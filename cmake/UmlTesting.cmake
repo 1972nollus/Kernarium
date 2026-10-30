@@ -149,6 +149,58 @@ set(UML_UNIT_TEST_DEFAULT_TIMEOUT 600)
 # enough for a runner to stop its emulator.
 set(UML_TEST_TIMEOUT_GRACE_PERIOD 20)
 
+# A test that runs a built tool, named by a $<TARGET_FILE:...> argument of its
+# command, needs that tool before it starts, whichever build the tree came
+# from. The tool is built by a CTest fixture of the test's suite, so running
+# the test by name after a configure is enough. The check workflows build the
+# suite's binaries first and the fixture then finds nothing to do. One build
+# runs at a time (RESOURCE_LOCK), because two builds of one tree must not
+# overlap.
+function(_uml_require_tool_targets SUITE NAME)
+    set(_fixtures "")
+    foreach(_argument IN LISTS ARGN)
+        if(NOT _argument MATCHES "^\\$<TARGET_FILE:([^>]+)>$")
+            continue()
+        endif()
+        set(_tool "${CMAKE_MATCH_1}")
+        if(NOT TARGET "${_tool}")
+            continue()
+        endif()
+        get_property(_aliased_tool TARGET "${_tool}" PROPERTY ALIASED_TARGET)
+        if(_aliased_tool)
+            set(_tool "${_aliased_tool}")
+        endif()
+        get_target_property(_tool_imported "${_tool}" IMPORTED)
+        get_target_property(_tool_type "${_tool}" TYPE)
+        if(_tool_imported OR _tool_type STREQUAL "INTERFACE_LIBRARY")
+            continue()
+        endif()
+        set(_fixture "uml-tool-${_tool}")
+        get_property(_registered GLOBAL PROPERTY "UML_TOOL_FIXTURE_${_tool}")
+        if(NOT _registered)
+            set(_build_test "${SUITE}-build-${_tool}")
+            add_test(NAME "${_build_test}" COMMAND "${CMAKE_COMMAND}"
+                --build "${CMAKE_BINARY_DIR}" --target "${_tool}"
+                --config "$<CONFIG>")
+            set_tests_properties("${_build_test}" PROPERTIES
+                LABELS "${SUITE}"
+                FIXTURES_SETUP "${_fixture}"
+                RESOURCE_LOCK uml-tool-build
+                TIMEOUT 3600
+                TIMEOUT_SIGNAL_NAME SIGINT
+                TIMEOUT_SIGNAL_GRACE_PERIOD "${UML_TEST_TIMEOUT_GRACE_PERIOD}")
+            uml_record_registered_test(${SUITE} "${_build_test}")
+            set_property(GLOBAL PROPERTY "UML_TOOL_FIXTURE_${_tool}" TRUE)
+        endif()
+        list(APPEND _fixtures "${_fixture}")
+    endforeach()
+    if(_fixtures)
+        list(REMOVE_DUPLICATES _fixtures)
+        set_tests_properties("${NAME}" PROPERTIES
+            FIXTURES_REQUIRED "${_fixtures}")
+    endif()
+endfunction()
+
 # Registers one test in SUITE (unit, tooling or integration). Its labels are
 # the suite, then rootfs for a ROOTFS integration test, then the caller's
 # LABELS, and must name exactly one primary suite. Its command targets join
@@ -232,6 +284,7 @@ function(_uml_add_suite_test SUITE)
     endif()
 
     add_test(NAME "${TEST_NAME}" COMMAND ${TEST_COMMAND})
+    _uml_require_tool_targets(${SUITE} "${TEST_NAME}" ${TEST_COMMAND})
     # At the timeout, SIGINT rather than SIGKILL lets a Python runner unwind
     # its cleanups and a shell run its INT trap. The test still fails as a
     # timeout, and the SIGKILL follows the grace period.

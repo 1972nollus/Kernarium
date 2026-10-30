@@ -127,7 +127,9 @@ add_library(uml_gpu_service STATIC in_process_service.cpp)
 uml_configure_gpu_component(uml_gpu_service)
 target_compile_definitions(uml_gpu_service PRIVATE
     UML_GPU_STARTUP_TESTING=0)
-target_link_libraries(uml_gpu_service PRIVATE uml_gpu_vhost_user_device)
+target_link_libraries(uml_gpu_service PRIVATE
+    uml_gpu_vhost_user_device
+    UML::DeviceGuestEnd)
 
 if(UML_BUILD_UNIT_TESTS)
     # Test variants for the GPU service and device tests. Each recompiles the
@@ -143,6 +145,7 @@ if(UML_BUILD_UNIT_TESTS)
     target_link_libraries(uml_gpu_service_test_variant PUBLIC
         uml_gpu_transport_startup_test_variant
         uml_gpu_protocol_device
+        UML::DeviceGuestEnd
         UML::VncInput)
 
     add_library(uml_gpu_service_slow_stop_test_variant STATIC
@@ -153,7 +156,8 @@ if(UML_BUILD_UNIT_TESTS)
         UML_GPU_SERVICE_TRANSPORT_TESTING=1)
     target_link_libraries(uml_gpu_service_slow_stop_test_variant PRIVATE
         uml_gpu_transport_slow_stop_test_variant
-        uml_gpu_protocol_device)
+        uml_gpu_protocol_device
+        UML::DeviceGuestEnd)
 
     # The device with its command-atomicity probes, and the fence queue it
     # completes into.

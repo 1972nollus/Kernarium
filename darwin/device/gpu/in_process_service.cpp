@@ -3,6 +3,7 @@
 #include "in_process_service.hpp"
 
 #include "gpu_vhost_user_server.hpp"
+#include "guest_end.hpp"
 #include "platform/descriptor.hpp"
 #include "request_gate.hpp"
 #include "unique_descriptor.hpp"
@@ -80,7 +81,13 @@ public:
 
     bool holdRequests(std::chrono::milliseconds budget) noexcept
     {
-        return requestGate_->hold(budget);
+        const bool quiet = requestGate_->hold(budget);
+        /* A hold placed after the guest said it is ending finds a guest that
+         * can no longer stop for want of its GPU: it discards as well. Either
+         * this sees the guest's end, or the guest's end sees this hold. */
+        if (guestEnded_.load())
+            (void)requestGate_->discard();
+        return quiet;
     }
 
     void releaseRequests() noexcept
@@ -125,6 +132,11 @@ public:
             service_->stop();
             service_.reset();
         }
+        /* The guest is gone, and a hold that discarded its requests is a
+         * plain hold for the next one: that guest waits behind the gate as
+         * designed, and the application opens it as for any other. */
+        guestEnded_.store(false);
+        requestGate_->returnToHold();
         {
             /* Input from the display has nowhere to go until the new guest
              * has its endpoint, and a guest that is not there yet must not
@@ -162,6 +174,16 @@ public:
     }
 
 private:
+    /* The guest said it is ending. Runs on the guest kernel's thread, which
+     * the guest's shutdown depends on, so it only flags the end and turns a
+     * closed gate to discarding. */
+    static void guestEnded(void* implementation) noexcept
+    {
+        auto& self = *static_cast<Implementation*>(implementation);
+        self.guestEnded_.store(true);
+        (void)self.requestGate_->discard();
+    }
+
     struct InputChannel {
         DescriptorPair descriptors {};
         std::string connectionName;
@@ -264,6 +286,11 @@ private:
     std::atomic_bool reportedInputFailure_ {};
     std::shared_ptr<RequestGate> requestGate_ {
         std::make_shared<RequestGate>()};
+    /* Whether the connection's guest has said it is ending. */
+    std::atomic_bool guestEnded_ {};
+    /* After the gate and the flag it acts on. */
+    uml::device::GuestEndRegistration guestEndRegistration_ {
+        &Implementation::guestEnded, this};
     mutable std::mutex displayMutex_;
     std::shared_ptr<Display> display_;
     std::mutex connectionMutex_;

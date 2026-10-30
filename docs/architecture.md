@@ -63,7 +63,10 @@ the kernel took and did not return:
   the commitment and is dropped with it); and
 - the guest RAM: the whole window becomes one protectionless reservation again,
   the commitment is retired and the token unregistered, so the next kernel
-  finds no byte and no page of this one.
+  finds no byte and no page of this one. The kernel's signed text, aliased
+  from the embedded image, stays mapped: XNU makes the aliases permanent on
+  iOS, so no mapping can replace them, and the next load of the same image
+  reuses them on every product.
 
 A refusal by the check changes nothing and may be retried: the caller stops
 every service that maps guest RAM, then runs again, and the handle stays
@@ -187,6 +190,24 @@ host page leaves the footprint once the guest has ballooned all of its 4 KiB
 frames. Under `VIRTIO_BALLOON_F_MUST_TELL_HOST`, a deflate commits the page
 before the guest may use it.
 
+The process's memory limit, L, is the figure the memory budgets derive from;
+the gadget-cache budget takes at most an eighth of it. iOS enforces one per
+application and reports it (`platform::process_memory_limit_bytes()`: the
+footprint plus the limit remaining, 2,867 MiB on the iPad mini 6). macOS
+enforces none, so a measurement run states it with `--memory-limit=2867M` or
+`UML_MEMORY_LIMIT_MIB=2867`, and every budget that derives from it computes on
+the Mac as it does on the device; the option wins over the variable and the
+host's own limit over both, and a run that states nothing is unchanged. A run
+that states a limit says so on stderr when it starts, with the gadget-cache
+budget derived from it, and a sampler writes one `virtual Jetsam` line, with
+the footprint, the limit and the lifetime peak, each time the footprint rises
+above it or the peak shows that it did between two samples
+(`runtime/virtual_jetsam.hpp`). Nothing is killed: the line marks where iOS
+would have ended the process.
+
+Every iOS memory control carries its macOS path, or records here why none can
+exist, so that a Mac run stays an accurate ground for measuring the device.
+
 A host mapping call that fails says so. The kernel distinguishes an exhausted
 host only by `ENOMEM`, so Mach's resource-shortage and address-space-exhaustion
 codes both arrive as that, and the first such failures are reported on the run's
@@ -280,13 +301,26 @@ served again may hold its old bytes.
 
 A library built without the embedded ELF runner, such as every XCFramework
 slice, excludes native-VM and embedded-ELF execution; only the macOS unit
-presets keep the native-VM bridge, for their tests. Kernarium uses versioned runtime frameworks whose kernel ELF is carried in signed Mach-O
-`__TEXT`. Its loader aliases immutable executable pages from that mapping,
-copies only data and BSS into anonymous storage, and rejects a carrier
-mismatch, writable executable segments, or relocations into signed text. The app
-embeds every selectable framework, links none at launch, and loads exactly one
-guest flavour for the process lifetime. macOS retains its
-unsigned embedded-loader path.
+presets keep the native-VM bridge, for their tests.
+
+Every product that embeds a kernel carries its ELF as a host-page-aligned
+Mach-O `__TEXT,__uml_elf` section, and
+`Kernarium/scripts/verify-signed-kernel-carrier.py` checks the image for it
+when the product is configured. The emulator runs that section in place: creation keeps a pointer to it instead of a copy (the
+`uml_emulator_create` contract), and the loader aliases the immutable
+executable pages from it, copies only data and BSS into anonymous storage
+around them, and rejects writable executable segments or relocations into
+signed text. iOS makes the aliases permanent once its code-signing monitor has
+associated them (a later load of the image reuses them;
+`memory/shared_backing.hpp` `keep_host_range`), and macOS keeps them the same
+way, so that a restart takes the path iOS takes. On iOS the image must be the section, because no other
+code can be made; on macOS any other image, such as a test's buffer, is copied
+into anonymous memory. The loader admits only an AArch64 image, so every
+guest's kernel text is native arm64 code: the x86-64 userspace of the macOS
+compatibility product is translated by its engines and is never loaded
+there. Kernarium uses versioned runtime frameworks that each carry their
+kernel this way. The app embeds every selectable framework, links none at
+launch, and loads exactly one guest flavour for the process lifetime.
 
 The macOS, iOS device, and iOS Simulator products build at a 27.0 minimum
 (`cmake/toolchains/Apple.cmake`). Their code therefore carries no availability
@@ -901,6 +935,28 @@ host GPU within seconds and a request that reached Metal after that would make
 the renderer's Vulkan device lost for good, and opens it as the application
 returns.
 
+A hold promises the guest's requests wait, and a guest that is ending cannot
+wait: its shutdown drains the GPU's rings (`virtio_gpu_shutdown`, and every
+sender blocked for ring space) before the machine can go, and an Android guest
+that keeps rendering fills the control queue within seconds. So a guest that
+ends behind a closed gate turns it to discarding. The kernel reports its end
+through `darwin_uml_guest_shutdown()`; the runtime tells the devices that
+registered a callback in the guest-end registry
+(`darwin/device/guest_end/guest_end.hpp`, a slot table like the socket paths'),
+once per report that is new to the run, and the GPU service's callback tells
+its gate. A discarding gate makes the server consume every request in an
+enabled ring, those already waiting and those that arrive, and complete it
+with the device's answer for a request that did not run
+(`VhostUserDevice::discardedResponse`), without calling the device. The GPU
+answers a control request with a header of type `OK_NODATA` that echoes the
+fence flag, fence id, context id and ring index, so the guest retires every
+fence and finishes stopping, and a cursor command with an empty completion. A
+disabled ring is left alone, as a closed gate leaves it, because its guest no
+longer waits on it. Only a closed gate discards: a guest that ends with the
+gate open ran everything it sent, and a hold placed after the guest's end
+discards from the start. `startNextConnection()` returns a discarding gate to a
+plain hold, so the next guest waits behind it as designed.
+
 The [Virtio video devices](../darwin/device/video/README.md) bridge the shared
 mainline/Android V4L2 drivers to the platform VideoToolbox decoder (device 31)
 and encoder (device 30). Each uses its own vhost-user connection and service
@@ -1078,7 +1134,8 @@ with new transport and input endpoints. VNC clients stay connected, the
 listener keeps its port, the window stays open, and display input that arrives
 while no connection exists is dropped. The request gate is the service's, not
 the connection's: a hold placed before the restart still holds the new device,
-and the application opens it as it opened the last. A host-visible blob of the
+as a plain hold even when the old guest's end made it discard, and the
+application opens it as it opened the last. A host-visible blob of the
 new guest has been observed to start zeroed, but nothing here enforces that: the
 host driver or the OS hands out fresh zero-filled memory. On the Mac, a guest
 that left a token in host-visible memory across a restart (freed, mapped at
@@ -1162,6 +1219,45 @@ command is consumed, as a bootloader that continues would, so that Android's
 init writes `boot-recovery` when it reboots into recovery; `boot-recovery`
 itself stays for recovery to clear. See the
 [Android boot contract](../android/lineage-24/README.md).
+
+The Kernarium runtime (`Kernarium/Runtime`) runs the same loop inside its one
+`run` call, with the same split of machine and boot (its machine also holds the
+microphone switch and the footprint log), the same retries, the same loop guard
+and its own `SIGPIPE` handling before every boot.
+`Kernarium/Runtime/KernariumRestartLoop.hpp` owns the order of the steps
+against a `Machine` interface, so the host test `kernarium-restart-loop` checks
+the order, the retry, the stop request, the hold and the events against a
+recording fake. What differs from the launchers:
+
+- The run returns the last guest's status, a negated `uml_emulator` error when
+  a start-up or a run fails, or `KERNARIUM_RUNTIME_RESULT_RESTART_LOOP` (-100)
+  when the loop guard ends it, which the application shows as its own notice.
+- The stop request is checked before every boot and again after the boot is
+  built, since the handle drops a stop made while it is idle. A stop that
+  arrives as the guest restarts wins and is a clean end.
+- The next boot waits while the guest is paused (a quiesce until its resume) or
+  the GPU service's request gate is held. The gate is the service's, so a hold
+  carries into the new GPU device, and a guest that booted behind a closed
+  gate would time out its `virtio_gpu` capset probe and run without 3D for the
+  whole boot. The first boot is not held: a hold placed before the guest's GPU
+  exists is applied when it does. A guest kept running in a Picture in Picture
+  window has released the gate, so its restarts boot at once.
+- A guest that restarts itself behind a closed gate, such as an Android guest
+  in the background under a kept-running job, finishes stopping: its report
+  turns the gate to discarding, which completes the requests its shutdown waits
+  for (see the request gate under [devices](#devices-and-graphics)). Without
+  that the guest stays resident, wired, until its init's reboot monitor crashes
+  the process. The gate is a plain hold again for the next guest.
+- The runtime reports a restart to the application twice
+  (`KERNARIUM_RUNTIME_RESTART_BEGAN` once the guest is gone and its services
+  have stopped, `KERNARIUM_RUNTIME_RESTART_BOOTED` once the new guest's
+  management console answers), so the application can re-apply what belongs to
+  a kernel (the vCPU throttle, the page-cache trimming) to the new one. The
+  console probe sends the application's last trimming request, so it never
+  undoes one, and gives up after 120 s with the event marked unanswered.
+- A hibernation needs nothing here: the hand-back drops the handle's
+  suspension and hibernation image with the rest of the guest's state, and a
+  quiesce asked of an idle handle only flushes.
 
 An application that can be backgrounded holds the guest's GPU requests before it
 quiesces, with the runtime's `set_gpu_hold` (see the request gate under

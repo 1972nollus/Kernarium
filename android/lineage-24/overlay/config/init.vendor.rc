@@ -26,9 +26,17 @@ on fs
     chmod 622 /dev/kmsg
 
 on late-fs
-    exec -- /system/bin/resize2fs /dev/block/by-name/userdata
     mount_all --late
     write /dev/kmsg "GUEST_BUILD_FINGERPRINT: ${ro.build.fingerprint}"
+
+# The host may have grown the userdata partition since the last boot. Once
+# /data is mounted, and before the zygote starts, the kernel's online resize
+# grows the filesystem to the partition: it is journaled, needs no fsck, and
+# adds the group descriptor blocks the compact image has no room for. With
+# nothing to grow resize2fs does nothing. It runs as root with the group of
+# /data's owner, so it opens /data (mode 0771) without a DAC capability.
+on post-fs-data
+    exec - root system -- /system/bin/resize2fs /dev/block/by-name/userdata
 
 on boot
     setprop ro.hardware.audio.primary goldfish

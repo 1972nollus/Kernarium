@@ -19,7 +19,7 @@ is sent with its Cb byte.
  1 file changed, 12 insertions(+), 7 deletions(-)
 
 diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
-index a1430dae46d2bba2889e76334fdd66f5eab01abe..5cf0c0606d5a05b01c17d272a12391d45e6809e0 100644
+index fcc50537c2a0165ce9da524fd2a16ca7dc7df1ae..df3b50217540c8aaf9281a6cac37e35531c058f5 100644
 --- a/virtgpu_virgl.c
 +++ b/virtgpu_virgl.c
 @@ -143,6 +143,10 @@ static bool virgl_bitmask_supports_format(struct virgl_supported_format_mask *su

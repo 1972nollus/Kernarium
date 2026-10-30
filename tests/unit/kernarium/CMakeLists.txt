@@ -26,6 +26,25 @@ uml_add_unit_test(NAME kernarium-key-wake
     COMMAND uml_kernarium_key_wake_tests
     LABELS kernarium)
 
+# The run loop of a launch that boots a restarting guest again, with a
+# recording machine in place of the guest.
+add_executable(uml_kernarium_restart_loop_tests restart_loop_tests.cpp)
+target_include_directories(uml_kernarium_restart_loop_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/Kernarium/Runtime
+    ${PROJECT_SOURCE_DIR}/darwin/api/include
+    ${PROJECT_SOURCE_DIR}/darwin/emulator/src)
+uml_add_unit_test(NAME kernarium-restart-loop
+    COMMAND uml_kernarium_restart_loop_tests
+    LABELS kernarium)
+
+# How an automation launch asks to start the background job with its guest.
+add_executable(uml_kernarium_automation_job_tests automation_job_tests.cpp)
+target_include_directories(uml_kernarium_automation_job_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/Kernarium/Runtime)
+uml_add_unit_test(NAME kernarium-automation-job
+    COMMAND uml_kernarium_automation_job_tests
+    LABELS kernarium)
+
 add_executable(uml_kernarium_adb_authorization_tests
     adb_authorization_tests.cpp)
 target_include_directories(uml_kernarium_adb_authorization_tests PRIVATE

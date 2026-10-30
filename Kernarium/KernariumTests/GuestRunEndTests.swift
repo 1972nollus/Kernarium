@@ -4,9 +4,9 @@ import Testing
 import UIKit
 @testable import Kernarium
 
-/// A launch runs its guest once. The runtime runs one guest per process and
-/// refuses a second run, so after the run returns the application reports how
-/// the guest ended and asks to be relaunched.
+/// A launch makes one run. The runtime boots a guest that restarts itself
+/// again inside it, so the run returns only when the guest is over; the
+/// application then reports how it ended and asks to be relaunched.
 @MainActor
 struct GuestRunEndTests {
     @Test
@@ -22,6 +22,29 @@ struct GuestRunEndTests {
             failed.message.hasSuffix("Relaunch Kernarium to start it again.")
         )
         #expect(failed.systemName != shutDown.systemName)
+    }
+
+    /// A guest that restarted itself again and again is not an error of the
+    /// runtime, and the notice does not print the status the runtime used to
+    /// say so.
+    @Test
+    func theNoticeTellsAGuestThatKeptRestartingFromAnError() {
+        let looping = GuestRunEnd(
+            result: Int32(KERNARIUM_RUNTIME_RESULT_RESTART_LOOP)
+        )
+        #expect(looping.restartedInALoop)
+        #expect(looping.title == "Guest Kept Restarting")
+        #expect(looping.message.contains("restarted itself"))
+        #expect(!looping.message.contains("returned"))
+        #expect(
+            looping.message.hasSuffix("Relaunch Kernarium to start it again.")
+        )
+        let failed = GuestRunEnd(result: -5)
+        #expect(!failed.restartedInALoop)
+        #expect(looping.systemName != failed.systemName)
+        #expect(looping.systemName != GuestRunEnd(result: 0).systemName)
+        // The runtime's own refusal is an error, not a loop.
+        #expect(!GuestRunEnd(result: -4).restartedInALoop)
     }
 
     /// Stops the application's own guest, so it runs once per test process.

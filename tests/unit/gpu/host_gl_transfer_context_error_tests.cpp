@@ -3,10 +3,11 @@
 // A transfer names its resource through a guest context, and one that names a
 // resource the context never attached fails. That failure must cost the guest
 // the transfer and nothing else. Android's gralloc mapper creates a context
-// that never submits a command buffer and only transfers, to lock buffers for
-// reading; when a failed transfer left the context in error, every later
-// transfer through it failed as well, each one reaching the guest as
-// VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER and a readback of nothing.
+// that submits nothing but transfers, to lock buffers for reading (a buffer
+// with padded rows by a command buffer that holds one transfer, any other by a
+// control-queue transfer). When a failed transfer left the context in error,
+// every later transfer through it failed as well, each one reaching the guest
+// as VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER and a readback of nothing.
 //
 // The contract under test: after a refused transfer, the same context
 // transfers normally once the resource is attached to it.

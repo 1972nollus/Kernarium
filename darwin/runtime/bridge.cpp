@@ -3,6 +3,7 @@
 
 #include "context.hpp"
 
+#include "device/guest_end/guest_end.hpp"
 #include "device/sockets/socket_paths.hpp"
 #include "guest_files.hpp"
 #include "memory/shared_backing.hpp"
@@ -123,7 +124,10 @@ int darwin_uml_stop_requested(void)
  * machine_power_off() or machine_halt(), before it runs its exitcalls. The
  * run's context keeps the kind and the command; the log line names them once,
  * as one write so that concurrent output cannot split it, and a repeat of the
- * report the context already holds logs nothing.
+ * report the context already holds logs nothing. A report that is new to the
+ * run also tells the devices that hold guest requests back that the guest is
+ * ending (device/guest_end/guest_end.hpp), because the guest's shutdown waits
+ * for those requests.
  */
 void darwin_uml_guest_shutdown(int kind, const char *command)
 {
@@ -152,9 +156,11 @@ void darwin_uml_guest_shutdown(int kind, const char *command)
 		std::string_view{command, strnlen(command,
 			::uml::runtime::guest_shutdown_command_limit)};
 	if (auto *context = ::uml::runtime::current_context();
-	    context != nullptr &&
-	    !context->record_guest_shutdown(recorded, text))
-		return;
+	    context != nullptr) {
+		if (!context->record_guest_shutdown(recorded, text))
+			return;
+		::uml::device::notify_guest_end();
+	}
 	/* The guest chose the command: keep control characters out of the log. */
 	char line[96 + ::uml::runtime::guest_shutdown_command_limit];
 	size_t length = static_cast<size_t>(

@@ -339,6 +339,7 @@ std::unique_ptr<AutomationBoot> AutomationBoot::fromEnvironment(
             std::fprintf(
                 stderr, "Kernarium: removed the boot payload Documents/%s\n",
                 payload);
+        boot->stdoutMutex_ = &consoleStdoutMutex;
         boot->relay_ = std::make_unique<ArtifactRelay>(consoleStdoutMutex);
     }
     return boot;
@@ -346,8 +347,14 @@ std::unique_ptr<AutomationBoot> AutomationBoot::fromEnvironment(
 
 std::string AutomationBoot::relayDeviceArgument()
 {
-    if (!relay_)
+    if (stdoutMutex_ == nullptr)
         return {};
+    if (relayTaken_) {
+        // Ends the old relay, which joins its reader, before the next starts.
+        relay_.reset();
+        relay_ = std::make_unique<ArtifactRelay>(*stdoutMutex_);
+    }
+    relayTaken_ = true;
     return uml::gpu::virtioDeviceArgument(
         relay_->takeConnectionName(), uml::console::protocol::deviceId);
 }

@@ -186,6 +186,16 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
 
+    # A guest buffer with padded rows is locked and unlocked in one transfer
+    # that names the pitch as its stride, rather than one transfer per row,
+    # which costs one readback per row: the rows must land at the pitch.
+    uml_add_gpu_unit_test(gpu-padded-row-transfer
+        uml_gpu_padded_row_transfer_tests
+        host_gl_padded_row_transfer_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries}
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY)
+
     # A blob texture has no guest pages, so a guest reads and writes it through
     # a staging buffer: the copy transfer must check the staging buffer for
     # guest storage in both directions, not the texture.
@@ -305,7 +315,7 @@ if(TARGET uml_gpu_service)
         gpu-resource-metal-texture gpu-cross-context-readback
         gpu-depth-format-advertisement gpu-line-loop-statistics
         gpu-statistics-availability gpu-packed-yuv-planes
-        gpu-texture-barrier-clear
+        gpu-texture-barrier-clear gpu-padded-row-transfer
         PROPERTIES SKIP_RETURN_CODE 77)
 
     # The renderer and the same-process render server share one fence table.

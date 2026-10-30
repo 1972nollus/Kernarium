@@ -61,6 +61,7 @@ endif()
 add_library(KernariumRuntime SHARED
     KernariumConsoleInput.hpp
     KernariumKeyWake.hpp
+    KernariumRestartLoop.hpp
     KernariumRuntime.h
     KernariumRuntime.mm)
 uml_declare_architecture_target(KernariumRuntime app)
@@ -86,12 +87,21 @@ if(UML_KERNARIUM_AUTOMATION_HARNESS)
         set(_kernarium_automation_harness 1)
     endif()
 endif()
+# Every automation runtime, whatever its guest, can be asked to start the
+# background job with the guest (KernariumAutomationJob.hpp).
+if(UML_KERNARIUM_AUTOMATION_HARNESS)
+    target_sources(KernariumRuntime PRIVATE KernariumAutomationJob.hpp)
+    set(_kernarium_automation_job_at_start 1)
+else()
+    set(_kernarium_automation_job_at_start 0)
+endif()
 target_include_directories(KernariumRuntime
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE
         ${CMAKE_CURRENT_BINARY_DIR}
         ${PROJECT_SOURCE_DIR}/darwin/api/include
         ${PROJECT_SOURCE_DIR}/darwin/device
+        ${PROJECT_SOURCE_DIR}/darwin/emulator/src
         ${PROJECT_SOURCE_DIR}/darwin/device/audio
         ${PROJECT_SOURCE_DIR}/darwin/device/battery
         ${PROJECT_SOURCE_DIR}/darwin/device/balloon
@@ -119,7 +129,8 @@ target_compile_definitions(KernariumRuntime PRIVATE
     KERNARIUM_RUNTIME_ANDROID_GUEST=${KERNARIUM_RUNTIME_ANDROID_GUEST}
     KERNARIUM_RUNTIME_GUEST_FLAVOR=${KERNARIUM_RUNTIME_GUEST_FLAVOR}
     KERNARIUM_AUTOMATION_HARNESS=${_kernarium_automation_harness}
-    KERNARIUM_AUTOMATION_ADB_AUTH=${_kernarium_automation_adb_auth})
+    KERNARIUM_AUTOMATION_ADB_AUTH=${_kernarium_automation_adb_auth}
+    KERNARIUM_AUTOMATION_JOB_AT_START=${_kernarium_automation_job_at_start})
 target_link_options(KernariumRuntime PRIVATE
     "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
 # The framework code signature covers __TEXT pages. The loader aliases the

@@ -51,3 +51,10 @@ is the contract the launchers follow: after a run that ends with a restart,
 stop every service that maps guest RAM, then run again on the same handle and
 build the services of the new boot. The one-guest-per-process rule remains for
 every other end of a guest.
+
+Outcome, 2026-10-31: creation no longer copies the kernel image when it is the
+process's own `__TEXT,__uml_elf` section, the image every product links its
+kernel into. The handle runs that section in place: a copy would be dirty heap
+for the handle's life, and the section outlives every handle. Any other buffer
+is still copied, and its caller may free it. The contract is the comment on
+`uml_emulator_create`.

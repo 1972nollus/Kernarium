@@ -21,6 +21,7 @@ constexpr std::string_view jit_tier_prefix{"--jit-tier="};
 constexpr std::string_view gadget_cache_budget_prefix{
 	"--gadget-cache-budget="};
 constexpr std::string_view guest_hibernation_prefix{"--guest-hibernation="};
+constexpr std::string_view memory_limit_prefix{"--memory-limit="};
 namespace {
 
 [[nodiscard]] bool has_argument(
@@ -273,6 +274,18 @@ EmulatorOptions prepare_emulator_options(
 				::uml::runtime::parse_translation_cache_quantity(
 					quantity.c_str());
 			if (prepared.gadget_cache_budget == 0) {
+				prepared.valid = false;
+				return prepared;
+			}
+			continue;
+		}
+		if (argument.starts_with(memory_limit_prefix)) {
+			const std::string quantity{argument.substr(
+				memory_limit_prefix.size())};
+			prepared.memory_limit_bytes =
+				::uml::runtime::parse_translation_cache_quantity(
+					quantity.c_str());
+			if (prepared.memory_limit_bytes == 0) {
 				prepared.valid = false;
 				return prepared;
 			}

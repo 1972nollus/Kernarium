@@ -204,6 +204,16 @@ const Layout* layoutOf(unsigned fourcc)
     for (const auto& layout : layouts) if (layout.fourcc == fourcc) return &layout;
     return nullptr;
 }
+/* The pitch the device lays a raw row at: the one a guest allocator gives a
+ * buffer of the format, 16 bytes for NV12, P010 and packed 32-bit rows and 32
+ * for the luma of planar YUV 4:2:0, so a width that is not a whole pitch has
+ * rows longer than its samples. */
+std::size_t rawPitch(const Layout& layout, unsigned width)
+{
+    const std::size_t bytes = layout.packed ? 4u * width : layout.tenBit ? 2u * width : width;
+    const std::size_t alignment = !layout.packed && !layout.tenBit && !layout.interleaved ? 32 : 16;
+    return (bytes + alignment - 1) / alignment * alignment;
+}
 std::string fourccName(unsigned fourcc)
 {
     return std::string(reinterpret_cast<const char*>(&fourcc), 4);
@@ -842,6 +852,9 @@ public:
         for (unsigned i = 0; i < negotiated.num_planes; ++i) {
             const unsigned row = layout->packed ? width * 4 : (i == 0 || layout->interleaved ? width : width / 2) * (layout->tenBit ? 2u : 1u);
             require(negotiated.plane_fmt[i].bytesperline >= row, "a raw line is shorter than its row");
+            /* The lines are the device's, at the padded pitch, and TRY_FMT says so as S_FMT does. */
+            const std::size_t pitch = rawPitch(*layout, width) / (i == 0 || layout->packed || layout->interleaved ? 1 : 2);
+            require(negotiated.plane_fmt[i].bytesperline == pitch, "a raw line is not at the padded pitch");
             require(negotiated.plane_fmt[i].sizeimage >= negotiated.plane_fmt[i].bytesperline, "a raw plane is shorter than a row");
             require(candidate.fmt.pix_mp.plane_fmt[i].bytesperline == negotiated.plane_fmt[i].bytesperline &&
                     candidate.fmt.pix_mp.plane_fmt[i].sizeimage == negotiated.plane_fmt[i].sizeimage,
@@ -1769,6 +1782,16 @@ int main(int argc, char** argv)
                     Plan layout = plan;
                     layout.raw = other; layout.forceAt = -1; layout.resume = false; layout.resize = false;
                     attempt(run, layout, "layout");
+                }
+                // A width that is not a whole pitch: the rows the client writes are longer than the picture's.
+                for (const unsigned any : {plan.raw, unsigned(V4L2_PIX_FMT_NV12), unsigned(V4L2_PIX_FMT_NV12M),
+                                           unsigned(V4L2_PIX_FMT_YUV420), unsigned(V4L2_PIX_FMT_YUV420M),
+                                           unsigned(V4L2_PIX_FMT_ABGR32), unsigned(V4L2_PIX_FMT_RGBA32)}) {
+                    if ((tenBit && any != plan.raw) || !probe.rawListed(any)) continue;
+                    Plan padded = plan;
+                    padded.raw = any; padded.width = 342; padded.height = 120; padded.frames = 6;
+                    padded.forceAt = -1; padded.resume = false; padded.resize = false;
+                    attempt(run, padded, "padded rows");
                 }
                 if (profileId && hasControl(probe.fd, V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR)) {
                     // Parameter sets come once at the start, not before the forced key frame.

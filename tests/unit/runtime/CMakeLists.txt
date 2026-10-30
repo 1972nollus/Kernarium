@@ -16,6 +16,7 @@ uml_add_unit_test(
 add_executable(uml_runtime_guest_shutdown_tests guest_shutdown_tests.cpp)
 target_link_libraries(uml_runtime_guest_shutdown_tests PRIVATE
     UML::BridgeAbi
+    UML::DeviceGuestEnd
     UML::Emulator)
 target_include_directories(uml_runtime_guest_shutdown_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
@@ -31,6 +32,39 @@ target_link_libraries(uml_runtime_kernel_signal_scope_tests PRIVATE
 uml_add_unit_test(
     NAME runtime-kernel-signal-scope
     COMMAND uml_runtime_kernel_signal_scope_tests)
+
+# The kernel a shared library links into itself is found through the library
+# that holds the lookup, not through the executable that loads it.
+add_library(uml_runtime_embedded_kernel_probe SHARED
+    embedded_kernel_probe.cpp
+    $<TARGET_OBJECTS:uml_runtime_kernel_signals>)
+# The directory's link_libraries() would give the library the process-wide
+# test host-capability installer, which a second copy in the process aborts.
+set_property(TARGET uml_runtime_embedded_kernel_probe PROPERTY
+    LINK_LIBRARIES UML::MemorySharedBacking)
+target_include_directories(uml_runtime_embedded_kernel_probe PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin
+    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+target_compile_options(uml_runtime_embedded_kernel_probe PRIVATE
+    -Wall -Wextra -Werror)
+target_link_options(uml_runtime_embedded_kernel_probe PRIVATE
+    "LINKER:-sectcreate,__TEXT,__uml_elf,${CMAKE_CURRENT_SOURCE_DIR}/embedded_kernel_probe.cpp"
+    "LINKER:-sectalign,__TEXT,__uml_elf,0x4000")
+set_target_properties(uml_runtime_embedded_kernel_probe PROPERTIES
+    PREFIX ""
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+set_property(TARGET uml_runtime_embedded_kernel_probe APPEND PROPERTY
+    LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/embedded_kernel_probe.cpp")
+add_executable(uml_runtime_embedded_kernel_image_tests
+    embedded_kernel_image_tests.cpp)
+target_link_libraries(uml_runtime_embedded_kernel_image_tests PRIVATE
+    UML::RuntimeKernelSignals)
+add_dependencies(uml_runtime_embedded_kernel_image_tests
+    uml_runtime_embedded_kernel_probe)
+uml_add_unit_test(
+    NAME runtime-embedded-kernel-image
+    COMMAND uml_runtime_embedded_kernel_image_tests
+        $<TARGET_FILE:uml_runtime_embedded_kernel_probe>)
 
 # The ledger of what an embedded kernel creates through its imports.
 add_executable(uml_runtime_kernel_resources_tests kernel_resources_tests.cpp)
@@ -134,3 +168,19 @@ uml_add_unit_test(
     COMMAND uml_runtime_guest_hibernation_tests
     TIMEOUT 240)
 set_tests_properties(runtime-guest-hibernation PROPERTIES RUN_SERIAL TRUE)
+
+# The virtual Jetsam: the decision, the line, and the sampler of a run whose
+# launch stated the process's memory limit.
+add_executable(uml_runtime_virtual_jetsam_tests virtual_jetsam_tests.cpp)
+target_link_libraries(uml_runtime_virtual_jetsam_tests PRIVATE
+    UML::RuntimeVirtualJetsam
+    UML::PlatformContract
+    "-framework Foundation")
+target_sources(uml_runtime_virtual_jetsam_tests PRIVATE
+    $<TARGET_OBJECTS:uml_host_environment>)
+target_include_directories(uml_runtime_virtual_jetsam_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/platform)
+uml_add_unit_test(
+    NAME runtime-virtual-jetsam
+    COMMAND uml_runtime_virtual_jetsam_tests
+    LABELS tsan)

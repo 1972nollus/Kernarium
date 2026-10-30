@@ -290,9 +290,10 @@ PRODUCT_PACKAGES_EXCLUDE += \
 
 # The browser (Jelly), the keyboard (LatinIME) and ThemePicker come from the
 # LineageOS product chain. resize2fs grows the compact userdata filesystem
-# after the host expands its partition and before the first /data mount. The
-# F-Droid client and its Privileged Extension are presigned prebuilts that
-# source preparation materializes under vendor/kernarium/fdroid.
+# online after the host expands its partition, once /data is mounted
+# (init.vendor.rc, post-fs-data). The F-Droid client and its Privileged
+# Extension are presigned prebuilts that source preparation materializes under
+# vendor/kernarium/fdroid.
 PRODUCT_PACKAGES += \
     android.hardware.health-service.example \
     android.hardware.health-service.example_recovery \
@@ -422,6 +423,14 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_ahb_im
 # differently fails the run.
 PRODUCT_PACKAGES += kernarium_ahb_yuv_roundtrip
 PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_ahb_yuv_roundtrip
+
+# An RGBA hardware-buffer lock check: tall buffers of widths whose rows gralloc
+# pads are written by the GPU and read by the CPU, and written by the CPU and
+# read by the GPU, at the stride gralloc reports, and the locks of the padded
+# widths are timed against the unpadded ones, so a lock that costs a transfer
+# for each row fails the run.
+PRODUCT_PACKAGES += kernarium_ahb_rgba_lock
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_ahb_rgba_lock
 
 # Hardware video encoding and decoding. The host's VideoToolbox encoders and
 # decoders reach the guest as V4L2 stateful devices, and external/v4l2_codec2

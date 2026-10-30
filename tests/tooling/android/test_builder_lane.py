@@ -573,6 +573,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_product_model: bool = False,
                           missing_lockscreen_default: bool = False,
                           use_fiemap_variant: str | None = None,
+                          userdata_grow_variant: str | None = None,
+                          userdata_grow_policy_variant: str | None = None,
                           discrete_ops_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
                           cas_hal_variant: str | None = None,
@@ -821,14 +823,34 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     net_rules += "on post-fs-data\n" + sysctls + "on boot\n" + start_tool
                 else:
                     net_rules += "on post-fs-data\n" + sysctls + start_tool
+                online = "    exec - root system -- /system/bin/resize2fs /dev/block/by-name/userdata\n"
+                offline = "    exec -- /system/bin/resize2fs /dev/block/by-name/userdata\n"
+                forced = "    exec - root system -- /system/bin/resize2fs -f /dev/block/by-name/userdata\n"
+                userdata_grow_late = {
+                    "offline-also": offline,
+                    "offline-only": offline,
+                }.get(userdata_grow_variant, "")
+                userdata_grow_data = {
+                    None: online,
+                    "missing": "",
+                    "offline-only": "",
+                    "offline-also": online,
+                    "twice": online + online,
+                    "forced": online + forced,
+                    "no-group": offline,
+                    "at-boot": online,
+                }[userdata_grow_variant]
+                userdata_grow_block = (
+                    "on post-fs-data\n" + userdata_grow_data if userdata_grow_data else ""
+                ) + ("on boot\n" + online if userdata_grow_variant == "at-boot" else "")
                 archive.writestr(
                     "VENDOR/etc/init/init.kernarium.rc",
                     "on early-init\n" + graphics + density +
                     "on fs\n    mount_all --early\n"
                     "on late-fs\n"
-                    "    exec -- /system/bin/resize2fs "
-                    "/dev/block/by-name/userdata\n"
+                    + userdata_grow_late +
                     "    mount_all --late\n"
+                    + userdata_grow_block +
                     "on boot\n"
                     "    setprop ro.hardware.audio.primary goldfish\n"
                     + wifi_dirs
@@ -1135,6 +1157,24 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         + " (memfd_file ("
                         + ("getattr map read" if clearkey_memfd_variant == "no-write"
                            else "getattr map read write")
+                        + ")))\n"
+                    )
+                    # The online grow of userdata by resize2fs, in the fsck domain.
+                    + (
+                        ""
+                        if userdata_grow_policy_variant == "no-capability"
+                        else "(allow fsck_202604 self (capability (sys_resource)))\n"
+                    )
+                    + (
+                        ""
+                        if userdata_grow_policy_variant == "no-dir-open"
+                        else "(allow fsck_202604 system_data_root_file_202604 (dir (ioctl read open)))\n"
+                    )
+                    + (
+                        ""
+                        if userdata_grow_policy_variant == "no-ioctl"
+                        else "(allowx fsck_202604 system_data_root_file_202604 (ioctl dir ("
+                        + ("0x6610 0x5401" if userdata_grow_policy_variant == "more-ioctls" else "0x6610")
                         + ")))\n"
                     ),
                 )
@@ -1692,6 +1732,17 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-lockscreen-default", {"missing_lockscreen_default": True}),
             ("missing-use-fiemap", {"use_fiemap_variant": "missing"}),
             ("use-fiemap-true", {"use_fiemap_variant": "true"}),
+            ("userdata-grow-missing", {"userdata_grow_variant": "missing"}),
+            ("userdata-grow-offline-only", {"userdata_grow_variant": "offline-only"}),
+            ("userdata-grow-offline-also", {"userdata_grow_variant": "offline-also"}),
+            ("userdata-grow-twice", {"userdata_grow_variant": "twice"}),
+            ("userdata-grow-forced", {"userdata_grow_variant": "forced"}),
+            ("userdata-grow-no-group", {"userdata_grow_variant": "no-group"}),
+            ("userdata-grow-at-boot", {"userdata_grow_variant": "at-boot"}),
+            ("userdata-grow-policy-no-capability", {"userdata_grow_policy_variant": "no-capability"}),
+            ("userdata-grow-policy-no-dir-open", {"userdata_grow_policy_variant": "no-dir-open"}),
+            ("userdata-grow-policy-no-ioctl", {"userdata_grow_policy_variant": "no-ioctl"}),
+            ("userdata-grow-policy-more-ioctls", {"userdata_grow_policy_variant": "more-ioctls"}),
             ("missing-discrete-ops-overlay", {"discrete_ops_variant": "missing-overlay"}),
             ("unreliable-present-fence", {"vendor_property_variant": "present-fence-unreliable"}),
             ("missing-incremental-property", {"vendor_property_variant": "no-incremental"}),
@@ -2020,6 +2071,36 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "unexpected product property apexd.config.use_fiemap: \\[\\]"),
             ("use-fiemap-true-cause", {"use_fiemap_variant": "true"},
              "unexpected product property apexd.config.use_fiemap: \\['true'\\]"),
+            ("userdata-grow-missing-cause", {"userdata_grow_variant": "missing"},
+             "does not run 'exec - root system -- /system/bin/resize2fs [^']*' once at "
+             "post-fs-data"),
+            ("userdata-grow-offline-only-cause", {"userdata_grow_variant": "offline-only"},
+             "does not run 'exec - root system -- /system/bin/resize2fs [^']*' once at "
+             "post-fs-data"),
+            ("userdata-grow-offline-also-cause", {"userdata_grow_variant": "offline-also"},
+             "handles userdata differently under 'late-fs': exec -- /system/bin/resize2fs "
+             "/dev/block/by-name/userdata"),
+            ("userdata-grow-twice-cause", {"userdata_grow_variant": "twice"},
+             "does not run 'exec - root system -- /system/bin/resize2fs [^']*' once at "
+             "post-fs-data"),
+            ("userdata-grow-forced-cause", {"userdata_grow_variant": "forced"},
+             "handles userdata differently under 'post-fs-data': exec - root system -- "
+             "/system/bin/resize2fs -f /dev/block/by-name/userdata"),
+            ("userdata-grow-no-group-cause", {"userdata_grow_variant": "no-group"},
+             "does not run 'exec - root system -- /system/bin/resize2fs [^']*' once at "
+             "post-fs-data"),
+            ("userdata-grow-at-boot-cause", {"userdata_grow_variant": "at-boot"},
+             "handles userdata differently under 'boot': exec - root system -- "
+             "/system/bin/resize2fs /dev/block/by-name/userdata"),
+            ("userdata-grow-policy-no-capability-cause", {"userdata_grow_policy_variant": "no-capability"},
+             "does not let the fsck domain have \\['sys_resource'\\] on self:capability"),
+            ("userdata-grow-policy-no-dir-open-cause", {"userdata_grow_policy_variant": "no-dir-open"},
+             "does not let the fsck domain have \\['ioctl', 'open', 'read'\\] on "
+             "system_data_root_file:dir"),
+            ("userdata-grow-policy-no-ioctl-cause", {"userdata_grow_policy_variant": "no-ioctl"},
+             "does not let the fsck domain issue EXT4_IOC_RESIZE_FS"),
+            ("userdata-grow-policy-more-ioctls-cause", {"userdata_grow_policy_variant": "more-ioctls"},
+             "lets the fsck domain issue more ioctls on /data than EXT4_IOC_RESIZE_FS"),
             ("unreliable-present-fence-cause", {"vendor_property_variant": "present-fence-unreliable"},
              "marks the present fences unreliable: ro.vendor.hwc.drm.present_fence_not_reliable=true"),
             ("missing-incremental-property-cause", {"vendor_property_variant": "no-incremental"},
@@ -2256,6 +2337,48 @@ def verify_net_setup_tool(android_root: Path) -> None:
     source = (android_root / "overlay/tools/kernarium_net_setup.cpp").read_text()
     if re.search(r"\bifi_change\s*=", source):
         fail("kernarium_net_setup.cpp assigns ifi_change: a link-creation flag mask clears IFF_MULTICAST")
+
+
+def verify_userdata_grow(android_root: Path) -> None:
+    """The product grows userdata online, on every boot, once /data is mounted.
+
+    An offline resize2fs refuses an unmounted filesystem mounted after its last full check, and
+    mount_all's e2fsck skips a clean one, so it works on the first boot and fails on every later
+    one. The kernel's online resize needs neither; the product's own init script runs it at
+    post-fs-data, and the fsck domain, which runs resize2fs, holds exactly the rules it needs."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    script = (android_root / "overlay/config/init.vendor.rc").read_text()
+    verifier.check_userdata_grow(verifier.init_actions(script))
+    offline = script.replace(
+        "    exec - root system -- /system/bin/resize2fs /dev/block/by-name/userdata\n",
+        "    exec -- /system/bin/resize2fs /dev/block/by-name/userdata\n",
+    )
+    if offline == script:
+        fail("init.vendor.rc does not contain the online resize2fs this guard looks for")
+    try:
+        verifier.check_userdata_grow(verifier.init_actions(offline))
+    except SystemExit:
+        pass
+    else:
+        fail("a resize2fs without root's group passes the userdata grow check")
+    # The overlay's fsck rules, in the CIL form the vendor policy has them in.
+    rules = (android_root / "overlay/sepolicy/vendor/fsck.te").read_text()
+    for needle in (
+        "allow fsck self:capability sys_resource;",
+        "allow fsck system_data_root_file:dir { open read ioctl };",
+        "allowxperm fsck system_data_root_file:dir ioctl 0x6610;",
+    ):
+        if needle not in rules:
+            fail(f"overlay/sepolicy/vendor/fsck.te does not contain '{needle}'")
+    for line in rules.splitlines():
+        if line.startswith("allow") and "fsck_untrusted" in line:
+            fail("overlay/sepolicy/vendor/fsck.te grants the untrusted fsck domain something")
+    policy = (
+        b"(allow fsck_202604 self (capability (sys_resource)))\n"
+        b"(allow fsck_202604 system_data_root_file_202604 (dir (ioctl read open)))\n"
+        b"(allowx fsck_202604 system_data_root_file_202604 (ioctl dir (0x6610)))\n"
+    )
+    verifier.check_userdata_grow_policy(policy)
 
 
 def verify_overlay_sepolicy(android_root: Path) -> None:
@@ -2943,6 +3066,7 @@ def main() -> None:
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
     verify_hal_selections(android_root)
     verify_net_setup_tool(android_root)
+    verify_userdata_grow(android_root)
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)
     verify_package_assertions(android_root)

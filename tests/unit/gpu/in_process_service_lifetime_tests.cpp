@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "gpu_test_support.hpp"
+#include "guest_end.hpp"
 #include "in_process_service.hpp"
 #include "in_process_service_testing.hpp"
 
@@ -266,6 +267,227 @@ void nextConnectionServesTheNextGuest()
     require(descriptorCount() == before);
 }
 
+/* Fenced control requests a rendering guest has in flight, queued in `ring`
+ * one after another: a SUBMIT_3D on a Venus ring, header only, so a device
+ * that ran it would answer with an error and not with success. */
+class FencedRequests {
+public:
+    static constexpr std::size_t requestsOffset = 0x300;
+    static constexpr std::size_t responsesOffset = 0x800;
+    static constexpr std::size_t stride = 0x40;
+    static constexpr std::uint32_t flags =
+        protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
+
+    explicit FencedRequests(const SplitRing& ring) : ring_(ring) {}
+
+    void append(std::uint64_t fenceId)
+    {
+        const std::uint16_t index = published_;
+        const std::uint16_t first = static_cast<std::uint16_t>(2U * index);
+        const auto chain = requestChain(
+            requestsOffset + index * stride,
+            sizeof(protocol::GpuControlHeader),
+            responsesOffset + index * stride,
+            sizeof(protocol::GpuControlHeader),
+            first);
+        descriptors_[first] = chain[0];
+        descriptors_[first + 1U] = chain[1];
+        protocol::GpuControlHeader request {};
+        request.type =
+            static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+        request.flags = flags;
+        request.fenceId = fenceId;
+        request.contextId = 7;
+        request.ringIndex = 2;
+        std::memcpy(
+            ring_.memory().data() + requestsOffset + index * stride,
+            &request,
+            sizeof(request));
+        std::memset(
+            ring_.memory().data() + responsesOffset + index * stride,
+            0xa5,
+            sizeof(request));
+        ring_.writeDescriptors(descriptors_);
+        const std::array<std::uint16_t, 1> head {first};
+        ring_.writeHeads(head, index);
+        ++published_;
+        ring_.setAvailableIndex(published_);
+    }
+
+    /* Requires request `index`, queued with `fenceId`, to have completed with
+     * success that carries its fence back. */
+    void requireAnswered(std::uint16_t index, std::uint64_t fenceId) const
+    {
+        require(ring_.usedIndex() > index);
+        require(ring_.usedElement(index).id == 2U * index);
+        require(ring_.usedElement(index).length ==
+            sizeof(protocol::GpuControlHeader));
+        protocol::GpuControlHeader answer {};
+        std::memcpy(
+            &answer,
+            ring_.memory().data() + responsesOffset + index * stride,
+            sizeof(answer));
+        require(answer.type ==
+            static_cast<std::uint32_t>(protocol::GpuResponse::okNoData));
+        require(answer.flags == flags);
+        require(answer.fenceId == fenceId);
+        require(answer.contextId == 7);
+        require(answer.ringIndex == 2);
+    }
+
+private:
+    const SplitRing& ring_;
+    std::array<protocol::VirtqueueDescriptor, 8> descriptors_ {};
+    std::uint16_t published_ {};
+};
+
+/* A guest that ends behind the application's hold, as an Android guest that
+ * reboots in the background does, cannot finish stopping while its GPU
+ * requests wait in the ring: its shutdown waits for them. The guest's end,
+ * reported through the registry the runtime calls, turns the hold to
+ * discarding: each request, those waiting and those that arrive, completes as
+ * success with its fence, and none reaches the renderer. The hold itself stays:
+ * the next guest finds it as a plain one. */
+void theGuestEndingDiscardsTheHeldRequests()
+{
+    const auto before = descriptorCount();
+    {
+        InProcessGpuOptions options;
+        options.vncPort = 0;
+        options.width = 64;
+        options.height = 64;
+        InProcessGpuService service {std::move(options)};
+        {
+            UniqueDescriptor transport {
+                descriptorFromName(service.takeConnectionName())};
+            UniqueDescriptor input {
+                descriptorFromName(service.takeInputConnectionName())};
+            require(service.holdRequests(std::chrono::milliseconds {100}));
+
+            const SplitRing ring;
+            FencedRequests requests {ring};
+            requests.append(0x1000'0000'0000'0001ULL);
+            negotiateProtocolFeatures(
+                transport.get(), protocol::protocolFeatureReplyAck);
+            configureMemory(transport.get(), ring.descriptor());
+            const auto channels = startQueue(transport.get(), ring);
+            writeKick(channels.kick);
+            pollfd call {.fd = channels.call.readEnd.get(), .events = POLLIN};
+            require(::poll(&call, 1, 200) == 0);
+            require(ring.usedIndex() == 0);
+
+            uml::device::notify_guest_end();
+            awaitCall(channels.call.readEnd.get());
+            require(ring.usedIndex() == 1);
+            requests.requireAnswered(0, 0x1000'0000'0000'0001ULL);
+            require(service.requestsHeld());
+
+            requests.append(0x1000'0000'0000'0002ULL);
+            writeKick(channels.kick);
+            awaitCall(channels.call.readEnd.get());
+            require(ring.usedIndex() == 2);
+            requests.requireAnswered(1, 0x1000'0000'0000'0002ULL);
+            /* The old guest goes: its endpoints close here. */
+        }
+        service.startNextConnection();
+        require(service.requestsHeld());
+
+        UniqueDescriptor transport {
+            descriptorFromName(service.takeConnectionName())};
+        UniqueDescriptor input {
+            descriptorFromName(service.takeInputConnectionName())};
+        /* A plain hold again: the request waits, and runs when it opens. */
+        heldRequestRunsAfterRelease(service, transport.get());
+        require(!service.requestsHeld());
+        service.stop();
+    }
+    require(descriptorCount() == before);
+}
+
+/* A guest that ends with the gate open has nothing held, and everything it
+ * sent runs. */
+void aGuestThatEndsBehindAnOpenGateRunsItsRequests()
+{
+    const auto before = descriptorCount();
+    {
+        InProcessGpuOptions options;
+        options.vncPort = 0;
+        options.width = 64;
+        options.height = 64;
+        InProcessGpuService service {std::move(options)};
+        UniqueDescriptor transport {
+            descriptorFromName(service.takeConnectionName())};
+        UniqueDescriptor input {
+            descriptorFromName(service.takeInputConnectionName())};
+        const SplitRing ring;
+        publishDisplayInfoRequest(ring);
+        negotiateProtocolFeatures(
+            transport.get(), protocol::protocolFeatureReplyAck);
+        configureMemory(transport.get(), ring.descriptor());
+        const auto channels = startQueue(transport.get(), ring);
+
+        uml::device::notify_guest_end();
+        require(!service.requestsHeld());
+        writeKick(channels.kick);
+        awaitCall(channels.call.readEnd.get());
+        protocol::GpuControlHeader response {};
+        std::memcpy(
+            &response,
+            ring.memory().data() + displayInfoResponseOffset,
+            sizeof(response));
+        require(response.type == static_cast<std::uint32_t>(
+            protocol::GpuResponse::okDisplayInfo));
+        service.stop();
+    }
+    require(descriptorCount() == before);
+}
+
+/* The application can enter the background just after the guest said it is
+ * ending, and a hold placed then holds a guest that can no longer stop: it
+ * discards from the start. The next guest finds a plain hold. */
+void aHoldAfterTheGuestEndedDiscards()
+{
+    const auto before = descriptorCount();
+    {
+        InProcessGpuOptions options;
+        options.vncPort = 0;
+        options.width = 64;
+        options.height = 64;
+        InProcessGpuService service {std::move(options)};
+        {
+            UniqueDescriptor transport {
+                descriptorFromName(service.takeConnectionName())};
+            UniqueDescriptor input {
+                descriptorFromName(service.takeInputConnectionName())};
+            uml::device::notify_guest_end();
+            require(!service.requestsHeld());
+            require(service.holdRequests(std::chrono::milliseconds {100}));
+            require(service.requestsHeld());
+
+            const SplitRing ring;
+            FencedRequests requests {ring};
+            requests.append(0x42);
+            negotiateProtocolFeatures(
+                transport.get(), protocol::protocolFeatureReplyAck);
+            configureMemory(transport.get(), ring.descriptor());
+            const auto channels = startQueue(transport.get(), ring);
+            writeKick(channels.kick);
+            awaitCall(channels.call.readEnd.get());
+            require(ring.usedIndex() == 1);
+            requests.requireAnswered(0, 0x42);
+        }
+        service.startNextConnection();
+        require(service.requestsHeld());
+        UniqueDescriptor transport {
+            descriptorFromName(service.takeConnectionName())};
+        UniqueDescriptor input {
+            descriptorFromName(service.takeInputConnectionName())};
+        heldRequestRunsAfterRelease(service, transport.get());
+        service.stop();
+    }
+    require(descriptorCount() == before);
+}
+
 /* A connection that cannot be opened leaves the service as it says it does.
  * One that fails before the old connection is touched leaves that connection
  * in place; one that fails after leaves none, with its descriptors given
@@ -334,6 +556,9 @@ void runInProcessServiceTests()
 {
     holdRequestsHoldsTheServicesRequests();
     nextConnectionServesTheNextGuest();
+    theGuestEndingDiscardsTheHeldRequests();
+    aGuestThatEndsBehindAnOpenGateRunsItsRequests();
+    aHoldAfterTheGuestEndedDiscards();
     failedNextConnectionLeavesTheServiceRecoverable();
     guestTransportEndpointBlocks();
     forceRepeatedFailure(StartupFailure::afterTransportSocketPair);

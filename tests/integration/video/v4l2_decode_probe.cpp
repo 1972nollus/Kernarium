@@ -2,6 +2,7 @@
 #include <linux/videodev2.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <poll.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -15,6 +16,7 @@
 #include <fstream>
 #include <iterator>
 #include <numeric>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -129,6 +131,102 @@ void release(int fd, v4l2_buf_type type)
     request.type = type; request.memory = V4L2_MEMORY_MMAP; request.count = 0;
     call(fd, VIDIOC_REQBUFS, &request, "REQBUFS release");
 }
+/* Free guest memory by the size of its blocks: element N counts the free
+ * blocks of 2^N pages, summed over the zones, as /proc/buddyinfo lists them. */
+std::vector<unsigned long> freeBlocks()
+{
+    std::vector<unsigned long> blocks;
+    std::ifstream info("/proc/buddyinfo");
+    require(bool(info), "/proc/buddyinfo is unreadable");
+    for (std::string line; std::getline(info, line);) {
+        const auto zone = line.find("zone");
+        if (zone == std::string::npos) continue;
+        std::istringstream fields(line.substr(zone));
+        std::string word, name;
+        fields >> word >> name;
+        unsigned long count;
+        for (std::size_t order = 0; fields >> count; ++order) {
+            if (blocks.size() <= order) blocks.resize(order + 1);
+            blocks[order] += count;
+        }
+    }
+    return blocks;
+}
+unsigned long freePages()
+{
+    std::ifstream info("/proc/meminfo");
+    for (std::string line; std::getline(info, line);) {
+        unsigned long kilobytes;
+        if (std::sscanf(line.c_str(), "MemFree: %lu kB", &kilobytes) == 1)
+            return kilobytes * 1024 / static_cast<unsigned long>(sysconf(_SC_PAGESIZE));
+    }
+    throw std::runtime_error("/proc/meminfo has no MemFree");
+}
+/* Guest memory whose free part is in blocks of 32 KiB, none larger, with
+ * plenty of those. The kernel allocates the ring of a pipe in one block, as
+ * large as its slots need and not otherwise used, and keeps it until the pipe
+ * closes, so pipes of a chosen number of slots take blocks of a chosen order
+ * out of memory and hold them where the kernel does not move them. This
+ * takes order-3 blocks (a ring of 512 slots) until memory is nearly full,
+ * lets go of every other one, and then takes away whatever larger block is
+ * left. What the kernel allocates next has to be built from 32 KiB blocks,
+ * as it is in a guest that has run for days: and a request for more than
+ * 32 KiB in one piece fails, though half of memory is free. Blocks of 32 KiB
+ * must stay, because a mapped buffer asks for them before it asks for
+ * smaller ones, and the kernel answers a failed request of that order by
+ * killing a process. The blocks go back when this object ends. */
+class Fragmented {
+public:
+    explicit Fragmented(unsigned long reservePages)
+    {
+        rlimit limit {1 << 20, 1 << 20};
+        require(setrlimit(RLIMIT_NOFILE, &limit) == 0, "raising the descriptor limit failed");
+        while (freePages() > reservePages && blocksAtLeast(3) > 8192)
+            for (unsigned i = 0; i < 128; ++i) require(claim(512), "claiming a block failed");
+        const std::size_t claimed = pipes_.size();
+        for (std::size_t i = 0; i < claimed; i += 2) {
+            close(pipes_[i].read); close(pipes_[i].write);
+            pipes_[i] = {-1, -1};
+        }
+        /* Blocks of 64 KiB and more are taken until there are none; a ring of
+         * 1024 slots is one of 64 KiB. */
+        for (unsigned long guard = 0; blocksAtLeast(4) != 0; ++guard) {
+            require(guard < (1ul << 20), "larger blocks could not be taken away");
+            require(claim(1024), "taking away a larger block failed");
+        }
+        std::printf("fragmented memory: %zu blocks taken, %lu pages free, %lu free blocks of 32 KiB\n", claimed,
+                    freePages(), freeBlocks().at(3));
+    }
+    Fragmented(const Fragmented&) = delete;
+    Fragmented& operator=(const Fragmented&) = delete;
+    ~Fragmented()
+    {
+        for (const auto& pipe : pipes_) if (pipe.read >= 0) { close(pipe.read); close(pipe.write); }
+    }
+    /* Pages that lie in free blocks of 2^order pages or more. */
+    static unsigned long blocksAtLeast(unsigned order)
+    {
+        const auto blocks = freeBlocks();
+        unsigned long pages = 0;
+        for (std::size_t i = order; i < blocks.size(); ++i) pages += blocks[i] << i;
+        return pages;
+    }
+private:
+    struct Pipe { int read; int write; };
+    std::vector<Pipe> pipes_;
+    /* A pipe whose ring of `slots` slots takes one block. */
+    bool claim(unsigned slots)
+    {
+        int ends[2];
+        require(pipe2(ends, O_CLOEXEC) == 0, "pipe failed");
+        if (fcntl(ends[1], F_SETPIPE_SZ, int(slots * sysconf(_SC_PAGESIZE))) < 0) {
+            close(ends[0]); close(ends[1]);
+            return false;
+        }
+        pipes_.push_back({ends[0], ends[1]});
+        return true;
+    }
+};
 unsigned import(int fd, v4l2_buf_type type, unsigned count)
 {
     v4l2_requestbuffers request {};
@@ -153,7 +251,7 @@ void queue(int fd, v4l2_buf_type type, unsigned index, const std::vector<Mapping
  * which case the queue takes the dma-buf's size. */
 enum class Declared { negotiated, whole, none };
 void queueImported(int fd, v4l2_buf_type type, unsigned index, const std::vector<Prime>& primes,
-                   const std::vector<unsigned>& sizes = {}, Declared declared = Declared::whole)
+                   const std::vector<unsigned>& sizes = {}, Declared declared = Declared::whole, unsigned bytes = 0)
 {
     v4l2_plane planes[VIDEO_MAX_PLANES] {};
     v4l2_buffer buffer {};
@@ -165,7 +263,85 @@ void queueImported(int fd, v4l2_buf_type type, unsigned index, const std::vector
         planes[i].length = declared == Declared::none ? 0
             : declared == Declared::negotiated ? sizes.at(i) : primes[i].length;
     }
+    planes[0].bytesused = bytes;
     call(fd, VIDIOC_QBUF, &buffer, "QBUF dmabuf");
+}
+/* The rows of a raw picture in the buffer the device describes. The host
+ * pads each row to the pitch a guest allocator gives a buffer of that format
+ * (16 bytes for NV12, P010 and packed 32-bit, 32 for the luma of planar
+ * YUV 4:2:0), so a picture whose width is not a multiple of that has rows
+ * longer than its samples and a client steps by bytesperline, not by width.
+ * A plane is stored as bands: `rows` rows each holding `bytes` of picture
+ * before the padding. Plane heights are the picture's: chroma rows are
+ * rounded up. */
+struct Band { std::size_t bytes; std::size_t rows; };
+struct PlaneLayout {
+    std::size_t pitch;
+    std::vector<Band> bands;
+    std::size_t size() const
+    {
+        return pitch * std::accumulate(bands.begin(), bands.end(), std::size_t {},
+                                       [](std::size_t sum, const Band& band) { return sum + band.rows; });
+    }
+};
+std::size_t alignUp(std::size_t value, std::size_t alignment) { return (value + alignment - 1) / alignment * alignment; }
+/* Empty for a format the rule does not cover. */
+std::vector<PlaneLayout> rawLayout(unsigned raw, std::size_t width, std::size_t height)
+{
+    const std::size_t halfWidth = (width + 1) / 2, halfHeight = (height + 1) / 2;
+    switch (raw) {
+    case V4L2_PIX_FMT_NV12M: case V4L2_PIX_FMT_NV21M: {
+        const std::size_t pitch = alignUp(width, 16);
+        return {{pitch, {{width, height}}}, {pitch, {{2 * halfWidth, halfHeight}}}};
+    }
+    case V4L2_PIX_FMT_YUV420M: case V4L2_PIX_FMT_YVU420M: {
+        const std::size_t pitch = alignUp(width, 32);
+        return {{pitch, {{width, height}}}, {pitch / 2, {{halfWidth, halfHeight}}}, {pitch / 2, {{halfWidth, halfHeight}}}};
+    }
+    case V4L2_PIX_FMT_P010: {
+        const std::size_t pitch = alignUp(2 * width, 16);
+        return {{pitch, {{2 * width, height}, {4 * halfWidth, halfHeight}}}};
+    }
+    case V4L2_PIX_FMT_ABGR32: case V4L2_PIX_FMT_ARGB32: case V4L2_PIX_FMT_RGBA32: case V4L2_PIX_FMT_RGB32:
+        return {{alignUp(4 * width, 16), {{4 * width, height}}}};
+    default:
+        return {};
+    }
+}
+/* A format's planes are what the rule says. TRY_FMT has to say so as well as
+ * S_FMT: a client that sizes its buffers from TRY_FMT, as Android's does,
+ * would otherwise allocate rows of the picture's width and be refused. */
+void requireLayout(const v4l2_pix_format_mplane& format, const std::vector<PlaneLayout>& layout, const char* call)
+{
+    const std::string name = call;
+    require(format.num_planes == layout.size(), (name + " reports another plane count than the device lays out").c_str());
+    for (unsigned i = 0; i < layout.size(); ++i) {
+        require(format.plane_fmt[i].bytesperline == layout[i].pitch,
+                (name + " does not report the padded pitch of a plane").c_str());
+        require(format.plane_fmt[i].sizeimage == layout[i].size(),
+                (name + " does not report the padded size of a plane").c_str());
+    }
+}
+
+/* The picture a dequeued buffer holds, with the padding between rows taken
+ * out: its planes one after another, each as tight rows. */
+std::vector<std::uint8_t> tightPicture(const std::vector<PlaneLayout>& layout, const v4l2_plane* planes,
+                                       const std::vector<Mapping>& maps)
+{
+    require(maps.size() == layout.size(), "the buffer has another plane count than its format");
+    std::vector<std::uint8_t> picture;
+    for (unsigned i = 0; i < layout.size(); ++i) {
+        require(planes[i].data_offset <= planes[i].bytesused && planes[i].bytesused <= maps[i].length,
+                "invalid decoded plane extent");
+        const auto* base = static_cast<const std::uint8_t*>(maps[i].data);
+        std::size_t at = planes[i].data_offset;
+        for (const auto& band : layout[i].bands)
+            for (std::size_t row = 0; row < band.rows; ++row, at += layout[i].pitch) {
+                require(at + band.bytes <= planes[i].bytesused, "a decoded plane is shorter than its rows");
+                picture.insert(picture.end(), base + at, base + at + band.bytes);
+            }
+    }
+    return picture;
 }
 /* Where an imported capture buffer's memory comes from. By default it is the
  * capture queue's own buffers, exported and handed back, which on a host with
@@ -239,8 +415,11 @@ Primes exportGuestPages(const char* device, unsigned coded, const std::vector<un
 /* `memory` selects how the capture queue holds its frames: its own mapped
  * buffers, or dma-buf descriptors it imports. The imported case is the one a
  * GPU client uses, so it is qualified against the same fixtures. */
+/* The picture a stream shows, which is smaller than the 128 x 96 it is coded
+ * as when the stream states a window onto it. */
+struct Picture { unsigned width {128}; unsigned height {96}; };
 void decode(const char* device, const std::string& directory, const char* name, unsigned coded, unsigned raw,
-            unsigned memory = V4L2_MEMORY_MMAP, Import origin = {})
+            unsigned memory = V4L2_MEMORY_MMAP, Import origin = {}, Picture picture = {})
 {
     const std::string memoryName = memory != V4L2_MEMORY_DMABUF ? "mmap"
         : !origin.guestPages ? "dmabuf"
@@ -297,7 +476,7 @@ void decode(const char* device, const std::string& directory, const char* name, 
     v4l2_format format {};
     format.type = capture;
     call(fd, VIDIOC_G_FMT, &format, "G_FMT capture");
-    require(format.fmt.pix_mp.width == 128 && format.fmt.pix_mp.height == 96, "decoded dimensions differ");
+    require(format.fmt.pix_mp.width == picture.width && format.fmt.pix_mp.height == picture.height, "decoded dimensions differ");
     format.fmt.pix_mp.pixelformat = raw;
     /* A client filters its candidates with TRY_FMT and drops the ones it
      * fails, so the call has to answer before the format is set. */
@@ -324,17 +503,14 @@ void decode(const char* device, const std::string& directory, const char* name, 
                 "TRY_FMT and S_FMT disagree on a plane size");
     }
     /* The stride reported for the capture format is the one its rows are
-     * written with. A consumer that steps a packed mapping by the planar
-     * luma stride instead reads every row from the wrong sample, so the
-     * reported value has to name the packed pitch. */
+     * written with: the pitch the device pads them to, which TRY_FMT reports
+     * as S_FMT does. A consumer that steps a mapping by the picture's width
+     * instead reads every row from the wrong sample. */
     const auto& negotiated = format.fmt.pix_mp;
-    const std::uint32_t sampleBytes = raw == V4L2_PIX_FMT_ABGR32 ? 4u
-        : raw == V4L2_PIX_FMT_P010 ? 2u : 1u;
-    require(negotiated.plane_fmt[0].bytesperline == negotiated.width * sampleBytes,
-            "capture stride is not the packed pitch of its format");
-    require(negotiated.plane_fmt[0].sizeimage >=
-                negotiated.plane_fmt[0].bytesperline * negotiated.height,
-            "capture plane is shorter than the rows it reports");
+    const auto layout = rawLayout(raw, negotiated.width, negotiated.height);
+    require(!layout.empty(), "no layout rule for the raw format");
+    requireLayout(negotiated, layout, "S_FMT");
+    requireLayout(candidate.fmt.pix_mp, layout, "TRY_FMT");
     Buffers outputs;
     Primes primes;
     std::vector<unsigned> sizes;
@@ -390,12 +566,10 @@ void decode(const char* device, const std::string& directory, const char* name, 
         frame = true;
         require(buffer.timestamp.tv_sec == 7 && buffer.timestamp.tv_usec == 654321, "frame timestamp differs");
         require(buffer.index < outputs.size(), "capture index outside allocation");
-        std::vector<std::uint8_t> actual;
-        for (unsigned i = 0; i < buffer.length; ++i) {
-            require(planes[i].data_offset <= planes[i].bytesused && planes[i].bytesused <= outputs[buffer.index][i].length, "invalid decoded plane extent");
-            const auto* data = static_cast<const std::uint8_t*>(outputs[buffer.index][i].data);
-            actual.insert(actual.end(), data + planes[i].data_offset, data + planes[i].bytesused);
-        }
+        require(buffer.length == layout.size(), "the decoded buffer has another plane count than its format");
+        auto actual = tightPicture(layout, planes, outputs[buffer.index]);
+        const std::size_t width = picture.width, height = picture.height;
+        const std::size_t halfWidth = (width + 1) / 2, halfHeight = (height + 1) / 2;
         if (raw == V4L2_PIX_FMT_ABGR32) {
             /* The host decodes straight to packed B, G, R, A. The reference is
              * the planar fixture taken through the limited-range BT.601 matrix
@@ -403,19 +577,19 @@ void decode(const char* device, const std::string& directory, const char* name, 
              * only a pixel whose chroma neighborhood is constant is compared:
              * hardware interpolates the subsampled field, so a pixel beside a
              * chroma edge has no single defined answer. */
-            require(actual.size() == 128u * 96u * 4u, "packed frame size differs");
-            const unsigned step = reference.size() == 128u * 96u * 3u ? 2u : 1u;
+            require(actual.size() == width * height * 4u, "packed frame size differs");
+            const unsigned step = reference.size() == width * height * 3u ? 2u : 1u;
             const auto sample = [&](std::size_t index) { return int(reference[step * index + step - 1]); };
             const auto chroma = [&](long cellRow, long cellColumn) {
-                cellRow = cellRow < 0 ? 0 : cellRow > 47 ? 47 : cellRow;
-                cellColumn = cellColumn < 0 ? 0 : cellColumn > 63 ? 63 : cellColumn;
-                const auto pair = std::size_t(128 * 96 + cellRow * 128 + cellColumn * 2);
+                cellRow = cellRow < 0 ? 0 : cellRow > long(halfHeight) - 1 ? long(halfHeight) - 1 : cellRow;
+                cellColumn = cellColumn < 0 ? 0 : cellColumn > long(halfWidth) - 1 ? long(halfWidth) - 1 : cellColumn;
+                const auto pair = std::size_t(width * height + cellRow * 2 * halfWidth + cellColumn * 2);
                 return std::pair<int, int>{sample(pair), sample(pair + 1)};
             };
             unsigned maximum = 0, checked = 0;
-            for (long row = 0; row < 96; ++row)
-                for (long column = 0; column < 128; ++column) {
-                    const auto* got = actual.data() + (row * 128 + column) * 4;
+            for (long row = 0; row < long(height); ++row)
+                for (long column = 0; column < long(width); ++column) {
+                    const auto* got = actual.data() + (row * width + column) * 4;
                     require(got[3] == 0xff, "packed frame is not opaque");
                     const auto cell = chroma(row / 2, column / 2);
                     bool flat = true;
@@ -424,7 +598,7 @@ void decode(const char* device, const std::string& directory, const char* name, 
                             flat = flat && chroma(row / 2 + dy, column / 2 + dx) == cell;
                     if (!flat) continue;
                     ++checked;
-                    const double luma = 1.164 * (sample(std::size_t(row * 128 + column)) - 16);
+                    const double luma = 1.164 * (sample(std::size_t(row * width + column)) - 16);
                     const double u = cell.first - 128, v = cell.second - 128;
                     const double wanted[3] = {luma + 2.017 * u, luma - 0.392 * u - 0.813 * v,
                                               luma + 1.596 * v};
@@ -434,7 +608,7 @@ void decode(const char* device, const std::string& directory, const char* name, 
                         maximum = std::max(maximum, unsigned(difference < 0 ? -difference : difference));
                     }
                 }
-            require(checked >= 128 * 96 / 8, "too little of the packed frame could be verified");
+            require(checked >= width * height / 8, "too little of the packed frame could be verified");
             require(maximum <= 8, "V4L2 packed pixels differ from the reference");
             std::printf("PASS %s raw=%08x memory=%s max-error=%u pixels=%u\n", name, raw,
                 memoryName.c_str(), maximum, checked);
@@ -444,13 +618,13 @@ void decode(const char* device, const std::string& directory, const char* name, 
         /* A 10-bit stream captured as 8-bit planes is the 10-bit picture
          * rounded to 8 bits, so its reference is half the size. */
         const unsigned step = raw == V4L2_PIX_FMT_P010 ? 2 : 1;
-        const unsigned referenceStep = reference.size() == 128u * 96u * 3u ? 2 : 1;
+        const unsigned referenceStep = reference.size() == width * height * 3u ? 2 : 1;
         require(actual.size() == reference.size() / referenceStep * step, "decoded plane sizes differ");
         if (raw == V4L2_PIX_FMT_YUV420M) {
             const auto planar = actual;
-            for (unsigned i = 0; i < 128 * 96 / 4; ++i) {
-                actual[128 * 96 + 2 * i] = planar[128 * 96 + i];
-                actual[128 * 96 + 2 * i + 1] = planar[128 * 96 * 5 / 4 + i];
+            for (std::size_t i = 0; i < halfWidth * halfHeight; ++i) {
+                actual[width * height + 2 * i] = planar[width * height + i];
+                actual[width * height + 2 * i + 1] = planar[width * height + halfWidth * halfHeight + i];
             }
         }
         unsigned maximum = 0;
@@ -556,6 +730,92 @@ void decodeShape(const char* device, const std::string& directory, const char* n
     require(frame && eos, "capture frame/EOS timeout");
     type = output; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF output");
     type = capture; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF capture");
+}
+/* TRY_FMT answers with the layout S_FMT will set for a picture of any size,
+ * including one whose rows the device pads: here every raw format the
+ * decoder advertises, at sizes whose rows are and are not whole pitches. */
+void tryRawLayouts(const char* device, unsigned coded)
+{
+    Device owner(device);
+    const int fd = owner.fd;
+    v4l2_format input {};
+    input.type = output;
+    input.fmt.pix_mp.width = 128; input.fmt.pix_mp.height = 96;
+    input.fmt.pix_mp.pixelformat = coded;
+    input.fmt.pix_mp.num_planes = 1;
+    input.fmt.pix_mp.plane_fmt[0].sizeimage = 4096;
+    call(fd, VIDIOC_S_FMT, &input, "S_FMT coded for TRY_FMT");
+    static const unsigned sizes[][2] = {{16, 16}, {98, 76}, {120, 90}, {340, 180}, {342, 120}, {346, 100}, {1366, 768}};
+    unsigned checked = 0;
+    for (unsigned index = 0;; ++index) {
+        v4l2_fmtdesc fmt {};
+        fmt.type = capture; fmt.index = index;
+        if (ioctl(fd, VIDIOC_ENUM_FMT, &fmt) < 0) {
+            require(errno == EINVAL, "ENUM_FMT capture failed");
+            break;
+        }
+        if (rawLayout(fmt.pixelformat, 16, 16).empty()) continue;
+        for (const auto& size : sizes) {
+            v4l2_format candidate {};
+            candidate.type = capture;
+            candidate.fmt.pix_mp.width = size[0]; candidate.fmt.pix_mp.height = size[1];
+            candidate.fmt.pix_mp.pixelformat = fmt.pixelformat;
+            call(fd, VIDIOC_TRY_FMT, &candidate, "TRY_FMT capture size");
+            const auto& answer = candidate.fmt.pix_mp;
+            require(answer.pixelformat == fmt.pixelformat, "TRY_FMT substituted an advertised raw format");
+            requireLayout(answer, rawLayout(fmt.pixelformat, answer.width, answer.height), "TRY_FMT");
+            ++checked;
+        }
+    }
+    require(checked > 0, "the decoder advertises no raw format the layout rule covers");
+    std::printf("PASS try-fmt layouts %u\n", checked);
+    std::fflush(stdout);
+}
+
+/* A buffer's scatter list is as long as the buffer has pieces, and in a guest
+ * that has run for a while the pieces are small: Codec2 asks for a 64 MiB
+ * bitstream buffer and gets one of sixteen thousand pages. The driver has to
+ * attach that buffer without asking the kernel for one block as large as its
+ * list, which the first version did (a 256 KiB order-6 allocation, and QBUF
+ * failed with "page allocation failure"). Here the guest's free memory is in
+ * pieces of 32 KiB or less, a 124 MiB coded buffer, the most the device
+ * attaches, is created from them (the list of its mapped buffer), exported
+ * and imported again by another open (the list of an imported dma-buf), and a
+ * picture whose planes are tens of megabytes is decoded into mapped buffers,
+ * whose lists are several pages long. */
+void fragmentedAttach(const char* device, const std::string& directory, unsigned coded, const char* shape,
+                      unsigned width, unsigned height)
+{
+    Fragmented fragments(8192);
+    {
+        constexpr unsigned size = 124u << 20;
+        const auto primes = exportGuestPages(device, coded, {size}, false, 1);
+        /* The run proves something only if nothing is left to build the list
+         * from: no block of 64 KiB or more, which is where a list of this
+         * size would have come from. */
+        const auto blocks = freeBlocks();
+        unsigned long large = 0;
+        for (std::size_t order = 4; order < blocks.size(); ++order) large += blocks[order];
+        std::printf("free blocks of 64 KiB or more: %lu\n", large);
+        require(large <= 4, "the guest's memory was not fragmented");
+        Device importer(device);
+        const int fd = importer.fd;
+        v4l2_format input {};
+        input.type = output;
+        input.fmt.pix_mp.width = 128; input.fmt.pix_mp.height = 96;
+        input.fmt.pix_mp.pixelformat = coded;
+        input.fmt.pix_mp.num_planes = 1;
+        input.fmt.pix_mp.plane_fmt[0].sizeimage = 4096;
+        call(fd, VIDIOC_S_FMT, &input, "S_FMT coded for import");
+        import(fd, output, 1);
+        queueImported(fd, output, 0, primes[0], {}, Declared::whole, 16);
+        v4l2_requestbuffers none {};
+        none.type = output; none.memory = V4L2_MEMORY_DMABUF; none.count = 0;
+        call(fd, VIDIOC_REQBUFS, &none, "REQBUFS dmabuf release");
+        std::printf("PASS fragmented attach %s %u MiB\n", shape, size >> 20);
+        std::fflush(stdout);
+    }
+    decodeShape(device, directory, shape, coded, width, height);
 }
 
 /* The imported buffers a client that is not the driver's own exporter queues:
@@ -1444,6 +1704,8 @@ void provisionalCapture(const char* device, const std::string& directory, const 
     call(fd, VIDIOC_S_FMT, &format, "S_FMT capture");
     require(format.fmt.pix_mp.pixelformat == raw && format.fmt.pix_mp.width == 128 && format.fmt.pix_mp.height == 96,
             "S_FMT changed the capture format");
+    const auto layout = rawLayout(raw, format.fmt.pix_mp.width, format.fmt.pix_mp.height);
+    requireLayout(format.fmt.pix_mp, layout, "S_FMT");
     sizes.clear();
     for (unsigned i = 0; i < format.fmt.pix_mp.num_planes; ++i)
         sizes.push_back(format.fmt.pix_mp.plane_fmt[i].sizeimage);
@@ -1479,13 +1741,8 @@ void provisionalCapture(const char* device, const std::string& directory, const 
         require(!pictures++, "decoder returned duplicate frame");
         require(buffer.timestamp.tv_sec == 2 && buffer.timestamp.tv_usec == 424242, "frame timestamp differs");
         require(buffer.index < frames.size(), "capture index outside allocation");
-        std::vector<std::uint8_t> actual;
-        for (unsigned i = 0; i < buffer.length; ++i) {
-            require(planes[i].data_offset <= planes[i].bytesused && planes[i].bytesused <= frames[buffer.index][i].length,
-                    "invalid decoded plane extent");
-            const auto* data = static_cast<const std::uint8_t*>(frames[buffer.index][i].data);
-            actual.insert(actual.end(), data + planes[i].data_offset, data + planes[i].bytesused);
-        }
+        require(buffer.length == layout.size(), "the decoded buffer has another plane count than its format");
+        const auto actual = tightPicture(layout, planes, frames[buffer.index]);
         require(actual.size() == reference.size(), "the picture is not the size of its reference");
         const unsigned step = raw == V4L2_PIX_FMT_P010 ? 2 : 1;
         for (std::size_t i = 0; i < actual.size(); i += step) {
@@ -1699,10 +1956,23 @@ int main(int argc, char** argv)
             require(control.minimum >= 0 && control.maximum <= 32, "invalid profile menu bounds");
             profileAndLevelMenus(capabilities.fd, avc);
             if (avc) {
+                tryRawLayouts(device, fmt.pixelformat);
+                /* A window onto the coded picture leaves a width that is not a whole pitch. */
+                decode(device, argv[1], "h264-window", fmt.pixelformat, V4L2_PIX_FMT_NV12M, V4L2_MEMORY_MMAP, {}, Picture{120, 90});
+                decode(device, argv[1], "h264-window", fmt.pixelformat, V4L2_PIX_FMT_ABGR32, V4L2_MEMORY_MMAP, {}, Picture{120, 90});
+                decode(device, argv[1], "h264-window", fmt.pixelformat, V4L2_PIX_FMT_NV12M, V4L2_MEMORY_DMABUF,
+                       Import{true, false, Declared::negotiated}, Picture{120, 90});
                 decodeShape(device, argv[1], "h264-portrait-2304x4096", fmt.pixelformat, 2304, 4096);
                 decodeShape(device, argv[1], "h264-square-4096x4096", fmt.pixelformat, 4096, 4096);
+                fragmentedAttach(device, argv[1], fmt.pixelformat, "h264-square-4096x4096", 4096, 4096);
             } else {
+                tryRawLayouts(device, fmt.pixelformat);
+                decode(device, argv[1], "hevc-window", fmt.pixelformat, V4L2_PIX_FMT_NV12M, V4L2_MEMORY_MMAP, {}, Picture{120, 90});
+                decode(device, argv[1], "hevc-window", fmt.pixelformat, V4L2_PIX_FMT_ABGR32, V4L2_MEMORY_MMAP, {}, Picture{120, 90});
+                decode(device, argv[1], "hevc-window", fmt.pixelformat, V4L2_PIX_FMT_NV12M, V4L2_MEMORY_DMABUF,
+                       Import{true, false, Declared::negotiated}, Picture{120, 90});
                 decodeShape(device, argv[1], "hevc-portrait-4320x8192", fmt.pixelformat, 4320, 8192);
+                fragmentedAttach(device, argv[1], fmt.pixelformat, "hevc-portrait-4320x8192", 4320, 8192);
             }
             bool imported = false;
             for (int value = control.minimum; value <= control.maximum; ++value) {

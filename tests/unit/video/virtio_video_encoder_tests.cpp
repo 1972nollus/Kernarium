@@ -607,11 +607,25 @@ void parameters()
     require(Fixture::type(f.setInput(1, VIRTIO_VIDEO_FORMAT_NV12, 99, 77, 0)) == VIRTIO_VIDEO_RESP_OK_NODATA, "odd size");
     raw = f.params(1, input);
     require(raw.frame_width == 99 && raw.frame_height == 77 && raw.crop.width == 98 && raw.crop.height == 76 &&
-            raw.plane_formats[0].plane_size == 99u * 77 && raw.plane_formats[0].stride == 99 &&
-            raw.plane_formats[1].plane_size == 100u * 39 && raw.plane_formats[1].stride == 100, "odd NV12 planes");
+            raw.plane_formats[0].plane_size == 112u * 77 && raw.plane_formats[0].stride == 112 &&
+            raw.plane_formats[1].plane_size == 112u * 39 && raw.plane_formats[1].stride == 112, "odd NV12 planes");
     require(Fixture::type(f.setInput(1, VIRTIO_VIDEO_FORMAT_NV12, 100, 80, 0)) == VIRTIO_VIDEO_RESP_OK_NODATA, "even size");
     raw = f.params(1, input);
-    require(raw.plane_formats[1].plane_size == 100u * 40 && raw.plane_formats[1].stride == 100, "NV12 chroma plane");
+    require(raw.plane_formats[1].plane_size == 112u * 40 && raw.plane_formats[1].stride == 112, "NV12 chroma plane");
+    // Rows lie at the pitch a guest allocator gives a buffer: 16 bytes for NV12 and packed pixels, 32 for I420 luma.
+    require(Fixture::type(f.setInput(1, VIRTIO_VIDEO_FORMAT_YUV420, 99, 77, 0)) == VIRTIO_VIDEO_RESP_OK_NODATA, "odd I420");
+    raw = f.params(1, input);
+    require(raw.num_planes == 3 && raw.plane_formats[0].plane_size == 128u * 77 && raw.plane_formats[0].stride == 128 &&
+            raw.plane_formats[1].plane_size == 64u * 39 && raw.plane_formats[1].stride == 64 &&
+            raw.plane_formats[2].plane_size == 64u * 39 && raw.plane_formats[2].stride == 64, "odd I420 planes");
+    require(Fixture::type(f.setInput(1, VIRTIO_VIDEO_FORMAT_YUV420, 99, 77, 1)) == VIRTIO_VIDEO_RESP_OK_NODATA, "odd I420 in one buffer");
+    raw = f.params(1, input);
+    require(raw.num_planes == 1 && raw.plane_formats[0].plane_size == 128u * 77 + 2 * 64u * 39 && raw.plane_formats[0].stride == 128,
+            "odd I420 in one buffer");
+    require(Fixture::type(f.setInput(1, VIRTIO_VIDEO_FORMAT_BGRA8888, 341, 64, 0)) == VIRTIO_VIDEO_RESP_OK_NODATA, "odd packed");
+    raw = f.params(1, input);
+    require(raw.num_planes == 1 && raw.plane_formats[0].plane_size == 1376u * 64 && raw.plane_formats[0].stride == 1376,
+            "odd packed plane");
     // BGRA and RGBA are one plane of four bytes a pixel, whichever way the plane count is asked for.
     for (const auto format : {VIRTIO_VIDEO_FORMAT_BGRA8888, VIRTIO_VIDEO_FORMAT_RGBA8888})
         for (const unsigned planes : {0u, 1u}) {
@@ -955,6 +969,42 @@ void crop()
     f.queue(1, input, 1, 77);
     require(f.encoder().settings.width == 64 && f.encoder().settings.height == 66, "the encoder was not given the crop size");
     f.requireFrame(f.encoder().submitted.at(0), luma, chroma, guest, 8, 4, 64, 66, "cropped frame");
+}
+
+/* A frame whose width is not a multiple of the allocator's row alignment is
+ * read at the pitch the device stated: every row after the first of a copy at
+ * the tight width would hold a window of the picture that starts at the wrong
+ * sample. The guest bytes are written at the pitch spelled out here. */
+void unalignedFrame()
+{
+    struct Case { std::uint32_t width, height, pitch; };
+    for (const auto [width, height, pitch] : {Case {99, 77, 112}, Case {340, 68, 352}, Case {520, 64, 528}}) {
+        Fixture f;
+        f.create(1);
+        const std::size_t luma = 40 * page, chroma = 60 * page;
+        const std::uint32_t cw = (width + 1) / 2, ch = (height + 1) / 2;
+        for (std::size_t row = 0; row < height; ++row)
+            for (std::size_t column = 0; column < pitch; ++column)
+                f.memory[luma + row * pitch + column] = column < width ? lumaPattern(5, row, column) : 0xee;
+        for (std::size_t row = 0; row < ch; ++row)
+            for (std::size_t byte = 0; byte < pitch; ++byte)
+                f.memory[chroma + row * pitch + byte] = byte < 2 * cw ? chromaPattern(5, row, byte) : 0xee;
+        require(Fixture::type(f.setInput(1, VIRTIO_VIDEO_FORMAT_NV12, width, height, 0)) == VIRTIO_VIDEO_RESP_OK_NODATA,
+                "unaligned frame size");
+        const auto raw = f.params(1, input);
+        require(raw.plane_formats[0].stride == pitch && raw.plane_formats[0].plane_size == pitch * height &&
+                raw.plane_formats[1].stride == pitch && raw.plane_formats[1].plane_size == pitch * ch,
+                "unaligned frame layout");
+        require(Fixture::type(f.attach(1, input, 1, {{{luma, raw.plane_formats[0].plane_size, 0}},
+                                                      {{chroma, raw.plane_formats[1].plane_size, 0}}})) ==
+                VIRTIO_VIDEO_RESP_OK_NODATA, "unaligned frame buffers refused");
+        f.attachCodedOk(1, 0);
+        f.queue(1, input, 1, 77);
+        const auto cropWidth = width & ~1u, cropHeight = height & ~1u;
+        require(f.encoder().settings.width == cropWidth && f.encoder().settings.height == cropHeight,
+                "the encoder was not given the aligned size");
+        f.requireFrame(f.encoder().submitted.at(0), luma, chroma, pitch, 0, 0, cropWidth, cropHeight, "unaligned frame");
+    }
 }
 
 void otherLayouts()
@@ -2206,6 +2256,7 @@ int main()
         controlCommands();
         encodeRoundTrip();
         crop();
+        unalignedFrame();
         otherLayouts();
         backpressure();
         drain();

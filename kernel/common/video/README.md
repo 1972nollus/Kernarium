@@ -10,6 +10,10 @@ Edit this canonical header, then use `sync-protocol.py --kernel-source PATH` to 
 the copy under `include/uapi/linux/` in each patch-producing kernel checkout.
 Amend the owning video topic and regenerate each line's series. Ordinary checks
 use `sync-protocol.py --kernel-source PATH --verify`. Never edit generated patch output.
+A change to the driver runs `guest-v4l2-decode`, `guest-v4l2-encode` and
+`guest-video-teardown` before a kernel release: the probes cover the queueing
+paths and the teardown test the removal of a device with files open, which
+reaches the same commands after the queues are gone.
 
 The protocol supports guest-page resources, separate command and event queues,
 H.264/HEVC/JPEG/VP9 coded input, and NV12/YUV420/P010 or packed BGRA8888 output.
@@ -22,6 +26,20 @@ offset inside a virtio shared-memory region, which is how a guest describes a
 host-visible buffer that has no guest-physical address. Stream IDs, buffer extents, and response capacities are validated by the
 host. The wire format is shared by all maintained
 kernel slices.
+
+## Resource attach
+
+`VIRTIO_VIDEO_CMD_RESOURCE_ATTACH` carries a buffer's scatter lists, one per
+plane, as device-readable data after the command. A list is an eight-byte
+header and 16 bytes for each run of pages, so it grows with the buffer and with
+the fragmentation of guest memory: a 64 MiB buffer in single pages is sixteen
+thousand entries. A driver may spread the lists over any number of descriptors,
+which the device reads back to back as one request, and must not need one block
+of kernel memory for them. The device accepts at most 32768 entries for a plane
+and 128 MiB for a resource, and the request has to fit the command queue's
+descriptors, because the device accepts no indirect ones. The Linux driver
+sends a page of list in each descriptor, so one command carries about 32500
+entries.
 
 ## Failed capture buffers
 

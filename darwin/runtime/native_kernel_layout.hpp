@@ -153,7 +153,8 @@ struct NativeKernelPlacement final {
  * gives the next unhinted allocation the most recently freed range, so a host
  * allocation that landed inside would be replaced by the guest's next fixed
  * mapping, silently on both sides. The guest hands it back whole
- * (hand_back_anonymous_guest_ram), as one protectionless mapping again.
+ * (hand_back_anonymous_guest_ram), protectionless again around the signed
+ * kernel text that iOS makes permanent and the next load reuses.
  *
  * A window longer than the one held, which only a process whose guest is not
  * spent asks for, extends the reservation at its exact address or, where the
