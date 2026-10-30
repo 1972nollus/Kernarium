@@ -318,6 +318,13 @@ item, as the host describes them. Each stream is decoded back through the guest 
 pictures by luma PSNR. The x86_64 slice runs `run_v4l2_encode.py`
 directly, like the decoder.
 
+The optional `guest-v4l2-mmap-capture` test covers what that one cannot: with a
+GPU the decoder's capture buffers are host-visible Virtio-GPU blobs, and an
+allocation of them has to finish on an idle guest. Build
+`tests/integration/video/v4l2_mmap_capture_probe.cpp` the same way and configure
+`UML_V4L2_MMAP_CAPTURE_PROBE_BINARY`. The probe allocates and maps the buffers
+and fails when that takes ten seconds or when the buffers are not blobs.
+
 The optional `guest-futex-atomic` test checks the futex contract in
 [`../kernel/common/README.md`](../kernel/common/README.md). Configure
 `UML_FUTEX_PROBE_BINARY` with a static C++20 build of

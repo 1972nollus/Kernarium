@@ -16,6 +16,15 @@ uml_add_tooling_test(
     LABELS emulator;guest
     TIMEOUT 60)
 
+# The fixture probe runner's guest command and the message of every way a probe
+# fails, with the guest replaced by a recorder.
+uml_add_tooling_test(
+    NAME guest-fixture-probe-runner
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/emulator/fixture_transfer_tests.py
+    LABELS emulator;guest
+    TIMEOUT 60)
+
 if(UML_BUILD_KERNEL_RUNNER)
     add_executable(uml_embedded_kernel_serialization_tests
         ${PROJECT_SOURCE_DIR}/tests/tooling/emulator/embedded_kernel_serialization_tests.cpp)
