@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 #include "elf_loader.h"
+#include "kernel_resources.hpp"
 #include "kernel_signal_scope.hpp"
 #include "kernel_threads.hpp"
 #include "uml_elf64.h"
@@ -67,14 +68,11 @@ public:
 	{
 	}
 
+	/* The image's last pages are guest RAM, which a host-service view may
+	 * still read after the run; the runtime keeps them while one does. */
 	~Reservation()
 	{
-		if (address_ == MAP_FAILED || address_ == nullptr)
-			return;
-		if (in_window_)
-			(void)reserve_in_place(address_, length_);
-		else
-			(void)munmap(address_, length_);
+		::uml::runtime::release_kernel_image(address_, length_, in_window_);
 	}
 
 	Reservation(const Reservation &) = delete;
@@ -233,6 +231,10 @@ private:
 	if (strcmp(name, "pthread_create") == 0 ||
 	    strcmp(name, "_pthread_create") == 0)
 		return reinterpret_cast<void *>(&uml::runtime::kernel_pthread_create);
+	/* The resources the kernel creates are recorded, so that a guest which
+	 * restarts itself can give them back (kernel_resources.hpp). */
+	if (void *const wrapper = uml::runtime::kernel_resource_import(name))
+		return wrapper;
 	void *address = dlsym(RTLD_DEFAULT, name);
 	/* Darwin SDK headers give a few libc entry points an asm-label alias. */
 	if (address == nullptr && name[0] == '_')

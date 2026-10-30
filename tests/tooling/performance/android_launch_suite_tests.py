@@ -190,6 +190,9 @@ def test_default_cpus(suite) -> None:
             check(suite.main() == 0, "the suite did not run")
     check(seen[0].cpus == 4,
           f"the suite boots {seen[0].cpus} vCPUs by default, not 4")
+    check(seen[0].engine == "gadgets",
+          f"the suite boots the {seen[0].engine} engine by default, not "
+          "gadgets")
 
 
 # A launcher that ignores SIGTERM, with an emulator stand-in that leads its own

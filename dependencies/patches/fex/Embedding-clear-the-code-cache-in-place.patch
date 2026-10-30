@@ -20,12 +20,18 @@ lists and resets the decoder's range. That is correct for a context
 whose buffer only one thread uses, which is what the declaration now
 says.
 
+The arena also had no destructor, so a code buffer that a larger one
+replaced, and every context that was destroyed, left the links of all its
+blocks mapped for the life of the process. It now returns its buffers when
+it dies, and it cannot be copied, which would free them twice.
+
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- FEXCore/Source/Interface/Core/Core.cpp        | 13 +++++++++++++
- FEXCore/Source/Interface/Core/LookupCache.cpp |  7 +++++--
- FEXCore/include/FEXCore/Core/Context.h        |  3 +++
- 3 files changed, 21 insertions(+), 2 deletions(-)
+ FEXCore/Source/Interface/Core/Core.cpp          | 13 +++++++++++++
+ FEXCore/Source/Interface/Core/LookupCache.cpp   |  7 +++++--
+ FEXCore/include/FEXCore/Core/Context.h          |  3 +++
+ FEXCore/include/FEXCore/fextl/memory_resource.h |  9 +++++++++
+ 4 files changed, 30 insertions(+), 2 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
 index 3b4437b8a1197d3871f7db5357c5fa6280f1a8cd..e18bac36fab7752f1b78b4c9603e1f370a5c3113 100644
@@ -85,3 +91,23 @@ index cad519d27b8f2ee450637072c94e4290d443687a..2e58a206a89b449700152bb1fabe4747
    FEX_DEFAULT_VISIBILITY virtual void ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, bool NewCodeBuffer = true) = 0;
    FEX_DEFAULT_VISIBILITY virtual void InvalidateCodeBuffersCodeRange(uint64_t Start, uint64_t Length) = 0;
    FEX_DEFAULT_VISIBILITY virtual void
+diff --git a/FEXCore/include/FEXCore/fextl/memory_resource.h b/FEXCore/include/FEXCore/fextl/memory_resource.h
+index 686feec9f47941baecb0228c9576dc816da736cb..797b2eac0ea757499e3faf55ac8aea82dc4eb1b7 100644
+--- a/FEXCore/include/FEXCore/fextl/memory_resource.h
++++ b/FEXCore/include/FEXCore/fextl/memory_resource.h
+@@ -38,6 +38,15 @@ namespace pmr {
+     explicit named_monotonic_page_buffer_resource(const char* Name)
+       : Name {Name} {}
+ 
++    // The resource owns its buffers: a copy would free them twice, and a resource
++    // that dies without freeing them leaves them mapped for the life of the process.
++    named_monotonic_page_buffer_resource(const named_monotonic_page_buffer_resource&) = delete;
++    named_monotonic_page_buffer_resource& operator=(const named_monotonic_page_buffer_resource&) = delete;
++
++    ~named_monotonic_page_buffer_resource() override {
++      release();
++    }
++
+     void release() noexcept {
+       for (auto& Iter : Buffers) {
+         FEXCore::Allocator::VirtualFree(Iter.Buffer, Iter.BufferSize);

@@ -47,6 +47,14 @@ std::atomic<unsigned> reclaims_active{0};
 constexpr unsigned inhibited_wait_microseconds = 5U * 1000U * 1000U;
 constexpr unsigned inhibited_poll_microseconds = 200;
 
+/* A thread whose pthread_join has returned can still be terminating: Darwin
+ * wakes the joiner before the thread is gone, so for a moment its port still
+ * answers. A request to reclaim waits this long for such threads, and for a
+ * creator on its way out of kernel_pthread_create, before it reports a slot
+ * in use. */
+constexpr unsigned ending_wait_microseconds = 2U * 1000U * 1000U;
+constexpr unsigned ending_poll_microseconds = 200;
+
 void pause_for(unsigned microseconds) noexcept
 {
 	const timespec delay{0, static_cast<long>(microseconds) * 1000L};
@@ -153,6 +161,23 @@ void snapshot_kernel_threads(KernelThreadSnapshot &snapshot) noexcept
 			snapshot.threads[snapshot.thread_count++] = thread;
 		else if (creator != MACH_PORT_NULL && creator != reclaiming)
 			snapshot.creators[snapshot.creator_count++] = creator;
+	}
+}
+
+std::size_t reclaim_ended_kernel_threads() noexcept
+{
+	std::size_t in_use = 0;
+	for (unsigned waited = 0;; waited += ending_poll_microseconds) {
+		reclaim();
+		in_use = 0;
+		for (const Slot &slot : slots)
+			if (slot.word.load(std::memory_order_acquire) != 0)
+				++in_use;
+		/* Nothing changes while a fence holds the ports. */
+		if (in_use == 0 || waited >= ending_wait_microseconds ||
+		    reclaim_inhibited.load(std::memory_order_seq_cst))
+			return in_use;
+		pause_for(ending_poll_microseconds);
 	}
 }
 

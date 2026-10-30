@@ -268,7 +268,8 @@ if(TARGET uml_x86_64_jit)
         PROCESSORS 2
         TIMEOUT 300)
     # An engine makes a gone address space's space over for the next one,
-    # which must translate the new bytes.
+    # which must translate the new bytes, and a destroyed engine leaves no
+    # FEXCore mapping behind.
     uml_add_x86_64_test_binary(uml_x86_64_jit_space_tests
         x86_64_jit_space_tests.cpp JIT)
     uml_add_unit_test(

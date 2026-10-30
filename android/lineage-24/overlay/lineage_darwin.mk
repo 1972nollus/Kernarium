@@ -16,7 +16,8 @@
 
 # Select the UML-safe branches in the inherited Cuttlefish product before it
 # is evaluated. The Darwin machine has no nested Trusty VM, modem, NFC, sensor,
-# Bluetooth, Wi-Fi, GNSS, biometric, secure-element, or camera transport.
+# Bluetooth, GNSS, biometric, secure-element, or camera transport, and its
+# Wi-Fi is the kernel's virtual one (kernarium_net_setup).
 TRUSTY_SYSTEM_VM := disabled
 UML_ANDROID_SECURITY_HALS := nonsecure
 UML_ANDROID_BUILTIN_KERNEL := true
@@ -26,6 +27,7 @@ UML_ANDROID_DISABLE_AVF := true
 UML_ANDROID_DISABLE_IDENTITY := true
 UML_ANDROID_DISABLE_REBOOT_ESCROW := true
 UML_ANDROID_DISABLE_LEGACY_VNDK := true
+UML_ANDROID_MULTILIB := true
 BOARD_HAVE_BLUETOOTH := false
 CF_VENDOR_NO_UWB := true
 CF_VENDOR_NO_THREADNETWORK := true
@@ -57,9 +59,10 @@ TARGET_DEDICATED_RECOVERY := true
 TARGET_NO_RECOVERY := false
 
 # LineageOS switches, read while its configuration is inherited below. The
-# machine has no camera, no audio capture device, no charger or fastboot
-# transport, and no hardware to apply effects to, so the matching defaults of
-# the LineageOS product chain stay out. Debug builds carry `su` for the
+# machine has no camera, no charger or fastboot transport, and no hardware to
+# apply effects to, so the matching defaults of the LineageOS product chain stay
+# out. Its microphone is the Virtio sound capture stream (config/
+# primary_audio_policy_configuration.xml, config/kernarium_core_hardware.xml). Debug builds carry `su` for the
 # development tooling; a user build never does.
 PRODUCT_NO_CAMERA := true
 TARGET_EXCLUDES_AUDIOFX := true
@@ -79,7 +82,7 @@ $(call inherit-product, vendor/lineage/config/common_full_tablet_wifionly.mk)
 # The inherited desktop product installs the complete historical AOSP sound
 # library. Keep its compact alarm, notification, and UI defaults, but omit the
 # legacy ringtone banks: this product has no telephony stack and the files
-# otherwise crowd useful app payloads out of the fixed 256 MiB product image.
+# otherwise crowd useful app payloads out of the fixed product image.
 PRODUCT_COPY_FILES_EXCLUDE += \
     frameworks/base/data/sounds/newwavelabs/% \
     frameworks/base/data/sounds/ringtones/%
@@ -172,7 +175,20 @@ PRODUCT_COPY_FILES += \
 
 # Remove obsolete first-party applications and packages backed by hardware
 # that the Darwin UML machine does not expose. Providers and framework APIs
-# useful to ordinary third-party applications remain installed.
+# useful to ordinary third-party applications remain installed, and so does
+# sgdisk: vold executes /system/bin/sgdisk to scan and partition any disk it
+# manages, such as the virtual disk of `sm set-virtual-disk`.
+#
+# The Wi-Fi HAL and the supplicant stay, because the kernel's virt_wifi gives
+# the guest a Wi-Fi station. wificond does not come back: the release
+# configuration retires it (RELEASE_DISABLE_WIFICOND), and the Wi-Fi service
+# then drives nl80211 itself. What Cuttlefish adds around the stack does not
+# stay: com.google.cf.wifi holds Cuttlefish's own network setup tools
+# (rename_netiface, setup_wifi and the mac80211 radios), which
+# kernarium_net_setup replaces, and its feature files, which come from the
+# device tree below. CuttlefishWifiOverlay turns on MAC randomization that
+# virt_wifi cannot do (KernariumWifiOverlay replaces it), and the tethering
+# overlay serves a tethering stack that has no upstream here.
 KERNARIUM_REMOVED_PACKAGES := \
     BasicDreams \
     BluetoothMidiService \
@@ -221,7 +237,6 @@ KERNARIUM_REMOVED_PACKAGES := \
     com.android.hardware.authsecret \
     com.android.hardware.biometrics.face.virtual \
     com.android.hardware.biometrics.fingerprint.virtual \
-    com.android.hardware.cas \
     com.android.hardware.graphics.composer.ranchu \
     com.android.hardware.contexthub \
     com.android.hardware.gnss \
@@ -232,10 +247,8 @@ KERNARIUM_REMOVED_PACKAGES := \
     com.android.hardware.security.authgraph \
     com.android.hardware.security.secretkeeper \
     com.android.hardware.tetheroffload \
-    com.android.hardware.thermal \
     com.android.hardware.usb \
     com.android.hardware.vibrator \
-    com.android.hardware.wifi \
     com.android.vndk.v31 \
     com.android.vndk.v32 \
     com.android.vndk.v33 \
@@ -248,7 +261,6 @@ KERNARIUM_REMOVED_PACKAGES := \
     com.google.cf.identity \
     com.google.cf.ir \
     com.google.cf.wifi \
-    com.google.cf.wpa_supplicant \
     cuttlefish_telephony_satellite_configs \
     gsi_tool \
     gsid \
@@ -256,12 +268,10 @@ KERNARIUM_REMOVED_PACKAGES := \
     messaging \
     pmg_daemon \
     sample_camera_extensions.xml \
-    sgdisk \
     snapshotctl \
     snapuserd \
     snapuserd_ramdisk \
     socket_vsock_proxy \
-    suspend_blocker \
     tombstone_transmit \
     update_engine \
     update_engine_client \
@@ -302,6 +312,12 @@ endif
 
 # Replace the handheld feature declaration and remove optional feature files
 # for absent hardware. This keeps PackageManager truthful for sideloaded apps.
+# The guest declares android.hardware.wifi, which virt_wifi provides, and not
+# android.hardware.ethernet: eth0 is the management NIC, and the framework would
+# otherwise start Ethernet management on it. virt_wifi is a station without
+# peer-to-peer, so android.hardware.wifi.direct stays out, and so do Aware and
+# RTT, which the interface combinations do not offer. Passpoint waits for the
+# first Wi-Fi CTS run.
 PRODUCT_COPY_FILES_EXCLUDE += \
     frameworks/native/data/etc/handheld_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/handheld_core_hardware.xml \
     frameworks/native/data/etc/android.hardware.biometrics.face.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.biometrics.face.xml \
@@ -314,13 +330,13 @@ PRODUCT_COPY_FILES_EXCLUDE += \
     frameworks/native/data/etc/android.hardware.camera.full.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.full.xml \
     frameworks/native/data/etc/android.hardware.camera.raw.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.raw.xml \
     frameworks/native/data/etc/android.hardware.consumerir.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.consumerir.xml \
+    frameworks/native/data/etc/android.hardware.ethernet.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.ethernet.xml \
     frameworks/native/data/etc/android.hardware.location.gps.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.location.gps.xml \
     frameworks/native/data/etc/android.hardware.usb.accessory.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.usb.accessory.xml \
     frameworks/native/data/etc/android.hardware.usb.host.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.usb.host.xml \
     frameworks/native/data/etc/android.hardware.uwb.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.uwb.xml \
     frameworks/native/data/etc/android.hardware.wifi.direct.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.direct.xml \
     frameworks/native/data/etc/android.hardware.wifi.passpoint.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.passpoint.xml \
-    frameworks/native/data/etc/android.hardware.wifi.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.xml \
     frameworks/native/data/etc/android.software.verified_boot.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.verified_boot.xml
 PRODUCT_COPY_FILES += \
     device/kernarium/darwin/config/kernarium_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/handheld_core_hardware.xml
@@ -378,7 +394,84 @@ PRODUCT_COPY_FILES += \
 PRODUCT_PACKAGES += kernarium_vk_present
 PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_present
 
+# eth0 is the management NIC adb is reached on; the framework sees the virtual
+# Wi-Fi built on it. This tool configures both before the framework starts
+# (init.vendor.rc runs it at post-fs-data).
+PRODUCT_PACKAGES += kernarium_net_setup
+
+# The Wi-Fi module's resources are overlaid by KernariumWifiOverlay
+# (rro/KernariumWifiOverlay): virt_wifi cannot change its MAC address, so the
+# framework must not randomize it.
+PRODUCT_PACKAGES += KernariumWifiOverlay
+
+# Once boot completes, a script saves the virtual Wi-Fi network (VirtWifi, open)
+# the first time only. It does not turn Wi-Fi on, and a network the user forgets
+# stays forgotten. It runs from system_ext in a core domain of its own.
+PRODUCT_PACKAGES += kernarium_wifi_network_script
+
+# A Vulkan hardware-buffer import check: it fills gralloc buffers of several
+# formats and widths through the CPU, imports each into Vulkan and reads it
+# back, so a row pitch the driver cannot import or the renderer misreads fails
+# the run.
+PRODUCT_PACKAGES += kernarium_vk_ahb_import
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_ahb_import
+
+# A YUV hardware-buffer round-trip check: it writes NV12, P010 and YV12 buffers
+# of even and odd sizes whole and then by a partial lock, and reads them back
+# through the host copy, so a layout the guest and the renderer read
+# differently fails the run.
+PRODUCT_PACKAGES += kernarium_ahb_yuv_roundtrip
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_ahb_yuv_roundtrip
+
+# Hardware video encoding and decoding. The host's VideoToolbox encoders and
+# decoders reach the guest as V4L2 stateful devices, and external/v4l2_codec2
+# exposes them through Codec2: its service is the vendor Codec2 store beside the
+# software one. The service brings the vendor variants of the libraries it
+# links, the plugin store among them; naming one of those here would install its
+# core variant under /system, which the generic system artifact path
+# requirement refuses. The XML lists the encoders and the HEVC and H.264
+# decoders, and the properties enable exactly those components; it also updates
+# the limits of the software HEVC and VP9 decoders, which advertise less than
+# they decode, to 3840x2160. The store
+# admits as many instances as the properties allow and reports the pixel rate
+# the host sustains as the capacity of the real-time streams of each direction.
+# That capacity is the largest performance point the XML publishes: 3840x2160 at
+# 13 frames per second is 107827200 luma samples per second for the encoders,
+# and 3840x2160 at 55 frames per second is 456192000 for the decoders (CTS
+# wants the largest point to use at least 60% of the capacity). A decoder keeps
+# its pool of decoded pictures in the guest's 8 GiB, about 0.9 GiB for a 4K
+# stream, so four decoders may run at once where the encoders allow eight. The
+# extended policy adds the calls the service's seccomp policy lacks for the V4L2
+# device and for the crash handler, and ueventd gives the nodes to the group the
+# service joins.
+PRODUCT_SOONG_NAMESPACES += external/v4l2_codec2
+PRODUCT_PACKAGES += android.hardware.media.c2-service-v4l2
+PRODUCT_COPY_FILES += \
+    device/kernarium/darwin/config/media_codecs_c2.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2.xml \
+    device/kernarium/darwin/config/media_c2_extended_seccomp_policy:$(TARGET_COPY_OUT_VENDOR)/etc/seccomp_policy/android.hardware.media.c2-extended-seccomp_policy
+PRODUCT_VENDOR_PROPERTIES += \
+    ro.vendor.v4l2_codec2.encoder.supported.h264=true \
+    ro.vendor.v4l2_codec2.encoder.supported.hevc=true \
+    ro.vendor.v4l2_codec2.encode_concurrent_instances=8 \
+    ro.vendor.v4l2_codec2.video_pixel_rate=108000000 \
+    ro.vendor.v4l2_codec2.decoder.supported.h264=true \
+    ro.vendor.v4l2_codec2.decoder.supported.hevc=true \
+    ro.vendor.v4l2_codec2.decode_concurrent_instances=4 \
+    ro.vendor.v4l2_codec2.video_decode_pixel_rate=456192000
+
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
+
+# The virtio-gpu device paces the display with a vblank timer, so a present
+# fence signals when the frame is shown. The inherited Cuttlefish graphics
+# configuration marks the fences unreliable for a host that sends frames as fast
+# as it can; with the property absent, SurfaceFlinger takes present timestamps
+# from the fences (service.sf.present_timestamp=1) and the Vulkan loader exposes
+# VK_GOOGLE_display_timing. A filter over PRODUCT_VENDOR_PROPERTIES cannot remove
+# an inherited value (inherit-product merges the parent's variables later), and
+# a second assignment of the key is a duplicate that the build refuses, so the
+# vendor build.prop denylist drops the property. The target-files verifier
+# rejects it when it is true.
+PRODUCT_VENDOR_PROPERTY_BLACKLIST += ro.vendor.hwc.drm.present_fence_not_reliable
 
 # ADB is available over the inherited TCP port even though this machine has no
 # USB controller. A user build retains the stock shell privilege boundary; a
@@ -391,6 +484,14 @@ PRODUCT_PRODUCT_PROPERTIES := $(filter-out \
     persist.sys.usb.config=%,$(PRODUCT_PRODUCT_PROPERTIES))
 PRODUCT_PRODUCT_PROPERTIES += \
     persist.sys.usb.config=adb
+
+# The WebView provider declares use32bitAbi. Left alone, that makes its 32-bit
+# libraries primary, and every WebView renderer, including those of 64-bit
+# applications, a 32-bit process. Keep the 64-bit ABI primary: 32-bit
+# applications still load the 32-bit WebView library in their own process and
+# talk to a 64-bit renderer.
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.config.ignore_use32bitabi=true
 
 # The Virtio sound transport has no MMAP or exclusive hardware path. These
 # read-only defaults seed a fresh Settings database; persisted user volume
@@ -409,5 +510,24 @@ PRODUCT_PRODUCT_PROPERTIES += \
     audio.timecheck.second_chance_duration_ms=200000
 PRODUCT_SYSTEM_EXT_PROPERTIES += \
     ro.audio.ihaladaptervendorextension_enabled=true
+
+# The guest boots straight to the home screen, and its swipe lock screen stays
+# available. LockSettingsService writes lockscreen.disabled=1 for user 0 when it
+# creates its database, which a fresh /data does on the first boot; the setting
+# can then be changed with `locksettings set-disabled` or the Settings app.
+# config_disableLockscreenByDefault is false for that reason (the overlay's
+# core/res config.xml). The standalone launcher gives every release a new /data.
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.lockscreen.disable.default=true
+
+# apexd pins an updated APEX as a device-mapper linear table over the block device that
+# holds /data (Early Activation; it bypasses dm-default-key on devices with metadata
+# encryption). Userdata here is an unencrypted ext4 filesystem mounted straight from its
+# partition, and that mount holds the partition exclusively, so the table load fails with
+# EBUSY and every staged APEX install is rejected. GSI and DSU turn pinning off with this
+# same property: apexd then stages through /data/app-staging and init keeps two mount
+# namespaces (ro.init.mnt_ns.count 2). The target-files verifier requires the property.
+PRODUCT_PRODUCT_PROPERTIES += \
+    apexd.config.use_fiemap=false
 
 PRODUCT_IGNORE_ALL_ANDROIDMK := true

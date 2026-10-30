@@ -1,17 +1,12 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 struct EmulatorSettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var microphone = MicrophoneSetting.shared
 
-    @State private var vCPUCount: Int
-    @State private var guestMemoryMiB: Int
-    @State private var overlaySizeGiB: Int
-    @State private var androidDiskSizeGiB: Int
-    @State private var rootfsFilename: String
-    @State private var retinaMode: Bool
-    @State private var autoResizeGuest: Bool
-    @State private var androidBootMode: AndroidBootMode
+    @State private var configuration: EmulatorConfiguration
     @State private var backgroundMode: BackgroundMode
     @State private var backgroundLimitMinutes: Int
 
@@ -22,7 +17,7 @@ struct EmulatorSettingsView: View {
 
     private var androidBundleSelected: Bool {
         RootfsImage.selection(
-            named: rootfsFilename,
+            named: configuration.rootfsFilename,
             in: documentsDirectory
         )?.flavor == .android
     }
@@ -33,7 +28,7 @@ struct EmulatorSettingsView: View {
         documentsDirectory: URL = RootfsImage.documentsDirectory
     ) {
         let maximum = max(maximumVCPUCount, 1)
-        let configuration = EmulatorConfiguration.load(
+        let loaded = EmulatorConfiguration.load(
             defaults: defaults,
             physicalProcessorCount: maximum,
             documentsDirectory: documentsDirectory
@@ -45,26 +40,17 @@ struct EmulatorSettingsView: View {
             in: documentsDirectory
         )
         self.rootfsFilenames = availableRootfsFilenames.contains(
-            configuration.rootfsFilename
-        ) ? availableRootfsFilenames : [configuration.rootfsFilename] +
+            loaded.rootfsFilename
+        ) ? availableRootfsFilenames : [loaded.rootfsFilename] +
             availableRootfsFilenames
-        _vCPUCount = State(initialValue: configuration.vCPUCount)
-        _guestMemoryMiB = State(initialValue: configuration.guestMemoryMiB)
-        _overlaySizeGiB = State(initialValue: configuration.overlaySizeGiB)
-        _androidDiskSizeGiB = State(
-            initialValue: configuration.androidDiskSizeGiB
-        )
-        _rootfsFilename = State(initialValue: configuration.rootfsFilename)
-        _retinaMode = State(initialValue: configuration.retinaMode)
-        _autoResizeGuest = State(initialValue: configuration.autoResizeGuest)
-        _androidBootMode = State(initialValue: configuration.androidBootMode)
+        _configuration = State(initialValue: loaded)
         let background = BackgroundSettings(defaults: defaults)
         _backgroundMode = State(
-            initialValue: background.mode(forGuest: configuration.rootfsFilename)
+            initialValue: background.mode(forGuest: loaded.rootfsFilename)
         )
         _backgroundLimitMinutes = State(
             initialValue: background.limitMinutes(
-                forGuest: configuration.rootfsFilename
+                forGuest: loaded.rootfsFilename
             )
         )
     }
@@ -85,23 +71,16 @@ struct EmulatorSettingsView: View {
             .sorted()
     }
 
-    private static func limitTitle(minutes: Int) -> String {
-        if minutes % 60 == 0 {
-            return minutes == 60 ? "1 hour" : "\(minutes / 60) hours"
-        }
-        return "\(minutes) minutes"
-    }
-
     var body: some View {
         NavigationStack {
             Form {
                 Section("Hardware") {
-                    Toggle("Retina mode", isOn: $retinaMode)
+                    Toggle("Retina mode", isOn: $configuration.retinaMode)
                         .accessibilityIdentifier("retinaModeToggle")
 
                     Toggle(
                         "Automatically resize guest display",
-                        isOn: $autoResizeGuest
+                        isOn: $configuration.autoResizeGuest
                     )
                     .accessibilityIdentifier("autoResizeGuestToggle")
 
@@ -116,30 +95,67 @@ struct EmulatorSettingsView: View {
                     .foregroundStyle(.secondary)
 
                     Stepper(
-                        "vCPUs: \(vCPUCount)",
-                        value: $vCPUCount,
+                        "vCPUs: \(configuration.vCPUCount)",
+                        value: $configuration.vCPUCount,
                         in: 1...maximumVCPUCount
                     )
                     .accessibilityIdentifier("vCPUCountStepper")
 
                     Stepper(
-                        "Guest RAM: \(guestMemoryMiB) MB",
-                        value: $guestMemoryMiB,
+                        "Guest RAM: \(configuration.guestMemoryMiB) MB",
+                        value: $configuration.guestMemoryMiB,
                         in: EmulatorConfiguration.guestMemoryRangeMiB,
                         step: EmulatorConfiguration.guestMemoryStepMiB
                     )
                     .accessibilityIdentifier("guestMemoryStepper")
 
                     Stepper(
-                        "Overlay FS: \(overlaySizeGiB) GB",
-                        value: $overlaySizeGiB,
+                        "Overlay FS: \(configuration.overlaySizeGiB) GB",
+                        value: $configuration.overlaySizeGiB,
                         in: EmulatorConfiguration.overlaySizeRangeGiB
                     )
                     .accessibilityIdentifier("overlaySizeStepper")
                 }
 
+                // Unlike the rest of the form this applies at once, whatever
+                // Save or Cancel does: turning it on is when iOS asks for
+                // access (see MicrophoneSetting).
+                Section("Microphone") {
+                    Toggle(
+                        "Microphone",
+                        isOn: Binding(
+                            get: { microphone.isOn },
+                            set: { microphone.setOn($0) }
+                        )
+                    )
+                    .accessibilityIdentifier("microphoneToggle")
+
+                    Text(
+                        MicrophoneSetting.explanation(
+                            isOn: microphone.isOn,
+                            access: microphone.access
+                        )
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                    if microphone.isOn, microphone.access == .denied {
+                        Button("Open Settings") {
+                            if let url = URL(
+                                string: UIApplication.openSettingsURLString
+                            ) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                        .accessibilityIdentifier("microphoneOpenSettingsButton")
+                    }
+                }
+
                 Section("Storage") {
-                    Picker("Root filesystem", selection: $rootfsFilename) {
+                    Picker(
+                        "Root filesystem",
+                        selection: $configuration.rootfsFilename
+                    ) {
                         ForEach(rootfsFilenames, id: \.self) { filename in
                             Text(filename).tag(filename)
                         }
@@ -148,13 +164,16 @@ struct EmulatorSettingsView: View {
 
                     if androidBundleSelected {
                         Stepper(
-                            "Android disk: \(androidDiskSizeGiB) GiB",
-                            value: $androidDiskSizeGiB,
+                            "Android disk: \(configuration.androidDiskSizeGiB) GiB",
+                            value: $configuration.androidDiskSizeGiB,
                             in: EmulatorConfiguration.androidDiskSizeRangeGiB
                         )
                         .accessibilityIdentifier("androidDiskSizeStepper")
 
-                        Picker("Android boot", selection: $androidBootMode) {
+                        Picker(
+                            "Android boot",
+                            selection: $configuration.androidBootMode
+                        ) {
                             ForEach(AndroidBootMode.allCases) { mode in
                                 Text(mode.title).tag(mode)
                             }
@@ -185,8 +204,10 @@ struct EmulatorSettingsView: View {
                             selection: $backgroundLimitMinutes
                         ) {
                             ForEach(offeredLimitMinutes, id: \.self) { minutes in
-                                Text(Self.limitTitle(minutes: minutes))
-                                    .tag(minutes)
+                                Text(BackgroundSettings.limitTitle(
+                                    minutes: minutes
+                                ))
+                                .tag(minutes)
                             }
                         }
                         .accessibilityIdentifier("backgroundLimitPicker")
@@ -196,7 +217,7 @@ struct EmulatorSettingsView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-                .onChange(of: rootfsFilename) { _, filename in
+                .onChange(of: configuration.rootfsFilename) { _, filename in
                     let background = BackgroundSettings(defaults: defaults)
                     backgroundMode = background.mode(forGuest: filename)
                     backgroundLimitMinutes = background.limitMinutes(
@@ -227,21 +248,15 @@ struct EmulatorSettingsView: View {
     }
 
     private func save() {
-        EmulatorConfiguration(
-            vCPUCount: vCPUCount,
-            guestMemoryMiB: guestMemoryMiB,
-            overlaySizeGiB: overlaySizeGiB,
-            androidDiskSizeGiB: androidDiskSizeGiB,
-            rootfsFilename: rootfsFilename,
-            retinaMode: retinaMode,
-            autoResizeGuest: autoResizeGuest,
-            androidBootMode: androidBootMode
-        ).save(defaults: defaults)
+        configuration.save(defaults: defaults)
         let background = BackgroundSettings(defaults: defaults)
-        background.setMode(backgroundMode, forGuest: rootfsFilename)
+        background.setMode(
+            backgroundMode,
+            forGuest: configuration.rootfsFilename
+        )
         background.setLimitMinutes(
             backgroundLimitMinutes,
-            forGuest: rootfsFilename
+            forGuest: configuration.rootfsFilename
         )
         dismiss()
     }

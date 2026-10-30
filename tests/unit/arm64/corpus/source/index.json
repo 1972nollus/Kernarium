@@ -332,6 +332,20 @@
         "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
         "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
       }
+    },
+    "tbi_memory": {
+      "cases": 1388,
+      "equivalence": {
+        "base_cases": 6203,
+        "cases": 6509,
+        "index_cases": 12,
+        "sp_cases": 267,
+        "tbi_off_cases": 27
+      },
+      "fault_cases": 502,
+      "script": "tools/arm64-tests/tbi-memory-corpus.py",
+      "sha256": "b1ee778e90edb4affaffa793bfd55122a1b00f081aa152ae299e8f5293ed0b34",
+      "tbi_off_cases": 23
     }
   },
   "files": [
@@ -752,7 +766,9 @@
     "arm64-sme-native.jsonl",
     "arm64-lse2-alignment.jsonl",
     "arm64-floating-trap-native.jsonl",
-    "arm64-sm0-vl.jsonl"
+    "arm64-sm0-vl.jsonl",
+    "arm64-tbi-memory.jsonl",
+    "arm64-tbi-equivalence.jsonl"
   ],
   "records": [
     {
@@ -4466,6 +4482,18 @@
     {
       "name": "arm64-jit-tlb-miss-preservation/arm64_jit_tlb_miss_preservation_tests.cpp:353/4k",
       "file": "arm64-jit-tlb-miss-preservation.jsonl"
+    },
+    {
+      "name": "arm64-tbi-memory/4k",
+      "file": "arm64-tbi-memory.jsonl"
+    },
+    {
+      "name": "arm64-tbi-equivalence/4k",
+      "file": "arm64-tbi-equivalence.jsonl"
+    },
+    {
+      "name": "arm64-tbi-equivalence/4k/svl=64",
+      "file": "arm64-tbi-equivalence.jsonl"
     }
   ]
 }

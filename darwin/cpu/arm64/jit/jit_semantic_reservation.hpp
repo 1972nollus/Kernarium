@@ -128,7 +128,7 @@ void reservation_store(CpuState &writer, std::uintptr_t key) noexcept;
 	std::uint64_t address, std::span<const std::byte> bytes);
 
 [[nodiscard]] bool simd_structure_address(CpuState &cpu,
-	GuestMemory &memory, std::uint64_t tagged_address, bool base_sp,
+	GuestMemory &memory, std::uint64_t tagged_address,
 	std::size_t transfer_size, std::size_t element_size,
 	MemoryAccess access, std::uint64_t &address, std::uint64_t &fault_address);
 

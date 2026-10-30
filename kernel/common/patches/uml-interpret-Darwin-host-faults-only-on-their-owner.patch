@@ -47,7 +47,7 @@ handled, so a handler that wedges still leaves its fault behind.
  6 files changed, 163 insertions(+), 10 deletions(-)
 
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
-index d36d5b8f77bdc4cc689ee4da965eab07f613ea87..15e501e58d4d2b84c1217e2e60c197a5f72e068c 100644
+index 260f69b22aa5cc7a5633bf1975299e73a35020b3..5a09df19640fde539603624516fa61d37268d333 100644
 --- a/arch/um/include/shared/kern_util.h
 +++ b/arch/um/include/shared/kern_util.h
 @@ -30,6 +30,7 @@ extern void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
@@ -55,14 +55,14 @@ index d36d5b8f77bdc4cc689ee4da965eab07f613ea87..15e501e58d4d2b84c1217e2e60c197a5
  			  int is_user, struct uml_pt_regs *regs,
  			  void *mc);
 +extern int segv_resumes_at_recovery(unsigned long address);
- extern int handle_page_fault(unsigned long address, unsigned long ip,
- 			     int is_write, int is_user, int *code_out);
+ extern int handle_uaccess_fault(unsigned long address, int is_write,
+ 				int *code_out);
  
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index dbb4d6cf068d0bbadd846a42d7bbbd117cad5d72..3267358aad21eb46cb76cc8375280bac948f0bc9 100644
+index 82adf37a8519edcc21e7cf41db9fd0641caef52f..683efe9f4e585258d8223a1459f68e294c9ed4bd 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
-@@ -320,6 +320,27 @@ void segv_handler(int sig, struct siginfo *unused_si, struct uml_pt_regs *regs,
+@@ -325,6 +325,27 @@ void segv_handler(int sig, struct siginfo *unused_si, struct uml_pt_regs *regs,
  	segv(*fi, UPT_IP(regs), UPT_IS_USER(regs), regs, mc);
  }
  

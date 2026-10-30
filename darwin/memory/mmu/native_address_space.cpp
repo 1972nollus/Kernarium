@@ -2406,6 +2406,23 @@ std::size_t NativeAddressSpace::direct_mapping_count_for_testing() const
 	return retired_.load(std::memory_order_acquire) ? 0 :
 		direct_slots_.size();
 }
+
+bool NativeAddressSpace::mapping_clears_its_page_copy_for_testing() noexcept
+{
+	alignas(Mapping) unsigned char storage[sizeof(Mapping)];
+	auto *const mapping = ::new (storage) Mapping{};
+	mapping->original.fill(std::byte{0xa5});
+	mapping->loaded = true;
+	/* Read through the bytes the object occupied once it is destroyed. */
+	const volatile unsigned char *const copy =
+		reinterpret_cast<const unsigned char *>(mapping->original.data());
+	const std::size_t size = mapping->original.size();
+	mapping->~Mapping();
+	for (std::size_t index = 0; index < size; ++index)
+		if (copy[index] != 0)
+			return false;
+	return true;
+}
 #endif
 
 NativeAddressSpace::~NativeAddressSpace()
@@ -2418,11 +2435,23 @@ void NativeAddressSpace::retire() noexcept
 	std::lock_guard lock{mutex_};
 	if (retired_.exchange(true, std::memory_order_acq_rel))
 		return;
-	for (const auto slot : materialized_slots_)
-		(void)mprotect(reinterpret_cast<void *>(slot), host_page_size(),
-			PROT_READ | PROT_WRITE);
-	for (const auto slot : materialized_slots_)
-		(void)flush_slot_locked(slot);
+	/* A shadow of a descriptor's backing is published, because the backing
+	 * outlives the space. A shadow of guest RAM is discarded: nothing reads RAM
+	 * once the run is over, and the loader has already released the kernel
+	 * image, whose tail is the first RAM the guest owns, so the root's span
+	 * holds unmapped or reserved pages that a publication would fault on. */
+	for (const auto slot : materialized_slots_) {
+		for (std::uintptr_t position = 0; position < host_page_size();
+		     position += guest_page_size) {
+			const auto found = mappings_.find(slot + position);
+			if (found == mappings_.end() || !found->second.loaded ||
+			    anonymous_shared_backing_memory(
+				    found->second.identity.device,
+				    found->second.identity.inode).anonymous)
+				continue;
+			(void)flush_page_locked(slot + position);
+		}
+	}
 	mappings_.clear();
 	backing_index_.clear();
 	slot_protections_.clear();

@@ -1,7 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: Apache-2.0
-# Build the fixed LineageOS 24 arm64-only UML product: page-agnostic userspace
-# on the 4 KiB kernel.
+# Build the fixed LineageOS 24 UML product: page-agnostic arm64 userspace with
+# a 32-bit armeabi-v7a second architecture for applications, on the 4 KiB
+# kernel.
 set -euo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -196,7 +197,24 @@ lunch "${LINEAGE24_PRODUCT}-${LINEAGE24_RELEASE_CONFIG}-${LINEAGE24_BUILD_VARIAN
 [[ "$(get_build_var TARGET_BUILD_VARIANT)" == "$LINEAGE24_BUILD_VARIANT" ]] ||
 	fail "lunch selected the wrong build variant"
 [[ "$(get_build_var TARGET_ARCH)" == arm64 ]] || fail "product is not arm64"
-[[ -z "$(get_build_var TARGET_2ND_ARCH)" ]] || fail "product has a 32-bit secondary ABI"
+# The second architecture is the softfp armeabi-v7a ABI and nothing else: no
+# armeabi, and no 32-bit daemon (IGNORE_PREFER32_ON_DEVICE keeps prefer32
+# modules 64-bit). Applications of both ABIs run from zygote64_32.
+[[ "$(get_build_var TARGET_2ND_ARCH)" == arm ]] || fail "product has no arm secondary architecture"
+[[ "$(get_build_var TARGET_2ND_ARCH_VARIANT)" == armv8-a ]] ||
+	fail "secondary architecture variant is not armv8-a"
+[[ "$(get_build_var TARGET_2ND_CPU_VARIANT)" == cortex-a53 ]] ||
+	fail "secondary CPU variant is not cortex-a53"
+[[ "$(get_build_var TARGET_2ND_CPU_ABI)" == armeabi-v7a ]] ||
+	fail "secondary ABI is not armeabi-v7a"
+[[ -z "$(get_build_var TARGET_2ND_CPU_ABI2)" ]] ||
+	fail "product lists a further 32-bit ABI; armeabi-v7a is the only one"
+[[ "$(get_build_var TARGET_SUPPORTS_32_BIT_APPS)" == true ]] ||
+	fail "product does not support 32-bit applications"
+[[ -z "$(get_build_var ZYGOTE_FORCE_64)" ]] ||
+	fail "ZYGOTE_FORCE_64 would leave no 32-bit ABI"
+[[ "$(get_build_var IGNORE_PREFER32_ON_DEVICE)" == true ]] ||
+	fail "native daemons must stay 64-bit (IGNORE_PREFER32_ON_DEVICE)"
 [[ "$(get_build_var TARGET_MAX_PAGE_SIZE_SUPPORTED)" == "$LINEAGE24_MAX_PAGE_SIZE_SUPPORTED" ]] ||
 	fail "product maximum page size differs from metadata"
 [[ "$(get_build_var TARGET_NO_BIONIC_PAGE_SIZE_MACRO)" == true ]] ||
@@ -339,6 +357,7 @@ for package in \
 	F-Droid \
 	F-DroidPrivilegedExtension \
 	Glimpse \
+	init.zygote64_32.rc \
 	Jelly \
 	LatinIME \
 	Launcher3QuickStep \
@@ -381,6 +400,24 @@ else
 fi
 [[ "$PRODUCT_PACKAGES" == *" adb_root "* ]] ||
 	fail "the LineageOS adb root service is absent"
+[[ "$PRODUCT_PACKAGES" == *" suspend_blocker "* ]] ||
+	fail "the suspend blocker that holds the guest awake for an adb host is absent"
+[[ "$PRODUCT_PACKAGES" == *" kernarium_net_setup "* ]] ||
+	fail "the network setup tool that configures eth0 and the virtual Wi-Fi is absent"
+[[ "$PRODUCT_PACKAGES" == *" kernarium_wifi_network_script "* ]] ||
+	fail "the script that saves the virtual Wi-Fi network is absent"
+[[ "$PRODUCT_PACKAGES" == *" com.android.hardware.wifi "* ]] ||
+	fail "the Wi-Fi HAL that the virtual Wi-Fi needs is absent"
+[[ "$PRODUCT_PACKAGES" == *" com.google.cf.wpa_supplicant "* ]] ||
+	fail "the Wi-Fi supplicant that the virtual Wi-Fi needs is absent"
+[[ "$PRODUCT_PACKAGES" == *" KernariumWifiOverlay "* ]] ||
+	fail "the Wi-Fi overlay that turns MAC randomization off is absent"
+[[ "$PRODUCT_PACKAGES" == *" com.android.hardware.thermal "* ]] ||
+	fail "the example thermal HAL that the thermal manager needs is absent"
+[[ "$PRODUCT_PACKAGES" == *" com.android.hardware.cas "* ]] ||
+	fail "the default CAS HAL that MediaCas needs is absent"
+[[ "$PRODUCT_PACKAGES" == *" libclearkeycasplugin "* ]] ||
+	fail "the ClearKey CAS plugin that the CAS HAL loads is absent"
 PRODUCT_PACKAGES_EXCLUDE=" $(get_build_var PRODUCT_PACKAGES_EXCLUDE) "
 for package in \
 	BasicDreams \
@@ -399,10 +436,8 @@ for package in \
 	TelephonyProvider \
 	com.android.compos \
 	com.android.hardware.authsecret \
-	com.android.hardware.cas \
 	com.android.hardware.graphics.composer.ranchu \
 	android.hardware.health-service.cuttlefish_recovery \
-	com.android.hardware.wifi \
 	com.android.hardware.contexthub \
 	com.android.hardware.input.processor \
 	com.android.hardware.net.nlinterceptor \
@@ -410,7 +445,6 @@ for package in \
 	com.android.hardware.security.authgraph \
 	com.android.hardware.security.secretkeeper \
 	com.android.hardware.tetheroffload \
-	com.android.hardware.thermal \
 	com.android.hardware.usb \
 	com.android.vndk.v31 \
 	com.android.vndk.v32 \
@@ -422,19 +456,16 @@ for package in \
 	com.google.cf.identity \
 	com.google.cf.ir \
 	com.google.cf.wifi \
-	com.google.cf.wpa_supplicant \
 	CuttlefishTetheringOverlay \
 	CuttlefishWifiOverlay \
 	gsi_tool \
 	gsid \
 	messaging \
 	pmg_daemon \
-	sgdisk \
 	snapshotctl \
 	snapuserd \
 	snapuserd_ramdisk \
 	socket_vsock_proxy \
-	suspend_blocker \
 	tombstone_transmit \
 	update_engine \
 	update_engine_client \

@@ -12,6 +12,18 @@ uml_add_unit_test(
     COMMAND uml_runtime_context_tests
     LABELS tsan)
 
+# The import through which the guest kernel says how its run ends.
+add_executable(uml_runtime_guest_shutdown_tests guest_shutdown_tests.cpp)
+target_link_libraries(uml_runtime_guest_shutdown_tests PRIVATE
+    UML::BridgeAbi
+    UML::Emulator)
+target_include_directories(uml_runtime_guest_shutdown_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+uml_add_unit_test(
+    NAME runtime-guest-shutdown
+    COMMAND uml_runtime_guest_shutdown_tests
+    LABELS tsan)
+
 add_executable(uml_runtime_kernel_signal_scope_tests
     kernel_signal_scope_tests.cpp)
 target_link_libraries(uml_runtime_kernel_signal_scope_tests PRIVATE
@@ -20,11 +32,42 @@ uml_add_unit_test(
     NAME runtime-kernel-signal-scope
     COMMAND uml_runtime_kernel_signal_scope_tests)
 
+# The ledger of what an embedded kernel creates through its imports.
+add_executable(uml_runtime_kernel_resources_tests kernel_resources_tests.cpp)
+target_link_libraries(uml_runtime_kernel_resources_tests PRIVATE
+    UML::BridgeAbi
+    uml_emulator_test_variant)
+target_include_directories(uml_runtime_kernel_resources_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+uml_add_unit_test(
+    NAME runtime-kernel-resources
+    COMMAND uml_runtime_kernel_resources_tests)
+
+# The loader's release of the kernel image against a host-service view that
+# still borrows its guest-RAM tail.
+add_executable(uml_runtime_kernel_image_release_tests
+    kernel_image_release_tests.cpp)
+target_link_libraries(uml_runtime_kernel_image_release_tests PRIVATE
+    UML::RuntimeKernelSignals)
+uml_add_unit_test(
+    NAME runtime-kernel-image-release
+    COMMAND uml_runtime_kernel_image_release_tests
+    LABELS tsan)
+
 add_executable(uml_runtime_sequential_run_tests sequential_run_tests.cpp)
 target_link_libraries(uml_runtime_sequential_run_tests PRIVATE
     UML::BridgeAbi
-    uml_emulator_test_variant)
+    UML::DeviceSocketPaths
+    UML::MemorySharedBacking
+    uml_emulator_test_variant
+    uml_test_mach_vm_region)
+# The JIT's exclusive-monitor probe the restart modes read between runs.
+target_sources(uml_runtime_sequential_run_tests PRIVATE
+    $<TARGET_OBJECTS:uml_arm64_jit_test_support>)
 target_include_directories(uml_runtime_sequential_run_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin
+    ${PROJECT_SOURCE_DIR}/darwin/platform
+    ${PROJECT_SOURCE_DIR}/darwin/runtime
     ${PROJECT_SOURCE_DIR}/tests/unit/emulator)
 uml_add_unit_test(
     NAME runtime-sequential-run-same-handle
@@ -35,6 +78,17 @@ uml_add_unit_test(
 uml_add_unit_test(
     NAME runtime-sequential-run-unclaimed-first-run
     COMMAND uml_runtime_sequential_run_tests unclaimed-first-run)
+# A guest that restarts itself boots again in the same process; every other end
+# leaves the guest spent, the hand-back refuses what still holds the guest, and
+# it waits for a stop or a resume still reaching the hibernation it drops.
+# One process each, because the claim on guest RAM outlives every handle.
+foreach(_uml_restart_mode IN ITEMS restart power-off halt stopped failed
+        another-handle borrowed-view running-thread abort-stop abort-resume)
+    uml_add_unit_test(
+        NAME runtime-restart-${_uml_restart_mode}
+        COMMAND uml_runtime_sequential_run_tests ${_uml_restart_mode})
+endforeach()
+unset(_uml_restart_mode)
 
 add_executable(uml_runtime_x86_tier_tests x86_tier_tests.cpp)
 target_include_directories(uml_runtime_x86_tier_tests PRIVATE
@@ -43,6 +97,14 @@ uml_add_unit_test(
     NAME runtime-x86-tier
     COMMAND uml_runtime_x86_tier_tests
     LABELS tsan)
+
+# The registry of an embedded kernel's threads across a storm of restarts.
+add_executable(uml_runtime_kernel_threads_tests kernel_threads_tests.cpp)
+target_link_libraries(uml_runtime_kernel_threads_tests PRIVATE
+    UML::RuntimeThreadFence)
+uml_add_unit_test(
+    NAME runtime-kernel-threads
+    COMMAND uml_runtime_kernel_threads_tests)
 
 # The fence against real threads. Each test stops and starts threads of the
 # process, so the binaries run alone.

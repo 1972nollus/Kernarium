@@ -124,6 +124,53 @@ if(UML_V4L2_PROBE_BINARY)
         LABELS guest;video
         TIMEOUT 600
         CPUS 2)
+    # The same probe with the GPU: capture buffers are then host-visible blobs,
+    # and a dma-buf a client imports takes the driver's other path.
+    uml_add_guest_integration_test(
+        NAME guest-v4l2-decode-gpu
+        SCRIPT video/run_v4l2_decode.py
+        ARGS --probe "${UML_V4L2_PROBE_BINARY}" --gpu
+            --log "${CMAKE_CURRENT_BINARY_DIR}/v4l2-gpu-guest.log"
+        LABELS guest;video;gpu
+        TIMEOUT 600
+        CPUS 2
+        GPUS 1)
+endif()
+
+set(UML_V4L2_ENCODE_PROBE_BINARY "" CACHE FILEPATH
+    "Static guest V4L2 encoder executable built from tests/integration/video/v4l2_encode_probe.cpp")
+if(UML_V4L2_ENCODE_PROBE_BINARY)
+    if(NOT EXISTS "${UML_V4L2_ENCODE_PROBE_BINARY}")
+        message(FATAL_ERROR "V4L2 encoder qualification requires its guest probe")
+    endif()
+    # The runner boots a two-vCPU guest with the decoder and the encoder.
+    uml_add_guest_integration_test(
+        NAME guest-v4l2-encode
+        SCRIPT video/run_v4l2_encode.py
+        ARGS --probe "${UML_V4L2_ENCODE_PROBE_BINARY}"
+            --log "${CMAKE_CURRENT_BINARY_DIR}/v4l2-encode-guest.log"
+        LABELS guest;video
+        TIMEOUT 720
+        CPUS 2)
+endif()
+
+set(UML_V4L2_MMAP_CAPTURE_PROBE_BINARY "" CACHE FILEPATH
+    "Static guest executable built from tests/integration/video/v4l2_mmap_capture_probe.cpp")
+if(UML_V4L2_MMAP_CAPTURE_PROBE_BINARY)
+    if(NOT EXISTS "${UML_V4L2_MMAP_CAPTURE_PROBE_BINARY}")
+        message(FATAL_ERROR "V4L2 MMAP capture qualification requires its guest probe")
+    endif()
+    # The decoder's capture buffers are host-visible GPU blobs only in a guest
+    # that has a GPU, which is why this is not part of guest-v4l2-decode.
+    uml_add_guest_integration_test(
+        NAME guest-v4l2-mmap-capture
+        SCRIPT video/run_v4l2_mmap_capture.py
+        ARGS --probe "${UML_V4L2_MMAP_CAPTURE_PROBE_BINARY}"
+            --log "${CMAKE_CURRENT_BINARY_DIR}/v4l2-mmap-capture-guest.log"
+        LABELS guest;video;gpu;smoke
+        TIMEOUT 300
+        CPUS 2
+        GPUS 1)
 endif()
 
 set(UML_FUTEX_PROBE_BINARY "" CACHE FILEPATH
@@ -141,6 +188,62 @@ if(UML_FUTEX_PROBE_BINARY)
         LABELS guest;futex
         TIMEOUT 320
         CPUS 4)
+endif()
+
+set(UML_GBM_DMABUF_PROBE_BINARY "" CACHE FILEPATH
+    "Guest executable built from tests/integration/gpu/gbm_dmabuf_probe.cpp")
+if(UML_GBM_DMABUF_PROBE_BINARY)
+    if(NOT EXISTS "${UML_GBM_DMABUF_PROBE_BINARY}")
+        message(FATAL_ERROR "The dma-buf visibility test requires its compiled guest probe")
+    endif()
+    # A four-vCPU guest with the GPU; the probe opens the render node itself.
+    uml_add_guest_integration_test(
+        NAME guest-gbm-dmabuf
+        SCRIPT gpu/run_gpu_guest.py
+        ARGS --timeout 300
+            --memory 4G
+            --guest-file
+            /usr/local/libexec/gbm-dmabuf-probe=${UML_GBM_DMABUF_PROBE_BINARY}
+            --command "timeout 60 sh -c 'until test -e /dev/dri/renderD128
+do
+    sleep 1
+done'"
+            --command "timeout 120 /usr/local/libexec/gbm-dmabuf-probe /dev/dri/renderD128"
+            --
+            ncpus=4 --execution-engine=jit --gpu --gpu-display=vnc
+            --gpu-vnc-bind=127.0.0.1 --gpu-vnc-port=0
+        LABELS guest;gpu
+        TIMEOUT 420
+        CPUS 4
+        GPUS 1)
+endif()
+
+set(UML_DRM_FLIP_PROBE_BINARY "" CACHE FILEPATH
+    "Guest executable built from tests/integration/gpu/drm_flip_probe.cpp")
+if(UML_DRM_FLIP_PROBE_BINARY)
+    if(NOT EXISTS "${UML_DRM_FLIP_PROBE_BINARY}")
+        message(FATAL_ERROR "The vblank pacing test requires its compiled guest probe")
+    endif()
+    # A four-vCPU guest with the GPU; the probe takes the card's first output.
+    uml_add_guest_integration_test(
+        NAME guest-drm-vblank
+        SCRIPT gpu/run_gpu_guest.py
+        ARGS --timeout 300
+            --memory 4G
+            --guest-file
+            /usr/local/libexec/drm-flip-probe=${UML_DRM_FLIP_PROBE_BINARY}
+            --command "timeout 60 sh -c 'until test -e /dev/dri/card0
+do
+    sleep 1
+done'"
+            --command "timeout 60 /usr/local/libexec/drm-flip-probe"
+            --
+            ncpus=4 --execution-engine=jit --gpu --gpu-display=vnc
+            --gpu-vnc-bind=127.0.0.1 --gpu-vnc-port=0
+        LABELS guest;gpu
+        TIMEOUT 420
+        CPUS 4
+        GPUS 1)
 endif()
 
 if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET OR
@@ -298,6 +401,7 @@ add_subdirectory(aarch32)
 add_subdirectory(balloon)
 add_subdirectory(exclusive)
 add_subdirectory(no_sve)
+add_subdirectory(restart)
 add_subdirectory(sme)
 
 # One-vCPU guest: an input burst past the tty buffer must not end console input.
@@ -387,6 +491,16 @@ uml_add_guest_integration_test(
     TIMEOUT 600
     CPUS 4)
 
+# Evicting cached ext4 inodes that hold block preallocations, under memory
+# pressure, releases the preallocations without a single __GFP_NOFAIL page
+# allocation at reclaim time, and leaves a checked, unchanged filesystem.
+uml_add_guest_integration_test(
+    NAME guest-ext4-prealloc-reclaim
+    SCRIPT kernel/run_guest_ext4_prealloc_reclaim.py
+    LABELS guest;kernel
+    TIMEOUT 900
+    CPUS 4)
+
 # Page-cache trimming is off until the host asks. The management console turns
 # it on and off and runs one pass that leaves the cache at its floor and,
 # compacting, hands most of what it frees to the host even when the cache lay
@@ -399,14 +513,15 @@ uml_add_guest_integration_test(
     TIMEOUT 900
     CPUS 2)
 
-# Removing the Virtio video decoder by unbind, management-console halt or
-# forced power-off, while files are open and buffers queued, resets it first,
-# returns everything it held and frees nothing an open file still uses.
+# Removing the Virtio video decoder and encoder by unbind, management-console
+# halt or forced power-off, while files are open and buffers queued, resets
+# each first, returns everything it held and frees nothing an open file still
+# uses.
 uml_add_guest_integration_test(
     NAME guest-video-teardown
     SCRIPT kernel/run_guest_video_teardown.py
     LABELS guest;kernel;video;smoke
-    TIMEOUT 300
+    TIMEOUT 600
     CPUS 4)
 
 # Files of an LZ4 EROFS image with 4 KiB clusters, which EROFS decompresses
@@ -432,8 +547,9 @@ uml_add_guest_integration_test(
 # until a wake request, and a wake sent while it is still being entered
 # ends it, even while it still syncs file systems. A suspend the host asked
 # for that one of the guest's own wake sources ended is entered again. A
-# suspend the guest entered by itself ends for a wake or for a power key
-# typed on the VNC display, which reaches the guest once.
+# suspend the guest entered by itself ends for a wake, for a power key typed
+# on the VNC display, which reaches the guest once, or for a network frame,
+# which never ends or fails one the host asked for.
 uml_add_guest_integration_test(
     NAME guest-suspend-holds
     SCRIPT kernel/run_guest_suspend_holds.py
@@ -490,6 +606,56 @@ uml_add_guest_integration_test(
         --ncpus 2 --probe-timeout 60
     LABELS guest;kernel;smoke
     TIMEOUT 300
+    CPUS 2)
+
+# A tracer follows the system calls of an A64 task and, on arm64, an AArch32
+# one as on native Linux: the entry stop shows the first argument in its
+# register, a rewrite there is the argument the call uses, the exit stop shows
+# the return value, syscall(-1) returns ENOSYS, and an interrupted call that a
+# handler restarts shows its argument again. Both engines run it, because a
+# register image crosses the host boundary at every system call.
+foreach(_engine IN ITEMS gadgets jit)
+    uml_add_guest_integration_test(
+        NAME guest-ptrace-syscall-args-${_engine}
+        SCRIPT support/run_guest_probe.py
+        ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/ptrace_syscall_args_probe.cpp
+            "--cxxflags=-Wall -Wextra -Werror"
+            --engine ${_engine} --ncpus 2 --probe-timeout 240
+        LABELS guest;kernel;${_engine}
+        TIMEOUT 480
+        CPUS 2)
+endforeach()
+
+# The AArch64 tagged-address ABI (Documentation/arch/arm64/tagged-address-abi.rst)
+# answers as native arm64 Linux does, row for row: PR_SET/GET_TAGGED_ADDR_CTRL,
+# tagged pointers in the system calls that touch user memory, the abi sysctl,
+# NT_ARM_TAGGED_ADDR_CTRL, and inheritance across fork, exec, threads and an
+# AArch32 task. The engines ignore the top byte unless the host passes
+# --guest-no-top-byte-ignore, so the guest runs with the default on both
+# engines and the probe expects the ABI to be available. With the off switch
+# enabling the ABI is refused, and the probe checks the refusal and the rows
+# that need no tagged address.
+foreach(_engine IN ITEMS gadgets jit)
+    uml_add_guest_integration_test(
+        NAME guest-tagged-addr-${_engine}
+        SCRIPT support/run_guest_probe.py
+        ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/tagged_addr_probe.cpp
+            "--cxxflags=-Wall -Wextra -Werror -pthread"
+            --engine ${_engine} --ncpus 2 --probe-timeout 240
+            --probe-argument=--tbi=on
+        LABELS guest;kernel;${_engine}
+        TIMEOUT 600
+        CPUS 2)
+endforeach()
+uml_add_guest_integration_test(
+    NAME guest-tagged-addr-no-tbi
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/tagged_addr_probe.cpp
+        "--cxxflags=-Wall -Wextra -Werror -pthread"
+        --ncpus 2 --probe-timeout 240
+        --guest-argument=--guest-no-top-byte-ignore --probe-argument=--tbi=off
+    LABELS guest;kernel;smoke
+    TIMEOUT 600
     CPUS 2)
 
 # A signal taken between two instructions leaves x0 alone even when it holds
@@ -552,6 +718,46 @@ uml_add_guest_integration_test(
     LABELS guest;kernel;memory
     TIMEOUT 420
     CPUS 4)
+
+# The kernel's own access to a user range reaches userfaultfd as native Linux
+# delivers it: a UFFD_USER_MODE_ONLY descriptor never sees it and the system
+# call fails with EFAULT, while a user-mode access and a plain descriptor's
+# kernel access are delivered. Android's ART collector depends on both.
+uml_add_guest_integration_test(
+    NAME guest-uaccess-userfaultfd
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/uaccess_userfaultfd_probe.cpp
+        "--cxxflags=-Wall -Wextra -Werror -pthread"
+        --ncpus 2 --probe-timeout 120
+    LABELS guest;kernel;memory
+    TIMEOUT 420
+    CPUS 2)
+
+# The settings the Android CTS and the desktop disagree on: a Linux guest has
+# SysV IPC, the NFS client and SCTP, no RDS and no wakelock interface, and
+# runs the helper a piped core_pattern names; every guest has IPv4 multicast,
+# no listener on RDS-over-TCP's port, and the strong stack protector and
+# hardened usercopy, a macvlan link that rtnetlink creates over a dummy one,
+# the accept_ra_rt_table sysctl (0 until it is written, then a prefix route in
+# the device's own table where the kernel has IPv6 multiple tables), and one
+# ESP SPI allocated for a second destination address, which a Linux guest
+# refuses and an Android guest allows. A Linux guest has no Incremental file
+# system and no 802.11 stack. An
+# Android guest, which runs the probe by hand, has a static usermode helper
+# that starts nothing, an Incremental file system that mounts, serves a filled
+# block and times out on a missing one, and virtual Wi-Fi: a virt_wifi link
+# over a macvlan connects to the access point VirtWifi through nl80211, remains
+# on 2412 MHz, sends an Action frame there, and passes a multicast group it
+# joins on to its macvlan.
+uml_add_guest_integration_test(
+    NAME guest-kernel-config
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/kernel_config_probe.cpp
+        "--cxxflags=-Wall -Wextra -Werror"
+        --ncpus 2 --probe-timeout 120
+    LABELS guest;kernel;smoke
+    TIMEOUT 420
+    CPUS 2)
 
 # A system call or a fault taken with a bad stack pointer, again and again
 # on one vCPU, gets native arm64's result and never kills the task, and the
@@ -643,6 +849,40 @@ uml_add_integration_test(
     PROCESSORS 2
     RESOURCE_GROUPS cpus:2)
 
+# A capture buffer a Virtio video device answers as failed reaches the client
+# flagged as an error, empty, and with the timestamp of the answer. A host
+# drops a picture only when its codec does, so the device is the production one
+# behind a test-only shim that answers the guest's capture buffer as failed.
+uml_add_freestanding_cxx_payload(UML_GUEST_VIDEO_ERROR_ANSWER_INIT
+    guest-video-error-answer-init
+    video/video_error_answer_init.cpp
+    COMMENT "Building the freestanding arm64 init of the failed video buffer test"
+    ARCH_OPTIONS -march=armv8-a)
+add_executable(uml_video_error_answer_tests video/video_error_answer_tests.cpp)
+target_link_libraries(uml_video_error_answer_tests PRIVATE
+    UML::BootInitramfs
+    UML::DelayedAnswerDevice
+    UML::Emulator
+    UML::VideoDevice)
+target_link_options(uml_video_error_answer_tests PRIVATE
+    "LINKER:-export_dynamic"
+    "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
+add_dependencies(uml_video_error_answer_tests
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
+add_dependencies(integration-test-binaries uml_video_error_answer_tests)
+get_target_property(_uml_video_error_answer_kernel
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_IMAGE)
+uml_add_integration_test(
+    NAME guest-video-error-answer
+    COMMAND uml_video_error_answer_tests
+        ${_uml_video_error_answer_kernel}
+        ${UML_GUEST_VIDEO_ERROR_ANSWER_INIT}
+        ${CMAKE_CURRENT_BINARY_DIR}/video-error-answer
+    LABELS guest;kernel;video
+    TIMEOUT 300
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
+
 # Configuration reads and in-band kicks that several vCPUs start at once on
 # one vhost-user socket each keep their own reply: a console that keeps
 # resizing, and answers late, stays bound while every vCPU writes to it.
@@ -727,6 +967,25 @@ uml_add_guest_integration_test(
     CPUS 10)
 # The runner skips on a host with fewer than the ten CPUs it asks for.
 set_tests_properties(guest-mmu-stress PROPERTIES SKIP_RETURN_CODE 77)
+
+# A process with many dirty shared VMAs exits in time linear in them. The mm
+# teardown flushes once per page table that holds a dirty shared page, and a
+# flush that walked every VMA made the exit quadratic: tens of seconds at
+# 20000 VMAs against a few tens of milliseconds.
+uml_add_freestanding_cxx_payload(UML_GUEST_EXIT_SHARED_VMAS
+    guest-exit-shared-vmas
+    smp/guest_exit_shared_vmas.cpp
+    COMMENT "Building the freestanding arm64 shared-VMA exit probe"
+    ARCH_OPTIONS -march=armv8-a)
+
+uml_add_guest_integration_test(
+    NAME guest-exit-shared-vmas
+    SCRIPT smp/run_guest_exit_shared_vmas.py
+    ARGS --probe ${UML_GUEST_EXIT_SHARED_VMAS}
+        --cpus 4
+    LABELS guest;memory;mmu
+    TIMEOUT 600
+    CPUS 4)
 
 if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)
     uml_add_guest_integration_test(

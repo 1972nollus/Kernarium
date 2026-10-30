@@ -13,8 +13,9 @@ namespace uml::cpu::arm64::aarch32 {
  * cache, link table and shared tier serve A64, A32 and T32 code with no
  * second instance of any of them.
  *
- *   A64  pc | svcr_mode     today's key, unchanged: a user PC lies below
- *                          2^48 and the two low bits are the SME mode
+ *   A64  pc | svcr_mode    a user PC lies below 2^48; the two low bits are
+ *        | tbi << 61       the SME mode, and bit 61 is set for a translation
+ *                          that strips the top byte of its data addresses
  *   A32  1<<63 | pc        pc is a 32-bit word-aligned address
  *   T32  1<<63 | 1<<62 | pc << 1
  *                          pc is a 32-bit halfword-aligned address; the
@@ -44,6 +45,9 @@ enum class GuestIsa : std::uint8_t {
 
 inline constexpr std::uint64_t aarch32_key_bit = std::uint64_t{1} << 63;
 inline constexpr std::uint64_t thumb_key_bit = std::uint64_t{1} << 62;
+/* An A64 key's top-byte-ignore bit: the translation was compiled for a guest
+ * whose data addresses ignore their top byte. */
+inline constexpr std::uint64_t a64_tbi_key_bit = std::uint64_t{1} << 61;
 
 /* `pc` is word aligned. */
 [[nodiscard]] constexpr std::uint64_t a32_key(std::uint32_t pc) noexcept
@@ -120,12 +124,13 @@ inline constexpr std::uint64_t thumb_key_bit = std::uint64_t{1} << 62;
 }
 
 /* Where the guest bytes of a translation start. An A64 key may carry the
- * SVCR mode in its two low bits; the gadget engine's keys do not. */
+ * SVCR mode in its two low bits and the top-byte-ignore bit; the gadget
+ * engine's keys carry neither. */
 [[nodiscard]] constexpr std::uint64_t key_fetch_address(
 	std::uint64_t key) noexcept
 {
 	return key_is_aarch32(key) ? key_pc(key) :
-		key & ~std::uint64_t{svcr_mask};
+		key & ~(std::uint64_t{svcr_mask} | a64_tbi_key_bit);
 }
 
 static_assert(a32_key(0) == aarch32_key_bit);
@@ -150,6 +155,9 @@ static_assert(key_is_canonical(a32_key(0xffff'fffcU)) &&
 	key_is_canonical(t32_key(0xffff'fffeU)));
 static_assert(!key_is_canonical(a32_key(2U)));
 static_assert(key_fetch_address(0x4000'1003U) == 0x4000'1000U);
+static_assert(key_fetch_address(a64_tbi_key_bit | 0x4000'1001U) ==
+	0x4000'1000U);
+static_assert(key_isa(a64_tbi_key_bit | 0x4000'1000U) == GuestIsa::a64);
 static_assert(key_fetch_address(a32_key(0x4000'1000U)) == 0x4000'1000U);
 static_assert(key_fetch_address(t32_key(0x4000'1002U)) == 0x4000'1002U);
 

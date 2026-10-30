@@ -4,6 +4,7 @@
 #include "require.hpp"
 #include "scratch_directory.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -26,12 +27,12 @@ namespace {
 
 constexpr std::uint64_t sectorSize = 512;
 constexpr std::uint64_t backupGptReservation = 1'048'576ULL;
-constexpr std::uint64_t seedDiskSize = 2'939'158'528ULL;
+constexpr std::uint64_t seedDiskSize = 3'274'702'848ULL;
 constexpr std::uint64_t expandedDiskSize = 8'589'934'592ULL;
-constexpr std::uint64_t initBootOffset = 2'773'483'520ULL;
+constexpr std::uint64_t initBootOffset = 3'109'027'840ULL;
 constexpr std::uint64_t initBootSize = 8'388'608ULL;
-constexpr std::uint64_t miscOffset = 2'781'872'128ULL;
-constexpr std::uint64_t recoveryOffset = 2'782'920'704ULL;
+constexpr std::uint64_t miscOffset = 3'117'416'448ULL;
+constexpr std::uint64_t recoveryOffset = 3'118'465'024ULL;
 constexpr std::uint64_t recoverySize = 20'971'520ULL;
 constexpr std::uint64_t normalRamdiskSize = 8192;
 constexpr std::uint64_t recoveryRamdiskSize = 12288;
@@ -43,16 +44,16 @@ struct Partition {
 };
 
 constexpr std::array partitions {
-	Partition{"system", 1'048'576ULL, 1'409'286'144ULL},
-	Partition{"system_ext", 1'410'334'720ULL, 536'870'912ULL},
-	Partition{"product", 1'947'205'632ULL, 536'870'912ULL},
-	Partition{"vendor", 2'484'076'544ULL, 268'435'456ULL},
-	Partition{"odm", 2'752'512'000ULL, 4'194'304ULL},
-	Partition{"metadata", 2'756'706'304ULL, 16'777'216ULL},
+	Partition{"system", 1'048'576ULL, 1'677'721'600ULL},
+	Partition{"system_ext", 1'678'770'176ULL, 536'870'912ULL},
+	Partition{"product", 2'215'641'088ULL, 603'979'776ULL},
+	Partition{"vendor", 2'819'620'864ULL, 268'435'456ULL},
+	Partition{"odm", 3'088'056'320ULL, 4'194'304ULL},
+	Partition{"metadata", 3'092'250'624ULL, 16'777'216ULL},
 	Partition{"init_boot", initBootOffset, initBootSize},
 	Partition{"misc", miscOffset, 1'048'576ULL},
 	Partition{"recovery", recoveryOffset, recoverySize},
-	Partition{"userdata", 2'803'892'224ULL, 134'217'728ULL},
+	Partition{"userdata", 3'139'436'544ULL, 134'217'728ULL},
 };
 
 using uml::testing::require;
@@ -179,20 +180,74 @@ std::filesystem::path makeDisk(const std::filesystem::path &directory,
 	return path;
 }
 
-void requestRecovery(const std::filesystem::path &disk)
+/* Writes `bytes` `offset` bytes into the misc partition, whose bootloader
+ * message opens with the 32-byte command field. */
+void writeMisc(const std::filesystem::path &disk,
+	       std::span<const std::byte> bytes, std::uint64_t offset = 0)
 {
 	const int descriptor = open(disk.c_str(), O_RDWR);
 	if (descriptor < 0)
 		throw std::system_error(errno, std::generic_category(), "open disk");
 	try {
-		const std::string command = "boot-recovery";
-		writeAll(descriptor, miscOffset,
-			 std::as_bytes(std::span{command.data(), command.size() + 1U}));
+		writeAll(descriptor, miscOffset + offset, bytes);
 	} catch (...) {
 		(void)close(descriptor);
 		throw;
 	}
 	require(close(descriptor) == 0);
+}
+
+/* Leaves `command` and its terminator in the command field, after zeroing
+ * the 2 KiB message so an earlier command leaves nothing behind. */
+void requestCommand(const std::filesystem::path &disk, const std::string &command)
+{
+	const std::array<std::byte, 2048> cleared {};
+	writeMisc(disk, cleared);
+	writeMisc(disk, std::as_bytes(std::span{command.data(), command.size() + 1U}));
+}
+
+void requestRecovery(const std::filesystem::path &disk)
+{
+	requestCommand(disk, "boot-recovery");
+}
+
+/* The bytes the tests compare: the partition table's start, and the misc
+ * partition with a mebibyte of its neighbours on both sides. The disk is
+ * sparse and 8 GiB, so it is not read whole. */
+std::vector<std::byte> readAround(const std::filesystem::path &path)
+{
+	constexpr std::uint64_t margin = 1'048'576ULL;
+	std::vector<std::byte> bytes(margin * 3U + 16U * sectorSize);
+	const int descriptor = open(path.c_str(), O_RDONLY);
+	require(descriptor >= 0);
+	const auto fill = [&](std::size_t at, std::uint64_t offset,
+			      std::size_t size) {
+		std::size_t done = 0;
+		while (done < size) {
+			const auto count = pread(descriptor, bytes.data() + at + done,
+						 size - done,
+						 static_cast<off_t>(offset + done));
+			require(count > 0);
+			done += static_cast<std::size_t>(count);
+		}
+	};
+	fill(0, 0, 16U * sectorSize);
+	fill(16U * sectorSize, miscOffset - margin, margin * 3U);
+	require(close(descriptor) == 0);
+	return bytes;
+}
+
+std::string miscCommand(const std::filesystem::path &disk)
+{
+	const auto bytes = readAround(disk);
+	std::string command;
+	for (std::size_t index = 0; index < 32; ++index) {
+		const auto value = bytes[16U * sectorSize + 1'048'576U + index];
+		if (value == std::byte{})
+			break;
+		command.push_back(static_cast<char>(value));
+	}
+	return command;
 }
 
 } // namespace
@@ -238,6 +293,36 @@ void testKernelCommandLine(const std::filesystem::path &directory)
 	});
 }
 
+/* The standalone launcher gives every guest a density: the EDID's, or the one
+ * SurfaceFlinger falls back to. A release cannot set it. */
+void testLcdDensity(const std::filesystem::path &directory)
+{
+	require(uml::android::lcdDensityArgument(0) ==
+		"androidboot.lcd_density=213");
+	require(uml::android::lcdDensityArgument(320) ==
+		"androidboot.lcd_density=320");
+	require(uml::android::lcdDensityArgument(
+			uml::android::defaultLcdDensity) ==
+		"androidboot.lcd_density=213");
+
+	require(uml::android::parseDotsPerInch("160") == 160U);
+	for (const std::string_view bad : {"", "0", "-1", "12x", " 5", "5 ",
+					   "4294967296", "dpi"})
+		requireThrows([&] { (void)uml::android::parseDotsPerInch(bad); });
+
+	constexpr std::array<std::string_view, 2> launcherPrefixes{
+		"androidboot.kernarium.adb_auth=",
+		uml::android::lcdDensityPrefix};
+	const auto path = directory / "density-command-line.txt";
+	writeText(path, "quiet androidboot.lcd_density=240\n");
+	requireThrows([&] {
+		(void)uml::android::readKernelCommandLine(path, launcherPrefixes);
+	});
+	writeText(path, "quiet androidboot.hardware=kernarium\n");
+	require(uml::android::readKernelCommandLine(path, launcherPrefixes) ==
+		std::vector<std::string>{"quiet", "androidboot.hardware=kernarium"});
+}
+
 /* The writable disk is named in a UBD specification and opened read-write. */
 void testWritableDisk(const std::filesystem::path &directory)
 {
@@ -268,6 +353,127 @@ void testWritableDisk(const std::filesystem::path &directory)
 	require(chmod(disk.c_str(), S_IRUSR | S_IWUSR) == 0);
 }
 
+/* There is no bootloader, so a restart consumes the one-shot request `reboot
+ * bootloader` leaves in the misc partition, as a bootloader that continues
+ * does: only the command field changes, and nothing else is consumed. */
+void testBootloaderCommandIsConsumed(const std::filesystem::path &directory)
+{
+	const auto path = directory / "consume";
+	std::filesystem::create_directory(path);
+	const auto disk = makeDisk(path, expandedDiskSize);
+	const std::string bootloader = "bootonce-bootloader";
+
+	/* Nothing to consume leaves the disk alone, even a read-only one. */
+	const auto pristine = readAround(disk);
+	require(!uml::android::consumeBootloaderCommand(disk));
+	require(readAround(disk) == pristine);
+	require(chmod(disk.c_str(), S_IRUSR) == 0);
+	require(!uml::android::consumeBootloaderCommand(disk));
+	require(chmod(disk.c_str(), S_IRUSR | S_IWUSR) == 0);
+
+	/* The request is cleared, and only the 32-byte command field changes. A
+	 * status, recovery and stage that follow it in the message stay. */
+	requestCommand(disk, bootloader);
+	const std::string recoveryField = "recovery-field-stays";
+	writeMisc(disk,
+		  std::as_bytes(std::span{recoveryField.data(), recoveryField.size()}),
+		  32U + 32U);
+	const auto requested = readAround(disk);
+	require(miscCommand(disk) == bootloader);
+	require(uml::android::consumeBootloaderCommand(disk));
+	auto expected = requested;
+	std::fill_n(expected.begin() + 16 * static_cast<std::ptrdiff_t>(sectorSize) +
+			    1'048'576, 32, std::byte{});
+	require(readAround(disk) == expected);
+	require(miscCommand(disk).empty());
+	require(!uml::android::consumeBootloaderCommand(disk));
+
+	/* Recovery's request is recovery's to clear, not the host's. */
+	requestRecovery(disk);
+	const auto recovery = readAround(disk);
+	require(!uml::android::consumeBootloaderCommand(disk));
+	require(readAround(disk) == recovery);
+
+	/* Only the exact request: a longer or shorter name, and a field with no
+	 * terminator, are not it. */
+	for (const std::string other : {"bootonce-bootloader2", "bootonce-bootload",
+					"boot-bootloader", "boot-fastboot"}) {
+		requestCommand(disk, other);
+		require(!uml::android::consumeBootloaderCommand(disk));
+		require(miscCommand(disk) == other);
+	}
+	const std::string unterminated(32, 'b');
+	writeMisc(disk, std::as_bytes(std::span{unterminated.data(), 32U}));
+	require(!uml::android::consumeBootloaderCommand(disk));
+
+	/* A request the host cannot clear is an error, not a silent boot. */
+	requestCommand(disk, bootloader);
+	require(chmod(disk.c_str(), S_IRUSR) == 0);
+	requireThrows([&] { (void)uml::android::consumeBootloaderCommand(disk); });
+	require(chmod(disk.c_str(), S_IRUSR | S_IWUSR) == 0);
+	require(miscCommand(disk) == bootloader);
+
+	/* A disk that is not the Android layout is refused before any write. */
+	const int descriptor = open(disk.c_str(), O_RDWR);
+	require(descriptor >= 0);
+	std::array<std::byte, 1> corrupt {std::byte{0xff}};
+	writeAll(descriptor, sectorSize + 20U, corrupt);
+	require(close(descriptor) == 0);
+	requireThrows([&] { (void)uml::android::consumeBootloaderCommand(disk); });
+	require(miscCommand(disk) == bootloader);
+}
+
+/* Every restart selects the ramdisk in automatic mode, whatever the first
+ * boot was given, so `reboot recovery` boots recovery and `reboot bootloader`
+ * boots normally after its request is consumed. */
+void testRestartSelectsAutomaticMode(const std::filesystem::path &directory)
+{
+	const auto path = directory / "restart";
+	std::filesystem::create_directory(path);
+	const auto disk = makeDisk(path, expandedDiskSize);
+
+	/* A first boot forced into recovery does not make the restart one. */
+	const auto first =
+		uml::android::selectBoot(disk, uml::android::BootMode::recovery);
+	require(first.mode == uml::android::BootMode::recovery);
+	auto restarted = uml::android::selectRestartBoot(disk);
+	require(restarted.boot.mode == uml::android::BootMode::normal);
+	require(restarted.boot.ramdisk.offset == initBootOffset + 4096U);
+	require(restarted.boot.ramdisk.size == normalRamdiskSize);
+	require(!restarted.bootloaderConsumed);
+
+	/* `reboot recovery`: init left boot-recovery, and recovery boots; the
+	 * request stays for recovery to clear. */
+	requestRecovery(disk);
+	restarted = uml::android::selectRestartBoot(disk);
+	require(restarted.boot.mode == uml::android::BootMode::recovery);
+	require(restarted.boot.ramdisk.offset == recoveryOffset + 4096U);
+	require(restarted.boot.ramdisk.size == recoveryRamdiskSize);
+	require(!restarted.bootloaderConsumed);
+	require(miscCommand(disk) == "boot-recovery");
+
+	/* Recovery's own reboot cleared the request: the next boot is normal. */
+	requestCommand(disk, "");
+	restarted = uml::android::selectRestartBoot(disk);
+	require(restarted.boot.mode == uml::android::BootMode::normal);
+
+	/* `reboot bootloader`: consumed, a normal boot, and a later request for
+	 * recovery works, as it did not while the request stayed. */
+	requestCommand(disk, "bootonce-bootloader");
+	restarted = uml::android::selectRestartBoot(disk);
+	require(restarted.bootloaderConsumed);
+	require(restarted.boot.mode == uml::android::BootMode::normal);
+	require(restarted.boot.ramdisk.offset == initBootOffset + 4096U);
+	require(miscCommand(disk).empty());
+	requestRecovery(disk);
+	require(uml::android::selectRestartBoot(disk).boot.mode ==
+		uml::android::BootMode::recovery);
+
+	/* A disk that is not the Android layout stops the restart. */
+	std::filesystem::resize_file(disk, seedDiskSize);
+	requireThrows([&] { (void)uml::android::selectRestartBoot(disk); });
+}
+
 int main()
 {
 	/* An uncaught failure leaves the directory, which names this test. */
@@ -275,7 +481,10 @@ int main()
 		"uml-android-boot-tests.XXXXXX"};
 	const auto &directory = scratch.path();
 	testKernelCommandLine(directory);
+	testLcdDensity(directory);
 	testWritableDisk(directory);
+	testBootloaderCommandIsConsumed(directory);
+	testRestartSelectsAutomaticMode(directory);
 
 	const auto stale = makeDisk(directory, seedDiskSize);
 	std::filesystem::resize_file(stale, expandedDiskSize);
@@ -284,6 +493,30 @@ int main()
 			stale, uml::android::BootMode::normal);
 	});
 	require(std::filesystem::remove(stale));
+
+	/* The product's capacity is 6 through 64 whole GiB: a smaller disk would
+	 * leave userdata too little room beside the 32-bit userspace. */
+	constexpr std::uint64_t gibibyte = 1'073'741'824ULL;
+	for (const auto gibibytes : {5ULL, 6ULL, 64ULL, 65ULL}) {
+		const auto sized = makeDisk(directory, gibibytes * gibibyte);
+		if (gibibytes == 6 || gibibytes == 64)
+			(void)uml::android::selectBoot(
+				sized, uml::android::BootMode::normal);
+		else
+			requireThrows([&] {
+				(void)uml::android::selectBoot(
+					sized, uml::android::BootMode::normal);
+			});
+		require(std::filesystem::remove(sized));
+	}
+	{
+		const auto fractional = makeDisk(directory, 6 * gibibyte + 4096);
+		requireThrows([&] {
+			(void)uml::android::selectBoot(
+				fractional, uml::android::BootMode::normal);
+		});
+		require(std::filesystem::remove(fractional));
+	}
 
 	const auto disk = makeDisk(directory, expandedDiskSize);
 	require(std::filesystem::file_size(disk) == expandedDiskSize);

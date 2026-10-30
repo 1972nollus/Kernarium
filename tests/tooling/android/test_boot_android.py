@@ -50,9 +50,11 @@ class BootAndroidTests(unittest.TestCase):
         self.assertIn("--gpu-width=720", command)
         self.assertIn("--gpu-height=1280", command)
         self.assertIn("--execution-engine=gadgets", command)
+        self.assertIn("--video", command)
+        self.assertIn("--video-encoder", command)
         self.assertIn("ncpus=10", command)
         self.assertIn("mem=8G", command)
-        self.assertIn("--android-boot-mode=normal", command)
+        self.assertIn("--android-boot-mode=auto", command)
         self.assertIn("--android-disk=/tmp/android.img", command)
         self.assertFalse(any("android-instance" in value for value in command))
         self.assertFalse(any("android-base-disk" in value for value in command))
@@ -74,6 +76,34 @@ class BootAndroidTests(unittest.TestCase):
         )
         self.assertFalse(any("vnc" in argument for argument in native))
 
+    def test_audio_output_defaults_to_the_host_and_can_be_null(self) -> None:
+        default = boot_android.emulator_command(
+            boot_android.parse_arguments([]), Path("/r"), Path("/i"), Path("/e")
+        )
+        self.assertFalse(any("--audio" in argument for argument in default))
+        options = boot_android.parse_arguments(["--audio-output", "null"])
+        command = boot_android.emulator_command(
+            options, Path("/r"), Path("/i"), Path("/e")
+        )
+        self.assertIn("--audio-output=null", command)
+        with self.assertRaises(SystemExit):
+            boot_android.parse_arguments(["--audio-output", "speaker"])
+
+    def test_audio_input_is_silent_unless_the_host_microphone_is_asked_for(
+        self
+    ) -> None:
+        default = boot_android.emulator_command(
+            boot_android.parse_arguments([]), Path("/r"), Path("/i"), Path("/e")
+        )
+        self.assertFalse(any("--audio-input" in argument for argument in default))
+        options = boot_android.parse_arguments(["--audio-input", "host"])
+        command = boot_android.emulator_command(
+            options, Path("/r"), Path("/i"), Path("/e")
+        )
+        self.assertIn("--audio-input=host", command)
+        with self.assertRaises(SystemExit):
+            boot_android.parse_arguments(["--audio-input", "mic"])
+
     def test_adb_forward_is_loopback_only(self) -> None:
         options = boot_android.parse_arguments(["--adb-port", "15555"])
         command = boot_android.emulator_command(
@@ -81,6 +111,17 @@ class BootAndroidTests(unittest.TestCase):
         )
         self.assertIn("--net-forward=tcp:127.0.0.1:15555-5555", command)
         self.assertFalse(any("0.0.0.0" in argument for argument in command))
+
+    def test_boot_mode_defaults_to_auto_and_stays_an_override(self) -> None:
+        # A restart in place picks its ramdisk in auto mode whatever the first
+        # boot was given, so the launcher's own default is auto too.
+        self.assertEqual(boot_android.parse_arguments([]).boot_mode, "auto")
+        for mode in ("auto", "normal", "recovery"):
+            options = boot_android.parse_arguments([f"--boot-mode={mode}"])
+            command = boot_android.emulator_command(
+                options, Path("/r"), Path("/i"), Path("/e")
+            )
+            self.assertIn(f"--android-boot-mode={mode}", command)
 
     def test_recovery_flag_selects_recovery_boot(self) -> None:
         options = boot_android.parse_arguments(["--recovery"])
@@ -179,7 +220,7 @@ class BootAndroidTests(unittest.TestCase):
             self.assertIn("--move-second-header", mutation)
             self.assertIn("--delete=10", mutation)
             self.assertIn(
-                "--new=10:5476352:8386559",
+                "--new=10:6131712:8386559",
                 mutation,
             )
 
@@ -341,6 +382,67 @@ class BootAndroidTests(unittest.TestCase):
                     mock.call(adb.resolve(), "127.0.0.1:5555"),
                     mock.call(adb.resolve(), "127.0.0.1:5555"),
                 ],
+            )
+
+    def test_a_restarting_guest_is_one_process_until_it_ends(self) -> None:
+        # The emulator restarts the guest inside its process, so the launcher
+        # starts it once and waits on that process alone. The wait returns the
+        # status that ended the whole run, here the loop guard's 3.
+        class Guest:
+            pid = 123
+
+            def __init__(self) -> None:
+                self.exited = False
+                self.waits = 0
+
+            def poll(self) -> int | None:
+                return 3 if self.exited else None
+
+            def wait(self, timeout: int | None = None) -> int:
+                del timeout
+                self.waits += 1
+                self.exited = True
+                return 3
+
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary)
+            release = self.installed_release(root / "releases")
+            emulator = root / "uml-darwin-android17"
+            adb = root / "adb"
+            for executable in (emulator, adb):
+                executable.write_text("#!/bin/sh\n", encoding="utf-8")
+                executable.chmod(0o755)
+            guest = Guest()
+            with (
+                mock.patch.object(
+                    boot_android.subprocess, "Popen", return_value=guest
+                ) as popen,
+                mock.patch.object(
+                    boot_android, "prepare_persistent_disk", return_value=False
+                ),
+                mock.patch.object(boot_android, "ensure_loopback_port_available"),
+                mock.patch.object(boot_android, "wait_for_adb") as wait_for_adb,
+                mock.patch.object(boot_android, "install_shutdown_handlers"),
+                mock.patch.object(boot_android, "disconnect_adb"),
+            ):
+                result = boot_android.main(
+                    [
+                        "--release",
+                        str(release),
+                        "--disk",
+                        str(root / "android.img"),
+                        "--emulator",
+                        str(emulator),
+                        "--adb",
+                        str(adb),
+                    ]
+                )
+            self.assertEqual(result, 3)
+            popen.assert_called_once()
+            wait_for_adb.assert_called_once()
+            self.assertEqual(guest.waits, 1)
+            self.assertIn(
+                "--android-boot-mode=auto", popen.call_args.args[0]
             )
 
     def test_guest_that_leads_no_group_is_still_stopped(self) -> None:

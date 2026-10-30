@@ -1,0 +1,2 @@
+# Saves the virtual Wi-Fi network once the system is up.
+/(system_ext|system/system_ext)/bin/kernarium_wifi_network\.sh  u:object_r:kernarium_wifi_network_exec:s0

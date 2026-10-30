@@ -277,11 +277,17 @@ GuestRamCommitment *guest_ram_commitment() noexcept
 void publish_guest_ram_commitment(
 	std::unique_ptr<GuestRamCommitment> commitment) noexcept
 {
-	/* Guest RAM lives as long as the process, like the window it describes. */
+	/* Guest RAM lives until the guest is handed back, and a thread that
+	 * commits or releases only ever runs for a guest that still holds it. */
 	GuestRamCommitment *expected = nullptr;
 	if (published_commitment.compare_exchange_strong(expected,
 		    commitment.get(), std::memory_order_acq_rel))
 		(void)commitment.release();
+}
+
+void retire_guest_ram_commitment() noexcept
+{
+	delete published_commitment.exchange(nullptr, std::memory_order_acq_rel);
 }
 
 int release_guest_ram(std::uint64_t offset, std::uint64_t length) noexcept

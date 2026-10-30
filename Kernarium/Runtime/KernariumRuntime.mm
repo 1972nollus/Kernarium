@@ -2,13 +2,20 @@
 
 #include "KernariumRuntime.h"
 #include "KernariumConsoleInput.hpp"
+#include "KernariumKeyWake.hpp"
 #if KERNARIUM_AUTOMATION_HARNESS
 #include "KernariumHarness.hpp"
 #endif
+#if KERNARIUM_AUTOMATION_ADB_AUTH
+#include "KernariumAdbAuthorization.hpp"
+#endif
 
 #include "audio/in_process_service.hpp"
+#include "audio/microphone_switch.hpp"
+#include "platform/microphone_authorization.hpp"
 #include "video/in_process_service.hpp"
 #include "video/virtio_video_device.hpp"
+#include "video/virtio_video_encoder_device.hpp"
 #include "audio/protocol.hpp"
 #include "balloon/in_process_service.hpp"
 #include "balloon/protocol.hpp"
@@ -131,6 +138,9 @@ std::atomic_bool runtimeActive;
  * kernarium::console::InputRegistry.
  */
 std::mutex emulatorLifecycleMutex;
+/* A held key repeats, so an ordinary key sends the guest one wake edge a second
+ * at most. */
+kernarium::input::KeyWakePolicy keyWakePolicy {std::chrono::seconds(1)};
 std::mutex activeEmulatorMutex;
 uml_emulator* activeEmulator;
 std::mutex activeInputMutex;
@@ -153,6 +163,18 @@ std::mutex consoleOutputCallbackMutex;
 std::mutex consoleStdoutMutex;
 kernarium_runtime_console_output_callback consoleOutputCallback;
 void* consoleOutputContext;
+
+/* The Microphone setting lives as long as the process and a guest that starts
+ * later follows it. It starts off, and creating it touches nothing: no
+ * microphone is opened and no permission is asked until the application turns
+ * it on and the system has granted access. */
+const std::shared_ptr<uml::audio::MicrophoneSwitch>& microphoneSwitch()
+{
+    static const auto& instance = *new std::shared_ptr<uml::audio::MicrophoneSwitch>(
+        std::make_shared<uml::audio::MicrophoneSwitch>(
+            uml::platform::makeAppleMicrophoneAuthorization()));
+    return instance;
+}
 
 void publishConsoleOutput(const void* buffer, std::size_t length)
 {
@@ -674,8 +696,23 @@ void appendKernelCommandLine(
     arguments.emplace_back(
         std::string {densityPrefix} + std::to_string(dotsPerInch));
     /* androidboot properties become immutable ro.boot properties. iOS always
-     * keeps the stock authorization prompt for a previously unseen ADB host. */
+     * keeps the stock authorization prompt for a previously unseen ADB host.
+     * Only the automation runtime lets a launch turn it off, as the macOS
+     * launcher does, so a test driver can reach a fresh guest without a tap;
+     * Kernarium/README.md owns that contract. */
+#if KERNARIUM_AUTOMATION_ADB_AUTH
+    const std::string_view adbAuthorization =
+        kernarium::adb::authorizationValue(
+            std::getenv(kernarium::adb::requestVariable.data()),
+            std::getenv("KERNARIUM_HOST_FORWARD"));
+    if (adbAuthorization == "0")
+        std::fputs(
+            "Kernarium: ADB authorization is off for this launch\n", stderr);
+    arguments.emplace_back(
+        std::string {adbAuthorizationPrefix} + std::string {adbAuthorization});
+#else
     arguments.emplace_back(std::string {adbAuthorizationPrefix} + "1");
+#endif
 }
 
 #endif
@@ -906,10 +943,17 @@ int runtimeRun(
             uml::input::virtio::DeviceKind::touchscreen);
         uml::input::virtio::InProcessInputService keyboard(
             uml::input::virtio::DeviceKind::keyboard);
-        const auto audioService = uml::audio::makeInProcessService();
+        const auto audioService = uml::audio::makeInProcessService(
+            {.microphone = microphoneSwitch()});
         std::unique_ptr<uml::gpu::InProcessVhostUserService> videoService;
         if (!uml::platform::videoDecodeCapabilities().empty())
             videoService = uml::video::makeInProcessService(sharedMemoryRegions);
+        /* Discovery of the hardware encoder takes test encodes, so it starts
+         * now and the capability check below finds it done or nearly. */
+        uml::platform::prepareVideoEncodeCapabilities();
+        std::unique_ptr<uml::gpu::InProcessVhostUserService> videoEncoderService;
+        if (!uml::platform::videoEncodeCapabilities().empty())
+            videoEncoderService = uml::video::makeInProcessEncoderService(sharedMemoryRegions);
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         const auto batteryService = uml::battery::makeInProcessService();
 #endif
@@ -997,6 +1041,10 @@ int runtimeRun(
         if (videoService) {
             arguments.emplace_back(uml::gpu::virtioDeviceArgument(
                 videoService->takeConnectionName(), uml::video::deviceId));
+        }
+        if (videoEncoderService) {
+            arguments.emplace_back(uml::gpu::virtioDeviceArgument(
+                videoEncoderService->takeConnectionName(), uml::video::encoderDeviceId));
         }
 #if KERNARIUM_AUTOMATION_HARNESS && !KERNARIUM_RUNTIME_ANDROID_GUEST
         if (automation) {
@@ -1125,6 +1173,30 @@ void runtimeResume(void)
         uml_emulator_resume(activeEmulator);
 }
 
+int runtimeSetMicrophone(int enabled)
+{
+    namespace audio = uml::audio;
+    const auto microphone = microphoneSwitch();
+    if (enabled == 0) {
+        microphone->disable();
+        return KERNARIUM_RUNTIME_MICROPHONE_OFF;
+    }
+    /* Never asks: the application asks, and this only carries its answer. */
+    switch (microphone->restore()) {
+    case audio::MicrophoneSwitch::State::off:
+        return KERNARIUM_RUNTIME_MICROPHONE_OFF;
+    case audio::MicrophoneSwitch::State::unasked:
+    case audio::MicrophoneSwitch::State::asking:
+        // The runtime never asks, so a question is never open here.
+        return KERNARIUM_RUNTIME_MICROPHONE_UNASKED;
+    case audio::MicrophoneSwitch::State::denied:
+        return KERNARIUM_RUNTIME_MICROPHONE_DENIED;
+    case audio::MicrophoneSwitch::State::on:
+        return KERNARIUM_RUNTIME_MICROPHONE_ON;
+    }
+    return KERNARIUM_RUNTIME_MICROPHONE_OFF;
+}
+
 int runtimeSetPageCacheTrimming(int enabled)
 {
     std::lock_guard lock(emulatorLifecycleMutex);
@@ -1192,9 +1264,12 @@ void runtimeSendKey(uint16_t code, int pressed)
         activeKeyboard->send(events);
     }
     /* A guest that suspended itself, as Android does once its display is off,
-     * holds the key until something wakes it. Power wakes it, as on a phone.
-     * The wake can wait on the guest's console, so it leaves this thread. */
-    if (code != input::keyPower || pressed == 0)
+     * holds the key until something wakes it. A key-down wakes it, as a phone
+     * wakes to its keyboard, and a touch does not; see KeyWakePolicy. The wake
+     * can wait on the guest's console, so it leaves this thread. */
+    if (!keyWakePolicy.shouldWake(
+            code == input::keyPower, pressed != 0,
+            std::chrono::steady_clock::now()))
         return;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         std::lock_guard lifecycle(emulatorLifecycleMutex);
@@ -1306,11 +1381,12 @@ const kernarium_runtime_api runtimeApi {
     .set_frame_sink = runtimeSetFrameSink,
     .set_background_throttle = runtimeSetBackgroundThrottle,
     .set_page_cache_trimming = runtimeSetPageCacheTrimming,
+    .set_microphone = runtimeSetMicrophone,
 };
 
 } // namespace
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v12(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v13(void)
 {
     return &runtimeApi;
 }

@@ -2,8 +2,9 @@
 
 The virtual CPU runs AArch32 EL0 programs of Armv8-A: ARMv7-A and Armv8
 A32 and T32 (Thumb-2, with IT blocks) with VFPv4-D32, Advanced SIMD and
-the Armv8 additions, on the EABI hard-float ABI that armhf and Android's
-armeabi-v7a use. There is no soft-float, VFPv3-D16 or ARMv5/v6 profile.
+the Armv8 additions, for the hard-float EABI of armhf and the softfp EABI of
+Android's armeabi-v7a, which both execute VFP and NEON on hardware. There is
+no soft-float-only, VFPv3-D16 or ARMv5/v6 profile.
 The pinned Arm AArch32 release (2026-06) defines the catalog; its 302 Base
 and 265 FP&SIMD instruction pages hold 2,363 encodings. 143 of them are
 aliases, preferred disassemblies of words that another encoding decodes,

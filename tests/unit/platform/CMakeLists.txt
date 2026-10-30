@@ -11,6 +11,60 @@ uml_add_unit_test(NAME platform-video-decoder
     COMMAND uml_video_decoder_tests ${PROJECT_SOURCE_DIR}/tests/support/video
     LABELS video TIMEOUT 120)
 
+# The decoder's HEVC header readers and output ordering, which need no hardware.
+add_executable(uml_hevc_stream_tests hevc_stream_tests.cpp)
+target_link_libraries(uml_hevc_stream_tests PRIVATE UML::VideoDecoder)
+uml_add_unit_test(NAME platform-hevc-stream
+    COMMAND uml_hevc_stream_tests ${PROJECT_SOURCE_DIR}/tests/support/video
+    LABELS video)
+
+# The decoder's H.264 header readers and output ordering, which need no hardware.
+add_executable(uml_h264_stream_tests h264_stream_tests.cpp)
+target_link_libraries(uml_h264_stream_tests PRIVATE UML::VideoDecoder)
+uml_add_unit_test(NAME platform-h264-stream
+    COMMAND uml_h264_stream_tests ${PROJECT_SOURCE_DIR}/tests/support/video
+    LABELS video)
+
+# The video encoder backend's Annex B and parameter-set readers, which need no
+# hardware.
+add_executable(uml_video_encoder_bitstream_tests video_encoder_bitstream_tests.cpp)
+target_include_directories(uml_video_encoder_bitstream_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/platform)
+uml_add_unit_test(NAME platform-video-encoder-bitstream
+    COMMAND uml_video_encoder_bitstream_tests ${PROJECT_SOURCE_DIR}/tests/support/video
+    LABELS video)
+
+# The hardware video encoder on this host: discovery, every advertised profile
+# and mode, and the stream checked against the decoder.
+add_executable(uml_video_encoder_tests video_encoder_tests.cpp)
+target_link_libraries(uml_video_encoder_tests PRIVATE
+    UML::VideoEncoder UML::VideoDecoder)
+uml_add_unit_test(NAME platform-video-encoder
+    COMMAND uml_video_encoder_tests ${PROJECT_SOURCE_DIR}/tests/support/video
+    LABELS video TIMEOUT 600)
+
+# Losing the hardware session: the encoder's test variant fails sessions on
+# demand, as the system does when it revokes the hardware.
+add_executable(uml_video_encoder_recovery_tests video_encoder_recovery_tests.cpp)
+target_link_libraries(uml_video_encoder_recovery_tests PRIVATE
+    uml_video_encoder_test_variant UML::VideoDecoder)
+uml_add_unit_test(NAME platform-video-encoder-recovery
+    COMMAND uml_video_encoder_recovery_tests ${PROJECT_SOURCE_DIR}/tests/support/video
+    LABELS video TIMEOUT 300)
+
+# The capability cache, through child processes that find a valid file, no
+# file, or a file they cannot vouch for.
+add_executable(uml_video_encoder_cache_tests video_encoder_cache_tests.cpp)
+target_link_libraries(uml_video_encoder_cache_tests PRIVATE UML::VideoEncoder)
+uml_add_unit_test(NAME platform-video-encoder-cache
+    COMMAND uml_video_encoder_cache_tests
+    LABELS video TIMEOUT 900)
+
+# The system limits hardware encoder sessions across every process, so the tests
+# that hold them (one holds all it can get) run one at a time.
+set_tests_properties(platform-video-encoder platform-video-encoder-recovery
+    platform-video-encoder-cache PROPERTIES RESOURCE_LOCK video-encoder-hardware)
+
 # The platform's run routing; the transaction tests use its test variant.
 add_executable(uml_run_routing_tests
     run_routing_tests.cpp

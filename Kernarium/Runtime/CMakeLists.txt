@@ -60,26 +60,31 @@ endif()
 
 add_library(KernariumRuntime SHARED
     KernariumConsoleInput.hpp
+    KernariumKeyWake.hpp
     KernariumRuntime.h
     KernariumRuntime.mm)
 uml_declare_architecture_target(KernariumRuntime app)
 
-# The release runtime boots only the desktop. The automation runtime, which
-# only test and benchmark drivers package, also accepts a host-built boot
-# payload and relays a guest campaign's artifacts; Kernarium/README.md owns
-# that contract.
+# The release runtime boots only the desktop and keeps the stock ADB
+# authorization prompt. The automation runtime, which only test and benchmark
+# drivers package, differs by guest: the Linux one also accepts a host-built
+# boot payload and relays a guest campaign's artifacts, and the Android one
+# lets a launch turn the guest's ADB authorization off. Kernarium/README.md
+# owns that contract.
+set(_kernarium_automation_harness 0)
+set(_kernarium_automation_adb_auth 0)
 if(UML_KERNARIUM_AUTOMATION_HARNESS)
     if(KERNARIUM_RUNTIME_ANDROID_GUEST)
-        message(FATAL_ERROR
-            "The Kernarium automation harness boots Linux guests only")
+        target_sources(KernariumRuntime PRIVATE
+            KernariumAdbAuthorization.hpp)
+        set(_kernarium_automation_adb_auth 1)
+    else()
+        target_sources(KernariumRuntime PRIVATE
+            KernariumHarness.hpp
+            KernariumHarness.mm
+            KernariumPayloadFile.hpp)
+        set(_kernarium_automation_harness 1)
     endif()
-    target_sources(KernariumRuntime PRIVATE
-        KernariumHarness.hpp
-        KernariumHarness.mm
-        KernariumPayloadFile.hpp)
-    set(_kernarium_automation_harness 1)
-else()
-    set(_kernarium_automation_harness 0)
 endif()
 target_include_directories(KernariumRuntime
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
@@ -113,7 +118,8 @@ target_link_libraries(KernariumRuntime PRIVATE
 target_compile_definitions(KernariumRuntime PRIVATE
     KERNARIUM_RUNTIME_ANDROID_GUEST=${KERNARIUM_RUNTIME_ANDROID_GUEST}
     KERNARIUM_RUNTIME_GUEST_FLAVOR=${KERNARIUM_RUNTIME_GUEST_FLAVOR}
-    KERNARIUM_AUTOMATION_HARNESS=${_kernarium_automation_harness})
+    KERNARIUM_AUTOMATION_HARNESS=${_kernarium_automation_harness}
+    KERNARIUM_AUTOMATION_ADB_AUTH=${_kernarium_automation_adb_auth})
 target_link_options(KernariumRuntime PRIVATE
     "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
 # The framework code signature covers __TEXT pages. The loader aliases the

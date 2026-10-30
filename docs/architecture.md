@@ -38,10 +38,44 @@ state, and copied network callback table. A handle admits at most one run at a
 time. Stop requests affect only that handle's current or queued run and are not
 carried into later runs.
 
-A process runs one guest. After a run's kernel has claimed guest RAM, every
-later run in the process, on any handle, returns `UML_EMULATOR_UNSUPPORTED`
-without entering a kernel; see
-[ADR 0002](decisions/0002-emulator-handle-lifetime.md).
+A process runs one guest, and that guest may restart itself. After a run's
+kernel has claimed guest RAM, every later run in the process, on any handle,
+returns `UML_EMULATOR_UNSUPPORTED` without entering a kernel, except the next
+run on the handle whose last run ended with a restart: that run hands the guest
+back to the process and boots again (`runtime/guest_hand_back`). A run says how
+its guest ended through `uml_emulator_get_run_end`: the guest's own report (see
+[guest lifecycle](#guest-lifecycle)), the host's stop request ahead of it, and a
+failure when the kernel said nothing. The hand-back refuses with `UML_EMULATOR_RUNTIME_ERROR` while a host service
+borrows guest RAM or a kernel thread runs, and otherwise gives back everything
+the kernel took and did not return:
+
+- its descriptors, pthread keys, allocations and mappings outside the window,
+  which the loader records through the imports it follows
+  (`runtime/kernel_resources`) and the hand-back closes, deletes, frees and
+  unmaps, descriptors through `darwin_uml_close`, after the run's memory domain
+  retired and while no kernel thread runs;
+- the process state the kernel changed, which `KernelSignalScope` restores when
+  the kernel returns: every signal disposition, `ITIMER_REAL`, the entering
+  thread's mask and signal stack, and the status flags and terminal attributes
+  of descriptors 0 to 2;
+- the guest-file records, the slots of ended kernel threads, and the handle's
+  suspension, pending page-cache request and hibernation (whose image refers to
+  the commitment and is dropped with it); and
+- the guest RAM: the whole window becomes one protectionless reservation again,
+  the commitment is retired and the token unregistered, so the next kernel
+  finds no byte and no page of this one.
+
+A refusal by the check changes nothing and may be retried: the caller stops
+every service that maps guest RAM, then runs again, and the handle stays
+restartable. The check and the hand-back are not one step, so a view acquired
+after the check makes the final step fail after the ledger has run; a retry
+succeeds. Every run of the process uses the same JIT cache budget and guest CPU
+count, because the budget is published once per process, and a run that asks
+for another is refused.
+
+The freed heap is not returned: the default malloc zone keeps the chunks a boot
+emptied until the system reclaims them, and its in-use bytes stay flat across
+hand-backs. See [ADR 0002](decisions/0002-emulator-handle-lifetime.md).
 
 Runs on different handles serialize through a process address-space gate,
 because an embedded kernel's fixed host mappings cannot be shared. A stop
@@ -71,15 +105,18 @@ Mac in Designed for iPad mode, where the process is a macOS process; placement
 follows the address space the process actually has, so that mode takes the
 macOS window.
 
-On a physical iOS device the window is a reservation, and it never returns
-address space to the process while the VM lives. It is created once, before the
-guest starts, as a single `PROT_NONE MAP_NORESERVE` anonymous mapping; a run
-whose window cannot be reserved fails rather than map guest RAM over a range
-nothing holds. macOS and Designed for iPad do not reserve the window up front:
-the kernel image and the loader tail take it by an address hint the host
-honours, far above the ranges its allocators use. On every product guest pages
-are mapped over the window with `MAP_FIXED`, and releasing one hands its range
-back as a reservation instead of unmapping it: one mapping call, no committed
+On every product the window is a reservation, and it never returns address
+space to the process while the process lives. The first run reserves it, once,
+before the guest starts, as a single `PROT_NONE MAP_NORESERVE` anonymous
+mapping (`runtime::reserve_process_native_window`), and every later run, such as
+that of a guest which restarted itself, takes the same window; a larger guest
+extends it. A run whose window cannot be reserved fails rather than map guest
+RAM over a range nothing holds. macOS reserves it at its address, 96 TiB, or
+not at all; a physical iOS device takes the address that top-packs it, or
+wherever the host has room. The kernel image and the loader tail are mapped
+over the reservation in place. Guest pages are mapped over the
+window with `MAP_FIXED`, and releasing one hands its range back as a
+reservation instead of unmapping it: one mapping call, no committed
 pages, and the replacement is atomic. `munmap`
 would delete the reservation along with the mapping and leave a free gap inside
 the window. Darwin's allocation hint follows the most recently freed range, so
@@ -95,7 +132,16 @@ Domain retirement follows the same rule: it ends one address space, not the
 process, and a later one maps the same window. Guest RAM that a host-service
 view still borrows is the exception: it stays mapped until the last borrowed
 view of the root is released, because in-process backends are stopped only
-after the run returns, and a host stop leaves their queues started.
+after the run returns, and a host stop leaves their queues started. The kernel
+image's last pages are the first RAM the guest owns, and every backend's view
+covers them, so the loader releases the image through the same rule
+(`runtime::release_kernel_image`): it stays mapped while a view borrows the
+root, and a range no view borrows goes back to the reservation, or is unmapped
+outside a window, at once. Retirement publishes the native shadows of a
+descriptor's backing and discards those of guest RAM, which nothing reads
+through a shadow once the run is over and which the loader may already have
+released, so retirement reads none of the root whether the window was kept,
+re-reserved or unmapped.
 
 Every Darwin UML kernel uses its linear physical window as the anonymous RAM
 root. Software-MMU and host-service consumers borrow that root or create
@@ -645,6 +691,17 @@ and a PC alignment fault the 32-bit target address. A fault address wider
 than 32 bits is an engine error and the fatal event, never a guest SIGSEGV
 whose compat siginfo would hide the upper half.
 
+Under top-byte ignore, which every arm64 run has unless the host passes
+`--guest-no-top-byte-ignore` (`--guest-top-byte-ignore` is accepted and
+changes nothing), both arm64 engines strip the top byte of a data address
+before they translate it, so a data abort carries the address they translated
+and never the tag the instruction presented. The kernel therefore does not
+untag the fault address in `segv()`: it cannot know whether the host ignores a
+tag, and a tagged access without it must fault at the address it used. The
+kernel offers the tagged-address ABI only while the host reports the ignore,
+and its contract, including the one fault-address difference from native
+Linux, is in the [shared kernel README](../kernel/common/README.md).
+
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address
@@ -684,8 +741,8 @@ privileged, real-mode, virtual-machine, enclave, and system-management
 instructions are outside this Linux userspace profile, and AMD's 3DNow!, SSE4a
 and CLZERO raise #UD, as on an Intel core. That gate is not proof of an
 arbitrary distribution or complete Linux syscall compatibility. The normal
-mainline slices and Android remain arm64-userspace-only and contain
-none of the x86_64 kernel overlay.
+mainline slices and Android remain arm64 kernels and contain none of
+the x86_64 kernel overlay.
 
 On macOS the x86_64 product can instead run long64 and compat32 tasks on the
 x86-64 JIT, FEXCore embedded behind the static MMU, which
@@ -750,8 +807,9 @@ target mm's generation. That call moves the code stamp of each executable page
 and publishes the range, as a guest code synchronization would. Pages mapped
 without execute permission are skipped, so data transfers publish nothing.
 
-The kernel runs AArch32 tasks (armhf and Android's armeabi-v7a: ARMv7-A and
-Armv8 AArch32 with VFPv4-D32, NEON and EABI hard-float) beside AArch64 ones, as
+The kernel runs AArch32 tasks (armhf with the hard-float EABI and Android's
+armeabi-v7a with the softfp EABI, both ARMv7-A and Armv8 AArch32 on hardware
+VFPv4-D32 and NEON) beside AArch64 ones, as
 arm64 Linux's `COMPAT` does. The bridge identifies one by PSTATE.nRW in the
 entry's pstate, with R0-R14 in x0-x14, D0-D31 in V0-V15, FPSCR split between
 fpsr and fpcr, TPIDRURW in the guest's TLS value and TPIDRURO in the `tpidrro`
@@ -843,9 +901,12 @@ host GPU within seconds and a request that reached Metal after that would make
 the renderer's Vulkan device lost for good, and opens it as the application
 returns.
 
-The [Virtio video device](../darwin/device/video/README.md) bridges the shared
-mainline/Android V4L2 driver to the platform VideoToolbox decoder. It uses its
-own vhost-user connection and requires no GPU context. The
+The [Virtio video devices](../darwin/device/video/README.md) bridge the shared
+mainline/Android V4L2 drivers to the platform VideoToolbox decoder (device 31)
+and encoder (device 30). Each uses its own vhost-user connection and service
+thread and requires no GPU context, and the devices depend only on the platform
+interfaces `darwin/platform/video_decoder.hpp` and
+`darwin/platform/video_encoder.hpp`. The
 [private wire header](../kernel/common/video/README.md) is separate from both
 the public API and the host/kernel bridge ABI.
 
@@ -992,14 +1053,38 @@ consumer reads it back as [`graphics.md`](graphics.md) describes.
 
 Sharing runs the other way too, for a guest whose buffer allocator is not the
 Vulkan driver: when another context asks to import a GL resource, the renderer
-gives that resource a host shared-memory segment the size of its tightly
-packed linear layout and hands out the segment's descriptor. The texture is
+gives that resource a host shared-memory segment the size of its linear layout
+and hands out the segment's descriptor. A row of the segment is padded to the
+first whole number of pixels that makes it a multiple of 16 bytes, the pitch
+Metal reads a texture over a buffer at; the guest allocator pads the buffer it
+asks for by the same rule, and the texture keeps the width the guest samples
+it at. The texture is
 refreshed from the segment before each GL read of it, and the segment is
 rewritten from the texture at the end of a submission that drew into it and
 before its descriptor is handed out. Ordering between the two consumers is the
 guest's own fences; the renderer adds none. A resource no other context
 imports keeps ordinary texture storage, and a host with dma-buf shares through
 that instead.
+
+The in-process GPU service keeps the display apart from the guest's GPU
+connection. The display (the VNC listener and its clients, or the native window
+or Kernarium view) and the frame tap last until the service stops. The
+connection (the Virtio-GPU device, the renderer, and every context and resource
+the guest created in them, with their share of the device memory pool) lasts as
+long as one guest. A guest that restarts itself is a new guest on the same
+machine, so `startNextConnection()` ends the connection, which resets the
+display to its idle picture and destroys the renderer, and opens a fresh one
+with new transport and input endpoints. VNC clients stay connected, the
+listener keeps its port, the window stays open, and display input that arrives
+while no connection exists is dropped. The request gate is the service's, not
+the connection's: a hold placed before the restart still holds the new device,
+and the application opens it as it opened the last. A host-visible blob of the
+new guest has been observed to start zeroed, but nothing here enforces that: the
+host driver or the OS hands out fresh zero-filled memory. On the Mac, a guest
+that left a token in host-visible memory across a restart (freed, mapped at
+exit, and held by a live process) found none of it, and every byte read zero,
+in 128 to 256 MiB scanned on each of the next two boots. The iPad is not yet
+measured.
 
 The devices Kernarium attaches and its display geometry are listed in
 [`../Kernarium/README.md`](../Kernarium/README.md).
@@ -1015,14 +1100,20 @@ until devices, secondary CPUs, interrupts, and timekeeping have reached the
 platform sleep boundary before flushing the host. `uml_emulator_resume()` sends
 the console wake edge. Every console request ends the suspend, so a trimming
 change requested meanwhile waits for the resume, and nothing else on the
-guest's descriptors ends it. An edge sent before the guest reached the
-boundary, as after a suspend request whose reply timed out, still ends it;
-the [mainline README](../kernel/mainline-6.18/README.md) gives the kernel's
-side. `uml_emulator_wake()` sends that edge whatever the host last asked for,
-except to a guest it has quiesced, as a phone's power key does: it ends a
-suspend the guest entered by itself, such as Android's once its display is off,
-and a running guest only answers it. Kernarium sends it after forwarding its
-Power key, whose virtio input cannot wake a suspended guest itself; the macOS
+guest's descriptors ends it, network traffic included. An edge sent before the
+guest reached the boundary, as after a suspend request whose reply timed out,
+still ends it; the [mainline README](../kernel/mainline-6.18/README.md) gives
+the kernel's side, including which wake sources end a suspend the host asked
+for and which end one the guest started. `uml_emulator_wake()` sends that edge
+whatever the host last asked for, except to a guest it has quiesced, as a
+phone's power key does: it ends a suspend the guest entered by itself, such as
+Android's once its display is off and no adb host is connected (the
+[Android README](../android/lineage-24/README.md) explains the wakelock), and a
+running guest only answers it. Network traffic to such a guest ends its own
+suspend as well, so `adb` reaches a guest whose display is off. Kernarium sends
+the edge after forwarding a key-down, since virtio input cannot wake a
+suspended guest itself: at every Power press and at most once a second for any
+other key, so a held key does not repeat it, and never for a touch. The macOS
 VNC display maps XF86PowerOff to the guest's power key, and VNC input is itself
 a wake source. The guest replies to a suspend only after syncing its file
 systems, so the host waits up to eight seconds for that reply. A kernel without
@@ -1031,6 +1122,46 @@ not suspend, falls back to the stop/go pair. Guests that need writeback
 requests boot with magic SysRq enabled; if the physical iOS sandbox cannot bind
 the console, host-file flushing still runs but guest writeback and freeze are
 unavailable.
+
+The kernel says how the guest ends before it shuts its drivers down or runs
+its exitcalls, with the bridge import `darwin_uml_guest_shutdown()`: power-off,
+halt, or restart with the command the guest passed. It reports twice, from a
+reboot notifier and from `machine_restart()`, `machine_halt()` or
+`machine_power_off()`. The runtime logs one line (`guest requested restart
+(command 'recovery')`, `guest powered off` or `guest halted`), and not again for
+a repeat of the report it holds, and keeps the kind and at most 255 bytes of
+the command in the run's `Context`, which `begin_run()` clears and `end_run()`
+leaves for the handle's owner to read. A panic aborts the process and reports
+nothing.
+
+The macOS launchers (`darwin/app/macos`) restart a guest in the same process.
+The machine is made once: the emulator handle, the SLiRP provider with its
+`--net-forward` list, and the GPU service with its display. Each boot makes its
+own services (battery, balloon, video, video encoder, audio, console) and its
+command line, runs, and stops them again. After a restart the launcher resets
+the SLiRP link (stop, then open at once, which replays the forwards) so that no
+connection of the old guest survives, asks the GPU service for its next
+connection, and runs the handle again; any other end leaves in the order a
+single launch always did, and the exit status is the last guest's (0 for a
+power-off or halt, 1 for a launch error). The launcher logs `guest restarting
+(command '...', restart N)` for each restart, writing the guest's command with
+escapes so a log line stays one line. A restart less than 15 s after its boot
+started is early, and five early restarts in a row end the loop with exit
+status 3: a guest that does not boot is not restarted for ever
+(`emulator/src/restart_loop_guard.hpp` owns the policy). A run the library
+refuses to hand back is retried three times, 500 ms apart, before the launch
+fails; a stop request ends the loop at once. A write to a socket whose peer
+reset it must not end the process, so the launcher ignores `SIGPIPE`, which the
+library restores after each run, and the SLiRP provider marks every socket it
+polls with `SO_NOSIGPIPE`.
+
+Android's boot control block is part of the loop. A launch asks the first boot
+for the mode the user chose (`auto` by default); every restart reads the misc
+partition again and, in `auto` mode, boots the ramdisk. A `bootonce-bootloader`
+command is consumed, as a bootloader that continues would, so that Android's
+init writes `boot-recovery` when it reboots into recovery; `boot-recovery`
+itself stays for recovery to clear. See the
+[Android boot contract](../android/lineage-24/README.md).
 
 An application that can be backgrounded holds the guest's GPU requests before it
 quiesces, with the runtime's `set_gpu_hold` (see the request gate under

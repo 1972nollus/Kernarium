@@ -38,3 +38,57 @@ cc_binary {
         "-DVK_USE_PLATFORM_ANDROID_KHR",
     ],
 }
+
+// Splits the guest's network device into the management NIC and the virtual
+// Wi-Fi the framework sees, with Cuttlefish's netlink library.
+cc_binary {
+    name: "kernarium_net_setup",
+    srcs: ["kernarium_net_setup.cpp"],
+    defaults: ["cuttlefish_guest_only"],
+    shared_libs: [
+        "cuttlefish_net",
+        "libbase",
+        "liblog",
+    ],
+    cflags: ["-Wextra"],
+}
+
+// Saves the virtual Wi-Fi network once. It runs in a core domain on the
+// system_ext partition because it drives a framework service, which a vendor
+// domain may not.
+sh_binary {
+    name: "kernarium_wifi_network_script",
+    src: "kernarium_wifi_network.sh",
+    system_ext_specific: true,
+    filename_from_src: true,
+    init_rc: ["kernarium_wifi_network.rc"],
+}
+
+cc_binary {
+    name: "kernarium_vk_ahb_import",
+    srcs: ["kernarium_vk_ahb_import.cpp"],
+    header_libs: ["vulkan_headers"],
+    shared_libs: [
+        "libnativewindow",
+        "libvulkan",
+    ],
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wextra",
+        "-DVK_USE_PLATFORM_ANDROID_KHR",
+    ],
+}
+
+cc_binary {
+    name: "kernarium_ahb_yuv_roundtrip",
+    srcs: ["kernarium_ahb_yuv_roundtrip.cpp"],
+    shared_libs: [
+        "libnativewindow",
+    ],
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wextra",
+    ],
+}

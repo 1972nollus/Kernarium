@@ -21,7 +21,7 @@ GLESv2_kernarium = "libGLESv2_kernarium"
 config_name = "kernarium_venus"
 
 [config.platforms]
-host_platforms = ["android_uml_arm64"]
+host_platforms = ["android_uml_arm64", "android_uml_arm"]
 build_platforms = ["linux_glibc_x86_64"]
 
 [config.static_options]
@@ -45,10 +45,16 @@ venus-protocol-dir = ""
 egl-lib-suffix = "_kernarium"
 gles-lib-suffix = "_kernarium"
 
-# Read by generate-mesa-venus-port.py; the converter ignores this table. Soong
-# makes every warning an error in a project outside device/ and vendor/, which
-# Meson's build of Mesa does not. An exception keeps one warning that Mesa's
-# own build tolerates from failing one module.
+# Read by generate-mesa-venus-port.py; the converter ignores this table. The
+# Soong arch of each host platform: the first platform is the default, and the
+# generator names a generated source that differs between platforms after it.
+[kernarium.platform_arch]
+android_uml_arm64 = "arm64"
+android_uml_arm = "arm"
+
+# Soong makes every warning an error in a project outside device/ and vendor/,
+# which Meson's build of Mesa does not. An exception keeps one warning that
+# Mesa's own build tolerates from failing one module.
 [[kernarium.warning_exception]]
 module = "virgl"
 conlyflags = ["-Wno-error=sometimes-uninitialized"]

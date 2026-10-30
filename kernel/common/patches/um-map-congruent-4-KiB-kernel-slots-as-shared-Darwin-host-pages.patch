@@ -88,7 +88,7 @@ index 9a7b9ed9373370ed8e421004f39fb65e26feec1e..d366f2f28fd61c7b42456abc1a63dd0d
 +
  #endif /* _ASM_UM_VMALLOC_H */
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 813730531f97e2f4d7a01cfb3054177d0dce96dc..37b35d3387afddc48ea6cff26976240f172d47ea 100644
+index c1c5e43b6ad05f4aba9a8136a0184843f6f59f3b..518cd56f2c254bc5e66527256eead5f85fb21282 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -9,6 +9,7 @@

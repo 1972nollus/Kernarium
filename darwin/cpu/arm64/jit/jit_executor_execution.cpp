@@ -17,9 +17,22 @@ namespace uml::cpu::arm64 {
 namespace {
 
 /* The SVCR mode of the translation cpu's next block runs. */
-[[nodiscard]] std::uint8_t guest_translation_mode(const CpuState &cpu) noexcept {
+[[nodiscard]] std::uint8_t guest_sme_mode(const CpuState &cpu) noexcept {
   return static_cast<std::uint8_t>(cpu.svcr & svcr_mask);
 }
+
+/* The mode of the translation cpu's next block runs: its SVCR mode, and
+ * whether the guest's data addresses ignore their top byte. */
+[[nodiscard]] std::uint8_t guest_translation_mode(const CpuState &cpu) noexcept {
+  return static_cast<std::uint8_t>(
+      guest_sme_mode(cpu) | (cpu.tbi_enabled ? translation_mode_tbi : 0U));
+}
+
+/* Bits of an A64 PC that a translation key uses for its own state, which no
+ * guest address a task can map has set. */
+inline constexpr std::uint64_t key_state_bits =
+    aarch32::aarch32_key_bit | aarch32::thumb_key_bit |
+    aarch32::a64_tbi_key_bit;
 
 } // namespace
 
@@ -62,13 +75,26 @@ namespace {
   }
   prepare_links(generation, sequences.code_changes);
   /*
-   * The guest SVCR mode selects the translation (translation_key()). Only
-   * a run that implements SME can be in a nonzero mode, and the state that
-   * mode makes live is accessible before any of its code runs. Nothing
-   * here changes SVCR before the block runs, so each use reads it from
-   * CpuState rather than keeping it live across this dispatch path.
+   * A PC with a bit that a translation key reserves for its own state is
+   * no mapped address; leaving it to the lookup below would run the
+   * translation of another PC or ISA under it. It faults as a fetch from
+   * an unmapped address does.
    */
-  if (guest_translation_mode(cpu) != 0U) [[unlikely]] {
+  if ((cpu.pc & key_state_bits) != 0U) [[unlikely]] {
+    pending_indirect_ = {};
+    std::uint32_t unmapped{};
+    (void)fetch_instruction(memory, cpu.pc, unmapped);
+    return Event::memory_fault;
+  }
+  /*
+   * The guest SVCR mode and top-byte-ignore select the translation
+   * (translation_key()). Only a run that implements SME can be in a nonzero
+   * SVCR mode, and the state that mode makes live is accessible before any
+   * of its code runs. Nothing here changes SVCR before the block runs, so
+   * each use reads it from CpuState rather than keeping it live across this
+   * dispatch path.
+   */
+  if (guest_sme_mode(cpu) != 0U) [[unlikely]] {
     if (cpu.sme_registers == nullptr || !implements_sme(host_capabilities_))
       return Event::fatal;
     if ((cpu.pc & (alignof(std::uint32_t) - 1U)) != 0U)
@@ -156,7 +182,7 @@ namespace {
           this, &Implementation::resolve_block_link, false,
           &Implementation::resolve_indirect_link
       };
-      compiler.set_sme_mode(mode);
+      compiler.set_translation_mode(mode);
       // Compile once on a miss. Speculatively lowering the whole block a
       // second time for GPR residency delays cold multi-process workloads.
       const auto compiled = compiler.compile(cpu.pc, fetched);
@@ -234,7 +260,7 @@ namespace {
               this, &Implementation::resolve_block_link, false,
               &Implementation::resolve_indirect_link
           };
-          retry_compiler.set_sme_mode(mode);
+          retry_compiler.set_translation_mode(mode);
           const auto retry_compiled = retry_compiler.compile(
               cpu.pc, std::span{instructions}.first(count));
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -357,7 +383,7 @@ JitExecutor::Implementation::tracked_store_function(CompiledBlock &block, Static
       return nullptr;
   }
   JitCompiler compiler{nullptr, nullptr, true};
-  compiler.set_sme_mode(translation_key_mode(block.key));
+  compiler.set_translation_mode(translation_key_mode(block.key));
   const auto compiled = compiler.compile(
       translation_key_pc(block.key),
       std::span{instructions}.first(block.instruction_count));
@@ -415,7 +441,8 @@ void JitExecutor::Implementation::clear_tracked_store_cache() noexcept {
   arm64::restore_native_fp_environment(cpu);
   cpu.access_fp_state();
   const auto translation =
-      translate_single_instruction(cpu.pc, instruction, false, cpu.svcr);
+      translate_single_instruction(cpu.pc, instruction, false,
+                                   guest_translation_mode(cpu));
   /*
    * The transactional class is register-only FP/SIMD data processing. A
    * translation that could not be built, or that would write memory the
@@ -469,7 +496,7 @@ JitExecutor::Implementation::translate_single_instruction(
     std::uint64_t pc, std::uint32_t instruction, bool track_direct_stores,
     std::uint8_t mode) {
   JitCompiler compiler{nullptr, nullptr, track_direct_stores};
-  compiler.set_sme_mode(mode);
+  compiler.set_translation_mode(mode);
   return store_single_translation(
       compiler.compile(pc, std::span{&instruction, std::size_t{1}}));
 }
@@ -541,7 +568,8 @@ JitExecutor::Implementation::store_single_translation(
     CpuState &cpu, std::uint32_t instruction, std::size_t &executed) {
   executed = 0;
   const auto translation =
-      translate_single_instruction(cpu.pc, instruction, false, cpu.svcr);
+      translate_single_instruction(cpu.pc, instruction, false,
+                                   guest_translation_mode(cpu));
   if (!translation)
     return Event::fatal;
   std::uint32_t deferred_exclusive = 0;
@@ -549,7 +577,7 @@ JitExecutor::Implementation::store_single_translation(
       cpu, *translation,
       [&] {
         return translate_single_instruction(cpu.pc, instruction, true,
-                                            cpu.svcr);
+                                            guest_translation_mode(cpu));
       },
       executed, deferred_exclusive);
   if (!published)
@@ -621,7 +649,10 @@ void JitExecutor::Implementation::record_pending_indirect(void *pointer, std::ui
    * generated-code pointer. A miss can therefore never turn a corrupted or
    * stale pointer into a host dereference.
    */
-  if ((cpu.pc & (alignof(std::uint32_t) - 1U)) != 0U) {
+  /* An AArch32 key never has the top-byte-ignore bit, so only an A64 PC
+   * that would alias a translation of another mode has it. */
+  if ((cpu.pc & (alignof(std::uint32_t) - 1U)) != 0U ||
+      (cpu.pc & aarch32::a64_tbi_key_bit) != 0U) {
     pending_indirect_ = {};
     return;
   }

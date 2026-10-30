@@ -12,8 +12,7 @@ mode. Build, launch, and test commands are in
 ```text
 Kernarium/            SwiftUI application: settings, guest selection, disk
                       capacity, decompression, console, shader cache
-Runtime/              runtime framework target, one per kernel flavour and page
-                      profile
+Runtime/              runtime framework target, one per kernel flavour
 KernariumTests/       hosted application and runtime tests
 KernariumUITests/     UI tests
 KernariumAutomation/  long-lived UI-automation host for a connected device
@@ -125,12 +124,29 @@ harness session runs before powering the guest off. The lanes are in
 [`testing.md`](../docs/testing.md#apple-builds-and-kernarium) and
 [`tests/perf/README.md`](../tests/perf/README.md).
 
+The Android runtime has an automation variant of its own, the
+`kernarium-ios-device-android-automation` preset packaged with
+`scripts/package-ios-frameworks.sh --android-automation`. The release runtime
+always starts the guest with `androidboot.kernarium.adb_auth=1`, so a fresh
+bundle's first ADB connection waits for the "Allow USB debugging" prompt, and
+a driver without a person at the screen cannot answer it. Only the automation
+runtime reads `KERNARIUM_ANDROID_ADB_AUTH`: `0` starts one launch with
+authorization off, as the macOS launcher does, and `1` or unset keeps the
+prompt. It prints `Kernarium: ADB authorization is off for this launch`, and
+it refuses the setting unless `KERNARIUM_HOST_FORWARD` is unset or listens on
+loopback, because authorization off also makes `adb root` available to
+whatever reaches the forward. A host on USB reaches a loopback forward through
+`iproxy`; a forward on every interface or on a network address is refused.
+The packaging script refuses a release runtime that carries the switch.
+
 ## Devices and display
 
 Kernarium attaches:
 
 - an absolute touchscreen and evdev keyboard;
-- one signed-16-bit stereo 48 kHz playback stream through Virtio-Sound;
+- a signed-16-bit 48 kHz playback stream (stereo) and capture stream
+  (mono or stereo) through Virtio-Sound, whose capture records silence unless
+  the user turns on Microphone;
 - an Android-only Virtio battery reflecting the Apple host's percentage and
   charging state, with a 100-percent charging fallback when the host has no
   readable battery;
@@ -162,12 +178,37 @@ Tiling and Slide Over, from the Window menu of a window zoomed to the screen,
 only arrange that window, and the guest display follows its size as it does a
 resize.
 
+### Microphone
+
+Emulator Settings has a Microphone switch, off by default. While it is off, or
+iOS has not granted access, a guest that records gets silence in real time
+and nothing opens the microphone. Turning it on is the one place iOS is asked
+for access: the application asks (`MicrophoneSetting`), as the direct result of
+the switch, and then tells the runtime (`set_microphone`), which never asks and
+never shows a prompt. The switch applies at once, unlike the rest of the form,
+which is why Cancel does not undo it. A launch that finds it on carries it into
+the guest without asking, so a user who dismissed the question is not asked
+again at launch; iOS's Settings is where to change the answer, and the
+application picks the change up when it becomes active.
+
+The microphone is opened only while a program in the guest records, so iOS's
+recording indicator is lit only then, and it is closed when the program stops.
+The audio session is play-and-record, still mixing with other audio, only for
+that time; the Picture in Picture window keeps that category when it finds it
+rather than replacing it with the playback category, which its movie mode needs.
+A guest kept running in the background may keep recording while the program
+does, under the `audio` background mode; iOS's indicator shows it.
+[`../darwin/device/audio/README.md`](../darwin/device/audio/README.md#microphone)
+owns the device side.
+
 ## Lifecycle
 
 Kernarium asks the guest to write back when the application loses focus,
 quiesces it before the application is backgrounded or terminated, and resumes
-it on foregrounding. Its Power key also wakes a guest that suspended itself,
-such as Android once its display is off. The runtime side of sync, quiesce,
+it on foregrounding. A key press also wakes a guest that suspended itself,
+such as Android once its display is off, as a phone wakes to its keyboard;
+a touch does not. Power wakes it at every press, any other key at most once a
+second. The runtime side of sync, quiesce,
 resume, and wake is in
 [`../docs/architecture.md`](../docs/architecture.md#guest-lifecycle).
 
@@ -307,8 +348,9 @@ Each script documents its options in `--help` or its header:
   on an Apple silicon Mac in Designed for iPad mode;
 - `package-ios-frameworks.sh` packages the selected runtime and graphics slices
   and the static GPT fdisk and zstd XCFrameworks for Xcode, with
-  `--automation` the automation Linux runtime, and the host battery archive
-  only `KernariumTests` links;
+  `--automation` the automation Linux runtime, with `--android-automation`
+  the automation Android runtime, and the host battery and video encoder
+  archives only `KernariumTests` links;
 - `make-guest-bundle.py` assembles an Android `.kern` bundle from an installed
   release;
 - `ipad-automation.py` drives UI automation on a connected iPad through the

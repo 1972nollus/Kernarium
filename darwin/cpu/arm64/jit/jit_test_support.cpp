@@ -679,9 +679,9 @@ run_translation_on_tlb(const JitCompiler::Result &compiled, CpuState &cpu,
 run_block_on_tlb_for_testing(std::uint64_t pc,
                              std::span<const std::uint32_t> instructions,
                              CpuState &cpu, ::uml::memory::Tlb &tlb,
-                             std::uint8_t sme_mode) {
+                             std::uint8_t mode) {
   JitCompiler compiler{};
-  compiler.set_sme_mode(sme_mode);
+  compiler.set_translation_mode(mode);
   return run_translation_on_tlb(compiler.compile(pc, instructions), cpu, tlb);
 }
 
@@ -760,7 +760,7 @@ ModeCompilation compile_block_in_mode(
       shape == LinkShape::direct ? direct : nullptr,
       shape == LinkShape::tracked,
       shape == LinkShape::indirect ? indirect : nullptr};
-  compiler.set_sme_mode(mode);
+  compiler.set_translation_mode(mode);
   const auto compiled = compiler.compile(pc, instructions);
   context.result.code = copied_code(compiled);
   for (const auto &relocation : compiled.relocations)
@@ -1052,6 +1052,22 @@ bool indirect_link_table_is_bounded(std::size_t capacity) {
          first->entries[0].link == &empty &&
          table.find_or_create(0x8000'0000) == nullptr &&
          table.size() == capacity;
+}
+
+ExclusiveMonitorState exclusive_monitor_state_for_testing() {
+  ExclusiveMonitorState state;
+  state.active_reservations =
+      active_jit_reservations.load(std::memory_order_seq_cst);
+  {
+    std::scoped_lock lock{jit_reservations_mutex};
+    state.reservations = jit_reservations.size();
+  }
+  {
+    std::scoped_lock lock{jit_store_participants_mutex};
+    state.store_participants = jit_store_participants.size();
+  }
+  state.gate_quiescent = jit_exclusive_gate_is_quiescent_for_testing();
+  return state;
 }
 
 } // namespace jit::testing

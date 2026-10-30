@@ -47,12 +47,6 @@ struct KernariumTests {
             ) == "Kernarium thermal state: phase=start state=nominal " +
                 "uptime=12.500"
         )
-        #expect(
-            ThermalStateReport.probeLine(
-                state: .fair,
-                uptime: 456.7894
-            ) == "Kernarium thermal probe: state=fair uptime=456.789"
-        )
     }
 
     @Test
@@ -287,7 +281,7 @@ struct KernariumTests {
             GuestTouchEvent(x: 399, y: 400, pressed: true),
             GuestTouchEvent(x: 280, y: 400, pressed: true),
         ])
-        #expect(path.cancel(
+        #expect(path.end(
             at: CGPoint(x: 50, y: 125),
             geometry: geometry
         ) == [
@@ -501,14 +495,7 @@ struct KernariumTests {
     @MainActor
     func overlayDiskIsRecreatedAtRequestedSize() throws {
         let manager = FileManager.default
-        let directory = manager.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString,
-            isDirectory: true
-        )
-        try manager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
+        let directory = try makeScratchDirectory("overlay-disk")
         defer { try? manager.removeItem(at: directory) }
 
         let first = try OverlayDisk.recreate(sizeGiB: 3, in: directory)
@@ -531,14 +518,7 @@ struct KernariumTests {
     @Test
     func diskUtilExpandsRawImageWithoutChangingItsPrefix() throws {
         let manager = FileManager.default
-        let directory = manager.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString,
-            isDirectory: true
-        )
-        try manager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
+        let directory = try makeScratchDirectory("disk-util")
         defer { try? manager.removeItem(at: directory) }
         let image = directory.appendingPathComponent("disk.img")
         let original = Data([0x45, 0x46, 0x49, 0x20, 0x50, 0x41, 0x52, 0x54])
@@ -557,16 +537,13 @@ struct KernariumTests {
     @Test
     func bundlePreparesItsDirectlyWritableDisk() throws {
         let manager = FileManager.default
-        let directory = manager.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString,
-            isDirectory: true
-        )
+        let directory = try makeScratchDirectory("bundle-disk")
+        defer { try? manager.removeItem(at: directory) }
         let guestDirectory = directory.appendingPathComponent("guest")
         try manager.createDirectory(
             at: guestDirectory,
             withIntermediateDirectories: true
         )
-        defer { try? manager.removeItem(at: directory) }
         let disk = guestDirectory.appendingPathComponent("disk.img")
         #expect(manager.createFile(atPath: disk.path, contents: Data([1])))
         let bundle = GuestBundle(
@@ -587,15 +564,16 @@ struct KernariumTests {
     @Test
     func androidBundleSelectionDoesNotRequireReleaseMetadata() throws {
         let manager = FileManager.default
-        let directory = manager.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension(GuestBundle.pathExtension)
+        let directory = try makeScratchDirectory(
+            "bundle-selection",
+            pathExtension: GuestBundle.pathExtension
+        )
+        defer { try? manager.removeItem(at: directory) }
         let guestDirectory = directory.appendingPathComponent("guest")
         try manager.createDirectory(
             at: guestDirectory,
             withIntermediateDirectories: true
         )
-        defer { try? manager.removeItem(at: directory) }
         let disk = guestDirectory.appendingPathComponent("legacy.img")
         #expect(manager.createFile(atPath: disk.path, contents: Data()))
 
@@ -679,6 +657,112 @@ struct KernariumTests {
     }
 
     @Test
+    func androidDiskSizeRangeIsSixThroughSixtyFourGiB() {
+        #expect(EmulatorConfiguration.androidDiskSizeRangeGiB == 6...64)
+        #expect(EmulatorConfiguration.defaultAndroidDiskSizeGiB == 8)
+
+        let (defaults, suiteName) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        // A disk stored below the range, as an older version allowed, is
+        // raised to its floor.
+        defaults.set(4, forKey: "emulator.androidDiskSizeGiB")
+        #expect(
+            EmulatorConfiguration.load(
+                defaults: defaults,
+                physicalProcessorCount: 6
+            ).androidDiskSizeGiB == 6
+        )
+
+        // The environment override takes a size inside the range only; any
+        // other leaves the stored value.
+        defaults.set(12, forKey: "emulator.androidDiskSizeGiB")
+        for (value, expected) in [("5", 12), ("6", 6), ("64", 64), ("65", 12)] {
+            #expect(
+                EmulatorConfiguration.load(
+                    defaults: defaults,
+                    physicalProcessorCount: 6,
+                    environment: [
+                        EmulatorConfiguration.androidDiskSizeEnvironmentKey:
+                            value
+                    ]
+                ).androidDiskSizeGiB == expected
+            )
+        }
+    }
+
+    @Test
+    func savedConfigurationUsesTheStoredKeysEveryBuildWrote() {
+        let (defaults, suiteName) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        EmulatorConfiguration(
+            vCPUCount: 3,
+            guestMemoryMiB: 1536,
+            overlaySizeGiB: 12,
+            androidDiskSizeGiB: 20,
+            rootfsFilename: "phosh.erofs",
+            retinaMode: true,
+            autoResizeGuest: false,
+            androidBootMode: .normal
+        ).save(defaults: defaults)
+
+        #expect(defaults.integer(forKey: "emulator.vCPUCount") == 3)
+        #expect(defaults.integer(forKey: "emulator.guestMemoryMiB") == 1536)
+        #expect(defaults.integer(forKey: "emulator.overlaySizeGiB") == 12)
+        #expect(defaults.integer(forKey: "emulator.androidDiskSizeGiB") == 20)
+        #expect(defaults.string(forKey: "emulator.rootfsFilename") == "phosh.erofs")
+        #expect(defaults.object(forKey: "emulator.retinaMode") as? Bool == true)
+        #expect(
+            defaults.object(forKey: "emulator.autoResizeGuest") as? Bool == false
+        )
+        #expect(defaults.integer(forKey: "emulator.androidBootMode") == 1)
+        // Nothing else is stored.
+        #expect(
+            defaults.dictionaryRepresentation().keys
+                .filter { $0.hasPrefix("emulator.") }.count == 8
+        )
+    }
+
+    @Test
+    func storedValuesOfTheWrongKindFallBackToTheirBounds() {
+        let (defaults, suiteName) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("four", forKey: "emulator.vCPUCount")
+        defaults.set("big", forKey: "emulator.guestMemoryMiB")
+        defaults.set("x", forKey: "emulator.overlaySizeGiB")
+        defaults.set("x", forKey: "emulator.androidDiskSizeGiB")
+        defaults.set(99, forKey: "emulator.androidBootMode")
+
+        let configuration = EmulatorConfiguration.load(
+            defaults: defaults,
+            physicalProcessorCount: 6
+        )
+
+        #expect(configuration.vCPUCount == 1)
+        #expect(configuration.guestMemoryMiB == 512)
+        #expect(configuration.overlaySizeGiB == 1)
+        #expect(configuration.androidDiskSizeGiB == 6)
+        #expect(configuration.androidBootMode == .automatic)
+
+        // Only "0" and "1" choose a switch from the environment.
+        for ignored in ["", " 1", "yes", "true", "01"] {
+            let loaded = EmulatorConfiguration.load(
+                defaults: defaults,
+                physicalProcessorCount: 6,
+                environment: [
+                    EmulatorConfiguration.retinaEnvironmentKey: ignored,
+                    EmulatorConfiguration.autoResizeGuestEnvironmentKey: ignored,
+                ]
+            )
+            #expect(loaded.retinaMode == EmulatorConfiguration.defaultRetinaMode)
+            #expect(
+                loaded.autoResizeGuest ==
+                    EmulatorConfiguration.defaultAutoResizeGuest
+            )
+        }
+    }
+
+    @Test
     func storedUnifiedImageSelectionOutlivesTheDesktopDefault() {
         let (defaults, suiteName) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -695,20 +779,6 @@ struct KernariumTests {
             defaults.string(forKey: "emulator.rootfsFilename") ==
                 "rootfs.erofs"
         )
-    }
-
-    @Test
-    func retiredKernelPageSizeSettingIsDroppedOnLoad() {
-        let (defaults, suiteName) = isolatedDefaults()
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set(16384, forKey: "emulator.kernelPageSize")
-
-        _ = EmulatorConfiguration.load(
-            defaults: defaults,
-            physicalProcessorCount: 6
-        )
-
-        #expect(defaults.object(forKey: "emulator.kernelPageSize") == nil)
     }
 
     @Test
@@ -816,14 +886,7 @@ struct KernariumTests {
     @Test
     func rootfsEnumerationIncludesOnlyRegularSupportedImages() throws {
         let manager = FileManager.default
-        let directory = manager.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString,
-            isDirectory: true
-        )
-        try manager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
+        let directory = try makeScratchDirectory("rootfs-enumeration")
         defer { try? manager.removeItem(at: directory) }
 
         #expect(
@@ -876,14 +939,7 @@ struct KernariumTests {
     @Test
     func zstdUtilReportsProgressAndCreatesSparseOutput() throws {
         let manager = FileManager.default
-        let directory = manager.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString,
-            isDirectory: true
-        )
-        try manager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
+        let directory = try makeScratchDirectory("zstd-sparse")
         defer { try? manager.removeItem(at: directory) }
 
         let source = directory.appendingPathComponent("disk.img.zst")
@@ -936,14 +992,7 @@ struct KernariumTests {
     @Test
     func zstdUtilLeavesExistingDestinationUntouchedOnFailure() throws {
         let manager = FileManager.default
-        let directory = manager.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString,
-            isDirectory: true
-        )
-        try manager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
+        let directory = try makeScratchDirectory("zstd-failure")
         defer { try? manager.removeItem(at: directory) }
 
         let source = directory.appendingPathComponent("invalid.zst")

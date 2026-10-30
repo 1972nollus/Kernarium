@@ -46,7 +46,7 @@ SGDISK_FALLBACK_CANDIDATES = (
     Path("/usr/local/bin/sgdisk"),
 )
 USERDATA_PARTITION_NUMBER = 10
-USERDATA_FIRST_LBA = 5_476_352
+USERDATA_FIRST_LBA = 6_131_712
 USERDATA_TYPE_GUID = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
 USERDATA_UNIQUE_GUID = "523ABB36-1F98-5D08-92D0-31C3C8A47304"
 GPT_TRAILING_FREE_BYTES = 1024**2
@@ -168,16 +168,42 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         choices=("gadgets", "jit"),
         default="gadgets",
     )
+    parser.add_argument(
+        "--audio-output",
+        choices=("host", "null"),
+        default="host",
+        help=(
+            "play guest audio through the Mac's default output, or discard "
+            "it at the rate it would play, for runs that must be silent "
+            "(default: host)"
+        ),
+    )
+    parser.add_argument(
+        "--audio-input",
+        choices=("silent", "host"),
+        default="silent",
+        help=(
+            "record silence in the guest, or record from the Mac's "
+            "microphone; host asks macOS for microphone access on behalf of "
+            "the app that runs this script (default: silent)"
+        ),
+    )
     boot_mode = parser.add_mutually_exclusive_group()
     boot_mode.add_argument(
-        "--boot-mode", choices=("auto", "normal", "recovery"), default="normal"
+        "--boot-mode",
+        choices=("auto", "normal", "recovery"),
+        default="auto",
+        help=(
+            "which ramdisk the first boot uses: auto follows the disk's "
+            "bootloader message, as every restart does (default: auto)"
+        ),
     )
     boot_mode.add_argument(
         "--recovery",
         action="store_const",
         const="recovery",
         dest="boot_mode",
-        help="boot the accepted release into recovery",
+        help="boot the accepted release into recovery once, as a first-boot override",
     )
     parser.add_argument(
         "--build",
@@ -489,6 +515,12 @@ def emulator_command(
           if options.display == "vnc" else []),
         f"--gpu-width={options.width}",
         f"--gpu-height={options.height}",
+        "--video",
+        "--video-encoder",
+        *([f"--audio-output={options.audio_output}"]
+          if options.audio_output != "host" else []),
+        *([f"--audio-input={options.audio_input}"]
+          if options.audio_input != "silent" else []),
         f"ncpus={options.cpus}",
         f"mem={options.memory}",
         f"--execution-engine={options.engine}",
@@ -641,6 +673,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         try:
             wait_for_adb(adb, serial, guest, options.adb_timeout)
             print(f"ADB connected: {adb} -s {serial} shell", file=sys.stderr)
+            # A guest that restarts itself (adb reboot, a power-menu restart,
+            # a tradefed reboot) boots again inside this process, on the same
+            # ADB serial, so one wait covers every boot until it powers off.
             return guest.wait()
         except KeyboardInterrupt:
             return 130

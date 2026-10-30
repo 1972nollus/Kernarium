@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -28,13 +29,17 @@ namespace {
 constexpr std::uint64_t sectorSize = 512;
 constexpr std::uint64_t mebibyte = 1'048'576ULL;
 constexpr std::uint64_t gibibyte = 1'073'741'824ULL;
-constexpr std::uint64_t seedDiskSize = 2'803ULL * mebibyte;
+constexpr std::uint64_t seedDiskSize = 3'123ULL * mebibyte;
 constexpr std::uint64_t backupGptReservation = mebibyte;
-constexpr std::uint64_t minimumDiskSizeGiB = 4;
+constexpr std::uint64_t minimumDiskSizeGiB = 6;
 constexpr std::uint64_t maximumDiskSizeGiB = 64;
 constexpr std::uint64_t bootImagePageSize = 4096;
 constexpr std::size_t bootImageHeaderSize = 1584;
 constexpr std::string_view recoveryCommand = "boot-recovery";
+constexpr std::string_view bootloaderCommand = "bootonce-bootloader";
+/* The command field that opens the bootloader message (struct
+ * bootloader_message in AOSP's bootloader_message.h). */
+constexpr std::size_t bootloaderCommandSize = 32;
 
 struct ExpectedPartition {
 	std::string_view name;
@@ -43,16 +48,16 @@ struct ExpectedPartition {
 };
 
 constexpr std::array seedPartitions {
-	ExpectedPartition{"system", 1'048'576ULL, 1'409'286'144ULL},
-	ExpectedPartition{"system_ext", 1'410'334'720ULL, 536'870'912ULL},
-	ExpectedPartition{"product", 1'947'205'632ULL, 536'870'912ULL},
-	ExpectedPartition{"vendor", 2'484'076'544ULL, 268'435'456ULL},
-	ExpectedPartition{"odm", 2'752'512'000ULL, 4'194'304ULL},
-	ExpectedPartition{"metadata", 2'756'706'304ULL, 16'777'216ULL},
-	ExpectedPartition{"init_boot", 2'773'483'520ULL, 8'388'608ULL},
-	ExpectedPartition{"misc", 2'781'872'128ULL, 1'048'576ULL},
-	ExpectedPartition{"recovery", 2'782'920'704ULL, 20'971'520ULL},
-	ExpectedPartition{"userdata", 2'803'892'224ULL, 134'217'728ULL},
+	ExpectedPartition{"system", 1'048'576ULL, 1'677'721'600ULL},
+	ExpectedPartition{"system_ext", 1'678'770'176ULL, 536'870'912ULL},
+	ExpectedPartition{"product", 2'215'641'088ULL, 603'979'776ULL},
+	ExpectedPartition{"vendor", 2'819'620'864ULL, 268'435'456ULL},
+	ExpectedPartition{"odm", 3'088'056'320ULL, 4'194'304ULL},
+	ExpectedPartition{"metadata", 3'092'250'624ULL, 16'777'216ULL},
+	ExpectedPartition{"init_boot", 3'109'027'840ULL, 8'388'608ULL},
+	ExpectedPartition{"misc", 3'117'416'448ULL, 1'048'576ULL},
+	ExpectedPartition{"recovery", 3'118'465'024ULL, 20'971'520ULL},
+	ExpectedPartition{"userdata", 3'139'436'544ULL, 134'217'728ULL},
 };
 
 constexpr std::size_t initBootPartition = 6;
@@ -285,6 +290,17 @@ bool recoveryRequested(const File &disk)
 	return command == recoveryCommand;
 }
 
+bool bootloaderRequested(const File &disk)
+{
+	std::array<std::byte, bootloaderCommandSize> command {};
+	disk.read(seedPartitions[miscPartition].offset, command);
+	const auto end = std::find(command.begin(), command.end(), std::byte{});
+	return end != command.end() &&
+		std::string_view(reinterpret_cast<const char *>(command.data()),
+				 static_cast<std::size_t>(end - command.begin())) ==
+			bootloaderCommand;
+}
+
 } // namespace
 
 void validateUbdPath(const std::filesystem::path &path, std::string_view label)
@@ -348,6 +364,59 @@ std::vector<std::string> readKernelCommandLine(
 		throw std::invalid_argument(
 			"the release kernel command line is empty");
 	return arguments;
+}
+
+bool consumeBootloaderCommand(const std::filesystem::path &diskPath)
+{
+	{
+		const File disk(diskPath);
+		validateGpt(disk);
+		if (!bootloaderRequested(disk))
+			return false;
+	}
+	const int descriptor = open(diskPath.c_str(), O_WRONLY | O_NOFOLLOW);
+	if (descriptor < 0)
+		throw std::system_error(errno, std::generic_category(),
+					"cannot open " + diskPath.string());
+	const std::array<std::byte, bootloaderCommandSize> cleared {};
+	const auto written = pwrite(
+		descriptor, cleared.data(), cleared.size(),
+		static_cast<off_t>(seedPartitions[miscPartition].offset));
+	const int writeError = written < 0 ? errno : EIO;
+	const int syncError = fsync(descriptor) == 0 ? 0 : errno;
+	const int closeError = close(descriptor) == 0 ? 0 : errno;
+	if (written != static_cast<ssize_t>(cleared.size()))
+		throw std::system_error(writeError, std::generic_category(),
+					"cannot clear the bootloader command");
+	if (syncError != 0 || closeError != 0)
+		throw std::system_error(syncError != 0 ? syncError : closeError,
+					std::generic_category(),
+					"cannot flush the bootloader command");
+	return true;
+}
+
+RestartBoot selectRestartBoot(const std::filesystem::path &diskPath)
+{
+	const bool consumed = consumeBootloaderCommand(diskPath);
+	return RestartBoot{selectBoot(diskPath, BootMode::automatic), consumed};
+}
+
+std::string lcdDensityArgument(std::uint32_t dotsPerInch)
+{
+	return std::string{lcdDensityPrefix} +
+	       std::to_string(dotsPerInch == 0 ? defaultLcdDensity : dotsPerInch);
+}
+
+std::uint32_t parseDotsPerInch(std::string_view text)
+{
+	std::uint32_t parsed = 0;
+	const auto [end, error] =
+		std::from_chars(text.data(), text.data() + text.size(), parsed);
+	if (error != std::errc{} || end != text.data() + text.size() ||
+	    parsed == 0)
+		throw std::invalid_argument("invalid dots per inch: " +
+					    std::string{text});
+	return parsed;
 }
 
 BootSelection selectBoot(const std::filesystem::path &diskPath,

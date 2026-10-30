@@ -62,6 +62,12 @@ void JitCompiler::emit_tlb_set(unsigned address) {
     emitter_.add_shifted(0, 14, 0, 5);
   }
 
+void JitCompiler::emit_untag_data_address(unsigned address) {
+    if (!top_byte_ignore())
+      return;
+    emitter_.ubfm(address, address, 0, 55);
+  }
+
 void JitCompiler::emit_translation_cold(const TranslationColdPath &path) {
     emitter_.bind(path.label);
     if (!path.bridge) {
@@ -236,12 +242,9 @@ void JitCompiler::clear_local_exclusive_monitor() {
         cold_exit(load_instruction, pc, ColdPath::Action::memory_fault);
 
     load_gpr(8, base, true);
-    if (base == 31U) {
+    if (base == 31U)
       emit_misalignment_check(8, 16, slow);
-    } else {
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
-    }
+    emit_untag_data_address(8);
     emit_misalignment_check(8, bytes, slow);
 
     /*
@@ -260,6 +263,7 @@ void JitCompiler::clear_local_exclusive_monitor() {
      */
     track_direct_store(21, bytes, count_ + store_index);
     load_gpr(8, base, true);
+    emit_untag_data_address(8);
     emit_translate(8, Access::read, slow, fault, bytes);
     emitter_.compare_register(8, 21);
     emitter_.branch_condition(slow, 1); // NE
@@ -433,13 +437,8 @@ void JitCompiler::emit_native_atomic_address(std::uint32_t instruction,
         cold_exit(instruction, pc, ColdPath::Action::exclusive_slow);
     const auto fault =
         cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-    if (base == 31U) {
-      emit_misalignment_check(8, 16, slow);
-    } else {
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
-      emit_misalignment_check(8, bytes, slow);
-    }
+    emit_untag_data_address(8);
+    emit_misalignment_check(8, base == 31U ? 16 : bytes, slow);
     emit_translate(8, Access::write, slow, fault, 1);
     track_direct_store(8, bytes);
   }
@@ -461,13 +460,8 @@ void JitCompiler::emit_native_ordered_load(std::uint32_t instruction,
     const auto slow = cold_exit(instruction, pc, slow_action);
     const auto fault =
         cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-    if (base == 31U) {
-      emit_misalignment_check(8, 16, slow);
-    } else {
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
-      emit_misalignment_check(8, bytes, slow);
-    }
+    emit_untag_data_address(8);
+    emit_misalignment_check(8, base == 31U ? 16 : bytes, slow);
     emit_translate(8, Access::read, slow, fault, 1);
     const auto native_destination =
         write_native_gpr(destination, false, false, 9);
@@ -569,15 +563,9 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
        * check before either memory or writeback can change. */
       emit_misalignment_check(8, 16, slow);
     }
-    if (base != 31U) {
-      /* Top-byte-ignore untagging stays on the exact semantic bridge.
-       * Untagged programs take the straight native path, and an SP base
-       * is never untagged. */
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
-    }
     if (mode != 1U)
       emit_displacement(8, 8);
+    emit_untag_data_address(8);
 
     /* The helper remains responsible for cross-page atomicity. The common
      * same-page case needs one TLB lookup and one native pair instruction. */
@@ -727,15 +715,7 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     if (base == 31U) {
       emit_misalignment_check(8, 16, slow);
     }
-    if (base != 31U) {
-      /*
-       * Untagged programs retain the direct native transfer. Top-byte
-       * ignore selects the cold bridge, which strips the logical tag; an SP
-       * base is never untagged.
-       */
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
-    }
+    emit_untag_data_address(8);
     emit_translate(8, load ? Access::read : Access::write, slow, fault,
                    transfer_size);
     if (!load)
@@ -848,13 +828,7 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
         cold_exit(instruction, pc, ColdPath::Action::memory_slow);
     const auto fault =
         cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-    if (base != 31U) {
-      /* Tagged-address handling stays on the exact semantic cold path. The
-       * ordinary untagged hot path pays one load and one predicted branch;
-       * an SP base is never untagged. */
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(fallback, 0, false, true);
-    }
+    emit_untag_data_address(8);
     emit_translate(8, load ? Access::read : Access::write, fallback, fault,
                    bytes);
     if (!load)
@@ -901,8 +875,8 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
  * register that is Z, or the halfword access of the zero register that is a
  * predicate register's, with the signed byte offset added to the base. It
  * is emit_other_memory's unscaled access without the encoding's 9-bit limit
- * on the offset, so its slow paths (a tagged base, a misaligned SP) run the
- * word through the semantic library, which has no such limit either.
+ * on the offset, so its slow paths (a misaligned SP, a page crossing) run
+ * the word through the semantic library, which has no such limit either.
  */
 void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
                                  std::uint32_t instruction, std::uint64_t pc) {
@@ -925,10 +899,7 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
     emitter_.add_shifted(8, 8, 9, 0);
   }
   const auto fault = cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-  if (base != 31U) {
-    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-    emitter_.compare_zero(slow, 0, false, true);
-  }
+  emit_untag_data_address(8);
   emit_translate(8, load ? Access::read : Access::write, slow, fault, bytes);
   if (!load)
     track_direct_store(8, bytes);
@@ -1125,14 +1096,6 @@ collect_unsigned_run(std::span<const std::uint32_t> instructions,
       /* All retained operations name SP, so its architectural alignment is
        * checked once before any destination or memory becomes observable. */
       emit_misalignment_check(8, 16, alignment);
-    } else {
-      /*
-       * Tagged-address handling remains on the existing exact semantic path.
-       * Consecutive operations share the immutable effective state, so one
-       * translation-selected check is sufficient for the complete run.
-       */
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
     }
 
     RunStraddle straddle{
@@ -1155,6 +1118,7 @@ collect_unsigned_run(std::span<const std::uint32_t> instructions,
         emitter_.test_zero(straddle.label, 0, page_shift - 4U, true);
         proved = true;
       }
+      emit_untag_data_address(8);
     } else {
       proved = emit_run_span_proof(first_offset, maximum_end, straddle.label);
     }
@@ -1280,6 +1244,7 @@ bool JitCompiler::emit_run_span_proof(std::uint64_t first, std::uint64_t end,
      * their own unsigned offsets.
      */
     move_run_base(first, true);
+    emit_untag_data_address(8);
     const auto last_delta = end - first - 1U;
     if (last_delta == 0U)
       return false;
@@ -1446,6 +1411,7 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
         emitter_.test_zero(straddle.label, 0, page_shift - 4U, true);
         proved = true;
       }
+      emit_untag_data_address(8);
     } else {
       proved = emit_run_span_proof(first_offset, maximum_end, straddle.label);
     }
@@ -1493,8 +1459,6 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
                                 ColdPath::Action::memory_slow);
 
     load_gpr(8, base, true);
-    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-    emitter_.compare_zero(slow, 0, false, true);
     RunStraddle straddle{
         .label = emitter_.make_label(),
         .slow = slow,
@@ -1560,10 +1524,7 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
         cold_exit(instruction, pc, ColdPath::Action::memory_slow);
     const auto fault =
         cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-    if (base != 31U) {
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(fallback, 0, false, true);
-    }
+    emit_untag_data_address(8);
     emit_translate(8, load ? Access::read : Access::write, fallback, fault,
                    bytes);
     if (!load)

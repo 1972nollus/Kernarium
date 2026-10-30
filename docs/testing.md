@@ -130,8 +130,10 @@ cmake --workflow --preset check-loader-asan-ubsan
 The `unit-gpu` test preset's name filter is the one selection of GPU workflow
 tests, and the other `unit-gpu*` test presets inherit it. It selects every
 registered test named `gpu-*` (the two `gpu-guest-*` tooling tests among them),
-and the Virtio balloon, battery, console, input, sound and video protocol
-tests and `platform-video-decoder` that the GPU configuration also builds. A
+and the Virtio balloon, battery, console, input, sound, video and video encoder
+protocol tests, `video-encoder-capabilities`, `platform-video-decoder`, and the
+hardware `platform-video-encoder`, `-recovery` and `-cache` tests that the GPU
+configuration also builds. A
 new GPU test joins the workflow by its name: `uml_add_gpu_unit_test` refuses a
 name that does not start with `gpu-`. Configure derives the
 `gpu-unit-test-binaries` target from that filter, so a selected test's binary
@@ -253,13 +255,75 @@ the guest architecture and configure an integration preset with
 `UML_V4L2_PROBE_BINARY` pointing to it. The rootfs needs a shell, `ip`,
 `sha256sum` and `timeout`. The test boots a disposable overlay with the probe
 and its fixtures installed as payload files, checks their SHA-256 list, checks
-every advertised profile's pixels, raw layouts including packed BGRA capture,
-imported dma-buf capture, timestamps, source-change and EOS events, and rejects
-kernel faults or failed shutdown. Android uses its own 4 KiB guest and
-deployment workflow.
+every advertised profile's pixels, raw layouts including packed BGRA capture
+and 8-bit capture of a 10-bit stream, imported dma-buf capture, timestamps,
+source-change and EOS events, the display order of H.264 and HEVC B-pictures
+and a seek in both (over open-group streams for HEVC), reads the H.264 and HEVC
+profile and level menus (Constrained High beside High, levels from 1.0 up to
+5.2 and from 1 up to 6.2, the current level the highest), decodes flat portrait
+and square H.264 and HEVC pictures (2304 x 4096, 4096 x 4096, 4320 x 8192) to
+frames of their own size inside a frame range that is a rectangle, and rejects
+kernel faults or failed shutdown. Imported capture covers the queue's own
+buffers handed back and guest memory a client brings, with each buffer's planes
+in separate dma-bufs or in one and their lengths stated as QUERYBUF gave them,
+as the whole dma-buf, or not at all. `guest-v4l2-decode-gpu` runs the same probe
+with the GPU, where capture buffers are host-visible blobs and an imported
+dma-buf takes another path in the driver. A stream that changes its picture size
+twice is decoded the way Android's V4L2 codec handles it, including a drain asked
+for while the last change is still on its way: every picture of a size returns,
+then the LAST buffer, before the source change is visible. A client that queues
+the whole stream and drains straight away, with both changes inside its drain,
+gets every picture of all three sizes before the one LAST buffer that ends the
+drain. Every profile is also
+started in v4l2_codec2's order, with a provisional 64 x 64 capture format (and
+queued buffers for it) before the size is known, the parameter sets and the
+picture as two coded buffers, and the capture format chosen only after the
+source change: the buffer that declared the size is held until then, nothing
+lands in the provisional buffers, and the picture arrives whole before the LAST
+buffer. Android uses its own 4 KiB guest and deployment workflow.
 The fixed x86_64 userspace product registers no CTest suites, so the x86_64
-slice exercises its own V4L2 path by running `run_v4l2_decode.py` directly with
-an x86-64 probe and an x86-64 rootfs, the way its boot check below is run.
+slice exercises its own V4L2 path by running `run_v4l2_decode.py`, with `--gpu`
+for the GPU case, directly with an x86-64 probe and an x86-64 rootfs, the way
+its boot check below is run.
+
+`guest-video-error-answer` needs no probe or rootfs. Its arm64 guest has a
+decoder whose device, the production one behind a test-only shim, answers the
+capture buffers the guest queues as failed, and the test checks that the client
+dequeues one flagged as an error, empty, and with the timestamp the device
+named, a contract the encoder's driver shares.
+
+The optional `guest-v4l2-encode` test qualifies the Virtio video encoder the
+same way. Build `tests/integration/video/v4l2_encode_probe.cpp` as a static
+C++20 executable for the guest architecture and configure
+`UML_V4L2_ENCODE_PROBE_BINARY`. The guest boots with `--video` and
+`--video-encoder`, and the probe finds the encoder and the decoder by their
+card names. For every advertised coded format, profile and raw layout it
+encodes generated pictures from mapped and imported dma-buf input, and checks
+the key-frame flags, header buffers, timestamps, forced key frames, controls
+refused while streaming, crop, drain with the last flag and end-of-stream
+event, resumption, a restart after STREAMOFF without a drain, and a resolution
+change. It also holds every control and raw format the guest registers
+against the host table, so a control the driver dropped or a format listed
+under another fourcc fails; encodes packed BGRA and RGBA pictures, whose red
+and blue blocks show the channel order; and checks the parameter sets that
+`PREPEND_SPSPPS_TO_IDR` adds and the layers that hierarchical coding makes.
+Colorimetry stated on the raw queue, including `V4L2_COLORSPACE_RAW` with a
+transfer function and range, must read back as stated, survive a repeated
+`S_FMT` and `S_PARM`, and appear in the H.264 stream's VUI; BT.2020 with PQ
+and with HLG (`V4L2_XFER_FUNC_HLG`, the kernel line's local value 8), stated on
+a P010 raw queue, must read back and show as transfer characteristics 16 and 18
+in the HEVC Main 10 stream's VUI; the B-frame control
+must run from zero in steps of one and the level menus default to their lowest
+item, as the host describes them. Each stream is decoded back through the guest decoder and compared with the
+pictures by luma PSNR. The x86_64 slice runs `run_v4l2_encode.py`
+directly, like the decoder.
+
+The optional `guest-v4l2-mmap-capture` test covers what that one cannot: with a
+GPU the decoder's capture buffers are host-visible Virtio-GPU blobs, and an
+allocation of them has to finish on an idle guest. Build
+`tests/integration/video/v4l2_mmap_capture_probe.cpp` the same way and configure
+`UML_V4L2_MMAP_CAPTURE_PROBE_BINARY`. The probe allocates and maps the buffers
+and fails when that takes ten seconds or when the buffers are not blobs.
 
 The optional `guest-futex-atomic` test checks the futex contract in
 [`../kernel/common/README.md`](../kernel/common/README.md). Configure
@@ -267,6 +331,30 @@ The optional `guest-futex-atomic` test checks the futex contract in
 `tests/integration/futex/futex_atomic_probe.cpp`; the rootfs needs the video
 probe's shell tools. Run it on the Linux guest and the maintained Android
 kernel.
+
+The optional `guest-gbm-dmabuf` test checks the virtio-gpu dma-buf contract in
+[`../kernel/common/README.md`](../kernel/common/README.md). Build
+`tests/integration/gpu/gbm_dmabuf_probe.cpp` as a dynamically linked C++20
+executable for the guest architecture (`c++ -std=c++20 -O2 -ldl`) and configure
+`UML_GBM_DMABUF_PROBE_BINARY`. The guest boots with the GPU, and the probe opens
+the render node through the image's own libgbm and libEGL. It requires an
+export that asked for no write access to be read-write, a GPU write to be
+visible through the dma-buf mapping after `DMA_BUF_IOCTL_SYNC` (twice), and a
+CPU write through it, bracketed the same way, to be what the GPU reads (twice).
+The x86_64 slice registers no CTest suites, so it runs `run_gpu_guest.py`
+directly with an x86-64 probe and an x86-64 image that carries Mesa, naming the
+test's `--command` lines and kernel arguments.
+
+The optional `guest-drm-vblank` test checks that Virtio-GPU paces its display
+as the vblank contract in
+[`../kernel/common/README.md`](../kernel/common/README.md) describes. Build
+`tests/integration/gpu/drm_flip_probe.cpp` as a static C++20 executable for the
+guest architecture and configure `UML_DRM_FLIP_PROBE_BINARY`. The guest boots
+with the GPU; the probe sets the first output's preferred mode, waits for 30
+vblanks and flips two buffers for two seconds, and requires both rates to be
+within 10% of the mode's refresh rate. The x86_64 slice runs
+`run_gpu_guest.py` directly with an x86-64 probe, naming the test's `--command`
+lines and kernel arguments.
 
 `guest-aarch32-kernel` checks the kernel's AArch32 task support in
 [`../kernel/common/README.md`](../kernel/common/README.md), and needs `python3`,
@@ -296,7 +384,10 @@ load/store-exclusive pairs, and every token must remain. `guest-aarch32-exclusiv
 
 `UML_TEST_APPLE_AUDIO=ON` enables `apple-audio-playback`, which sends a brief,
 low-volume stereo tone through the real macOS output and verifies completion
-and restart. It requires access to macOS audio services.
+and restart. It requires access to macOS audio services. The microphone has
+no opt-in test: `virtio-sound-microphone` runs over fakes, and the real input
+is checked by hand (see the Microphone section of the audio README) because
+granting microphone access is the user's act.
 
 The full sanitizer suites remain separate because of their runtime cost:
 
@@ -313,12 +404,27 @@ ctest --preset unit-tsan
 Every sanitizer preset, these two and the GPU and embedded-loader ones,
 instruments Objective-C++ as well as C++.
 
-Both sanitizers keep the product's macOS native window for themselves, so a
-sanitized test, and every run it makes through the emulator test variant,
-takes a native window that both leave free
-(`tests/unit/memory/native_window_test_support.hpp`). AddressSanitizer also
-ignores `mlock()`, so under it the cases that need wired guest RAM report
-themselves unsupported instead of running.
+Both sanitizers keep the product's macOS native window for themselves, and a
+process reserves its window once, so a sanitized test, and every run it makes
+through the emulator test variant, takes a native window that both leave free
+(`tests/unit/memory/native_window_test_support.hpp`; the test variant places
+its runs there by default). AddressSanitizer also ignores `mlock()`, so under
+it the cases that need wired guest RAM report themselves unsupported instead
+of running.
+
+A guest that restarts itself boots again in the same process, and
+`runtime-restart-*` (one process per mode, `sequential_run_tests.cpp`) covers
+it with a test kernel that leaves behind what a real one does: descriptors,
+pthread keys, allocations and mappings through the imports the loader follows,
+changed signal state, a guest RAM root, kernel threads and a guest file. At the
+moment each of 64 hand-backs completes the test checks that none of it is left
+and that the process is as it was before the first run; the other modes cover
+the ends that stay spent, another handle, a host service that borrows guest RAM
+and a kernel thread that still runs, and a stop or a resume that is inside the
+hibernation's abort request while the restart drops the hibernation
+(`abort-stop`, `abort-resume`). The default malloc zone keeps what a boot freed,
+so the test gates the heap's in-use bytes, not its size; under a sanitizer it
+reads the sanitizer allocator's live bytes.
 
 The gadget cache census
 ([`tests/perf/README.md`](../tests/perf/README.md#cache-census)) compiles
@@ -380,6 +486,23 @@ A behaviour that one program checks inside the guest runs through
 `--cxxflags`. The probe's exit status is its failure count, and the test also
 fails on a console line that the registration's `--console-failure` pattern
 matches.
+
+`guest-restart` runs the macOS launcher through a guest that restarts itself.
+Under each of the gadgets and the JIT engine, one `uml-darwin` process boots,
+restarts twice and powers off, with the same pid throughout. The test loads a
+process audit (`tests/integration/restart/process_audit.cpp`) into the launcher
+and, at the settle point of each boot, compares what it lists with boot 1's:
+descriptors by kind, threads by name, Mach ports, the next pthread key, signal
+dispositions and the flags of descriptors 0 to 2. A pattern the first boot
+writes into anonymous memory and tmpfs must be found in guest RAM before the
+restart and nowhere in the process, window included, after it. A second phase
+runs a guest that restarts at once and checks that the launcher ends the loop
+with exit status 3 after five early restarts. `emulator-restart-loop-guard`
+covers the guard's policy and its escaping of the guest's command, and
+`slirp-network-reset-peer` covers a SLiRP connection whose peer resets while
+the guest has data to send, which must not end the process.
+`android-partition-boot-selection` covers the consumption of a
+`bootonce-bootloader` command and the boot a restart selects.
 
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
@@ -496,9 +619,10 @@ and no Simulator variant; see
 [`graphics.md`](graphics.md#current-path).
 `Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
-Xcode. It also packages the Apple battery provider's archive, as the Android
-runtime links it, as `HostBattery.xcframework`; only `KernariumTests` links
-it, so the test process reaches the provider without loading a second runtime.
+Xcode. It also packages the Apple battery provider's archive and the hardware
+video encoder's, as the Android runtime links them, as `HostBattery.xcframework`
+and `HostVideoEncoder.xcframework`; only `KernariumTests` links them, so the
+test process reaches each without loading a second runtime.
 `dependencies/build-ios-storage.sh --verify-only` and
 `dependencies/build-ios-zstd.sh --verify-only` check both arm64 Apple slices,
 their provenance and deployment targets, required APIs, and the absence of
@@ -537,7 +661,12 @@ passes `-enableCodeCoverage YES` to `xcodebuild test`.
 For an opt-in diagnostic, pass one SLiRP forwarding specification as
 `TEST_RUNNER_KERNARIUM_HOST_FORWARD` when launching the app. For example,
 `tcp:127.0.0.1:5567-5555` exposes guest ADB on host loopback port 5567. Normal
-launches leave the variable unset and publish no host port.
+launches leave the variable unset and publish no host port. A device driver
+that cannot answer the first-connection "Allow USB debugging" prompt launches
+the automation Android runtime
+([`Kernarium/README.md`](../Kernarium/README.md#automation-runs)) with
+`KERNARIUM_ANDROID_ADB_AUTH=0` and a loopback forward, and reaches the forward
+over USB with `iproxy`.
 
 Android recovery qualification uses a fresh disposable bundle and sets
 `TEST_RUNNER_KERNARIUM_ANDROID_BOOT_MODE=recovery`. Verify the LineageOS
@@ -743,6 +872,26 @@ SME profile assumed on any host. The unit tests `arm64-sm0-vector-length`,
 `arm64-gadget-sme`, `arm64-jit-sme-control` and `arm64-jit-sme-codegen` check
 the family against a model of the pseudocode and run it in each engine.
 
+Top-byte ignore (TBI), which every arm64 guest runs with unless the host
+passes `--guest-no-top-byte-ignore`, ignores the top byte of every data
+address, SP-based or not. The `arm64-tbi-memory` record
+holds the atomic, compare-and-swap, ordered, RCpc and exclusive forms reaching
+memory through a pointer tagged in its top byte, with the virtual CPU's
+top-byte ignore on, and the controls with it off. Its expectations come from
+the architecture's pseudocode, it needs no host feature, and
+`arm64-instruction-corpus-tbi-memory` re-derives it. The `arm64-tlb` unit test
+pins that an entry filled through any tag goes with its page, and the
+`guest_tagged_*_loop.S` probes time the form and the aliasing a tag could
+cause.
+
+The `arm64-tbi-equivalence` records rerun existing memory cases (general,
+SIMD&FP, pair, structure, SVE and SME forms) with a tagged base register and
+expect the source's result, add the tag-in-index, carry and SP-base forms, and
+pin that a tagged pointer faults at itself with TBI off;
+`arm64-instruction-corpus-tbi-equivalence` re-derives them, and
+`arm64-jit-top-byte-ignore` runs the JIT's strip across the forms. The SME
+cases need an SME host.
+
 The `arm64-floating-trap-native` records, and the outcomes of the
 register-only `arm64-floating-trap-scalar`, `-vector` and `-control` cases,
 were observed on the M1, which traps floating-point exceptions natively; any
@@ -938,6 +1087,97 @@ attempts in all, and the summary counts the cases that needed it.
 `arm64-jit-a32-corpus-interrupted` makes it happen on purpose: it runs the
 `exclusive-qemu` record under a signal storm aimed at the guest's thread until
 cases have lost a reservation, and requires that every case then agreed.
+
+## Android 32-bit userspace
+
+The Android product runs `armeabi-v7a` applications beside `arm64-v8a` ones
+([`../android/lineage-24/README.md`](../android/lineage-24/README.md#android-product)).
+The build side needs no Android build. `lineage24-builder-lane` drives the
+target-files verifier over fixtures (ABI lists, the 32-bit runtime, ELF32
+placement and alignment, per-ISA ART artifacts, the 32-bit Mesa and HAL files
+and their 64-suffixed `mmap` and `lseek` imports, the userdata inode count,
+the application read of the vendor security patch level, the built-in
+microphone and companion device setup feature declarations, the userdata `quota` flag, and the
+suspend blocker with the adb host-connected property it follows, the network
+setup tool with the ARP policy init sets before it, its library, label and domain
+transition, the script that saves the virtual Wi-Fi network once, after boot and
+without touching the user's Wi-Fi switch, with its core domain, its binder transfer to the Wi-Fi service's process and the call back, and its marker, the Wi-Fi
+HAL and supplicant with their manifest fragments and services, the Wi-Fi feature
+declaration and the absent Ethernet, Aware, RTT, Direct and Passpoint ones, the built-in macvlan, cfg80211 and virt_wifi
+options of the packaged kernel configuration, the absent wificond, the ClearKey HAL's access to the memfd files of applications, the
+policy without the LineageOS grants that Android's neverallow tests refuse, and the
+discrete app-op list that keeps AOSP's default ops, the example thermal HAL
+with its manifest fragment and service, the default CAS HAL with its ClearKey
+plugin, the vendor `build.prop` without the unreliable-present-fence property
+and with `ro.incremental.enable=1`, the software decoders' 3840x2160 limits, the
+hardware video encoder service, a codec list of its two encoders and two
+decoders, their properties and no other enabled decoder, the video nodes' group,
+the service's seccomp calls and its label) and the builder's assertions;
+`lineage24-first-boot-precompile` covers the
+ISA set of a package and the per-ISA artifacts and manifest;
+`lineage24-mesa-venus-port-generator` covers the per-ISA generators of the
+Mesa port and that every arm module is built with Meson's large-file define;
+and `lineage24-mesa-venus-source-contract` pins the regenerated series.
+`KernariumTests` covers the disk range the larger seed GPT needs.
+
+A release candidate is qualified on its image, opt-in, on every engine that
+runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
+`SIGILL` anywhere is a blocker, as everywhere.
+
+- **Boot.** `boot_completed` with `ro.product.cpu.abilist` listing
+  `arm64-v8a,armeabi-v7a`, `ro.zygote=zygote64_32` and the secondary zygote
+  running without restarts; SELinux enforcing with no denial from the 32-bit
+  zygote, `crash_dump32`, the WebView zygote or its RELRO process; native
+  daemons and HALs 64-bit. ART Service's first-boot pass skips every package,
+  the WebView's `arm` artifacts included, and `odrefresh` compiles nothing for
+  either ISA.
+- **Applications.** A set of real 32-bit applications: some `armeabi-v7a`
+  only, some dual-ABI installed with `adb install --abi armeabi-v7a` against a
+  64-bit control install, and a Java-only one forced to 32 bits. Each shows
+  `primaryCpuAbi=armeabi-v7a` in `dumpsys package`, descends from the
+  secondary zygote, draws through GLES and, where it uses it, Vulkan, and
+  leaves no tombstone. A deliberate `SIGSEGV` in one must leave a symbolized
+  `crash_dump32` tombstone. The 64-bit browser's pages load through the 64-bit
+  WebView renderer, and a 32-bit application's WebView talks to it.
+- **CTS.** The 32-bit and 64-bit variants of the bionic, binder, OS, JNI,
+  seccomp, ABI-override and ASLR modules run on the same candidate; a test that
+  fails only on `armeabi-v7a` is triaged before acceptance.
+- **Alignment.** The engine probe (`tests/integration/aarch32/engine_probe`)
+  runs from `/data/local/tmp` on both engines: its fault section must give
+  `SIGBUS` with `BUS_ADRALN` for misaligned LDM, STM, LDRD, STRD and VLDM while
+  unaligned LDR, LDRH, STR and STRH succeed, as on Linux guests (the kernel has
+  no `COMPAT_ALIGNMENT_FIXUPS`).
+- **Cost.** Boot to `sys.boot_completed` (dmesg), cold and warm, in an
+  ABBA order against the previous release on the same host build; `MemAvailable`
+  after a settle and `dumpsys meminfo` for the zygotes and the WebView zygote;
+  and the image and compressed sizes. The stock secondary zygote stays unless
+  it costs more than 3 s of iPad cold boot or 100 MiB of guest `MemAvailable`;
+  then one started on demand is designed.
+
+## Android hardware video encoding and decoding
+
+A release candidate whose product carries the hardware codecs
+([`../android/lineage-24/README.md`](../android/lineage-24/README.md#hardware-video-encoding-and-decoding))
+is qualified opt-in, on a guest started with the host's Virtio video device
+enabled (`--video`).
+
+- **Codec list.** `MediaCodecList` shows `c2.v4l2.avc.encoder`,
+  `c2.v4l2.hevc.encoder`, `c2.v4l2.avc.decoder` and `c2.v4l2.hevc.decoder`
+  beside the `c2.android.*` components; the service runs without restarts,
+  with no SELinux denial and no seccomp kill in its log.
+- **CTS.** The encoder tests of `CtsMediaEncoderTestCases`,
+  `CtsMediaV2TestCases`, `CtsVideoCodecTestCases`, `CtsVideoTestCases`,
+  `CtsMediaCodecTestCases` and `CtsMediaRecorderTestCases`, filtered to the two
+  encoder names, and the decoder classes of `CtsMediaV2TestCases` and
+  `CtsVideoTestCases` (the performance and availability classes among them) and
+  `AdaptivePlaybackTest`, `DecoderBlockModelTest` and `VideoDecoderPerfTest` of
+  `CtsMediaDecoderTestCases`, filtered to the two decoder names, pass on
+  `arm64-v8a` and `armeabi-v7a`, and the software `c2.android.*` results do
+  not regress. The encoder tests that decode their output pass through the
+  hardware decoders. The decoders' rates swing with the load of the host, so
+  the performance classes run on a quiet one.
+- **Host.** The host's video activity log shows hardware encodes and decodes
+  for those runs; a pass that never reached the host codec does not qualify.
 
 ## x86 instruction conformance
 

@@ -12,12 +12,15 @@
 # --automation packages the automation Linux runtimes, which boot host
 # payloads (Kernarium/README.md), in place of the release ones. The Linux
 # runtime is checked: the release runtime must not read a payload, and the
-# automation runtime must.
+# automation runtime must. --android-automation likewise packages the
+# automation Android runtime, whose launch may turn ADB authorization off, and
+# checks that the release Android runtime carries no such switch.
 #
 # KernariumTests also links HostBattery.xcframework: the Apple battery
 # provider's archive, as the Android runtime links it, with its header. The
 # application neither links nor embeds it, and the test bundle loads no second
-# runtime to reach it.
+# runtime to reach it. HostVideoEncoder.xcframework is the hardware video
+# encoder's archive, packaged the same way for the capability tests.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -30,11 +33,14 @@ fail()
 }
 
 AUTOMATION=0
-case "$#:${1-}" in
-0:) ;;
-1:--automation) AUTOMATION=1 ;;
-*) fail "usage: package-ios-frameworks.sh [--automation]" ;;
-esac
+ANDROID_AUTOMATION=0
+for option in "$@"; do
+	case "$option" in
+	--automation) AUTOMATION=1 ;;
+	--android-automation) ANDROID_AUTOMATION=1 ;;
+	*) fail "usage: package-ios-frameworks.sh [--automation] [--android-automation]" ;;
+	esac
+done
 
 find_tool()
 {
@@ -64,13 +70,19 @@ RUNTIME_ANDROID_4K="KRuntime_ACK_6_18_4K"
 
 RUNTIME_TREE=kernarium-runtime-ios-device
 [ "$AUTOMATION" -eq 0 ] || RUNTIME_TREE=kernarium-runtime-ios-device-automation
+ANDROID_TREE=kernarium-runtime-ios-device-android-4k
+[ "$ANDROID_AUTOMATION" -eq 0 ] ||
+	ANDROID_TREE=kernarium-runtime-ios-device-android-4k-automation
 DEVICE_RUNTIME_4K="$ROOT_DIR/.build/$RUNTIME_TREE/Kernarium/Runtime/$RUNTIME_4K.framework"
-DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-4k/Kernarium/Runtime/$RUNTIME_ANDROID_4K.framework"
+DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/$ANDROID_TREE/Kernarium/Runtime/$RUNTIME_ANDROID_4K.framework"
 DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64/Frameworks"
 STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/GPTFDisk.xcframework"
 ZSTD="$ROOT_DIR/.build/dependencies/ios-zstd/LibZstd.xcframework"
-HOST_BATTERY="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-4k/darwin/platform/libuml_host_battery.a"
+HOST_BATTERY="$ROOT_DIR/.build/$ANDROID_TREE/darwin/platform/libuml_host_battery.a"
 HOST_BATTERY_HEADER="$ROOT_DIR/darwin/platform/host_battery.hpp"
+ANDROID_RUNTIME_TREE="$ROOT_DIR/.build/$ANDROID_TREE"
+HOST_VIDEO_ENCODER="$ANDROID_RUNTIME_TREE/darwin/platform/libuml_video_encoder.a"
+HOST_VIDEO_ENCODER_HEADERS="$ROOT_DIR/darwin/platform/video_encoder.hpp $ROOT_DIR/darwin/platform/video_decoder.hpp"
 
 # Mesa supplies the host GL provider as MesaEGL and MesaGallium, and the
 # Vulkan driver they render on as KosmicKrisp.
@@ -91,6 +103,11 @@ for framework in \
 	[ -d "$framework" ] || fail "missing framework slice: $framework"
 done
 [ -f "$HOST_BATTERY" ] || fail "missing host battery archive: $HOST_BATTERY"
+# The encoder archive is a static library of the runtime tree; it is built here
+# when the runtime itself has not linked it yet.
+"$CMAKE" --build "$ANDROID_RUNTIME_TREE" --target uml_video_encoder ||
+	fail "could not build the host video encoder archive"
+[ -f "$HOST_VIDEO_ENCODER" ] || fail "missing host video encoder archive: $HOST_VIDEO_ENCODER"
 for framework in $GPU_FRAMEWORKS; do
 	[ -d "$DEVICE_GPU/$framework.framework" ] ||
 		fail "missing framework slice: $DEVICE_GPU/$framework.framework"
@@ -138,6 +155,17 @@ cp -- "$HOST_BATTERY_HEADER" "$HOST_BATTERY_HEADERS/"
 "$CMAKE" -E remove_directory "$HOST_BATTERY_HEADERS"
 [ -f "$STAGE/HostBattery.xcframework/ios-arm64/libuml_host_battery.a" ] ||
 	fail "HostBattery XCFramework was not created"
+HOST_VIDEO_ENCODER_STAGE="$STAGE/host-video-encoder-headers"
+mkdir -p -- "$HOST_VIDEO_ENCODER_STAGE"
+for header in $HOST_VIDEO_ENCODER_HEADERS; do
+	cp -- "$header" "$HOST_VIDEO_ENCODER_STAGE/"
+done
+"$XCODEBUILD" -create-xcframework \
+	-library "$HOST_VIDEO_ENCODER" -headers "$HOST_VIDEO_ENCODER_STAGE" \
+	-output "$STAGE/HostVideoEncoder.xcframework"
+"$CMAKE" -E remove_directory "$HOST_VIDEO_ENCODER_STAGE"
+[ -f "$STAGE/HostVideoEncoder.xcframework/ios-arm64/libuml_video_encoder.a" ] ||
+	fail "HostVideoEncoder XCFramework was not created"
 
 RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_ANDROID_4K"
 for framework in $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS; do
@@ -163,6 +191,15 @@ if LC_ALL=C grep -a -q KERNARIUM_BOOT_PAYLOAD "$binary"; then
 else
 	[ "$AUTOMATION" -eq 0 ] ||
 		fail "$RUNTIME_4K is a release runtime; build the kernarium-ios-device-automation preset"
+fi
+
+binary="$STAGE/$RUNTIME_ANDROID_4K.xcframework/ios-arm64/$RUNTIME_ANDROID_4K.framework/$RUNTIME_ANDROID_4K"
+if LC_ALL=C grep -a -q KERNARIUM_ANDROID_ADB_AUTH "$binary"; then
+	[ "$ANDROID_AUTOMATION" -eq 1 ] ||
+		fail "$RUNTIME_ANDROID_4K is an automation runtime; package it with --android-automation"
+else
+	[ "$ANDROID_AUTOMATION" -eq 0 ] ||
+		fail "$RUNTIME_ANDROID_4K is a release runtime; build the kernarium-ios-device-android-automation preset"
 fi
 
 # The storage and compression cores carry no Metal dependency, so their
@@ -200,7 +237,7 @@ case $publish in
 	;;
 *) fail "could not publish the XCFrameworks: $OUTPUT" ;;
 esac
-if [ "$AUTOMATION" -eq 1 ]; then
+if [ "$AUTOMATION" -eq 1 ] || [ "$ANDROID_AUTOMATION" -eq 1 ]; then
 	printf '%s\n' "published Kernarium automation XCFrameworks: $OUTPUT"
 else
 	printf '%s\n' "published Kernarium XCFrameworks: $OUTPUT"

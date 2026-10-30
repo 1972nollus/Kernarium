@@ -199,17 +199,17 @@ void miss_call_is_cold_and_has_no_resident_spills() {
           "successful TLB miss does not rejoin the exact memory continuation");
 
   /*
-   * Deferring the preserving miss bridge leaves a 27-word single-store hot
-   * body. The two-word TBI gate selects the exact semantic path without
-   * changing the preserving miss bridge. The persistent linked-block ABI
-   * contributes seven fixed prologue/epilogue words.
+   * Deferring the preserving miss bridge leaves a 24-word single-store hot
+   * body; a translation compiled without top-byte ignore holds no tag work.
+   * The persistent linked-block ABI contributes seven fixed prologue/epilogue
+   * words.
    */
   const std::size_t persistent_hot_frame_words = 7U;
   const std::size_t persistent_total_frame_words = 13U;
-  require(compiled.hot_words <= 30 + persistent_hot_frame_words,
+  require(compiled.hot_words <= 27 + persistent_hot_frame_words,
           "single-store JIT hot expansion lost the "
           "deferred-translation budget");
-  require(compiled.words.size() <= 66 + persistent_total_frame_words,
+  require(compiled.words.size() <= 60 + persistent_total_frame_words,
           "single-store JIT total expansion exceeded the "
           "preserving-call budget");
 }

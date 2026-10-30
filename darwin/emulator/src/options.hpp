@@ -50,7 +50,10 @@ struct EmulatorOptions final {
 		::uml::runtime::HibernationMode::automatic};
 	std::size_t guest_memory_bytes{};
 	unsigned guest_cpus{1};
-	bool top_byte_ignore{};
+	/* Whether the engines ignore the top byte of a data address. On for every
+	 * guest; --guest-no-top-byte-ignore turns it off, and the accepted
+	 * --guest-top-byte-ignore turns it on, the default. */
+	bool top_byte_ignore{true};
 	bool informational{};
 	/* uml_dir= is the host's own, so the run prepares and removes the
 	 * console's location; a caller's directory is left to the caller. */

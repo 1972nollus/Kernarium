@@ -465,7 +465,7 @@ uml_arm64_jit_execute_pair(CpuState *cpu, Tlb *tlb,
       tagged_base + static_cast<std::uint64_t>(displacement);
   const auto tagged_address = mode == 1U ? tagged_base : adjusted;
   const auto address =
-      cpu->untag_data_address(tagged_address, base_register == 31U);
+      cpu->untag_data_address(tagged_address);
   const unsigned first = instruction & 31U;
   const unsigned second = (instruction >> 10) & 31U;
   std::array<std::byte, 32> bytes{};
@@ -563,7 +563,7 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
   const unsigned base = (instruction >> 5) & 31U;
   const unsigned transfer = instruction & 31U;
   const auto tagged_address = cpu->read_register(base, true);
-  const auto address = cpu->untag_data_address(tagged_address, base == 31U);
+  const auto address = cpu->untag_data_address(tagged_address);
   if (arm64::detail::single_copy_alignment_faults(address, size,
                                                   tlb->unaligned_atomics)) {
     tlb->fault_alignment = 1;
@@ -602,9 +602,9 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
  * publication, so an exclusive store waiting in its operation scope sees it.
  */
 void invalidate_structure_store(CpuState &cpu, Tlb &tlb,
-                                std::uint64_t tagged_address, bool base_sp,
+                                std::uint64_t tagged_address,
                                 std::size_t size) noexcept {
-  const auto address = cpu.untag_data_address(tagged_address, base_sp);
+  const auto address = cpu.untag_data_address(tagged_address);
   std::array<JitStoreRange, 2> stored{};
   std::size_t pages = 0;
   for (std::size_t completed = 0;
@@ -711,12 +711,10 @@ uml_arm64_jit_execute_simd_structure(CpuState *cpu, Tlb *tlb,
       single ? element_size * register_count : vector_size * register_count;
   std::array<std::byte, 64> bytes{};
   auto transfer = std::span{bytes}.first(transfer_size);
-  const bool base_sp = base_register == 31U;
   /* Not the structure wrapper uml_arm64_simd_structure_memory_transfer,
    * which also drops the exclusive monitor for the gadget engine: a vector
    * store of the guest's own between a pair leaves it standing. */
-  const auto untagged_address =
-      cpu->untag_data_address(tagged_address, base_sp);
+  const auto untagged_address = cpu->untag_data_address(tagged_address);
   if (load) {
     if (uml_arm64_memory_transfer(tlb, untagged_address, transfer.data(),
                                   transfer.size(), 0) == 0U)
@@ -767,8 +765,7 @@ uml_arm64_jit_execute_simd_structure(CpuState *cpu, Tlb *tlb,
     if (uml_arm64_memory_transfer(tlb, untagged_address, transfer.data(),
                                   transfer.size(), 1) == 0U)
       return pack_jit_result(Event::memory_fault, 0);
-    invalidate_structure_store(*cpu, *tlb, tagged_address, base_sp,
-                               transfer.size());
+    invalidate_structure_store(*cpu, *tlb, tagged_address, transfer.size());
   }
   if (post_index) {
     const auto offset = offset_register == 31U

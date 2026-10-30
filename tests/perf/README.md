@@ -255,9 +255,13 @@ napped emulator drops from 31 to 4 and launches several times slower), and the
 host load. A launch that misses its limit is recorded with no time and left out
 of the medians. The source disk's `.release-id` must name the release, because
 the launcher re-creates a disk from another release. `--env KEY=VALUE` sets one
-arm's emulator environment; `--guest-samples PATH` profiles the boot with the
-guest code sampler below. Guests are not serialized by the tool: run one
-guest per measurement, and alternate arms (ABBA) across runs.
+arm's emulator environment; `--engine gadgets|jit` selects the execution
+engine (gadgets by default); `--guest-samples PATH` profiles the boot with the
+guest code sampler below. Each record names the engine and carries the boot's
+wall seconds and the emulator's CPU seconds at boot completion, which measure
+the boot's translation and execution work whatever the host load. Guests are
+not serialized by the tool: run one guest per measurement, and alternate arms
+(ABBA) across runs.
 
 `--scenario android_scenarios/NAME.json` follows each successful launch with a
 fixed sequence of sleeps and taps and waits for the scenario's completion line;
@@ -392,6 +396,17 @@ registrations and do not enter ordinary suite aggregates.
 
 The LSE atomic probe needs assembler support for that extension. Other probes declare any restriction in
 the manifest.
+
+The `guest_tagged_*_loop.S` probes reach memory through a pointer tagged in
+its top byte, as a process with heap pointer tagging does; the emulator ignores
+the top byte by default, and the runner's `--guest-no-top-byte-ignore` turns
+that off. Given a probe argument
+(`--probe-argument x`) they run the same instructions through an untagged
+pointer, which is their matched control. The two alias probes use the tagged
+pointer and a plain one on the same page, so they time an engine whose
+translation cache keys a page by the address as presented; the other two use
+the tagged pointer alone, so they time the form itself. `tbi_atomic_probe.inc`
+holds their shared setup.
 
 ## Loader corpus
 
