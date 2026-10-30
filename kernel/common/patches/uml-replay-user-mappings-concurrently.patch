@@ -306,7 +306,7 @@ index 5e153236cbc104c5ac60297c9de16773e1a325dd..8cb774915731e131352e9f9e3249ac84
  	return 0;
  }
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 3f3d2382294fbe72c58819cf09f723c808c68a43..3b69fda453be8ba3f695b74061bf1d9f39cba034 100644
+index bcb7a240bb0e14ab55dc6ca27902cc2c23c3bcfb..aeef0bd64b989e85535fce0cdf67cea1de8a9599 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -28,9 +28,33 @@ struct vm_ops {

@@ -421,7 +421,7 @@ index a6d32d27031a4ecdc38d8f81873b7e106b4902cd..dad935fd36647c8278b427943d50169b
  	if (page == NULL)
  		return -EFAULT;
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 5b217a950357d31ec0cf42d45ee136251f6d3ee1..bda6ec6b0c58514534442618ecf5089567180e5b 100644
+index 56bc2c1dfb863fdccf832eba4e7a2afea18a7780..04cff8cc7fb270a9b3980c3324335b5cd8868104 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -7,6 +7,7 @@

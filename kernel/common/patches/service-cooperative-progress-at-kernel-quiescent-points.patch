@@ -14,15 +14,72 @@ last close of a terminal is still in progress, because tty_reopen() answers
 a console getty then stops for minutes with one carrier looping through
 tty_open() and every other carrier asleep.  A task that is about to block
 needs no poll: it leaves the CPU to the idle loop or to another task.
+
+A TLB walk boundary may reschedule only where no spinlock or RCU read lock is
+held.  flush_tlb_mm() is such a boundary for its direct callers, dup_mmap()
+and the soft-dirty clear, which hold only mmap locks.  The mmu_gather flushes
+from zap_pte_range() under the PTE lock, inside the RCU read section that
+pte_offset_map_lock() opens, so its tlb_flush() never reaches that walk.
+Without CONFIG_PREEMPT_COUNT, cond_resched() there switched tasks with the
+PTE lock held, and even with it reported an RCU quiescent state inside the
+read section.  exit_mmap()'s full-mm gather, the only one that flushed the
+whole mm, needs no host work at all: arch_exit_mmap() has already emptied the
+host generation, and with no task left on the mm nothing maps into it again.
 ---
+ arch/um/include/asm/tlb.h          | 31 ++++++++++++++++++++++++
  arch/um/include/shared/kern_util.h |  3 +++
  arch/um/kernel/skas/uaccess.c      | 38 +++++++++++++++++++++++++++++-
  arch/um/kernel/time.c              | 15 ++++++++++++
- arch/um/kernel/tlb.c               | 10 ++++++++
+ arch/um/kernel/tlb.c               | 13 ++++++++++
  arch/um/os-Darwin/smp.c            | 23 ++++++++++++++----
  kernel/sched/core.c                | 29 +++++++++++++++++++++++
- 6 files changed, 112 insertions(+), 6 deletions(-)
+ 7 files changed, 146 insertions(+), 6 deletions(-)
 
+diff --git a/arch/um/include/asm/tlb.h b/arch/um/include/asm/tlb.h
+index ed4e779424897a3d2d195eb5b48feb79083861c0..71fbc5ce6a18f3dd4c66d8ce6c64cfe1f68e4193 100644
+--- a/arch/um/include/asm/tlb.h
++++ b/arch/um/include/asm/tlb.h
+@@ -6,9 +6,40 @@
+ 
+ #include <asm/tlbflush.h>
+ #include <asm/cacheflush.h>
++
++#ifdef UML_HOST_DARWIN
++#define tlb_flush tlb_flush
++static inline void tlb_flush(struct mmu_gather *tlb);
++#endif
++
+ #include <asm-generic/tlb.h>
+ 
+ #ifdef UML_HOST_DARWIN
++/*
++ * The generic tlb_flush() without its flush_tlb_mm(), whose VMA walk
++ * reschedules.  A gather flushes from zap_pte_range() under the PTE lock and
++ * inside the RCU read section pte_offset_map_lock() opens.  exit_mmap()'s
++ * full-mm gather has nothing to flush: arch_exit_mmap() emptied the host
++ * generation before the first zap, and with no task left on the mm nothing
++ * maps into it again.  Any other whole-mm flush, which this port never asks
++ * for, covers every user address without scheduling.
++ */
++static inline void tlb_flush(struct mmu_gather *tlb)
++{
++	struct vm_area_struct vma = {
++		.vm_mm = tlb->mm,
++		.vm_flags = (tlb->vma_exec ? VM_EXEC    : 0) |
++			    (tlb->vma_huge ? VM_HUGETLB : 0),
++	};
++
++	if (tlb->fullmm && !atomic_read(&tlb->mm->mm_users))
++		return;
++	if (tlb->fullmm || tlb->need_flush_all)
++		flush_tlb_range(&vma, 0, TASK_SIZE);
++	else if (tlb->end)
++		flush_tlb_range(&vma, tlb->start, tlb->end);
++}
++
+ /* Darwin range invalidation quiesces every executor for the generation and
+  * advances the mapping epoch before it returns.  Concurrent mmu-gather users
+  * therefore retain the precise range they collected instead of converting it
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
 index 198ba0cad52645505807ac20faeb9641c6467495..480eda72a4869435404ccfeea1b97fdce330b298 100644
 --- a/arch/um/include/shared/kern_util.h
@@ -142,16 +199,19 @@ index b46649f2ea64a6d4b289cb0d9ab8c164da804ba1..8b8a647f44ee690582f1f6b4aabb6d3e
  {
  	int cpu = evt - &timer_clockevent[0];
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 1db28abe9d40c61beccfd70c3920d82b9eeecbc2..3f3d2382294fbe72c58819cf09f723c808c68a43 100644
+index 1db28abe9d40c61beccfd70c3920d82b9eeecbc2..bcb7a240bb0e14ab55dc6ca27902cc2c23c3bcfb 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
-@@ -686,7 +686,17 @@ void flush_tlb_mm(struct mm_struct *mm)
+@@ -686,7 +686,20 @@ void flush_tlb_mm(struct mm_struct *mm)
  	for_each_vma(vmi, vma) {
  		um_tlb_mark_sync(mm, vma->vm_start, vma->vm_end);
  #ifdef UML_HOST_DARWIN
 +		/*
 +		 * The host invalidation may quiesce every sibling executor.  Once it
-+		 * returns, no page-table lock or thread-local mapping batch is live.
++		 * returns no thread-local mapping batch is live, and no caller holds
++		 * a spinlock or an RCU read lock: dup_mmap() and the soft-dirty
++		 * clear hold only mmap locks, and the mmu_gather, which flushes under
++		 * the PTE lock, never comes here (see tlb_flush() in asm/tlb.h).
 +		 * With logical IRQs enabled, cond_resched() services an expired
 +		 * per-CPU deadline at the PREEMPT_NONE scheduling and RCU boundary
 +		 * during a large VMA walk.

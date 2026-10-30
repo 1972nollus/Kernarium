@@ -103,7 +103,7 @@ index 1c2a4d1fe496894487f6f0a34874a823d006bf9d..f52741ef46b8a45b2367f44e536fafbb
  #endif
  
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 3a5f76bb07ac2f841628dbe3d0687ed7ab5be968..813730531f97e2f4d7a01cfb3054177d0dce96dc 100644
+index 82ee607e57a315ddf5ad94f75be8acd0c9eaf39d..c1c5e43b6ad05f4aba9a8136a0184843f6f59f3b 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -552,9 +552,13 @@ static int darwin_replay_user_ranges(struct mm_struct *mm, struct vm_ops *ops,

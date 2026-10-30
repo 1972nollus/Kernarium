@@ -705,12 +705,18 @@ uml_add_guest_integration_test(
 # SysV IPC, the NFS client and SCTP, no RDS and no wakelock interface, and
 # runs the helper a piped core_pattern names; every guest has IPv4 multicast,
 # no listener on RDS-over-TCP's port, and the strong stack protector and
-# hardened usercopy, and a macvlan link that rtnetlink creates over a dummy
-# one. A Linux guest has no Incremental file system and no 802.11 stack. An
+# hardened usercopy, a macvlan link that rtnetlink creates over a dummy one,
+# the accept_ra_rt_table sysctl (0 until it is written, then a prefix route in
+# the device's own table where the kernel has IPv6 multiple tables), and one
+# ESP SPI allocated for a second destination address, which a Linux guest
+# refuses and an Android guest allows. A Linux guest has no Incremental file
+# system and no 802.11 stack. An
 # Android guest, which runs the probe by hand, has a static usermode helper
 # that starts nothing, an Incremental file system that mounts, serves a filled
 # block and times out on a missing one, and virtual Wi-Fi: a virt_wifi link
-# over a macvlan connects to the access point VirtWifi through nl80211.
+# over a macvlan connects to the access point VirtWifi through nl80211, remains
+# on 2412 MHz, sends an Action frame there, and passes a multicast group it
+# joins on to its macvlan.
 uml_add_guest_integration_test(
     NAME guest-kernel-config
     SCRIPT support/run_guest_probe.py
@@ -929,6 +935,25 @@ uml_add_guest_integration_test(
     CPUS 10)
 # The runner skips on a host with fewer than the ten CPUs it asks for.
 set_tests_properties(guest-mmu-stress PROPERTIES SKIP_RETURN_CODE 77)
+
+# A process with many dirty shared VMAs exits in time linear in them. The mm
+# teardown flushes once per page table that holds a dirty shared page, and a
+# flush that walked every VMA made the exit quadratic: tens of seconds at
+# 20000 VMAs against a few tens of milliseconds.
+uml_add_freestanding_cxx_payload(UML_GUEST_EXIT_SHARED_VMAS
+    guest-exit-shared-vmas
+    smp/guest_exit_shared_vmas.cpp
+    COMMENT "Building the freestanding arm64 shared-VMA exit probe"
+    ARCH_OPTIONS -march=armv8-a)
+
+uml_add_guest_integration_test(
+    NAME guest-exit-shared-vmas
+    SCRIPT smp/run_guest_exit_shared_vmas.py
+    ARGS --probe ${UML_GUEST_EXIT_SHARED_VMAS}
+        --cpus 4
+    LABELS guest;memory;mmu
+    TIMEOUT 600
+    CPUS 4)
 
 if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)
     uml_add_guest_integration_test(
