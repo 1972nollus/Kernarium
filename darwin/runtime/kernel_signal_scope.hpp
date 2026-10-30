@@ -86,9 +86,9 @@ void release_kernel_image(void *address, std::size_t length,
 	void *address, std::size_t length) noexcept;
 
 /* Keep the signed kernel text the loader aliased at [address, address +
- * length) for the life of the process. iOS makes the alias permanent
- * (memory::keep_host_range), so no release replaces it and the next load of
- * the same image reuses it. False when it cannot be kept. */
+ * length) for the life of the process. iOS makes the alias permanent, and
+ * macOS keeps it the same way (memory::keep_host_range): no release replaces
+ * it, and the next load of the same image reuses it. False when it cannot be kept. */
 [[nodiscard]] bool keep_signed_kernel_text(
 	void *address, std::size_t length) noexcept;
 
