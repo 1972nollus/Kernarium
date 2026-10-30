@@ -63,9 +63,10 @@ the kernel took and did not return:
   the commitment and is dropped with it); and
 - the guest RAM: the whole window becomes one protectionless reservation again,
   the commitment is retired and the token unregistered, so the next kernel
-  finds no byte and no page of this one. On iOS the kernel's signed text stays
-  mapped: XNU makes those aliases permanent, so no mapping can replace them,
-  and the next load of the same image reuses them.
+  finds no byte and no page of this one. The kernel's signed text, aliased
+  from the embedded image, stays mapped: XNU makes the aliases permanent on
+  iOS, so no mapping can replace them, and the next load of the same image
+  reuses them on every product.
 
 A refusal by the check changes nothing and may be retried: the caller stops
 every service that maps guest RAM, then runs again, and the handle stays
@@ -300,16 +301,26 @@ served again may hold its old bytes.
 
 A library built without the embedded ELF runner, such as every XCFramework
 slice, excludes native-VM and embedded-ELF execution; only the macOS unit
-presets keep the native-VM bridge, for their tests. Kernarium uses versioned runtime frameworks whose kernel ELF is carried in signed Mach-O
-`__TEXT`. Its loader aliases immutable executable pages from that mapping,
-which iOS makes permanent once its code-signing monitor has associated them
-(a later load of the image reuses them; `memory/shared_backing.hpp`
-`keep_host_range`), copies only data and BSS into anonymous storage around
-them, and rejects a carrier
-mismatch, writable executable segments, or relocations into signed text. The app
-embeds every selectable framework, links none at launch, and loads exactly one
-guest flavour for the process lifetime. macOS retains its
-unsigned embedded-loader path.
+presets keep the native-VM bridge, for their tests.
+
+Every product that embeds a kernel carries its ELF as a host-page-aligned
+Mach-O `__TEXT,__uml_elf` section, and
+`Kernarium/scripts/verify-signed-kernel-carrier.py` checks the image for it
+when the product is configured. The emulator runs that section in place: creation keeps a pointer to it instead of a copy (the
+`uml_emulator_create` contract), and the loader aliases the immutable
+executable pages from it, copies only data and BSS into anonymous storage
+around them, and rejects writable executable segments or relocations into
+signed text. iOS makes the aliases permanent once its code-signing monitor has
+associated them (a later load of the image reuses them;
+`memory/shared_backing.hpp` `keep_host_range`), and macOS keeps them the same
+way, so that a restart takes the path iOS takes. On iOS the image must be the section, because no other
+code can be made; on macOS any other image, such as a test's buffer, is copied
+into anonymous memory. The loader admits only an AArch64 image, so every
+guest's kernel text is native arm64 code: the x86-64 userspace of the macOS
+compatibility product is translated by its engines and is never loaded
+there. Kernarium uses versioned runtime frameworks that each carry their
+kernel this way. The app embeds every selectable framework, links none at
+launch, and loads exactly one guest flavour for the process lifetime.
 
 The macOS, iOS device, and iOS Simulator products build at a 27.0 minimum
 (`cmake/toolchains/Apple.cmake`). Their code therefore carries no availability
