@@ -16,7 +16,7 @@ struct ContentView: View {
     /// mode sets it; the serial console's keyboard is its terminal's focus.
     @State private var framebufferKeyboardVisible = false
     @State private var specialKeysExpanded = false
-    @State private var presentedSheet: PresentedSheet?
+    @State private var settingsPresented = false
     /// Whether the window scene fills the screen. Until the view is in a
     /// scene, it is taken to be a window, which is the system's own default.
     @State private var sceneCoversScreen = false
@@ -77,11 +77,8 @@ struct ContentView: View {
         .background {
             SceneCoverageReader { sceneCoversScreen = $0 }
         }
-        .sheet(item: $presentedSheet) { destination in
-            switch destination {
-            case .settings:
-                EmulatorSettingsView()
-            }
+        .sheet(isPresented: $settingsPresented) {
+            EmulatorSettingsView()
         }
         .onAppear {
             serialConsole.startObserving()
@@ -196,7 +193,7 @@ struct ContentView: View {
             accessibilityLabel: "Emulator Settings",
             identifier: "settingsButton"
         ) {
-            presentedSheet = .settings
+            settingsPresented = true
         }
     }
 
@@ -251,7 +248,7 @@ struct ContentView: View {
             accessibilityLabel: key.accessibilityLabel,
             identifier: key.accessibilityIdentifier
         ) {
-            sendGuestKey(key.code)
+            key.press()
         }
     }
 
@@ -308,11 +305,6 @@ struct ContentView: View {
             guestViewMode = .framebuffer
         }
     }
-
-    private func sendGuestKey(_ code: UInt16) {
-        kernarium_runtime_loader_send_key(code, 1)
-        kernarium_runtime_loader_send_key(code, 0)
-    }
 }
 
 enum GuestViewMode {
@@ -349,19 +341,11 @@ private struct GuestEndedNotice: View {
     let end: GuestRunEnd
 
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: end.systemName)
-                .font(.title)
-            Text(end.title)
-                .font(.headline)
-            Text(end.message)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(20)
-        .frame(maxWidth: 320)
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        GuestNoticeCard(
+            systemName: end.systemName,
+            title: end.title,
+            message: end.message
+        )
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("guestEndedNotice")
     }
@@ -377,27 +361,49 @@ private struct GuestRestartedNotice: View {
 
     var body: some View {
         Button(action: dismiss) {
-            VStack(spacing: 8) {
-                Image(systemName: restart.systemName)
-                    .font(.title)
-                Text(restart.title)
-                    .font(.headline)
-                Text(restart.message)
-                    .font(.subheadline)
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(.center)
-                Text("Tap to dismiss")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(20)
-            .frame(maxWidth: 320)
-            .glassEffect(.regular, in: .rect(cornerRadius: 20))
+            GuestNoticeCard(
+                systemName: restart.systemName,
+                title: restart.title,
+                message: restart.message,
+                messageStyle: .primary,
+                footer: "Tap to dismiss"
+            )
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("guestRestartedNotice")
+    }
+}
+
+/// The card both notices share: an icon, a headline and a message, with an
+/// optional line beneath.
+private struct GuestNoticeCard: View {
+    let systemName: String
+    let title: String
+    let message: String
+    var messageStyle = HierarchicalShapeStyle.secondary
+    var footer: String?
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: systemName)
+                .font(.title)
+            Text(title)
+                .font(.headline)
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(messageStyle)
+                .multilineTextAlignment(.center)
+            if let footer {
+                Text(footer)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: 320)
+        .glassEffect(.regular, in: .rect(cornerRadius: 20))
     }
 }
 
@@ -416,6 +422,12 @@ enum GuestSpecialKey: UInt16, CaseIterable, Identifiable {
 
     var id: Self { self }
     var code: UInt16 { rawValue }
+
+    /// Presses and releases the key.
+    func press() {
+        kernarium_runtime_loader_send_key(code, 1)
+        kernarium_runtime_loader_send_key(code, 0)
+    }
 
     var systemName: String {
         switch self {
@@ -449,12 +461,6 @@ enum GuestSpecialKey: UInt16, CaseIterable, Identifiable {
         case .home: "guestHomeButton"
         }
     }
-}
-
-private enum PresentedSheet: String, Identifiable {
-    case settings
-
-    var id: String { rawValue }
 }
 
 private struct GuestDisplayGeometry {
@@ -510,28 +516,33 @@ struct GuestInputCoordinateSpace {
             contentSize: contentSize,
             in: drawableSize
         ) else { return nil }
-        var drawablePoint = CGPoint(
+        let drawablePoint = CGPoint(
             x: point.x * drawableSize.width / bounds.width,
             y: point.y * drawableSize.height / bounds.height
         )
-        if clampToContent {
-            drawablePoint.x = min(
-                max(drawablePoint.x, viewport.minX), viewport.maxX
-            )
-            drawablePoint.y = min(
-                max(drawablePoint.y, viewport.minY), viewport.maxY
-            )
-        } else if drawablePoint.x < viewport.minX ||
-                    drawablePoint.x > viewport.maxX ||
-                    drawablePoint.y < viewport.minY ||
-                    drawablePoint.y > viewport.maxY {
+        if !clampToContent, drawablePoint.x < viewport.minX ||
+            drawablePoint.x > viewport.maxX ||
+            drawablePoint.y < viewport.minY ||
+            drawablePoint.y > viewport.maxY {
             return nil
         }
+        return coordinate(ofDrawable: drawablePoint, in: viewport)
+    }
+
+    /// The position `drawablePoint` has in this space once it is clamped into
+    /// `viewport`, the aspect-fit rectangle the guest's display occupies.
+    func coordinate(
+        ofDrawable drawablePoint: CGPoint,
+        in viewport: CGRect
+    ) -> (x: UInt32, y: UInt32) {
+        let clamped = CGPoint(
+            x: min(max(drawablePoint.x, viewport.minX), viewport.maxX),
+            y: min(max(drawablePoint.y, viewport.minY), viewport.maxY)
+        )
         let x = min(
             max(
                 (
-                    (drawablePoint.x - viewport.minX) * size.width /
-                        viewport.width
+                    (clamped.x - viewport.minX) * size.width / viewport.width
                 ).rounded(.down),
                 0
             ),
@@ -540,8 +551,7 @@ struct GuestInputCoordinateSpace {
         let y = min(
             max(
                 (
-                    (drawablePoint.y - viewport.minY) * size.height /
-                        viewport.height
+                    (clamped.y - viewport.minY) * size.height / viewport.height
                 ).rounded(.down),
                 0
             ),
@@ -597,7 +607,6 @@ struct GuestTouchGeometry {
     private let coordinateSpace: GuestInputCoordinateSpace
     private let boundsSize: CGSize
     private let drawableSize: CGSize
-    private let contentSize: CGSize
     private let viewport: CGRect
 
     init?(
@@ -617,7 +626,6 @@ struct GuestTouchGeometry {
         self.coordinateSpace = coordinateSpace
         self.boundsSize = boundsSize
         self.drawableSize = drawableSize
-        self.contentSize = contentSize
         self.viewport = viewport
     }
 
@@ -642,17 +650,13 @@ struct GuestTouchGeometry {
         at drawablePoint: CGPoint,
         pressed: Bool
     ) -> GuestTouchEvent? {
-        let boundsPoint = CGPoint(
-            x: drawablePoint.x * boundsSize.width / drawableSize.width,
-            y: drawablePoint.y * boundsSize.height / drawableSize.height
+        guard drawablePoint.x.isFinite, drawablePoint.y.isFinite else {
+            return nil
+        }
+        let location = coordinateSpace.coordinate(
+            ofDrawable: drawablePoint,
+            in: viewport
         )
-        guard let location = coordinateSpace.location(
-            boundsPoint,
-            in: boundsSize,
-            drawableSize: drawableSize,
-            contentSize: contentSize,
-            clampToContent: true
-        ) else { return nil }
         return GuestTouchEvent(
             x: location.x,
             y: location.y,
@@ -838,13 +842,6 @@ struct GuestTouchPath {
         appendLastRelease(to: &events)
         previousPoint = nil
         return events
-    }
-
-    mutating func cancel(
-        at point: CGPoint,
-        geometry: GuestTouchGeometry?
-    ) -> [GuestTouchEvent] {
-        end(at: point, geometry: geometry)
     }
 
     mutating func release() -> [GuestTouchEvent] {
@@ -1043,7 +1040,7 @@ private struct GuestDisplayView: UIViewControllerRepresentable {
         _ controller: GuestDisplayViewController,
         coordinator: ()
     ) {
-        controller.metalView.releaseGuestInput()
+        controller.metalView.releaseTrackedTouch()
         controller.metalView.finishHostResize()
         controller.metalView.resignFirstResponder()
     }
@@ -1191,10 +1188,6 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         )
     }
 
-    func releaseGuestInput() {
-        releaseTrackedTouch()
-    }
-
     func setKeyboardVisible(_ visible: Bool) {
         if visible {
             becomeFirstResponder()
@@ -1262,19 +1255,15 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         with event: UIEvent?
     ) {
         super.touchesCancelled(touches, with: event)
-        finishTouch(in: touches, cancelled: true)
+        finishTouch(in: touches)
     }
 
-    private func finishTouch(
-        in touches: Set<UITouch>,
-        cancelled: Bool = false
-    ) {
+    private func finishTouch(in touches: Set<UITouch>) {
         guard let touch = trackedTouch, touches.contains(touch) else { return }
-        let point = touch.location(in: self)
-        let events = cancelled ?
-            touchPath.cancel(at: point, geometry: touchGeometry()) :
-            touchPath.end(at: point, geometry: touchGeometry())
-        sendTouchEvents(events)
+        sendTouchEvents(touchPath.end(
+            at: touch.location(in: self),
+            geometry: touchGeometry()
+        ))
         trackedTouch = nil
     }
 
@@ -1297,7 +1286,7 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         }
     }
 
-    private func releaseTrackedTouch() {
+    func releaseTrackedTouch() {
         guard trackedTouch != nil else { return }
         sendTouchEvents(touchPath.release())
         trackedTouch = nil
@@ -1425,19 +1414,6 @@ enum ThermalStateReport {
         return "Kernarium thermal state: phase=\(phase.rawValue) " +
             "state=\(name(for: state)) uptime=\(uptimeText)"
     }
-
-    static func probeLine(
-        state: ProcessInfo.ThermalState,
-        uptime: TimeInterval
-    ) -> String {
-        let uptimeText = String(
-            format: "%.3f",
-            locale: Locale(identifier: "en_US_POSIX"),
-            uptime
-        )
-        return "Kernarium thermal probe: state=\(name(for: state)) " +
-            "uptime=\(uptimeText)"
-    }
 }
 
 /// The paths one boot needs, in the order the boot request declares them.
@@ -1551,18 +1527,6 @@ final class EmulatorLauncher: ObservableObject {
         geometry: GuestDisplayGeometry
     ) {
         guard phase == .idle else { return }
-        if ProcessInfo.processInfo.environment[
-            "KERNARIUM_THERMAL_PROBE_ONLY"
-        ] == "1" {
-            phase = .running
-            print(
-                ThermalStateReport.probeLine(
-                    state: ProcessInfo.processInfo.thermalState,
-                    uptime: ProcessInfo.processInfo.systemUptime
-                )
-            )
-            return
-        }
         guard let rootfsFilename = RootfsImage.selectedFilename(
             configuredFilename: configuration.rootfsFilename
         ) else {
@@ -1575,10 +1539,8 @@ final class EmulatorLauncher: ObservableObject {
         }
         runningGuestName = rootfsFilename
         runningGuestIsAndroid = selection.flavor == .android
-        // Every runtime carries a 4 KiB kernel.
         guard kernarium_runtime_loader_select(
-            selection.flavor.rawValue,
-            4096
+            selection.flavor.rawValue
         ) == 0 else {
             print("Kernarium: cannot load the runtime")
             return
@@ -1597,13 +1559,10 @@ final class EmulatorLauncher: ObservableObject {
         let size = GuestInputCoordinateSpace.boundedDisplaySize(
             geometry.pixelSize
         )
-        view.setGuestDisplay(
-            width: UInt32(size.width.rounded(.down)),
-            height: UInt32(size.height.rounded(.down))
-        )
-        UIApplication.shared.isIdleTimerDisabled = true
         let width = UInt32(size.width.rounded(.down))
         let height = UInt32(size.height.rounded(.down))
+        view.setGuestDisplay(width: width, height: height)
+        UIApplication.shared.isIdleTimerDisabled = true
         let guestMemoryMiB = UInt32(configuration.guestMemoryMiB)
         let vCPUCount = UInt32(configuration.vCPUCount)
         let dotsPerInch = geometry.dotsPerInch

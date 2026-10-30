@@ -15,11 +15,8 @@
 
 namespace {
 
-constexpr uint32_t fourKiB = 4096U;
-
 std::mutex selectionMutex;
 std::atomic<const kernarium_runtime_api*> selectedApi;
-uint32_t selectedPageSize;
 uint32_t selectedFlavor;
 bool selectionAttempted;
 std::mutex consoleOutputHandlerMutex;
@@ -81,11 +78,6 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     blockGuestTimer();
 }
 
-[[nodiscard]] NSString* pageVariant(uint32_t guestPageSize)
-{
-    return guestPageSize == fourKiB ? @"4K" : nil;
-}
-
 /* The flavour leads the framework name. Linux additionally requires a numeric
  * release after its prefix because the specialized names share its stem. */
 [[nodiscard]] NSString* flavorPrefix(uint32_t guestFlavor)
@@ -119,7 +111,6 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
 
 [[nodiscard]] NSURL* findRuntimeFramework(
     NSString* prefix,
-    NSString* variant,
     uint32_t guestFlavor)
 {
     NSURL* frameworks = NSBundle.mainBundle.privateFrameworksURL;
@@ -140,12 +131,11 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         return nil;
     }
 
-    NSString* suffix = [NSString stringWithFormat:@"_%@.framework", variant];
     NSMutableArray<NSURL*>* matches = [NSMutableArray array];
     for (NSURL* candidate in contents) {
         NSString* name = candidate.lastPathComponent;
         if (matchesFlavor(name, prefix, guestFlavor) &&
-            [name hasSuffix:suffix])
+            [name hasSuffix:@"_4K.framework"])
             [matches addObject:candidate];
     }
     [matches sortUsingComparator:^NSComparisonResult(NSURL* first, NSURL* second) {
@@ -154,25 +144,25 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     if (matches.count != 1U) {
         std::fprintf(
             stderr,
-            "Kernarium: expected one embedded %s%s runtime framework, "
+            "Kernarium: expected one embedded %s4K runtime framework, "
             "found %lu\n",
             prefix.UTF8String,
-            variant.UTF8String,
             static_cast<unsigned long>(matches.count));
         return nil;
     }
     return matches.firstObject;
 }
 
+/* Every embedded runtime has 4 KiB guest pages; a framework that says
+ * otherwise is stale. */
 [[nodiscard]] bool validApi(
     const kernarium_runtime_api* api,
-    uint32_t guestFlavor,
-    uint32_t guestPageSize)
+    uint32_t guestFlavor)
 {
     if (api == nullptr ||
         api->abi_version != KERNARIUM_RUNTIME_API_VERSION ||
         api->struct_size < sizeof(kernarium_runtime_api) ||
-        api->guest_page_size != guestPageSize ||
+        api->guest_page_size != 4096U ||
         api->guest_flavor != guestFlavor ||
         api->run == nullptr ||
         api->request_stop == nullptr ||
@@ -193,16 +183,11 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     return true;
 }
 
-/* `prefix` and `variant` name the framework for `guestFlavor` and
- * `guestPageSize`; the caller has resolved both. The handle stays loaded for
- * the life of the process. */
-[[nodiscard]] int loadRuntime(
-    NSString* prefix,
-    NSString* variant,
-    uint32_t guestFlavor,
-    uint32_t guestPageSize)
+/* `prefix` names the framework for `guestFlavor`; the caller has resolved it.
+ * The handle stays loaded for the life of the process. */
+[[nodiscard]] int loadRuntime(NSString* prefix, uint32_t guestFlavor)
 {
-    NSURL* framework = findRuntimeFramework(prefix, variant, guestFlavor);
+    NSURL* framework = findRuntimeFramework(prefix, guestFlavor);
     NSBundle* bundle = framework == nil ? nil : [NSBundle bundleWithURL:framework];
     NSString* executable = bundle.executablePath;
     if (executable == nil) {
@@ -235,18 +220,17 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     const auto getter = reinterpret_cast<
         const kernarium_runtime_api* (*)(void)>(symbol);
     const kernarium_runtime_api* api = getter();
-    if (!validApi(api, guestFlavor, guestPageSize)) {
+    if (!validApi(api, guestFlavor)) {
         (void)dlclose(handle);
         return -1;
     }
 
     updateConsoleOutputForwarder(api);
-    selectedPageSize = guestPageSize;
     selectedFlavor = guestFlavor;
     selectedApi.store(api, std::memory_order_release);
     std::printf(
-        "Kernarium: loaded runtime with %u-byte guest pages\n",
-        api->guest_page_size);
+        "Kernarium: loaded runtime %s\n",
+        framework.lastPathComponent.UTF8String);
     return 0;
 }
 
@@ -257,31 +241,24 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
 
 } // namespace
 
-extern "C" int kernarium_runtime_loader_select(
-    uint32_t guestFlavor,
-    uint32_t guestPageSize)
+extern "C" int kernarium_runtime_loader_select(uint32_t guestFlavor)
 {
-    NSString* variant = pageVariant(guestPageSize);
     NSString* prefix = flavorPrefix(guestFlavor);
-    if (variant == nil || prefix == nil) {
+    if (prefix == nil) {
         std::fprintf(
             stderr,
-            "Kernarium: unsupported guest flavour %u or page size %u\n",
-            guestFlavor,
-            guestPageSize);
+            "Kernarium: unsupported guest flavour %u\n",
+            guestFlavor);
         return -1;
     }
 
     std::lock_guard lock(selectionMutex);
-    if (api() != nullptr) {
-        return selectedPageSize == guestPageSize &&
-                selectedFlavor == guestFlavor
-            ? 0 : -1;
-    }
+    if (api() != nullptr)
+        return selectedFlavor == guestFlavor ? 0 : -1;
     if (selectionAttempted)
         return -1;
     selectionAttempted = true;
-    return loadRuntime(prefix, variant, guestFlavor, guestPageSize);
+    return loadRuntime(prefix, guestFlavor);
 }
 
 extern "C" int kernarium_runtime_loader_run(

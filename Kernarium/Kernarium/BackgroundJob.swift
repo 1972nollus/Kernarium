@@ -64,6 +64,7 @@ final class BackgroundJob: ObservableObject {
     weak var controller: BackgroundController?
 
     private var registered = false
+    private var submissions = 0
     private var task: BGContinuedProcessingTask?
     private var ticker: Timer?
     private var lastSubtitleMinutes = Int.max
@@ -89,16 +90,36 @@ final class BackgroundJob: ObservableObject {
         let request = BGContinuedProcessingTaskRequest(
             identifier: Self.identifier,
             title: "\(guestName) is running",
-            subtitle: "Stops after \(Self.describe(minutes: limitMinutes))"
+            subtitle: "Stops after " +
+                BackgroundSettings.limitTitle(minutes: limitMinutes)
         )
         request.strategy = .fail
-        do {
-            try BGTaskScheduler.shared.submit(request)
-            state = .submitted
-            print("Kernarium: background job submitted (\(limitMinutes) min)")
-        } catch {
-            print("Kernarium: background job refused: \(error)")
+        // iOS 27 submits off the calling thread and reports later, possibly
+        // after it has already started the task, so the job counts as
+        // submitted from here and a refusal puts it back.
+        state = .submitted
+        submissions += 1
+        let submission = submissions
+        nonisolated(unsafe) let handed = request
+        DispatchQueue.global(qos: .userInitiated).async {
+            BGTaskScheduler.shared.submitTaskRequest(handed) { error in
+                guard let error else { return }
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        BackgroundJob.shared.refuse(submission, error: error)
+                    }
+                }
+            }
         }
+        print("Kernarium: background job submitted (\(limitMinutes) min)")
+    }
+
+    /// iOS refused the request. Only the submission that is still waiting
+    /// is undone: the user may have stopped it, and started another, since.
+    private func refuse(_ submission: Int, error: Error) {
+        print("Kernarium: background job refused: \(error)")
+        guard state == .submitted, submission == submissions else { return }
+        state = .idle
     }
 
     /// The guest's settings may have changed: a job belongs to the keep-running
@@ -114,12 +135,6 @@ final class BackgroundJob: ObservableObject {
             BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.identifier)
         }
         finish(success: false, reason: "stopped")
-    }
-
-    private static func describe(minutes: Int) -> String {
-        minutes % 60 == 0 ?
-            (minutes == 60 ? "1 hour" : "\(minutes / 60) hours") :
-            "\(minutes) minutes"
     }
 
     private func registerHandler() {
