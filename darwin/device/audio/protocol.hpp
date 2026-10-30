@@ -16,8 +16,13 @@ constexpr std::uint32_t transmitQueue = 2;
 constexpr std::uint32_t receiveQueue = 3;
 constexpr std::size_t queueCount = 4;
 
+// The playback stream and the capture stream share function group 0, which
+// the guest driver exposes as the two directions of PCM device 0.
 constexpr std::uint32_t streamId = 0;
 constexpr std::uint32_t channelMapId = 0;
+constexpr std::uint32_t inputStreamId = 1;
+constexpr std::uint32_t inputChannelMapId = 1;
+constexpr std::uint32_t streamCount = 2;
 constexpr std::uint32_t sampleRate = 48'000;
 constexpr std::uint8_t channelCount = 2;
 constexpr std::uint8_t bytesPerSample = 2;

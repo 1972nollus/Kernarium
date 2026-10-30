@@ -168,6 +168,26 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         choices=("gadgets", "jit"),
         default="gadgets",
     )
+    parser.add_argument(
+        "--audio-output",
+        choices=("host", "null"),
+        default="host",
+        help=(
+            "play guest audio through the Mac's default output, or discard "
+            "it at the rate it would play, for runs that must be silent "
+            "(default: host)"
+        ),
+    )
+    parser.add_argument(
+        "--audio-input",
+        choices=("silent", "host"),
+        default="silent",
+        help=(
+            "record silence in the guest, or record from the Mac's "
+            "microphone; host asks macOS for microphone access on behalf of "
+            "the app that runs this script (default: silent)"
+        ),
+    )
     boot_mode = parser.add_mutually_exclusive_group()
     boot_mode.add_argument(
         "--boot-mode", choices=("auto", "normal", "recovery"), default="normal"
@@ -491,6 +511,10 @@ def emulator_command(
         f"--gpu-height={options.height}",
         "--video",
         "--video-encoder",
+        *([f"--audio-output={options.audio_output}"]
+          if options.audio_output != "host" else []),
+        *([f"--audio-input={options.audio_input}"]
+          if options.audio_input != "silent" else []),
         f"ncpus={options.cpus}",
         f"mem={options.memory}",
         f"--execution-engine={options.engine}",

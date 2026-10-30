@@ -64,6 +64,14 @@ REFUSALS: list[tuple[list[str], str]] = [
      CONFIGURE + "--virtio-console-socket and --virtio-serial-socket are "
      "mutually exclusive"),
     (["--gpu-display=bogus"], CONFIGURE + "--gpu-display must be native or vnc"),
+    (["--audio-output=bogus"], CONFIGURE + "--audio-output must be host or null"),
+    (["--audio-output="], CONFIGURE + "--audio-output must be host or null"),
+    (["--audio-output=null", explicit(AUDIO)],
+     COLLISION.format("--audio", "Virtio Sound")),
+    (["--audio-input=bogus"], CONFIGURE + "--audio-input must be silent or host"),
+    (["--audio-input="], CONFIGURE + "--audio-input must be silent or host"),
+    (["--audio-input=silent", explicit(AUDIO)],
+     COLLISION.format("--audio", "Virtio Sound")),
     (["--gpu-vnc-bind="], CONFIGURE + "invalid host option: --gpu-vnc-bind="),
     (["--gpu-vnc-password="],
      CONFIGURE + "VNC password must contain between 1 and 8 bytes"),
@@ -105,6 +113,9 @@ ACCEPTED: list[list[str]] = [
      "--virtio-serial-socket={tmp}/serial.sock"],
     ["--gpu", "--battery", "--audio", "--video", "--video-encoder",
      explicit(BATTERY), explicit(GPU)],
+    ["--audio-output=null"],
+    ["--audio", "--audio-output=host"],
+    ["--audio-input=silent"],
 ]
 
 

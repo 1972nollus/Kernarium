@@ -8,6 +8,7 @@ investigation date.
 | Architecture, dependency direction, runtime boundaries | [`architecture.md`](architecture.md) |
 | Build, test, guest, sanitizer, and package entry points | [`testing.md`](testing.md) |
 | Apple graphics support and limits | [`graphics.md`](graphics.md) |
+| Virtio sound: playback pacing, the null output, capture and the microphone | [`../darwin/device/audio/README.md`](../darwin/device/audio/README.md) |
 | Virtio video decoding, encoding and the private wire contract | [`../darwin/device/video/README.md`](../darwin/device/video/README.md) and [`../kernel/common/video/README.md`](../kernel/common/video/README.md) |
 | Platform hardware video encoder: discovery, cache, sessions, recovery | [`../darwin/platform/README.md`](../darwin/platform/README.md) |
 | Guest VA-API backend over the video decoder and encoder | [`../tools/video/va-v4l2/README.md`](../tools/video/va-v4l2/README.md) |
