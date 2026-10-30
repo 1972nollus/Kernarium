@@ -107,3 +107,17 @@ cc_binary {
         "-Wextra",
     ],
 }
+
+cc_binary {
+    name: "kernarium_egl_configs",
+    srcs: ["kernarium_egl_configs.cpp"],
+    shared_libs: [
+        "libEGL",
+        "libGLESv3",
+    ],
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wextra",
+    ],
+}

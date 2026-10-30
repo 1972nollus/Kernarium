@@ -700,6 +700,11 @@ read differently. `kernarium_ahb_rgba_lock` checks the lock of tall RGBA buffers
 whose rows gralloc pads (widths 340 to 350 at 604 rows): a buffer the GPU wrote
 and a buffer the CPU wrote are each compared at the stride, and a padded lock
 that takes more than four times an unpadded one fails the run.
+`kernarium_egl_configs` lists the EGL configs and picks the one HWUI's request
+chooses (RGBA8888, no depth, eight bits of stencil); `--expect-stencil-only` fails
+unless that config has no depth plane, and a pbuffer of it must stencil: a draw
+that writes only stencil and a draw that passes only where the stencil matches
+colour the two halves of the picture apart.
 
 The product declares `android.hardware.vulkan.version` 1.4, `level` 1 and
 `compute` 0, and deliberately declares no `android.software.vulkan.deqp.level`:

@@ -432,6 +432,14 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_ahb_yuv_r
 PRODUCT_PACKAGES += kernarium_ahb_rgba_lock
 PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_ahb_rgba_lock
 
+# An EGL config check: it lists the configs, picks the one the hardware renderer
+# asks eglChooseConfig for (RGBA8888, no depth, eight bits of stencil) and
+# stencils in a pbuffer of it, so a guest that stores a window's stencil beside
+# a depth plane it never reads, or a stencil that does not stencil, fails the
+# run.
+PRODUCT_PACKAGES += kernarium_egl_configs
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_egl_configs
+
 # Hardware video encoding and decoding. The host's VideoToolbox encoders and
 # decoders reach the guest as V4L2 stateful devices, and external/v4l2_codec2
 # exposes them through Codec2: its service is the vendor Codec2 store beside the
