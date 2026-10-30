@@ -70,6 +70,11 @@ VIDEO_DECODER_PROPERTIES = {
 # the capacity (VideoEncoderAvailabilityTest and VideoDecoderAvailabilityTest, resource
 # consumption for performance points), so a capacity cannot be far above what the codec publishes.
 VIDEO_MIN_CAPACITY_SHARE = 0.6
+# The smallest picture and the lowest bit rate of the encoders: the floors that the host lists
+# (the platform's kVideoEncodeMinimumSide and the bit rate control's minimum), below which its
+# streams fail CTS's quality bar. The codec list states exactly them.
+VIDEO_ENCODER_MINIMUM_SIZE = "64x64"
+VIDEO_ENCODER_MINIMUM_BITRATE = "20000"
 VIDEO_ENCODER_UEVENTD = "/dev/video* 0660 system camera"
 # The service reads this policy beside its default one. The poller of the V4L2
 # device wakes its thread through an eventfd, which the default lacks.
@@ -1715,6 +1720,16 @@ def check_video_encoders(
     }
     if encoders != VIDEO_ENCODER_CODECS:
         fail(f"the Codec2 list must name exactly the hardware encoders: {encoders}")
+    for codec in codecs.iterfind("./Encoders/MediaCodec"):
+        limits = {limit.get("name"): limit for limit in codec.iterfind("./Limit")}
+        size = limits.get("size")
+        if size is None or size.get("min") != VIDEO_ENCODER_MINIMUM_SIZE:
+            fail(f"{codec.get('name')} must start at {VIDEO_ENCODER_MINIMUM_SIZE} pixels: "
+                 "the host lists no smaller picture")
+        bitrate = limits.get("bitrate")
+        if bitrate is None or (bitrate.get("range") or "").split("-")[0] != VIDEO_ENCODER_MINIMUM_BITRATE:
+            fail(f"{codec.get('name')} must start at {VIDEO_ENCODER_MINIMUM_BITRATE} bit/s: "
+                 "the host lists no lower bit rate")
     # A decoder is one of the hardware decoders, or an update to a software decoder's limits.
     hardware_decoders = {
         codec.get("name"): codec.get("type")

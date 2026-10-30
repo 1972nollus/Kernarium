@@ -741,7 +741,12 @@ frame copy, which grows with the picture, so 4K HEVC encoding is published
 below 30 frames per second; a decoder's lower bound is the rate that keeps up
 with a 30 frames per second clip of every size at or below the point. The file
 is the product's one vendor codec list, so it also carries any update
-(`update="true"`) to the limits of a software decoder.
+(`update="true"`) to the limits of a software decoder. The encoders start at
+64x64 pixels and 20 kbit/s, the floors the host lists (the platform never lists a
+video picture below 64 samples and the bit rate control starts at 20 kbit/s)
+and the component clamps to: below them VideoToolbox's streams fail CTS
+`VideoEncoderMinMaxTest`'s 20 dB PSNR bar, and the verifier requires the codec
+list to state exactly these floors.
 `ro.vendor.v4l2_codec2.encode_concurrent_instances` and
 `ro.vendor.v4l2_codec2.decode_concurrent_instances` bound the instances of each
 direction. The encoders allow eight. A decoder keeps its pool of decoded

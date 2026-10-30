@@ -461,6 +461,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                              decoder_performance_points: bool = True,
                              decoder_measured_frame_rates: bool = True,
                              decoder_performance_point: str = "3840x2160 49-55",
+                             encoder_minimum_size: str = "64x64",
+                             encoder_minimum_bitrate: str = "20000",
                              software_updates: tuple[str, ...] = (
                                  "c2.android.hevc.decoder", "c2.android.vp9.decoder"),
                              hevc_rate: str = "1-16711680",
@@ -470,7 +472,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             hardware_decoders = (tool.VIDEO_DECODER_CODECS if hardware_decoders is None
                                  else hardware_decoders)
             limits = (
-                (f'      <Limit name="performance-point-{performance_point.split()[0]}"'
+                f'      <Limit name="size" min="{encoder_minimum_size}" max="4096x4096"/>\n'
+                f'      <Limit name="bitrate" range="{encoder_minimum_bitrate}-60000000"/>\n'
+                + (f'      <Limit name="performance-point-{performance_point.split()[0]}"'
                  f' range="{performance_point.split()[1]}"/>\n'
                  if performance_points else "")
                 + ('      <Limit name="measured-frame-rate-1920x1080" range="31-45"/>\n'
@@ -1752,6 +1756,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("video-encoder-without-measured-frame-rate",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  measured_frame_rates=False)}}),
+            ("video-encoder-below-the-size-floor",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 encoder_minimum_size="16x16")}}),
+            ("video-encoder-below-the-bitrate-floor",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 encoder_minimum_bitrate="1")}}),
             ("video-performance-point-above-capacity",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  performance_point="3840x2160 30-60")}}),
@@ -2138,6 +2148,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  performance_point="3840x2160 fast")}},
              "publishes a malformed performance-point-3840x2160"),
+            ("video-encoder-below-the-size-floor-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 encoder_minimum_size="16x16")}},
+             r"c2\.v4l2\.\w+\.encoder must start at 64x64 pixels"),
+            ("video-encoder-below-the-bitrate-floor-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 encoder_minimum_bitrate="1")}},
+             r"c2\.v4l2\.\w+\.encoder must start at 20000 bit/s"),
             ("video-decoder-without-performance-point-cause",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  decoder_performance_points=False)}},
