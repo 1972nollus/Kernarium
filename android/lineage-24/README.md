@@ -925,10 +925,12 @@ system disk; it reaches sgdisk only for the loop-backed virtual disk of
 
 AOSP's EROFS tools (`mkfs.erofs`, `fsck.erofs`, `dump.erofs`) are built with
 Zstandard. An `external/erofs-utils` topic (route `p0023`) compiles the encoder
-and the decoder and links libzstd (static on the host, shared on the device and
-in recovery), and a second `external/zstd` topic (route `p0013`) lets that
-project see the library. Without them `mkfs.erofs` rejects `-zzstd` and
-`fsck.erofs` cannot read a Zstandard image.
+and the decoder and embeds libzstd in `liberofs` itself (`whole_static_libs`,
+because the `static_libs` of a static library are not linked into its users, so
+`apex-ls` and the update engine's payload generator would otherwise miss the
+symbols), and a second `external/zstd` topic (route `p0013`) lets that project
+see the library. Without them `mkfs.erofs` rejects `-zzstd` and `fsck.erofs`
+cannot read a Zstandard image.
 
 The five read-only partitions are compressed EROFS: Zstandard level 15 with
 16 KiB physical clusters on 4 KiB blocks. The two parameters are written once,
