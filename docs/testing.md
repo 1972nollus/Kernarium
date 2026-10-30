@@ -806,6 +806,13 @@ keeps drawing, to find when iOS stops serving Metal: the first Metal
 access-revoked error in the console is the answer, and the grace stays well
 inside it.
 
+A Mac runs the guest's side of this edge without a device, with no GPU
+revoked: `Kernarium/scripts/repro-android-hold-mac.py` launches the Android
+automation runtime in Designed for iPad mode, applies the real policy through
+`AndroidHoldReproTests`, and checks the guest through adb. The tests skip
+unless that script names their channel. `--expect fail` is for a build with the
+old order, which must show tasks waiting on the GPU control queue.
+
 To check the restart notice, background the
 application, terminate its process with `devicectl device process terminate`,
 and launch it again: the console reports that the previous process ended in

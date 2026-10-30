@@ -435,6 +435,10 @@ Each script documents its options in `--help` or its header:
   archives only `KernariumTests` links;
 - `make-guest-bundle.py` assembles an Android `.kern` bundle from an installed
   release;
+- `repro-android-hold-mac.py` sends an Android guest through the background
+  edge on a Mac and checks it through adb, with `AndroidHoldReproTests` as the
+  application's side (`docs/testing.md`); `run-ios-mac.sh` takes
+  `--android-automation`, `--only-testing` and `--test-env` for it;
 - `ipad-automation.py` drives UI automation on a connected iPad through the
   `KernariumAutomation` host; and
 - `verify-signed-kernel-carrier.py` checks that a kernel image is safe for the
