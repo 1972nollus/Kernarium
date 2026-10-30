@@ -1082,6 +1082,16 @@ drivers that size their caches from either see that difference.
 heap's budget is held to the heap size; a measurement run states 4096 to see what
 the device reports. Unset, the heap is physical memory.
 
+The shared-memory segments that virglrenderer maps with the host stack (a texture
+export, a Venus shared-memory blob) are unlinked container files on iOS, where
+`shm_open` is denied, and POSIX shared memory on macOS. A file's pages are
+outside an iOS application's footprint and POSIX shared memory is inside it, so a
+macOS run reads high by the size of the segments: 25 MiB at a 1133x687 display
+and 58 MiB at 2266x1374 for the Android UI drawn by Venus. `VIRGL_ANON_FILE_UNLINKED=1`
+makes a macOS run take the file, so a measurement reads what the device would;
+unset, empty or `0`, macOS keeps POSIX shared memory, because the pages of a file
+can be written back to the volume of the temporary directory.
+
 A Venus device charges its heap to the renderer's device-memory pool (see [the
 Venus share](#host-visible-memory-is-bounded-by-the-blob-aperture)), so the
 heap and the guest's allocations share one bound. A heap the device creates or

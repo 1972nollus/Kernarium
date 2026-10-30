@@ -162,6 +162,16 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
     endforeach()
 endif()
 
+if(TARGET uml_gpu_service AND UML_TARGET_MACOS)
+    # A measurement run takes the iOS memory accounting of the segments that
+    # virglrenderer shares with the host GPU stack by asking for container
+    # files in place of POSIX shared memory.
+    uml_add_gpu_unit_test(gpu-virgl-anon-file-backing
+        uml_gpu_virgl_anon_file_tests virgl_anon_file_tests.cpp
+        LIBRARIES UML::ThirdPartyVirglrenderer
+        TIMEOUT 60)
+endif()
+
 if(TARGET uml_gpu_service)
     uml_add_gpu_unit_test(gpu-host-gl-provider-lifetime
         uml_gpu_host_gl_provider_tests host_gl_provider_lifetime_tests.cpp
