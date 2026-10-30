@@ -128,6 +128,31 @@ void anUnflushableDescriptorIsReportedWithoutStoppingTheRest()
 	require(::close(file) == 0);
 }
 
+/* A guest that restarts itself leaves no record to the next one: a record of
+ * a descriptor that is still open is not flushed afterwards, and one of a
+ * closed descriptor is not retired later, because there is none. */
+void forgottenRecordsAreNeitherFlushedNorRetired()
+{
+	drainRegistry();
+	const int open_file = openScratch("forgotten-open", O_RDWR);
+	const int closed_file = openScratch("forgotten-closed", O_RDWR);
+	uml::platform::record_guest_file(open_file, O_RDWR);
+	uml::platform::record_guest_file(closed_file, O_RDWR);
+	require(::close(closed_file) == 0);
+	require(uml::platform::forget_guest_files() == 2U,
+		"the records were not all forgotten");
+	const auto result = uml::platform::sync_guest_files();
+	require(result.flushed == 0U && result.failed == 0U &&
+		result.retired == 0U, "a forgotten record survived");
+	require(uml::platform::forget_guest_files() == 0U,
+		"forgetting twice found records");
+	/* The next guest records its own. */
+	uml::platform::record_guest_file(open_file, O_RDWR);
+	require(uml::platform::sync_guest_files().flushed == 1U);
+	require(::close(open_file) == 0);
+	require(uml::platform::forget_guest_files() == 1U);
+}
+
 void anEmptyRegistryFlushesNothing()
 {
 	const auto result = uml::platform::sync_guest_files();
@@ -146,6 +171,7 @@ int main()
 	aReusedDescriptorIsRetiredRatherThanFlushed();
 	everyRecordedDescriptorIsFlushed();
 	anUnflushableDescriptorIsReportedWithoutStoppingTheRest();
+	forgottenRecordsAreNeitherFlushedNorRetired();
 	std::puts("guest file sync tests passed");
 	return 0;
 }

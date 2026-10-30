@@ -337,7 +337,6 @@ int main()
 		uml::emulator::testing::place_native_kernel_window(
 			uml::testing::native_test_window_start);
 		RunWindowSlot slot;
-		slot.release();
 		test_same_address_is_serialized_and_isolated(slot);
 		test_queued_stop_cancels_and_retry_is_fresh(slot);
 		return EXIT_SUCCESS;

@@ -2,9 +2,12 @@
 #include "kernel_signal_scope.hpp"
 #include "memory/shared_backing.hpp"
 
+#include <cstring>
+#include <fcntl.h>
 #include <pthread.h>
 #include <sys/mman.h>
 #include <sys/time.h>
+#include <unistd.h>
 
 namespace uml::runtime {
 namespace {
@@ -22,6 +25,56 @@ namespace {
 	return reinterpret_cast<std::uintptr_t>(action.sa_handler);
 }
 
+/* The status flags F_SETFL can change on an open file description. */
+constexpr int settable_status_flags =
+	O_NONBLOCK | O_APPEND | O_ASYNC | O_FSYNC | O_DSYNC;
+
+[[nodiscard]] bool same_disposition(const struct sigaction &left,
+	const struct sigaction &right) noexcept
+{
+	return left.sa_handler == right.sa_handler &&
+		left.sa_flags == right.sa_flags &&
+		left.sa_mask == right.sa_mask;
+}
+
+/* PENDIN is the line discipline's own note that input is waiting to be
+ * retyped: a terminal sets it after any change of mode, and the mode it
+ * records does not include it. */
+[[nodiscard]] bool same_terminal(const struct termios &left,
+	const struct termios &right) noexcept
+{
+	return left.c_iflag == right.c_iflag && left.c_oflag == right.c_oflag &&
+		left.c_cflag == right.c_cflag &&
+		(left.c_lflag & ~PENDIN) == (right.c_lflag & ~PENDIN) &&
+		std::memcmp(left.c_cc, right.c_cc, sizeof(left.c_cc)) == 0 &&
+		left.c_ispeed == right.c_ispeed && left.c_ospeed == right.c_ospeed;
+}
+
+[[nodiscard]] bool same_stack(const stack_t &left,
+	const stack_t &right) noexcept
+{
+	if (((left.ss_flags ^ right.ss_flags) & SS_DISABLE) != 0)
+		return false;
+	return (left.ss_flags & SS_DISABLE) != 0 ||
+		(left.ss_sp == right.ss_sp && left.ss_size == right.ss_size);
+}
+
+/* Changes a terminal from a process that may be in a background group of it
+ * without being stopped by SIGTTOU: POSIX lets a process that blocks the
+ * signal change the terminal. Not draining output, which a terminal nobody
+ * reads would never finish. */
+void restore_terminal(int descriptor, const struct termios &attributes) noexcept
+{
+	sigset_t stop;
+	sigemptyset(&stop);
+	sigaddset(&stop, SIGTTOU);
+	sigset_t previous;
+	const bool blocked = pthread_sigmask(SIG_BLOCK, &stop, &previous) == 0;
+	(void)tcsetattr(descriptor, TCSANOW, &attributes);
+	if (blocked)
+		(void)pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+}
+
 } // namespace
 
 KernelSignalScope::KernelSignalScope(std::uintptr_t image_begin,
@@ -32,6 +85,17 @@ KernelSignalScope::KernelSignalScope(std::uintptr_t image_begin,
 		recorded_[signal] = revocable(signal) &&
 			sigaction(signal, nullptr, &dispositions_[signal]) == 0;
 	mask_recorded_ = pthread_sigmask(SIG_SETMASK, nullptr, &mask_) == 0;
+	alternate_stack_recorded_ = sigaltstack(nullptr, &alternate_stack_) == 0;
+	for (std::size_t descriptor = 0; descriptor < standard_flags_.size();
+	     ++descriptor) {
+		const int fd = static_cast<int>(descriptor);
+		const int flags = fcntl(fd, F_GETFL);
+		if (flags < 0)
+			continue;
+		standard_flags_[descriptor] = flags & settable_status_flags;
+		standard_terminal_recorded_[descriptor] = isatty(fd) == 1 &&
+			tcgetattr(fd, &standard_terminals_[descriptor]) == 0;
+	}
 }
 
 KernelSignalScope::~KernelSignalScope()
@@ -44,9 +108,18 @@ KernelSignalScope::~KernelSignalScope()
 	for (int signal = 1; signal < NSIG; ++signal) {
 		struct sigaction current {};
 		if (!revocable(signal) ||
-		    sigaction(signal, nullptr, &current) != 0 ||
-		    !inside_image(current))
+		    sigaction(signal, nullptr, &current) != 0)
 			continue;
+		const bool kernel_code = inside_image(current);
+		if (!kernel_code) {
+			/* A disposition of the kernel's own making, such as the SIG_IGN
+			 * it leaves SIGPIPE, SIGIO and SIGWINCH with, references no
+			 * kernel code, but the next boot must find what this one did. */
+			if (recorded_[signal] &&
+			    !same_disposition(current, dispositions_[signal]))
+				(void)sigaction(signal, &dispositions_[signal], nullptr);
+			continue;
+		}
 		/* Ignoring a signal discards every pending instance of it, including
 		 * one Darwin parked on a thread which still blocks it. */
 		struct sigaction ignore {};
@@ -66,6 +139,39 @@ KernelSignalScope::~KernelSignalScope()
 	 * entered it; the host gets that thread back with the mask it lent. */
 	if (mask_recorded_)
 		(void)pthread_sigmask(SIG_SETMASK, &mask_, nullptr);
+
+	/* The kernel gives that thread a signal stack it allocated itself. The
+	 * thread has the stack it had again before the allocation is freed. */
+	stack_t stack{};
+	if (alternate_stack_recorded_ && sigaltstack(nullptr, &stack) == 0 &&
+	    !same_stack(stack, alternate_stack_)) {
+		stack_t restored = alternate_stack_;
+		if ((restored.ss_flags & SS_DISABLE) != 0) {
+			/* Darwin checks the size before it looks at SS_DISABLE. */
+			restored = {};
+			restored.ss_size = MINSIGSTKSZ;
+			restored.ss_flags = SS_DISABLE;
+		}
+		(void)sigaltstack(&restored, nullptr);
+	}
+
+	/* The console descriptors come back with the flags and the terminal
+	 * attributes they had, which the kernel's console channel changes. */
+	for (std::size_t descriptor = 0; descriptor < standard_flags_.size();
+	     ++descriptor) {
+		if (standard_flags_[descriptor] < 0)
+			continue;
+		const int fd = static_cast<int>(descriptor);
+		const int flags = fcntl(fd, F_GETFL);
+		if (flags >= 0 &&
+		    (flags & settable_status_flags) != standard_flags_[descriptor])
+			(void)fcntl(fd, F_SETFL, standard_flags_[descriptor]);
+		struct termios attributes {};
+		if (standard_terminal_recorded_[descriptor] &&
+		    tcgetattr(fd, &attributes) == 0 &&
+		    !same_terminal(attributes, standard_terminals_[descriptor]))
+			restore_terminal(fd, standard_terminals_[descriptor]);
+	}
 }
 
 bool KernelSignalScope::inside_image(

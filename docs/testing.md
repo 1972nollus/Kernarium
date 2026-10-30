@@ -404,12 +404,27 @@ ctest --preset unit-tsan
 Every sanitizer preset, these two and the GPU and embedded-loader ones,
 instruments Objective-C++ as well as C++.
 
-Both sanitizers keep the product's macOS native window for themselves, so a
-sanitized test, and every run it makes through the emulator test variant,
-takes a native window that both leave free
-(`tests/unit/memory/native_window_test_support.hpp`). AddressSanitizer also
-ignores `mlock()`, so under it the cases that need wired guest RAM report
-themselves unsupported instead of running.
+Both sanitizers keep the product's macOS native window for themselves, and a
+process reserves its window once, so a sanitized test, and every run it makes
+through the emulator test variant, takes a native window that both leave free
+(`tests/unit/memory/native_window_test_support.hpp`; the test variant places
+its runs there by default). AddressSanitizer also ignores `mlock()`, so under
+it the cases that need wired guest RAM report themselves unsupported instead
+of running.
+
+A guest that restarts itself boots again in the same process, and
+`runtime-restart-*` (one process per mode, `sequential_run_tests.cpp`) covers
+it with a test kernel that leaves behind what a real one does: descriptors,
+pthread keys, allocations and mappings through the imports the loader follows,
+changed signal state, a guest RAM root, kernel threads and a guest file. At the
+moment each of 64 hand-backs completes the test checks that none of it is left
+and that the process is as it was before the first run; the other modes cover
+the ends that stay spent, another handle, a host service that borrows guest RAM
+and a kernel thread that still runs, and a stop or a resume that is inside the
+hibernation's abort request while the restart drops the hibernation
+(`abort-stop`, `abort-resume`). The default malloc zone keeps what a boot freed,
+so the test gates the heap's in-use bytes, not its size; under a sanitizer it
+reads the sanitizer allocator's live bytes.
 
 The gadget cache census
 ([`tests/perf/README.md`](../tests/perf/README.md#cache-census)) compiles
@@ -471,6 +486,23 @@ A behaviour that one program checks inside the guest runs through
 `--cxxflags`. The probe's exit status is its failure count, and the test also
 fails on a console line that the registration's `--console-failure` pattern
 matches.
+
+`guest-restart` runs the macOS launcher through a guest that restarts itself.
+Under each of the gadgets and the JIT engine, one `uml-darwin` process boots,
+restarts twice and powers off, with the same pid throughout. The test loads a
+process audit (`tests/integration/restart/process_audit.cpp`) into the launcher
+and, at the settle point of each boot, compares what it lists with boot 1's:
+descriptors by kind, threads by name, Mach ports, the next pthread key, signal
+dispositions and the flags of descriptors 0 to 2. A pattern the first boot
+writes into anonymous memory and tmpfs must be found in guest RAM before the
+restart and nowhere in the process, window included, after it. A second phase
+runs a guest that restarts at once and checks that the launcher ends the loop
+with exit status 3 after five early restarts. `emulator-restart-loop-guard`
+covers the guard's policy and its escaping of the guest's command, and
+`slirp-network-reset-peer` covers a SLiRP connection whose peer resets while
+the guest has data to send, which must not end the process.
+`android-partition-boot-selection` covers the consumption of a
+`bootonce-bootloader` command and the boot a restart selects.
 
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through

@@ -190,14 +190,20 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     boot_mode = parser.add_mutually_exclusive_group()
     boot_mode.add_argument(
-        "--boot-mode", choices=("auto", "normal", "recovery"), default="normal"
+        "--boot-mode",
+        choices=("auto", "normal", "recovery"),
+        default="auto",
+        help=(
+            "which ramdisk the first boot uses: auto follows the disk's "
+            "bootloader message, as every restart does (default: auto)"
+        ),
     )
     boot_mode.add_argument(
         "--recovery",
         action="store_const",
         const="recovery",
         dest="boot_mode",
-        help="boot the accepted release into recovery",
+        help="boot the accepted release into recovery once, as a first-boot override",
     )
     parser.add_argument(
         "--build",
@@ -667,6 +673,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         try:
             wait_for_adb(adb, serial, guest, options.adb_timeout)
             print(f"ADB connected: {adb} -s {serial} shell", file=sys.stderr)
+            # A guest that restarts itself (adb reboot, a power-menu restart,
+            # a tradefed reboot) boots again inside this process, on the same
+            # ADB serial, so one wait covers every boot until it powers off.
             return guest.wait()
         except KeyboardInterrupt:
             return 130

@@ -52,6 +52,16 @@ struct KernelThreadSnapshot final {
 /* Takes the registry's state without a lock. */
 void snapshot_kernel_threads(KernelThreadSnapshot &snapshot) noexcept;
 
+/* Gives back the slots, and the port rights, of the kernel threads that have
+ * ended, and returns how many slots are still in use: threads that run, and
+ * creators inside kernel_pthread_create. A guest that restarts itself hands
+ * its process back with none left. A thread that was just joined can still be
+ * terminating, so the call waits up to 2 s for the slots to empty before it
+ * reports them; a thread that runs makes it wait the whole time. Nothing is
+ * given back while a fence reads the ports (the next call after it clears
+ * does), so a fence in progress shows at once as slots in use. */
+[[nodiscard]] std::size_t reclaim_ended_kernel_threads() noexcept;
+
 /* While set, the slots of ended threads are not reclaimed (their ports are
  * not given back), because whoever stopped threads from a snapshot may still
  * be using the ports. A creator that finds the table full waits for the flag

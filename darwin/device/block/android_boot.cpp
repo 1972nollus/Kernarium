@@ -36,6 +36,10 @@ constexpr std::uint64_t maximumDiskSizeGiB = 64;
 constexpr std::uint64_t bootImagePageSize = 4096;
 constexpr std::size_t bootImageHeaderSize = 1584;
 constexpr std::string_view recoveryCommand = "boot-recovery";
+constexpr std::string_view bootloaderCommand = "bootonce-bootloader";
+/* The command field that opens the bootloader message (struct
+ * bootloader_message in AOSP's bootloader_message.h). */
+constexpr std::size_t bootloaderCommandSize = 32;
 
 struct ExpectedPartition {
 	std::string_view name;
@@ -286,6 +290,17 @@ bool recoveryRequested(const File &disk)
 	return command == recoveryCommand;
 }
 
+bool bootloaderRequested(const File &disk)
+{
+	std::array<std::byte, bootloaderCommandSize> command {};
+	disk.read(seedPartitions[miscPartition].offset, command);
+	const auto end = std::find(command.begin(), command.end(), std::byte{});
+	return end != command.end() &&
+		std::string_view(reinterpret_cast<const char *>(command.data()),
+				 static_cast<std::size_t>(end - command.begin())) ==
+			bootloaderCommand;
+}
+
 } // namespace
 
 void validateUbdPath(const std::filesystem::path &path, std::string_view label)
@@ -349,6 +364,41 @@ std::vector<std::string> readKernelCommandLine(
 		throw std::invalid_argument(
 			"the release kernel command line is empty");
 	return arguments;
+}
+
+bool consumeBootloaderCommand(const std::filesystem::path &diskPath)
+{
+	{
+		const File disk(diskPath);
+		validateGpt(disk);
+		if (!bootloaderRequested(disk))
+			return false;
+	}
+	const int descriptor = open(diskPath.c_str(), O_WRONLY | O_NOFOLLOW);
+	if (descriptor < 0)
+		throw std::system_error(errno, std::generic_category(),
+					"cannot open " + diskPath.string());
+	const std::array<std::byte, bootloaderCommandSize> cleared {};
+	const auto written = pwrite(
+		descriptor, cleared.data(), cleared.size(),
+		static_cast<off_t>(seedPartitions[miscPartition].offset));
+	const int writeError = written < 0 ? errno : EIO;
+	const int syncError = fsync(descriptor) == 0 ? 0 : errno;
+	const int closeError = close(descriptor) == 0 ? 0 : errno;
+	if (written != static_cast<ssize_t>(cleared.size()))
+		throw std::system_error(writeError, std::generic_category(),
+					"cannot clear the bootloader command");
+	if (syncError != 0 || closeError != 0)
+		throw std::system_error(syncError != 0 ? syncError : closeError,
+					std::generic_category(),
+					"cannot flush the bootloader command");
+	return true;
+}
+
+RestartBoot selectRestartBoot(const std::filesystem::path &diskPath)
+{
+	const bool consumed = consumeBootloaderCommand(diskPath);
+	return RestartBoot{selectBoot(diskPath, BootMode::automatic), consumed};
 }
 
 std::string lcdDensityArgument(std::uint32_t dotsPerInch)

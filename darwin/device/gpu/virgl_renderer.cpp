@@ -303,6 +303,10 @@ VirglRenderer::VirglRenderer()
 VirglRenderer::~VirglRenderer()
 {
     virgl_renderer_cleanup(this);
+    /* The pool is the renderer's: nothing the cleanup left can reach it, and
+     * the guest that comes after this one starts with nothing reserved. */
+    virgl_renderer_set_device_memory_pool(nullptr);
+    deviceMemoryPool.reset();
     rendererInstanceActive.store(false, std::memory_order_release);
 }
 

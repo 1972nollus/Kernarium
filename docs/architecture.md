@@ -38,10 +38,44 @@ state, and copied network callback table. A handle admits at most one run at a
 time. Stop requests affect only that handle's current or queued run and are not
 carried into later runs.
 
-A process runs one guest. After a run's kernel has claimed guest RAM, every
-later run in the process, on any handle, returns `UML_EMULATOR_UNSUPPORTED`
-without entering a kernel; see
-[ADR 0002](decisions/0002-emulator-handle-lifetime.md).
+A process runs one guest, and that guest may restart itself. After a run's
+kernel has claimed guest RAM, every later run in the process, on any handle,
+returns `UML_EMULATOR_UNSUPPORTED` without entering a kernel, except the next
+run on the handle whose last run ended with a restart: that run hands the guest
+back to the process and boots again (`runtime/guest_hand_back`). A run says how
+its guest ended through `uml_emulator_get_run_end`: the guest's own report (see
+[guest lifecycle](#guest-lifecycle)), the host's stop request ahead of it, and a
+failure when the kernel said nothing. The hand-back refuses with `UML_EMULATOR_RUNTIME_ERROR` while a host service
+borrows guest RAM or a kernel thread runs, and otherwise gives back everything
+the kernel took and did not return:
+
+- its descriptors, pthread keys, allocations and mappings outside the window,
+  which the loader records through the imports it follows
+  (`runtime/kernel_resources`) and the hand-back closes, deletes, frees and
+  unmaps, descriptors through `darwin_uml_close`, after the run's memory domain
+  retired and while no kernel thread runs;
+- the process state the kernel changed, which `KernelSignalScope` restores when
+  the kernel returns: every signal disposition, `ITIMER_REAL`, the entering
+  thread's mask and signal stack, and the status flags and terminal attributes
+  of descriptors 0 to 2;
+- the guest-file records, the slots of ended kernel threads, and the handle's
+  suspension, pending page-cache request and hibernation (whose image refers to
+  the commitment and is dropped with it); and
+- the guest RAM: the whole window becomes one protectionless reservation again,
+  the commitment is retired and the token unregistered, so the next kernel
+  finds no byte and no page of this one.
+
+A refusal by the check changes nothing and may be retried: the caller stops
+every service that maps guest RAM, then runs again, and the handle stays
+restartable. The check and the hand-back are not one step, so a view acquired
+after the check makes the final step fail after the ledger has run; a retry
+succeeds. Every run of the process uses the same JIT cache budget and guest CPU
+count, because the budget is published once per process, and a run that asks
+for another is refused.
+
+The freed heap is not returned: the default malloc zone keeps the chunks a boot
+emptied until the system reclaims them, and its in-use bytes stay flat across
+hand-backs. See [ADR 0002](decisions/0002-emulator-handle-lifetime.md).
 
 Runs on different handles serialize through a process address-space gate,
 because an embedded kernel's fixed host mappings cannot be shared. A stop
@@ -71,15 +105,18 @@ Mac in Designed for iPad mode, where the process is a macOS process; placement
 follows the address space the process actually has, so that mode takes the
 macOS window.
 
-On a physical iOS device the window is a reservation, and it never returns
-address space to the process while the VM lives. It is created once, before the
-guest starts, as a single `PROT_NONE MAP_NORESERVE` anonymous mapping; a run
-whose window cannot be reserved fails rather than map guest RAM over a range
-nothing holds. macOS and Designed for iPad do not reserve the window up front:
-the kernel image and the loader tail take it by an address hint the host
-honours, far above the ranges its allocators use. On every product guest pages
-are mapped over the window with `MAP_FIXED`, and releasing one hands its range
-back as a reservation instead of unmapping it: one mapping call, no committed
+On every product the window is a reservation, and it never returns address
+space to the process while the process lives. The first run reserves it, once,
+before the guest starts, as a single `PROT_NONE MAP_NORESERVE` anonymous
+mapping (`runtime::reserve_process_native_window`), and every later run, such as
+that of a guest which restarted itself, takes the same window; a larger guest
+extends it. A run whose window cannot be reserved fails rather than map guest
+RAM over a range nothing holds. macOS reserves it at its address, 96 TiB, or
+not at all; a physical iOS device takes the address that top-packs it, or
+wherever the host has room. The kernel image and the loader tail are mapped
+over the reservation in place. Guest pages are mapped over the
+window with `MAP_FIXED`, and releasing one hands its range back as a
+reservation instead of unmapping it: one mapping call, no committed
 pages, and the replacement is atomic. `munmap`
 would delete the reservation along with the mapping and leave a free gap inside
 the window. Darwin's allocation hint follows the most recently freed range, so
@@ -1029,6 +1066,26 @@ guest's own fences; the renderer adds none. A resource no other context
 imports keeps ordinary texture storage, and a host with dma-buf shares through
 that instead.
 
+The in-process GPU service keeps the display apart from the guest's GPU
+connection. The display (the VNC listener and its clients, or the native window
+or Kernarium view) and the frame tap last until the service stops. The
+connection (the Virtio-GPU device, the renderer, and every context and resource
+the guest created in them, with their share of the device memory pool) lasts as
+long as one guest. A guest that restarts itself is a new guest on the same
+machine, so `startNextConnection()` ends the connection, which resets the
+display to its idle picture and destroys the renderer, and opens a fresh one
+with new transport and input endpoints. VNC clients stay connected, the
+listener keeps its port, the window stays open, and display input that arrives
+while no connection exists is dropped. The request gate is the service's, not
+the connection's: a hold placed before the restart still holds the new device,
+and the application opens it as it opened the last. A host-visible blob of the
+new guest has been observed to start zeroed, but nothing here enforces that: the
+host driver or the OS hands out fresh zero-filled memory. On the Mac, a guest
+that left a token in host-visible memory across a restart (freed, mapped at
+exit, and held by a live process) found none of it, and every byte read zero,
+in 128 to 256 MiB scanned on each of the next two boots. The iPad is not yet
+measured.
+
 The devices Kernarium attaches and its display geometry are listed in
 [`../Kernarium/README.md`](../Kernarium/README.md).
 
@@ -1076,6 +1133,35 @@ a repeat of the report it holds, and keeps the kind and at most 255 bytes of
 the command in the run's `Context`, which `begin_run()` clears and `end_run()`
 leaves for the handle's owner to read. A panic aborts the process and reports
 nothing.
+
+The macOS launchers (`darwin/app/macos`) restart a guest in the same process.
+The machine is made once: the emulator handle, the SLiRP provider with its
+`--net-forward` list, and the GPU service with its display. Each boot makes its
+own services (battery, balloon, video, video encoder, audio, console) and its
+command line, runs, and stops them again. After a restart the launcher resets
+the SLiRP link (stop, then open at once, which replays the forwards) so that no
+connection of the old guest survives, asks the GPU service for its next
+connection, and runs the handle again; any other end leaves in the order a
+single launch always did, and the exit status is the last guest's (0 for a
+power-off or halt, 1 for a launch error). The launcher logs `guest restarting
+(command '...', restart N)` for each restart, writing the guest's command with
+escapes so a log line stays one line. A restart less than 15 s after its boot
+started is early, and five early restarts in a row end the loop with exit
+status 3: a guest that does not boot is not restarted for ever
+(`emulator/src/restart_loop_guard.hpp` owns the policy). A run the library
+refuses to hand back is retried three times, 500 ms apart, before the launch
+fails; a stop request ends the loop at once. A write to a socket whose peer
+reset it must not end the process, so the launcher ignores `SIGPIPE`, which the
+library restores after each run, and the SLiRP provider marks every socket it
+polls with `SO_NOSIGPIPE`.
+
+Android's boot control block is part of the loop. A launch asks the first boot
+for the mode the user chose (`auto` by default); every restart reads the misc
+partition again and, in `auto` mode, boots the ramdisk. A `bootonce-bootloader`
+command is consumed, as a bootloader that continues would, so that Android's
+init writes `boot-recovery` when it reboots into recovery; `boot-recovery`
+itself stays for recovery to clear. See the
+[Android boot contract](../android/lineage-24/README.md).
 
 An application that can be backgrounded holds the guest's GPU requests before it
 quiesces, with the runtime's `set_gpu_hold` (see the request gate under

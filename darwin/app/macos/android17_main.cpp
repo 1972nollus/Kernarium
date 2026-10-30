@@ -179,8 +179,57 @@ void print_usage()
 			"  --virtio-console-socket=/absolute/console.sock\n"
 			"The same values may be supplied through UML_ANDROID17_RELEASE, "
 			"UML_ANDROID17_DISK, "
-			"and UML_ANDROID17_BOOT_MODE.\n",
+			"and UML_ANDROID17_BOOT_MODE.\n"
+			"The boot mode picks the first boot's ramdisk. A guest that "
+			"restarts itself boots again in the same process, and each "
+			"restart picks the ramdisk in auto mode.\n",
 		stderr);
+}
+
+/* The kernel arguments that give a guest `boot`'s ramdisk, appended to the
+ * host's arguments. */
+std::vector<std::string> boot_command_line(
+	const std::vector<std::string> &host_arguments,
+	const std::filesystem::path &release,
+	const std::filesystem::path &disk, const uml::android::BootSelection &boot,
+	std::uint32_t dots_per_inch)
+{
+	auto forwarded = host_arguments;
+	forwarded.emplace_back("ubd0=" + disk.string());
+	forwarded.emplace_back("initrd=" + disk.string());
+	forwarded.emplace_back(
+		"initrd_offset=" + std::to_string(boot.ramdisk.offset));
+	forwarded.emplace_back("initrd_size=" + std::to_string(boot.ramdisk.size));
+	forwarded.emplace_back("root=/dev/ram0");
+	forwarded.emplace_back("rootfstype=ramfs");
+	constexpr std::array launcher_prefixes{
+		adb_authorization_prefix,
+		uml::android::lcdDensityPrefix};
+	for (auto &argument : uml::android::readKernelCommandLine(
+		     release / "boot/kernel-command-line.txt", launcher_prefixes))
+		forwarded.push_back(std::move(argument));
+	/* Android init imports this as ro.boot.lcd_density, which the vendor
+	 * init script publishes as ro.sf.lcd_density: a guest without it has an
+	 * empty property. */
+	forwarded.emplace_back(uml::android::lcdDensityArgument(dots_per_inch));
+	forwarded.emplace_back(std::string{adb_authorization_prefix} + "0");
+	std::fprintf(
+		stderr,
+			"Android rootfs %s, %s boot, writable disk %s\n",
+			release.c_str(),
+			boot.mode == uml::android::BootMode::recovery
+				? "recovery" : "normal",
+			disk.c_str());
+	return forwarded;
+}
+
+/* There is no bootloader to take the request `reboot bootloader` leaves, and
+ * left in place it stops init from writing the next `reboot recovery`'s. */
+void say_bootloader_consumed()
+{
+	std::fputs("Android: the guest asked for the bootloader; there is none, "
+		   "so the request is cleared and the guest boots normally\n",
+		   stderr);
 }
 
 } // namespace
@@ -192,53 +241,43 @@ int main(int argc, char *argv[], char *envp[])
 		if (uml::app::has_argument(argc, argv, "--help"))
 			print_usage();
 		auto options = parse_options(argc, argv);
+		uml::app::LaunchConfiguration configuration{
+			.rootfs_path = nullptr,
+			.default_guest_memory = android_default_guest_memory,
+			.default_guest_cpus = android_default_guest_cpus,
+			.top_byte_ignore = true,
+			.input_mode = uml::app::DisplayInput::touchscreen,
+		};
 		if (!information_only) {
 			if (options.release.empty() || options.disk.empty())
 				throw std::invalid_argument(
 					"Android launch requires release and disk paths");
 			const auto release = validated_release_root(options.release);
 			const auto disk = validated_disk(options.disk);
+			if (uml::android::consumeBootloaderCommand(disk))
+				say_bootloader_consumed();
 			const auto boot = uml::android::selectBoot(
 				disk, options.boot_mode);
-			options.forwarded.emplace_back("ubd0=" + disk.string());
-			options.forwarded.emplace_back("initrd=" + disk.string());
-			options.forwarded.emplace_back(
-				"initrd_offset=" + std::to_string(boot.ramdisk.offset));
-			options.forwarded.emplace_back(
-				"initrd_size=" + std::to_string(boot.ramdisk.size));
-			options.forwarded.emplace_back("root=/dev/ram0");
-			options.forwarded.emplace_back("rootfstype=ramfs");
-			constexpr std::array launcher_prefixes{
-				adb_authorization_prefix,
-				uml::android::lcdDensityPrefix};
-			for (auto &argument : uml::android::readKernelCommandLine(
-				     release / "boot/kernel-command-line.txt",
-				     launcher_prefixes))
-				options.forwarded.push_back(std::move(argument));
-			/* Android init imports this as ro.boot.lcd_density, which
-			 * the vendor init script publishes as ro.sf.lcd_density: a
-			 * guest without it has an empty property. */
-			options.forwarded.emplace_back(
-				uml::android::lcdDensityArgument(options.dots_per_inch));
-			options.forwarded.emplace_back(
-				std::string{adb_authorization_prefix} + "0");
-			std::fprintf(
-				stderr,
-					"Android rootfs %s, %s boot, writable disk %s\n",
-					release.c_str(),
-					boot.mode == uml::android::BootMode::recovery
-						? "recovery" : "normal",
-					disk.c_str());
+			const auto host_arguments = options.forwarded;
+			options.forwarded =
+				boot_command_line(
+					host_arguments, release, disk, boot, options.dots_per_inch);
+			/* The mode the user gave picks the first boot's ramdisk only: a
+			 * guest that restarts has said what it wants in the disk's
+			 * bootloader message. */
+			configuration.restart_command_line =
+				[host_arguments, release, disk,
+				 dots_per_inch = options.dots_per_inch] {
+					const auto next = uml::android::selectRestartBoot(disk);
+					if (next.bootloaderConsumed)
+						say_bootloader_consumed();
+					return boot_command_line(
+						host_arguments, release, disk, next.boot,
+						dots_per_inch);
+				};
 		}
 		return uml::app::runEmbeddedKernel(
-			options.forwarded, envp,
-			{
-				.rootfs_path = nullptr,
-				.default_guest_memory = android_default_guest_memory,
-				.default_guest_cpus = android_default_guest_cpus,
-				.top_byte_ignore = true,
-				.input_mode = uml::app::DisplayInput::touchscreen,
-			});
+			options.forwarded, envp, configuration);
 	} catch (const std::exception &error) {
 		std::fprintf(stderr, "Unable to configure Android guest: %s\n",
 			     error.what());

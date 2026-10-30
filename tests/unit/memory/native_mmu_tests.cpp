@@ -1326,6 +1326,16 @@ void test_anonymous_backing_shadow_uses_root_memory()
 
 } // namespace
 
+/* A guest that restarts itself hands its process to the next one, so the copy
+ * of a guest page a shadow mapping keeps for the merge must not outlive the
+ * mapping in freed heap. */
+void test_destroyed_mapping_keeps_no_copy_of_its_page()
+{
+	require(uml::memory::NativeAddressSpace::
+		mapping_clears_its_page_copy_for_testing(),
+		"a destroyed shadow mapping left its page copy in memory");
+}
+
 int main()
 {
 	try {
@@ -1355,6 +1365,7 @@ int main()
 		test_non_map_wrapper_allocation_failures_are_transactional();
 		test_shadow_slots_and_direct_maps_share_global_ownership();
 		test_shadow_failures_report_errno();
+		test_destroyed_mapping_keeps_no_copy_of_its_page();
 		/* Anonymous backing registration is process-global and one-shot. */
 		test_anonymous_backing_shadow_uses_root_memory();
 		std::puts("native 4K shadow MMU tests passed");

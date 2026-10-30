@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "mach_vm_region_test_support.hpp"
+#include "memory/guest_ram_commitment.hpp"
 #include "memory/shared_backing.hpp"
 #include "require.hpp"
 #include "scratch_backing.hpp"
@@ -263,6 +264,86 @@ void test_reserved_window_prefix_tail_is_mapped_in_place(std::size_t page_size)
 	require(!is_unmapped(root + backing_size + page_size));
 }
 
+/* The guest the host hands out once is handed back whole: the window becomes
+ * one protectionless reservation again, the commitment is retired and the token
+ * unregistered, so that a second guest can register, publish and map its RAM
+ * over the same window and finds none of the first guest's bytes. A host
+ * service that still borrows the RAM stops the hand-back with nothing
+ * changed. */
+void test_hand_back_returns_the_guest_to_the_process(std::size_t page_size)
+{
+	constexpr std::size_t pages = 6;
+	const auto backing_size = page_size * pages;
+	const auto window_size = backing_size + page_size * 2;
+	void *window = ::mmap(nullptr, window_size, PROT_NONE,
+		MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+	require(window != MAP_FAILED);
+	auto *root = static_cast<std::uint8_t *>(window);
+	auto *suffix = root + page_size * 4;
+	const auto suffix_size = backing_size - page_size * 4;
+
+	const auto boot = [&](const ScratchBacking &token) {
+		require(::ftruncate(token.descriptor(),
+			static_cast<off_t>(backing_size)) == 0);
+		require(uml::memory::register_anonymous_shared_backing(
+			token.descriptor()));
+		require(uml::memory::guest_ram_commitment() == nullptr);
+		void *mapped = uml::memory::map_shared_backing(suffix, suffix_size,
+			PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED,
+			token.descriptor(), page_size * 4);
+		require(mapped == suffix);
+		require(uml::memory::guest_ram_commitment() != nullptr);
+	};
+	const auto hand_back_leaves_only_the_window = [&] {
+		for (std::size_t offset = 0; offset < window_size;) {
+			const auto region = uml::testing::region_containing(
+				root + offset);
+			require(region.has_value() &&
+				region->protection == VM_PROT_NONE);
+			offset = region->start + region->size -
+				reinterpret_cast<std::uintptr_t>(root);
+		}
+	};
+
+	/* A hand-back with no guest registered is the window's reset alone. */
+	require(uml::memory::hand_back_anonymous_guest_ram(
+		window, window_size) == 0);
+
+	const ScratchBacking first{backing_name, 0};
+	boot(first);
+	for (std::size_t offset = 0; offset < suffix_size; offset += page_size)
+		suffix[offset] = 0xa5;
+	{
+		auto service = uml::memory::acquire_shared_backing_view(
+			first.descriptor(), page_size * 4, page_size,
+			PROT_READ | PROT_WRITE);
+		require(static_cast<bool>(service));
+		errno = 0;
+		require(uml::memory::hand_back_anonymous_guest_ram(
+			window, window_size) == -1 && errno == EBUSY);
+		require(uml::memory::anonymous_shared_backing_registered() &&
+			uml::memory::guest_ram_commitment() != nullptr &&
+			protection_of(suffix) == (VM_PROT_READ | VM_PROT_WRITE) &&
+			suffix[0] == 0xa5);
+	}
+	require(uml::memory::hand_back_anonymous_guest_ram(
+		window, window_size) == 0);
+	require(!uml::memory::anonymous_shared_backing_registered() &&
+		!uml::memory::is_anonymous_shared_backing(first.descriptor()) &&
+		uml::memory::guest_ram_commitment() == nullptr);
+	hand_back_leaves_only_the_window();
+
+	const ScratchBacking second{backing_name, 0};
+	boot(second);
+	require(uml::memory::is_anonymous_shared_backing(second.descriptor()) &&
+		!uml::memory::is_anonymous_shared_backing(first.descriptor()));
+	for (std::size_t offset = 0; offset < suffix_size; ++offset)
+		require(suffix[offset] == 0);
+	require(uml::memory::hand_back_anonymous_guest_ram(
+		window, window_size) == 0);
+	hand_back_leaves_only_the_window();
+}
+
 void run_in_child(void (*test)(std::size_t), std::size_t page_size)
 {
 	const pid_t child = ::fork();
@@ -296,6 +377,7 @@ int main()
 	const auto page_size = static_cast<std::size_t>(configured_page_size);
 	run_in_child(test_reserved_window_prefix_tail_is_mapped_in_place,
 		page_size);
+	run_in_child(test_hand_back_returns_the_guest_to_the_process, page_size);
 	test_ordinary_descriptor_view_owns_its_mapping(page_size);
 	const ScratchBacking token{backing_name, 0};
 	void *root = test_anonymous_consumers_borrow_one_root(page_size, token);
