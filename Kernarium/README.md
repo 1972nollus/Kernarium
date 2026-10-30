@@ -73,7 +73,9 @@ paused. A guest that boots behind a closed gate finds its GPU unanswered: the
 it would run without 3D after the user came back. A `keepRunning` job holds the
 GPU for its whole stay, so a guest that restarts during a job boots when the
 user returns; a Picture in Picture window releases the gate and the guest boots
-at once.
+at once. The old guest still stops while the gate is closed: the report of its
+restart makes the gate complete its GPU requests without running them, which its
+shutdown waits for, and the gate holds the next guest as before.
 
 `KERNARIUM_FOOTPRINT_LOG_MS` also writes `Kernarium: memory` lines (`tick`,
 and for a restart `ended` and `booted`): the footprint, the lifetime peak iOS
