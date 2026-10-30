@@ -949,10 +949,13 @@ mount the partitions as `erofs ro`; the first-stage entries add
 `wait,first_stage_mount`. The fixed GPT is unchanged: each image sits at the
 start of its partition with zeros behind it, so the seed stays 3,123 MiB and
 the compression shows in the images' own sizes. Decompression is the guest
-kernel's native code, not emulated guest code. It costs nothing measurable on a
-guest with 4 GiB, but a guest with 1,536 MiB re-reads and decompresses evicted
-pages a whole cluster at a time, which is why the clusters are 16 KiB and not
-64 KiB.
+kernel's native code, not emulated guest code. The five images hold 1,001 MiB
+(system 524.5, system_ext 157.0, product 227.5, vendor 91.9, odm 0.3), of
+which 257.5 MiB are the 52 `.apex` files. Against the ext4 release the
+five-app cold launch sum is the same on a guest with 4 GiB (about 7.6 s
+against 7.7 s) and about 20% longer on a quiet host with 1,536 MiB (13.9 s
+against 11.6 s), where evicted pages are re-read and decompressed a whole
+cluster at a time; that is why the clusters are 16 KiB and not 64 KiB.
 
 Every APEX payload is compressed EROFS as well, with the same two parameters:
 `PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := erofs` and the three
