@@ -84,6 +84,20 @@ struct VmRegionQuery final {
 	return region_containing(reinterpret_cast<std::uintptr_t>(pointer));
 }
 
+/* Replace [address, address + length) with a zero-filled read/write mapping
+ * that no later MAP_FIXED or vm_remap can replace, as iOS makes the loader's
+ * aliases of the code-signed kernel text. A macOS process is exempt from that
+ * rule for signed code, but XNU applies it to a mapping allocated permanent. */
+[[nodiscard]] inline bool allocate_permanent(
+	void *address, std::size_t length) noexcept
+{
+	auto target = reinterpret_cast<mach_vm_address_t>(address);
+	return mach_vm_allocate(mach_task_self(), &target, length,
+		       VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE |
+			       VM_FLAGS_PERMANENT) == KERN_SUCCESS &&
+		target == reinterpret_cast<mach_vm_address_t>(address);
+}
+
 /* The user wire count of the map entry holding pointer; 0 when none does. */
 [[nodiscard]] inline unsigned wired_count(const void *pointer) noexcept
 {

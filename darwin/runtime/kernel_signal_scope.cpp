@@ -194,4 +194,19 @@ void release_kernel_image(void *address, std::size_t length,
 		(void)munmap(address, length);
 }
 
+int reserve_kernel_image(void *address, std::size_t length) noexcept
+{
+	return ::uml::memory::reserve_host_range(address, length);
+}
+
+bool keep_signed_kernel_text(void *address, std::size_t length) noexcept
+{
+	return ::uml::memory::keep_host_range(address, length);
+}
+
+bool signed_kernel_text_kept(const void *address, std::size_t length) noexcept
+{
+	return ::uml::memory::host_range_kept(address, length);
+}
+
 } // namespace uml::runtime

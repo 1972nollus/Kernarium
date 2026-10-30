@@ -42,3 +42,60 @@ struct BackgroundJobTests {
         #expect(job.subtitle(at: start.addingTimeInterval(1800)) == "Finishing")
     }
 }
+
+/// An automation launch can ask for the job to start with its guest. Nothing
+/// else does: the release app starts a job only on the user's tap.
+@MainActor
+struct BackgroundJobAtStartTests {
+    private let timeline = BackgroundJobTimeline(
+        started: Date(timeIntervalSinceReferenceDate: 1_000_000),
+        limit: 900
+    )
+
+    @Test
+    func aGuestThatKeepsRunningStartsItsJobWhenAutomationAsks() {
+        #expect(BackgroundJob.startsWithGuest(
+            asked: true, mode: .keepRunning, state: .idle
+        ))
+    }
+
+    @Test
+    func nothingStartsAJobWithoutTheAsk() {
+        for mode in [BackgroundMode.off, .pictureInPicture, .keepRunning] {
+            #expect(!BackgroundJob.startsWithGuest(
+                asked: false, mode: mode, state: .idle
+            ))
+        }
+    }
+
+    @Test
+    func theAskStartsNothingForAGuestThatChoseAnotherMode() {
+        for mode in [BackgroundMode.off, .pictureInPicture] {
+            #expect(!BackgroundJob.startsWithGuest(
+                asked: true, mode: mode, state: .idle
+            ))
+        }
+    }
+
+    @Test
+    func theAskStartsNoSecondJob() {
+        for state in [BackgroundJob.State.submitted, .running(timeline)] {
+            #expect(!BackgroundJob.startsWithGuest(
+                asked: true, mode: .keepRunning, state: state
+            ))
+        }
+    }
+
+    /// The setting's name is in the automation runtimes alone, so a launch
+    /// that does not set it, or a runtime that has no such name, is not asked.
+    @Test
+    func aLaunchThatDoesNotAskIsNeverAsked() {
+        #expect(
+            ProcessInfo.processInfo.environment[
+                "KERNARIUM_BACKGROUND_JOB_AT_START"
+            ] == nil,
+            "this test needs a launch that did not ask"
+        )
+        #expect(kernarium_runtime_loader_automation_job_at_start() == 0)
+    }
+}

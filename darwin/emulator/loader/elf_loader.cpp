@@ -53,11 +53,12 @@ struct DynamicInfo final {
 
 /* An image placed inside the host's window reservation goes back to that
  * reservation rather than to the process: the window outlives the run, and a
- * range freed inside it is where Darwin puts the next unhinted allocation. */
+ * range freed inside it is where Darwin puts the next unhinted allocation.
+ * Signed text an earlier load left in place stays (reserve_kernel_image). */
 [[nodiscard]] void *reserve_in_place(void *address, size_t length) noexcept
 {
-	return mmap(address, length, PROT_NONE,
-		MAP_FIXED | MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+	return ::uml::runtime::reserve_kernel_image(address, length) == 0 ?
+		address : MAP_FAILED;
 }
 
 class Reservation final {
@@ -129,9 +130,17 @@ private:
 }
 
 #if DARWIN_UML_SIGNED_KERNEL_CARRIER
+/* iOS makes the alias permanent once its code-signing monitor has associated
+ * it: no mapping can replace it again, and munmap would only take its access.
+ * It is kept for the life of the process, and a later load of the same image,
+ * as after the guest restarts in place, reuses it; the final protection pass
+ * fails the load if it has lost its access. */
 [[nodiscard]] int remap_signed_executable(uintptr_t destination,
 	size_t length, const unsigned char *source)
 {
+	if (::uml::runtime::signed_kernel_text_kept(
+		    reinterpret_cast<const void *>(destination), length))
+		return 0;
 	vm_address_t target = destination;
 	vm_prot_t current_protection = VM_PROT_NONE;
 	vm_prot_t maximum_protection = VM_PROT_NONE;
@@ -139,6 +148,13 @@ private:
 		length, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(),
 		reinterpret_cast<vm_address_t>(source), FALSE,
 		&current_protection, &maximum_protection, VM_INHERIT_NONE);
+	if (result == KERN_SUCCESS && target == destination &&
+	    !::uml::runtime::keep_signed_kernel_text(
+		    reinterpret_cast<void *>(destination), length))
+		fprintf(stderr,
+			"UML ELF: cannot keep signed kernel text at %#lx; the "
+			"guest cannot restart in place\n",
+			static_cast<unsigned long>(destination));
 	if (result != KERN_SUCCESS || target != destination ||
 	    (current_protection & (VM_PROT_READ | VM_PROT_EXECUTE)) !=
 		(VM_PROT_READ | VM_PROT_EXECUTE) ||
@@ -150,6 +166,20 @@ private:
 		return -1;
 	}
 	return 0;
+}
+
+/* Whether an executable segment covers the host page, which is then an alias
+ * of the signed carrier. */
+[[nodiscard]] bool signed_text_page(const std::vector<LoadedSegment> &segments,
+	uintptr_t page, size_t page_size) noexcept
+{
+	return std::ranges::any_of(segments, [&](const LoadedSegment &segment) {
+		uintptr_t segment_end;
+		return (segment.flags & UML_PF_X) != 0U &&
+			page >= align_down(segment.begin, page_size) &&
+			align_up(segment.end, page_size, segment_end) &&
+			page < segment_end;
+	});
 }
 #endif
 
@@ -571,7 +601,8 @@ private:
 	 * existing host mapping; if Darwin chooses another address, release it
 	 * and fail. On iOS, executable pages are replaced with aliases of the
 	 * framework's immutable, code-signed __TEXT carrier; no anonymous page is
-	 * made code.
+	 * made code. The aliases are permanent, so they stay in the window for
+	 * the process and a later load of the image reuses them.
 	 */
 	const bool in_window = window_end != 0U;
 	if (in_window && (minimum < window_start || maximum > window_end)) {
@@ -645,16 +676,40 @@ private:
 		} else
 #endif
 		{
-			if (mprotect(reinterpret_cast<void *>(start), end - start,
-				PROT_READ | PROT_WRITE) != 0) {
+			uintptr_t write_begin = start;
+			uintptr_t write_end = end;
+#if DARWIN_UML_SIGNED_KERNEL_CARRIER
+			/* A page shared with signed text is that text's alias, which
+			 * holds the same file bytes and can never be made writable,
+			 * and a later load of the image finds it already in place:
+			 * the segment is written around it. */
+			if (signed_text_page(segments, write_begin, page_size))
+				write_begin += page_size;
+			if (write_end > write_begin &&
+			    signed_text_page(segments, write_end - page_size,
+				page_size))
+				write_end -= page_size;
+#endif
+			if (write_end > write_begin &&
+			    mprotect(reinterpret_cast<void *>(write_begin),
+				write_end - write_begin, PROT_READ | PROT_WRITE) != 0) {
 				perror("UML ELF mprotect load");
 				return 126;
 			}
-			void *destination = reinterpret_cast<void *>(start +
-				(program.vaddr & (page_size - 1U)));
-			memcpy(destination, bytes + program.offset, program.filesz);
-			memset(static_cast<unsigned char *>(destination) +
-				program.filesz, 0, program.memsz - program.filesz);
+			const uintptr_t destination = start +
+				(program.vaddr & (page_size - 1U));
+			const uintptr_t file_end = destination + program.filesz;
+			const uintptr_t copy_begin = std::max(destination, write_begin);
+			const uintptr_t copy_end = std::min(file_end, write_end);
+			if (copy_begin < copy_end)
+				memcpy(reinterpret_cast<void *>(copy_begin),
+					bytes + program.offset + (copy_begin - destination),
+					copy_end - copy_begin);
+			const uintptr_t zero_begin = std::max(file_end, write_begin);
+			const uintptr_t zero_end = std::min(data_end, write_end);
+			if (zero_begin < zero_end)
+				memset(reinterpret_cast<void *>(zero_begin), 0,
+					zero_end - zero_begin);
 		}
 
 		const auto first_page = (start - minimum) / page_size;

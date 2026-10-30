@@ -5,6 +5,7 @@
  * release keeps the image while a view borrows the RAM root and hands it back
  * with the last view; without one it releases at once. */
 #include "kernel_signal_scope.hpp"
+#include "mach_vm_region_test_support.hpp"
 #include "memory/shared_backing.hpp"
 #include "require.hpp"
 #include "scratch_backing.hpp"
@@ -115,6 +116,46 @@ void test_unborrowed_image_is_released_at_once(std::size_t page)
 	require(protection_of(layout.root + page * 2) == VM_PROT_NONE);
 }
 
+/* The first restart on the iPad: a backend's view outlived the run, so the
+ * image release waited for the last view, and the image holds signed text
+ * that iOS made permanent, which refuses any replacement that touches it.
+ * Kept, the text stays mapped while the rest of the image goes back to the
+ * reservation with the last view, and the loader's next placement of the
+ * image reserves around it in the same way. */
+void test_kept_text_survives_image_release(std::size_t page)
+{
+	const ScratchBacking token{"uml-kernel-image-release-XXXXXX", 0};
+	const auto layout = build(token, page);
+	auto *text = layout.root + page;
+	require(uml::testing::allocate_permanent(text, page));
+	text[0] = 0x7e;
+	require(::mprotect(text, page, PROT_READ) == 0);
+	require(!uml::runtime::signed_kernel_text_kept(text, page));
+	require(uml::runtime::keep_signed_kernel_text(text, page));
+	require(uml::runtime::signed_kernel_text_kept(text, page));
+	{
+		auto view = uml::memory::acquire_shared_backing_view(
+			token.descriptor(), page * 2, page * (Layout::pages - 2),
+			PROT_READ | PROT_WRITE);
+		require(static_cast<bool>(view));
+		uml::runtime::release_kernel_image(layout.root,
+			page * Layout::image_pages, true);
+		require(protection_of(layout.root) ==
+			(VM_PROT_READ | VM_PROT_WRITE));
+	}
+	require(protection_of(layout.root) == VM_PROT_NONE);
+	require(protection_of(text) == VM_PROT_READ && text[0] == 0x7e);
+	require(protection_of(layout.root + page * 2) == VM_PROT_NONE);
+	require(protection_of(layout.root + page * 4) ==
+		(VM_PROT_READ | VM_PROT_WRITE));
+
+	require(::mprotect(layout.root, page, PROT_READ | PROT_WRITE) == 0);
+	require(uml::runtime::reserve_kernel_image(layout.root,
+		page * Layout::image_pages) == 0);
+	require(protection_of(layout.root) == VM_PROT_NONE);
+	require(protection_of(text) == VM_PROT_READ && text[0] == 0x7e);
+}
+
 /* The hazard itself, as a control: releasing the image with a plain
  * reservation, as the loader once did, leaves a backend that reads the tail
  * through its view faulting (SIGBUS in a reservation). */
@@ -169,6 +210,7 @@ int main()
 	run_in_child(test_previous_release_faults_a_borrowed_reader, page, SIGBUS);
 	run_in_child(test_borrowed_tail_outlives_image_release, page, 0);
 	run_in_child(test_unborrowed_image_is_released_at_once, page, 0);
+	run_in_child(test_kept_text_survives_image_release, page, 0);
 	std::puts("kernel image release tests passed");
 	return EXIT_SUCCESS;
 }
