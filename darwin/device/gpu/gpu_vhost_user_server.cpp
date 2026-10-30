@@ -216,6 +216,14 @@ public:
         return true;
     }
 
+    [[nodiscard]] std::vector<std::uint8_t> discardedResponse(
+        std::uint32_t index,
+        std::span<const std::uint8_t> request) const override
+    {
+        return gpu_.discardedResponse(
+            request, index == protocol::gpuCursorQueue);
+    }
+
     void reset() noexcept override
     {
         cancelFenceTimer(eventQueue_.get());

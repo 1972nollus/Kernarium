@@ -4,24 +4,30 @@
  * kernel says how its run ends: what the run's context records, what the host
  * logs, and what the record keeps across the end of a run.
  */
+#include "device/guest_end/guest_end.hpp"
 #include "platform/run_routing.hpp"
 #include "require.hpp"
 #include "runtime/context.hpp"
 #include "uml_darwin_host.h"
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdio>
+#include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
 using namespace std::chrono_literals;
+using uml::device::GuestEndRegistration;
 using uml::runtime::Context;
 using uml::runtime::GuestShutdown;
 using uml::runtime::GuestShutdownKind;
@@ -341,12 +347,130 @@ void test_without_a_run_context_the_report_is_only_logged()
 	require(text == "guest requested restart (command 'recovery')\n", text);
 }
 
+/* What a device registered to learn that the guest is ending is told once
+ * per report that is new to the run: the kernel reports from a reboot
+ * notifier and again from machine_restart(), and a device that discards its
+ * held requests on the first has nothing to do for the second. */
+struct Notified final {
+	std::atomic_int calls{};
+
+	static void call(void *context) noexcept
+	{
+		static_cast<Notified *>(context)->calls.fetch_add(1);
+	}
+};
+
+void test_a_new_report_tells_the_registered_devices_once()
+{
+	Notified notified;
+	Notified unregistered;
+	RoutedContext routed;
+	auto &context = routed.context();
+	{
+		GuestEndRegistration registration{&Notified::call, &notified};
+		{
+			GuestEndRegistration gone{&Notified::call, &unregistered};
+		}
+		RunScope run{context};
+		require(run.entered());
+		require(notified.calls.load() == 0);
+
+		(void)logged([] {
+			darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_RESTART, "recovery");
+		});
+		require(notified.calls.load() == 1);
+		/* The repeat from machine_restart() is not a new report. */
+		(void)logged([] {
+			darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_RESTART, "recovery");
+		});
+		require(notified.calls.load() == 1);
+		/* A report that differs is: the guest's end is idempotent for the
+		 * devices, but each fact reaches them. */
+		(void)logged([] {
+			darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_HALT, nullptr);
+		});
+		require(notified.calls.load() == 2);
+		/* A kind the bridge does not know is no report. */
+		(void)logged([] { darwin_uml_guest_shutdown(99, nullptr); });
+		require(notified.calls.load() == 2);
+	}
+	/* The next run clears the record, so its first report is new again. */
+	{
+		GuestEndRegistration registration{&Notified::call, &notified};
+		RunScope run{context};
+		require(run.entered());
+		(void)logged([] {
+			darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_HALT, nullptr);
+		});
+		require(notified.calls.load() == 3);
+	}
+	/* Unregistered devices are not called, and nothing registered is fine. */
+	{
+		RunScope run{context};
+		require(run.entered());
+		(void)logged([] {
+			darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_HALT, nullptr);
+		});
+	}
+	require(notified.calls.load() == 3);
+	require(unregistered.calls.load() == 0);
+}
+
+/* A run with no context reports to nobody: its devices are not told. */
+void test_without_a_run_context_no_device_is_told()
+{
+	Notified notified;
+	GuestEndRegistration registration{&Notified::call, &notified};
+	(void)logged([] {
+		darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_RESTART, "recovery");
+	});
+	require(notified.calls.load() == 0);
+}
+
+void test_the_registry_has_a_bounded_table_and_frees_slots()
+{
+	Notified notified;
+	std::vector<std::unique_ptr<GuestEndRegistration>> held;
+	bool full = false;
+	for (int attempt = 0; attempt < 64 && !full; ++attempt) {
+		try {
+			held.push_back(std::make_unique<GuestEndRegistration>(
+				&Notified::call, &notified));
+		} catch (const std::length_error &) {
+			full = true;
+		}
+	}
+	require(full);
+	require(!held.empty());
+	uml::device::notify_guest_end();
+	require(notified.calls.load() == static_cast<int>(held.size()));
+	held.pop_back();
+	/* A freed slot is taken again. */
+	GuestEndRegistration again{&Notified::call, &notified};
+	bool refused = false;
+	try {
+		GuestEndRegistration over{&Notified::call, &notified};
+	} catch (const std::length_error &) {
+		refused = true;
+	}
+	require(refused);
+	held.clear();
+	bool rejected = false;
+	try {
+		GuestEndRegistration none{nullptr, nullptr};
+	} catch (const std::invalid_argument &) {
+		rejected = true;
+	}
+	require(rejected);
+}
+
 } // namespace
 
 int main()
 {
 	/* First: later tests route a context of their own. */
 	test_without_a_run_context_the_report_is_only_logged();
+	test_without_a_run_context_no_device_is_told();
 	test_each_kind_is_recorded_and_logged();
 	test_restart_command_is_recorded_and_named();
 	test_null_command_means_no_command();
@@ -357,6 +481,8 @@ int main()
 	test_record_outlives_the_run_and_the_next_run_clears_it();
 	test_record_is_readable_while_an_exitcall_never_returns();
 	test_an_unknown_kind_records_nothing();
+	test_a_new_report_tells_the_registered_devices_once();
+	test_the_registry_has_a_bounded_table_and_frees_slots();
 	std::puts("guest shutdown import: ok");
 	return 0;
 }

@@ -16,6 +16,7 @@ uml_add_unit_test(
 add_executable(uml_runtime_guest_shutdown_tests guest_shutdown_tests.cpp)
 target_link_libraries(uml_runtime_guest_shutdown_tests PRIVATE
     UML::BridgeAbi
+    UML::DeviceGuestEnd
     UML::Emulator)
 target_include_directories(uml_runtime_guest_shutdown_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
