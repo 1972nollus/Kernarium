@@ -260,8 +260,10 @@ and 8-bit capture of a 10-bit stream, imported dma-buf capture, timestamps,
 source-change and EOS events, the display order of H.264 and HEVC B-pictures
 and a seek in both (over open-group streams for HEVC), reads the H.264 and HEVC
 profile and level menus (Constrained High beside High, levels from 1.0 up to
-5.2 and from 1 up to 6.2, the current level the highest), and rejects kernel
-faults or failed shutdown. Imported capture covers the queue's own
+5.2 and from 1 up to 6.2, the current level the highest), decodes flat portrait
+and square H.264 and HEVC pictures (2304 x 4096, 4096 x 4096, 4320 x 8192) to
+frames of their own size inside a frame range that is a rectangle, and rejects
+kernel faults or failed shutdown. Imported capture covers the queue's own
 buffers handed back and guest memory a client brings, with each buffer's planes
 in separate dma-bufs or in one and their lengths stated as QUERYBUF gave them,
 as the whole dma-buf, or not at all. `guest-v4l2-decode-gpu` runs the same probe
@@ -269,8 +271,16 @@ with the GPU, where capture buffers are host-visible blobs and an imported
 dma-buf takes another path in the driver. A stream that changes its picture size
 twice is decoded the way Android's V4L2 codec handles it, including a drain asked
 for while the last change is still on its way: every picture of a size returns,
-then the LAST buffer, before the source change is visible. Android uses its own
-4 KiB guest and deployment workflow.
+then the LAST buffer, before the source change is visible. A client that queues
+the whole stream and drains straight away, with both changes inside its drain,
+gets every picture of all three sizes before the one LAST buffer that ends the
+drain. Every profile is also
+started in v4l2_codec2's order, with a provisional 64 x 64 capture format (and
+queued buffers for it) before the size is known, the parameter sets and the
+picture as two coded buffers, and the capture format chosen only after the
+source change: the buffer that declared the size is held until then, nothing
+lands in the provisional buffers, and the picture arrives whole before the LAST
+buffer. Android uses its own 4 KiB guest and deployment workflow.
 The fixed x86_64 userspace product registers no CTest suites, so the x86_64
 slice exercises its own V4L2 path by running `run_v4l2_decode.py`, with `--gpu`
 for the GPU case, directly with an x86-64 probe and an x86-64 rootfs, the way

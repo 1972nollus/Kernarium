@@ -41,6 +41,28 @@ private:
     T value_ {};
 };
 
+/* The largest picture, per axis, that each hardware decoder opens. The
+ * capability list states it and a session is refused above it, so what the
+ * guest is told and what the host accepts cannot differ. The hardware limits a
+ * dimension and not the area: an M1 Ultra opens H.264 up to 4096 on either
+ * axis (4096 x 4096 and 2304 x 4096 decode, 4112 in either direction is
+ * refused) and HEVC at least to 8192 x 8192, where it stops being measured.
+ * A level's frame-size limit is not used: level 5.2 allows 36864 macroblocks
+ * and the hardware opens 65536. iOS has not been measured. */
+struct SizeLimit {
+    std::uint32_t width;
+    std::uint32_t height;
+};
+constexpr SizeLimit decodeSizeLimit(VideoCodec codec) noexcept
+{
+    switch (codec) {
+    case VideoCodec::h264: return {4096, 4096};
+    case VideoCodec::hevc: return {8192, 8192};
+    case VideoCodec::jpeg: case VideoCodec::vp9: return {4096, 2304};
+    }
+    return {};
+}
+
 bool high10Available()
 {
 #if TARGET_OS_OSX
@@ -817,9 +839,8 @@ private:
             : codec_ == VideoCodec::h264 ? h264Active_.width() : format_.width;
         const auto codedHeight = codec_ == VideoCodec::hevc ? hevcActive_.height
             : codec_ == VideoCodec::h264 ? h264Active_.height() : format_.height;
-        const auto maxWidth = codec_ == VideoCodec::hevc ? 8192u : 4096u;
-        const auto maxHeight = codec_ == VideoCodec::hevc ? 4320u : 2304u;
-        if (!codedWidth || !codedHeight || codedWidth > maxWidth || codedHeight > maxHeight)
+        const auto limit = decodeSizeLimit(codec_);
+        if (!codedWidth || !codedHeight || codedWidth > limit.width || codedHeight > limit.height)
             throw std::runtime_error("video dimensions exceed decoder capabilities");
         /* A stream that states full range is decoded to full range: asking
          * for video range would have the hardware squeeze every sample. */
@@ -925,25 +946,31 @@ std::vector<VideoDecodeCapability> videoDecodeCapabilities()
 {
     std::vector<VideoDecodeCapability> result;
     if (VTIsHardwareDecodeSupported(kCMVideoCodecType_H264)) {
-        // Level 5.2 is the last whose largest frame (36864 macroblocks, 4096 x
-        // 2304) the hardware opens: it decodes a level 5.2, 6.0 or 6.2 stream of
-        // that size alike, and refuses the 8192 x 4320 frame a level 6 stream may
-        // carry. The platform test decodes the level 5.2 frame.
+        // Level 5.2 is the last whose frames the hardware opens in full: it
+        // decodes a level 5.2, 6.0 or 6.2 stream of 4096 x 2304 alike, and
+        // refuses the 8192 x 4320 frame a level 6 stream may carry. The
+        // platform test decodes the level 5.2 frame. Its size range is wider
+        // than the level's frame area, because the hardware limits a
+        // dimension, not the area (see decodeSizeLimit).
+        const auto h264 = decodeSizeLimit(VideoCodec::h264);
         for (auto profile : {VideoProfile::h264Baseline, VideoProfile::h264ConstrainedBaseline,
                              VideoProfile::h264Main, VideoProfile::h264High,
                              VideoProfile::h264ConstrainedHigh})
-            result.push_back({VideoCodec::h264, profile, 4096, 2304, 52, 8});
+            result.push_back({VideoCodec::h264, profile, h264.width, h264.height, 52, 8});
         if (high10Available())
-            result.push_back({VideoCodec::h264, VideoProfile::h264High10, 4096, 2304, 51, 10});
+            result.push_back({VideoCodec::h264, VideoProfile::h264High10, h264.width, h264.height, 51, 10});
     }
     if (VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC)) {
-        result.push_back({VideoCodec::hevc, VideoProfile::hevcMain, 8192, 4320, 186, 8});
-        result.push_back({VideoCodec::hevc, VideoProfile::hevcMain10, 8192, 4320, 186, 10});
+        const auto hevc = decodeSizeLimit(VideoCodec::hevc);
+        result.push_back({VideoCodec::hevc, VideoProfile::hevcMain, hevc.width, hevc.height, 186, 8});
+        result.push_back({VideoCodec::hevc, VideoProfile::hevcMain10, hevc.width, hevc.height, 186, 10});
     }
     if (VTIsHardwareDecodeSupported(kCMVideoCodecType_JPEG))
-        result.push_back({VideoCodec::jpeg, VideoProfile::jpegBaseline, 4096, 2304, 0, 8});
+        result.push_back({VideoCodec::jpeg, VideoProfile::jpegBaseline,
+                          decodeSizeLimit(VideoCodec::jpeg).width, decodeSizeLimit(VideoCodec::jpeg).height, 0, 8});
     if (vp9Available())
-        result.push_back({VideoCodec::vp9, VideoProfile::vp9Profile0, 4096, 2304, 0, 8});
+        result.push_back({VideoCodec::vp9, VideoProfile::vp9Profile0,
+                          decodeSizeLimit(VideoCodec::vp9).width, decodeSizeLimit(VideoCodec::vp9).height, 0, 8});
     return result;
 }
 

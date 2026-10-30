@@ -471,6 +471,93 @@ void decode(const char* device, const std::string& directory, const char* name, 
     type = capture; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF capture");
 }
 }
+/* A picture that is not landscape, or not small, decoded to a frame of its own
+ * size. The hardware limits a dimension and not the area, so the guest's range
+ * is a rectangle and every picture within it decodes; a host that capped the
+ * height at the landscape 2304 refused these. The stream is a flat gray picture,
+ * so the frame is checked by its size, its stride and its mean luma. */
+void decodeShape(const char* device, const std::string& directory, const char* name, unsigned coded,
+                 unsigned width, unsigned height)
+{
+    const auto packet = read(directory + "/" + name + ".bin");
+    Device owner(device);
+    const int fd = owner.fd;
+    v4l2_event_subscription subscription {};
+    subscription.type = V4L2_EVENT_SOURCE_CHANGE;
+    call(fd, VIDIOC_SUBSCRIBE_EVENT, &subscription, "SUBSCRIBE_EVENT");
+    v4l2_format input {};
+    input.type = output;
+    input.fmt.pix_mp.width = 128; input.fmt.pix_mp.height = 96;
+    input.fmt.pix_mp.pixelformat = coded;
+    input.fmt.pix_mp.num_planes = 1;
+    input.fmt.pix_mp.plane_fmt[0].sizeimage = packet.size();
+    call(fd, VIDIOC_S_FMT, &input, "S_FMT coded");
+    auto inputs = allocate(fd, output, 2);
+    require(inputs[0][0].length >= packet.size(), "coded buffer too short");
+    std::memcpy(inputs[0][0].data, packet.data(), packet.size());
+    auto type = output;
+    call(fd, VIDIOC_STREAMON, &type, "STREAMON output");
+    queue(fd, output, 0, inputs[0], packet.size());
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    bool source = false;
+    while (!source && std::chrono::steady_clock::now() < deadline) {
+        pollfd p {fd, POLLPRI, 0};
+        if (poll(&p, 1, 100) < 0 && errno != EINTR) throw std::runtime_error("poll source change failed");
+        v4l2_event event {};
+        if (ioctl(fd, VIDIOC_DQEVENT, &event) == 0)
+            source = event.type == V4L2_EVENT_SOURCE_CHANGE && (event.u.src_change.changes & V4L2_EVENT_SRC_CH_RESOLUTION);
+        else require(errno == EAGAIN, "DQEVENT failed");
+    }
+    require(source, "decoder source-change timeout");
+    v4l2_format format {};
+    format.type = capture;
+    call(fd, VIDIOC_G_FMT, &format, "G_FMT capture");
+    require(format.fmt.pix_mp.width == width && format.fmt.pix_mp.height == height,
+            "the decoded picture is not the size of the stream");
+    format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12M;
+    call(fd, VIDIOC_S_FMT, &format, "S_FMT capture");
+    const auto stride = format.fmt.pix_mp.plane_fmt[0].bytesperline;
+    require(format.fmt.pix_mp.width == width && format.fmt.pix_mp.height == height && stride >= width &&
+            format.fmt.pix_mp.plane_fmt[0].sizeimage >= std::size_t(stride) * height,
+            "the capture format does not hold the picture");
+    auto outputs = allocate(fd, capture, 4);
+    for (unsigned i = 0; i < outputs.size(); ++i) queue(fd, capture, i, outputs[i]);
+    type = capture;
+    call(fd, VIDIOC_STREAMON, &type, "STREAMON capture");
+    v4l2_decoder_cmd drain {};
+    drain.cmd = V4L2_DEC_CMD_STOP;
+    call(fd, VIDIOC_DECODER_CMD, &drain, "DECODER_CMD drain");
+    bool frame = false, eos = false;
+    while (!eos && std::chrono::steady_clock::now() < deadline) {
+        pollfd p {fd, POLLIN, 0};
+        if (poll(&p, 1, 100) < 0 && errno != EINTR) throw std::runtime_error("poll capture failed");
+        v4l2_plane planes[VIDEO_MAX_PLANES] {};
+        v4l2_buffer buffer {};
+        buffer.type = capture; buffer.memory = V4L2_MEMORY_MMAP;
+        buffer.length = VIDEO_MAX_PLANES; buffer.m.planes = planes;
+        if (ioctl(fd, VIDIOC_DQBUF, &buffer) < 0) {
+            require(errno == EAGAIN, "DQBUF capture failed"); continue;
+        }
+        require(!(buffer.flags & V4L2_BUF_FLAG_ERROR), "capture buffer has decoder error");
+        if (buffer.flags & V4L2_BUF_FLAG_LAST) { eos = true; if (!planes[0].bytesused) continue; }
+        require(!frame, "decoder returned duplicate frame");
+        frame = true;
+        require(buffer.index < outputs.size() && planes[0].bytesused >= std::size_t(stride) * height,
+                "the decoded plane is shorter than the picture");
+        const auto* luma = static_cast<const std::uint8_t*>(outputs[buffer.index][0].data) + planes[0].data_offset;
+        std::uint64_t sum = 0;
+        for (unsigned row = 0; row < height; ++row)
+            for (unsigned column = 0; column < width; ++column) sum += luma[std::size_t(row) * stride + column];
+        const double mean = double(sum) / (double(width) * height);
+        require(mean > 122.0 && mean < 130.0, "the decoded picture is not the flat gray the stream codes");
+        std::printf("PASS shape %s %ux%u mean-luma=%.1f\n", name, width, height, mean);
+        std::fflush(stdout);
+    }
+    require(frame && eos, "capture frame/EOS timeout");
+    type = output; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF output");
+    type = capture; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF capture");
+}
+
 /* The imported buffers a client that is not the driver's own exporter queues:
  * guest memory, with its planes in separate dma-bufs or in one, and their
  * lengths stated as QUERYBUF gave them, as the whole dma-buf, or not at all.
@@ -663,10 +750,16 @@ std::vector<std::vector<std::uint8_t>> delimitedUnits(const std::vector<std::uin
  * drain as soon as every coded buffer is back and takes the first LAST buffer
  * it sees as the end of that drain. The device must therefore not let a change
  * be pending then, which it does by keeping the coded buffer that carries the
- * change until the client has handled it, as a hardware decoder does. */
+ * change until the client has handled it, as a hardware decoder does. The
+ * straight client queues every access unit and drains at once, so the changes
+ * are inside its drain, and it takes the first LAST buffer for the end of it:
+ * the device must not end an old size with one there, but announce the change
+ * and carry on into the buffers the client then sets up. */
+enum class Drain { afterPictures, eager, straight };
 void resolutionChange(const char* device, const std::string& directory, unsigned coded,
-                      unsigned memory = V4L2_MEMORY_MMAP, Import origin = {}, bool eager = false)
+                      unsigned memory = V4L2_MEMORY_MMAP, Import origin = {}, Drain drain = Drain::afterPictures)
 {
+    const bool eager = drain == Drain::eager;
     struct Sequence { unsigned width, height, pictures; };
     const Sequence sequences[] = {{128, 96, 8}, {96, 64, 8}, {160, 112, 8}};
     constexpr unsigned count = 3;
@@ -690,7 +783,9 @@ void resolutionChange(const char* device, const std::string& directory, unsigned
     input.fmt.pix_mp.num_planes = 1;
     input.fmt.pix_mp.plane_fmt[0].sizeimage = unsigned(largest);
     call(fd, VIDIOC_S_FMT, &input, "S_FMT coded");
-    auto inputs = allocate(fd, output, 4);
+    /* The straight client holds a buffer for every access unit, as one that
+     * reads its whole stream ahead does. */
+    auto inputs = allocate(fd, output, drain == Drain::straight ? total : 4);
     for (const auto& buffer : inputs) require(buffer[0].length >= largest, "coded buffer too short");
     std::vector<bool> free(inputs.size(), true);
     auto type = output;
@@ -861,11 +956,11 @@ void resolutionChange(const char* device, const std::string& directory, unsigned
          * that carries the change until the client has handled it, so for such
          * a client the drain never starts first. The patient client below
          * waits for the pictures instead. */
-        if (!draining && capturing && fed == units.size() && (eager || received == total) &&
-            std::all_of(free.begin(), free.end(), [](bool v) { return v; })) {
-            v4l2_decoder_cmd drain {};
-            drain.cmd = V4L2_DEC_CMD_STOP;
-            call(fd, VIDIOC_DECODER_CMD, &drain, "DECODER_CMD drain");
+        if (!draining && capturing && fed == units.size() && (drain != Drain::afterPictures || received == total) &&
+            (drain == Drain::straight || std::all_of(free.begin(), free.end(), [](bool v) { return v; }))) {
+            v4l2_decoder_cmd stop {};
+            stop.cmd = V4L2_DEC_CMD_STOP;
+            call(fd, VIDIOC_DECODER_CMD, &stop, "DECODER_CMD drain");
             draining = true;
             drainedAfter = received;
             drainedChanges = changes;
@@ -924,7 +1019,7 @@ void resolutionChange(const char* device, const std::string& directory, unsigned
     type = capture; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF capture");
     std::printf("PASS resolution-change sequences=%u pictures=%u memory=%s drain=%s drained-after=%u pictures, %u changes\n",
         count, received, memory != V4L2_MEMORY_DMABUF ? "mmap" : !origin.guestPages ? "dmabuf" : "dmabuf-guest",
-        eager ? "eager" : "after-pictures", drainedAfter, drainedChanges);
+        eager ? "eager" : drain == Drain::straight ? "straight" : "after-pictures", drainedAfter, drainedChanges);
     std::fflush(stdout);
 }
 
@@ -1219,6 +1314,200 @@ void hevcDisplayOrder(const char* device, const std::string& directory)
     }
 }
 
+/* An access unit as the parameter sets that open it and the picture after
+ * them, which a client may queue as two coded buffers. */
+std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>
+splitAtPicture(const std::vector<std::uint8_t>& unit, bool avc)
+{
+    for (std::size_t i = 0; i + 3 < unit.size(); ++i) {
+        if (!(unit[i] == 0 && unit[i + 1] == 0 && unit[i + 2] == 1)) continue;
+        const unsigned type = avc ? unit[i + 3] & 0x1f : (unit[i + 3] >> 1) & 0x3f;
+        if (avc ? type != 1 && type != 5 : type >= 32) continue;
+        const auto start = std::ptrdiff_t(i > 0 && unit[i - 1] == 0 ? i - 1 : i);
+        return {{unit.begin(), unit.begin() + start}, {unit.begin() + start, unit.end()}};
+    }
+    throw std::runtime_error("the access unit has no picture");
+}
+/* Starts a stream before the picture size is known, as Android's V4L2 codec
+ * (v4l2_codec2) does. It sets a provisional capture format, 64 x 64 NV12, and
+ * with `buffers` queues buffers for it and starts the capture queue. It queues
+ * the parameter sets and the first picture as two coded buffers, and only when
+ * it dequeues the source change does it stop the capture queue and choose the
+ * format and buffers for the size the stream has, P010 for a 10-bit one. Its
+ * input thread may run ahead of its event thread, so the pause before the event
+ * is dequeued here is the interleaving it produces.
+ *
+ * The device must keep the coded buffer that declared the size until the
+ * client has set its capture queue up for it, because a client drains once
+ * every coded buffer is back and a drain it starts with no change pending ends
+ * at once, without the picture. No picture may go into the provisional buffers,
+ * which are too small for it, and the picture must keep the stream's depth for
+ * a client that chooses P010 after it was decoded. The picture then arrives
+ * whole, ahead of the LAST buffer. */
+void provisionalCapture(const char* device, const std::string& directory, const char* name, unsigned coded,
+                        unsigned raw, bool buffers)
+{
+    constexpr unsigned guessed = 64;
+    const auto unit = read(directory + "/" + name + ".bin");
+    const auto reference = read(directory + "/" + name + ".raw");
+    const auto [sets, picture] = splitAtPicture(unit, coded == V4L2_PIX_FMT_H264);
+    require(!sets.empty(), "the access unit has no parameter sets before its picture");
+    Device owner(device);
+    const int fd = owner.fd;
+    v4l2_event_subscription subscription {};
+    subscription.type = V4L2_EVENT_SOURCE_CHANGE;
+    call(fd, VIDIOC_SUBSCRIBE_EVENT, &subscription, "SUBSCRIBE_EVENT");
+    v4l2_format input {};
+    input.type = output;
+    input.fmt.pix_mp.width = guessed; input.fmt.pix_mp.height = guessed;
+    input.fmt.pix_mp.pixelformat = coded;
+    input.fmt.pix_mp.num_planes = 1;
+    input.fmt.pix_mp.plane_fmt[0].sizeimage = unit.size();
+    call(fd, VIDIOC_S_FMT, &input, "S_FMT coded");
+    auto inputs = allocate(fd, output, 2);
+    require(inputs[0][0].length >= unit.size() && inputs[1][0].length >= unit.size(), "coded buffer too short");
+    v4l2_format format {};
+    format.type = capture;
+    format.fmt.pix_mp.width = guessed; format.fmt.pix_mp.height = guessed;
+    format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12M;
+    call(fd, VIDIOC_S_FMT, &format, "S_FMT provisional capture");
+    require(format.fmt.pix_mp.num_planes == 2, "the provisional format is not two planes");
+    std::vector<unsigned> sizes;
+    for (unsigned i = 0; i < format.fmt.pix_mp.num_planes; ++i)
+        sizes.push_back(format.fmt.pix_mp.plane_fmt[i].sizeimage);
+    const unsigned count = import(fd, capture, 4);
+    Primes provisional;
+    if (buffers) {
+        provisional = exportGuestPages(device, coded, sizes, false, count);
+        for (unsigned i = 0; i < provisional.size(); ++i)
+            queueImported(fd, capture, i, provisional[i], sizes, Declared::negotiated);
+        auto type = capture;
+        call(fd, VIDIOC_STREAMON, &type, "STREAMON provisional capture");
+    }
+    auto type = output;
+    call(fd, VIDIOC_STREAMON, &type, "STREAMON output");
+    const auto submit = [&](unsigned index, const std::vector<std::uint8_t>& packet, long stamp) {
+        std::memcpy(inputs[index][0].data, packet.data(), packet.size());
+        v4l2_plane planes[VIDEO_MAX_PLANES] {};
+        v4l2_buffer buffer {};
+        buffer.type = output; buffer.memory = V4L2_MEMORY_MMAP; buffer.index = index;
+        buffer.length = 1; buffer.m.planes = planes;
+        buffer.timestamp.tv_sec = stamp; buffer.timestamp.tv_usec = 424242;
+        planes[0].length = inputs[index][0].length;
+        planes[0].bytesused = unsigned(packet.size());
+        call(fd, VIDIOC_QBUF, &buffer, "QBUF coded");
+    };
+    const auto dequeueCoded = [&]() {
+        v4l2_plane planes[VIDEO_MAX_PLANES] {};
+        v4l2_buffer buffer {};
+        buffer.type = output; buffer.memory = V4L2_MEMORY_MMAP;
+        buffer.length = VIDEO_MAX_PLANES; buffer.m.planes = planes;
+        if (ioctl(fd, VIDIOC_DQBUF, &buffer) < 0) {
+            require(errno == EAGAIN, "DQBUF coded failed");
+            return false;
+        }
+        require(!(buffer.flags & V4L2_BUF_FLAG_ERROR), "a coded buffer came back with an error");
+        return true;
+    };
+    submit(0, sets, 1);
+    submit(1, picture, 2);
+    usleep(50000);
+    unsigned back = 0;
+    while (dequeueCoded()) ++back;
+    require(back <= 1, "both coded buffers were back before the source change was handled");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    bool source = false;
+    while (!source && std::chrono::steady_clock::now() < deadline) {
+        pollfd p {fd, POLLPRI, 0};
+        if (poll(&p, 1, 100) < 0 && errno != EINTR) throw std::runtime_error("poll source change failed");
+        v4l2_event event {};
+        if (ioctl(fd, VIDIOC_DQEVENT, &event) == 0)
+            source = event.type == V4L2_EVENT_SOURCE_CHANGE && (event.u.src_change.changes & V4L2_EVENT_SRC_CH_RESOLUTION);
+        else require(errno == ENOENT || errno == EAGAIN, "DQEVENT failed");
+    }
+    require(source, "decoder source-change timeout");
+    call(fd, VIDIOC_G_FMT, &format, "G_FMT capture");
+    require(format.fmt.pix_mp.width == 128 && format.fmt.pix_mp.height == 96, "decoded dimensions differ");
+    if (buffers) {
+        v4l2_plane planes[VIDEO_MAX_PLANES] {};
+        v4l2_buffer buffer {};
+        buffer.type = capture; buffer.memory = V4L2_MEMORY_DMABUF;
+        buffer.length = VIDEO_MAX_PLANES; buffer.m.planes = planes;
+        require(ioctl(fd, VIDIOC_DQBUF, &buffer) < 0 && errno == EAGAIN,
+                "a picture came back in a buffer set up for the provisional size");
+        type = capture;
+        call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF provisional capture");
+    }
+    provisional.clear();
+    release(fd, capture);
+    format.fmt.pix_mp.pixelformat = raw;
+    call(fd, VIDIOC_S_FMT, &format, "S_FMT capture");
+    require(format.fmt.pix_mp.pixelformat == raw && format.fmt.pix_mp.width == 128 && format.fmt.pix_mp.height == 96,
+            "S_FMT changed the capture format");
+    sizes.clear();
+    for (unsigned i = 0; i < format.fmt.pix_mp.num_planes; ++i)
+        sizes.push_back(format.fmt.pix_mp.plane_fmt[i].sizeimage);
+    const auto primes = exportGuestPages(device, coded, sizes, false, import(fd, capture, 4));
+    Buffers frames;
+    for (const auto& planes : primes) {
+        frames.emplace_back();
+        for (unsigned i = 0; i < planes.size(); ++i) frames.back().emplace_back(planes[i].fd, sizes.at(i), planes[i].offset);
+    }
+    for (unsigned i = 0; i < primes.size(); ++i) queueImported(fd, capture, i, primes[i], sizes, Declared::negotiated);
+    type = capture;
+    call(fd, VIDIOC_STREAMON, &type, "STREAMON capture");
+    v4l2_decoder_cmd drain {};
+    drain.cmd = V4L2_DEC_CMD_STOP;
+    call(fd, VIDIOC_DECODER_CMD, &drain, "DECODER_CMD drain");
+    unsigned pictures = 0, maximum = 0;
+    bool last = false;
+    while (!last && std::chrono::steady_clock::now() < deadline) {
+        pollfd p {fd, POLLIN, 0};
+        if (poll(&p, 1, 100) < 0 && errno != EINTR) throw std::runtime_error("poll capture failed");
+        while (dequeueCoded()) ++back;
+        v4l2_plane planes[VIDEO_MAX_PLANES] {};
+        v4l2_buffer buffer {};
+        buffer.type = capture; buffer.memory = V4L2_MEMORY_DMABUF;
+        buffer.length = VIDEO_MAX_PLANES; buffer.m.planes = planes;
+        if (ioctl(fd, VIDIOC_DQBUF, &buffer) < 0) {
+            require(errno == EAGAIN, "DQBUF capture failed");
+            continue;
+        }
+        require(!(buffer.flags & V4L2_BUF_FLAG_ERROR), "capture buffer has decoder error");
+        last = buffer.flags & V4L2_BUF_FLAG_LAST;
+        if (!planes[0].bytesused) continue;
+        require(!pictures++, "decoder returned duplicate frame");
+        require(buffer.timestamp.tv_sec == 2 && buffer.timestamp.tv_usec == 424242, "frame timestamp differs");
+        require(buffer.index < frames.size(), "capture index outside allocation");
+        std::vector<std::uint8_t> actual;
+        for (unsigned i = 0; i < buffer.length; ++i) {
+            require(planes[i].data_offset <= planes[i].bytesused && planes[i].bytesused <= frames[buffer.index][i].length,
+                    "invalid decoded plane extent");
+            const auto* data = static_cast<const std::uint8_t*>(frames[buffer.index][i].data);
+            actual.insert(actual.end(), data + planes[i].data_offset, data + planes[i].bytesused);
+        }
+        require(actual.size() == reference.size(), "the picture is not the size of its reference");
+        const unsigned step = raw == V4L2_PIX_FMT_P010 ? 2 : 1;
+        for (std::size_t i = 0; i < actual.size(); i += step) {
+            const int got = step == 1 ? actual[i] : (actual[i] | (actual[i + 1] << 8)) >> 6;
+            const int wanted = step == 1 ? reference[i] : (reference[i] | (reference[i + 1] << 8)) >> 6;
+            maximum = std::max(maximum, unsigned(std::abs(got - wanted)));
+        }
+        require(maximum <= 2, "the picture is not the one the stream codes");
+    }
+    require(last, "capture EOS timeout");
+    require(pictures == 1, "the LAST buffer came without the picture");
+    for (const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+         back < 2 && std::chrono::steady_clock::now() < limit; usleep(10000))
+        while (dequeueCoded()) ++back;
+    require(back == 2, "a coded buffer was never given back");
+    type = output; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF output");
+    type = capture; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF capture");
+    std::printf("PASS provisional-capture %s raw=%08x buffers=%s max-error=%u\n", name, raw,
+        buffers ? "queued" : "none", maximum);
+    std::fflush(stdout);
+}
+
 /* The values a read-only menu lists, in order. */
 std::vector<int> menuItems(int fd, unsigned id)
 {
@@ -1320,6 +1609,13 @@ int main(int argc, char** argv)
                     "a stepwise frame size has a zero step");
             require(sizes.stepwise.max_width >= 1920 && sizes.stepwise.max_height >= 1200,
                     "the advertised maximum coded size is too small");
+            /* The range is a rectangle, so it names a portrait picture as it names a landscape one. */
+            if (coded.pixelformat == V4L2_PIX_FMT_H264)
+                require(sizes.stepwise.max_width >= 4096 && sizes.stepwise.max_height >= 4096,
+                        "the advertised H.264 range stops short of 4096 x 4096");
+            if (coded.pixelformat == V4L2_PIX_FMT_HEVC)
+                require(sizes.stepwise.max_width >= 8192 && sizes.stepwise.max_height >= 8192,
+                        "the advertised HEVC range stops short of 8192 x 8192");
             /* A capture list in wire order names the planar format the device
              * actually decodes to; a reversed one names only the tail. */
             bool planar = false;
@@ -1363,7 +1659,10 @@ int main(int argc, char** argv)
             resolutionChange(device, argv[1], fmt.pixelformat, V4L2_MEMORY_DMABUF);
             resolutionChange(device, argv[1], fmt.pixelformat, V4L2_MEMORY_DMABUF,
                              Import{true, false, Declared::negotiated});
-            resolutionChange(device, argv[1], fmt.pixelformat, V4L2_MEMORY_MMAP, {}, true);
+            resolutionChange(device, argv[1], fmt.pixelformat, V4L2_MEMORY_MMAP, {}, Drain::eager);
+            resolutionChange(device, argv[1], fmt.pixelformat, V4L2_MEMORY_MMAP, {}, Drain::straight);
+            resolutionChange(device, argv[1], fmt.pixelformat, V4L2_MEMORY_DMABUF,
+                             Import{true, false, Declared::negotiated}, Drain::straight);
             break;
         }
         unsigned tested = 0;
@@ -1399,6 +1698,12 @@ int main(int argc, char** argv)
             call(capabilities.fd, VIDIOC_QUERYCTRL, &control, "QUERYCTRL profiles");
             require(control.minimum >= 0 && control.maximum <= 32, "invalid profile menu bounds");
             profileAndLevelMenus(capabilities.fd, avc);
+            if (avc) {
+                decodeShape(device, argv[1], "h264-portrait-2304x4096", fmt.pixelformat, 2304, 4096);
+                decodeShape(device, argv[1], "h264-square-4096x4096", fmt.pixelformat, 4096, 4096);
+            } else {
+                decodeShape(device, argv[1], "hevc-portrait-4320x8192", fmt.pixelformat, 4320, 8192);
+            }
             bool imported = false;
             for (int value = control.minimum; value <= control.maximum; ++value) {
                 v4l2_querymenu menu {}; menu.id = id; menu.index = value;
@@ -1427,6 +1732,8 @@ int main(int argc, char** argv)
                 if (profile->raw == V4L2_PIX_FMT_P010)
                     decode(device, argv[1], profile->name, fmt.pixelformat, profile->raw,
                            V4L2_MEMORY_DMABUF, Import{true, false, Declared::negotiated});
+                for (const bool buffers : {false, true})
+                    provisionalCapture(device, argv[1], profile->name, fmt.pixelformat, profile->raw, buffers);
                 ++tested;
                 if (avc && profile->value == V4L2_MPEG_VIDEO_H264_PROFILE_HIGH) {
                     decode(device, argv[1], profile->name, fmt.pixelformat, V4L2_PIX_FMT_YUV420M);
