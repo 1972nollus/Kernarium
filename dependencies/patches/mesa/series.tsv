@@ -119,4 +119,4 @@ patch	kosmickrisp-take-an-importer-s-row-pitch-for-a-linear-image.patch
 patch	kosmickrisp-refuse-an-image-image-view-or-buffer-view-of-a-format-it.patch
 patch	zink-make-a-pending-clear-visible-to-a-sampler-texture-barrier.patch
 patch	zink-free-what-a-destroyed-context-s-programs-can-no-longer-use.patch
-patch	kosmickrisp-probe-a-quiet-Metal-queue-before-calling-it-stopped.patch
+patch	kosmickrisp-test-a-Metal-queue-that-rejects-every-commit.patch

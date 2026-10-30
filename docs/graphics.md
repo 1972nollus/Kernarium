@@ -956,6 +956,17 @@ probe never completes a signal and a stopped queue is still lost at thirty
 seconds. The test `kosmickrisp_queue_denied` reproduces the denial on a Mac by
 rejecting commits and dropping signals in the Metal queue's methods.
 
+A query a rejected submission was to make available stays unavailable, since
+its availability write died with the commit, and `vkGetQueryPoolResults` with
+`VK_QUERY_RESULT_WAIT_BIT` ends the wait for it after ten seconds with
+`VK_ERROR_DEVICE_LOST` for that call. The Zink GL clients the iOS hold
+protects cannot reach that bound: Zink never passes the bit to
+`vkGetQueryPoolResults`, its blocking waits are on the batch's timeline
+semaphore, which the recovery above completes, and its
+`vkCmdCopyQueryPoolResults` with the bit set is a GPU copy that reads
+availability without waiting. Only a Vulkan client that waits on such a query
+sees the loss.
+
 #### Fragment-stage store work faults the GPU
 
 A render pass whose fragment shader performs enough `device` store work faults.
