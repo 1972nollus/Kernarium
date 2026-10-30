@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+import zlib
 from pathlib import Path
 
 
@@ -576,6 +577,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           userdata_grow_variant: str | None = None,
                           userdata_grow_policy_variant: str | None = None,
                           discrete_ops_variant: str | None = None,
+                          wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
                           cas_hal_variant: str | None = None,
                           vendor_property_variant: str | None = None,
@@ -1271,6 +1273,37 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk",
                         overlay_apk.getvalue(),
                     )
+                if wallpaper_variant != "missing-overlay":
+                    # The framework's runtime resource overlay: Soong lists the tablet default
+                    # wallpapers with the version qualifier aapt2 adds to a smallest-width one.
+                    def png_header(width: int, height: int) -> bytes:
+                        header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+                        return (b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + header
+                                + struct.pack(">I", zlib.crc32(b"IHDR" + header)))
+
+                    wallpapers = {
+                        "res/drawable-sw600dp-nodpi-v13/default_wallpaper.png": png_header(1024, 1024),
+                        "res/drawable-sw720dp-nodpi-v13/default_wallpaper.png": png_header(1024, 1024),
+                        "res/drawable-xxxhdpi-v4/default_wallpaper.png": png_header(2560, 2560),
+                    }
+                    if wallpaper_variant == "missing-variant":
+                        del wallpapers["res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"]
+                    elif wallpaper_variant == "lineage-size":
+                        wallpapers["res/drawable-sw600dp-nodpi-v13/default_wallpaper.png"] = png_header(1920, 1920)
+                    elif wallpaper_variant == "not-square":
+                        wallpapers["res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"] = png_header(1024, 768)
+                    elif wallpaper_variant == "not-png":
+                        wallpapers["res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"] = b"not a png at all, just bytes"
+                    framework_apk = io.BytesIO()
+                    with zipfile.ZipFile(framework_apk, "w") as overlay:
+                        overlay.writestr("resources.arsc", b"\x00")
+                        for name, payload in wallpapers.items():
+                            overlay.writestr(name, payload)
+                    archive.writestr(
+                        "PRODUCT/overlay/"
+                        "framework-res__lineage_darwin__auto_generated_rro_product.apk",
+                        framework_apk.getvalue(),
+                    )
                 for apk in arm_preopt_apks:
                     apk_path = Path(apk)
                     for isa in ("arm64", "arm"):
@@ -1744,6 +1777,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("userdata-grow-policy-no-ioctl", {"userdata_grow_policy_variant": "no-ioctl"}),
             ("userdata-grow-policy-more-ioctls", {"userdata_grow_policy_variant": "more-ioctls"}),
             ("missing-discrete-ops-overlay", {"discrete_ops_variant": "missing-overlay"}),
+            ("missing-framework-overlay", {"wallpaper_variant": "missing-overlay"}),
+            ("missing-default-wallpaper-variant", {"wallpaper_variant": "missing-variant"}),
+            ("lineage-size-default-wallpaper", {"wallpaper_variant": "lineage-size"}),
+            ("non-square-default-wallpaper", {"wallpaper_variant": "not-square"}),
+            ("default-wallpaper-not-png", {"wallpaper_variant": "not-png"}),
             ("unreliable-present-fence", {"vendor_property_variant": "present-fence-unreliable"}),
             ("missing-incremental-property", {"vendor_property_variant": "no-incremental"}),
             ("disabled-incremental-property", {"vendor_property_variant": "incremental-off"}),
@@ -2129,6 +2167,17 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "the ClearKey CAS plugin is missing: VENDOR/lib/mediacas/libclearkeycasplugin.so"),
             ("missing-discrete-ops-overlay-cause", {"discrete_ops_variant": "missing-overlay"},
              "SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk is missing"),
+            ("missing-framework-overlay-cause", {"wallpaper_variant": "missing-overlay"},
+             "framework-res__lineage_darwin__auto_generated_rro_product.apk is missing"),
+            ("missing-default-wallpaper-variant-cause", {"wallpaper_variant": "missing-variant"},
+             "has no res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"),
+            ("lineage-size-default-wallpaper-cause", {"wallpaper_variant": "lineage-size"},
+             "res/drawable-sw600dp-nodpi-v13/default_wallpaper.png in .* is 1920x1920: the tablet "
+             "default wallpaper must be a square of at most 1024 pixels"),
+            ("non-square-default-wallpaper-cause", {"wallpaper_variant": "not-square"},
+             "is 1024x768: the tablet default wallpaper must be a square"),
+            ("default-wallpaper-not-png-cause", {"wallpaper_variant": "not-png"},
+             "default_wallpaper.png in .* is not a PNG with a leading IHDR chunk"),
             ("lineage-discrete-ops-list-only-cause", {"discrete_ops_variant": "lineage-list-only"},
              "keeps AOSP's default ops; the closest lacks 2, 25, 41, 42, 63, 73, 88, 89, 120, "
              "136, 141, 147, 149, 150, 152, 170, 171, 172, 173"),
@@ -2379,6 +2428,63 @@ def verify_userdata_grow(android_root: Path) -> None:
         b"(allowx fsck_202604 system_data_root_file_202604 (ioctl dir (0x6610)))\n"
     )
     verifier.check_userdata_grow_policy(policy)
+
+
+def verify_default_wallpaper(android_root: Path) -> None:
+    """The overlay replaces LineageOS's 1920 pixel tablet wallpaper with a bounded square.
+
+    SystemUI fixes the wallpaper surface to the bitmap, so the 1920 pixel default kept a 14 MiB
+    buffer alive behind a window the display's long side wide; the overlay's copy is 1024 pixels
+    and carries the same image (the checked source and output digests pin that)."""
+    tool = load_tool(android_root / "tools/default_wallpaper.py")
+    tool.check_files(android_root)
+    resources = Path(tool.OVERLAY_RESOURCES)
+    with tempfile.TemporaryDirectory(prefix="default-wallpaper-") as temporary:
+        copy = Path(temporary)
+        shutil.copytree(android_root / resources, copy / resources)
+
+        def refuses(label: str, pattern: str, mutate) -> None:
+            for directory in tool.VARIANT_DIRECTORIES:
+                shutil.copyfile(
+                    android_root / resources / directory / tool.FILE_NAME,
+                    copy / resources / directory / tool.FILE_NAME,
+                )
+            mutate()
+            try:
+                tool.check_files(copy)
+            except tool.WallpaperError as error:
+                if not re.search(pattern, str(error)):
+                    fail(f"{label}: the refusal does not name its cause: {error}")
+            else:
+                fail(f"{label}: the default wallpaper check accepts it")
+
+        def png(width: int, height: int, depth: int = 8, color: int = 2) -> bytes:
+            header = struct.pack(">IIBBBBB", width, height, depth, color, 0, 0, 0)
+            return (b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + header
+                    + struct.pack(">I", zlib.crc32(b"IHDR" + header)))
+
+        sw600 = copy / resources / tool.VARIANT_DIRECTORIES[0] / tool.FILE_NAME
+        sw720 = copy / resources / tool.VARIANT_DIRECTORIES[1] / tool.FILE_NAME
+        refuses("lineage-size", r"is 1920x1920: .*square of at most 1024",
+                lambda: sw600.write_bytes(png(1920, 1920)))
+        refuses("not-square", r"is 1024x768", lambda: sw720.write_bytes(png(1024, 768)))
+        refuses("alpha", r"8-bit RGB without alpha", lambda: sw720.write_bytes(png(1024, 1024, 8, 6)))
+        refuses("not-png", r"not a PNG", lambda: sw720.write_bytes(b"bytes"))
+        refuses("variants-differ", r"differ", lambda: sw720.write_bytes(png(1024, 1024)))
+        refuses("missing-variant", r"has no drawable-sw720dp-nodpi/default_wallpaper.png", sw720.unlink)
+        refuses("changed-bytes", r"digest is .*: regenerate it",
+                lambda: [path.write_bytes(path.read_bytes() + b"\0") for path in (sw600, sw720)])
+    # A source that is not LineageOS's own file cannot regenerate the committed copy.
+    with tempfile.TemporaryDirectory(prefix="default-wallpaper-") as temporary:
+        source = Path(temporary) / "source.png"
+        source.write_bytes(png(tool.SOURCE_SIDE, tool.SOURCE_SIDE))
+        try:
+            tool.generate(android_root, source, "magick")
+        except tool.WallpaperError as error:
+            if "is not LineageOS's default wallpaper" not in str(error):
+                fail(f"the regeneration refusal does not name its cause: {error}")
+        else:
+            fail("a wallpaper that is not LineageOS's regenerates the committed copy")
 
 
 def verify_overlay_sepolicy(android_root: Path) -> None:
@@ -3067,6 +3173,7 @@ def main() -> None:
     verify_hal_selections(android_root)
     verify_net_setup_tool(android_root)
     verify_userdata_grow(android_root)
+    verify_default_wallpaper(android_root)
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)
     verify_package_assertions(android_root)

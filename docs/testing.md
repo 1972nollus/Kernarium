@@ -1118,7 +1118,8 @@ HAL and supplicant with their manifest fragments and services, the Wi-Fi feature
 declaration and the absent Ethernet, Aware, RTT, Direct and Passpoint ones, the built-in macvlan, cfg80211 and virt_wifi
 options of the packaged kernel configuration, the absent wificond, the ClearKey HAL's access to the memfd files of applications, the
 policy without the LineageOS grants that Android's neverallow tests refuse, and the
-discrete app-op list that keeps AOSP's default ops, the example thermal HAL
+discrete app-op list that keeps AOSP's default ops, the 1024 pixel tablet
+default wallpaper in the framework overlay with the checks of the overlay's copy, the example thermal HAL
 with its manifest fragment and service, the default CAS HAL with its ClearKey
 plugin, the vendor `build.prop` without the unreliable-present-fence property
 and with `ro.incremental.enable=1`, the software decoders' 3840x2160 limits, the

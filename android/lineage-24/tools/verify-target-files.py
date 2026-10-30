@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import android_image  # noqa: E402
+import default_wallpaper  # noqa: E402
 from release_common import BUILD_VARIANTS, configured_build_variant, sha256_path  # noqa: E402
 
 
@@ -1042,6 +1043,46 @@ def check_discrete_ops(
             f"no discrete app-op list in {DEVICE_CONFIG_OVERLAY} keeps AOSP's default ops; "
             f"the closest lacks {', '.join(map(str, missing))}"
         )
+
+
+# The framework's runtime resource overlay holds the product's replacement for LineageOS's
+# default wallpaper. Its two tablet variants are what every display of 600dp and more draws, and
+# SystemUI sizes the wallpaper surface from the bitmap, so a variant of the default 1920 pixels
+# keeps a 14 MiB buffer alive for a window that is the display's long side wide.
+FRAMEWORK_OVERLAY = (
+    "PRODUCT/overlay/framework-res__lineage_darwin__auto_generated_rro_product.apk"
+)
+FRAMEWORK_OVERLAY_LIMIT = 16 << 20
+DEFAULT_WALLPAPER_ENTRIES = tuple(
+    f"res/{directory}-v13/{default_wallpaper.FILE_NAME}"
+    for directory in default_wallpaper.VARIANT_DIRECTORIES
+)
+
+
+def check_default_wallpaper(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The tablet default wallpapers are the overlay's bounded square, not LineageOS's 1920."""
+    info = infos.get(FRAMEWORK_OVERLAY)
+    if info is None:
+        fail(f"{FRAMEWORK_OVERLAY} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, FRAMEWORK_OVERLAY_LIMIT))) as overlay:
+            for entry in DEFAULT_WALLPAPER_ENTRIES:
+                try:
+                    header = default_wallpaper.png_size(overlay.read(entry))
+                except KeyError:
+                    fail(f"{FRAMEWORK_OVERLAY} has no {entry}")
+                except default_wallpaper.WallpaperError as error:
+                    fail(f"{entry} in {FRAMEWORK_OVERLAY} is {error}")
+                width, height = header[:2]
+                if width != height or width > default_wallpaper.MAX_SIDE:
+                    fail(
+                        f"{entry} in {FRAMEWORK_OVERLAY} is {width}x{height}: the tablet default "
+                        f"wallpaper must be a square of at most {default_wallpaper.MAX_SIDE} pixels"
+                    )
+    except (OSError, zipfile.BadZipFile) as error:
+        fail(f"{FRAMEWORK_OVERLAY} is not a readable archive: {error}")
 
 
 # The AOSP example HALs the product keeps, each packaged as the vendor APEX that Cuttlefish
@@ -2272,6 +2313,7 @@ def main() -> None:
         check_hardware_features(archive, infos)
         check_fdroid(archive, infos)
         check_discrete_ops(archive, infos)
+        check_default_wallpaper(archive, infos)
         check_thermal_hal(archive, infos)
         check_cas_hal(archive, infos)
         check_wifi_hals(archive, infos)
