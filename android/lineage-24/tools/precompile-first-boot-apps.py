@@ -50,6 +50,7 @@ import argparse
 import concurrent.futures
 import hashlib
 import json
+import mmap
 import os
 import re
 import shutil
@@ -60,6 +61,10 @@ import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import android_image  # noqa: E402
 
 PRIMARY_ISA = "arm64"
 ISAS = ("arm64", "arm")
@@ -250,7 +255,7 @@ class Tools:
         self.out = out_dir
         self._recorded: dict[tuple[str, str], list[tuple[Path, list[str]]]] | None = None
         self.bin = host_bin or aosp / out_dir / "host" / "linux-x86" / "bin"
-        for tool in ("debugfs", "aapt2"):
+        for tool in ("debugfs", "fsck.erofs", "aapt2"):
             if not (self.bin / tool).is_file():
                 fail(f"missing host tool: {self.bin / tool}")
 
@@ -417,6 +422,49 @@ def resolve_isas(tools: Tools, package: Package) -> None:
     package.isas = tuple(isa for isa in ISAS if isa in found) or (PRIMARY_ISA,)
 
 
+def payload_error(message: str) -> SystemExit:
+    return SystemExit(f"precompile-first-boot-apps: {message}")
+
+
+def ext4_payload_apks(tools: Tools, payload: Path, scratch: Path, name: str) -> list[tuple[str, Path]]:
+    """The APKs under /app and /priv-app of an ext4 APEX payload, with their paths in the APEX."""
+    found: list[tuple[str, Path]] = []
+    for path in (p for d in ("/app", "/priv-app") for p in debugfs_files(tools, payload, d)):
+        if not path.endswith(".apk"):
+            continue
+        target = scratch / (name + path.replace("/", "@"))
+        result = run([str(tools.bin / "debugfs"), "-R", f"dump {path} {target}", str(payload)])
+        if not target.is_file():
+            fail(f"cannot extract {path} from {name}: {result.stderr.strip()}")
+        found.append((path, target))
+    return found
+
+
+def erofs_payload_apks(tools: Tools, payload: Path, scratch: Path, name: str) -> list[tuple[str, Path]]:
+    """The APKs under /app and /priv-app of an EROFS APEX payload, with their paths in the APEX.
+
+    The payload's directories say which of the two exist; fsck.erofs extracts each of them
+    (its --path names a directory whose contents land in the extraction directory).
+    """
+    found: list[tuple[str, Path]] = []
+    with payload.open("rb") as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as image:
+        present = [
+            directory for directory in ("app", "priv-app")
+            if android_image.erofs_file_type(image, directory, name, payload_error)
+            == android_image.EROFS_FILE_TYPE_DIRECTORY
+        ]
+    for directory in present:
+        extracted = scratch / f"{name}.{directory}"
+        result = run([str(tools.bin / "fsck.erofs"), f"--extract={extracted}",
+                      f"--path=/{directory}", str(payload)])
+        if result.returncode != 0 or not extracted.is_dir():
+            fail(f"cannot extract /{directory} from {name}: {result.stderr.strip()}")
+        for apk in sorted(extracted.rglob("*.apk")):
+            if apk.is_file() and not apk.is_symlink():
+                found.append((f"/{directory}/{apk.relative_to(extracted).as_posix()}", apk))
+    return found
+
+
 def apex_packages(layout: Layout, tools: Tools, scratch: Path) -> list[Package]:
     packages: list[Package] = []
     for partition in PARTITIONS:
@@ -431,13 +479,11 @@ def apex_packages(layout: Layout, tools: Tools, scratch: Path) -> list[Package]:
                 payload = scratch / f"{name}.payload.img"
                 with archive.open("apex_payload.img") as source, payload.open("wb") as sink:
                     shutil.copyfileobj(source, sink, 1 << 20)
-            for path in (p for d in ("/app", "/priv-app") for p in debugfs_files(tools, payload, d)):
-                if not path.endswith(".apk"):
-                    continue
-                target = scratch / (name + path.replace("/", "@"))
-                result = run([str(tools.bin / "debugfs"), "-R", f"dump {path} {target}", str(payload)])
-                if not target.is_file():
-                    fail(f"cannot extract {path} from {apex}: {result.stderr.strip()}")
+            with payload.open("rb") as stream:
+                erofs = stream.read(android_image.EROFS_SUPERBLOCK_OFFSET + 4)[
+                    android_image.EROFS_SUPERBLOCK_OFFSET:] == android_image.EROFS_MAGIC
+            extract = erofs_payload_apks if erofs else ext4_payload_apks
+            for path, target in extract(tools, payload, scratch, name):
                 if not zip_has_dex(target):
                     target.unlink()
                     continue
@@ -688,7 +734,7 @@ def main() -> int:
     build.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     build.set_defaults(func=cmd_build)
     verify.add_argument("--host-bin", type=Path, required=True,
-                        help="host tool directory holding debugfs and aapt2 (out/host/linux-x86/bin)")
+                        help="host tool directory holding debugfs, fsck.erofs and aapt2 (out/host/linux-x86/bin)")
     verify.add_argument("--target-files-dir", type=Path, required=True, help="extracted target-files staging")
     verify.add_argument("--artifacts", type=Path, required=True, help="the build output directory")
     verify.set_defaults(func=cmd_verify)

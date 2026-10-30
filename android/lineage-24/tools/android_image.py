@@ -188,6 +188,90 @@ def erofs_superblock(prefix: bytes, label: str, error: Error) -> ErofsSuperblock
     return ErofsSuperblock(block_size_bits, feature_incompat, algorithms)
 
 
+EROFS_ISLOT_SIZE = 32
+EROFS_COMPACT_INODE_SIZE = 32
+EROFS_EXTENDED_INODE_SIZE = 64
+EROFS_DIRENT_SIZE = 12
+EROFS_LAYOUT_FLAT_PLAIN = 0
+EROFS_LAYOUT_FLAT_INLINE = 2
+EROFS_FILE_TYPE_REGULAR = 1
+EROFS_FILE_TYPE_DIRECTORY = 2
+
+
+def erofs_directory(
+    image: bytes, nid: int, label: str, error: Error
+) -> dict[str, tuple[int, int]]:
+    """Map the entry names of one EROFS directory to (node id, file type).
+
+    A directory is never compressed: it is plain blocks, or plain blocks and a tail
+    stored right behind its inode. Both are read from the image bytes.
+    """
+    block_bits = image[EROFS_SUPERBLOCK_OFFSET + 12]
+    block_size = 1 << block_bits
+    meta_block = struct.unpack_from("<I", image, EROFS_SUPERBLOCK_OFFSET + 40)[0]
+    inode = meta_block * block_size + nid * EROFS_ISLOT_SIZE
+    if inode + EROFS_EXTENDED_INODE_SIZE > len(image):
+        raise error(f"{label} has an inode beyond the image: {nid}")
+    inode_format, xattr_count, mode = struct.unpack_from("<HHH", image, inode)
+    if mode & 0o170000 != 0o040000:
+        raise error(f"{label} node {nid} is not a directory")
+    layout = (inode_format >> 1) & 7
+    if inode_format & 1:
+        size = struct.unpack_from("<Q", image, inode + 8)[0]
+        inode_size = EROFS_EXTENDED_INODE_SIZE
+    else:
+        size = struct.unpack_from("<I", image, inode + 8)[0]
+        inode_size = EROFS_COMPACT_INODE_SIZE
+    first_block = struct.unpack_from("<I", image, inode + 16)[0]
+    if layout not in (EROFS_LAYOUT_FLAT_PLAIN, EROFS_LAYOUT_FLAT_INLINE):
+        raise error(f"{label} directory {nid} has data layout {layout}")
+    xattr_size = 12 + (xattr_count - 1) * 4 if xattr_count else 0
+    entries: dict[str, tuple[int, int]] = {}
+    for offset in range(0, size, block_size):
+        length = min(block_size, size - offset)
+        if layout == EROFS_LAYOUT_FLAT_INLINE and length < block_size:
+            start = inode + inode_size + xattr_size
+        else:
+            start = (first_block + offset // block_size) * block_size
+        block = image[start : start + length]
+        if len(block) != length:
+            raise error(f"{label} directory {nid} extends beyond the image")
+        count = struct.unpack_from("<H", block, 8)[0] // EROFS_DIRENT_SIZE
+        for index in range(count):
+            entry_nid, name_offset, file_type = struct.unpack_from(
+                "<QHB", block, index * EROFS_DIRENT_SIZE
+            )
+            if index + 1 < count:
+                name_end = struct.unpack_from(
+                    "<H", block, (index + 1) * EROFS_DIRENT_SIZE + 8
+                )[0]
+            else:
+                name_end = block.find(b"\0", name_offset)
+                if name_end < 0:
+                    name_end = length
+            if not EROFS_DIRENT_SIZE * count <= name_offset <= name_end <= length:
+                raise error(f"{label} directory {nid} is malformed")
+            entries[block[name_offset:name_end].decode("utf-8", errors="replace")] = (
+                entry_nid,
+                file_type,
+            )
+    return entries
+
+
+def erofs_file_type(image: bytes, path: str, label: str, error: Error) -> int | None:
+    """The file type of a path in an uncompressed-metadata EROFS image, None when absent."""
+    root_nid = struct.unpack_from("<H", image, EROFS_SUPERBLOCK_OFFSET + 14)[0]
+    nid, file_type = root_nid, EROFS_FILE_TYPE_DIRECTORY
+    for component in path.strip("/").split("/"):
+        if file_type != EROFS_FILE_TYPE_DIRECTORY:
+            return None
+        found = erofs_directory(image, nid, label, error).get(component)
+        if found is None:
+            return None
+        nid, file_type = found
+    return file_type
+
+
 def is_module_payload(basename: str) -> bool:
     """Whether a file name is a kernel module or a module-tool index.
 

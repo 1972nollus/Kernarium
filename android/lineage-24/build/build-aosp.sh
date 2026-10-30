@@ -258,10 +258,17 @@ for partition in SYSTEM SYSTEM_EXT PRODUCT VENDOR ODM; do
 			fail "BOARD_${partition}IMAGE_EROFS_${suffix} must be empty: one compressor for every partition"
 	done
 done
-[[ "$(get_build_var PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE)" == ext4 ]] ||
-	fail "PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE must select ext4"
+# Every APEX payload is EROFS with the partitions' compressor and cluster size.
+[[ "$(get_build_var PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE)" == erofs ]] ||
+	fail "PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE must select erofs"
+[[ "$(get_build_var PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_COMPRESSOR)" == "$(get_build_var UML_ANDROID_EROFS_COMPRESSOR)" ]] ||
+	fail "the APEX payload compressor must be the product's"
+[[ "$(get_build_var PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_PCLUSTER_SIZE)" == "$(get_build_var UML_ANDROID_EROFS_PCLUSTER_SIZE)" ]] ||
+	fail "the APEX payload cluster size must be the product's"
+[[ "$(get_build_var PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_COMPRESS_HINTS)" == device/kernarium/darwin/config/erofs_apex_payload_hints.txt ]] ||
+	fail "the APEX payload compress hints must be the product's"
 [[ "$(get_build_var PRODUCT_COMPRESSED_APEX)" == false ]] ||
-	fail "PRODUCT_COMPRESSED_APEX must be false for ext4 payload verification"
+	fail "PRODUCT_COMPRESSED_APEX must be false: the payloads are compressed, not the files"
 for variable in \
 	PRODUCT_USE_DYNAMIC_PARTITIONS \
 	PRODUCT_USE_DYNAMIC_PARTITION_SIZE \

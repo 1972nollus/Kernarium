@@ -950,7 +950,22 @@ the compression shows in the images' own sizes. Decompression is the guest
 kernel's native code, not emulated guest code. It costs nothing measurable on a
 guest with 4 GiB, but a guest with 1,536 MiB re-reads and decompresses evicted
 pages a whole cluster at a time, which is why the clusters are 16 KiB and not
-64 KiB. APEX payloads are still ext4.
+64 KiB.
+
+Every APEX payload is compressed EROFS as well, with the same two parameters:
+`PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := erofs` and the three
+`PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_*` settings in `overlay/lineage_darwin.mk`
+reach apexer through Soong, not its lz4hc and 4 KiB defaults, and
+`build/build-aosp.sh` asserts them. The `p0008` series no longer pins
+`com.android.virt` to a payload of its own. The payload hints
+(`overlay/config/erofs_apex_payload_hints.txt`) keep `.rc` and `.xml` files
+uncompressed, so the verifier still reads the example HALs' service
+definitions from the payload's bytes; it finds each service binary through the
+payload's directories. The presigned CTS shim APEX is a prebuilt that keeps its
+ext4 payload: the verifier allows exactly that one and rejects ext4 in any
+other APEX. `tools/precompile-first-boot-apps.py` reads APKs out of an EROFS
+payload with the host `fsck.erofs` (part of `otatools`), and out of an ext4 one
+with `debugfs`.
 
 Userdata is an ordinary unencrypted ext4 filesystem in the directly writable image; this
 emulator does not expose a hardware-backed KeyMint service and the guest bundle

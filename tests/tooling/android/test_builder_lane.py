@@ -19,6 +19,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from erofs_fixture import synthetic_erofs_image
+
 
 def fail(message: str) -> None:
     raise SystemExit(f"android builder lane fixture: {message}")
@@ -257,37 +259,18 @@ def tracked_erofs_parameters(android_root: Path) -> tuple[str, str]:
     return found[0], found[1]
 
 
-def synthetic_erofs_image(*, algorithms: int = 1 << 3, features: int = 0x3,
-                          block_bits: int = 12, sparse: bool = False) -> bytes:
-    """One block of an EROFS image: the superblock at 1024 and nothing else.
-
-    The defaults are what mkfs.erofs writes for zstd and 16 KiB clusters on 4 KiB
-    blocks (ZERO_PADDING and BIG_PCLUSTER, the zstd bit of the algorithm mask). A
-    sparse image carries the block as a RAW chunk and a hole behind it.
-    """
-    block = bytearray(4096)
-    block[1024 : 1024 + 4] = b"\xe2\xe1\xf5\xe0"
-    block[1024 + 12] = block_bits
-    struct.pack_into("<IH", block, 1024 + 80, features, algorithms)
-    if not sparse:
-        return bytes(block)
-    header = struct.pack("<IHHHHIIII", 0xED26FF3A, 1, 0, 28, 12, 4096, 4, 2, 0)
-    return (
-        header
-        + struct.pack("<HHII", 0xCAC1, 0, 1, 12 + 4096) + bytes(block)
-        + struct.pack("<HHII", 0xCAC3, 0, 3, 12)
-    )
-
-
-def synthetic_apex(filesystem: str = "ext4", content: bytes = b"") -> bytes:
-    payload = bytearray(1024 + 0x38 + 2)
-    payload += content
+def synthetic_apex(filesystem: str = "erofs", content: bytes = b"", **superblock) -> bytes:
+    """An APEX container whose payload has the superblock of `filesystem` and then `content`."""
     if filesystem == "ext4":
+        payload = bytearray(1024 + 0x38 + 2)
         payload[1024 + 0x38 : 1024 + 0x38 + 2] = b"\x53\xef"
     elif filesystem == "erofs":
-        payload[1024 : 1024 + 4] = b"\xe2\xe1\xf5\xe0"
+        payload = bytearray(synthetic_erofs_image(**superblock))
+    elif filesystem == "unknown":
+        payload = bytearray(4096)
     else:
         fail(f"unsupported synthetic APEX filesystem: {filesystem}")
+    payload += content
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as apex:
         apex.writestr("apex_payload.img", payload)
@@ -765,9 +748,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 )
                 archive.writestr(
                     "SYSTEM/apex/com.android.fixture.apex",
-                    synthetic_apex(
-                        "erofs" if wrong_apex_filesystem else "ext4"
-                    ),
+                    synthetic_apex("ext4" if wrong_apex_filesystem else "erofs"),
+                )
+                # The presigned CTS shim keeps its checked-in ext4 payload.
+                archive.writestr(
+                    "SYSTEM/apex/com.android.apex.cts.shim.apex", synthetic_apex("ext4")
                 )
                 required_sdk_apexes = (
                     "com.android.bt",
@@ -784,7 +769,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     if missing_sdk_apex and index == 0:
                         continue
                     archive.writestr(
-                        f"SYSTEM/apex/{apex}.apex", synthetic_apex("ext4")
+                        f"SYSTEM/apex/{apex}.apex", synthetic_apex()
                     )
                 fstab = ext4_system_fstab(uml_fstab) if wrong_fstab else uml_fstab
                 if missing_userdata_quota:
@@ -1492,13 +1477,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 if unsupported_hal:
                     archive.writestr("VENDOR/apex/com.google.cf.light.apex", b"apex")
                 # The AOSP example thermal service as the vendor APEX Cuttlefish installs: the service
-                # binary as a regular-file directory entry (name length, file type 1, name), the
-                # VINTF fragment that declares it and the init script that starts it. The init
-                # script names the binary too, so the entry is told apart from that.
+                # binary as a file under bin/hw, the VINTF fragment that declares it and the init
+                # script that starts it. The init script names the binary too, so the file is read
+                # from the payload's directories, not found by its name.
                 thermal_binary = b"android.hardware.thermal-service.example"
                 thermal_content = b"\x00" * 8
+                thermal_files = ("etc/init.rc",)
                 if thermal_hal_variant != "no-binary":
-                    thermal_content += bytes([len(thermal_binary), 1]) + thermal_binary
+                    thermal_files += (f"bin/hw/{thermal_binary.decode()}",)
                 if thermal_hal_variant != "no-fragment":
                     thermal_content += (
                         b'<manifest version="1.0" type="device"><hal format="aidl">'
@@ -1513,13 +1499,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 if thermal_hal_variant != "missing-apex":
                     archive.writestr(
                         "VENDOR/apex/com.android.hardware.thermal.apex",
-                        synthetic_apex("ext4", thermal_content),
+                        synthetic_apex("erofs", thermal_content, files=thermal_files),
                     )
                 # The Wi-Fi HAL and the supplicant (with hostapd), packaged the same way.
                 def hal_apex(apex, binary, name, fqname, service, variant):
                     content = b"\x00" * 8
+                    files = ("etc/init.rc",)
                     if variant != "no-binary":
-                        content += bytes([len(binary), 1]) + binary
+                        files += (f"bin/hw/{binary.decode()}",)
                     if variant != "no-fragment":
                         content += (
                             b'<manifest version="1.0" type="device"><hal format="aidl">'
@@ -1534,7 +1521,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     if variant != "missing-apex":
                         archive.writestr(
                             f"VENDOR/apex/{apex.decode()}.apex",
-                            synthetic_apex("ext4", content),
+                            synthetic_apex("erofs", content, files=files),
                         )
 
                 hal_apex(b"com.android.hardware.wifi", b"android.hardware.wifi-service",
@@ -1547,8 +1534,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 # from /vendor/lib*/mediacas for both ISAs.
                 cas_binary = b"android.hardware.cas-service.example"
                 cas_content = b"\x00" * 8
+                cas_files = ("etc/init.rc",)
                 if cas_hal_variant != "no-binary":
-                    cas_content += bytes([len(cas_binary), 1]) + cas_binary
+                    cas_files += (f"bin/hw/{cas_binary.decode()}",)
                 if cas_hal_variant != "no-fragment":
                     cas_content += (
                         b'<manifest version="1.0" type="device"><hal format="aidl">'
@@ -1563,7 +1551,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 if cas_hal_variant != "missing-apex":
                     archive.writestr(
                         "VENDOR/apex/com.android.hardware.cas.apex",
-                        synthetic_apex("ext4", cas_content),
+                        synthetic_apex("erofs", cas_content, files=cas_files),
                     )
                 if cas_hal_variant != "no-plugin64":
                     archive.writestr(
@@ -1581,7 +1569,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 if removed_payload:
                     archive.writestr(
                         "SYSTEM/apex/com.android.hardware.rebootescrow.apex",
-                        synthetic_apex("ext4"),
+                        synthetic_apex(),
                     )
             if entries:
                 adjust_archive(path, entries)
@@ -1705,6 +1693,22 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("wrong-userdata-inodes", {"wrong_userdata_inodes": True}),
             ("missing-userdata-quota", {"missing_userdata_quota": True}),
             ("wrong-apex-filesystem", {"wrong_apex_filesystem": True}),
+            ("apex-lz4-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 algorithms=1 << 0)}}),
+            ("apex-small-cluster-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 features=0x1)}}),
+            ("apex-extended-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 features=0x3 | 0x20)}}),
+            ("apex-16k-block-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 block_bits=14)}}),
+            ("apex-unknown-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex("unknown")}}),
+            ("shim-lookalike-ext4-payload",
+             {"entries": {"SYSTEM/apex/com.android.apex.cts.shim2.apex": synthetic_apex("ext4")}}),
             ("stock-fstab", {"stock_fstab": True}),
             ("seriallogging", {"seriallogging": True}),
             ("boot-control", {"boot_control": True}),
@@ -2238,6 +2242,33 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "the closest lacks 141$"),
             ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
              "userdata entry lacks the fs_mgr quota flag"),
+            ("wrong-apex-filesystem-cause", {"wrong_apex_filesystem": True},
+             "APEX payload must use compressed erofs, not ext4: SYSTEM/apex/com.android.fixture.apex"),
+            ("apex-lz4-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 algorithms=1 << 0)}},
+             "APEX payload SYSTEM/apex/com.android.fixture.apex is not compressed with zstd alone: "
+             "algorithms 0x1"),
+            ("apex-small-cluster-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 features=0x1)}},
+             "APEX payload SYSTEM/apex/com.android.fixture.apex has no physical cluster larger "
+             "than a block"),
+            ("apex-extended-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 features=0x3 | 0x20)}},
+             "APEX payload SYSTEM/apex/com.android.fixture.apex uses an extended option"),
+            ("apex-16k-block-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 block_bits=14)}},
+             "APEX payload SYSTEM/apex/com.android.fixture.apex does not use 4 KiB blocks"),
+            ("apex-unknown-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex("unknown")}},
+             "APEX payload must use compressed erofs: SYSTEM/apex/com.android.fixture.apex"),
+            ("shim-lookalike-ext4-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.apex.cts.shim2.apex": synthetic_apex("ext4")}},
+             "APEX payload must use compressed erofs, not ext4: "
+             "SYSTEM/apex/com.android.apex.cts.shim2.apex"),
             ("wrong-filesystem-cause", {"wrong_filesystem": True},
              "system_fs_type must select read-only erofs images"),
             ("wrong-erofs-compressor-cause",
