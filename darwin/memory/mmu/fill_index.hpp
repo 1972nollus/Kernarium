@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "../domain_heap.hpp"
+
 #include "page_index.hpp"
 
 #include <algorithm>
@@ -135,6 +137,9 @@ public:
 	}
 
 	FillIndex() noexcept = default;
+	/* Nodes and leaves come from `heap`, or from the global allocator when
+	 * there is none. A heap must outlive the index. */
+	explicit FillIndex(DomainHeap *heap) noexcept : heap_{heap} {}
 	FillIndex(const FillIndex &) = delete;
 	FillIndex &operator=(const FillIndex &) = delete;
 	~FillIndex() { clear(); }
@@ -243,7 +248,7 @@ public:
 		if (leaf == nullptr || !empty(*leaf))
 			return;
 		slot->store(nullptr, std::memory_order_relaxed);
-		delete leaf;
+		destroy(leaf);
 	}
 
 	/* store(page, 0) and trim(page): writers only, execution quiesced. */
@@ -303,7 +308,7 @@ public:
 				}
 				if (empty(leaf)) {
 					slot.store(nullptr, std::memory_order_relaxed);
-					delete &leaf;
+					destroy(&leaf);
 				}
 				return false;
 			});
@@ -335,12 +340,12 @@ public:
 					if (lower == nullptr)
 						continue;
 					for (auto &leaf : lower->children)
-						delete leaf.load(std::memory_order_relaxed);
-					delete lower;
+						destroy(leaf.load(std::memory_order_relaxed));
+					destroy(lower);
 				}
-				delete middle;
+				destroy(middle);
 			}
-			delete upper;
+			destroy(upper);
 			root.store(nullptr, std::memory_order_relaxed);
 		}
 		high_.clear();
@@ -392,15 +397,40 @@ private:
 	using Middle = Node<Lower>;
 	using Upper = Node<Middle>;
 
+	template <typename T>
+	[[nodiscard]] T *make() noexcept
+	{
+		if (heap_ == nullptr)
+			return new (std::nothrow) T{};
+		try {
+			return new (heap_->allocate(sizeof(T), alignof(T))) T{};
+		} catch (...) {
+			return nullptr;
+		}
+	}
+
+	template <typename T>
+	void destroy(T *node) noexcept
+	{
+		if (node == nullptr)
+			return;
+		if (heap_ == nullptr) {
+			delete node;
+			return;
+		}
+		node->~T();
+		heap_->deallocate(node, sizeof(T), alignof(T));
+	}
+
 	template <typename Child>
-	[[nodiscard]] static Child *child(std::atomic<Child *> &slot,
+	[[nodiscard]] Child *child(std::atomic<Child *> &slot,
 		bool create) noexcept
 	{
 		auto *found = slot.load(std::memory_order_relaxed);
 		if (found != nullptr || !create)
 			return found;
 		/* Published whole: a reader that sees the pointer sees zeroes. */
-		found = new (std::nothrow) Child{};
+		found = make<Child>();
 		if (found != nullptr)
 			slot.store(found, std::memory_order_release);
 		return found;
@@ -511,6 +541,7 @@ private:
 		}
 	};
 
+	DomainHeap *heap_{};
 	std::array<std::atomic<Upper *>, root_entries> roots_{};
 	/* Writers and locked readers only. */
 	std::unordered_map<std::uint64_t, std::uintptr_t, NumberHash> high_;

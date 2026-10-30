@@ -1444,7 +1444,7 @@ private:
 		}
 		UML_MEMORY_ALLOCATION_CHECKPOINT(
 			testing::AllocationSite::generation);
-		auto state = std::make_shared<GenerationState>();
+		auto state = std::make_shared<GenerationState>(heap_);
 		state->address_space_lifetime = lifetime_;
 		states_.emplace(generation, state);
 		return state;
@@ -1723,6 +1723,8 @@ private:
 			state, address & ~(page_size - 1), page_size);
 	}
 
+	/* Shared with every generation: the last holder gives the pages back. */
+	std::shared_ptr<DomainHeap> heap_{std::make_shared<DomainHeap>()};
 	mutable WordSharedMutex states_mutex_;
 	WordSharedMutex backing_mutex_;
 	std::unordered_map<std::uint64_t, std::shared_ptr<GenerationState>> states_;
