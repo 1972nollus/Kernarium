@@ -1634,9 +1634,9 @@ final class EmulatorLauncher: ObservableObject {
     var retinaMode: Bool { configuration.retinaMode }
 
     /// The unit tests make launchers of their own, with a job of their own.
-    init(configuration: EmulatorConfiguration, job: BackgroundJob = .shared) {
+    init(configuration: EmulatorConfiguration, job: BackgroundJob? = nil) {
         self.configuration = configuration
-        self.job = job
+        self.job = job ?? .shared
     }
 
     fileprivate func start(
