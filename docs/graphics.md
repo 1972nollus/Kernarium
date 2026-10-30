@@ -107,6 +107,24 @@ needs no drawable, and it renders nothing while no sink is set. Clearing the
 sink returns only once no delivery is running, so the receiver may be released
 at once.
 
+`--gpu-display=offscreen` is the macOS mode for memory measurements. An iPad
+allocates presentation memory that a VNC run never does -- the view's three
+drawables, the presentation's textures and, in Picture in Picture, the frame
+mirror's pool -- and a native window on a Mac opens on a shared screen. The
+offscreen display drives the same presentation into a `CAMetalLayer` that
+belongs to no window (BGRA8, `framebufferOnly`, three drawables) and presents
+each guest frame as it arrives, on a serial queue of its own, because no display
+link paces it; a frame that arrives while one is drawing replaces the one
+waiting, as in a window. `--gpu-offscreen-size=WIDTHxHEIGHT` sets the drawables'
+pixel size (default: the guest mode; a run states the size of the view it
+imitates), and `--gpu-offscreen-mirror=on|off|WIDTH@FPS` keeps the frame mirror
+running into a receiver that drops what it is given (`on` is 800 pixels at 15
+frames a second, off by default). Nothing reaches the guest from the host: there
+is no input, no host resize and no VNC server, and the guest keeps its own mode.
+Like the VNC display, it does not make the process an AppKit application. A
+layer outside any window keeps handing out its drawables without the one-second
+wait for a free one, which `gpu-native-metal-presentation` checks.
+
 The macOS native display turns the emulator into an AppKit application, which
 makes the whole process eligible for App Nap whenever its window is occluded or
 minimized or the screen is locked. A napped process runs every thread,

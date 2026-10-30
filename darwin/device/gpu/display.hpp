@@ -15,6 +15,32 @@ namespace uml::gpu {
 enum class DisplayMode {
     vnc,
     native,
+    /* The native display's presentation into a Metal layer that belongs to
+     * no window, on macOS. See OffscreenDisplayOptions. */
+    offscreen,
+};
+
+/* What DisplayMode::offscreen presents into and keeps alive. A window and a
+ * screen are the things a measurement run cannot have: the iPad allocates the
+ * memory of its presentation (drawables of the view's size and, in Picture in
+ * Picture, the pool of the frame mirror) and a run on a Mac with a VNC
+ * display allocates none of it. The offscreen display makes the same
+ * allocations with nothing to show them on, takes no input, and presents each
+ * guest frame as it arrives, since there is no display to pace it. */
+struct OffscreenDisplayOptions {
+    /* The drawables' size in pixels: the size of the view the iPad shows the
+     * guest in. Zero in either dimension keeps the display's own size. */
+    std::uint32_t drawableWidth {};
+    std::uint32_t drawableHeight {};
+    /* The frame mirror (frame_tap.hpp) that Picture in Picture runs, kept
+     * running at this width and rate with a receiver that drops its frames.
+     * Zero in either leaves the mirror off, as it is without Picture in
+     * Picture. */
+    std::uint32_t mirrorWidth {};
+    std::uint32_t mirrorFramesPerSecond {};
+
+    [[nodiscard]] bool operator==(const OffscreenDisplayOptions&) const =
+        default;
 };
 
 struct MetalScanout {
@@ -163,6 +189,7 @@ protected:
     uml::input::vnc::PointerMode pointerMode =
         uml::input::vnc::PointerMode::mouse,
     std::uint32_t maximumDimension = protocol::maximumDisplayDimension,
-    bool autoResizeGuest = true);
+    bool autoResizeGuest = true,
+    OffscreenDisplayOptions offscreen = {});
 
 } // namespace uml::gpu

@@ -205,7 +205,13 @@ above it or the peak shows that it did between two samples
 would have ended the process.
 
 Every iOS memory control carries its macOS path, or records here why none can
-exist, so that a Mac run stays an accurate ground for measuring the device.
+exist, so that a Mac run stays an accurate ground for measuring the device. The
+host graphics stack's paths are switches of a measurement run, described in
+[`graphics.md`](graphics.md#memory-budget): `VIRGL_ANON_FILE_UNLINKED=1` for the
+container-file segments iOS gets, `MESA_KK_SYSMEM_HEAP_MIB=4096` for the heap
+size an iPad reports, and `--gpu-display=offscreen` with the device view's
+drawable size and the frame mirror for its presentation memory (see
+[`graphics.md`](graphics.md#current-path)).
 
 A host mapping call that fails says so. The kernel distinguishes an exhausted
 host only by `ENOMEM`, so Mach's resource-shortage and address-space-exhaustion

@@ -490,7 +490,8 @@ std::unique_ptr<VhostUserServer> makeGpuVhostUserServer(
     void* nativeView,
     std::uint32_t dotsPerInch,
     uml::input::vnc::PointerMode pointerMode,
-    bool autoResizeGuest)
+    bool autoResizeGuest,
+    OffscreenDisplayOptions offscreen)
 {
     std::shared_ptr<Display> display = makeGpuDisplay(
         vncBindAddress,
@@ -503,7 +504,8 @@ std::unique_ptr<VhostUserServer> makeGpuVhostUserServer(
         nativeView,
         dotsPerInch,
         pointerMode,
-        autoResizeGuest);
+        autoResizeGuest,
+        offscreen);
     return makeGpuVhostUserServer(
         std::move(display),
         std::move(vncBindAddress),
@@ -522,7 +524,8 @@ std::unique_ptr<Display> makeGpuDisplay(
     void* nativeView,
     std::uint32_t dotsPerInch,
     uml::input::vnc::PointerMode pointerMode,
-    bool autoResizeGuest)
+    bool autoResizeGuest,
+    OffscreenDisplayOptions offscreen)
 {
     return makeDisplay(
         displayMode,
@@ -537,7 +540,8 @@ std::unique_ptr<Display> makeGpuDisplay(
         dotsPerInch == 0 ?
             protocol::maximumDisplayDimension :
             protocol::maximumEdidDimension,
-        autoResizeGuest);
+        autoResizeGuest,
+        offscreen);
 }
 
 } // namespace uml::gpu

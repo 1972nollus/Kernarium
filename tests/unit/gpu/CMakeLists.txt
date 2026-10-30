@@ -453,6 +453,18 @@ if(TARGET uml_gpu_display)
             UNIT_DIRECTORY TIMEOUT 90)
         set_tests_properties(gpu-native-metal-presentation PROPERTIES
             SKIP_RETURN_CODE 77)
+
+        # The windowless display (DisplayMode::offscreen) that measurement
+        # runs use for the memory a view and Picture in Picture take on an
+        # iPad. It skips on a host without a Metal device or without
+        # drawables for a layer outside any window.
+        uml_add_gpu_unit_test(gpu-offscreen-display
+            uml_gpu_offscreen_display_tests offscreen_display_tests.mm
+            LIBRARIES uml_gpu_display "-framework Metal"
+            INCLUDES ${_uml_gpu_device_directory}
+            UNIT_DIRECTORY TIMEOUT 120)
+        set_tests_properties(gpu-offscreen-display PROPERTIES
+            SKIP_RETURN_CODE 77)
     endif()
 endif()
 
