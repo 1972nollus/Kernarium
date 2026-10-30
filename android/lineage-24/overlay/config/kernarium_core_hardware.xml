@@ -18,6 +18,7 @@
     <feature name="android.software.cts" />
 
     <feature name="android.hardware.audio.output" />
+    <feature name="android.hardware.microphone" />
     <feature name="android.hardware.touchscreen" />
     <feature name="android.hardware.screen.portrait" />
     <feature name="android.hardware.screen.landscape" />
@@ -32,6 +33,7 @@
     <feature name="android.software.activities_on_secondary_displays" notLowRam="true" />
     <feature name="android.software.print" />
     <feature name="android.software.autofill" />
+    <feature name="android.software.companion_device_setup" />
     <feature name="android.software.credentials" />
     <feature name="android.software.cant_save_state" />
     <feature name="android.software.secure_lock_screen" />

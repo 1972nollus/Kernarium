@@ -40,7 +40,9 @@ struct EmulatorConfiguration: Equatable {
     static let guestMemoryRangeMiB = 512...4096
     static let guestMemoryStepMiB = 64
     static let overlaySizeRangeGiB = 1...32
-    static let androidDiskSizeRangeGiB = 4...64
+    // The 32-bit userspace grows the immutable partitions, so a smaller disk
+    // would leave userdata too little room.
+    static let androidDiskSizeRangeGiB = 6...64
     // A real iPhone or iPad enforces a jetsam limit that a 4 GiB guest would
     // cross, so the device default stays at half the range. The same slice
     // running on an Apple silicon Mac in Designed for iPad mode is given the

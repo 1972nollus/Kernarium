@@ -14,10 +14,26 @@
 # limitations under the License.
 #
 
-# Retain the tested 64-bit-only, page-agnostic Cuttlefish board foundation.
-# The product makefile removes transports and HALs that Darwin UML cannot
-# provide, while this board owns its static storage and module-free kernel.
+# Retain the tested page-agnostic Cuttlefish board foundation. The product
+# makefile removes transports and HALs that Darwin UML cannot provide, while
+# this board owns its static storage and module-free kernel.
 include device/google/cuttlefish/vsoc_arm64_pgagnostic/BoardConfig.mk
+
+# 32-bit applications run beside the 64-bit ones. The second architecture is
+# ARMv8-A AArch32 built as the softfp armeabi-v7a ABI, the only 32-bit ABI the
+# image lists (no armeabi). The parent board is 64-bit only; the
+# UML_ANDROID_MULTILIB switch of the product makes it start the secondary
+# zygote. Native daemons and HALs stay 64-bit: IGNORE_PREFER32_ON_DEVICE turns
+# every prefer32 module into a 64-bit one, so only applications, the zygotes
+# and the WebView RELRO process run 32-bit code. Recovery, init_boot and the
+# vendor ramdisk are primary-architecture images and stay 64-bit.
+TARGET_2ND_ARCH := arm
+TARGET_2ND_ARCH_VARIANT := armv8-a
+TARGET_2ND_CPU_ABI := armeabi-v7a
+TARGET_2ND_CPU_ABI2 :=
+TARGET_2ND_CPU_VARIANT := cortex-a53
+TARGET_TRANSLATE_2ND_ARCH := false
+IGNORE_PREFER32_ON_DEVICE := true
 
 # The inherited page-size-agnostic product boots a 16 KiB kernel. This guest
 # runs 4 KiB pages, so clear that choice and let ro.product.page_size report
@@ -47,6 +63,19 @@ BOARD_VENDOR_SEPOLICY_DIRS := $(filter-out \
     $(BOARD_VENDOR_SEPOLICY_DIRS))
 
 BOARD_VENDOR_SEPOLICY_DIRS += device/kernarium/darwin/sepolicy/vendor
+# The Wi-Fi interface is virt_wifi, a station only: the kernel gives it no
+# access-point or peer-to-peer interface type. The inherited board offers
+# station, access point and peer-to-peer interfaces and a second station, which
+# the HAL would report and the framework would then fail to create. One station
+# keeps SoftAP, Wi-Fi Direct and Aware out of the framework. The flag that
+# selects dual interfaces is ignored when the combinations are given, but it
+# stays cleared so the board says one thing.
+WIFI_HIDL_FEATURE_DUAL_INTERFACE :=
+WIFI_HAL_INTERFACE_COMBINATIONS := {{{STA}, 1}}
+
+# Properties the platform's core domains set belong to the system partitions: the
+# Treble split forbids a core domain to set a vendor-owned one.
+SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += device/kernarium/darwin/sepolicy/system_ext/private
 
 # The Android UML ELF is built and published independently. Android packaging
 # must neither substitute a Cuttlefish kernel nor stage loadable modules.
@@ -108,9 +137,9 @@ AB_OTA_PARTITIONS := $(filter-out vendor_dlkm system_dlkm odm_dlkm \
     vbmeta_vendor_dlkm vbmeta_system_dlkm,$(AB_OTA_PARTITIONS))
 
 # Exact capacities in support/image/partition-layout.json.
-BOARD_SYSTEMIMAGE_PARTITION_SIZE := 1409286144
+BOARD_SYSTEMIMAGE_PARTITION_SIZE := 1677721600
 BOARD_SYSTEM_EXTIMAGE_PARTITION_SIZE := 536870912
-BOARD_PRODUCTIMAGE_PARTITION_SIZE := 536870912
+BOARD_PRODUCTIMAGE_PARTITION_SIZE := 603979776
 # The inherited ext4 default reserves one inode per 4 KiB block, consuming
 # 16 MiB in this small image. Product currently contains fewer than 300 files;
 # keep generous growth room without crowding app payloads out of the image.
@@ -119,6 +148,11 @@ BOARD_VENDORIMAGE_PARTITION_SIZE := 268435456
 BOARD_ODMIMAGE_PARTITION_SIZE := 4194304
 BOARD_METADATAIMAGE_PARTITION_SIZE := 16777216
 BOARD_USERDATAIMAGE_PARTITION_SIZE := 134217728
+# mke2fs gives a filesystem under 512 MiB one inode per 4 KiB, and the first
+# boot's resize2fs keeps the inodes per group, so the grown /data would hold
+# more inodes than blocks. 8192 inodes in the image's one 32768-block group is
+# one per 16 KiB, ext4's default ratio, and survives the resize.
+BOARD_USERDATAIMAGE_EXTFS_INODE_COUNT := 8192
 BOARD_INIT_BOOT_IMAGE_PARTITION_SIZE := 8388608
 BOARD_RECOVERYIMAGE_PARTITION_SIZE := 20971520
 

@@ -694,8 +694,8 @@ privileged, real-mode, virtual-machine, enclave, and system-management
 instructions are outside this Linux userspace profile, and AMD's 3DNow!, SSE4a
 and CLZERO raise #UD, as on an Intel core. That gate is not proof of an
 arbitrary distribution or complete Linux syscall compatibility. The normal
-mainline slices and Android remain arm64-userspace-only and contain
-none of the x86_64 kernel overlay.
+mainline slices and Android remain arm64 kernels and contain none of
+the x86_64 kernel overlay.
 
 On macOS the x86_64 product can instead run long64 and compat32 tasks on the
 x86-64 JIT, FEXCore embedded behind the static MMU, which
@@ -760,8 +760,9 @@ target mm's generation. That call moves the code stamp of each executable page
 and publishes the range, as a guest code synchronization would. Pages mapped
 without execute permission are skipped, so data transfers publish nothing.
 
-The kernel runs AArch32 tasks (armhf and Android's armeabi-v7a: ARMv7-A and
-Armv8 AArch32 with VFPv4-D32, NEON and EABI hard-float) beside AArch64 ones, as
+The kernel runs AArch32 tasks (armhf with the hard-float EABI and Android's
+armeabi-v7a with the softfp EABI, both ARMv7-A and Armv8 AArch32 on hardware
+VFPv4-D32 and NEON) beside AArch64 ones, as
 arm64 Linux's `COMPAT` does. The bridge identifies one by PSTATE.nRW in the
 entry's pstate, with R0-R14 in x0-x14, D0-D31 in V0-V15, FPSCR split between
 fpsr and fpcr, TPIDRURW in the guest's TLS value and TPIDRURO in the `tpidrro`
@@ -1039,9 +1040,11 @@ the kernel's side, including which wake sources end a suspend the host asked
 for and which end one the guest started. `uml_emulator_wake()` sends that edge
 whatever the host last asked for, except to a guest it has quiesced, as a
 phone's power key does: it ends a suspend the guest entered by itself, such as
-Android's once its display is off, and a running guest only answers it. Network
-traffic to such a guest ends its own suspend as well, so `adb` reaches a guest
-whose display is off. Kernarium sends the edge after forwarding its
+Android's once its display is off and no adb host is connected (the
+[Android README](../android/lineage-24/README.md) explains the wakelock), and a
+running guest only answers it. Network traffic to such a guest ends its own
+suspend as well, so `adb` reaches a guest whose display is off. Kernarium sends
+the edge after forwarding its
 Power key, whose virtio input cannot wake a suspended guest itself; the macOS
 VNC display maps XF86PowerOff to the guest's power key, and VNC input is itself
 a wake source. The guest replies to a suspend only after syncing its file

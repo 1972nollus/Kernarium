@@ -6,3 +6,4 @@ patch	cuttlefish-use-built-in-kernel-init.patch
 patch	cuttlefish-use-fixed-UBD-partitions.patch
 patch	cuttlefish-disable-userdata-quotas.patch
 patch	cuttlefish-omit-unsupported-UML-HALs.patch
+patch	cuttlefish-run-32-bit-applications-on-request.patch

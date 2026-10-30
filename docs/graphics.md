@@ -200,8 +200,10 @@ display presents carry a scanout bit, and no YUV format does. The guest's
 minigbm keeps the scanout use on exactly the combinations the mask names, and
 it refuses an NV12 combination that has both scanout and its emulation over R8
 buffers, so a scanout bit on NV12 costs the guest every video encoder, video
-decoder and camera use of that format. P010 stays unavailable either way:
-minigbm has no emulation for it and the host does not sample it.
+decoder and camera use of that format. P010 carries no scanout bit either,
+because the host does not sample it: minigbm emulates it over an R8 resource for
+CPU access, as the input of a video encoder and the output of a video decoder,
+and keeps scanout off it.
 
 Without a host allocator the renderer cannot create any multi-planar resource,
 so a YUV buffer exists on the host only as the bytes of an R8 image, whatever
@@ -225,10 +227,11 @@ into the image redraws the plane rows its bytes feed in the blitter's own
 context; an image that only a codec or the CPU touches never gets them. Writes
 the GPU makes into such an image are not followed, because nothing allocates it
 as a render target. The capability `VIRGL_CAP_V2_PACKED_YUV` says the renderer
-knows the flags. minigbm sends them for exactly the buffers it emulates, only
-when the capability is present, so an older renderer is never sent a flag it
-refuses and an older minigbm sends none, which leaves the image the single R8
-texture it always was. A guest that imports each plane of a picture as its own
+knows the flags. minigbm sends them for the 8-bit YUV buffers it emulates (NV12,
+NV21 and YV12), only when the capability is present, so an older renderer is
+never sent a flag it refuses and an older minigbm sends none, which leaves the
+image the single R8 texture it always was. A P010 buffer is not tagged: its
+two-byte samples do not fit the R8 plane textures, and nothing samples it. A guest that imports each plane of a picture as its own
 resource sends the plane number as well, and the renderer reads it as the whole
 texture of that resource unless the resource has the plane's image, so a planar
 picture whose planes are separate buffers samples correctly too.
@@ -248,8 +251,10 @@ The emulated layouts are the layouts Android defines, so that the media
 framework, the Image API and an importer that reads the buffer's own plane
 offsets and strides agree on where a plane is. An NV12 image is the luma rows
 followed by the interleaved chroma rows, and a row is padded to a multiple of 16
-bytes, which also holds the one extra chroma byte of an odd width. A YV12 image is Android's: the V plane
-after the Y plane, the U plane after the V plane, and a chroma stride of half
+bytes, which also holds the one extra chroma byte of an odd width. A P010 image
+is the same with two-byte samples, its rows padded the same way and the chroma
+box of a partial lock clamped at the padded width. A YV12 image is Android's:
+the V plane after the Y plane, the U plane after the V plane, and a chroma stride of half
 the luma stride, which minigbm makes a multiple of 32 so that the half is a
 multiple of 16. A chroma row is therefore half as wide as the R8 image and two
 of them fill one image row, so a 1920x1080 frame is a 1920x1620 image. Locking

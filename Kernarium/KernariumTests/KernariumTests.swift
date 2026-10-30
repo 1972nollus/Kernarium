@@ -679,6 +679,40 @@ struct KernariumTests {
     }
 
     @Test
+    func androidDiskSizeRangeIsSixThroughSixtyFourGiB() {
+        #expect(EmulatorConfiguration.androidDiskSizeRangeGiB == 6...64)
+        #expect(EmulatorConfiguration.defaultAndroidDiskSizeGiB == 8)
+
+        let (defaults, suiteName) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        // A disk stored below the range, as an older version allowed, is
+        // raised to its floor.
+        defaults.set(4, forKey: "emulator.androidDiskSizeGiB")
+        #expect(
+            EmulatorConfiguration.load(
+                defaults: defaults,
+                physicalProcessorCount: 6
+            ).androidDiskSizeGiB == 6
+        )
+
+        // The environment override takes a size inside the range only; any
+        // other leaves the stored value.
+        defaults.set(12, forKey: "emulator.androidDiskSizeGiB")
+        for (value, expected) in [("5", 12), ("6", 6), ("64", 64), ("65", 12)] {
+            #expect(
+                EmulatorConfiguration.load(
+                    defaults: defaults,
+                    physicalProcessorCount: 6,
+                    environment: [
+                        EmulatorConfiguration.androidDiskSizeEnvironmentKey:
+                            value
+                    ]
+                ).androidDiskSizeGiB == expected
+            )
+        }
+    }
+
+    @Test
     func storedUnifiedImageSelectionOutlivesTheDesktopDefault() {
         let (defaults, suiteName) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }

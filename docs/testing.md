@@ -1021,6 +1021,97 @@ attempts in all, and the summary counts the cases that needed it.
 `exclusive-qemu` record under a signal storm aimed at the guest's thread until
 cases have lost a reservation, and requires that every case then agreed.
 
+## Android 32-bit userspace
+
+The Android product runs `armeabi-v7a` applications beside `arm64-v8a` ones
+([`../android/lineage-24/README.md`](../android/lineage-24/README.md#android-product)).
+The build side needs no Android build. `lineage24-builder-lane` drives the
+target-files verifier over fixtures (ABI lists, the 32-bit runtime, ELF32
+placement and alignment, per-ISA ART artifacts, the 32-bit Mesa and HAL files
+and their 64-suffixed `mmap` and `lseek` imports, the userdata inode count,
+the application read of the vendor security patch level, the built-in
+microphone and companion device setup feature declarations, the userdata `quota` flag, and the
+suspend blocker with the adb host-connected property it follows, the network
+setup tool with the ARP policy init sets before it, its library, label and domain
+transition, the script that saves the virtual Wi-Fi network once, after boot and
+without touching the user's Wi-Fi switch, with its core domain, its binder transfer to the Wi-Fi service's process and the call back, and its marker, the Wi-Fi
+HAL and supplicant with their manifest fragments and services, the Wi-Fi feature
+declaration and the absent Ethernet, Aware, RTT, Direct and Passpoint ones, the built-in macvlan, cfg80211 and virt_wifi
+options of the packaged kernel configuration, the absent wificond, the ClearKey HAL's access to the memfd files of applications, the
+policy without the LineageOS grants that Android's neverallow tests refuse, and the
+discrete app-op list that keeps AOSP's default ops, the example thermal HAL
+with its manifest fragment and service, the default CAS HAL with its ClearKey
+plugin, the vendor `build.prop` without the unreliable-present-fence property
+and with `ro.incremental.enable=1`, the software decoders' 3840x2160 limits, the
+hardware video encoder service, a codec list of its two encoders and two
+decoders, their properties and no other enabled decoder, the video nodes' group,
+the service's seccomp calls and its label) and the builder's assertions;
+`lineage24-first-boot-precompile` covers the
+ISA set of a package and the per-ISA artifacts and manifest;
+`lineage24-mesa-venus-port-generator` covers the per-ISA generators of the
+Mesa port and that every arm module is built with Meson's large-file define;
+and `lineage24-mesa-venus-source-contract` pins the regenerated series.
+`KernariumTests` covers the disk range the larger seed GPT needs.
+
+A release candidate is qualified on its image, opt-in, on every engine that
+runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
+`SIGILL` anywhere is a blocker, as everywhere.
+
+- **Boot.** `boot_completed` with `ro.product.cpu.abilist` listing
+  `arm64-v8a,armeabi-v7a`, `ro.zygote=zygote64_32` and the secondary zygote
+  running without restarts; SELinux enforcing with no denial from the 32-bit
+  zygote, `crash_dump32`, the WebView zygote or its RELRO process; native
+  daemons and HALs 64-bit. ART Service's first-boot pass skips every package,
+  the WebView's `arm` artifacts included, and `odrefresh` compiles nothing for
+  either ISA.
+- **Applications.** A set of real 32-bit applications: some `armeabi-v7a`
+  only, some dual-ABI installed with `adb install --abi armeabi-v7a` against a
+  64-bit control install, and a Java-only one forced to 32 bits. Each shows
+  `primaryCpuAbi=armeabi-v7a` in `dumpsys package`, descends from the
+  secondary zygote, draws through GLES and, where it uses it, Vulkan, and
+  leaves no tombstone. A deliberate `SIGSEGV` in one must leave a symbolized
+  `crash_dump32` tombstone. The 64-bit browser's pages load through the 64-bit
+  WebView renderer, and a 32-bit application's WebView talks to it.
+- **CTS.** The 32-bit and 64-bit variants of the bionic, binder, OS, JNI,
+  seccomp, ABI-override and ASLR modules run on the same candidate; a test that
+  fails only on `armeabi-v7a` is triaged before acceptance.
+- **Alignment.** The engine probe (`tests/integration/aarch32/engine_probe`)
+  runs from `/data/local/tmp` on both engines: its fault section must give
+  `SIGBUS` with `BUS_ADRALN` for misaligned LDM, STM, LDRD, STRD and VLDM while
+  unaligned LDR, LDRH, STR and STRH succeed, as on Linux guests (the kernel has
+  no `COMPAT_ALIGNMENT_FIXUPS`).
+- **Cost.** Boot to `sys.boot_completed` (dmesg), cold and warm, in an
+  ABBA order against the previous release on the same host build; `MemAvailable`
+  after a settle and `dumpsys meminfo` for the zygotes and the WebView zygote;
+  and the image and compressed sizes. The stock secondary zygote stays unless
+  it costs more than 3 s of iPad cold boot or 100 MiB of guest `MemAvailable`;
+  then one started on demand is designed.
+
+## Android hardware video encoding and decoding
+
+A release candidate whose product carries the hardware codecs
+([`../android/lineage-24/README.md`](../android/lineage-24/README.md#hardware-video-encoding-and-decoding))
+is qualified opt-in, on a guest started with the host's Virtio video device
+enabled (`--video`).
+
+- **Codec list.** `MediaCodecList` shows `c2.v4l2.avc.encoder`,
+  `c2.v4l2.hevc.encoder`, `c2.v4l2.avc.decoder` and `c2.v4l2.hevc.decoder`
+  beside the `c2.android.*` components; the service runs without restarts,
+  with no SELinux denial and no seccomp kill in its log.
+- **CTS.** The encoder tests of `CtsMediaEncoderTestCases`,
+  `CtsMediaV2TestCases`, `CtsVideoCodecTestCases`, `CtsVideoTestCases`,
+  `CtsMediaCodecTestCases` and `CtsMediaRecorderTestCases`, filtered to the two
+  encoder names, and the decoder classes of `CtsMediaV2TestCases` and
+  `CtsVideoTestCases` (the performance and availability classes among them) and
+  `AdaptivePlaybackTest`, `DecoderBlockModelTest` and `VideoDecoderPerfTest` of
+  `CtsMediaDecoderTestCases`, filtered to the two decoder names, pass on
+  `arm64-v8a` and `armeabi-v7a`, and the software `c2.android.*` results do
+  not regress. The encoder tests that decode their output pass through the
+  hardware decoders. The decoders' rates swing with the load of the host, so
+  the performance classes run on a quiet one.
+- **Host.** The host's video activity log shows hardware encodes and decodes
+  for those runs; a pass that never reached the host codec does not qualify.
+
 ## x86 instruction conformance
 
 The x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
