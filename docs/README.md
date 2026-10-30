@@ -10,7 +10,7 @@ investigation date.
 | Apple graphics support and limits | [`graphics.md`](graphics.md) |
 | Virtio video decoding, encoding and the private wire contract | [`../darwin/device/video/README.md`](../darwin/device/video/README.md) and [`../kernel/common/video/README.md`](../kernel/common/video/README.md) |
 | Platform hardware video encoder: discovery, cache, sessions, recovery | [`../darwin/platform/README.md`](../darwin/platform/README.md) |
-| Guest VA-API backend over the video decoder | [`../tools/video/va-v4l2/README.md`](../tools/video/va-v4l2/README.md) |
+| Guest VA-API backend over the video decoder and encoder | [`../tools/video/va-v4l2/README.md`](../tools/video/va-v4l2/README.md) |
 | Attempted performance work | [`optimization-history.md`](optimization-history.md) |
 | Performance tools, probes, and profilers | [`../tests/perf/README.md`](../tests/perf/README.md) |
 | A64 instruction coverage | [`a64-instruction-coverage.md`](a64-instruction-coverage.md) and `tests/unit/arm64/*.tsv` |

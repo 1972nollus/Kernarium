@@ -541,6 +541,10 @@ configure_plasma_user()
 		libgl1-mesa-dri mesa-va-drivers vainfo ffmpeg \
 		xdg-desktop-portal-kde \
 		pipewire wireplumber pipewire-pulse pipewire-alsa rtkit
+	# Chromium's hardware video encode and decode go through VA-API, and the
+	# Virtio video device has a VA-API driver of its own: built here against
+	# the image's libva, with the Chromium configuration that selects it.
+	producer_install_uml_va_driver "$root" "$SCRIPT_DIR/../../video/va-v4l2"
 	write_root_file \
 		"$root/etc/wireplumber/wireplumber.conf.d/50-no-bluetooth.conf" \
 		0644 <<'EOF'

@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "v4l2_pool.hpp"
+
 namespace uml::va {
 
 // A decoded picture still owned by the decoder's CAPTURE queue. It stays valid
@@ -46,17 +48,21 @@ struct CaptureTarget {
 // buffers the device allocates itself.
 using CaptureSource = std::function<bool(unsigned index, bool fresh, CaptureTarget& target)>;
 
-// One stateful V4L2 memory-to-memory decode session: a device node, an OUTPUT
-// queue of compressed packets and a CAPTURE queue of decoded pictures. All
-// calls are serialised by the caller.
+// One stateful V4L2 memory-to-memory decode session: a descriptor on the
+// device node, an OUTPUT queue of compressed packets and a CAPTURE queue of
+// decoded pictures. All calls are serialised by the caller.
 class V4l2Decoder {
 public:
-    // `codedFormat` is a V4L2_PIX_FMT_* value for the compressed queue.
-    // `preferredCapture` asks for a decoded format other than NV12, and is
-    // ignored when the device does not offer it; zero means NV12.
-    static std::unique_ptr<V4l2Decoder> open(const std::string& device, std::uint32_t codedFormat,
+    // `lease` is the descriptor the session runs on, which goes back to the
+    // pool when the session ends. `codedFormat` is a V4L2_PIX_FMT_* value for
+    // the compressed queue. `preferredCapture` asks for a decoded format other
+    // than NV12, and is ignored when the device does not offer it; zero means
+    // NV12.
+    static std::unique_ptr<V4l2Decoder> open(Lease lease, std::uint32_t codedFormat,
                                              unsigned width, unsigned height,
                                              std::uint32_t preferredCapture, std::string& error);
+    // Stops and releases both queues and gives the descriptor back: to the
+    // pool as it is when every step worked, and closed when one did not.
     ~V4l2Decoder();
 
     V4l2Decoder(const V4l2Decoder&) = delete;
@@ -127,6 +133,7 @@ private:
     bool importCapture(std::string& error);
     bool pendingSourceChange(std::string& error);
 
+    Lease lease_;
     int fd_ {-1};
     std::uint32_t preferredCapture_ {};
     std::uint32_t captureFormat_ {};
@@ -181,8 +188,10 @@ CaptureMemory captureMemoryRequest(const char* request) noexcept;
 
 // Whether the device can deliver decoded pictures in `fourcc`. A device that
 // does not enumerate it makes the RGB decode path unavailable, and the driver
-// then decodes NV12 and converts.
-bool decoderOffersCapture(const std::string& device, std::uint32_t fourcc);
+// then decodes NV12 and converts. `descriptor` is one the caller already has
+// open on the decoder, so that nothing has to be opened after a sandbox has
+// closed the device nodes.
+bool decoderOffersCapture(int descriptor, std::uint32_t fourcc);
 
 // Whether plane `plane` of a `width` x `height` picture decoded in `format`,
 // its rows `pitch` bytes apart from `offset` bytes into a buffer plane of
@@ -194,7 +203,7 @@ bool capturedPlaneFits(std::uint32_t format, unsigned plane, unsigned width, uns
 
 // The frame sizes the device accepts for a coded format. Returns false and
 // leaves the arguments untouched when the device does not say.
-bool queryCodecLimits(const std::string& device, std::uint32_t codedFormat, unsigned& minWidth,
+bool queryCodecLimits(int descriptor, std::uint32_t codedFormat, unsigned& minWidth,
                       unsigned& minHeight, unsigned& maxWidth, unsigned& maxHeight);
 
 }
