@@ -767,12 +767,17 @@ int NativeAddressSpace::map_direct(
 	auto *registry = registry_or_enomem(host_ownership_registry());
 	if (registry == nullptr)
 		return -1;
-	std::vector<std::uintptr_t> inserted;
+	/* The call's own lists live in the thread's scratch and go with the
+	 * call. */
+	ScratchScope scratch;
+	std::vector<std::uintptr_t, ScratchAllocator<std::uintptr_t>> inserted{
+		ScratchAllocator<std::uintptr_t>{scratch.arena()}};
 	struct DirectSnapshot final {
 		std::uintptr_t page;
 		std::optional<DirectMapping> mapping;
 	};
-	std::vector<DirectSnapshot> direct_snapshots;
+	std::vector<DirectSnapshot, ScratchAllocator<DirectSnapshot>>
+		direct_snapshots{ScratchAllocator<DirectSnapshot>{scratch.arena()}};
 	std::size_t new_page_count = 0;
 	/* A whole host page of one backing replaces the shadow that held its
 	 * quarters until now; the shadow's own writes are published first. */

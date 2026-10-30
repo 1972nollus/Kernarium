@@ -140,12 +140,54 @@ void test_domain_indexes_live_in_its_heap()
 		"the default zone did not return to where it was");
 }
 
+/* The plan of a batch is built in the thread's scratch: one batch of
+ * thousands of pages overruns the 64 KiB the thread keeps, so the arena maps
+ * a chunk for it, and the end of the batch gives that chunk back and keeps
+ * only its own. */
+void test_batch_plan_lives_in_thread_scratch()
+{
+	constexpr std::uint64_t domain = 40'010;
+	constexpr unsigned long generation = 960;
+	constexpr unsigned long base = 0x2000'0000;
+	constexpr std::size_t backing_pages = 64;
+	constexpr std::size_t pages = 4096;
+	ScratchBacking backing{"uml-static-retire-plan-XXXXXX",
+		backing_pages * DARWIN_UML_GUEST_PAGE_SIZE};
+	std::size_t scratch_before = 0;
+	std::size_t scratch_after = 0;
+	std::size_t heap_after = 0;
+	auto &region = uml::memory::HeapRegion::instance();
+	const auto heap_before = region.committed();
+	on_own_thread([&] {
+		active_domain.store(domain, std::memory_order_release);
+		require(darwin_uml_static_vm_activate(generation) == 0,
+			"the generation was not activated");
+		scratch_before = uml::memory::thread_scratch_arena().mapped_bytes();
+		/* One batch: the whole plan is built when it ends. */
+		map_pages(generation, base, backing.descriptor(), pages, pages,
+			backing_pages);
+		scratch_after = uml::memory::thread_scratch_arena().mapped_bytes();
+		heap_after = region.committed();
+		active_domain.store(0, std::memory_order_release);
+	});
+	std::printf("batch of %zu pages: thread scratch %zu -> %zu bytes\n",
+		pages, scratch_before, scratch_after);
+	require(scratch_before == 0, "the thread had scratch before the batch");
+	require(scratch_after == uml::memory::ScratchArena::kept_bytes,
+		"the batch's plan is not in the thread's scratch");
+	require(heap_after > heap_before);
+	uml::memory::retire_domain(domain);
+	require(region.committed() == heap_before,
+		"the batch left heap or scratch pages mapped");
+}
+
 } // namespace
 
 int main()
 {
 	uml::memory::set_domain_provider(&provide_test_domain);
 	test_domain_indexes_live_in_its_heap();
+	test_batch_plan_lives_in_thread_scratch();
 	uml::memory::set_domain_provider(nullptr);
 	std::puts("static retire tests passed");
 	return EXIT_SUCCESS;
