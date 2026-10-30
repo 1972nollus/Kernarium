@@ -394,6 +394,14 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_ahb_im
 PRODUCT_PACKAGES += kernarium_ahb_yuv_roundtrip
 PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_ahb_yuv_roundtrip
 
+# An RGBA hardware-buffer lock check: tall buffers of widths whose rows gralloc
+# pads are written by the GPU and read by the CPU, and written by the CPU and
+# read by the GPU, at the stride gralloc reports, and the locks of the padded
+# widths are timed against the unpadded ones, so a lock that costs a transfer
+# for each row fails the run.
+PRODUCT_PACKAGES += kernarium_ahb_rgba_lock
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_ahb_rgba_lock
+
 # Hardware video encoding and decoding. The host's VideoToolbox encoders and
 # decoders reach the guest as V4L2 stateful devices, and external/v4l2_codec2
 # exposes them through Codec2: its service is the vendor Codec2 store beside the

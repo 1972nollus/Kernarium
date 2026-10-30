@@ -411,7 +411,10 @@ pitch the driver cannot import or the renderer lays out differently.
 `kernarium_ahb_yuv_roundtrip` is its counterpart for YUV buffers: NV12, P010 and
 YV12 of even and odd sizes are written whole and then by a partial lock and read
 back through the host copy, which fails for a layout the guest and the renderer
-read differently.
+read differently. `kernarium_ahb_rgba_lock` checks the lock of tall RGBA buffers
+whose rows gralloc pads (widths 340 to 350 at 604 rows): a buffer the GPU wrote
+and a buffer the CPU wrote are each compared at the stride, and a padded lock
+that takes more than four times an unpadded one fails the run.
 
 The product declares `android.hardware.vulkan.version` 1.4, `level` 1 and
 `compute` 0, and deliberately declares no `android.software.vulkan.deqp.level`:
