@@ -247,6 +247,19 @@ regressions use `--suite vulkan`. Assertions must stay active in those builds.
 Apple's emulated `util_barrier` has `util_tests --gtest_filter='util_barrier.*'`
 in `--suite util`, which runs in any `-Dbuild-tests=true` tree.
 
+Both Mesa passes build with `-Dhost-heap=true`, the host topic that lets the
+embedding host supply the allocator of the memory Mesa allocates for itself
+(`src/util/u_host_heap.h`). `MesaEGL`, `MesaGallium` and `KosmicKrisp` each
+define `malloc`, `calloc`, `realloc`, `posix_memalign`, `aligned_alloc` and
+`free` for themselves, so the static linker binds every reference inside the
+image to them, and export `mesa_set_host_allocator`. Until a host calls it they
+forward to libmalloc's zone API. Prefix verification requires the export in all
+three frameworks and no undefined malloc-family symbol in any of them, which
+proves that no object of an image escaped the definitions; a block that one
+image took from the host's allocator could otherwise reach another image's
+`free` while that image is still on libSystem's. The topic's own test is
+`u_host_heap` in `--suite util` of a `-Dbuild-tests=true -Dhost-heap=true` tree.
+
 KosmicKrisp's runtime behaviour is specified in
 [`../docs/graphics.md`](../docs/graphics.md#kosmickrisp-driver-contracts).
 Metal bridge constructors return one owned, initialized object. Callers

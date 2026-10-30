@@ -472,7 +472,7 @@ mesa_setup "$MESA_TOOL_PATH" \
 		$MESA_MACHINE_ARGS $MESA_PRECOMP_ARGS \
 		-Dplatforms=macos -Dvulkan-drivers=kosmickrisp \
 		-Dgallium-drivers= -Dopengl=false -Dzstd=disabled \
-		-Dllvm=disabled -Dspirv-tools=disabled
+		-Dllvm=disabled -Dspirv-tools=disabled -Dhost-heap=true
 mesa_run "$MESA_TOOL_PATH" "$MESON" compile -C "$MESA_BUILD" -j "$JOBS"
 KOSMICKRISP_BINARY="$MESA_BUILD/src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dylib"
 [ -f "$KOSMICKRISP_BINARY" ] ||
@@ -526,6 +526,7 @@ mesa_setup "$MESA_GL_TOOL_PATH" \
 		-Dgallium-drivers=zink -Dopengl=true -Degl=enabled \
 		-Dglx=disabled -Dgles1=disabled -Dgles2=disabled \
 		-Dzstd=disabled -Dllvm=disabled -Dspirv-tools=disabled \
+		-Dhost-heap=true \
 		-Dzink-vulkan-library-file="$KOSMICKRISP_FRAMEWORK_BINARY"
 mesa_run "$MESA_GL_TOOL_PATH" "$MESON" compile -C "$MESA_GL_BUILD" -j "$JOBS"
 mesa_run "$MESA_GL_TOOL_PATH" \
