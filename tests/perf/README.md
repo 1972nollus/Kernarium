@@ -255,9 +255,13 @@ napped emulator drops from 31 to 4 and launches several times slower), and the
 host load. A launch that misses its limit is recorded with no time and left out
 of the medians. The source disk's `.release-id` must name the release, because
 the launcher re-creates a disk from another release. `--env KEY=VALUE` sets one
-arm's emulator environment; `--guest-samples PATH` profiles the boot with the
-guest code sampler below. Guests are not serialized by the tool: run one
-guest per measurement, and alternate arms (ABBA) across runs.
+arm's emulator environment; `--engine gadgets|jit` selects the execution
+engine (gadgets by default); `--guest-samples PATH` profiles the boot with the
+guest code sampler below. Each record names the engine and carries the boot's
+wall seconds and the emulator's CPU seconds at boot completion, which measure
+the boot's translation and execution work whatever the host load. Guests are
+not serialized by the tool: run one guest per measurement, and alternate arms
+(ABBA) across runs.
 
 `--scenario android_scenarios/NAME.json` follows each successful launch with a
 fixed sequence of sleeps and taps and waits for the scenario's completion line;

@@ -19,18 +19,19 @@ struct CpuState;
 
 namespace uml::cpu::arm64::jit::testing {
 
-/* Compiles the instructions at pc as one unlinked A64 block for the SVCR
- * mode `sme_mode` (or, for the A32 form, the guest bytes at the key as an
- * AArch32 block) and runs it once on cpu with tlb as its software TLB, which
- * the caller has filled: the block's inline probes meet exactly the entries
- * left there. A nonzero mode needs cpu's SME state bound and loaded as the
- * executor leaves it. Returns the block's exit event, or fatal when the
- * block needs link relocations or cannot be published. */
+/* Compiles the instructions at pc as one unlinked A64 block for the
+ * translation mode `mode` (the SVCR mode, and translation_mode_tbi; or, for
+ * the A32 form, the guest bytes at the key as an AArch32 block) and runs it
+ * once on cpu with tlb as its software TLB, which the caller has filled: the
+ * block's inline probes meet exactly the entries left there. A nonzero SVCR
+ * mode needs cpu's SME state bound and loaded as the executor leaves it.
+ * Returns the block's exit event, or fatal when the block needs link
+ * relocations or cannot be published. */
 [[nodiscard]] ::uml::cpu::EngineEvent
 run_block_on_tlb_for_testing(std::uint64_t pc,
                              std::span<const std::uint32_t> instructions,
                              CpuState &cpu, ::uml::memory::Tlb &tlb,
-                             std::uint8_t sme_mode = 0);
+                             std::uint8_t mode = 0);
 [[nodiscard]] ::uml::cpu::EngineEvent
 run_a32_block_on_tlb_for_testing(std::uint64_t key,
                                  std::span<const std::byte> bytes,
@@ -89,7 +90,7 @@ struct ModeCompilation final {
   std::vector<std::uint64_t> relocation_keys;
 };
 
-/* Compiles for the guest SVCR mode `mode` on the scoped host profile
+/* Compiles for the translation mode `mode` on the scoped host profile
  * (HostCapabilitiesScope). */
 [[nodiscard]] ModeCompilation
 compile_block_in_mode(std::uint64_t pc,

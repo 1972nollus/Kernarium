@@ -335,9 +335,16 @@
     },
     "tbi_memory": {
       "cases": 1388,
+      "equivalence": {
+        "base_cases": 6203,
+        "cases": 6509,
+        "index_cases": 12,
+        "sp_cases": 267,
+        "tbi_off_cases": 27
+      },
       "fault_cases": 502,
       "script": "tools/arm64-tests/tbi-memory-corpus.py",
-      "sha256": "a375c920dd7980431dac64e18ea8f0d0d16eb5ccc0c46059421f1272f80cafab",
+      "sha256": "b1ee778e90edb4affaffa793bfd55122a1b00f081aa152ae299e8f5293ed0b34",
       "tbi_off_cases": 23
     }
   },
@@ -760,7 +767,8 @@
     "arm64-lse2-alignment.jsonl",
     "arm64-floating-trap-native.jsonl",
     "arm64-sm0-vl.jsonl",
-    "arm64-tbi-memory.jsonl"
+    "arm64-tbi-memory.jsonl",
+    "arm64-tbi-equivalence.jsonl"
   ],
   "records": [
     {
@@ -4478,6 +4486,14 @@
     {
       "name": "arm64-tbi-memory/4k",
       "file": "arm64-tbi-memory.jsonl"
+    },
+    {
+      "name": "arm64-tbi-equivalence/4k",
+      "file": "arm64-tbi-equivalence.jsonl"
+    },
+    {
+      "name": "arm64-tbi-equivalence/4k/svl=64",
+      "file": "arm64-tbi-equivalence.jsonl"
     }
   ]
 }

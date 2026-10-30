@@ -14,7 +14,7 @@ extern "C" std::uint32_t uml_arm64_memory_transfer(
 extern "C" std::uint32_t uml_arm64_simd_structure_memory_transfer(
     ::uml::cpu::arm64::CpuState *cpu, ::uml::memory::Tlb *tlb,
     std::uint64_t tagged_address, void *data, std::size_t size,
-    std::uint32_t access, std::uint32_t base_sp) noexcept;
+    std::uint32_t access) noexcept;
 
 extern "C" void uml_arm64_alignment_fault(
     ::uml::memory::Tlb *tlb, std::uint64_t address,

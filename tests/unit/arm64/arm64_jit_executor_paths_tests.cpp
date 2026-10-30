@@ -444,8 +444,6 @@ void a_stepped_store_ends_another_vcpus_reservation(Isa isa, bool intervening,
 			cpu.registers[1] = data;
 			cpu.registers[2] = stored_value;
 			cpu.registers[4] = 0x2222'2222U;
-			/* Checked semantic reservations, not the host's monitor. */
-			cpu.tbi_enabled = true;
 		} else {
 			cpu.registers[0] = data;
 			cpu.registers[1] = stored_value;

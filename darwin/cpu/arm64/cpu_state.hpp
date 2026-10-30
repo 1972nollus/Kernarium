@@ -73,7 +73,7 @@ struct CpuState final {
 	std::uint32_t fpsr{};
 	std::uint64_t tls{};
 	/* Effective TBI0, imported from the task: EL0 data addresses ignore
-	 * their top byte. SP-based addresses are never untagged. */
+	 * their top byte, whatever register is the base. */
 	bool tbi_enabled{};
 	/* EL0-visible PSTATE fields controlled by MSR (immediate).  DAIF access is
 	 * explicitly gated because SCTLR_EL1.UMA determines whether userspace may
@@ -215,9 +215,9 @@ struct CpuState final {
 	 * two instructions. */
 	alignas(16) std::array<std::uint8_t, 64> a32_cross{};
 	[[nodiscard]] std::uint64_t untag_data_address(
-		std::uint64_t address, bool base_sp) const noexcept
+		std::uint64_t address) const noexcept
 	{
-		return !base_sp && tbi_enabled ?
+		return tbi_enabled ?
 			address & 0x00ff'ffff'ffff'ffffULL : address;
 	}
 

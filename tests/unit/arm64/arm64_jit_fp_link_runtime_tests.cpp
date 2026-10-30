@@ -514,6 +514,12 @@ void linked_vector_fault_is_precise_for_page_size() {
 }
 
 void trap_mode_runs_a_deferred_atomic() {
+  /* A native atomic leaves its sequence for the exclusive helper when its
+   * address is misaligned, and FEAT_LSE2 lets that helper complete an access
+   * within one 16-byte block. */
+  if (!::uml::platform::apple::probed_host_capabilities().has(
+          ::uml::cpu::ArmFeature::lse2))
+    return;
   constexpr unsigned long generation = 8415;
   constexpr std::uint64_t base = 0x124'0000;
   constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
@@ -527,13 +533,13 @@ void trap_mode_runs_a_deferred_atomic() {
   StaticGuestMemory memory;
   arm64::CpuState cpu{};
   /*
-   * An enabled trap runs each instruction as its own translation. Tagged
-   * addressing sends a native atomic to its exclusive helper, which a block
-   * with a direct store defers until its store publication has ended.
+   * An enabled trap runs each instruction as its own translation. A
+   * misaligned address sends the native atomic to its exclusive helper,
+   * which a block with a direct store defers until its store publication
+   * has ended.
    */
   cpu.fpcr = 1U << 8U;
-  cpu.tbi_enabled = true;
-  cpu.registers[0] = base + page;
+  cpu.registers[0] = base + page + 1;
   cpu.registers[1] = 2;
   cpu.pc = base;
 
@@ -541,8 +547,9 @@ void trap_mode_runs_a_deferred_atomic() {
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued && run.executed == 1);
   require(cpu.pc == base + 4);
-  require(cpu.registers[2] == 40);
-  require(backing.get64(page) == 42);
+  /* The eight bytes from the second byte were zero. */
+  require(cpu.registers[2] == 0);
+  require(backing.get64(page) == 40 + (2U << 8U));
 
   /* Across a 16-byte block, so the alignment fault stands under LSE2. */
   cpu.registers[0] = base + page + 9;
@@ -550,7 +557,7 @@ void trap_mode_runs_a_deferred_atomic() {
   require(run.event == ::uml::cpu::EngineEvent::memory_fault && run.executed == 0);
   require(cpu.pc == base + 4);
   require(executor.fault_address() == base + page + 9);
-  require(backing.get64(page) == 42);
+  require(backing.get64(page) == 40 + (2U << 8U));
   executor.end_execution();
 }
 
