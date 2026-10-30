@@ -25,19 +25,25 @@ A byte buffer has no rows, and a multi-planar format keeps the layout its
 helpers define.
 
 The renderer takes the guest rows of a transfer at the row length of the
-texture's width, because the kernel carries no stride in a transfer, so a
-padded buffer would land every row after the first at the wrong place. A
-buffer whose rows are padded is transferred one row at a time, each from the
-offset where its row starts, whether the lock covers all of it or a rectangle.
+texture's width unless the transfer names a stride, and the kernel's transfer
+ioctls carry none for a classic resource, so a padded buffer would land every
+row after the first at the wrong place. A buffer whose rows are padded is
+transferred by a VIRGL_CCMD_TRANSFER3D in a command buffer instead, which names
+the row pitch as its stride and the offset of the first byte of the box: one
+command for a whole lock or for a rectangle of it, in either direction. The
+resource id comes from the resource info ioctl, and the buffer travels with the
+command buffer, so the wait on the buffer that follows is ordered after the
+transfer. Sent a row at a time, each row cost the renderer a readback or an
+upload of its own, and locking a 342x604 buffer took half a second.
 ---
- virtgpu_virgl.c | 121 +++++++++++++++++++++++++++++++++++++-----------
- 1 file changed, 93 insertions(+), 28 deletions(-)
+ virtgpu_virgl.c | 111 +++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 109 insertions(+), 2 deletions(-)
 
 diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
-index 5a1cbf944416f5c5a5c39175a75932571c5c89ea..a1430dae46d2bba2889e76334fdd66f5eab01abe 100644
+index 5a1cbf944416f5c5a5c39175a75932571c5c89ea..fcc50537c2a0165ce9da524fd2a16ca7dc7df1ae 100644
 --- a/virtgpu_virgl.c
 +++ b/virtgpu_virgl.c
-@@ -583,6 +583,44 @@ static uint32_t compute_virgl_bind_flags(uint64_t use_flags)
+@@ -583,6 +583,46 @@ static uint32_t compute_virgl_bind_flags(uint64_t use_flags)
  	return bind;
  }
  
@@ -70,9 +76,11 @@ index 5a1cbf944416f5c5a5c39175a75932571c5c89ea..a1430dae46d2bba2889e76334fdd66f5
 +}
 +
 +// The renderer reads and writes the guest rows of a texture at the row length of the texture's
-+// width, because the kernel carries no stride in a transfer, and a transfer of several rows of a
-+// buffer padded as above would land every row after the first at the wrong place. Such a buffer is
-+// transferred one row at a time, each from the offset where the row starts.
++// width unless the transfer names a stride, and the kernel's transfer ioctls carry no stride for a
++// classic resource, so a transfer of several rows of a buffer padded as above would land every row
++// after the first at the wrong place. Such a buffer is transferred by a VIRGL_CCMD_TRANSFER3D in a
++// command buffer, which does carry the stride (virgl_transfer_padded_box): one command for the
++// whole lock, where a transfer per row costs the renderer a readback or an upload each.
 +static bool virgl_rows_are_padded(const struct bo *bo)
 +{
 +	return bo->meta.num_planes == 1 &&
@@ -82,7 +90,7 @@ index 5a1cbf944416f5c5a5c39175a75932571c5c89ea..a1430dae46d2bba2889e76334fdd66f5
  static int virgl_3d_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint32_t format,
  			      uint64_t use_flags)
  {
-@@ -593,7 +631,7 @@ static int virgl_3d_bo_create(struct bo *bo, uint32_t width, uint32_t height, ui
+@@ -593,7 +633,7 @@ static int virgl_3d_bo_create(struct bo *bo, uint32_t width, uint32_t height, ui
  	struct bo_metadata emulated_metadata = { 0 };
  
  	if (virgl_creates_natively(bo->drv, format, use_flags)) {
@@ -91,7 +99,7 @@ index 5a1cbf944416f5c5a5c39175a75932571c5c89ea..a1430dae46d2bba2889e76334fdd66f5
  		drv_bo_from_format(bo, stride, 1, height, format);
  	} else {
  		assert(virgl_supports_combination_through_emulation(bo->drv, format, use_flags));
-@@ -953,7 +991,10 @@ static int virgl_blob_get_host_format(struct driver *drv, struct bo_metadata *me
+@@ -953,7 +993,10 @@ static int virgl_blob_get_host_format(struct driver *drv, struct bo_metadata *me
  			uint32_t total_size = 0;
  			for (int i = 0; i < num_planes; i++) {
  				local_strides[i] =
@@ -103,109 +111,101 @@ index 5a1cbf944416f5c5a5c39175a75932571c5c89ea..a1430dae46d2bba2889e76334fdd66f5
  				local_sizes[i] = drv_size_from_format(
  				    meta->format, local_strides[i], meta->height, i);
  				local_offsets[i] = total_size;
-@@ -1187,6 +1228,8 @@ static int virgl_bo_invalidate(struct bo *bo, struct mapping *mapping)
+@@ -1183,10 +1226,55 @@ static bool is_arc_screen_capture_bo(struct bo *bo)
+ 	return strstr(tmp, "ARC-SCREEN-CAP");
+ }
+ 
++// Sends the box of a padded buffer in one VIRGL_CCMD_TRANSFER3D, which names the row pitch as its
++// stride and the offset of the box's first byte, and leaves the completion to the caller's wait on
++// the buffer: the command buffer carries the buffer, so the kernel fences the buffer with it.
++static int virgl_transfer_padded_box(struct bo *bo, struct mapping *mapping,
++				     const struct rectangle *box, uint32_t direction)
++{
++	int ret;
++	uint32_t bo_handle = mapping->vma->handle;
++	uint32_t cmd[VIRGL_TRANSFER3D_SIZE + 1] = { 0 };
++	struct drm_virtgpu_resource_info_cros res_info = { 0 };
++	struct drm_virtgpu_execbuffer exec = { 0 };
++
++	res_info.bo_handle = bo_handle;
++	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_RESOURCE_INFO_CROS, &res_info);
++	if (ret) {
++		drv_loge("DRM_IOCTL_VIRTGPU_RESOURCE_INFO failed with %s\n", strerror(errno));
++		return -errno;
++	}
++
++	cmd[0] = VIRGL_CMD0(VIRGL_CCMD_TRANSFER3D, 0, VIRGL_TRANSFER3D_SIZE);
++	cmd[VIRGL_RESOURCE_IW_RES_HANDLE] = res_info.res_handle;
++	cmd[VIRGL_RESOURCE_IW_STRIDE] = bo->meta.strides[0];
++	cmd[VIRGL_RESOURCE_IW_X] = box->x;
++	cmd[VIRGL_RESOURCE_IW_Y] = box->y;
++	cmd[VIRGL_RESOURCE_IW_W] = box->width;
++	cmd[VIRGL_RESOURCE_IW_H] = box->height;
++	cmd[VIRGL_RESOURCE_IW_D] = 1;
++	cmd[VIRGL_TRANSFER3D_DATA_OFFSET] =
++	    bo->meta.strides[0] * box->y + drv_bytes_per_pixel_from_format(bo->meta.format, 0) * box->x;
++	cmd[VIRGL_TRANSFER3D_DIRECTION] = direction;
++
++	exec.command = (uintptr_t)cmd;
++	exec.size = sizeof(cmd);
++	exec.bo_handles = (uintptr_t)&bo_handle;
++	exec.num_bo_handles = 1;
++	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_EXECBUFFER, &exec);
++	if (ret) {
++		drv_loge("DRM_IOCTL_VIRTGPU_EXECBUFFER failed with %s\n", strerror(errno));
++		return -errno;
++	}
++
++	return 0;
++}
++
+ static int virgl_bo_invalidate(struct bo *bo, struct mapping *mapping)
  {
  	int ret;
  	size_t i;
-+	uint32_t row;
 +	bool padded;
  	struct drm_virtgpu_3d_transfer_from_host xfer = { 0 };
  	struct drm_virtgpu_3d_wait waitcmd = { 0 };
  	struct virtio_transfers_params xfer_params;
-@@ -1257,20 +1300,30 @@ static int virgl_bo_invalidate(struct bo *bo, struct mapping *mapping)
+@@ -1257,7 +1345,16 @@ static int virgl_bo_invalidate(struct bo *bo, struct mapping *mapping)
  		virgl_get_emulated_transfers_params(bo, &mapping->rect, &xfer_params);
  	}
  
 +	padded = !emulated && virgl_rows_are_padded(bo);
  	for (i = 0; i < xfer_params.xfers_needed; i++) {
--		xfer.box.x = xfer_params.xfer_boxes[i].x;
--		xfer.box.y = xfer_params.xfer_boxes[i].y;
--		xfer.box.w = xfer_params.xfer_boxes[i].width;
--		xfer.box.h = xfer_params.xfer_boxes[i].height;
--		xfer.box.d = 1;
--		if (emulated)
--			xfer.offset = (uint64_t)xfer.box.y * bo->meta.strides[0] + xfer.box.x;
--
--		ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST, &xfer);
--		if (ret) {
--			drv_loge("DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST failed with %s\n",
--				 strerror(errno));
--			return -errno;
-+		const struct rectangle *box = &xfer_params.xfer_boxes[i];
-+		uint32_t rows = padded ? box->height : 1;
++		if (padded) {
++			ret = virgl_transfer_padded_box(bo, mapping, &xfer_params.xfer_boxes[i],
++							VIRGL_TRANSFER_FROM_HOST);
++			if (ret)
++				return ret;
++			continue;
++		}
 +
-+		for (row = 0; row < rows; row++) {
-+			xfer.box.x = box->x;
-+			xfer.box.y = box->y + row;
-+			xfer.box.w = box->width;
-+			xfer.box.h = padded ? 1 : box->height;
-+			xfer.box.d = 1;
-+			if (emulated)
-+				xfer.offset = (uint64_t)xfer.box.y * bo->meta.strides[0] + xfer.box.x;
-+			else if (padded)
-+				xfer.offset = (uint64_t)xfer.box.y * bo->meta.strides[0] +
-+					      (uint64_t)drv_bytes_per_pixel_from_format(
-+						  bo->meta.format, 0) * xfer.box.x;
-+
-+			ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST, &xfer);
-+			if (ret) {
-+				drv_loge("DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST failed with %s\n",
-+					 strerror(errno));
-+				return -errno;
-+			}
- 		}
- 	}
- 
-@@ -1291,6 +1344,8 @@ static int virgl_bo_flush(struct bo *bo, struct mapping *mapping)
+ 		xfer.box.x = xfer_params.xfer_boxes[i].x;
+ 		xfer.box.y = xfer_params.xfer_boxes[i].y;
+ 		xfer.box.w = xfer_params.xfer_boxes[i].width;
+@@ -1291,6 +1388,7 @@ static int virgl_bo_flush(struct bo *bo, struct mapping *mapping)
  {
  	int ret;
  	size_t i;
-+	uint32_t row;
 +	bool padded;
  	struct drm_virtgpu_3d_transfer_to_host xfer = { 0 };
  	struct drm_virtgpu_3d_wait waitcmd = { 0 };
  	struct virtio_transfers_params xfer_params;
-@@ -1336,20 +1391,30 @@ static int virgl_bo_flush(struct bo *bo, struct mapping *mapping)
+@@ -1336,7 +1434,16 @@ static int virgl_bo_flush(struct bo *bo, struct mapping *mapping)
  		virgl_get_emulated_transfers_params(bo, &mapping->rect, &xfer_params);
  	}
  
 +	padded = !emulated && virgl_rows_are_padded(bo);
  	for (i = 0; i < xfer_params.xfers_needed; i++) {
--		xfer.box.x = xfer_params.xfer_boxes[i].x;
--		xfer.box.y = xfer_params.xfer_boxes[i].y;
--		xfer.box.w = xfer_params.xfer_boxes[i].width;
--		xfer.box.h = xfer_params.xfer_boxes[i].height;
--		xfer.box.d = 1;
--		if (emulated)
--			xfer.offset = (uint64_t)xfer.box.y * bo->meta.strides[0] + xfer.box.x;
--
--		ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST, &xfer);
--		if (ret) {
--			drv_loge("DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST failed with %s\n",
--				 strerror(errno));
--			return -errno;
-+		const struct rectangle *box = &xfer_params.xfer_boxes[i];
-+		uint32_t rows = padded ? box->height : 1;
++		if (padded) {
++			ret = virgl_transfer_padded_box(bo, mapping, &xfer_params.xfer_boxes[i],
++							VIRGL_TRANSFER_TO_HOST);
++			if (ret)
++				return ret;
++			continue;
++		}
 +
-+		for (row = 0; row < rows; row++) {
-+			xfer.box.x = box->x;
-+			xfer.box.y = box->y + row;
-+			xfer.box.w = box->width;
-+			xfer.box.h = padded ? 1 : box->height;
-+			xfer.box.d = 1;
-+			if (emulated)
-+				xfer.offset = (uint64_t)xfer.box.y * bo->meta.strides[0] + xfer.box.x;
-+			else if (padded)
-+				xfer.offset = (uint64_t)xfer.box.y * bo->meta.strides[0] +
-+					      (uint64_t)drv_bytes_per_pixel_from_format(
-+						  bo->meta.format, 0) * xfer.box.x;
-+
-+			ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST, &xfer);
-+			if (ret) {
-+				drv_loge("DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST failed with %s\n",
-+					 strerror(errno));
-+				return -errno;
-+			}
- 		}
- 	}
- 
+ 		xfer.box.x = xfer_params.xfer_boxes[i].x;
+ 		xfer.box.y = xfer_params.xfer_boxes[i].y;
+ 		xfer.box.w = xfer_params.xfer_boxes[i].width;
