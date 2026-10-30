@@ -138,6 +138,19 @@ struct MetalPresentationState final :
             return;
         FrameTapRegistry::instance().wake();
         tapThread.join();
+        /* A frame still on the GPU releases its texture into the cache and
+         * its buffer into the pool from its completion handler, so neither
+         * may go while one is in flight. A GPU that does not finish in five
+         * seconds keeps them: leaking a cache is better than a handler that
+         * releases into a freed one. */
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (tapInFlight.load(std::memory_order_acquire) > 0 &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        if (tapInFlight.load(std::memory_order_acquire) > 0)
+            return;
         if (tapPool != nullptr) {
             CVPixelBufferPoolRelease(tapPool);
             tapPool = nullptr;
