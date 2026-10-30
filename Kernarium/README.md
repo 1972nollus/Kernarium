@@ -398,10 +398,22 @@ choosing another mode ends it. `KERNARIUM_BACKGROUND_LIMIT_MINUTES` sets the tim
 
 An Android guest that is kept running this way has its screen turned off with
 its power key as the application leaves, and on again, after the GPU is back and
-the guest is running, as it returns. A screen that stays on keeps Android busy;
-with it off the guest suspends itself and only its wakelock holders and alarms
-run, as on a phone, so a job that should make progress has to hold a wakelock,
-as Android's own downloads and jobs do. A guest in the Picture in Picture mode
+the guest is running, as it returns. The screen goes off before the GPU is held,
+because a visible app that is drawing when the hold lands has its render and
+upload threads waiting on a GPU that does not answer, so it cannot handle the
+framework's pause or the screen-off broadcast, and Android kills it as not
+responding. The edge therefore presses the key, waits up to 1.5 seconds
+(`displayOffGrace`, within the four-second budget) for the guest's display to
+go off, then holds the GPU and writes the guest back. The display is off when
+the guest has no primary scanout, which the guest's disabled CRTC unbinds
+(`kernarium_runtime_guest_display_active`, answered without a request reaching
+the device, so it works as the hold lands). A display that is still on at the
+grace is held anyway, because iOS revoking the GPU matters more than the
+screen. A screen that is off already is neither woken nor turned on at the
+return. Every other mode holds first. A screen that stays on keeps Android
+busy; with it off the guest suspends itself and only its wakelock holders and
+alarms run, as on a phone, so a job that should make progress has to hold a
+wakelock, as Android's own downloads and jobs do. A guest in the Picture in Picture mode
 keeps its screen, because its display is on show.
 
 The Picture in Picture mode needs the `audio` background mode in `Info.plist`,

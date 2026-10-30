@@ -233,22 +233,41 @@ final class SystemBackgroundEffects: BackgroundEffects {
         }
     }
 
+    /// How often the wait for the guest's display to go off looks again.
+    private static let displayPoll: TimeInterval = 0.02
+
     private let persistence: GuestPersistence
     private let window: (any PictureInPictureWindow)?
     private let pageCacheTrimming: @Sendable (Int32) -> Int32
+    private let displayActive: @Sendable () -> Int32
+    private let holdDelayMilliseconds: @Sendable () -> Int32
 
-    /// - Parameter pageCacheTrimming: the runtime's trimming switch; the
-    ///   unit tests replace it.
+    /// - Parameters:
+    ///   - pageCacheTrimming: the runtime's trimming switch.
+    ///   - displayActive: the runtime's answer for the guest's display, 1 on,
+    ///     0 off, negative when it cannot say.
+    ///   - holdDelayMilliseconds: the delay an automation launch asked for
+    ///     before the GPU is held, zero for none.
+    ///
+    ///   The unit tests replace all three.
     init(
         persistence: GuestPersistence,
         pictureInPicture: (any PictureInPictureWindow)?,
         pageCacheTrimming: @escaping @Sendable (Int32) -> Int32 = {
             kernarium_runtime_loader_set_page_cache_trimming($0)
+        },
+        displayActive: @escaping @Sendable () -> Int32 = {
+            kernarium_runtime_loader_guest_display_active()
+        },
+        holdDelayMilliseconds: @escaping @Sendable () -> Int32 = {
+            kernarium_runtime_loader_automation_hold_delay_ms()
         }
     ) {
         self.persistence = persistence
         window = pictureInPicture
         self.pageCacheTrimming = pageCacheTrimming
+        self.displayActive = displayActive
+        self.holdDelayMilliseconds = holdDelayMilliseconds
     }
 
     func holdGuestGPU() {
@@ -304,6 +323,23 @@ final class SystemBackgroundEffects: BackgroundEffects {
 
     func pressPowerKey() {
         GuestSpecialKey.power.press()
+    }
+
+    var guestDisplayActive: Bool? {
+        let answer = displayActive()
+        return answer < 0 ? nil : answer != 0
+    }
+
+    func waitForGuestDisplayOff(until deadline: DispatchTime) -> Bool {
+        while true {
+            if displayActive() == 0 { return true }
+            if DispatchTime.now() >= deadline { return false }
+            Thread.sleep(forTimeInterval: Self.displayPoll)
+        }
+    }
+
+    var automationHoldDelay: TimeInterval {
+        TimeInterval(max(holdDelayMilliseconds(), 0)) / 1000
     }
 
     var pictureInPictureCanStart: Bool { window?.canStart ?? false }

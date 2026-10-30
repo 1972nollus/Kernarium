@@ -906,6 +906,19 @@ host GPU within seconds and a request that reached Metal after that would make
 the renderer's Vulkan device lost for good, and opens it as the application
 returns.
 
+A hold also stops whatever the guest is drawing, and an app that is drawing
+when it lands has its render and upload threads waiting, uninterruptibly, for
+ring space the host will not give: its main thread then cannot answer the
+framework, and Android kills it as not responding. So an Android guest whose
+screen is to be off for the stay is put to sleep first, while the GPU still
+answers, and the hold waits, for a bounded time, for the guest's display to go
+off. The service reports the display from the device's own state
+(`InProcessGpuService::guestScanoutActive()`, the shared display's flag): the
+device sets it when the guest binds a resource to its scanout and clears it
+when the guest unbinds it, which a disabled CRTC does as a screen goes off,
+and when the guest resets or a new guest connects. The answer needs no request
+to run, so it is the same as the hold lands.
+
 A hold promises the guest's requests wait, and a guest that is ending cannot
 wait: its shutdown drains the GPU's rings (`virtio_gpu_shutdown`, and every
 sender blocked for ring space) before the machine can go, and an Android guest

@@ -160,6 +160,17 @@ protocol BackgroundEffects: AnyObject {
     /// Presses and releases the guest's power key, which turns an Android
     /// screen off or on and wakes a guest that suspended itself.
     func pressPowerKey()
+    /// Whether the guest's display is on, or nil when the runtime cannot say.
+    /// The guest's display is on while it has its primary scanout.
+    var guestDisplayActive: Bool? { get }
+    /// Waits until `deadline` for the guest's display to go off, and returns
+    /// whether it did. The wait ends at once when it is off already.
+    func waitForGuestDisplayOff(until deadline: DispatchTime) -> Bool
+    /// How long after the edge an automation launch asked for the guest's GPU
+    /// to be held, so a measurement can find how long the host GPU stays
+    /// usable in the background. Zero, the only value a release build has,
+    /// holds it at the edge.
+    var automationHoldDelay: TimeInterval { get }
 
     /// Whether iOS will start the Picture in Picture window as the app leaves.
     var pictureInPictureCanStart: Bool { get }
@@ -206,6 +217,13 @@ final class BackgroundController {
     /// What the edge handler's own work may take: the watchdog answers to the
     /// handler as a whole.
     static let edgeBudget = DispatchTimeInterval.seconds(4)
+    /// How long an Android guest gets to turn its screen off before its GPU is
+    /// held anyway. A screen that is still drawing when the hold lands leaves
+    /// its threads waiting on a GPU that does not answer, so the screen goes
+    /// off first, while the GPU still works; the wait is bounded because iOS
+    /// revokes the host GPU within seconds of the edge, and holding it in time
+    /// matters more than the screen.
+    static let displayOffGrace = DispatchTimeInterval.milliseconds(1500)
 
     private(set) var phase = Phase.foreground {
         didSet {
@@ -221,6 +239,10 @@ final class BackgroundController {
     private var guestQuiesced = false
     /// The Android screen this controller turned off, to turn on again.
     private var screenTurnedOff = false
+    /// A hold an automation launch put off, and what keeps the process
+    /// scheduled until it lands.
+    private var holdDelayTimer: (any BackgroundCancellable)?
+    private var holdDelayScheduled: (any BackgroundCancellable)?
 
     init(
         effects: any BackgroundEffects,
@@ -233,8 +255,13 @@ final class BackgroundController {
     func didEnterBackground() {
         guard phase == .foreground else { return }
         let deadline = DispatchTime.now() + Self.edgeBudget
+        let chosen = mode()
+        if chosen == .keepRunning && effects.jobActive {
+            enterBackgroundWithJob(until: deadline)
+            return
+        }
         holdGPU()
-        switch mode() {
+        switch chosen {
         case .pictureInPicture
         where effects.pictureInPictureActive ||
             effects.pictureInPictureCanStart:
@@ -244,20 +271,51 @@ final class BackgroundController {
             } else {
                 awaitPictureInPicture()
             }
-        case .keepRunning where effects.jobActive:
-            effects.flushGuest(until: deadline)
-            effects.setPageCacheTrimming(true)
-            // An Android screen that stays on keeps the guest busy; with it off
-            // the guest suspends itself and only its wakelock holders and
-            // alarms run, as on a phone.
-            if effects.guestIsAndroid {
-                effects.pressPowerKey()
-                screenTurnedOff = true
-            }
-            phase = .jobRunning
         case .off, .pictureInPicture, .keepRunning:
             quiesce(reason: "background", until: deadline)
         }
+    }
+
+    /// The guest keeps running for a job, with the GPU held for the whole stay.
+    /// An Android screen that stays on keeps the guest busy, and with it off
+    /// the guest suspends itself and only its wakelock holders and alarms run,
+    /// as on a phone. The screen goes off before the GPU is held: its
+    /// turning off draws, and a visible app that is drawing when the hold
+    /// lands has its render and upload threads waiting on a GPU that does not
+    /// answer, so it cannot handle the framework's pause and the screen-off
+    /// broadcast, and Android kills it as not responding. A screen that is off
+    /// already is left as it is, which the return leaves as well.
+    private func enterBackgroundWithJob(until deadline: DispatchTime) {
+        if effects.guestIsAndroid {
+            turnAndroidScreenOff(before: deadline)
+        }
+        holdGPUForJob()
+        effects.flushGuest(until: deadline)
+        effects.setPageCacheTrimming(true)
+        phase = .jobRunning
+    }
+
+    private func turnAndroidScreenOff(before deadline: DispatchTime) {
+        guard effects.guestDisplayActive != false else {
+            print("Kernarium: guest display already off")
+            return
+        }
+        effects.pressPowerKey()
+        screenTurnedOff = true
+        // A launch that puts the hold off to measure it does not wait for the
+        // screen, which would move the hold it asked for.
+        guard effects.automationHoldDelay <= 0 else { return }
+        let limit = min(deadline, DispatchTime.now() + Self.displayOffGrace)
+        let started = DispatchTime.now()
+        let off = effects.waitForGuestDisplayOff(until: limit)
+        let milliseconds = (
+            DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds
+        ) / 1_000_000
+        print(
+            off
+                ? "Kernarium: guest display off after \(milliseconds) ms"
+                : "Kernarium: guest display still on after \(milliseconds) ms; holding the GPU"
+        )
     }
 
     /// The job ended: its time ran out, the user stopped it, or iOS
@@ -328,6 +386,7 @@ final class BackgroundController {
 
     func willEnterForeground() {
         endWait()
+        endHoldDelay()
         if phase == .keptRunning {
             endKeptRunning()
         }
@@ -353,6 +412,31 @@ final class BackgroundController {
     private func holdGPU() {
         effects.holdGuestGPU()
         gpuHeld = true
+    }
+
+    /// Holds the GPU for a job at the edge, or, when an automation launch
+    /// asked for the hold after a delay, that long after it. Only a job is
+    /// delayed: the other modes release or keep the GPU on their own terms.
+    private func holdGPUForJob() {
+        let delay = effects.automationHoldDelay
+        guard delay > 0 else {
+            holdGPU()
+            return
+        }
+        print("Kernarium: automation holds the GPU \(delay) s after the edge")
+        holdDelayScheduled = effects.keepScheduled(named: "gpu-hold-delay")
+        holdDelayTimer = effects.schedule(after: delay) { [weak self] in
+            guard let self else { return }
+            self.endHoldDelay()
+            self.holdGPU()
+        }
+    }
+
+    private func endHoldDelay() {
+        holdDelayTimer?.cancel()
+        holdDelayTimer = nil
+        holdDelayScheduled?.cancel()
+        holdDelayScheduled = nil
     }
 
     private func awaitPictureInPicture() {
