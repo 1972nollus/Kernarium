@@ -135,7 +135,8 @@ mutate or tear down renderer state wait until those deferred fences retire;
 reset cancels the timer and discards deferred transport state before releasing
 renderer resources. A command buffer or transfer the renderer refuses fails
 alone: the context error it reports is cleared with it, so a context that only
-transfers, as Android's gralloc mapper does to lock a buffer for reading, keeps
+transfers, as Android's gralloc mapper does to lock a buffer for reading (a
+buffer with padded rows by a command buffer that holds one transfer), keeps
 working after one refusal.
 
 A texture a guest context created and wrapped in a blob, as Android's gralloc
@@ -237,9 +238,14 @@ at the pitch the guest reports and Metal reads a texture over a buffer only at
 such a pitch. The buffer and its host texture keep their width, which Android
 allows to be smaller than the stride and which the guest samples the texture
 by. A swapchain image, a GPU blob, is laid out by the same rule. The renderer
-takes the guest rows of a transfer at the row length of the texture's width,
-because the kernel carries no stride in a transfer, so a buffer with padded rows
-is locked and unlocked one row at a time.
+takes the guest rows of a transfer at the row length of the texture's width
+unless the transfer names a stride, and the kernel's transfer ioctls carry none
+for a classic resource, so a buffer with padded rows is locked and unlocked by a
+`VIRGL_CCMD_TRANSFER3D` in a command buffer, which names the pitch as its stride
+and the offset of the box's first byte. That is one command, and one readback or
+upload, for a whole lock or a rectangle of it in either direction, however tall
+the buffer is: a transfer for each row cost one each, and half a second to lock
+a 342x604 buffer.
 
 The emulated layouts are the layouts Android defines, so that the media
 framework, the Image API and an importer that reads the buffer's own plane

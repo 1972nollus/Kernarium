@@ -22,7 +22,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  1 file changed, 26 insertions(+), 13 deletions(-)
 
 diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
-index cf4a800f992cf4a3f934c110412bc4498b52900c..5527268151655b528180d35887cc6b88ac79dc03 100644
+index f799aabcf78a4b5daa4c6ef72f0a3b615db4f48f..b018d51596531dd8dafee9ebd4081e61d2bb8486 100644
 --- a/virtgpu_virgl.c
 +++ b/virtgpu_virgl.c
 @@ -210,16 +210,19 @@ static void virgl_get_emulated_metadata(const struct bo *bo, struct bo_metadata
@@ -104,7 +104,7 @@ index cf4a800f992cf4a3f934c110412bc4498b52900c..5527268151655b528180d35887cc6b88
  }
  
  // Whether this buffer exists only as the bytes of an R8 image. The native test above only checks
-@@ -651,6 +661,8 @@ static uint32_t virgl_packed_yuv_flags(struct driver *drv, uint32_t drm_format,
+@@ -653,6 +663,8 @@ static uint32_t virgl_packed_yuv_flags(struct driver *drv, uint32_t drm_format,
  		layout = VIRGL_RESOURCE_FLAG_YUV_TRIPLANAR;
  		break;
  	default:
@@ -113,7 +113,7 @@ index cf4a800f992cf4a3f934c110412bc4498b52900c..5527268151655b528180d35887cc6b88
  		return 0;
  	}
  
-@@ -889,7 +901,8 @@ static int virgl_init(struct driver *drv)
+@@ -891,7 +903,8 @@ static int virgl_init(struct driver *drv)
  	 * when not natively supported and instead handled by HWComposer. */
  	virgl_add_combination(drv, DRM_FORMAT_P010, &LINEAR_METADATA,
  			      BO_USE_SCANOUT | BO_USE_TEXTURE | BO_USE_SW_MASK |

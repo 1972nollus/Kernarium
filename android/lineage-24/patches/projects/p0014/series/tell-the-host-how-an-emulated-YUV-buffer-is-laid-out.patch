@@ -84,10 +84,10 @@ index 4527ced258d7aa84cb9f29e1b4e06dd4cf840a3a..c515989b2b9ae47e1650658eee30b782
 +#define VIRGL_RESOURCE_YUV_WIDTH_SHIFT     16
  #endif
 diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
-index 5cf0c0606d5a05b01c17d272a12391d45e6809e0..cf4a800f992cf4a3f934c110412bc4498b52900c 100644
+index df3b50217540c8aaf9281a6cac37e35531c058f5..f799aabcf78a4b5daa4c6ef72f0a3b615db4f48f 100644
 --- a/virtgpu_virgl.c
 +++ b/virtgpu_virgl.c
-@@ -626,6 +626,37 @@ static bool virgl_rows_are_padded(const struct bo *bo)
+@@ -628,6 +628,37 @@ static bool virgl_rows_are_padded(const struct bo *bo)
  	       bo->meta.strides[0] != drv_stride_from_format(bo->meta.format, bo->meta.width, 0);
  }
  
@@ -125,7 +125,7 @@ index 5cf0c0606d5a05b01c17d272a12391d45e6809e0..cf4a800f992cf4a3f934c110412bc449
  static int virgl_3d_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint32_t format,
  			      uint64_t use_flags)
  {
-@@ -643,6 +674,8 @@ static int virgl_3d_bo_create(struct bo *bo, uint32_t width, uint32_t height, ui
+@@ -645,6 +676,8 @@ static int virgl_3d_bo_create(struct bo *bo, uint32_t width, uint32_t height, ui
  
  		virgl_get_emulated_metadata(bo, &emulated_metadata);
  
