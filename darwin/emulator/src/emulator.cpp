@@ -117,6 +117,29 @@ private:
 };
 
 #if UML_EMULATOR_TESTING
+/* The region a test declares to be a linked kernel (src/testing.hpp). */
+std::atomic<const std::byte *> test_linked_kernel_begin;
+std::atomic<std::size_t> test_linked_kernel_size;
+#endif
+
+/* Whether `image` is a kernel image the process links into itself
+ * (runtime/kernel_signal_scope.hpp): the one kernel image a handle keeps a
+ * pointer to instead of a copy, since no caller can free it and a copy would
+ * be dirty memory for the handle's life. Any other buffer is the caller's. */
+[[nodiscard]] bool is_linked_kernel(std::span<const std::byte> image) noexcept
+{
+#if UML_EMULATOR_TESTING
+	if (const auto begin =
+		    test_linked_kernel_begin.load(std::memory_order_acquire);
+	    begin != nullptr && !image.empty() && image.data() == begin &&
+	    image.size() == test_linked_kernel_size.load(std::memory_order_relaxed))
+		return true;
+#endif
+	return ::uml::runtime::is_embedded_kernel_image(
+		image.data(), image.size());
+}
+
+#if UML_EMULATOR_TESTING
 constexpr char test_kernel_magic[] = "uml-test-kernel";
 
 [[nodiscard]] testing::KernelEntry test_kernel_entry(
@@ -265,6 +288,13 @@ void set_address_space_admission_hooks(
 		before_gate_release, std::memory_order_release);
 }
 
+void set_linked_kernel(const void *start, std::size_t size) noexcept
+{
+	test_linked_kernel_size.store(size, std::memory_order_relaxed);
+	test_linked_kernel_begin.store(static_cast<const std::byte *>(start),
+		std::memory_order_release);
+}
+
 void place_native_kernel_window(std::uintptr_t start) noexcept
 {
 	test_native_kernel_window_start.store(start, std::memory_order_release);
@@ -309,16 +339,27 @@ public:
 			const auto image = std::span{
 				static_cast<const std::byte *>(config.kernel_image),
 				config.kernel_image_size};
-			kernel_.assign(image.begin(), image.end());
+			if (is_linked_kernel(image)) {
+				/* The process's own kernel section is immutable and outlives
+				 * every handle, and a copy of it would be dirty memory for
+				 * the handle's life. Nothing a caller can free is borrowed. */
+				kernel_view_ = image;
+			} else {
+				kernel_.assign(image.begin(), image.end());
+				kernel_view_ = kernel_;
+			}
 		}
 	}
+
+	Emulator(const Emulator &) = delete;
+	Emulator &operator=(const Emulator &) = delete;
 
 	[[nodiscard]] int run(int argc, const char *const argv[],
 			      const char *const envp[])
 	{
 		if (argc < 0 || (argc != 0 && argv == nullptr))
 			return -UML_EMULATOR_INVALID_ARGUMENT;
-		if (kernel_.empty())
+		if (kernel_view_.empty())
 			return -UML_EMULATOR_UNSUPPORTED;
 		ProcessAddressSpaceAdmission process_admission;
 		::uml::runtime::RunScope run_scope{runtime_};
@@ -436,7 +477,8 @@ public:
 		 * has no end to record. */
 		std::optional<RunEndRecorder> run_end_recorder;
 #if UML_EMULATOR_TESTING
-		if (const auto entry = test_kernel_entry(kernel_); entry != nullptr) {
+		if (const auto entry = test_kernel_entry(kernel_view_);
+		    entry != nullptr) {
 			if (!prepared.informational)
 				run_end_recorder.emplace(*this);
 			/* The kernel's own process state is the run's to restore, as
@@ -449,8 +491,8 @@ public:
 #if UML_EMULATOR_HAS_KERNEL_RUNNER
 		if (!prepared.informational)
 			run_end_recorder.emplace(*this);
-		const auto result = uml_elf_run(kernel_.data(), kernel_.size(),
-			native_layout.load_bias,
+		const auto result = uml_elf_run(kernel_view_.data(),
+			kernel_view_.size(), native_layout.load_bias,
 			native_layout.reserved ? native_layout.window_start : 0U,
 			native_layout.reserved ? native_layout.window_end : 0U,
 			static_cast<int>(arguments.size()), argument_pointers.data(),
@@ -463,7 +505,7 @@ public:
 
 	[[nodiscard]] bool has_embedded_kernel() const noexcept
 	{
-		return !kernel_.empty();
+		return !kernel_view_.empty();
 	}
 
 	void request_stop() noexcept
@@ -560,6 +602,12 @@ public:
 	}
 
 #if UML_EMULATOR_TESTING
+	/* Whether the handle runs the linked kernel section and holds no copy. */
+	[[nodiscard]] bool kernel_image_borrowed() const noexcept
+	{
+		return kernel_.empty() && !kernel_view_.empty();
+	}
+
 	void use_hibernation(
 		std::unique_ptr<::uml::runtime::HibernationSteps> steps,
 		::uml::runtime::GuestHibernation::FailureHandler on_failure)
@@ -777,7 +825,10 @@ private:
 	}
 
 	std::string rootfs_;
+	/* The handle's own copy of the kernel image; empty when it borrows. */
 	std::vector<std::byte> kernel_;
+	/* The image the handle runs: `kernel_`, or the linked kernel section. */
+	std::span<const std::byte> kernel_view_;
 	::uml::runtime::Context runtime_;
 	uml::network::Provider network_;
 	uml::network::ProviderContext network_context_;
@@ -825,6 +876,11 @@ void use_hibernation(uml_emulator *emulator,
 	void (*on_failure)() noexcept)
 {
 	emulator->implementation.use_hibernation(std::move(steps), on_failure);
+}
+
+bool kernel_image_borrowed(const uml_emulator *emulator) noexcept
+{
+	return emulator->implementation.kernel_image_borrowed();
 }
 
 } // namespace uml::emulator::testing

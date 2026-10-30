@@ -10,6 +10,10 @@ Edit this canonical header, then use `sync-protocol.py --kernel-source PATH` to 
 the copy under `include/uapi/linux/` in each patch-producing kernel checkout.
 Amend the owning video topic and regenerate each line's series. Ordinary checks
 use `sync-protocol.py --kernel-source PATH --verify`. Never edit generated patch output.
+A change to the driver runs `guest-v4l2-decode`, `guest-v4l2-encode` and
+`guest-video-teardown` before a kernel release: the probes cover the queueing
+paths and the teardown test the removal of a device with files open, which
+reaches the same commands after the queues are gone.
 
 The protocol supports guest-page resources, separate command and event queues,
 H.264/HEVC/JPEG/VP9 coded input, and NV12/YUV420/P010 or packed BGRA8888 output.
