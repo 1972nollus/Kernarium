@@ -22,6 +22,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <new>
 #include <type_traits>
@@ -421,5 +422,99 @@ public:
 private:
 	ScratchArena *arena_;
 };
+
+/*
+ * One heap that many owners share and that goes back when the last of them
+ * ends. The gadget caches' record tables are such owners: an address space
+ * has sixteen of them and a boot has hundreds of address spaces, so a heap
+ * each would keep a first chunk each. Allocation there is rare, a chunk per
+ * doubling and an index per growth, so the heap's lock is not contended.
+ *
+ * Every owner holds a HeapLease for as long as it holds a block of the heap.
+ * Counting a lease and releasing the heap are one critical section: a lease
+ * taken while the last one ends either comes first and keeps the heap, or
+ * comes after the release and allocates from the heap as new.
+ */
+class LeasedHeap final {
+public:
+	/* The heap the engine's gadget caches share. */
+	[[nodiscard]] static LeasedHeap &engine() noexcept;
+
+	[[nodiscard]] DomainHeap &heap() noexcept { return heap_; }
+
+	void acquire() noexcept
+	{
+		os_unfair_lock_lock(&lock_);
+		++leases_;
+		os_unfair_lock_unlock(&lock_);
+	}
+
+	void drop() noexcept
+	{
+		os_unfair_lock_lock(&lock_);
+		if (--leases_ == 0)
+			heap_.release();
+		os_unfair_lock_unlock(&lock_);
+	}
+
+	/* Leases held now. */
+	[[nodiscard]] std::size_t leases() const noexcept
+	{
+		os_unfair_lock_lock(&lock_);
+		const auto count = leases_;
+		os_unfair_lock_unlock(&lock_);
+		return count;
+	}
+
+private:
+	DomainHeap heap_;
+	mutable os_unfair_lock lock_ = OS_UNFAIR_LOCK_INIT;
+	std::size_t leases_{};
+};
+
+/* A hold on the engine's leased heap; a copy holds one of its own. */
+class HeapLease final {
+public:
+	HeapLease() noexcept { LeasedHeap::engine().acquire(); }
+	HeapLease(const HeapLease &) noexcept : HeapLease{} {}
+	HeapLease &operator=(const HeapLease &) noexcept { return *this; }
+	~HeapLease() { LeasedHeap::engine().drop(); }
+
+	[[nodiscard]] static DomainHeap &heap() noexcept
+	{
+		return LeasedHeap::engine().heap();
+	}
+};
+
+/* An array of trivial elements from the leased heap. Its owner holds a
+ * HeapLease that outlives it. */
+template <typename T>
+struct LeasedArrayDelete final {
+	std::size_t count{};
+	void operator()(T *pointer) const noexcept
+	{
+		HeapLease::heap().deallocate(
+			pointer, count * sizeof(T), alignof(T));
+	}
+};
+
+template <typename T>
+using LeasedArray = std::unique_ptr<T[], LeasedArrayDelete<T>>;
+
+/* Zero-filled when `zero`, as make_unique<T[]> is, and left as it was
+ * otherwise, as make_unique_for_overwrite leaves it. Throws std::bad_alloc. */
+template <typename T>
+[[nodiscard]] LeasedArray<T> make_leased_array(std::size_t count, bool zero)
+{
+	static_assert(std::is_trivially_default_constructible_v<T> &&
+		std::is_trivially_destructible_v<T>);
+	if (count > static_cast<std::size_t>(-1) / sizeof(T))
+		throw std::bad_alloc{};
+	void *raw = HeapLease::heap().allocate(count * sizeof(T), alignof(T));
+	if (zero)
+		std::memset(raw, 0, count * sizeof(T));
+	return LeasedArray<T>{
+		static_cast<T *>(raw), LeasedArrayDelete<T>{count}};
+}
 
 } // namespace uml::memory

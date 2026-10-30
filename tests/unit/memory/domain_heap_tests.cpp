@@ -428,6 +428,78 @@ void an_allocator_follows_its_container_and_falls_back_without_a_heap()
 	require(committed() == baseline);
 }
 
+void a_leased_heap_goes_back_with_its_last_lease()
+{
+	auto &leased = uml::memory::LeasedHeap::engine();
+	const auto before = committed();
+	require(leased.leases() == 0);
+	{
+		uml::memory::HeapLease first;
+		void *block = first.heap().allocate(100, 16);
+		stamp(block, 100);
+		require(committed() > before);
+		{
+			/* A copy holds a lease of its own. */
+			const uml::memory::HeapLease second{first};
+			require(leased.leases() == 2);
+		}
+		require(leased.leases() == 1 && stamped(block, 100),
+			"a lease that ended took the heap from the one that is left");
+		first.heap().deallocate(block, 100, 16);
+	}
+	require(leased.leases() == 0);
+	require(committed() == before, "the last lease left the heap committed");
+
+	/* Zeroed, and the size it was made with frees it. */
+	{
+		const uml::memory::HeapLease lease;
+		auto numbers = uml::memory::make_leased_array<std::uint32_t>(
+			100'000, true);
+		for (std::size_t index = 0; index < 100'000; ++index)
+			require(numbers[index] == 0);
+		numbers[99'999] = 7;
+		auto overwritten =
+			uml::memory::make_leased_array<std::uint32_t>(10, false);
+		overwritten[9] = 1;
+	}
+	require(committed() == before);
+}
+
+/* Taking a lease as the last one ends is safe: the count and the release are
+ * one critical section, so a block a new holder allocates is never released
+ * from under it. Each holder writes its block and reads it back across a
+ * yield, over many generations of the heap. */
+void leases_taken_as_the_last_ends_keep_their_blocks()
+{
+	constexpr unsigned threads = 3;
+	constexpr int rounds = 300'000;
+	std::atomic_bool failed{};
+	Gate start{threads};
+	std::vector<std::thread> workers;
+	for (unsigned worker = 0; worker < threads; ++worker)
+		workers.emplace_back([&, worker] {
+			start.arrive_and_wait();
+			for (int round = 0; round < rounds; ++round) {
+				const uml::memory::HeapLease lease;
+				auto *block = static_cast<unsigned char *>(
+					lease.heap().allocate(64, 16));
+				for (unsigned index = 0; index < 64; ++index)
+					block[index] = static_cast<unsigned char>(
+						worker + index);
+				std::this_thread::yield();
+				for (unsigned index = 0; index < 64; ++index)
+					if (block[index] !=
+					    static_cast<unsigned char>(worker + index))
+						failed.store(true);
+				lease.heap().deallocate(block, 64, 16);
+			}
+		});
+	for (auto &worker : workers)
+		worker.join();
+	require(!failed.load(), "a block changed under its holder");
+	require(uml::memory::LeasedHeap::engine().leases() == 0);
+}
+
 void heaps_are_counted_while_they_live()
 {
 	const auto before = DomainHeap::live_heaps();
@@ -466,6 +538,10 @@ int main()
 			scratch_containers_never_free_and_reset_together},
 		{"an allocator follows its container and falls back without a heap",
 			an_allocator_follows_its_container_and_falls_back_without_a_heap},
+		{"a leased heap goes back with its last lease",
+			a_leased_heap_goes_back_with_its_last_lease},
+		{"leases taken as the last ends keep their blocks",
+			leases_taken_as_the_last_ends_keep_their_blocks},
 		{"heaps are counted while they live",
 			heaps_are_counted_while_they_live},
 	};

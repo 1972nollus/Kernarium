@@ -280,6 +280,12 @@ void DomainHeap::release() noexcept
 	}
 }
 
+LeasedHeap &LeasedHeap::engine() noexcept
+{
+	[[clang::no_destroy]] static LeasedHeap heap;
+	return heap;
+}
+
 void *ScratchArena::map(std::size_t bytes)
 {
 	void *memory = HeapRegion::instance().take(bytes, vm_tag);
