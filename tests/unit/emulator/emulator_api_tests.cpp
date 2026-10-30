@@ -52,6 +52,7 @@ static_assert(!HasStopCallback<uml::network::Provider>);
 bool kernel_arguments_valid;
 bool execution_option_was_stripped;
 bool kernel_inputs_were_mutable;
+unsigned long kernel_top_byte_ignore;
 #if UML_EMULATOR_TEST_HAS_SLIRP
 bool network_kernel_ran;
 bool ip_argument_present;
@@ -211,6 +212,7 @@ int run_kernel(int argc, char *const argv[], char *const envp[])
 		darwin_uml_net_irq_fd() == 42 &&
 		darwin_uml_net_read(nullptr, 0) == 0 &&
 		darwin_uml_net_write(frame, sizeof(frame)) == 0;
+	kernel_top_byte_ignore = darwin_uml_guest_top_byte_ignore();
 	argv[0][0] = 'U';
 	envp[0][0] = 'u';
 	kernel_inputs_were_mutable = argv[0][0] == 'U' && envp[0][0] == 'u';
@@ -352,6 +354,8 @@ void test_run_boundary()
 			::uml::platform::apple::probed_host_capabilities(),
 			std::min(arm64::gadgets::sme_support,
 				arm64::jit::sme_support)));
+	require(darwin_uml_guest_top_byte_ignore() == 0,
+		"top-byte-ignore was reported outside a run");
 	require(darwin_uml_guest_hwcap() == expected[0],
 		"guest HWCAP does not match the host-safe virtual CPU");
 	require(darwin_uml_guest_hwcap2() == expected[1],
@@ -421,6 +425,18 @@ void test_run_boundary()
 		"kernel arguments or network callbacks were invalid");
 	require(network_state.writes == 1,
 		"network callback was not invoked exactly once");
+	require(kernel_top_byte_ignore == 0,
+		"a run without --guest-top-byte-ignore reported it");
+	/* The kernel decides at boot whether to offer the tagged-address ABI
+	 * from the flag, which is the run's own and is consumed before the
+	 * kernel sees its arguments. */
+	const char *tbi_arguments[]{
+		"uml-test", "--execution-engine=gadgets", "--guest-top-byte-ignore"};
+	require(uml_emulator_run(
+			emulator.get(), 3, tbi_arguments, environment) == 73,
+		"a top-byte-ignore run did not enter the kernel");
+	require(kernel_top_byte_ignore == 1,
+		"--guest-top-byte-ignore did not reach the kernel's query");
 	/* The gadget run's deliberately different JIT budget/CPU pair must not
 	 * freeze process-global JIT geometry. A later default JIT run publishes
 	 * its own pair and enters normally.
@@ -430,8 +446,9 @@ void test_run_boundary()
 	require(uml_emulator_run(
 			emulator.get(), 2, jit_arguments, environment) == 73,
 		"a gadget-only configuration froze later JIT geometry");
-	require(network_state.writes == 2,
-		"the sequential JIT run did not enter the kernel");
+	require(network_state.writes == 3 && kernel_top_byte_ignore == 0,
+		"the sequential JIT run did not enter the kernel, or kept "
+		"the previous run's top-byte-ignore");
 
 	const char *invalid_arguments[]{
 		"uml-test", "--execution-engine=invalid"};

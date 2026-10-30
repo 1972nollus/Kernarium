@@ -159,7 +159,7 @@ index 5abd0dfd66c7f1da714c1895760ada28ac1b2a74..5a0c3b28f9cfef9e38a5014c87efde6f
  void mconsole_stop(struct mc_request *req)
  {
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
-index aa401501c034272cf9e4f2391b4921f3f00ded4f..a833287d72c20a02e51ff4e96f593051a8b23324 100644
+index 57420503f97bf7e44596591f6fad1f4e21c1766b..738bb8a006bef0a46796d020c7b8a62635461dca 100644
 --- a/arch/um/include/shared/kern_util.h
 +++ b/arch/um/include/shared/kern_util.h
 @@ -85,6 +85,7 @@ extern void fatal_sigsegv(void) __attribute__ ((noreturn));

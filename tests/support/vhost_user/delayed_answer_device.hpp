@@ -33,6 +33,11 @@ namespace uml::testing {
  * once, a duration delays it, and `never` holds it until the device is reset.
  * A request the device itself defers is never held back. The log, when given,
  * hears of every answer held, delivered late, or dropped.
+ *
+ * An answerer, when given, sees each request first and may answer it in the
+ * device's place: the wrapped device then never hears of the request, and the
+ * answer goes back at once. That reaches the driver's paths for an answer the
+ * device would give only when its own work fails.
  */
 class DelayedAnswerDevice final : public uml::virtio::VhostUserDevice {
 public:
@@ -41,9 +46,11 @@ public:
     using Policy = std::function<std::optional<std::chrono::milliseconds>(
         std::uint32_t queue, std::span<const std::uint8_t> request)>;
     using Log = std::function<void(std::string_view)>;
+    using Answerer = std::function<std::optional<std::vector<std::uint8_t>>(
+        std::uint32_t queue, std::span<const std::uint8_t> request)>;
 
     DelayedAnswerDevice(std::unique_ptr<uml::virtio::VhostUserDevice> device,
-                        Policy policy, Log log = {});
+                        Policy policy, Log log = {}, Answerer answerer = {});
     ~DelayedAnswerDevice() override;
 
     DelayedAnswerDevice(const DelayedAnswerDevice&) = delete;
@@ -99,6 +106,7 @@ private:
     std::unique_ptr<uml::virtio::VhostUserDevice> device_;
     Policy policy_;
     Log log_;
+    Answerer answerer_;
     std::mutex mutex_;
     std::condition_variable changed_;
     std::deque<Held> held_;

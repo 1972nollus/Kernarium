@@ -304,10 +304,10 @@ index 37b35d3387afddc48ea6cff26976240f172d47ea..17fad5fcd1bfb4915127b2b30b9d965b
  				 * whole span on every covering walk.  Nothing
  				 * frees a vmalloc page table, so no init_mm
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 3267358aad21eb46cb76cc8375280bac948f0bc9..67bb5bc16c01d7a95ca2b3aa82d21b3b0b4f5e9d 100644
+index 683efe9f4e585258d8223a1459f68e294c9ed4bd..d8a452c5b234ad31f5712d3737201144293c6156 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
-@@ -363,12 +363,10 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -368,12 +368,10 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  		 * Kernel has pending updates from set_ptes that were not
  		 * flushed yet. Force the exact faulting Linux page into this
  		 * snapshot even when an interrupted outer walker already cleared

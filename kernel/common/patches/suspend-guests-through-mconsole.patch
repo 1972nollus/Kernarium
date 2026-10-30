@@ -138,7 +138,7 @@ index a04cd13c6315a2af5f28ad83724d63004e322335..19b89ceb4d6260b25d5806795d9fc4a1
  	{ "proc", mconsole_proc, MCONSOLE_PROC },
  	{ "stack", mconsole_stack, MCONSOLE_INTR },
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
-index 960950e4030b167de0f480ac09b5d74b5e2662e1..d36d5b8f77bdc4cc689ee4da965eab07f613ea87 100644
+index 480eda72a4869435404ccfeea1b97fdce330b298..260f69b22aa5cc7a5633bf1975299e73a35020b3 100644
 --- a/arch/um/include/shared/kern_util.h
 +++ b/arch/um/include/shared/kern_util.h
 @@ -72,6 +72,7 @@ extern void winch(int sig, struct siginfo *unused_si, struct uml_pt_regs *regs,

@@ -4,6 +4,7 @@
 The device owns command validation, stream state, guest buffer mappings, and
 completion events. It reuses the common vhost-user transport; decoding belongs
 to `UML::VideoDecoder` in the platform layer. No GPU context is required.
+Encoding is a separate device, ID 30, described [below](#encoder-device-id-30).
 
 macOS enables the service with `--video`. Kernarium supplies it to each supported
 kernel profile when hardware decoding is available.
@@ -11,7 +12,9 @@ The shared mainline and Android driver creates `/dev/video0`;
 the Steam image provides the `/dev/video-dec0` udev alias used by CEF.
 
 The Apple backend requires VideoToolbox hardware decoding. Its capabilities are
-H.264 Baseline, Constrained Baseline, Main, and High; HEVC Main and Main10; and
+H.264 Baseline, Constrained Baseline, Main, High and Constrained High (High
+with the constraint flags set, a subset it decodes by construction, listed as
+a profile of its own as Constrained Baseline is); HEVC Main and Main10; and
 baseline JPEG, subject to host availability.
 H.264 High10 is conditional on the iOS profile probe and is excluded on macOS.
 VP9 Profile 0 is added where VideoToolbox offers it as a supplemental decoder,
@@ -20,7 +23,7 @@ driver already name VP9, so this needs no kernel or protocol change. The device
 still drops a platform capability the protocol cannot name rather than
 publishing an unnamed format on the queue.
 Decoded surfaces are copied into guest NV12, planar YUV420, P010, or packed
-BGRA buffers. This path does not implement encoding.
+BGRA buffers. The decoder does not encode.
 
 Packed BGRA is a single plane of 8-bit B, G, R, A samples, `width * 4` bytes per
 row and opaque alpha, reached over the wire as `VIRTIO_VIDEO_FORMAT_BGRA8888`
@@ -65,6 +68,88 @@ completes with an error rather than reaching memory the guest no longer has.
 The guest chooses the plane layout it negotiated: planes packed into one
 dma-buf follow one another at their negotiated sizes.
 
+### Decoder behavior
+
+**Display order.** VideoToolbox returns each picture as it decodes it, and a
+V4L2 client cannot reorder them: it has a buffer sequence, not a presentation
+time. The H.264 and HEVC decoders therefore derive the output order from the
+stream (`apple/h264_stream.cpp`, `apple/hevc_stream.cpp`). Each decodes one
+picture at a time, computes its picture order count, and holds a picture in the
+decoded picture buffer's bumping process: HEVC (C.5.2) until more pictures wait
+than `sps_max_num_reorder_pics` allows or one has waited longer than
+`sps_max_latency_increase_plus1` allows; H.264 (C.4.5.3) until more frames wait
+than `max_num_reorder_frames` allows or the buffer of `max_dec_frame_buffering`
+frames has no room. A stream that states neither gets the level's frame count,
+and zero for Baseline, picture order count type 2 and the intra profiles with
+`constraint_set3`. H.264 order counts of types 0 to 2, `memory_management`
+operations 1 to 6, the sliding window and `frame_num` gaps are modelled, and an
+IDR picture or operation 5 sends everything before it out first (the device
+ignores `no_output_of_prior_pics_flag`, because a frame the decoder has is a
+frame the client is owed). A coded video sequence boundary, an end of sequence
+or bitstream unit, and a drain release every waiting picture in order. A RASL
+picture whose CRA or BLA the decode begins at, or follows an end of sequence, is
+skipped: its references are missing and VideoToolbox answers it with a bad-data
+error. A picture with `pic_output_flag` 0 is decoded and not shown. Timestamps
+stay with their pictures. H.264 field pictures (`field_pic_flag` 1) are not
+modelled: each leaves at once after everything waiting, in decode order, which
+is a continuing limitation for interlaced field-coded streams. VP9 and JPEG
+pictures are returned as decoded, which is their display order.
+
+**Seek.** `QUEUE_CLEAR` on the coded queue drops every picture in flight, every
+reference and the picture order state, and keeps the stream's parameter sets
+and the capture format the client settled on, because a client that seeks
+resends neither. The next picture must start at a random access point. A size
+the client already has is not announced again.
+
+**Raw formats.** A 10-bit stream is offered NV12 and YUV420 as well as P010 and
+packed BGRA; the decoder rounds each sample to 8 bits as it copies the picture
+out. VideoToolbox's own 8-bit output for a 10-bit stream is not used: it moves
+the chroma by about a fifth. P010 is refused for a stream with 8-bit samples.
+A stream that states full range in its VUI (or a VP9 header) is decoded to the
+full-range pixel format, so no sample is squeezed into 16 to 235, and the frame
+says so for the conversion to packed BGRA.
+
+**Cropping.** The size a client is told is the stream's conformance window
+(HEVC) or frame cropping rectangle (H.264), not its coded size. VideoToolbox
+honors only the right and bottom offsets and returns the coded picture's
+top-left corner otherwise, so the decoder describes the stream with the window
+removed from the SPS and crops the copy at the window's own origin. The result
+is byte for byte what a software decoder shows (`platform-video-decoder` checks
+both codecs).
+
+**Resolution change.** When the first picture of a new size is decoded, the
+device first delivers every picture of the old size, including the ones held
+back for display order, into the capture buffers set up for it. It then
+completes one more capture buffer, empty and with `VIRTIO_VIDEO_DEQUEUE_FLAG_EOS`,
+which the guest driver reports as the V4L2 LAST buffer, and only then posts
+`VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED`, with the new size answering
+`GET_PARAMS` on the capture queue. No picture of the new size is written into
+buffers the client still holds: delivery resumes after it sets the new size on
+the capture queue, clears it or detaches its resources, which is what a V4L2
+client does when it handles the source change. The coded buffer whose packet
+carries the new size is held as well, queued and not returned, until the client
+does that, or clears the coded queue, or drains. A client that stops the decoder
+as soon as every coded buffer is back (as v4l2_codec2 does) therefore cannot end
+the drain before the marker and the event. The first size of a stream is
+announced as the event alone, from the packet's headers, before any picture
+exists, with no end marker and no hold.
+
+**Limits.** The device lists the levels of a coded format from the lowest up
+to the highest `maximumLevel` of the format's capabilities, and reports that
+level as the current one; the guest's level menu is exactly that range. HEVC
+comes out as levels 1 to 6.2 with no tier, because the wire has none, so a High
+tier stream is accepted wherever the hardware decodes it. `platform-video-decoder`
+decodes a High tier 4096 x 2160 (level 5.2) and 8192 x 4320 (level 6.2)
+picture whenever the capability list covers that size, so a host whose hardware
+does less fails the test, not a guest. H.264 comes out as levels 1.0 to 5.2:
+the hardware decodes the 4096 x 2304 frame level 5.2 allows (the same
+decoder takes it whatever level the stream states) and refuses to open the
+8192 x 4320 frame a level 6 stream may carry, so the wire names 6.0 to 6.2 and
+no host lists them. The test decodes a level 5.2 picture and fails if a
+capability states a level above 5.2, so a higher claim needs a fixture first.
+H.264 High10 keeps level 5.1: macOS does not offer it, and no host that does is
+verified at 5.2.
+
 Input uses complete Annex B H.264/HEVC access units, complete JPEG frames, or
 complete VP9 frames.
 Streams retain timestamps, signal format changes, drain delayed output, and
@@ -83,6 +168,212 @@ stderr shares the guest console. Unset, the device opens and writes nothing.
 `virtio-video-protocol` exercises buffer layouts across 4 KiB and 16 KiB
 memory boundaries, stream lifecycle, EOS, and event backpressure with a synthetic
 decoder. `platform-video-decoder` decodes the checked-in generated fixtures on
-Apple hardware. Both are included in the `check-gpu` workflow. The optional `guest-v4l2-decode` CTest runs the actual V4L2 driver
+Apple hardware. `virtio-video-encoder-protocol` drives the encoder device over
+both queues in front of the synthetic encoder in `tests/support/video`, and then
+on the host's own hardware encoder: NV12, packed BGRA and RGBA, and HEVC Main 10
+from P010 with HDR10 metadata, read back as coded bytes. `video-encoder-capabilities`
+checks the capability responses, control tables and control-to-settings mapping
+without a device, and that the wire lists exactly what this host's discovery
+found. A host without a feature skips that case and must not list it. The two
+encoder tests share the `video-encoder-hardware` resource lock with the platform
+encoder tests. All four are included in the `check-gpu` workflow. The optional `guest-v4l2-decode` CTest runs the actual V4L2 driver
 against every advertised codec profile and verifies pixels and clean shutdown.
 See [testing](../../../docs/testing.md) for the guest probe input.
+
+## Encoder (device ID 30)
+
+The encoder is a second Virtio device instance with the standard encoder ID,
+beside the decoder's 31. It has its own vhost-user service, so the asynchronous
+encoder callbacks and queues stay apart from the synchronous decoder, a guest
+kernel without the encoder never binds it, and a host without a hardware
+encoder never creates it. The [wire contract](../../../kernel/common/video/README.md#encoder-device-id-30)
+and the platform interface (`darwin/platform/video_encoder.hpp`) are its
+contract; the device depends only on that interface, the memory layer and the
+device contracts, and never on VideoToolbox.
+
+macOS enables the encoder with `--video-encoder`; `--video` stays decoder-only,
+so a qualification can turn either side off. The Android launcher passes both.
+Kernarium creates the encoder service beside the decoder's whenever the platform
+reports a hardware encoder. On macOS an explicit `--video-encoder` on a host
+without one fails to start rather than advertise a device its guest could not
+use.
+
+A guest reaches the encoder as a stateful V4L2 encoder (`stateful-encoder`
+video node). Raw frames are copied once, from guest pages or from a host-visible
+blob, into a buffer the platform encoder owns, and the guest's input buffer
+completes as soon as that copy is done. Coded buffers are Annex B for H.264 and
+HEVC and a complete JFIF image for JPEG. Output order is decode order and each
+coded buffer carries its source frame's timestamp.
+
+Discovery is the platform's, and it publishes only what an encode on this host
+proved: a profile, input layout, size or rate-control mode that did not encode
+is absent. The guest therefore learns the host's capability from which formats,
+controls and menu items exist, and a control that is not published is
+unsupported, which is the truthful answer.
+
+### Encoder behavior
+
+`UML::VideoDevice` implements the device in `virtio_video_encoder_device.cpp`,
+with the capability and control tables as pure functions of the platform's
+capabilities in `encoder_capabilities.cpp` and `encoder_controls.cpp`. The device
+guarantees:
+
+- **Session.** The platform session is created at a stream's first raw frame,
+  from the controls and formats the guest settled by then, so the guest may set
+  them in any order before it. From then on a control that is not dynamic, and
+  the raw or coded format, answer `ERR_BUSY`. A set of controls applies every
+  value or none. `QUEUE_CLEAR` on either queue ends the session and returns the
+  buffers that queue held with an error; the next frame configures a new
+  session and starts at a key frame.
+- **Layout.** The device decides each raw plane's size and stride (tight, with
+  odd chroma rounded up) and reports them in `GET_PARAMS`; a buffer smaller than
+  that is refused at attach. A crop is rounded inside the frame to the
+  platform's alignment, and the coded size is the crop's. Planar 8-bit formats
+  take a buffer per plane or one buffer, as the guest negotiated.
+- **Buffers.** A raw buffer completes once the host has copied it into a frame
+  the platform provided, before the frame is encoded. When the platform has no
+  free frame the device holds the raw buffers, so the guest sees them not come
+  back; when the platform reports none in flight and still offers no frame, the
+  stream fails. At most eight coded frames wait in the device for coded buffers,
+  and the rest stay in the platform until buffers arrive.
+- **Output.** Coded buffers complete in decode order with their source frame's
+  timestamp and `KEY_FRAME`, `PFRAME` or `BFRAME`. A frame larger than its
+  buffer completes with `ERR` and the next frame submitted is a key frame; a
+  frame the platform failed completes with `ERR` and its timestamp.
+- **Parameter sets.** With `PREPEND_SPSPPS_TO_IDR` on, every key frame carries
+  its parameter sets. With it off, the device removes them from key frames after
+  the first, and under `HEADER_MODE_SEPARATE` the platform's parameter sets
+  arrive in a buffer of their own flagged `CODEC_CONFIG`.
+- **Drain.** `STREAM_DRAIN` completes when the platform has returned every
+  frame submitted before it, and the next coded buffer completes empty with
+  `EOS`. A drain with nothing encoded completes at once, and encoding resumes on
+  the same session afterwards.
+- **Failure.** A session the platform refuses completes the stream's frames with
+  `ERR` and sends `VIRTIO_VIDEO_EVENT_ERROR`; the guest recovers with
+  `QUEUE_CLEAR`. Destroying a stream or resetting the device returns everything
+  still queued.
+- **Limits.** At most eight streams, or the platform's reported concurrent
+  session limit if lower. The configuration advertises 16 KiB for capability and
+  control-descriptor responses, and the device splits a control query at
+  `next_index` to fit the buffer the guest gave.
+
+With `UML_VIDEO_ACTIVITY_LOG` set the encoder appends lines marked `encoder`:
+what it advertised for each codec, each stream's open with its codec, the
+settings its session started with (profile, rate control, bitrate, size, frame
+rate, input layout, B-frames, layers and the platform's status), and the frame,
+key frame, byte and error totals when the stream closes. They are the evidence
+that the hardware encoded, since a guest that falls back to a software encoder
+looks the same from inside.
+
+### Encoder controls
+
+The host publishes the controls below through
+`VIRTIO_VIDEO_CMD_QUERY_V4L2_CONTROLS`, and the guest driver registers exactly
+what is published. IDs and menu indices are the Linux UAPI values in
+[`virtio_video_v4l2_ids.h`](../../../kernel/common/video/virtio_video_v4l2_ids.h),
+which `sync-protocol.py` checks against the kernel. Every control is grabbed
+while the stream encodes, and the driver returns `-EBUSY` for it, unless its
+"Dyn" column is yes. "VT" is VideoToolbox, and the VT column names the public
+`kVTCompressionPropertyKey_*` key with the prefix dropped, or the host
+behavior. Private VT keys are never used.
+
+Rate control and quality:
+
+| Control | Type | Range, menu and default | Dyn | Published when | VT |
+| --- | --- | --- | --- | --- | --- |
+| `MPEG_VIDEO_BITRATE_MODE` | menu | VBR, CBR, CQ; the skip mask removes unverified modes; default VBR | no | always | VBR: `AverageBitRate` and `DataRateLimits` from the peak. CBR: `ConstantBitRate` (the standard encoder only). CQ: `ConstantQualityFactor`, else `Quality` |
+| `MPEG_VIDEO_BITRATE` | int | 1000 to the codec maximum; default 2,000,000 | yes | always | `AverageBitRate` or `ConstantBitRate` |
+| `MPEG_VIDEO_BITRATE_PEAK` | int | 0 to the codec maximum; default 0 (none) | yes | VBR verified | `DataRateLimits`, one second |
+| `MPEG_VIDEO_CONSTANT_QUALITY` | int | 1 to 100; default 50 | yes | CQ verified | `ConstantQualityFactor`, else `Quality` = q/100 |
+| `MPEG_VIDEO_FRAME_RC_ENABLE` | bool | default 1 | no | constant QP verified | 0 selects constant QP from the `*_FRAME_QP` controls |
+| `MPEG_VIDEO_MB_RC_ENABLE` | bool | default 1 | no | always | accepted; the encoder's own spatial adaptation |
+| `MPEG_VIDEO_VBV_SIZE`, `MPEG_VIDEO_H264_CPB_SIZE` | int | 0 to 2^31-1 kB; default 0 (encoder default) | no | `VBVBufferDuration` verified | duration = size * 8192 / bitrate seconds |
+| `MPEG_VIDEO_H264_MIN_QP`, `_MAX_QP` | int | 0 to 51; defaults 0 and 51 | max only | H.264 | `MinAllowedFrameQP`, `MaxAllowedFrameQP`; the host refuses min above max |
+| `MPEG_VIDEO_HEVC_MIN_QP`, `_MAX_QP` | int | 0 to 51 (the 10-bit range only if verified); defaults 0 and 51 | max only | HEVC | as H.264 |
+| `MPEG_VIDEO_H264_I_FRAME_QP`, `_P_`, `_B_` | int | 0 to 51; default 26 | no | constant QP verified | the low-latency encoder: `BaseFrameQP` per frame; otherwise Min = Max QP |
+| `MPEG_VIDEO_HEVC_I_FRAME_QP`, `_P_`, `_B_` | int | as H.264 | no | as H.264 | as H.264 |
+| `JPEG_COMPRESSION_QUALITY` | int | 1 to 100; default 85 | yes | JPEG listed | `Quality` = q/100 |
+
+Structure and headers:
+
+| Control | Type | Range, menu and default | Dyn | Published when | VT |
+| --- | --- | --- | --- | --- | --- |
+| `MPEG_VIDEO_GOP_SIZE` | int | 0 to 2^31-1; default 0 (no periodic key frame) | no: VT ignores a change while streaming | always | `MaxKeyFrameInterval`; 0 means never |
+| `MPEG_VIDEO_B_FRAMES` | int | 0 to the longest run any codec has (3 on Apple hardware); default 0 | no | the codecs with a run | VT codes B-frames in one pattern whose run cannot be shortened, so the host codes the whole run or none: a value below a codec's run is no B-frames (`AllowFrameReordering` = NO, always set because VT defaults to YES), a value at or above it is the run (a codec with a shorter run codes its own). A value in between reads back as set and does nothing, which keeps the stream no more out of order than the guest allowed |
+| `MPEG_VIDEO_FORCE_KEY_FRAME` | button | | yes | always | `ForceKeyFrame` on the next submitted frame |
+| `MPEG_VIDEO_HEADER_MODE` | menu | SEPARATE, JOINED_WITH_1ST_FRAME; default JOINED | no | always | host Annex B assembly; SEPARATE produces a `CODEC_CONFIG` buffer first |
+| `MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR` | bool | default 1 | yes | always | the host inserts VPS, SPS and PPS before each IDR |
+| `MPEG_VIDEO_H264_ENTROPY_MODE` | menu | CAVLC, CABAC; default CABAC | no | H.264 | `H264EntropyMode`; CABAC is refused under Baseline |
+| `MPEG_VIDEO_H264_8X8_TRANSFORM` | bool | default 1 | no | H.264 High | accepted; the encoder decides |
+| `MPEG_VIDEO_H264_HIERARCHICAL_CODING` | bool | default 0 | no | low-latency H.264 verified | 1 selects the low-latency encoder |
+| `MPEG_VIDEO_H264_HIERARCHICAL_CODING_TYPE` | menu | P only | no | as above | |
+| `MPEG_VIDEO_H264_HIERARCHICAL_CODING_LAYER` | int | 1 to 2; default 1 | no | as above | 2: `BaseLayerFrameRateFraction` 0.5 |
+| `MPEG_VIDEO_H264_HIER_CODING_L0_BR`, `_L1_BR` | int | bits per second | no | as above | `BaseLayerBitRateFraction` = L0 / (L0 + L1) |
+| `MPEG_VIDEO_HEVC_HIER_CODING_TYPE`, `_LAYER`, `_L0_BR`, `_L1_BR` | as H.264 | as H.264 | no | low-latency HEVC verified | as H.264 |
+
+Profile, level and tier. The menu items are the UAPI indices, each published
+only when an encode with it wrote a matching SPS:
+
+| Control | Published menu items | VT |
+| --- | --- | --- |
+| `MPEG_VIDEO_H264_PROFILE` | BASELINE, CONSTRAINED_BASELINE, MAIN, HIGH, CONSTRAINED_HIGH; HIGH_422 and HIGH_444_PREDICTIVE once NV16 and NV24 input exist | `ProfileLevel` H264_`<profile>`_`<level>` |
+| `MPEG_VIDEO_H264_LEVEL` | 1.0 to 5.2; default 1.0 | The stream states the level asked for, or the lowest its size, frame rate and bit rate fit if that is higher, so the default 1.0 means "as low as it fits". VT names few levels and weighs no bit rate: a named level the stream fits is requested from it, and the platform raises a lower level in the SPS. 6.x is not published |
+| `MPEG_VIDEO_HEVC_PROFILE` | MAIN, MAIN_10, and MAIN_STILL_PICTURE when verified | `HEVC_Main_AutoLevel`, `HEVC_Main10_AutoLevel`, `HEVC_MainStill` |
+| `MPEG_VIDEO_HEVC_LEVEL` | 1 to the verified maximum (6.2 when 8192x4320 encodes); default 1 | As H.264: VT has AutoLevel only, and the platform rewrites the level in the VPS and SPS to the one asked for or the lowest the stream fits if higher |
+| `MPEG_VIDEO_HEVC_TIER` | MAIN | |
+
+HDR and colorimetry:
+
+| Control or field | Type | Published when | VT |
+| --- | --- | --- | --- |
+| `COLORIMETRY_HDR10_CLL_INFO` | compound, 4 bytes | HEVC Main10 verified | `ContentLightLevelInfo`, with the big-endian SEI payload built by the host |
+| `COLORIMETRY_HDR10_MASTERING_DISPLAY` | compound, 24 bytes | HEVC Main10 verified | `MasteringDisplayColorVolume` |
+| `SET_STREAM_INFO` colorspace | `v4l2_colorspace` | always | REC709: `ColorPrimaries_ITU_R_709_2`. SMPTE170M: `SMPTE_C`. 470_SYSTEM_BG: `EBU_3213`. BT2020: `ITU_R_2020`. DCI_P3: `P3_D65`. SRGB: 709 primaries. RAW: no primaries. DEFAULT leaves the standard unspecified |
+| `SET_STREAM_INFO` xfer_func | `v4l2_xfer_func`, with the kernel line's local `HLG` = 8 | always | 709: `ITU_R_709_2`. SRGB: `sRGB`. SMPTE2084: `SMPTE_ST_2084_PQ`. HLG: `ITU_R_2100_HLG`. NONE: `Linear` |
+| `SET_STREAM_INFO` ycbcr_enc | `v4l2_ycbcr_encoding` | always | 601: `ITU_R_601_4`. 709: `ITU_R_709_2`. BT2020: `ITU_R_2020` |
+| `SET_STREAM_INFO` quantization | `v4l2_quantization` | always | FULL_RANGE selects full-range YCbCr input (RGB input is converted by the platform, since VT converts RGB to video range only); LIM_RANGE selects video range |
+
+A standard in the colorspace implies the defaults of the fields beside it (a
+DEFAULT transfer function, matrix or range follows it, V4L2's `V4L2_MAP_*_DEFAULT`).
+The V4L2 core resets those fields to DEFAULT whenever the colorspace is
+DEFAULT, so a client that has a transfer function or a range but no standard
+sends `V4L2_COLORSPACE_RAW`, which states no primaries and derives nothing: a
+DEFAULT transfer function is then unspecified (NONE is linear), a DEFAULT
+matrix is unspecified, and a DEFAULT range is limited.
+
+The same values are attached to every pixel buffer and written into the coded
+stream's VUI. `GET_STREAM_INFO` on the coded queue returns what was written,
+which is what Android's color-aspects checks read back. `MIN_BUFFERS_FOR_OUTPUT`
+is read-only and 2, because the host copies each raw frame on arrival.
+
+Raw input formats (V4L2 OUTPUT) are NV12, YUV420 (`YU12`), P010 (HEVC Main10
+only), packed BGRA and RGBA for Android surface input (the platform converts;
+RGBA is the memory order R, G, B, A of Android's AB24 surfaces, wire format
+`RGBA8888`), and the encoder-only NV16 and NV24 for H.264 High 4:2:2 and High
+4:4:4 Predictive. A format is listed only when some profile of some codec
+encoded from it on this host. Packed and 10-bit formats are one buffer; the
+planar 8-bit formats are one buffer or one per plane. The coded formats are
+`H264`, `HEVC` and `JPEG`, each listed only when discovery found a hardware
+encoder for it. Odd visible sizes are rounded down to even by VideoToolbox, so
+the device reports an alignment of 2.
+
+Not published, because the host can neither honor nor emulate the control: the
+multi-slice controls (`MaxH264SliceBytes` fails on the hardware encoder and the
+slice count is a private key), intra refresh (no public key), the long-term
+reference controls (VideoToolbox's are token-acknowledged, not index-based),
+`MPEG_VIDEO_AVERAGE_QP` (VideoToolbox reports no per-frame QP), frame skip
+(VideoToolbox never skips), the HEVC length-field and refresh-type controls
+(the output is always Annex B and IDR), and B-frame hierarchical coding (the
+low-latency encoder has no B-frames).
+
+Host capabilities that no guest API can name are documented here and exposed
+nowhere:
+
+- ProRes 422, HQ, LT, Proxy, 4444 and 4444 XQ.
+- HEVC with alpha, depth and disparity HEVC, and MV-HEVC.
+- HEVC range extensions (Main 4:2:2 10, Main 4:4:4, Main 4:4:4 10, Monochrome
+  and Monochrome 10), because the V4L2 HEVC profile menu ends at Main 10.
+- VideoToolbox settings with no V4L2 control: presets, speed against quality,
+  spatial adaptive QP levels, the VBV initial delay and HDR10+ per-frame
+  metadata.
+- H.264 levels 6.0 to 6.2.

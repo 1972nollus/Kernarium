@@ -155,10 +155,8 @@ CONFIG_FUSE_PASSTHROUGH=y
 # CONFIG_HOSTFS is not set
 
 # --- Network filesystems ----------------------------------------------------
-CONFIG_NFS_FS=y
-CONFIG_NFS_V4=y
-CONFIG_NFS_V4_1=y
-CONFIG_NFS_V4_2=y
+# The NFS client is the Linux overlay's: the Android product forbids it
+# (config/android-forbidden-options.txt).
 CONFIG_CIFS=y
 CONFIG_CIFS_XATTR=y
 
@@ -219,11 +217,11 @@ CONFIG_HIGH_RES_TIMERS=y
 # stats while initializing buildkit.
 CONFIG_NAMESPACES=y
 CONFIG_USER_NS=y
-CONFIG_SYSVIPC=y
+# SysV IPC is the Linux overlay's: Android does not implement it.
 CONFIG_POSIX_MQUEUE=y
 CONFIG_WATCH_QUEUE=y
 CONFIG_TIME_NS=y
-CONFIG_POSIX_AUX_CLOCKS=y
+# Auxiliary POSIX clocks are the Linux overlay's: Android leaves them off.
 CONFIG_RTC_CLASS=y
 CONFIG_UML_RTC=y
 CONFIG_TASKSTATS=y
@@ -267,6 +265,9 @@ CONFIG_NET=y
 CONFIG_PACKET=y
 CONFIG_UNIX=y
 CONFIG_INET=y
+# IPv4 multicast (IGMP and /proc/net/igmp) is how mDNS, SSDP and other
+# discovery protocols find peers; Kconfig leaves it off.
+CONFIG_IP_MULTICAST=y
 CONFIG_IPV6=y
 CONFIG_SYN_COOKIES=y
 CONFIG_NETDEVICES=y
@@ -281,6 +282,10 @@ CONFIG_TUN=y
 # physical host hardware.
 CONFIG_VETH=y
 CONFIG_DUMMY=y
+# A second MAC address on one NIC. The Android guest puts its virtual Wi-Fi
+# interface on a macvlan child of its only NIC, so that the interface adb
+# uses keeps its own address; a container runtime can use it the same way.
+CONFIG_MACVLAN=y
 CONFIG_VSOCKETS=y
 CONFIG_VSOCKETS_LOOPBACK=y
 CONFIG_TLS=y
@@ -300,9 +305,12 @@ CONFIG_TCP_CONG_BBR=y
 CONFIG_WIREGUARD=y
 # Software XFRM policy/state management and its NETLINK_XFRM control plane.
 CONFIG_XFRM_USER=y
-CONFIG_IP_SCTP=y
-CONFIG_RDS=y
-CONFIG_RDS_TCP=y
+# SCTP is the Linux overlay's. RDS is absent from every product: with its TCP
+# transport the kernel opens a listener on [::]:16385 in every network
+# namespace for any local user to reach, and RDS has no use on a Virtio
+# network.
+# CONFIG_RDS is not set
+# CONFIG_RDS_TCP is not set
 CONFIG_DNS_RESOLVER=y
 # Socket-CAN is deliberately absent. There is no CAN hardware to model on an
 # Apple host, and a virtual-only bus is not part of this product's workloads.
@@ -347,12 +355,11 @@ CONFIG_IP_NF_IPTABLES_LEGACY=y
 CONFIG_IP_NF_FILTER=y
 CONFIG_IP_NF_TARGET_REJECT=y
 CONFIG_IP_NF_NAT=y
-# The IPv6 half of the same policy, so a dual-stack guest firewall and a
-# container runtime with IPv6 enabled behave like the IPv4 path.
+# The IPv6 half of the same policy, so a dual-stack guest firewall behaves like
+# the IPv4 path. IPv6 NAT is the Linux product's alone (see mainline.fragment).
 CONFIG_IP6_NF_IPTABLES=y
 CONFIG_IP6_NF_IPTABLES_LEGACY=y
 CONFIG_IP6_NF_FILTER=y
-CONFIG_IP6_NF_NAT=y
 CONFIG_BRIDGE=y
 CONFIG_BRIDGE_NETFILTER=y
 
@@ -396,6 +403,20 @@ CONFIG_USER_DECRYPTED_DATA=y
 CONFIG_SECURITY=y
 CONFIG_SECURITYFS=y
 CONFIG_SECURITY_LANDLOCK=y
+# Both overlays name safesetid in CONFIG_LSM, which skips a module that is not
+# built. It restricts setuid and setgid only for the IDs a policy written to
+# securityfs names; Android writes one for an application zygote's UID, and
+# without the module that write fails.
+CONFIG_SECURITY_SAFESETID=y
+
+# --- Kernel self-protection -------------------------------------------------
+# Debian and Android's GKI build the same two. A kernel stack overflow ends in
+# a panic that names the function, and a copy between kernel and user memory
+# is refused when it would cross the bounds of its slab object, page
+# allocation, stack or kernel text. Android's CTS requires both.
+CONFIG_STACKPROTECTOR=y
+CONFIG_STACKPROTECTOR_STRONG=y
+CONFIG_HARDENED_USERCOPY=y
 
 # --- Display and input ------------------------------------------------------
 # uinput and evdev are software-only interfaces: they let guest userspace

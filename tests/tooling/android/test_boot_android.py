@@ -50,6 +50,8 @@ class BootAndroidTests(unittest.TestCase):
         self.assertIn("--gpu-width=720", command)
         self.assertIn("--gpu-height=1280", command)
         self.assertIn("--execution-engine=gadgets", command)
+        self.assertIn("--video", command)
+        self.assertIn("--video-encoder", command)
         self.assertIn("ncpus=10", command)
         self.assertIn("mem=8G", command)
         self.assertIn("--android-boot-mode=normal", command)

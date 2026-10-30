@@ -90,7 +90,7 @@ index 6c022aa9698cec9b1ef5fe4f60e6a7a04c700274..2b1a007cd64b3197b25b8d994240e0bc
  extern int darwin_uml_vm_sync_from_buffer(unsigned long address,
  					  const void *buffer,
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index c46e90ea904736ff9527c98e06ff1bc5373b8a7c..8e1b2d593cb65acf7f5bee3ea6259751afa8791f 100644
+index 1c2a4d1fe496894487f6f0a34874a823d006bf9d..f52741ef46b8a45b2367f44e536fafbb036a8909 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -289,8 +289,6 @@ static struct page *maybe_map(unsigned long virt, int is_write)

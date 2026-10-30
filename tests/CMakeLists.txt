@@ -40,6 +40,7 @@ add_subdirectory(perf EXCLUDE_FROM_ALL)
 if(UML_BUILD_UNIT_TESTS OR UML_BUILD_INTEGRATION_TESTS)
     # Test-only device wrappers that unit and integration tests share.
     add_subdirectory(support/vhost_user)
+    add_subdirectory(support/video)
 endif()
 
 if(UML_BUILD_UNIT_TESTS)

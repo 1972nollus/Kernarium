@@ -15,4 +15,13 @@ namespace uml::video {
 makeInProcessService(
     std::shared_ptr<uml::virtio::SharedMemoryRegions> regions = {});
 
+/* The encoder service, device ID 30, one transport thread beside the
+ * decoder's. A host with no hardware encoder fails the service's start, so a
+ * caller that must not fail checks `videoEncodeCapabilities()` first.
+ * `regions` is as for the decoder: with it the encoder reads a raw frame that
+ * lives in the guest's host-visible region. */
+[[nodiscard]] std::unique_ptr<uml::gpu::InProcessVhostUserService>
+makeInProcessEncoderService(
+    std::shared_ptr<uml::virtio::SharedMemoryRegions> regions = {});
+
 } // namespace uml::video

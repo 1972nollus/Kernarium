@@ -23,6 +23,12 @@ unsigned long darwin_uml_guest_hwcap2(void);
  * exists. Fixed for the life of the process. */
 unsigned long darwin_uml_guest_compat_hwcap(void);
 unsigned long darwin_uml_guest_compat_hwcap2(void);
+/* Whether the run's engines ignore the top byte of a data address, as EL0
+ * does with TCR_EL1.TBI0, from bridge ABI 25: 1 when they do, 0 when they
+ * do not. Fixed for the life of the process. An arm64 kernel offers the
+ * tagged-address ABI (PR_SET_TAGGED_ADDR_CTRL) only while it is 1, because a
+ * tagged pointer faults on a host that keeps the tag. */
+unsigned long darwin_uml_guest_top_byte_ignore(void);
 /* The streaming vector length in bytes when the virtual CPU implements SME
  * for this run, else 0. Fixed for the life of the process. */
 unsigned long darwin_uml_guest_sme_vector_length(void);

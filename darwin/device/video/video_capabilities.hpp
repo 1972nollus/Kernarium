@@ -13,4 +13,8 @@ std::vector<std::uint8_t> capabilityResponse(
     std::span<const uml::platform::VideoDecodeCapability> capabilities, std::uint32_t queue);
 std::vector<std::uint32_t> profileValues(
     std::span<const uml::platform::VideoDecodeCapability> capabilities, std::uint32_t format);
+// The levels of a coded format, in ascending order, from the lowest up to the
+// highest the capabilities for that format state as their maximumLevel.
+std::vector<std::uint32_t> levelValues(
+    std::span<const uml::platform::VideoDecodeCapability> capabilities, std::uint32_t format);
 } // namespace uml::video

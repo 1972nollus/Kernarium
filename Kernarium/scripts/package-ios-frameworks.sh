@@ -17,7 +17,8 @@
 # KernariumTests also links HostBattery.xcframework: the Apple battery
 # provider's archive, as the Android runtime links it, with its header. The
 # application neither links nor embeds it, and the test bundle loads no second
-# runtime to reach it.
+# runtime to reach it. HostVideoEncoder.xcframework is the hardware video
+# encoder's archive, packaged the same way for the capability tests.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -71,6 +72,9 @@ STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/GPTFDisk.xcframework"
 ZSTD="$ROOT_DIR/.build/dependencies/ios-zstd/LibZstd.xcframework"
 HOST_BATTERY="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-4k/darwin/platform/libuml_host_battery.a"
 HOST_BATTERY_HEADER="$ROOT_DIR/darwin/platform/host_battery.hpp"
+ANDROID_RUNTIME_TREE="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-4k"
+HOST_VIDEO_ENCODER="$ANDROID_RUNTIME_TREE/darwin/platform/libuml_video_encoder.a"
+HOST_VIDEO_ENCODER_HEADERS="$ROOT_DIR/darwin/platform/video_encoder.hpp $ROOT_DIR/darwin/platform/video_decoder.hpp"
 
 # Mesa supplies the host GL provider as MesaEGL and MesaGallium, and the
 # Vulkan driver they render on as KosmicKrisp.
@@ -91,6 +95,11 @@ for framework in \
 	[ -d "$framework" ] || fail "missing framework slice: $framework"
 done
 [ -f "$HOST_BATTERY" ] || fail "missing host battery archive: $HOST_BATTERY"
+# The encoder archive is a static library of the runtime tree; it is built here
+# when the runtime itself has not linked it yet.
+"$CMAKE" --build "$ANDROID_RUNTIME_TREE" --target uml_video_encoder ||
+	fail "could not build the host video encoder archive"
+[ -f "$HOST_VIDEO_ENCODER" ] || fail "missing host video encoder archive: $HOST_VIDEO_ENCODER"
 for framework in $GPU_FRAMEWORKS; do
 	[ -d "$DEVICE_GPU/$framework.framework" ] ||
 		fail "missing framework slice: $DEVICE_GPU/$framework.framework"
@@ -138,6 +147,17 @@ cp -- "$HOST_BATTERY_HEADER" "$HOST_BATTERY_HEADERS/"
 "$CMAKE" -E remove_directory "$HOST_BATTERY_HEADERS"
 [ -f "$STAGE/HostBattery.xcframework/ios-arm64/libuml_host_battery.a" ] ||
 	fail "HostBattery XCFramework was not created"
+HOST_VIDEO_ENCODER_STAGE="$STAGE/host-video-encoder-headers"
+mkdir -p -- "$HOST_VIDEO_ENCODER_STAGE"
+for header in $HOST_VIDEO_ENCODER_HEADERS; do
+	cp -- "$header" "$HOST_VIDEO_ENCODER_STAGE/"
+done
+"$XCODEBUILD" -create-xcframework \
+	-library "$HOST_VIDEO_ENCODER" -headers "$HOST_VIDEO_ENCODER_STAGE" \
+	-output "$STAGE/HostVideoEncoder.xcframework"
+"$CMAKE" -E remove_directory "$HOST_VIDEO_ENCODER_STAGE"
+[ -f "$STAGE/HostVideoEncoder.xcframework/ios-arm64/libuml_video_encoder.a" ] ||
+	fail "HostVideoEncoder XCFramework was not created"
 
 RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_ANDROID_4K"
 for framework in $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS; do
