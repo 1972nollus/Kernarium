@@ -902,15 +902,20 @@ void rgbaInput()
     };
     // Red (255, 0, 0), green (0, 255, 0) and blue (0, 0, 255): swapping red and blue exchanges the first and last.
     const Color colors[] = {{"red", 63, 102, 240}, {"green", 173, 42, 26}, {"blue", 32, 240, 118}};
-    // The decoder hands pictures back in video range whatever the stream's range, so a full-range
-    // stream must decode to the same colours as a limited one: the range it states is the range it has.
+    // The same three colours as BT.709 full-range samples (Y = 255 * Kr, Kg, Kb; Cb and Cr clamp at 255).
+    const Color fullRangeColors[] = {{"red", 54, 99, 255}, {"green", 182, 30, 12}, {"blue", 18, 255, 116}};
+    // The decoder hands pictures back in the range the stream states, so a full-range stream decodes to
+    // the full-range samples of the colour that was written and a limited one to the limited samples.
     for (const bool fullRange : {false, true}) {
         for (const auto layout : {RawVideoLayout::bgra, RawVideoLayout::rgba}) {
-            for (const auto& color : colors) {
+            for (std::size_t index = 0; index < std::size(colors); ++index) {
+                // The picture is written in video range either way: the encoder converts it to RGB.
+                const auto& source = colors[index];
+                const auto& color = fullRange ? fullRangeColors[index] : source;
                 auto settings = baseSettings(*profile, 128, 96, layout);
                 settings.color.fullRange = fullRange;
                 settings.bitrate = 4'000'000;
-                const auto picture = solid(color.y, color.cb, color.cr);
+                const auto picture = solid(source.y, source.cb, source.cr);
                 const auto encoded = encode(settings, 3, [&](unsigned) { return picture; }, "channel order");
                 expectOrdered(encoded.output, 3);
                 const auto decoded = decode(VideoCodec::h264, encoded.output);
