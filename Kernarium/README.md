@@ -198,6 +198,16 @@ setting from `kernarium_runtime_automation_job_at_start`, an export outside the
 versioned table that only an automation runtime has, and the packaging script
 refuses a release runtime that contains the setting's name.
 
+`KERNARIUM_BACKGROUND_HOLD_DELAY_MS`, read by the same runtimes and refused in
+release the same way, holds the guest's GPU that many milliseconds (a whole
+number up to 30000) after the application enters the background instead of at
+the edge, so a driver can measure how long iOS leaves the host GPU usable
+there. It moves only the hold of a job, which keeps its guest drawing for the
+measurement, and an Android guest's screen is still turned off without waiting
+for it, so measure on a guest whose screen stays on. A return before the delay
+ends cancels the hold. The application learns it from
+`kernarium_runtime_automation_hold_delay_ms`, another export outside the table.
+
 ## Devices and display
 
 Kernarium attaches:
