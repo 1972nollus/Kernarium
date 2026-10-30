@@ -930,8 +930,29 @@ in recovery), and a second `external/zstd` topic (route `p0013`) lets that
 project see the library. Without them `mkfs.erofs` rejects `-zzstd` and
 `fsck.erofs` cannot read a Zstandard image.
 
-The immutable Android payload filesystems and APEX payloads are ext4. Userdata
-is an ordinary unencrypted ext4 filesystem in the directly writable image; this
+The five read-only partitions are compressed EROFS: Zstandard level 15 with
+16 KiB physical clusters on 4 KiB blocks. The two parameters are written once,
+as `UML_ANDROID_EROFS_COMPRESSOR` and `UML_ANDROID_EROFS_PCLUSTER_SIZE` in
+`overlay/lineage_darwin.mk`. `BoardConfig.mk` hands them to the image builder,
+which otherwise uses `mkfs.erofs`'s defaults (no per-partition setting, no
+extended option, no block size beyond the default), and `build/build-aosp.sh`
+asserts that. The compress hints (`overlay/config/erofs_compress_hints.txt`)
+store every `.apex` file uncompressed, so apexd's loop devices read it with
+direct I/O and its pages are cached once. The target-files verifier reads the
+parameters from the makefile and checks `misc_info`, the hints and the
+superblock of each of the five images (4 KiB blocks, Zstandard alone, clusters
+larger than a block, none of ztailpacking, fragments or dedupe), and that the
+packaged kernel configuration has EROFS with Zstandard built in. Both fstabs
+mount the partitions as `erofs ro`; the first-stage entries add
+`wait,first_stage_mount`. The fixed GPT is unchanged: each image sits at the
+start of its partition with zeros behind it, so the seed stays 3,123 MiB and
+the compression shows in the images' own sizes. Decompression is the guest
+kernel's native code, not emulated guest code. It costs nothing measurable on a
+guest with 4 GiB, but a guest with 1,536 MiB re-reads and decompresses evicted
+pages a whole cluster at a time, which is why the clusters are 16 KiB and not
+64 KiB. APEX payloads are still ext4.
+
+Userdata is an ordinary unencrypted ext4 filesystem in the directly writable image; this
 emulator does not expose a hardware-backed KeyMint service and the guest bundle
 is already protected by the host application sandbox. The mount holds the
 partition exclusively, so apexd cannot pin an updated APEX as a device-mapper

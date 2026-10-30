@@ -28,6 +28,12 @@ UML_ANDROID_DISABLE_IDENTITY := true
 UML_ANDROID_DISABLE_REBOOT_ESCROW := true
 UML_ANDROID_DISABLE_LEGACY_VNDK := true
 UML_ANDROID_MULTILIB := true
+# The compressed EROFS of the five read-only partitions: the compressor with
+# its level, and the physical cluster size in bytes. These two lines are the
+# only place either value is written; BoardConfig.mk hands them to the image
+# builder and the target-files verifier reads them from here.
+UML_ANDROID_EROFS_COMPRESSOR := zstd,15
+UML_ANDROID_EROFS_PCLUSTER_SIZE := 16384
 BOARD_HAVE_BLUETOOTH := false
 CF_VENDOR_NO_UWB := true
 CF_VENDOR_NO_THREADNETWORK := true

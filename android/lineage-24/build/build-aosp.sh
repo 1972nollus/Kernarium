@@ -229,11 +229,35 @@ for variable in \
 	BOARD_PRODUCTIMAGE_FILE_SYSTEM_TYPE \
 	BOARD_VENDORIMAGE_FILE_SYSTEM_TYPE \
 	BOARD_ODMIMAGE_FILE_SYSTEM_TYPE; do
-	[[ "$(get_build_var "$variable")" == ext4 ]] ||
-		fail "$variable must select ext4 for the immutable GPT"
+	[[ "$(get_build_var "$variable")" == erofs ]] ||
+		fail "$variable must select erofs for the immutable GPT"
 done
-[[ -z "$(get_build_var BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE)" ]] ||
-	fail "BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE must be empty"
+# The compressor and the cluster size are the two parameters of lineage_darwin.mk
+# and reach every image alike: nothing per partition, no extended option, and
+# the default 4 KiB block that the guest's 4 KiB pages require.
+[[ "$(get_build_var BOARD_EROFS_COMPRESSOR)" == "$(get_build_var UML_ANDROID_EROFS_COMPRESSOR)" &&
+	"$(get_build_var BOARD_EROFS_COMPRESSOR)" == zstd,* ]] ||
+	fail "BOARD_EROFS_COMPRESSOR must be the product's zstd compressor"
+[[ "$(get_build_var BOARD_EROFS_PCLUSTER_SIZE)" == "$(get_build_var UML_ANDROID_EROFS_PCLUSTER_SIZE)" &&
+	"$(get_build_var BOARD_EROFS_PCLUSTER_SIZE)" =~ ^[0-9]+$ ]] ||
+	fail "BOARD_EROFS_PCLUSTER_SIZE must be the product's cluster size"
+[[ "$(get_build_var BOARD_EROFS_COMPRESS_HINTS)" == device/kernarium/darwin/config/erofs_compress_hints.txt ]] ||
+	fail "BOARD_EROFS_COMPRESS_HINTS must be the product's hints file"
+for variable in \
+	BOARD_EROFS_BLOCKSIZE \
+	BOARD_EROFS_SHARE_DUP_BLOCKS \
+	BOARD_EROFS_USE_LEGACY_COMPRESSION \
+	BOARD_EROFS_ENABLE_DEDUPE \
+	BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE; do
+	[[ -z "$(get_build_var "$variable")" ]] ||
+		fail "$variable must be empty: the images use mkfs.erofs defaults beyond the two parameters"
+done
+for partition in SYSTEM SYSTEM_EXT PRODUCT VENDOR ODM; do
+	for suffix in COMPRESSOR COMPRESS_HINTS PCLUSTER_SIZE BLOCKSIZE ENABLE_DEDUPE; do
+		[[ -z "$(get_build_var "BOARD_${partition}IMAGE_EROFS_${suffix}")" ]] ||
+			fail "BOARD_${partition}IMAGE_EROFS_${suffix} must be empty: one compressor for every partition"
+	done
+done
 [[ "$(get_build_var PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE)" == ext4 ]] ||
 	fail "PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE must select ext4"
 [[ "$(get_build_var PRODUCT_COMPRESSED_APEX)" == false ]] ||

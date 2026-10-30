@@ -496,12 +496,25 @@ UML_FSTAB_ENTRIES = (
     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
 )
 READ_ONLY_FILESYSTEMS = {
-    "system_fs_type": "ext4",
-    "system_ext_fs_type": "ext4",
-    "product_fs_type": "ext4",
-    "vendor_fs_type": "ext4",
-    "odm_fs_type": "ext4",
+    "system_fs_type": "erofs",
+    "system_ext_fs_type": "erofs",
+    "product_fs_type": "erofs",
+    "vendor_fs_type": "erofs",
+    "odm_fs_type": "erofs",
 }
+READ_ONLY_PARTITIONS = ("system", "system_ext", "product", "vendor", "odm")
+# The images use mkfs.erofs's defaults apart from the product's compressor and
+# cluster size: no other EROFS policy may be set, for a partition or for all.
+EROFS_FORBIDDEN_POLICY = (
+    "erofs_blocksize",
+    "erofs_enable_dedupe",
+    "erofs_share_dup_blocks",
+    "erofs_use_legacy_compression",
+)
+EROFS_PARTITION_POLICY = re.compile(
+    "^(?:" + "|".join(READ_ONLY_PARTITIONS) + ")_erofs_[a-z_]+$"
+)
+EROFS_COMPRESS_HINTS_ENTRY = "META/erofs_default_compress_hints.txt"
 VENDOR_SPL_APP_READ = re.compile(
     rb"^\(allow appdomain(?:_[0-9]+)? vendor_security_patch_level_prop(?:_[0-9]+)? "
     rb"\(file \([^)]*\bread\b[^)]*\)\)\)$",
@@ -911,14 +924,13 @@ def check_boot_policy(
             misc_info[key] = value
     for key, expected in READ_ONLY_FILESYSTEMS.items():
         if misc_info.get(key) != expected:
-            fail(f"{key} must select read-only ext4 images")
+            fail(f"{key} must select read-only erofs images")
+    check_erofs_policy(archive, infos, misc_info)
     if misc_info.get("userdata_extfs_inode_count") != USERDATA_EXTFS_INODE_COUNT:
         fail(
             "userdata_extfs_inode_count must be "
             f"{USERDATA_EXTFS_INODE_COUNT}: {misc_info.get('userdata_extfs_inode_count')!r}"
         )
-    if "system_erofs_blocksize" in misc_info:
-        fail("system EROFS image policy remains enabled")
 
     init_payload = read_small(
         archive, infos["VENDOR/etc/init/init.kernarium.rc"]
@@ -1225,6 +1237,13 @@ def check_app_dexpreopt(seen: set[str]) -> None:
 # The virtual Wi-Fi needs these built in: kernarium_net_setup stacks a macvlan on eth0 and a
 # virt_wifi device on that, and a kernel without them leaves apps no network at all.
 WIFI_KERNEL_OPTIONS = ("CONFIG_MACVLAN=y", "CONFIG_CFG80211=y", "CONFIG_VIRT_WIFI=y")
+# First-stage init mounts the five read-only partitions as compressed EROFS before any module
+# could load, so the kernel needs the file system and the product's decompressor built in.
+EROFS_KERNEL_OPTIONS = (
+    "CONFIG_EROFS_FS=y",
+    "CONFIG_EROFS_FS_ZIP=y",
+    "CONFIG_EROFS_FS_ZIP_ZSTD=y",
+)
 
 
 def check_kernel_policy(
@@ -1244,6 +1263,12 @@ def check_kernel_policy(
             fail(
                 f"packaged kernel configuration lacks {option}: the virtual Wi-Fi needs it, "
                 "and without it apps have no network"
+            )
+    for option in EROFS_KERNEL_OPTIONS:
+        if option not in packaged_options:
+            fail(
+                f"packaged kernel configuration lacks {option}: the read-only partitions "
+                "are compressed EROFS, and first-stage init cannot mount them without it"
             )
 
     packaged_release = read_small(
@@ -1752,6 +1777,60 @@ def check_multilib_properties(
     )
     if system.get("ro.product.cpu.abi") != EXPECTED_ABIS["abi"]:
         fail(f"SYSTEM/build.prop lacks ro.product.cpu.abi=arm64-v8a: {system.get('ro.product.cpu.abi')!r}")
+
+
+def check_erofs_policy(
+    archive: zipfile.ZipFile,
+    infos: dict[str, zipfile.ZipInfo],
+    misc_info: dict[str, str],
+) -> None:
+    """The images were built with the product's one compressor and cluster size."""
+    compressor, pcluster_size = android_image.tracked_erofs_parameters(error)
+    if misc_info.get("erofs_default_compressor") != compressor:
+        fail(
+            f"erofs_default_compressor must be {compressor}: "
+            f"{misc_info.get('erofs_default_compressor')!r}"
+        )
+    if misc_info.get("erofs_pcluster_size") != pcluster_size:
+        fail(
+            f"erofs_pcluster_size must be {pcluster_size}: "
+            f"{misc_info.get('erofs_pcluster_size')!r}"
+        )
+    for key in sorted(misc_info):
+        if key in EROFS_FORBIDDEN_POLICY or EROFS_PARTITION_POLICY.match(key):
+            fail(f"EROFS policy beyond the product's two parameters is set: {key}")
+    hints = infos.get(EROFS_COMPRESS_HINTS_ENTRY)
+    if hints is None:
+        fail(f"{EROFS_COMPRESS_HINTS_ENTRY} is missing: the .apex files would be compressed")
+    tracked_hints = (android_image.ANDROID_ROOT / "overlay/config/erofs_compress_hints.txt").read_bytes()
+    if read_small(archive, hints) != tracked_hints:
+        fail("EROFS compress hints differ from the tracked product file")
+    if misc_info.get("erofs_default_compress_hints") is None:
+        fail("erofs_default_compress_hints is not set")
+    algorithm_mask = 1 << android_image.EROFS_ALGORITHM_ZSTD
+    for partition in READ_ONLY_PARTITIONS:
+        name = f"IMAGES/{partition}.img"
+        with archive.open(infos[name]) as source:
+            prefix = android_image.read_image_prefix(
+                source,
+                android_image.EROFS_SUPERBLOCK_OFFSET + android_image.EROFS_SUPERBLOCK_SIZE,
+                error,
+            )
+        superblock = android_image.erofs_superblock(prefix, name, error)
+        if superblock.block_size_bits != 12:
+            fail(f"{name} does not use 4 KiB blocks")
+        if superblock.compression_algorithms != algorithm_mask:
+            fail(
+                f"{name} is not compressed with {compressor.partition(',')[0]} alone: "
+                f"algorithms {superblock.compression_algorithms:#x}"
+            )
+        if not superblock.feature_incompat & android_image.EROFS_FEATURE_INCOMPAT_BIG_PCLUSTER:
+            fail(f"{name} has no physical cluster larger than a block")
+        if superblock.feature_incompat & (
+            android_image.EROFS_FEATURE_INCOMPAT_ZTAILPACKING
+            | android_image.EROFS_FEATURE_INCOMPAT_FRAGMENTS
+        ):
+            fail(f"{name} uses an extended option (ztailpacking, fragments or dedupe)")
 
 
 def check_userdata_quota(fstab: bytes, label: str) -> None:
