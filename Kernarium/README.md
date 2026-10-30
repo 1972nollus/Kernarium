@@ -377,9 +377,10 @@ on the efficiency cores at background priority: a computing guest there ran at
 about a third of its foreground rate for a fifth of a watt. If iOS ends the
 process during a job, its card reports the job as failed, and the next launch
 shows the restart notice. The job ends when its time is up, when the user stops
-it, or when iOS expires it; in the background that quiesces the guest, and in
-the foreground nothing changes. A job belongs to the mode, so choosing another
-mode ends it. `KERNARIUM_BACKGROUND_LIMIT_MINUTES` sets the time for one launch.
+it, when iOS expires it, or when the guest's run returns, whether it powered
+off, failed to start or kept restarting; in the background that quiesces the
+guest, and in the foreground nothing changes. A job belongs to the mode, so
+choosing another mode ends it. `KERNARIUM_BACKGROUND_LIMIT_MINUTES` sets the time for one launch.
 
 An Android guest that is kept running this way has its screen turned off with
 its power key as the application leaves, and on again, after the GPU is back and

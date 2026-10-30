@@ -1619,6 +1619,9 @@ final class EmulatorLauncher: ObservableObject {
     static let shared = EmulatorLauncher(configuration: .load())
 
     private let configuration: EmulatorConfiguration
+    /// The job that keeps the guest running in the background, which ends
+    /// with the run.
+    private let job: BackgroundJob
     @Published private(set) var phase = GuestRunPhase.idle
     /// Whether the guest is between two boots.
     @Published private(set) var restarting = false
@@ -1630,8 +1633,10 @@ final class EmulatorLauncher: ObservableObject {
 
     var retinaMode: Bool { configuration.retinaMode }
 
-    private init(configuration: EmulatorConfiguration) {
+    /// The unit tests make launchers of their own, with a job of their own.
+    init(configuration: EmulatorConfiguration, job: BackgroundJob = .shared) {
         self.configuration = configuration
+        self.job = job
     }
 
     fileprivate func start(
@@ -1786,13 +1791,17 @@ final class EmulatorLauncher: ObservableObject {
         }
     }
 
-    fileprivate func finished(result: Int32) {
+    func finished(result: Int32) {
         stopThermalObservation()
         restartIndicator.runEnded()
         restarting = false
         phase = .ended(result: result)
         UIApplication.shared.isIdleTimerDisabled = false
         print("Kernarium: runtime returned \(result)")
+        // The job keeps a guest running in the background. A guest whose run
+        // is over has nothing left to keep, whichever way it ended, and a job
+        // that went on would hold the application alive for no reason.
+        job.guestRunEnded(result: result)
     }
 
     func stop() {
