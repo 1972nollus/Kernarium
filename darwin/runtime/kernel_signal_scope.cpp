@@ -3,7 +3,11 @@
 #include "memory/shared_backing.hpp"
 
 #include <cstring>
+#include <crt_externs.h>
+#include <dlfcn.h>
 #include <fcntl.h>
+#include <mach-o/getsect.h>
+#include <mach-o/loader.h>
 #include <pthread.h>
 #include <sys/mman.h>
 #include <sys/time.h>
@@ -207,6 +211,39 @@ bool keep_signed_kernel_text(void *address, std::size_t length) noexcept
 bool signed_kernel_text_kept(const void *address, std::size_t length) noexcept
 {
 	return ::uml::memory::host_range_kept(address, length);
+}
+
+namespace {
+
+/* Whether the __TEXT,__uml_elf section of the image `header` names is exactly
+ * [image, image + size). */
+[[nodiscard]] bool embedded_section_is(const mach_header_64 *header,
+	const void *image, std::size_t size) noexcept
+{
+	if (header == nullptr)
+		return false;
+	unsigned long length = 0;
+	const void *const start =
+		getsectiondata(header, "__TEXT", "__uml_elf", &length);
+	return start != nullptr && start == image && length == size;
+}
+
+} // namespace
+
+bool is_embedded_kernel_image(const void *image, std::size_t size) noexcept
+{
+	if (image == nullptr || size == 0)
+		return false;
+	Dl_info library{};
+	if (dladdr(reinterpret_cast<const void *>(&is_embedded_kernel_image),
+		   &library) != 0 &&
+	    embedded_section_is(
+		    static_cast<const mach_header_64 *>(library.dli_fbase), image,
+		    size))
+		return true;
+	return embedded_section_is(
+		reinterpret_cast<const mach_header_64 *>(_NSGetMachExecuteHeader()),
+		image, size);
 }
 
 } // namespace uml::runtime

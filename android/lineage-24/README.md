@@ -56,8 +56,15 @@ series under `patches/projects/` are the only maintained modifications to
 upstream projects.
 
 `overlay/` owns the complete `device/kernarium/darwin` product tree and is
-synchronized as one verified unit. The Vulkan HAL's Mesa source has its own
-pinned source and generated series under `third_party/mesa-venus/`.
+synchronized as one verified unit. The synchronization stamps a file whose
+bytes or mode differ from what the workspace held with the current time, and
+restores the time of every file that did not change: Make treats an output newer
+than its input as current, and a checkout keeps the time of the commit that
+wrote a file, so an overlay that switches back to older content would otherwise
+leave the installed copy of the newer content in place, while untouched files
+keep the build from redoing work that depends only on them. The Vulkan HAL's
+Mesa source has its own pinned source and generated series under
+`third_party/mesa-venus/`.
 
 `third_party/fdroid/` pins the F-Droid client and its Privileged Extension by
 size and SHA-256. Both are upstream-presigned APKs the build installs

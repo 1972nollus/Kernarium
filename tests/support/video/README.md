@@ -99,7 +99,9 @@ string (SEI units are removed).
   profile with a frame cropping rectangle of 6 samples on the left, 2 on the
   right, 4 on top and 2 on the bottom (`h264_metadata=crop_left=6:crop_right=2:crop_top=4:crop_bottom=2`),
   so the stream shows 120 × 90. `h264-window.raw` is the picture a software
-  decoder shows.
+  decoder shows. The guest V4L2 probe decodes both window streams, whose
+  120-sample rows lie at the device's padded pitch of 128 bytes, and compares
+  them row by row with these tightly packed references.
 
 ## Synthetic encoder
 

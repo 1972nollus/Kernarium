@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Verify that an AArch64 ET_DYN image is safe for the iOS signed carrier."""
+"""Verify that an AArch64 ET_DYN image is safe for the signed carrier."""
 
 from __future__ import annotations
 

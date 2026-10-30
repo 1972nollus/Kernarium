@@ -262,7 +262,10 @@ the guest architecture and configure an integration preset with
 `sha256sum` and `timeout`. The test boots a disposable overlay with the probe
 and its fixtures installed as payload files, checks their SHA-256 list, checks
 every advertised profile's pixels, raw layouts including packed BGRA capture
-and 8-bit capture of a 10-bit stream, imported dma-buf capture, timestamps,
+and 8-bit capture of a 10-bit stream, the rows of every raw format at the
+padded pitch the device states (TRY_FMT and S_FMT against the rule at widths
+that are and are not whole pitches, and the 120 x 90 window streams read row by
+row), imported dma-buf capture, timestamps,
 source-change and EOS events, the display order of H.264 and HEVC B-pictures
 and a seek in both (over open-group streams for HEVC), reads the H.264 and HEVC
 profile and level menus (Constrained High beside High, levels from 1.0 up to
@@ -286,7 +289,14 @@ queued buffers for it) before the size is known, the parameter sets and the
 picture as two coded buffers, and the capture format chosen only after the
 source change: the buffer that declared the size is held until then, nothing
 lands in the provisional buffers, and the picture arrives whole before the LAST
-buffer. Android uses its own 4 KiB guest and deployment workflow.
+buffer. The large buffers are also created with the guest's free memory in
+blocks of 32 KiB, none larger, the state a guest that has run for days is in:
+a 124 MiB coded buffer, the most the device attaches, is created, exported and
+imported again, and the 4096 x 4096 and 4320 x 8192 flat pictures are decoded
+into mapped buffers. The scatter lists of these buffers are hundreds of
+kilobytes, so a driver that asks the kernel for a list in one block fails them
+with `page allocation failure: order:4`, as it did a 4K HEVC decode on a
+1536 MiB Android guest. Android uses its own 4 KiB guest and deployment workflow.
 The fixed x86_64 userspace product registers no CTest suites, so the x86_64
 slice exercises its own V4L2 path by running `run_v4l2_decode.py`, with `--gpu`
 for the GPU case, directly with an x86-64 probe and an x86-64 rootfs, the way
@@ -311,7 +321,9 @@ event, resumption, a restart after STREAMOFF without a drain, and a resolution
 change. It also holds every control and raw format the guest registers
 against the host table, so a control the driver dropped or a format listed
 under another fourcc fails; encodes packed BGRA and RGBA pictures, whose red
-and blue blocks show the channel order; and checks the parameter sets that
+and blue blocks show the channel order; encodes every raw layout at a width
+that is not a whole pitch (342 x 120), where the rows lie at the padded pitch
+that TRY_FMT and S_FMT both state; and checks the parameter sets that
 `PREPEND_SPSPPS_TO_IDR` adds and the layers that hierarchical coding makes.
 Colorimetry stated on the raw queue, including `V4L2_COLORSPACE_RAW` with a
 transfer function and range, must read back as stated, survive a repeated
