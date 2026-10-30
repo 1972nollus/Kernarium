@@ -38,6 +38,12 @@ A process-heavy test runs many times slower there than alone. A wait inside a
 test for a process, file or thread the test started outlasts the same load,
 stays below the test's bound, and is never retried or unbounded.
 
+A test that runs a built tool, named by a `$<TARGET_FILE:...>` argument of its
+command, requires a CTest fixture that builds the tool: a `<suite>-build-<tool>`
+test of the suite of the first test that needs it. Running the test by name
+after a configure is enough. The check workflows build the suite's binaries
+first, and the fixture then finds nothing to build.
+
 Tooling tests run tools against fixtures; they do not grep tracked source for
 expected tokens or restate values that another file owns. A shell tooling
 test's `$TMPDIR` is its `test-scratch/<test>` in the build tree, which
