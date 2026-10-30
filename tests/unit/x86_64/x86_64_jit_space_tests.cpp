@@ -6,12 +6,16 @@
  * address space's bytes, not the old one's. The program is "mov $value,
  * %eax; syscall" at one address, with other bytes for every address space
  * and no change published between them, so a space that kept a translation
- * returns the previous value. */
+ * returns the previous value. A space the engine lets go of, or an engine
+ * that dies with its spaces, returns everything FEXCore mapped for its
+ * context, which FEXCore's block-link buffers once did not. */
 #include "cpu/execution_types.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/jit/fex_engine.hpp"
 #include "memory/guest_address_space.hpp"
 #include "platform/apple/host_features.hpp"
+
+#include "mach_vm_region_test_support.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -19,6 +23,9 @@
 #include <cstdio>
 #include <cstring>
 #include <span>
+
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
 
 namespace {
 
@@ -181,6 +188,62 @@ void test_an_engine_without_a_query_never_recycles()
 	expect(engine.recycled_spaces() == 0, "nothing is gone to take");
 }
 
+/* The bytes of untagged read-write anonymous memory this task maps. FEXCore
+ * maps its own buffers directly, so they carry no tag, and a context that
+ * dies without returning one adds to the total for good. */
+std::uint64_t untagged_bytes()
+{
+	std::uint64_t total = 0;
+	mach_vm_address_t address = 0;
+	natural_t depth = 0;
+	for (;;) {
+		mach_vm_size_t size = 0;
+		vm_region_submap_info_data_64_t information{};
+		mach_msg_type_number_t count = VM_REGION_SUBMAP_INFO_COUNT_64;
+		if (mach_vm_region_recurse(mach_task_self(), &address, &size, &depth,
+			reinterpret_cast<vm_region_recurse_info_t>(&information),
+			&count) != KERN_SUCCESS)
+			return total;
+		if (information.is_submap) {
+			++depth;
+			continue;
+		}
+		if (information.user_tag == 0 &&
+			information.protection == (VM_PROT_READ | VM_PROT_WRITE) &&
+			information.share_mode == SM_PRIVATE)
+			total += size;
+		address += size;
+	}
+}
+
+void test_a_destroyed_engine_returns_its_mappings()
+{
+	OnePage memory;
+	memory.set_value(0x4444);
+	const auto make_and_destroy = [&](int engines) {
+		for (int round = 0; round < engines; ++round) {
+			x86_64::jit::FexEngine engine{
+				uml::platform::apple::probed_host_capabilities()};
+			bool finished = false;
+			expect(run_program(engine, memory, 30, finished) == 0x4444 &&
+				finished, "the program runs");
+		}
+	};
+	/* Whatever FEXCore and the allocator keep for the process comes first. */
+	make_and_destroy(4);
+	const auto before = untagged_bytes();
+	make_and_destroy(48);
+	const auto after = untagged_bytes();
+	/* A context's block links alone take a host page of their own, so
+	 * the engines left more than 48 pages behind. */
+	expect(after < before + 8 * uml::testing::host_page(),
+		"engines that are gone leave no mappings behind");
+	if (after >= before + 8 * uml::testing::host_page())
+		std::printf("untagged bytes %llu before, %llu after\n",
+			static_cast<unsigned long long>(before),
+			static_cast<unsigned long long>(after));
+}
+
 } // namespace
 
 int main()
@@ -188,6 +251,7 @@ int main()
 	test_a_gone_address_space_leaves_its_space_to_the_next();
 	test_a_live_address_space_keeps_its_space();
 	test_an_engine_without_a_query_never_recycles();
+	test_a_destroyed_engine_returns_its_mappings();
 	if (failures != 0)
 		return 1;
 	std::puts("x86-64 JIT space tests passed");
