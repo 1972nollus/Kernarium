@@ -187,6 +187,24 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
 
+    # An idle host GL context must give back what its last batches held when
+    # the renderer tells the driver it has gone idle (EGL_MESA_context_trim).
+    uml_add_gpu_unit_test(gpu-host-context-trim
+        uml_gpu_host_context_trim_tests host_gl_context_trim_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries}
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY
+        TIMEOUT 120)
+
+    # Contexts that draw, flush and trim at once on one driver screen.
+    uml_add_gpu_unit_test(gpu-host-context-trim-concurrent
+        uml_gpu_host_context_trim_concurrent_tests
+        host_gl_context_trim_concurrent_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} Threads::Threads
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY
+        TIMEOUT 180)
+
     # A transfer a context refuses must not leave that context refusing every
     # later transfer: Android's gralloc mapper only ever transfers.
     uml_add_gpu_unit_test(gpu-transfer-context-error
@@ -326,6 +344,7 @@ if(TARGET uml_gpu_service)
         gpu-depth-format-advertisement gpu-line-loop-statistics
         gpu-statistics-availability gpu-packed-yuv-planes
         gpu-texture-barrier-clear gpu-padded-row-transfer
+        gpu-host-context-trim gpu-host-context-trim-concurrent
         PROPERTIES SKIP_RETURN_CODE 77)
 
     # The renderer and the same-process render server share one fence table.
