@@ -46,12 +46,23 @@ TARGET_BOOTS_16K :=
 # artifacts adjacent to their APKs in the immutable partition images instead.
 BOARD_USES_SYSTEM_OTHER_ODEX :=
 
-# Keep every immutable Android partition on the kernel's uncompressed ext4
-# path. The GPT remains the read-only backing image at runtime, and fstab.uml
-# mounts these filesystems read-only inside the guest.
-BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE := ext4
+# The five immutable partitions are compressed EROFS images, which fstab.uml
+# mounts read-only in the guest. The inherited board gives each its own file
+# system type, so every one is named here. The compressor and the physical
+# cluster size are the product's two parameters (lineage_darwin.mk), applied to
+# every partition alike: no per-partition override, no extended option
+# (ztailpacking, fragments, dedupe) and no block size other than the default
+# 4 KiB, which the guest's 4 KiB pages require. The compress hints keep the
+# .apex files uncompressed, so apexd's loop devices read them directly.
+BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE := erofs
+BOARD_SYSTEM_EXTIMAGE_FILE_SYSTEM_TYPE := erofs
+BOARD_PRODUCTIMAGE_FILE_SYSTEM_TYPE := erofs
+BOARD_VENDORIMAGE_FILE_SYSTEM_TYPE := erofs
+BOARD_ODMIMAGE_FILE_SYSTEM_TYPE := erofs
 BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE :=
-BOARD_PRODUCTIMAGE_FILE_SYSTEM_TYPE := ext4
+BOARD_EROFS_COMPRESSOR := $(UML_ANDROID_EROFS_COMPRESSOR)
+BOARD_EROFS_PCLUSTER_SIZE := $(UML_ANDROID_EROFS_PCLUSTER_SIZE)
+BOARD_EROFS_COMPRESS_HINTS := device/kernarium/darwin/config/erofs_compress_hints.txt
 
 # This product has no SwiftShader: its Vulkan driver is the Mesa Venus HAL.
 # The inherited SwiftShader policy fragment grants bootanim, surfaceflinger,
@@ -140,10 +151,6 @@ AB_OTA_PARTITIONS := $(filter-out vendor_dlkm system_dlkm odm_dlkm \
 BOARD_SYSTEMIMAGE_PARTITION_SIZE := 1677721600
 BOARD_SYSTEM_EXTIMAGE_PARTITION_SIZE := 536870912
 BOARD_PRODUCTIMAGE_PARTITION_SIZE := 603979776
-# The inherited ext4 default reserves one inode per 4 KiB block, consuming
-# 16 MiB in this small image. Product currently contains fewer than 300 files;
-# keep generous growth room without crowding app payloads out of the image.
-BOARD_PRODUCTIMAGE_EXTFS_INODE_COUNT := 4096
 BOARD_VENDORIMAGE_PARTITION_SIZE := 268435456
 BOARD_ODMIMAGE_PARTITION_SIZE := 4194304
 BOARD_METADATAIMAGE_PARTITION_SIZE := 16777216

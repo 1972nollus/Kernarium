@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Check the first-boot precompile tool: manifest rules, artifact naming per
 instruction set, the ABI-set rules of a multilib image, the PRODUCT_COPY_FILES
-fragment, reuse of earlier output, and the packaged-tree check."""
+fragment, reuse of earlier output, the packaged-tree check, and the APKs of an
+EROFS APEX payload."""
 
 from __future__ import annotations
 
@@ -19,6 +20,8 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+
+from erofs_fixture import synthetic_erofs_image
 
 
 def fail(message: str) -> None:
@@ -86,6 +89,17 @@ with open(oat[:-4] + "vdex", "w") as stream:
     stream.write("vdex " + location)
 with open(os.environ["FIXTURE_LOG"], "a") as log:
     log.write(json.dumps(args) + "\n")
+'''
+
+
+# An fsck.erofs that extracts the APEX payload from the tree the fixture keeps beside
+# it (the AOSP 1.8 tool extracts a whole image only), and logs each call.
+FAKE_FSCK_EROFS = r'''#!/usr/bin/env python3
+import os, shutil, sys
+extract = next(a.split("=", 1)[1] for a in sys.argv if a.startswith("--extract="))
+with open(os.environ["FIXTURE_FSCK_LOG"], "a") as log:
+    log.write(sys.argv[-1] + "\\n")
+shutil.copytree(os.environ["FIXTURE_APEX_TREE"], extract)
 '''
 
 
@@ -173,6 +187,7 @@ def build_fixture(root: Path) -> Path:
     bin_dir = aosp / "out/host/linux-x86/bin"
     write_executable(bin_dir / "aapt2", FAKE_AAPT2)
     write_executable(bin_dir / "debugfs", "#!/bin/sh\nexit 1\n")
+    write_executable(bin_dir / "fsck.erofs", "#!/bin/sh\nexit 1\n")
     write_executable(bin_dir / "dex2oatd64", FAKE_DEX2OAT)
     # What a multilib product records: an application invocation for the primary
     # ISA only (Soong preopts an application for its first target), and a
@@ -468,6 +483,67 @@ def check_build_and_verify(tool, scratch: Path) -> None:
         fail(f"a manifest without ISAs must be refused: {message}")
 
 
+def check_erofs_apex_payloads(tool, scratch: Path) -> None:
+    """The APKs of an EROFS payload come from one fsck.erofs extraction, only from the directories it has."""
+    import os
+
+    bin_dir = scratch / "bin"
+    write_executable(bin_dir / "aapt2", FAKE_AAPT2)
+    write_executable(bin_dir / "debugfs", "#!/bin/sh\nexit 1\n")
+    write_executable(bin_dir / "fsck.erofs", FAKE_FSCK_EROFS)
+    tree = scratch / "payload-tree"
+    make_apk(tree / "app/Dex/Dex.apk", XMLTREE, b"dex")
+    make_apk(tree / "app/Resources/Resources.apk", XMLTREE, None)
+    (tree / "app/Dex/lib/arm64").mkdir(parents=True)
+    (tree / "app/Dex/lib/arm64/libnative.so").write_text("elf")
+    make_apk(tree / "priv-app/Nested/more/Priv.apk", XMLTREE, b"dex-priv")
+    log = scratch / "fsck.log"
+    os.environ["FIXTURE_APEX_TREE"] = str(tree)
+    os.environ["FIXTURE_FSCK_LOG"] = str(log)
+    root = scratch / "out"
+    apex_dir = root / "system/apex"
+    apex_dir.mkdir(parents=True)
+    layout = tool.Layout(root, "product-out")
+    tools = tool.Tools(Path(), "", bin_dir)
+
+    def packages_of(payload: bytes) -> list:
+        with zipfile.ZipFile(apex_dir / "com.android.fixture.apex", "w") as apex:
+            apex.writestr("apex_payload.img", payload)
+        log.write_text("")
+        work = scratch / "work"
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir()
+        return tool.apex_packages(layout, tools, work)
+
+    both = packages_of(synthetic_erofs_image(files=(
+        "app/Dex/Dex.apk", "app/Resources/Resources.apk", "priv-app/Nested/more/Priv.apk")))
+    locations = sorted(package.device_location for package in both)
+    if locations != ["/apex/com.android.fixture/app/Dex/Dex.apk",
+                     "/apex/com.android.fixture/priv-app/Nested/more/Priv.apk"]:
+        fail(f"an EROFS payload must yield its APKs with dex code: {locations}")
+    if sorted(package.odex_name for package in both) != [
+            "apex@com.android.fixture@app@Dex@Dex.apk@classes.odex",
+            "apex@com.android.fixture@priv-app@Nested@more@Priv.apk@classes.odex"]:
+        fail("an APK in an EROFS payload is named as one in an ext4 payload")
+    if len(log.read_text().split()) != 1:
+        fail(f"fsck.erofs must extract the payload once: {log.read_text()!r}")
+    only_app = packages_of(synthetic_erofs_image(files=("app/Dex/Dex.apk",)))
+    if [package.device_location for package in only_app] != [
+            "/apex/com.android.fixture/app/Dex/Dex.apk"]:
+        fail("an EROFS payload without /priv-app must yield its /app APKs alone")
+    no_apps = packages_of(synthetic_erofs_image(files=("etc/init.rc",)))
+    if no_apps or log.read_text():
+        fail("an EROFS payload without application directories must not run fsck.erofs")
+    write_executable(bin_dir / "fsck.erofs", "#!/bin/sh\necho broken >&2\nexit 1\n")
+    try:
+        packages_of(synthetic_erofs_image(files=("app/Dex/Dex.apk",)))
+    except SystemExit as exit_:
+        if "cannot extract the payload of com.android.fixture" not in str(exit_):
+            fail(f"a failed extraction must name the APEX: {exit_}")
+    else:
+        fail("a failed extraction must stop the tool")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", type=Path, required=True)
@@ -478,6 +554,7 @@ def main() -> int:
         scratch = Path(name)
         check_makefile(tool, scratch)
         check_build_and_verify(tool, scratch / "tree")
+        check_erofs_apex_payloads(tool, scratch / "apex")
     print("first-boot precompile fixture passed")
     return 0
 

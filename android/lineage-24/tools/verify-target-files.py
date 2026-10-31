@@ -6,6 +6,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import functools
 import hashlib
 import io
 import re
@@ -24,11 +25,12 @@ from release_common import BUILD_VARIANTS, configured_build_variant, sha256_path
 ET_EXEC = 2
 ET_DYN = 3
 MAX_PROGRAM_HEADERS_SIZE = 1 << 20
-APEX_PAYLOAD_MAGIC_SIZE = 1024 + 0x38 + 2
+APEX_PAYLOAD_MAGIC_SIZE = android_image.EROFS_SUPERBLOCK_OFFSET + android_image.EROFS_SUPERBLOCK_SIZE
 EXT4_MAGIC_OFFSET = 1024 + 0x38
 EXT4_MAGIC = b"\x53\xef"
-EROFS_MAGIC_OFFSET = 1024
-EROFS_MAGIC = b"\xe2\xe1\xf5\xe0"
+# The one APEX whose payload stays ext4: Soong installs the checked-in presigned CTS shim
+# (system/apex/shim/prebuilts), which no product setting recompresses.
+APEX_EXT4_PAYLOADS = frozenset({"SYSTEM/apex/com.android.apex.cts.shim.apex"})
 # The Mesa Virgl GLES stack: the EGL and GLES libraries the platform loader
 # finds through ro.hardware.egl, and the gallium driver they link. The boot
 # command line's androidboot.hardware.egl must name the same suffix.
@@ -496,12 +498,25 @@ UML_FSTAB_ENTRIES = (
     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
 )
 READ_ONLY_FILESYSTEMS = {
-    "system_fs_type": "ext4",
-    "system_ext_fs_type": "ext4",
-    "product_fs_type": "ext4",
-    "vendor_fs_type": "ext4",
-    "odm_fs_type": "ext4",
+    "system_fs_type": "erofs",
+    "system_ext_fs_type": "erofs",
+    "product_fs_type": "erofs",
+    "vendor_fs_type": "erofs",
+    "odm_fs_type": "erofs",
 }
+READ_ONLY_PARTITIONS = ("system", "system_ext", "product", "vendor", "odm")
+# The images use mkfs.erofs's defaults apart from the product's compressor and
+# cluster size: no other EROFS policy may be set, for a partition or for all.
+EROFS_FORBIDDEN_POLICY = (
+    "erofs_blocksize",
+    "erofs_enable_dedupe",
+    "erofs_share_dup_blocks",
+    "erofs_use_legacy_compression",
+)
+EROFS_PARTITION_POLICY = re.compile(
+    "^(?:" + "|".join(READ_ONLY_PARTITIONS) + ")_erofs_[a-z_]+$"
+)
+EROFS_COMPRESS_HINTS_ENTRY = "META/erofs_default_compress_hints.txt"
 VENDOR_SPL_APP_READ = re.compile(
     rb"^\(allow appdomain(?:_[0-9]+)? vendor_security_patch_level_prop(?:_[0-9]+)? "
     rb"\(file \([^)]*\bread\b[^)]*\)\)\)$",
@@ -735,6 +750,7 @@ def read_small(
 def check_apex_payload_filesystem(
     archive: zipfile.ZipFile, info: zipfile.ZipInfo
 ) -> None:
+    """An APEX payload is EROFS compressed as the partitions are, or the prebuilt shim's ext4."""
     try:
         with zipfile.ZipFile(io.BytesIO(archive.read(info))) as apex:
             payload = apex.getinfo("apex_payload.img")
@@ -743,10 +759,12 @@ def check_apex_payload_filesystem(
     except (KeyError, OSError, zipfile.BadZipFile) as error:
         fail(f"cannot inspect APEX payload {info.filename}: {error}")
     if prefix[EXT4_MAGIC_OFFSET : EXT4_MAGIC_OFFSET + len(EXT4_MAGIC)] == EXT4_MAGIC:
-        return
-    if prefix[EROFS_MAGIC_OFFSET : EROFS_MAGIC_OFFSET + len(EROFS_MAGIC)] == EROFS_MAGIC:
-        fail(f"EROFS APEX payload is forbidden: {info.filename}")
-    fail(f"APEX payload must use ext4: {info.filename}")
+        if info.filename in APEX_EXT4_PAYLOADS:
+            return
+        fail(f"APEX payload must use compressed erofs, not ext4: {info.filename}")
+    if prefix[android_image.EROFS_SUPERBLOCK_OFFSET :][:4] != android_image.EROFS_MAGIC:
+        fail(f"APEX payload must use compressed erofs: {info.filename}")
+    check_erofs_superblock(f"APEX payload {info.filename}", prefix)
 
 
 def init_services(payload: str) -> dict[str, tuple[str, list[str]]]:
@@ -911,14 +929,13 @@ def check_boot_policy(
             misc_info[key] = value
     for key, expected in READ_ONLY_FILESYSTEMS.items():
         if misc_info.get(key) != expected:
-            fail(f"{key} must select read-only ext4 images")
+            fail(f"{key} must select read-only erofs images")
+    check_erofs_policy(archive, infos, misc_info)
     if misc_info.get("userdata_extfs_inode_count") != USERDATA_EXTFS_INODE_COUNT:
         fail(
             "userdata_extfs_inode_count must be "
             f"{USERDATA_EXTFS_INODE_COUNT}: {misc_info.get('userdata_extfs_inode_count')!r}"
         )
-    if "system_erofs_blocksize" in misc_info:
-        fail("system EROFS image policy remains enabled")
 
     init_payload = read_small(
         archive, infos["VENDOR/etc/init/init.kernarium.rc"]
@@ -1045,10 +1062,11 @@ def check_discrete_ops(
 
 
 # The AOSP example HALs the product keeps, each packaged as the vendor APEX that Cuttlefish
-# installs. The APEX payload holds the service binary (a regular-file directory entry: name
-# length, file type 1, name), the VINTF fragment that declares the AIDL interface, and the init
-# script that starts the service. The init script names the binary too, so the entry is told
-# apart from that.
+# installs. The APEX payload holds the service binary, the VINTF fragment that declares the AIDL
+# interface, and the init script that starts the service. The payload is compressed EROFS: the
+# fragment and the script stay readable in its bytes because the payload's compress hints
+# (overlay/config/erofs_apex_payload_hints.txt) store every .rc and .xml file uncompressed, and
+# the binary is looked up in the payload's directories, since the init script names it too.
 APEX_PAYLOAD_READ_LIMIT = 64 << 20
 # system_server's thermal manager and CTS NativeThermalTest need a thermal HAL.
 THERMAL_HAL = {
@@ -1121,9 +1139,17 @@ def check_example_hal(
             if payload_info.file_size > APEX_PAYLOAD_READ_LIMIT:
                 fail(f"{apex_name} has an unexpectedly large payload")
             payload = apex.read(payload_info)
-    except (KeyError, OSError, zipfile.BadZipFile) as error:
-        fail(f"cannot inspect {apex_name}: {error}")
-    if bytes([len(binary), 1]) + binary not in payload:
+    except (KeyError, OSError, zipfile.BadZipFile) as problem:
+        fail(f"cannot inspect {apex_name}: {problem}")
+    if payload[android_image.EROFS_SUPERBLOCK_OFFSET :][:4] != android_image.EROFS_MAGIC:
+        fail(f"cannot inspect {apex_name}: the payload is not EROFS")
+    try:
+        file_type = android_image.erofs_file_type(
+            payload, f"bin/hw/{binary.decode()}", apex_name, error
+        )
+    except (struct.error, ValueError) as parse_error:
+        fail(f"cannot read the directories of {apex_name}: {parse_error}")
+    if file_type != android_image.EROFS_FILE_TYPE_REGULAR:
         fail(f"{apex_name} does not hold the service binary bin/hw/{binary.decode()}")
     if not all(marker in payload for marker in hal["fragment"]):
         fail(f"{apex_name} does not declare {hal['interface']} in a VINTF fragment")
@@ -1225,6 +1251,13 @@ def check_app_dexpreopt(seen: set[str]) -> None:
 # The virtual Wi-Fi needs these built in: kernarium_net_setup stacks a macvlan on eth0 and a
 # virt_wifi device on that, and a kernel without them leaves apps no network at all.
 WIFI_KERNEL_OPTIONS = ("CONFIG_MACVLAN=y", "CONFIG_CFG80211=y", "CONFIG_VIRT_WIFI=y")
+# First-stage init mounts the five read-only partitions as compressed EROFS before any module
+# could load, so the kernel needs the file system and the product's decompressor built in.
+EROFS_KERNEL_OPTIONS = (
+    "CONFIG_EROFS_FS=y",
+    "CONFIG_EROFS_FS_ZIP=y",
+    "CONFIG_EROFS_FS_ZIP_ZSTD=y",
+)
 
 
 def check_kernel_policy(
@@ -1244,6 +1277,12 @@ def check_kernel_policy(
             fail(
                 f"packaged kernel configuration lacks {option}: the virtual Wi-Fi needs it, "
                 "and without it apps have no network"
+            )
+    for option in EROFS_KERNEL_OPTIONS:
+        if option not in packaged_options:
+            fail(
+                f"packaged kernel configuration lacks {option}: the read-only partitions "
+                "are compressed EROFS, and first-stage init cannot mount them without it"
             )
 
     packaged_release = read_small(
@@ -1752,6 +1791,71 @@ def check_multilib_properties(
     )
     if system.get("ro.product.cpu.abi") != EXPECTED_ABIS["abi"]:
         fail(f"SYSTEM/build.prop lacks ro.product.cpu.abi=arm64-v8a: {system.get('ro.product.cpu.abi')!r}")
+
+
+def check_erofs_policy(
+    archive: zipfile.ZipFile,
+    infos: dict[str, zipfile.ZipInfo],
+    misc_info: dict[str, str],
+) -> None:
+    """The images were built with the product's one compressor and cluster size."""
+    compressor, pcluster_size = erofs_parameters()
+    if misc_info.get("erofs_default_compressor") != compressor:
+        fail(
+            f"erofs_default_compressor must be {compressor}: "
+            f"{misc_info.get('erofs_default_compressor')!r}"
+        )
+    if misc_info.get("erofs_pcluster_size") != pcluster_size:
+        fail(
+            f"erofs_pcluster_size must be {pcluster_size}: "
+            f"{misc_info.get('erofs_pcluster_size')!r}"
+        )
+    for key in sorted(misc_info):
+        if key in EROFS_FORBIDDEN_POLICY or EROFS_PARTITION_POLICY.match(key):
+            fail(f"EROFS policy beyond the product's two parameters is set: {key}")
+    hints = infos.get(EROFS_COMPRESS_HINTS_ENTRY)
+    if hints is None:
+        fail(f"{EROFS_COMPRESS_HINTS_ENTRY} is missing: the .apex files would be compressed")
+    tracked_hints = (android_image.ANDROID_ROOT / "overlay/config/erofs_compress_hints.txt").read_bytes()
+    if read_small(archive, hints) != tracked_hints:
+        fail("EROFS compress hints differ from the tracked product file")
+    if misc_info.get("erofs_default_compress_hints") is None:
+        fail("erofs_default_compress_hints is not set")
+    for partition in READ_ONLY_PARTITIONS:
+        name = f"IMAGES/{partition}.img"
+        with archive.open(infos[name]) as source:
+            prefix = android_image.read_image_prefix(
+                source,
+                android_image.EROFS_SUPERBLOCK_OFFSET + android_image.EROFS_SUPERBLOCK_SIZE,
+                error,
+            )
+        check_erofs_superblock(name, prefix)
+
+
+@functools.cache
+def erofs_parameters() -> tuple[str, str]:
+    return android_image.tracked_erofs_parameters(error)
+
+
+def check_erofs_superblock(name: str, prefix: bytes) -> None:
+    """The image is EROFS on 4 KiB blocks, compressed with the product's algorithm alone and
+    with clusters larger than a block, and uses none of the extended layout options."""
+    compressor = erofs_parameters()[0]
+    superblock = android_image.erofs_superblock(prefix, name, error)
+    if superblock.block_size_bits != 12:
+        fail(f"{name} does not use 4 KiB blocks")
+    if superblock.compression_algorithms != 1 << android_image.EROFS_ALGORITHM_ZSTD:
+        fail(
+            f"{name} is not compressed with {compressor.partition(',')[0]} alone: "
+            f"algorithms {superblock.compression_algorithms:#x}"
+        )
+    if not superblock.feature_incompat & android_image.EROFS_FEATURE_INCOMPAT_BIG_PCLUSTER:
+        fail(f"{name} has no physical cluster larger than a block")
+    if superblock.feature_incompat & (
+        android_image.EROFS_FEATURE_INCOMPAT_ZTAILPACKING
+        | android_image.EROFS_FEATURE_INCOMPAT_FRAGMENTS
+    ):
+        fail(f"{name} uses an extended option (ztailpacking, fragments or dedupe)")
 
 
 def check_userdata_quota(fstab: bytes, label: str) -> None:
@@ -2288,7 +2392,7 @@ def main() -> None:
 
     print(
         f"verified AOSP 17 target files: {len(seen)} entries, "
-        f"{elf_count} target executables, {apex_count} ext4 APEX payloads"
+        f"{elf_count} target executables, {apex_count} APEX payloads"
     )
 
 
