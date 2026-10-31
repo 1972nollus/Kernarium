@@ -15,12 +15,101 @@ inside it with the physical-memory file's alias, as for the pages after
 the break, and free them to memblock. A host page shared with a neighbour
 section stays: Darwin maps and protects whole 16 KiB host pages.
 
+The pages lie below the break, and the memory table that virtio-uml sends
+a vhost-user backend started at the break, since the image is not in the
+file. A buffer the allocator placed in the freed range, such as a
+virtio-gpu command, then lay outside the guest memory the backend knew,
+and the backend dropped the connection ("virtqueue buffer is outside
+guest memory"). The table now carries the freed range as a region of its
+own, with its offset in the file.
+
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- arch/um/kernel/dyn.lds.S |  9 +++++++++
- arch/um/kernel/mem.c     | 29 +++++++++++++++++++++++++++++
- 2 files changed, 38 insertions(+)
+ arch/um/drivers/virtio_uml.c | 30 +++++++++++++++++------
+ arch/um/include/shared/mem.h | 12 ++++++++++
+ arch/um/kernel/dyn.lds.S     |  9 +++++++
+ arch/um/kernel/mem.c         | 46 ++++++++++++++++++++++++++++++++++++
+ 4 files changed, 90 insertions(+), 7 deletions(-)
 
+diff --git a/arch/um/drivers/virtio_uml.c b/arch/um/drivers/virtio_uml.c
+index 61c5ef5b7f2f9b8a2c30a45235331818c74ed613..5288d707429c901b60b153ec005c8eca2226c50a 100644
+--- a/arch/um/drivers/virtio_uml.c
++++ b/arch/um/drivers/virtio_uml.c
+@@ -984,11 +984,11 @@ static int vhost_user_set_mem_table(struct virtio_uml_device *vu_dev)
+ {
+ 	struct vhost_user_msg msg = {
+ 		.header.request = VHOST_USER_SET_MEM_TABLE,
+-		.header.size = offsetof(typeof(msg.payload.mem_regions), regions[1]),
+-		.payload.mem_regions.num = 1,
+ 	};
+ 	unsigned long reserved = uml_reserved - uml_physmem;
++	unsigned long hole_start, hole_end;
+ 	int fds[2];
++	u32 num = 0;
+ 	int rc;
+ 
+ 	/*
+@@ -1025,16 +1025,32 @@ static int vhost_user_set_mem_table(struct virtio_uml_device *vu_dev)
+ 	 * between bss_start and where we map the file now, but it's not
+ 	 * something that you typically encounter with virtio drivers, so
+ 	 * it didn't seem worthwhile.
++	 *
++	 * Pages of the image that the kernel gave to the page allocator are
++	 * the exception. Their contents are in the file, and the allocator
++	 * hands them out like any other page, so they are a region of their
++	 * own.
+ 	 */
++	if (uml_image_hole(&hole_start, &hole_end)) {
++		rc = vhost_user_init_mem_region(hole_start,
++						hole_end - hole_start,
++						&fds[num],
++						&msg.payload.mem_regions.regions[num]);
++		if (rc < 0)
++			return rc;
++		num++;
++	}
+ 	rc = vhost_user_init_mem_region(reserved, physmem_size - reserved,
+-					&fds[0],
+-					&msg.payload.mem_regions.regions[0]);
+-
++					&fds[num],
++					&msg.payload.mem_regions.regions[num]);
+ 	if (rc < 0)
+ 		return rc;
++	num++;
+ 
+-	return vhost_user_send(vu_dev, &msg, fds,
+-			       msg.payload.mem_regions.num);
++	msg.payload.mem_regions.num = num;
++	msg.header.size = offsetof(typeof(msg.payload.mem_regions),
++				   regions[num]);
++	return vhost_user_send(vu_dev, &msg, fds, num);
+ }
+ 
+ static int vhost_user_set_vring_state(struct virtio_uml_device *vu_dev,
+diff --git a/arch/um/include/shared/mem.h b/arch/um/include/shared/mem.h
+index 952b871ea04bf65e28379adcbe3788cd5f67cc1e..7b33518ca6a7319d8680f2ee28d0c10c79e35af3 100644
+--- a/arch/um/include/shared/mem.h
++++ b/arch/um/include/shared/mem.h
+@@ -28,6 +28,18 @@ int uml_vhost_user_shmem_unmap(void *owner,
+ 			       unsigned long long length);
+ void uml_vhost_user_shmem_reset(void *owner);
+ void uml_vhost_user_shmem_release(void *owner);
++
++/*
++ * The pages of the kernel image that the page allocator owns, as a physical
++ * range below uml_reserved. Their contents are in the physical-memory file,
++ * so a vhost-user backend can reach them if the memory table names them.
++ */
++int uml_image_hole(unsigned long *start, unsigned long *end);
++#else
++static inline int uml_image_hole(unsigned long *start, unsigned long *end)
++{
++	return 0;
++}
+ #endif
+ 
+ extern unsigned long uml_physmem;
 diff --git a/arch/um/kernel/dyn.lds.S b/arch/um/kernel/dyn.lds.S
 index 21cb40a672f97440f555af3df2fbcaa7113997a0..9817216e483f3a67785a52d07423387d24828d71 100644
 --- a/arch/um/kernel/dyn.lds.S
@@ -42,15 +131,34 @@ index 21cb40a672f97440f555af3df2fbcaa7113997a0..9817216e483f3a67785a52d07423387d
      KEEP (*(.init))
    } =0x90909090
 diff --git a/arch/um/kernel/mem.c b/arch/um/kernel/mem.c
-index 7c42ca72464020660034a658d553132b7f8b1f42..486f7123d563c645414788fa7c55a68127d9279e 100644
+index 7c42ca72464020660034a658d553132b7f8b1f42..866ab3f2663597fea523b8ff0cf8bdf7e0745421 100644
 --- a/arch/um/kernel/mem.c
 +++ b/arch/um/kernel/mem.c
-@@ -60,6 +60,32 @@ int kmalloc_ok = 0;
+@@ -17,6 +17,7 @@
+ #include <init.h>
+ #include <kern.h>
+ #include <kern_util.h>
++#include <mem.h>
+ #include <mem_user.h>
+ #include <os.h>
+ #include <um_malloc.h>
+@@ -60,6 +61,48 @@ int kmalloc_ok = 0;
  /* Used during early boot */
  static unsigned long brk_end;
  
 +#ifdef UML_HOST_DARWIN
 +extern char __rela_dyn_start[], __rela_dyn_end[];
++
++/* The physical range free_dynamic_relocations() gave to the allocator. */
++static unsigned long image_hole_start __ro_after_init;
++static unsigned long image_hole_end __ro_after_init;
++
++int uml_image_hole(unsigned long *start, unsigned long *end)
++{
++	*start = image_hole_start;
++	*end = image_hole_end;
++	return image_hole_end > image_hole_start;
++}
 +
 +/*
 + * The host applied the image's dynamic relocations before it started the
@@ -59,7 +167,10 @@ index 7c42ca72464020660034a658d553132b7f8b1f42..486f7123d563c645414788fa7c55a681
 + * lie wholly inside them go to the page allocator the way the pages after the
 + * break do. The physical-memory file replaces the image's copy of them, since
 + * a page that user space or the page cache can map has to be in that file,
-+ * and what the allocator gets starts zeroed.
++ * and what the allocator gets starts zeroed. The range is below the break, so
++ * the memory table a vhost-user backend receives has to name it as a region of
++ * its own (uml_image_hole()); otherwise a buffer the allocator places there
++ * lies outside the guest memory the backend knows.
 + */
 +static void __init free_dynamic_relocations(void)
 +{
@@ -72,13 +183,15 @@ index 7c42ca72464020660034a658d553132b7f8b1f42..486f7123d563c645414788fa7c55a681
 +		return;
 +	map_memory(start, __pa(start), end - start, 1, 1, 0);
 +	memblock_free((void *)start, end - start);
++	image_hole_start = __pa(start);
++	image_hole_end = __pa(end);
 +}
 +#endif
 +
  void __init arch_mm_preinit(void)
  {
  	/* Safe to call after jump_label_init(). Enables KASAN. */
-@@ -81,6 +107,9 @@ void __init arch_mm_preinit(void)
+@@ -81,6 +124,9 @@ void __init arch_mm_preinit(void)
  #endif
  	map_memory(brk_end, __pa(brk_end), uml_reserved - brk_end, 1, 1, 0);
  	memblock_free((void *)brk_end, uml_reserved - brk_end);

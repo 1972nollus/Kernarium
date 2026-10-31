@@ -378,11 +378,14 @@ tmpfs file.
 The image holds nothing that only boot or an unused feature needs. The host
 loader applies its dynamic relocations (`.rela.dyn`, about 2 MB) before it
 starts the kernel, so `arch_mm_preinit()` returns the 16 KiB host pages wholly
-inside them to the allocator, as it does the slack after `_end`. There is no
-array of per-CPU signal stacks in the image: the host gives each vCPU carrier
-a 128 KiB signal stack of its own, whatever `THREAD_SIZE` is. Nor is there a
-table for the vhost-user region, since the mappings described above are
-allocated as the backend asks for them.
+inside them to the allocator, as it does the slack after `_end`. Those pages lie
+below the break, which the memory table of a vhost-user device otherwise starts
+at, so the table names them as a second region (with their offset in the
+physical-memory file), since the allocator places buffers there like anywhere
+else. There is no array of per-CPU signal stacks in the image: the host gives
+each vCPU carrier a 128 KiB signal stack of its own, whatever `THREAD_SIZE` is.
+Nor is there a table for the vhost-user region, since the mappings described
+above are allocated as the backend asks for them.
 
 `CONFIG_VIRTIO_BALLOON` lets the host carve its GPU memory out of guest RAM.
 UML removes virtio drivers from an exitcall that runs
