@@ -1116,7 +1116,7 @@ cases have lost a reservation, and requires that every case then agreed.
 
 The Android product runs `armeabi-v7a` applications beside `arm64-v8a` ones
 ([`../android/lineage-24/README.md`](../android/lineage-24/README.md#android-product)).
-The build side needs no Android build. `lineage24-builder-lane` drives the
+The build side needs no Android build. `lineage24-target-files-fixtures` drives the
 target-files verifier over fixtures (ABI lists, the 32-bit runtime, ELF32
 placement and alignment, per-ISA ART artifacts, the 32-bit Mesa and HAL files
 and their 64-suffixed `mmap` and `lseek` imports, the compressed-EROFS contract of
@@ -1140,7 +1140,8 @@ plugin, the vendor `build.prop` without the unreliable-present-fence property
 and with `ro.incremental.enable=1`, the software decoders' 3840x2160 limits, the
 hardware video encoder service, a codec list of its two encoders and two
 decoders, their properties and no other enabled decoder, the video nodes' group,
-the service's seccomp calls and its label) and the builder's assertions;
+the service's seccomp calls and its label), and `lineage24-builder-lane` the
+builder's other assertions;
 `lineage24-first-boot-precompile` covers the
 ISA set of a package and the per-ISA artifacts and manifest;
 `lineage24-mesa-venus-port-generator` covers the per-ISA generators of the
