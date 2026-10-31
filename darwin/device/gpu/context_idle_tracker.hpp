@@ -40,7 +40,12 @@ public:
     void reset();
 
     /* The context ran something on the host GL stack. */
-    void activity(std::uint32_t contextId, Clock::time_point now);
+    void activity(std::uint32_t contextId, Clock::time_point now);    /* Every context starts a new idle period. A texture that one context
+     * deleted may still have a view that another context made, and a context
+     * destroys its own views only when it next flushes: the context that
+     * sampled a texture the host has just deleted has something to release
+     * although nothing was sent to it. */
+    void activityAll(Clock::time_point now);
     /* A fence on a ring of the context was asked for and later retired.
      * Cookies on a ring only grow, and retiring one retires all before it. */
     void fenceCreated(

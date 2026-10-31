@@ -56,6 +56,15 @@ void ContextIdleTracker::activity(
     found->second.reports = 0;
 }
 
+void ContextIdleTracker::activityAll(Clock::time_point now)
+{
+    std::lock_guard lock(mutex_);
+    for (auto& entry : contexts_) {
+        entry.second.lastActivity = std::max(entry.second.lastActivity, now);
+        entry.second.reports = 0;
+    }
+}
+
 void ContextIdleTracker::fenceCreated(
     std::uint32_t contextId,
     std::uint32_t ringIndex,

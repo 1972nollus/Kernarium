@@ -114,6 +114,44 @@ void checkSecondReport()
         "the second report after the retirement is missing");
 }
 
+void checkActivityOfAllContexts()
+{
+    ContextIdleTracker tracker(1s);
+    tracker.add(first, origin);
+    tracker.add(second, origin);
+    require((tracker.takeIdle(origin + 1s) == std::vector {first, second}),
+        "both contexts should have been reported");
+    require((tracker.takeIdle(origin + 2s) == std::vector {first, second}),
+        "both contexts should have been reported a second time");
+    require(tracker.takeIdle(origin + 60s) == none,
+        "a context was reported a third time");
+
+    /* Something the host did concerns every context: all of them start a new
+     * period. */
+    tracker.activityAll(origin + 70s);
+    require(tracker.nextDelay(origin + 70s) == 1s,
+        "activity of all contexts did not start a new interval");
+    require(tracker.takeIdle(origin + 70999ms) == none,
+        "a context was reported before its new interval ended");
+    require((tracker.takeIdle(origin + 71s) == std::vector {first, second}),
+        "contexts were not reported again after activity of all");
+
+    /* A context waiting on a fence stays held back, and the activity does not
+     * report a context that was never added. */
+    tracker.fenceCreated(second, 0, 3, origin + 80s);
+    tracker.activityAll(origin + 90s);
+    require(tracker.takeIdle(origin + 100s) == std::vector {first},
+        "a context with a fence outstanding was reported after activity of all");
+    tracker.remove(first);
+    tracker.activityAll(origin + 110s);
+    require(tracker.takeIdle(origin + 120s) == none,
+        "a removed context or one with a fence outstanding was reported");
+    ContextIdleTracker empty(1s);
+    empty.activityAll(origin);
+    require(empty.takeIdle(origin + 60s) == none && !empty.nextDelay(origin).has_value(),
+        "activity of all contexts invented a context");
+}
+
 void checkActivityMakesTheContextEligibleAgain()
 {
     ContextIdleTracker tracker(1s);
@@ -239,6 +277,7 @@ int main()
 {
     checkIdleInterval();
     checkSecondReport();
+    checkActivityOfAllContexts();
     checkActivityMakesTheContextEligibleAgain();
     checkPendingFences();
     checkSeveralContexts();
