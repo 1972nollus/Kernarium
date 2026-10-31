@@ -201,6 +201,7 @@ private:
         std::uint32_t ringIndex,
         std::uint64_t fenceId) noexcept;
     void noteContextActivity(std::uint32_t contextId) noexcept;
+    void noteResourceReleased() noexcept;
     [[nodiscard]] static std::uint64_t contextRingKey(
         std::uint32_t contextId,
         std::uint32_t ringIndex) noexcept;
