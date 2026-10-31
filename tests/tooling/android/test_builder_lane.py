@@ -3130,6 +3130,49 @@ def verify_secondary_zygote_topic(android_root: Path) -> None:
             fail(f"the secondary zygote preload check accepts {label}")
 
 
+def decoder_output_delay_problems(added: str, removed: str) -> list[str]:
+    """What is wrong with the added text of the topic that lowers the H.264 and HEVC output delay.
+
+    The framework stops feeding the decoder at the pipeline delay (3) plus the output delay plus 4 works,
+    and this device releases a picture once more than the stream's reorder depth R of them wait, so a
+    stream stalls only when R exceeds the delay by more than 6. R is at most 16, which needs a delay of
+    at least 10; the delay is a constant, not a property."""
+    problems = []
+    constant = re.search(r"constexpr uint32_t kReorderingOutputDelay = (\d+);", added)
+    if not constant:
+        problems.append("the topic defines no kReorderingOutputDelay")
+    elif int(constant.group(1)) + 6 < 16:
+        problems.append(f"a delay of {constant.group(1)} stalls a stream of reorder depth 16")
+    if added.count("return kReorderingOutputDelay;") != 2 or removed.count("return 16;") != 2:
+        problems.append("H.264 and HEVC do not both return the constant in place of 16")
+    if "property_get" in added or "getprop" in added.lower():
+        problems.append("the delay is a constant, not a property")
+    if "reorders on the host" not in added or "hold no" not in added:
+        problems.append("the comment does not give the reason: the device reorders on the host and its capture buffers hold no reorder pictures")
+    return problems
+
+
+def verify_decoder_output_delay_topic(android_root: Path) -> None:
+    """The v4l2_codec2 topic that lowers the H.264 and HEVC output delay keeps every stream decodable."""
+    patches = sorted((android_root / "patches/projects/p0018/series").glob("v4l2-hold-fewer-capture-buffers-*.patch"))
+    if len(patches) != 1:
+        fail(f"p0018 has {len(patches)} output delay patches, not one")
+    lines = patches[0].read_text().splitlines()
+    added = "\n".join(line[1:] for line in lines if line.startswith("+") and not line.startswith("+++"))
+    removed = "\n".join(line[1:] for line in lines if line.startswith("-") and not line.startswith("---"))
+    problems = decoder_output_delay_problems(added, removed)
+    if problems:
+        fail("the decoder output delay topic: " + "; ".join(problems))
+    for label, edited_added, edited_removed in (
+        ("a delay of 9", added.replace("kReorderingOutputDelay = 10;", "kReorderingOutputDelay = 9;"), removed),
+        ("an HEVC case that keeps 16", added.replace("return kReorderingOutputDelay;", "return 16;", 1), removed.replace("return 16;", "", 1)),
+        ("a delay read from a property", added + '\nproperty_get_int32("ro.vendor.v4l2_codec2.output_delay", 10);', removed),
+        ("a delay without its reason", added.replace("reorders on the host", "reorders"), removed),
+    ):
+        if (edited_added, edited_removed) == (added, removed) or not decoder_output_delay_problems(edited_added, edited_removed):
+            fail(f"the decoder output delay check accepts {label}")
+
+
 def verify_reclaim_boot_apps(android_root: Path) -> None:
     """The reclaim script kills only the cached processes of the listed packages.
 
@@ -4076,6 +4119,7 @@ def main() -> None:
     verify_zram_fstab(android_root)
     verify_pinner_overlay(android_root)
     verify_secondary_zygote_topic(android_root)
+    verify_decoder_output_delay_topic(android_root)
     verify_reclaim_boot_apps(android_root)
     verify_default_wallpaper(android_root)
     verify_overlay_sepolicy(android_root)
