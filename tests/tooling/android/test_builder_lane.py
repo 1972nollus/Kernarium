@@ -11,6 +11,7 @@ import gzip
 import importlib.util
 import io
 import json
+import random
 import re
 import shutil
 import struct
@@ -3271,6 +3272,31 @@ def verify_default_wallpaper(android_root: Path) -> None:
                ordinary_wallpaper=True)
         orders("no-inherit-call", r"no inherit-product call",
                makefile_text.replace("$(call inherit-product,", "$(call not-inherit,"))
+    # The copy is pinned to the source's mini bitmap: the texels SystemUI's 112 x 112 nearest-neighbour
+    # reduction reads from the 1024 pixel image hold what the 1920 pixel image's own samples read, so the
+    # Monet palette is the one LineageOS's wallpaper gives. The positions are the ones read on a guest.
+    source_side, output_side = tool.SOURCE_SIDE, tool.MAX_SIDE
+    if [tool.sample_texels(source_side, k)[0] for k in range(5)] != [8, 25, 42, 59, 77] \
+            or tool.sample_texels(source_side, tool.MINI_SIDE - 1) != (1911, 1911) \
+            or [tool.sample_texels(output_side, k) for k in range(5)] \
+            != [(4, 4), (13, 13), (22, 22), (31, 32), (41, 41)] \
+            or tool.sample_texels(output_side, tool.MINI_SIDE - 1) != (1019, 1019):
+        fail("the mini bitmap sample positions differ from the ones read on a guest")
+    pattern = random.Random(20261031).randbytes(source_side * source_side * 3)
+    pinned = bytearray(output_side * output_side * 3)
+    changed = tool.pin_samples(pinned, output_side, pattern, source_side)
+    columns = [x for k in range(tool.MINI_SIDE) for x in range(tool.sample_texels(output_side, k)[0],
+                                                              tool.sample_texels(output_side, k)[1] + 1)]
+    if changed != len(columns) ** 2 or sum(1 for i in range(0, len(pinned), 3) if pinned[i:i + 3] != b"\0\0\0") != changed:
+        fail(f"the pinned copy changed {changed} texel values, not exactly the {len(columns) ** 2} sample texels")
+    for row in range(tool.MINI_SIDE):
+        for column in range(tool.MINI_SIDE):
+            start = (tool.sample_texels(source_side, row)[0] * source_side
+                     + tool.sample_texels(source_side, column)[0]) * 3
+            for y in range(tool.sample_texels(output_side, row)[0], tool.sample_texels(output_side, row)[1] + 1):
+                for x in range(tool.sample_texels(output_side, column)[0], tool.sample_texels(output_side, column)[1] + 1):
+                    if pinned[(y * output_side + x) * 3:(y * output_side + x) * 3 + 3] != pattern[start:start + 3]:
+                        fail(f"sample ({row}, {column}) of the pinned copy does not hold the source's sample")
     # A source that is not LineageOS's own file cannot regenerate the committed copy.
     with tempfile.TemporaryDirectory(prefix="default-wallpaper-") as temporary:
         source = Path(temporary) / "source.png"

@@ -436,6 +436,15 @@ three of 255 levels (PSNR above 56 dB). The platform's own
 `config_optimizeDefaultWallpaper` is no substitute: it crops to the display's long
 side and scales up, 19.6 MiB at 2266 by 1374.
 
+The wallpaper also sets the Monet palette. SystemUI quantizes a 112 by 112 mini
+bitmap that `Bitmap.createScaledBitmap(bitmap, 112, 112, false)` takes with one
+nearest-neighbour texel per sample, and a plain resize of the 1920 pixel image
+moves the accent colour from LineageOS's #589EA8 to #78ACB9 although no pixel
+differs visibly. `tools/default_wallpaper.py generate` therefore writes the
+original's own sample into each texel the copy is sampled at (the positions were
+read on a guest), 0.4% of the texels by at most five levels, so both images give
+the quantizer the same pixels and the palette stays LineageOS's.
+
 LineageOS's overlay names the same resource, and where two overlay directories do
 that the one listed earlier in `PRODUCT_PACKAGE_OVERLAYS` wins (Soong gives the
 earlier directory the higher priority). `inherit-product` expands the inherited
