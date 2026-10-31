@@ -252,6 +252,17 @@ the reaper and the add path; Apple's assembler rejects the CFI directives of
 `src/util/streaming-load-memcpy.c` in that tree, so that one object is built
 without the sanitizer.
 
+The idle trim of a context (`EGL_MESA_context_trim`, `pipe_context::trim`) is
+exercised by `gpu-host-context-trim` and `gpu-host-context-trim-concurrent` in
+`check-gpu`. The second has four contexts of one Zink screen draw, flush and
+trim at once, and is the program for a ThreadSanitizer pass over the trim, the
+flush queue's reset of the screen's batch-state lists and their lock order: build
+the Zink and EGL stack with `-Db_sanitize=thread` (the same object stays without
+the sanitizer) and compile the test and `host_gl_provider.cpp` with
+`-fsanitize=thread`. Zink reports its unsynchronized scalars there, with or
+without a trim: the screen's last finished batch, a state's submit count and the
+context's state count. No report involves a state list or a state's link.
+
 KosmicKrisp's runtime behaviour is specified in
 [`../docs/graphics.md`](../docs/graphics.md#kosmickrisp-driver-contracts).
 Metal bridge constructors return one owned, initialized object. Callers

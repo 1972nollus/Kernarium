@@ -1097,6 +1097,28 @@ of the heap when that is smaller, so its bound is the same on every host rather
 than following the heap size KosmicKrisp reports. `ZINK_BO_CACHE_MAX_MIB`
 changes the cap, and assertions check that the cache stays within it.
 
+A guest GL context that stops submitting keeps what its last batches used. Zink
+holds a flushed context's completed batch states, and every resource object they
+reference, until that context's next batch asks for a state, and the states a
+context has handed to the screen wait for the next submission of any context;
+glthread and the threaded context keep the last reference to a texture the guest
+deleted until the context's next fence. At Retina idle that was three to five
+full-screen heaps for as long as the guest stayed still. The renderer therefore
+records each Virgl context's last command, transfer, fence and fence retirement.
+A context with no fence outstanding and no activity for one second is trimmed
+once with `virgl_renderer_context_trim`, and any new activity arms it again; the
+GPU service thread sleeps on a timer for the earliest moment a context could be
+that idle, so an idle guest costs no wakeups. `UML_GPU_IDLE_TRIM_MS` replaces the
+interval and zero turns the trim off. The trim visits each of the context's GL
+contexts, runs what glthread and the threaded context still have queued behind a
+`glFlush`, and calls `eglTrimContextMESA`, which Mesa advertises as
+`EGL_MESA_context_trim`. That reaches `pipe_context::trim`, which Zink answers by
+handing the context's completed batch states to the screen and resetting every
+state the screen holds, without waiting for the device and keeping the states for
+reuse. A context that has not finished its last batch keeps it, and a render
+target that is still the context's bound framebuffer stays referenced until the
+context binds another.
+
 KosmicKrisp reports physical memory as its one host heap, 64 GiB on a large Mac
 and 4 GiB on an iPad mini 6, and the memory budget it reports follows. Apps and
 drivers that size their caches from either see that difference.
