@@ -568,44 +568,91 @@ resource is gone be exported again, so a later `vkMapMemory` succeeds once the
 aperture has room. A host-visible heap of one aperture therefore leaves a
 mapping of a quarter of it usable with room to spare.
 
+### Device memory budget
+
 Device memory is charged to the application like guest RAM, so the host gives
-Venus a share of the guest's allocation: half of `mem=`. The share is one pool
-(`device/gpu/device_memory_pool.*`) for everything the host GPU holds for the
-process. Its usage is the process's Metal allocation
+the GPU a fixed budget, B, computed once at launch from the process's memory
+limit and the guest's memory (the formula, its launch parameters and the
+warning below the floor are in [memory
+architecture](architecture.md#memory-and-executable-code)). The budget is one
+pool (`device/gpu/device_memory_pool.*`) for everything the host GPU holds for
+the process. Its usage is the larger of the process's Metal allocation
 (`MTLDevice.currentAllocatedSize`, which also counts presentation, host GL
-memory and the host driver's own memory) plus the reservations of allocations
-under way. The renderer shrinks every advertised heap to the share and bounds
-every heap budget it reports by the heap's usage plus what the pool has left,
-so a guest sizes its allocations from the share, less what the host already
-holds, instead of from the host's memory. The guest driver passes budgets on
-only under `VN_DEBUG=mem_budget`. The Virtio balloon then takes the same amount
-out of the guest's RAM (see [memory
-architecture](architecture.md#memory-and-executable-code)).
+memory and the host driver's own memory) and its graphics footprint (the
+graphics ledger of `TASK_VM_INFO`, which also charges the command storage the
+driver has written), the figure the Virtio balloon follows, plus the
+reservations of allocations under way. The renderer shrinks every advertised
+heap to B and bounds every heap budget it reports by the heap's usage plus what
+the pool has left, so a guest sizes its allocations from B, less what the host
+already holds, instead of from the host's memory. The guest driver passes
+budgets on only under `VN_DEBUG=mem_budget`. The balloon takes the same amount
+out of the guest's RAM.
 
-Every consumer of the pool reserves an allocation's size, in whole host pages,
-before it allocates, and releases the reservation once Metal counts the
-allocation or it has failed. One lock decides every reservation, so
-allocations that each fit alone never together take the process past the
-share, whichever threads make them. The renderer reserves each new, non-import
-guest allocation. KosmicKrisp reserves its geometry heap (see [memory
-budget](#memory-budget)) through a driver-private structure that the renderer
-chains to every device it creates for a guest (`kk_device_memory_pool.h`,
-staged for the renderer's build and absent from the published prefix). A guest
-cannot chain that structure itself: the protocol decoder rejects a chain member
-it does not know. The driver's other internal allocations, such as upload
-buffers, are small; the pool counts them once Metal does and does not reserve
-them.
+KosmicKrisp is the one place every allocation passes. Whoever owns the host
+(`uml-darwin`, the Kernarium runtime) hands the renderer the pool, and the
+renderer states it to the driver for the whole process
+(`kk_set_device_memory_pool`, exported by the driver library beside the
+per-device structure of `kk_device_memory_pool.h`, in this project's Mesa
+series). Every device the process creates then charges it, the Venus devices of
+guests and the device Zink creates for host GL alike, without either chaining
+anything: a guest cannot chain the structure itself, because the protocol
+decoder rejects a chain member it does not know. A pooled device reserves a
+heap's size, in whole host pages, before Metal makes it, and releases the
+reservation once Metal counts the heap or has refused it; one lock decides
+every reservation, so allocations that each fit alone never together take the
+process past B, whichever threads make them.
 
-The renderer refuses a guest allocation the pool cannot reserve. The
-application does not see that refusal as `VK_ERROR_OUT_OF_DEVICE_MEMORY`. Venus allocates
-asynchronously, so `vkAllocateMemory` has already succeeded in the guest; the
-first later command that names the missing memory fails in the renderer, which
-marks the Venus ring fatal, and the guest driver aborts the process. The
-counter also includes memory the guest has already freed while its blob
+What the driver refuses and what it only counts:
+
+- `vkAllocateMemory` of any memory type is refused with
+  `VK_ERROR_OUT_OF_DEVICE_MEMORY` when the pool cannot hold it, and nothing is
+  allocated. That covers every buffer and texture of the OpenGL path, which Zink
+  places in memory it allocates this way, its pb_cache slabs included: Zink
+  answers the failure as it answers any, by dropping its cached buffers and
+  trying once more before the resource fails.
+- The geometry heap charges itself through the same pool and follows the
+  pool-aware heap rules (see [memory budget](#memory-budget)).
+- Host-visible memory the renderer makes for the guest and the driver imports
+  is not a driver allocation, so the renderer reserves its size before it makes
+  the pages and releases the reservation once the driver has made its Metal
+  buffer over them.
+- Memory a device imports names memory that exists already and is not charged.
+- The device's other storage (command pools, descriptor pools, query pools,
+  events and upload buffers), presentation, the VNC surface and decoder surfaces
+  are counted once Metal does and never refused: what needs them cannot fail
+  the way an allocation can.
+
+What a guest sees of a refusal depends on the path:
+
+- OpenGL. The guest creates a texture without an answer, so the guest driver
+  raises no `GL_OUT_OF_MEMORY`: the host's Zink logs `couldn't allocate memory`,
+  the texture has no storage, and what the guest draws to or reads from it is
+  lost. The context, the renderer and every resource made within the budget
+  stay as they were. While the budget is full even a transfer is refused,
+  since it needs a staging buffer, and the host's GL context records
+  `GL_OUT_OF_MEMORY` for the guest's `glReadPixels`. Once the guest releases
+  memory new textures store again, although the driver keeps released memory
+  for reuse: a refused allocation first drops what the driver caches.
+  `gpu-host-gl-device-memory-budget` drives this without a guest.
+- Vulkan on Venus. The guest driver submits `vkAllocateMemory` asynchronously
+  and waits for its result only when it maps, exports or frees the memory, so
+  the host's refusal reaches the guest as a context that fails at the next
+  command naming the allocation: the ring stops answering (the host logs `GPU
+  fence overdue`) and the guest process aborts. The host, the budget and every
+  other guest process are untouched, and a new process allocates at once. With
+  `VN_PERF=no_async_mem_alloc` the call waits and returns
+  `VK_ERROR_OUT_OF_DEVICE_MEMORY` while the device, the allocations already made
+  and later allocations stay usable. The advertised heap is B, but the pool
+  counts everything the host holds, so a guest cannot tell from the heap size
+  whether an asynchronous allocation will fit.
+
+The counter also includes memory the guest has already freed while its blob
 resource is still referenced: a freed swapchain image stays allocated until the
 guest's resource release arrives on the control queue, a few milliseconds after
 `vkFreeMemory`. A loop that frees and reallocates large images can therefore be
-refused while its live memory is below the share.
+refused while its live memory is below B. The pool writes one `uml: the GPU
+budget is full` line to stderr the first time it refuses an allocation, with
+the usage and the limit at that moment.
 
 ### Android guest requirements
 
@@ -1064,14 +1111,14 @@ levels: past about a thousand quad patches it reaches the cap. Constant levels
 bound it by the level written instead, and 65,536 triangle patches at level 1
 fit the starting 16 MiB.
 
-A Venus device charges its heap to the renderer's device-memory pool (see [the
-Venus share](#host-visible-memory-is-bounded-by-the-blob-aperture)), so the
-heap and the guest's allocations share one bound. A heap the device creates or
+A pooled device charges its heap to the host's device-memory pool (see [the
+budget](#device-memory-budget)), so the heap and the guest's allocations share
+one bound. A heap the device creates or
 grows takes at most half of the pool's headroom, except that a device's first
 heap may take 1 MiB, and a heap the pool cannot hold is not created. A heap
 grown past its start is freed once nothing holds it and the headroom has fallen
-below half its size. A device created without a pool, as host GL through Zink
-creates, keeps the fixed cap. The rules are the comment above
+below half its size. A device created without a pool keeps the fixed cap. The
+rules are the comment above
 `KK_HEAP_START_MIB` in `src/kosmickrisp/vulkan/kk_cmd_draw.c` and
 `kk_device_memory_pool.h`, in this project's Mesa series.
 
