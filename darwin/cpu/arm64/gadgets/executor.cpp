@@ -17,6 +17,7 @@
 #include "cpu/gadget_cache_census.hpp"
 #endif
 #include "uml_darwin_static_mmu.h"
+#include "memory/domain_heap.hpp"
 
 #include <algorithm>
 #include <array>
@@ -2102,6 +2103,17 @@ private:
 	struct Slab final {
 		std::array<Slot, slab_slots> slots;
 	};
+	/* Slabs come from the cache's own heap, which a cache that ends gives back
+	 * whole. */
+	struct SlabDelete final {
+		::uml::memory::DomainHeap *heap{};
+		void operator()(Slab *slab) const noexcept
+		{
+			slab->~Slab();
+			heap->deallocate(slab, sizeof(Slab), alignof(Slab));
+		}
+	};
+	using SlabPointer = std::unique_ptr<Slab, SlabDelete>;
 
 	struct Location final {
 		std::size_t set;
@@ -2404,7 +2416,8 @@ private:
 		const auto location = locate(window_.current_generation, pc);
 		auto &slab = slabs_[location.slab];
 		if (!slab)
-			slab = std::make_unique<Slab>();
+			slab = SlabPointer{new (slab_heap_.allocate(sizeof(Slab),
+				alignof(Slab))) Slab{}, SlabDelete{&slab_heap_}};
 		auto &replacement = next_replacement_[location.set];
 		std::size_t selected = replacement;
 		for (std::size_t way = 0; way < ways; ++way) {
@@ -2742,7 +2755,8 @@ private:
 	std::uint64_t dead_left_{};
 	std::uint64_t lru_tomb_{};
 #endif
-	std::array<std::unique_ptr<Slab>, slab_count> slabs_;
+	::uml::memory::DomainHeap slab_heap_;
+	std::array<SlabPointer, slab_count> slabs_;
 	std::array<std::uint8_t, set_count> next_replacement_{};
 };
 

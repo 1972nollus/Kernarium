@@ -432,7 +432,8 @@ endif()
 # shared ones.
 function(_uml_add_gadget_executor TARGET SLOTS)
     _uml_add_cpu_objects(${TARGET} gadget arm64/gadgets/executor.cpp)
-    target_link_libraries(${TARGET} PUBLIC uml_arm64_gadgets)
+    # The program slabs and record tables come from the memory layer's heaps.
+    target_link_libraries(${TARGET} PUBLIC uml_arm64_gadgets UML::MemoryHeap)
     target_compile_definitions(${TARGET} PRIVATE
         UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
         UML_GADGET_CACHE_SLOTS=${SLOTS}

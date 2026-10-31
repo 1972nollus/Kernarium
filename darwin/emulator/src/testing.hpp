@@ -44,7 +44,7 @@ void set_address_space_admission_hooks(
 
 /* What a hand-back gave back: the kernel's descriptors, pthread keys,
  * allocations and mappings, the sbrk calls the kernel made, and the guest-file
- * records forgotten. */
+ * records forgotten; and what the memory layer's heaps still hold. */
 struct GuestHandBackReport final {
 	std::size_t descriptors{};
 	std::size_t keys{};
@@ -54,6 +54,11 @@ struct GuestHandBackReport final {
 	std::size_t mapping_bytes{};
 	std::size_t sbrk_calls{};
 	std::size_t guest_files{};
+	/* The domain heaps alive, the bytes of the heap region committed and
+	 * the leases on the engine's shared heap. */
+	std::size_t heaps{};
+	std::size_t heap_bytes{};
+	std::size_t heap_leases{};
 };
 
 /* Called once the process's guest has been handed back, inside the run that

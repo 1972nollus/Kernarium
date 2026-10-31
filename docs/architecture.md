@@ -76,9 +76,15 @@ succeeds. Every run of the process uses the same JIT cache budget and guest CPU
 count, because the budget is published once per process, and a run that asks
 for another is refused.
 
-The freed heap is not returned: the default malloc zone keeps the chunks a boot
-emptied until the system reclaims them, and its in-use bytes stay flat across
-hand-backs. See [ADR 0002](decisions/0002-emulator-handle-lifetime.md).
+The engine's metadata for the guest, the MMU's indexes and the gadget caches,
+lives in heaps the memory layer maps itself and gives back whole, so that a
+run's end returns it to the host at once (see [domain heaps](#domain-heaps)).
+What the default malloc zone holds is not returned: the zone keeps the chunks a
+boot emptied until the system reclaims them, and its in-use bytes stay flat
+across hand-backs. The hand-back reports what the heaps still hold
+(`heaps=<n> (<bytes> bytes) leases=<n>` on its console line) and the
+`guest-restart` test requires it to be nothing but the scratch each thread
+keeps. See [ADR 0002](decisions/0002-emulator-handle-lifetime.md).
 
 Runs on different handles serialize through a process address-space gate,
 because an embedded kernel's fixed host mappings cannot be shared. A stop
@@ -307,6 +313,48 @@ when the host names other backing than that page either of the two may be the
 stale one. Each uaccess page makes one `darwin_uml_vm_discard_if_stale()`
 call, which discards such a mapping and leaves an absent or equal one alone,
 and the next access replays the PTE. An absent page is always sound.
+
+### Domain heaps
+
+The default malloc zone returns what a restarted guest freed on its own
+schedule: it keeps the chunks a boot emptied and moves their pages between
+"dirty" and "reclaimable" in the footprint at moments the process cannot
+choose. A guest's metadata is millions of small blocks, so the memory layer
+(`memory/domain_heap.hpp`) keeps it out of the zone. `HeapRegion` is one
+`PROT_NONE MAP_NORESERVE` reservation per process, 8 GiB on macOS and 1 GiB on
+iOS, made on first use and never unmapped. A block is committed by mapping
+fresh pages over its range with `MAP_FIXED` and given back by reserving the
+range again, so its pages leave the footprint at once, the lowest free range is
+reused first, and no hole is ever left for the next `mmap(NULL)` to prefer. A
+region that has no room is `std::bad_alloc`.
+
+- `DomainHeap` carves 16-byte size classes (to 8 KiB) out of chunks of 256 KiB
+  that double to 4 MiB; larger blocks are mappings of their own. `release()`
+  gives every chunk back, and the destructor releases. A `DomainAllocator`
+  is the standard allocator over one.
+- `ScratchScope` and `ScratchAllocator` hold the temporaries of one operation in
+  the calling thread's bump arena, which keeps one 64 KiB chunk for the thread's
+  life and returns anything beyond it when the outermost scope ends.
+- `LeasedHeap` is one heap many owners share, released when the last of their
+  `HeapLease`s ends; counting a lease and releasing the heap are one critical
+  section.
+
+The owners, and when each gives its heap back:
+
+| Owner | Memory | Back |
+| --- | --- | --- |
+| Static MMU address space (one per memory domain) | the generations' fill-index nodes and mapping histories | when the domain retires and its last generation goes |
+| Native address space (one per memory domain) | its mappings, backing index, slot protections, materialized slots and direct mappings | at `retire()`, under its lock |
+| Host ownership registry | its page-owner map | whenever it is empty |
+| Batch plans, direct-map lists | the thread's scratch | at the end of the call |
+| arm64 `ProgramCache` (one per executor) | its program slabs | with the executor |
+| `StableRecordTable` (the arm64 `Space` and the x86-64 translation space) | its record chunks and index, in the engine's `LeasedHeap` | when the last table is gone |
+
+Every mapping carries a VM tag (heap 241, scratch 242), so `vmmap` and
+`footprint` name the memory. The guest-lifecycle hand-back follows the domain's
+retirement, so no domain heap is dirty at a hand-back. The GPU stack, Metal and
+the system frameworks, the devices and the process's own objects stay in the
+default zone, whose residue is what remains.
 
 Gadget streams, MMU backing, and shadow mappings are data.
 Only `darwin/cpu/jit_memory/executable_memory.cpp` may allocate executable
