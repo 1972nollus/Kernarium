@@ -518,6 +518,16 @@ running guest returns to normal grace periods and does not interrupt every
 vCPU for each one. The target-files verifier requires that action. Recovery
 loads no vendor init script and stays expedited for its short run.
 
+The guest has a compressed swap of half its RAM. `fstab.uml` names one zram
+entry (`zramsize=50%`) and the same init action that restores the RCU grace
+periods runs `swapon_all` on it once `sys.boot_completed` is set, so boot
+itself compresses nothing. The apps the system starts around boot completion
+keep their anonymous memory in zram, which zswap fronts, rather than in guest
+RAM that nothing but killing the app could reclaim: it compresses about 4:1 and
+frees about 80 MiB of a 1536 MiB guest at idle, and the launcher workload
+refaults about a quarter of the file pages it did. The verifier requires the one
+fstab entry and the one `swapon_all`, at boot completion and nowhere else.
+
 ## Graphics
 
 Both graphics APIs come from one Mesa build of this project's own guest Mesa

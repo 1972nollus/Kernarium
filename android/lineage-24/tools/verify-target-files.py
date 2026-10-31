@@ -653,6 +653,10 @@ UML_INIT_DENSITY_COPY = "setprop ro.sf.lcd_density ${ro.boot.lcd_density}"
 # product init script then restores normal ones.
 UML_INIT_RCU_TRIGGER = "property:sys.boot_completed=1"
 UML_INIT_RCU_RESTORE = "write /sys/kernel/rcu_expedited 0"
+# Compressed swap: one zram entry in the fstab, turned on once boot completes so
+# that boot itself compresses nothing.
+UML_ZRAM_DEVICE = "/dev/block/zram0"
+UML_SWAPON_COMMAND = "swapon_all /vendor/etc/fstab.uml"
 # The inherited Cuttlefish graphics script also copied the goldfish composer
 # mode and the ANGLE feature overrides; this product has neither, and their
 # androidboot sources never exist.
@@ -804,6 +808,32 @@ def check_suspend_blocker(init_payload: str, actions: dict[str, list[str]]) -> N
         fail(f"UML init policy does not stop {name} when the last adb host leaves")
 
 
+def check_zram_swap(actions: dict[str, list[str]]) -> None:
+    """Swap goes on when boot completes and at no other point."""
+    if actions.get(UML_INIT_RCU_TRIGGER, []).count(UML_SWAPON_COMMAND) != 1:
+        fail(f"UML init policy does not run '{UML_SWAPON_COMMAND}' once at {UML_INIT_RCU_TRIGGER}")
+    for trigger, commands in actions.items():
+        for command in commands:
+            if command.startswith("swapon_all") and (
+                trigger != UML_INIT_RCU_TRIGGER or command != UML_SWAPON_COMMAND
+            ):
+                fail(f"UML init policy turns swap on under '{trigger}': {command}")
+
+
+def check_zram_fstab(fstab: bytes, label: str) -> None:
+    """The fstab names one zram swap entry that sizes itself from the RAM."""
+    entries = [
+        fields
+        for fields in (line.split() for line in fstab.decode("utf-8", errors="strict").splitlines())
+        if fields and not fields[0].startswith("#") and fields[2:3] == ["swap"]
+    ]
+    if len(entries) != 1 or entries[0][0] != UML_ZRAM_DEVICE:
+        fail(f"UML fstab must have exactly one swap entry, on {UML_ZRAM_DEVICE}: {label}")
+    flags = entries[0][4].split(",") if len(entries[0]) > 4 else []
+    if not any(flag.startswith("zramsize=") and flag.endswith("%") for flag in flags):
+        fail(f"UML fstab swap entry has no zramsize percentage: {label}")
+
+
 def check_userdata_grow(actions: dict[str, list[str]]) -> None:
     """Growing userdata works on every boot, not only the first, and happens while it is mounted."""
     if actions.get(USERDATA_GROW_TRIGGER, []).count(USERDATA_GROW_COMMAND) != 1:
@@ -918,6 +948,7 @@ def check_boot_policy(
     fstab = android_image.tracked_fstab(error)
     for entry in UML_FSTAB_ENTRIES:
         check_userdata_quota(read_small(archive, infos[entry]), entry)
+        check_zram_fstab(read_small(archive, infos[entry]), entry)
         if read_small(archive, infos[entry]) != fstab:
             fail(f"UML fstab differs from the fixed UBD contract: {entry}")
 
@@ -960,6 +991,7 @@ def check_boot_policy(
         fail("UML init policy does not copy a host-supplied display density")
     if UML_INIT_RCU_RESTORE not in actions.get(UML_INIT_RCU_TRIGGER, []):
         fail("UML init policy does not restore normal RCU grace periods after boot")
+    check_zram_swap(actions)
     check_userdata_grow(actions)
     check_suspend_blocker(init_payload, actions)
     check_network_setup(init_payload, actions)

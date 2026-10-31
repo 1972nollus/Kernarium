@@ -798,11 +798,26 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 ) + "    setprop ro.sf.lcd_density ${ro.boot.lcd_density}\n"
                 # The restore of normal RCU grace periods, which belongs to
                 # boot completion, follows the boot action's commands.
+                # Swap goes on at the same point.
+                swapon = "    swapon_all /vendor/etc/fstab.uml\n"
                 rcu_restore = "    write /sys/kernel/rcu_expedited 0\n"
+                if init_variant == "missing-swapon":
+                    swapon = ""
                 if init_variant == "missing-rcu-restore":
                     rcu_restore = ""
-                elif init_variant != "rcu-restore-at-boot":
-                    rcu_restore = "on property:sys.boot_completed=1\n" + rcu_restore
+                if init_variant == "swapon-also-at-boot":
+                    rcu_restore = (
+                        "    swapon_all /vendor/etc/fstab.uml\n"
+                        "on property:sys.boot_completed=1\n" + rcu_restore + swapon
+                    )
+                elif init_variant == "swapon-twice":
+                    rcu_restore = (
+                        "on property:sys.boot_completed=1\n" + rcu_restore + swapon + swapon
+                    )
+                elif init_variant == "rcu-restore-at-boot":
+                    rcu_restore = rcu_restore + swapon
+                else:
+                    rcu_restore = "on property:sys.boot_completed=1\n" + rcu_restore + swapon
                 # The directories the Wi-Fi HAL and the supplicant use.
                 wifi_dirs = (
                     ""
@@ -1901,6 +1916,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("ungated-density", {"init_variant": "ungated-density"}),
             ("missing-rcu-restore", {"init_variant": "missing-rcu-restore"}),
             ("rcu-restore-at-boot", {"init_variant": "rcu-restore-at-boot"}),
+            ("missing-swapon", {"init_variant": "missing-swapon"}),
+            ("swapon-also-at-boot", {"init_variant": "swapon-also-at-boot"}),
+            ("swapon-twice", {"init_variant": "swapon-twice"}),
             ("cuttlefish-graphics-rc",
              {"extra_entry": "VENDOR/etc/init/init_graphics.vendor.rc"}),
             ("product-init-rc", {"extra_entry": "PRODUCT/etc/init/init.rc"}),
@@ -2215,6 +2233,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "unexpected product property apexd.config.use_fiemap: \\[\\]"),
             ("use-fiemap-true-cause", {"use_fiemap_variant": "true"},
              "unexpected product property apexd.config.use_fiemap: \\['true'\\]"),
+            ("missing-swapon-cause", {"init_variant": "missing-swapon"},
+             "does not run 'swapon_all /vendor/etc/fstab.uml' once at property:sys.boot_completed=1"),
+            ("swapon-twice-cause", {"init_variant": "swapon-twice"},
+             "does not run 'swapon_all /vendor/etc/fstab.uml' once at property:sys.boot_completed=1"),
+            ("swapon-also-at-boot-cause", {"init_variant": "swapon-also-at-boot"},
+             "turns swap on under 'boot': swapon_all /vendor/etc/fstab.uml"),
             ("userdata-grow-missing-cause", {"userdata_grow_variant": "missing"},
              "does not run 'exec - root system -- /system/bin/resize2fs [^']*' once at "
              "post-fs-data"),
@@ -2668,6 +2692,28 @@ def verify_userdata_grow(android_root: Path) -> None:
         b"(allowx fsck_202604 system_data_root_file_202604 (ioctl dir (0x6610)))\n"
     )
     verifier.check_userdata_grow_policy(policy)
+
+
+def verify_zram_fstab(android_root: Path) -> None:
+    """The fstab names one zram swap entry that sizes itself from the RAM; init turns it on at boot completion."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    fstab = (android_root / "overlay/config/fstab.uml").read_bytes()
+    verifier.check_zram_fstab(fstab, "tracked")
+    entry = b"/dev/block/zram0 none swap defaults zramsize=50%\n"
+    if entry not in fstab:
+        fail("overlay/config/fstab.uml does not contain the zram swap entry this guard looks for")
+    for label, edited in (
+        ("no swap entry", fstab.replace(entry, b"")),
+        ("wrong device", fstab.replace(b"/dev/block/zram0", b"/dev/block/zram1")),
+        ("no size", fstab.replace(b"zramsize=50%", b"max_comp_streams=4")),
+        ("absolute size", fstab.replace(b"zramsize=50%", b"zramsize=768M")),
+        ("two entries", fstab + entry),
+    ):
+        try:
+            verifier.check_zram_fstab(edited, label)
+        except SystemExit:
+            continue
+        fail(f"a fstab with {label} passes the zram swap check")
 
 
 def verify_default_wallpaper(android_root: Path) -> None:
@@ -3463,6 +3509,7 @@ def main() -> None:
     verify_net_setup_tool(android_root)
     verify_erofs_board(android_root)
     verify_userdata_grow(android_root)
+    verify_zram_fstab(android_root)
     verify_default_wallpaper(android_root)
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)
