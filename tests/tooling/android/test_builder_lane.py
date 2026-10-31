@@ -221,6 +221,35 @@ def synthetic_arm_elf(
     return with_imports(bytes(payload), False, imports) if imports is not None else bytes(payload)
 
 
+def synthetic_compiled_manifest(target_sdk: int | None, *, string_value: bool = False) -> bytes:
+    """A compiled manifest with one element, <uses-sdk>, that carries targetSdkVersion when given.
+
+    It has the chunks the verifier reads and no more: a string pool, the resource map that gives
+    the attribute name its framework ID, and the element."""
+    strings = ["targetSdkVersion", "uses-sdk", "28"]
+    pool_strings = b""
+    offsets = []
+    for text in strings:
+        offsets.append(len(pool_strings))
+        pool_strings += struct.pack("<H", len(text)) + text.encode("utf-16-le") + b"\0\0"
+    pool_strings += b"\0" * (-len(pool_strings) % 4)
+    strings_start = 28 + 4 * len(strings)
+    pool = struct.pack(
+        "<HHIIIIII", 0x0001, 28, strings_start + len(pool_strings), len(strings), 0, 0, strings_start, 0
+    ) + b"".join(struct.pack("<I", offset) for offset in offsets) + pool_strings
+    resource_map = struct.pack("<HHII", 0x0180, 8, 12, 0x01010270)
+    attributes = b""
+    if target_sdk is not None:
+        attributes = struct.pack(
+            "<IIIHBBI", 0xFFFFFFFF, 0, 2 if string_value else 0xFFFFFFFF, 8, 0,
+            0x03 if string_value else 0x10, 2 if string_value else target_sdk,
+        )
+    body = struct.pack("<IIHHHHHH", 0xFFFFFFFF, 1, 20, 20, 1 if attributes else 0, 0, 0, 0) + attributes
+    element = struct.pack("<HHIII", 0x0102, 16, 16 + len(body), 1, 0xFFFFFFFF) + body
+    payload = pool + resource_map + element
+    return struct.pack("<HHI", 0x0003, 8, 8 + len(payload)) + payload
+
+
 def run_in_process(module, *arguments: object) -> subprocess.CompletedProcess[str]:
     """Run a loaded tool's main() as `run_tool` would run its script.
 
@@ -404,10 +433,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
     from release_common import BUILD_VARIANTS, configured_build_variant
 
     tool = load_tool(verifier)
+    pinner_overlay_entry = tool.PINNER_OVERLAY
     preopt_apks = sorted(tool.REQUIRED_PREOPT_APKS)
     plain_apks = sorted(
         entry for entry in tool.REQUIRED_ENTRIES
         if entry.endswith(".apk") and entry not in tool.REQUIRED_PREOPT_APKS
+        and entry != pinner_overlay_entry
     )
     arm_preopt_apks = sorted(tool.REQUIRED_ARM_PREOPT_APKS)
     permission_files = [
@@ -642,6 +673,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           userdata_grow_variant: str | None = None,
                           userdata_grow_policy_variant: str | None = None,
                           discrete_ops_variant: str | None = None,
+                          pinner_overlay_variant: str | None = None,
                           wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
                           cas_hal_variant: str | None = None,
@@ -1334,6 +1366,28 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             archive.writestr(f"{artifact}.vdex", b"vdex")
                 for apk in plain_apks:
                     archive.writestr(apk, b"apk")
+                # The overlay that releases the home app's pin: built for SDK 28, with the
+                # resource it sets in its table.
+                pinner_overlay = io.BytesIO()
+                with zipfile.ZipFile(pinner_overlay, "w") as overlay:
+                    overlay.writestr(
+                        "AndroidManifest.xml",
+                        b"not a compiled manifest" if pinner_overlay_variant == "not-compiled"
+                        else synthetic_compiled_manifest(
+                            None if pinner_overlay_variant == "no-target-sdk"
+                            else 29 if pinner_overlay_variant == "target-sdk-29"
+                            else 37 if pinner_overlay_variant == "target-sdk-current"
+                            else 28,
+                            string_value=pinner_overlay_variant == "named-target-sdk",
+                        ),
+                    )
+                    if pinner_overlay_variant != "no-table":
+                        overlay.writestr(
+                            "resources.arsc",
+                            b"\x00" if pinner_overlay_variant == "no-resource"
+                            else b"\x00config_pinnerHomePinBytes\x00",
+                        )
+                archive.writestr(pinner_overlay_entry, pinner_overlay.getvalue())
                 # The runtime resource overlay Soong generates from the product's
                 # SimpleDeviceConfig overlays. Its string pool holds each DeviceConfig list:
                 # LineageOS's, then the product's, which adds the ops of AOSP's default.
@@ -1976,6 +2030,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-cas-plugin-32", {"cas_hal_variant": "no-plugin32"}),
             ("lineage-discrete-ops-list-only", {"discrete_ops_variant": "lineage-list-only"}),
             ("short-discrete-ops-list", {"discrete_ops_variant": "short-device-list"}),
+            ("missing-pinner-overlay", {"entries": {"VENDOR/overlay/KernariumPinnerOverlay.apk": None}}),
+            ("pinner-overlay-target-sdk-29", {"pinner_overlay_variant": "target-sdk-29"}),
+            ("pinner-overlay-target-sdk-current", {"pinner_overlay_variant": "target-sdk-current"}),
+            ("pinner-overlay-no-target-sdk", {"pinner_overlay_variant": "no-target-sdk"}),
+            ("pinner-overlay-named-target-sdk", {"pinner_overlay_variant": "named-target-sdk"}),
+            ("pinner-overlay-no-resource", {"pinner_overlay_variant": "no-resource"}),
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
@@ -2373,6 +2433,23 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "136, 141, 147, 149, 150, 152, 170, 171, 172, 173"),
             ("short-discrete-ops-list-cause", {"discrete_ops_variant": "short-device-list"},
              "the closest lacks 141$"),
+            ("missing-pinner-overlay-cause",
+             {"entries": {"VENDOR/overlay/KernariumPinnerOverlay.apk": None}},
+             "VENDOR/overlay/KernariumPinnerOverlay.apk"),
+            ("pinner-overlay-target-sdk-29-cause", {"pinner_overlay_variant": "target-sdk-29"},
+             "KernariumPinnerOverlay.apk targets SDK 29: .* 28 or lower"),
+            ("pinner-overlay-target-sdk-current-cause", {"pinner_overlay_variant": "target-sdk-current"},
+             "KernariumPinnerOverlay.apk targets SDK 37: .* 28 or lower"),
+            ("pinner-overlay-no-target-sdk-cause", {"pinner_overlay_variant": "no-target-sdk"},
+             "KernariumPinnerOverlay.apk targets SDK None: .* 28 or lower"),
+            ("pinner-overlay-named-target-sdk-cause", {"pinner_overlay_variant": "named-target-sdk"},
+             "KernariumPinnerOverlay.apk targets SDK None: .* 28 or lower"),
+            ("pinner-overlay-no-resource-cause", {"pinner_overlay_variant": "no-resource"},
+             "KernariumPinnerOverlay.apk does not set config_pinnerHomePinBytes"),
+            ("pinner-overlay-no-table-cause", {"pinner_overlay_variant": "no-table"},
+             "KernariumPinnerOverlay.apk has no readable manifest and resource table"),
+            ("pinner-overlay-not-compiled-cause", {"pinner_overlay_variant": "not-compiled"},
+             "KernariumPinnerOverlay.apk has an unreadable manifest: not a compiled XML file"),
             ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
              "userdata entry lacks the fs_mgr quota flag"),
             ("wrong-apex-filesystem-cause", {"wrong_apex_filesystem": True},
@@ -2801,6 +2878,60 @@ def verify_zram_fstab(android_root: Path) -> None:
         fail(f"a fstab with {label} passes the zram swap check")
 
 
+def verify_pinner_overlay(android_root: Path) -> None:
+    """The product releases the home app's memory pin with an overlay built for SDK 28.
+
+    The pin sizes are not overlayable, so the overlay applies only while it targets 28 or lower;
+    the verifier reads the built manifest, and these checks keep its reader and the module's
+    sources in step."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    module = android_root / "overlay/rro/KernariumPinnerOverlay"
+    values = re.findall(
+        r'<integer name="([a-zA-Z_]+)">([^<]*)</integer>',
+        (module / "res/values/config.xml").read_text(),
+    )
+    if values != [("config_pinnerHomePinBytes", "0")]:
+        fail(f"the pinner overlay sets {values}, not the home pin size alone and to zero")
+    if verifier.PINNER_OVERLAY_RESOURCE.decode() != values[0][0]:
+        fail("the verifier looks for a different pin resource than the overlay sets")
+    manifest = (module / "AndroidManifest.xml").read_text()
+    target = re.search(r'android:targetSdkVersion="(\d+)"', manifest)
+    if target is None or int(target.group(1)) > verifier.PINNER_OVERLAY_MAX_TARGET_SDK:
+        fail("the pinner overlay manifest does not target SDK 28 or lower")
+    for needle in ('android:targetPackage="android"', 'android:isStatic="true"'):
+        if needle not in manifest:
+            fail(f"the pinner overlay manifest lacks {needle}")
+    blueprint = (module / "Android.bp").read_text()
+    for needle in ('name: "KernariumPinnerOverlay"', "vendor: true,", 'sdk_version: "28",'):
+        if needle not in blueprint:
+            fail(f"the pinner overlay module lacks {needle}")
+    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    if len(re.findall(r"^PRODUCT_PACKAGES \+= KernariumPinnerOverlay$", product, re.M)) != 1:
+        fail("lineage_darwin.mk does not add KernariumPinnerOverlay to PRODUCT_PACKAGES exactly once")
+    if verifier.PINNER_OVERLAY != "VENDOR/overlay/KernariumPinnerOverlay.apk":
+        fail("the verifier expects the pinner overlay somewhere other than the vendor overlay directory")
+
+    for label, blob, expected in (
+        ("SDK 28", synthetic_compiled_manifest(28), 28),
+        ("SDK 37", synthetic_compiled_manifest(37), 37),
+        ("no attribute", synthetic_compiled_manifest(None), None),
+        ("a name", synthetic_compiled_manifest(28, string_value=True), None),
+    ):
+        if verifier.manifest_target_sdk(blob) != expected:
+            fail(f"the manifest reader does not read {label} as {expected}")
+    good = synthetic_compiled_manifest(28)
+    for label, blob in (
+        ("empty", b""),
+        ("not compiled XML", b"<manifest/>" + bytes(8)),
+        ("truncated", good[:-6]),
+    ):
+        try:
+            verifier.manifest_target_sdk(blob)
+        except (ValueError, struct.error):
+            continue
+        fail(f"the manifest reader accepts a {label} manifest")
+
+
 def verify_default_wallpaper(android_root: Path) -> None:
     """The overlay replaces LineageOS's 1920 pixel tablet wallpaper with a bounded square.
 
@@ -2997,6 +3128,7 @@ def verify_package_assertions(android_root: Path) -> None:
         "com.android.hardware.wifi",
         "com.google.cf.wpa_supplicant",
         "KernariumWifiOverlay",
+        "KernariumPinnerOverlay",
         "kernarium_net_setup",
         "kernarium_wifi_network_script",
     ):
@@ -3613,6 +3745,7 @@ def main() -> None:
     verify_erofs_board(android_root)
     verify_userdata_grow(android_root)
     verify_zram_fstab(android_root)
+    verify_pinner_overlay(android_root)
     verify_default_wallpaper(android_root)
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)

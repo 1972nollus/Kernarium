@@ -248,6 +248,8 @@ REQUIRED_ENTRIES = {
     "VENDOR/lib64/cuttlefish_net.so",
     # The Wi-Fi module's overlay: virt_wifi cannot randomize its MAC.
     "VENDOR/overlay/KernariumWifiOverlay.apk",
+    # The overlay that releases PinnerService's home app pin.
+    "VENDOR/overlay/KernariumPinnerOverlay.apk",
     *ABI_LIST_PROPERTY_FILES,
     *MESA_ELF_ENTRIES,
     *MESA_HAL_ENTRIES,
@@ -1135,6 +1137,74 @@ def check_default_wallpaper(
                     )
     except (OSError, zipfile.BadZipFile) as error:
         fail(f"{FRAMEWORK_OVERLAY} is not a readable archive: {error}")
+
+
+# PinnerService's pin sizes are framework resources that the platform does not declare
+# overlayable. A runtime resource overlay may replace a resource its target has not declared
+# overlayable only when the overlay targets SDK 28 or lower; from Android 10 on the target's
+# overlayable policies bind it, and the overlay then applies to nothing without a message. The
+# overlay releases the home app's pin, about 54 MiB locked at idle.
+PINNER_OVERLAY = "VENDOR/overlay/KernariumPinnerOverlay.apk"
+PINNER_OVERLAY_RESOURCE = b"config_pinnerHomePinBytes"
+PINNER_OVERLAY_MAX_TARGET_SDK = 28
+# The framework attribute android:targetSdkVersion, and the types a numeric attribute has in a
+# compiled manifest (TYPE_INT_DEC and TYPE_INT_HEX).
+ATTR_TARGET_SDK_VERSION = 0x01010270
+AXML_START_ELEMENT = 0x0102
+AXML_RESOURCE_MAP = 0x0180
+AXML_INTEGER_TYPES = (0x10, 0x11)
+
+
+def manifest_target_sdk(manifest: bytes) -> int | None:
+    """The targetSdkVersion of a compiled manifest, or None when it has none or it is not a number."""
+    if len(manifest) < 8 or struct.unpack_from("<HH", manifest, 0)[0] != 0x0003:
+        raise ValueError("not a compiled XML file")
+    resource_ids: list[int] = []
+    offset = struct.unpack_from("<H", manifest, 2)[0]
+    while offset + 8 <= len(manifest):
+        kind, header, size = struct.unpack_from("<HHI", manifest, offset)
+        if size < 8 or offset + size > len(manifest):
+            raise ValueError("truncated compiled XML chunk")
+        if kind == AXML_RESOURCE_MAP:
+            resource_ids = list(struct.unpack_from(f"<{(size - header) // 4}I", manifest, offset + header))
+        elif kind == AXML_START_ELEMENT:
+            body = offset + header
+            attribute_start, attribute_size, count = struct.unpack_from("<HHH", manifest, body + 8)
+            for index in range(count):
+                position = body + attribute_start + index * attribute_size
+                name, _, _, data_type, data = struct.unpack_from("<IIHxBI", manifest, position + 4)
+                if name < len(resource_ids) and resource_ids[name] == ATTR_TARGET_SDK_VERSION:
+                    return data if data_type in AXML_INTEGER_TYPES else None
+        offset += size
+    return None
+
+
+def check_pinner_overlay(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The home pin overlay is built for SDK 28 or lower and carries the pin size it sets."""
+    info = infos.get(PINNER_OVERLAY)
+    if info is None:
+        fail(f"{PINNER_OVERLAY} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info))) as overlay:
+            manifest = overlay.read("AndroidManifest.xml")
+            table = overlay.read("resources.arsc")
+    except (KeyError, OSError, zipfile.BadZipFile) as error:
+        fail(f"{PINNER_OVERLAY} has no readable manifest and resource table: {error}")
+    try:
+        target = manifest_target_sdk(manifest)
+    except (ValueError, struct.error) as error:
+        fail(f"{PINNER_OVERLAY} has an unreadable manifest: {error}")
+    if target is None or target > PINNER_OVERLAY_MAX_TARGET_SDK:
+        fail(
+            f"{PINNER_OVERLAY} targets SDK {target}: PinnerService's pin sizes are not overlayable, so "
+            f"the overlay applies only when it targets {PINNER_OVERLAY_MAX_TARGET_SDK} or lower "
+            "(its Android.bp builds it with sdk_version \"28\")"
+        )
+    # Resource names sit in the table's key string pool as UTF-8 or UTF-16.
+    if PINNER_OVERLAY_RESOURCE not in table and PINNER_OVERLAY_RESOURCE.decode().encode("utf-16-le") not in table:
+        fail(f"{PINNER_OVERLAY} does not set {PINNER_OVERLAY_RESOURCE.decode()}")
 
 
 # The AOSP example HALs the product keeps, each packaged as the vendor APEX that Cuttlefish
@@ -2453,6 +2523,7 @@ def main() -> None:
         check_fdroid(archive, infos)
         check_discrete_ops(archive, infos)
         check_default_wallpaper(archive, infos)
+        check_pinner_overlay(archive, infos)
         check_thermal_hal(archive, infos)
         check_cas_hal(archive, infos)
         check_wifi_hals(archive, infos)

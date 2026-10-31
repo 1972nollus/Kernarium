@@ -429,6 +429,11 @@ PRODUCT_PACKAGES += kernarium_net_setup
 # framework must not randomize it.
 PRODUCT_PACKAGES += KernariumWifiOverlay
 
+# PinnerService locks the home app's APK and its compiled code into memory,
+# about 54 MiB at idle. KernariumPinnerOverlay (rro/KernariumPinnerOverlay)
+# sets the home pin size to zero and leaves the WebView pin as it was.
+PRODUCT_PACKAGES += KernariumPinnerOverlay
+
 # Once boot completes, a script saves the virtual Wi-Fi network (VirtWifi, open)
 # the first time only. It does not turn Wi-Fi on, and a network the user forgets
 # stays forgotten. It runs from system_ext in a core domain of its own.

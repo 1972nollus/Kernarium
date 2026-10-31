@@ -536,6 +536,17 @@ frees about 80 MiB of a 1536 MiB guest at idle, and the launcher workload
 refaults about a quarter of the file pages it did. The verifier requires the one
 fstab entry and the one `swapon_all`, at boot completion and nowhere else.
 
+PinnerService does not lock the home app's files. It would otherwise keep the
+launcher's APK, odex and vdex, about 54 MiB, resident whatever the memory
+pressure; without the pin those pages are reclaimed like any app's, and the
+time back to the home screen after a run of other apps did not grow.
+`KernariumPinnerOverlay` (`overlay/rro`) sets `config_pinnerHomePinBytes` to
+zero and leaves the WebView pin alone. The pin sizes are not overlayable, so the
+overlay is built for SDK 28, the last level whose overlays are not held to the
+target's overlayable declarations, and the target-files verifier reads the
+built manifest for that: an overlay that targeted a later level would apply to
+nothing and say nothing.
+
 ## Graphics
 
 Both graphics APIs come from one Mesa build of this project's own guest Mesa
