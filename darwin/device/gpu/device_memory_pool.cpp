@@ -46,25 +46,58 @@ std::uint64_t DeviceMemoryPool::usage() const
     return usageLocked();
 }
 
+bool DeviceMemoryPool::tryReserve(std::uint64_t charged, std::uint64_t& used)
+{
+    std::lock_guard lock(mutex_);
+    used = usageLocked();
+    if (charged > limit_ || used > limit_ - charged)
+        return false;
+    reserved_ += charged;
+    return true;
+}
+
+void DeviceMemoryPool::setReclaim(Reclaim reclaim)
+{
+    std::lock_guard lock(reclaimMutex_);
+    reclaim_ = std::move(reclaim);
+}
+
 bool DeviceMemoryPool::reserve(std::uint64_t bytes)
 {
     const std::uint64_t charged = charge(bytes);
-    std::lock_guard lock(mutex_);
-    const std::uint64_t used = usageLocked();
-    if (charged > limit_ || used > limit_ - charged) {
-        const bool first =
-            refusals_.fetch_add(1, std::memory_order_relaxed) == 0;
-        if (first)
-            std::fprintf(stderr,
-                "uml: the GPU budget is full: it refused %llu bytes with "
-                "%llu of %llu bytes in use\n",
-                static_cast<unsigned long long>(charged),
-                static_cast<unsigned long long>(used),
-                static_cast<unsigned long long>(limit_));
-        return false;
+    std::uint64_t used = 0;
+    if (tryReserve(charged, used))
+        return true;
+
+    /* A request larger than the pool is no cache's doing. Otherwise free what
+     * the host drivers cache, with no lock of the pool held: freeing returns
+     * reservations to it, and the memory the drivers free lowers the usage
+     * that the decision below reads again. */
+    std::uint64_t released = 0;
+    if (charged <= limit_) {
+        std::lock_guard lock(reclaimMutex_);
+        if (reclaim_) {
+            released = reclaim_();
+            if (tryReserve(charged, used)) {
+                if (released != 0)
+                    reclaimed_.fetch_add(1, std::memory_order_relaxed);
+                return true;
+            }
+        }
     }
-    reserved_ += charged;
-    return true;
+
+    const bool first = refusals_.fetch_add(1, std::memory_order_relaxed) == 0;
+    if (released != 0)
+        refusalsAfterRelease_.fetch_add(1, std::memory_order_relaxed);
+    if (first)
+        std::fprintf(stderr,
+            "uml: the GPU budget is full: it refused %llu bytes with "
+            "%llu of %llu bytes in use%s\n",
+            static_cast<unsigned long long>(charged),
+            static_cast<unsigned long long>(used),
+            static_cast<unsigned long long>(limit_),
+            released != 0 ? " after releasing cached memory" : "");
+    return false;
 }
 
 void DeviceMemoryPool::release(std::uint64_t bytes) noexcept

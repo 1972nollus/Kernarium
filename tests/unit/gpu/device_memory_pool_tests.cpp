@@ -160,6 +160,119 @@ void manyThreadsNeverCrossTheLimit()
     require(pool.usage() == 0, "every reservation is returned");
 }
 
+void reclaimsBeforeRefusing()
+{
+    /* Half the pool is a cache the driver would free for the asking. A
+     * reservation that does not fit asks it to, and is decided once more:
+     * the hook's memory serves it. */
+    Counter counter;
+    DeviceMemoryPool pool(100 * page, [&] { return counter.bytes.load(); },
+        page);
+    counter.bytes = 70 * page;
+    unsigned calls = 0;
+    pool.setReclaim([&]() -> std::uint64_t {
+        ++calls;
+        counter.bytes = 20 * page;
+        return 3;
+    });
+    require(pool.reserve(20 * page), "a reservation that fits needs no hook");
+    require(calls == 0, "the hook is not called while reservations fit");
+    pool.release(20 * page);
+    require(pool.reserve(40 * page), "freed cache admits the reservation");
+    require(calls == 1, "the hook ran once");
+    require(pool.reclaimed() == 1, "the rescue is counted");
+    require(pool.refusals() == 0, "nothing was refused");
+    require(pool.usage() == 60 * page, "the reservation and the memory left");
+    pool.release(40 * page);
+
+    /* A cache that is gone leaves the next refusal to stand. */
+    counter.bytes = 90 * page;
+    pool.setReclaim([&]() -> std::uint64_t {
+        ++calls;
+        return 5;
+    });
+    require(!pool.reserve(20 * page), "released memory that is not enough "
+                                      "still refuses");
+    require(pool.refusals() == 1, "the refusal is counted");
+    require(pool.refusalsAfterRelease() == 1,
+        "a refusal that followed a release is counted apart");
+    pool.setReclaim([&]() -> std::uint64_t {
+        ++calls;
+        return 0;
+    });
+    require(!pool.reserve(20 * page), "an empty cache refuses");
+    require(pool.refusals() == 2 && pool.refusalsAfterRelease() == 1,
+        "an empty release is not counted apart");
+
+    /* A request no cache could serve does not ask. */
+    const unsigned before = calls;
+    require(!pool.reserve(101 * page), "a request past the limit is refused");
+    require(calls == before, "the hook is not asked for the impossible");
+
+    pool.setReclaim({});
+    require(!pool.reserve(20 * page), "no hook, no rescue");
+}
+
+void hookRunsWithoutThePoolsLocks()
+{
+    /* The hook frees memory, which returns reservations to the pool and reads
+     * its usage. Called under the pool's lock it would wait for itself; the
+     * pool must also let a second thread's reservation proceed meanwhile. */
+    Counter counter;
+    DeviceMemoryPool pool(100 * page, [&] { return counter.bytes.load(); },
+        page);
+    counter.bytes = 80 * page;
+    require(pool.reserve(10 * page), "a reservation to give back");
+    std::atomic<bool> inside {};
+    std::atomic<bool> proceed {};
+    pool.setReclaim([&]() -> std::uint64_t {
+        pool.release(10 * page);
+        (void)pool.usage();
+        inside = true;
+        while (!proceed)
+            std::this_thread::yield();
+        counter.bytes = 0;
+        return 1;
+    });
+    std::atomic<bool> rescued {};
+    std::thread refused([&] { rescued = pool.reserve(50 * page); });
+    while (!inside)
+        std::this_thread::yield();
+    /* The hook is running: the pool still answers a thread whose reservation
+     * fits, without waiting for it. */
+    counter.bytes = 0;
+    require(pool.reserve(5 * page), "the pool answers while a hook runs");
+    pool.release(5 * page);
+    counter.bytes = 80 * page;
+    proceed = true;
+    refused.join();
+    require(rescued, "the refused thread was admitted after the hook");
+    pool.release(50 * page);
+    pool.setReclaim({});
+}
+
+void setReclaimWaitsForARunningHook()
+{
+    Counter counter;
+    DeviceMemoryPool pool(10 * page, [&] { return counter.bytes.load(); },
+        page);
+    counter.bytes = 10 * page;
+    std::atomic<bool> inside {};
+    std::atomic<bool> finished {};
+    pool.setReclaim([&]() -> std::uint64_t {
+        inside = true;
+        std::this_thread::sleep_for(100ms);
+        finished = true;
+        return 0;
+    });
+    std::thread refused([&] { (void)pool.reserve(page); });
+    while (!inside)
+        std::this_thread::yield();
+    pool.setReclaim({});
+    require(finished, "clearing the hook waits for the call running it");
+    refused.join();
+}
+
 } // namespace
 
 int main()
@@ -168,6 +281,9 @@ int main()
     growthLeavesTheRestToTheGuest();
     concurrentAllocationsNeverCrossTheLimit();
     manyThreadsNeverCrossTheLimit();
+    reclaimsBeforeRefusing();
+    hookRunsWithoutThePoolsLocks();
+    setReclaimWaitsForARunningHook();
     std::puts("device memory pool: allocations that reserve first never "
               "pass the limit together");
     return 0;

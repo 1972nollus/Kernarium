@@ -319,6 +319,15 @@ VirglRenderer::VirglRenderer()
                 std::to_string(checkedResult));
         }
         initialized = true;
+        if (deviceMemoryPool) {
+            /* A refused reservation first frees what the host GL driver
+             * caches. The hook reaches this renderer's provider, so it is
+             * cleared before the provider goes. */
+            deviceMemoryPool->setReclaim(
+                [provider = provider_.get()]() -> std::uint64_t {
+                    return provider->releaseCachedMemory();
+                });
+        }
         if (capabilityReportEnabled()) {
             // vrend asks for 4.6 first, the core context this provider serves.
             reportContextProbe(provider_->probeContext(4, 6));
@@ -327,6 +336,8 @@ VirglRenderer::VirglRenderer()
             reportCapset(venusCapsetId, capset(venusCapsetId));
         }
     } catch (...) {
+        if (deviceMemoryPool)
+            deviceMemoryPool->setReclaim({});
         if (initialized)
             virgl_renderer_cleanup(this);
         rendererInstanceActive.store(false, std::memory_order_release);
@@ -336,6 +347,8 @@ VirglRenderer::VirglRenderer()
 
 VirglRenderer::~VirglRenderer()
 {
+    if (deviceMemoryPool)
+        deviceMemoryPool->setReclaim({});
     virgl_renderer_cleanup(this);
     /* The pool is the renderer's: nothing the cleanup left can reach it, and
      * the guest that comes after this one starts with nothing reserved. */
