@@ -210,6 +210,8 @@ REQUIRED_ENTRIES = {
     "SYSTEM_EXT/priv-app/Seedvault/Seedvault.apk",
     "SYSTEM_EXT/bin/kernarium_wifi_network.sh",
     "SYSTEM_EXT/etc/init/kernarium_wifi_network.rc",
+    "SYSTEM_EXT/bin/kernarium_reclaim_boot_apps.sh",
+    "SYSTEM_EXT/etc/init/kernarium_reclaim_boot_apps.rc",
     "SYSTEM_EXT/etc/selinux/system_ext_file_contexts",
     "SYSTEM_EXT/etc/selinux/system_ext_property_contexts",
     "SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil",
@@ -622,6 +624,50 @@ WIFI_NETWORK_TRANSITION = re.compile(
     rb"kernarium_wifi_network\)$",
     re.MULTILINE,
 )
+# Once boot has settled a script kills the cached processes of a reviewed list of apps the
+# system starts at boot (overlay/tools/kernarium_reclaim_boot_apps.sh), in a core domain of its
+# own on system_ext (overlay/sepolicy/system_ext/private). Their receivers and bindings stay;
+# only `cmd activity kill` runs on them, which kills nothing the system would not have chosen,
+# and never `kill-all` or `force-stop`, which cancel alarms and jobs. Each entry is a package
+# and the names of its processes.
+RECLAIM_SERVICE = ("kernarium_reclaim_boot_apps", "/system_ext/bin/kernarium_reclaim_boot_apps.sh")
+RECLAIM_TRIGGER = "property:sys.boot_completed=1"
+RECLAIM_SETTLE = "settle=120"
+RECLAIM_APPS = (
+    ("android.ext.services", (".adservices", "android.ext.services")),
+    ("com.android.federatedcompute.services", ("com.android.federatedcompute.services",)),
+    ("com.android.ondevicepersonalization.services",
+     ("com.android.ondevicepersonalization.services",)),
+    ("com.stevesoltys.seedvault", ("com.stevesoltys.seedvault",)),
+    ("org.calyxos.backup.contacts", ("org.calyxos.backup.contacts",)),
+    ("com.android.localtransport", ("com.android.localtransport",)),
+    ("com.android.rkpdapp", ("com.android.rkpdapp",)),
+    ("com.android.statementservice", ("com.android.statementservice",)),
+    ("com.android.healthconnect.controller", ("com.android.healthconnect.controller",)),
+)
+RECLAIM_SCRIPT_REQUIRED = (
+    "dumpsys activity lru",
+    'cmd activity kill --user 0 "$pkg"',
+    RECLAIM_SETTLE,
+)
+RECLAIM_SCRIPT_FORBIDDEN = (
+    "kill-all",
+    "force-stop",
+    "kill -9",
+    "kill -KILL",
+    "kill -s",
+    "pm disable",
+    "pm clear",
+    "pm uninstall",
+    "set-inactive",
+    "stop-app",
+)
+RECLAIM_LIST = re.compile(r"^reclaim_list='\n(.*?)^'$", re.MULTILINE | re.DOTALL)
+RECLAIM_TRANSITION = re.compile(
+    rb"^\(typetransition init(?:_[0-9]+)? kernarium_reclaim_boot_apps_exec process "
+    rb"kernarium_reclaim_boot_apps\)$",
+    re.MULTILINE,
+)
 # The partition the host grew is filled on every boot, once /data is mounted
 # (init.vendor.rc says why): the kernel's online resize needs neither a fsck nor
 # a recorded check. resize2fs runs as root with the group of /data's owner, so
@@ -1003,6 +1049,12 @@ def check_boot_policy(
             "utf-8", errors="strict"
         ),
         read_small(archive, infos["SYSTEM_EXT/bin/kernarium_wifi_network.sh"]),
+    )
+    check_reclaim_boot_apps(
+        read_small(archive, infos["SYSTEM_EXT/etc/init/kernarium_reclaim_boot_apps.rc"]).decode(
+            "utf-8", errors="strict"
+        ),
+        read_small(archive, infos["SYSTEM_EXT/bin/kernarium_reclaim_boot_apps.sh"]),
     )
     check_media_codecs_c2(read_small(archive, infos["VENDOR/etc/media_codecs_c2.xml"]))
 
@@ -1467,6 +1519,10 @@ def check_kernel_policy(
             "utf-8", errors="strict"
         ),
     )
+    check_reclaim_boot_apps_policy(
+        system_ext_policy,
+        read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_file_contexts"]),
+    )
     check_property_writers(
         platform_policy,
         vendor_policy,
@@ -1730,6 +1786,85 @@ def check_wifi_network_policy(
         if line.strip() and not line.lstrip().startswith("#")
     ):
         fail(f"system_ext property contexts do not label {WIFI_NETWORK_MARKER}")
+
+
+def check_reclaim_boot_apps(rc_payload: str, script: bytes) -> None:
+    """The reclaim script runs once after boot, kills only cached processes of the reviewed list."""
+    name, executable = RECLAIM_SERVICE
+    service = init_services(rc_payload).get(name)
+    if service is None or service[0] != executable:
+        fail(f"system_ext init policy does not declare the {name} service at {executable}")
+    for option in ("oneshot", "disabled"):
+        if option not in service[1]:
+            fail(f"system_ext init policy does not declare {name} as {option}")
+    actions = init_actions(rc_payload)
+    for trigger, commands in actions.items():
+        if f"start {name}" in commands and trigger != RECLAIM_TRIGGER:
+            fail(f"system_ext init policy starts {name} under '{trigger}'")
+    if f"start {name}" not in actions.get(RECLAIM_TRIGGER, []):
+        fail(f"system_ext init policy does not start {name} when boot completes")
+    text = script.decode("utf-8", errors="strict")
+    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    for token in RECLAIM_SCRIPT_REQUIRED:
+        if token not in code:
+            fail(f"{executable} does not contain '{token}'")
+    for token in RECLAIM_SCRIPT_FORBIDDEN:
+        if token in code.replace(RECLAIM_SETTLE, ""):
+            fail(
+                f"{executable} contains '{token}': it may only kill the cached processes of "
+                "the reviewed list, which keeps alarms, jobs and bindings"
+            )
+    listed = RECLAIM_LIST.search(text)
+    if listed is None:
+        fail(f"{executable} has no reclaim_list block")
+    entries = tuple(
+        (fields[0], tuple(fields[1:]))
+        for fields in (line.split() for line in listed.group(1).splitlines())
+        if fields
+    )
+    if entries != RECLAIM_APPS:
+        fail(
+            f"{executable} lists {entries}, not the reviewed packages {RECLAIM_APPS}: "
+            "a change to the list is a reviewed change to this verifier too"
+        )
+
+
+def check_reclaim_boot_apps_policy(system_ext_policy: bytes, system_ext_file_contexts: bytes) -> None:
+    """The reclaim script runs in its own core domain and may only use the activity manager."""
+    domain = RECLAIM_SERVICE[0]
+    if file_context_label(system_ext_file_contexts, RECLAIM_SERVICE[1]) != (
+        f"u:object_r:{domain}_exec:s0"
+    ):
+        fail(f"system_ext file contexts do not label {RECLAIM_SERVICE[1]}")
+    if not RECLAIM_TRANSITION.search(system_ext_policy):
+        fail("system_ext policy does not move init into the reclaim domain")
+
+    def has(source: str, target: str, object_class: bytes, permission: bytes) -> bool:
+        return any(
+            CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()) == source
+            and CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode()) == target
+            and match.group(3) == object_class
+            and permission in match.group(4).split()
+            for match in CIL_ALLOW_RULE.finditer(system_ext_policy)
+        )
+
+    for source, target, object_class, permission, why in (
+        (domain, "activity_service", b"service_manager", b"find",
+         "dumpsys and cmd find the activity manager"),
+        (domain, "system_server", b"binder", b"transfer",
+         "cmd hands the activity manager the receiver of its result"),
+        ("system_server", domain, b"binder", b"call",
+         "cmd waits for the receiver of its result"),
+        ("system_server", domain, b"fd", b"use",
+         "the activity manager writes to the descriptors the tools pass"),
+        ("system_server", domain, b"fifo_file", b"write",
+         "dumpsys reads the process list from a pipe"),
+    ):
+        if not has(source, target, object_class, permission):
+            fail(
+                f"system_ext policy does not allow {source} {target} {object_class.decode()} "
+                f"{permission.decode()}: {why}"
+            )
 
 
 def check_policy_relaxations(policies: tuple[bytes, ...]) -> None:

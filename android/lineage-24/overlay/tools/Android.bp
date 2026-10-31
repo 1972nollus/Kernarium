@@ -64,6 +64,17 @@ sh_binary {
     init_rc: ["kernarium_wifi_network.rc"],
 }
 
+// Gives back the memory of the cached apps the system starts at boot, once boot
+// has settled. It runs `cmd activity kill` and `dumpsys activity lru`, so it is
+// installed on system_ext for a core domain of its own (kernarium_reclaim_boot_apps).
+sh_binary {
+    name: "kernarium_reclaim_boot_apps_script",
+    src: "kernarium_reclaim_boot_apps.sh",
+    system_ext_specific: true,
+    filename_from_src: true,
+    init_rc: ["kernarium_reclaim_boot_apps.rc"],
+}
+
 cc_binary {
     name: "kernarium_vk_ahb_import",
     srcs: ["kernarium_vk_ahb_import.cpp"],

@@ -439,6 +439,13 @@ PRODUCT_PACKAGES += KernariumPinnerOverlay
 # stays forgotten. It runs from system_ext in a core domain of its own.
 PRODUCT_PACKAGES += kernarium_wifi_network_script
 
+# Cached apps the system starts at boot (privacy sandbox, backup, key
+# provisioning, domain verification, Health Connect) keep memory until the low
+# memory killer wants it. Once boot has settled this script kills the cached
+# processes of a reviewed list of packages and nothing else; the apps start again
+# when something uses them.
+PRODUCT_PACKAGES += kernarium_reclaim_boot_apps_script
+
 # A Vulkan hardware-buffer import check: it fills gralloc buffers of several
 # formats and widths through the CPU, imports each into Vulkan and reads it
 # back, so a row pitch the driver cannot import or the renderer misreads fails

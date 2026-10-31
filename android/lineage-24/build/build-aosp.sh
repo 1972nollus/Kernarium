@@ -437,6 +437,8 @@ fi
 	fail "the network setup tool that configures eth0 and the virtual Wi-Fi is absent"
 [[ "$PRODUCT_PACKAGES" == *" kernarium_wifi_network_script "* ]] ||
 	fail "the script that saves the virtual Wi-Fi network is absent"
+[[ "$PRODUCT_PACKAGES" == *" kernarium_reclaim_boot_apps_script "* ]] ||
+	fail "the script that reclaims the cached boot-started apps is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.android.hardware.wifi "* ]] ||
 	fail "the Wi-Fi HAL that the virtual Wi-Fi needs is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.google.cf.wpa_supplicant "* ]] ||

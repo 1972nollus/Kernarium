@@ -551,6 +551,25 @@ target's overlayable declarations, and the target-files verifier reads the
 built manifest for that: an overlay that targeted a later level would apply to
 nothing and say nothing.
 
+Several apps start at every boot and then sit cached, holding memory until the
+low memory killer wants it: the privacy sandbox services (the ExtServices
+`.adservices` process, FederatedCompute, OnDevicePersonalization), the backup
+apps (Seedvault, LocalContactsBackup and the local transport), key provisioning
+(`rkpdapp`), domain verification (`statementservice`) and the Health Connect
+controller. Their boot receivers and the system's bindings stay, because each
+schedules work or serves a feature; disabling them would lose it. Instead
+`kernarium_reclaim_boot_apps.sh` (`overlay/tools`, system_ext, its own core
+domain) waits 120 s after `sys.boot_completed`, reads `dumpsys activity lru` and
+runs `cmd activity kill --user 0` for each listed package whose processes are
+cached. That kills only what the system could have killed itself: alarms, jobs
+and bindings stay, and the next use starts the app again. A package with a
+process the system holds as a started service, the previous app or the home app
+is logged to logcat (tag `kernarium_reclaim_boot_apps`) and left alone, as is a
+package with no cached process; `kill-all` and `force-stop`, which cancel alarms
+and jobs, are never used. The list is a reviewed table in the script and in
+`tools/verify-target-files.py`, which require each other, and the script runs once
+per boot.
+
 ## Graphics
 
 Both graphics APIs come from one Mesa build of this project's own guest Mesa

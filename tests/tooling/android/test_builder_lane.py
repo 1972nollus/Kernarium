@@ -674,6 +674,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           userdata_grow_policy_variant: str | None = None,
                           discrete_ops_variant: str | None = None,
                           pinner_overlay_variant: str | None = None,
+                          reclaim_variant: str | None = None,
                           wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
                           cas_hal_variant: str | None = None,
@@ -1104,6 +1105,47 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             else wifi_trigger + "    start kernarium_wifi_network\n"
                         ),
                     )
+                # The script that kills the cached processes of the reviewed boot-started apps, with its
+                # init file: the tracked ones, and the ways each can go wrong.
+                reclaim_script = (
+                    verifier.parents[1] / "overlay/tools/kernarium_reclaim_boot_apps.sh"
+                ).read_text()
+                reclaim_rc = (
+                    verifier.parents[1] / "overlay/tools/kernarium_reclaim_boot_apps.rc"
+                ).read_text()
+                for variant, (old, new) in {
+                    "no-kill": ('cmd activity kill --user 0 "$pkg"', "true"),
+                    "kill-all": ("exit 0\n", "cmd activity kill-all\nexit 0\n"),
+                    "force-stop": ("exit 0\n", 'cmd activity force-stop "$pkg"\nexit 0\n'),
+                    "kill-9": ("exit 0\n", "kill -9 1234\nexit 0\n"),
+                    "extra-package": ("com.android.rkpdapp com.android.rkpdapp\n",
+                                      "com.android.rkpdapp com.android.rkpdapp\ncom.example.app com.example.app\n"),
+                    "missing-package": ("com.stevesoltys.seedvault com.stevesoltys.seedvault\n", ""),
+                    "missing-process": ("android.ext.services .adservices android.ext.services",
+                                        "android.ext.services android.ext.services"),
+                    "no-settle": ("settle=120", "settle=0"),
+                    "no-lru": ("dumpsys activity lru", "dumpsys activity processes"),
+                    "no-list": ("reclaim_list='", "reclaim_apps='"),
+                }.items():
+                    if reclaim_variant == variant:
+                        if old not in reclaim_script:
+                            fail(f"the reclaim script lacks '{old}' for the {variant} variant")
+                        reclaim_script = reclaim_script.replace(old, new)
+                if reclaim_variant != "missing-script":
+                    archive.writestr("SYSTEM_EXT/bin/kernarium_reclaim_boot_apps.sh", reclaim_script)
+                for variant, (old, new) in {
+                    "missing-service": ("service kernarium_reclaim_boot_apps ", "service other_service "),
+                    "not-oneshot": ("    oneshot\n", ""),
+                    "not-disabled": ("    disabled\n", ""),
+                    "started-at-boot": ("on property:sys.boot_completed=1", "on boot"),
+                    "no-start": ("    start kernarium_reclaim_boot_apps\n", ""),
+                }.items():
+                    if reclaim_variant == variant:
+                        if old not in reclaim_rc:
+                            fail(f"the reclaim init file lacks '{old}' for the {variant} variant")
+                        reclaim_rc = reclaim_rc.replace(old, new)
+                if reclaim_variant != "missing-rc":
+                    archive.writestr("SYSTEM_EXT/etc/init/kernarium_reclaim_boot_apps.rc", reclaim_rc)
                 archive.writestr(
                     "SYSTEM_EXT/etc/selinux/system_ext_file_contexts",
                     "/(system_ext|system/system_ext)/bin/other\\.sh  u:object_r:system_file:s0\n"
@@ -1112,6 +1154,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         if wifi_network_variant == "missing-label"
                         else "/(system_ext|system/system_ext)/bin/kernarium_wifi_network\\.sh  "
                         "u:object_r:kernarium_wifi_network_exec:s0\n"
+                    )
+                    + (
+                        ""
+                        if reclaim_variant == "missing-label"
+                        else "/(system_ext|system/system_ext)/bin/kernarium_reclaim_boot_apps\\.sh  "
+                        "u:object_r:kernarium_reclaim_boot_apps_exec:s0\n"
                     ),
                 )
                 # Platform, vendor and system_ext policy as the builder emits them: the
@@ -1214,6 +1262,27 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         ""
                         if wifi_network_variant == "missing-binder-call"
                         else "(allow system_server kernarium_wifi_network (binder (call)))\n"
+                    )
+                    + "".join(
+                        rule
+                        for variant, rule in (
+                            ("missing-transition",
+                             "(typetransition init kernarium_reclaim_boot_apps_exec process "
+                             "kernarium_reclaim_boot_apps)\n"),
+                            ("missing-find",
+                             "(allow kernarium_reclaim_boot_apps activity_service "
+                             "(service_manager (find)))\n"),
+                            ("missing-transfer",
+                             "(allow kernarium_reclaim_boot_apps system_server (binder (transfer)))\n"),
+                            ("missing-call",
+                             "(allow system_server kernarium_reclaim_boot_apps (binder (call)))\n"),
+                            ("missing-fd",
+                             "(allow system_server kernarium_reclaim_boot_apps (fd (use)))\n"),
+                            ("missing-fifo",
+                             "(allow system_server kernarium_reclaim_boot_apps "
+                             "(fifo_file (read write getattr)))\n"),
+                        )
+                        if reclaim_variant != variant
                     )
                     + (
                         ""
@@ -2036,6 +2105,30 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("pinner-overlay-no-target-sdk", {"pinner_overlay_variant": "no-target-sdk"}),
             ("pinner-overlay-named-target-sdk", {"pinner_overlay_variant": "named-target-sdk"}),
             ("pinner-overlay-no-resource", {"pinner_overlay_variant": "no-resource"}),
+            ("missing-reclaim-script", {"reclaim_variant": "missing-script"}),
+            ("missing-reclaim-rc", {"reclaim_variant": "missing-rc"}),
+            ("reclaim-missing-service", {"reclaim_variant": "missing-service"}),
+            ("reclaim-not-oneshot", {"reclaim_variant": "not-oneshot"}),
+            ("reclaim-not-disabled", {"reclaim_variant": "not-disabled"}),
+            ("reclaim-started-at-boot", {"reclaim_variant": "started-at-boot"}),
+            ("reclaim-no-start", {"reclaim_variant": "no-start"}),
+            ("reclaim-no-kill", {"reclaim_variant": "no-kill"}),
+            ("reclaim-kill-all", {"reclaim_variant": "kill-all"}),
+            ("reclaim-force-stop", {"reclaim_variant": "force-stop"}),
+            ("reclaim-kill-9", {"reclaim_variant": "kill-9"}),
+            ("reclaim-extra-package", {"reclaim_variant": "extra-package"}),
+            ("reclaim-missing-package", {"reclaim_variant": "missing-package"}),
+            ("reclaim-missing-process", {"reclaim_variant": "missing-process"}),
+            ("reclaim-no-settle", {"reclaim_variant": "no-settle"}),
+            ("reclaim-no-lru", {"reclaim_variant": "no-lru"}),
+            ("reclaim-no-list", {"reclaim_variant": "no-list"}),
+            ("reclaim-missing-label", {"reclaim_variant": "missing-label"}),
+            ("reclaim-missing-transition", {"reclaim_variant": "missing-transition"}),
+            ("reclaim-missing-find", {"reclaim_variant": "missing-find"}),
+            ("reclaim-missing-transfer", {"reclaim_variant": "missing-transfer"}),
+            ("reclaim-missing-call", {"reclaim_variant": "missing-call"}),
+            ("reclaim-missing-fd", {"reclaim_variant": "missing-fd"}),
+            ("reclaim-missing-fifo", {"reclaim_variant": "missing-fifo"}),
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
@@ -2450,6 +2543,54 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "KernariumPinnerOverlay.apk has no readable manifest and resource table"),
             ("pinner-overlay-not-compiled-cause", {"pinner_overlay_variant": "not-compiled"},
              "KernariumPinnerOverlay.apk has an unreadable manifest: not a compiled XML file"),
+            ("missing-reclaim-script-cause", {"reclaim_variant": "missing-script"},
+             "required entries are missing: .*SYSTEM_EXT/bin/kernarium_reclaim_boot_apps.sh"),
+            ("missing-reclaim-rc-cause", {"reclaim_variant": "missing-rc"},
+             "required entries are missing: .*SYSTEM_EXT/etc/init/kernarium_reclaim_boot_apps.rc"),
+            ("reclaim-missing-service-cause", {"reclaim_variant": "missing-service"},
+             "does not declare the kernarium_reclaim_boot_apps service"),
+            ("reclaim-not-oneshot-cause", {"reclaim_variant": "not-oneshot"},
+             "does not declare kernarium_reclaim_boot_apps as oneshot"),
+            ("reclaim-not-disabled-cause", {"reclaim_variant": "not-disabled"},
+             "does not declare kernarium_reclaim_boot_apps as disabled"),
+            ("reclaim-started-at-boot-cause", {"reclaim_variant": "started-at-boot"},
+             "starts kernarium_reclaim_boot_apps under 'boot'"),
+            ("reclaim-no-start-cause", {"reclaim_variant": "no-start"},
+             "does not start kernarium_reclaim_boot_apps when boot completes"),
+            ("reclaim-no-kill-cause", {"reclaim_variant": "no-kill"},
+             "does not contain 'cmd activity kill --user 0 \"\\$pkg\"'"),
+            ("reclaim-kill-all-cause", {"reclaim_variant": "kill-all"},
+             "contains 'kill-all': it may only kill the cached processes"),
+            ("reclaim-force-stop-cause", {"reclaim_variant": "force-stop"},
+             "contains 'force-stop': it may only kill the cached processes"),
+            ("reclaim-kill-9-cause", {"reclaim_variant": "kill-9"},
+             "contains 'kill -9': it may only kill the cached processes"),
+            ("reclaim-extra-package-cause", {"reclaim_variant": "extra-package"},
+             "lists .*com.example.app.*not the reviewed packages"),
+            ("reclaim-missing-package-cause", {"reclaim_variant": "missing-package"},
+             "not the reviewed packages"),
+            ("reclaim-missing-process-cause", {"reclaim_variant": "missing-process"},
+             "not the reviewed packages"),
+            ("reclaim-no-settle-cause", {"reclaim_variant": "no-settle"},
+             "does not contain 'settle=120'"),
+            ("reclaim-no-lru-cause", {"reclaim_variant": "no-lru"},
+             "does not contain 'dumpsys activity lru'"),
+            ("reclaim-no-list-cause", {"reclaim_variant": "no-list"},
+             "has no reclaim_list block"),
+            ("reclaim-missing-label-cause", {"reclaim_variant": "missing-label"},
+             "system_ext file contexts do not label /system_ext/bin/kernarium_reclaim_boot_apps.sh"),
+            ("reclaim-missing-transition-cause", {"reclaim_variant": "missing-transition"},
+             "does not move init into the reclaim domain"),
+            ("reclaim-missing-find-cause", {"reclaim_variant": "missing-find"},
+             "does not allow kernarium_reclaim_boot_apps activity_service service_manager find"),
+            ("reclaim-missing-transfer-cause", {"reclaim_variant": "missing-transfer"},
+             "does not allow kernarium_reclaim_boot_apps system_server binder transfer"),
+            ("reclaim-missing-call-cause", {"reclaim_variant": "missing-call"},
+             "does not allow system_server kernarium_reclaim_boot_apps binder call"),
+            ("reclaim-missing-fd-cause", {"reclaim_variant": "missing-fd"},
+             "does not allow system_server kernarium_reclaim_boot_apps fd use"),
+            ("reclaim-missing-fifo-cause", {"reclaim_variant": "missing-fifo"},
+             "does not allow system_server kernarium_reclaim_boot_apps fifo_file write"),
             ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
              "userdata entry lacks the fs_mgr quota flag"),
             ("wrong-apex-filesystem-cause", {"wrong_apex_filesystem": True},
@@ -2932,6 +3073,111 @@ def verify_pinner_overlay(android_root: Path) -> None:
         fail(f"the manifest reader accepts a {label} manifest")
 
 
+def verify_reclaim_boot_apps(android_root: Path) -> None:
+    """The reclaim script kills only the cached processes of the listed packages.
+
+    The script runs with stub tools: dumpsys prints a process list, cmd records the kill it is asked
+    for and log records what the script says. The list covers a cached process, one that is not
+    cached and is not touched by `kill` either, one that `kill` would take though it is not cached,
+    a package that is not running and a package that is not listed."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    tools = android_root / "overlay/tools"
+    script = tools / "kernarium_reclaim_boot_apps.sh"
+    # The sepolicy sources hold what the built-policy check looks for.
+    policy = (android_root / "overlay/sepolicy/system_ext/private/kernarium_reclaim_boot_apps.te").read_text()
+    for needle in (
+        "init_daemon_domain(kernarium_reclaim_boot_apps)",
+        "allow kernarium_reclaim_boot_apps activity_service:service_manager find;",
+        "allow kernarium_reclaim_boot_apps system_server:binder transfer;",
+        "allow system_server kernarium_reclaim_boot_apps:binder call;",
+        "allow system_server kernarium_reclaim_boot_apps:fd use;",
+        "allow system_server kernarium_reclaim_boot_apps:fifo_file { getattr read write };",
+        "allow kernarium_reclaim_boot_apps system_file:file execute_no_trans;",
+    ):
+        if needle not in policy:
+            fail(f"the reclaim domain lacks '{needle}'")
+    contexts = (android_root / "overlay/sepolicy/system_ext/private/file_contexts").read_text()
+    if (
+        r"/(system_ext|system/system_ext)/bin/kernarium_reclaim_boot_apps\.sh  "
+        "u:object_r:kernarium_reclaim_boot_apps_exec:s0"
+    ) not in contexts:
+        fail("the system_ext file contexts do not label the reclaim script")
+    blueprint = (tools / "Android.bp").read_text()
+    for needle in (
+        'name: "kernarium_reclaim_boot_apps_script"',
+        'src: "kernarium_reclaim_boot_apps.sh"',
+        'init_rc: ["kernarium_reclaim_boot_apps.rc"]',
+    ):
+        if needle not in blueprint:
+            fail(f"overlay/tools/Android.bp lacks {needle}")
+    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    if len(re.findall(r"^PRODUCT_PACKAGES \+= kernarium_reclaim_boot_apps_script$", product, re.M)) != 1:
+        fail("lineage_darwin.mk does not add the reclaim script to PRODUCT_PACKAGES exactly once")
+    verifier.check_reclaim_boot_apps((tools / "kernarium_reclaim_boot_apps.rc").read_text(), script.read_bytes())
+
+    lru = "\n".join((
+        "ACTIVITY MANAGER LRU PROCESSES (dumpsys activity lru)",
+        "  Activities:",
+        "  #30: fg       TOP  LCMNFUATI 1155:com.android.launcher3/u0a86 act:activities|recents",
+        "  Other:",
+        # cached, with a process of the same package that the system keeps visible
+        "  #29: cch  + 5 CEM  --------- 1587:.adservices/u0a104",
+        "  #28: vis      BFGS LCMNFUATI 1321:android.ext.services/u0a104",
+        # cached, one digit index
+        "  # 9: cch  +15 CEM  --------- 1583:com.android.localtransport/1000",
+        # a started service: `kill` would take it, so the package is left alone
+        "  #20: svc      SVC  --------- 1800:com.android.rkpdapp/u0a121",
+        "  #21: cch  + 5 CEM  --------- 1840:com.android.statementservice/u0a89",
+        # not cached and `kill` leaves it: nothing to reclaim
+        "  #22: prcp + 1 IMPB -------TI 1632:com.stevesoltys.seedvault/u0a85",
+        # not listed
+        "  #23: cch  + 5 CEM  --------- 1999:com.example.unlisted/u0a200",
+        "  #24: cch  + 5 CEM  --------- 1744:com.android.ondevicepersonalization.services.extra/u0a113",
+    ))
+    with tempfile.TemporaryDirectory(prefix="reclaim-script-") as temporary:
+        stubs = Path(temporary)
+        calls = stubs / "calls"
+        for name, body in {
+            "dumpsys": f'[ "$*" = "activity lru" ] || exit 2\ncat {stubs}/lru\n',
+            "cmd": f'echo "cmd $*" >> {calls}\necho Killed\n',
+            "log": f'echo "log $*" >> {calls}\n',
+            "sleep": f'echo "sleep $*" >> {calls}\n',
+        }.items():
+            (stubs / name).write_text("#!/bin/sh\n" + body)
+            (stubs / name).chmod(0o755)
+        (stubs / "lru").write_text(lru + "\n")
+        env = {"PATH": f"{stubs}:/usr/bin:/bin"}
+        result = subprocess.run(["/bin/sh", str(script)], env=env, capture_output=True, text=True)
+        if result.returncode != 0:
+            fail(f"the reclaim script exited {result.returncode}: {result.stderr}")
+        recorded = calls.read_text().splitlines()
+        if recorded[0] != "sleep 120":
+            fail(f"the reclaim script does not wait 120 s first: {recorded[:1]}")
+        kills = [line for line in recorded if line.startswith("cmd ")]
+        expected = [
+            "cmd activity kill --user 0 android.ext.services",
+            "cmd activity kill --user 0 com.android.localtransport",
+            "cmd activity kill --user 0 com.android.statementservice",
+        ]
+        if kills != expected:
+            fail(f"the reclaim script killed {kills}, not {expected}")
+        text = "\n".join(recorded)
+        for needle in (
+            "com.android.rkpdapp left alone, not cached: com.android.rkpdapp:svc",
+            "com.stevesoltys.seedvault has no cached process (kept: com.stevesoltys.seedvault:prcp)",
+            "android.ext.services killed cached .adservices (kept: android.ext.services:vis)",
+            "com.android.federatedcompute.services has no cached process (kept: none)",
+        ):
+            if needle not in text:
+                fail(f"the reclaim script did not log '{needle}': {text}")
+        # No process list, no kills.
+        (stubs / "lru").write_text("")
+        calls.unlink()
+        result = subprocess.run(["/bin/sh", str(script)], env=env, capture_output=True, text=True)
+        if result.returncode == 0 or any(line.startswith("cmd ") for line in calls.read_text().splitlines()):
+            fail("the reclaim script acts without a process list")
+
+
 def verify_default_wallpaper(android_root: Path) -> None:
     """The overlay replaces LineageOS's 1920 pixel tablet wallpaper with a bounded square.
 
@@ -3131,6 +3377,7 @@ def verify_package_assertions(android_root: Path) -> None:
         "KernariumPinnerOverlay",
         "kernarium_net_setup",
         "kernarium_wifi_network_script",
+        "kernarium_reclaim_boot_apps_script",
     ):
         if package not in present:
             fail(f"build-aosp.sh does not assert that {package} is present")
@@ -3746,6 +3993,7 @@ def main() -> None:
     verify_userdata_grow(android_root)
     verify_zram_fstab(android_root)
     verify_pinner_overlay(android_root)
+    verify_reclaim_boot_apps(android_root)
     verify_default_wallpaper(android_root)
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)
