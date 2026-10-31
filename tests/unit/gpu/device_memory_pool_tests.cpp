@@ -36,8 +36,10 @@ void admitsWhatFits()
         page);
     require(pool.reserve(60 * page), "a reservation that fits is admitted");
     require(pool.usage() == 60 * page, "a reservation counts in the usage");
+    require(pool.refusals() == 0, "nothing has been refused yet");
     require(!pool.reserve(41 * page), "one that does not is refused");
     require(pool.usage() == 60 * page, "a refusal charges nothing");
+    require(pool.refusals() == 1, "a refusal is counted");
     require(pool.reserve(40 * page), "one that fills the pool is admitted");
     require(!pool.reserve(1), "a full pool admits nothing");
 

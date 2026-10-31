@@ -216,6 +216,16 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
 
+    # The OpenGL path stays within the host GPU's fixed budget: textures past
+    # it have no storage, the host never holds more than the budget, and the
+    # renderer stores new textures once the guest has released the old ones.
+    uml_add_gpu_unit_test(gpu-host-gl-device-memory-budget
+        uml_gpu_host_gl_device_memory_budget_tests
+        host_gl_device_memory_budget_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY TIMEOUT 120)
+
     # A YUV picture a guest keeps in one R8 image samples as its planes: a
     # decoder that plays into a GL or SurfaceView view would show stripes
     # otherwise.
@@ -316,6 +326,7 @@ if(TARGET uml_gpu_service)
         gpu-depth-format-advertisement gpu-line-loop-statistics
         gpu-statistics-availability gpu-packed-yuv-planes
         gpu-texture-barrier-clear gpu-padded-row-transfer
+        gpu-host-gl-device-memory-budget
         PROPERTIES SKIP_RETURN_CODE 77)
 
     # The renderer and the same-process render server share one fence table.

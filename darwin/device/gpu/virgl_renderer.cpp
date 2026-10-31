@@ -260,8 +260,18 @@ VirglRenderer::VirglRenderer()
             deviceMemoryLimit.load(std::memory_order_acquire);
         deviceMemoryPool.reset();
         if (limit != 0) {
+            /*
+             * What the host GPU holds is the larger of Metal's allocation
+             * counter and the graphics ledger jetsam counts, as the balloon
+             * target takes it: the ledger also holds the driver's command
+             * storage and the surfaces the counter omits, and the counter can
+             * briefly pass the ledger. Neither estimate may lower the other.
+             */
             deviceMemoryPool = std::make_unique<DeviceMemoryPool>(limit,
-                [] { return uml::platform::hostGpuAllocatedBytes(); },
+                [] {
+                    return std::max(uml::platform::hostGpuAllocatedBytes(),
+                        uml::platform::hostGraphicsFootprintBytes());
+                },
                 static_cast<std::uint64_t>(getpagesize()));
             const virgl_renderer_device_memory_pool pool {
                 .limit = limit,
