@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/gadget_record_table.hpp"
+#include "memory/domain_heap.hpp"
 #include "require.hpp"
 
 #include <algorithm>
@@ -379,10 +380,49 @@ void metered(std::uint64_t count)
 	require(account.bytes() == 0);
 }
 
+/* The chunks and the index of every table come from the engine's leased
+ * heap, which goes back to the region whole when the last table ends. */
+void leased_heap()
+{
+	auto &region = uml::memory::HeapRegion::instance();
+	auto &leased = uml::memory::LeasedHeap::engine();
+	const auto committed = region.committed();
+	require(leased.leases() == 0);
+	{
+		cache::StableRecordTable<Sized<24>, KeyOf> first;
+		require(leased.leases() == 1);
+		std::vector<Sized<24> *> records;
+		for (std::uint64_t index = 0; index < 20'000; ++index)
+			records.push_back(first.try_emplace(index, index).first);
+		/* The records and the index are the heap's, not the zone's. */
+		require(region.committed() >=
+			committed + 20'000 * sizeof(Sized<24>));
+		{
+			cache::StableRecordTable<Sized<1024>, KeyOf> second;
+			require(leased.leases() == 2);
+			for (std::uint64_t index = 0; index < 500; ++index)
+				(void)second.try_emplace(index, index);
+		}
+		/* One table ending leaves the other's records where they were. */
+		require(leased.leases() == 1);
+		for (std::uint64_t index = 0; index < 20'000; ++index)
+			require(first.find(index) == records[index] &&
+				records[index]->key == index);
+		/* A sweep that returns every chunk keeps the heap for its table. */
+		require(first.sweep(first.marks()) == 20'000);
+		(void)first.try_emplace(1, 1);
+		require(first.find(1) != nullptr);
+	}
+	require(leased.leases() == 0);
+	require(region.committed() == committed,
+		"the record tables left heap pages committed");
+}
+
 } // namespace
 
 int main()
 {
+	leased_heap();
 	exercise<Sized<24>>(200'000);
 	exercise<Sized<1024>>(5'000);
 	exercise<Sized<8192>>(1'000);

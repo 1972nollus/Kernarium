@@ -519,6 +519,8 @@
 
     add_executable(uml_gadget_record_table_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/gadget_record_table_tests.cpp)
+    target_link_libraries(uml_gadget_record_table_tests PRIVATE
+		UML::MemoryHeap)
     target_include_directories(uml_gadget_record_table_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin)
     uml_add_unit_test(NAME gadget-record-table

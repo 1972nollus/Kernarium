@@ -689,11 +689,21 @@ public:
 					host_page_size());
 			position = owners_.erase(position);
 		}
+		/* The registry belongs to the process and outlives every domain. Once
+		 * the last domain's records are gone its heap goes back, bucket array
+		 * included, which is most of what a long-lived registry holds. */
+		if (owners_.empty()) {
+			owners_ = PageAddressMap<Ownership>{
+				DomainAllocator<char>{&heap_}};
+			heap_.release();
+		}
 	}
 
 private:
+	/* Declared first, so that the records are gone before it is. */
+	DomainHeap heap_;
 	mutable std::mutex mutex_;
-	PageAddressMap<Ownership> owners_;
+	PageAddressMap<Ownership> owners_{DomainAllocator<char>{&heap_}};
 };
 
 std::atomic<HostOwnershipRegistry *> published_host_ownership_registry{};
@@ -757,12 +767,17 @@ int NativeAddressSpace::map_direct(
 	auto *registry = registry_or_enomem(host_ownership_registry());
 	if (registry == nullptr)
 		return -1;
-	std::vector<std::uintptr_t> inserted;
+	/* The call's own lists live in the thread's scratch and go with the
+	 * call. */
+	ScratchScope scratch;
+	std::vector<std::uintptr_t, ScratchAllocator<std::uintptr_t>> inserted{
+		ScratchAllocator<std::uintptr_t>{scratch.arena()}};
 	struct DirectSnapshot final {
 		std::uintptr_t page;
 		std::optional<DirectMapping> mapping;
 	};
-	std::vector<DirectSnapshot> direct_snapshots;
+	std::vector<DirectSnapshot, ScratchAllocator<DirectSnapshot>>
+		direct_snapshots{ScratchAllocator<DirectSnapshot>{scratch.arena()}};
 	std::size_t new_page_count = 0;
 	/* A whole host page of one backing replaces the shadow that held its
 	 * quarters until now; the shadow's own writes are published first. */
@@ -1406,7 +1421,7 @@ int NativeAddressSpace::ensure_backing_index_locked()
 {
 	if (backing_index_ready_)
 		return 0;
-	decltype(backing_index_) index;
+	decltype(backing_index_) index{DomainAllocator<char>{&heap_}};
 	UML_MEMORY_ALLOCATION_CHECKPOINT(
 		testing::AllocationSite::native_backing_index);
 	index.reserve(mappings_.size());
@@ -2452,15 +2467,20 @@ void NativeAddressSpace::retire() noexcept
 			(void)flush_page_locked(slot + position);
 		}
 	}
-	mappings_.clear();
-	backing_index_.clear();
-	slot_protections_.clear();
-	materialized_slots_.clear();
-	direct_mappings_.clear();
 	backing_index_ready_ = false;
 	if (auto *registry = host_ownership_registry(); registry != nullptr)
 		registry->retire(ownership_id_);
-	direct_slots_.clear();
+	/* Empty the indexes and drop their bucket arrays, which clear() keeps,
+	 * then give the heap back whole: a space that has ended holds no memory,
+	 * and every operation on it fails before it could allocate. */
+	const DomainAllocator<char> allocator{&heap_};
+	mappings_ = decltype(mappings_){allocator};
+	backing_index_ = decltype(backing_index_){allocator};
+	slot_protections_ = decltype(slot_protections_){allocator};
+	materialized_slots_ = decltype(materialized_slots_){allocator};
+	direct_mappings_ = decltype(direct_mappings_){allocator};
+	direct_slots_ = decltype(direct_slots_){allocator};
+	heap_.release();
 }
 
 namespace {

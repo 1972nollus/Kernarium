@@ -323,9 +323,11 @@ struct Restarts final {
 	int token{-1};
 	int control{-1};
 	void *outside_mapping{};
-	/* Hand-backs seen, and the heap's live bytes at each. */
+	/* Hand-backs seen, and the heap's live bytes at each, and the bytes the
+	 * memory layer's heap region has committed. */
 	int hand_backs{};
 	std::vector<std::size_t> heap_in_use;
+	std::vector<std::size_t> region_committed;
 	std::size_t zone_allocated{};
 	pthread_t held_thread{};
 	std::atomic<bool> release_thread{false};
@@ -689,6 +691,12 @@ void check_hand_back(void *, const GuestHandBackReport &report) noexcept
 		counts.allocations == 0 && counts.allocation_bytes == 0 &&
 		counts.mappings == 0 && counts.mapping_bytes == 0 &&
 		counts.sbrk_calls == 0, "the kernel-resource ledger is not empty");
+	/* No engine heap is leased once the guest is handed back, and what the
+	 * memory layer's heap region holds then is recorded for the comparison
+	 * at the end of the storm. */
+	require(report.heap_leases == 0,
+		"an engine heap lease survived the hand-back");
+	world.region_committed.push_back(report.heap_bytes);
 	for (const int descriptor : world.descriptors)
 		require(fcntl(descriptor, F_GETFD) == -1 && errno == EBADF,
 			"a descriptor the kernel left open survived the hand-back");
@@ -809,6 +817,12 @@ void restart_storm()
 		"%zu-th; the default zone holds %zu bytes\n",
 		baseline, world.heap_in_use.back(), world.heap_in_use.size(),
 		world.zone_allocated);
+	/* The memory layer's heap region holds the same bytes at every hand-back:
+	 * a boot's heaps are given back whole, not kept until the system takes
+	 * them. */
+	for (const auto bytes : world.region_committed)
+		require(bytes == world.region_committed.front(),
+			"the heap region's committed bytes changed across hand-backs");
 	(void)close(world.control);
 }
 

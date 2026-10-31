@@ -9,9 +9,14 @@
  *
  * Retirement discards a shadow of guest RAM, which has no reader once the run
  * is over, and still publishes a shadow of any other backing, which outlives
- * it; native_mmu_tests covers that half. */
+ * it; native_mmu_tests covers that half.
+ *
+ * The space keeps its indexes in a heap it maps itself, so that retirement
+ * gives their memory back to the process whole instead of leaving it to the
+ * default malloc zone, which returns it when it chooses. */
 #include "native_address_space.hpp"
 #include "domain_contract.hpp"
+#include "domain_heap.hpp"
 #include "native_window_test_support.hpp"
 #include "require.hpp"
 #include "scratch_backing.hpp"
@@ -24,6 +29,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <malloc/malloc.h>
 #include <memory>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -87,6 +93,21 @@ constexpr const char *name(Path path) noexcept
 
 std::atomic_uint64_t active_domain{};
 std::array<char, 96> case_name{};
+
+/* A sanitizer replaces the allocator, and the default zone then says nothing
+ * about the program's own allocations. */
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+constexpr bool zone_is_measurable = false;
+#else
+constexpr bool zone_is_measurable = true;
+#endif
+
+[[nodiscard]] std::size_t zone_in_use() noexcept
+{
+	malloc_statistics_t statistics{};
+	malloc_zone_statistics(malloc_default_zone(), &statistics);
+	return statistics.size_in_use;
+}
 
 bool provide_test_domain(std::uint64_t &domain) noexcept
 {
@@ -241,6 +262,71 @@ public:
 			"a successor's clean shadow changed guest RAM");
 	}
 
+	/* Many shadows, the way a booted guest has them: the indexes grow with the
+	 * pages and they all live in the space's heap. The default zone does not
+	 * grow with them, and when the space ends, by any path, the heap is gone
+	 * and the zone is where it was. */
+	void run_heap(Path path)
+	{
+		static std::uint64_t next_domain = 50'000;
+		(void)std::snprintf(case_name.data(), case_name.size(),
+			"%s with many shadows", name(path));
+		constexpr std::size_t pages = 1024;
+		constexpr std::size_t host_page = 16384;
+		const WindowRange range{pages * host_page};
+		auto &region = uml::memory::HeapRegion::instance();
+		const auto heap_before = region.committed();
+		const auto zone_before = zone_in_use();
+
+		std::uint64_t domain = 0;
+		std::shared_ptr<uml::memory::NativeAddressSpace> space;
+		if (path == Path::domain) {
+			domain = next_domain++;
+			active_domain.store(domain, std::memory_order_release);
+			space = uml::memory::native_address_space();
+		} else {
+			space = std::make_shared<uml::memory::NativeAddressSpace>();
+		}
+		require(space != nullptr, "native address space was not created");
+		/* The space itself, its filter included, is the zone's. */
+		const auto zone_with_space = zone_in_use();
+		for (std::size_t page = 0; page < pages; ++page)
+			require(space->map(range.address() + page * host_page,
+					token_.descriptor(), 0, guest_page_size,
+					PROT_READ | PROT_WRITE) == 0,
+				"a shadow was not mapped");
+		require(space->mapping_count_for_testing() == pages);
+		/* Each mapping keeps a 4 KiB copy of its page. */
+		require(region.committed() - heap_before >= pages * guest_page_size,
+			"the space's indexes are not in its heap");
+		require(!zone_is_measurable ||
+				zone_in_use() < zone_with_space + (256U << 10),
+			"the space's indexes grew the default zone");
+
+		switch (path) {
+		case Path::retire:
+			space->retire();
+			break;
+		case Path::destructor:
+			space.reset();
+			break;
+		case Path::domain:
+			active_domain.store(0, std::memory_order_release);
+			uml::memory::retire_domain(domain);
+			break;
+		}
+		require(region.committed() == heap_before,
+			"a retired space left heap pages committed");
+		if (space != nullptr) {
+			require(space->mapping_count_for_testing() == 0);
+			space.reset();
+		}
+		require(region.committed() == heap_before);
+		require(!zone_is_measurable ||
+				zone_in_use() < zone_before + (64U << 10),
+			"the default zone did not return to where it was");
+	}
+
 private:
 	void set_root_byte(std::byte value) const noexcept
 	{
@@ -316,5 +402,7 @@ int main()
 		for (const auto window : {Window::kept, Window::unreadable,
 			     Window::reserved, Window::unmapped})
 			guest.run(window, path);
+	for (const auto path : {Path::retire, Path::destructor, Path::domain})
+		guest.run_heap(path);
 	return 0;
 }
