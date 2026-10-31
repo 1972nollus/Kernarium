@@ -108,6 +108,21 @@ modelled: each leaves at once after everything waiting, in decode order, which
 is a continuing limitation for interlaced field-coded streams. VP9 and JPEG
 pictures are returned as decoded, which is their display order.
 
+**Capture minimum.** From the announcement of the picture size on, the capture
+queue's `min_buffers` is the stream's reorder depth plus one, and four at the
+least (`V4L2_CID_MIN_BUFFERS_FOR_CAPTURE` in the guest). A client that keeps
+every picture it has queued until it is displayed, as Codec2's pipeline does,
+stalls the decoder when it keeps fewer pictures than that in flight, because
+the decoder releases a picture only once more than the reorder depth have
+followed it. The minimum lets such a client size its pipeline for the stream
+instead of for the worst case any stream could have (16). The depth is read
+from the parameter set in force: HEVC `sps_max_num_reorder_pics`; H.264
+`max_num_reorder_frames`, or the level's frame count when the stream states
+none, and zero where nothing is reordered. It is announced with the picture
+size, so a later parameter set that raises the depth at the same size is not
+announced again, and a client that sized its pipeline from the first one keeps
+it.
+
 **Seek.** `QUEUE_CLEAR` on the coded queue drops every picture in flight, every
 reference and the picture order state, and keeps the stream's parameter sets
 and the capture format the client settled on, because a client that seeks

@@ -173,15 +173,30 @@ const char* profileName(uml::platform::VideoProfile profile) noexcept
     return "unknown";
 }
 
-virtio_video_params params(std::uint32_t queue, std::uint32_t format, std::uint32_t width, std::uint32_t height)
+constexpr std::uint32_t captureMaximumBuffers = 32;
+/* How few capture buffers a client may run a stream with. A client that keeps
+ * every buffer it has queued until the picture is displayed must hold one more
+ * than the pictures the stream reorders, because the decoder releases a picture
+ * only when that many have followed it, so the capture queue reports the
+ * stream's own reorder depth plus one, and four at the least. This is what a
+ * client reads as V4L2_CID_MIN_BUFFERS_FOR_CAPTURE once the picture size is
+ * announced, and it can size its pipeline by it instead of by the worst case
+ * any stream could have (16 pictures). */
+std::uint32_t captureMinimumBuffers(unsigned reorderDepth) noexcept
+{
+    return std::min(captureMaximumBuffers, std::max(4u, reorderDepth + 1));
+}
+
+virtio_video_params params(std::uint32_t queue, std::uint32_t format, std::uint32_t width, std::uint32_t height,
+                           unsigned reorderDepth = 0)
 {
     virtio_video_params p {};
     p.queue_type = queue;
     p.format = format;
     p.frame_width = width;
     p.frame_height = height;
-    p.min_buffers = queue == VIRTIO_VIDEO_QUEUE_TYPE_INPUT ? 1 : 4;
-    p.max_buffers = 32;
+    p.min_buffers = queue == VIRTIO_VIDEO_QUEUE_TYPE_INPUT ? 1 : captureMinimumBuffers(reorderDepth);
+    p.max_buffers = captureMaximumBuffers;
     p.crop.width = width;
     p.crop.height = height;
     p.frame_rate = 30;
@@ -424,7 +439,7 @@ public:
         if (raw == VIRTIO_VIDEO_FORMAT_BGRA8888) { /* keep the negotiated packed format */ }
         else if (raw == VIRTIO_VIDEO_FORMAT_P010) { if (depth != 10) raw = VIRTIO_VIDEO_FORMAT_NV12; }
         else if (depth == 10 && !stream.captureSettled) raw = VIRTIO_VIDEO_FORMAT_P010;
-        stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, raw, width, height);
+        stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, raw, width, height, stream.decoder->reorderDepth());
         stream.announcedWidth = width;
         stream.announcedHeight = height;
         stream.sourceKnown = true;
@@ -740,7 +755,8 @@ public:
                 stream.decoder->requestOutputLayout(decodeLayout(p.format, stream.sourceKnown));
                 stream.captureSettled = true;
                 stream.captureDeferred = false;
-                stream.output = params(p.queue_type, p.format, p.frame_width, p.frame_height);
+                stream.output = params(p.queue_type, p.format, p.frame_width, p.frame_height,
+                                       stream.decoder->reorderDepth());
                 /* A client that sets the new size is done renegotiating. */
                 if (p.frame_width == stream.announcedWidth && p.frame_height == stream.announcedHeight) {
                     stream.renegotiating = false;

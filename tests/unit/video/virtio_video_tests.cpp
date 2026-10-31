@@ -96,9 +96,10 @@ void convertBt601Limited(std::uint8_t y, std::uint8_t cb, std::uint8_t cr, std::
 class Decoder final : public VideoDecoder {
 public:
     explicit Decoder(bool ten, bool packs = false, bool defers = false,
-                     std::uint32_t width = 64, std::uint32_t height = 64, bool variesChroma = false)
+                     std::uint32_t width = 64, std::uint32_t height = 64, bool variesChroma = false,
+                     unsigned reorder = 0)
         : ten_(ten), packs_(packs), defers_(defers), width_(width), height_(height),
-          variesChroma_(variesChroma) {}
+          variesChroma_(variesChroma), reorder_(reorder) {}
     /* Reads what the packet declares and decodes nothing, so a caller can
      * report the picture size before it has to choose an output layout. */
     void inspect(std::span<const std::uint8_t> packet) override
@@ -160,6 +161,7 @@ public:
     void discard() override { frames_.clear(); }
     std::vector<DecodedVideoFrame> takeFrames() override { return std::exchange(frames_, {}); }
     VideoFormat format() const noexcept override { return format_; }
+    unsigned reorderDepth() const noexcept override { return format_.width ? reorder_ : 0; }
     void requestOutputLayout(VideoPixelLayout layout) override { layout_ = layout; }
 private:
     bool ten_;
@@ -170,6 +172,7 @@ private:
     std::uint32_t width_ {64};
     std::uint32_t height_ {64};
     bool variesChroma_ {};
+    unsigned reorder_ {};
     VideoPixelLayout layout_ {VideoPixelLayout::planarYuv};
     VideoPixelLayout adopted_ {VideoPixelLayout::planarYuv};
     VideoFormat format_;
@@ -1278,6 +1281,48 @@ void inputBackpressure()
     video.device.reset();
 }
 
+/* The capture queue's minimum buffer count is the stream's reorder depth plus
+ * one, and four at the least, from the announcement of the picture size on: a
+ * client reads it as V4L2_CID_MIN_BUFFERS_FOR_CAPTURE to size its pipeline by
+ * the stream instead of by the worst case any stream could have. Until the
+ * size is announced the decoder has read no parameter set, and the answer is
+ * the floor. */
+void captureMinimumFollowsReorder(unsigned reorder)
+{
+    const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+    VideoFixture video(12, 8 * page, [reorder](auto) {
+        return std::make_unique<Decoder>(false, true, false, 64, 64, false, reorder);
+    });
+    video.createStream();
+    require(video.device.processQueue(1, 920, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
+            "event not deferred");
+    video.attachEncodedInput();
+    const auto minimum = [&video] {
+        std::vector<std::uint8_t> request;
+        append(request, virtio_video_get_params{{VIRTIO_VIDEO_CMD_GET_PARAMS, video.stream},
+                                                VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, {}});
+        const auto params = load<virtio_video_get_params_resp>(
+            video.device.processQueue(0, video.next++, request, 16384).response).params;
+        require(params.max_buffers >= params.min_buffers, "the minimum exceeds the maximum buffer count");
+        return params.min_buffers;
+    };
+    require(minimum() == 4, "the capture minimum before the size is known is not the floor");
+
+    // The packet's headers announce the size, and with it the reorder depth.
+    const auto packet = video.queueCommand(input, 1, 5, 31);
+    require(video.command(packet).action == VhostUserQueueAction::defer, "the packet was decoded early");
+    VhostUserQueueCompletion completion;
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == 920, "missing source event");
+    const unsigned expected = std::max(4u, reorder + 1);
+    require(minimum() == expected, "the announced capture minimum does not follow the reorder depth");
+
+    // Choosing the capture format answers with the same minimum.
+    video.setOutputFormat(VIRTIO_VIDEO_FORMAT_NV12);
+    require(minimum() == expected, "choosing the capture format changed the minimum");
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 12}});
+    video.device.reset();
+}
+
 /* How the client deals with a size change it has been told of. */
 enum class Renegotiation { clearCapture, setNewSize, drain, clearCoded };
 
@@ -1923,6 +1968,7 @@ int main()
         lateNegotiation();
         inputBackpressure();
         unsettledHoldIsBounded();
+        for (const unsigned reorder : {0u, 2u, 3u, 4u, 9u, 16u}) captureMinimumFollowsReorder(reorder);
         planarAfterSourceChange();
         packedDefaultThroughStreamon();
         for (const auto how : {Renegotiation::clearCapture, Renegotiation::setNewSize,
