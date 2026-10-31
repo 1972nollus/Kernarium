@@ -331,6 +331,16 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
 
+    # A stencil buffer needs no depth plane beside it: Android's hardware
+    # renderer asks for a stencil of eight bits and no depth for every window,
+    # and the renderer used to give it a depth-stencil image.
+    uml_add_gpu_unit_test(gpu-stencil-only-target
+        uml_gpu_stencil_only_target_tests
+        host_gl_stencil_only_target_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries}
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY)
+
     # GL_VERTICES_SUBMITTED_ARB counts submitted vertices, not assembled ones.
     # Zink does not advertise LINE_LOOP, so Mesa decomposes every line loop
     # into independent lines before the driver sees it, doubling the count
@@ -359,9 +369,9 @@ if(TARGET uml_gpu_service)
         gpu-transfer-context-error gpu-blob-copy-transfer
         gpu-texture-zero-fill gpu-scanout-caps gpu-import-bounds
         gpu-resource-metal-texture gpu-cross-context-readback
-        gpu-depth-format-advertisement gpu-line-loop-statistics
-        gpu-statistics-availability gpu-packed-yuv-planes
-        gpu-texture-barrier-clear gpu-padded-row-transfer
+        gpu-depth-format-advertisement gpu-stencil-only-target
+        gpu-line-loop-statistics gpu-statistics-availability
+        gpu-packed-yuv-planes gpu-texture-barrier-clear gpu-padded-row-transfer
         gpu-host-context-trim gpu-host-context-trim-concurrent
         gpu-host-gl-device-memory-budget
         PROPERTIES SKIP_RETURN_CODE 77)
