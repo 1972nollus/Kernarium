@@ -203,7 +203,11 @@ use that one, so an image the probe found complete is complete when a guest
 renders to it. A guest that wants stencil and no depth, as Android's hardware
 renderer does for every window, then holds one byte per texel where it held a
 depth-stencil image of four or eight, and every guest's `GL_STENCIL_INDEX8`
-renderbuffer and texture lands on it too.
+renderbuffer and texture lands on it too. An image with one plane detaches the
+other plane from the framebuffer it joins: a stencil-only image that follows a
+depth-stencil one must not inherit that image's depth plane, a pair Zink cannot
+draw to, so the switch from a window's depth-stencil buffer to a stencil-only
+renderbuffer keeps drawing.
 
 The scanout mask is held to the same standard. Only the 8-bit RGB layouts the
 display presents carry a scanout bit, and no YUV format does. The guest's

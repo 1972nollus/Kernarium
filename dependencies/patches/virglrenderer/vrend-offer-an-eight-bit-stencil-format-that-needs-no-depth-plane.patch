@@ -19,13 +19,22 @@ the probe would have found the new format unusable as a target and left it
 without VIRGL_BIND_DEPTH_STENCIL; the target path binds a stencil-only
 image at the stencil attachment point, and the probe now does too.
 
+An image with one plane must also take the other plane off the framebuffer.
+The depth-only path already detached the stencil attachment; the stencil-only
+path left the depth attachment of whatever image the framebuffer held before.
+A stencil-only image that followed a depth-stencil one, a window's depth-stencil
+buffer and then a renderbuffer of stencil alone, was paired with that image's
+depth plane: GL_FRAMEBUFFER_UNSUPPORTED on the host, and every draw after the
+switch was lost. The stencil-only path now detaches the depth attachment.
+
 A guest's GL_STENCIL_INDEX8 renderbuffers and textures choose the new format
 as soon as the capset names it.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- src/vrend/vrend_formats.c | 6 +++++-
- 1 file changed, 5 insertions(+), 1 deletion(-)
+ src/vrend/vrend_formats.c  |  6 +++++-
+ src/vrend/vrend_renderer.c | 13 ++++++++++---
+ 2 files changed, 15 insertions(+), 4 deletions(-)
 
 diff --git a/src/vrend/vrend_formats.c b/src/vrend/vrend_formats.c
 index d1db8bb999cb4de5f608869adb6eec26dc455b12..0f5e6c2eb0767d655ec6b76326646a282eaf5688 100644
@@ -52,3 +61,33 @@ index d1db8bb999cb4de5f608869adb6eec26dc455b12..0f5e6c2eb0767d655ec6b76326646a28
        else
          attachment = GL_DEPTH_ATTACHMENT;
        glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, tex_id, 0);
+diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
+index 89e060fb4e0e158037642934742e0aaad85e6ad3..0c948113b49116b256bcd538e08578c67139c861 100644
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -3146,15 +3146,22 @@ void vrend_fb_bind_texture_id(struct vrend_resource *res,
+       break;
+    }
+ 
+-   if (attachment == GL_DEPTH_ATTACHMENT) {
++   /* An image with a single plane leaves the other attachment point alone, so
++    * the framebuffer keeps what an earlier image put there: a stencil-only
++    * image that follows a depth-stencil one would be paired with that image's
++    * depth plane, a combination the host cannot draw to. Detach the plane the
++    * image does not have. */
++   if (attachment == GL_DEPTH_ATTACHMENT || attachment == GL_STENCIL_ATTACHMENT) {
++      const GLenum other = attachment == GL_DEPTH_ATTACHMENT ?
++                           GL_STENCIL_ATTACHMENT : GL_DEPTH_ATTACHMENT;
+       switch (res->target) {
+       case GL_TEXTURE_1D:
+-         glFramebufferTexture1D(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT,
++         glFramebufferTexture1D(GL_FRAMEBUFFER, other,
+                                 GL_TEXTURE_1D, 0, 0);
+          break;
+       case GL_TEXTURE_2D:
+       default:
+-         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT,
++         glFramebufferTexture2D(GL_FRAMEBUFFER, other,
+                                 GL_TEXTURE_2D, 0, 0);
+          break;
+       }

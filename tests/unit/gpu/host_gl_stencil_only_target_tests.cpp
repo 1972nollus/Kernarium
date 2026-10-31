@@ -10,7 +10,12 @@
 // The contract under test: the renderer advertises VIRGL_FORMAT_S8_UINT, an
 // image of it is a depth-stencil target the guest can transfer into and out of,
 // clear, draw stencil operations into and copy, and each of those changes
-// exactly the stencil bytes the guest named.
+// exactly the stencil bytes the guest named. A framebuffer that held a
+// depth-stencil image and is then given a stencil-only one has no depth plane
+// left: the host used to keep the first image's depth plane beside the new
+// stencil, a combination Zink cannot draw to, so every draw after the switch was
+// lost. That is the order a window's depth-stencil buffer followed by a
+// renderbuffer of stencil alone makes in the guest.
 
 #include "host_gl_stream_support.hpp"
 #include "host_gl_test_support.hpp"
@@ -44,6 +49,11 @@ constexpr std::uint32_t stencilFormat = VIRGL_FORMAT_S8_UINT;
 constexpr std::uint32_t stencilBind = VIRGL_BIND_DEPTH_STENCIL | VIRGL_BIND_SAMPLER_VIEW;
 constexpr std::uint32_t imageId = 20;
 constexpr std::uint32_t copyId = 21;
+constexpr std::uint32_t colorId = 22;
+constexpr std::uint32_t packedId = 23;
+constexpr std::uint32_t clearDepth = 1U << 0U;
+constexpr std::uint32_t clearColor0 = 1U << 2U;
+constexpr std::uint32_t pipeFuncLess = 1;
 
 struct Size {
     std::uint32_t width;
@@ -173,6 +183,86 @@ void checkImage(
     require(commands.submit(renderer) == 0, "the state could not be reset");
 }
 
+// Draws a viewport-filling strip, whose fragments are all at depth 0.5, into a
+// 16 by 16 colour image and the depth-stencil image `zsId`, with the depth test
+// on and the depth plane (if the image has one) cleared to 0.0, which nothing
+// can pass. Returns how many texels were drawn.
+[[nodiscard]] std::size_t drawnThrough(
+    uml::gpu::VirglRenderer& renderer,
+    Pipeline& pipeline,
+    std::uint64_t& fence,
+    std::uint32_t zsId,
+    std::uint32_t zsFormat,
+    bool hasDepth)
+{
+    constexpr std::uint32_t side = 16;
+    constexpr std::uint32_t rgba = uml::gpu::testing::virglFormatR8g8b8a8Unorm;
+    Image color(renderer, colorId, pipeTexture2d, rgba,
+        uml::gpu::testing::virglBindRenderTarget, side, side, 0,
+        static_cast<std::size_t>(side) * side * 4U);
+    const std::uint32_t colorSurface = pipeline.newHandle();
+    const std::uint32_t zsSurface = pipeline.newHandle();
+    const std::uint32_t depthTest = pipeline.newHandle();
+    const float half = static_cast<float>(side) / 2.0F;
+    Commands commands;
+    commands.add(commandCreateObject, objectSurface,
+        {colorSurface, colorId, rgba, 0, 0});
+    commands.add(commandCreateObject, objectSurface,
+        {zsSurface, zsId, zsFormat, 0, 0});
+    commands.add(commandSetFramebufferState, 0, {1, zsSurface, colorSurface});
+    commands.add(commandSetViewportState, 0,
+        {0, bits(half), bits(half), bits(0.5F), bits(half), bits(half),
+            bits(0.5F)});
+    const std::uint32_t cleared = clearColor0 | clearStencil |
+        (hasDepth ? clearDepth : 0U);
+    commands.add(commandClear, 0, {cleared, 0, 0, 0, 0, 0, 0, 0});
+    // depth_enabled, depth_writemask and depth_func LESS.
+    commands.add(commandCreateObject, objectDepthStencilAlpha,
+        {depthTest, 1U | (1U << 1U) | (pipeFuncLess << 2U), 0, 0, 0});
+    commands.add(commandBindObject, objectDepthStencilAlpha, {depthTest});
+    commands.add(commandDrawVbo, 0,
+        {0, 4, primitiveTriangleStrip, 0, 1, 0, 0, 0, 0, 0, 3, 0});
+    require(commands.submit(renderer) == 0, "the draw failed");
+    finish(renderer, fence);
+    std::vector<std::uint8_t> texels(static_cast<std::size_t>(side) * side * 4U);
+    require(renderer.readResourceRectangle(colorId, texels, 0, 0, side, side) == 0,
+        "the colour image could not be read");
+    commands.add(commandBindObject, objectDepthStencilAlpha, {depthHandle});
+    require(commands.submit(renderer) == 0, "the state could not be reset");
+    std::size_t drawn = 0;
+    for (std::size_t index = 0; index < texels.size(); index += 4)
+        drawn += (texels[index] != 0 || texels[index + 1] != 0 ||
+                     texels[index + 2] != 0) ? 1U : 0U;
+    return drawn;
+}
+
+void checkAfterDepthStencil(
+    uml::gpu::VirglRenderer& renderer,
+    Pipeline& pipeline,
+    std::uint64_t& fence)
+{
+    constexpr std::uint32_t side = 16;
+    Image packed(renderer, packedId, pipeTexture2d, VIRGL_FORMAT_S8_UINT_Z24_UNORM,
+        stencilBind, side, side, 0, static_cast<std::size_t>(side) * side * 4U);
+    Image stencil(renderer, imageId, pipeTexture2d, stencilFormat, stencilBind,
+        side, side, 0, static_cast<std::size_t>(side) * side);
+
+    // The depth-stencil image does test depth: a depth of zero stops every fragment.
+    require(drawnThrough(renderer, pipeline, fence, packedId,
+                VIRGL_FORMAT_S8_UINT_Z24_UNORM, true) == 0,
+        "a depth-stencil image does not apply the depth test");
+    // A stencil-only image has no depth to test against, so the same draw lands
+    // everywhere, however often the framebuffer changes between the two.
+    for (int round = 0; round < 2; ++round) {
+        require(drawnThrough(renderer, pipeline, fence, imageId, stencilFormat, false) ==
+                static_cast<std::size_t>(side) * side,
+            "a stencil-only image after a depth-stencil one did not take the draw");
+        require(drawnThrough(renderer, pipeline, fence, packedId,
+                    VIRGL_FORMAT_S8_UINT_Z24_UNORM, true) == 0,
+            "a depth-stencil image after a stencil-only one does not apply the depth test");
+    }
+}
+
 } // namespace
 
 int main()
@@ -198,7 +288,7 @@ int main()
     Pipeline pipeline(*renderer,
         "FRAG\n"
         "DCL OUT[0], COLOR\n"
-        "IMM[0] FLT32 { 0.0, 0.0, 0.0, 0.0 }\n"
+        "IMM[0] FLT32 { 1.0, 1.0, 1.0, 1.0 }\n"
         "  0: MOV OUT[0], IMM[0]\n"
         "  1: END\n");
     std::uint64_t fence = 0;
@@ -206,6 +296,7 @@ int main()
     // and one taller than it is wide.
     for (const Size size : {Size {16, 16}, Size {17, 9}, Size {64, 33}})
         checkImage(*renderer, pipeline, fence, size);
+    checkAfterDepthStencil(*renderer, pipeline, fence);
 
     std::fputs("Stencil only target: ok\n", stderr);
     return 0;
