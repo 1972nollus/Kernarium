@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 14U
+#define KERNARIUM_RUNTIME_API_VERSION 15U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -41,7 +41,16 @@ enum {
 
 /* A boot request. Linux guests supply rootfs_path and overlay_path; Android
  * guests supply one directly writable GPT disk, its command line, and the
- * desired boot mode. The kernel is carried by the runtime. */
+ * desired boot mode. The kernel is carried by the runtime.
+ *
+ * The host GPU's budget is B = clamp(L - A - G - E - S, 384 MiB, G / 2),
+ * evaluated once at launch (see the architecture document): L is the
+ * application's memory limit, G the guest's memory, and E the gadget cache
+ * plus the other memory the guest side of the process uses. The request states
+ * the three launch parameters: A, the application's own expected ceiling;
+ * E_rest, the guest side's memory beyond the gadget cache; and S, the headroom
+ * left unused. Zero, which is what the application states until their values
+ * are chosen, adds nothing to the sum. */
 typedef struct kernarium_runtime_boot {
     uint32_t struct_size;
     uint32_t width;
@@ -55,7 +64,32 @@ typedef struct kernarium_runtime_boot {
     const char* overlay_path;
     const char* android_disk_path;
     const char* android_command_line_path;
+    uint32_t gpu_budget_application_mib;
+    uint32_t gpu_budget_engine_mib;
+    uint32_t gpu_budget_headroom_mib;
+    uint32_t reserved;
 } kernarium_runtime_boot;
+
+/* What a launch's host GPU budget comes to, as the runtime evaluates it for
+ * the boot request it receives. */
+typedef struct kernarium_runtime_gpu_budget {
+    uint32_t struct_size;
+    /* Nonzero when L - A - G - E - S is below the budget's 384 MiB floor: the
+     * process is likely to be ended, the guest boots anyway with the budget
+     * clamped to the floor, and the application is to say so. */
+    uint32_t short_of_floor;
+    /* B. */
+    uint64_t budget_bytes;
+    /* L, zero when the host sets no limit. */
+    uint64_t process_limit_bytes;
+    /* L - A - G - E - S, zero when the sum passes L. */
+    uint64_t available_bytes;
+    uint64_t guest_memory_bytes;
+    /* E: the gadget cache the run will set plus E_rest. */
+    uint64_t engine_bytes;
+    uint64_t application_bytes;
+    uint64_t headroom_bytes;
+} kernarium_runtime_gpu_budget;
 
 /* Boots the guest and returns when it is over. A guest that restarts itself is
  * booted again inside this call, on the same view, disk and network, so the
@@ -74,6 +108,19 @@ enum {
      * of the negated uml_emulator errors (-1 through -4). */
     KERNARIUM_RUNTIME_RESULT_RESTART_LOOP = -100,
 };
+
+/* Evaluates the host GPU's budget for a guest of `guest_memory_mib` with the
+ * launch parameters of kernarium_runtime_boot, as a run with that request will
+ * (the application's memory limit and the gadget cache included), and fills
+ * `plan`, whose struct_size the caller sets. The application calls it before
+ * run to warn the user when `short_of_floor` is set. Returns 0, or a negative
+ * value for a null or short `plan` or a guest memory of zero. */
+typedef int (*kernarium_runtime_plan_gpu_budget_function)(
+    uint32_t guest_memory_mib,
+    uint32_t gpu_budget_application_mib,
+    uint32_t gpu_budget_engine_mib,
+    uint32_t gpu_budget_headroom_mib,
+    kernarium_runtime_gpu_budget* plan);
 
 typedef void (*kernarium_runtime_request_stop_function)(void);
 /* Flushes the guest's writable host files. Safe to call from any thread while
@@ -227,6 +274,7 @@ typedef struct kernarium_runtime_api {
         set_page_cache_trimming;
     kernarium_runtime_set_microphone_function set_microphone;
     kernarium_runtime_set_restart_callback_function set_restart_callback;
+    kernarium_runtime_plan_gpu_budget_function plan_gpu_budget;
 } kernarium_runtime_api;
 
 #if defined(__GNUC__)
@@ -236,7 +284,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v14(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v15(void);
 
 /* An automation-only extension, outside the versioned table: only a runtime
  * built for automation exports this symbol, and the application looks it up

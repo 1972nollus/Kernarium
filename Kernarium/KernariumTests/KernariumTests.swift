@@ -719,6 +719,84 @@ struct KernariumTests {
     }
 
     @Test
+    func gpuBudgetParametersComeFromTheEnvironmentAndDefaultToNothing() {
+        let (defaults, suiteName) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        // Their values are pending a decision, so a launch states none.
+        let plain = EmulatorConfiguration.load(
+            defaults: defaults,
+            physicalProcessorCount: 6
+        )
+        #expect(plain.gpuBudgetApplicationMiB == 0)
+        #expect(plain.gpuBudgetEngineMiB == 0)
+        #expect(plain.gpuBudgetHeadroomMiB == 0)
+
+        let stated = EmulatorConfiguration.load(
+            defaults: defaults,
+            physicalProcessorCount: 6,
+            environment: [
+                EmulatorConfiguration.gpuBudgetApplicationEnvironmentKey:
+                    "300",
+                EmulatorConfiguration.gpuBudgetEngineEnvironmentKey: "50",
+                EmulatorConfiguration.gpuBudgetHeadroomEnvironmentKey: "100",
+            ]
+        )
+        #expect(stated.gpuBudgetApplicationMiB == 300)
+        #expect(stated.gpuBudgetEngineMiB == 50)
+        #expect(stated.gpuBudgetHeadroomMiB == 100)
+
+        // A value that is not a whole number in range states nothing.
+        let refused = EmulatorConfiguration.load(
+            defaults: defaults,
+            physicalProcessorCount: 6,
+            environment: [
+                EmulatorConfiguration.gpuBudgetApplicationEnvironmentKey:
+                    "-1",
+                EmulatorConfiguration.gpuBudgetEngineEnvironmentKey: "lots",
+                EmulatorConfiguration.gpuBudgetHeadroomEnvironmentKey:
+                    "99999999",
+            ]
+        )
+        #expect(refused.gpuBudgetApplicationMiB == 0)
+        #expect(refused.gpuBudgetEngineMiB == 0)
+        #expect(refused.gpuBudgetHeadroomMiB == 0)
+
+        // The parameters are not stored: no setting writes them.
+        stated.save(defaults: defaults)
+        #expect(
+            EmulatorConfiguration.load(
+                defaults: defaults,
+                physicalProcessorCount: 6
+            ).gpuBudgetApplicationMiB == 0
+        )
+    }
+
+    @Test
+    func gpuBudgetWarningNamesTheShortfallOnlyWhenTheFloorIsMissed() {
+        var plan = kernarium_runtime_gpu_budget()
+        plan.struct_size = UInt32(
+            MemoryLayout<kernarium_runtime_gpu_budget>.size
+        )
+        plan.budget_bytes = 384 << 20
+        plan.process_limit_bytes = 2867 << 20
+        plan.guest_memory_bytes = 2048 << 20
+        plan.available_bytes = 273 << 20
+        plan.short_of_floor = 0
+        #expect(GPUBudgetWarning(plan: plan) == nil)
+
+        plan.short_of_floor = 1
+        let warning = GPUBudgetWarning(plan: plan)
+        #expect(warning?.limitMiB == 2867)
+        #expect(warning?.guestMemoryMiB == 2048)
+        #expect(warning?.availableMiB == 273)
+        #expect(warning?.floorMiB == 384)
+        #expect(warning?.message.contains("2867 MB") == true)
+        #expect(warning?.message.contains("273 MB") == true)
+        #expect(warning?.message.contains("likely") == true)
+    }
+
+    @Test
     func savedConfigurationUsesTheStoredKeysEveryBuildWrote() {
         let (defaults, suiteName) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }

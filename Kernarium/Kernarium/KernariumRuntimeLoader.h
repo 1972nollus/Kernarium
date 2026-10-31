@@ -61,6 +61,16 @@ int kernarium_runtime_loader_set_frame_sink(
  * otherwise, -1 when no runtime is loaded. Call it away from the main thread:
  * it may wait for the guest's console. */
 int kernarium_runtime_loader_set_page_cache_trimming(int enabled);
+/* Evaluates the host GPU's budget for a launch with these parameters, as the
+ * selected runtime's run will, and fills `plan`; see
+ * kernarium_runtime_plan_gpu_budget_function. Returns the runtime's answer, or
+ * -1 when no runtime is loaded. */
+int kernarium_runtime_loader_plan_gpu_budget(
+    uint32_t guest_memory_mib,
+    uint32_t application_mib,
+    uint32_t engine_mib,
+    uint32_t headroom_mib,
+    kernarium_runtime_gpu_budget* plan);
 /* Turns the guest's microphone on (nonzero) or off (zero), as
  * kernarium_runtime_set_microphone_function does, and returns the resulting
  * KERNARIUM_RUNTIME_MICROPHONE_ value, or -1 when no runtime is loaded. It
