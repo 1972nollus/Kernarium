@@ -53,9 +53,9 @@
 
 extern "C" {
 extern const unsigned char uml_elf_start[]
-	__asm("section$start$__DATA$__uml_elf");
+	__asm("section$start$__TEXT$__uml_elf");
 extern const unsigned char uml_elf_end[]
-	__asm("section$end$__DATA$__uml_elf");
+	__asm("section$end$__TEXT$__uml_elf");
 }
 
 namespace {
@@ -326,7 +326,8 @@ struct PreparedArguments {
 			for (const auto &argument : arguments)
 				for (const std::string_view prefix : {
 					     "ncpus=", "mem=", "--execution-engine",
-					     "--jit", "--gadget-", "--guest-"})
+					     "--jit", "--gadget-", "--guest-",
+					     "--memory-limit="})
 					if (argument.starts_with(prefix)) {
 						selected.push_back(argument);
 						break;

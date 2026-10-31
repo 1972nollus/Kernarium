@@ -44,11 +44,20 @@ struct EmulatorConfiguration: Equatable {
     // would leave userdata too little room.
     static let androidDiskSizeRangeGiB = 6...64
     // A real iPhone or iPad enforces a jetsam limit that a 4 GiB guest would
-    // cross, so the device default stays at half the range. The same slice
-    // running on an Apple silicon Mac in Designed for iPad mode is given the
-    // host's memory instead and keeps the full guest.
+    // cross. iOS killed a 2048 MiB guest on the 4 GiB iPad mini 6 in a
+    // nine-application budget run, so a device defaults to 1536 MiB until the
+    // graphics-memory reductions land, when the value is revisited. A value
+    // the user stored is kept. The same slice running on an Apple silicon Mac
+    // in Designed for iPad mode is given the host's memory instead and keeps
+    // the full guest.
     static var defaultGuestMemoryMiB: Int {
-        ProcessInfo.processInfo.isiOSAppOnMac ? 4096 : 2048
+        defaultGuestMemoryMiB(
+            appRunsOnMac: ProcessInfo.processInfo.isiOSAppOnMac
+        )
+    }
+
+    static func defaultGuestMemoryMiB(appRunsOnMac: Bool) -> Int {
+        appRunsOnMac ? 4096 : 1536
     }
     static let defaultOverlaySizeGiB = 8
     static let defaultAndroidDiskSizeGiB = 8

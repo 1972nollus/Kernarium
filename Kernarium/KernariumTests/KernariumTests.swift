@@ -596,7 +596,7 @@ struct KernariumTests {
         #expect(configuration.vCPUCount == 6)
         #expect(
             configuration.guestMemoryMiB ==
-                (ProcessInfo.processInfo.isiOSAppOnMac ? 4096 : 2048)
+                (ProcessInfo.processInfo.isiOSAppOnMac ? 4096 : 1536)
         )
         #expect(configuration.overlaySizeGiB == 8)
         #expect(configuration.androidDiskSizeGiB == 8)
@@ -604,6 +604,34 @@ struct KernariumTests {
         #expect(configuration.retinaMode == false)
         #expect(configuration.autoResizeGuest == true)
         #expect(configuration.androidBootMode == .automatic)
+    }
+
+    @Test
+    func aDeviceDefaultsToLessGuestMemoryThanAMac() {
+        let device = EmulatorConfiguration.defaultGuestMemoryMiB(
+            appRunsOnMac: false
+        )
+        #expect(device == 1536)
+        #expect(
+            EmulatorConfiguration.defaultGuestMemoryMiB(appRunsOnMac: true) ==
+                4096
+        )
+        #expect(EmulatorConfiguration.guestMemoryRangeMiB.contains(device))
+        #expect(device % EmulatorConfiguration.guestMemoryStepMiB == 0)
+    }
+
+    @Test
+    func aStoredGuestMemoryOutlivesTheDefault() {
+        let (defaults, suiteName) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(2048, forKey: "emulator.guestMemoryMiB")
+
+        #expect(
+            EmulatorConfiguration.load(
+                defaults: defaults,
+                physicalProcessorCount: 6
+            ).guestMemoryMiB == 2048
+        )
     }
 
     @Test

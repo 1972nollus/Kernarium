@@ -40,8 +40,10 @@ application shows.
 
 Kernarium defaults to Linux, the processor count `NSProcessInfo` reports, and
 4 GiB of guest memory where the process is given the host's memory (Designed
-for iPad on a Mac) or 2 GiB on a physical device, whose jetsam limit a 4 GiB
-guest would cross.
+for iPad on a Mac) or 1.5 GiB on a physical device, whose jetsam limit a 4 GiB
+guest would cross and a 2 GiB guest crossed on a 4 GiB iPad mini 6. The device
+value stays until the graphics-memory reductions land, and a value the user
+stored is kept.
 
 ## Restarts
 

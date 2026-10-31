@@ -89,9 +89,55 @@ ActiveWalker &active_walker()
 
 constexpr std::size_t maximum_mapping_history = 4096;
 
+/* The protection bits a mapping keeps. */
+constexpr int protection_mask = PROT_READ | PROT_WRITE | PROT_EXEC;
+
+/* What a generation maps at one page, as its fill index word and backing slot
+ * say. The backing is the slot's, so the record is good for as long as the
+ * caller holds the generation's lock. */
+struct PageMapping final {
+	MappedBacking *backing;
+	std::uint64_t offset;
+	int fd;
+	int protection;
+	bool guest_code;
+	bool guest_writable;
+};
+
+[[nodiscard]] int protection_of(const FillIndex::Fields &fields) noexcept
+{
+	return (fields.read ? PROT_READ : 0) | (fields.write ? PROT_WRITE : 0) |
+		(fields.exec ? PROT_EXEC : 0);
+}
+
+/* The record of a page whose word is `word` (0: none), or nothing when the
+ * page is absent. */
+[[nodiscard]] std::optional<PageMapping> decode_page(
+	const GenerationState &state, std::uint64_t page,
+	std::uintptr_t word) noexcept
+{
+	if (word == 0)
+		return std::nullopt;
+	const auto fields = FillIndex::decode(word);
+	const auto entry = state.backings.entry(fields.slot, page);
+	if (entry.backing == nullptr)
+		return std::nullopt;
+	return PageMapping{entry.backing,
+		fields.host - reinterpret_cast<std::uintptr_t>(entry.backing->base()),
+		entry.fd, protection_of(fields), fields.guest_code,
+		fields.guest_writable};
+}
+
+/* What the generation maps at `page`. For a holder of its lock. */
+[[nodiscard]] std::optional<PageMapping> find_page(
+	const GenerationState &state, std::uint64_t page) noexcept
+{
+	return decode_page(state, page, state.fill_index.lookup(page));
+}
+
 /* Whether a translator can hold code for the page: it fetches only from a
  * guest-code page that grants execute. */
-[[nodiscard]] bool can_hold_translation(const Mapping &mapping) noexcept
+[[nodiscard]] bool can_hold_translation(const PageMapping &mapping) noexcept
 {
 	return mapping.guest_code && (mapping.protection & PROT_EXEC) != 0;
 }
@@ -127,8 +173,8 @@ std::atomic_bool &coherent_kernel_code_writes()
  * in the code-page registry), and the page's other writers publish with
  * their own stores. */
 [[nodiscard]] bool changes_translatable_code(
-	const std::optional<Mapping> &before,
-	const std::optional<Mapping> &after) noexcept
+	const std::optional<PageMapping> &before,
+	const std::optional<PageMapping> &after) noexcept
 {
 	if (!before || !can_hold_translation(*before))
 		return false;
@@ -167,8 +213,8 @@ struct CodeSpan final {
  * stamp exists only once something has translated the page, and a page
  * nothing translated has none to move. */
 void note_code_change(CodeSpan &code, std::uint64_t address,
-	const std::optional<Mapping> &before,
-	const std::optional<Mapping> &after) noexcept
+	const std::optional<PageMapping> &before,
+	const std::optional<PageMapping> &after) noexcept
 {
 	if (!changes_translatable_code(before, after))
 		return;
@@ -258,87 +304,125 @@ private:
 };
 
 [[nodiscard]] bool same_mapping(
-	const Mapping &left, const Mapping &right) noexcept
+	const PageMapping &left, const PageMapping &right) noexcept
 {
-	return left.offset == right.offset && left.fd == right.fd &&
-		left.protection == right.protection &&
+	return left.backing == right.backing && left.offset == right.offset &&
+		left.fd == right.fd && left.protection == right.protection &&
 		left.guest_code == right.guest_code &&
 		left.guest_writable == right.guest_writable;
 }
 
 [[nodiscard]] bool same_mapping(
-	const std::optional<Mapping> &left,
-	const std::optional<Mapping> &right) noexcept
+	const std::optional<PageMapping> &left,
+	const std::optional<PageMapping> &right) noexcept
 {
 	return left.has_value() == right.has_value() &&
 		(!left || same_mapping(*left, *right));
 }
 
-/* The fill index word of a mapped page: its host address and what the guest
- * may do there, as translate_in() judges it. */
-[[nodiscard]] std::uintptr_t fill_entry(const Mapping &mapping) noexcept
+/* The fill index word of a mapped page that lies in backing slot `slot`: its
+ * host address and what the guest may do there, as translate_in() judges it.
+ * map() has checked that the address is one a word can hold. */
+[[nodiscard]] std::uintptr_t fill_word(
+	const PageMapping &mapping, unsigned slot) noexcept
 {
-	const auto host = reinterpret_cast<std::uintptr_t>(
-		mapping.backing ? mapping.backing->at(mapping.offset) : nullptr);
-	if (host == 0 || (host & FillIndex::permissions) != 0)
-		return 0;
-	return host |
-		((mapping.protection & PROT_READ) != 0 ? FillIndex::readable : 0) |
-		((mapping.protection & PROT_WRITE) != 0 ?
-			FillIndex::writable : 0) |
-		(mapping.guest_code && (mapping.protection & PROT_EXEC) != 0 ?
-			FillIndex::executable : 0);
+	return FillIndex::encode({
+		reinterpret_cast<std::uintptr_t>(
+			mapping.backing->at(mapping.offset)),
+		(mapping.protection & PROT_READ) != 0,
+		(mapping.protection & PROT_WRITE) != 0,
+		(mapping.protection & PROT_EXEC) != 0,
+		mapping.guest_code, mapping.guest_writable, slot});
 }
 
 struct PlannedMappingPage final {
 	std::uint64_t address;
-	std::optional<Mapping> original;
-	std::optional<Mapping> final;
+	std::optional<PageMapping> original;
+	std::optional<PageMapping> final;
+	/* Who owns `final`'s backing: the operation that maps it. */
+	const std::shared_ptr<MappedBacking> *owner;
+	/* The backing slot `final` lies in, which the plan claimed. */
+	unsigned slot;
 };
 
-void index_planned_pages(GenerationState &state,
-	std::span<const PlannedMappingPage> pages) noexcept
+/* The step of a mapping change that can fail: the nodes, and the overflow
+ * room, that every page the change maps will live in. A page's word is
+ * committed only once all of them exist, so a change that fails here has
+ * changed nothing but the empty nodes it made. */
+void reserve_planned_pages(GenerationState &state,
+	std::span<const PlannedMappingPage> pages)
 {
-	for (const auto &page : pages)
-		if (!same_mapping(page.original, page.final))
-			state.fill_index.assign(page.address,
-				page.final ? fill_entry(*page.final) : 0);
+	for (const auto &page : pages) {
+		if (!page.final || same_mapping(page.original, page.final))
+			continue;
+		UML_MEMORY_ALLOCATION_CHECKPOINT(testing::AllocationSite::reserve);
+		if (!state.fill_index.reserve(page.address))
+			throw std::bad_alloc{};
+		if (page.slot == BackingSlots::overflow)
+			state.backings.reserve_overflow(page.address);
+	}
 }
 
-class MappingPlanRollback final {
-public:
-	MappingPlanRollback(GenerationState &state,
-		std::span<const PlannedMappingPage> pages) noexcept
-		: state_{state}, pages_{pages}
-	{
-	}
-
-	~MappingPlanRollback()
-	{
-		if (committed_)
-			return;
-		for (auto page = pages_.rbegin(); page != pages_.rend(); ++page) {
-			if (!page->original) {
-				state_.mappings.erase(page->address);
-				continue;
-			}
-			/* Erasures occur only after every throwing insertion succeeds, so
-			 * an unwind always finds every originally present node. */
-			if (auto found = state_.mappings.find(page->address);
-			    found != state_.mappings.end())
-				found->second = *page->original;
+/* Writes the planned pages' words, counts them in and out of their slots, and
+ * frees the leaves a removal emptied. The reserve step made room for all of
+ * it, so nothing here allocates or fails. A removal is for the caller to have
+ * quiesced execution for. */
+void commit_planned_pages(GenerationState &state,
+	std::span<const PlannedMappingPage> pages) noexcept
+{
+	for (const auto &page : pages) {
+		if (same_mapping(page.original, page.final))
+			continue;
+		const auto old_word = state.fill_index.lookup(page.address);
+		const bool had = old_word != 0;
+		const auto old_slot = FillIndex::decode(old_word).slot;
+		if (page.final) {
+			state.backings.add(page.slot, page.address, *page.owner,
+				page.final->fd);
+			state.fill_index.store(page.address,
+				fill_word(*page.final, page.slot));
+			if (!had)
+				++state.mapped_pages;
+		} else {
+			state.fill_index.store(page.address, 0);
+			if (had)
+				--state.mapped_pages;
 		}
+		/* A page that stays in the overflow table was just given its new
+		 * entry; dropping the old one would drop that. */
+		if (had && !(page.final && old_slot == BackingSlots::overflow &&
+			     page.slot == BackingSlots::overflow))
+			state.backings.remove(old_slot, page.address);
 	}
+	auto trimmed = ~std::uint64_t{0};
+	for (const auto &page : pages) {
+		if (page.final || !page.original ||
+		    FillIndex::leaf_of(page.address) == trimmed)
+			continue;
+		trimmed = FillIndex::leaf_of(page.address);
+		state.fill_index.trim(page.address);
+	}
+}
 
-	MappingPlanRollback(const MappingPlanRollback &) = delete;
-	MappingPlanRollback &operator=(const MappingPlanRollback &) = delete;
+/* Empties a generation of its pages. */
+void clear_mappings(GenerationState &state) noexcept
+{
+	state.fill_index.clear();
+	state.backings.clear();
+	state.mapped_pages = 0;
+}
 
-	void commit() noexcept { committed_ = true; }
+/* Releases the backing slots a change claimed, and the overflow room it
+ * reserved, once the change is committed or abandoned. */
+class SlotSettler final {
+public:
+	explicit SlotSettler(GenerationState &state) noexcept : state_{state} {}
+	~SlotSettler() { state_.backings.settle(); }
+	SlotSettler(const SlotSettler &) = delete;
+	SlotSettler &operator=(const SlotSettler &) = delete;
 
 private:
 	GenerationState &state_;
-	std::span<const PlannedMappingPage> pages_;
-	bool committed_{};
 };
 
 ActiveGeneration &active_thread_generation()
@@ -525,6 +609,11 @@ public:
 		if (!backing || offset > backing->size() ||
 		    length > backing->size() - offset)
 			return -1;
+		/* A page's word holds the host address beside its flags. */
+		if (!FillIndex::representable(
+			    reinterpret_cast<std::uintptr_t>(backing->at(offset))))
+			return -1;
+		protection &= protection_mask;
 		generation = generation_for(address, generation);
 		auto &batch = mapping_batch();
 		if (batch.depth != 0 && batch.address_space == this &&
@@ -556,41 +645,44 @@ public:
 			active.address_space == this && active.state &&
 				!active.state->retired.load(std::memory_order_acquire) ?
 				active.generation : 0);
+		protection &= protection_mask;
 		auto state = state_for(generation);
 		ExecutionQuiesce quiesce{state, generation};
 		std::lock_guard lock{state->mappings_mutex};
 		bool changed = false;
 		CodeSpan code;
-		for (std::uint64_t position = 0; position < length;
-		     position += page_size) {
-			auto mapping = state->mappings.find(address + position);
-			if (mapping != state->mappings.end() &&
-			    mapping->second.protection != protection) {
+		(void)state->fill_index.scan(address, address + length,
+			[&](std::uint64_t page, std::uintptr_t word) {
+				const auto fields = FillIndex::decode(word);
+				if (protection_of(fields) == protection)
+					return false;
 				changed = true;
 				/* The backing and the bytes stay; only losing execute
 				 * leaves a translation wrong. */
-				if (can_hold_translation(mapping->second) &&
+				if (fields.guest_code && fields.exec &&
 				    (protection & PROT_EXEC) == 0) {
-					code.add(address + position);
-					mapping->second.backing->retire_code_page(
-						mapping->second.offset);
+					code.add(page);
+					if (const auto mapping = decode_page(
+						    *state, page, word))
+						mapping->backing->retire_code_page(
+							mapping->offset);
 				}
-			}
-		}
+				return false;
+			});
 		if (!changed)
 			return 0;
 		const std::array changes{
 			MappingChangePlan{address, length, code}};
 		PendingMappingChanges pending{*state, changes};
-		for (std::uint64_t position = 0; position < length;
-		     position += page_size) {
-			auto mapping = state->mappings.find(address + position);
-			if (mapping == state->mappings.end())
-				continue;
-			mapping->second.protection = protection;
-			state->fill_index.assign(address + position,
-				fill_entry(mapping->second));
-		}
+		(void)state->fill_index.scan(address, address + length,
+			[&](std::uint64_t page, std::uintptr_t word) {
+				auto fields = FillIndex::decode(word);
+				fields.read = (protection & PROT_READ) != 0;
+				fields.write = (protection & PROT_WRITE) != 0;
+				fields.exec = (protection & PROT_EXEC) != 0;
+				state->fill_index.store(page, FillIndex::encode(fields));
+				return false;
+			});
 		pending.commit();
 		return 0;
 	}
@@ -641,7 +733,7 @@ public:
 		auto state = state_for(generation);
 		ExecutionQuiesce quiesce{state, generation};
 		std::lock_guard lock{state->mappings_mutex};
-		if (state->mappings.empty()) {
+		if (state->mapped_pages == 0) {
 			/* A batch which started before this flush must not publish an old
 			 * page-table snapshot after the flush returns, even when no mapping
 			 * had reached the host cache yet. */
@@ -658,8 +750,7 @@ public:
 		PendingMappingChanges pending{*state, changes};
 		state->invalidation_epoch.fetch_add(
 			1, std::memory_order_release);
-		state->mappings.clear();
-		state->fill_index.clear();
+		clear_mappings(*state);
 		pending.commit();
 		return 0;
 	}
@@ -706,8 +797,7 @@ public:
 			const std::array changes{
 				MappingChangePlan{0, 0, {.whole = true}}};
 			PendingMappingChanges pending{*state, changes};
-			state->mappings.clear();
-			state->fill_index.clear();
+			clear_mappings(*state);
 			pending.commit();
 		}
 		state->retired.store(true, std::memory_order_release);
@@ -781,10 +871,8 @@ public:
 				!active.state->retired.load(std::memory_order_acquire) ?
 				active.generation : 0);
 		const auto names_other_backing = [&](const GenerationState &state) {
-			const auto iterator = state.mappings.find(address);
-			return iterator != state.mappings.end() &&
-				(iterator->second.fd != fd ||
-				 iterator->second.offset != offset);
+			const auto mapping = find_page(state, address);
+			return mapping && (mapping->fd != fd || mapping->offset != offset);
 		};
 		{
 			/* Every kernel uaccess asks, and nearly every one finds the page
@@ -842,19 +930,18 @@ public:
 				active.generation : 0);
 		auto reference = reference_for(generation);
 		std::shared_lock lock{reference.state->mappings_mutex};
-		auto iterator = reference.state->mappings.find(page);
-		if (iterator == reference.state->mappings.end())
+		const auto word = reference.state->fill_index.lookup(page);
+		if (word == 0)
 			return 0;
-		auto *destination = iterator->second.backing->at(
-			iterator->second.offset + in_page);
-		if (destination == nullptr)
-			return -1;
-		std::memcpy(destination, buffer, length);
-		if (iterator->second.guest_code &&
+		std::memcpy(reinterpret_cast<void *>(
+				    (word & FillIndex::address_mask) + in_page),
+			buffer, length);
+		if ((word & FillIndex::guest_code_page) != 0 &&
 		    (!kernel_write || kernel_code_write_publishes())) {
-			MappedBacking::invalidate_code_page(
-				iterator->second.backing->code_page_handle(
-					iterator->second.offset));
+			if (const auto mapping = decode_page(
+				    *reference.state, page, word))
+				MappedBacking::invalidate_code_page(
+					mapping->backing->code_page_handle(mapping->offset));
 			publish_code_change(*reference.state, page);
 		}
 		return 0;
@@ -901,7 +988,7 @@ public:
 		const auto entry = context->state->fill_index.find(page);
 		if ((entry & wanted) != 0) {
 			*result = reinterpret_cast<void *>(
-				(entry & ~FillIndex::permissions) +
+				(entry & FillIndex::address_mask) +
 				(address & (page_size - 1)));
 			return DARWIN_UML_STATIC_TRANSLATED;
 		}
@@ -914,22 +1001,17 @@ public:
 	{
 		const auto page = address & ~(page_size - 1);
 		std::shared_lock lock{state.mappings_mutex};
-		auto iterator = state.mappings.find(page);
-		if (iterator == state.mappings.end())
+		const auto word = state.fill_index.lookup(page);
+		if (word == 0)
 			return DARWIN_UML_STATIC_UNMAPPED;
-		const auto &mapping = iterator->second;
-		const bool permitted = access == DARWIN_UML_STATIC_EXECUTE ?
-			mapping.guest_code && (mapping.protection & PROT_EXEC) != 0 :
+		const auto wanted = access == DARWIN_UML_STATIC_EXECUTE ?
+			FillIndex::executable :
 			access == DARWIN_UML_STATIC_WRITE ?
-				(mapping.protection & PROT_WRITE) != 0 :
-				(mapping.protection & PROT_READ) != 0;
-		if (!permitted)
+				FillIndex::writable : FillIndex::readable;
+		if ((word & wanted) == 0)
 			return DARWIN_UML_STATIC_PERMISSION;
-		auto *base = mapping.backing->at(
-			mapping.offset + (address & (page_size - 1)));
-		if (base == nullptr)
-			return DARWIN_UML_STATIC_HOST_ERROR;
-		*result = base;
+		*result = reinterpret_cast<void *>(
+			(word & FillIndex::address_mask) + (address & (page_size - 1)));
 		return DARWIN_UML_STATIC_TRANSLATED;
 	}
 
@@ -944,13 +1026,12 @@ public:
 		const auto resolved_generation = generation_for(page, generation);
 		auto reference = reference_for(resolved_generation);
 		std::shared_lock lock{reference.state->mappings_mutex};
-		const auto iterator = reference.state->mappings.find(page);
-		if (iterator == reference.state->mappings.end())
+		const auto mapping = find_page(*reference.state, page);
+		if (!mapping)
 			return DARWIN_UML_STATIC_UNMAPPED;
-		const auto &mapping = iterator->second;
-		if (!mapping.guest_code || (mapping.protection & PROT_EXEC) == 0)
+		if (!can_hold_translation(*mapping))
 			return DARWIN_UML_STATIC_PERMISSION;
-		auto *code_page = mapping.backing->code_page_handle(mapping.offset);
+		auto *code_page = mapping->backing->code_page_handle(mapping->offset);
 		if (code_page == nullptr ||
 		    !MappedBacking::load_code_page_stamp(
 			    code_page, stamp->identity, stamp->version))
@@ -1067,13 +1148,13 @@ public:
 			std::shared_lock lock{state->mappings_mutex};
 			for (auto page = first; page < rounded_end;
 			     page += page_size) {
-				const auto mapping = state->mappings.find(page);
-				if (mapping != state->mappings.end()) {
-					if (!mapping->second.guest_code)
+				const auto mapping = find_page(*state, page);
+				if (mapping) {
+					if (!mapping->guest_code)
 						continue;
 					MappedBacking::invalidate_code_page(
-						mapping->second.backing->code_page_handle(
-							mapping->second.offset));
+						mapping->backing->code_page_handle(
+							mapping->offset));
 				}
 				publish_first = std::min(publish_first, page);
 				publish_end = page + page_size;
@@ -1393,9 +1474,10 @@ private:
 			else
 				total += static_cast<std::size_t>(pages);
 		};
+		SlotSettler settler{state};
 		std::size_t touched_pages = 0;
 		std::size_t possible_pages = std::min(
-			state.mappings.size(), maximum_plan_reserve);
+			state.mapped_pages, maximum_plan_reserve);
 		for (const auto &operation : operations) {
 			const auto operation_pages = operation.length / page_size;
 			add_reserve_pages(touched_pages, operation_pages);
@@ -1421,14 +1503,12 @@ private:
 			if (const auto found = page_indices.find(address);
 			    found != page_indices.end())
 				return pages[found->second];
-			std::optional<Mapping> original;
-			if (const auto found = state.mappings.find(address);
-			    found != state.mappings.end())
-				original = found->second;
+			const auto original = find_page(state, address);
 			UML_MEMORY_ALLOCATION_CHECKPOINT(
 				testing::AllocationSite::batch_index);
 			page_indices.emplace(address, pages.size());
-			pages.push_back({address, original, original});
+			pages.push_back({address, original, original, nullptr,
+				BackingSlots::overflow});
 			return pages.back();
 		};
 
@@ -1442,6 +1522,9 @@ private:
 			 * operation of the batch already changed is judged again
 			 * against its original, which at worst names it twice. */
 			CodeSpan code;
+			/* The slot of the backing this operation maps, claimed when the
+			 * first page needs it. */
+			std::optional<unsigned> operation_slot;
 			const auto clear_page = [&](PlannedMappingPage &page) {
 				if (!page.final)
 					return;
@@ -1452,60 +1535,64 @@ private:
 			};
 			const auto operation_pages = operation.length / page_size;
 			const auto candidate_pages =
-				state.mappings.size() >
+				state.mapped_pages >
 					std::numeric_limits<std::size_t>::max() - pages.size() ?
 				std::numeric_limits<std::size_t>::max() :
-				state.mappings.size() + pages.size();
+				state.mapped_pages + pages.size();
 			if (!operation.map && operation_pages > candidate_pages) {
 				const auto end = operation.address + operation.length;
 				/* A broad unmap is commonly a sparse exit_mmap() range. It can
 				 * only change pages which were already published or mapped by an
 				 * earlier operation in this batch; do not materialize every hole. */
-					for (const auto &[address, mapping] : state.mappings) {
-						(void)mapping;
-						if (address >= operation.address && address < end)
-							clear_page(page_for(address));
-					}
-					for (auto &page : pages)
-						if (page.address >= operation.address &&
-						    page.address < end)
-							clear_page(page);
-				} else {
-					for (std::uint64_t position = 0;
-					     position < operation.length;
-					     position += page_size) {
-						const auto page_address =
-							operation.address + position;
-						if (!operation.map) {
-							/* An unmap changes only a page the
-							 * generation or this batch holds. Most
-							 * name pages nothing mapped, and a 4 KiB
-							 * guest sends one per page, so plan none
-							 * for them. */
-							if (!page_indices.contains(
-								    page_address) &&
-							    !state.mappings.contains(
-								    page_address))
-								continue;
-							clear_page(page_for(page_address));
+				(void)state.fill_index.scan(operation.address, end,
+					[&](std::uint64_t address, std::uintptr_t) {
+						clear_page(page_for(address));
+						return false;
+					});
+				for (auto &page : pages)
+					if (page.address >= operation.address &&
+					    page.address < end)
+						clear_page(page);
+			} else {
+				for (std::uint64_t position = 0;
+				     position < operation.length;
+				     position += page_size) {
+					const auto page_address =
+						operation.address + position;
+					if (!operation.map) {
+						/* An unmap changes only a page the
+						 * generation or this batch holds. Most
+						 * name pages nothing mapped, and a 4 KiB
+						 * guest sends one per page, so plan none
+						 * for them. */
+						if (!page_indices.contains(page_address) &&
+						    state.fill_index.lookup(page_address) == 0)
 							continue;
-						}
-						auto &page = page_for(page_address);
-						std::optional<Mapping> next;
-						next = Mapping{operation.mapping.backing,
-							operation.mapping.offset + position,
-							operation.mapping.fd,
-							operation.mapping.protection,
-							operation.mapping.guest_code,
-							operation.mapping.guest_writable};
-						if (same_mapping(page.final, next))
-							continue;
-						changed = true;
-						note_code_change(code, page.address,
-							page.original, next);
-						page.final = std::move(next);
+						clear_page(page_for(page_address));
+						continue;
 					}
+					auto &page = page_for(page_address);
+					const std::optional<PageMapping> next{PageMapping{
+						operation.mapping.backing.get(),
+						operation.mapping.offset + position,
+						operation.mapping.fd,
+						operation.mapping.protection,
+						operation.mapping.guest_code,
+						operation.mapping.guest_writable}};
+					if (same_mapping(page.final, next))
+						continue;
+					if (!operation_slot)
+						operation_slot = state.backings.claim(
+							operation.mapping.backing,
+							operation.mapping.fd);
+					changed = true;
+					note_code_change(code, page.address,
+						page.original, next);
+					page.final = next;
+					page.owner = &operation.mapping.backing;
+					page.slot = *operation_slot;
 				}
+			}
 			if (changed)
 				changes.push_back({operation.address,
 					operation.length, code});
@@ -1513,59 +1600,43 @@ private:
 		if (changes.empty())
 			return;
 
+		reserve_planned_pages(state, pages);
 		PendingMappingChanges pending{state, changes};
-		MappingPlanRollback rollback{state, pages};
-		/* Complete every potentially allocating insertion before erasing an
-		 * original node.  Rollback can therefore restore without allocating. */
-		for (const auto &page : pages) {
-			if (same_mapping(page.original, page.final) || !page.final)
-				continue;
-			UML_MEMORY_ALLOCATION_CHECKPOINT(
-				testing::AllocationSite::mapping);
-			state.mappings.insert_or_assign(page.address, *page.final);
-		}
-		for (const auto &page : pages)
-			if (!same_mapping(page.original, page.final) && !page.final)
-				state.mappings.erase(page.address);
-		rollback.commit();
-		index_planned_pages(state, pages);
+		commit_planned_pages(state, pages);
 		pending.commit();
 	}
 
 	void map_locked(GenerationState &state, std::uint64_t address,
 		std::uint64_t length, const Mapping &mapping)
 	{
+		SlotSettler settler{state};
 		std::vector<PlannedMappingPage> pages;
 		pages.reserve(static_cast<std::size_t>(length / page_size));
 		CodeSpan code;
+		std::optional<unsigned> slot;
 		for (std::uint64_t position = 0; position < length;
 		     position += page_size) {
 			const auto page_address = address + position;
-			std::optional<Mapping> previous;
-			if (const auto found = state.mappings.find(page_address);
-			    found != state.mappings.end())
-				previous = found->second;
-			Mapping next{mapping.backing, mapping.offset + position,
+			const auto previous = find_page(state, page_address);
+			const std::optional<PageMapping> next{PageMapping{
+				mapping.backing.get(), mapping.offset + position,
 				mapping.fd, mapping.protection, mapping.guest_code,
-				mapping.guest_writable};
-			if (previous && same_mapping(*previous, next))
+				mapping.guest_writable}};
+			if (same_mapping(previous, next))
 				continue;
+			if (!slot)
+				slot = state.backings.claim(mapping.backing, mapping.fd);
 			note_code_change(code, page_address, previous, next);
-			pages.push_back({page_address, previous, std::move(next)});
+			pages.push_back({page_address, previous, next,
+				&mapping.backing, *slot});
 		}
 		if (pages.empty())
 			return;
 		const std::array changes{
 			MappingChangePlan{address, length, code}};
+		reserve_planned_pages(state, pages);
 		PendingMappingChanges pending{state, changes};
-		MappingPlanRollback rollback{state, pages};
-		for (const auto &page : pages) {
-			UML_MEMORY_ALLOCATION_CHECKPOINT(
-				testing::AllocationSite::mapping);
-			state.mappings.insert_or_assign(page.address, *page.final);
-		}
-		rollback.commit();
-		index_planned_pages(state, pages);
+		commit_planned_pages(state, pages);
 		pending.commit();
 	}
 
@@ -1574,35 +1645,25 @@ private:
 		std::span<const MappingOperation> operations)
 	{
 		for (const auto &operation : operations) {
-			const auto operation_pages = operation.length / page_size;
-			const auto mapping_differs = [&](const std::uint64_t address,
-						 const Mapping &mapping) {
+			const auto differs = [&](std::uint64_t address,
+						 std::uintptr_t word) {
 				if (!operation.map)
 					return true;
+				const auto mapping = decode_page(state, address, word);
+				if (!mapping)
+					return true;
 				const auto position = address - operation.address;
-				return mapping.fd != operation.mapping.fd ||
-					mapping.offset != operation.mapping.offset + position ||
-					mapping.protection != operation.mapping.protection ||
-					mapping.guest_code != operation.mapping.guest_code ||
-					mapping.guest_writable !=
+				return mapping->backing != operation.mapping.backing.get() ||
+					mapping->fd != operation.mapping.fd ||
+					mapping->offset != operation.mapping.offset + position ||
+					mapping->protection != operation.mapping.protection ||
+					mapping->guest_code != operation.mapping.guest_code ||
+					mapping->guest_writable !=
 						operation.mapping.guest_writable;
 			};
-			if (operation_pages <= state.mappings.size()) {
-				for (std::uint64_t position = 0;
-				     position < operation.length; position += page_size) {
-					const auto previous = state.mappings.find(
-						operation.address + position);
-					if (previous != state.mappings.end() &&
-					    mapping_differs(previous->first, previous->second))
-						return true;
-				}
-				continue;
-			}
-			const auto end = operation.address + operation.length;
-			for (const auto &[address, mapping] : state.mappings)
-				if (address >= operation.address && address < end &&
-				    mapping_differs(address, mapping))
-					return true;
+			if (state.fill_index.scan(operation.address,
+				    operation.address + operation.length, differs))
+				return true;
 		}
 		return false;
 	}
@@ -1612,53 +1673,33 @@ private:
 		std::uint64_t length)
 	{
 		/* exit_mmap() unmaps the whole user range of a generation that has
-		 * few pages mapped, often none: walk the table when the range is
-		 * wider than it, as the batch path does, instead of every page. */
+		 * few pages mapped, often none: the index walks only the subtrees that
+		 * hold a page, whatever the width of the range. */
 		const auto end = address + length;
-		const bool sparse = length / page_size > state.mappings.size();
 		bool changed = false;
 		CodeSpan code;
-		const auto note = [&](std::uint64_t page, const Mapping &mapping) {
-			changed = true;
-			if (can_hold_translation(mapping)) {
-				code.add(page);
-				mapping.backing->retire_code_page(mapping.offset);
-			}
-		};
-		if (sparse) {
-			for (const auto &[page, mapping] : state.mappings)
-				if (page >= address && page < end)
-					note(page, mapping);
-		} else {
-			for (std::uint64_t position = 0; position < length;
-			     position += page_size) {
-				auto mapping = state.mappings.find(address + position);
-				if (mapping != state.mappings.end())
-					note(address + position, mapping->second);
-			}
-		}
+		(void)state.fill_index.scan(address, end,
+			[&](std::uint64_t page, std::uintptr_t word) {
+				changed = true;
+				const auto fields = FillIndex::decode(word);
+				if (fields.guest_code && fields.exec) {
+					code.add(page);
+					if (const auto mapping = decode_page(state, page, word))
+						mapping->backing->retire_code_page(mapping->offset);
+				}
+				return false;
+			});
 		if (!changed)
 			return false;
 		const std::array changes{
 			MappingChangePlan{address, length, code}};
 		PendingMappingChanges pending{state, changes};
-		if (sparse) {
-			for (auto page = state.mappings.begin();
-			     page != state.mappings.end();) {
-				if (page->first >= address && page->first < end) {
-					state.fill_index.erase(page->first);
-					page = state.mappings.erase(page);
-				} else {
-					++page;
-				}
-			}
-		} else {
-			for (std::uint64_t position = 0; position < length;
-			     position += page_size) {
-				state.fill_index.erase(address + position);
-				state.mappings.erase(address + position);
-			}
-		}
+		state.fill_index.erase_range(address, end,
+			[&state](std::uint64_t page, std::uintptr_t word) noexcept {
+				state.backings.remove(FillIndex::decode(word).slot, page);
+				--state.mapped_pages;
+			});
+		state.backings.settle();
 		pending.commit();
 		return true;
 	}
@@ -1668,12 +1709,11 @@ private:
 	{
 		const auto page = address & ~(page_size - 1);
 		std::shared_lock lock{state.mappings_mutex};
-		const auto mapping = state.mappings.find(page);
-		if (mapping == state.mappings.end() || !mapping->second.guest_code)
+		const auto mapping = find_page(state, page);
+		if (!mapping || !mapping->guest_code)
 			return;
 		MappedBacking::invalidate_code_page(
-			mapping->second.backing->code_page_handle(
-				mapping->second.offset));
+			mapping->backing->code_page_handle(mapping->offset));
 	}
 
 	static void publish_code_change(

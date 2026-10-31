@@ -94,7 +94,13 @@ struct uml_emulator_capabilities {
 struct uml_emulator;
 
 /* Creation copies rootfs_path, kernel_image, and the network callback table.
- * It does not retain the config object or those input buffers. */
+ * It does not retain the config object or those input buffers, with one
+ * exception: a kernel_image that is exactly the __TEXT,__uml_elf section
+ * (its start and its size) of the image that holds this library, or of the
+ * main executable, is not copied. A product that links its kernel into itself
+ * as that section passes it as kernel_image, and the handle runs the section
+ * in place. No caller can free it, and it stays mapped for as long as the
+ * handle can run. Every other buffer may be freed once creation returns. */
 int uml_emulator_create(const struct uml_emulator_config *config,
 		       struct uml_emulator **result);
 /* Destruction must not overlap any other operation on this handle. */

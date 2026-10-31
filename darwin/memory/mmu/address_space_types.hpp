@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "backing_slots.hpp"
 #include "fill_index.hpp"
 #include "mapped_backing.hpp"
 #include "uml_darwin_static_mmu.h"
@@ -38,9 +39,13 @@ struct AddressSpaceLifetime final {
 
 struct GenerationState final {
 	mutable WordSharedMutex mappings_mutex;
-	std::unordered_map<std::uint64_t, Mapping> mappings;
-	/* `mappings` again, for the lock-free fill of an entered context. */
+	/* Every page the generation maps, as one word each, which the lock-free
+	 * fill of an entered context reads, and the backings the words' slots
+	 * name. */
 	FillIndex fill_index;
+	BackingSlots backings;
+	/* The pages mapped. */
+	std::size_t mapped_pages{};
 	std::atomic_uint64_t mapping_changes{1};
 	std::atomic_uint64_t code_changes{1};
 	std::atomic_uint64_t invalidation_epoch{};
