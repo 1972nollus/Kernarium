@@ -113,13 +113,13 @@ struct AnonymousBackingMemory final {
 
 /* Keep a mapping that the host can never replace for the life of the process.
  *
- * On iOS the loader maps the kernel's text as aliases of the framework's
- * code-signed carrier, and XNU makes an executable mapping of signed code
- * permanent once its code-signing monitor has associated it; a macOS process
- * is exempt. A MAP_FIXED mapping or vm_remap overwrite that would replace any
- * part of a permanent mapping then fails, with EACCES or
- * KERN_PROTECTION_FAILURE and nothing changed, and munmap leaves it in place
- * without access, for good. So a kept range stays mapped: reserve_host_range,
+ * The loader maps the kernel's text as aliases of the embedded image's
+ * code-signed carrier, and on iOS XNU makes an executable mapping of signed
+ * code permanent once its code-signing monitor has associated it; a macOS
+ * process is exempt, and keeps its aliases the same way. A MAP_FIXED mapping
+ * or vm_remap overwrite that would replace any part of a permanent mapping
+ * then fails, with EACCES or KERN_PROTECTION_FAILURE and nothing changed, and
+ * munmap leaves it in place without access, for good. So a kept range stays mapped: reserve_host_range,
  * and every release and hand-back built on it, reserves only around it, and
  * the next load of the same image finds it in place (host_range_kept).
  *

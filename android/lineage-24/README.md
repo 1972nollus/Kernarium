@@ -970,8 +970,56 @@ or partitions. The fstab has no `voldmanaged` entry, so `vold` never manages the
 system disk; it reaches sgdisk only for the loop-backed virtual disk of
 `sm set-virtual-disk`.
 
-The immutable Android payload filesystems and APEX payloads are ext4. Userdata
-is an ordinary unencrypted ext4 filesystem in the directly writable image; this
+AOSP's EROFS tools (`mkfs.erofs`, `fsck.erofs`, `dump.erofs`) are built with
+Zstandard. An `external/erofs-utils` topic (route `p0023`) compiles the encoder
+and the decoder and embeds libzstd in `liberofs` itself (`whole_static_libs`,
+because the `static_libs` of a static library are not linked into its users, so
+`apex-ls` and the update engine's payload generator would otherwise miss the
+symbols), and a second `external/zstd` topic (route `p0013`) lets that project
+see the library. Without them `mkfs.erofs` rejects `-zzstd` and `fsck.erofs`
+cannot read a Zstandard image.
+
+The five read-only partitions are compressed EROFS: Zstandard level 15 with
+16 KiB physical clusters on 4 KiB blocks. The two parameters are written once,
+as `UML_ANDROID_EROFS_COMPRESSOR` and `UML_ANDROID_EROFS_PCLUSTER_SIZE` in
+`overlay/lineage_darwin.mk`. `BoardConfig.mk` hands them to the image builder,
+which otherwise uses `mkfs.erofs`'s defaults (no per-partition setting, no
+extended option, no block size beyond the default), and `build/build-aosp.sh`
+asserts that. The compress hints (`overlay/config/erofs_compress_hints.txt`)
+store every `.apex` file uncompressed, so apexd's loop devices read it with
+direct I/O and its pages are cached once. The target-files verifier reads the
+parameters from the makefile and checks `misc_info`, the hints and the
+superblock of each of the five images (4 KiB blocks, Zstandard alone, clusters
+larger than a block, none of ztailpacking, fragments or dedupe), and that the
+packaged kernel configuration has EROFS with Zstandard built in. Both fstabs
+mount the partitions as `erofs ro`; the first-stage entries add
+`wait,first_stage_mount`. The fixed GPT is unchanged: each image sits at the
+start of its partition with zeros behind it, so the seed stays 3,123 MiB and
+the compression shows in the images' own sizes. Decompression is the guest
+kernel's native code, not emulated guest code. The five images hold 1,001 MiB
+(system 524.5, system_ext 157.0, product 227.5, vendor 91.9, odm 0.3), of
+which 257.5 MiB are the 52 `.apex` files. Against the ext4 release the
+five-app cold launch sum is the same on a guest with 4 GiB (about 7.6 s
+against 7.7 s) and about 20% longer on a quiet host with 1,536 MiB (13.9 s
+against 11.6 s), where evicted pages are re-read and decompressed a whole
+cluster at a time; that is why the clusters are 16 KiB and not 64 KiB.
+
+Every APEX payload is compressed EROFS as well, with the same two parameters:
+`PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := erofs` and the three
+`PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_*` settings in `overlay/lineage_darwin.mk`
+reach apexer through Soong, not its lz4hc and 4 KiB defaults, and
+`build/build-aosp.sh` asserts them. The `p0008` series no longer pins
+`com.android.virt` to a payload of its own. The payload hints
+(`overlay/config/erofs_apex_payload_hints.txt`) keep `.rc` and `.xml` files
+uncompressed, so the verifier still reads the example HALs' service
+definitions from the payload's bytes; it finds each service binary through the
+payload's directories. The presigned CTS shim APEX is a prebuilt that keeps its
+ext4 payload: the verifier allows exactly that one and rejects ext4 in any
+other APEX. `tools/precompile-first-boot-apps.py` reads APKs out of an EROFS
+payload with the host `fsck.erofs` (part of `otatools`), and out of an ext4 one
+with `debugfs`.
+
+Userdata is an ordinary unencrypted ext4 filesystem in the directly writable image; this
 emulator does not expose a hardware-backed KeyMint service and the guest bundle
 is already protected by the host application sandbox. The mount holds the
 partition exclusively, so apexd cannot pin an updated APEX as a device-mapper

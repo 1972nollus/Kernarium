@@ -20,6 +20,8 @@ import zipfile
 import zlib
 from pathlib import Path
 
+from erofs_fixture import synthetic_erofs_image
+
 
 def fail(message: str) -> None:
     raise SystemExit(f"android builder lane fixture: {message}")
@@ -238,23 +240,38 @@ def tracked_fstab(android_root: Path) -> str:
     return (android_root / "overlay/config/fstab.uml").read_text()
 
 
-def erofs_system_fstab(fstab: str) -> str:
-    """`fstab` with /system declared erofs, which the UBD contract forbids."""
-    changed = fstab.replace("/system ext4", "/system erofs", 1)
+def ext4_system_fstab(fstab: str) -> str:
+    """`fstab` with /system declared ext4, which the compressed-EROFS contract forbids."""
+    changed = fstab.replace("/system erofs", "/system ext4", 1)
     if changed == fstab:
-        fail("the tracked fstab has no ext4 /system line to corrupt")
+        fail("the tracked fstab has no erofs /system line to corrupt")
     return changed
 
 
-def synthetic_apex(filesystem: str = "ext4", content: bytes = b"") -> bytes:
-    payload = bytearray(1024 + 0x38 + 2)
-    payload += content
+def tracked_erofs_parameters(android_root: Path) -> tuple[str, str]:
+    """The compressor and the cluster size the product makefile sets, once each."""
+    text = (android_root / "overlay/lineage_darwin.mk").read_text()
+    found = []
+    for name in ("UML_ANDROID_EROFS_COMPRESSOR", "UML_ANDROID_EROFS_PCLUSTER_SIZE"):
+        values = re.findall(rf"^{name} := (\S+)$", text, re.MULTILINE)
+        if len(values) != 1:
+            fail(f"lineage_darwin.mk does not set {name} exactly once")
+        found.append(values[0])
+    return found[0], found[1]
+
+
+def synthetic_apex(filesystem: str = "erofs", content: bytes = b"", **superblock) -> bytes:
+    """An APEX container whose payload has the superblock of `filesystem` and then `content`."""
     if filesystem == "ext4":
+        payload = bytearray(1024 + 0x38 + 2)
         payload[1024 + 0x38 : 1024 + 0x38 + 2] = b"\x53\xef"
     elif filesystem == "erofs":
-        payload[1024 : 1024 + 4] = b"\xe2\xe1\xf5\xe0"
+        payload = bytearray(synthetic_erofs_image(**superblock))
+    elif filesystem == "unknown":
+        payload = bytearray(4096)
     else:
         fail(f"unsupported synthetic APEX filesystem: {filesystem}")
+    payload += content
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as apex:
         apex.writestr("apex_payload.img", payload)
@@ -361,6 +378,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         fail(f"expected one required PRODUCT permission file: {permission_files}")
     fdroid_permissions = permission_files[0]
     uml_fstab = tracked_fstab(verifier.parents[1])
+    erofs_compressor, erofs_pcluster_size = tracked_erofs_parameters(verifier.parents[1])
+    erofs_compress_hints = (
+        verifier.parents[1] / "overlay/config/erofs_compress_hints.txt"
+    ).read_bytes()
     tracked_variant = configured_build_variant(verifier.parents[1])
     other_variant = next(name for name in BUILD_VARIANTS if name != tracked_variant)
     with tempfile.TemporaryDirectory(prefix="android-target-files-") as temporary:
@@ -369,9 +390,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         kernel = root / "kernel/vmlinux"
         kernel.write_bytes(synthetic_aarch64_elf())
         kernel_config = root / "kernel/config"
-        # The options the virtual Wi-Fi needs, and the ways a configuration can lack one.
+        # The options the virtual Wi-Fi and the EROFS mounts need, and the ways a configuration
+        # can lack one.
         wifi_kernel_options = {
             "CONFIG_MACVLAN": "y", "CONFIG_CFG80211": "y", "CONFIG_VIRT_WIFI": "y",
+            "CONFIG_EROFS_FS": "y", "CONFIG_EROFS_FS_ZIP": "y",
+            "CONFIG_EROFS_FS_ZIP_ZSTD": "y",
         }
 
         def kernel_config_text(variant: str | None) -> str:
@@ -515,6 +539,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           virtual_ab: bool = False,
                           wrong_fstab: bool = False, stock_fstab: bool = False,
                           wrong_filesystem: bool = False,
+                          misc_info_edits: dict[str, str | None] | None = None,
                           wrong_userdata_inodes: bool = False,
                           missing_userdata_quota: bool = False,
                           wrong_apex_filesystem: bool = False,
@@ -619,35 +644,41 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     if wrong_kernel_release
                     else kernel_release.read_bytes(),
                 )
+                misc_info = {
+                    "system_fs_type": "ext4" if wrong_filesystem else "erofs",
+                    "system_ext_fs_type": "erofs",
+                    "product_fs_type": "erofs",
+                    "vendor_fs_type": "erofs",
+                    "odm_fs_type": "erofs",
+                    "erofs_default_compressor": erofs_compressor,
+                    "erofs_pcluster_size": erofs_pcluster_size,
+                    "erofs_default_compress_hints": "device/kernarium/darwin/config/erofs_compress_hints.txt",
+                    "erofs_sparse_flag": "-s",
+                    "userdata_extfs_inode_count": (
+                        "32768" if wrong_userdata_inodes else "8192"
+                    ),
+                }
+                for key, value in (misc_info_edits or {}).items():
+                    if value is None:
+                        del misc_info[key]
+                    else:
+                        misc_info[key] = value
                 archive.writestr(
                     "META/misc_info.txt",
-                    "system_fs_type=erofs\n"
-                    if wrong_filesystem
-                    else (
-                        "system_fs_type=ext4\n"
-                        "system_ext_fs_type=ext4\n"
-                        "product_fs_type=ext4\n"
-                        "vendor_fs_type=ext4\n"
-                        "odm_fs_type=ext4\n"
-                        + (
-                            "userdata_extfs_inode_count=32768\n"
-                            if wrong_userdata_inodes
-                            else "userdata_extfs_inode_count=8192\n"
-                        )
-                    ),
+                    "".join(f"{key}={value}\n" for key, value in misc_info.items()),
+                )
+                archive.writestr(
+                    "META/erofs_default_compress_hints.txt", erofs_compress_hints
                 )
                 archive.writestr("META/ramdisk_node_list", "")
-                for image in (
-                    "init_boot.img",
-                    "odm.img",
-                    "product.img",
-                    "recovery.img",
-                    "system.img",
-                    "system_ext.img",
-                    "userdata.img",
-                    "vendor.img",
-                ):
+                for image in ("init_boot.img", "recovery.img", "userdata.img"):
                     archive.writestr(f"IMAGES/{image}", b"image")
+                # AOSP writes the EROFS images sparse; one of them is here, to read both forms.
+                for image in ("odm", "product", "system", "system_ext", "vendor"):
+                    archive.writestr(
+                        f"IMAGES/{image}.img",
+                        synthetic_erofs_image(sparse=image == "product"),
+                    )
                 archive.writestr("ROOT/system_dlkm/", b"")
                 archive.writestr("SYSTEM/system_dlkm/etc/build.prop", "")
                 virtual_ab_property = "ro.virtual_ab.enabled=true\n" if virtual_ab else ""
@@ -719,9 +750,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 )
                 archive.writestr(
                     "SYSTEM/apex/com.android.fixture.apex",
-                    synthetic_apex(
-                        "erofs" if wrong_apex_filesystem else "ext4"
-                    ),
+                    synthetic_apex("ext4" if wrong_apex_filesystem else "erofs"),
+                )
+                # The presigned CTS shim keeps its checked-in ext4 payload.
+                archive.writestr(
+                    "SYSTEM/apex/com.android.apex.cts.shim.apex", synthetic_apex("ext4")
                 )
                 required_sdk_apexes = (
                     "com.android.bt",
@@ -738,9 +771,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     if missing_sdk_apex and index == 0:
                         continue
                     archive.writestr(
-                        f"SYSTEM/apex/{apex}.apex", synthetic_apex("ext4")
+                        f"SYSTEM/apex/{apex}.apex", synthetic_apex()
                     )
-                fstab = erofs_system_fstab(uml_fstab) if wrong_fstab else uml_fstab
+                fstab = ext4_system_fstab(uml_fstab) if wrong_fstab else uml_fstab
                 if missing_userdata_quota:
                     fstab = fstab.replace(",quota", "")
                 archive.writestr("VENDOR/etc/fstab.uml", fstab)
@@ -1477,13 +1510,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 if unsupported_hal:
                     archive.writestr("VENDOR/apex/com.google.cf.light.apex", b"apex")
                 # The AOSP example thermal service as the vendor APEX Cuttlefish installs: the service
-                # binary as a regular-file directory entry (name length, file type 1, name), the
-                # VINTF fragment that declares it and the init script that starts it. The init
-                # script names the binary too, so the entry is told apart from that.
+                # binary as a file under bin/hw, the VINTF fragment that declares it and the init
+                # script that starts it. The init script names the binary too, so the file is read
+                # from the payload's directories, not found by its name.
                 thermal_binary = b"android.hardware.thermal-service.example"
                 thermal_content = b"\x00" * 8
+                thermal_files = ("etc/init.rc",)
                 if thermal_hal_variant != "no-binary":
-                    thermal_content += bytes([len(thermal_binary), 1]) + thermal_binary
+                    thermal_files += (f"bin/hw/{thermal_binary.decode()}",)
                 if thermal_hal_variant != "no-fragment":
                     thermal_content += (
                         b'<manifest version="1.0" type="device"><hal format="aidl">'
@@ -1498,13 +1532,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 if thermal_hal_variant != "missing-apex":
                     archive.writestr(
                         "VENDOR/apex/com.android.hardware.thermal.apex",
-                        synthetic_apex("ext4", thermal_content),
+                        synthetic_apex("erofs", thermal_content, files=thermal_files),
                     )
                 # The Wi-Fi HAL and the supplicant (with hostapd), packaged the same way.
                 def hal_apex(apex, binary, name, fqname, service, variant):
                     content = b"\x00" * 8
+                    files = ("etc/init.rc",)
                     if variant != "no-binary":
-                        content += bytes([len(binary), 1]) + binary
+                        files += (f"bin/hw/{binary.decode()}",)
                     if variant != "no-fragment":
                         content += (
                             b'<manifest version="1.0" type="device"><hal format="aidl">'
@@ -1519,7 +1554,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     if variant != "missing-apex":
                         archive.writestr(
                             f"VENDOR/apex/{apex.decode()}.apex",
-                            synthetic_apex("ext4", content),
+                            synthetic_apex("erofs", content, files=files),
                         )
 
                 hal_apex(b"com.android.hardware.wifi", b"android.hardware.wifi-service",
@@ -1532,8 +1567,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 # from /vendor/lib*/mediacas for both ISAs.
                 cas_binary = b"android.hardware.cas-service.example"
                 cas_content = b"\x00" * 8
+                cas_files = ("etc/init.rc",)
                 if cas_hal_variant != "no-binary":
-                    cas_content += bytes([len(cas_binary), 1]) + cas_binary
+                    cas_files += (f"bin/hw/{cas_binary.decode()}",)
                 if cas_hal_variant != "no-fragment":
                     cas_content += (
                         b'<manifest version="1.0" type="device"><hal format="aidl">'
@@ -1548,7 +1584,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 if cas_hal_variant != "missing-apex":
                     archive.writestr(
                         "VENDOR/apex/com.android.hardware.cas.apex",
-                        synthetic_apex("ext4", cas_content),
+                        synthetic_apex("erofs", cas_content, files=cas_files),
                     )
                 if cas_hal_variant != "no-plugin64":
                     archive.writestr(
@@ -1566,7 +1602,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 if removed_payload:
                     archive.writestr(
                         "SYSTEM/apex/com.android.hardware.rebootescrow.apex",
-                        synthetic_apex("ext4"),
+                        synthetic_apex(),
                     )
             if entries:
                 adjust_archive(path, entries)
@@ -1645,9 +1681,67 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("untracked-variant", {"build_variant": other_variant}),
             ("wrong-fstab", {"wrong_fstab": True}),
             ("wrong-filesystem", {"wrong_filesystem": True}),
+            ("wrong-erofs-compressor",
+             {"misc_info_edits": {"erofs_default_compressor": "lz4hc,9"}}),
+            ("wrong-erofs-level",
+             {"misc_info_edits": {"erofs_default_compressor": "zstd,19"}}),
+            ("wrong-erofs-cluster",
+             {"misc_info_edits": {"erofs_pcluster_size": "4096"}}),
+            ("missing-erofs-compressor",
+             {"misc_info_edits": {"erofs_default_compressor": None}}),
+            ("erofs-dedupe", {"misc_info_edits": {"erofs_enable_dedupe": "true"}}),
+            ("erofs-shared-blocks",
+             {"misc_info_edits": {"erofs_share_dup_blocks": "true"}}),
+            ("erofs-legacy-compression",
+             {"misc_info_edits": {"erofs_use_legacy_compression": "true"}}),
+            ("erofs-block-size", {"misc_info_edits": {"erofs_blocksize": "16384"}}),
+            ("erofs-system-block-size",
+             {"misc_info_edits": {"system_erofs_blocksize": "16384"}}),
+            ("erofs-vendor-compressor",
+             {"misc_info_edits": {"vendor_erofs_compressor": "lz4hc,9"}}),
+            ("erofs-system-ext-cluster",
+             {"misc_info_edits": {"system_ext_erofs_pcluster_size": "65536"}}),
+            ("missing-erofs-hints",
+             {"entries": {"META/erofs_default_compress_hints.txt": None}}),
+            ("wrong-erofs-hints",
+             {"entries": {"META/erofs_default_compress_hints.txt": b"0 .*\\.img$\n"}}),
+            ("ext4-system-image",
+             {"entries": {"IMAGES/system.img": bytes(4096)}}),
+            ("lz4-vendor-image",
+             {"entries": {"IMAGES/vendor.img": synthetic_erofs_image(algorithms=1 << 0)}}),
+            ("lzma-product-image",
+             {"entries": {"IMAGES/product.img": synthetic_erofs_image(
+                 algorithms=1 << 1, sparse=True)}}),
+            ("two-algorithm-odm-image",
+             {"entries": {"IMAGES/odm.img": synthetic_erofs_image(
+                 algorithms=(1 << 0) | (1 << 3))}}),
+            ("small-cluster-system-ext-image",
+             {"entries": {"IMAGES/system_ext.img": synthetic_erofs_image(features=0x1)}}),
+            ("tail-packing-system-image",
+             {"entries": {"IMAGES/system.img": synthetic_erofs_image(features=0x3 | 0x10)}}),
+            ("fragments-vendor-image",
+             {"entries": {"IMAGES/vendor.img": synthetic_erofs_image(features=0x3 | 0x20)}}),
+            ("16k-block-system-image",
+             {"entries": {"IMAGES/system.img": synthetic_erofs_image(block_bits=14)}}),
             ("wrong-userdata-inodes", {"wrong_userdata_inodes": True}),
             ("missing-userdata-quota", {"missing_userdata_quota": True}),
             ("wrong-apex-filesystem", {"wrong_apex_filesystem": True}),
+            ("apex-lz4-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 algorithms=1 << 0)}}),
+            ("apex-small-cluster-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 features=0x1)}}),
+            ("apex-extended-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 features=0x3 | 0x20)}}),
+            ("apex-16k-block-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 block_bits=14)}}),
+            ("apex-unknown-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex("unknown")}}),
+            ("shim-lookalike-ext4-payload",
+             {"entries": {"SYSTEM/apex/com.android.apex.cts.shim2.apex": synthetic_apex("ext4")}}),
             ("stock-fstab", {"stock_fstab": True}),
             ("seriallogging", {"seriallogging": True}),
             ("boot-control", {"boot_control": True}),
@@ -1665,6 +1759,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("kernel-macvlan-module", {"kernel_config_variant": "module:CONFIG_MACVLAN"}),
             ("kernel-cfg80211-module", {"kernel_config_variant": "module:CONFIG_CFG80211"}),
             ("kernel-virt-wifi-module", {"kernel_config_variant": "module:CONFIG_VIRT_WIFI"}),
+            ("kernel-no-erofs", {"kernel_config_variant": "missing:CONFIG_EROFS_FS"}),
+            ("kernel-no-erofs-zstd",
+             {"kernel_config_variant": "unset:CONFIG_EROFS_FS_ZIP_ZSTD"}),
+            ("kernel-erofs-zip-module", {"kernel_config_variant": "module:CONFIG_EROFS_FS_ZIP"}),
             ("kernel-release", {"wrong_kernel_release": True}),
             ("memfd-policy", {"missing_memfd_policy": True}),
             ("spl-policy", {"missing_spl_policy": True}),
@@ -2020,6 +2118,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "packaged kernel configuration lacks CONFIG_CFG80211=y"),
             ("kernel-virt-wifi-module-cause", {"kernel_config_variant": "module:CONFIG_VIRT_WIFI"},
              "packaged kernel configuration lacks CONFIG_VIRT_WIFI=y"),
+            ("kernel-no-erofs-cause", {"kernel_config_variant": "missing:CONFIG_EROFS_FS"},
+             "packaged kernel configuration lacks CONFIG_EROFS_FS=y"),
+            ("kernel-no-erofs-zstd-cause",
+             {"kernel_config_variant": "unset:CONFIG_EROFS_FS_ZIP_ZSTD"},
+             "packaged kernel configuration lacks CONFIG_EROFS_FS_ZIP_ZSTD=y"),
+            ("kernel-erofs-zip-module-cause",
+             {"kernel_config_variant": "module:CONFIG_EROFS_FS_ZIP"},
+             "packaged kernel configuration lacks CONFIG_EROFS_FS_ZIP=y"),
             ("wifi-dirs-missing-cause", {"wifi_dirs_variant": "missing"},
              "does not run 'mkdir /data/vendor/wifi 0770 wifi wifi' at boot"),
             ("wifi-dirs-wrong-owner-cause", {"wifi_dirs_variant": "wrong-owner"},
@@ -2185,6 +2291,98 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "the closest lacks 141$"),
             ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
              "userdata entry lacks the fs_mgr quota flag"),
+            ("wrong-apex-filesystem-cause", {"wrong_apex_filesystem": True},
+             "APEX payload must use compressed erofs, not ext4: SYSTEM/apex/com.android.fixture.apex"),
+            ("apex-lz4-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 algorithms=1 << 0)}},
+             "APEX payload SYSTEM/apex/com.android.fixture.apex is not compressed with zstd alone: "
+             "algorithms 0x1"),
+            ("apex-small-cluster-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 features=0x1)}},
+             "APEX payload SYSTEM/apex/com.android.fixture.apex has no physical cluster larger "
+             "than a block"),
+            ("apex-extended-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 features=0x3 | 0x20)}},
+             "APEX payload SYSTEM/apex/com.android.fixture.apex uses an extended option"),
+            ("apex-16k-block-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 block_bits=14)}},
+             "APEX payload SYSTEM/apex/com.android.fixture.apex does not use 4 KiB blocks"),
+            ("apex-unknown-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex("unknown")}},
+             "APEX payload must use compressed erofs: SYSTEM/apex/com.android.fixture.apex"),
+            ("shim-lookalike-ext4-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.apex.cts.shim2.apex": synthetic_apex("ext4")}},
+             "APEX payload must use compressed erofs, not ext4: "
+             "SYSTEM/apex/com.android.apex.cts.shim2.apex"),
+            ("wrong-filesystem-cause", {"wrong_filesystem": True},
+             "system_fs_type must select read-only erofs images"),
+            ("wrong-erofs-compressor-cause",
+             {"misc_info_edits": {"erofs_default_compressor": "lz4hc,9"}},
+             re.escape(f"erofs_default_compressor must be {erofs_compressor}: 'lz4hc,9'")),
+            ("wrong-erofs-level-cause",
+             {"misc_info_edits": {"erofs_default_compressor": "zstd,19"}},
+             re.escape(f"erofs_default_compressor must be {erofs_compressor}: 'zstd,19'")),
+            ("wrong-erofs-cluster-cause",
+             {"misc_info_edits": {"erofs_pcluster_size": "4096"}},
+             re.escape(f"erofs_pcluster_size must be {erofs_pcluster_size}: '4096'")),
+            ("missing-erofs-compressor-cause",
+             {"misc_info_edits": {"erofs_default_compressor": None}},
+             "erofs_default_compressor must be .*: None"),
+            ("erofs-dedupe-cause", {"misc_info_edits": {"erofs_enable_dedupe": "true"}},
+             "policy beyond the product's two parameters is set: erofs_enable_dedupe"),
+            ("erofs-shared-blocks-cause",
+             {"misc_info_edits": {"erofs_share_dup_blocks": "true"}},
+             "policy beyond the product's two parameters is set: erofs_share_dup_blocks"),
+            ("erofs-legacy-compression-cause",
+             {"misc_info_edits": {"erofs_use_legacy_compression": "true"}},
+             "policy beyond the product's two parameters is set: erofs_use_legacy_compression"),
+            ("erofs-block-size-cause", {"misc_info_edits": {"erofs_blocksize": "16384"}},
+             "policy beyond the product's two parameters is set: erofs_blocksize"),
+            ("erofs-system-block-size-cause",
+             {"misc_info_edits": {"system_erofs_blocksize": "16384"}},
+             "policy beyond the product's two parameters is set: system_erofs_blocksize"),
+            ("erofs-vendor-compressor-cause",
+             {"misc_info_edits": {"vendor_erofs_compressor": "lz4hc,9"}},
+             "policy beyond the product's two parameters is set: vendor_erofs_compressor"),
+            ("erofs-system-ext-cluster-cause",
+             {"misc_info_edits": {"system_ext_erofs_pcluster_size": "65536"}},
+             "policy beyond the product's two parameters is set: system_ext_erofs_pcluster_size"),
+            ("missing-erofs-hints-cause",
+             {"entries": {"META/erofs_default_compress_hints.txt": None}},
+             "erofs_default_compress_hints.txt is missing: the .apex files would be compressed"),
+            ("wrong-erofs-hints-cause",
+             {"entries": {"META/erofs_default_compress_hints.txt": b"0 .*\\.img$\n"}},
+             "EROFS compress hints differ from the tracked product file"),
+            ("ext4-system-image-cause",
+             {"entries": {"IMAGES/system.img": bytes(4096)}},
+             "IMAGES/system.img is not an EROFS image"),
+            ("lz4-vendor-image-cause",
+             {"entries": {"IMAGES/vendor.img": synthetic_erofs_image(algorithms=1 << 0)}},
+             "IMAGES/vendor.img is not compressed with zstd alone: algorithms 0x1"),
+            ("lzma-product-image-cause",
+             {"entries": {"IMAGES/product.img": synthetic_erofs_image(
+                 algorithms=1 << 1, sparse=True)}},
+             "IMAGES/product.img is not compressed with zstd alone: algorithms 0x2"),
+            ("two-algorithm-odm-image-cause",
+             {"entries": {"IMAGES/odm.img": synthetic_erofs_image(
+                 algorithms=(1 << 0) | (1 << 3))}},
+             "IMAGES/odm.img is not compressed with zstd alone: algorithms 0x9"),
+            ("small-cluster-system-ext-image-cause",
+             {"entries": {"IMAGES/system_ext.img": synthetic_erofs_image(features=0x1)}},
+             "IMAGES/system_ext.img has no physical cluster larger than a block"),
+            ("tail-packing-system-image-cause",
+             {"entries": {"IMAGES/system.img": synthetic_erofs_image(features=0x3 | 0x10)}},
+             "IMAGES/system.img uses an extended option"),
+            ("fragments-vendor-image-cause",
+             {"entries": {"IMAGES/vendor.img": synthetic_erofs_image(features=0x3 | 0x20)}},
+             "IMAGES/vendor.img uses an extended option"),
+            ("16k-block-system-image-cause",
+             {"entries": {"IMAGES/system.img": synthetic_erofs_image(block_bits=14)}},
+             "IMAGES/system.img does not use 4 KiB blocks"),
             ("missing-microphone-feature-cause", {"missing_microphone_feature": True},
              "feature is not declared: android.hardware.microphone"),
             ("missing-companion-feature-cause", {"missing_companion_feature": True},
@@ -2386,6 +2584,48 @@ def verify_net_setup_tool(android_root: Path) -> None:
     source = (android_root / "overlay/tools/kernarium_net_setup.cpp").read_text()
     if re.search(r"\bifi_change\s*=", source):
         fail("kernarium_net_setup.cpp assigns ifi_change: a link-creation flag mask clears IFF_MULTICAST")
+
+
+def verify_erofs_board(android_root: Path) -> None:
+    """The five read-only partitions are compressed EROFS from one pair of parameters.
+
+    The compressor and the cluster size are written once, in the product makefile; the board
+    file hands them on, and neither it nor the build script repeats a value. The fstabs mount the
+    partitions as EROFS, read-only, and the hints keep every .apex uncompressed."""
+    compressor, pcluster_size = tracked_erofs_parameters(android_root)
+    if not compressor.startswith("zstd,") or int(pcluster_size) % 4096 != 0:
+        fail(f"unexpected EROFS parameters: {compressor} {pcluster_size}")
+    board = (android_root / "overlay/BoardConfig.mk").read_text()
+    for partition in ("SYSTEM", "SYSTEM_EXT", "PRODUCT", "VENDOR", "ODM"):
+        line = f"BOARD_{partition}IMAGE_FILE_SYSTEM_TYPE := erofs\n"
+        if board.count(line) != 1:
+            fail(f"BoardConfig.mk does not select erofs for {partition} exactly once")
+    for line in (
+        "BOARD_EROFS_COMPRESSOR := $(UML_ANDROID_EROFS_COMPRESSOR)\n",
+        "BOARD_EROFS_PCLUSTER_SIZE := $(UML_ANDROID_EROFS_PCLUSTER_SIZE)\n",
+        "BOARD_EROFS_COMPRESS_HINTS := device/kernarium/darwin/config/erofs_compress_hints.txt\n",
+    ):
+        if board.count(line) != 1:
+            fail(f"BoardConfig.mk does not contain {line.strip()!r} exactly once")
+    for repeated in (compressor, pcluster_size):
+        for name in ("overlay/BoardConfig.mk", "build/build-aosp.sh"):
+            if re.search(rf"(?<![0-9A-Za-z_]){re.escape(repeated)}(?![0-9A-Za-z_])",
+                         (android_root / name).read_text()):
+                fail(f"{name} repeats the EROFS parameter {repeated}")
+    for name, flags in (
+        ("overlay/config/fstab.uml", "wait,first_stage_mount"),
+        ("overlay/config/recovery.fstab", "wait"),
+    ):
+        text = (android_root / name).read_text()
+        for partition in ("system", "system_ext", "product", "vendor", "odm"):
+            expected = f"/dev/block/by-name/{partition} /{partition} erofs ro {flags}\n"
+            if text.count(expected) != 1:
+                fail(f"{name} does not mount {partition} as '{expected.strip()}'")
+    hints = (android_root / "overlay/config/erofs_compress_hints.txt").read_text()
+    if [line for line in hints.splitlines() if line and not line.startswith("#")] != [
+        "0 .*\\.apex$"
+    ]:
+        fail("erofs_compress_hints.txt is not the single rule that stores .apex uncompressed")
 
 
 def verify_userdata_grow(android_root: Path) -> None:
@@ -2716,7 +2956,7 @@ def synthetic_initramfs(fstab: str, *, wrong_fstab: bool = False,
                         duplicate_file: bool = False,
                         module_file: str | None = None) -> bytes:
     if wrong_fstab:
-        fstab = erofs_system_fstab(fstab)
+        fstab = ext4_system_fstab(fstab)
     entries = [
         newc_entry("dev", 0o40755, b"", 1),
         newc_entry("dev", 0o40755, b"", 2),
@@ -3221,6 +3461,7 @@ def main() -> None:
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
     verify_hal_selections(android_root)
     verify_net_setup_tool(android_root)
+    verify_erofs_board(android_root)
     verify_userdata_grow(android_root)
     verify_default_wallpaper(android_root)
     verify_overlay_sepolicy(android_root)

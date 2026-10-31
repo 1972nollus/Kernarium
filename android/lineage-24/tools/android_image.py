@@ -6,7 +6,8 @@ verify-lineage-recovery.py read the same formats: the kernelless boot-image
 v4 header, a partition's range in partition-layout.json, uncompressed newc
 archives and the program headers of AArch64 and Arm ELF payloads. They also compare
 against the same tracked first-stage fstab and reject the same kernel
-module files. Each caller passes its own error type, so diagnostics keep
+module files. The EROFS superblock and the product's two EROFS parameters are
+read here too. Each caller passes its own error type, so diagnostics keep
 their per-tool prefixes.
 """
 
@@ -15,6 +16,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import json
+import re
 import stat
 import struct
 from dataclasses import dataclass
@@ -83,6 +85,191 @@ def tracked_fstab(error: Error) -> bytes:
     if path.is_symlink() or not path.is_file():
         raise error(f"tracked UML fstab is missing: {path}")
     return path.read_bytes()
+
+
+# The two parameters of the compressed EROFS the read-only partitions share,
+# written once in the product makefile.
+EROFS_PARAMETERS_MAKEFILE = "overlay/lineage_darwin.mk"
+EROFS_PARAMETER = re.compile(
+    r"^(UML_ANDROID_EROFS_COMPRESSOR|UML_ANDROID_EROFS_PCLUSTER_SIZE) := (\S+)$"
+)
+
+
+def tracked_erofs_parameters(error: Error) -> tuple[str, str]:
+    """Return the compressor (name,level) and the cluster size in bytes the product sets."""
+    path = ANDROID_ROOT / EROFS_PARAMETERS_MAKEFILE
+    if path.is_symlink() or not path.is_file():
+        raise error(f"tracked product makefile is missing: {path}")
+    found: dict[str, list[str]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = EROFS_PARAMETER.match(line)
+        if match is not None:
+            found.setdefault(match.group(1), []).append(match.group(2))
+    for name in ("UML_ANDROID_EROFS_COMPRESSOR", "UML_ANDROID_EROFS_PCLUSTER_SIZE"):
+        if len(found.get(name, [])) != 1:
+            raise error(f"{EROFS_PARAMETERS_MAKEFILE} must set {name} exactly once")
+    return found["UML_ANDROID_EROFS_COMPRESSOR"][0], found["UML_ANDROID_EROFS_PCLUSTER_SIZE"][0]
+
+
+SPARSE_MAGIC = 0xED26FF3A
+SPARSE_HEADER = struct.Struct("<IHHHHIIII")
+SPARSE_CHUNK_HEADER = struct.Struct("<HHII")
+SPARSE_RAW = 0xCAC1
+SPARSE_FILL = 0xCAC2
+SPARSE_DONT_CARE = 0xCAC3
+SPARSE_CRC32 = 0xCAC4
+
+
+def read_image_prefix(source: BinaryIO, size: int, error: Error) -> bytes:
+    """Return the first `size` bytes of a raw image or of an Android sparse one."""
+    head = source.read(SPARSE_HEADER.size)
+    if len(head) < SPARSE_HEADER.size or struct.unpack_from("<I", head)[0] != SPARSE_MAGIC:
+        return (head + source.read(size))[:size]
+    (_magic, major, _minor, file_header_size, chunk_header_size, block_size,
+     _blocks, chunks, _checksum) = SPARSE_HEADER.unpack(head)
+    if major != 1 or file_header_size < SPARSE_HEADER.size or \
+            chunk_header_size < SPARSE_CHUNK_HEADER.size or block_size == 0:
+        raise error("unsupported Android sparse image header")
+    source.seek(file_header_size)
+    output = bytearray()
+    for _ in range(chunks):
+        if len(output) >= size:
+            break
+        raw = read_exact(source, SPARSE_CHUNK_HEADER.size, "sparse chunk header", error)
+        chunk_type, _reserved, chunk_blocks, total = SPARSE_CHUNK_HEADER.unpack(raw)
+        source.seek(chunk_header_size - SPARSE_CHUNK_HEADER.size, 1)
+        payload_size = total - chunk_header_size
+        length = chunk_blocks * block_size
+        wanted = min(length, size - len(output))
+        if chunk_type == SPARSE_RAW:
+            if payload_size != length:
+                raise error("sparse RAW chunk has the wrong byte count")
+            output += read_exact(source, wanted, "sparse RAW chunk", error)
+            if len(output) < size:
+                source.seek(payload_size - wanted, 1)
+        elif chunk_type == SPARSE_FILL:
+            pattern = read_exact(source, 4, "sparse fill value", error)
+            output += (pattern * (wanted // 4 + 1))[:wanted]
+        elif chunk_type == SPARSE_DONT_CARE:
+            output += bytes(wanted)
+        elif chunk_type == SPARSE_CRC32:
+            source.seek(payload_size, 1)
+        else:
+            raise error(f"unknown Android sparse chunk type 0x{chunk_type:04x}")
+    return bytes(output)
+
+
+EROFS_MAGIC = b"\xe2\xe1\xf5\xe0"
+EROFS_SUPERBLOCK_OFFSET = 1024
+EROFS_SUPERBLOCK_SIZE = 128
+# feature_incompat bits (the kernel's erofs_fs.h). COMPR_CFGS and BIG_PCLUSTER
+# share a bit, as do FRAGMENTS and DEDUPE.
+EROFS_FEATURE_INCOMPAT_BIG_PCLUSTER = 0x2
+EROFS_FEATURE_INCOMPAT_ZTAILPACKING = 0x10
+EROFS_FEATURE_INCOMPAT_FRAGMENTS = 0x20
+EROFS_ALGORITHM_ZSTD = 3
+
+
+@dataclass(frozen=True)
+class ErofsSuperblock:
+    block_size_bits: int
+    feature_incompat: int
+    compression_algorithms: int  # bit mask, bit n is the algorithm numbered n
+
+
+def erofs_superblock(prefix: bytes, label: str, error: Error) -> ErofsSuperblock:
+    """Parse the superblock of an EROFS image from its first 1152 bytes."""
+    start = EROFS_SUPERBLOCK_OFFSET
+    block = prefix[start : start + EROFS_SUPERBLOCK_SIZE]
+    if len(block) != EROFS_SUPERBLOCK_SIZE or block[:4] != EROFS_MAGIC:
+        raise error(f"{label} is not an EROFS image")
+    block_size_bits = block[12]
+    feature_incompat, algorithms = struct.unpack_from("<IH", block, 80)
+    return ErofsSuperblock(block_size_bits, feature_incompat, algorithms)
+
+
+EROFS_ISLOT_SIZE = 32
+EROFS_COMPACT_INODE_SIZE = 32
+EROFS_EXTENDED_INODE_SIZE = 64
+EROFS_DIRENT_SIZE = 12
+EROFS_LAYOUT_FLAT_PLAIN = 0
+EROFS_LAYOUT_FLAT_INLINE = 2
+EROFS_FILE_TYPE_REGULAR = 1
+EROFS_FILE_TYPE_DIRECTORY = 2
+
+
+def erofs_directory(
+    image: bytes, nid: int, label: str, error: Error
+) -> dict[str, tuple[int, int]]:
+    """Map the entry names of one EROFS directory to (node id, file type).
+
+    A directory is never compressed: it is plain blocks, or plain blocks and a tail
+    stored right behind its inode. Both are read from the image bytes.
+    """
+    block_bits = image[EROFS_SUPERBLOCK_OFFSET + 12]
+    block_size = 1 << block_bits
+    meta_block = struct.unpack_from("<I", image, EROFS_SUPERBLOCK_OFFSET + 40)[0]
+    inode = meta_block * block_size + nid * EROFS_ISLOT_SIZE
+    if inode + EROFS_EXTENDED_INODE_SIZE > len(image):
+        raise error(f"{label} has an inode beyond the image: {nid}")
+    inode_format, xattr_count, mode = struct.unpack_from("<HHH", image, inode)
+    if mode & 0o170000 != 0o040000:
+        raise error(f"{label} node {nid} is not a directory")
+    layout = (inode_format >> 1) & 7
+    if inode_format & 1:
+        size = struct.unpack_from("<Q", image, inode + 8)[0]
+        inode_size = EROFS_EXTENDED_INODE_SIZE
+    else:
+        size = struct.unpack_from("<I", image, inode + 8)[0]
+        inode_size = EROFS_COMPACT_INODE_SIZE
+    first_block = struct.unpack_from("<I", image, inode + 16)[0]
+    if layout not in (EROFS_LAYOUT_FLAT_PLAIN, EROFS_LAYOUT_FLAT_INLINE):
+        raise error(f"{label} directory {nid} has data layout {layout}")
+    xattr_size = 12 + (xattr_count - 1) * 4 if xattr_count else 0
+    entries: dict[str, tuple[int, int]] = {}
+    for offset in range(0, size, block_size):
+        length = min(block_size, size - offset)
+        if layout == EROFS_LAYOUT_FLAT_INLINE and length < block_size:
+            start = inode + inode_size + xattr_size
+        else:
+            start = (first_block + offset // block_size) * block_size
+        block = image[start : start + length]
+        if len(block) != length:
+            raise error(f"{label} directory {nid} extends beyond the image")
+        count = struct.unpack_from("<H", block, 8)[0] // EROFS_DIRENT_SIZE
+        for index in range(count):
+            entry_nid, name_offset, file_type = struct.unpack_from(
+                "<QHB", block, index * EROFS_DIRENT_SIZE
+            )
+            if index + 1 < count:
+                name_end = struct.unpack_from(
+                    "<H", block, (index + 1) * EROFS_DIRENT_SIZE + 8
+                )[0]
+            else:
+                name_end = block.find(b"\0", name_offset)
+                if name_end < 0:
+                    name_end = length
+            if not EROFS_DIRENT_SIZE * count <= name_offset <= name_end <= length:
+                raise error(f"{label} directory {nid} is malformed")
+            entries[block[name_offset:name_end].decode("utf-8", errors="replace")] = (
+                entry_nid,
+                file_type,
+            )
+    return entries
+
+
+def erofs_file_type(image: bytes, path: str, label: str, error: Error) -> int | None:
+    """The file type of a path in an uncompressed-metadata EROFS image, None when absent."""
+    root_nid = struct.unpack_from("<H", image, EROFS_SUPERBLOCK_OFFSET + 14)[0]
+    nid, file_type = root_nid, EROFS_FILE_TYPE_DIRECTORY
+    for component in path.strip("/").split("/"):
+        if file_type != EROFS_FILE_TYPE_DIRECTORY:
+            return None
+        found = erofs_directory(image, nid, label, error).get(component)
+        if found is None:
+            return None
+        nid, file_type = found
+    return file_type
 
 
 def is_module_payload(basename: str) -> bool:

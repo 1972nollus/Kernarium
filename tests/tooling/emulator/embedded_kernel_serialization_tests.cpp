@@ -713,6 +713,24 @@ void test_unaligned_loader_metadata_is_guest_failure()
 	require_runtime_window_available();
 }
 
+/* The loader maps an image's executable pages as native code, aliased from
+ * the embedded section on a product that carries one. Only an AArch64 image
+ * may be, so an x86-64 image is refused before it maps anything: the x86-64
+ * guests are userspace, translated by the cpu engines, never a kernel image. */
+void test_non_aarch64_image_is_refused()
+{
+	constexpr std::uint16_t machine_x86_64 = 62;
+	for (const std::uint16_t machine : {machine_x86_64, std::uint16_t{0}}) {
+		auto image = embedded_image(second_kernel);
+		reinterpret_cast<uml_elf64_ehdr *>(image.data())->machine = machine;
+		auto emulator = make_emulator(image);
+		const char *arguments[]{"embedded-loader-foreign-machine"};
+		require(uml_emulator_run(emulator.get(), 1, arguments, nullptr) == 126,
+			"the loader accepted an image that is not AArch64");
+		require_runtime_window_available();
+	}
+}
+
 void test_embedded_image_is_copied_at_creation()
 {
 	auto image = embedded_image(second_kernel);
@@ -943,6 +961,7 @@ int main()
 		test_malformed_dynamic_metadata_is_guest_failure();
 		test_non_executable_final_entry_page_is_guest_failure();
 		test_unaligned_loader_metadata_is_guest_failure();
+		test_non_aarch64_image_is_refused();
 		test_embedded_image_is_copied_at_creation();
 		test_embedded_runs_start_with_fresh_mmu_domain();
 		test_loader_binds_creating_imports_to_the_ledger();

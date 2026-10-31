@@ -82,9 +82,9 @@ not a multiple of the pitch.
  drivers/media/virtio/virtio_video_device.c  | 1329 +++++++++++++++++++
  drivers/media/virtio/virtio_video_driver.c  |  261 ++++
  drivers/media/virtio/virtio_video_helpers.c |  317 +++++
- drivers/media/virtio/virtio_video_vq.c      | 1183 +++++++++++++++++
+ drivers/media/virtio/virtio_video_vq.c      | 1185 +++++++++++++++++
  include/uapi/linux/virtio_video.h           |  544 ++++++++
- 14 files changed, 5332 insertions(+)
+ 14 files changed, 5334 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
@@ -3784,10 +3784,10 @@ index 0000000000000000000000000000000000000000..f27c516cf031dd09eccd685deb05827c
 +}
 diff --git a/drivers/media/virtio/virtio_video_vq.c b/drivers/media/virtio/virtio_video_vq.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..720142bc6c81ab4df08133132ea7327b8b46b48a
+index 0000000000000000000000000000000000000000..5917feb0512bf044b5dccecc520f02b2bc87d3b3
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_vq.c
-@@ -0,0 +1,1183 @@
+@@ -0,0 +1,1185 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -4281,16 +4281,18 @@ index 0000000000000000000000000000000000000000..720142bc6c81ab4df08133132ea7327b
 +		descriptors++;
 +	}
 +
-+	/* A command longer than the ring would wait for room that never comes. */
-+	if (descriptors > virtqueue_get_vring_size(vvd->commandq.vq)) {
-+		put_vbuf(vvd, vbuf);
-+		return -EINVAL;
-+	}
-+
 +	spin_lock_irqsave(&vvd->commandq.qlock, flags);
 +	for (;;) {
 +		if (!vvd->commandq.ready) {
 +			ret = -ENODEV;
++			break;
++		}
++		/*
++		 * A command longer than the ring would wait for room that never
++		 * comes. The ring is only there while the queue is ready.
++		 */
++		if (descriptors > virtqueue_get_vring_size(vvd->commandq.vq)) {
++			ret = -EINVAL;
 +			break;
 +		}
 +		ret = virtqueue_add_sgs(vvd->commandq.vq, sgs, outcnt, incnt,

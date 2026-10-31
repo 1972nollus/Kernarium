@@ -28,6 +28,13 @@ UML_ANDROID_DISABLE_IDENTITY := true
 UML_ANDROID_DISABLE_REBOOT_ESCROW := true
 UML_ANDROID_DISABLE_LEGACY_VNDK := true
 UML_ANDROID_MULTILIB := true
+# The compressed EROFS of the five read-only partitions and of every APEX
+# payload: the compressor with its level, and the physical cluster size in
+# bytes. These two lines are the only place either value is written;
+# BoardConfig.mk and the APEX payload settings below hand them to the image
+# builder and apexer, and the target-files verifier reads them from here.
+UML_ANDROID_EROFS_COMPRESSOR := zstd,15
+UML_ANDROID_EROFS_PCLUSTER_SIZE := 16384
 BOARD_HAVE_BLUETOOTH := false
 CF_VENDOR_NO_UWB := true
 CF_VENDOR_NO_THREADNETWORK := true
@@ -130,9 +137,18 @@ PRODUCT_PACKAGES_EXCLUDE += \
 PRODUCT_COPY_FILES_EXCLUDE += \
     vendor/lineage/prebuilt/common/etc/init/init.lineage-updater.rc:$(TARGET_COPY_OUT_SYSTEM_EXT)/etc/init/init.lineage-updater.rc
 
-# The desktop Cuttlefish base chooses EROFS APEX payloads. Keep every APEX on
-# the uncompressed ext4 path so this guest never depends on EROFS at runtime.
-PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := ext4
+# Every APEX carries an EROFS payload compressed like the partitions are: the
+# same compressor and cluster size, not apexer's lz4hc and 4 KiB. The .apex
+# files themselves are stored uncompressed in the partitions (config/
+# erofs_compress_hints.txt), so apexd's loop devices read them with direct I/O
+# and their pages are cached once. The Cuttlefish base already sets
+# OVERRIDE_PRODUCT_COMPRESSED_APEX to false, which keeps the payloads out of a
+# compressed container. The hints keep the init scripts and VINTF fragments
+# uncompressed.
+PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := erofs
+PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_COMPRESSOR := $(UML_ANDROID_EROFS_COMPRESSOR)
+PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_PCLUSTER_SIZE := $(UML_ANDROID_EROFS_PCLUSTER_SIZE)
+PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_COMPRESS_HINTS := device/kernarium/darwin/config/erofs_apex_payload_hints.txt
 
 # The kernel runs 4 KiB pages. The userspace stays page-agnostic, so a 16 KiB
 # maximum alignment keeps every 64-bit ELF valid on a kernel of either size.
