@@ -1119,7 +1119,11 @@ The Android product runs `armeabi-v7a` applications beside `arm64-v8a` ones
 The build side needs no Android build. `lineage24-builder-lane` drives the
 target-files verifier over fixtures (ABI lists, the 32-bit runtime, ELF32
 placement and alignment, per-ISA ART artifacts, the 32-bit Mesa and HAL files
-and their 64-suffixed `mmap` and `lseek` imports, the userdata inode count,
+and their 64-suffixed `mmap` and `lseek` imports, the compressed-EROFS contract of
+the read-only partitions (the two parameters, `misc_info`, the compress hints, each
+image's superblock, the EROFS kernel options and the fstabs; each APEX payload's
+filesystem and superblock, and the example HALs' service binaries read from the payload's
+directories), the userdata inode count,
 the application read of the vendor security patch level, the built-in
 microphone and companion device setup feature declarations, the userdata `quota` flag, and the
 suspend blocker with the adb host-connected property it follows, the network
