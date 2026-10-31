@@ -99,3 +99,7 @@ patch	virt_wifi-let-a-supplicant-listen-and-send-on-any-channel.patch
 patch	virt_wifi-pass-the-multicast-groups-on-to-the-lower-device.patch
 patch	um-tell-the-Darwin-host-how-the-guest-ended.patch
 patch	ext4-keep-the-allocator-state-of-a-group-with-inode-preallocations-i.patch
+patch	um-keep-no-signal-stack-array-for-Darwin-carriers.patch
+patch	um-allocate-vhost-user-shared-memory-mappings-as-they-arrive.patch
+patch	ext4-index-a-block-group-quietly-and-again-when-the-insert-failed.patch
+patch	um-return-the-pages-of-the-dynamic-relocations-to-the-allocator.patch
