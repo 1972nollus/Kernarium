@@ -120,7 +120,9 @@ talks to a 64-bit renderer. The same route makes system_server preload the
 secondary zygote only while an installed package has a 32-bit primary ABI, and
 when the first one is installed later; without such a package the zygote keeps
 about 13 MiB less, and it still forks the WebView RELRO process at boot, which
-does not need the preload. The same project's route also carries a LineageOS
+does not need the preload. system_server waits for that task, so the task never
+throws: a failed package lookup, at boot or for an added package, preloads as
+stock Android does, and an added or changed package is looked up by itself. The same project's route also carries a LineageOS
 correction: its WebView service drops the configured providers that are not
 installed, asking the package manager for every user, and does so under the
 identity of the calling application, which the package manager refuses without

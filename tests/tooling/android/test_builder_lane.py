@@ -3074,6 +3074,62 @@ def verify_pinner_overlay(android_root: Path) -> None:
         fail(f"the manifest reader accepts a {label} manifest")
 
 
+def secondary_zygote_preloader_problems(added: str) -> list[str]:
+    """What is wrong with the added text of the topic that preloads the secondary zygote on demand.
+
+    system_server waits for the preload task, and the stock task catches everything, so a failure
+    of the package lookup must fall back to the preload instead of reaching the task's future:
+    that rethrows into startOtherServices and restarts system_server."""
+
+    def body(signature: str) -> str:
+        start = added.find(signature)
+        if start < 0:
+            return ""
+        depth = 0
+        for end in range(added.index("{", start), len(added)):
+            depth += added[end] == "{"
+            depth -= added[end] == "}"
+            if depth == 0:
+                return added[start : end + 1]
+        return ""
+
+    problems = []
+    run, check, preload = body("void run()"), body("private void check("), body("private void preload()")
+    for name, text in (("run", run), ("check", check), ("preload", preload)):
+        if not text:
+            problems.append(f"the topic has no {name}()")
+    if run and not re.search(r"catch \(Exception \w+\) \{[^}]*\bpreload\(\);", run):
+        problems.append("run() does not fall back to the preload when the package lookup throws")
+    if check:
+        if not re.search(r"catch \(Exception \w+\) \{[^}]*\bneeded = true;", check):
+            problems.append("check() does not fall back to the preload when the lookup throws")
+        if "getPackageStateInternal(" not in check or "getPackageStates(" in check:
+            problems.append("check() must read the one package's state, not copy every state")
+    if preload and not re.search(r"try \{\s*mPackageManager\.removePackageListObserver\(this\);\s*\} catch \(Exception", preload):
+        problems.append("preload() lets a failure to remove the package observer skip the preload")
+    return problems
+
+
+def verify_secondary_zygote_topic(android_root: Path) -> None:
+    """The frameworks/base topic that preloads the secondary zygote on demand cannot fail system_server."""
+    patches = sorted((android_root / "patches/projects/p0007/series").glob("zygote-preload-the-secondary-zygote-*.patch"))
+    if len(patches) != 1:
+        fail(f"p0007 has {len(patches)} secondary zygote preload patches, not one")
+    text = patches[0].read_text()
+    added = "\n".join(line[1:] for line in text.splitlines() if line.startswith("+") and not line.startswith("+++"))
+    problems = secondary_zygote_preloader_problems(added)
+    if problems:
+        fail("the secondary zygote preload topic: " + "; ".join(problems))
+    for label, edited in (
+        ("run() without its catch", re.sub(r"\} catch \(Exception ex\) \{\n\s*Slog\.e\(TAG, \"Unable to tell whether a package", "} finally { Slog.e(TAG, \"Unable to tell whether a package", added, count=1)),
+        ("check() that copies every state", added.replace("getPackageStateInternal(packageName)", "getPackageStates().get(packageName)")),
+        ("check() without its fallback", added.replace("needed = true;", "needed = false;")),
+        ("preload() that skips on a failed removal", added.replace("try {\n                mPackageManager.removePackageListObserver(this);\n            } catch (Exception ex) {", "{\n                mPackageManager.removePackageListObserver(this);\n            } if (false) {")),
+    ):
+        if edited == added or not secondary_zygote_preloader_problems(edited):
+            fail(f"the secondary zygote preload check accepts {label}")
+
+
 def verify_reclaim_boot_apps(android_root: Path) -> None:
     """The reclaim script kills only the cached processes of the listed packages.
 
@@ -4019,6 +4075,7 @@ def main() -> None:
     verify_userdata_grow(android_root)
     verify_zram_fstab(android_root)
     verify_pinner_overlay(android_root)
+    verify_secondary_zygote_topic(android_root)
     verify_reclaim_boot_apps(android_root)
     verify_default_wallpaper(android_root)
     verify_overlay_sepolicy(android_root)
