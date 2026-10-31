@@ -187,6 +187,26 @@ std::uint32_t captureMinimumBuffers(unsigned reorderDepth) noexcept
     return std::min(captureMaximumBuffers, std::max(4u, reorderDepth + 1));
 }
 
+/* The coded buffer a client must give the decoder for a stream of this picture
+ * size, which is the size its input queue states once the client has stated one.
+ * A compressed picture is far smaller than its raw samples, and a client that
+ * keeps several coded buffers queued holds them for the stream's lifetime, so a
+ * buffer of the largest packet the device takes (8 MiB) is memory no 1080p
+ * picture uses: 1 MiB to 720p, 2 MiB to 1080p, 4 MiB to 4096 x 2304 and the
+ * full packet above that, which is the order a ChromeOS stateful decoder asks
+ * for. A JPEG picture compresses far less than a video picture and keeps
+ * the full packet. A packet the guest buffer cannot hold is the client's to
+ * refuse; the device takes any packet up to `maximumPacket` that fits. */
+std::uint32_t codedBufferSize(std::uint32_t format, std::uint32_t width, std::uint32_t height) noexcept
+{
+    if (format == VIRTIO_VIDEO_FORMAT_MJPEG) return maximumPacket;
+    const std::uint64_t area = std::uint64_t(width) * height;
+    if (area <= 1280u * 720u) return 1u << 20;
+    if (area <= 1920u * 1088u) return 2u << 20;
+    if (area <= 4096u * 2304u) return 4u << 20;
+    return maximumPacket;
+}
+
 virtio_video_params params(std::uint32_t queue, std::uint32_t format, std::uint32_t width, std::uint32_t height,
                            unsigned reorderDepth = 0)
 {
@@ -232,6 +252,15 @@ virtio_video_params params(std::uint32_t queue, std::uint32_t format, std::uint3
             p.plane_formats[1] = {pitch * ch, pitch};
         }
     }
+    return p;
+}
+/* The coded queue's parameters for a picture size the client has stated: the
+ * coded buffer follows the size. A stream that has stated none keeps the full
+ * packet, which fits whatever the stream turns out to carry. */
+virtio_video_params inputParams(std::uint32_t format, std::uint32_t width, std::uint32_t height)
+{
+    auto p = params(VIRTIO_VIDEO_QUEUE_TYPE_INPUT, format, width, height);
+    p.plane_formats[0].plane_size = codedBufferSize(format, width, height);
     return p;
 }
 }
@@ -738,7 +767,7 @@ public:
                     stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT,
                         defaultCapture(cap->bitDepth), p.frame_width, p.frame_height);
                 }
-                stream.input = params(p.queue_type, p.format, p.frame_width, p.frame_height);
+                stream.input = inputParams(p.format, p.frame_width, p.frame_height);
             } else {
                 const bool packed = p.format == VIRTIO_VIDEO_FORMAT_BGRA8888;
                 if (!packed && p.format != VIRTIO_VIDEO_FORMAT_NV12 && p.format != VIRTIO_VIDEO_FORMAT_YUV420 &&

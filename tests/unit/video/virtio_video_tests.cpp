@@ -1323,6 +1323,56 @@ void captureMinimumFollowsReorder(unsigned reorder)
     video.device.reset();
 }
 
+/* The coded queue's buffer size follows the picture size the client states, so
+ * a client that keeps several coded buffers queued does not hold the full packet
+ * a device takes for a picture that is a fraction of it. A stream that has
+ * stated no size keeps the full packet, and so does a JPEG one. */
+void codedBufferFollowsPicture()
+{
+    constexpr std::uint32_t mebibyte = 1u << 20;
+    VideoFixture video(13, 8 * page, [](auto) { return std::make_unique<Decoder>(false); },
+                       {{VideoCodec::h264, VideoProfile::h264High, 8192, 4320, 62, 8},
+                        {VideoCodec::jpeg, VideoProfile::jpegBaseline, 8192, 4320, 0, 8}});
+    video.createStream();
+    const auto codedSize = [&video] {
+        std::vector<std::uint8_t> request;
+        append(request, virtio_video_get_params{{VIRTIO_VIDEO_CMD_GET_PARAMS, video.stream},
+                                                VIRTIO_VIDEO_QUEUE_TYPE_INPUT, {}});
+        const auto params = load<virtio_video_get_params_resp>(
+            video.device.processQueue(0, video.next++, request, 16384).response).params;
+        require(params.num_planes == 1, "the coded queue is not one plane");
+        return params.plane_formats[0].plane_size;
+    };
+    const auto state = [&video](std::uint32_t format, std::uint32_t width, std::uint32_t height) {
+        virtio_video_set_params set {};
+        set.hdr = {VIRTIO_VIDEO_CMD_SET_PARAMS, video.stream};
+        set.params.queue_type = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+        set.params.format = format;
+        set.params.frame_width = width; set.params.frame_height = height;
+        video.ok(set);
+    };
+    require(codedSize() == 8 * mebibyte, "a stream with no stated size does not take the full packet");
+    struct Case { std::uint32_t width, height, expected; };
+    for (const auto& c : {Case {64, 64, mebibyte}, Case {1280, 720, mebibyte}, Case {720, 1280, mebibyte},
+                          Case {1920, 1080, 2 * mebibyte}, Case {1920, 1088, 2 * mebibyte},
+                          Case {1088, 1920, 2 * mebibyte}, Case {2560, 1440, 4 * mebibyte},
+                          Case {3840, 2160, 4 * mebibyte}, Case {4096, 2304, 4 * mebibyte},
+                          Case {5120, 2880, 8 * mebibyte}, Case {8192, 4320, 8 * mebibyte}}) {
+        state(VIRTIO_VIDEO_FORMAT_H264, c.width, c.height);
+        require(codedSize() == c.expected, "the coded buffer does not follow the stated picture size");
+    }
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 13}});
+
+    virtio_video_stream_create create {};
+    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, video.stream};
+    create.coded_format = VIRTIO_VIDEO_FORMAT_MJPEG;
+    video.ok(create);
+    state(VIRTIO_VIDEO_FORMAT_MJPEG, 640, 360);
+    require(codedSize() == 8 * mebibyte, "a JPEG stream does not keep the full packet");
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 13}});
+    video.device.reset();
+}
+
 /* How the client deals with a size change it has been told of. */
 enum class Renegotiation { clearCapture, setNewSize, drain, clearCoded };
 
@@ -1969,6 +2019,7 @@ int main()
         inputBackpressure();
         unsettledHoldIsBounded();
         for (const unsigned reorder : {0u, 2u, 3u, 4u, 9u, 16u}) captureMinimumFollowsReorder(reorder);
+        codedBufferFollowsPicture();
         planarAfterSourceChange();
         packedDefaultThroughStreamon();
         for (const auto how : {Renegotiation::clearCapture, Renegotiation::setNewSize,

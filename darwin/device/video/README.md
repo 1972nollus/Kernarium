@@ -240,6 +240,19 @@ while the next waits. Held packets queue up to 128 deep, a burst released at a
 sequence boundary or a drain is delivered whole, and the pictures a stream's
 reorder depth keeps inside the decoder are not counted.
 
+The coded queue's buffer size, which the guest reads as the plane size, follows
+the picture size the client states with its coded format: 1 MiB up to
+1280 x 720, 2 MiB up to 1920 x 1088, 4 MiB up to 4096 x 2304 and 8 MiB, the
+largest packet the device takes, above that. A stream that has stated no size
+and every JPEG stream keep the 8 MiB. A client keeps several coded buffers
+queued for a stream's lifetime and a compressed picture is a fraction of that
+size, so eight buffers of the largest packet were 64 MiB of guest memory at any
+resolution. A packet that does not fit the buffer a client allocated for the
+size it stated is the client's to split or refuse, which is what a hardware
+decoder's own limit asks of it. A client may still allocate larger buffers: the
+stated size is the least the guest accepts, and the device takes any packet up
+to 8 MiB that fits the buffer.
+
 Whether an application decoded in hardware cannot be settled from inside the
 guest: a player that falls back to software shows the same correct picture, and
 an open device node is not a decode. Setting `UML_VIDEO_ACTIVITY_LOG` to a
