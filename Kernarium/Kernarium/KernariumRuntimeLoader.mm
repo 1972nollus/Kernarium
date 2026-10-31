@@ -220,7 +220,8 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->set_page_cache_trimming == nullptr ||
         api->set_microphone == nullptr ||
         api->set_restart_callback == nullptr ||
-        api->guest_display_active == nullptr) {
+        api->guest_display_active == nullptr ||
+        api->plan_gpu_budget == nullptr) {
         std::fputs("Kernarium: runtime API validation failed\n", stderr);
         return false;
     }
@@ -251,12 +252,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v15");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v16");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v14: %s\n",
+            "Kernarium: selected runtime lacks API v16: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;
@@ -379,6 +380,20 @@ extern "C" int kernarium_runtime_loader_set_page_cache_trimming(int enabled)
 {
     const kernarium_runtime_api* runtime = api();
     return runtime == nullptr ? -1 : runtime->set_page_cache_trimming(enabled);
+}
+
+extern "C" int kernarium_runtime_loader_plan_gpu_budget(
+    uint32_t guestMemoryMiB,
+    uint32_t applicationMiB,
+    uint32_t engineMiB,
+    uint32_t headroomMiB,
+    kernarium_runtime_gpu_budget* plan)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ?
+        -1 :
+        runtime->plan_gpu_budget(
+            guestMemoryMiB, applicationMiB, engineMiB, headroomMiB, plan);
 }
 
 extern "C" int kernarium_runtime_loader_set_microphone(int enabled)

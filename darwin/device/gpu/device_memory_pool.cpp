@@ -3,6 +3,7 @@
 #include "device_memory_pool.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <limits>
 #include <utility>
 
@@ -50,8 +51,18 @@ bool DeviceMemoryPool::reserve(std::uint64_t bytes)
     const std::uint64_t charged = charge(bytes);
     std::lock_guard lock(mutex_);
     const std::uint64_t used = usageLocked();
-    if (charged > limit_ || used > limit_ - charged)
+    if (charged > limit_ || used > limit_ - charged) {
+        const bool first =
+            refusals_.fetch_add(1, std::memory_order_relaxed) == 0;
+        if (first)
+            std::fprintf(stderr,
+                "uml: the GPU budget is full: it refused %llu bytes with "
+                "%llu of %llu bytes in use\n",
+                static_cast<unsigned long long>(charged),
+                static_cast<unsigned long long>(used),
+                static_cast<unsigned long long>(limit_));
         return false;
+    }
     reserved_ += charged;
     return true;
 }

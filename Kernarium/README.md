@@ -85,6 +85,26 @@ acts on, the wired bytes, the address space, and the default malloc zone's
 bytes in use and held: the figures a restart must return to the first boot's
 level.
 
+## GPU memory budget
+
+The host GPU's budget is fixed at launch from the guest's memory, the process's
+memory limit and three launch parameters
+([architecture](../docs/architecture.md#memory-and-executable-code) owns the
+formula; [graphics](../docs/graphics.md#device-memory-budget) what it bounds).
+The application states the parameters in the boot request (runtime API 16:
+`gpu_budget_application_mib`, `gpu_budget_engine_mib`,
+`gpu_budget_headroom_mib`) and, before it starts the run, asks the runtime for
+the plan (`plan_gpu_budget`), which evaluates exactly what the run will. When
+the limit leaves the GPU less than its 384 MiB floor, the application shows a
+Memory May Run Short notice in the style of the ended and restarting notices:
+a tap dismisses it, it holds nothing back, and the guest boots with the floor.
+Nothing refuses a launch for lack of memory.
+
+`KERNARIUM_GPU_BUDGET_APP_MIB`, `KERNARIUM_GPU_BUDGET_ENGINE_MIB` and
+`KERNARIUM_GPU_BUDGET_HEADROOM_MIB` (each 0 to 16384) state the parameters for
+one launch, for a measurement run. They come from the environment only and are
+never stored. All three default to zero until the product owner chooses values.
+
 ## Guest storage
 
 A Linux guest boots an image file in the application's Documents directory:

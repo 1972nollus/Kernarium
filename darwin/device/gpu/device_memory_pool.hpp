@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -34,6 +35,13 @@ public:
     /* The bytes allocated and reserved now. */
     [[nodiscard]] std::uint64_t usage() const;
 
+    /* How many reservations the pool has refused. The first is reported on
+     * stderr, so a run says where its budget ended. */
+    [[nodiscard]] std::uint64_t refusals() const noexcept
+    {
+        return refusals_.load(std::memory_order_relaxed);
+    }
+
     /* Charges `bytes` to the pool, or returns false and charges nothing when
      * the pool cannot hold them. */
     [[nodiscard]] bool reserve(std::uint64_t bytes);
@@ -50,6 +58,7 @@ private:
     const std::uint64_t granule_;
     mutable std::mutex mutex_;
     std::uint64_t reserved_ {};
+    std::atomic<std::uint64_t> refusals_ {};
 };
 
 } // namespace uml::gpu

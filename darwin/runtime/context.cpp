@@ -544,15 +544,21 @@ void set_process_memory_limit(std::size_t bytes) noexcept
 	::uml::platform::set_configured_process_memory_limit(bytes);
 }
 
+std::size_t gadget_cache_budget_for(std::size_t guest_memory_bytes,
+	std::size_t bytes) noexcept
+{
+	if (bytes != 0)
+		return bytes;
+	return ::uml::cpu::gadget_cache::derive_budget(guest_memory_bytes,
+		static_cast<std::size_t>(
+			::uml::platform::process_memory_limit_bytes()));
+}
+
 std::size_t set_gadget_cache_budget(std::size_t guest_memory_bytes,
 	std::size_t bytes) noexcept
 {
-	namespace gadget_cache = ::uml::cpu::gadget_cache;
-	if (bytes == 0)
-		bytes = gadget_cache::derive_budget(guest_memory_bytes,
-			static_cast<std::size_t>(
-				::uml::platform::process_memory_limit_bytes()));
-	gadget_cache::set_budget(bytes);
+	bytes = gadget_cache_budget_for(guest_memory_bytes, bytes);
+	::uml::cpu::gadget_cache::set_budget(bytes);
 	return bytes;
 }
 

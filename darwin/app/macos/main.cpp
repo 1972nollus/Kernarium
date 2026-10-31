@@ -16,6 +16,7 @@
 #include "gpu/native_display_application.hpp"
 #include "gpu/protocol.hpp"
 #include "launcher.hpp"
+#include "gpu_budget_plan.hpp"
 #include "guest_memory_argument.hpp"
 #include "platform/microphone_authorization.hpp"
 #include "restart_loop_guard.hpp"
@@ -312,6 +313,10 @@ struct PreparedArguments {
 	bool battery {};
 	bool video {};
 	bool video_encoder {};
+	/* --gpu-budget-app=, --gpu-budget-engine= and --gpu-budget-headroom=:
+	 * A, E_rest and S of the host GPU's fixed budget
+	 * (platform/gpu_budget.hpp). */
+	uml::emulator::GpuBudgetParameters gpu_budget;
 	std::string console_socket;
 	std::string serial_socket;
 	std::vector<std::string> net_forwards;
@@ -345,13 +350,14 @@ struct PreparedArguments {
 	[[nodiscard]] bool same_host_devices(
 		const PreparedArguments &other) const
 	{
-		return std::tie(gpu, audio, audio_output, audio_input_host, battery,
-				video, video_encoder, console_socket, serial_socket,
-				net_forwards) ==
-			std::tie(other.gpu, other.audio, other.audio_output,
-				 other.audio_input_host, other.battery, other.video,
-				 other.video_encoder, other.console_socket,
-				 other.serial_socket, other.net_forwards);
+		return std::tie(gpu, gpu_budget, audio, audio_output,
+				audio_input_host, battery, video, video_encoder,
+				console_socket, serial_socket, net_forwards) ==
+			std::tie(other.gpu, other.gpu_budget, other.audio,
+				 other.audio_output, other.audio_input_host,
+				 other.battery, other.video, other.video_encoder,
+				 other.console_socket, other.serial_socket,
+				 other.net_forwards);
 	}
 };
 
@@ -409,6 +415,18 @@ void parse_host_pair(std::string_view argument, std::string_view value,
 	}
 	first = parsed[0];
 	second = parsed[1];
+}
+
+/* The bytes a --gpu-budget-*= option states: a whole number with an optional
+ * K, M or G suffix. */
+std::uint64_t parse_gpu_budget_option(std::string_view argument,
+				      std::string_view value)
+{
+	std::uint64_t bytes = 0;
+	if (!uml::emulator::parse_gpu_budget_bytes(value, bytes))
+		throw std::invalid_argument("invalid host option: " +
+					    std::string(argument));
+	return bytes;
 }
 
 /* Records the path of a socket option, which may be given once. */
@@ -541,6 +559,15 @@ PreparedArguments prepare_host_arguments(
 					"--gpu-auto-resize must be on or off");
 			prepared.gpu.auto_resize_guest_specified = true;
 			prepared.gpu.enabled = true;
+		} else if (valued("--gpu-budget-app=")) {
+			prepared.gpu_budget.application =
+				parse_gpu_budget_option(argument, value);
+		} else if (valued("--gpu-budget-engine=")) {
+			prepared.gpu_budget.engine_rest =
+				parse_gpu_budget_option(argument, value);
+		} else if (valued("--gpu-budget-headroom=")) {
+			prepared.gpu_budget.headroom =
+				parse_gpu_budget_option(argument, value);
 		} else if (valued("--net-forward=")) {
 			if (value.empty())
 				throw std::invalid_argument(
@@ -740,12 +767,30 @@ public:
 			return false;
 		}
 		emulator_.reset(created);
-		/* GPU memory is charged to the process like guest RAM, so the GPU may
-		 * use at most half of the guest's allocation and the balloon takes
-		 * what it uses out of the guest. */
-		guest_memory_ =
-			uml::emulator::configured_guest_memory_bytes(prepared_.kernel);
-		device_memory_limit_ = guest_memory_ / 2;
+		/* GPU memory is charged to the process like guest RAM: the GPU's
+		 * budget is what the process limit leaves after the guest, the
+		 * gadget cache and the launch's own allowances, at least 384 MiB and
+		 * at most half of the guest's allocation, and the balloon takes what
+		 * the GPU uses out of the guest. */
+		const auto plan = uml::emulator::plan_gpu_budget(
+			prepared_.kernel, prepared_.gpu_budget);
+		guest_memory_ = plan.guest_memory;
+		device_memory_limit_ = plan.budget.bytes;
+		if (prepared_.gpu.enabled && !information_only_) {
+			if (plan.budget.short_of_floor)
+				std::fprintf(stderr, "uml-darwin: %s\n",
+					uml::emulator::describe_gpu_budget_shortfall(
+						plan)
+						.c_str());
+			else if (plan.process_limit != 0)
+				std::fprintf(stderr,
+					"uml-darwin: GPU budget %llu MiB of a "
+					"%llu MiB process limit\n",
+					static_cast<unsigned long long>(
+						plan.budget.bytes >> 20),
+					static_cast<unsigned long long>(
+						plan.process_limit >> 20));
+		}
 		if (prepared_.gpu.enabled && !information_only_) {
 			if (has_virtio_device_argument(
 				prepared_.kernel, uml::gpu::protocol::virtioGpuDeviceId)) {

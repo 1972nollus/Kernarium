@@ -184,8 +184,8 @@ The Virtio balloon (`device/balloon`) takes the memory the host GPU uses out of
 the guest. Its target is the larger of the process's Metal allocation
 (`MTLDevice.currentAllocatedSize`) and its graphics footprint (the graphics
 ledger of `TASK_VM_INFO`), which also charges the command storage the GPU
-driver has written and the allocation omits. The target is capped at the Venus
-device-memory limit of half the guest's RAM and followed in 16 MiB steps. A
+driver has written and the allocation omits. The target is capped at the GPU
+budget (below) and followed in 16 MiB steps. A
 host page leaves the footprint once the guest has ballooned all of its 4 KiB
 frames. Under `VIRTIO_BALLOON_F_MUST_TELL_HOST`, a deflate commits the page
 before the guest may use it.
@@ -204,6 +204,32 @@ the footprint, the limit and the lifetime peak, each time the footprint rises
 above it or the peak shows that it did between two samples
 (`runtime/virtual_jetsam.hpp`). Nothing is killed: the line marks where iOS
 would have ended the process.
+
+The host GPU's budget, B, is computed once at launch and fixed for the run
+(`platform/gpu_budget.hpp`, planned by `emulator/src/gpu_budget_plan.*` for both
+hosts):
+
+```text
+B = clamp(L - A - G - E - S, 384 MiB, G / 2)
+```
+
+G is the guest's RAM. E is the gadget-cache budget in effect plus the rest of
+the guest side's host memory. A is the application's own expected ceiling and S
+the headroom left unused. Half the guest's RAM is the most the GPU may take, so
+where that is under the floor the maximum wins and B is G / 2; with no limit B
+is G / 2 as well. A, the rest of E and S are launch parameters, all in MiB:
+`--gpu-budget-app=`, `--gpu-budget-engine=` and `--gpu-budget-headroom=` on the
+macOS command line (an optional `K`, `M` or `G` suffix), the fields of the
+runtime's boot request on iOS, which `KERNARIUM_GPU_BUDGET_APP_MIB`,
+`KERNARIUM_GPU_BUDGET_ENGINE_MIB` and `KERNARIUM_GPU_BUDGET_HEADROOM_MIB` set for
+a measurement run. Their defaults are zero until the product owner chooses
+values, so B is G / 2 except where L - G leaves the GPU less than that. A launch
+whose L - A - G - E - S is under the floor is never refused: B is the floor,
+and the launch says the process is likely to be ended, as one `uml-darwin:`
+line on stderr and as a dismissible notice in Kernarium
+(`kernarium_runtime_plan_gpu_budget_function` evaluates the plan before the run
+so the application can show it). The device memory budget section of
+[graphics](graphics.md) owns what B bounds.
 
 Every iOS memory control carries its macOS path, or records here why none can
 exist, so that a Mac run stays an accurate ground for measuring the device. The
