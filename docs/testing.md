@@ -1180,9 +1180,11 @@ runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
 - **Cost.** Boot to `sys.boot_completed` (dmesg), cold and warm, in an
   ABBA order against the previous release on the same host build; `MemAvailable`
   after a settle and `dumpsys meminfo` for the zygotes and the WebView zygote;
-  and the image and compressed sizes. The stock secondary zygote stays unless
-  it costs more than 3 s of iPad cold boot or 100 MiB of guest `MemAvailable`;
-  then one started on demand is designed.
+  and the image and compressed sizes. The secondary zygote stays, preloaded only
+  while a 32-bit package is installed; it is replaced if it costs more than 3 s
+  of iPad cold boot or 100 MiB of guest `MemAvailable`. A 32-bit application
+  installed on a device that had none starts the preload, so the first launch
+  after that install is the one to time.
 
 ## Android hardware video encoding and decoding
 
