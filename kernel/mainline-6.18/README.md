@@ -356,10 +356,8 @@ transport (`VHOST_USER_PROTOCOL_F_SHMEM_MAP`), obtains one region through
 `SHMEM_MAP`/`SHMEM_UNMAP` messages with exact descriptor, range, permission,
 and owner validation. The kernel reserves a 1 GiB guarded guest-physical
 aperture outside RAM, enforces 16 KiB mapping alignment (the host page), and
-supports one mapping per 16 KiB aperture page. Each mapping is a node the
-kernel allocates when the backend asks for it and finds by offset in a tree, so
-a guest whose backend maps nothing holds no table for the region. Reset,
-disconnect, and release revoke every
+supports one mapping per 16 KiB aperture page through a
+constant-time page-to-record index. Reset, disconnect, and release revoke every
 mapping in bounded descriptor batches, and a request-stream lock serializes the
 backend-request IRQ against the drain in every synchronous reply wait
 ([architecture](../../docs/architecture.md)) so two vCPUs cannot split one
@@ -408,17 +406,14 @@ replies with both amounts and each step's time, so a host can suspend a guest
 that holds no cold cache. `guest-page-cache-trim` checks the default, all three
 commands, the back-off, and a pass over file cache read between the pages of a
 tmpfs file.
-The image holds nothing that only boot or an unused feature needs. The host
-loader applies its dynamic relocations (`.rela.dyn`, about 2 MB) before it
-starts the kernel, so `arch_mm_preinit()` returns the 16 KiB host pages wholly
-inside them to the allocator, as it does the slack after `_end`. Those pages lie
-below the break, which the memory table of a vhost-user device otherwise starts
-at, so the table names them as a second region (with their offset in the
-physical-memory file), since the allocator places buffers there like anywhere
-else. There is no array of per-CPU signal stacks in the image: the host gives
-each vCPU carrier a 128 KiB signal stack of its own, whatever `THREAD_SIZE` is.
-Nor is there a table for the vhost-user region, since the mappings described
-above are allocated as the backend asks for them.
+
+The image has no array of per-CPU signal stacks: the host gives each vCPU
+carrier a 128 KiB signal stack of its own, whatever `THREAD_SIZE` is. Two
+further cuts were tried and dropped, so that nobody attempts them again. The
+relocation records (`.rela.dyn`, about 2 MB) stay in the image, because pages
+freed below the break lie outside the vhost-user memory table. The
+shared-memory tables stay static, because the map request is served in
+interrupt context, where an atomic allocation can fail.
 
 `CONFIG_VIRTIO_BALLOON` lets the host carve its GPU memory out of guest RAM.
 UML removes virtio drivers from an exitcall that runs
