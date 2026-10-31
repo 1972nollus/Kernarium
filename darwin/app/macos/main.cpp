@@ -714,11 +714,21 @@ public:
 			prepared_.kernel, prepared_.gpu_budget);
 		guest_memory_ = plan.guest_memory;
 		device_memory_limit_ = plan.budget.bytes;
-		if (prepared_.gpu.enabled && !information_only_ &&
-		    plan.budget.short_of_floor)
-			std::fprintf(stderr, "uml-darwin: %s\n",
-				uml::emulator::describe_gpu_budget_shortfall(plan)
-					.c_str());
+		if (prepared_.gpu.enabled && !information_only_) {
+			if (plan.budget.short_of_floor)
+				std::fprintf(stderr, "uml-darwin: %s\n",
+					uml::emulator::describe_gpu_budget_shortfall(
+						plan)
+						.c_str());
+			else if (plan.process_limit != 0)
+				std::fprintf(stderr,
+					"uml-darwin: GPU budget %llu MiB of a "
+					"%llu MiB process limit\n",
+					static_cast<unsigned long long>(
+						plan.budget.bytes >> 20),
+					static_cast<unsigned long long>(
+						plan.process_limit >> 20));
+		}
 		if (prepared_.gpu.enabled && !information_only_) {
 			if (has_virtio_device_argument(
 				prepared_.kernel, uml::gpu::protocol::virtioGpuDeviceId)) {
