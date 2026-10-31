@@ -260,7 +260,8 @@ private:
                 options_.nativeView,
                 options_.dotsPerInch,
                 options_.pointerMode,
-                options_.autoResizeGuest);
+                options_.autoResizeGuest,
+                options_.offscreen);
             std::lock_guard lock(displayMutex_);
             display_ = display;
         }

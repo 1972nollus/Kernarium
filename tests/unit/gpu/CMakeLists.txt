@@ -51,6 +51,14 @@ function(uml_add_gpu_unit_test TEST TARGET)
     uml_add_unit_test(NAME ${TEST} COMMAND ${TARGET} ${_options})
 endfunction()
 
+# The renderer trims a guest context once it has been quiet for a while; the
+# tracker that decides when needs no GPU device, only the GPU component.
+if(TARGET uml_gpu_context_idle_tracker)
+    uml_add_gpu_unit_test(gpu-context-idle-tracker
+        uml_gpu_context_idle_tracker_tests context_idle_tracker_tests.cpp
+        LIBRARIES UML::GpuContextIdleTracker Threads::Threads)
+endif()
+
 uml_add_gpu_unit_test(gpu-metal-submit-timing-collector
     uml_gpu_metal_submit_timing_tests metal_submit_timing_tests.cpp
     LIBRARIES Threads::Threads
@@ -162,6 +170,16 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
     endforeach()
 endif()
 
+if(TARGET uml_gpu_service AND UML_TARGET_MACOS)
+    # A measurement run takes the iOS memory accounting of the segments that
+    # virglrenderer shares with the host GPU stack by asking for container
+    # files in place of POSIX shared memory.
+    uml_add_gpu_unit_test(gpu-virgl-anon-file-backing
+        uml_gpu_virgl_anon_file_tests virgl_anon_file_tests.cpp
+        LIBRARIES UML::ThirdPartyVirglrenderer
+        TIMEOUT 60)
+endif()
+
 if(TARGET uml_gpu_service)
     uml_add_gpu_unit_test(gpu-host-gl-provider-lifetime
         uml_gpu_host_gl_provider_tests host_gl_provider_lifetime_tests.cpp
@@ -176,6 +194,24 @@ if(TARGET uml_gpu_service)
         LIBRARIES ${_uml_host_gl_libraries}
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
+
+    # An idle host GL context must give back what its last batches held when
+    # the renderer tells the driver it has gone idle (EGL_MESA_context_trim).
+    uml_add_gpu_unit_test(gpu-host-context-trim
+        uml_gpu_host_context_trim_tests host_gl_context_trim_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries}
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY
+        TIMEOUT 120)
+
+    # Contexts that draw, flush and trim at once on one driver screen.
+    uml_add_gpu_unit_test(gpu-host-context-trim-concurrent
+        uml_gpu_host_context_trim_concurrent_tests
+        host_gl_context_trim_concurrent_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} Threads::Threads
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY
+        TIMEOUT 180)
 
     # A transfer a context refuses must not leave that context refusing every
     # later transfer: Android's gralloc mapper only ever transfers.
@@ -316,6 +352,7 @@ if(TARGET uml_gpu_service)
         gpu-depth-format-advertisement gpu-line-loop-statistics
         gpu-statistics-availability gpu-packed-yuv-planes
         gpu-texture-barrier-clear gpu-padded-row-transfer
+        gpu-host-context-trim gpu-host-context-trim-concurrent
         PROPERTIES SKIP_RETURN_CODE 77)
 
     # The renderer and the same-process render server share one fence table.
@@ -442,6 +479,18 @@ if(TARGET uml_gpu_display)
             INCLUDES ${_uml_gpu_device_directory}
             UNIT_DIRECTORY TIMEOUT 90)
         set_tests_properties(gpu-native-metal-presentation PROPERTIES
+            SKIP_RETURN_CODE 77)
+
+        # The windowless display (DisplayMode::offscreen) that measurement
+        # runs use for the memory a view and Picture in Picture take on an
+        # iPad. It skips on a host without a Metal device or without
+        # drawables for a layer outside any window.
+        uml_add_gpu_unit_test(gpu-offscreen-display
+            uml_gpu_offscreen_display_tests offscreen_display_tests.mm
+            LIBRARIES uml_gpu_display "-framework Metal"
+            INCLUDES ${_uml_gpu_device_directory}
+            UNIT_DIRECTORY TIMEOUT 120)
+        set_tests_properties(gpu-offscreen-display PROPERTIES
             SKIP_RETURN_CODE 77)
     endif()
 endif()

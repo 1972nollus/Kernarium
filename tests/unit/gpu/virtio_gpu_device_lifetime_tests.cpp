@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <new>
 #include <optional>
@@ -440,6 +441,17 @@ public:
         return rendererPendingWork;
     }
 
+    [[nodiscard]] std::optional<std::chrono::steady_clock::duration>
+        nextIdleTrimDelay() const noexcept override
+    {
+        return idleTrimDelay;
+    }
+
+    void trimIdleContexts() noexcept override
+    {
+        ++idleTrimCount;
+    }
+
     [[nodiscard]] int contextFenceStatus(
         std::uint32_t contextId,
         std::uint32_t ringIndex,
@@ -608,6 +620,8 @@ public:
     unsigned fenceCount {};
     unsigned rendererPollCount {};
     bool rendererPendingWork {};
+    std::optional<std::chrono::steady_clock::duration> idleTrimDelay;
+    unsigned idleTrimCount {};
     std::vector<std::uint64_t> contextFenceCookies;
     VirtioGpuDevice::DeferredFence lastFence {};
     unsigned unrefResourceCount {};
@@ -2447,6 +2461,13 @@ void venusBlobsAndFencesUseStandardWireState()
     require(device.pollRenderer() == 0);
     require(dependencies.rendererPollCount == 1);
     dependencies.rendererPendingWork = false;
+    /* The service asks the renderer when a quiet context could be trimmed and
+     * calls it when that time has come; the device only forwards both. */
+    require(!device.nextIdleTrimDelay().has_value());
+    dependencies.idleTrimDelay = std::chrono::milliseconds(250);
+    require(device.nextIdleTrimDelay() == std::chrono::milliseconds(250));
+    device.trimIdleContexts();
+    require(dependencies.idleTrimCount == 1);
 
     auto invalidRingSubmit = submit;
     invalidRingSubmit.header.ringIndex =

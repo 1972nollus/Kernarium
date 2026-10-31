@@ -24,6 +24,8 @@ struct InProcessGpuOptions {
         uml::input::vnc::PointerMode::mouse};
     void* nativeView {};
     bool autoResizeGuest {true};
+    /* What the windowless display (DisplayMode::offscreen) presents into. */
+    OffscreenDisplayOptions offscreen {};
     /* Shared with the other backends of the same guest. This service
      * publishes every host-visible blob range it maps there, so a device
      * whose guest names a buffer inside the region can resolve it. */

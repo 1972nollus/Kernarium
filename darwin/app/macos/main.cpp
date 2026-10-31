@@ -298,6 +298,8 @@ struct HostGpuOptions {
 	std::uint32_t width {1280};
 	std::uint32_t height {720};
 	std::uint32_t dots_per_inch {};
+	uml::gpu::OffscreenDisplayOptions offscreen;
+	bool offscreen_option_specified {};
 
 	[[nodiscard]] bool operator==(const HostGpuOptions &) const = default;
 };
@@ -381,6 +383,34 @@ bool parse_host_integer(std::string_view argument, std::string_view prefix,
 	return true;
 }
 
+/* Two positive whole numbers around `separator`, "2266x1374" or "800@15",
+ * in the value of `argument`. */
+void parse_host_pair(std::string_view argument, std::string_view value,
+		     char separator, std::uint32_t &first,
+		     std::uint32_t &second)
+{
+	const auto invalid = [&] {
+		return std::invalid_argument("invalid host option: " +
+					     std::string(argument));
+	};
+	const auto cut = value.find(separator);
+	if (cut == std::string_view::npos)
+		throw invalid();
+	std::uint32_t parsed[2] {};
+	const std::string_view parts[2] {value.substr(0, cut),
+					 value.substr(cut + 1)};
+	for (int i = 0; i < 2; ++i) {
+		const auto [end, error] = std::from_chars(
+			parts[i].data(), parts[i].data() + parts[i].size(),
+			parsed[i]);
+		if (error != std::errc {} || parts[i].empty() ||
+		    end != parts[i].data() + parts[i].size() || parsed[i] == 0)
+			throw invalid();
+	}
+	first = parsed[0];
+	second = parsed[1];
+}
+
 /* Records the path of a socket option, which may be given once. */
 void set_socket_path(std::string &destination, std::string_view option,
 		     std::string_view value)
@@ -448,11 +478,38 @@ PreparedArguments prepare_host_arguments(
 		} else if (valued("--gpu-display=")) {
 			if (value == "native")
 				prepared.gpu.display_mode = uml::gpu::DisplayMode::native;
+			else if (value == "offscreen")
+				prepared.gpu.display_mode =
+					uml::gpu::DisplayMode::offscreen;
 			else if (value == "vnc")
 				prepared.gpu.display_mode = uml::gpu::DisplayMode::vnc;
 			else
 				throw std::invalid_argument(
-					"--gpu-display must be native or vnc");
+					"--gpu-display must be native, offscreen "
+					"or vnc");
+			prepared.gpu.enabled = true;
+		} else if (valued("--gpu-offscreen-size=")) {
+			parse_host_pair(argument, value, 'x',
+					prepared.gpu.offscreen.drawableWidth,
+					prepared.gpu.offscreen.drawableHeight);
+			prepared.gpu.offscreen_option_specified = true;
+			prepared.gpu.enabled = true;
+		} else if (valued("--gpu-offscreen-mirror=")) {
+			/* The mirror Picture in Picture runs while it shows the guest:
+			 * 800 pixels wide at 15 frames a second. */
+			if (value == "on") {
+				prepared.gpu.offscreen.mirrorWidth = 800;
+				prepared.gpu.offscreen.mirrorFramesPerSecond = 15;
+			} else if (value == "off") {
+				prepared.gpu.offscreen.mirrorWidth = 0;
+				prepared.gpu.offscreen.mirrorFramesPerSecond = 0;
+			} else {
+				parse_host_pair(
+					argument, value, '@',
+					prepared.gpu.offscreen.mirrorWidth,
+					prepared.gpu.offscreen.mirrorFramesPerSecond);
+			}
+			prepared.gpu.offscreen_option_specified = true;
 			prepared.gpu.enabled = true;
 		} else if (valued("--gpu-vnc-bind=")) {
 			prepared.gpu.vnc_option_specified = true;
@@ -504,10 +561,15 @@ PreparedArguments prepare_host_arguments(
 			prepared.kernel.push_back(text);
 		}
 	}
-	if (prepared.gpu.display_mode == uml::gpu::DisplayMode::native &&
+	if (prepared.gpu.display_mode != uml::gpu::DisplayMode::vnc &&
 	    prepared.gpu.vnc_option_specified)
 		throw std::invalid_argument(
 			"--gpu-vnc-* options require --gpu-display=vnc");
+	if (prepared.gpu.display_mode != uml::gpu::DisplayMode::offscreen &&
+	    prepared.gpu.offscreen_option_specified)
+		throw std::invalid_argument(
+			"--gpu-offscreen-* options require "
+			"--gpu-display=offscreen");
 	if (prepared.gpu.display_mode != uml::gpu::DisplayMode::native &&
 	    prepared.gpu.auto_resize_guest_specified)
 		throw std::invalid_argument(
@@ -712,6 +774,7 @@ public:
 								uml::input::vnc::PointerMode::mouse,
 							.autoResizeGuest =
 								prepared_.gpu.auto_resize_guest,
+							.offscreen = prepared_.gpu.offscreen,
 							.sharedMemoryRegions =
 								shared_memory_regions_,
 							.deviceMemoryLimit =

@@ -905,6 +905,17 @@ bool VirtioGpuDevice::rendererHasPendingWork() noexcept
     return UML_GPU_RENDERER.hasPendingWork();
 }
 
+std::optional<std::chrono::steady_clock::duration>
+VirtioGpuDevice::nextIdleTrimDelay() const noexcept
+{
+    return UML_GPU_RENDERER.nextIdleTrimDelay();
+}
+
+void VirtioGpuDevice::trimIdleContexts() noexcept
+{
+    UML_GPU_RENDERER.trimIdleContexts();
+}
+
 int VirtioGpuDevice::contextFenceStatus(
     const DeferredFence& fence) noexcept
 {

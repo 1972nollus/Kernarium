@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "context_idle_tracker.hpp"
+
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <unordered_map>
@@ -168,6 +172,17 @@ public:
         std::uint32_t contextId,
         std::uint32_t resourceId) noexcept;
     void resetFenceState() noexcept;
+
+    /* Guest GL contexts that have gone quiet release what the host GL driver
+     * keeps for them. A context is idle once a second has passed since its
+     * last command, transfer or fence and it has no fence outstanding; the
+     * renderer is told once, and again after the context is next active. The
+     * service thread asks how long until the next context could be idle,
+     * arms a timer for it, and calls trimIdleContexts when it fires. */
+    [[nodiscard]] std::optional<std::chrono::steady_clock::duration>
+        nextIdleTrimDelay() const noexcept;
+    void trimIdleContexts() noexcept;
+
 private:
     static void* createGlContext(
         void* cookie,
@@ -185,6 +200,7 @@ private:
         std::uint32_t contextId,
         std::uint32_t ringIndex,
         std::uint64_t fenceId) noexcept;
+    void noteContextActivity(std::uint32_t contextId) noexcept;
     [[nodiscard]] static std::uint64_t contextRingKey(
         std::uint32_t contextId,
         std::uint32_t ringIndex) noexcept;
@@ -195,6 +211,8 @@ private:
     std::atomic_bool fenceCallbackFailed_ {};
     std::unique_ptr<HostGlProvider> provider_;
     std::uint32_t retiredFence_ {};
+    ContextIdleTracker idleContexts_;
+    bool idleTrimEnabled_ {true};
 };
 
 } // namespace uml::gpu
