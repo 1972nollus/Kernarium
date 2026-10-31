@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 14U
+#define KERNARIUM_RUNTIME_API_VERSION 15U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -111,6 +111,12 @@ typedef int (*kernarium_runtime_send_console_input_function)(
  * (the hold is in effect regardless), and -1 when no guest is running: the
  * setting is kept and applies to the guest's GPU once it starts. */
 typedef int (*kernarium_runtime_set_gpu_hold_function)(int held);
+/* Whether the guest's display is on: 1 while it has its primary scanout, 0
+ * while it has none, as an Android screen that is off has not, and -1 when no
+ * guest is running or its GPU has not started. A request the guest sent behind
+ * a held GPU has not run, so the answer then is the one the guest's last
+ * request that ran left; the application asks before it holds. */
+typedef int (*kernarium_runtime_guest_display_active_function)(void);
 /* Receives one copy of the guest's display as a CVPixelBufferRef: an
  * IOSurface-backed 32BGRA buffer from a pool, turned the way the user turned
  * the display, no wider than the width asked for. The buffer is borrowed for
@@ -227,6 +233,7 @@ typedef struct kernarium_runtime_api {
         set_page_cache_trimming;
     kernarium_runtime_set_microphone_function set_microphone;
     kernarium_runtime_set_restart_callback_function set_restart_callback;
+    kernarium_runtime_guest_display_active_function guest_display_active;
 } kernarium_runtime_api;
 
 #if defined(__GNUC__)
@@ -236,7 +243,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v14(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v15(void);
 
 /* An automation-only extension, outside the versioned table: only a runtime
  * built for automation exports this symbol, and the application looks it up
@@ -246,6 +253,14 @@ const kernarium_runtime_api* kernarium_runtime_get_api_v14(void);
  * release runtime cannot be asked. */
 KERNARIUM_RUNTIME_EXPORT
 int kernarium_runtime_automation_job_at_start(void);
+
+/* Another automation-only extension, found the same way: how many
+ * milliseconds after the application enters the background the launch asked
+ * for the guest's GPU to be held, instead of at once, so a measurement can
+ * find how long the host GPU stays usable there. Zero means no delay, and a
+ * runtime built for release has no such symbol. */
+KERNARIUM_RUNTIME_EXPORT
+int kernarium_runtime_automation_hold_delay_ms(void);
 
 #ifdef __cplusplus
 }

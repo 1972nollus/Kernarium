@@ -933,6 +933,40 @@ fence at fifteen seconds per stage, releasing queue ordering first and retiring
 the fence without the renderer second, so a loss no layer explains cannot
 wedge a guest for longer than that.
 
+#### A rejecting queue drops a bare signal in silence
+
+Metal reports a failure through the feedback of a commit, and a signal enqueued
+without a command buffer behind it has none. A queue that rejects every
+submission, as the queue of an app iOS has denied the GPU does, therefore
+drops such a signal and reports nothing: the failure count the recovery above
+keys on stays zero, and the queue holds nothing it has not answered for, which
+is how a queue that has stopped looks. The driver lost the device for it after
+thirty seconds, for good, with the guest's GL client waiting in
+`vkQueueWaitIdle`.
+
+A waiter on a signal that has been overdue for a second on a queue that has
+reported no failure and holds no unanswered work therefore gives the queue
+something to report: an empty command buffer committed behind everything it
+holds, once a second at most (`kk_queue_probe`). A queue that rejects it
+reports a failure, which completes what the queue owes as any other failure
+does and retires the queue at the next submission; the wait ends about a second
+after it began. A queue that runs the probe says nothing, and one held up
+behind a wait only the host can release answers when the host does, so the
+probe never completes a signal and a stopped queue is still lost at thirty
+seconds. The test `kosmickrisp_queue_denied` reproduces the denial on a Mac by
+rejecting commits and dropping signals in the Metal queue's methods.
+
+A query a rejected submission was to make available stays unavailable, since
+its availability write died with the commit, and `vkGetQueryPoolResults` with
+`VK_QUERY_RESULT_WAIT_BIT` ends the wait for it after ten seconds with
+`VK_ERROR_DEVICE_LOST` for that call. The Zink GL clients the iOS hold
+protects cannot reach that bound: Zink never passes the bit to
+`vkGetQueryPoolResults`, its blocking waits are on the batch's timeline
+semaphore, which the recovery above completes, and its
+`vkCmdCopyQueryPoolResults` with the bit set is a GPU copy that reads
+availability without waiting. Only a Vulkan client that waits on such a query
+sees the loss.
+
 #### Fragment-stage store work faults the GPU
 
 A render pass whose fragment shader performs enough `device` store work faults.

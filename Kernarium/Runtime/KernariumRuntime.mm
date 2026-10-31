@@ -1748,6 +1748,15 @@ int runtimeSetGpuHold(int held)
     return activeGpu->holdRequests(gpuHoldBudget) ? 1 : 0;
 }
 
+int runtimeGuestDisplayActive()
+{
+    std::lock_guard lock(activeGpuMutex);
+    if (activeGpu == nullptr)
+        return -1;
+    const auto active = activeGpu->guestScanoutActive();
+    return active.has_value() ? (*active ? 1 : 0) : -1;
+}
+
 int runtimeSetBackgroundThrottle(int enabled)
 {
     thread_act_array_t threads = nullptr;
@@ -1849,6 +1858,7 @@ const kernarium_runtime_api runtimeApi {
     .set_page_cache_trimming = runtimeSetPageCacheTrimming,
     .set_microphone = runtimeSetMicrophone,
     .set_restart_callback = runtimeSetRestartCallback,
+    .guest_display_active = runtimeGuestDisplayActive,
 };
 
 } // namespace
@@ -1878,9 +1888,30 @@ kernarium_runtime_automation_job_at_start(void)
     }
     return 0;
 }
+
+/* The delay an automation launch asked for before the guest's GPU is held in
+ * the background (see KernariumRuntime.h). */
+extern "C" KERNARIUM_RUNTIME_EXPORT int
+kernarium_runtime_automation_hold_delay_ms(void)
+{
+    const char* value =
+        std::getenv(kernarium::automation::holdDelayVariable);
+    const auto delay = kernarium::automation::parseHoldDelayMs(value);
+    if (!delay.valid) {
+        std::fprintf(
+            stderr,
+            "Kernarium: %s must be a whole number of milliseconds from 0 to "
+            "%d, not '%s'; the GPU is held at once\n",
+            kernarium::automation::holdDelayVariable,
+            kernarium::automation::holdDelayMaximumMs,
+            value);
+        return 0;
+    }
+    return delay.milliseconds;
+}
 #endif
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v14(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v15(void)
 {
     return &runtimeApi;
 }

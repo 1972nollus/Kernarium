@@ -100,6 +100,14 @@ public:
         return requestGate_->held();
     }
 
+    std::optional<bool> guestScanoutActive() const noexcept
+    {
+        std::lock_guard lock(displayMutex_);
+        if (!display_)
+            return std::nullopt;
+        return display_->guestScanoutActive();
+    }
+
     std::string takeConnectionName()
     {
         std::lock_guard lock(connectionMutex_);
@@ -137,6 +145,12 @@ public:
          * designed, and the application opens it as for any other. */
         guestEnded_.store(false);
         requestGate_->returnToHold();
+        /* Nor has the new guest a scanout yet, whatever the old one left. */
+        {
+            std::lock_guard displayLock(displayMutex_);
+            if (display_)
+                display_->setGuestScanoutActive(false);
+        }
         {
             /* Input from the display has nowhere to go until the new guest
              * has its endpoint, and a guest that is not there yet must not
@@ -346,6 +360,11 @@ void InProcessGpuService::releaseRequests() noexcept
 bool InProcessGpuService::requestsHeld() const noexcept
 {
     return implementation_->requestsHeld();
+}
+
+std::optional<bool> InProcessGpuService::guestScanoutActive() const noexcept
+{
+    return implementation_->guestScanoutActive();
 }
 
 std::optional<std::uint16_t> InProcessGpuService::vncPort() const noexcept

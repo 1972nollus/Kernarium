@@ -4,6 +4,7 @@
 #include "protocol.hpp"
 #include "../input/vnc/vnc_input.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -109,6 +110,19 @@ public:
         return std::nullopt;
     }
     virtual void clear() noexcept = 0;
+    /* Whether the guest has its primary scanout on. The device sets it when
+     * the guest binds a resource to the scanout and clears it when the guest
+     * unbinds it, which an Android screen turning off does through its
+     * disabled CRTC, and when the guest is reset or gone. It is read from
+     * any thread, by the application waiting for a guest's screen to go off. */
+    [[nodiscard]] bool guestScanoutActive() const noexcept
+    {
+        return guestScanoutActive_.load(std::memory_order_acquire);
+    }
+    void setGuestScanoutActive(bool active) noexcept
+    {
+        guestScanoutActive_.store(active, std::memory_order_release);
+    }
     virtual void update(
         std::span<const std::uint8_t> source,
         std::uint32_t sourceWidth,
@@ -149,6 +163,9 @@ public:
 
 protected:
     Display() = default;
+
+private:
+    std::atomic_bool guestScanoutActive_ {};
 };
 
 [[nodiscard]] std::unique_ptr<Display> makeDisplay(
