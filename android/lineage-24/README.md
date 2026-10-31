@@ -554,7 +554,14 @@ launcher's APK, odex and vdex, about 54 MiB, resident whatever the memory
 pressure; without the pin those pages are reclaimed like any app's, and the
 time back to the home screen after a run of other apps did not grow.
 `KernariumPinnerOverlay` (`overlay/rro`) sets `config_pinnerHomePinBytes` to
-zero and leaves the WebView pin alone. The pin sizes are not overlayable, so the
+zero and leaves the WebView pin alone. That pin locks the first 20 MiB of
+`webview.apk` (the ICU data, the dex and the start of the native library). A
+cold start of a WebView app touches about 77 MiB of the 160 MiB library, spread
+over its code, and only 9.5 MiB of what it touches lies inside the locked 20, so
+a `pinlist.meta` of hot ranges would need either the whole touched set or a pin
+half this size that does the same; dropping the pin outright costs about 5% more
+major faults and disk reads on a cold WebView start. The pin sizes are not
+overlayable, so the
 overlay is built for SDK 28, the last level whose overlays are not held to the
 target's overlayable declarations, and the target-files verifier reads the
 built manifest for that: an overlay that targeted a later level would apply to
