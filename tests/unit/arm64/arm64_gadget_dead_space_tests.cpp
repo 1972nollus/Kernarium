@@ -13,6 +13,8 @@
 
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "cpu/arm64/sme_profile.hpp"
+#include "memory/domain_contract.hpp"
+#include "memory/domain_heap.hpp"
 #include "static_mmu_test_support.hpp"
 
 #include <array>
@@ -495,6 +497,61 @@ void concurrent_executors_follow_dead_generations(unsigned long first,
 
 } // namespace
 
+std::atomic_uint64_t heap_case_domain{};
+
+bool provide_heap_case_domain(std::uint64_t &domain) noexcept
+{
+	domain = heap_case_domain.load(std::memory_order_acquire);
+	return domain != 0;
+}
+
+/* D8: an executor's program slabs and its address spaces' record tables are
+ * in heaps of the memory layer. They are committed in the heap region while
+ * the executor runs, and the region has every byte back when the executor and
+ * its spaces are gone and the memory domain has retired, whichever way the
+ * space is held. The case runs in a domain of its own on a thread of its own:
+ * the static MMU's scratch chunk goes back when the thread ends. */
+void an_executor_and_its_spaces_give_their_heaps_back(
+	unsigned long generation, bool shared)
+{
+	constexpr std::uint64_t domain = 61'000;
+	set_shared(shared);
+	uml::memory::set_domain_provider(&provide_heap_case_domain);
+	auto &region = uml::memory::HeapRegion::instance();
+	const auto heap_before = region.committed();
+	const auto spaces = stress::live_spaces();
+	std::size_t heap_running = 0;
+	std::thread thread{[&] {
+		heap_case_domain.store(domain, std::memory_order_release);
+		JitBacking backing{1};
+		put_program(backing, 1, 2);
+		{
+			const JitMapping mapping{generation, code_base, backing, 1};
+			{
+				const auto vcpu = std::make_unique<Vcpu>();
+				require(run_to_system_call(vcpu->executor,
+					vcpu->memory, generation, vcpu->cpu,
+					code_base) == 4);
+				require(vcpu->cpu.registers[0] == 1 &&
+					vcpu->cpu.registers[1] == 2);
+				heap_running = region.committed();
+			}
+		}
+		heap_case_domain.store(0, std::memory_order_release);
+	}};
+	thread.join();
+	uml::memory::retire_domain(domain);
+	uml::memory::set_domain_provider(nullptr);
+	/* Three heaps hold a first chunk of 256 KiB each: the domain's index, the
+	 * engine's record tables and the cache's program slabs. */
+	require(heap_running >= heap_before + 3 * (256U << 10),
+		"the executor's translations are not in heaps");
+	require(stress::live_spaces() == spaces);
+	require(region.committed() == heap_before,
+		"the executor left heap pages committed");
+	require(uml::memory::LeasedHeap::engine().leases() == 0);
+}
+
 int main(int argc, char **argv)
 {
 	const uml::testing::RuntimeTestRoute runtime_route;
@@ -516,6 +573,8 @@ int main(int argc, char **argv)
 		{"d6s", [] { a_dead_space_goes_after_a_failed_allocation(2150, true); }},
 		{"d7p", [] { an_executor_goes_whole_after_a_failed_allocation(2160, false); }},
 		{"d7s", [] { an_executor_goes_whole_after_a_failed_allocation(2170, true); }},
+		{"d8p", [] { an_executor_and_its_spaces_give_their_heaps_back(2200, false); }},
+		{"d8s", [] { an_executor_and_its_spaces_give_their_heaps_back(2210, true); }},
 		{"s1p", [] { concurrent_executors_follow_dead_generations(3000, false); }},
 		{"s1s", [] { concurrent_executors_follow_dead_generations(4000, true); }},
 	};

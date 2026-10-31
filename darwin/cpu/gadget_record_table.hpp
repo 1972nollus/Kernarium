@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "gadget_cache_budget.hpp"
+#include "memory/domain_heap.hpp"
 
 namespace uml::cpu::gadget_cache {
 
@@ -298,7 +299,7 @@ public:
 			std::size_t first = 0;
 			for (const auto &chunk : table->chunks_) {
 				const auto begin = reinterpret_cast<std::uintptr_t>(
-					chunk.storage.get());
+					chunk.storage);
 				const auto used = &chunk == &table->chunks_.back() ?
 					table->used_ : chunk.count;
 				marks.ranges_.push_back({begin,
@@ -365,8 +366,8 @@ public:
 		std::size_t next = first_capacity;
 		while (remaining * 4 > next * 3)
 			next *= 2;
-		auto replacement = remaining == 0 ? nullptr :
-			std::make_unique<std::uint32_t[]>(next);
+		auto replacement = remaining == 0 ? Index{} :
+			::uml::memory::make_leased_array<std::uint32_t>(next, true);
 
 		for (std::size_t position = 0; position < capacity(); ++position) {
 			const auto entry = index_[position];
@@ -433,9 +434,43 @@ private:
 	static constexpr std::size_t maximum_records =
 		(std::size_t{1} << number_bits) - 1U;
 
+	/* A chunk's storage comes from the engine's leased heap. Its size is the
+	 * chunk's own count, so that the deleting is stateless and a Chunk stays
+	 * two words. */
 	struct Chunk final {
-		std::unique_ptr<std::byte[]> storage;
+		Chunk(std::byte *bytes, std::size_t records) noexcept
+			: storage{bytes}, count{records}
+		{
+		}
+		Chunk(Chunk &&other) noexcept
+			: storage{std::exchange(other.storage, nullptr)},
+			  count{other.count}
+		{
+		}
+		Chunk &operator=(Chunk &&other) noexcept
+		{
+			if (this != &other) {
+				drop();
+				storage = std::exchange(other.storage, nullptr);
+				count = other.count;
+			}
+			return *this;
+		}
+		Chunk(const Chunk &) = delete;
+		Chunk &operator=(const Chunk &) = delete;
+		~Chunk() { drop(); }
+
+		std::byte *storage;
 		std::size_t count;
+
+	private:
+		void drop() noexcept
+		{
+			if (storage != nullptr)
+				::uml::memory::HeapLease::heap().deallocate(
+					storage, count * sizeof(Record),
+					alignof(Record));
+		}
 	};
 
 	[[nodiscard]] static std::uint64_t mix(std::uint64_t key) noexcept
@@ -473,7 +508,7 @@ private:
 			chunk = doubling_chunks + beyond / largest_chunk;
 			slot = beyond % largest_chunk;
 		}
-		return chunks_[chunk].storage.get() + slot * sizeof(Record);
+		return chunks_[chunk].storage + slot * sizeof(Record);
 	}
 
 	/* The record with one-based number `number`. */
@@ -504,7 +539,8 @@ private:
 	void grow()
 	{
 		const auto next = std::max<std::size_t>(first_capacity, capacity() * 2);
-		auto replacement = std::make_unique<std::uint32_t[]>(next);
+		auto replacement =
+			::uml::memory::make_leased_array<std::uint32_t>(next, true);
 		auto previous = std::move(index_);
 		const auto previous_capacity = previous == nullptr ? 0 : mask_ + 1;
 		index_ = std::move(replacement);
@@ -544,8 +580,10 @@ private:
 			if (chunks_.size() == chunks_.capacity())
 				chunks_.reserve(std::max<std::size_t>(
 					8, chunks_.size() * 2));
-			chunks_.push_back({std::make_unique_for_overwrite<std::byte[]>(
-				count * sizeof(Record)), count});
+			chunks_.emplace_back(static_cast<std::byte *>(
+				::uml::memory::HeapLease::heap().allocate(
+					count * sizeof(Record), alignof(Record))),
+				count);
 			record_bytes_ += count * sizeof(Record);
 			used_ = 0;
 		}
@@ -581,6 +619,8 @@ private:
 		}
 	}
 
+	/* First, so it ends after everything below that the heap holds. */
+	::uml::memory::HeapLease lease_;
 	std::vector<Chunk> chunks_;
 	/* Places carved from the last chunk, and from all of them. */
 	std::size_t used_{};
@@ -590,7 +630,8 @@ private:
 	std::vector<std::uint64_t> vacant_;
 	std::size_t lowest_vacant_{};
 	std::size_t vacancies_{};
-	std::unique_ptr<std::uint32_t[]> index_;
+	using Index = ::uml::memory::LeasedArray<std::uint32_t>;
+	Index index_;
 	std::size_t mask_{};
 	std::size_t size_{};
 	/* The bytes of the record chunks, and the account they are charged

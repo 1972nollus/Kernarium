@@ -16,6 +16,7 @@ uml_declare_architecture_target(uml_x86_64_gadgets cpu gadget)
 # (engine/region.inc).
 target_link_libraries(uml_x86_64_gadgets
     PUBLIC uml_x86_64_target UML::BridgeAbi UML::ThirdPartyCephes128
+           UML::MemoryHeap
     PRIVATE UML::CpuContract
     INTERFACE UML::GadgetRegionLayout)
 target_include_directories(uml_x86_64_gadgets PUBLIC
