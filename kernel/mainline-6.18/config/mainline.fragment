@@ -25,6 +25,15 @@ CONFIG_NFS_V4_1=y
 CONFIG_NFS_V4_2=y
 CONFIG_IP_SCTP=y
 
+# A desktop guest mounts the other general-purpose filesystems and network
+# shares too: XFS and Btrfs on attached disks, SMB shares through the CIFS
+# client. The Android product mounts none of them and leaves all three out
+# (see android.fragment).
+CONFIG_XFS_FS=y
+CONFIG_BTRFS_FS=y
+CONFIG_CIFS=y
+CONFIG_CIFS_XATTR=y
+
 # A container runtime with IPv6 enabled translates addresses on the IPv6 path
 # as it does on the IPv4 one. Android's base configuration leaves IPv6 NAT out
 # (see android.fragment).
