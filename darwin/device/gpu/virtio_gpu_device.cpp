@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -1222,10 +1223,19 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return response(
                 *header, protocol::GpuResponse::errorOutOfMemory);
         }
-        if (UML_GPU_RENDERER.createResource3d(resource) != 0) {
+        if (const int created = UML_GPU_RENDERER.createResource3d(resource);
+            created != 0) {
             virglResources_.erase(create->resourceId);
+            /* The renderer reports a host driver with no room for the
+             * resource's storage as ENOMEM, which is the one failure the
+             * guest can tell from a resource it described wrongly: the
+             * driver gives its application GL_OUT_OF_MEMORY, and the guest
+             * kernel fails the creation ioctl with -ENOMEM. */
             return response(
-                *header, protocol::GpuResponse::errorInvalidParameter);
+                *header,
+                created == ENOMEM || created == -ENOMEM
+                    ? protocol::GpuResponse::errorOutOfMemory
+                    : protocol::GpuResponse::errorInvalidParameter);
         }
         return success;
     }

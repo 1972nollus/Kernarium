@@ -38,6 +38,8 @@ public:
         destroy_context,
         submit,
         create_resource,
+        /* the host driver has no room for the resource's storage */
+        create_resource_refused,
         transfer,
         read_resource,
         fence,
@@ -181,6 +183,8 @@ public:
     {
         if (reject(Operation::create_resource))
             return EIO;
+        if (reject(Operation::create_resource_refused))
+            return ENOMEM;
         try {
             resources.insert(resource.resourceId);
             nativeTextures[resource.resourceId] = VirglRenderer::NativeTexture {
@@ -1358,6 +1362,17 @@ void rendererExecutionFailuresPreserveDeviceState()
         protocol::GpuResponse::errorInvalidParameter);
     require(!dependencies.resources.contains(resource.resourceId));
     requireOk(device, requestBytes(resource));
+
+    /* A host driver with no room for a resource's storage is told apart from
+     * a resource described wrongly, so the guest can fail the creation with
+     * -ENOMEM; nothing of the refused resource stays behind. */
+    auto refused = create3d(703, 4, 4);
+    dependencies.rejectNext(
+        FakeGpuDependencies::Operation::create_resource_refused);
+    requireResponse(device, requestBytes(refused),
+        protocol::GpuResponse::errorOutOfMemory);
+    require(!dependencies.resources.contains(refused.resourceId));
+    requireOk(device, requestBytes(refused));
 
     const auto attachRequest = attachBackingRequest(
         resource.resourceId, guestMemory.size());
