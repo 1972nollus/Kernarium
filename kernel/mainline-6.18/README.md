@@ -152,8 +152,41 @@ slab object, page allocation, kernel text and stack, and a failure is a
 panic. UML arm64 has no `HAVE_ARCH_WITHIN_STACK_FRAMES`, so a stack copy is
 checked against the whole stack, not the frame. LKDTM confirms the canary
 check and the slab, page, kernel-text and stack-bounds cases. An overrun of
-one stack frame into the next goes unseen here, and so does a vmalloc overrun
-into its guard page, which upstream does not catch either.
+one stack frame into the next goes unseen here; an overrun of a whole task
+stack does not (see Kernel stacks).
+
+### Kernel stacks
+
+Every product uses 64 KiB task stacks (`CONFIG_KERNEL_STACK_ORDER=4` with
+4 KiB pages), virtually mapped with an unmapped guard region around each, and
+`CONFIG_SCHED_STACK_END_CHECK`. The deepest use measured, with
+`CONFIG_DEBUG_STACK_USAGE`, the stack dumps and the exit-time "greatest stack
+depth" lines under the heaviest workload of each line:
+
+| Line and workload | Deepest | Margin at 64 KiB |
+|---|---|---|
+| x86-64 slice, JIT: filesystem, memory, network, xfrm, compiler and 316 LTP cases | 25.6 KiB | 2.5x |
+| x86-64 slice, JIT: headless Chromium | 22.4 KiB | 2.9x |
+| arm64 Linux, gadgets: the same phases and LTP | 22.6 KiB | 2.8x |
+| Android, gadgets: boot, five cold launches, package compilation | 23.6 KiB | 2.7x |
+
+The Android stress script (GMEM) reached 25.0 KiB on a 128 KiB stack, a 2.6x
+margin. No stack above 32 KiB appeared in the `kstack_*` histogram of any run.
+The deepest stacks were `kworker` threads and processes at exit. XFS and Btrfs
+were not exercised, because the rootfs has no `mkfs` for them; the Android
+product has neither.
+
+The signal stack the host gives each vCPU carrier is separate: 128 KiB from
+`malloc`, whatever `THREAD_SIZE` is, with the deepest use measured at
+3.8 KiB. There is no per-CPU array in the image for it.
+
+An overrun is caught, not silent. A write below the lowest stack page or above
+the highest faults on the guard region and ends in
+`Kernel panic - not syncing: Kernel mode signal 10`, which names the faulting
+pc and address (LKDTM `STACK_GUARD_PAGE_LEADING`, `STACK_GUARD_PAGE_TRAILING`
+and `EXHAUST_STACK`). A clobbered end-of-stack word ends in
+`corrupted stack end detected inside scheduler` (LKDTM `CORRUPT_STACK_END`).
+`guest-kernel-config` checks the order, `VMAP_STACK` and the end check.
 
 The Android CTS `KernelConfigTest` also asks for three symbols that arch/um
 does not have. Each protection is either provided by the design under another
