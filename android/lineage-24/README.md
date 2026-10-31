@@ -152,7 +152,10 @@ or microG services. The LineageOS updater and setup
 wizard, Canvas, Aperture, Profiles, Recorder, QuickAccessWallet, the charger
 animation,
 fastbootd and AudioFX are excluded, as are DeskClock and EmergencyInfo; the
-build and verifier assert both lists. QuickSearchBox and its home-screen
+build and verifier assert both lists. SecureElement, the persistent OMAPI
+service for readers the machine does not have (no eSE, no UICC), is excluded
+too: `SEService` clients never connect, and the OMAPI features are not
+declared. QuickSearchBox and its home-screen
 search surface are deliberately omitted. Bluetooth
 device implementations and feature declarations are also omitted. Settings is
 the stock application apart from its Bluetooth parts (a `packages/apps/Settings`

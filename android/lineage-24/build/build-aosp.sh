@@ -462,6 +462,7 @@ for package in \
 	DynamicSystemInstallationService \
 	Gallery2 \
 	QuickSearchBox \
+	SecureElement \
 	TeleService \
 	Telecom \
 	TelephonyProvider \

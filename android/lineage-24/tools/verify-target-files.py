@@ -431,6 +431,7 @@ FORBIDDEN_APP_DIRECTORIES = {
     "QuickAccessWallet",
     "QuickSearchBox",
     "Recorder",
+    "SecureElement",
     "TeleService",
     "Telecom",
     "TelephonyProvider",
