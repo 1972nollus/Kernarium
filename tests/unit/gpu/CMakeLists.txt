@@ -51,6 +51,12 @@ function(uml_add_gpu_unit_test TEST TARGET)
     uml_add_unit_test(NAME ${TEST} COMMAND ${TARGET} ${_options})
 endfunction()
 
+# The renderer trims a guest context once it has been quiet for a while; the
+# tracker that decides when needs no GPU.
+uml_add_gpu_unit_test(gpu-context-idle-tracker
+    uml_gpu_context_idle_tracker_tests context_idle_tracker_tests.cpp
+    LIBRARIES UML::GpuContextIdleTracker Threads::Threads)
+
 uml_add_gpu_unit_test(gpu-metal-submit-timing-collector
     uml_gpu_metal_submit_timing_tests metal_submit_timing_tests.cpp
     LIBRARIES Threads::Threads

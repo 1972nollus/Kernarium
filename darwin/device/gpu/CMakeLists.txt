@@ -21,10 +21,17 @@ add_library(uml_gpu_device_memory_pool STATIC device_memory_pool.cpp)
 add_library(UML::GpuDeviceMemoryPool ALIAS uml_gpu_device_memory_pool)
 uml_configure_gpu_component(uml_gpu_device_memory_pool)
 
+# Finds the guest contexts that have gone quiet, for the renderer to trim.
+add_library(uml_gpu_context_idle_tracker STATIC context_idle_tracker.cpp)
+add_library(UML::GpuContextIdleTracker ALIAS uml_gpu_context_idle_tracker)
+uml_configure_gpu_component(uml_gpu_context_idle_tracker)
+
 add_library(uml_gpu_renderer STATIC
     host_gl_provider.cpp
     virgl_renderer.cpp)
 uml_configure_gpu_component(uml_gpu_renderer)
+target_link_libraries(uml_gpu_renderer PUBLIC
+    UML::GpuContextIdleTracker)
 target_compile_definitions(uml_gpu_renderer PRIVATE
     VIRGL_RENDERER_UNSTABLE_APIS)
 target_link_libraries(uml_gpu_renderer PRIVATE

@@ -45,6 +45,28 @@ constexpr std::uint32_t virglCapsetId = 1;
 constexpr std::uint32_t virgl2CapsetId = 2;
 constexpr std::uint32_t venusCapsetId = 4;
 
+/* UML_GPU_IDLE_TRIM_MS is how long a guest GL context stays quiet before the
+ * renderer asks the host driver to release what it keeps for it: a whole
+ * number of milliseconds, zero to never. Unset or unusable, one second. */
+constexpr auto defaultIdleTrim = std::chrono::milliseconds(1000);
+
+[[nodiscard]] std::optional<std::chrono::milliseconds> idleTrimInterval()
+{
+    const char* const text = std::getenv("UML_GPU_IDLE_TRIM_MS");
+    if (text == nullptr || *text == '\0')
+        return defaultIdleTrim;
+    char* end = nullptr;
+    errno = 0;
+    const long long value = std::strtoll(text, &end, 10);
+    if (errno != 0 || *end != '\0' || value < 0 ||
+        value > std::numeric_limits<int>::max()) {
+        return defaultIdleTrim;
+    }
+    if (value == 0)
+        return std::nullopt;
+    return std::chrono::milliseconds(value);
+}
+
 std::atomic_bool missingGlEntryPoint;
 std::atomic_bool rendererInstanceActive;
 std::atomic<std::uint64_t> deviceMemoryLimit;
@@ -199,6 +221,8 @@ void VirglRenderer::setDeviceMemoryLimit(std::uint64_t bytes) noexcept
 
 VirglRenderer::VirglRenderer()
     : provider_(std::make_unique<HostGlProvider>())
+    , idleContexts_(idleTrimInterval().value_or(defaultIdleTrim))
+    , idleTrimEnabled_(idleTrimInterval().has_value())
 {
     if (rendererInstanceActive.exchange(true, std::memory_order_acq_rel)) {
         throw std::runtime_error(
@@ -381,6 +405,11 @@ int VirglRenderer::createContext(
         virgl_renderer_context_destroy(contextId);
         return EIO;
     }
+    try {
+        idleContexts_.add(contextId, ContextIdleTracker::Clock::now());
+    } catch (...) {
+        // A context that is not tracked is never trimmed; that is all.
+    }
     return 0;
 }
 
@@ -388,6 +417,7 @@ void VirglRenderer::destroyContext(std::uint32_t contextId) noexcept
 {
     virgl_renderer_context_destroy(contextId);
     try {
+        idleContexts_.remove(contextId);
         std::lock_guard lock(mutex_);
         std::erase_if(
             retiredContextFences_,
@@ -411,6 +441,7 @@ int VirglRenderer::submit(
         return EINVAL;
     }
 
+    noteContextActivity(contextId);
     // virglrenderer accepts an immutable command but retains a legacy void*
     // API. The implementation does not modify this storage.
     return checkGlDispatchResult(
@@ -535,6 +566,7 @@ int VirglRenderer::transferResource(
     const Box& box,
     std::uint64_t offset) noexcept
 {
+    noteContextActivity(contextId);
     virgl_box transferBox {
         .x = box.x,
         .y = box.y,
@@ -774,8 +806,17 @@ int VirglRenderer::createContextFence(
         }
         constexpr std::uint32_t mergeableFence =
             VIRGL_RENDERER_FENCE_FLAG_MERGEABLE;
-        return checkGlDispatchResult(virgl_renderer_context_create_fence(
-            contextId, mergeableFence, ringIndex, fenceCookie));
+        const int result =
+            checkGlDispatchResult(virgl_renderer_context_create_fence(
+                contextId, mergeableFence, ringIndex, fenceCookie));
+        if (result == 0) {
+            idleContexts_.fenceCreated(
+                contextId,
+                ringIndex,
+                fenceCookie,
+                ContextIdleTracker::Clock::now());
+        }
+        return result;
     } catch (const std::bad_alloc&) {
         return ENOMEM;
     } catch (...) {
@@ -899,6 +940,7 @@ int VirglRenderer::detachResource(
 void VirglRenderer::resetFenceState() noexcept
 {
     try {
+        idleContexts_.reset();
         std::lock_guard lock(mutex_);
         retiredFence_ = 0;
         retiredContextFences_.clear();
@@ -975,11 +1017,55 @@ void VirglRenderer::writeContextFence(
             if (iterator != renderer.retiredContextFences_.end())
                 iterator->second = std::max(iterator->second, fenceId);
         }
+        renderer.idleContexts_.fenceRetired(
+            contextId,
+            ringIndex,
+            fenceId,
+            ContextIdleTracker::Clock::now());
         renderer.fenceCondition_.notify_all();
     } catch (...) {
         auto& renderer = *static_cast<VirglRenderer*>(cookie);
         renderer.fenceCallbackFailed_.store(true, std::memory_order_release);
         renderer.fenceCondition_.notify_all();
+    }
+}
+
+void VirglRenderer::noteContextActivity(std::uint32_t contextId) noexcept
+{
+    if (contextId == 0)
+        return;
+    try {
+        idleContexts_.activity(contextId, ContextIdleTracker::Clock::now());
+    } catch (...) {
+    }
+}
+
+std::optional<std::chrono::steady_clock::duration>
+VirglRenderer::nextIdleTrimDelay() const noexcept
+{
+    if (!idleTrimEnabled_)
+        return std::nullopt;
+    try {
+        return idleContexts_.nextDelay(ContextIdleTracker::Clock::now());
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+void VirglRenderer::trimIdleContexts() noexcept
+{
+    if (!idleTrimEnabled_)
+        return;
+    try {
+        for (const auto contextId : idleContexts_.takeIdle(
+                 ContextIdleTracker::Clock::now())) {
+            virgl_renderer_context_trim(contextId);
+            // A missing GL entry point is reported through the next call that
+            // checks; trimming has no result to carry it.
+            (void)checkGlDispatchResult(0);
+        }
+    } catch (...) {
+        // Never carry a C++ exception through the C renderer API.
     }
 }
 

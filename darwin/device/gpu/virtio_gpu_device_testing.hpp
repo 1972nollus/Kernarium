@@ -6,8 +6,10 @@
 #include "virgl_renderer.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -111,6 +113,9 @@ public:
         std::uint32_t contextId) noexcept = 0;
     [[nodiscard]] virtual int pollRenderer() noexcept = 0;
     [[nodiscard]] virtual bool hasPendingWork() noexcept = 0;
+    [[nodiscard]] virtual std::optional<std::chrono::steady_clock::duration>
+        nextIdleTrimDelay() const noexcept = 0;
+    virtual void trimIdleContexts() noexcept = 0;
     [[nodiscard]] virtual int contextFenceStatus(
         std::uint32_t contextId,
         std::uint32_t ringIndex,
