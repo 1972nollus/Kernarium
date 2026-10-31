@@ -412,7 +412,8 @@ tests, and the ops AOSP records for security. SimpleDeviceConfig applies its
 `overlay/overlay/packages/apps/SimpleDeviceConfig` sets the second to
 LineageOS's list united with the ops of `DiscreteOpsRegistry`'s defaults. The
 target-files verifier requires the generated overlay to cover the defaults; a
-list that drops one of them also fails the `lineage24-builder-lane` fixtures.
+list that drops one of them also fails the `lineage24-target-files-fixtures`
+test.
 
 When applications update together while their tasks are in a desk (LineageOS
 enables desktop windowing on tablets), WM Shell's `PackageUpdateController`
