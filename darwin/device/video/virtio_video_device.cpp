@@ -391,8 +391,17 @@ public:
      * coming back; this device decodes whenever it is asked, so it has to
      * withhold the input buffer itself. Without that the frames pile up
      * against a client that consumes them at its display rate, and the pile
-     * used to end in an error the client reports as EIO on both queues. */
-    static constexpr std::size_t framesInFlight = 8;
+     * used to end in an error the client reports as EIO on both queues.
+     *
+     * Two are enough, and more are host memory with no use: each is a copy of
+     * a decoded picture (11.9 MiB at 3840x2160) that waits for a capture
+     * buffer, and a decoder needs one frame being copied into a buffer while
+     * the next one waits. The bound holds back input, never a frame: the
+     * packets withheld behind it wait in a queue (heldPacketLimit) deeper than
+     * any a client sets up, and a burst the decoder releases at once, at a
+     * sequence boundary or a drain, is delivered whole. The pictures the
+     * stream's reorder depth keeps in the decoder are not counted here. */
+    static constexpr std::size_t framesInFlight = 2;
     /* What a stream may hold while it waits for the client to choose a
      * capture format. This is not backpressure and no client needs it to be
      * generous: a stateful client chooses as soon as the source change tells

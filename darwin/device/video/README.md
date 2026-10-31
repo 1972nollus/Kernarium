@@ -217,6 +217,14 @@ complete cancellation and EOS through the command and event queues. Pending
 event buffers are bounded by the transport's maximum virtqueue size; full
 queues apply backpressure instead of completing empty events.
 
+A decoder in hardware cannot decode without a free capture buffer, so the device
+holds an encoded packet back, and its input buffer with it, while two decoded
+frames wait for a capture buffer. Two are enough because a frame is a full copy
+of the picture (11.9 MiB at 3840 x 2160): one is being copied into a buffer
+while the next waits. Held packets queue up to 128 deep, a burst released at a
+sequence boundary or a drain is delivered whole, and the pictures a stream's
+reorder depth keeps inside the decoder are not counted.
+
 Whether an application decoded in hardware cannot be settled from inside the
 guest: a player that falls back to software shows the same correct picture, and
 an open device node is not a decode. Setting `UML_VIDEO_ACTIVITY_LOG` to a
