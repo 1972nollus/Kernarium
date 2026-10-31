@@ -103,3 +103,4 @@ patch	um-keep-no-signal-stack-array-for-Darwin-carriers.patch
 patch	um-allocate-vhost-user-shared-memory-mappings-as-they-arrive.patch
 patch	ext4-index-a-block-group-quietly-and-again-when-the-insert-failed.patch
 patch	um-return-the-pages-of-the-dynamic-relocations-to-the-allocator.patch
+patch	ext4-do-not-warn-when-the-extent-status-cache-cannot-grow.patch

@@ -416,7 +416,10 @@ an allocation. A shared topic inserts with `__GFP_NOWARN`, because
 pressure that caused it, which the test above rightly rejects. It also checks,
 when a group's order is unchanged, that the group is indexed and indexes it
 again if not, where upstream returned early and left the group out until its
-order changed.
+order changed. The extent status cache is filled the same way: the extents a
+lookup reads are inserted under the inode's extent-cache lock with an atomic
+allocation, a miss only means the extent tree is read again, and a second
+shared topic adds `__GFP_NOWARN` to that allocation for the same reason.
 
 Every slice selects `HAVE_ALIGNED_STRUCT_PAGE` and `HAVE_CMPXCHG_DOUBLE`, as
 native arm64 does; the x86-64 userspace slice keeps the arm64 kernel. SLUB
