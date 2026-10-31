@@ -1242,6 +1242,9 @@ void inputBackpressure()
     }
     require(answered > 0 && !waiting.empty(),
             "the device did not hold an encoded buffer against a full frame queue");
+    /* Two decoded frames wait for a capture buffer and the third packet is
+     * the first one held: more would be host memory no decode uses. */
+    require(answered == 2, "the frame queue did not hold at two frames");
 
     /* Every capture buffer the client gives back releases one held packet, so
      * the stream keeps running instead of erroring out. */
