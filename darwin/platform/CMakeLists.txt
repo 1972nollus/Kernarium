@@ -11,6 +11,13 @@ uml_declare_architecture_target(uml_guest_timer_mask platform)
 target_include_directories(uml_guest_timer_mask INTERFACE
     ${PROJECT_SOURCE_DIR}/darwin)
 
+# Header-only: the host GPU's fixed budget, evaluated once at launch.
+add_library(uml_gpu_budget INTERFACE)
+add_library(UML::GpuBudget ALIAS uml_gpu_budget)
+uml_declare_architecture_target(uml_gpu_budget platform)
+target_include_directories(uml_gpu_budget INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Header-only: host file-descriptor ownership.
 add_library(uml_descriptor INTERFACE)
 add_library(UML::Descriptor ALIAS uml_descriptor)
