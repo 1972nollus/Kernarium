@@ -1200,9 +1200,13 @@ deleted until the context's next fence. At Retina idle that was three to five
 full-screen heaps for as long as the guest stayed still. The renderer therefore
 records each Virgl context's last command, transfer, fence and fence retirement.
 A context with no fence outstanding and no activity for one second is trimmed
-once with `virgl_renderer_context_trim`, and any new activity arms it again; the
-GPU service thread sleeps on a timer for the earliest moment a context could be
-that idle, so an idle guest costs no wakeups. `UML_GPU_IDLE_TRIM_MS` replaces the
+with `virgl_renderer_context_trim`, and trimmed once more a second later, and
+any new activity arms it again. The second trim is the one that matters to a
+context that only uploads: the flush inside the first trim submits its last
+batch, which has not completed when that trim looks at it, and the idle
+context would not submit again to reset it. The GPU service thread sleeps on a
+timer for the earliest moment a context could be due, so an idle guest costs
+no wakeups. `UML_GPU_IDLE_TRIM_MS` replaces the
 interval and zero turns the trim off. The trim visits each of the context's GL
 contexts, runs what glthread and the threaded context still have queued behind a
 `glFlush`, and calls `eglTrimContextMESA`, which Mesa advertises as

@@ -13,6 +13,15 @@ bool ContextIdleTracker::Context::hasPendingFence() const noexcept
     });
 }
 
+std::optional<ContextIdleTracker::Clock::time_point>
+ContextIdleTracker::Context::nextReport(
+    Clock::duration idleInterval) const noexcept
+{
+    if (reports >= reportsPerIdlePeriod || hasPendingFence())
+        return std::nullopt;
+    return (reports == 0 ? lastActivity : reportedAt) + idleInterval;
+}
+
 ContextIdleTracker::ContextIdleTracker(Clock::duration idleInterval) noexcept
     : idleInterval_(idleInterval)
 {
@@ -44,7 +53,7 @@ void ContextIdleTracker::activity(
     if (found == contexts_.end())
         return;
     found->second.lastActivity = std::max(found->second.lastActivity, now);
-    found->second.reported = false;
+    found->second.reports = 0;
 }
 
 void ContextIdleTracker::fenceCreated(
@@ -60,7 +69,7 @@ void ContextIdleTracker::fenceCreated(
     auto& ring = found->second.rings[ringIndex];
     ring.created = std::max(ring.created, cookie);
     found->second.lastActivity = std::max(found->second.lastActivity, now);
-    found->second.reported = false;
+    found->second.reports = 0;
 }
 
 void ContextIdleTracker::fenceRetired(
@@ -79,7 +88,7 @@ void ContextIdleTracker::fenceRetired(
      * created) cannot leave a fence pending. */
     ring.created = std::max(ring.created, ring.retired);
     found->second.lastActivity = std::max(found->second.lastActivity, now);
-    found->second.reported = false;
+    found->second.reports = 0;
 }
 
 std::vector<std::uint32_t> ContextIdleTracker::takeIdle(Clock::time_point now)
@@ -87,11 +96,11 @@ std::vector<std::uint32_t> ContextIdleTracker::takeIdle(Clock::time_point now)
     std::vector<std::uint32_t> idle;
     std::lock_guard lock(mutex_);
     for (auto& [contextId, context] : contexts_) {
-        if (context.reported || context.hasPendingFence() ||
-            now - context.lastActivity < idleInterval_) {
+        const auto due = context.nextReport(idleInterval_);
+        if (!due || now < *due)
             continue;
-        }
-        context.reported = true;
+        ++context.reports;
+        context.reportedAt = now;
         idle.push_back(contextId);
     }
     std::ranges::sort(idle);
@@ -104,11 +113,10 @@ ContextIdleTracker::nextDelay(Clock::time_point now) const
     std::optional<Clock::duration> delay;
     std::lock_guard lock(mutex_);
     for (const auto& entry : contexts_) {
-        const auto& context = entry.second;
-        if (context.reported || context.hasPendingFence())
+        const auto due = entry.second.nextReport(idleInterval_);
+        if (!due)
             continue;
-        const auto due = context.lastActivity + idleInterval_ - now;
-        const auto wait = std::max(due, Clock::duration::zero());
+        const auto wait = std::max(*due - now, Clock::duration::zero());
         if (!delay || wait < *delay)
             delay = wait;
     }
