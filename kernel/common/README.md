@@ -5,7 +5,7 @@ This directory contains only source-family-independent inputs:
 - [`abi/`](abi/README.md): canonical plain-C host/kernel bridge, identity,
   generated-copy authority, and import policy;
 - `config/darwin-uml.fragment`: the kernel configuration policy every product
-  shares, including the 4 KiB guest page size and the 128 KiB task-stack
+  shares, including the 4 KiB guest page size and the 64 KiB task-stack
   geometry it implies. Each product applies its own overlay after it, which
   lists only the settings in which that product differs and whose README says
   why;

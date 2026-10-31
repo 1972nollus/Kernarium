@@ -294,7 +294,7 @@ qualification remains separate from structural table coverage. The slice
 inherits the shared eBPF syscall, verifier, and cgroup BPF policy without a
 product-specific configuration override.
 
-Both use a 128 KiB virtually mapped task stack, a 128 TiB software-MMU task
+Both use a 64 KiB virtually mapped task stack, a 128 TiB software-MMU task
 range, a relocatable ET_DYN image, 100 Hz plus `NO_HZ_IDLE` with
 high-resolution timers, built-in-only drivers, and the same host/kernel ABI. There is no platform-specific image or
 address-space configuration axis.
@@ -323,8 +323,10 @@ transport (`VHOST_USER_PROTOCOL_F_SHMEM_MAP`), obtains one region through
 `SHMEM_MAP`/`SHMEM_UNMAP` messages with exact descriptor, range, permission,
 and owner validation. The kernel reserves a 1 GiB guarded guest-physical
 aperture outside RAM, enforces 16 KiB mapping alignment (the host page), and
-supports one mapping per 16 KiB aperture page through a
-constant-time page-to-record index. Reset, disconnect, and release revoke every
+supports one mapping per 16 KiB aperture page. Each mapping is a node the
+kernel allocates when the backend asks for it and finds by offset in a tree, so
+a guest whose backend maps nothing holds no table for the region. Reset,
+disconnect, and release revoke every
 mapping in bounded descriptor batches, and a request-stream lock serializes the
 backend-request IRQ against the drain in every synchronous reply wait
 ([architecture](../../docs/architecture.md)) so two vCPUs cannot split one
@@ -373,6 +375,15 @@ replies with both amounts and each step's time, so a host can suspend a guest
 that holds no cold cache. `guest-page-cache-trim` checks the default, all three
 commands, the back-off, and a pass over file cache read between the pages of a
 tmpfs file.
+The image holds nothing that only boot or an unused feature needs. The host
+loader applies its dynamic relocations (`.rela.dyn`, about 2 MB) before it
+starts the kernel, so `arch_mm_preinit()` returns the 16 KiB host pages wholly
+inside them to the allocator, as it does the slack after `_end`. There is no
+array of per-CPU signal stacks in the image: the host gives each vCPU carrier
+a 128 KiB signal stack of its own, whatever `THREAD_SIZE` is. Nor is there a
+table for the vhost-user region, since the mappings described above are
+allocated as the backend asks for them.
+
 `CONFIG_VIRTIO_BALLOON` lets the host carve its GPU memory out of guest RAM.
 UML removes virtio drivers from an exitcall that runs
 after `device_shutdown()` has broken every virtqueue. The balloon therefore
@@ -394,6 +405,18 @@ fs-verity, so the release is not confined to open files.
 `guest-ext4-prealloc-reclaim` evicts such inodes under memory pressure, on
 4 KiB and 1 KiB blocks, and requires that reclaim release them with no
 `__GFP_NOFAIL` page allocation.
+
+The block allocator indexes each block group by its largest free order and its
+average fragment size in xarrays, and moves a group between them under the
+group lock, so the insert can use only the atomic reserves and fails when
+memory is that short. A group left out is still found by the linear scan of
+the later criteria, so a failed insert costs a worse choice of group and never
+an allocation. A shared topic inserts with `__GFP_NOWARN`, because
+`warn_alloc()` printed a stack trace from writeback in the middle of the
+pressure that caused it, which the test above rightly rejects. It also checks,
+when a group's order is unchanged, that the group is indexed and indexes it
+again if not, where upstream returned early and left the group out until its
+order changed.
 
 Every slice selects `HAVE_ALIGNED_STRUCT_PAGE` and `HAVE_CMPXCHG_DOUBLE`, as
 native arm64 does; the x86-64 userspace slice keeps the arm64 kernel. SLUB
@@ -705,6 +728,13 @@ The overlay holds only what differs from the Linux product:
   the overlay leaves both out, and SCTP too, which Android has no use for. The
   forbidden list also names RDS, so that no overlay brings back its
   listener.
+- XFS, Btrfs and the SMB client (`CONFIG_XFS_FS`, `CONFIG_BTRFS_FS`,
+  `CONFIG_CIFS`) are absent. Android mounts ext4 and erofs partitions, shared
+  storage is FUSE, and vold mounts removable media as vfat or exfat, so the
+  filesystems are never used and the guest need not carry their code,
+  caches and `cifsiod` and `smb3decryptd` workers. The forbidden list names
+  them, so that no overlay brings them back. The desktop product keeps all
+  three.
 - `CONFIG_STATIC_USERMODEHELPER` with an empty
   `CONFIG_STATIC_USERMODEHELPER_PATH`, which the CTS requires. Every
   `call_usermodehelper()` then returns without starting a program, so a
