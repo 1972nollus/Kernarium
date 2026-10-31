@@ -635,7 +635,17 @@ decoder rejects a chain member it does not know. A pooled device reserves a
 heap's size, in whole host pages, before Metal makes it, and releases the
 reservation once Metal counts the heap or has refused it; one lock decides
 every reservation, so allocations that each fit alone never together take the
-process past B, whichever threads make them.
+process past B, whichever threads make them. A reservation that does not fit
+first frees what the host GL driver caches, and is decided once more: the pool
+takes one reclaim hook, which the host GL provider fills with
+`eglReleaseCachedMemoryMESA` (`EGL_MESA_context_trim` of this project's Mesa
+series, callable from any thread, with no display lock because the refused
+allocation may hold one) and which releases every Zink screen's buffer cache and
+slabs. Zink frees only for a refusal of its own, so without the hook a Venus
+guest's allocation could be refused by memory that Zink's idle cache held. The
+pool counts the reservations that fit only after the release and those still
+refused although it freed something; the first refusal's stderr line says
+whether a release came before it.
 
 What the driver refuses and what it only counts:
 
@@ -659,27 +669,46 @@ What the driver refuses and what it only counts:
 
 What a guest sees of a refusal depends on the path:
 
-- OpenGL. The guest creates a texture without an answer, so the guest driver
-  raises no `GL_OUT_OF_MEMORY`: the host's Zink logs `couldn't allocate memory`,
-  the texture has no storage, and what the guest draws to or reads from it is
-  lost. The context, the renderer and every resource made within the budget
-  stay as they were. While the budget is full even a transfer is refused,
-  since it needs a staging buffer, and the host's GL context records
-  `GL_OUT_OF_MEMORY` for the guest's `glReadPixels`. Once the guest releases
-  memory new textures store again, although the driver keeps released memory
-  for reuse: a refused allocation first drops what the driver caches.
-  `gpu-host-gl-device-memory-budget` drives this without a guest.
-- Vulkan on Venus. The guest driver submits `vkAllocateMemory` asynchronously
-  and waits for its result only when it maps, exports or frees the memory, so
-  the host's refusal reaches the guest as a context that fails at the next
-  command naming the allocation: the ring stops answering (the host logs `GPU
-  fence overdue`) and the guest process aborts. The host, the budget and every
-  other guest process are untouched, and a new process allocates at once. With
-  `VN_PERF=no_async_mem_alloc` the call waits and returns
+- OpenGL. vrend reads the GL error queue after the storage calls of a texture
+  or buffer, and `GL_OUT_OF_MEMORY` fails the creation with `ENOMEM`; the device
+  answers `VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY` and releases nothing of the
+  resource but its half-made object. The guest kernel's creation ioctl waits for
+  that answer (one control-queue round trip per creation, before the
+  attach-backing is queued, so a refused resource costs no further command) and
+  returns `-ENOMEM`: Mesa raises `GL_OUT_OF_MEMORY` for the texture or buffer and
+  Android's gralloc fails the allocation. The context, the renderer and every
+  resource made within the budget stay as they were. A guest kernel without that
+  change still gets a texture that has no storage and no error. While the budget
+  is full even a transfer is refused, since it needs a staging buffer, and the
+  host's GL context records `GL_OUT_OF_MEMORY` for the guest's `glReadPixels`.
+  Once the guest releases memory new textures store again, although the driver
+  keeps released memory for reuse: a refused reservation first frees what the
+  driver caches. `gpu-host-gl-device-memory-budget` drives this without a guest.
+- Vulkan on Venus, this project's guest Mesa (the Vulkan rootfs derivatives and
+  the Android HAL, guest epoch source-33 on). The driver makes `vkAllocateMemory`
+  synchronously, as it does pipeline creation, so the application gets
   `VK_ERROR_OUT_OF_DEVICE_MEMORY` while the device, the allocations already made
-  and later allocations stay usable. The advertised heap is B, but the pool
-  counts everything the host holds, so a guest cannot tell from the heap size
-  whether an asynchronous allocation will fit.
+  and later allocations stay usable. This costs one round trip per allocation;
+  `VN_PERF=no_async_mem_alloc` stays accepted and changes nothing.
+- Vulkan on Venus, a guest with its own Mesa (the Debian desktop images'
+  packaged driver). It submits `vkAllocateMemory` asynchronously and waits for
+  the result only when it maps, exports or frees the memory, so the host's
+  refusal reaches it as a context that fails at the next command naming the
+  allocation, and the guest process aborts. The render worker retires the fences
+  of a failed context at once, so the process ends when its next fence wait
+  returns instead of after the host's 30 s overdue-fence escape. The host, the
+  budget and every other guest process are untouched, and a new process allocates
+  at once. With `VN_PERF=no_async_mem_alloc` in that process's
+  environment the driver waits and returns `VK_ERROR_OUT_OF_DEVICE_MEMORY` as
+  above. The advertised heap is B, but the pool counts everything the host holds,
+  so a guest cannot tell from the heap size whether an asynchronous allocation
+  will fit.
+- A draw whose geometry heap the pool refused. KosmicKrisp fails the recording
+  of a command buffer whose device has no geometry heap (the pool refused even
+  the first one), and `vkEndCommandBuffer` is the call that reports it. Venus
+  sends that call without a reply, so the guest sees `VK_SUCCESS` and the host
+  silently drops the draw. A pool that frees its caches before it refuses makes
+  this rare, not impossible.
 
 The counter also includes memory the guest has already freed while its blob
 resource is still referenced: a freed swapchain image stays allocated until the

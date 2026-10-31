@@ -263,6 +263,14 @@ the sanitizer) and compile the test and `host_gl_provider.cpp` with
 without a trim: the screen's last finished batch, a state's submit count and the
 context's state count. No report involves a state list or a state's link.
 
+`eglReleaseCachedMemoryMESA` (the same extension), which frees what every screen
+of the process caches from any thread, is exercised by
+`gpu-host-cached-memory-release`: it fills Zink's buffer cache, releases it from
+a thread with no context and checks that the allocation drops and refills.
+`gpu-device-memory-pool` covers the pool's retry, and
+`gpu-host-gl-device-memory-budget` the refused reservation that frees the cache
+first.
+
 Both Mesa passes build with `-Dhost-heap=true`, the host topic that lets the
 embedding host supply the allocator of the memory Mesa allocates for itself
 (`src/util/u_host_heap.h`). `MesaEGL`, `MesaGallium` and `KosmicKrisp` each
