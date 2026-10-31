@@ -1444,7 +1444,7 @@ private:
 		}
 		UML_MEMORY_ALLOCATION_CHECKPOINT(
 			testing::AllocationSite::generation);
-		auto state = std::make_shared<GenerationState>();
+		auto state = std::make_shared<GenerationState>(heap_);
 		state->address_space_lifetime = lifetime_;
 		states_.emplace(generation, state);
 		return state;
@@ -1485,10 +1485,19 @@ private:
 				add_reserve_pages(possible_pages, operation_pages);
 		}
 		const auto plan_reserve = std::min(touched_pages, possible_pages);
-		std::vector<PlannedMappingPage> pages;
-		std::unordered_map<std::uint64_t, std::size_t, GuestPageHash>
-			page_indices;
-		std::vector<MappingChangePlan> changes;
+		/* The plan lives in the thread's scratch: it is dropped whole when
+		 * the batch ends, instead of leaving its largest vector in the
+		 * default malloc zone. */
+		ScratchScope scratch;
+		const ScratchAllocator<char> scratch_allocator{scratch.arena()};
+		std::vector<PlannedMappingPage, ScratchAllocator<PlannedMappingPage>>
+			pages{scratch_allocator};
+		std::unordered_map<std::uint64_t, std::size_t, GuestPageHash,
+			std::equal_to<std::uint64_t>,
+			ScratchAllocator<std::pair<const std::uint64_t, std::size_t>>>
+			page_indices{scratch_allocator};
+		std::vector<MappingChangePlan, ScratchAllocator<MappingChangePlan>>
+			changes{scratch_allocator};
 		/* The operation count is a poor capacity estimate: one coalesced TLB
 		 * range can cover thousands of pages. Reserve a checked upper bound on
 		 * planned pages, capped to avoid a hostile overlapping batch forcing an
@@ -1610,7 +1619,9 @@ private:
 		std::uint64_t length, const Mapping &mapping)
 	{
 		SlotSettler settler{state};
-		std::vector<PlannedMappingPage> pages;
+		ScratchScope scratch;
+		std::vector<PlannedMappingPage, ScratchAllocator<PlannedMappingPage>>
+			pages{ScratchAllocator<PlannedMappingPage>{scratch.arena()}};
 		pages.reserve(static_cast<std::size_t>(length / page_size));
 		CodeSpan code;
 		std::optional<unsigned> slot;
@@ -1723,6 +1734,8 @@ private:
 			state, address & ~(page_size - 1), page_size);
 	}
 
+	/* Shared with every generation: the last holder gives the pages back. */
+	std::shared_ptr<DomainHeap> heap_{std::make_shared<DomainHeap>()};
 	mutable WordSharedMutex states_mutex_;
 	WordSharedMutex backing_mutex_;
 	std::unordered_map<std::uint64_t, std::shared_ptr<GenerationState>> states_;

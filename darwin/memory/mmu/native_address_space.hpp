@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "../domain_heap.hpp"
 #include "page_index.hpp"
 
 #include <array>
@@ -21,11 +22,15 @@
 
 namespace uml::memory {
 
-/* Every native index is keyed by a host page or slot address. */
-using PageAddressSet = std::unordered_set<std::uintptr_t, PageAddressHash>;
+/* Every native index is keyed by a host page or slot address, and takes its
+ * nodes from the heap of the unit that owns it. */
+using PageAddressSet = std::unordered_set<std::uintptr_t, PageAddressHash,
+	std::equal_to<std::uintptr_t>, DomainAllocator<std::uintptr_t>>;
 template <typename Value>
 using PageAddressMap =
-	std::unordered_map<std::uintptr_t, Value, PageAddressHash>;
+	std::unordered_map<std::uintptr_t, Value, PageAddressHash,
+		std::equal_to<std::uintptr_t>,
+		DomainAllocator<std::pair<const std::uintptr_t, Value>>>;
 
 class NativeAddressSpace final {
 public:
@@ -165,13 +170,19 @@ private:
 	int update_slot_protection_locked(std::uintptr_t slot);
 	[[nodiscard]] bool contains_shadow_locked(
 		std::uintptr_t address, std::uint64_t length) const;
+	/* Every index below takes its nodes from this heap, which retire() gives
+	 * back whole. It is declared first so that it outlives them. */
+	DomainHeap heap_;
 	mutable std::mutex mutex_;
-	PageAddressMap<Mapping> mappings_;
+	PageAddressMap<Mapping> mappings_{DomainAllocator<char>{&heap_}};
 	std::unordered_multimap<BackingPageKey, std::uintptr_t,
-		BackingPageKeyHash> backing_index_;
-	PageAddressMap<int> slot_protections_;
-	PageAddressSet materialized_slots_;
-	PageAddressMap<DirectMapping> direct_mappings_;
+		BackingPageKeyHash, std::equal_to<BackingPageKey>,
+		DomainAllocator<std::pair<const BackingPageKey, std::uintptr_t>>>
+		backing_index_{DomainAllocator<char>{&heap_}};
+	PageAddressMap<int> slot_protections_{DomainAllocator<char>{&heap_}};
+	PageAddressSet materialized_slots_{DomainAllocator<char>{&heap_}};
+	PageAddressMap<DirectMapping> direct_mappings_{
+		DomainAllocator<char>{&heap_}};
 	bool backing_index_ready_{};
 
 	/* Every software mapping of a guest page publishes its backing first, and
@@ -209,7 +220,7 @@ private:
 		return true;
 	}
 
-	PageAddressSet direct_slots_;
+	PageAddressSet direct_slots_{DomainAllocator<char>{&heap_}};
 	std::uint64_t ownership_id_{};
 	std::atomic_bool retired_{};
 };

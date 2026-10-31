@@ -15,6 +15,14 @@ target_compile_definitions(uml_memory_domain_lifetime_tests PRIVATE
 uml_add_unit_test(NAME memory-domain-lifetime
     COMMAND uml_memory_domain_lifetime_tests LABELS tsan)
 
+# The heaps a unit of the engine maps for itself and gives back whole.
+add_executable(uml_memory_domain_heap_tests domain_heap_tests.cpp)
+target_link_libraries(uml_memory_domain_heap_tests PRIVATE UML::MemoryHeap)
+target_include_directories(uml_memory_domain_heap_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/memory)
+uml_add_unit_test(NAME memory-domain-heap
+    COMMAND uml_memory_domain_heap_tests LABELS tsan)
+
 add_executable(uml_memory_address_window_tests address_window_tests.cpp)
 target_link_libraries(uml_memory_address_window_tests PRIVATE
     uml_address_layout_test_variant)
@@ -95,6 +103,21 @@ target_compile_definitions(uml_static_mmu_batch_tests PRIVATE
 uml_add_unit_test(NAME static-mmu-batch COMMAND uml_static_mmu_batch_tests
     LABELS tsan)
 
+# A retired domain gives the pages of its bookkeeping back to the process.
+add_executable(uml_static_retire_tests
+    static_retire_tests.cpp
+    $<TARGET_OBJECTS:uml_static_mmu_test_variant>)
+target_link_libraries(uml_static_retire_tests PRIVATE
+    UML::BridgeAbi
+    UML::MemorySharedBacking)
+target_include_directories(uml_static_retire_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/memory
+    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
+target_compile_definitions(uml_static_retire_tests PRIVATE
+    UML_MEMORY_ALLOCATION_TESTING=1)
+uml_add_unit_test(NAME memory-static-retire COMMAND uml_static_retire_tests
+    LABELS tsan)
+
 # What a mapping change publishes as a code change.
 add_executable(uml_static_mmu_code_change_tests
     static_mmu_code_change_tests.cpp
@@ -112,7 +135,9 @@ uml_add_unit_test(NAME static-mmu-code-change
 # The fill index's word layout and radix table, and the backing slots its
 # words name. The slot test builds real backings.
 add_executable(uml_fill_index_tests fill_index_tests.cpp)
-target_link_libraries(uml_fill_index_tests PRIVATE UML::MemoryContract)
+target_link_libraries(uml_fill_index_tests PRIVATE
+    UML::MemoryContract
+    UML::MemoryHeap)
 target_include_directories(uml_fill_index_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
 uml_add_unit_test(NAME memory-fill-index COMMAND uml_fill_index_tests

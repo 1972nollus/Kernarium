@@ -9,7 +9,9 @@ the launcher answers from inside it. At the settle point of every boot the
 process must look as it did at the first boot's: its descriptors by kind and
 path, its threads by name, its Mach ports by right and kind, its next pthread
 key, its signal dispositions and timers, and the status flags and terminal
-settings of its stdio. A pattern the first boot wrote into tmpfs and
+settings of its stdio. At every hand-back the heaps the memory layer maps for a
+run's engine metadata (VM tag 241) hold no dirty page, and the scratch of the
+threads that remain (tag 242) holds no more than a kept chunk each. A pattern the first boot wrote into tmpfs and
 anonymous guest memory is in guest RAM before the restart and nowhere in the
 process after it. Then a guest whose /init restarts at once never boots past
 it: the launcher ends the launch after the fifth restart in a row that comes
@@ -63,6 +65,9 @@ COMPARED = (
 # kind of port must be exactly the first boot's.
 REPLY_PORTS = "rights=0x20000 kobject=-1"
 REPLY_PORT_SLACK = 2
+# Thread scratch keeps one chunk of this many bytes for the thread's life
+# (memory/domain_heap.hpp, ScratchArena::kept_bytes).
+SCRATCH_CHUNK = 64 * 1024
 # The temporary name of the guest-RAM token differs for each boot.
 RANDOM_NAME = re.compile(r"(uml-phys-token-)\w+")
 
@@ -178,6 +183,43 @@ def settled(channel: AuditChannel, label: str,
             previous = channel.dump(label)
 
 
+def heaps_returned(dump: dict[str, list[str]], label: str) -> str:
+    """The memory layer's heaps at a hand-back: a run's domain heaps are given
+    back whole when the run's memory domain retires, which the hand-back
+    follows, so no page of them is dirty; only the chunk a thread keeps for its
+    scratch may remain, one for each thread the process has."""
+    def figure(keyword: str) -> int:
+        if not dump.get(keyword):
+            raise RuntimeError(f"{label}: the process audit did not report {keyword}")
+        return int(dump[keyword][0])
+
+    heap, scratch = figure("heap_dirty"), figure("scratch_dirty")
+    threads = int(dump["threads"][0]) if dump.get("threads") else 0
+    if heap != 0:
+        raise RuntimeError(f"{label}: {heap} bytes of domain heaps are dirty "
+                           "at the hand-back")
+    if scratch > (threads + 1) * SCRATCH_CHUNK:
+        raise RuntimeError(
+            f"{label}: {scratch} bytes of thread scratch are dirty at the "
+            f"hand-back, more than a kept chunk for each of {threads} threads")
+    return f"heaps {heap} B, scratch {scratch // 1024} KiB"
+
+
+def hand_back_dump(audit: pathlib.Path, number: int) -> dict[str, list[str]]:
+    """The process as it was when the guest was handed back: the audit dumps
+    it at the hand-back's own announcement (UML_PROCESS_AUDIT_HAND_BACK)."""
+    path = audit / f"handback-{number}.txt"
+    deadline = time.monotonic() + MATCH_SECONDS
+    while not path.exists():
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"the process audit made no {path.name}")
+        time.sleep(0.2)
+    text = path.read_text()
+    if "\nend\n" not in text:
+        raise RuntimeError(f"the process audit's {path.name} is incomplete")
+    return parse_dump(text)
+
+
 def footprint(dump: dict[str, list[str]]) -> str:
     def figure(keyword: str) -> int:
         return int(dump[keyword][0]) if dump.get(keyword) else -1
@@ -225,6 +267,7 @@ def run_engine(arguments: argparse.Namespace, engine: str) -> None:
     environment = dict(os.environ)
     environment["DYLD_INSERT_LIBRARIES"] = str(arguments.audit_library)
     environment["UML_PROCESS_AUDIT_DIRECTORY"] = str(audit)
+    environment["UML_PROCESS_AUDIT_HAND_BACK"] = "1"
     guest = Guest(
         arguments.emulator,
         arguments.rootfs,
@@ -268,10 +311,14 @@ def run_engine(arguments: argparse.Namespace, engine: str) -> None:
                 )
             require_aliased_text(engine, current)
             retries = guest.output().count("is not handed back yet")
+            returned = heaps_returned(
+                hand_back_dump(audit, restart),
+                f"{engine}: hand-back {restart}")
             print(
                 f"{engine}: restart {restart} to a shell in "
                 f"{time.monotonic() - started:.1f} s, pid {process_id}, "
-                f"as the first boot ({footprint(current)}), no pattern left"
+                f"as the first boot ({footprint(current)}), no pattern left, "
+                f"{returned} at the hand-back"
                 + (f", {retries} refused hand-backs so far" if retries else "")
             )
         if not guest.shutdown(60) or guest.return_code != 0:
