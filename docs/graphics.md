@@ -257,20 +257,39 @@ pixels in the high half of the flags is checked to be one picture, and keeps a
 texture for each plane: R8 for luma, RG8 for interleaved chroma, and R8 for each
 planar chroma plane. A sampler view of the image sends the plane it selects where
 a view carries its layers, plane 0 as the ordinary layer range and a later plane
-as its number, and reads that plane's texture. The textures are made when the
-first view is, from the image as it then is, and every write the guest transfers
-into the image redraws the plane rows its bytes feed in the blitter's own
-context; an image that only a codec or the CPU touches never gets them. Writes
-the GPU makes into such an image are not followed, because nothing allocates it
-as a render target. The capability `VIRGL_CAP_V2_PACKED_YUV` says the renderer
-knows the flags. minigbm sends them for the 8-bit YUV buffers it emulates (NV12,
-NV21 and YV12), only when the capability is present, so an older renderer is
-never sent a flag it refuses and an older minigbm sends none, which leaves the
-image the single R8 texture it always was. A P010 buffer is not tagged: its
-two-byte samples do not fit the R8 plane textures, and nothing samples it. A guest that imports each plane of a picture as its own
-resource sends the plane number as well, and the renderer reads it as the whole
-texture of that resource unless the resource has the plane's image, so a planar
-picture whose planes are separate buffers samples correctly too.
+as its number, and reads that plane's texture. A triplanar image makes the
+textures when the first view is, from the image as it then is, and every write
+the guest transfers into the image redraws the plane rows its bytes feed in the
+blitter's own context; an image that only a codec or the CPU touches never gets
+them. Writes the GPU makes into such an image are not followed, because nothing
+allocates it as a render target.
+
+A biplanar image (NV12 and NV21, which is what the hardware decoders produce)
+keeps its pixels only in its plane textures, which exist from its creation: its
+R8 texture is 1x1 and only names it. A transfer of any box writes or reads the
+plane textures that the box's luma rows and chroma rows fall in, and nothing is
+drawn from an image, so a decoded frame costs its planes and no R8 image, plane
+draw or upload staging beside them. A chroma box that cuts an interleaved pair
+in two, or whose guest rows are an odd number of bytes apart, goes through the
+whole pairs it touches, so the half the box does not carry is kept. The bytes
+of a row past the picture's width, or past its last chroma pair, are padding
+that no plane keeps: a write drops them and a read leaves the guest's bytes
+there alone. A use of the image other than a transfer (a surface, a copy
+region, a blit, a shader image, a clear, a view of a plane it does not have, or
+a presenter) first gives it the R8 storage of a plain image, read back from the
+planes, with a warning, and the image is a plain one from then on; playback and
+the CTS reach none of them. An image imported from an EGL image keeps its
+storage, and triplanar images keep the path above. The capability
+`VIRGL_CAP_V2_PACKED_YUV` says the renderer knows the flags. minigbm sends them
+for the 8-bit YUV buffers it emulates (NV12, NV21 and YV12), only when the
+capability is present, so an older renderer is never sent a flag it refuses and
+an older minigbm sends none, which leaves the image the single R8 texture it
+always was. A P010 buffer is not tagged: its two-byte samples do not fit the R8
+plane textures, and nothing samples it. A guest that imports each plane of a
+picture as its own resource sends the plane number as well, and the renderer
+reads it as the whole texture of that resource unless the resource has the
+plane's image, so a planar picture whose planes are separate buffers samples
+correctly too.
 
 A single-plane buffer's rows are padded to the first whole number of pixels
 that makes them a multiple of 16 bytes (a 642-pixel RGBA row is 2576 bytes and

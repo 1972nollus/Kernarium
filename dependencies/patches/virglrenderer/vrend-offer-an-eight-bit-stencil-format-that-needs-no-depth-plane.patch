@@ -62,10 +62,10 @@ index d1db8bb999cb4de5f608869adb6eec26dc455b12..0f5e6c2eb0767d655ec6b76326646a28
          attachment = GL_DEPTH_ATTACHMENT;
        glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, tex_id, 0);
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 2474d3ee0fdbf38fa7c252e0a868a28243065bda..76f1f4bd0594c41b1b9b4d25a15c3bd21681101c 100644
+index 42b7031ca765c586becf4151af2e631a77fd380a..da7daebc79112bbbc5a994b40c6e3f9626fc3d8e 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -3146,15 +3146,22 @@ void vrend_fb_bind_texture_id(struct vrend_resource *res,
+@@ -3163,15 +3163,22 @@ void vrend_fb_bind_texture_id(struct vrend_resource *res,
        break;
     }
  
