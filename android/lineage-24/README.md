@@ -594,7 +594,9 @@ stencil, when the host renderer advertises that format
 ([`../../docs/graphics.md`](../../docs/graphics.md#guest-capability-boundary)):
 HWUI asks for stencil and no depth for every window, `eglChooseConfig` sorts a
 config without a depth plane first for such a request, and the window then holds
-one byte per pixel where the smallest config with a depth plane held four. An
+one byte per pixel where the smallest config with a depth plane held four. The
+window's stencil plane is the drawable's depth-stencil attachment, shared by
+every context that draws to the window, as a depth-stencil plane is. An
 application that asks for no depth and uses one anyway no longer gets it, as the
 EGL specification allows. The port also leaves out `VK_KHR_device_address_commands`,
 which the CTS refuses on a device whose declared dEQP level does not list it. A guest replay assigns new

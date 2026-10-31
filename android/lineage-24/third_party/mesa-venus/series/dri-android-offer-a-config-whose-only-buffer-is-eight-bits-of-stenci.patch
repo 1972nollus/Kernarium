@@ -16,10 +16,21 @@ eight stencil bits, which eglChooseConfig sorts before the configs that have a
 depth plane for a request that wants none. A host that does not offer the
 format, as an older virglrenderer does not, leaves the config list as it was.
 
+The state tracker did not treat the stencil plane of such a window as the
+drawable's depth-stencil attachment. A window framebuffer keeps a renderbuffer
+whose format has no depth at BUFFER_STENCIL alone, and only BUFFER_DEPTH maps to
+the drawable's depth-stencil attachment, so no framebuffer asked the drawable
+for the plane and each one allocated a stencil buffer of its own. Contexts that
+draw to one window then did not see each other's stencil values, which the
+multi-context EGL render cases do not accept. Map a stencil-only window
+renderbuffer to the drawable's depth-stencil attachment when the framebuffer
+is built and when it is validated, as a depth-stencil one is.
+
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
  src/gallium/frontends/dri/dri_screen.c | 14 +++++++++++++-
- 1 file changed, 13 insertions(+), 1 deletion(-)
+ src/mesa/state_tracker/st_manager.c    | 17 +++++++++++++++++
+ 2 files changed, 30 insertions(+), 1 deletion(-)
 
 diff --git a/src/gallium/frontends/dri/dri_screen.c b/src/gallium/frontends/dri/dri_screen.c
 index 7855f4b2b27d6795de4cbe7795d54ed669dcfba7..c973f511e3714787d84ddd3d820406ef6bab4202 100644
@@ -60,3 +71,38 @@ index 7855f4b2b27d6795de4cbe7795d54ed669dcfba7..c973f511e3714787d84ddd3d820406ef
  #undef HAS_ZS
  
     mixed_color_depth =
+diff --git a/src/mesa/state_tracker/st_manager.c b/src/mesa/state_tracker/st_manager.c
+index 9af523a90a962a6e026a188e924646c34bfcdc6b..c3f6c64deb6ca104ee477703b99ef407ef28a003 100644
+--- a/src/mesa/state_tracker/st_manager.c
++++ b/src/mesa/state_tracker/st_manager.c
+@@ -261,6 +261,12 @@ st_framebuffer_validate(struct gl_framebuffer *stfb,
+          continue;
+       }
+ 
++      /* The depth-stencil attachment of a stencil-only visual is at
++       * BUFFER_STENCIL.
++       */
++      if (idx == BUFFER_DEPTH && !stfb->Attachment[idx].Renderbuffer)
++         idx = BUFFER_STENCIL;
++
+       rb = stfb->Attachment[idx].Renderbuffer;
+       assert(rb);
+       if (rb->texture == textures[i] &&
+@@ -324,6 +330,17 @@ st_framebuffer_update_attachments(struct gl_framebuffer *stfb)
+          continue;
+ 
+       statt = buffer_index_to_attachment(idx);
++
++      /* A visual whose depth-stencil format has no depth keeps its
++       * renderbuffer at BUFFER_STENCIL alone. It is still the drawable's
++       * depth-stencil attachment: left out, every framebuffer the contexts of
++       * one drawable make would allocate a stencil plane of its own instead of
++       * sharing the drawable's.
++       */
++      if (idx == BUFFER_STENCIL &&
++          !stfb->Attachment[BUFFER_DEPTH].Renderbuffer)
++         statt = ST_ATTACHMENT_DEPTH_STENCIL;
++
+       if (statt != ST_ATTACHMENT_INVALID &&
+           st_visual_have_buffers(stfb->drawable->visual, 1 << statt))
+          stfb->statts[stfb->num_statts++] = statt;

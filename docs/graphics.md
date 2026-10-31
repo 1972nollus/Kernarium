@@ -207,7 +207,9 @@ renderbuffer and texture lands on it too. An image with one plane detaches the
 other plane from the framebuffer it joins: a stencil-only image that follows a
 depth-stencil one must not inherit that image's depth plane, a pair Zink cannot
 draw to, so the switch from a window's depth-stencil buffer to a stencil-only
-renderbuffer keeps drawing.
+renderbuffer keeps drawing. The guest's Mesa treats that stencil plane as the
+window's depth-stencil attachment, so the contexts that draw to one window share
+it as they share a depth-stencil buffer.
 
 The scanout mask is held to the same standard. Only the 8-bit RGB layouts the
 display presents carry a scanout bit, and no YUV format does. The guest's
