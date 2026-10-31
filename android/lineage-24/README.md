@@ -516,7 +516,11 @@ command line), which shortens it by a few seconds. Once `sys.boot_completed`
 is set, the vendor init script writes 0 to `/sys/kernel/rcu_expedited`, so a
 running guest returns to normal grace periods and does not interrupt every
 vCPU for each one. The target-files verifier requires that action. Recovery
-loads no vendor init script and stays expedited for its short run.
+loads no vendor init script and stays expedited for its short run. The command
+line also sets `nbd.nbds_max=0`: Android uses no network block device, and the
+kernel's built-in driver would otherwise create 16, each with a receiver thread
+and its stack, about 7 MiB of guest memory. The Mac launcher and Kernarium both
+read this one file from the release, so the setting reaches both.
 
 The guest has a compressed swap of half its RAM. `fstab.uml` names one zram
 entry (`zramsize=50%`) and the same init action that restores the RCU grace

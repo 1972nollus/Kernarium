@@ -2972,6 +2972,12 @@ def verify_hal_selections(android_root: Path) -> None:
     if verifier.UML_INIT_RCU_RESTORE not in actions.get(verifier.UML_INIT_RCU_TRIGGER, []):
         fail("product init script does not restore normal RCU grace periods after boot")
 
+    # Android uses no network block device, and the desktop kernels' built-in
+    # driver otherwise creates 16 devices with a stack-holding receiver thread
+    # each.
+    if command_line.count("nbd.nbds_max=0") != 1:
+        fail("boot command line does not turn the network block devices off once")
+
 
 def newc_entry(name: str, mode: int, payload: bytes, inode: int) -> bytes:
     fields = (
