@@ -6,6 +6,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import contextlib
 import gzip
 import importlib.util
 import io
@@ -16,6 +17,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import traceback
 import zipfile
 import zlib
 from pathlib import Path
@@ -217,6 +219,44 @@ def synthetic_arm_elf(
     if edit is not None:
         struct.pack_into(edit[0], payload, edit[1], edit[2])
     return with_imports(bytes(payload), False, imports) if imports is not None else bytes(payload)
+
+
+def run_in_process(module, *arguments: object) -> subprocess.CompletedProcess[str]:
+    """Run a loaded tool's main() as `run_tool` would run its script.
+
+    The result carries the exit status the interpreter would report and the
+    tool's stdout and stderr together: a tool that exits with a message
+    reports status 1 and prints the message, and an uncaught exception reports
+    status 1 and prints its traceback. A fixture-heavy test runs a verifier
+    hundreds of times; a process each would spend most of its time starting
+    Python and importing the verifier.
+    """
+    output = io.StringIO()
+    status = 0
+    saved = sys.argv
+    sys.argv = [str(module.__file__), *map(str, arguments)]
+    try:
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            try:
+                module.main()
+            except SystemExit as stop:
+                if stop.code is None:
+                    status = 0
+                elif isinstance(stop.code, int):
+                    status = stop.code
+                else:
+                    print(stop.code, file=sys.stderr)
+                    status = 1
+            except Exception:
+                traceback.print_exc()
+                status = 1
+    finally:
+        sys.argv = saved
+    return subprocess.CompletedProcess(
+        [sys.executable, str(module.__file__), *map(str, arguments)],
+        status,
+        output.getvalue(),
+    )
 
 
 def load_tool(path: Path):
@@ -1626,7 +1666,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         write_fixture(good)
         run_tool(verifier, "--target-files", good, *kernel_options, check=True)
         # Every supported variant verifies as itself and is rejected as any
-        # other: the build-type properties follow the requested variant.
+        # other: the build-type properties follow the requested variant. These
+        # run as processes, like the good archive: they state the command line.
         for variant in BUILD_VARIANTS:
             for requested in BUILD_VARIANTS:
                 fixture = root / f"{variant}-as-{requested}.zip"
@@ -1640,6 +1681,31 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         f"a {variant} build verified as {requested}: "
                         f"{result.returncode} {result.stdout}"
                     )
+
+        # A rejection fixture is built and verified once however many tables
+        # state it: the cases whose options are the same share one run, which
+        # must satisfy every assertion of every case (the status and the
+        # verifier's own message of the first table, the named cause of the
+        # second).
+        rejections: dict[str, dict[str, object]] = {}
+
+        def canonical(value: object) -> str:
+            if isinstance(value, dict):
+                return "{" + ",".join(
+                    f"{key!r}:{canonical(item)}" for key, item in sorted(value.items())
+                ) + "}"
+            return repr(value)
+
+        def reject(label: str, options: dict[str, object], reason: str | None = None) -> None:
+            case = rejections.setdefault(
+                canonical(options),
+                {"options": options, "labels": [], "reasons": [], "message": False},
+            )
+            case["labels"].append(label)
+            if reason is None:
+                case["message"] = True
+            else:
+                case["reasons"].append(reason)
 
         for label, options in (
             ("module", {"module": True}),
@@ -2029,13 +2095,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"VENDOR/etc/selinux/vendor_file_contexts":
                           good_video_contexts.replace("mediacodec_exec", "vendor_file").encode()}}),
         ):
-            fixture = root / f"bad-{label}.zip"
-            write_fixture(fixture, **options)
-            result = run_tool(verifier, "--target-files", fixture, *kernel_options)
-            if result.returncode == 0:
-                fail(f"target-files verifier accepted the {label} fixture")
-            if result.returncode != 1 or "Android target-files verifier: " not in result.stdout:
-                fail(f"target-files verifier did not reject the {label} fixture: {result.stdout}")
+            reject(label, options)
 
         # Rejections that must name their cause: kernel module files and
         # metadata in any case, and a target ELF whose header is not an
@@ -2593,11 +2653,36 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           good_video_contexts.replace("mediacodec_exec", "vendor_file").encode()}},
              "not labeled mediacodec_exec"),
         ):
-            fixture = root / f"bad-{label}.zip"
-            write_fixture(fixture, **options)
-            result = run_tool(verifier, "--target-files", fixture, *kernel_options)
-            if result.returncode != 1 or not re.search(reason, result.stdout):
-                fail(f"target-files verifier did not reject the {label} fixture for {reason!r}: {result.stdout}")
+            reject(label, options, reason)
+
+        for index, case in enumerate(rejections.values()):
+            label = "/".join(case["labels"])
+            fixture = root / f"bad-{case['labels'][0]}.zip"
+            write_fixture(fixture, **case["options"])
+            result = run_in_process(tool, "--target-files", fixture, *kernel_options)
+            if index == 0:
+                # The harness answers as the script does: the first case also
+                # runs as a process.
+                process = run_tool(verifier, "--target-files", fixture, *kernel_options)
+                if (process.returncode, process.stdout) != (result.returncode, result.stdout):
+                    fail(
+                        f"the in-process run of the {label} fixture differs from the "
+                        f"script's: {result.returncode} {result.stdout!r} against "
+                        f"{process.returncode} {process.stdout!r}"
+                    )
+            if result.returncode == 0:
+                fail(f"target-files verifier accepted the {label} fixture")
+            if result.returncode != 1 or (
+                case["message"]
+                and "Android target-files verifier: " not in result.stdout
+            ):
+                fail(f"target-files verifier did not reject the {label} fixture: {result.stdout}")
+            for reason in case["reasons"]:
+                if not re.search(reason, result.stdout):
+                    fail(
+                        f"target-files verifier did not reject the {label} fixture "
+                        f"for {reason!r}: {result.stdout}"
+                    )
 
 
 def verify_net_setup_tool(android_root: Path) -> None:
@@ -3495,11 +3580,22 @@ def verify_layout_consumers(root: Path, android_root: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, required=True)
+    parser.add_argument(
+        "--part",
+        choices=("all", "verifiers", "target-files"),
+        default="all",
+        help="run the target-files fixtures alone, everything else alone, or both",
+    )
     args = parser.parse_args()
     root = args.source_root.resolve()
 
     android_root = root / "android/lineage-24"
     kernel_root = root / "kernel/mainline-6.18"
+
+    if args.part == "target-files":
+        verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
+        print("Android 17 target-files verifier fixtures passed")
+        return
 
     subprocess.run(
         [
@@ -3510,7 +3606,8 @@ def main() -> None:
         check=True,
     )
     verify_kernel_elf_fixtures(android_root / "build/verify-kernel-elf.py")
-    verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
+    if args.part == "all":
+        verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
     verify_hal_selections(android_root)
     verify_net_setup_tool(android_root)
     verify_erofs_board(android_root)

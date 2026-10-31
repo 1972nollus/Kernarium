@@ -415,7 +415,8 @@ tests, and the ops AOSP records for security. SimpleDeviceConfig applies its
 `overlay/overlay/packages/apps/SimpleDeviceConfig` sets the second to
 LineageOS's list united with the ops of `DiscreteOpsRegistry`'s defaults. The
 target-files verifier requires the generated overlay to cover the defaults; a
-list that drops one of them also fails the `lineage24-builder-lane` fixtures.
+list that drops one of them also fails the `lineage24-target-files-fixtures`
+test.
 
 LineageOS's default wallpaper is a nearly detail-free square, and its `sw600dp`
 and `sw720dp` variants, which every display of 600dp and more draws, are 1920 by

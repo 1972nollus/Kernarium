@@ -4,7 +4,15 @@ uml_add_tooling_test(
     NAME lineage24-builder-lane
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_builder_lane.py
-        --source-root ${PROJECT_SOURCE_DIR}
+        --source-root ${PROJECT_SOURCE_DIR} --part verifiers
+    LABELS android;audit
+    TIMEOUT 60)
+
+uml_add_tooling_test(
+    NAME lineage24-target-files-fixtures
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_builder_lane.py
+        --source-root ${PROJECT_SOURCE_DIR} --part target-files
     LABELS android;audit
     TIMEOUT 120)
 
