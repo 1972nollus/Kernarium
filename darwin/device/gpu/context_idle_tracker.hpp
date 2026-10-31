@@ -18,7 +18,10 @@ namespace uml::gpu {
  * does not do for minutes. A context is idle once a whole idle interval has
  * passed since its last activity (a command buffer, a transfer, a fence it
  * asked for, a fence that retired) and no fence it asked for is still
- * outstanding. It is reported once; any new activity makes it eligible again.
+ * outstanding. It is reported twice, an idle interval apart: the trim of the
+ * first report flushes the context, and the batch that flush submits has not
+ * completed when the trim looks at it, so only the second trim can release
+ * what that last batch holds. Any new activity makes it eligible again.
  *
  * Only contexts that were added are tracked. Safe to call from any thread. */
 class ContextIdleTracker {
@@ -26,6 +29,8 @@ public:
     using Clock = std::chrono::steady_clock;
 
     static constexpr auto defaultIdleInterval = std::chrono::seconds(1);
+    /* How often an idle context is reported before it is active again. */
+    static constexpr unsigned reportsPerIdlePeriod = 2;
 
     explicit ContextIdleTracker(
         Clock::duration idleInterval = defaultIdleInterval) noexcept;
@@ -35,7 +40,12 @@ public:
     void reset();
 
     /* The context ran something on the host GL stack. */
-    void activity(std::uint32_t contextId, Clock::time_point now);
+    void activity(std::uint32_t contextId, Clock::time_point now);    /* Every context starts a new idle period. A texture that one context
+     * deleted may still have a view that another context made, and a context
+     * destroys its own views only when it next flushes: the context that
+     * sampled a texture the host has just deleted has something to release
+     * although nothing was sent to it. */
+    void activityAll(Clock::time_point now);
     /* A fence on a ring of the context was asked for and later retired.
      * Cookies on a ring only grow, and retiring one retires all before it. */
     void fenceCreated(
@@ -49,12 +59,14 @@ public:
         std::uint64_t cookie,
         Clock::time_point now);
 
-    /* The contexts to trim at `now`, each reported until it is active again. */
+    /* The contexts to trim at `now`. Each is reported at the end of its idle
+     * interval and once more an interval later, then not again until it is
+     * active. */
     [[nodiscard]] std::vector<std::uint32_t> takeIdle(Clock::time_point now);
 
-    /* How long until a context becomes idle, zero if one already is, and
-     * nothing if no context is waiting for it: all of them have been
-     * reported, or are waiting on a fence. */
+    /* How long until a context is next due for a report, zero if one already
+     * is, and nothing if no context is waiting for it: all of them have been
+     * reported twice, or are waiting on a fence. */
     [[nodiscard]] std::optional<Clock::duration> nextDelay(
         Clock::time_point now) const;
 
@@ -65,10 +77,16 @@ private:
     };
     struct Context {
         Clock::time_point lastActivity {};
-        bool reported {};
+        /* The reports since the last activity, and when the latest was made. */
+        unsigned reports {};
+        Clock::time_point reportedAt {};
         std::map<std::uint32_t, Ring> rings;
 
         [[nodiscard]] bool hasPendingFence() const noexcept;
+        /* When the next report is due, or nothing once both were made or a
+         * fence is outstanding. */
+        [[nodiscard]] std::optional<Clock::time_point> nextReport(
+            Clock::duration idleInterval) const noexcept;
     };
 
     Clock::duration idleInterval_;

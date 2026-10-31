@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /* The renderer trims a guest context once a whole idle interval has passed
- * since its last activity and no fence it asked for is outstanding. The
- * tracker decides that from the times it is told, so the test drives it with
- * its own clock: a context is reported once, activity of any kind makes it
- * eligible again, a fence outstanding holds it back however long it takes, a
- * retired fence starts the interval, contexts the tracker was not told of are
- * ignored, and the delay it names is the time to the next context that could
- * be reported. */
+ * since its last activity and no fence it asked for is outstanding, and once
+ * more an interval later, when the batch the first trim flushed has completed.
+ * The tracker decides that from the times it is told, so the test drives it
+ * with its own clock: a context is reported twice and then not again, activity
+ * of any kind makes it eligible again, a fence outstanding holds it back
+ * however long it takes, a retired fence starts the interval, contexts the
+ * tracker was not told of are ignored, and the delay it names is the time to
+ * the next context that could be reported. */
 
 #include "context_idle_tracker.hpp"
 #include "require.hpp"
@@ -44,10 +45,111 @@ void checkIdleInterval()
 
     require(tracker.takeIdle(origin + 1s) == std::vector {first},
         "a context was not idle after the interval");
-    require(tracker.takeIdle(origin + 10s) == none,
-        "a context was reported twice");
-    require(!tracker.nextDelay(origin + 10s).has_value(),
-        "a reported context still had a delay");
+    require(tracker.takeIdle(origin + 1500ms) == none,
+        "a context was reported again before an interval had passed");
+    require(tracker.takeIdle(origin + 10s) == std::vector {first},
+        "a context was not reported a second time");
+    require(tracker.takeIdle(origin + 60s) == none,
+        "a context was reported three times");
+    require(!tracker.nextDelay(origin + 60s).has_value(),
+        "a context reported twice still had a delay");
+}
+
+void checkSecondReport()
+{
+    ContextIdleTracker tracker(1s);
+    tracker.add(first, origin);
+    require(tracker.takeIdle(origin + 1s) == std::vector {first},
+        "the first report is missing");
+
+    /* The second report is an interval after the first, not after the last
+     * activity, and the delay says so. */
+    require(tracker.nextDelay(origin + 1s) == 1s,
+        "the delay after the first report was not an interval");
+    require(tracker.nextDelay(origin + 1400ms) == 600ms,
+        "the delay to the second report did not shrink with time");
+    require(tracker.takeIdle(origin + 1999ms) == none,
+        "the second report came before an interval had passed");
+    require(tracker.takeIdle(origin + 2s) == std::vector {first},
+        "the second report is missing");
+    require(!tracker.nextDelay(origin + 2s).has_value(),
+        "a context reported twice had a delay");
+
+    /* A late poll reports from the time it ran: the second interval is
+     * counted from the first report, not from when it was due. */
+    tracker.activity(first, origin + 10s);
+    require(tracker.takeIdle(origin + 13s) == std::vector {first},
+        "the first report after activity is missing");
+    require(tracker.takeIdle(origin + 13999ms) == none,
+        "the second report came before an interval after a late first report");
+    require(tracker.takeIdle(origin + 14s) == std::vector {first},
+        "the second report after a late first report is missing");
+
+    /* Activity between the reports starts the whole period again. */
+    tracker.activity(first, origin + 20s);
+    require(tracker.takeIdle(origin + 21s) == std::vector {first},
+        "a context was not reported after activity");
+    tracker.activity(first, origin + 21500ms);
+    require(tracker.takeIdle(origin + 22s) == none,
+        "activity between the reports did not restart the interval");
+    require(tracker.takeIdle(origin + 22500ms) == std::vector {first},
+        "the first report after the interrupted period is missing");
+    require(tracker.takeIdle(origin + 23500ms) == std::vector {first},
+        "the second report after the interrupted period is missing");
+    require(tracker.takeIdle(origin + 60s) == none,
+        "a third report was made");
+
+    /* A fence asked for between the reports holds the second one back until
+     * it retires, and the period starts again at the retirement. */
+    tracker.activity(first, origin + 70s);
+    require(tracker.takeIdle(origin + 71s) == std::vector {first},
+        "a context was not reported before its fence");
+    tracker.fenceCreated(first, 0, 1, origin + 71500ms);
+    require(tracker.takeIdle(origin + 90s) == none,
+        "a context with a fence outstanding was reported a second time");
+    tracker.fenceRetired(first, 0, 1, origin + 90s);
+    require(tracker.takeIdle(origin + 91s) == std::vector {first},
+        "the first report after the retirement is missing");
+    require(tracker.takeIdle(origin + 92s) == std::vector {first},
+        "the second report after the retirement is missing");
+}
+
+void checkActivityOfAllContexts()
+{
+    ContextIdleTracker tracker(1s);
+    tracker.add(first, origin);
+    tracker.add(second, origin);
+    require((tracker.takeIdle(origin + 1s) == std::vector {first, second}),
+        "both contexts should have been reported");
+    require((tracker.takeIdle(origin + 2s) == std::vector {first, second}),
+        "both contexts should have been reported a second time");
+    require(tracker.takeIdle(origin + 60s) == none,
+        "a context was reported a third time");
+
+    /* Something the host did concerns every context: all of them start a new
+     * period. */
+    tracker.activityAll(origin + 70s);
+    require(tracker.nextDelay(origin + 70s) == 1s,
+        "activity of all contexts did not start a new interval");
+    require(tracker.takeIdle(origin + 70999ms) == none,
+        "a context was reported before its new interval ended");
+    require((tracker.takeIdle(origin + 71s) == std::vector {first, second}),
+        "contexts were not reported again after activity of all");
+
+    /* A context waiting on a fence stays held back, and the activity does not
+     * report a context that was never added. */
+    tracker.fenceCreated(second, 0, 3, origin + 80s);
+    tracker.activityAll(origin + 90s);
+    require(tracker.takeIdle(origin + 100s) == std::vector {first},
+        "a context with a fence outstanding was reported after activity of all");
+    tracker.remove(first);
+    tracker.activityAll(origin + 110s);
+    require(tracker.takeIdle(origin + 120s) == none,
+        "a removed context or one with a fence outstanding was reported");
+    ContextIdleTracker empty(1s);
+    empty.activityAll(origin);
+    require(empty.takeIdle(origin + 60s) == none && !empty.nextDelay(origin).has_value(),
+        "activity of all contexts invented a context");
 }
 
 void checkActivityMakesTheContextEligibleAgain()
@@ -130,6 +232,8 @@ void checkSeveralContexts()
     tracker.activity(second, origin + 5s);
     require((tracker.takeIdle(origin + 6s) == std::vector {first, second}),
         "contexts were not reported together in id order");
+    require((tracker.takeIdle(origin + 7s) == std::vector {first, second}),
+        "contexts were not reported together a second time");
 
     tracker.remove(first);
     tracker.activity(first, origin + 7s);
@@ -172,6 +276,8 @@ void checkThreads()
 int main()
 {
     checkIdleInterval();
+    checkSecondReport();
+    checkActivityOfAllContexts();
     checkActivityMakesTheContextEligibleAgain();
     checkPendingFences();
     checkSeveralContexts();

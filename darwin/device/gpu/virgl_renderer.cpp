@@ -441,6 +441,8 @@ void VirglRenderer::destroyContext(std::uint32_t contextId) noexcept
     virgl_renderer_context_destroy(contextId);
     try {
         idleContexts_.remove(contextId);
+        // Destroying a context deletes the textures only it held.
+        idleContexts_.activityAll(ContextIdleTracker::Clock::now());
         std::lock_guard lock(mutex_);
         std::erase_if(
             retiredContextFences_,
@@ -905,6 +907,7 @@ int VirglRenderer::contextFenceStatus(
 void VirglRenderer::unrefResource(std::uint32_t resourceId) noexcept
 {
     virgl_renderer_resource_unref(resourceId);
+    noteResourceReleased();
 }
 
 int VirglRenderer::attachBacking(
@@ -956,7 +959,9 @@ int VirglRenderer::detachResource(
     if (result != 0) {
         virgl_renderer_ctx_attach_resource(
             static_cast<int>(contextId), static_cast<int>(resourceId));
+        return result;
     }
+    noteResourceReleased();
     return result;
 }
 
@@ -1059,6 +1064,14 @@ void VirglRenderer::noteContextActivity(std::uint32_t contextId) noexcept
         return;
     try {
         idleContexts_.activity(contextId, ContextIdleTracker::Clock::now());
+    } catch (...) {
+    }
+}
+
+void VirglRenderer::noteResourceReleased() noexcept
+{
+    try {
+        idleContexts_.activityAll(ContextIdleTracker::Clock::now());
     } catch (...) {
     }
 }
