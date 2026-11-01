@@ -64,10 +64,10 @@ index d2e1788a82270a9b70cac3a0db0f74864ae5e3c4..437406234ab21926b4099e0b3cedb573
  	virtgpu_fence.o virtgpu_object.o virtgpu_debugfs.o virtgpu_plane.o \
  	virtgpu_ioctl.o virtgpu_prime.o virtgpu_trace_points.o virtgpu_submit.o
 diff --git a/drivers/gpu/drm/virtio/virtgpu_drv.h b/drivers/gpu/drm/virtio/virtgpu_drv.h
-index 00c609c3b53a80ee4cd0b03661d3d510246dce1d..1a6b956f090d90e18f974696c8374221f9c20f3f 100644
+index 8575c7787fc3695ac4dde86d81bffdd2f3afde18..60efab16c485afaa0f2b6aab2499e318c7f4092a 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_drv.h
 +++ b/drivers/gpu/drm/virtio/virtgpu_drv.h
-@@ -517,6 +517,10 @@ int virtgpu_dma_buf_import_sgt(struct virtio_gpu_mem_entry **ents,
+@@ -522,6 +522,10 @@ int virtgpu_dma_buf_import_sgt(struct virtio_gpu_mem_entry **ents,
  /* virtgpu_debugfs.c */
  void virtio_gpu_debugfs_init(struct drm_minor *minor);
  

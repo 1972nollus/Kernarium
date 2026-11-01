@@ -114,7 +114,7 @@ index f7ba1e9dea49a049f9177d276bf57c288c799e92..a090b758fdf202602c2cbb7437c6f320
  		file_seals = memfd_file_seals_ptr(file);
  		if (file_seals) {
 diff --git a/security/selinux/hooks.c b/security/selinux/hooks.c
-index eef75bde66f5ba7441c1da7ef4348cc8c00495a2..1d2207ede79f8e6c6f42714df012e9b54be4a69e 100644
+index 03ecfc6de2c3eb8494984c9d74d9e31f9788f54e..80b949409d37cd39a9e8a1316d08ab8113d1f16f 100644
 --- a/security/selinux/hooks.c
 +++ b/security/selinux/hooks.c
 @@ -93,6 +93,7 @@
@@ -125,7 +125,7 @@ index eef75bde66f5ba7441c1da7ef4348cc8c00495a2..1d2207ede79f8e6c6f42714df012e9b5
  
  #include "avc.h"
  #include "objsec.h"
-@@ -2348,6 +2349,10 @@ static int selinux_bprm_creds_for_exec(struct linux_binprm *bprm)
+@@ -2355,6 +2356,10 @@ static int selinux_bprm_creds_for_exec(struct linux_binprm *bprm)
  	new_crsec = selinux_cred(bprm->cred);
  	isec = inode_security(inode);
  
@@ -136,7 +136,7 @@ index eef75bde66f5ba7441c1da7ef4348cc8c00495a2..1d2207ede79f8e6c6f42714df012e9b5
  	/* Default to the current task SID. */
  	new_crsec->sid = old_crsec->sid;
  	new_crsec->osid = old_crsec->sid;
-@@ -2400,8 +2405,8 @@ static int selinux_bprm_creds_for_exec(struct linux_binprm *bprm)
+@@ -2407,8 +2412,8 @@ static int selinux_bprm_creds_for_exec(struct linux_binprm *bprm)
  	ad.u.file = bprm->file;
  
  	if (new_crsec->sid == old_crsec->sid) {
@@ -147,7 +147,7 @@ index eef75bde66f5ba7441c1da7ef4348cc8c00495a2..1d2207ede79f8e6c6f42714df012e9b5
  		if (rc)
  			return rc;
  	} else {
-@@ -2411,8 +2416,8 @@ static int selinux_bprm_creds_for_exec(struct linux_binprm *bprm)
+@@ -2418,8 +2423,8 @@ static int selinux_bprm_creds_for_exec(struct linux_binprm *bprm)
  		if (rc)
  			return rc;
  
@@ -158,7 +158,7 @@ index eef75bde66f5ba7441c1da7ef4348cc8c00495a2..1d2207ede79f8e6c6f42714df012e9b5
  		if (rc)
  			return rc;
  
-@@ -3008,10 +3013,18 @@ static int selinux_inode_init_security_anon(struct inode *inode,
+@@ -3015,10 +3020,18 @@ static int selinux_inode_init_security_anon(struct inode *inode,
  	struct common_audit_data ad;
  	struct inode_security_struct *isec;
  	int rc;
@@ -177,7 +177,7 @@ index eef75bde66f5ba7441c1da7ef4348cc8c00495a2..1d2207ede79f8e6c6f42714df012e9b5
  	isec = selinux_inode(inode);
  
  	/*
-@@ -3031,7 +3044,10 @@ static int selinux_inode_init_security_anon(struct inode *inode,
+@@ -3038,7 +3051,10 @@ static int selinux_inode_init_security_anon(struct inode *inode,
  		isec->sclass = context_isec->sclass;
  		isec->sid = context_isec->sid;
  	} else {

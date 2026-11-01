@@ -390,7 +390,7 @@ index fc13ce83dcf8fbd119e4915d4a904089cd677c8e..da7d5a81db003f8572aafbaccc580c29
  
  #endif
 diff --git a/include/linux/io_uring_types.h b/include/linux/io_uring_types.h
-index 4f1607e00359b7213fffbed93a4c7ea0cc4dcfb8..ab9ee8ecf88fef31351e5c76b6057ba105ba52e1 100644
+index bdfc3cf7d989d01076870117081947112f646af5..b46b7c20704b89ef67da23ca7f680588c81e6d49 100644
 --- a/include/linux/io_uring_types.h
 +++ b/include/linux/io_uring_types.h
 @@ -91,6 +91,10 @@ struct io_mapped_region {
@@ -450,7 +450,7 @@ index ac01dc4eb2cecd71ed39bbb65df912b4734e9169..cadd9b1de926b15238d58a8b0619da00
  static inline bool arch_pgtable_dma_compat(struct mm_struct *mm)
  {
 diff --git a/io_uring/memmap.c b/io_uring/memmap.c
-index add03ca75cb90eb4040916b69731e40855a12da8..462872a716698309b5410e23599fb59aeb45ac5d 100644
+index 3855452f48e2972611ef67429a709df9164388ed..4cc1529fd0b88f36654d460f6b6e77fe2649f878 100644
 --- a/io_uring/memmap.c
 +++ b/io_uring/memmap.c
 @@ -8,6 +8,8 @@
@@ -462,7 +462,7 @@ index add03ca75cb90eb4040916b69731e40855a12da8..462872a716698309b5410e23599fb59a
  #include <asm/shmparam.h>
  
  #include "memmap.h"
-@@ -103,6 +105,13 @@ void io_free_region(struct io_ring_ctx *ctx, struct io_mapped_region *mr)
+@@ -103,6 +105,13 @@ void io_free_region(struct user_struct *user, struct io_mapped_region *mr)
  
  		kvfree(mr->pages);
  	}
@@ -475,8 +475,8 @@ index add03ca75cb90eb4040916b69731e40855a12da8..462872a716698309b5410e23599fb59a
 +#endif
  	if ((mr->flags & IO_REGION_F_VMAP) && mr->ptr)
  		vunmap(mr->ptr);
- 	if (mr->nr_pages && ctx->user)
-@@ -145,6 +154,15 @@ static int io_region_pin_pages(struct io_ring_ctx *ctx,
+ 	if (mr->nr_pages && user)
+@@ -144,6 +153,15 @@ static int io_region_pin_pages(struct io_mapped_region *mr,
  	if (WARN_ON_ONCE(nr_pages != mr->nr_pages))
  		return -EFAULT;
  
@@ -511,7 +511,7 @@ index 76001e9ba04f1c116c92b3b76f43d45464a00f36..909561b73db0ee6d391c6e9a965bcd75
  # whether the data caches are aliased (VIVT or VIPT with dcache
  # aliasing) need to select this.
 diff --git a/mm/vma.c b/mm/vma.c
-index dcaa2d8998bfb1573da3d578d4e9b438320389f8..7f30fb6360b2579fc9ae14a60e2ada34d4399190 100644
+index d1627a8ef32b128af71db3450f94af919c7c2cef..f8b709c027c6fe957d090554faf1d194e4ce8abf 100644
 --- a/mm/vma.c
 +++ b/mm/vma.c
 @@ -1306,6 +1306,7 @@ static void vms_complete_munmap_vmas(struct vma_munmap_struct *vms,
@@ -538,7 +538,7 @@ index dcaa2d8998bfb1573da3d578d4e9b438320389f8..7f30fb6360b2579fc9ae14a60e2ada34
  	validate_mm(mm);
  	if (vms->unlock)
  		mmap_read_unlock(mm);
-@@ -2783,6 +2788,8 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
+@@ -2808,6 +2813,8 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
  	}
  
  	ret = __mmap_region(file, addr, len, vm_flags, pgoff, uf);

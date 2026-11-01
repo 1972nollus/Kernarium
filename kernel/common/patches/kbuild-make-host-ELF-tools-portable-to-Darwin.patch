@@ -116,10 +116,10 @@ index 9f141395c074e33d60c3da6a6d2d0c594c2c2f18..841f3b0fa81647dd1547cd8cc3dbb706
  struct btf *btf__load_module_btf(const char *module_name, struct btf *vmlinux_btf)
  {
 diff --git a/tools/lib/bpf/libbpf.c b/tools/lib/bpf/libbpf.c
-index 94ee5f52b86617d56aae71271e131ab0b583ee14..ee93df1753518291acc503e554412cbc439f9966 100644
+index b21d2f842579f9814a6f565b3df5bdbf09e30926..21e93a61da63ffe475f7fe1b6dcd01cd7ab241c5 100644
 --- a/tools/lib/bpf/libbpf.c
 +++ b/tools/lib/bpf/libbpf.c
-@@ -8953,8 +8953,10 @@ int bpf_map__set_pin_path(struct bpf_map *map, const char *path)
+@@ -8960,8 +8960,10 @@ int bpf_map__set_pin_path(struct bpf_map *map, const char *path)
  	return 0;
  }
  
@@ -132,7 +132,7 @@ index 94ee5f52b86617d56aae71271e131ab0b583ee14..ee93df1753518291acc503e554412cbc
  
  const char *bpf_map__pin_path(const struct bpf_map *map)
  {
-@@ -9415,8 +9417,10 @@ int bpf_program__fd(const struct bpf_program *prog)
+@@ -9422,8 +9424,10 @@ int bpf_program__fd(const struct bpf_program *prog)
  	return prog->fd;
  }
  
@@ -145,7 +145,7 @@ index 94ee5f52b86617d56aae71271e131ab0b583ee14..ee93df1753518291acc503e554412cbc
  
  enum bpf_prog_type bpf_program__type(const struct bpf_program *prog)
  {
-@@ -9451,8 +9455,10 @@ int bpf_program__set_type(struct bpf_program *prog, enum bpf_prog_type type)
+@@ -9458,8 +9462,10 @@ int bpf_program__set_type(struct bpf_program *prog, enum bpf_prog_type type)
  	return 0;
  }
  
