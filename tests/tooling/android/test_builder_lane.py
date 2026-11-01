@@ -3173,18 +3173,57 @@ def verify_decoder_output_delay_topic(android_root: Path) -> None:
             fail(f"the decoder output delay check accepts {label}")
 
 
-def secure_element_topic_problems(added: str, removed: str) -> list[str]:
-    """What is wrong with the lines of the SecureElement topic.
+SECURE_ELEMENT_MANIFEST = "AndroidManifest.xml"
+SECURE_ELEMENT_APPLICATION = "src/com/android/se/SEApplication.java"
 
-    The topic makes the OMAPI service start when a client binds it by removing the one attribute that
-    starts it at boot. It changes nothing else of the manifest: the service, its exported intent filter
-    and its shared uid stay, so a client that binds the intent still connects."""
+
+def secure_element_topic_problems(files: dict[str, tuple[str, str]], message: str) -> list[str]:
+    """What is wrong with the SecureElement topic (its lines per file, and its commit message).
+
+    The topic makes the OMAPI service start when a client binds it. It removes the one attribute that
+    starts the process at boot, and the application's own startService call: the system starts the
+    process of a bound service in the background and refuses a background startService, so with the
+    call the application crashed in onCreate on every bind and no client ever connected (cand15). The
+    bind creates the service, which registers itself in its own onCreate. The topic changes nothing else
+    of the manifest: the service, its exported intent filter and its shared uid stay, so a client that
+    binds the intent still connects. Nothing else may start, bind or pin the service from the application:
+    a started service is sticky, and the system would restart the process after reclaiming it."""
     problems = []
+    if set(files) != {SECURE_ELEMENT_MANIFEST, SECURE_ELEMENT_APPLICATION}:
+        return [f"the topic touches {sorted(files)}, not the manifest and SEApplication.java"]
+    added, removed = files[SECURE_ELEMENT_MANIFEST]
     if added.strip():
-        problems.append("the topic adds lines")
+        problems.append("the topic adds manifest lines")
     if removed.strip() != 'android:persistent="true"':
         problems.append("the topic removes something other than the persistent attribute")
+    added, removed = files[SECURE_ELEMENT_APPLICATION]
+    if "startService(serviceIntent);" not in removed:
+        problems.append("the topic leaves the application's startService call")
+    for call in ("startService", "startForegroundService", "bindService"):
+        if call + "(" in added:
+            problems.append(f"the topic adds a {call} call to the application")
+    if "try" in added.split() or "catch" in added:
+        problems.append("the topic keeps the start and catches its refusal instead of removing it")
+    if "exactly as before" in message:
+        problems.append("the message claims that onCreate starts the service as before")
+    for needed in ("startService", "BackgroundServiceStartNotAllowedException"):
+        if needed not in message:
+            problems.append(f"the message does not mention {needed}")
     return problems
+
+
+def secure_element_topic_files(text: str) -> tuple[dict[str, tuple[str, str]], str]:
+    """The added and removed lines per file of a one-commit patch, and its commit message."""
+    head, _, body = text.partition("\n---\n")
+    message = head.split("\n\n", 1)[1] if "\n\n" in head else ""
+    files: dict[str, tuple[str, str]] = {}
+    for chunk in re.split(r"^diff --git a/", body, flags=re.MULTILINE)[1:]:
+        path = chunk.split(" b/", 1)[0]
+        lines = chunk.splitlines()
+        added = "\n".join(line[1:] for line in lines if line.startswith("+") and not line.startswith("+++"))
+        removed = "\n".join(line[1:] for line in lines if line.startswith("-") and not line.startswith("---"))
+        files[path] = (added, removed)
+    return files, message
 
 
 def verify_secure_element_topic(android_root: Path) -> None:
@@ -3195,22 +3234,46 @@ def verify_secure_element_topic(android_root: Path) -> None:
     patches = sorted((android_root / "patches/projects/p0024/series").glob("SecureElement-*.patch"))
     if len(patches) != 1:
         fail(f"p0024 has {len(patches)} SecureElement patches, not one")
-    text = patches[0].read_text()
-    if "+++ b/AndroidManifest.xml" not in text or text.count("+++ b/") != 1:
-        fail("the SecureElement topic touches something other than AndroidManifest.xml")
-    lines = text.splitlines()
-    added = "\n".join(line[1:] for line in lines if line.startswith("+") and not line.startswith("+++"))
-    removed = "\n".join(line[1:] for line in lines if line.startswith("-") and not line.startswith("---"))
-    problems = secure_element_topic_problems(added, removed)
+    files, message = secure_element_topic_files(patches[0].read_text())
+    problems = secure_element_topic_problems(files, message)
     if problems:
         fail("the SecureElement topic: " + "; ".join(problems))
-    for label, edited_added, edited_removed in (
-        ("a topic that adds the attribute back", added + 'android:persistent="true"', removed),
-        ("a topic that also drops the exported service", added, removed + '\n<service android:name=".SecureElementService"'),
-        ("a topic that removes another attribute", added, removed.replace("persistent", "directBootAware")),
-        ("a topic that removes nothing", added, ""),
+    manifest_added, manifest_removed = files[SECURE_ELEMENT_MANIFEST]
+    app_added, app_removed = files[SECURE_ELEMENT_APPLICATION]
+
+    def variant(manifest=None, application=None, message_edit=None, extra_file=None, drop_file=None):
+        edited = dict(files)
+        if manifest is not None:
+            edited[SECURE_ELEMENT_MANIFEST] = manifest
+        if application is not None:
+            edited[SECURE_ELEMENT_APPLICATION] = application
+        if extra_file:
+            edited["src/com/android/se/SecureElementService.java"] = ("", "x")
+        if drop_file:
+            edited.pop(drop_file)
+        return secure_element_topic_problems(edited, message_edit if message_edit is not None else message)
+
+    for label, found in (
+        ("a topic that adds the attribute back", variant(manifest=(manifest_added + 'android:persistent="true"', manifest_removed))),
+        ("a topic that also drops the exported service",
+         variant(manifest=(manifest_added, manifest_removed + '\n<service android:name=".SecureElementService"'))),
+        ("a topic that removes another attribute",
+         variant(manifest=(manifest_added, manifest_removed.replace("persistent", "directBootAware")))),
+        ("a topic that removes nothing from the manifest", variant(manifest=(manifest_added, ""))),
+        ("a topic that keeps the application's startService", variant(application=(app_added, ""))),
+        ("a topic that adds a catch around the start",
+         variant(application=(app_added + "\ntry { startService(serviceIntent); } catch (IllegalStateException e) { }", app_removed))),
+        ("a topic that starts the service in a foreground service",
+         variant(application=(app_added + "\nstartForegroundService(serviceIntent);", app_removed))),
+        ("a topic that binds the service from the application",
+         variant(application=(app_added + "\nbindService(serviceIntent, c, 1);", app_removed))),
+        ("a topic that touches the service as well", variant(extra_file=True)),
+        ("a topic without the application change", variant(drop_file=SECURE_ELEMENT_APPLICATION)),
+        ("a message that claims the start works as before",
+         variant(message_edit=message + "\nonCreate starts and registers the service exactly as before.")),
+        ("a message that does not give the crash", variant(message_edit=message.replace("BackgroundServiceStartNotAllowedException", "an exception"))),
     ):
-        if not secure_element_topic_problems(edited_added, edited_removed):
+        if not found:
             fail(f"the SecureElement topic check accepts {label}")
     # The product keeps the package (the package assertions are verified in verify_package_assertions) and
     # the image verifier does not forbid its directory.

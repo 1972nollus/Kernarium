@@ -162,10 +162,13 @@ build and verifier assert both lists. SecureElement, the OMAPI service for
 readers the machine does not have (no eSE, no UICC), is kept but is not
 persistent (a `packages/apps/SecureElement` topic, route `p0024`, drops
 `android:persistent`): nothing starts it at boot, so it costs no memory at idle.
-The first `SEService` client that binds it starts the process, whose
-application starts and registers the service as on any device, and the process
-stays until the system reclaims it; a client still connects, which CTS's OMAPI
-version test needs. The OMAPI features are not declared. QuickSearchBox and its
+The first `SEService` client that binds it starts the process, and the bind
+creates the service, which registers itself (the topic also drops the
+application's own `startService`: the system refuses it in a process it started
+for a bound service, and the application crashed on every bind). The service
+lives while a client is bound and is destroyed with the last unbind, the
+process stays until the system reclaims it, and nothing restarts it; a client
+still connects, which CTS's OMAPI version test needs. The OMAPI features are not declared. QuickSearchBox and its
 home-screen search surface are deliberately omitted. Bluetooth
 device implementations and feature declarations are also omitted. Settings is
 the stock application apart from its Bluetooth parts (a `packages/apps/Settings`
