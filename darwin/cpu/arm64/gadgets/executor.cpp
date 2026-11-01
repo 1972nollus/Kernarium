@@ -432,25 +432,30 @@ static_assert(block_instruction_count < 0xffU,
  *
  * Translated code follows `link` with one `ldp` of its stream and count while
  * other vCPUs of the address space may retarget it, so the pair sits on a
- * sixteen-byte boundary and is only ever written whole (store_pair). The
- * fallback word stays right in front of it, where link_exit expects its
- * stream, and the alignment's padding holds the body a miss may adopt.
+ * sixteen-byte boundary and is only ever written whole (store_pair). An
+ * unlinked record's stream is the link_exit word right in front of it, which
+ * link_exit runs with its stream two words before the PC. Records are carved
+ * thirty-two bytes apart, so that word is the last of the record before, or for
+ * a chunk's first record the last of the chunk's prefix: each record's last
+ * word holds link_exit for the next, and a released record keeps it. Only what
+ * generated code reads is in the record; what the cache alone needs, the body
+ * a miss may adopt and whether the record is listed, is its companion (see
+ * gadget_cache::StableRecordTable).
  */
 struct alignas(16) LinkRecord final {
 	explicit LinkRecord(std::uint64_t pc) noexcept
-		: fallback_stream{reinterpret_cast<std::uintptr_t>(
-			uml_arm64_gadget_link_exit)},
-		  link{
-			.stream = &fallback_stream,
+		: link{
+			.stream = fallback(),
 			.instruction_count = 0,
 			.guest_pc = pc,
-		  }
+		  },
+		  next_fallback{exit_word()}
 	{
 	}
 
 	void reset() noexcept
 	{
-		store_pair(&link, word_of(&fallback_stream), 0);
+		store_pair(&link, word_of(fallback()), 0);
 	}
 
 	/* Retarget the record at a stored body. Its words were written before
@@ -467,25 +472,73 @@ struct alignas(16) LinkRecord final {
 		return link.stream == body.link_entry();
 	}
 
-	/* The newest body stored for this PC that some slot still holds, which
-	 * another executor's miss may adopt instead of translating. */
-	Body *indexed{};
-	/* An unlinked record's stream: link_exit, which takes the guest PC from
-	 * the BlockLink right behind it. */
-	std::uintptr_t fallback_stream;
+	/* An unlinked record's stream: the word in front of it, link_exit. */
+	[[nodiscard]] const std::uintptr_t *fallback() const noexcept
+	{
+		return reinterpret_cast<const std::uintptr_t *>(this) - 1;
+	}
+
+	[[nodiscard]] static std::uintptr_t exit_word() noexcept
+	{
+		return reinterpret_cast<std::uintptr_t>(
+			uml_arm64_gadget_link_exit);
+	}
+
 	arm64::gadgets::BlockLink link;
-	/* Set while this record sits in its shard's live list, so a code change
+	/* The next record's fallback, link_exit, whatever that record holds. */
+	std::uintptr_t next_fallback;
+
+	/* The chunk's prefix ends in its first record's fallback. */
+	static constexpr std::size_t chunk_prefix = 16;
+	static void prepare_chunk(std::byte *storage) noexcept
+	{
+		const auto word = exit_word();
+		std::memcpy(storage + chunk_prefix - sizeof(word), &word,
+			sizeof(word));
+	}
+	/* A released record keeps its next record's fallback. */
+	static constexpr std::size_t cleared_bytes =
+		sizeof(arm64::gadgets::BlockLink);
+
+	/* The newest body stored for this PC that some slot still holds, which
+	 * another executor's miss may adopt instead of translating, with bit 0
+	 * set while the record sits in its shard's live list, so a code change
 	 * resets the records that hold an activation instead of every record
-	 * the translator ever named. */
-	bool listed{};
+	 * the translator ever named. Bodies are sixteen-byte aligned. */
+	struct Companion final {
+		std::uintptr_t word{};
+
+		[[nodiscard]] Body *indexed() const noexcept
+		{
+			return reinterpret_cast<Body *>(
+				word & ~std::uintptr_t{1});
+		}
+		void set_indexed(Body *body) noexcept
+		{
+			const auto address =
+				reinterpret_cast<std::uintptr_t>(body);
+			assert((address & 1U) == 0);
+			word = address | (word & 1U);
+		}
+		[[nodiscard]] bool listed() const noexcept
+		{
+			return (word & 1U) != 0;
+		}
+		void set_listed(bool value) noexcept
+		{
+			word = (word & ~std::uintptr_t{1}) | (value ? 1U : 0U);
+		}
+	};
 };
 
-static_assert(offsetof(LinkRecord, link) == 16 &&
-	offsetof(LinkRecord, fallback_stream) + sizeof(std::uintptr_t) ==
-		offsetof(LinkRecord, link) &&
-	sizeof(LinkRecord) == 48,
-	"link_exit reads the PC two words past its stream word, and the "
-	"stream and count are one aligned pair");
+static_assert(offsetof(LinkRecord, link) == 0 &&
+	offsetof(LinkRecord, next_fallback) ==
+		sizeof(arm64::gadgets::BlockLink) &&
+	sizeof(LinkRecord) == 32 &&
+	LinkRecord::chunk_prefix % alignof(LinkRecord) == 0,
+	"link_exit reads the PC two words past its stream word, the stream and "
+	"count are one aligned pair, and each record ends in the next one's "
+	"fallback");
 
 struct LinkKey final {
 	[[nodiscard]] std::uint64_t operator()(
@@ -788,7 +841,8 @@ public:
 		auto &shard = shard_of(pc);
 		{
 			const std::lock_guard guard{shard.mutex};
-			auto &record = *shard.links.try_emplace(pc, pc).first;
+			const auto &record = shard.links.companion_at(
+				shard.links.try_emplace_number(pc, pc).first);
 			if (auto *held = equal_indexed(record, validation, isa)) {
 				++held->holders;
 				return held;
@@ -797,7 +851,8 @@ public:
 		auto *body = new_body(built, validation, isa);
 		{
 			const std::lock_guard guard{shard.mutex};
-			auto &record = *shard.links.find(pc);
+			auto &record = shard.links.companion_at(
+				shard.links.find_number(pc));
 			if (auto *held = equal_indexed(record, validation, isa)) {
 				++held->holders;
 				/* Never published, so nothing can reach it. */
@@ -809,7 +864,7 @@ public:
 			if (key_.owner == nullptr)
 				note_held(*body);
 			if (!validation.empty())
-				record.indexed = body;
+				record.set_indexed(body);
 		}
 		return body;
 	}
@@ -819,11 +874,13 @@ public:
 	{
 		auto &shard = shard_of(pc);
 		const std::lock_guard guard{shard.mutex};
-		auto *record = shard.links.find(pc);
-		if (record == nullptr || record->indexed == nullptr)
+		const auto number = shard.links.find_number(pc);
+		if (number == 0)
 			return nullptr;
-		++record->indexed->holders;
-		return record->indexed;
+		auto *body = shard.links.companion_at(number).indexed();
+		if (body != nullptr)
+			++body->holders;
+		return body;
 	}
 
 	/* A slot lets go of `body`. `stale` says validation found guest code
@@ -832,11 +889,17 @@ public:
 	{
 		auto &shard = shard_of(body->guest_address);
 		const std::lock_guard guard{shard.mutex};
-		auto *record = shard.links.find(body->guest_address);
+		const auto number =
+			shard.links.find_number(body->guest_address);
+		auto *record =
+			number != 0 ? shard.links.record_at(number) : nullptr;
 		assert(body->holders != 0);
 		const bool last = --body->holders == 0;
-		if (record != nullptr && record->indexed == body && (last || stale))
-			record->indexed = nullptr;
+		if (record != nullptr) {
+			auto &companion = shard.links.companion_at(number);
+			if (companion.indexed() == body && (last || stale))
+				companion.set_indexed(nullptr);
+		}
 		if (!last)
 			return;
 		/* Only a body that leaves can leave a record nothing names. */
@@ -855,26 +918,33 @@ public:
 	/* Link the record for `pc` to `body`, which the caller holds and
 	 * validated at `changes`, unless a newer code change has reset the
 	 * address space's links since. `known` is the caller's memo of the
-	 * record, or null. Returns the record's link for that memo. */
-	const arm64::gadgets::BlockLink *activate(std::uint64_t pc,
-		const arm64::gadgets::BlockLink *known, const Body &body,
+	 * record's number, or zero. Returns the number and the link for that
+	 * memo. */
+	std::pair<std::uint32_t, const arm64::gadgets::BlockLink *> activate(
+		std::uint64_t pc, std::uint32_t known, const Body &body,
 		std::uint64_t changes)
 	{
 		auto &shard = shard_of(pc);
 		const std::lock_guard guard{shard.mutex};
-		auto *record = known != nullptr ?
-			const_cast<LinkRecord *>(record_of(known)) :
-			shard.links.try_emplace(pc, pc).first;
+		const auto number = known != 0 ? known :
+			shard.links.try_emplace_number(pc, pc).first;
+		auto *record = shard.links.record_at(number);
 		assert(record->link.guest_pc == pc);
 		if (gate_.load(std::memory_order_seq_cst) != changes)
-			return &record->link;
-		if (!record->listed) {
-			record->listed = true;
-			shard.live_links.push_back(record);
+			return {number, &record->link};
+		/* Only an activation links a record, and it lists the record
+		 * first; a code change clears both together. So a record that
+		 * already names `body` is listed, and its companion, a line of
+		 * its own, need not be read. */
+		if (record->names(body))
+			return {number, &record->link};
+		if (auto &companion = shard.links.companion_at(number);
+		    !companion.listed()) {
+			shard.live_links.push_back(number);
+			companion.set_listed(true);
 		}
-		if (!record->names(body))
-			record->link_to(body);
-		return &record->link;
+		record->link_to(body);
+		return {number, &record->link};
 	}
 
 	/* Answer a code change: before any executor runs the address space at
@@ -891,9 +961,10 @@ public:
 		gate_.store(changes, std::memory_order_seq_cst);
 		for (auto &shard : shards_) {
 			const std::lock_guard guard{shard.mutex};
-			for (auto *record : shard.live_links) {
-				record->reset();
-				record->listed = false;
+			for (const auto number : shard.live_links) {
+				auto &companion = shard.links.companion_at(number);
+				shard.links.record_at(number)->reset();
+				companion.set_listed(false);
 			}
 			shard.live_links.clear();
 			/* The reset cells name this address space's own empty
@@ -969,15 +1040,15 @@ public:
 		const SiteTable::Marks &sites)
 	{
 		assert(key_.owner != nullptr);
-		std::array<std::vector<LinkRecord *>, shard_count> live_links;
+		std::array<std::vector<std::uint32_t>, shard_count> live_links;
 		std::array<std::vector<arm64::gadgets::IndirectLink *>, shard_count>
 			live_indirect;
 		for (std::size_t index = 0; index < shard_count; ++index) {
 			const auto &shard = shards_[index];
 			const std::lock_guard guard{shard.mutex};
-			for (auto *record : shard.live_links)
-				if (links.marked(record))
-					live_links[index].push_back(record);
+			for (const auto number : shard.live_links)
+				if (links.marked(shard.links.record_at(number)))
+					live_links[index].push_back(number);
 			for (auto *site : shard.live_indirect)
 				if (sites.marked(site_record(site)))
 					live_indirect[index].push_back(site);
@@ -1027,9 +1098,8 @@ public:
 	[[nodiscard]] static const LinkRecord *record_of(
 		const arm64::gadgets::BlockLink *link) noexcept
 	{
-		return reinterpret_cast<const LinkRecord *>(
-			reinterpret_cast<std::uintptr_t>(link) -
-			offsetof(LinkRecord, link));
+		static_assert(offsetof(LinkRecord, link) == 0);
+		return reinterpret_cast<const LinkRecord *>(link);
 	}
 
 	/* Free what was unpublished long enough ago that no other executor can
@@ -1079,7 +1149,7 @@ public:
 			const std::lock_guard guard{shard.mutex};
 			result.links += shard.links.bytes() +
 				shard.live_links.capacity() *
-					sizeof(LinkRecord *);
+					sizeof(std::uint32_t);
 			result.indirect += shard.indirect.bytes() +
 				shard.live_indirect.capacity() * sizeof(void *);
 		}
@@ -1147,8 +1217,8 @@ private:
 		 * its whole residency. */
 		LinkTable links;
 		SiteTable indirect;
-		/* The records and sites holding an activation. */
-		std::vector<LinkRecord *> live_links;
+		/* The records (by number) and sites holding an activation. */
+		std::vector<std::uint32_t> live_links;
 		std::vector<arm64::gadgets::IndirectLink *> live_indirect;
 	};
 
@@ -1199,11 +1269,12 @@ private:
 	}
 
 	/* The indexed body when it stands for exactly these guest units. */
-	[[nodiscard]] static Body *equal_indexed(const LinkRecord &record,
+	[[nodiscard]] static Body *equal_indexed(
+		const LinkRecord::Companion &companion,
 		std::span<const std::byte> validation,
 		arm64::aarch32::GuestIsa isa) noexcept
 	{
-		auto *held = record.indexed;
+		auto *held = companion.indexed();
 		if (held == nullptr || validation.empty() ||
 		    held->isa != static_cast<std::uint8_t>(isa))
 			return nullptr;
@@ -1858,7 +1929,7 @@ public:
 		auto &entry = memo_entry(pc);
 		if (!remembers(entry, pc))
 			entry = {pc, window_.current_generation,
-				window_.current->space->link(pc)};
+				window_.current->space->link(pc), 0U};
 		return entry.link;
 	}
 
@@ -2133,6 +2204,9 @@ private:
 		std::uint64_t pc;
 		unsigned long generation;
 		const arm64::gadgets::BlockLink *link;
+		/* The record's number in its table once an activation
+		 * looked it up; zero when only an indirect miss did. */
+		std::uint32_t number;
 	};
 	using LinkMemo = std::array<LinkMemoEntry, link_memo_entries>;
 
@@ -2597,11 +2671,11 @@ private:
 		if (!body.complete || body.instruction_count == 0)
 			return;
 		auto &entry = memo_entry(pc);
-		const auto known = remembers(entry, pc);
-		const auto *link = space().activate(pc,
-			known ? entry.link : nullptr, body, current().changes);
+		const auto known = remembers(entry, pc) && entry.number != 0;
+		const auto [number, link] = space().activate(pc,
+			known ? entry.number : 0U, body, current().changes);
 		if (!known)
-			entry = {pc, window_.current_generation, link};
+			entry = {pc, window_.current_generation, link, number};
 	}
 
 	/* Release the link records and indirect sites of the running address
