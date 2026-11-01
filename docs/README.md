@@ -21,6 +21,7 @@ investigation date.
 | AArch32 instruction corpus and its oracle | [`../tests/unit/arm64/aarch32_corpus/README.md`](../tests/unit/arm64/aarch32_corpus/README.md) |
 | Darwin runtime details | [`../darwin/README.md`](../darwin/README.md) |
 | Kernarium iOS application | [`../Kernarium/README.md`](../Kernarium/README.md) |
+| Andarium iOS application (Android) | [`../Andarium/README.md`](../Andarium/README.md) |
 | arm64 gadget engine internals | [`../darwin/cpu/arm64/gadgets/README.md`](../darwin/cpu/arm64/gadgets/README.md) |
 | arm64 JIT engine internals | [`../darwin/cpu/arm64/jit/README.md`](../darwin/cpu/arm64/jit/README.md) |
 | x86-64 gadget engine contracts | [`../darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md) |

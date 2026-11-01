@@ -1,0 +1,463 @@
+import SwiftUI
+
+/// A ruler with a cyan needle: the whole range as ticks, the chosen value
+/// under the needle. Drag along it or tap a tick. Limits are drawn on the
+/// ruler itself: ticks past a recommendation turn orange, and ticks below a
+/// floor are hatched and out of reach.
+struct Ruler: View {
+    @Binding var index: Int
+    let count: Int
+    /// Positions below this one cannot be chosen.
+    var floor: Int = 0
+    /// Every this many positions a tick is long and labelled.
+    var majorEvery: Int = 1
+    var majorOffset: Int = 0
+    /// Draw a short tick only every this many positions.
+    var minorEvery: Int = 1
+    let label: (Int) -> String
+    /// Positions at and above this one are past the recommended value.
+    var warnFrom: Int?
+    var accessibilityName: String = ""
+
+    @State private var dragging = false
+    /// A drag that starts mostly vertical belongs to the scroll view.
+    @State private var horizontal: Bool?
+
+    private let inset: CGFloat = 12
+    private let track: CGFloat = 30
+
+    var body: some View {
+        GeometryReader { geo in
+            let step = (geo.size.width - inset * 2) / CGFloat(max(count - 1, 1))
+            let x = { (i: Int) -> CGFloat in inset + CGFloat(i) * step }
+            ZStack(alignment: .topLeading) {
+                Capsule()
+                    .fill(Color.primary.opacity(0.06))
+                    .frame(width: geo.size.width, height: track)
+                if let warnFrom, warnFrom < count {
+                    UnevenRoundedRectangle(topLeadingRadius: 4, bottomLeadingRadius: 4, bottomTrailingRadius: track / 2, topTrailingRadius: track / 2)
+                        .fill(Color.orange.opacity(0.14))
+                        .frame(width: geo.size.width - x(warnFrom) + step / 2, height: track)
+                        .offset(x: x(warnFrom) - step / 2)
+                }
+                if floor > 0 {
+                    let shape = UnevenRoundedRectangle(topLeadingRadius: track / 2, bottomLeadingRadius: track / 2, bottomTrailingRadius: 4, topTrailingRadius: 4)
+                    shape
+                        .fill(Color.primary.opacity(0.07))
+                        .overlay(
+                            HatchPattern()
+                                .stroke(Color.primary.opacity(0.14), lineWidth: 1)
+                                .clipShape(shape)
+                        )
+                        .frame(width: x(floor) - step / 2, height: track)
+                }
+                ForEach(0..<count, id: \.self) { i in
+                    let major = (i - majorOffset) % majorEvery == 0
+                    let warn = warnFrom.map { i >= $0 } ?? false
+                    let below = i < floor
+                    if major || (i - majorOffset) % minorEvery == 0 {
+                        Capsule()
+                            .fill(tickColor(major: major, warn: warn, below: below))
+                            .frame(width: 2, height: major ? 14 : 8)
+                            .position(x: x(i), y: track / 2)
+                    }
+                    if major {
+                        Text(label(i))
+                            .font(.system(size: 12, weight: i == index ? .bold : .medium, design: .rounded).monospacedDigit())
+                            .foregroundStyle(labelStyle(selected: i == index, warn: warn, below: below))
+                            .fixedSize()
+                            .position(x: x(i), y: track + 13)
+                    }
+                }
+                Capsule()
+                    .fill(Color.accentColor)
+                    .frame(width: 6, height: dragging ? 40 : 36)
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.95), lineWidth: 1.5))
+                    .shadow(color: Color.accentColor.opacity(0.45), radius: dragging ? 6 : 3, y: 1)
+                    .position(x: x(index), y: track / 2)
+                    .animation(.snappy(duration: 0.22), value: index)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(coordinateSpace: .local) { location in
+                set(at: location.x, step: step)
+            }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 6, coordinateSpace: .local)
+                    .onChanged { value in
+                        if horizontal == nil {
+                            horizontal = abs(value.translation.width) > abs(value.translation.height)
+                        }
+                        guard horizontal == true else { return }
+                        dragging = true
+                        set(at: value.location.x, step: step)
+                    }
+                    .onEnded { _ in
+                        dragging = false
+                        horizontal = nil
+                    }
+            )
+        }
+        .frame(height: 52)
+        .sensoryFeedback(.selection, trigger: index)
+        .accessibilityElement()
+        .accessibilityLabel(accessibilityName)
+        .accessibilityValue(label(index))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: index = min(count - 1, index + 1)
+            case .decrement: index = max(floor, index - 1)
+            @unknown default: break
+            }
+        }
+    }
+
+    private func set(at x: CGFloat, step: CGFloat) {
+        let raw = Int(((x - inset) / step).rounded())
+        let clamped = min(count - 1, max(floor, raw))
+        if clamped != index { index = clamped }
+    }
+
+    private func tickColor(major: Bool, warn: Bool, below: Bool) -> Color {
+        if below { return Color.primary.opacity(0.14) }
+        if warn { return Color.orange.opacity(major ? 0.95 : 0.6) }
+        return Color.primary.opacity(major ? 0.45 : 0.22)
+    }
+
+    private func labelStyle(selected: Bool, warn: Bool, below: Bool) -> AnyShapeStyle {
+        if selected { return AnyShapeStyle(.primary) }
+        if below { return AnyShapeStyle(Color.primary.opacity(0.25)) }
+        if warn { return AnyShapeStyle(Color.orange) }
+        return AnyShapeStyle(.secondary)
+    }
+}
+
+/// Diagonal hatching for the part of a ruler that cannot be chosen.
+nonisolated struct HatchPattern: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        var x = rect.minX - rect.height
+        while x < rect.maxX {
+            path.move(to: CGPoint(x: x, y: rect.maxY))
+            path.addLine(to: CGPoint(x: x + rect.height, y: rect.minY))
+            x += 7
+        }
+        return path
+    }
+}
+
+/// Processor, memory and storage in one glass panel: each a row with its
+/// value on the right and, for processor and memory, a ruler beneath.
+struct ControlsPanel: View {
+    @Binding var guest: Guest
+    let host: HostDevice
+    /// A new guest chooses its capacity on a ruler; an existing one shows
+    /// what it holds and opens Resize.
+    var isNew = false
+    var resize: () -> Void = {}
+
+    var body: some View {
+        VStack(spacing: 0) {
+            processor
+            Divider().padding(.leading, 58)
+            memory
+            Divider().padding(.leading, 58)
+            if isNew { capacity } else { storage }
+        }
+        .glassEffect(.regular, in: .rect(cornerRadius: 30))
+    }
+
+    private var processor: some View {
+        ControlRow(
+            title: "Processor", symbol: "cpu",
+            value: guest.cores == 1 ? "1 vCPU" : "\(guest.cores) vCPUs"
+        ) {
+            Ruler(
+                index: Binding(get: { guest.cores - 1 }, set: { guest.cores = $0 + 1 }),
+                count: host.processorCount,
+                label: { "\($0 + 1)" },
+                accessibilityName: "Processor"
+            )
+        } note: {
+            EmptyView()
+        }
+    }
+
+    private var memory: some View {
+        let steps = (host.maximumMemoryMiB - Limits.minimumMemoryMiB) / Limits.memoryStepMiB + 1
+        let warnFrom = (host.recommendedMemoryMiB - Limits.minimumMemoryMiB) / Limits.memoryStepMiB + 1
+        let above = guest.memoryMiB > host.recommendedMemoryMiB
+        return ControlRow(title: "Memory", symbol: "memorychip", value: Formats.memory(guest.memoryMiB), valueColor: above ? .orange : .primary) {
+            Ruler(
+                index: Binding(
+                    get: { (guest.memoryMiB - Limits.minimumMemoryMiB) / Limits.memoryStepMiB },
+                    set: { guest.memoryMiB = Limits.minimumMemoryMiB + $0 * Limits.memoryStepMiB }
+                ),
+                count: steps,
+                majorEvery: 2,
+                label: { "\((Limits.minimumMemoryMiB + $0 * Limits.memoryStepMiB) / 1024)" },
+                warnFrom: warnFrom,
+                accessibilityName: "Memory in gigabytes"
+            )
+        } note: {
+            if above {
+                Label {
+                    Text("Above the \(Formats.memory(host.recommendedMemoryMiB)) recommended for this \(host.name). iOS may close Andarium while Android runs.")
+                        .foregroundStyle(.primary)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+            } else {
+                Text("Recommended up to \(Formats.memory(host.recommendedMemoryMiB)) on this \(host.name)")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var capacity: some View {
+        ControlRow(title: "Storage", symbol: "internaldrive", value: "\(guest.capacityGiB) GB") {
+            Ruler(
+                index: Binding(
+                    get: { guest.capacityGiB - Limits.capacityRangeGiB.lowerBound },
+                    set: { guest.capacityGiB = Limits.capacityRangeGiB.lowerBound + $0 }
+                ),
+                count: Limits.capacityRangeGiB.count,
+                majorEvery: 8,
+                majorOffset: 4,
+                minorEvery: 2,
+                label: { "\(Limits.capacityRangeGiB.lowerBound + $0)" },
+                accessibilityName: "Storage in gigabytes"
+            )
+        } note: {
+            Text("\(Formats.gb(host.freeStorageGB)) free on this \(host.name)")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Storage only grows, so at the largest size Resize has nothing to offer.
+    private var atMaximum: Bool {
+        guest.capacityGiB >= Limits.capacityRangeGiB.upperBound
+    }
+
+    private var storage: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ControlHeader(title: "Storage", symbol: "internaldrive", value: "\(Formats.gb(guest.usedGB)) of \(guest.capacityGiB) GB")
+            UsageBar(used: guest.usedGB, capacity: Double(guest.capacityGiB), pending: guest.pendingCapacityGiB.map(Double.init))
+            HStack(spacing: 8) {
+                if let pending = guest.pendingCapacityGiB {
+                    Label("Grows to \(pending) GB at the next start", systemImage: "arrow.up.circle.fill")
+                        .foregroundStyle(Color.accentColor)
+                } else if atMaximum {
+                    Text("\(Limits.capacityRangeGiB.upperBound) GB is the largest size")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("\(Formats.gb(Double(guest.capacityGiB) - guest.usedGB)) free in Android")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                Button(action: resize) {
+                    Text("Resize")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(atMaximum ? Color(.tertiaryLabel) : Color.accentColor)
+                        .padding(.horizontal, 16)
+                        .frame(height: 34)
+                        .background(atMaximum ? Color(.quaternarySystemFill) : Color.accentColor.opacity(0.13), in: .capsule)
+                        .contentShape(.capsule)
+                }
+                .buttonStyle(.plain)
+                .disabled(atMaximum)
+            }
+            .font(.footnote)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 14)
+    }
+}
+
+/// The icon tile, title and value that head every control row.
+struct ControlHeader: View {
+    let title: String
+    let symbol: String
+    let value: String
+    var valueColor: Color = .primary
+
+    var body: some View {
+        HStack(spacing: 12) {
+            IconTile(symbol: symbol)
+            Text(title)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(valueColor)
+                .contentTransition(.numericText())
+                .animation(.snappy, value: value)
+        }
+    }
+}
+
+/// A control row: header, ruler, and a line about the limits.
+struct ControlRow<Dial: View, Note: View>: View {
+    let title: String
+    let symbol: String
+    let value: String
+    var valueColor: Color = .primary
+    @ViewBuilder var dial: Dial
+    @ViewBuilder var note: Note
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ControlHeader(title: title, symbol: symbol, value: value, valueColor: valueColor)
+            dial
+                .padding(.top, 2)
+            note
+                .font(.footnote)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
+    }
+}
+
+/// What Android has written out of its capacity; a pending growth is drawn
+/// as a dashed outline to the new size.
+struct UsageBar: View {
+    let used: Double
+    let capacity: Double
+    var pending: Double?
+
+    var body: some View {
+        GeometryReader { geo in
+            let total = max(capacity, pending ?? 0)
+            let usedWidth = max(8, geo.size.width * used / total)
+            let capWidth = geo.size.width * capacity / total
+            ZStack(alignment: .leading) {
+                if pending != nil {
+                    Capsule()
+                        .strokeBorder(Color.accentColor.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                } else {
+                    Capsule().fill(Color(.tertiarySystemFill))
+                }
+                Capsule().fill(Color(.systemFill)).frame(width: capWidth)
+                if used > 0 {
+                    Capsule().fill(Color.accentColor).frame(width: usedWidth)
+                }
+            }
+        }
+        .frame(height: 10)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Resize opens on the same ruler, from 4 to 64 GB. Storage only grows: the
+/// sizes below the current one are hatched and out of reach, and growth
+/// applies at the next start.
+struct ResizeSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var capacity = 16
+
+    var body: some View {
+        let guest = model.guest ?? Guest.fresh(host: model.host)
+        NavigationStack {
+            VStack(spacing: 16) {
+                VStack(spacing: 2) {
+                    Text("\(capacity) GB")
+                        .font(.system(size: 50, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .contentTransition(.numericText(value: Double(capacity)))
+                    Text(capacity == guest.capacityGiB ? "Current size" : "From \(guest.capacityGiB) GB")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 4)
+                Ruler(
+                    index: Binding(
+                        get: { capacity - Limits.capacityRangeGiB.lowerBound },
+                        set: { value in withAnimation(.snappy) { capacity = Limits.capacityRangeGiB.lowerBound + value } }
+                    ),
+                    count: Limits.capacityRangeGiB.count,
+                    floor: guest.capacityGiB - Limits.capacityRangeGiB.lowerBound,
+                    majorEvery: 8,
+                    majorOffset: 4,
+                    minorEvery: 2,
+                    label: { "\(Limits.capacityRangeGiB.lowerBound + $0)" },
+                    accessibilityName: "Storage in gigabytes"
+                )
+                .padding(.horizontal, 6)
+                UsageBar(used: guest.usedGB, capacity: Double(capacity))
+                    .padding(.horizontal, 18)
+                status(guest)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 18)
+            .navigationTitle("Resize Storage")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", systemImage: "xmark", role: .cancel) { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Resize", systemImage: "checkmark") {
+                        model.guest?.setCapacity(capacity)
+                        dismiss()
+                    }
+                    .disabled(capacity == guest.effectiveCapacityGiB)
+                }
+            }
+        }
+        .presentationDetents([.height(470)])
+        .presentationSizing(FixedSheetSizing(width: 540, height: 480))
+        .onAppear {
+            capacity = model.resizePreset ?? guest.effectiveCapacityGiB
+        }
+    }
+
+    @ViewBuilder
+    private func status(_ guest: Guest) -> some View {
+        if capacity > guest.capacityGiB {
+            line("arrow.up.circle.fill", .accentColor,
+                 "Grows to \(capacity) GB at the next start",
+                 "Android sees the new space once it has started.")
+        } else if let pending = guest.pendingCapacityGiB {
+            line("arrow.uturn.backward.circle.fill", .secondary,
+                 "Stays at \(guest.capacityGiB) GB",
+                 "The growth to \(pending) GB is cancelled.")
+        } else {
+            line("internaldrive", .secondary,
+                 "\(Formats.gb(guest.usedGB)) used of \(guest.capacityGiB) GB",
+                 "Storage can only grow. A larger size applies at the next start.")
+        }
+    }
+
+    private func line(_ symbol: String, _ tint: Color, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbol)
+                .font(.title3)
+                .foregroundStyle(tint)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 20, style: .continuous))
+    }
+}
+
+/// A form-width sheet of a set size on iPad. On iPhone the detents decide.
+nonisolated struct FixedSheetSizing: PresentationSizing {
+    let width: CGFloat
+    let height: CGFloat
+
+    func proposedSize(for root: PresentationSizingRoot, context: PresentationSizingContext) -> ProposedViewSize {
+        ProposedViewSize(width: width, height: height)
+    }
+}
