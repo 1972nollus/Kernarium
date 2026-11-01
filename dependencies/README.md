@@ -84,7 +84,10 @@ Darwin, add an embedding mode in which a host that owns guest memory drives
 FEXCore, compat32 code included, and correct x86 semantics where FEXCore
 differs from hardware. The series touches nothing the `x86-conformance` corpus
 producers read, so one prepared FEX source serves both products and still
-yields the pinned corpus.
+yields the pinned corpus. The `nasm` row that assembles that corpus applies one
+topic, [`patches/nasm`](patches/nasm/series.tsv): `smsw` of a 16-bit register
+keeps its operand-size prefix in 32-bit and 64-bit code, which NASM 3.02 drops,
+so the SMSW test runs as FEX wrote it.
 
 The prefix installs FEXCore's static archives (`libFEXCore.a`,
 `libFEXCore_Base.a`, and `libJemallocDummy.a`, its allocator entry points over

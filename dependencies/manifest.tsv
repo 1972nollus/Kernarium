@@ -24,7 +24,7 @@ fex	FEX-2610	macos,x86-conformance	https://github.com/FEX-Emu/FEX.git	14c92681f4
 fmt	12.2.1	macos	https://github.com/fmtlib/fmt.git	c07e2aa4b130b4fd359a1c6455a5201b17af01fa	.	-
 xxhash	0.8.3	macos	https://github.com/Cyan4973/xxHash.git	e626a72bc2321cd320e953a0ccf1584cad60f363	.	-
 unordered-dense	4.8.1	macos	https://github.com/martinus/unordered_dense.git	3234af2c03549bc85656bfd3a86993bf1cd8aef1	.	-
-nasm	2.16.03	x86-conformance	https://github.com/netwide-assembler/nasm.git	cd37b81b320ead83ca5a6bbce5da0a6456663bc6	.	-
+nasm	3.02	x86-conformance	https://github.com/netwide-assembler/nasm.git	4a56d66ed9626d5a3ded5414c9d8b7f1a48ce065	.	patches/nasm/series.tsv
 x86-k-semantics	2020-03-04	x86-conformance	https://github.com/kframework/X86-64-semantics.git	592380aea04820ea11cfa5475b343f0257f2474e	.	-
 gawk	5.4.1	kernel-host-tools	https://git.savannah.gnu.org/git/gawk.git	52af7f12758da12db0ddbdb117a84e0685cd2f72	.	-
 argp-standalone	1.5.0	kernel-host-tools	https://github.com/argp-standalone/argp-standalone.git	b931da3e7e9a999b0d9515c087488e96821845fb	.	-
