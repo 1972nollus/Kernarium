@@ -664,7 +664,11 @@ Linux host clears O_ASYNC on every other descriptor for the suspend; Darwin,
 whose IRQ notification thread stands in for SIGIO, takes those descriptors off
 that thread instead, so console input, vhost-user requests and block
 completions wait for the resume and are handled then, and so does network
-input in a suspend the host asked for. The suspended CPU
+input in a suspend the host asked for. Those descriptors stay nonblocking: a
+vhost-user reply wait still serves its backend's requests during a suspend,
+and the `irq_work` that delivers what one recorded drains the request socket
+until it would block, so a blocking socket would hold that CPU in the host's
+`recvmsg()` and the suspend would never end. The suspended CPU
 sleeps until a wake source has input or a wakeup is pending, so neither a host
 signal nor a notification collected before the suspend ends it. A wake request
 that arrives while a suspend is still being entered, whether the host or the
