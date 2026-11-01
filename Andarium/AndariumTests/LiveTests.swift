@@ -78,3 +78,40 @@ struct HostDeviceTests {
         #expect(AppEntry.freeStorageBytes() > 0)
     }
 }
+
+/// The system Andarium carries, written the way Create writes it: decoded
+/// sparse from the bundled archive and grown to the guest's size. It is the
+/// one test that reads the real archive, so it takes tens of seconds.
+struct LiveSeedWriterTests {
+    private nonisolated final class Progress: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [Double] = []
+        var all: [Double] { lock.withLock { values } }
+        func add(_ value: Double) { lock.withLock { values.append(value) } }
+    }
+
+    @Test func theBundledSystemBecomesAGPTDiskOfTheRequestedSize() async throws {
+        let folder = try #require(Bundle.main.resourceURL?.appendingPathComponent(SystemFolder.name))
+        let seed = try SystemFolder.seed(in: folder, release: "test", stagedName: nil)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("andarium-seed-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let destination = directory.appendingPathComponent("guest.img")
+        let imageGiB = SingleImageStorage.imageGiB(forCapacity: 8)
+        let progress = Progress()
+
+        try await LiveSeedWriter().write(seed: seed, to: destination, imageGiB: imageGiB) { progress.add($0) }
+
+        let size = try #require(try FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? UInt64)
+        #expect(size == UInt64(imageGiB) << 30)
+        // The GPT header sits at LBA 1 and its backup at the last LBA.
+        let handle = try FileHandle(forReadingFrom: destination)
+        try handle.seek(toOffset: 512)
+        #expect(try handle.read(upToCount: 8) == Data("EFI PART".utf8))
+        try handle.seek(toOffset: size - 512)
+        #expect(try handle.read(upToCount: 8) == Data("EFI PART".utf8))
+        // Progress only moves forward and ends at the whole.
+        #expect(progress.all == progress.all.sorted())
+        #expect(progress.all.last == 1)
+    }
+}
