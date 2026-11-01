@@ -1078,7 +1078,11 @@ or a kick's acknowledgement alike. Serving a request inside a wait records its
 interrupt and replies on the request stream without touching the control
 socket. Darwin drops a read edge whose data is gone before it is collected, so
 a request read there leaves no edge for the request IRQ; the interrupts it
-recorded are delivered through `irq_work` instead.
+recorded are delivered through `irq_work` instead. A suspend disables each ring
+with such a wait, so that `irq_work` can run inside the suspend, where it reads
+the request stream once more and must find it nonblocking.
+`guest-vhost-user-suspend-drain` has a console take a backend request between
+the ring disables of a suspend and requires the suspend to end at its alarm.
 
 A backend request that needs an acknowledgement (an in-band completion, a
 config change, or a shared-memory map or unmap) waits for it while still

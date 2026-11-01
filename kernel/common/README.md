@@ -420,6 +420,17 @@ A virtio-gpu PRIME export is always read-write. The first export of a buffer
 fixes the mode of every later one, and guest Mesa exports without `DRM_RDWR`,
 so a buffer it exported first could otherwise never be mapped writable.
 
+The virtio-gpu resource-creation ioctl, for a 2D or classic 3D resource,
+waits for the host's answer. The driver queues the fenced creation, kicks the
+control queue and waits (at most 15 s) for the response before it queues the
+attach-backing. A host that answers out of memory fails the ioctl with `-ENOMEM`
+(any other error with `-EINVAL`) and the object is released without a
+`RESOURCE_UNREF` and without a command the host would answer with an error, so
+a host that bounds the memory it gives the guest refuses a texture or buffer
+visibly: Mesa raises `GL_OUT_OF_MEMORY` and Android's gralloc fails the
+allocation. The wait costs one control-queue round trip per creation; blob and
+dumb creations are unchanged.
+
 A classic 3D resource, a single-sampled 2D or rectangle Virgl texture, is
 coherent with the GPU through its dma-buf around `DMA_BUF_IOCTL_SYNC`. Its
 guest pages change only on an explicit `TRANSFER_FROM_HOST_3D` or
