@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
+"""Assemble and verify the Android 17 read-only system disk.
+
+The system disk is one raw GPT image that ships with the app and is attached
+read-only. It holds the boot ramdisk containers and the five read-only
+filesystems, each partition exactly its image rounded up to the alignment, so
+no byte of the disk is slack. `assemble` packs the images and writes the
+release's partition-layout.json beside the disk: the system disk's exact
+partitions with a SHA-256 each, and the data disk's template, which the host
+turns into the writable disk of each guest instance. `verify` checks a disk
+against that file. The host validates the same geometry before it boots.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +18,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import binascii
+import hashlib
 import json
 import os
 import re
@@ -23,13 +35,18 @@ GPT_HEADER_SIZE = 92
 GPT_ENTRY_SIZE = 128
 PROTECTIVE_MBR_TYPE = 0xEE
 SPARSE_MAGIC = 0xED26FF3A
-SPARSE_HEADER = struct.Struct("<IHHHHIIII")
-SPARSE_CHUNK_HEADER = struct.Struct("<HHII")
-SPARSE_RAW = 0xCAC1
-SPARSE_FILL = 0xCAC2
-SPARSE_DONT_CARE = 0xCAC3
-SPARSE_CRC32 = 0xCAC4
 COPY_CHUNK = 1024 * 1024
+SECTOR_SIZE = 512
+POLICY_SCHEMA_VERSION = 1
+LAYOUT_SCHEMA_VERSION = 2
+SYSTEM_DISK_FILE = "system.img"
+LAYOUT_FILE = "partition-layout.json"
+NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,35}")
+SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+# The partitions the guest and the host address by name.
+BOOT_PARTITION_NAMES = ("init_boot", "recovery")
+DATA_PARTITION_NAMES = ("misc", "metadata", "userdata")
+GIB = 1024**3
 
 
 class DiskError(ValueError):
@@ -41,46 +58,14 @@ class Partition:
     name: str
     start_bytes: int
     size_bytes: int
-    image: str
     type_guid: uuid.UUID
     unique_guid: uuid.UUID
-    writable: bool
 
 
-@dataclass(frozen=True)
-class Layout:
-    sector_size: int
-    alignment_bytes: int
-    disk_size_bytes: int
-    partition_entry_count: int
-    disk_guid: uuid.UUID
-    partitions: tuple[Partition, ...]
-
-    @property
-    def sector_count(self) -> int:
-        return self.disk_size_bytes // self.sector_size
-
-    @property
-    def table_bytes(self) -> int:
-        return self.partition_entry_count * GPT_ENTRY_SIZE
-
-    @property
-    def table_sectors(self) -> int:
-        return self.table_bytes // self.sector_size
-
-    @property
-    def first_usable_lba(self) -> int:
-        return 2 + self.table_sectors
-
-    @property
-    def last_usable_lba(self) -> int:
-        return self.sector_count - self.table_sectors - 2
-
-
-def require_int(owner: dict[str, object], key: str) -> int:
+def require_int(owner: dict[str, object], key: str, *, minimum: int = 0) -> int:
     value = owner.get(key)
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise DiskError(f"{key} must be an integer")
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise DiskError(f"{key} must be an integer of at least {minimum}")
     return value
 
 
@@ -91,140 +76,100 @@ def require_string(owner: dict[str, object], key: str) -> str:
     return value
 
 
+def require_object(owner: dict[str, object], key: str) -> dict[str, object]:
+    value = owner.get(key)
+    if not isinstance(value, dict):
+        raise DiskError(f"{key} must be an object")
+    return value
+
+
+def require_keys(owner: dict[str, object], keys: set[str], label: str) -> None:
+    if set(owner) != keys:
+        raise DiskError(
+            f"{label} keys differ from the contract: "
+            f"missing={sorted(keys - set(owner))} extra={sorted(set(owner) - keys)}"
+        )
+
+
 def parse_guid(owner: dict[str, object], key: str) -> uuid.UUID:
+    text = require_string(owner, key)
     try:
-        return uuid.UUID(require_string(owner, key))
+        parsed = uuid.UUID(text)
     except ValueError as error:
         raise DiskError(f"{key} is not a canonical UUID") from error
+    if str(parsed) != text:
+        raise DiskError(f"{key} is not a canonical lower-case UUID")
+    return parsed
 
 
-def load_layout(path: Path) -> Layout:
+def partition_name(owner: dict[str, object]) -> str:
+    name = require_string(owner, "name")
+    if NAME_PATTERN.fullmatch(name) is None:
+        raise DiskError(f"unsafe GPT partition name: {name}")
+    return name
+
+
+def align_up(value: int, alignment: int) -> int:
+    return (value + alignment - 1) // alignment * alignment
+
+
+def read_json(path: Path, label: str) -> dict[str, object]:
     try:
-        document = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as error:
-        raise DiskError(f"cannot read layout {path}: {error}") from error
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise DiskError(f"cannot read {label} {path}: {error}") from error
     if not isinstance(document, dict):
-        raise DiskError("layout root must be an object")
-    allowed_root = {
-        "schema_version",
-        "sector_size",
-        "alignment_bytes",
-        "disk_size_bytes",
-        "partition_entry_count",
-        "disk_guid",
-        "partitions",
-    }
-    unknown_root = set(document) - allowed_root
-    if unknown_root:
-        raise DiskError(f"unknown layout keys: {', '.join(sorted(unknown_root))}")
-    if require_int(document, "schema_version") != 1:
-        raise DiskError("only partition layout schema version 1 is supported")
-    sector_size = require_int(document, "sector_size")
-    alignment = require_int(document, "alignment_bytes")
-    disk_size = require_int(document, "disk_size_bytes")
-    entry_count = require_int(document, "partition_entry_count")
-    if sector_size != 512:
-        raise DiskError("GPT sector size must be exactly 512 bytes")
-    if alignment < 1024 * 1024 or alignment % sector_size:
-        raise DiskError("partition alignment must be a sector-aligned MiB or larger")
-    if disk_size <= 0 or disk_size % sector_size:
-        raise DiskError("disk size must be a positive whole number of sectors")
+        raise DiskError(f"{label} root must be an object")
+    return document
+
+
+@dataclass(frozen=True)
+class Geometry:
+    """The GPT geometry of one disk: its sector count and its table's size."""
+
+    disk_size_bytes: int
+    partition_entry_count: int
+
+    @property
+    def sector_count(self) -> int:
+        return self.disk_size_bytes // SECTOR_SIZE
+
+    @property
+    def table_bytes(self) -> int:
+        return self.partition_entry_count * GPT_ENTRY_SIZE
+
+    @property
+    def table_sectors(self) -> int:
+        return self.table_bytes // SECTOR_SIZE
+
+    @property
+    def first_usable_lba(self) -> int:
+        return 2 + self.table_sectors
+
+    @property
+    def last_usable_lba(self) -> int:
+        return self.sector_count - self.table_sectors - 2
+
+    @property
+    def backup_entries_lba(self) -> int:
+        return self.sector_count - self.table_sectors - 1
+
+
+def check_entry_count(entry_count: int) -> None:
     if entry_count < 1 or entry_count > 4096:
         raise DiskError("partition entry count is outside the supported range")
-    if entry_count * GPT_ENTRY_SIZE % sector_size:
+    if entry_count * GPT_ENTRY_SIZE % SECTOR_SIZE:
         raise DiskError("partition entry array must occupy whole sectors")
 
-    entries = document.get("partitions")
-    if not isinstance(entries, list) or not entries:
-        raise DiskError("partitions must be a non-empty array")
-    if len(entries) > entry_count:
-        raise DiskError("layout has more partitions than GPT entries")
-    allowed_partition = {
-        "name",
-        "start_bytes",
-        "size_bytes",
-        "image",
-        "type_guid",
-        "unique_guid",
-        "writable",
-    }
-    partitions: list[Partition] = []
-    names: set[str] = set()
-    images: set[str] = set()
-    guids: set[uuid.UUID] = set()
-    previous_end = 0
-    for index, item in enumerate(entries, 1):
-        if not isinstance(item, dict):
-            raise DiskError(f"partition {index} must be an object")
-        unknown = set(item) - allowed_partition
-        if unknown:
-            raise DiskError(
-                f"partition {index} has unknown keys: {', '.join(sorted(unknown))}"
-            )
-        name = require_string(item, "name")
-        if re.fullmatch(r"[a-z][a-z0-9_]{0,35}", name) is None:
-            raise DiskError(f"partition {index} has an unsafe GPT name: {name}")
-        image = require_string(item, "image")
-        if Path(image).name != image or "/" in image or "\\" in image:
-            raise DiskError(f"partition {name} image must be a plain filename")
-        start = require_int(item, "start_bytes")
-        size = require_int(item, "size_bytes")
-        writable = item.get("writable")
-        if not isinstance(writable, bool):
-            raise DiskError(f"partition {name} writable must be boolean")
-        if start % alignment or size <= 0 or size % alignment:
-            raise DiskError(f"partition {name} is not aligned to {alignment} bytes")
-        if start < previous_end:
-            raise DiskError(f"partition {name} overlaps or is out of order")
-        if name in names or image in images:
-            raise DiskError(f"partition {name} duplicates a name or image")
-        type_guid = parse_guid(item, "type_guid")
-        unique_guid = parse_guid(item, "unique_guid")
-        if unique_guid in guids:
-            raise DiskError(f"partition {name} duplicates a unique GUID")
-        partitions.append(
-            Partition(
-                name,
-                start,
-                size,
-                image,
-                type_guid,
-                unique_guid,
-                writable,
-            )
-        )
-        names.add(name)
-        images.add(image)
-        guids.add(unique_guid)
-        previous_end = start + size
 
-    layout = Layout(
-        sector_size,
-        alignment,
-        disk_size,
-        entry_count,
-        parse_guid(document, "disk_guid"),
-        tuple(partitions),
-    )
-    minimum_start = layout.first_usable_lba * sector_size
-    maximum_end = (layout.last_usable_lba + 1) * sector_size
-    if partitions[0].start_bytes < minimum_start:
-        raise DiskError("first partition overlaps the primary GPT")
-    if previous_end > maximum_end:
-        raise DiskError("last partition overlaps the backup GPT")
-    return layout
-
-
-def partition_entries(layout: Layout) -> bytes:
-    table = bytearray(layout.table_bytes)
-    for index, partition in enumerate(layout.partitions):
+def partition_entries(partitions: tuple[Partition, ...], geometry: Geometry) -> bytes:
+    table = bytearray(geometry.table_bytes)
+    for index, partition in enumerate(partitions):
         name = partition.name.encode("utf-16-le")
         if len(name) > 72:
             raise DiskError(f"partition name is too long for GPT: {partition.name}")
-        first_lba = partition.start_bytes // layout.sector_size
-        last_lba = (
-            partition.start_bytes + partition.size_bytes
-        ) // layout.sector_size - 1
+        first_lba = partition.start_bytes // SECTOR_SIZE
+        last_lba = (partition.start_bytes + partition.size_bytes) // SECTOR_SIZE - 1
         entry = struct.pack(
             "<16s16sQQQ72s",
             partition.type_guid.bytes_le,
@@ -240,14 +185,15 @@ def partition_entries(layout: Layout) -> bytes:
 
 
 def gpt_header(
-    layout: Layout,
+    geometry: Geometry,
+    disk_guid: uuid.UUID,
     *,
     current_lba: int,
     backup_lba: int,
     entries_lba: int,
     entries_crc: int,
 ) -> bytes:
-    header = bytearray(layout.sector_size)
+    header = bytearray(SECTOR_SIZE)
     struct.pack_into(
         "<8sIIIIQQQQ16sQIII",
         header,
@@ -259,11 +205,11 @@ def gpt_header(
         0,
         current_lba,
         backup_lba,
-        layout.first_usable_lba,
-        layout.last_usable_lba,
-        layout.disk_guid.bytes_le,
+        geometry.first_usable_lba,
+        geometry.last_usable_lba,
+        disk_guid.bytes_le,
         entries_lba,
-        layout.partition_entry_count,
+        geometry.partition_entry_count,
         GPT_ENTRY_SIZE,
         entries_crc,
     )
@@ -272,9 +218,9 @@ def gpt_header(
     return bytes(header)
 
 
-def protective_mbr(layout: Layout) -> bytes:
-    mbr = bytearray(layout.sector_size)
-    sectors = min(layout.sector_count - 1, 0xFFFFFFFF)
+def protective_mbr(geometry: Geometry) -> bytes:
+    mbr = bytearray(SECTOR_SIZE)
+    sectors = min(geometry.sector_count - 1, 0xFFFFFFFF)
     struct.pack_into(
         "<B3sB3sII",
         mbr,
@@ -290,212 +236,6 @@ def protective_mbr(layout: Layout) -> bytes:
     return bytes(mbr)
 
 
-def copy_exact(source: BinaryIO, destination: BinaryIO, byte_count: int) -> None:
-    remaining = byte_count
-    while remaining:
-        block = source.read(min(remaining, COPY_CHUNK))
-        if not block:
-            raise DiskError("sparse RAW chunk is truncated")
-        destination.write(block)
-        remaining -= len(block)
-
-
-def write_fill(destination: BinaryIO, pattern: bytes, byte_count: int) -> None:
-    if pattern == b"\0\0\0\0":
-        destination.seek(byte_count, os.SEEK_CUR)
-        return
-    block = pattern * (COPY_CHUNK // len(pattern))
-    remaining = byte_count
-    while remaining:
-        piece = block[: min(remaining, len(block))]
-        destination.write(piece)
-        remaining -= len(piece)
-
-
-def expand_sparse(source: BinaryIO, destination: BinaryIO, maximum: int) -> int:
-    raw_header = source.read(SPARSE_HEADER.size)
-    if len(raw_header) != SPARSE_HEADER.size:
-        raise DiskError("Android sparse header is truncated")
-    (
-        magic,
-        major,
-        _minor,
-        file_header_size,
-        chunk_header_size,
-        block_size,
-        total_blocks,
-        total_chunks,
-        _checksum,
-    ) = SPARSE_HEADER.unpack(raw_header)
-    if magic != SPARSE_MAGIC or major != 1:
-        raise DiskError("unsupported Android sparse image version")
-    if file_header_size < SPARSE_HEADER.size or chunk_header_size < SPARSE_CHUNK_HEADER.size:
-        raise DiskError("Android sparse header sizes are invalid")
-    if block_size == 0 or block_size % 4:
-        raise DiskError("Android sparse block size is invalid")
-    expanded_size = total_blocks * block_size
-    if expanded_size > maximum:
-        raise DiskError(
-            f"expanded Android sparse image is {expanded_size} bytes, limit is {maximum}"
-        )
-    source.seek(file_header_size - SPARSE_HEADER.size, os.SEEK_CUR)
-    written_blocks = 0
-    for _ in range(total_chunks):
-        raw_chunk = source.read(SPARSE_CHUNK_HEADER.size)
-        if len(raw_chunk) != SPARSE_CHUNK_HEADER.size:
-            raise DiskError("Android sparse chunk header is truncated")
-        chunk_type, _reserved, chunk_blocks, total_size = SPARSE_CHUNK_HEADER.unpack(
-            raw_chunk
-        )
-        source.seek(chunk_header_size - SPARSE_CHUNK_HEADER.size, os.SEEK_CUR)
-        chunk_bytes = chunk_blocks * block_size
-        data_size = total_size - chunk_header_size
-        if total_size < chunk_header_size:
-            raise DiskError("Android sparse chunk size underflows its header")
-        if written_blocks + chunk_blocks > total_blocks:
-            raise DiskError("Android sparse chunks exceed declared block count")
-        if chunk_type == SPARSE_RAW:
-            if data_size != chunk_bytes:
-                raise DiskError("Android sparse RAW chunk has the wrong byte count")
-            copy_exact(source, destination, chunk_bytes)
-        elif chunk_type == SPARSE_FILL:
-            if data_size != 4:
-                raise DiskError("Android sparse FILL chunk must contain four bytes")
-            pattern = source.read(4)
-            if len(pattern) != 4:
-                raise DiskError("Android sparse FILL chunk is truncated")
-            write_fill(destination, pattern, chunk_bytes)
-        elif chunk_type == SPARSE_DONT_CARE:
-            if data_size != 0:
-                raise DiskError("Android sparse DONT_CARE chunk contains data")
-            destination.seek(chunk_bytes, os.SEEK_CUR)
-        elif chunk_type == SPARSE_CRC32:
-            if chunk_blocks != 0 or data_size != 4:
-                raise DiskError("Android sparse CRC32 chunk is malformed")
-            if len(source.read(4)) != 4:
-                raise DiskError("Android sparse CRC32 chunk is truncated")
-        else:
-            raise DiskError(f"unknown Android sparse chunk type 0x{chunk_type:04x}")
-        written_blocks += chunk_blocks
-    if written_blocks != total_blocks:
-        raise DiskError("Android sparse image block count does not match its chunks")
-    if source.read(1):
-        raise DiskError("Android sparse image has trailing data")
-    return expanded_size
-
-
-def write_partition_image(image: Path, destination: BinaryIO, maximum: int) -> int:
-    if image.is_symlink() or not image.is_file():
-        raise DiskError(f"partition image must be a regular non-symlink file: {image}")
-    with image.open("rb") as source:
-        prefix = source.read(4)
-        source.seek(0)
-        if len(prefix) == 4 and struct.unpack("<I", prefix)[0] == SPARSE_MAGIC:
-            return expand_sparse(source, destination, maximum)
-        size = image.stat().st_size
-        if size > maximum:
-            raise DiskError(f"raw image {image.name} is {size} bytes, limit is {maximum}")
-        copy_exact(source, destination, size)
-        return size
-
-
-def assemble(
-    layout: Layout,
-    images_dir: Path,
-    output: Path,
-    blank_partition_names: list[str],
-    image_overrides: list[str],
-) -> None:
-    if images_dir.is_symlink() or not images_dir.is_dir():
-        raise DiskError(f"images directory must be a non-symlink directory: {images_dir}")
-    if output.exists() or output.is_symlink():
-        raise DiskError(f"output already exists: {output}")
-    if len(blank_partition_names) != len(set(blank_partition_names)):
-        raise DiskError("blank partition names must not be repeated")
-    partitions_by_name = {partition.name: partition for partition in layout.partitions}
-    overrides: dict[str, Path] = {}
-    for value in image_overrides:
-        name, separator, path_text = value.partition("=")
-        if not separator or not name or not path_text:
-            raise DiskError("partition image override must be NAME=ABSOLUTE_PATH")
-        if name in overrides:
-            raise DiskError(f"partition image override is repeated: {name}")
-        if name not in partitions_by_name:
-            raise DiskError(f"partition image override is absent from the layout: {name}")
-        path = Path(path_text)
-        if not path.is_absolute():
-            raise DiskError(f"partition image override must be absolute: {name}")
-        if path.is_symlink():
-            raise DiskError(f"partition image override must not be a symlink: {name}")
-        overrides[name] = path
-    blank_partitions: set[str] = set()
-    for name in blank_partition_names:
-        partition = partitions_by_name.get(name)
-        if partition is None:
-            raise DiskError(f"blank partition is absent from the layout: {name}")
-        if not partition.writable:
-            raise DiskError(f"immutable partition cannot be blank: {name}")
-        if name in overrides:
-            raise DiskError(f"blank partition also has an image override: {name}")
-        blank_partitions.add(name)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(f".{output.name}.tmp.{os.getpid()}")
-    if temporary.exists():
-        raise DiskError(f"temporary output already exists: {temporary}")
-    table = partition_entries(layout)
-    table_crc = binascii.crc32(table) & 0xFFFFFFFF
-    primary_header = gpt_header(
-        layout,
-        current_lba=1,
-        backup_lba=layout.sector_count - 1,
-        entries_lba=2,
-        entries_crc=table_crc,
-    )
-    backup_entries_lba = layout.sector_count - layout.table_sectors - 1
-    backup_header = gpt_header(
-        layout,
-        current_lba=layout.sector_count - 1,
-        backup_lba=1,
-        entries_lba=backup_entries_lba,
-        entries_crc=table_crc,
-    )
-    try:
-        with temporary.open("xb") as disk:
-            disk.truncate(layout.disk_size_bytes)
-            disk.seek(0)
-            disk.write(protective_mbr(layout))
-            disk.write(primary_header)
-            disk.write(table)
-            disk.seek(backup_entries_lba * layout.sector_size)
-            disk.write(table)
-            disk.seek((layout.sector_count - 1) * layout.sector_size)
-            disk.write(backup_header)
-            for partition in layout.partitions:
-                disk.seek(partition.start_bytes)
-                image = overrides.get(partition.name, images_dir / partition.image)
-                if partition.name in blank_partitions:
-                    if image.exists() or image.is_symlink():
-                        raise DiskError(
-                            f"blank partition also has an image payload: {partition.name}"
-                        )
-                    used = 0
-                else:
-                    used = write_partition_image(image, disk, partition.size_bytes)
-                print(
-                    f"staged {partition.name}: {used}/{partition.size_bytes} bytes "
-                    f"at {partition.start_bytes}"
-                )
-            disk.flush()
-            os.fsync(disk.fileno())
-        os.replace(temporary, output)
-    except BaseException:
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
-        raise
-
-
 def read_exact(source: BinaryIO, offset: int, size: int) -> bytes:
     source.seek(offset)
     payload = source.read(size)
@@ -505,7 +245,8 @@ def read_exact(source: BinaryIO, offset: int, size: int) -> bytes:
 
 
 def verify_header(
-    layout: Layout,
+    geometry: Geometry,
+    disk_guid: uuid.UUID,
     sector: bytes,
     *,
     current_lba: int,
@@ -526,11 +267,11 @@ def verify_header(
     expected = (
         current_lba,
         backup_lba,
-        layout.first_usable_lba,
-        layout.last_usable_lba,
-        layout.disk_guid.bytes_le,
+        geometry.first_usable_lba,
+        geometry.last_usable_lba,
+        disk_guid.bytes_le,
         entries_lba,
-        layout.partition_entry_count,
+        geometry.partition_entry_count,
         GPT_ENTRY_SIZE,
         entries_crc,
     )
@@ -538,86 +279,600 @@ def verify_header(
         raise DiskError("GPT header does not match the checked layout")
 
 
-def verify(layout: Layout, disk_path: Path) -> None:
+def verify_gpt(
+    disk_path: Path,
+    geometry: Geometry,
+    disk_guid: uuid.UUID,
+    partitions: tuple[Partition, ...],
+) -> None:
+    """Check protective MBR, both headers and both entry arrays of one disk."""
     if disk_path.is_symlink() or not disk_path.is_file():
         raise DiskError(f"disk image must be a regular non-symlink file: {disk_path}")
-    if disk_path.stat().st_size != layout.disk_size_bytes:
+    if disk_path.stat().st_size != geometry.disk_size_bytes:
         raise DiskError("disk image size does not match the checked layout")
-    expected_table = partition_entries(layout)
+    expected_table = partition_entries(partitions, geometry)
     table_crc = binascii.crc32(expected_table) & 0xFFFFFFFF
-    backup_entries_lba = layout.sector_count - layout.table_sectors - 1
     with disk_path.open("rb") as disk:
-        mbr = read_exact(disk, 0, layout.sector_size)
+        mbr = read_exact(disk, 0, SECTOR_SIZE)
         if mbr[510:512] != b"\x55\xaa" or mbr[450] != PROTECTIVE_MBR_TYPE:
             raise DiskError("protective MBR is invalid")
-        primary = read_exact(disk, layout.sector_size, layout.sector_size)
-        primary_table = read_exact(disk, 2 * layout.sector_size, layout.table_bytes)
+        primary = read_exact(disk, SECTOR_SIZE, SECTOR_SIZE)
+        primary_table = read_exact(disk, 2 * SECTOR_SIZE, geometry.table_bytes)
         backup_table = read_exact(
-            disk, backup_entries_lba * layout.sector_size, layout.table_bytes
+            disk, geometry.backup_entries_lba * SECTOR_SIZE, geometry.table_bytes
         )
-        backup = read_exact(
-            disk, (layout.sector_count - 1) * layout.sector_size, layout.sector_size
-        )
+        backup = read_exact(disk, (geometry.sector_count - 1) * SECTOR_SIZE, SECTOR_SIZE)
     if primary_table != expected_table or backup_table != expected_table:
         raise DiskError("GPT entry array does not match the checked layout")
-    if binascii.crc32(primary_table) & 0xFFFFFFFF != table_crc:
-        raise DiskError("GPT entry-array CRC32 does not match")
     verify_header(
-        layout,
+        geometry,
+        disk_guid,
         primary,
         current_lba=1,
-        backup_lba=layout.sector_count - 1,
+        backup_lba=geometry.sector_count - 1,
         entries_lba=2,
         entries_crc=table_crc,
     )
     verify_header(
-        layout,
+        geometry,
+        disk_guid,
         backup,
-        current_lba=layout.sector_count - 1,
+        current_lba=geometry.sector_count - 1,
         backup_lba=1,
-        entries_lba=backup_entries_lba,
+        entries_lba=geometry.backup_entries_lba,
         entries_crc=table_crc,
     )
+
+
+# --- the policy: what the tree decides ---------------------------------------
+
+
+@dataclass(frozen=True)
+class Policy:
+    document: dict[str, object]
+    boot: tuple[dict[str, object], ...]
+    filesystems: tuple[dict[str, object], ...]
+
+
+def load_policy(path: Path) -> Policy:
+    document = read_json(path, "disk policy")
+    require_keys(
+        document, {"schema_version", "sector_size", "system_disk", "data_disk"},
+        "disk policy",
+    )
+    if require_int(document, "schema_version") != POLICY_SCHEMA_VERSION:
+        raise DiskError("only disk policy schema version 1 is supported")
+    if require_int(document, "sector_size") != SECTOR_SIZE:
+        raise DiskError("GPT sector size must be exactly 512 bytes")
+    system = require_object(document, "system_disk")
+    require_keys(
+        system,
+        {
+            "alignment_bytes", "partition_entry_count", "disk_guid",
+            "boot_partitions", "filesystem_partitions",
+        },
+        "system disk policy",
+    )
+    alignment = require_int(system, "alignment_bytes", minimum=SECTOR_SIZE)
+    if alignment % 4096:
+        raise DiskError("system disk alignment must be a multiple of 4 KiB")
+    check_entry_count(require_int(system, "partition_entry_count", minimum=1))
+    parse_guid(system, "disk_guid")
+    groups: list[tuple[dict[str, object], ...]] = []
+    seen_names: set[str] = set()
+    seen_images: set[str] = set()
+    seen_guids: set[uuid.UUID] = set()
+    for key in ("boot_partitions", "filesystem_partitions"):
+        entries = system[key]
+        if not isinstance(entries, list) or not entries:
+            raise DiskError(f"{key} must be a non-empty array")
+        for index, item in enumerate(entries):
+            if not isinstance(item, dict):
+                raise DiskError(f"{key} entry {index} must be an object")
+            require_keys(
+                item, {"name", "image", "type_guid", "unique_guid"},
+                f"{key} entry {index}",
+            )
+            name = partition_name(item)
+            image = require_string(item, "image")
+            if Path(image).name != image or "/" in image or "\\" in image:
+                raise DiskError(f"partition {name} image must be a plain filename")
+            parse_guid(item, "type_guid")
+            unique = parse_guid(item, "unique_guid")
+            if name in seen_names or image in seen_images or unique in seen_guids:
+                raise DiskError(f"partition {name} duplicates a name, image or GUID")
+            seen_names.add(name)
+            seen_images.add(image)
+            seen_guids.add(unique)
+        groups.append(tuple(entries))
+    if tuple(entry["name"] for entry in groups[0]) != BOOT_PARTITION_NAMES:
+        raise DiskError("boot partitions must be exactly init_boot and recovery")
+    validate_data_disk(require_object(document, "data_disk"), seen_names)
+    return Policy(document, groups[0], groups[1])
+
+
+def validate_data_disk(data: dict[str, object], system_names: set[str]) -> None:
+    """The data disk template: a fixed head and a userdata that fills the rest."""
+    require_keys(
+        data,
+        {
+            "layout_version", "alignment_bytes", "partition_entry_count",
+            "disk_guid", "trailing_free_bytes", "capacity_gib", "partitions",
+        },
+        "data disk",
+    )
+    require_int(data, "layout_version", minimum=1)
+    alignment = require_int(data, "alignment_bytes", minimum=4096)
+    if alignment % 4096:
+        raise DiskError("data disk alignment must be a multiple of 4 KiB")
+    check_entry_count(require_int(data, "partition_entry_count", minimum=1))
+    parse_guid(data, "disk_guid")
+    trailing = require_int(data, "trailing_free_bytes", minimum=1)
+    if trailing % alignment:
+        raise DiskError("data disk trailing space must be aligned")
+    capacity = require_object(data, "capacity_gib")
+    require_keys(capacity, {"minimum", "default", "maximum"}, "data disk capacity")
+    minimum = require_int(capacity, "minimum", minimum=1)
+    default = require_int(capacity, "default", minimum=minimum)
+    require_int(capacity, "maximum", minimum=default)
+    partitions = data["partitions"]
+    if not isinstance(partitions, list) or len(partitions) != len(DATA_PARTITION_NAMES):
+        raise DiskError("data disk partitions must be misc, metadata and userdata")
+    previous_end = 0
+    seen_guids: set[uuid.UUID] = set()
+    for index, (item, expected) in enumerate(zip(partitions, DATA_PARTITION_NAMES)):
+        if not isinstance(item, dict):
+            raise DiskError(f"data partition {index} must be an object")
+        require_keys(
+            item, {"name", "start_bytes", "size_bytes", "type_guid", "unique_guid"},
+            f"data partition {index}",
+        )
+        name = partition_name(item)
+        if name != expected:
+            raise DiskError(f"data partition {index} must be {expected}")
+        if name in system_names:
+            raise DiskError(f"data partition {name} repeats a system disk name")
+        start = require_int(item, "start_bytes", minimum=alignment)
+        last = expected == DATA_PARTITION_NAMES[-1]
+        size = 0
+        if last:
+            if item["size_bytes"] is not None:
+                raise DiskError("the last data partition must fill the disk")
+        else:
+            size = require_int(item, "size_bytes", minimum=1)
+            if size % alignment:
+                raise DiskError(f"data partition {name} is not aligned")
+        if start % alignment or start < previous_end:
+            raise DiskError(f"data partition {name} is misaligned or out of order")
+        previous_end = start + size
+        parse_guid(item, "type_guid")
+        unique = parse_guid(item, "unique_guid")
+        if unique in seen_guids:
+            raise DiskError(f"data partition {name} duplicates a unique GUID")
+        seen_guids.add(unique)
+    user_start = partitions[-1]["start_bytes"]
+    if user_start + trailing >= minimum * GIB:
+        raise DiskError("the smallest data disk leaves userdata no room")
+
+
+# --- the release layout: what one build produced -----------------------------
+
+
+@dataclass(frozen=True)
+class SystemLayout:
+    geometry: Geometry
+    alignment_bytes: int
+    disk_guid: uuid.UUID
+    partitions: tuple[Partition, ...]
+    hashes: dict[str, str]
+    image_bytes: dict[str, int]
+    disk_sha256: str
+
+
+@dataclass(frozen=True)
+class Layout:
+    system: SystemLayout
+    data: dict[str, object]
+
+
+def load_layout(path: Path) -> Layout:
+    document = read_json(path, "partition layout")
+    require_keys(document, {"schema_version", "sector_size", "system_disk", "data_disk"},
+                 "partition layout")
+    if require_int(document, "schema_version") != LAYOUT_SCHEMA_VERSION:
+        raise DiskError("only partition layout schema version 2 is supported")
+    if require_int(document, "sector_size") != SECTOR_SIZE:
+        raise DiskError("GPT sector size must be exactly 512 bytes")
+    system = require_object(document, "system_disk")
+    require_keys(
+        system,
+        {
+            "size_bytes", "sha256", "alignment_bytes", "partition_entry_count",
+            "disk_guid", "partitions",
+        },
+        "system disk",
+    )
+    size = require_int(system, "size_bytes", minimum=SECTOR_SIZE)
+    alignment = require_int(system, "alignment_bytes", minimum=4096)
+    entry_count = require_int(system, "partition_entry_count", minimum=1)
+    check_entry_count(entry_count)
+    if size % alignment or alignment % 4096:
+        raise DiskError("system disk size and alignment must be multiples of 4 KiB")
+    geometry = Geometry(size, entry_count)
+    disk_sha256 = require_string(system, "sha256")
+    if SHA256_PATTERN.fullmatch(disk_sha256) is None:
+        raise DiskError("system disk sha256 is not a lower-case hex digest")
+    entries = system["partitions"]
+    if not isinstance(entries, list) or not entries or len(entries) > entry_count:
+        raise DiskError("system disk partitions must be a non-empty array")
+    partitions: list[Partition] = []
+    hashes: dict[str, str] = {}
+    image_bytes: dict[str, int] = {}
+    names: set[str] = set()
+    guids: set[uuid.UUID] = set()
+    cursor = align_up(geometry.first_usable_lba * SECTOR_SIZE, alignment)
+    for index, item in enumerate(entries):
+        if not isinstance(item, dict):
+            raise DiskError(f"system partition {index} must be an object")
+        require_keys(
+            item,
+            {
+                "name", "start_bytes", "size_bytes", "image_bytes", "sha256",
+                "type_guid", "unique_guid",
+            },
+            f"system partition {index}",
+        )
+        name = partition_name(item)
+        start = require_int(item, "start_bytes")
+        length = require_int(item, "size_bytes", minimum=alignment)
+        used = require_int(item, "image_bytes", minimum=1)
+        digest = require_string(item, "sha256")
+        if SHA256_PATTERN.fullmatch(digest) is None:
+            raise DiskError(f"partition {name} sha256 is not a lower-case hex digest")
+        if start % alignment or length % alignment:
+            raise DiskError(f"partition {name} is not aligned to {alignment} bytes")
+        if used > length or length - used >= alignment:
+            raise DiskError(f"partition {name} is not exact fit")
+        # Exact fit: the first partition follows the table at the next
+        # alignment boundary and each later one starts where its predecessor
+        # ends.
+        if start != cursor:
+            raise DiskError(f"partition {name} is not packed against its predecessor")
+        unique = parse_guid(item, "unique_guid")
+        if name in names or unique in guids:
+            raise DiskError(f"partition {name} duplicates a name or unique GUID")
+        names.add(name)
+        guids.add(unique)
+        partitions.append(
+            Partition(name, start, length, parse_guid(item, "type_guid"), unique)
+        )
+        hashes[name] = digest
+        image_bytes[name] = used
+        cursor = start + length
+    if cursor > (geometry.last_usable_lba + 1) * SECTOR_SIZE:
+        raise DiskError("last partition overlaps the backup GPT")
+    if align_up(cursor + (geometry.table_sectors + 1) * SECTOR_SIZE, alignment) != size:
+        raise DiskError("system disk has bytes beyond its exact fit")
+    for required in BOOT_PARTITION_NAMES:
+        if required not in names:
+            raise DiskError(f"system disk lacks {required}")
+    data = require_object(document, "data_disk")
+    validate_data_disk(data, names)
+    return Layout(
+        SystemLayout(
+            geometry, alignment, parse_guid(system, "disk_guid"), tuple(partitions),
+            hashes, image_bytes, disk_sha256,
+        ),
+        data,
+    )
+
+
+# --- assembling ----------------------------------------------------------------
+
+
+def sha256_range(source: BinaryIO, offset: int, size: int) -> str:
+    digest = hashlib.sha256()
+    source.seek(offset)
+    remaining = size
+    while remaining:
+        block = source.read(min(remaining, COPY_CHUNK))
+        if not block:
+            raise DiskError("disk image is truncated")
+        digest.update(block)
+        remaining -= len(block)
+    return digest.hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    with path.open("rb") as source:
+        return sha256_range(source, 0, path.stat().st_size)
+
+
+def copy_exact(source: BinaryIO, destination: BinaryIO, byte_count: int) -> None:
+    remaining = byte_count
+    while remaining:
+        block = source.read(min(remaining, COPY_CHUNK))
+        if not block:
+            raise DiskError("partition image is truncated")
+        destination.write(block)
+        remaining -= len(block)
+
+
+def image_size(image: Path) -> int:
+    if image.is_symlink() or not image.is_file():
+        raise DiskError(f"partition image must be a regular non-symlink file: {image}")
+    with image.open("rb") as source:
+        prefix = source.read(4)
+    if len(prefix) == 4 and struct.unpack("<I", prefix)[0] == SPARSE_MAGIC:
+        raise DiskError(
+            f"{image.name} is an Android sparse image; the read-only partitions are raw"
+        )
+    size = image.stat().st_size
+    if size <= 0:
+        raise DiskError(f"partition image is empty: {image.name}")
+    return size
+
+
+def parse_overrides(values: list[str], known: set[str]) -> dict[str, Path]:
+    overrides: dict[str, Path] = {}
+    for value in values:
+        name, separator, path_text = value.partition("=")
+        if not separator or not name or not path_text:
+            raise DiskError("partition image override must be NAME=ABSOLUTE_PATH")
+        if name in overrides:
+            raise DiskError(f"partition image override is repeated: {name}")
+        if name not in known:
+            raise DiskError(f"partition image override is absent from the policy: {name}")
+        path = Path(path_text)
+        if not path.is_absolute():
+            raise DiskError(f"partition image override must be absolute: {name}")
+        if path.is_symlink():
+            raise DiskError(f"partition image override must not be a symlink: {name}")
+        overrides[name] = path
+    return overrides
+
+
+def assemble(
+    policy: Policy,
+    images_dir: Path,
+    output_dir: Path,
+    image_overrides: list[str],
+) -> None:
+    if images_dir.is_symlink() or not images_dir.is_dir():
+        raise DiskError(f"images directory must be a non-symlink directory: {images_dir}")
+    disk_path = output_dir / SYSTEM_DISK_FILE
+    layout_path = output_dir / LAYOUT_FILE
+    for existing in (disk_path, layout_path):
+        if existing.exists() or existing.is_symlink():
+            raise DiskError(f"output already exists: {existing}")
+    system = policy.document["system_disk"]
+    alignment = system["alignment_bytes"]
+    entry_count = system["partition_entry_count"]
+    entries = list(policy.boot) + list(policy.filesystems)
+    overrides = parse_overrides(image_overrides, {entry["name"] for entry in entries})
+
+    sources: dict[str, Path] = {}
+    sizes: dict[str, int] = {}
+    for entry in entries:
+        name = entry["name"]
+        sources[name] = overrides.get(name, images_dir / entry["image"])
+        sizes[name] = image_size(sources[name])
+    # Boot containers first, then the filesystems largest first. The order is
+    # deterministic and carries no meaning.
+    ordered = list(policy.boot) + sorted(
+        policy.filesystems, key=lambda entry: (-sizes[entry["name"]], entry["name"])
+    )
+
+    probe = Geometry(SECTOR_SIZE * 2, entry_count)
+    cursor = align_up(probe.first_usable_lba * SECTOR_SIZE, alignment)
+    placed: list[dict[str, object]] = []
+    for entry in ordered:
+        name = entry["name"]
+        length = align_up(sizes[name], alignment)
+        placed.append({
+            "name": name,
+            "start_bytes": cursor,
+            "size_bytes": length,
+            "image_bytes": sizes[name],
+            "type_guid": entry["type_guid"],
+            "unique_guid": entry["unique_guid"],
+        })
+        cursor += length
+    disk_size = align_up(cursor + (probe.table_sectors + 1) * SECTOR_SIZE, alignment)
+    geometry = Geometry(disk_size, entry_count)
+    partitions = tuple(
+        Partition(
+            item["name"], item["start_bytes"], item["size_bytes"],
+            uuid.UUID(item["type_guid"]), uuid.UUID(item["unique_guid"]),
+        )
+        for item in placed
+    )
+    disk_guid = uuid.UUID(system["disk_guid"])
+    table = partition_entries(partitions, geometry)
+    table_crc = binascii.crc32(table) & 0xFFFFFFFF
+    primary_header = gpt_header(
+        geometry, disk_guid, current_lba=1, backup_lba=geometry.sector_count - 1,
+        entries_lba=2, entries_crc=table_crc,
+    )
+    backup_header = gpt_header(
+        geometry, disk_guid, current_lba=geometry.sector_count - 1, backup_lba=1,
+        entries_lba=geometry.backup_entries_lba, entries_crc=table_crc,
+    )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    temporary = output_dir / f".{SYSTEM_DISK_FILE}.tmp.{os.getpid()}"
+    layout_temporary = output_dir / f".{LAYOUT_FILE}.tmp.{os.getpid()}"
+    try:
+        with temporary.open("xb") as disk:
+            disk.truncate(disk_size)
+            disk.seek(0)
+            disk.write(protective_mbr(geometry))
+            disk.write(primary_header)
+            disk.write(table)
+            disk.seek(geometry.backup_entries_lba * SECTOR_SIZE)
+            disk.write(table)
+            disk.write(backup_header)
+            for item in placed:
+                disk.seek(item["start_bytes"])
+                with sources[item["name"]].open("rb") as source:
+                    copy_exact(source, disk, sizes[item["name"]])
+                print(
+                    f"staged {item['name']}: {sizes[item['name']]}/{item['size_bytes']} "
+                    f"bytes at {item['start_bytes']}"
+                )
+            disk.flush()
+            os.fsync(disk.fileno())
+        with temporary.open("rb") as disk:
+            for item in placed:
+                item["sha256"] = sha256_range(disk, item["start_bytes"], item["size_bytes"])
+        layout = {
+            "schema_version": LAYOUT_SCHEMA_VERSION,
+            "sector_size": SECTOR_SIZE,
+            "system_disk": {
+                "size_bytes": disk_size,
+                "sha256": sha256_file(temporary),
+                "alignment_bytes": alignment,
+                "partition_entry_count": entry_count,
+                "disk_guid": system["disk_guid"],
+                "partitions": [
+                    {
+                        key: item[key]
+                        for key in (
+                            "name", "start_bytes", "size_bytes", "image_bytes",
+                            "sha256", "type_guid", "unique_guid",
+                        )
+                    }
+                    for item in placed
+                ],
+            },
+            "data_disk": policy.document["data_disk"],
+        }
+        layout_temporary.write_text(
+            json.dumps(layout, indent=2) + "\n", encoding="utf-8"
+        )
+        # The tool's own check of what it wrote, before either file is published.
+        verify_layout_and_disk(load_layout(layout_temporary), temporary, check_hashes=True)
+        os.replace(temporary, disk_path)
+        os.replace(layout_temporary, layout_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+        layout_temporary.unlink(missing_ok=True)
     print(
-        f"verified UBD GPT disk: {len(layout.partitions)} partitions, "
-        f"{layout.disk_size_bytes} bytes"
+        f"assembled the system disk: {disk_size} bytes, "
+        f"{len(placed)} partitions, sha256 {layout['system_disk']['sha256']}"
+    )
+
+
+# --- verifying -----------------------------------------------------------------
+
+
+def verify_layout_and_disk(layout: Layout, disk_path: Path, *, check_hashes: bool) -> None:
+    system = layout.system
+    verify_gpt(disk_path, system.geometry, system.disk_guid, system.partitions)
+    if not check_hashes:
+        return
+    with disk_path.open("rb") as disk:
+        for partition in system.partitions:
+            observed = sha256_range(disk, partition.start_bytes, partition.size_bytes)
+            if observed != system.hashes[partition.name]:
+                raise DiskError(f"partition {partition.name} differs from its recorded sha256")
+        # The slack between the last partition and the backup table is zero.
+        end = system.partitions[-1].start_bytes + system.partitions[-1].size_bytes
+        gap_end = system.geometry.backup_entries_lba * SECTOR_SIZE
+        disk.seek(end)
+        if disk.read(gap_end - end).strip(b"\0"):
+            raise DiskError("the slack beyond the last partition is not zero")
+    if sha256_file(disk_path) != system.disk_sha256:
+        raise DiskError("system disk differs from its recorded sha256")
+
+
+def check_against_policy(layout: Layout, policy: Policy) -> None:
+    """A release's layout is what the tracked policy produces: the same
+    identities for every partition and the same data disk template."""
+    system = policy.document["system_disk"]
+    if layout.data != policy.document["data_disk"]:
+        raise DiskError("the data disk template differs from the tracked policy")
+    if (
+        layout.system.disk_guid != uuid.UUID(system["disk_guid"])
+        or layout.system.alignment_bytes != system["alignment_bytes"]
+        or layout.system.geometry.partition_entry_count != system["partition_entry_count"]
+    ):
+        raise DiskError("the system disk geometry differs from the tracked policy")
+    expected = {
+        entry["name"]: entry for entry in list(policy.boot) + list(policy.filesystems)
+    }
+    if {partition.name for partition in layout.system.partitions} != set(expected):
+        raise DiskError("the system disk partitions differ from the tracked policy")
+    for partition in layout.system.partitions:
+        entry = expected[partition.name]
+        if (
+            partition.type_guid != uuid.UUID(entry["type_guid"])
+            or partition.unique_guid != uuid.UUID(entry["unique_guid"])
+        ):
+            raise DiskError(f"partition {partition.name} GUIDs differ from the tracked policy")
+    boot_count = len(policy.boot)
+    if [partition.name for partition in layout.system.partitions[:boot_count]] != [
+        entry["name"] for entry in policy.boot
+    ]:
+        raise DiskError("the boot partitions do not come first")
+
+
+def verify(
+    layout_path: Path, disk_path: Path, check_hashes: bool, policy_path: Path | None
+) -> None:
+    layout = load_layout(layout_path)
+    if policy_path is not None:
+        check_against_policy(layout, load_policy(policy_path))
+    verify_layout_and_disk(layout, disk_path, check_hashes=check_hashes)
+    suffix = ", every sha256 matches" if check_hashes else ""
+    print(
+        f"verified system disk: {len(layout.system.partitions)} partitions, "
+        f"{layout.system.geometry.disk_size_bytes} bytes{suffix}"
     )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Assemble or verify the fixed Android 17 raw UBD GPT disk"
+        description="Assemble or verify the Android 17 read-only system disk"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     validate_parser = subparsers.add_parser("validate")
-    validate_parser.add_argument("--layout", type=Path, required=True)
+    validate_parser.add_argument("--policy", type=Path, required=True)
     assemble_parser = subparsers.add_parser("assemble")
-    assemble_parser.add_argument("--layout", type=Path, required=True)
+    assemble_parser.add_argument("--policy", type=Path, required=True)
     assemble_parser.add_argument("--images-dir", type=Path, required=True)
-    assemble_parser.add_argument("--output", type=Path, required=True)
-    assemble_parser.add_argument("--blank-partition", action="append", default=[])
+    assemble_parser.add_argument("--output-dir", type=Path, required=True)
     assemble_parser.add_argument("--image", action="append", default=[])
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--layout", type=Path, required=True)
     verify_parser.add_argument("--disk", type=Path, required=True)
+    verify_parser.add_argument(
+        "--hash", action="store_true",
+        help="also check every partition's and the disk's SHA-256",
+    )
+    verify_parser.add_argument(
+        "--policy", type=Path,
+        help="also require the layout to be what this disk policy produces",
+    )
     args = parser.parse_args()
     try:
-        layout = load_layout(args.layout.resolve())
-        if args.command == "assemble":
+        if args.command == "validate":
+            policy = load_policy(args.policy.resolve())
+            print(
+                "validated disk policy: "
+                f"{len(policy.boot) + len(policy.filesystems)} system partitions"
+            )
+        elif args.command == "assemble":
             assemble(
-                layout,
+                load_policy(args.policy.resolve()),
                 args.images_dir.resolve(),
-                args.output.resolve(),
-                args.blank_partition,
+                args.output_dir.resolve(),
                 args.image,
             )
-            verify(layout, args.output.resolve())
-        elif args.command == "verify":
-            verify(layout, args.disk.resolve())
         else:
-            print(
-                f"validated UBD GPT layout: {len(layout.partitions)} partitions, "
-                f"{layout.disk_size_bytes} bytes"
+            verify(
+                args.layout.resolve(), args.disk.resolve(), args.hash,
+                args.policy.resolve() if args.policy else None,
             )
     except (DiskError, OSError) as error:
         raise SystemExit(f"UBD disk: {error}") from error

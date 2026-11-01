@@ -3179,125 +3179,165 @@ def synthetic_sparse_image() -> bytes:
     )
 
 
-def verify_ubd_disk_fixtures(tool: Path, production_layout: Path) -> None:
-    run_tool(tool, "validate", "--layout", production_layout, check=True)
+def verify_ubd_disk_fixtures(tool: Path, production_policy: Path) -> None:
+    """The system disk is exact fit and its layout file proves every byte."""
+    run_tool(tool, "validate", "--policy", production_policy, check=True)
+    policy = json.loads(production_policy.read_text())
+    system = policy["system_disk"]
+    entries = system["boot_partitions"] + system["filesystem_partitions"]
 
     with tempfile.TemporaryDirectory(prefix="android-ubd-disk-") as temporary:
         root = Path(temporary)
         images = root / "images"
         images.mkdir()
-        (images / "system.img").write_bytes(b"raw-system")
-        userdata_payload = synthetic_sparse_image()
-        (images / "userdata.img").write_bytes(userdata_payload)
-        fixture_layout = root / "layout.json"
-        fixture_layout.write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "sector_size": 512,
-                    "alignment_bytes": 1024 * 1024,
-                    "disk_size_bytes": 16 * 1024 * 1024,
-                    "partition_entry_count": 128,
-                    "disk_guid": "253a21bd-933f-5273-8cd3-586ec7288d68",
-                    "partitions": [
-                        {
-                            "name": "system",
-                            "start_bytes": 1024 * 1024,
-                            "size_bytes": 2 * 1024 * 1024,
-                            "image": "system.img",
-                            "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
-                            "unique_guid": "e2c6424a-9fda-551e-b5d2-c1ba3b29ae33",
-                            "writable": False,
-                        },
-                        {
-                            "name": "userdata",
-                            "start_bytes": 3 * 1024 * 1024,
-                            "size_bytes": 4 * 1024 * 1024,
-                            "image": "userdata.img",
-                            "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
-                            "unique_guid": "f07a1ac4-5c95-5c37-86dd-70eaa487a193",
-                            "writable": True,
-                        },
-                    ],
-                },
-                indent=2,
-            )
-            + "\n"
-        )
-        disk = root / "android.img"
+        sizes = {
+            "init_boot": 5000,
+            "recovery": 4096,
+            "system": 3 * 4096 + 1,
+            "system_ext": 4096 * 5,
+            "product": 4096 * 2 + 17,
+            "vendor": 4096 * 3,
+            "odm": 4097,
+        }
+        for entry in entries:
+            payload = bytes((sum(entry["name"].encode()) + i) & 0xFF
+                            for i in range(251)) * (sizes[entry["name"]] // 251 + 1)
+            (images / entry["image"]).write_bytes(payload[: sizes[entry["name"]]])
+        out = root / "out"
         run_tool(
-            tool, "assemble", "--layout", fixture_layout,
-            "--images-dir", images, "--output", disk, check=True,
+            tool, "assemble", "--policy", production_policy,
+            "--images-dir", images, "--output-dir", out, check=True,
         )
-        run_tool(tool, "verify", "--layout", fixture_layout, "--disk", disk, check=True)
-        if disk.stat().st_size != 16 * 1024 * 1024:
-            fail("assembled UBD fixture has the wrong logical size")
+        disk = out / "system.img"
+        layout_path = out / "partition-layout.json"
+        run_tool(
+            tool, "verify", "--layout", layout_path, "--disk", disk, "--hash",
+            "--policy", production_policy, check=True,
+        )
+        layout = json.loads(layout_path.read_text())
+        listed = layout["system_disk"]["partitions"]
+        names = [item["name"] for item in listed]
+        if names[:2] != ["init_boot", "recovery"] or sorted(names[2:]) != sorted(
+            entry["name"] for entry in system["filesystem_partitions"]
+        ):
+            fail(f"system disk partition order is wrong: {names}")
+        filesystem_sizes = [item["size_bytes"] for item in listed[2:]]
+        if filesystem_sizes != sorted(filesystem_sizes, reverse=True):
+            fail("the read-only filesystems are not packed largest first")
+        end = 0
+        for item in listed:
+            if item["start_bytes"] % 4096 or item["size_bytes"] % 4096:
+                fail(f"partition {item['name']} is not 4 KiB aligned")
+            if item["size_bytes"] - item["image_bytes"] >= 4096:
+                fail(f"partition {item['name']} is not exact fit")
+            if item["image_bytes"] != sizes[item["name"]]:
+                fail(f"partition {item['name']} records the wrong image size")
+            if end and item["start_bytes"] != end:
+                fail(f"partition {item['name']} is not packed against its predecessor")
+            end = item["start_bytes"] + item["size_bytes"]
+        if listed[0]["start_bytes"] != 40 * 512:
+            fail("the first partition does not follow the 20 KiB primary table")
+        expected_size = (end + 128 * 128 + 512 + 4095) // 4096 * 4096
+        if layout["system_disk"]["size_bytes"] != expected_size:
+            fail("the system disk is not exact fit")
+        if disk.stat().st_size != expected_size:
+            fail("assembled system disk has the wrong size")
         with disk.open("rb") as image:
-            image.seek(1024 * 1024)
-            if image.read(len(b"raw-system")) != b"raw-system":
-                fail("raw partition payload was not staged at its fixed offset")
-            image.seek(3 * 1024 * 1024)
-            if image.read(4096) != b"A" * 4096:
-                fail("Android sparse RAW chunk was not expanded")
-            if image.read(8) != b"\x12\x34\x56\x78" * 2:
-                fail("Android sparse FILL chunk was not expanded")
-            image.seek(3 * 1024 * 1024 + 2 * 4096)
-            if image.read(32) != b"\0" * 32:
-                fail("Android sparse DONT_CARE chunk is not a disk hole")
+            for item in listed:
+                image.seek(item["start_bytes"])
+                if image.read(item["image_bytes"]) != (
+                    images / next(e["image"] for e in entries if e["name"] == item["name"])
+                ).read_bytes():
+                    fail(f"partition {item['name']} payload is not at its offset")
+        if layout["data_disk"] != policy["data_disk"]:
+            fail("the layout does not carry the data disk template")
 
         existing = run_tool(
-            tool, "assemble", "--layout", fixture_layout,
-            "--images-dir", images, "--output", disk,
+            tool, "assemble", "--policy", production_policy,
+            "--images-dir", images, "--output-dir", out,
         )
         if existing.returncode == 0:
-            fail("UBD assembler replaced an existing disk without permission")
+            fail("the system disk assembler replaced an existing release")
 
-        (images / "userdata.img").unlink()
         missing = run_tool(
-            tool, "assemble", "--layout", fixture_layout,
-            "--images-dir", images, "--output", root / "missing.img",
+            tool, "assemble", "--policy", production_policy,
+            "--images-dir", images / "nonexistent", "--output-dir", root / "missing",
         )
         if missing.returncode == 0:
-            fail("UBD assembler silently accepted a missing writable image")
+            fail("the assembler accepted a missing images directory")
 
-        blank = root / "blank.img"
-        run_tool(
-            tool, "assemble", "--layout", fixture_layout, "--images-dir", images,
-            "--blank-partition", "userdata", "--output", blank, check=True,
+        sparse_images = root / "sparse-images"
+        shutil.copytree(images, sparse_images)
+        (sparse_images / "vendor.img").write_bytes(synthetic_sparse_image())
+        sparse = run_tool(
+            tool, "assemble", "--policy", production_policy,
+            "--images-dir", sparse_images, "--output-dir", root / "sparse",
         )
-        with blank.open("rb") as image:
-            image.seek(3 * 1024 * 1024)
-            if image.read(4096) != b"\0" * 4096:
-                fail("explicit blank UBD partition is not zero initialized")
+        if sparse.returncode == 0:
+            fail("the assembler accepted an Android sparse image for a read-only partition")
 
-        for label, partition in (("immutable", "system"), ("unknown", "missing")):
+        for label, edit in (
+            ("primary GPT", lambda f: (f.seek(512 + 20), f.write(b"\xff"))),
+            ("backup GPT", lambda f: (f.seek(disk.stat().st_size - 512 + 20), f.write(b"\xff"))),
+            ("partition payload", lambda f: (f.seek(listed[2]["start_bytes"] + 7), f.write(b"\xff"))),
+        ):
+            corrupted = root / f"corrupted-{label.replace(' ', '-')}.img"
+            shutil.copyfile(disk, corrupted)
+            with corrupted.open("r+b") as image:
+                edit(image)
             rejected = run_tool(
-                tool, "assemble", "--layout", fixture_layout,
-                "--images-dir", images, "--blank-partition", partition,
-                "--output", root / f"bad-blank-{label}.img",
+                tool, "verify", "--layout", layout_path, "--disk", corrupted, "--hash"
             )
             if rejected.returncode == 0:
-                fail(f"UBD assembler accepted an {label} blank partition")
-        (images / "userdata.img").write_bytes(userdata_payload)
+                fail(f"the verifier accepted a corrupted {label}")
 
-        with disk.open("r+b") as image:
-            image.seek(512 + 20)
-            byte = image.read(1)
-            image.seek(512 + 20)
-            image.write(bytes((byte[0] ^ 0x80,)))
-        corrupted = run_tool(
-            tool, "verify", "--layout", fixture_layout, "--disk", disk
-        )
-        if corrupted.returncode == 0:
-            fail("UBD verifier accepted a corrupted primary GPT")
+        # The slack beyond the last partition must be zero.
+        padded = root / "padded.img"
+        shutil.copyfile(disk, padded)
+        last = listed[-1]
+        with padded.open("r+b") as image:
+            image.seek(last["start_bytes"] + last["size_bytes"] + 1)
+            image.write(b"\x01")
+        if run_tool(
+            tool, "verify", "--layout", layout_path, "--disk", padded, "--hash"
+        ).returncode == 0:
+            fail("the verifier accepted nonzero slack")
 
-        (images / "system.img").write_bytes(b"X" * (2 * 1024 * 1024 + 1))
-        oversized = run_tool(
-            tool, "assemble", "--layout", fixture_layout,
-            "--images-dir", images, "--output", root / "oversized.img",
-        )
-        if oversized.returncode == 0:
-            fail("UBD assembler accepted a partition payload that exceeds its capacity")
+        # A layout that is not what the tracked policy produces is refused.
+        tampered = json.loads(layout_path.read_text())
+        tampered["data_disk"]["capacity_gib"]["maximum"] += 1
+        tampered_path = root / "tampered-layout.json"
+        tampered_path.write_text(json.dumps(tampered))
+        if run_tool(
+            tool, "verify", "--layout", tampered_path, "--disk", disk,
+            "--policy", production_policy,
+        ).returncode == 0:
+            fail("the verifier accepted a data disk template the policy does not produce")
+
+        # An unpacked layout (a partition that leaves room) is not exact fit.
+        loose = json.loads(layout_path.read_text())
+        loose["system_disk"]["partitions"][1]["size_bytes"] += 4096
+        loose_path = root / "loose-layout.json"
+        loose_path.write_text(json.dumps(loose))
+        if run_tool(tool, "verify", "--layout", loose_path, "--disk", disk).returncode == 0:
+            fail("the verifier accepted a layout that is not exact fit")
+
+        # A data disk partition may not share a name with a system partition,
+        # because first-stage init takes a name from any attached disk.
+        clash = json.loads(production_policy.read_text())
+        clash["system_disk"]["filesystem_partitions"][4]["name"] = "misc"
+        clash_path = root / "clash-policy.json"
+        clash_path.write_text(json.dumps(clash))
+        if run_tool(tool, "validate", "--policy", clash_path).returncode == 0:
+            fail("the policy accepted a data partition that repeats a system name")
+
+        # userdata must fill the disk: a fixed size is refused.
+        fixed = json.loads(production_policy.read_text())
+        fixed["data_disk"]["partitions"][2]["size_bytes"] = 1 << 30
+        fixed_path = root / "fixed-policy.json"
+        fixed_path.write_text(json.dumps(fixed))
+        if run_tool(tool, "validate", "--policy", fixed_path).returncode == 0:
+            fail("the policy accepted a fixed-size userdata partition")
 
 
 def verify_pin_manifest(tool: Path) -> None:
@@ -3332,42 +3372,6 @@ def verify_pin_manifest(tool: Path) -> None:
         )
         if refused.returncode == 0 or "not pinned to a commit" not in refused.stdout:
             fail("pin manifest rendering accepted a project not pinned to a commit")
-
-
-def verify_layout_consumers(root: Path, android_root: Path) -> None:
-    """The fixed GPT geometry is compiled into the emulator and the launcher."""
-    layout = json.loads(
-        (android_root / "support/image/partition-layout.json").read_text()
-    )
-    partitions = layout["partitions"]
-    emulator = (root / "darwin/device/block/android_boot.cpp").read_text()
-    seed_mib = re.search(
-        r"seedDiskSize = ([0-9']+)ULL \* mebibyte;", emulator
-    )
-    if seed_mib is None or (
-        int(seed_mib.group(1).replace("'", "")) << 20 != layout["disk_size_bytes"]
-    ):
-        fail("the emulator's seed disk size differs from partition-layout.json")
-    compiled = re.findall(
-        r'ExpectedPartition\{"([a-z_]+)", ([0-9\']+)ULL, ([0-9\']+)ULL\}',
-        emulator,
-    )
-    expected = [
-        (p["name"], p["start_bytes"], p["size_bytes"]) for p in partitions
-    ]
-    if [
-        (name, int(offset.replace("'", "")), int(size.replace("'", "")))
-        for name, offset, size in compiled
-    ] != expected:
-        fail("the emulator's fixed partitions differ from partition-layout.json")
-    launcher = (root / "tools/boot_android.py").read_text()
-    first_lba = re.search(r"USERDATA_FIRST_LBA = ([0-9_]+)", launcher)
-    userdata = partitions[-1]
-    if userdata["name"] != "userdata" or first_lba is None or (
-        int(first_lba.group(1).replace("_", ""))
-        != userdata["start_bytes"] // layout["sector_size"]
-    ):
-        fail("the launcher's userdata start differs from partition-layout.json")
 
 
 def main() -> None:
@@ -3416,9 +3420,8 @@ def main() -> None:
     )
     verify_ubd_disk_fixtures(
         android_root / "tools/ubd-disk.py",
-        android_root / "support/image/partition-layout.json",
+        android_root / "support/image/disk-policy.json",
     )
-    verify_layout_consumers(root, android_root)
 
     scripts = list((android_root / "build").rglob("*.sh"))
     scripts += list((android_root / "tools").rglob("*.py"))

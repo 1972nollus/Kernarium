@@ -886,45 +886,59 @@ time compared and the release accepted.
 
 ## Static disk and boot contract
 
-`support/image/partition-layout.json` owns a compact 3,123 MiB seed GPT with
-separate Android payload, metadata, `init_boot`, `misc`, recovery, and a
-128 MiB userdata filesystem. The payload partitions hold both userspaces:
-system is 1,600 MiB, system_ext 512, product 576 and vendor 256. Userdata is
-the final partition. Before its first
-boot, the Apple app's generic Swift `DiskUtil` expands the bundle-local raw
-file to the selected whole-GiB capacity from 6 through 64 GiB, which leaves
-userdata about 3 GiB at the smallest, and uses the
-statically linked GPT fdisk core to relocate the backup GPT and extend
-userdata. The standalone macOS wrapper performs the same transactional
-host-side operation with the system `truncate` utility and GPT fdisk's
-`sgdisk`, found on `PATH` or named with `--sgdisk`. Runtime launch has no
-disk-capacity parameter and rejects a GPT that does not match the file. The
-resized image is opened directly as writable storage; Android launch never
-constructs or accepts a UBD COW pair. Normal Android fills userdata on every
-boot, once `/data` is mounted and before the zygote starts (`post-fs-data`):
-`resize2fs` asks the kernel's online resize to grow the mounted filesystem to
-the partition, and does nothing when the host has not enlarged it. The online
-resize is journaled and needs no `fsck`; an offline `resize2fs` refuses a
-filesystem mounted since its last full check, and the `e2fsck` that `mount_all`
-runs skips a clean one, so it would fill userdata on the first boot only. The
-kernel adds the group descriptor blocks a larger filesystem needs by converting
-it to `meta_bg`, which the 128 MiB image (no reserved descriptor blocks) relies
-on for a first boot at a large capacity. `resize2fs` runs as root with the group
-of `/data`'s owner, so it opens `/data` (mode 0771) without a DAC capability,
-and in the `fsck` domain, which gets `sys_resource`, `open`, `read` and `ioctl`
-on `system_data_root_file:dir` and the one ioctl `EXT4_IOC_RESIZE_FS` (0x6610);
-the target-files verifier requires the command, these rules, and no other
-ioctl for that domain on `/data`. The image carries
-8,192 inodes (`BOARD_USERDATAIMAGE_EXTFS_INODE_COUNT`, which a `build/make`
-topic, route `p0002`, forwards to the image builder as it does for the
-read-only partitions), one per 16 KiB, ext4's default ratio. `resize2fs` keeps
-the inodes per group, so mke2fs's own choice for so small a filesystem, one per
-4 KiB, would leave the grown `/data` with more inodes than blocks, which
-Android's storage tests reject; the verifier requires the count. Recovery does
-not grow userdata: it mounts the filesystem at its current extent, and its
-factory reset formats the whole partition. Neither guest rewrites or refreshes
-a live partition table. There is no `super`,
-dynamic partition, Virtual A/B, AVB, OTA slot, or DLKM partition.
+The guest sees two disks, and a third would stall its boot: first-stage init
+mounts a partition by name from any Android GPT disk it finds, so the host
+attaches exactly these two.
+
+- The **system disk**, `guest/system.img`, is read-only and ships with the
+  release. One GPT holds `init_boot`, `recovery`, and the five EROFS partitions
+  (`system`, `system_ext`, `product`, `vendor`, `odm`), each exactly its image
+  rounded up to 4 KiB and packed back to back from LBA 40, the boot containers
+  first and the filesystems largest first. The two GPT tables are the only
+  bytes that are not partition payload, and the bytes between a payload and
+  its partition's end are zero. The disk is attached as `ubd0r`.
+- The **data disk** is the guest instance's writable disk, a sparse GPT that
+  the host creates (see [`darwin/device/block`](../../darwin/device/block/README.md)):
+  `misc` (1 MiB at 1 MiB), `metadata` (16 MiB at 2 MiB), a reserved gap, and
+  `userdata` from 64 MiB to the last MiB. The gap is room for a later layout
+  to add partitions without moving userdata. The host writes no filesystem:
+  the fstab's `formattable` entries make first-stage init format metadata and
+  userdata on first boot. The disk is attached as `ubd1`, with discard.
+
+`support/image/disk-policy.json` is the tracked policy: partition names,
+image names, GUIDs, the packing rules, and the data disk template with its
+capacity range (4 through 64 GiB, 8 by default). `tools/ubd-disk.py assemble`
+turns the policy and the built images into `system.img` and the release's
+`partition-layout.json` (schema 2), which records the system disk's size,
+every partition's offset, size, image size and SHA-256, the SHA-256 of the
+whole disk, and the data disk template. The host reads only that file, never
+the policy, so a layout is a release property: changing a size or an offset
+needs no host change. Partition names are unique across both disks.
+`tools/ubd-disk.py verify --hash` checks a disk against its layout, optionally
+against the tracked policy. The host does not hash at boot; the installer
+verifies a release once.
+
+The data disk only grows. The host raises its size and rewrites its GPT (the
+`userdata` partition fills the disk); it never shrinks one. Normal Android
+fills userdata on every boot, once `/data` is mounted and before the zygote
+starts (`post-fs-data`): `resize2fs` asks the kernel's online resize to grow
+the mounted filesystem to the partition, and does nothing when the host has not
+enlarged it. The online resize is journaled and needs no `fsck`; an offline
+`resize2fs` refuses a filesystem mounted since its last full check, and the
+`e2fsck` that `mount_all` runs skips a clean one, so it would fill userdata on
+the first boot only. The kernel adds the group descriptor blocks a larger
+filesystem needs by converting it to `meta_bg`. `resize2fs` runs as root with
+the group of `/data`'s owner, so it opens `/data` (mode 0771) without a DAC
+capability, and in the `fsck` domain, which gets `sys_resource`, `open`,
+`read` and `ioctl` on `system_data_root_file:dir` and the one ioctl
+`EXT4_IOC_RESIZE_FS` (0x6610); the target-files verifier requires the command,
+these rules, and no other ioctl for that domain on `/data`. Recovery does not
+grow userdata: it mounts the filesystem at its current extent, and its factory
+reset formats the whole partition. Neither guest rewrites or refreshes a live
+partition table. There is no `super`, dynamic partition, Virtual A/B, AVB, OTA
+slot, or DLKM partition. AOSP still builds its own metadata and userdata
+images into the target files (the target-files verifier requires them and the
+userdata inode count), but they are not shipped.
 
 The image keeps `/system/bin/sgdisk`, which `vold` runs for every disk it scans
 or partitions. The fstab has no `voldmanaged` entry, so `vold` never manages the
@@ -1045,28 +1059,28 @@ product's properties, so `sys.use_memfd=true` reaches it and its ashmem users
 fall back to memfd on a kernel without `/dev/ashmem`. The verifier requires
 that line.
 
-The recovery partition is 20 MiB. The stock LineageOS recovery image measures
-15.07 MiB (15,802,368 bytes), and the size rule is that image plus 25%
-headroom, rounded up to a 4 MiB multiple: 18.8 MiB becomes 20 MiB, which leaves
-4.9 MiB (32%) of the partition free. Like every partition it starts on the
-layout's 1 MiB alignment, and `BOARD_RECOVERYIMAGE_PARTITION_SIZE` must equal
-the layout, so the build fails on an image that does not fit. Resize the
-partition only when the image outgrows 80% of it, and a resize moves
-userdata, so it changes the seed GPT that the Apple runtime validates.
+The stock LineageOS recovery image measures 15.07 MiB (15,802,368 bytes). Its
+`BOARD_RECOVERYIMAGE_PARTITION_SIZE` of 20 MiB is the image builder's limit, 25%
+headroom rounded up to a 4 MiB multiple, and the build fails on an image that
+does not fit; the system disk packs the recovery image at its own size.
 
 `tools/verify-lineage-recovery.py` checks the image the assembler installs: a
 kernel-less v4 image whose LZ4 or gzip ramdisk holds only target ELFs aligned
 to 16 KiB or better, a closed dependency set, no loadable modules, the checked
 fstab, and the `eth0` interface policy. `build/assemble-image.sh` owns
-`init_boot` ramdisk composition, disk assembly, and verification. It refuses
-unsafe paths, partition overflow, module payloads, or replacement of an
-existing output.
+`init_boot` ramdisk composition, system disk assembly, and verification. It
+refuses unsafe paths, partition overflow, module payloads, or replacement of
+an existing output.
 
 ## Release installation
 
 `support/release/release-manifest.schema.json` defines the compact rootfs
-release. It binds the fixed GPT, boot ranges, command line, layout, target-file
-support, and source provenance. The checked
+release. It binds the system disk and its layout, boot ranges, command line,
+target-file support, and source provenance. The Android section records the
+security patch level (`ro.build.version.security_patch`) and the build number
+(`ro.build.version.incremental`), which a release must set numerically
+(`build-aosp.sh --build-number N`): the number is both the user-visible release
+number and the monotonic key by which the host refuses a downgrade. The checked
 `metadata/accepted-release.env` selects one reviewed release without recording
 a builder path.
 
@@ -1077,18 +1091,18 @@ android/lineage-24/tools/install-release.py \
   --source /absolute/local/path/to/release
 ```
 
-The installer validates the candidate, expands the compressed GPT as a sparse
-local file, revalidates the staged tree, and installs it atomically below
-`.build/android/releases`. It never replaces an existing release. Apple CMake
-does not import the rootfs release and does not invoke Repo, Soong, Kbuild,
-image assembly, publication, or transport.
+The installer validates the candidate, including every system disk partition
+hash, and installs it atomically below `.build/android/releases`. It never
+replaces an existing release. Apple CMake does not import the rootfs release
+and does not invoke Repo, Soong, Kbuild, image assembly, publication, or
+transport.
 
 The release manifest retains the kernel build that qualified its target files,
 but that value is historical provenance. Apple runtime selection uses an
 independent compatible Android kernel artifact and performs no rootfs, kernel
-commit, or emulator release comparison at launch. A bundle's expanded disk
-remains usable across compatible kernel updates within the `6.18` line. A
-kernel-only update therefore advances only
+commit, or emulator release comparison at launch. A guest's data disk remains
+usable across compatible kernel updates within the `6.18` line. A kernel-only
+update therefore advances only
 [`accepted-android-4k.env`](../../kernel/mainline-6.18/artifacts/accepted-android-4k.env)
 and keeps the accepted release, which then runs a later kernel than the one it
 records.
@@ -1099,9 +1113,10 @@ A release is signed with a private key set that never enters the repository, a
 log or a release. `tools/publish-release.py --signing-keys DIR` takes the
 unsigned target files, copies `DIR` (owner-only, no group or other access) to a
 private temporary directory, signs with the AOSP `sign_target_files_apks`,
-assembles the disk from the signed archive, and deletes the copy and checks the
-deletion whether or not signing succeeded. `--disk` then names the new signed
-disk, and `--mkbootfs`, `--mkbootimg` and `--first-boot-artifacts` are
+assembles the system disk from the signed archive, and deletes the copy and
+checks the deletion whether or not signing succeeded. `--disk-dir` then names
+the new directory the signed `system.img` and `partition-layout.json` are
+written to, and `--mkbootfs`, `--mkbootimg` and `--first-boot-artifacts` are
 required; the last names the first-boot output of
 `tools/precompile-first-boot-apps.py`, and publishing runs that tool's `verify`
 on the signed tree, so re-signing cannot leave first boot compiling. The set
