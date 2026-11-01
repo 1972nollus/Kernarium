@@ -3173,6 +3173,59 @@ def verify_decoder_output_delay_topic(android_root: Path) -> None:
             fail(f"the decoder output delay check accepts {label}")
 
 
+def secure_element_topic_problems(added: str, removed: str) -> list[str]:
+    """What is wrong with the lines of the SecureElement topic.
+
+    The topic makes the OMAPI service start when a client binds it by removing the one attribute that
+    starts it at boot. It changes nothing else of the manifest: the service, its exported intent filter
+    and its shared uid stay, so a client that binds the intent still connects."""
+    problems = []
+    if added.strip():
+        problems.append("the topic adds lines")
+    if removed.strip() != 'android:persistent="true"':
+        problems.append("the topic removes something other than the persistent attribute")
+    return problems
+
+
+def verify_secure_element_topic(android_root: Path) -> None:
+    """SecureElement stays in the product, not persistent: it costs nothing at idle and still answers a bind.
+
+    CTS's OmapiTest#testGetOmapiVersion fails when the SEService intent finds no package, so the package
+    is kept; the memory it cost at idle (about 5.7 MiB) is saved by starting it on a bind."""
+    patches = sorted((android_root / "patches/projects/p0024/series").glob("SecureElement-*.patch"))
+    if len(patches) != 1:
+        fail(f"p0024 has {len(patches)} SecureElement patches, not one")
+    text = patches[0].read_text()
+    if "+++ b/AndroidManifest.xml" not in text or text.count("+++ b/") != 1:
+        fail("the SecureElement topic touches something other than AndroidManifest.xml")
+    lines = text.splitlines()
+    added = "\n".join(line[1:] for line in lines if line.startswith("+") and not line.startswith("+++"))
+    removed = "\n".join(line[1:] for line in lines if line.startswith("-") and not line.startswith("---"))
+    problems = secure_element_topic_problems(added, removed)
+    if problems:
+        fail("the SecureElement topic: " + "; ".join(problems))
+    for label, edited_added, edited_removed in (
+        ("a topic that adds the attribute back", added + 'android:persistent="true"', removed),
+        ("a topic that also drops the exported service", added, removed + '\n<service android:name=".SecureElementService"'),
+        ("a topic that removes another attribute", added, removed.replace("persistent", "directBootAware")),
+        ("a topic that removes nothing", added, ""),
+    ):
+        if not secure_element_topic_problems(edited_added, edited_removed):
+            fail(f"the SecureElement topic check accepts {label}")
+    # The product keeps the package (the package assertions are verified in verify_package_assertions) and
+    # the image verifier does not forbid its directory.
+    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    removed_block = re.search(
+        r"^KERNARIUM_REMOVED_PACKAGES := \\\n((?:    \S+ \\\n)+    \S+)$", product, re.MULTILINE
+    )
+    if removed_block is None or "SecureElement" in removed_block.group(1).replace("\\", " ").split():
+        fail("the product removes SecureElement")
+    if "SecureElement" in load_tool(android_root / "tools/verify-target-files.py").FORBIDDEN_APP_DIRECTORIES:
+        fail("the target-files verifier forbids the SecureElement directory")
+    if "route `p0024`" not in (android_root / "README.md").read_text():
+        fail("the README does not describe the SecureElement topic (route p0024)")
+
+
 def verify_reclaim_boot_apps(android_root: Path) -> None:
     """The reclaim script kills only the cached processes of the listed packages.
 
@@ -3500,6 +3553,7 @@ def verify_package_assertions(android_root: Path) -> None:
         "com.google.cf.wpa_supplicant",
         "KernariumWifiOverlay",
         "KernariumPinnerOverlay",
+        "SecureElement",
         "kernarium_net_setup",
         "kernarium_wifi_network_script",
         "kernarium_reclaim_boot_apps_script",
@@ -4120,6 +4174,7 @@ def main() -> None:
     verify_pinner_overlay(android_root)
     verify_secondary_zygote_topic(android_root)
     verify_decoder_output_delay_topic(android_root)
+    verify_secure_element_topic(android_root)
     verify_reclaim_boot_apps(android_root)
     verify_default_wallpaper(android_root)
     verify_overlay_sepolicy(android_root)

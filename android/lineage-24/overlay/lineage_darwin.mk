@@ -245,7 +245,6 @@ KERNARIUM_REMOVED_PACKAGES := \
     PhotoTable \
     QuickSearchBox \
     SatelliteClient \
-    SecureElement \
     SimAppDialog \
     Stk \
     TeleService \

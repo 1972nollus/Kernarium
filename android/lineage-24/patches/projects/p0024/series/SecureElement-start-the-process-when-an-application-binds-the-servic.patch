@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 17:16:52 +0900
+Subject: [PATCH] SecureElement: start the process when an application binds
+ the service
+
+SecureElement is the OMAPI service for an embedded secure element or a
+UICC reader. The application is persistent, so the system starts its
+process at every boot and the application starts the service from onCreate;
+the process then holds about 5.7 MiB at idle whether or not an SEService
+client ever asks for it. A device without a reader has no use for that: its
+clients find no reader, but they still have to connect.
+
+SEService looks for the system's secure_element service first and, when
+the service is missing, binds the application's SecureElementService
+intent. Remove android:persistent, so nothing starts the process at boot
+and the first such bind does: the application's onCreate then starts and
+registers the service exactly as before, and the process is one that the
+system may reclaim under memory pressure. Nothing else about the
+application changes.
+---
+ AndroidManifest.xml | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/AndroidManifest.xml b/AndroidManifest.xml
+index 9e3a75bb8b90610cb94392f82eece45045106c10..d2034975b60f8059f7cc057d6ac26673dfee42f0 100755
+--- a/AndroidManifest.xml
++++ b/AndroidManifest.xml
+@@ -7,7 +7,6 @@
+     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
+     <application android:name=".SEApplication"
+          android:label="SecureElementApplication"
+-         android:persistent="true"
+          android:directBootAware="true"
+          android:defaultToDeviceProtectedStorage="true"
+          android:memtagMode="async">
