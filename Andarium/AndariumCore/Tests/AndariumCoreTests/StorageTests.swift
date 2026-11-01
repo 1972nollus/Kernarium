@@ -203,18 +203,29 @@ struct StorageTests {
         var guest = try await storage.create(Guest.fresh(on: host))
 
         // A URL caches the resource values it has read, so each read starts
-        // from the path.
+        // from the path. macOS applies a cleared flag through the backup
+        // service, so it reads back a moment after the call returns; the
+        // wait is bounded.
         func excluded(_ url: URL) throws -> Bool? {
             try URL(fileURLWithPath: url.path).resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup
         }
-        for url in [storage.locations.directory, storage.locations.image, storage.locations.settings, storage.locations.instance] {
-            #expect(try excluded(url) == true)
+        func settles(_ url: URL, to value: Bool) throws -> Bool {
+            let deadline = Date().addingTimeInterval(5)
+            while try excluded(url) != value {
+                if Date() > deadline { return false }
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            return true
+        }
+        let paths = [storage.locations.directory, storage.locations.image, storage.locations.settings, storage.locations.instance]
+        for url in paths {
+            #expect(try settles(url, to: true), "\(url.lastPathComponent)")
         }
 
         guest.includeInBackups = true
         try storage.save(guest)
-        for url in [storage.locations.directory, storage.locations.image, storage.locations.settings, storage.locations.instance] {
-            #expect(try excluded(url) == false)
+        for url in paths {
+            #expect(try settles(url, to: false), "\(url.lastPathComponent)")
         }
     }
 }

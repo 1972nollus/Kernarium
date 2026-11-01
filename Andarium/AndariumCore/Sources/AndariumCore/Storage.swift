@@ -259,10 +259,18 @@ public struct SingleImageStorage: GuestStorage {
     /// which covers whatever is later put in it, and on its files.
     private func applyBackupPolicy(_ guest: Guest) {
         var excluded = URLResourceValues()
-        excluded.isExcludedFromBackup = !guest.includeInBackups
+        excluded.isExcludedFromBackup = true
+        var included = URLResourceValues()
+        included.isExcludedFromBackup = false
         for url in [locations.directory, locations.image, locations.instance, locations.settings] {
             var target = url
             try? target.setResourceValues(excluded)
+            // On a Mac the backup service keeps the exclusion of a path and
+            // restores it on a file that replaced the original, as the
+            // atomic write of the settings does. A clear finds no flag on the
+            // new file and leaves that record in place, so the flag is set
+            // first and the clear then removes both.
+            if guest.includeInBackups { try? target.setResourceValues(included) }
         }
     }
 }
