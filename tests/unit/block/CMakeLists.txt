@@ -13,10 +13,10 @@ set(_uml_android_fixture_files
 add_custom_command(
     OUTPUT ${_uml_android_fixture_files}
     COMMAND ${Python3_EXECUTABLE} -B
-        ${CMAKE_CURRENT_SOURCE_DIR}/android_release_fixture.py
+        ${PROJECT_SOURCE_DIR}/tests/support/android/android_release_fixture.py
         --android-root ${_uml_android_producer_root}
         --output ${_uml_android_fixture_dir}
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/android_release_fixture.py
+    DEPENDS ${PROJECT_SOURCE_DIR}/tests/support/android/android_release_fixture.py
         ${_uml_android_producer_root}/tools/ubd-disk.py
         ${_uml_android_producer_root}/support/image/disk-policy.json
     COMMENT "Assembling the Android release fixture"

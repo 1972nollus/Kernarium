@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Assemble a small Android release for the host block-layer unit tests.
+"""Assemble a small Android release for the host block-layer tests.
 
 The release is what android/lineage-24/tools/ubd-disk.py produces from the
 tracked disk policy, with synthetic partition contents: kernelless boot image

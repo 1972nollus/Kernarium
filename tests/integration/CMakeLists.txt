@@ -398,6 +398,7 @@ uml_add_guest_integration_test(
     CPUS 2)
 
 add_subdirectory(aarch32)
+add_subdirectory(android)
 add_subdirectory(balloon)
 add_subdirectory(exclusive)
 add_subdirectory(no_sve)
