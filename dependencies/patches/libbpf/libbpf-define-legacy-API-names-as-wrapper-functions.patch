@@ -13,10 +13,10 @@ around their current names, so the library also builds on Darwin hosts.
  2 files changed, 24 insertions(+), 11 deletions(-)
 
 diff --git a/src/btf.c b/src/btf.c
-index ceb57b46a8782a9cd58a28d9473e2e3281a4d022..fe6c357a99c6e8dab15a7fc1fbb7594ced1ac370 100644
+index 512b3962f75f8c502d4785b3edf0693da9a26ef0..a6b1f2c57003a655a9a45823cf57bd405e6e93e8 100644
 --- a/src/btf.c
 +++ b/src/btf.c
-@@ -1872,8 +1872,10 @@ const void *btf__raw_data(const struct btf *btf_ro, __u32 *size)
+@@ -1928,8 +1928,10 @@ const void *btf__raw_data(const struct btf *btf_ro, __u32 *size)
  	return data;
  }
  
@@ -29,7 +29,7 @@ index ceb57b46a8782a9cd58a28d9473e2e3281a4d022..fe6c357a99c6e8dab15a7fc1fbb7594c
  
  const char *btf__str_by_offset(const struct btf *btf, __u32 offset)
  {
-@@ -3712,8 +3714,10 @@ const void *btf_ext__raw_data(const struct btf_ext *btf_ext, __u32 *size)
+@@ -4023,8 +4025,10 @@ const void *btf_ext__raw_data(const struct btf_ext *btf_ext, __u32 *size)
  	return data;
  }
  
@@ -42,7 +42,7 @@ index ceb57b46a8782a9cd58a28d9473e2e3281a4d022..fe6c357a99c6e8dab15a7fc1fbb7594c
  
  enum btf_endianness btf_ext__endianness(const struct btf_ext *btf_ext)
  {
-@@ -5812,7 +5816,10 @@ struct btf *btf__load_vmlinux_btf(void)
+@@ -6225,7 +6229,10 @@ struct btf *btf__load_vmlinux_btf(void)
  	return libbpf_err_ptr(-ESRCH);
  }
  
@@ -55,10 +55,10 @@ index ceb57b46a8782a9cd58a28d9473e2e3281a4d022..fe6c357a99c6e8dab15a7fc1fbb7594c
  struct btf *btf__load_module_btf(const char *module_name, struct btf *vmlinux_btf)
  {
 diff --git a/src/libbpf.c b/src/libbpf.c
-index 42bdba4efd0c67696c9f9b0623dccd93ddf47a06..b1b377779f680cb2a505c6db61a99805720b4a7f 100644
+index fdd69aac39bdec6f8aae444b4975e11d9faa66ea..bebab3c0110da996af554b15b90d83206e0eef8c 100644
 --- a/src/libbpf.c
 +++ b/src/libbpf.c
-@@ -9253,8 +9253,10 @@ int bpf_map__set_pin_path(struct bpf_map *map, const char *path)
+@@ -9908,8 +9908,10 @@ int bpf_map__set_pin_path(struct bpf_map *map, const char *path)
  	return 0;
  }
  
@@ -71,7 +71,7 @@ index 42bdba4efd0c67696c9f9b0623dccd93ddf47a06..b1b377779f680cb2a505c6db61a99805
  
  const char *bpf_map__pin_path(const struct bpf_map *map)
  {
-@@ -9722,8 +9724,10 @@ int bpf_program__fd(const struct bpf_program *prog)
+@@ -10389,8 +10391,10 @@ int bpf_program__fd(const struct bpf_program *prog)
  	return prog->fd;
  }
  
@@ -84,7 +84,7 @@ index 42bdba4efd0c67696c9f9b0623dccd93ddf47a06..b1b377779f680cb2a505c6db61a99805
  
  enum bpf_prog_type bpf_program__type(const struct bpf_program *prog)
  {
-@@ -9758,8 +9762,10 @@ int bpf_program__set_type(struct bpf_program *prog, enum bpf_prog_type type)
+@@ -10425,8 +10429,10 @@ int bpf_program__set_type(struct bpf_program *prog, enum bpf_prog_type type)
  	return 0;
  }
  

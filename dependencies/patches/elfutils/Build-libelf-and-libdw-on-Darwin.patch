@@ -115,10 +115,10 @@ index 43d2534f20b0bd0e1dd8c143ccb52eefa6902b9a..281dfd5c2ca943fe9295a052365f2dd3
 -     ppc64_register_info __attribute__ ((alias ("ppc_register_info")));
 +strong_alias (ppc_register_info, ppc64_register_info)
 diff --git a/configure.ac b/configure.ac
-index b0d1b48d063a18655da7917f411bb9a5b7f64bbe..6a9f5b23ec91f2d24d19715c1d5d9d903ff93f09 100644
+index d3c0292273c570d2c2eeab952de75af93d684186..3301d7f670db19a5019c3083859de278b2428a24 100644
 --- a/configure.ac
 +++ b/configure.ac
-@@ -530,7 +530,10 @@ AC_CHECK_HEADERS([sys/random.h])
+@@ -532,7 +532,10 @@ AC_CHECK_HEADERS([sys/random.h])
  AC_CHECK_DECLS([getrandom],[],[],
  	       [#include <sys/random.h>])
  
