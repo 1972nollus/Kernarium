@@ -174,11 +174,14 @@ public:
     void resetFenceState() noexcept;
 
     /* Guest GL contexts that have gone quiet release what the host GL driver
-     * keeps for them. A context is idle once a second has passed since its
-     * last command, transfer or fence and it has no fence outstanding; the
-     * renderer is told once, and again after the context is next active. The
-     * service thread asks how long until the next context could be idle,
-     * arms a timer for it, and calls trimIdleContexts when it fires. */
+     * keeps for them, and so does the renderer's own context (context 0),
+     * where a resource is made and transferred when a command names no guest
+     * context. A context is idle once a second has passed since its last
+     * command, transfer, resource creation or fence and it has no fence
+     * outstanding; the renderer is told once, and again after the context is
+     * next active. The service thread asks how long until the next context
+     * could be idle, arms a timer for it, and calls trimIdleContexts when it
+     * fires. */
     [[nodiscard]] std::optional<std::chrono::steady_clock::duration>
         nextIdleTrimDelay() const noexcept;
     void trimIdleContexts() noexcept;

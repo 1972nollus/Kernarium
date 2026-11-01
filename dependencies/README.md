@@ -254,7 +254,8 @@ without the sanitizer.
 
 The idle trim of a context (`EGL_MESA_context_trim`, `pipe_context::trim`) is
 exercised by `gpu-host-context-trim` and `gpu-host-context-trim-concurrent` in
-`check-gpu`. The second has four contexts of one Zink screen draw, flush and
+`check-gpu`; `gpu-host-context0-trim` makes the renderer's own context release
+the textures a guest made and deleted without naming a context. The second has four contexts of one Zink screen draw, flush and
 trim at once, and is the program for a ThreadSanitizer pass over the trim, the
 flush queue's reset of the screen's batch-state lists and their lock order: build
 the Zink and EGL stack with `-Db_sanitize=thread` (the same object stays without
@@ -262,6 +263,14 @@ the sanitizer) and compile the test and `host_gl_provider.cpp` with
 `-fsanitize=thread`. Zink reports its unsynchronized scalars there, with or
 without a trim: the screen's last finished batch, a state's submit count and the
 context's state count. No report involves a state list or a state's link.
+
+`eglReleaseCachedMemoryMESA` (the same extension), which frees what every screen
+of the process caches from any thread, is exercised by
+`gpu-host-cached-memory-release`: it fills Zink's buffer cache, releases it from
+a thread with no context and checks that the allocation drops and refills.
+`gpu-device-memory-pool` covers the pool's retry, and
+`gpu-host-gl-device-memory-budget` the refused reservation that frees the cache
+first.
 
 Both Mesa passes build with `-Dhost-heap=true`, the host topic that lets the
 embedding host supply the allocator of the memory Mesa allocates for itself

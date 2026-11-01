@@ -3,12 +3,13 @@
 // The host GPU has one fixed budget (docs/graphics.md, "Device memory
 // budget"), and the OpenGL path stays inside it: every buffer and texture a
 // guest creates is memory the host's Zink allocates through KosmicKrisp, which
-// refuses what the budget cannot hold. A guest cannot be told, because a
-// texture is created without an answer, so the contract is about what the host
-// does:
+// refuses what the budget cannot hold. The contract is what the host does and
+// what it tells the guest:
 //
-//  - textures made past the budget have no storage, and the host's GPU memory
-//    stays within the budget while the guest tries;
+//  - a texture the budget cannot hold is not made: the renderer fails the
+//    creation with ENOMEM, which the device answers as out of memory so that
+//    the guest fails it too, and the host's GPU memory stays within the
+//    budget while the guest tries;
 //  - the renderer is not lost: once the guest releases some textures, the
 //    ones it made before the budget ran out still hold their pixels (while
 //    the budget is full even a transfer is refused, since it needs a staging
@@ -26,6 +27,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -71,18 +73,19 @@ public:
         , storage_(static_cast<std::size_t>(textureSize) * textureSize *
               bytesPerPixel)
     {
-        created_ = renderer_.createResource3d(
-                       uml::gpu::VirglRenderer::Resource3d {
-                           .resourceId = resourceId_,
-                           .target = pipeTexture2d,
-                           .format = virglFormatR8g8b8a8Unorm,
-                           .bind = virglBindRenderTarget | virglBindSamplerView,
-                           .width = textureSize,
-                           .height = textureSize,
-                           .depth = 1,
-                           .arraySize = 1,
-                           .lastLevel = 0,
-                       }) == 0;
+        result_ = renderer_.createResource3d(
+            uml::gpu::VirglRenderer::Resource3d {
+                .resourceId = resourceId_,
+                .target = pipeTexture2d,
+                .format = virglFormatR8g8b8a8Unorm,
+                .bind = virglBindRenderTarget | virglBindSamplerView,
+                .width = textureSize,
+                .height = textureSize,
+                .depth = 1,
+                .arraySize = 1,
+                .lastLevel = 0,
+            });
+        created_ = result_ == 0;
         if (!created_)
             return;
         // The renderer keeps this array, not a copy of it.
@@ -101,6 +104,9 @@ public:
 
     Texture(const Texture&) = delete;
     Texture& operator=(const Texture&) = delete;
+
+    // What the renderer answered the creation with: 0, or the reason.
+    [[nodiscard]] int result() const noexcept { return result_; }
 
     // Writes a pattern of its own to the texture and reads it back: true when
     // the host gave the texture storage that holds it.
@@ -141,6 +147,7 @@ private:
 
     uml::gpu::VirglRenderer& renderer_;
     std::uint32_t resourceId_;
+    int result_ {};
     bool created_ {};
     std::vector<std::uint8_t> storage_;
     std::array<iovec, 1> vectors_ {};
@@ -165,11 +172,20 @@ int main()
     std::uint32_t nextResourceId = 1;
     std::vector<std::unique_ptr<Texture>> held;
     std::uint32_t stored = 0;
+    std::uint32_t refusedAtCreation = 0;
     std::uint32_t firstRefused = attempts;
     std::uint64_t peak = 0;
     for (std::uint32_t index = 0; index < attempts; ++index) {
         held.push_back(
             std::make_unique<Texture>(*renderer, nextResourceId++));
+        if (held.back()->result() != 0) {
+            // The only reason a well described texture is not made.
+            require(held.back()->result() == ENOMEM ||
+                    held.back()->result() == -ENOMEM,
+                "a texture the budget refused was not reported as out of "
+                "memory");
+            ++refusedAtCreation;
+        }
         if (held.back()->stores(static_cast<std::uint8_t>(index + 1)))
             ++stored;
         else
@@ -177,18 +193,22 @@ int main()
         peak = std::max(peak, used());
     }
     std::fprintf(stderr,
-        "%u of %u textures of %u MiB stored; the first refusal at %u; "
+        "%u of %u textures of %u MiB stored, %u refused at creation; the "
+        "first refusal at %u; "
         "%.1f MiB held at most against a limit of %.1f MiB (%.1f MiB "
         "before the renderer)\n",
         stored, attempts, static_cast<unsigned>(textureSize * textureSize *
             bytesPerPixel / mebibyte),
-        firstRefused, static_cast<double>(peak) / mebibyte,
+        refusedAtCreation, firstRefused, static_cast<double>(peak) / mebibyte,
         static_cast<double>(limit) / mebibyte,
         static_cast<double>(before) / mebibyte);
 
     require(stored > 0, "the budget left no room for a single texture");
     require(stored < attempts,
         "the budget did not refuse a texture past its limit");
+    require(refusedAtCreation > 0,
+        "the budget refused no creation: a texture past it was made without "
+        "storage and the guest was not told");
     require(peak <= limit + slackBytes,
         "the host GPU held more than its budget while a guest asked for more");
 

@@ -240,10 +240,10 @@ index e6ca2dc0026df3ace1f0a1ff9cf3c2d7d80aeab1..1b39488843090e9ea3be81d131390fe6
  
  uint64_t
 diff --git a/src/virglrenderer.h b/src/virglrenderer.h
-index 70085259bf47ebb119c3034e64e94821d432f0d2..0056f030ff3d3f62642ee2c594d9a7ed89e84d3d 100644
+index 2b9c5dab5e96c54f71940a69aebe475bd41c9659..7ba357cacc684d0e1374542c56fe3454fe372eef 100644
 --- a/src/virglrenderer.h
 +++ b/src/virglrenderer.h
-@@ -614,9 +614,12 @@ struct virgl_renderer_device_memory_pool {
+@@ -616,9 +616,12 @@ struct virgl_renderer_device_memory_pool {
   * most the limit, memory budgets leave the guest only what the pool has left,
   * and a new allocation the pool cannot reserve fails with
   * VK_ERROR_OUT_OF_DEVICE_MEMORY. An import names memory that already exists

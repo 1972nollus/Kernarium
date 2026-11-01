@@ -654,7 +654,17 @@ decoder rejects a chain member it does not know. A pooled device reserves a
 heap's size, in whole host pages, before Metal makes it, and releases the
 reservation once Metal counts the heap or has refused it; one lock decides
 every reservation, so allocations that each fit alone never together take the
-process past B, whichever threads make them.
+process past B, whichever threads make them. A reservation that does not fit
+first frees what the host GL driver caches, and is decided once more: the pool
+takes one reclaim hook, which the host GL provider fills with
+`eglReleaseCachedMemoryMESA` (`EGL_MESA_context_trim` of this project's Mesa
+series, callable from any thread, with no display lock because the refused
+allocation may hold one) and which releases every Zink screen's buffer cache and
+slabs. Zink frees only for a refusal of its own, so without the hook a Venus
+guest's allocation could be refused by memory that Zink's idle cache held. The
+pool counts the reservations that fit only after the release and those still
+refused although it freed something; the first refusal's stderr line says
+whether a release came before it.
 
 What the driver refuses and what it only counts:
 
@@ -665,7 +675,8 @@ What the driver refuses and what it only counts:
   answers the failure as it answers any, by dropping its cached buffers and
   trying once more before the resource fails.
 - The geometry heap charges itself through the same pool and follows the
-  pool-aware heap rules (see [memory budget](#memory-budget)).
+  pool-aware heap rules (see [memory budget](#memory-budget)), except that a
+  device's first heap, at its 1 MiB floor, is made when the pool refuses it.
 - Host-visible memory the renderer makes for the guest and the driver imports
   is not a driver allocation, so the renderer reserves its size before it makes
   the pages and releases the reservation once the driver has made its Metal
@@ -678,27 +689,42 @@ What the driver refuses and what it only counts:
 
 What a guest sees of a refusal depends on the path:
 
-- OpenGL. The guest creates a texture without an answer, so the guest driver
-  raises no `GL_OUT_OF_MEMORY`: the host's Zink logs `couldn't allocate memory`,
-  the texture has no storage, and what the guest draws to or reads from it is
-  lost. The context, the renderer and every resource made within the budget
-  stay as they were. While the budget is full even a transfer is refused,
-  since it needs a staging buffer, and the host's GL context records
-  `GL_OUT_OF_MEMORY` for the guest's `glReadPixels`. Once the guest releases
-  memory new textures store again, although the driver keeps released memory
-  for reuse: a refused allocation first drops what the driver caches.
-  `gpu-host-gl-device-memory-budget` drives this without a guest.
+- OpenGL. vrend reads the GL error queue after the storage calls of a texture
+  or buffer, and `GL_OUT_OF_MEMORY` fails the creation with `ENOMEM`; the device
+  answers `VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY` and releases nothing of the
+  resource but its half-made object. The guest kernel's creation ioctl does not
+  read that answer, so the guest still gets a texture that has no storage and no
+  error: the host's Zink logs `couldn't allocate memory`, and what the guest
+  draws to or reads from the texture is lost. The context, the renderer and
+  every resource made within the budget stay as they were. While the budget is
+  full even a transfer is refused, since it needs a staging buffer, and the
+  host's GL context records `GL_OUT_OF_MEMORY` for the guest's `glReadPixels`.
+  Once the guest releases memory new textures store again, although the driver
+  keeps released memory for reuse: a refused reservation first frees what the
+  driver caches. `gpu-host-gl-device-memory-budget` drives this without a guest.
 - Vulkan on Venus. The guest driver submits `vkAllocateMemory` asynchronously
   and waits for its result only when it maps, exports or frees the memory, so
   the host's refusal reaches the guest as a context that fails at the next
-  command naming the allocation: the ring stops answering (the host logs `GPU
-  fence overdue`) and the guest process aborts. The host, the budget and every
-  other guest process are untouched, and a new process allocates at once. With
-  `VN_PERF=no_async_mem_alloc` the call waits and returns
-  `VK_ERROR_OUT_OF_DEVICE_MEMORY` while the device, the allocations already made
+  command naming the allocation, and the guest process aborts. The render worker
+  retires the fences of a failed context at once, so the process ends when its
+  next fence wait returns instead of after the host's 30 s overdue-fence
+  escape. The host, the budget and every other guest process are untouched, and
+  a new process allocates at once. With `VN_PERF=no_async_mem_alloc` in the
+  process's environment the call waits and returns
+  `VK_ERROR_OUT_OF_DEVICE_MEMORY`, and the device, the allocations already made
   and later allocations stay usable. The advertised heap is B, but the pool
   counts everything the host holds, so a guest cannot tell from the heap size
   whether an asynchronous allocation will fit.
+- A draw whose geometry heap the pool refused. A device with no geometry heap
+  fails the recording of a command buffer, `vkEndCommandBuffer` is the call that
+  reports it, and Venus sends that call without a reply, so the guest would see
+  `VK_SUCCESS` and the host silently drop the whole command buffer. A device's
+  first heap, at the 1 MiB floor, is therefore made although the pool refused
+  its reservation: the pool counts it once Metal does and never refuses it, so
+  a full pool can leave the process one floor per device past B. A draw that
+  needs more than the floor loses its output and the loss is logged once, as on
+  any heap too small for its draw, and the command buffer is whole. Growth past
+  the floor stays within the pool.
 
 The counter also includes memory the guest has already freed while its blob
 resource is still referenced: a freed swapchain image stays allocated until the
@@ -1223,7 +1249,16 @@ with `virgl_renderer_context_trim`, and trimmed once more a second later, and
 any new activity arms it again. The second trim is the one that matters to a
 context that only uploads: the flush inside the first trim submits its last
 batch, which has not completed when that trim looks at it, and the idle context
-would not submit again to reset it. The GPU service thread sleeps on a timer for
+would not submit again to reset it. The renderer's own context, context 0, is
+tracked the same way. A texture or buffer made and written when a command names
+no guest context (a gralloc allocation, an upload before the guest's first
+command) is made and written there, and its GL context kept the storage of what
+the guest had since deleted until the renderer next submitted on it, which
+for a guest that had stopped allocating was never: 48 textures of 4 MiB stayed
+allocated, 384 MiB, for as long as the renderer was quiet, and counted against
+the budget. A resource's creation, a transfer and a readback on it count as the
+activity of context 0, and `virgl_renderer_context_trim(0)` trims vrend's own
+context. The GPU service thread sleeps on a timer for
 the earliest moment a context could be due, so an idle guest costs no wakeups. A
 texture one context deletes may still have a sampler view that another made, and
 Mesa destroys a context's own views when that context next flushes. A resource
@@ -1267,8 +1302,8 @@ can be written back to the volume of the temporary directory.
 A pooled device charges its heap to the host's device-memory pool (see [the
 budget](#device-memory-budget)), so the heap and the guest's allocations share
 one bound. A heap the device creates or
-grows takes at most half of the pool's headroom, except that a device's first
-heap may take 1 MiB, and a heap the pool cannot hold is not created. A heap
+grows takes at most half of the pool's headroom, a heap the pool cannot hold is
+not created, and a device's first heap is made at 1 MiB even then. A heap
 grown past its start is freed once nothing holds it and the headroom has fallen
 below half its size. A device created without a pool keeps the fixed cap. The
 rules are the comment above

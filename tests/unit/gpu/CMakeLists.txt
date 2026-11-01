@@ -204,6 +204,16 @@ if(TARGET uml_gpu_service)
         UNIT_DIRECTORY
         TIMEOUT 120)
 
+    # The renderer's own context (context 0) is trimmed like a guest context:
+    # textures a guest made and deleted without naming a context give their
+    # memory back within a few idle intervals.
+    uml_add_gpu_unit_test(gpu-host-context0-trim
+        uml_gpu_host_context0_trim_tests host_gl_context0_trim_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY
+        TIMEOUT 120)
+
     # Contexts that draw, flush and trim at once on one driver screen.
     uml_add_gpu_unit_test(gpu-host-context-trim-concurrent
         uml_gpu_host_context_trim_concurrent_tests
@@ -252,12 +262,23 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
 
-    # The OpenGL path stays within the host GPU's fixed budget: textures past
-    # it have no storage, the host never holds more than the budget, and the
-    # renderer stores new textures once the guest has released the old ones.
+    # The OpenGL path stays within the host GPU's fixed budget: a texture past
+    # it is refused at creation with ENOMEM, the host never holds more than the
+    # budget, and the renderer stores new textures once the guest has released
+    # the old ones.
     uml_add_gpu_unit_test(gpu-host-gl-device-memory-budget
         uml_gpu_host_gl_device_memory_budget_tests
         host_gl_device_memory_budget_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY TIMEOUT 120)
+
+    # The device memory pool frees the host GL driver's cache before it
+    # refuses a reservation: the driver releases it for any thread, with no
+    # context current (EGL_MESA_context_trim).
+    uml_add_gpu_unit_test(gpu-host-cached-memory-release
+        uml_gpu_host_cached_memory_release_tests
+        host_gl_cached_memory_release_tests.cpp
         LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY TIMEOUT 120)

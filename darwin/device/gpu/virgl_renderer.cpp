@@ -44,6 +44,9 @@ constexpr auto maximumFenceWait = std::chrono::seconds(60);
 constexpr std::uint32_t virglCapsetId = 1;
 constexpr std::uint32_t virgl2CapsetId = 2;
 constexpr std::uint32_t venusCapsetId = 4;
+// The renderer's own context, which no guest names: resources are made and
+// transferred on it when a command carries no context.
+constexpr std::uint32_t hostContextId = 0;
 
 /* UML_GPU_IDLE_TRIM_MS is how long a guest GL context stays quiet before the
  * renderer asks the host driver to release what it keeps for it: a whole
@@ -319,6 +322,22 @@ VirglRenderer::VirglRenderer()
                 std::to_string(checkedResult));
         }
         initialized = true;
+        try {
+            /* The renderer's own context is where a resource is made and
+             * transferred when the guest names no context of its own. */
+            idleContexts_.add(hostContextId, ContextIdleTracker::Clock::now());
+        } catch (...) {
+            // A context that is not tracked is never trimmed; that is all.
+        }
+        if (deviceMemoryPool) {
+            /* A refused reservation first frees what the host GL driver
+             * caches. The hook reaches this renderer's provider, so it is
+             * cleared before the provider goes. */
+            deviceMemoryPool->setReclaim(
+                [provider = provider_.get()]() -> std::uint64_t {
+                    return provider->releaseCachedMemory();
+                });
+        }
         if (capabilityReportEnabled()) {
             // vrend asks for 4.6 first, the core context this provider serves.
             reportContextProbe(provider_->probeContext(4, 6));
@@ -327,6 +346,8 @@ VirglRenderer::VirglRenderer()
             reportCapset(venusCapsetId, capset(venusCapsetId));
         }
     } catch (...) {
+        if (deviceMemoryPool)
+            deviceMemoryPool->setReclaim({});
         if (initialized)
             virgl_renderer_cleanup(this);
         rendererInstanceActive.store(false, std::memory_order_release);
@@ -336,6 +357,8 @@ VirglRenderer::VirglRenderer()
 
 VirglRenderer::~VirglRenderer()
 {
+    if (deviceMemoryPool)
+        deviceMemoryPool->setReclaim({});
     virgl_renderer_cleanup(this);
     /* The pool is the renderer's: nothing the cleanup left can reach it, and
      * the guest that comes after this one starts with nothing reserved. */
@@ -466,6 +489,7 @@ int VirglRenderer::submit(
 int VirglRenderer::createResource3d(
     const Resource3d& resource) noexcept
 {
+    noteContextActivity(hostContextId);
     virgl_renderer_resource_create_args arguments {
         .handle = resource.resourceId,
         .target = resource.target,
@@ -631,6 +655,7 @@ int VirglRenderer::readResourceRectangle(
     const auto stride = width * protocol::gpuBytesPerPixel;
     if (height > destination.size() / stride)
         return ENOSPC;
+    noteContextActivity(hostContextId);
     iovec vector {
         .iov_base = destination.data(),
         .iov_len = destination.size(),
@@ -956,6 +981,8 @@ void VirglRenderer::resetFenceState() noexcept
 {
     try {
         idleContexts_.reset();
+        // The renderer's own context outlives the guest's contexts.
+        idleContexts_.add(hostContextId, ContextIdleTracker::Clock::now());
         std::lock_guard lock(mutex_);
         retiredFence_ = 0;
         retiredContextFences_.clear();
@@ -1047,8 +1074,6 @@ void VirglRenderer::writeContextFence(
 
 void VirglRenderer::noteContextActivity(std::uint32_t contextId) noexcept
 {
-    if (contextId == 0)
-        return;
     try {
         idleContexts_.activity(contextId, ContextIdleTracker::Clock::now());
     } catch (...) {
