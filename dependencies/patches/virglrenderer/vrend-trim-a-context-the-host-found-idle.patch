@@ -125,10 +125,10 @@ index e76f006d2a577f714399b7271b4a46ab6eabaf42..05fa41fca31d80f89ed6b206d5732c10
 +   ctx->trim = vrend_decode_ctx_trim;
  }
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 89e060fb4e0e158037642934742e0aaad85e6ad3..2ce2b0081c0c370e6d641f5df0f43f90db614a39 100644
+index 224d99df8d68dd777752cfb653b3d5793110d1bc..a685788a3bbc6a2e7d3e0e20751ed191fe52682d 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -12832,6 +12832,38 @@ bool vrend_hw_switch_context(struct vrend_context *ctx, bool now)
+@@ -13109,6 +13109,38 @@ bool vrend_hw_switch_context(struct vrend_context *ctx, bool now)
     return true;
  }
  
@@ -168,10 +168,10 @@ index 89e060fb4e0e158037642934742e0aaad85e6ad3..2ce2b0081c0c370e6d641f5df0f43f90
  {
     if (ctx->ctx_switch_pending == false)
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index 76426e4d3c0170ab7b9857a8e58e3cfe76e12a8c..943351838ee3f60e73123124eefa7869d525f70d 100644
+index a2440259de2f14a96f7bb58de2e6af14ffe99a7c..83539173b331e2965e076ec2d4825acd8419c919 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
-@@ -591,6 +591,9 @@ void vrend_renderer_get_rect(struct pipe_resource *pres,
+@@ -598,6 +598,9 @@ void vrend_renderer_get_rect(struct pipe_resource *pres,
                               uint32_t offset,
                               int x, int y, int width, int height);
  
