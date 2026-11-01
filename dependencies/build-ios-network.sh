@@ -295,7 +295,7 @@ meson_setup "$BUILDS/glib" "$GLIB_SOURCE" \
 "$MESON" compile -C "$BUILDS/glib" -j "$JOBS"
 "$MESON" install -C "$BUILDS/glib"
 
-printf '%s\n' "building libslirp 4.9.5 for $PLATFORM"
+printf '%s\n' "building libslirp 4.9.7 for $PLATFORM"
 meson_setup "$BUILDS/libslirp" "$SOURCE_ROOT/libslirp" \
 	--prefix "$STAGE" --libdir=lib --buildtype=release \
 	--default-library=static --wrap-mode=nofallback \

@@ -23,7 +23,7 @@ libiconv|1.19.1
 proxy-libintl|0.5
 glib|2.90.1
 gvdb|2b42fc7
-libslirp|4.9.5
+libslirp|4.9.7
 libvncserver|0.9.15
 fex|FEX-2608
 fmt|12.2.0
@@ -413,7 +413,7 @@ meson_env setup "$BUILDS/glib" "$SOURCES/glib" \
 meson_env compile -C "$BUILDS/glib"
 meson_install_env install -C "$BUILDS/glib"
 
-printf '%s\n' "building libslirp 4.9.5"
+printf '%s\n' "building libslirp 4.9.7"
 # libslirp's project-level static option selects a non-installed helper target.
 # Let Meson's default-library setting make the installable library target static.
 require_private_pkg_config glib-2.0
