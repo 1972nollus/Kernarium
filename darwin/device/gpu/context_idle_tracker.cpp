@@ -17,9 +17,17 @@ std::optional<ContextIdleTracker::Clock::time_point>
 ContextIdleTracker::Context::nextReport(
     Clock::duration idleInterval) const noexcept
 {
-    if (reports >= reportsPerIdlePeriod || hasPendingFence())
+    if (hasPendingFence())
         return std::nullopt;
-    return (reports == 0 ? lastActivity : reportedAt) + idleInterval;
+    if (reports == 0)
+        return lastActivity + idleInterval;
+    if (reports < reportsPerIdlePeriod)
+        return reportedAt + idleInterval;
+    if (followUpIn != 0)
+        return reportedAt + followUpIn * idleInterval;
+    if (!dirtySince)
+        return std::nullopt;
+    return *dirtySince + idleInterval;
 }
 
 ContextIdleTracker::ContextIdleTracker(Clock::duration idleInterval) noexcept
@@ -54,14 +62,15 @@ void ContextIdleTracker::activity(
         return;
     found->second.lastActivity = std::max(found->second.lastActivity, now);
     found->second.reports = 0;
+    found->second.followUpIn = 0;
 }
 
-void ContextIdleTracker::activityAll(Clock::time_point now)
+void ContextIdleTracker::noteRelease(Clock::time_point now)
 {
     std::lock_guard lock(mutex_);
     for (auto& entry : contexts_) {
-        entry.second.lastActivity = std::max(entry.second.lastActivity, now);
-        entry.second.reports = 0;
+        if (!entry.second.dirtySince)
+            entry.second.dirtySince = now;
     }
 }
 
@@ -79,6 +88,7 @@ void ContextIdleTracker::fenceCreated(
     ring.created = std::max(ring.created, cookie);
     found->second.lastActivity = std::max(found->second.lastActivity, now);
     found->second.reports = 0;
+    found->second.followUpIn = 0;
 }
 
 void ContextIdleTracker::fenceRetired(
@@ -98,6 +108,7 @@ void ContextIdleTracker::fenceRetired(
     ring.created = std::max(ring.created, ring.retired);
     found->second.lastActivity = std::max(found->second.lastActivity, now);
     found->second.reports = 0;
+    found->second.followUpIn = 0;
 }
 
 std::vector<std::uint32_t> ContextIdleTracker::takeIdle(Clock::time_point now)
@@ -108,8 +119,18 @@ std::vector<std::uint32_t> ContextIdleTracker::takeIdle(Clock::time_point now)
         const auto due = context.nextReport(idleInterval_);
         if (!due || now < *due)
             continue;
-        ++context.reports;
+        /* A report made because something was dropped, after the idle ones,
+         * does not start an idle period of its own. What it finds dropped it
+         * frees, and the report after it releases: the next one is an
+         * interval away, or the spacing if this was already such a report. */
+        const bool dropped = context.dirtySince.has_value();
+        const bool followUp =
+            context.followUpIn != 0 && context.reports >= reportsPerIdlePeriod;
+        if (context.reports < reportsPerIdlePeriod)
+            ++context.reports;
         context.reportedAt = now;
+        context.dirtySince.reset();
+        context.followUpIn = !dropped ? 0 : followUp ? dirtyReportSpacing : 1;
         idle.push_back(contextId);
     }
     std::ranges::sort(idle);

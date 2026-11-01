@@ -5,7 +5,8 @@
  * more an interval later, when the batch the first trim flushed has completed.
  * The tracker decides that from the times it is told, so the test drives it
  * with its own clock: a context is reported twice and then not again, activity
- * of any kind makes it eligible again, a fence outstanding holds it back
+ * of any kind or a resource the host dropped makes it eligible again for two
+ * reports at a bounded rate, a fence outstanding holds it back
  * however long it takes, a retired fence starts the interval, contexts the
  * tracker was not told of are ignored, and the delay it names is the time to
  * the next context that could be reported. */
@@ -114,42 +115,139 @@ void checkSecondReport()
         "the second report after the retirement is missing");
 }
 
-void checkActivityOfAllContexts()
+void checkAReleaseBringsTwoMoreReports()
 {
     ContextIdleTracker tracker(1s);
     tracker.add(first, origin);
-    tracker.add(second, origin);
-    require((tracker.takeIdle(origin + 1s) == std::vector {first, second}),
-        "both contexts should have been reported");
-    require((tracker.takeIdle(origin + 2s) == std::vector {first, second}),
-        "both contexts should have been reported a second time");
-    require(tracker.takeIdle(origin + 60s) == none,
-        "a context was reported a third time");
+    require(tracker.takeIdle(origin + 1s) == std::vector {first},
+        "the first report is missing");
+    require(tracker.takeIdle(origin + 2s) == std::vector {first},
+        "the second report is missing");
+    require(tracker.takeIdle(origin + 60s) == none, "a third report was made");
 
-    /* Something the host did concerns every context: all of them start a new
-     * period. */
-    tracker.activityAll(origin + 70s);
+    /* Something the host dropped: a report an interval after the drop, which
+     * frees what the drop left, and one an interval after that, which
+     * releases it, and then no more. */
+    tracker.noteRelease(origin + 70s);
     require(tracker.nextDelay(origin + 70s) == 1s,
-        "activity of all contexts did not start a new interval");
+        "a release did not bring a report an interval later");
     require(tracker.takeIdle(origin + 70999ms) == none,
-        "a context was reported before its new interval ended");
-    require((tracker.takeIdle(origin + 71s) == std::vector {first, second}),
-        "contexts were not reported again after activity of all");
+        "a context was reported before the interval after a release");
+    require(tracker.takeIdle(origin + 71s) == std::vector {first},
+        "a release did not bring a report");
+    require(tracker.nextDelay(origin + 71s) == 1s,
+        "the report after a release did not bring the releasing one");
+    require(tracker.takeIdle(origin + 71999ms) == none,
+        "the releasing report came before its interval");
+    require(tracker.takeIdle(origin + 72s) == std::vector {first},
+        "a release did not bring a second report");
+    require(tracker.takeIdle(origin + 100s) == none &&
+            !tracker.nextDelay(origin + 100s).has_value(),
+        "a release brought more than two reports");
 
-    /* A context waiting on a fence stays held back, and the activity does not
-     * report a context that was never added. */
-    tracker.fenceCreated(second, 0, 3, origin + 80s);
-    tracker.activityAll(origin + 90s);
-    require(tracker.takeIdle(origin + 100s) == std::vector {first},
-        "a context with a fence outstanding was reported after activity of all");
+    /* Drops the releasing report finds bring one more, the spacing later, and
+     * drops it does not find bring none. */
+    tracker.noteRelease(origin + 110s);
+    require(tracker.takeIdle(origin + 111s) == std::vector {first},
+        "the report after a drop is missing");
+    tracker.noteRelease(origin + 111500ms);
+    require(tracker.takeIdle(origin + 112s) == std::vector {first},
+        "the releasing report is missing");
+    require(tracker.nextDelay(origin + 112s) == 2s,
+        "drops the second report found did not wait for the spacing");
+    require(tracker.takeIdle(origin + 113999ms) == none,
+        "a context was reported inside the spacing");
+    require(tracker.takeIdle(origin + 114s) == std::vector {first},
+        "the report after the spacing is missing");
+    require(tracker.takeIdle(origin + 140s) == none &&
+            !tracker.nextDelay(origin + 140s).has_value(),
+        "reports went on after the last drop was released");
+
+    /* A release is a drop for every context, and the first one since a
+     * report is the one that counts: later drops do not move the report. */
+    tracker.noteRelease(origin + 150s);
+    tracker.noteRelease(origin + 150900ms);
+    require(tracker.takeIdle(origin + 150999ms) == none,
+        "a context was reported before the interval after the first drop");
+    require(tracker.takeIdle(origin + 151s) == std::vector {first},
+        "a later drop moved the report");
+
+    /* A drop while the idle reports are still being made does not add to
+     * them, apart from the one that releases what the last of them freed. */
+    ContextIdleTracker early(1s);
+    early.add(first, origin);
+    require(early.takeIdle(origin + 1s) == std::vector {first},
+        "the first report is missing");
+    early.noteRelease(origin + 1500ms);
+    require(early.takeIdle(origin + 2s) == std::vector {first},
+        "the second report is missing");
+    require(early.takeIdle(origin + 3s) == std::vector {first},
+        "the report that releases the drop is missing");
+    require(early.takeIdle(origin + 30s) == none &&
+            !early.nextDelay(origin + 30s).has_value(),
+        "a drop during the idle reports brought more than one");
+}
+
+void checkReleasesNeitherStarveNorFlood()
+{
+    constexpr auto step = 100ms;
+    ContextIdleTracker tracker(1s);
+    tracker.add(first, origin);
+    tracker.add(second, origin);
+    (void)tracker.takeIdle(origin + 1s);
+    (void)tracker.takeIdle(origin + 2s);
+
+    /* Resources are dropped ten times a second for ten seconds. A context
+     * that went idle is reported the same moment it would be without them, and
+     * a context that was idle all along is reported once every two intervals,
+     * not more. */
+    tracker.activity(second, origin + 30s);
+    int firstReports = 0;
+    Clock::time_point secondReport {};
+    for (auto at = origin + 30100ms; at <= origin + 40s; at += step) {
+        tracker.noteRelease(at);
+        for (const auto id : tracker.takeIdle(at)) {
+            if (id == first)
+                ++firstReports;
+            else if (secondReport == Clock::time_point {})
+                secondReport = at;
+        }
+    }
+    require(secondReport == origin + 31s,
+        "resource churn held a context back from its own idle report");
+    require(firstReports == 5,
+        "an idle context was reported at the wrong rate during resource churn");
+
+    /* After the churn each context is reported for the last drops, and again
+     * to release what that flush freed, and then nothing is. */
+    int firstAfter = 0;
+    int secondAfter = 0;
+    for (auto at = origin + 40100ms; at <= origin + 60s; at += step) {
+        for (const auto id : tracker.takeIdle(at))
+            ++(id == first ? firstAfter : secondAfter);
+    }
+    require(firstAfter >= 1 && firstAfter <= 2 && secondAfter >= 1 &&
+            secondAfter <= 2,
+        "the reports after resource churn were not the last ones");
+    require(tracker.takeIdle(origin + 61s) == none &&
+            !tracker.nextDelay(origin + 61s).has_value(),
+        "a context was still due after the last reports");
+
+    /* A fence outstanding holds a context back from a release's report too, and
+     * a removed context is not reported. */
+    tracker.fenceCreated(second, 0, 3, origin + 70s);
+    tracker.noteRelease(origin + 71s);
+    require(tracker.takeIdle(origin + 90s) == std::vector {first},
+        "a context with a fence outstanding was reported after a release");
     tracker.remove(first);
-    tracker.activityAll(origin + 110s);
+    tracker.noteRelease(origin + 100s);
     require(tracker.takeIdle(origin + 120s) == none,
         "a removed context or one with a fence outstanding was reported");
     ContextIdleTracker empty(1s);
-    empty.activityAll(origin);
-    require(empty.takeIdle(origin + 60s) == none && !empty.nextDelay(origin).has_value(),
-        "activity of all contexts invented a context");
+    empty.noteRelease(origin);
+    require(empty.takeIdle(origin + 60s) == none &&
+            !empty.nextDelay(origin).has_value(),
+        "a release invented a context");
 }
 
 void checkActivityMakesTheContextEligibleAgain()
@@ -277,7 +375,8 @@ int main()
 {
     checkIdleInterval();
     checkSecondReport();
-    checkActivityOfAllContexts();
+    checkAReleaseBringsTwoMoreReports();
+    checkReleasesNeitherStarveNorFlood();
     checkActivityMakesTheContextEligibleAgain();
     checkPendingFences();
     checkSeveralContexts();
