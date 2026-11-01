@@ -3179,6 +3179,195 @@ def synthetic_sparse_image() -> bytes:
     )
 
 
+SPARSE_BLOCK = 4096
+
+
+def sparse_encode(raw: bytes, *, crc_chunk: bool = False) -> bytes:
+    """Encode a block-multiple image the way img2simg does.
+
+    Runs of zero blocks become DONT_CARE, runs of one repeated four-byte
+    pattern become FILL, and the rest is RAW. `crc_chunk` appends the trailing
+    CRC32 chunk some writers emit.
+    """
+    if not raw or len(raw) % SPARSE_BLOCK:
+        fail("a sparse fixture must be a whole number of blocks")
+    # Each chunk is (kind, the fill pattern or the RAW blocks, block count).
+    chunks: list[tuple[str, bytes | list[bytes], int]] = []
+    for offset in range(0, len(raw), SPARSE_BLOCK):
+        block = raw[offset:offset + SPARSE_BLOCK]
+        if block == bytes(SPARSE_BLOCK):
+            kind, key = "dont_care", b""
+        elif block == block[:4] * (SPARSE_BLOCK // 4):
+            kind, key = "fill", block[:4]
+        else:
+            kind, key = "raw", b""
+        if chunks and chunks[-1][0] == kind and (kind != "fill" or chunks[-1][1] == key):
+            last = chunks[-1]
+            if kind == "raw":
+                last[1].append(block)
+            chunks[-1] = (kind, last[1], last[2] + 1)
+        else:
+            chunks.append((kind, [block] if kind == "raw" else key, 1))
+    body = bytearray()
+    for kind, payload, blocks in chunks:
+        if kind == "raw":
+            data = b"".join(payload)
+            body += struct.pack("<HHII", 0xCAC1, 0, blocks, 12 + len(data)) + data
+        elif kind == "fill":
+            body += struct.pack("<HHII", 0xCAC2, 0, blocks, 16) + payload
+        else:
+            body += struct.pack("<HHII", 0xCAC3, 0, blocks, 12)
+    count = len(chunks)
+    if crc_chunk:
+        body += struct.pack("<HHII", 0xCAC4, 0, 0, 16) + struct.pack("<I", 0x12345678)
+        count += 1
+    header = struct.pack(
+        "<IHHHHIIII", 0xED26FF3A, 1, 0, 28, 12, SPARSE_BLOCK,
+        len(raw) // SPARSE_BLOCK, count, 0,
+    )
+    return header + bytes(body)
+
+
+def sparse_fixture_image(name: str, blocks: int) -> bytes:
+    """A block-multiple filesystem image with zero, fill, and data runs."""
+    seed = sum(name.encode())
+    out = bytearray()
+    for index in range(blocks):
+        if index % 5 in (1, 2):
+            out += bytes(SPARSE_BLOCK)
+        elif index % 5 == 3:
+            out += bytes(((seed + index) & 0xFF, 0x5A, 0xA5, 0x01)) * (SPARSE_BLOCK // 4)
+        else:
+            out += bytes((seed * 7 + index * 13 + i * 31) & 0xFF for i in range(SPARSE_BLOCK))
+    return bytes(out)
+
+
+def verify_ubd_sparse_inputs(
+    tool: Path, production_policy: Path, entries: list[dict[str, object]], root: Path
+) -> None:
+    """The signed target files carry the five filesystems as Android sparse
+    images, so the disk the assembler writes holds the expanded bytes, and is
+    the disk the raw images would have produced."""
+    filesystems = ("system", "system_ext", "product", "vendor", "odm")
+    blocks = {"system": 9, "system_ext": 6, "product": 7, "vendor": 5, "odm": 1}
+    raw_images = root / "sparse-raw-images"
+    sparse_images = root / "sparse-images"
+    raw_images.mkdir()
+    sparse_images.mkdir()
+    for entry in entries:
+        name = entry["name"]
+        if name in filesystems:
+            raw = sparse_fixture_image(name, blocks[name])
+            encoded = sparse_encode(raw, crc_chunk=name == "product")
+            if len(encoded) >= len(raw) and name != "odm":
+                fail("the sparse fixture is not smaller than its expansion")
+        else:
+            # The boot images stay raw in the target files and are not block
+            # multiples.
+            raw = encoded = bytes((i * 3 + len(name)) & 0xFF for i in range(5000))
+        (raw_images / entry["image"]).write_bytes(raw)
+        (sparse_images / entry["image"]).write_bytes(encoded)
+
+    outputs = {}
+    for label, images in (("raw", raw_images), ("sparse", sparse_images)):
+        out = root / f"sparse-{label}-out"
+        run_tool(
+            tool, "assemble", "--policy", production_policy,
+            "--images-dir", images, "--output-dir", out, check=True,
+        )
+        run_tool(
+            tool, "verify", "--layout", out / "partition-layout.json",
+            "--disk", out / "system.img", "--hash",
+            "--policy", production_policy, check=True,
+        )
+        outputs[label] = out
+    if (outputs["raw"] / "system.img").read_bytes() != (
+        outputs["sparse"] / "system.img"
+    ).read_bytes():
+        fail("the disk assembled from sparse images differs from the raw one")
+    if (outputs["raw"] / "partition-layout.json").read_bytes() != (
+        outputs["sparse"] / "partition-layout.json"
+    ).read_bytes():
+        fail("the layout assembled from sparse images differs from the raw one")
+    layout = json.loads((outputs["sparse"] / "partition-layout.json").read_text())
+    by_name = {item["name"]: item for item in layout["system_disk"]["partitions"]}
+    for name in filesystems:
+        if by_name[name]["image_bytes"] != blocks[name] * SPARSE_BLOCK or \
+                by_name[name]["size_bytes"] != blocks[name] * SPARSE_BLOCK:
+            fail(f"partition {name} does not hold its expanded image exactly")
+    if by_name["init_boot"]["image_bytes"] != 5000:
+        fail("a raw boot image changed size next to the sparse filesystems")
+    with (outputs["sparse"] / "system.img").open("rb") as disk:
+        for name in filesystems:
+            disk.seek(by_name[name]["start_bytes"])
+            if disk.read(by_name[name]["image_bytes"]) != (raw_images / f"{name}.img").read_bytes():
+                fail(f"partition {name} is not the expanded image")
+    # The override path takes sparse images too.
+    override_out = root / "sparse-override-out"
+    run_tool(
+        tool, "assemble", "--policy", production_policy,
+        "--images-dir", raw_images, "--output-dir", override_out,
+        "--image", f"vendor={sparse_images / 'vendor.img'}", check=True,
+    )
+    if (override_out / "system.img").read_bytes() != (
+        outputs["raw"] / "system.img"
+    ).read_bytes():
+        fail("a sparse override differs from the raw image")
+
+    # A hand-written image with one RAW, one FILL, and one DONT_CARE chunk.
+    hand_written = root / "hand-written-sparse.img"
+    hand_written.write_bytes(synthetic_sparse_image())
+    hand_out = root / "sparse-hand-written-out"
+    run_tool(
+        tool, "assemble", "--policy", production_policy,
+        "--images-dir", raw_images, "--output-dir", hand_out,
+        "--image", f"vendor={hand_written}", check=True,
+    )
+    hand_layout = json.loads((hand_out / "partition-layout.json").read_text())
+    hand_vendor = next(
+        item for item in hand_layout["system_disk"]["partitions"] if item["name"] == "vendor"
+    )
+    if hand_vendor["image_bytes"] != 3 * SPARSE_BLOCK:
+        fail("the hand-written sparse image did not expand to three blocks")
+    with (hand_out / "system.img").open("rb") as disk:
+        disk.seek(hand_vendor["start_bytes"])
+        if disk.read(3 * SPARSE_BLOCK) != (
+            b"A" * SPARSE_BLOCK + b"\x12\x34\x56\x78" * (SPARSE_BLOCK // 4) + bytes(SPARSE_BLOCK)
+        ):
+            fail("the hand-written sparse image expanded to the wrong bytes")
+
+    good = (sparse_images / "vendor.img").read_bytes()
+    header_size = struct.calcsize("<IHHHHIIII")
+    short_blocks = bytearray(good)
+    struct.pack_into("<I", short_blocks, 16, blocks["vendor"] + 1)
+    chunk_count = bytearray(good)
+    struct.pack_into("<I", chunk_count, 20, struct.unpack_from("<I", good, 20)[0] - 1)
+    unknown_chunk = bytearray(good)
+    struct.pack_into("<H", unknown_chunk, header_size, 0xCAC9)
+    huge = bytearray(good)
+    struct.pack_into("<I", huge, 16, 1 << 30)
+    for label, damaged in (
+        ("truncated", good[:-100]),
+        ("trailing data", good + b"x"),
+        ("more blocks than chunks", bytes(short_blocks)),
+        ("fewer chunks than declared", bytes(chunk_count)),
+        ("unknown chunk type", bytes(unknown_chunk)),
+        ("absurd expanded size", bytes(huge)),
+    ):
+        bad_images = root / f"sparse-bad-{label.replace(' ', '-')}"
+        shutil.copytree(sparse_images, bad_images)
+        (bad_images / "vendor.img").write_bytes(damaged)
+        bad_out = root / f"sparse-bad-out-{label.replace(' ', '-')}"
+        rejected = run_tool(
+            tool, "assemble", "--policy", production_policy,
+            "--images-dir", bad_images, "--output-dir", bad_out,
+        )
+        if rejected.returncode == 0:
+            fail(f"the assembler accepted a sparse image with {label}")
+        if bad_out.exists() and any(bad_out.iterdir()):
+            fail(f"the assembler left files behind after a sparse image with {label}")
+
+
 def verify_ubd_disk_fixtures(tool: Path, production_policy: Path) -> None:
     """The system disk is exact fit and its layout file proves every byte."""
     run_tool(tool, "validate", "--policy", production_policy, check=True)
@@ -3302,15 +3491,7 @@ def verify_ubd_disk_fixtures(tool: Path, production_policy: Path) -> None:
         if missing.returncode == 0:
             fail("the assembler accepted a missing images directory")
 
-        sparse_images = root / "sparse-images"
-        shutil.copytree(images, sparse_images)
-        (sparse_images / "vendor.img").write_bytes(synthetic_sparse_image())
-        sparse = run_tool(
-            tool, "assemble", "--policy", production_policy,
-            "--images-dir", sparse_images, "--output-dir", root / "sparse",
-        )
-        if sparse.returncode == 0:
-            fail("the assembler accepted an Android sparse image for a read-only partition")
+        verify_ubd_sparse_inputs(tool, production_policy, entries, root)
 
         for label, edit in (
             ("primary GPT", lambda f: (f.seek(512 + 20), f.write(b"\xff"))),

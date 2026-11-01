@@ -5,11 +5,13 @@
 The system disk is one raw GPT image that ships with the app and is attached
 read-only. It holds the boot ramdisk containers and the five read-only
 filesystems, each partition exactly its image rounded up to the alignment, so
-no byte of the disk is slack. `assemble` packs the images and writes the
-release's partition-layout.json beside the disk: the system disk's exact
-partitions with a SHA-256 each, and the data disk's template, which the host
-turns into the writable disk of each guest instance. `verify` checks a disk
-against that file. The host validates the same geometry before it boots.
+no byte of the disk is slack. `assemble` packs the images, expanding the
+Android sparse images the signed target files carry into the raw bytes the
+guest reads, and writes the release's partition-layout.json beside the disk:
+the system disk's exact partitions with a SHA-256 each, and the data disk's
+template, which the host turns into the writable disk of each guest instance.
+`verify` checks a disk against that file. The host validates the same geometry
+before it boots.
 """
 
 from __future__ import annotations
@@ -35,6 +37,12 @@ GPT_HEADER_SIZE = 92
 GPT_ENTRY_SIZE = 128
 PROTECTIVE_MBR_TYPE = 0xEE
 SPARSE_MAGIC = 0xED26FF3A
+SPARSE_HEADER = struct.Struct("<IHHHHIIII")
+SPARSE_CHUNK_HEADER = struct.Struct("<HHII")
+SPARSE_RAW = 0xCAC1
+SPARSE_FILL = 0xCAC2
+SPARSE_DONT_CARE = 0xCAC3
+SPARSE_CRC32 = 0xCAC4
 COPY_CHUNK = 1024 * 1024
 SECTOR_SIZE = 512
 POLICY_SCHEMA_VERSION = 1
@@ -47,6 +55,9 @@ SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 BOOT_PARTITION_NAMES = ("init_boot", "recovery")
 DATA_PARTITION_NAMES = ("misc", "metadata", "userdata")
 GIB = 1024**3
+# An expanded image larger than this is a corrupt or hostile sparse header, not
+# a partition; the largest read-only partition is under a gibibyte.
+MAX_PARTITION_IMAGE_BYTES = 16 * GIB
 
 
 class DiskError(ValueError):
@@ -624,19 +635,147 @@ def copy_exact(source: BinaryIO, destination: BinaryIO, byte_count: int) -> None
         remaining -= len(block)
 
 
+def write_fill(destination: BinaryIO, pattern: bytes, byte_count: int) -> None:
+    if pattern == b"\0\0\0\0":
+        destination.seek(byte_count, os.SEEK_CUR)
+        return
+    block = pattern * (COPY_CHUNK // len(pattern))
+    remaining = byte_count
+    while remaining:
+        piece = block[: min(remaining, len(block))]
+        destination.write(piece)
+        remaining -= len(piece)
+
+
+def read_sparse_header(source: BinaryIO) -> tuple[int, int, int, int, int]:
+    """Parse and check a sparse header, returning the sizes the chunks need."""
+    raw_header = source.read(SPARSE_HEADER.size)
+    if len(raw_header) != SPARSE_HEADER.size:
+        raise DiskError("Android sparse header is truncated")
+    (
+        magic,
+        major,
+        _minor,
+        file_header_size,
+        chunk_header_size,
+        block_size,
+        total_blocks,
+        total_chunks,
+        _checksum,
+    ) = SPARSE_HEADER.unpack(raw_header)
+    if magic != SPARSE_MAGIC or major != 1:
+        raise DiskError("unsupported Android sparse image version")
+    if file_header_size < SPARSE_HEADER.size or chunk_header_size < SPARSE_CHUNK_HEADER.size:
+        raise DiskError("Android sparse header sizes are invalid")
+    if block_size == 0 or block_size % 4:
+        raise DiskError("Android sparse block size is invalid")
+    if total_blocks == 0:
+        raise DiskError("Android sparse image is empty")
+    source.seek(file_header_size - SPARSE_HEADER.size, os.SEEK_CUR)
+    return file_header_size, chunk_header_size, block_size, total_blocks, total_chunks
+
+
+def expand_sparse(source: BinaryIO, destination: BinaryIO) -> int:
+    """Write the raw bytes an Android sparse image stands for and return their count.
+
+    The destination is a pre-sized zero-filled disk, so a DONT_CARE chunk and a
+    zero FILL chunk only advance it. The expanded bytes are exactly the bytes
+    the guest reads from the partition.
+    """
+    _file_header, chunk_header_size, block_size, total_blocks, total_chunks = (
+        read_sparse_header(source)
+    )
+    written_blocks = 0
+    for _ in range(total_chunks):
+        raw_chunk = source.read(SPARSE_CHUNK_HEADER.size)
+        if len(raw_chunk) != SPARSE_CHUNK_HEADER.size:
+            raise DiskError("Android sparse chunk header is truncated")
+        chunk_type, _reserved, chunk_blocks, total_size = SPARSE_CHUNK_HEADER.unpack(
+            raw_chunk
+        )
+        source.seek(chunk_header_size - SPARSE_CHUNK_HEADER.size, os.SEEK_CUR)
+        chunk_bytes = chunk_blocks * block_size
+        if total_size < chunk_header_size:
+            raise DiskError("Android sparse chunk size underflows its header")
+        data_size = total_size - chunk_header_size
+        if written_blocks + chunk_blocks > total_blocks:
+            raise DiskError("Android sparse chunks exceed declared block count")
+        if chunk_type == SPARSE_RAW:
+            if data_size != chunk_bytes:
+                raise DiskError("Android sparse RAW chunk has the wrong byte count")
+            copy_exact(source, destination, chunk_bytes)
+        elif chunk_type == SPARSE_FILL:
+            if data_size != 4:
+                raise DiskError("Android sparse FILL chunk must contain four bytes")
+            pattern = source.read(4)
+            if len(pattern) != 4:
+                raise DiskError("Android sparse FILL chunk is truncated")
+            write_fill(destination, pattern, chunk_bytes)
+        elif chunk_type == SPARSE_DONT_CARE:
+            if data_size != 0:
+                raise DiskError("Android sparse DONT_CARE chunk contains data")
+            destination.seek(chunk_bytes, os.SEEK_CUR)
+        elif chunk_type == SPARSE_CRC32:
+            if chunk_blocks != 0 or data_size != 4:
+                raise DiskError("Android sparse CRC32 chunk is malformed")
+            if len(source.read(4)) != 4:
+                raise DiskError("Android sparse CRC32 chunk is truncated")
+        else:
+            raise DiskError(f"unknown Android sparse chunk type 0x{chunk_type:04x}")
+        written_blocks += chunk_blocks
+    if written_blocks != total_blocks:
+        raise DiskError("Android sparse image block count does not match its chunks")
+    if source.read(1):
+        raise DiskError("Android sparse image has trailing data")
+    return total_blocks * block_size
+
+
+def is_sparse(source: BinaryIO) -> bool:
+    prefix = source.read(4)
+    source.seek(0)
+    return len(prefix) == 4 and struct.unpack("<I", prefix)[0] == SPARSE_MAGIC
+
+
 def image_size(image: Path) -> int:
+    """The bytes the guest reads from the partition: a raw image's size, or the
+    size an Android sparse image expands to."""
     if image.is_symlink() or not image.is_file():
         raise DiskError(f"partition image must be a regular non-symlink file: {image}")
     with image.open("rb") as source:
-        prefix = source.read(4)
-    if len(prefix) == 4 and struct.unpack("<I", prefix)[0] == SPARSE_MAGIC:
-        raise DiskError(
-            f"{image.name} is an Android sparse image; the read-only partitions are raw"
-        )
-    size = image.stat().st_size
+        if is_sparse(source):
+            _file_header, _chunk_header, block_size, total_blocks, _chunks = (
+                read_sparse_header(source)
+            )
+            size = block_size * total_blocks
+        else:
+            size = image.stat().st_size
     if size <= 0:
         raise DiskError(f"partition image is empty: {image.name}")
+    if size > MAX_PARTITION_IMAGE_BYTES:
+        raise DiskError(
+            f"partition image {image.name} is {size} bytes, limit is "
+            f"{MAX_PARTITION_IMAGE_BYTES}"
+        )
     return size
+
+
+def write_partition_image(image: Path, destination: BinaryIO, expected: int) -> None:
+    """Write the image at the destination's position, expanding a sparse one.
+
+    `expected` is the size image_size reported, which placed the partition."""
+    with image.open("rb") as source:
+        if is_sparse(source):
+            written = expand_sparse(source, destination)
+        else:
+            written = image.stat().st_size
+            copy_exact(source, destination, written)
+            if source.read(1):
+                raise DiskError(f"partition image grew while it was staged: {image.name}")
+    if written != expected:
+        raise DiskError(
+            f"partition image {image.name} changed while it was staged: "
+            f"{written} bytes, expected {expected}"
+        )
 
 
 def parse_overrides(values: list[str], known: set[str]) -> dict[str, Path]:
@@ -724,8 +863,7 @@ def assemble(
             write_gpt(disk, geometry, disk_guid, partitions)
             for item in placed:
                 disk.seek(item["start_bytes"])
-                with sources[item["name"]].open("rb") as source:
-                    copy_exact(source, disk, sizes[item["name"]])
+                write_partition_image(sources[item["name"]], disk, sizes[item["name"]])
                 print(
                     f"staged {item['name']}: {sizes[item['name']]}/{item['size_bytes']} "
                     f"bytes at {item['start_bytes']}"

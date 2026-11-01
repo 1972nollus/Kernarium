@@ -894,7 +894,10 @@ attaches exactly these two.
   release. One GPT holds `init_boot`, `recovery`, and the five EROFS partitions
   (`system`, `system_ext`, `product`, `vendor`, `odm`), each exactly its image
   rounded up to 4 KiB and packed back to back from LBA 40, the boot containers
-  first and the filesystems largest first. The two GPT tables are the only
+  first and the filesystems largest first. The signed target files carry the
+  five filesystems as Android sparse images; assembly expands them, so a
+  partition's size and hash are those of the raw bytes the guest reads and the
+  disk is raw. The two GPT tables are the only
   bytes that are not partition payload, and the bytes between a payload and
   its partition's end are zero. The disk is attached as `ubd0r`.
 - The **data disk** is the guest instance's writable disk, a sparse GPT that
