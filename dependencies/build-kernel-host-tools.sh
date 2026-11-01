@@ -221,8 +221,13 @@ copy_source()
 	"$RSYNC" -a --exclude=.git "$1/" "$2/"
 }
 
-# gawk generates elfutils' DWARF name tables. It is a build-only tool.
+# gawk generates elfutils' DWARF name tables. It is a build-only tool. Its
+# generated autotools files are committed, but a checkout that crosses a second
+# boundary leaves aclocal.m4 older than the m4 files it was generated from, and
+# make then runs the aclocal-1.16 this host does not have. Give the copy one
+# mtime so that checkout order never reads as staleness.
 copy_source "$SOURCE_ROOT/gawk" "$TEMP_ROOT/src/gawk"
+find "$TEMP_ROOT/src/gawk" -exec touch -r "$TEMP_ROOT/src/gawk/configure" {} +
 (
 	CDPATH= cd -- "$TEMP_ROOT/src/gawk"
 	logged gawk private_env ./configure --prefix="$BOOTSTRAP" --disable-nls \
