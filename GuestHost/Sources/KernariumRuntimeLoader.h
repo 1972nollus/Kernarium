@@ -7,7 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "../Runtime/KernariumRuntime.h"
+#include "../../Kernarium/Runtime/KernariumRuntime.h"
 
 NS_ASSUME_NONNULL_BEGIN
 

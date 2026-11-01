@@ -10,14 +10,21 @@ mode. Build, launch, and test commands are in
 ## Ownership
 
 ```text
-Kernarium/            SwiftUI application: settings, guest selection, disk
-                      capacity, decompression, console, shader cache
+Kernarium/            SwiftUI application: settings, guest selection, console,
+                      microphone setting, background running and picture in
+                      picture
 Runtime/              runtime framework target, one per kernel flavour
 KernariumTests/       hosted application and runtime tests
 KernariumUITests/     UI tests
 KernariumAutomation/  long-lived UI-automation host for a connected device
 scripts/              launch, packaging, bundle assembly, and automation tools
 ```
+
+The runtime loader, the guest display and its input, the disk and zstd
+utilities, the microphone permission and the shader-cache bound are not in
+this directory: [`GuestHost/`](../GuestHost/README.md) holds them, compiled
+into this application and into Andarium. `DiskUtil` and `ZstdUtil` below are
+those.
 
 ## Runtimes and runs
 
