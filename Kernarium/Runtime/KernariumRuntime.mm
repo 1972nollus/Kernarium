@@ -830,9 +830,10 @@ const char* selectedGuestHibernation()
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
 void appendKernelCommandLine(
     std::vector<std::string>& arguments,
-    const std::filesystem::path& path,
+    const uml::android::Storage& storage,
     uint32_t dotsPerInch)
 {
+    const auto path = storage.release() / uml::android::releaseCommandLine;
     constexpr std::string_view densityPrefix {
         "androidboot.lcd_density="};
     constexpr std::string_view adbAuthorizationPrefix {
@@ -984,8 +985,9 @@ struct GuestRequest final {
     std::uint64_t guestMemoryBytes {};
     std::uint64_t deviceMemoryLimit {};
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
-    std::filesystem::path androidDisk;
-    std::filesystem::path androidCommandLine;
+    /* The guest's two disks: the release's system disk and the instance's
+     * data disk. */
+    std::optional<uml::android::Storage> androidStorage;
     uml::android::BootMode androidBootMode {};
 #else
     std::string rootfsPath;
@@ -1292,18 +1294,14 @@ private:
         }
 #endif
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
-        /* The bundle GPT is the directly writable persistent disk. Its selected
-         * ramdisk is exposed from the same file without a standalone image. */
-        arguments.emplace_back("ubd0=" + request_.androidDisk.string());
-        arguments.emplace_back("initrd=" + request_.androidDisk.string());
-        arguments.emplace_back(
-            "initrd_offset=" + std::to_string(androidBoot_.ramdisk.offset));
-        arguments.emplace_back(
-            "initrd_size=" + std::to_string(androidBoot_.ramdisk.size));
-        arguments.emplace_back("root=/dev/ram0");
-        arguments.emplace_back("rootfstype=ramfs");
+        /* The release's read-only system disk and the instance's data disk are
+         * the guest's only block devices. The selected ramdisk is exposed from
+         * the system disk without a standalone image. */
+        for (auto& argument :
+             request_.androidStorage->kernelArguments(androidBoot_))
+            arguments.push_back(std::move(argument));
         appendKernelCommandLine(
-            arguments, request_.androidCommandLine, request_.dotsPerInch);
+            arguments, *request_.androidStorage, request_.dotsPerInch);
 #else
         /* A sealed ext4 derivative is attached read-only; the per-run /init
          * mounts either kind of image beneath the overlay. */
@@ -1328,13 +1326,13 @@ private:
     void chooseAndroidBoot(unsigned restarts)
     {
         if (restarts == 0) {
-            if (uml::android::consumeBootloaderCommand(request_.androidDisk))
+            if (request_.androidStorage->consumeBootloaderCommand())
                 sayBootloaderConsumed();
-            androidBoot_ = uml::android::selectBoot(
-                request_.androidDisk, request_.androidBootMode);
+            androidBoot_ = request_.androidStorage->selectBoot(
+                request_.androidBootMode);
             return;
         }
-        const auto next = uml::android::selectRestartBoot(request_.androidDisk);
+        const auto next = request_.androidStorage->selectRestartBoot();
         if (next.bootloaderConsumed)
             sayBootloaderConsumed();
         androidBoot_ = next.boot;
@@ -1402,16 +1400,33 @@ int runtimeRun(
         request.guestMemoryMiB = guestMemoryMiB;
         request.guestProcessorCount = guestProcessorCount;
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
-        if (boot->android_disk_path == nullptr ||
-            boot->android_command_line_path == nullptr) {
+        if (boot->android_data_disk_path == nullptr ||
+            boot->android_release_path == nullptr) {
             std::fputs("Kernarium: incomplete Android bundle\n", stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
-        request.androidDisk = boot->android_disk_path;
-        request.androidCommandLine = boot->android_command_line_path;
         request.androidBootMode =
             static_cast<uml::android::BootMode>(boot->android_boot_mode);
-        uml::android::validateWritableDisk(request.androidDisk);
+        try {
+            const std::filesystem::path release = boot->android_release_path;
+            const std::filesystem::path dataDisk = boot->android_data_disk_path;
+            const auto prepared = uml::android::prepareDataDisk(
+                uml::android::readLayout(release / uml::android::releaseLayout),
+                dataDisk,
+                boot->android_data_gib);
+            if (prepared.change != uml::android::DataDiskChange::none)
+                std::printf(
+                    "Kernarium: %s the data disk, %u GiB\n",
+                    prepared.change == uml::android::DataDiskChange::created
+                        ? "created" : "grew",
+                    prepared.capacityGiB);
+            request.androidStorage.emplace(release, dataDisk);
+        } catch (const std::exception& error) {
+            std::fprintf(
+                stderr, "Kernarium: cannot prepare the Android disks: %s\n",
+                error.what());
+            return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
 #else
         const char* rootfsPath = boot->rootfs_path;
         const char* overlayPath = boot->overlay_path;
@@ -1880,7 +1895,7 @@ kernarium_runtime_automation_job_at_start(void)
 }
 #endif
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v14(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v15(void)
 {
     return &runtimeApi;
 }

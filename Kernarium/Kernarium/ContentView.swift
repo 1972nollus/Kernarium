@@ -604,23 +604,29 @@ enum ThermalStateReport {
 private struct PreparedBoot: Sendable {
     private let paths: [String?]
     let androidBootMode: AndroidBootMode
+    /// The data disk's capacity: the runtime creates a missing disk this size
+    /// and grows a smaller one to it. 0 leaves an existing disk alone.
+    let androidDataGiB: UInt32
 
     init(rootfs: URL, overlay: URL) {
         paths = [rootfs.path, overlay.path, nil, nil]
         androidBootMode = .automatic
+        androidDataGiB = 0
     }
 
     init(
         bundle: GuestBundle,
-        androidBootMode: AndroidBootMode
+        androidBootMode: AndroidBootMode,
+        androidDataGiB: UInt32
     ) {
         paths = [
             nil,
             nil,
-            bundle.disk.path,
-            bundle.commandLine.path,
+            bundle.dataDisk.path,
+            bundle.url.path,
         ]
         self.androidBootMode = androidBootMode
+        self.androidDataGiB = androidDataGiB
     }
 
     func withCPaths<Result>(
@@ -667,8 +673,9 @@ private func runGuest(
         request.auto_resize_guest = autoResizeGuest ? 1 : 0
         request.rootfs_path = paths[0]
         request.overlay_path = paths[1]
-        request.android_disk_path = paths[2]
-        request.android_command_line_path = paths[3]
+        request.android_data_disk_path = paths[2]
+        request.android_release_path = paths[3]
+        request.android_data_gib = boot.androidDataGiB
         return withUnsafePointer(to: &request) { pointer in
             kernarium_runtime_loader_run(view, pointer)
         }
@@ -828,30 +835,18 @@ final class EmulatorLauncher: ObservableObject {
         }
     }
 
-    /// A bundle keeps its directly writable disk beside its payload, so guest
-    /// state survives the app being closed and reopened.
+    /// A bundle keeps its writable data disk beside its payload, so guest
+    /// state survives the app being closed and reopened. The runtime creates
+    /// and grows that disk.
     private func prepareBundleBoot(bundle: GuestBundle) -> PreparedBoot? {
         guard FileManager.default.isWritableFile(atPath: bundle.url.path) else {
             print("Kernarium: \(bundle.name) is not writable")
             return nil
         }
-        do {
-            let resized = try bundle.prepareDiskCapacity(
-                configuration.androidDiskSizeGiB
-            )
-            if resized {
-                print(
-                    "Kernarium: expanded \(bundle.disk.lastPathComponent) " +
-                        "to \(configuration.androidDiskSizeGiB) GiB"
-                )
-            }
-        } catch {
-            print("Kernarium: cannot resize Android disk: \(error)")
-            return nil
-        }
         return PreparedBoot(
             bundle: bundle,
-            androidBootMode: configuration.androidBootMode
+            androidBootMode: configuration.androidBootMode,
+            androidDataGiB: UInt32(configuration.androidDiskSizeGiB)
         )
     }
 

@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 14U
+#define KERNARIUM_RUNTIME_API_VERSION 15U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -39,9 +39,14 @@ enum {
     KERNARIUM_RUNTIME_ANDROID_BOOT_RECOVERY = 2,
 };
 
-/* A boot request. Linux guests supply rootfs_path and overlay_path; Android
- * guests supply one directly writable GPT disk, its command line, and the
- * desired boot mode. The kernel is carried by the runtime. */
+/* A boot request. Linux guests supply rootfs_path and overlay_path. Android
+ * guests supply the release directory (guest/system.img, the read-only system
+ * disk; guest/partition-layout.json; boot/kernel-command-line.txt), the path of
+ * the instance's writable data disk, and the desired boot mode. The runtime
+ * creates a data disk that is absent, sized android_data_gib GiB or the
+ * release's default when that is 0, and grows an existing one to
+ * android_data_gib GiB when that is larger; it never shrinks one. The guest
+ * has exactly these two disks. The kernel is carried by the runtime. */
 typedef struct kernarium_runtime_boot {
     uint32_t struct_size;
     uint32_t width;
@@ -53,8 +58,9 @@ typedef struct kernarium_runtime_boot {
     uint32_t auto_resize_guest;
     const char* rootfs_path;
     const char* overlay_path;
-    const char* android_disk_path;
-    const char* android_command_line_path;
+    const char* android_data_disk_path;
+    const char* android_release_path;
+    uint32_t android_data_gib;
 } kernarium_runtime_boot;
 
 /* Boots the guest and returns when it is over. A guest that restarts itself is
@@ -236,7 +242,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v14(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v15(void);
 
 /* An automation-only extension, outside the versioned table: only a runtime
  * built for automation exports this symbol, and the application looks it up

@@ -278,8 +278,8 @@ and duration, and the total excluding the download window together.
 
 `android_launch_suite.py` times cold launches of the applications in
 `android_launch_apps.tsv` in one Android guest boot. Each run boots an APFS
-clone of a prepared source disk, so every arm starts from the same installed
-and compiled state and the source disk is never written. Each round force-stops
+clone of a prepared source instance's data disk, so every arm starts from the
+same installed and compiled state and the source is never written. Each round force-stops
 every application and times it from the activity manager's `START` line to the
 first logcat line that matches its completion pattern, both by the guest's
 logcat timestamps. A row's pattern marks the end of the launch's work: for a
@@ -287,7 +287,7 @@ game, its first playable scene rather than its splash screen.
 
 ```sh
 python3 tests/perf/android_launch_suite.py --emulator BUILD/bin/uml-darwin-android17 \
-  --release RELEASE --source-disk PREPARED.img --work-disk RUN.img \
+  --release RELEASE --source-instance PREPARED --work-instance RUN \
   --label candidate --output launches.jsonl
 python3 tests/perf/android_launch_suite.py --summary launches.jsonl
 ```
@@ -296,8 +296,9 @@ Each launch record also carries `am start -W`'s `TotalTime` (first frame), the
 emulator's CPU seconds during the launch, its threads' scheduling priorities (a
 napped emulator drops from 31 to 4 and launches several times slower), and the
 host load. A launch that misses its limit is recorded with no time and left out
-of the medians. The source disk's `.release-id` must name the release, because
-the launcher re-creates a disk from another release. `--env KEY=VALUE` sets one
+of the medians. The source instance's `instance.json` must name the release as
+a settled start (no unfinished update), because the launcher would otherwise
+update the clone. `--env KEY=VALUE` sets one
 arm's emulator environment; `--engine gadgets|jit` selects the execution
 engine (gadgets by default); `--guest-samples PATH` profiles the boot with the
 guest code sampler below. Each record names the engine and carries the boot's

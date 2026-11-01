@@ -20,6 +20,7 @@ investigation date.
 | AArch32 decoder and encoding table | [`../darwin/cpu/arm64/aarch32/README.md`](../darwin/cpu/arm64/aarch32/README.md) |
 | AArch32 instruction corpus and its oracle | [`../tests/unit/arm64/aarch32_corpus/README.md`](../tests/unit/arm64/aarch32_corpus/README.md) |
 | Darwin runtime details | [`../darwin/README.md`](../darwin/README.md) |
+| Android guest storage on the host: layout file, partition tables, data disk, exactly two disks | [`../darwin/device/block/README.md`](../darwin/device/block/README.md) |
 | Kernarium iOS application | [`../Kernarium/README.md`](../Kernarium/README.md) |
 | Andarium iOS application (Android) | [`../Andarium/README.md`](../Andarium/README.md) |
 | Source both iOS applications share: the runtime loader, display and input, disk and zstd utilities | [`../GuestHost/README.md`](../GuestHost/README.md) |

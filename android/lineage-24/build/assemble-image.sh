@@ -1,11 +1,11 @@
 #!/bin/bash
 # SPDX-License-Identifier: Apache-2.0
-# Assemble the verified static Android partition images into one raw UBD disk.
+# Assemble the verified Android partition images into the read-only system disk.
 set -euo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ANDROID_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-LAYOUT="$ANDROID_ROOT/support/image/partition-layout.json"
+POLICY="$ANDROID_ROOT/support/image/disk-policy.json"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 DISK_TOOL="$ANDROID_ROOT/tools/ubd-disk.py"
 BOOT_IMAGE_TOOL="$ANDROID_ROOT/tools/boot-image.py"
@@ -16,7 +16,7 @@ TARGET_FILES=
 KERNEL_ARTIFACT=
 MKBOOTFS=
 MKBOOTIMG=
-OUTPUT=
+OUTPUT_DIR=
 WORK_DIR=
 
 # shellcheck disable=SC1090
@@ -30,14 +30,20 @@ Usage: android/lineage-24/build/assemble-image.sh \
        --kernel-artifact ABSOLUTE_PATH \
        --mkbootfs ABSOLUTE_PATH \
        --mkbootimg ABSOLUTE_PATH \
-       --output ABSOLUTE_PATH
+       --output-dir ABSOLUTE_PATH
 
 Run locally on the x86_64 Linux builder after build-aosp.sh. The target-files
 staging directory must remain beside its .zip archive. The generic and UML
 first-stage ramdisks are composed into one raw newc ramdisk, wrapped in a
 kernelless boot-image v4 init_boot partition. The target files' own LineageOS
-recovery image, verified here, is the recovery partition. The output is a new
-raw GPT disk; an existing path is never replaced.
+recovery image, verified here, is the recovery partition. Those two boot
+partitions and the five read-only EROFS images are packed, each exactly its
+image rounded up to 4 KiB, into one raw GPT disk, system.img, and described by
+partition-layout.json beside it, with a SHA-256 for every partition and the
+data disk template the host turns into each guest's writable disk. Neither the
+seed userdata and metadata images nor a misc partition are assembled: the app
+creates the writable disk. The output directory receives the two files; an
+existing file is never replaced.
 EOF
 }
 
@@ -71,9 +77,9 @@ while [[ $# -gt 0 ]]; do
 		MKBOOTIMG=$2
 		shift 2
 		;;
-	--output)
-		[[ $# -ge 2 ]] || fail "--output requires a path"
-		OUTPUT=$2
+	--output-dir)
+		[[ $# -ge 2 ]] || fail "--output-dir requires a path"
+		OUTPUT_DIR=$2
 		shift 2
 		;;
 	-h|--help)
@@ -88,20 +94,20 @@ done
 [[ -n "$KERNEL_ARTIFACT" ]] || fail "--kernel-artifact is required"
 [[ -n "$MKBOOTFS" ]] || fail "--mkbootfs is required"
 [[ -n "$MKBOOTIMG" ]] || fail "--mkbootimg is required"
-[[ -n "$OUTPUT" ]] || fail "--output is required"
+[[ -n "$OUTPUT_DIR" ]] || fail "--output-dir is required"
 absolute_path "target-files archive" "$TARGET_FILES"
 absolute_path "kernel artifact" "$KERNEL_ARTIFACT"
 absolute_path "mkbootfs" "$MKBOOTFS"
 absolute_path "mkbootimg" "$MKBOOTIMG"
-absolute_path "output disk" "$OUTPUT"
+absolute_path "output directory" "$OUTPUT_DIR"
 [[ "$(uname -s)" == Linux ]] || fail "builder host must be Linux"
 [[ "$(uname -m)" == x86_64 ]] || fail "builder host must be x86_64"
 [[ -x "$TARGET_FILES_VERIFIER" ]] || fail "target-files verifier is missing"
-[[ -x "$DISK_TOOL" ]] || fail "UBD disk tool is missing"
+[[ -x "$DISK_TOOL" ]] || fail "system disk tool is missing"
 [[ -x "$BOOT_IMAGE_TOOL" ]] || fail "boot-image verifier is missing"
 [[ -x "$INITRAMFS_VERIFIER" ]] || fail "initramfs verifier is missing"
 [[ -x "$RECOVERY_VERIFIER" ]] || fail "LineageOS recovery verifier is missing"
-[[ -f "$LAYOUT" ]] || fail "fixed UBD partition layout is missing"
+[[ -f "$POLICY" ]] || fail "disk policy is missing"
 [[ -f "$TARGET_FILES" && ! -L "$TARGET_FILES" ]] ||
 	fail "target-files archive must be a regular non-symlink file"
 [[ -d "$KERNEL_ARTIFACT" && ! -L "$KERNEL_ARTIFACT" ]] ||
@@ -171,13 +177,15 @@ EOF
 "$BOOT_IMAGE_TOOL" verify --image "$INIT_BOOT_IMAGE" --ramdisk "$RAMDISK"
 "$BOOT_IMAGE_TOOL" verify --image "$RECOVERY_IMAGE"
 "$RECOVERY_VERIFIER" --android-root "$ANDROID_ROOT" --image "$RECOVERY_IMAGE"
-"$DISK_TOOL" assemble --layout "$LAYOUT" --images-dir "$IMAGES_DIR" \
-	--image "init_boot=$INIT_BOOT_IMAGE" \
-	--blank-partition metadata --blank-partition misc --output "$OUTPUT"
-"$BOOT_IMAGE_TOOL" verify --layout "$LAYOUT" --disk "$OUTPUT" \
+"$DISK_TOOL" assemble --policy "$POLICY" --images-dir "$IMAGES_DIR" \
+	--image "init_boot=$INIT_BOOT_IMAGE" --output-dir "$OUTPUT_DIR"
+LAYOUT="$OUTPUT_DIR/partition-layout.json"
+DISK="$OUTPUT_DIR/system.img"
+"$DISK_TOOL" verify --layout "$LAYOUT" --disk "$DISK" --hash
+"$BOOT_IMAGE_TOOL" verify --layout "$LAYOUT" --disk "$DISK" \
 	--partition init_boot --ramdisk "$RAMDISK"
-"$BOOT_IMAGE_TOOL" verify --layout "$LAYOUT" --disk "$OUTPUT" \
+"$BOOT_IMAGE_TOOL" verify --layout "$LAYOUT" --disk "$DISK" \
 	--partition recovery
 "$RECOVERY_VERIFIER" --android-root "$ANDROID_ROOT" \
-	--layout "$LAYOUT" --disk "$OUTPUT"
-printf '%s\n' "assembled Android 17 UBD disk: $OUTPUT"
+	--layout "$LAYOUT" --disk "$DISK"
+printf '%s\n' "assembled the Android 17 system disk: $DISK"
