@@ -22,7 +22,7 @@ import sys
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
-from typing import Iterable, NamedTuple
+from typing import Callable, Iterable, NamedTuple
 
 RULES = {
     "R1": "host-path: /Users/<name>, /Volumes/<name>, /home/<name> (not the "
@@ -34,7 +34,10 @@ RULES = {
     "R3": "apple-signing: a literal DEVELOPMENT_TEAM, and a literal bundle "
     "identifier (PRODUCT_BUNDLE_IDENTIFIER, CFBundleIdentifier, "
     "MACOSX_FRAMEWORK_IDENTIFIER, MACOSX_BUNDLE_GUI_IDENTIFIER) outside the "
-    "project namespaces; $(X), ${X} and @X@ values pass",
+    "project namespaces; read from *.pbxproj and *.xcconfig settings, from "
+    "the string or string-array values of *.xcproj JSON settings (a "
+    "[condition] key suffix and JSON5 quoting included), plists and CMake; "
+    "$(X), ${X}, @X@ and empty values pass",
     "R4": "ssh-endpoint: user@host remotes of scp, rsync, sftp and ssh "
     "(placeholders and git forges pass), and the ssh options ControlPath, "
     "ControlMaster and ControlPersist",
@@ -101,6 +104,7 @@ REMOTE_PLACEHOLDERS = frozenset(
 REMOTE_FORGES = frozenset({"git", "hg", "svn"})
 
 SIGNING_FILE = re.compile(r"\.(?:pbxproj|xcconfig)$")
+JSON_PROJECT_FILE = re.compile(r"\.xcproj$")
 PLIST_FILE = re.compile(r"\.(?:plist|plist\.in|entitlements)$")
 CMAKE_FILE = re.compile(r"(?:^|/)CMakeLists\.txt$|\.cmake$")
 DEVELOPMENT_TEAM = re.compile(r"\bDEVELOPMENT_TEAM\s*=\s*(?P<value>[^;\n]*)")
@@ -115,6 +119,25 @@ CMAKE_IDENTIFIER = re.compile(
     r"(?P<value>\"[^\"\n]*\"|[^\s)]+)"
 )
 PLACEHOLDER = re.compile(r"@\w+@|\$\{[^}]*\}|\$\([^)]*\)")
+
+# A JSON project (`project.xcproj`) is JSON5: keys may be unquoted or single
+# quoted, and a build-setting key may carry a `[condition]` suffix inside its
+# quotes. A setting's value is one string or an array of strings.
+JSON_STRING = r"\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'"
+JSON_COMMENT = r"//[^\n]*(?=\n|\Z)|/\*(?:[^*]|\*(?!/))*\*/"
+JSON_ARRAY = rf"\[(?:\s|,|{JSON_COMMENT}|{JSON_STRING})*\]"
+JSON_LITERAL = re.compile(rf"{JSON_COMMENT}|(?P<string>{JSON_STRING})")
+
+
+def json_setting(name: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"(?P<quote>[\"']?)\b{name}(?:\[[^\]\"'\n]*\])?(?P=quote)\s*:\s*"
+        rf"(?P<value>{JSON_ARRAY}|{JSON_STRING})"
+    )
+
+
+JSON_TEAM = json_setting("DEVELOPMENT_TEAM")
+JSON_BUNDLE = json_setting("PRODUCT_BUNDLE_IDENTIFIER")
 
 
 class Finding(NamedTuple):
@@ -389,18 +412,40 @@ def accepted_bundle_identifier(value: str) -> bool:
     )
 
 
+def accepted_team(value: str) -> bool:
+    """A team is site-neutral when it is empty or starts with a placeholder."""
+    return not PLACEHOLDER.split(value, maxsplit=1)[0].strip()
+
+
+def scan_json_setting(
+    scan: FileScan,
+    pattern: re.Pattern[str],
+    accepted: Callable[[str], bool],
+) -> None:
+    """Report each literal string of a JSON setting, at the literal's line."""
+    for match in pattern.finditer(scan.text):
+        base = match.start("value")
+        for literal in JSON_LITERAL.finditer(match.group("value")):
+            text = literal.group("string")
+            if text is not None and not accepted(text[1:-1].strip()):
+                scan.add("R3", base + literal.start())
+
+
 def scan_signing(scan: FileScan) -> None:
     path = scan.path
     text = scan.text
     if SIGNING_FILE.search(path):
         for match in DEVELOPMENT_TEAM.finditer(text):
             value = match.group("value").strip().strip('"')
-            if value and not value.startswith("$("):
+            if not accepted_team(value):
                 scan.add("R3", match.start())
         for match in BUNDLE_SETTING.finditer(text):
             value = match.group("value").strip().strip('"')
             if not accepted_bundle_identifier(value):
                 scan.add("R3", match.start())
+    if JSON_PROJECT_FILE.search(path):
+        scan_json_setting(scan, JSON_TEAM, accepted_team)
+        scan_json_setting(scan, JSON_BUNDLE, accepted_bundle_identifier)
     if PLIST_FILE.search(path):
         for match in PLIST_IDENTIFIER.finditer(text):
             value = match.group("value").strip()

@@ -54,9 +54,10 @@ Python tooling tests keep the host `$TMPDIR` for `sun_path`.
 `repository-environment-portability` is the one tooling test that scans
 tracked source, and it looks for forbidden values rather than expected ones:
 host paths and account names, private addresses, ssh endpoints and Apple
-signing identifiers outside the project's own. It also scans new unignored
-files, so a leak fails before it is committed. A site adds its private tokens
-to a local denylist, found at
+signing identifiers outside the project's own (read from `project.pbxproj` and
+JSON `project.xcproj` projects, xcconfig files, plists and CMake). It also
+scans new unignored files, so a leak fails before it is committed. A site adds
+its private tokens to a local denylist, found at
 `${XDG_CONFIG_HOME:-$HOME/.config}/linux-um-darwin/portability-denylist` or
 through `UML_PORTABILITY_DENYLIST`; the test runs with and without it. A
 reviewed exception goes in
