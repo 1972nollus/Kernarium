@@ -1174,6 +1174,13 @@ persistent guest changes directly into the image inside the `.kern` bundle.
 How Kernarium keeps, relaunches, and copies a bundle is in
 [`../../Kernarium/README.md`](../../Kernarium/README.md#guest-storage).
 
+Andarium carries the accepted release instead: `Andarium/scripts/stage-system-image.py`
+checks it against its own manifest (accepted, 4 KiB pages, a LineageOS family,
+the accepted release identity, file sizes, and the disk archive's declared
+expanded size against the partition layout) and stages the zstd disk archive, the
+kernel command line, the manifest and the partition layout for the application to
+bundle. See [`../../Andarium/README.md`](../../Andarium/README.md#build).
+
 ## Validation boundary
 
 Producer verification covers pinned source/patch identity, target files,

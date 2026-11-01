@@ -35,6 +35,21 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
     -destination 'generic/platform=iOS Simulator' build
 ```
 
+## Build
+
+Packaging the Android runtime alone, and staging the system from the accepted
+release, need no Linux runtime build:
+
+```sh
+cmake --preset kernarium-ios-device-android
+cmake --build --preset kernarium-ios-device-android
+Kernarium/scripts/package-ios-frameworks.sh --runtimes android
+Andarium/scripts/stage-system-image.py
+```
+
+The frameworks go to `.build/kernarium-xcframeworks`, which Kernarium shares,
+and the system to `.build/andarium-system`.
+
 ## Model
 
 `AndariumCore` holds everything the screens decide with, so it is tested on

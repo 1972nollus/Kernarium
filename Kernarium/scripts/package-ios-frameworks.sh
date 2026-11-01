@@ -18,6 +18,11 @@
 # and start the background job with the guest, and checks that the release
 # Android runtime carries neither setting.
 #
+# --runtimes android packages the Android runtime alone, for Andarium, whose
+# builds need not build the Linux runtime (--automation, which packages it,
+# conflicts with it). The output directory is shared: Kernarium needs the
+# default full set, so package that again before building Kernarium.
+#
 # KernariumTests also links HostBattery.xcframework: the Apple battery
 # provider's archive, as the Android runtime links it, with its header. The
 # application neither links nor embeds it, and the test bundle loads no second
@@ -36,13 +41,29 @@ fail()
 
 AUTOMATION=0
 ANDROID_AUTOMATION=0
-for option in "$@"; do
-	case "$option" in
+RUNTIMES=all
+USAGE="usage: package-ios-frameworks.sh [--automation] [--android-automation] [--runtimes all|android]"
+while [ "$#" -gt 0 ]; do
+	case "$1" in
 	--automation) AUTOMATION=1 ;;
 	--android-automation) ANDROID_AUTOMATION=1 ;;
-	*) fail "usage: package-ios-frameworks.sh [--automation] [--android-automation]" ;;
+	--runtimes)
+		[ "$#" -ge 2 ] || fail "$USAGE"
+		RUNTIMES=$2
+		shift
+		;;
+	*) fail "$USAGE" ;;
 	esac
+	shift
 done
+case "$RUNTIMES" in
+all) ;;
+android)
+	[ "$AUTOMATION" -eq 0 ] ||
+		fail "--automation packages the Linux runtime; it conflicts with --runtimes android"
+	;;
+*) fail "--runtimes takes all or android: $RUNTIMES" ;;
+esac
 
 find_tool()
 {
@@ -98,12 +119,13 @@ GPU_FRAMEWORKS="MesaEGL MesaGallium KosmicKrisp"
 "$ROOT_DIR/dependencies/build-ios-zstd.sh"
 
 for framework in \
-	"$DEVICE_RUNTIME_4K" \
 	"$DEVICE_RUNTIME_ANDROID" \
 	"$STORAGE" \
 	"$ZSTD"; do
 	[ -d "$framework" ] || fail "missing framework slice: $framework"
 done
+[ "$RUNTIMES" = android ] || [ -d "$DEVICE_RUNTIME_4K" ] ||
+	fail "missing framework slice: $DEVICE_RUNTIME_4K"
 [ -f "$HOST_BATTERY" ] || fail "missing host battery archive: $HOST_BATTERY"
 # The encoder archive is a static library of the runtime tree; it is built here
 # when the runtime itself has not linked it yet.
@@ -139,7 +161,11 @@ create_xcframework()
 		fail "$name XCFramework was not created"
 }
 
-create_xcframework "$RUNTIME_4K" "$DEVICE_RUNTIME_4K"
+RUNTIME_FRAMEWORKS="$RUNTIME_ANDROID_4K"
+if [ "$RUNTIMES" = all ]; then
+	RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_ANDROID_4K"
+	create_xcframework "$RUNTIME_4K" "$DEVICE_RUNTIME_4K"
+fi
 create_xcframework "$RUNTIME_ANDROID_4K" "$DEVICE_RUNTIME_ANDROID"
 for framework in $GPU_FRAMEWORKS; do
 	create_xcframework "$framework" "$DEVICE_GPU/$framework.framework"
@@ -169,7 +195,6 @@ done
 [ -f "$STAGE/HostVideoEncoder.xcframework/ios-arm64/libuml_video_encoder.a" ] ||
 	fail "HostVideoEncoder XCFramework was not created"
 
-RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_ANDROID_4K"
 for framework in $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS; do
 	binary="$STAGE/$framework.xcframework/ios-arm64/$framework.framework/$framework"
 	[ -f "$binary" ] || fail "missing packaged framework binary: $binary"
@@ -186,23 +211,26 @@ for framework in $RUNTIME_FRAMEWORKS; do
 	[ "$rpaths" = '@loader_path/..' ] ||
 		fail "$framework has an invalid runtime search path: $rpaths"
 done
-binary="$STAGE/$RUNTIME_4K.xcframework/ios-arm64/$RUNTIME_4K.framework/$RUNTIME_4K"
-if LC_ALL=C grep -a -q KERNARIUM_BOOT_PAYLOAD "$binary"; then
-	[ "$AUTOMATION" -eq 1 ] ||
-		fail "$RUNTIME_4K is an automation runtime; package it with --automation"
-else
-	[ "$AUTOMATION" -eq 0 ] ||
-		fail "$RUNTIME_4K is a release runtime; build the kernarium-ios-device-automation preset"
+if [ "$RUNTIMES" = all ]; then
+	binary="$STAGE/$RUNTIME_4K.xcframework/ios-arm64/$RUNTIME_4K.framework/$RUNTIME_4K"
+	if LC_ALL=C grep -a -q KERNARIUM_BOOT_PAYLOAD "$binary"; then
+		[ "$AUTOMATION" -eq 1 ] ||
+			fail "$RUNTIME_4K is an automation runtime; package it with --automation"
+	else
+		[ "$AUTOMATION" -eq 0 ] ||
+			fail "$RUNTIME_4K is a release runtime; build the kernarium-ios-device-automation preset"
+	fi
+	# The setting that starts the background job with the guest is in the
+	# automation runtimes alone.
+	if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_JOB_AT_START "$binary"; then
+		[ "$AUTOMATION" -eq 1 ] ||
+			fail "$RUNTIME_4K carries the background job setting; only an automation runtime may"
+	else
+		[ "$AUTOMATION" -eq 0 ] ||
+			fail "$RUNTIME_4K is an automation runtime without the background job setting; rebuild it"
+	fi
 fi
-# The setting that starts the background job with the guest is in the
-# automation runtimes alone.
-if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_JOB_AT_START "$binary"; then
-	[ "$AUTOMATION" -eq 1 ] ||
-		fail "$RUNTIME_4K carries the background job setting; only an automation runtime may"
-else
-	[ "$AUTOMATION" -eq 0 ] ||
-		fail "$RUNTIME_4K is an automation runtime without the background job setting; rebuild it"
-fi
+
 
 binary="$STAGE/$RUNTIME_ANDROID_4K.xcframework/ios-arm64/$RUNTIME_ANDROID_4K.framework/$RUNTIME_ANDROID_4K"
 if LC_ALL=C grep -a -q KERNARIUM_ANDROID_ADB_AUTH "$binary"; then
@@ -255,7 +283,9 @@ case $publish in
 	;;
 *) fail "could not publish the XCFrameworks: $OUTPUT" ;;
 esac
-if [ "$AUTOMATION" -eq 1 ] || [ "$ANDROID_AUTOMATION" -eq 1 ]; then
+if [ "$RUNTIMES" = android ]; then
+	printf '%s\n' "published Android runtime XCFrameworks: $OUTPUT"
+elif [ "$AUTOMATION" -eq 1 ] || [ "$ANDROID_AUTOMATION" -eq 1 ]; then
 	printf '%s\n' "published Kernarium automation XCFrameworks: $OUTPUT"
 else
 	printf '%s\n' "published Kernarium XCFrameworks: $OUTPUT"

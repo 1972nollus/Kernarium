@@ -732,7 +732,9 @@ up to four tests fail because of how the Mac hosts an iPad app:
 ### Andarium
 
 `andarium-core` (unit, macOS hosts) runs the tests of the Swift package
-`Andarium/AndariumCore`, the application's model, with `swift test`. The
+`Andarium/AndariumCore`, the application's model, with `swift test`.
+`andarium-stage-system-image` (tooling) covers the system-image staging script
+and the option checks of `package-ios-frameworks.sh --runtimes android`. The
 application itself builds with Xcode, and `AndariumPreview` is its Simulator
 build with mock data
 ([`Andarium/README.md`](../Andarium/README.md#preview)).

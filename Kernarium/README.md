@@ -416,8 +416,10 @@ Each script documents its options in `--help` or its header:
 - `package-ios-frameworks.sh` packages the selected runtime and graphics slices
   and the static GPT fdisk and zstd XCFrameworks for Xcode, with
   `--automation` the automation Linux runtime, with `--android-automation`
-  the automation Android runtime, and the host battery and video encoder
-  archives only `KernariumTests` links;
+  the automation Android runtime, with `--runtimes android` the Android
+  runtime alone (for Andarium; the output directory is shared, so package the
+  full set again before building Kernarium), and the host battery and video
+  encoder archives only `KernariumTests` links;
 - `make-guest-bundle.py` assembles an Android `.kern` bundle from an installed
   release;
 - `ipad-automation.py` drives UI automation on a connected iPad through the
