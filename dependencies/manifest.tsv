@@ -30,5 +30,5 @@ gawk	5.4.1	kernel-host-tools	https://git.savannah.gnu.org/git/gawk.git	52af7f127
 argp-standalone	1.5.0	kernel-host-tools	https://github.com/argp-standalone/argp-standalone.git	b931da3e7e9a999b0d9515c087488e96821845fb	.	-
 musl-obstack	1.2.3	kernel-host-tools	https://github.com/void-linux/musl-obstack.git	f4385255be1615688c6a5f042277304d7ab288b1	.	patches/musl-obstack/series.tsv
 elfutils	0.197	kernel-host-tools	https://sourceware.org/git/elfutils.git	d1e04729ece4d4fa4097a83dbbad541edaf149f7	.	patches/elfutils/series.tsv
-libbpf	1.8.0	kernel-host-tools	https://github.com/libbpf/libbpf.git	dd92bef7f6c7a00bb0312554119b6d9cf38e4f32	.	patches/libbpf/series.tsv
+libbpf	1.8.0	kernel-host-tools	https://github.com/libbpf/libbpf.git	85c0d575a447651bbeb8e2376eacd64c30dce9a6	.	patches/libbpf/series.tsv
 dwarves	1.32	kernel-host-tools	https://git.kernel.org/pub/scm/devel/pahole/pahole.git	fa725d687ce3a712ef296b46bc63ea57ef466014	.	patches/dwarves/series.tsv
