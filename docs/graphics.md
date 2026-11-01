@@ -656,7 +656,8 @@ What the driver refuses and what it only counts:
   answers the failure as it answers any, by dropping its cached buffers and
   trying once more before the resource fails.
 - The geometry heap charges itself through the same pool and follows the
-  pool-aware heap rules (see [memory budget](#memory-budget)).
+  pool-aware heap rules (see [memory budget](#memory-budget)), except that a
+  device's first heap, at its 1 MiB floor, is made when the pool refuses it.
 - Host-visible memory the renderer makes for the guest and the driver imports
   is not a driver allocation, so the renderer reserves its size before it makes
   the pages and releases the reservation once the driver has made its Metal
@@ -703,12 +704,16 @@ What a guest sees of a refusal depends on the path:
   above. The advertised heap is B, but the pool counts everything the host holds,
   so a guest cannot tell from the heap size whether an asynchronous allocation
   will fit.
-- A draw whose geometry heap the pool refused. KosmicKrisp fails the recording
-  of a command buffer whose device has no geometry heap (the pool refused even
-  the first one), and `vkEndCommandBuffer` is the call that reports it. Venus
-  sends that call without a reply, so the guest sees `VK_SUCCESS` and the host
-  silently drops the draw. A pool that frees its caches before it refuses makes
-  this rare, not impossible.
+- A draw whose geometry heap the pool refused. A device with no geometry heap
+  fails the recording of a command buffer, `vkEndCommandBuffer` is the call that
+  reports it, and Venus sends that call without a reply, so the guest would see
+  `VK_SUCCESS` and the host silently drop the whole command buffer. A device's
+  first heap, at the 1 MiB floor, is therefore made although the pool refused
+  its reservation: the pool counts it once Metal does and never refuses it, so
+  a full pool can leave the process one floor per device past B. A draw that
+  needs more than the floor loses its output and the loss is logged once, as on
+  any heap too small for its draw, and the command buffer is whole. Growth past
+  the floor stays within the pool.
 
 The counter also includes memory the guest has already freed while its blob
 resource is still referenced: a freed swapchain image stays allocated until the
@@ -1277,8 +1282,8 @@ can be written back to the volume of the temporary directory.
 A pooled device charges its heap to the host's device-memory pool (see [the
 budget](#device-memory-budget)), so the heap and the guest's allocations share
 one bound. A heap the device creates or
-grows takes at most half of the pool's headroom, except that a device's first
-heap may take 1 MiB, and a heap the pool cannot hold is not created. A heap
+grows takes at most half of the pool's headroom, a heap the pool cannot hold is
+not created, and a device's first heap is made at 1 MiB even then. A heap
 grown past its start is freed once nothing holds it and the headroom has fallen
 below half its size. A device created without a pool keeps the fixed cap. The
 rules are the comment above
