@@ -51,6 +51,7 @@ struct SessionView: View {
         .persistentSystemOverlays(.hidden)
         .sheet(isPresented: $settings) {
             SessionSettingsSheet(large: model.sessionPreset.settingsLarge)
+                .environment(model)
         }
         .onAppear(perform: prepare)
         .task {

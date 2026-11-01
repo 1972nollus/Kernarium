@@ -18,6 +18,7 @@ struct SessionView: View {
             .persistentSystemOverlays(.hidden)
             .sheet(isPresented: $settings) {
                 SessionSettingsSheet(large: false)
+                    .environment(model)
             }
     }
 
