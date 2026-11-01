@@ -1242,7 +1242,10 @@ handing the context's completed batch states to the screen and resetting every
 state the screen holds, without waiting for the device and keeping the states for
 reuse. A context that has not finished its last batch keeps it, and a render
 target that is still the context's bound framebuffer stays referenced until the
-context binds another.
+context binds another. So does the sampler view of a texture that is already
+deleted while an idle context still has it bound: that context frees it at its
+next flush, not at the trim, so a closed app can leave one full-screen heap for
+the seconds until then.
 
 KosmicKrisp reports physical memory as its one host heap, 64 GiB on a large Mac
 and 4 GiB on an iPad mini 6, and the memory budget it reports follows. Apps and
