@@ -22,6 +22,13 @@ uml_add_tooling_test(
     TIMEOUT 60)
 
 uml_add_tooling_test(
+    NAME kernarium-audio-interrupter
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernarium/test_audio_interrupter.py
+    LABELS kernarium
+    TIMEOUT 120)
+
+uml_add_tooling_test(
     NAME kernarium-payload-removal
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/kernarium/test_payload_removal.py
