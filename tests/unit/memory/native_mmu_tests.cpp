@@ -6,6 +6,7 @@
 #include "native_window_test_support.hpp"
 #include "require.hpp"
 #include "scratch_backing.hpp"
+#include "wait_until.hpp"
 #include "memory/shared_backing.hpp"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -867,16 +869,26 @@ void test_sibling_churn_keeps_live_quarter_stable()
 	std::atomic_ref<std::uint64_t> value{counter};
 	std::atomic_bool stop{};
 	std::atomic_uint regressions{};
+	std::atomic_ulong passes{};
 	std::thread writer{[&] {
 		auto previous = value.fetch_add(1, std::memory_order_relaxed);
-		while (!stop.load(std::memory_order_relaxed)) {
+		/* The first pass is made whatever `stop` says. */
+		do {
 			const auto current = value.fetch_add(1,
 				std::memory_order_relaxed);
 			if (current <= previous)
 				regressions.fetch_add(1, std::memory_order_relaxed);
 			previous = current;
-		}
+			passes.fetch_add(1, std::memory_order_release);
+		} while (!stop.load(std::memory_order_relaxed));
 	}};
+	/* The churn begins once the writer is going: a loaded host can
+	 * schedule it only after the churn is over, and the test would then
+	 * pass having watched nothing. */
+	require(uml::testing::waitUntil([&] {
+			return passes.load(std::memory_order_acquire) != 0;
+		}, std::chrono::seconds{10}),
+		"the sibling writer never started");
 	for (int iteration = 0; iteration < 2000; ++iteration) {
 		require(space.unmap(base + 2 * guest_page_size,
 			guest_page_size) == 0, "churn quarter unmap failed");
@@ -887,6 +899,8 @@ void test_sibling_churn_keeps_live_quarter_stable()
 	}
 	stop.store(true, std::memory_order_relaxed);
 	writer.join();
+	require(passes.load(std::memory_order_acquire) != 0,
+		"the sibling writer made no pass");
 	require(regressions.load(std::memory_order_relaxed) == 0,
 		"sibling churn replaced a concurrently accessed live quarter");
 	require(space.unmap(base + 2 * guest_page_size, guest_page_size) == 0,

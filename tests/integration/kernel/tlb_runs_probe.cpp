@@ -481,6 +481,17 @@ void test_churn()
 		result("churn", false, "pthread_create failed");
 		return;
 	}
+	// The rounds below run against the churn thread, so they begin once it
+	// has made its first round; a loaded guest can schedule it only after
+	// they are over.
+	for (int wait = 0; wait < 10000 && churn.rounds.load() == 0; ++wait)
+		usleep(1000);
+	if (churn.rounds.load() == 0) {
+		churn.stop.store(true);
+		pthread_join(thread, nullptr);
+		result("churn", false, "the churn thread never ran");
+		return;
+	}
 	bool *writable = new bool[pages];
 	char detail[160];
 	bool pass = true;
@@ -495,10 +506,6 @@ void test_churn()
 	}
 	churn.stop.store(true);
 	pthread_join(thread, nullptr);
-	if (pass && churn.rounds.load() == 0) {
-		std::snprintf(detail, sizeof(detail), "the churn thread never ran");
-		pass = false;
-	}
 	result("churn", pass, detail);
 	delete[] writable;
 }
