@@ -981,6 +981,8 @@ void VirglRenderer::resetFenceState() noexcept
 {
     try {
         idleContexts_.reset();
+        // The renderer's own context outlives the guest's contexts.
+        idleContexts_.add(hostContextId, ContextIdleTracker::Clock::now());
         std::lock_guard lock(mutex_);
         retiredFence_ = 0;
         retiredContextFences_.clear();

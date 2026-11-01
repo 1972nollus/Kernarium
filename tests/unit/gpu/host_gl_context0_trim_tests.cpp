@@ -7,12 +7,13 @@
 // stay allocated for as long as the renderer stays quiet, and a guest that
 // churns them through context 0 holds the host's budget for nothing.
 //
-// The renderer tracks context 0 like a guest context. Once the guest has
-// released the textures and the context has been quiet for an idle interval,
-// the service thread's trim reaches vrend's own context and the driver releases
-// what it held: the memory returns to where it was within a few intervals. The
-// service thread's loop is reproduced here: ask how long until a context could
-// be due, wait that long, trim.
+// The renderer tracks context 0 like a guest context, and keeps tracking it
+// across a device reset. Once the guest has released the textures and the
+// context has been quiet for an idle interval, the service thread's trim
+// reaches vrend's own context and the driver releases what it held: the memory
+// returns to where it was within a few intervals. The service thread's loop is
+// reproduced here: ask how long until a context could be due, wait that long,
+// trim.
 
 #include "host_gl_test_support.hpp"
 #include "host_gpu_memory.hpp"
@@ -88,6 +89,10 @@ int main()
         return skipWithoutRenderer(error);
     }
 
+    // A guest driver resets the device when it probes, and the reset clears
+    // the renderer's fence state and the contexts it tracks for idleness: the
+    // renderer's own context has to survive it.
+    renderer->resetFenceState();
     const std::uint64_t baseline = used();
     std::vector<std::vector<std::uint8_t>> storage(textureCount);
     std::vector<iovec> vectors(textureCount);
