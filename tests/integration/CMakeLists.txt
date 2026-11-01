@@ -917,6 +917,38 @@ uml_add_integration_test(
     PROCESSORS 4
     RESOURCE_GROUPS cpus:4)
 
+# A suspend that takes a vhost-user backend request inside a ring disable's
+# reply wait still ends at its RTC alarm: the irq_work that delivers the
+# request runs inside the suspend and must find the request socket still
+# nonblocking.
+uml_add_freestanding_cxx_payload(UML_GUEST_VHOST_USER_SUSPEND_DRAIN_INIT
+    guest-vhost-user-suspend-drain-init
+    kernel/vhost_user_suspend_drain_init.cpp
+    COMMENT "Building the freestanding arm64 init of the vhost-user suspend-drain test"
+    ARCH_OPTIONS -march=armv8-a)
+add_executable(uml_vhost_user_suspend_drain_tests
+    kernel/vhost_user_suspend_drain_tests.cpp)
+target_link_libraries(uml_vhost_user_suspend_drain_tests PRIVATE
+    UML::BootInitramfs
+    UML::Emulator
+    UML::VhostUserTransport)
+target_link_options(uml_vhost_user_suspend_drain_tests PRIVATE
+    "LINKER:-export_dynamic"
+    "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
+add_dependencies(uml_vhost_user_suspend_drain_tests
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
+add_dependencies(integration-test-binaries uml_vhost_user_suspend_drain_tests)
+uml_add_integration_test(
+    NAME guest-vhost-user-suspend-drain
+    COMMAND uml_vhost_user_suspend_drain_tests
+        ${_uml_vhost_user_round_trips_kernel}
+        ${UML_GUEST_VHOST_USER_SUSPEND_DRAIN_INIT}
+        ${CMAKE_CURRENT_BINARY_DIR}/vhost-user-suspend-drain
+    LABELS guest;kernel
+    TIMEOUT 300
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
+
 uml_add_guest_payload(UML_GUEST_SAMPLER_WORKLOAD guest-sampler-workload
     profiling/guest_sampler_workload.S
     COMMENT "Building the freestanding arm64 guest sampler workload")
