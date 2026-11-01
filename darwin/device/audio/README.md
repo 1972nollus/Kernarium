@@ -43,6 +43,33 @@ real time after the one before, on its `PeriodClock`:
 The guest therefore sees a steady device whatever the Mac's output does, and
 never an I/O error from an output problem.
 
+## Interruptions on iOS
+
+When the system takes the audio session (a call, Siri, another app's audio),
+`ApplePlaybackSink` mutes: nothing reaches the player, and the sink completes
+the guest's periods as `played` on the schedule the hardware would have kept
+(`MuteClock`), so the guest sees no pause and its clock keeps its rate. That
+schedule is the sink's own and does not use the device's `PeriodClock`, which
+paces only the periods a sink discards. An interruption is the session
+becoming inactive with an interruption context; the app's own deactivations
+are not interruptions.
+
+The sink takes the session back when the system recommends resuming, whichever
+advice it carries, and, because iOS posts nothing when the interrupter simply
+stops or is killed, once no other app plays primary audio, asked once a second
+while the stream runs. It never takes the session from an app that still
+plays, except when the guest starts a stream at a moment nothing interrupts
+it: a stream that starts or resumes during an interruption, or a route change
+during one, joins the mute. Route changes otherwise restart the engine.
+
+Taking the session back, starting the engine and the audio hardware's first
+cycle (about 70, 75 and 210 ms on an iPad mini 6) run on another thread while
+the mute clock goes on completing the guest's periods. The periods the mute
+clock still holds go to the player only once it has consumed a buffer of
+silence, so that no guest write waits longer than its stream's buffer lasts
+(100 ms with four periods, about 330 ms with a 300 ms buffer): a longer wait
+ends in an I/O error.
+
 ## Capture
 
 While the guest records, the device completes one receive buffer per period of
@@ -110,8 +137,10 @@ and Kernarium keeps the host output.
 pacing and capture delivery under an injected clock, and the production clock.
 `virtio-sound-microphone` covers the setting, the ring and the capture source
 over fakes; it never opens the microphone or shows a permission prompt.
+`audio-mute-clock` covers the schedule a muted sink completes periods on.
 `UML_TEST_APPLE_AUDIO=ON` adds `apple-audio-playback`, which plays a brief tone
-through the real output (see
+through the real output, and `apple-audio-interruption`, which runs the sink in
+the iOS Simulator against posted interruption notifications (see
 [`../../../docs/testing.md`](../../../docs/testing.md)).
 
 The real microphone is checked by hand, because granting access is the user's
