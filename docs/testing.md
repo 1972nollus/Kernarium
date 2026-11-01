@@ -729,6 +729,14 @@ up to four tests fail because of how the Mac hosts an iPad app:
   as it launches, so it fails when the launch has no image to boot, as a run
   whose `TEST_RUNNER_KERNARIUM_ROOTFS` names a missing file does.
 
+### Andarium
+
+`andarium-core` (unit, macOS hosts) runs the tests of the Swift package
+`Andarium/AndariumCore`, the application's model, with `swift test`. The
+application itself builds with Xcode, and `AndariumPreview` is its Simulator
+build with mock data
+([`Andarium/README.md`](../Andarium/README.md#preview)).
+
 ### UI automation on a device
 
 Unattended device automation goes through the long-lived

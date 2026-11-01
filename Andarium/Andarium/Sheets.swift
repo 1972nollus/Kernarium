@@ -1,3 +1,4 @@
+import AndariumCore
 import SwiftUI
 
 /// Setting up the one guest: the same controls, already at the defaults.
@@ -5,6 +6,13 @@ struct NewGuestSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var draft: Guest?
+
+    private var draftBinding: Binding<Guest> {
+        Binding(
+            get: { draft ?? Guest.fresh(on: model.host) },
+            set: { draft = $0 }
+        )
+    }
 
     var body: some View {
         NavigationStack {
@@ -14,17 +22,26 @@ struct NewGuestSheet: View {
                         NoticeCard(
                             symbol: "externaldrive.badge.exclamationmark", color: .orange,
                             title: "Not enough free space",
-                            text: "Setting up needs \(Formats.gb(Limits.createReserveGB)) free for Android's setup. This \(model.host.name) has \(Formats.gb(model.host.freeStorageGB)). Free up space in Settings › General › \(model.host.name) Storage."
+                            text: "Setting up needs \(Formats.hostGB(bytes: model.createRequirementBytes)) free for Android's setup. This \(model.host.name) has \(Formats.gb(model.host.freeStorageGB)). Free up space in Settings › General › \(model.host.name) Storage."
                         )
                     }
-                    ControlsPanel(
-                        guest: Binding(
-                            get: { draft ?? Guest.fresh(host: model.host) },
-                            set: { draft = $0 }
-                        ),
-                        host: model.host,
-                        isNew: true
-                    )
+                    ControlsPanel(guest: draftBinding, host: model.host, isNew: true)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 12) {
+                            IconTile(symbol: "icloud.fill")
+                            Text("Include in Backups")
+                            Spacer(minLength: 8)
+                            Toggle("Include in Backups", isOn: Binding(
+                                get: { draftBinding.wrappedValue.includeInBackups },
+                                set: { draftBinding.wrappedValue.includeInBackups = $0 }
+                            ))
+                            .labelsHidden()
+                        }
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 54)
+                        .glassEffect(.regular, in: .rect(cornerRadius: 26))
+                        BackupNote(host: model.host)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
@@ -39,7 +56,7 @@ struct NewGuestSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create") {
-                        model.create(draft ?? Guest.fresh(host: model.host))
+                        model.create(draft ?? Guest.fresh(on: model.host))
                         dismiss()
                     }
                     .fontWeight(.semibold)
@@ -62,7 +79,7 @@ struct EraseSheet: View {
     }
 
     var body: some View {
-        let guest = model.guest ?? Guest.fresh(host: model.host)
+        let guest = model.guest ?? Guest.fresh(on: model.host)
         NavigationStack {
             List {
                 Section {
@@ -85,13 +102,15 @@ struct EraseSheet: View {
                     .listRowBackground(Color.clear)
                 }
                 Section("Erased") {
-                    item("square.grid.2x2", "Apps", "\(guest.apps)")
+                    if let apps = guest.apps {
+                        item("square.grid.2x2", "Apps", "\(apps)")
+                    }
                     item("person.crop.circle", "Accounts and settings", nil)
                     item("photo.on.rectangle", "Photos, downloads and other files", nil)
                     item("internaldrive", "Data on this \(model.host.name)", Formats.gb(guest.usedGB))
                 }
                 Section("Kept") {
-                    item("checkmark.seal", "\(SystemImage.distribution), built in", nil, kept: true)
+                    item("checkmark.seal", "\(model.system.distribution), built in", nil, kept: true)
                     item("slider.horizontal.3", "vCPUs, memory, storage size and options", nil, kept: true)
                 }
             }
@@ -190,7 +209,7 @@ struct InfoSheet: View {
                             .frame(width: 80)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Andarium").font(.title3.weight(.semibold))
-                            Text("Version \(SystemImage.appVersion)")
+                            Text("Version \(model.system.appVersion)")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -198,33 +217,39 @@ struct InfoSheet: View {
                     .padding(.vertical, 6)
                 }
                 Section {
-                    LabeledContent("System", value: SystemImage.distribution)
-                    LabeledContent("Android", value: SystemImage.android)
-                    LabeledContent("Build", value: SystemImage.build)
-                    LabeledContent("Security Patch", value: SystemImage.securityPatch)
-                    LabeledContent("Kernel", value: SystemImage.kernel)
-                    LabeledContent("Architecture", value: SystemImage.architecture)
+                    LabeledContent("System", value: model.system.distribution)
+                    LabeledContent("Android", value: model.system.android)
+                    LabeledContent("Build", value: model.system.release)
+                    if let patch = model.system.securityPatch {
+                        LabeledContent("Security Patch", value: patch)
+                    }
+                    LabeledContent("Kernel", value: model.system.kernel)
+                    LabeledContent("Architecture", value: model.system.architecture)
                 } header: {
                     Text("Built-in System")
                 } footer: {
-                    Text("The system is read-only and updates with Andarium from the App Store.")
+                    if model.capabilities.systemUpdate {
+                        Text("The system is read-only and updates with Andarium from the App Store.")
+                    } else {
+                        Text("A guest keeps the system it was created with. Erase the guest to start again with the system in this version of Andarium.")
+                    }
                 }
                 Section("Storage") {
                     StorageBar(
                         guestGB: model.guest?.usedGB ?? 0,
-                        systemGB: SystemImage.sizeGB,
+                        systemGB: Double(model.systemBytes) / 1e9,
                         freeGB: model.host.freeStorageGB
                     )
                     .padding(.vertical, 6)
                     if let guest = model.guest {
                         LabeledContent("Guest Data", value: "\(Formats.gb(guest.usedGB)) of \(guest.effectiveCapacityGiB) GB")
                     }
-                    LabeledContent("System", value: Formats.gb(SystemImage.sizeGB))
+                    LabeledContent("System", value: Formats.hostGB(bytes: model.systemBytes))
                     LabeledContent("Free on This \(model.host.name)", value: Formats.gb(model.host.freeStorageGB))
                 }
                 Section("This \(model.host.name)") {
                     LabeledContent("Processor", value: "\(model.host.processorCount) cores")
-                    LabeledContent("Recommended Memory", value: "Up to \(Formats.memory(model.host.recommendedMemoryMiB))")
+                    LabeledContent("Memory for a Guest", value: "Up to \(Formats.memory(model.host.memory.rulerTopMiB))")
                 }
                 Section {
                     NavigationLink("Acknowledgements", value: "ack")

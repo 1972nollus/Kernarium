@@ -1,3 +1,4 @@
+import AndariumCore
 import SwiftUI
 import TipKit
 import UIKit
@@ -29,7 +30,7 @@ struct SessionView: View {
     private let tip = SideKeysTip()
 
     var body: some View {
-        let guestModel = model.guest ?? Guest.fresh(host: model.host)
+        let guestModel = model.guest ?? Guest.fresh(on: model.host)
         ZStack {
             Color.black.ignoresSafeArea()
             guest

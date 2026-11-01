@@ -525,7 +525,7 @@ struct GuestRecoveryScreen: View {
                     Text("Recovery")
                         .font(.system(size: 30, weight: .medium))
                         .foregroundStyle(.white)
-                    Text("Version 24.0 (\(SystemImage.build))")
+                    Text("Version 24.0 (\(PreviewData.release))")
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundStyle(Color(hex: 0x9AA3A6))
                     Text(state.subtitle)

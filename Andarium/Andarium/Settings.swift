@@ -1,3 +1,4 @@
+import AndariumCore
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -20,9 +21,9 @@ struct SessionSettingsSheet: View {
         let session = model.session
         NavigationStack {
             List {
-                apps(session)
-                adb(session)
-                stats(session)
+                if model.capabilities.apkInstall { apps(session) }
+                if model.capabilities.adbOverNetwork { adb(session) }
+                if model.capabilities.statistics { stats(session) }
                 options
             }
             .listSectionSpacing(.compact)

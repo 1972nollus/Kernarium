@@ -70,11 +70,5 @@ struct EndView: View {
         .background(Color(.systemGroupedBackground))
     }
 
-    private var report: String {
-        """
-        Andarium \(SystemImage.appVersion) · \(SystemImage.distribution) \(SystemImage.build)
-        \(SystemImage.kernel) · \(model.guest?.cores ?? 0) vCPUs · \(Formats.memory(model.guest?.memoryMiB ?? 0))
-        Guest exited: signal 11 in vCPU 3 after 0:42:10
-        """
-    }
+    private var report: String { model.runReport }
 }

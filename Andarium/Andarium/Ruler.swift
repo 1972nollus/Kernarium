@@ -1,3 +1,4 @@
+import AndariumCore
 import SwiftUI
 
 /// A ruler with a cyan needle: the whole range as ticks, the chosen value
@@ -183,34 +184,21 @@ struct ControlsPanel: View {
     }
 
     private var memory: some View {
-        let steps = (host.maximumMemoryMiB - Limits.minimumMemoryMiB) / Limits.memoryStepMiB + 1
-        let warnFrom = (host.recommendedMemoryMiB - Limits.minimumMemoryMiB) / Limits.memoryStepMiB + 1
-        let above = guest.memoryMiB > host.recommendedMemoryMiB
-        return ControlRow(title: "Memory", symbol: "memorychip", value: Formats.memory(guest.memoryMiB), valueColor: above ? .orange : .primary) {
+        let stops = host.memory.stops
+        return ControlRow(title: "Memory", symbol: "memorychip", value: Formats.memory(guest.memoryMiB)) {
             Ruler(
                 index: Binding(
-                    get: { (guest.memoryMiB - Limits.minimumMemoryMiB) / Limits.memoryStepMiB },
-                    set: { guest.memoryMiB = Limits.minimumMemoryMiB + $0 * Limits.memoryStepMiB }
+                    get: { stops.lastIndex(where: { $0 <= guest.memoryMiB }) ?? 0 },
+                    set: { guest.memoryMiB = stops[min(max($0, 0), stops.count - 1)] }
                 ),
-                count: steps,
-                majorEvery: 2,
-                label: { "\((Limits.minimumMemoryMiB + $0 * Limits.memoryStepMiB) / 1024)" },
-                warnFrom: warnFrom,
+                count: stops.count,
+                majorEvery: 4,
+                label: { Formats.memoryNumber(stops[$0]) },
                 accessibilityName: "Memory in gigabytes"
             )
         } note: {
-            if above {
-                Label {
-                    Text("Above the \(Formats.memory(host.recommendedMemoryMiB)) recommended for this \(host.name). iOS may close Andarium while Android runs.")
-                        .foregroundStyle(.primary)
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                }
-            } else {
-                Text("Recommended up to \(Formats.memory(host.recommendedMemoryMiB)) on this \(host.name)")
-                    .foregroundStyle(.secondary)
-            }
+            Text("Up to \(Formats.memory(stops.last ?? Limits.minimumMemoryMiB)) on this \(host.name)")
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -360,7 +348,7 @@ struct ResizeSheet: View {
     @State private var capacity = 16
 
     var body: some View {
-        let guest = model.guest ?? Guest.fresh(host: model.host)
+        let guest = model.guest ?? Guest.fresh(on: model.host)
         NavigationStack {
             VStack(spacing: 16) {
                 VStack(spacing: 2) {

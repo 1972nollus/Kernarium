@@ -10,8 +10,15 @@
       "Base",
     ],
   },
+  "packages": [
+    {
+      "kind": "local",
+      "path": "AndariumCore",
+    },
+  ],
   "files": [
     { "kind": "folder", "path": "Andarium", "target-membership": [ "AndariumPreview" ] },
+    { "path": "AndariumCore" },
     {
       "kind": "group",
       "name": "Products",
@@ -30,6 +37,12 @@
         "compile-sources",
         "frameworks",
         "resources",
+      ],
+      "package-product-members": [
+        {
+          "product-name": "AndariumCore",
+          "build-phase": { "build-phase": "frameworks" },
+        },
       ],
       "build-settings": {
         "ASSETCATALOG_COMPILER_APPICON_NAME": "DuskJade",

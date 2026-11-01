@@ -1,160 +1,11 @@
-import Foundation
+import AndariumCore
 import Observation
 import SwiftUI
-import UIKit
-
-/// The one system Andarium carries. It is read-only, ships inside the app and
-/// changes only when Andarium itself is updated from the App Store.
-enum SystemImage {
-    static let distribution = "LineageOS 24"
-    static let android = "17"
-    static let build = "20261024"
-    static let previousBuild = "20261002"
-    static let securityPatch = "5 October 2026"
-    static let kernel = "Linux 6.18.54"
-    static let architecture = "arm64, 4 KB pages"
-    static let sizeGB = 2.8
-    static let appVersion = "1.0 (1)"
-}
-
-/// What the iPhone or iPad running Andarium offers. Mock values per idiom.
-struct HostDevice {
-    var name: String
-    var processorCount: Int
-    var recommendedMemoryMiB: Int
-    var maximumMemoryMiB: Int
-    var freeStorageGB: Double
-
-    static func current(lowSpace: Bool) -> HostDevice {
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            return HostDevice(
-                name: "iPad", processorCount: 10,
-                recommendedMemoryMiB: 6144, maximumMemoryMiB: 12288,
-                freeStorageGB: lowSpace ? 1.2 : 118.3
-            )
-        }
-        return HostDevice(
-            name: "iPhone", processorCount: 6,
-            recommendedMemoryMiB: 4096, maximumMemoryMiB: 8192,
-            freeStorageGB: lowSpace ? 1.2 : 41.6
-        )
-    }
-}
-
-enum Limits {
-    /// Storage capacity, set in whole gigabytes.
-    static let capacityRangeGiB = 4...64
-    static let defaultCapacityGiB = 8
-    static let defaultMemoryMiB = 2048
-    static let minimumMemoryMiB = 1024
-    static let memoryStepMiB = 512
-    /// Free space a new guest needs to finish Android's first-run setup.
-    static let createReserveGB = 3.0
-    /// Free space any start needs for Android's own writes.
-    static let startReserveGB = 1.5
-
-    static func memoryStops(maximum: Int) -> [Int] {
-        Array(stride(from: minimumMemoryMiB, through: maximum, by: memoryStepMiB))
-    }
-}
-
-enum StartMode: Hashable {
-    case normal, recovery
-}
-
-/// Why a start takes as long as it does.
-enum BootKind: Hashable {
-    case normal, firstStart, upgrade, recovery, restart
-}
-
-/// The one guest Andarium keeps: Android's data partition (apps, accounts,
-/// settings and files) with the processor, memory and capacity it runs with.
-struct Guest: Hashable {
-    var cores: Int
-    var memoryMiB: Int
-    var capacityGiB: Int
-    /// A larger capacity that applies when the guest next starts.
-    var pendingCapacityGiB: Int?
-    /// Data Android has written; the sparse image occupies about this much.
-    var usedGB: Double
-    var apps: Int
-    /// The system build this guest last ran; nil until its first start.
-    var systemBuild: String?
-    var microphone = false
-
-    var neverStarted: Bool { systemBuild == nil }
-
-    /// The capacity the next start runs with.
-    var effectiveCapacityGiB: Int { pendingCapacityGiB ?? capacityGiB }
-
-    /// Storage only grows, up to the largest capacity there is.
-    var canGrow: Bool { effectiveCapacityGiB < Limits.capacityRangeGiB.upperBound }
-
-    var needsUpgrade: Bool {
-        guard let systemBuild else { return false }
-        return systemBuild != SystemImage.build
-    }
-
-    func bootKind(_ mode: StartMode) -> BootKind {
-        if mode == .recovery { return .recovery }
-        if neverStarted { return .firstStart }
-        if needsUpgrade { return .upgrade }
-        return .normal
-    }
-
-    /// Resize: storage only grows, and the growth waits for the next start.
-    /// Choosing the current capacity again cancels a growth not yet applied.
-    mutating func setCapacity(_ value: Int) {
-        let value = min(max(value, capacityGiB), Limits.capacityRangeGiB.upperBound)
-        pendingCapacityGiB = value > capacityGiB ? value : nil
-    }
-
-    /// The same choices with nothing in it: what Erase leaves behind.
-    var erased: Guest {
-        Guest(
-            cores: cores, memoryMiB: memoryMiB, capacityGiB: effectiveCapacityGiB,
-            pendingCapacityGiB: nil, usedGB: 0, apps: 0, systemBuild: nil,
-            microphone: microphone
-        )
-    }
-
-    static func fresh(host: HostDevice) -> Guest {
-        Guest(
-            cores: host.processorCount, memoryMiB: Limits.defaultMemoryMiB,
-            capacityGiB: Limits.defaultCapacityGiB, usedGB: 0, apps: 0, systemBuild: nil
-        )
-    }
-
-    /// A guest in everyday use.
-    static func sample(host: HostDevice) -> Guest {
-        Guest(
-            cores: host.processorCount, memoryMiB: 3072, capacityGiB: 16,
-            usedGB: 5.4, apps: 23, systemBuild: SystemImage.build
-        )
-    }
-}
-
-enum Phase: Equatable {
-    case home
-    case booting(BootKind)
-    case running(StartMode)
-    case poweredOff
-    case failed
-}
 
 enum SheetKind: String, Identifiable, Hashable {
     case create, resize, erase, info
 
     var id: String { rawValue }
-}
-
-enum HomeNotice: Equatable {
-    /// The guest was just erased.
-    case erased
-    /// This version of Andarium carries a new system.
-    case systemUpdated
-    /// iOS ended Andarium while the guest was paused in the background.
-    case closedInBackground
 }
 
 /// What a launch argument asks the session to show first.
@@ -258,16 +109,26 @@ final class SessionState {
     }
 }
 
+/// What the screens read and change. The guest's life (create, start, boot,
+/// erase, how a run ends) is `Lifecycle` in AndariumCore; this adds what only
+/// a screen holds: the open sheet, display options and the session's state.
 @Observable
 final class AppModel {
-    /// Andarium holds at most one guest.
-    var guest: Guest?
+    var lifecycle: Lifecycle
     var host: HostDevice
-    var phase: Phase = .home
+    /// The system this build of Andarium carries.
+    var system: SystemInfo
+    /// What the runtime behind the screens can do; a screen shows only the
+    /// controls whose capability exists.
+    var capabilities: Capabilities
+    /// Free space a new guest needs, which the storage behind the screens
+    /// decides.
+    var createRequirementBytes: UInt64
+    /// What the system takes on this device.
+    var systemBytes: UInt64
     var sheet: SheetKind?
     var startMenu = false
     var startBlocked = false
-    var notice: HomeNotice?
 
     // App-wide display options, set on the home screen.
     var retina = false
@@ -275,6 +136,9 @@ final class AppModel {
 
     var sessionPreset = SessionPreset()
     var session = SessionState()
+    /// How the last run ended, for the screen that says so.
+    var runEnd = RunEnd(result: 0)
+    var runUptimeSeconds: Int?
     /// Where Resize opens; nil opens at the current capacity.
     var resizePreset: Int?
     /// Holds the boot screen at one stage instead of animating (screenshots).
@@ -282,61 +146,82 @@ final class AppModel {
     /// Seconds the boot screen shows when it is held.
     var frozenElapsed = 9
 
-    init(guest: Guest?, host: HostDevice) {
-        self.guest = guest
+    init(
+        guest: Guest?, host: HostDevice, system: SystemInfo, capabilities: Capabilities,
+        createRequirementBytes: UInt64, systemBytes: UInt64
+    ) {
+        lifecycle = Lifecycle(guest: guest)
         self.host = host
+        self.system = system
+        self.capabilities = capabilities
+        self.createRequirementBytes = createRequirementBytes
+        self.systemBytes = systemBytes
     }
 
-    var canCreate: Bool { host.freeStorageGB >= Limits.createReserveGB }
-    var canStart: Bool { host.freeStorageGB >= Limits.startReserveGB }
-    var lowSpace: Bool { host.freeStorageGB < Limits.createReserveGB }
+    var guest: Guest? {
+        get { lifecycle.guest }
+        set { lifecycle.guest = newValue }
+    }
+
+    var phase: Phase {
+        get { lifecycle.phase }
+        set { lifecycle.phase = newValue }
+    }
+
+    var notice: HomeNotice? {
+        get { lifecycle.notice }
+        set { lifecycle.notice = newValue }
+    }
+
+    var canCreate: Bool { host.hasRoom(for: createRequirementBytes) }
+    /// Less free space than Android's first start wants: Home says so before
+    /// a start would fail.
+    var lowSpace: Bool { !host.hasRoom(for: Limits.firstStartReserveBytes) }
+
+    /// The release a guest is compared with, where this build can move a
+    /// guest to a newer system.
+    private var updateTarget: String? { capabilities.systemUpdate ? system.release : nil }
+
+    /// What a start of the guest would be, for the words on Start.
+    func bootKind(_ mode: StartMode) -> BootKind {
+        guest?.bootKind(mode, currentRelease: updateTarget) ?? .normal
+    }
 
     func create(_ guest: Guest) {
-        self.guest = guest
-        notice = nil
+        lifecycle.create(guest)
     }
 
-    /// Erases everything in the guest and leaves a fresh one with the same
-    /// choices; its next start runs Android's first-run setup.
     func erase() {
-        guard let guest else { return }
-        self.guest = guest.erased
-        notice = .erased
+        lifecycle.erase()
     }
 
     func start(_ mode: StartMode) {
         startMenu = false
-        guard canStart else {
-            startBlocked = true
-            return
+        switch lifecycle.start(mode, host: host, currentRelease: updateTarget) {
+        case .allowed: frozenBootStage = nil
+        case .lowSpace: startBlocked = true
+        case .noGuest: break
         }
-        guard let guest else { return }
-        frozenBootStage = nil
-        phase = .booting(guest.bootKind(mode))
     }
 
     func finishBoot(_ kind: BootKind) {
-        if var guest, kind != .recovery {
-            if let pending = guest.pendingCapacityGiB {
-                guest.capacityGiB = pending
-                guest.pendingCapacityGiB = nil
-            }
-            if guest.neverStarted {
-                sessionPreset.guestScreen = .setup
-                guest.usedGB = 2.1
-            }
-            guest.systemBuild = SystemImage.build
-            self.guest = guest
+        let firstStart = guest?.neverStarted ?? false
+        lifecycle.finishBoot(kind, release: system.release)
+        if firstStart, kind != .recovery {
+            sessionPreset.guestScreen = .setup
+            guest?.usedBytes = 2_100_000_000
         }
-        phase = .running(kind == .recovery ? .recovery : .normal)
     }
 
     func powerOff() {
-        phase = .poweredOff
+        runEnd = RunEnd(result: 0)
+        lifecycle.powerOff()
     }
 
-    func fail() {
-        phase = .failed
+    func fail(_ end: RunEnd = RunEnd(result: -11), uptimeSeconds: Int? = 2530) {
+        runEnd = end
+        runUptimeSeconds = uptimeSeconds
+        lifecycle.fail()
     }
 
     /// Android's own Restart boots the guest again in place. ADB and the
@@ -347,39 +232,17 @@ final class AppModel {
         let showStats = session.showStats
         session = SessionState()
         session.showStats = showStats
-        phase = .booting(.restart)
+        lifecycle.restart()
     }
 
-    /// Android's factory reset from Recovery: the same result as Erase, done
-    /// from inside.
     func factoryReset() {
-        guard let guest else { return }
-        self.guest = guest.erased
-    }
-}
-
-enum Formats {
-    static func gb(_ value: Double) -> String {
-        if value <= 0 { return "0 GB" }
-        if value < 0.95 { return String(format: "%.0f MB", value * 1000) }
-        if value >= 10 || value.rounded() == value { return String(format: "%.0f GB", value) }
-        return String(format: "%.1f GB", value)
+        lifecycle.factoryReset()
     }
 
-    static func memoryNumber(_ mib: Int) -> String {
-        let gb = Double(mib) / 1024
-        if gb.rounded() == gb { return String(format: "%.0f", gb) }
-        return String(format: "%.1f", gb)
-    }
-
-    static func memory(_ mib: Int) -> String { memoryNumber(mib) + " GB" }
-
-    static func duration(_ minutes: Int) -> String {
-        if minutes % 60 == 0 { return minutes == 60 ? "1 hour" : "\(minutes / 60) hours" }
-        return "\(minutes) min"
-    }
-
-    static func elapsed(_ seconds: Int) -> String {
-        String(format: "%d:%02d", seconds / 60, seconds % 60)
+    /// The failure screen's copyable report.
+    var runReport: String {
+        runEnd.report(
+            appVersion: system.appVersion, system: system, guest: guest, uptimeSeconds: runUptimeSeconds
+        )
     }
 }

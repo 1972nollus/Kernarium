@@ -1,3 +1,4 @@
+import AndariumCore
 import SwiftUI
 
 /// The boot, from the built-in system to Android's first frame: a status
@@ -19,15 +20,15 @@ struct BootView: View {
     }
 
     var body: some View {
-        let guest = model.guest ?? Guest.fresh(host: model.host)
-        let steps = Self.steps(kind, guest: guest)
+        let guest = model.guest ?? Guest.fresh(on: model.host)
+        let steps = Self.steps(kind, guest: guest, system: model.system)
         let frozen = model.frozenBootStage.map { min($0, steps.count - 1) }
         let current = frozen ?? stage
         let progress = min(1, (Double(current) + (frozen != nil ? 0.45 : 0.5)) / Double(steps.count))
         VStack(spacing: 0) {
             statusLine(frozen: frozen != nil)
             ScrollView {
-                content(guest: guest, steps: steps, current: current, progress: progress)
+                content(guest: guest, system: model.system, steps: steps, current: current, progress: progress)
                     .containerRelativeFrame(.vertical, alignment: .center) { length, _ in length }
             }
             .scrollBounceBehavior(.basedOnSize)
@@ -71,7 +72,7 @@ struct BootView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func content(guest: Guest, steps: [Step], current: Int, progress: Double) -> some View {
+    private func content(guest: Guest, system: SystemInfo, steps: [Step], current: Int, progress: Double) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
@@ -97,7 +98,7 @@ struct BootView: View {
             .padding(.vertical, 4)
             .glassEffect(.regular, in: .rect(cornerRadius: 26))
 
-            if let note = Self.note(kind, guest: guest) {
+            if let note = Self.note(kind, guest: guest, system: system) {
                 Label {
                     Text(note)
                         .font(.subheadline)
@@ -173,12 +174,12 @@ struct BootView: View {
         }
     }
 
-    static func note(_ kind: BootKind, guest: Guest) -> String? {
+    static func note(_ kind: BootKind, guest: Guest, system: SystemInfo) -> String? {
         switch kind {
         case .firstStart:
             "Android\u{2019}s first-run setup takes a few minutes."
         case .upgrade:
-            "Updating from \(guest.systemBuild ?? SystemImage.previousBuild) to \(SystemImage.build). Apps and files are kept."
+            "Updating from \(guest.systemRelease ?? "the previous release") to \(system.release). Apps and files are kept."
         case .recovery:
             "Recovery appears on Android\u{2019}s screen. Use touch, or the side keys: volume moves, Power chooses."
         case .normal, .restart:
@@ -186,16 +187,16 @@ struct BootView: View {
         }
     }
 
-    static func steps(_ kind: BootKind, guest: Guest) -> [Step] {
-        let system = Step(title: "System", detail: "\(SystemImage.distribution) · \(SystemImage.build) · read-only", seconds: 0.7)
-        let kernel = Step(title: "Linux Kernel", detail: "6.18 · \(guest.cores) vCPUs · \(Formats.memory(guest.memoryMiB)) RAM", seconds: 0.9)
+    static func steps(_ kind: BootKind, guest: Guest, system info: SystemInfo) -> [Step] {
+        let system = Step(title: "System", detail: "\(info.distribution) · \(info.release) · read-only", seconds: 0.7)
+        let kernel = Step(title: "Linux Kernel", detail: "\(info.kernel.replacingOccurrences(of: "Linux ", with: "")) · \(guest.cores) vCPUs · \(Formats.memory(guest.memoryMiB)) RAM", seconds: 0.9)
         let screen = Step(title: "Screen", detail: "Waiting for Android\u{2019}s first frame", seconds: 0.7)
         let used = "\(Formats.gb(guest.usedGB)) of \(guest.capacityGiB) GB"
         switch kind {
         case .recovery:
             return [system, kernel,
                     Step(title: "Storage", detail: "\(used) · unchanged", seconds: 0.6),
-                    Step(title: "Recovery", detail: "Loading \(SystemImage.distribution) Recovery", seconds: 1.4),
+                    Step(title: "Recovery", detail: "Loading \(info.distribution) Recovery", seconds: 1.4),
                     screen]
         case .firstStart:
             return [system, kernel,
@@ -205,7 +206,7 @@ struct BootView: View {
         case .upgrade:
             return [system, kernel,
                     Step(title: "Storage", detail: used, seconds: 0.7),
-                    Step(title: "Android", detail: "Updating apps for \(SystemImage.build)", seconds: 3.6),
+                    Step(title: "Android", detail: "Updating apps for \(info.release)", seconds: 3.6),
                     screen]
         case .normal, .restart:
             let storage = guest.pendingCapacityGiB.map { "Growing from \(guest.capacityGiB) GB to \($0) GB" } ?? used

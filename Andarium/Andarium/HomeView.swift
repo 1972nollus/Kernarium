@@ -1,3 +1,4 @@
+import AndariumCore
 import SwiftUI
 
 /// The only screen before a run: the guest's processor, memory and storage,
@@ -62,7 +63,7 @@ struct HomeView: View {
         .alert("Not Enough Free Space", isPresented: $model.startBlocked) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Starting needs \(Formats.gb(Limits.startReserveGB)) free for Android's own writes. This \(model.host.name) has \(Formats.gb(model.host.freeStorageGB)) free.")
+            Text("Starting needs \(Formats.hostGB(bytes: Limits.startReserveBytes)) free for Android's own writes. This \(model.host.name) has \(Formats.gb(model.host.freeStorageGB)) free.")
         }
     }
 
@@ -137,7 +138,7 @@ struct HomeView: View {
             NoticeCard(
                 symbol: "externaldrive.badge.exclamationmark", color: .orange,
                 title: "\(Formats.gb(model.host.freeStorageGB)) free on this \(model.host.name)",
-                text: "Android needs \(Formats.gb(Limits.startReserveGB)) free to start. Free up space in Settings › General › \(model.host.name) Storage."
+                text: "Android needs \(Formats.hostGB(bytes: Limits.startReserveBytes)) free to start. Free up space in Settings › General › \(model.host.name) Storage."
             )
         }
         if let notice = model.notice {
@@ -152,7 +153,7 @@ struct HomeView: View {
             case .systemUpdated:
                 NoticeCard(
                     symbol: "arrow.down.circle.fill", color: .accentColor,
-                    title: "Android updated to \(SystemImage.build)",
+                    title: "Android updated to \(model.system.release)",
                     text: "The next start finishes the update and takes a little longer.",
                     onClose: { withAnimation { model.notice = nil } }
                 )
@@ -239,8 +240,8 @@ struct StartButton: View {
     }
 
     private var title: String {
-        guard let guest = model.guest else { return "Start" }
-        switch guest.bootKind(.normal) {
+        guard model.guest != nil else { return "Start" }
+        switch model.bootKind(.normal) {
         case .firstStart: return "Start and Set Up"
         case .upgrade: return "Update and Start"
         default: return "Start"
@@ -267,11 +268,11 @@ struct StartMenu: View {
     }
 
     private var detail: String {
-        guard let guest = model.guest else { return "" }
-        switch guest.bootKind(.normal) {
+        guard model.guest != nil else { return "" }
+        switch model.bootKind(.normal) {
         case .firstStart: return "First start: Android sets up"
         case .upgrade: return "Android finishes its update"
-        default: return "\(SystemImage.distribution) · Android \(SystemImage.android)"
+        default: return "\(model.system.distribution) · Android \(model.system.android)"
         }
     }
 
@@ -318,7 +319,7 @@ struct WelcomeView: View {
                 .padding(.bottom, 34)
             Text("No Guest Yet")
                 .font(.title2.weight(.bold))
-            Text("\(SystemImage.distribution) (Android \(SystemImage.android)) is built into Andarium. Set up a guest to run it.")
+            Text("\(model.system.distribution) (Android \(model.system.android)) is built into Andarium. Set up a guest to run it.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -415,9 +416,20 @@ struct OptionsPanel: View {
                         ))
                         .labelsHidden()
                     }
+                    divider
+                    row("Include in Backups", symbol: "icloud.fill") {
+                        Toggle("Include in Backups", isOn: Binding(
+                            get: { guest.includeInBackups },
+                            set: { model.guest?.includeInBackups = $0 }
+                        ))
+                        .labelsHidden()
+                    }
                 }
             }
             .glassEffect(.regular, in: .rect(cornerRadius: 26))
+            if model.guest != nil {
+                BackupNote(host: model.host)
+            }
         }
         .id("options")
     }
@@ -437,6 +449,18 @@ struct OptionsPanel: View {
         }
         .padding(.horizontal, 16)
         .frame(minHeight: 54)
+    }
+}
+
+/// What Include in Backups does to iCloud and computer backups.
+struct BackupNote: View {
+    let host: HostDevice
+
+    var body: some View {
+        Text("iCloud and computer backups of this \(host.name) leave the guest out, because Android can set itself up again and its files take several gigabytes. Turn on Include in Backups to keep them.")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 18)
     }
 }
 

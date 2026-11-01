@@ -1,3 +1,4 @@
+import AndariumCore
 import Foundation
 import SwiftUI
 import TipKit
@@ -45,10 +46,13 @@ struct LaunchOptions {
 
     func makeModel() -> AppModel {
         let lowSpace = lowSpace || ["create-low-space", "start-low-space", "home-low-space"].contains(screen)
-        let host = HostDevice.current(lowSpace: lowSpace)
-        var guest: Guest? = Guest.sample(host: host)
+        let host = PreviewData.host(lowSpace: lowSpace)
+        var guest: Guest? = PreviewData.sampleGuest(on: host)
         if ["welcome", "create", "create-low-space"].contains(screen) { guest = nil }
-        let model = AppModel(guest: guest, host: host)
+        let model = AppModel(
+            guest: guest, host: host, system: PreviewData.system, capabilities: .preview,
+            createRequirementBytes: PreviewData.createRequirementBytes, systemBytes: PreviewData.systemBytes
+        )
         let freeze = !play
 
         func boot(_ kind: BootKind, stage: Int, seconds: Int) {
@@ -59,9 +63,7 @@ struct LaunchOptions {
 
         switch screen {
         case "home-new":
-            model.guest = Guest.fresh(host: host)
-        case "home-warning":
-            model.guest?.memoryMiB = host.recommendedMemoryMiB + 1024
+            model.guest = Guest.fresh(on: host)
         case "home-grow":
             model.guest?.pendingCapacityGiB = 24
         case "resize":
@@ -69,7 +71,7 @@ struct LaunchOptions {
         case "home-max":
             model.guest?.capacityGiB = Limits.capacityRangeGiB.upperBound
         case "home-update":
-            model.guest?.systemBuild = SystemImage.previousBuild
+            model.guest?.systemRelease = PreviewData.previousRelease
             model.notice = .systemUpdated
         case "home-closed":
             model.notice = .closedInBackground
@@ -84,7 +86,7 @@ struct LaunchOptions {
             model.erase()
             boot(.firstStart, stage: 3, seconds: 74)
         case "boot-upgrade":
-            model.guest?.systemBuild = SystemImage.previousBuild
+            model.guest?.systemRelease = PreviewData.previousRelease
             boot(.upgrade, stage: 3, seconds: 51)
         case "boot-recovery":
             boot(.recovery, stage: 3, seconds: 7)
