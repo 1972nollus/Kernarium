@@ -18,7 +18,8 @@ own line.
 The default campaign reaches only the SLiRP host gateway.  An explicit
 ``--external`` switch is deliberately required before the guest resolves or
 contacts an Internet host; CMake registers that variant only when the caller
-has opted into external-network permission.
+has opted into external-network permission.  It asks the host resolver through
+both the name server address and the gateway address.
 """
 
 from __future__ import annotations
@@ -47,24 +48,32 @@ from slirp_network import (  # noqa: E402
 )
 
 
-SLIRP_DNS_PROBE = (
-    'const dgram=require("dgram");'
-    'const socket=dgram.createSocket("udp4");'
-    'const query=Buffer.from('
-    '"c0de01000001000000000000096c6f63616c686f73740000010001","hex");'
-    "let done=false;"
-    "const finish=(message)=>{"
-    "if(done)return;done=true;clearTimeout(timer);socket.close();"
-    "if(message){console.error(message);process.exitCode=1;}"
-    'else console.log("slirp-dns-ok");};'
-    'const timer=setTimeout(()=>finish("SLiRP DNS request timed out"),5000);'
-    'socket.on("error",error=>finish(error.message));'
-    'socket.on("message",(response,remote)=>{'
-    'if(remote.address!=="10.0.2.3"||response.length<12||'
-    'response.readUInt16BE(0)!==0xc0de){'
-    'finish("invalid SLiRP DNS response");return;}finish();});'
-    'socket.send(query,53,"10.0.2.3");'
-)
+def slirp_dns_probe(server: str) -> str:
+    """A node script: one DNS query to ``server`` must be answered by it."""
+    return (
+        'const dgram=require("dgram");'
+        'const socket=dgram.createSocket("udp4");'
+        'const query=Buffer.from('
+        '"c0de01000001000000000000096c6f63616c686f73740000010001","hex");'
+        "let done=false;"
+        "const finish=(message)=>{"
+        "if(done)return;done=true;clearTimeout(timer);socket.close();"
+        "if(message){console.error(message);process.exitCode=1;}"
+        'else console.log("slirp-dns-ok");};'
+        'const timer=setTimeout(()=>finish("SLiRP DNS request timed out"),5000);'
+        'socket.on("error",error=>finish(error.message));'
+        'socket.on("message",(response,remote)=>{'
+        f'if(remote.address!=={json.dumps(server)}||response.length<12||'
+        'response.readUInt16BE(0)!==0xc0de){'
+        'finish("invalid SLiRP DNS response");return;}finish();});'
+        f"socket.send(query,53,{json.dumps(server)});"
+    )
+
+
+# The name server address, and the gateway address, which SLiRP proxies to
+# the host resolver as well.
+SLIRP_DNS_PROBE = slirp_dns_probe("10.0.2.3")
+SLIRP_GATEWAY_DNS_PROBE = slirp_dns_probe("10.0.2.2")
 
 
 FORWARD_GUEST_PORT = 7777
@@ -185,12 +194,14 @@ def main() -> int:
         verify_slirp_lease(*wait_for_slirp_lease(guest))
         verify_concurrent_forward(guest, forward_port)
         if arguments.external:
-            dns_output = run_node(guest, SLIRP_DNS_PROBE, 15)
-            if "slirp-dns-ok" not in dns_output:
-                raise RuntimeError(
-                    "SLiRP DNS probe did not report success; the external "
-                    f"network campaign requires host-network permission:\n{dns_output}"
-                )
+            for probe in (SLIRP_DNS_PROBE, SLIRP_GATEWAY_DNS_PROBE):
+                dns_output = run_node(guest, probe, 15)
+                if "slirp-dns-ok" not in dns_output:
+                    raise RuntimeError(
+                        "SLiRP DNS probe did not report success; the external "
+                        "network campaign requires host-network "
+                        f"permission:\n{dns_output}"
+                    )
             output = run_node(guest, external_probe(arguments.external_host), 60)
             if "external-ok" not in output:
                 raise RuntimeError(
