@@ -2,6 +2,8 @@
 
 include_guard(GLOBAL)
 
+include(UmlAppleSdk)
+
 # _uml_import_static_dependency(<name> <archive> ALIAS <alias>
 #     [INCLUDES <dir>...] [DEFINITIONS <definition>...] [LINKS <item>...])
 # Imports <archive> as uml_third_party_<name> and names it <alias>.
@@ -31,27 +33,11 @@ function(_uml_import_static_dependency name archive)
     endif()
 endfunction()
 
-function(_uml_find_sdk_library result name)
-    find_library(${result}
-        NAMES "${name}"
-        PATHS "${CMAKE_OSX_SYSROOT}/usr/lib"
-        NO_DEFAULT_PATH REQUIRED)
-    set(${result} "${${result}}" PARENT_SCOPE)
-endfunction()
-
-function(_uml_find_sdk_framework result name)
-    find_library(${result}
-        NAMES "${name}"
-        PATHS "${CMAKE_OSX_SYSROOT}/System/Library/Frameworks"
-        NO_DEFAULT_PATH REQUIRED)
-    set(${result} "${${result}}" PARENT_SCOPE)
-endfunction()
-
 function(uml_define_third_party_targets prefix)
-    _uml_find_sdk_library(_uml_sdk_math m)
-    _uml_find_sdk_library(_uml_sdk_resolver resolv)
+    uml_find_sdk_library(_uml_sdk_math m)
+    uml_find_sdk_library(_uml_sdk_resolver resolv)
     foreach(_framework IN ITEMS Foundation CoreFoundation AppKit Carbon)
-        _uml_find_sdk_framework(_uml_sdk_${_framework} ${_framework})
+        uml_find_sdk_framework(_uml_sdk_${_framework} ${_framework})
     endforeach()
 
     set(_include "${prefix}/include")

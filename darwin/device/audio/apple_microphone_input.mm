@@ -210,8 +210,9 @@ public:
     {
 #if TARGET_OS_IPHONE
         const std::weak_ptr<Capture> weak = capture_;
-        /* The playback sink observes the same notification, which iOS 27
-         * deprecates; see the note there. */
+        /* iOS 27 deprecates this notification. The playback sink observes
+         * its replacements; moving the microphone to them needs a device test
+         * of an interruption. */
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
         interruptionObserver_ = [NSNotificationCenter.defaultCenter

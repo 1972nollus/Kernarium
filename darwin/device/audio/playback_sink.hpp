@@ -19,7 +19,8 @@ struct PlaybackParameters final {
 
 /* What became of a period the sink had accepted. */
 enum class PlaybackOutcome : std::uint8_t {
-    // The output consumed it.
+    // The output consumed it, or a muted sink completed it on the schedule
+    // the output would have kept.
     played,
     // The output dropped it unplayed: a route change, a fault or a release.
     // The device keeps the guest's playback clock steady by completing it on

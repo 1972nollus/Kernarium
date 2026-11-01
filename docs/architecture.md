@@ -379,6 +379,12 @@ the same 27.0 deployment target. The toolchain refuses any other
 floor; a build tree configured before the floor moved is reconfigured with
 `--fresh` or in a new binary directory.
 
+The toolchain takes the SDK from `xcrun` at every configure, and the SDK
+libraries and frameworks the products link are looked up in it again each
+time rather than cached. The selected SDK's `SDKSettings.json` is a configure
+dependency, so a build tree notices an Xcode update at its next build and
+reconfigures, with no manual step; the update's new SDK recompiles the tree.
+
 Apple products consume accepted kernel bundles and never invoke Kbuild. The
 arm64 userspace product uses the same accepted mainline
 artifact on macOS and on the iOS device. The macOS x86_64 userspace
