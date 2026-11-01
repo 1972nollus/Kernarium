@@ -3252,6 +3252,42 @@ def verify_ubd_disk_fixtures(tool: Path, production_policy: Path) -> None:
         if layout["data_disk"] != policy["data_disk"]:
             fail("the layout does not carry the data disk template")
 
+        # The data disk is the reference the host's own builder is held to.
+        data_disk = root / "data.img"
+        run_tool(
+            tool, "data", "--layout", layout_path, "--capacity-gib", "4",
+            "--output", data_disk, check=True,
+        )
+        run_tool(tool, "verify-data", "--layout", layout_path, "--disk", data_disk, check=True)
+        if data_disk.stat().st_size != 4 << 30:
+            fail("the data disk has the wrong size")
+        with data_disk.open("rb") as image:
+            image.seek(1 << 20)
+            if image.read(2048) != b"\0" * 2048:
+                fail("misc is not zero")
+            image.seek(64 << 20)
+            if image.read(4096) != b"\0" * 4096:
+                fail("userdata is not zero")
+        if data_disk.stat().st_blocks * 512 > 1 << 20:
+            fail("the data disk is not sparse")
+        for capacity in ("3", "65"):
+            if run_tool(
+                tool, "data", "--layout", layout_path, "--capacity-gib", capacity,
+                "--output", root / f"data-{capacity}.img",
+            ).returncode == 0:
+                fail("the data disk accepted a capacity outside the template's range")
+        if run_tool(
+            tool, "data", "--layout", layout_path, "--output", data_disk
+        ).returncode == 0:
+            fail("the data disk tool replaced an existing disk")
+        with data_disk.open("r+b") as image:
+            image.seek(512 + 20)
+            image.write(b"\xff")
+        if run_tool(
+            tool, "verify-data", "--layout", layout_path, "--disk", data_disk
+        ).returncode == 0:
+            fail("the data disk verifier accepted a corrupted table")
+
         existing = run_tool(
             tool, "assemble", "--policy", production_policy,
             "--images-dir", images, "--output-dir", out,

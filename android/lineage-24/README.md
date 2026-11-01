@@ -1149,6 +1149,57 @@ The second architecture adds a variant to nearly every module, so the first
 multilib release is built in a fresh output directory, never over the 64-bit-only
 one; that output is a superseded build once the multilib release is accepted.
 
+## Guest instance storage
+
+A guest instance is the writable half of a guest: a directory holding the data
+disk, `data.img` (the creation and growth rules are in
+[`darwin/device/block`](../../darwin/device/block/README.md)), and
+`instance.json`, which records the release the disk was last started with. The
+system disk is not part of an instance. Every launcher that keeps instances,
+the macOS script and the Andarium app, applies the same rules before each
+start; [`tools/android_instance.py`](../../tools/android_instance.py) is the
+reference implementation and
+[`support/instance/update-decisions.json`](support/instance/update-decisions.json)
+holds decision vectors that any other implementation must reproduce.
+
+`instance.json` (schema 1) holds: `data_layout`, the data disk layout version of
+the release's template; `release_id`, `build_fingerprint`, `build_incremental`
+(the release's build number, as text) and `system_disk_sha256`, the release the
+data disk was last started with; `created_with`, the release that created the
+instance; `last_booted`, the time of the last start (RFC 3339, UTC);
+`last_completed`, the last start that reached `sys.boot_completed` and shut down
+cleanly (`release_id`, `build_incremental`, `at`) or `null`; and
+`pending_update`, the update whose first start has not completed or `null`: the
+release it starts (`to_release_id`), its `snapshot` file, and the identity the
+disk was last started with before it (`from`). The release's identity comes from
+its manifest and layout, never from hashing the disk at launch.
+
+The build number (`ro.build.version.incremental` of a release build) orders
+releases; the rules compare nothing else. Before a start:
+
+| Case | Action |
+| --- | --- |
+| no instance | create it; the host creates the data disk, which the guest formats on first boot |
+| same release | start |
+| newer build, same `data_layout` | snapshot, record the pending update, start; Android upgrades its own data |
+| newer build, newer `data_layout` | snapshot, run the registered migration (none exists yet), start |
+| older build | refuse: Android's key store, package manager and apexd do not go back |
+| same build, another release or system disk, or a `data.img` without `instance.json` | refuse |
+| an unfinished update | refuse until the user retries it, restores its snapshot, or resets |
+
+The snapshot, `data.img.pre-<release_id>`, is an APFS clone, so it is instant
+and costs only the blocks that later diverge; a volume without clones refuses
+the update. It is kept until the new release has reached `sys.boot_completed`
+and the guest has shut down cleanly (`last_completed`), and the old system disk
+is gone by then, so a restore puts back the data the new release started from;
+it does not boot the previous release. An update whose first start fails offers
+three ways out: start it again keeping the snapshot, restore the snapshot and
+update afresh, or reset the instance (delete it and create it anew), which is
+also the way out of a refused downgrade. A future data layout changes the
+partition table only inside the reserved gap, never moving `userdata`. The
+instance directory is one directory, so a backup of it is a copy of it; the
+app, not the host layer, decides whether to exclude it from backup.
+
 ## Apple consumers and guest bundles
 
 The macOS Android product is configured with the `macos-android17` preset. Its
@@ -1157,12 +1208,14 @@ directory with the expected payload layout and one directly writable GPT image.
 It does not alter the normal Linux executable or search for `rootfs.erofs`.
 
 [`../../tools/boot_android.py`](../../tools/boot_android.py) is the ordinary
-macOS launcher. It selects the accepted installed release, copies its seed GPT
-to a persistent writable image on first boot, expands that copy to 8 GiB,
-exposes guest ADB only on host loopback, waits for the transport, and disconnects
-it when the guest stops. Later boots reuse the same image directly. When the
-selected release identity changes, the launcher replaces the persistent image
-with a newly expanded copy of that release. The default session uses
+macOS launcher. It selects the accepted installed release and a guest instance
+(by default `.build/android/instances/android-17`, see
+[Guest instance storage](#guest-instance-storage)), applies the update rules to
+it, and starts the emulator on the release's system disk and the instance's
+data disk. A new instance has an 8 GiB data disk, `--data-gib` raises it, and a
+disk never shrinks. The launcher exposes guest ADB only on host loopback, waits
+for the transport and for `sys.boot_completed`, and disconnects ADB when the
+guest stops. The default session uses
 the existing `macos-android17` executable with native Metal display, 10 vCPUs,
 8 GiB of RAM, the gadgets engine, and a 720-by-1280 portrait display. Pass
 `--build` to refresh that executable incrementally or `--recovery` to boot
