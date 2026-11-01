@@ -65,10 +65,7 @@ execute_process(
     COMMAND_ERROR_IS_FATAL ANY)
 
 find_package(Threads REQUIRED)
-find_library(_uml_apple_gpu_math
-    NAMES m
-    PATHS "${CMAKE_OSX_SYSROOT}/usr/lib"
-    NO_DEFAULT_PATH REQUIRED)
+uml_find_sdk_library(_uml_apple_gpu_math m)
 
 # The packaged host GL provider is Mesa's EGL entry point over its Gallium
 # library. libepoxy and the renderer dispatch through that pair.
