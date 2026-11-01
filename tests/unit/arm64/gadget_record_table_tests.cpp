@@ -418,6 +418,61 @@ void leased_heap()
 		"the record tables left heap pages committed");
 }
 
+/* Counts the keys a lookup reads back, which is one per index entry whose
+ * tag matched. */
+struct CountingKeyOf final {
+	static inline std::size_t reads = 0;
+
+	template <typename Record>
+	[[nodiscard]] std::uint64_t operator()(
+		const Record &record) const noexcept
+	{
+		++reads;
+		return record.key;
+	}
+};
+
+/* The engines pick a record's shard from bits of one multiply of its key, so
+ * every key one shard's table holds agrees on those bits. For an A64 address
+ * below 2^31 (non-PIE code), and for an AArch32 key, whose top bits are mode
+ * flags, the table's own hash would otherwise share most of that multiply.
+ * Their index positions must still spread, or each probe walks a run of
+ * other keys. */
+void spread_within_a_shard()
+{
+	using Table = cache::StableRecordTable<Sized<24>, CountingKeyOf>;
+	const auto shard = [](std::uint64_t key) {
+		auto mixed = key * 0x9e37'79b9'7f4a'7c15ULL;
+		mixed ^= mixed >> 29;
+		return (mixed >> 7) & 7U;
+	};
+	const auto a64 = [](std::uint64_t index) {
+		return 0x40'0000 + index * 4;
+	};
+	const auto t32 = [](std::uint64_t index) {
+		return (std::uint64_t{3} << 62) |
+			((0x1'0000 + index * 2) << 1);
+	};
+	const auto check = [&](const auto &key_of_index) {
+		std::vector<std::uint64_t> keys;
+		for (std::uint64_t index = 0; keys.size() < 50'000; ++index)
+			if (const auto key = key_of_index(index); shard(key) == 0)
+				keys.push_back(key);
+		Table table;
+		for (const auto key : keys)
+			require(table.try_emplace(key, key).second);
+		CountingKeyOf::reads = 0;
+		for (const auto key : keys)
+			require(table.find(key)->key == key);
+		/* A 6-bit tag passes one entry in 64 that is not the key, so
+		 * a run of r entries costs about 1 + r/64 reads. */
+		require(CountingKeyOf::reads * 4 < keys.size() * 5,
+			"a shard's keys cluster in the record index");
+	};
+	check(a64);
+	check(t32);
+}
+
 } // namespace
 
 int main()
@@ -437,6 +492,7 @@ int main()
 	several_tables();
 	metered<Sized<24>>(20'000);
 	metered<Sized<1024>>(2'000);
+	spread_within_a_shard();
 
 	/* Consecutive keys, as neighbouring guest addresses are. */
 	cache::StableRecordTable<Sized<24>, KeyOf> table;

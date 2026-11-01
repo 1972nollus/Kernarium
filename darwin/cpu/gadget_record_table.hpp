@@ -473,11 +473,17 @@ private:
 		}
 	};
 
+	/* A full finalizer, not one multiply: the engines shard their tables
+	 * by bits of one multiply of the same key, so a key below 2^31 would
+	 * otherwise reach only the index positions its shard's other keys
+	 * reach, and the index would fill one eighth of itself. */
 	[[nodiscard]] static std::uint64_t mix(std::uint64_t key) noexcept
 	{
-		key ^= key >> 31;
-		key *= 0x9e3779b97f4a7c15ULL;
-		return key ^ (key >> 29);
+		key ^= key >> 33;
+		key *= 0xff51afd7ed558ccdULL;
+		key ^= key >> 33;
+		key *= 0xc4ceb9fe1a85ec53ULL;
+		return key ^ (key >> 33);
 	}
 
 	[[nodiscard]] static std::uint32_t tag_of(std::uint64_t hash) noexcept
