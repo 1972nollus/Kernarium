@@ -31,7 +31,7 @@ after every hand edit. Kernarium keeps its `.pbxproj`.
 
 ## Targets
 
-`Andarium` is the device application (`com.imxieyi.Andarium`, iOS and an
+`Andarium` is the device application (`com.imxieyi.andarium`, iOS and an
 Apple silicon Mac in Designed for iPad mode). It embeds the Android runtime
 frameworks and carries the system image; Kernarium stays beside it on a
 device. It has no background mode: the guest runs while Andarium is in the

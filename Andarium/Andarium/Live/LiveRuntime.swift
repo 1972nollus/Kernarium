@@ -362,7 +362,7 @@ final class LiveRuntime: RuntimeDriver {
 /// quiesce still in flight.
 @MainActor
 final class LivePauseEffects: PauseEffects {
-    private let queue = DispatchQueue(label: "com.imxieyi.Andarium.guest-sync", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.imxieyi.andarium.guest-sync", qos: .userInitiated)
 
     func holdGuestGPU() {
         let result = kernarium_runtime_loader_set_gpu_hold(1)

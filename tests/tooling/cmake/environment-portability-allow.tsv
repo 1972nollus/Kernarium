@@ -21,4 +21,4 @@ R3	Kernarium/Kernarium.xcodeproj/project.pbxproj	PRODUCT_BUNDLE_IDENTIFIER = com
 R3	Kernarium/Runtime/CMakeLists.txt	MACOSX_FRAMEWORK_IDENTIFIER	project signing identity
 R3	dependencies/apple-static-framework/Info.plist.in	CFBundleIdentifier	project signing identity
 R3	Andarium/Andarium.xcodeproj/project.xcproj	"DEVELOPMENT_TEAM": "XXXXXXXXXX"	project signing identity
-R3	Andarium/Andarium.xcodeproj/project.xcproj	"PRODUCT_BUNDLE_IDENTIFIER": "com.imxieyi.Andarium(?:Preview|Tests|Automation)?"	project signing identity
+R3	Andarium/Andarium.xcodeproj/project.xcproj	"PRODUCT_BUNDLE_IDENTIFIER": "com.imxieyi.(?:andarium|Andarium(?:Preview|Tests|Automation))"	project signing identity

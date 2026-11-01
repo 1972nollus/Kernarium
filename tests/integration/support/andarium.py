@@ -26,7 +26,7 @@ import subprocess
 import ios_device
 
 
-BUNDLE_ID = "com.imxieyi.Andarium"
+BUNDLE_ID = "com.imxieyi.andarium"
 # The guest's adbd listens here; the forward publishes it on the device.
 GUEST_ADB_PORT = 5555
 # The runtime's own lines keep their Kernarium prefix.

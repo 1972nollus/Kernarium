@@ -209,7 +209,7 @@ class AndroidRunnerTests(unittest.TestCase):
         self.assertNotIn("KERNARIUM_ROOTFS", environment)
         self.assertNotIn("ANDARIUM_ERASE", environment)
         self.assertFalse(launch["copy_in_flight"])
-        self.assertEqual(launch["args"][-1], "com.imxieyi.Andarium")
+        self.assertEqual(launch["args"][-1], "com.imxieyi.andarium")
 
         (proxy,) = outcome.tool("iproxy")
         self.assertEqual(proxy["args"], ["-u", DEVICE, f"{port}:{port}"])
@@ -240,7 +240,7 @@ class AndroidRunnerTests(unittest.TestCase):
 
         (afc,) = outcome.tool("afcclient")
         self.assertEqual(afc["args"], ["-u", DEVICE, "--container",
-                                       "com.imxieyi.Andarium"])
+                                       "com.imxieyi.andarium"])
         self.assertEqual(afc["commands"], [f"rm /Documents/{IMAGE}"])
 
         summary = outcome.summary

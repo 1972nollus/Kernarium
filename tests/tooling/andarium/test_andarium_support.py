@@ -148,7 +148,7 @@ class ApplicationTests(unittest.TestCase):
 
     def test_the_two_applications_are_told_apart(self) -> None:
         self.assertEqual(andarium.APPLICATION.bundle_id,
-                         "com.imxieyi.Andarium")
+                         "com.imxieyi.andarium")
         self.assertEqual(kernarium.APPLICATION.bundle_id,
                          "com.imxieyi.Kernarium")
 
