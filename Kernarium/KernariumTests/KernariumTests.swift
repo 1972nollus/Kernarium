@@ -1017,6 +1017,35 @@ struct KernariumTests {
         #expect(reports.last?.fractionCompleted == 1)
     }
 
+    /// Two frames: 1000 bytes of 0xAB, then 200000 zeros and "END\n". The
+    /// hole starts and ends inside filesystem blocks, which F_PUNCHHOLE
+    /// refuses unless the range is rounded to whole blocks.
+    @Test
+    func zstdUtilPunchesHolesThatAreNotBlockAligned() throws {
+        let manager = FileManager.default
+        let directory = try makeScratchDirectory("zstd-unaligned")
+        defer { try? manager.removeItem(at: directory) }
+
+        let source = directory.appendingPathComponent("unaligned.zst")
+        let destination = directory.appendingPathComponent("unaligned.img")
+        try Data([
+            0x28, 0xB5, 0x2F, 0xFD, 0x60, 0xE8, 0x02, 0x4D, 0x00, 0x00,
+            0x10, 0xAB, 0xAB, 0x01, 0x00, 0xE3, 0x2B, 0x80, 0x05, 0x28,
+            0xB5, 0x2F, 0xFD, 0xA0, 0x44, 0x0D, 0x03, 0x00, 0x54, 0x00,
+            0x00, 0x10, 0x00, 0x00, 0x01, 0x00, 0xFB, 0xFF, 0x39, 0xC0,
+            0x02, 0x6D, 0x00, 0x00, 0x28, 0x00, 0x45, 0x4E, 0x44, 0x0A,
+            0x01, 0x00, 0x3C, 0x0D, 0x39, 0x10, 0x02,
+        ]).write(to: source)
+
+        try ZstdUtil.decompress(from: source, to: destination, sparse: true)
+
+        let output = try Data(contentsOf: destination)
+        #expect(output.count == 201_004)
+        #expect(output.prefix(1000).allSatisfy { $0 == 0xAB })
+        #expect(output[1000..<201_000].allSatisfy { $0 == 0 })
+        #expect(output.suffix(4) == Data("END\n".utf8))
+    }
+
     @Test
     func zstdUtilLeavesExistingDestinationUntouchedOnFailure() throws {
         let manager = FileManager.default
