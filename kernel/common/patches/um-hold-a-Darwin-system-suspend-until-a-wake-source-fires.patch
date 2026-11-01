@@ -17,6 +17,13 @@ back with the descriptor's current events, so an edge that arrived
 meanwhile notifies at once; the dispatch queue keeps every edge, so
 nothing that arrives during the suspend is lost.
 
+A suspended descriptor stays nonblocking.  Darwin still reads a vhost-user
+backend's request socket while interrupts are suspended: a reply wait
+serves the backend's requests, and the irq_work that delivers what one
+recorded drains the socket again, until it would block.  With
+O_NONBLOCK cleared that read held the CPU in recvmsg() for as long as
+the backend kept sending, and the suspend never ended.
+
 A Darwin idle sleep also ends for host signals and for an edge the
 notification thread collected before the suspend cleared its
 descriptor.  As suspend-to-idle does, um_suspend_enter() now sleeps
@@ -45,9 +52,9 @@ the host's own wake has arrived.
  arch/um/include/shared/kern_util.h |   1 +
  arch/um/include/shared/os.h        |   4 +
  arch/um/kernel/um_arch.c           |  30 +++++-
- arch/um/os-Darwin/file.c           |  15 ++-
+ arch/um/os-Darwin/file.c           |  31 +++---
  arch/um/os-Darwin/irq.c            | 168 +++++++++++++++++++++++------
- 6 files changed, 231 insertions(+), 40 deletions(-)
+ 6 files changed, 239 insertions(+), 48 deletions(-)
 
 diff --git a/arch/um/drivers/mconsole_kern.c b/arch/um/drivers/mconsole_kern.c
 index 5abd0dfd66c7f1da714c1895760ada28ac1b2a74..5a0c3b28f9cfef9e38a5014c87efde6f510b7cc8 100644
@@ -234,10 +241,10 @@ index 95fabf70e1ee8b0c4f4f0db0cba663664a8cf851..e426227f327d49d16d618709f21d6943
  }
  
 diff --git a/arch/um/os-Darwin/file.c b/arch/um/os-Darwin/file.c
-index 2af88421f7a2d6d47b0462532f0ed7417af4b178..5e761c77071aca2d8e2e5cfaa8cb9def952133c4 100644
+index 2af88421f7a2d6d47b0462532f0ed7417af4b178..ba95a9351b2f20fa8c46ada584e065ba9da2ec50 100644
 --- a/arch/um/os-Darwin/file.c
 +++ b/arch/um/os-Darwin/file.c
-@@ -289,20 +289,25 @@ int os_set_fd_async(int fd)
+@@ -289,22 +289,27 @@ int os_set_fd_async(int fd)
  
  	if (flags < 0)
  		return -errno;
@@ -250,24 +257,34 @@ index 2af88421f7a2d6d47b0462532f0ed7417af4b178..5e761c77071aca2d8e2e5cfaa8cb9def
  	 */
 -	return darwin_uml_fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0 ?
 -		-errno : 0;
+-}
+-
 +	if (darwin_uml_fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
 +		return -errno;
 +	return darwin_irq_set_notification(fd, 1);
- }
- 
++}
++
++/*
++ * A suspend only stops a descriptor's notifications: the descriptor stays
++ * nonblocking, as os_set_fd_async() left it.  Its readers drain it until it
++ * would block, and some still read it while interrupts are suspended: a
++ * vhost-user reply wait serves its backend's requests, and the irq_work that
++ * delivers what a reply wait recorded drains the request socket again.  A
++ * blocking descriptor would hold that CPU in the host's recvmsg() for as long
++ * as the backend kept sending.
++ */
  int os_clear_fd_async(int fd)
  {
- 	int flags = darwin_uml_fcntl(fd, F_GETFL, 0);
-+	int error;
- 
- 	if (flags < 0)
- 		return -errno;
-+	error = darwin_irq_set_notification(fd, 0);
-+	if (error < 0)
-+		return error;
- 	return darwin_uml_fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) < 0 ?
- 		-errno : 0;
+-	int flags = darwin_uml_fcntl(fd, F_GETFL, 0);
+-
+-	if (flags < 0)
+-		return -errno;
+-	return darwin_uml_fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) < 0 ?
+-		-errno : 0;
++	return darwin_irq_set_notification(fd, 0);
  }
+ 
+ int os_set_fd_block(int fd, int blocking)
 diff --git a/arch/um/os-Darwin/irq.c b/arch/um/os-Darwin/irq.c
 index 45aa9db0b03f72d597a8ee90a3e0b037d1f7fdb3..c73632a809ba6ebddc2362470315fbc10343cbf3 100644
 --- a/arch/um/os-Darwin/irq.c

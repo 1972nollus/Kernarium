@@ -152,8 +152,41 @@ slab object, page allocation, kernel text and stack, and a failure is a
 panic. UML arm64 has no `HAVE_ARCH_WITHIN_STACK_FRAMES`, so a stack copy is
 checked against the whole stack, not the frame. LKDTM confirms the canary
 check and the slab, page, kernel-text and stack-bounds cases. An overrun of
-one stack frame into the next goes unseen here, and so does a vmalloc overrun
-into its guard page, which upstream does not catch either.
+one stack frame into the next goes unseen here; an overrun of a whole task
+stack does not (see Kernel stacks).
+
+### Kernel stacks
+
+Every product uses 64 KiB task stacks (`CONFIG_KERNEL_STACK_ORDER=4` with
+4 KiB pages), virtually mapped with an unmapped guard region around each, and
+`CONFIG_SCHED_STACK_END_CHECK`. The deepest use measured, with
+`CONFIG_DEBUG_STACK_USAGE`, the stack dumps and the exit-time "greatest stack
+depth" lines under the heaviest workload of each line:
+
+| Line and workload | Deepest | Margin at 64 KiB |
+|---|---|---|
+| x86-64 slice, JIT: filesystem, memory, network, xfrm, compiler and 316 LTP cases | 25.6 KiB | 2.5x |
+| x86-64 slice, JIT: headless Chromium | 22.4 KiB | 2.9x |
+| arm64 Linux, gadgets: the same phases and LTP | 22.6 KiB | 2.8x |
+| Android, gadgets: boot, five cold launches, package compilation | 23.6 KiB | 2.7x |
+
+The Android stress script (GMEM) reached 25.0 KiB on a 128 KiB stack, a 2.6x
+margin. No stack above 32 KiB appeared in the `kstack_*` histogram of any run.
+The deepest stacks were `kworker` threads and processes at exit. XFS and Btrfs
+were not exercised, because the rootfs has no `mkfs` for them; the Android
+product has neither.
+
+The signal stack the host gives each vCPU carrier is separate: 128 KiB from
+`malloc`, whatever `THREAD_SIZE` is, with the deepest use measured at
+3.8 KiB. There is no per-CPU array in the image for it.
+
+An overrun is caught, not silent. A write below the lowest stack page or above
+the highest faults on the guard region and ends in
+`Kernel panic - not syncing: Kernel mode signal 10`, which names the faulting
+pc and address (LKDTM `STACK_GUARD_PAGE_LEADING`, `STACK_GUARD_PAGE_TRAILING`
+and `EXHAUST_STACK`). A clobbered end-of-stack word ends in
+`corrupted stack end detected inside scheduler` (LKDTM `CORRUPT_STACK_END`).
+`guest-kernel-config` checks the order, `VMAP_STACK` and the end check.
 
 The Android CTS `KernelConfigTest` also asks for three symbols that arch/um
 does not have. Each protection is either provided by the design under another
@@ -294,7 +327,7 @@ qualification remains separate from structural table coverage. The slice
 inherits the shared eBPF syscall, verifier, and cgroup BPF policy without a
 product-specific configuration override.
 
-Both use a 128 KiB virtually mapped task stack, a 128 TiB software-MMU task
+Both use a 64 KiB virtually mapped task stack, a 128 TiB software-MMU task
 range, a relocatable ET_DYN image, 100 Hz plus `NO_HZ_IDLE` with
 high-resolution timers, built-in-only drivers, and the same host/kernel ABI. There is no platform-specific image or
 address-space configuration axis.
@@ -373,6 +406,15 @@ replies with both amounts and each step's time, so a host can suspend a guest
 that holds no cold cache. `guest-page-cache-trim` checks the default, all three
 commands, the back-off, and a pass over file cache read between the pages of a
 tmpfs file.
+
+The image has no array of per-CPU signal stacks: the host gives each vCPU
+carrier a 128 KiB signal stack of its own, whatever `THREAD_SIZE` is. Two
+further cuts were tried and dropped, so that nobody attempts them again. The
+relocation records (`.rela.dyn`, about 2 MB) stay in the image, because pages
+freed below the break lie outside the vhost-user memory table. The
+shared-memory tables stay static, because the map request is served in
+interrupt context, where an atomic allocation can fail.
+
 `CONFIG_VIRTIO_BALLOON` lets the host carve its GPU memory out of guest RAM.
 UML removes virtio drivers from an exitcall that runs
 after `device_shutdown()` has broken every virtqueue. The balloon therefore
@@ -394,6 +436,21 @@ fs-verity, so the release is not confined to open files.
 `guest-ext4-prealloc-reclaim` evicts such inodes under memory pressure, on
 4 KiB and 1 KiB blocks, and requires that reclaim release them with no
 `__GFP_NOFAIL` page allocation.
+
+The block allocator indexes each block group by its largest free order and its
+average fragment size in xarrays, and moves a group between them under the
+group lock, so the insert can use only the atomic reserves and fails when
+memory is that short. A group left out is still found by the linear scan of
+the later criteria, so a failed insert costs a worse choice of group and never
+an allocation. A shared topic inserts with `__GFP_NOWARN`, because
+`warn_alloc()` printed a stack trace from writeback in the middle of the
+pressure that caused it, which the test above rightly rejects. It also checks,
+when a group's order is unchanged, that the group is indexed and indexes it
+again if not, where upstream returned early and left the group out until its
+order changed. The extent status cache is filled the same way: the extents a
+lookup reads are inserted under the inode's extent-cache lock with an atomic
+allocation, a miss only means the extent tree is read again, and a second
+shared topic adds `__GFP_NOWARN` to that allocation for the same reason.
 
 Every slice selects `HAVE_ALIGNED_STRUCT_PAGE` and `HAVE_CMPXCHG_DOUBLE`, as
 native arm64 does; the x86-64 userspace slice keeps the arm64 kernel. SLUB
@@ -607,7 +664,11 @@ Linux host clears O_ASYNC on every other descriptor for the suspend; Darwin,
 whose IRQ notification thread stands in for SIGIO, takes those descriptors off
 that thread instead, so console input, vhost-user requests and block
 completions wait for the resume and are handled then, and so does network
-input in a suspend the host asked for. The suspended CPU
+input in a suspend the host asked for. Those descriptors stay nonblocking: a
+vhost-user reply wait still serves its backend's requests during a suspend,
+and the `irq_work` that delivers what one recorded drains the request socket
+until it would block, so a blocking socket would hold that CPU in the host's
+`recvmsg()` and the suspend would never end. The suspended CPU
 sleeps until a wake source has input or a wakeup is pending, so neither a host
 signal nor a notification collected before the suspend ends it. A wake request
 that arrives while a suspend is still being entered, whether the host or the
@@ -705,6 +766,13 @@ The overlay holds only what differs from the Linux product:
   the overlay leaves both out, and SCTP too, which Android has no use for. The
   forbidden list also names RDS, so that no overlay brings back its
   listener.
+- XFS, Btrfs and the SMB client (`CONFIG_XFS_FS`, `CONFIG_BTRFS_FS`,
+  `CONFIG_CIFS`) are absent. Android mounts ext4 and erofs partitions, shared
+  storage is FUSE, and vold mounts removable media as vfat or exfat, so the
+  filesystems are never used and the guest need not carry their code,
+  caches and `cifsiod` and `smb3decryptd` workers. The forbidden list names
+  them, so that no overlay brings them back. The desktop product keeps all
+  three.
 - `CONFIG_STATIC_USERMODEHELPER` with an empty
   `CONFIG_STATIC_USERMODEHELPER_PATH`, which the CTS requires. Every
   `call_usermodehelper()` then returns without starting a program, so a

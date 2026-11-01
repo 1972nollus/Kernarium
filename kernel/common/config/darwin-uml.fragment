@@ -81,8 +81,6 @@ CONFIG_EXT4_FS_POSIX_ACL=y
 # Security xattrs are what a labelled root filesystem stores its LSM contexts
 # in. They are storage support, independent of which LSM is active.
 CONFIG_EXT4_FS_SECURITY=y
-CONFIG_XFS_FS=y
-CONFIG_BTRFS_FS=y
 CONFIG_QUOTA=y
 CONFIG_QUOTA_NETLINK_INTERFACE=y
 CONFIG_QFMT_V1=y
@@ -155,10 +153,8 @@ CONFIG_FUSE_PASSTHROUGH=y
 # CONFIG_HOSTFS is not set
 
 # --- Network filesystems ----------------------------------------------------
-# The NFS client is the Linux overlay's: the Android product forbids it
-# (config/android-forbidden-options.txt).
-CONFIG_CIFS=y
-CONFIG_CIFS_XATTR=y
+# The NFS and SMB clients are the Linux overlay's: the Android product forbids
+# the first and never mounts the second (config/android-forbidden-options.txt).
 
 # --- Memory management ------------------------------------------------------
 # KSM's background page-content scanning is not useful for this emulator: the
@@ -491,22 +487,29 @@ CONFIG_ARM_PMU=n
 CONFIG_DEBUG_FS=y
 
 # --- Kernel build policy ----------------------------------------------------
-# Darwin UML guest pages are 4 KiB. An order-5 kernel stack of 4 KiB pages is
-# the 128 KiB stackful Darwin task contexts need.
+# Darwin UML guest pages are 4 KiB. An order-4 kernel stack of 4 KiB pages is
+# the 64 KiB stackful Darwin task contexts run on. The Darwin engine runs on
+# the task's own kernel stack; the deepest stack any guest has used and the
+# margin over it are recorded in kernel/mainline-6.18/README.md ("Kernel
+# stacks"). The signal stacks the host gives each vCPU carrier are separate and
+# stay 128 KiB.
 CONFIG_PAGE_SIZE_4KB=y
-CONFIG_KERNEL_STACK_ORDER=5
-# Darwin resumes each stackful UML task on one of the fixed vCPU carriers, and
-# the order above produces a 128 KiB task stack. A physically contiguous
-# allocation per task pinned unmovable blocks on a booted Android guest and
-# fragmented the buddy allocator past what compaction could recover, with
-# global OOM kills of healthy applications.
+CONFIG_KERNEL_STACK_ORDER=4
+# Darwin resumes each stackful UML task on one of the fixed vCPU carriers. A
+# physically contiguous allocation per task pinned unmovable blocks on a booted
+# Android guest and fragmented the buddy allocator past what compaction could
+# recover, with global OOM kills of healthy applications.
 #
 # Virtually mapped stacks are backed by order-0 pages and remove the
-# contiguity requirement entirely. The stacks stay 128 KiB. This needs the
-# widened auxiliary window that gives vmalloc a 1 GiB floor rather than one
-# eighth of RAM; at the old 504 MiB the vmapped stacks exhausted the window and
-# panicked the guest.
+# contiguity requirement entirely. This needs the widened auxiliary window
+# that gives vmalloc a 1 GiB floor rather than one eighth of RAM; at the old
+# 504 MiB the vmapped stacks exhausted the window and panicked the guest. The
+# guard page after each stack area, a whole unmapped mapping group, is what
+# turns an overrun into a panic that names the faulting address, and
+# SCHED_STACK_END_CHECK panics at the next reschedule if anything wrote
+# through the stack's last word.
 CONFIG_VMAP_STACK=y
+CONFIG_SCHED_STACK_END_CHECK=y
 CONFIG_NULL_CHAN=y
 CONFIG_CC_OPTIMIZE_FOR_SIZE=y
 # Module text would be dynamically published executable memory inside the host

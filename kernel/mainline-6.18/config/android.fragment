@@ -30,6 +30,14 @@ CONFIG_CRYPTO_HCTR2=y
 CONFIG_UNICODE=y
 # The CTS requires that no NFS client filesystem is registered.
 # CONFIG_NFS_FS is not set
+# Android never mounts XFS, Btrfs or an SMB share: its partitions are ext4 and
+# erofs, shared storage is FUSE, and vold mounts removable media as vfat or
+# exfat. The desktop product keeps all three. Without them the image drops
+# their code and the guest starts no cifsiod or smb3decryptd worker.
+# CONFIG_XFS_FS is not set
+# CONFIG_BTRFS_FS is not set
+# CONFIG_CIFS is not set
+# CONFIG_CIFS_XATTR is not set
 # MediaProvider serves shared storage through FUSE and names the file under
 # each FUSE path, so that an app's FileObserver sees the changes MediaProvider
 # and other writers make to the underlying file. The desktop product's FUSE
