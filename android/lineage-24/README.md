@@ -1177,14 +1177,16 @@ Kernarium represents one Android guest as a `.kern` directory containing:
 
 - `release-manifest.json`;
 - `boot/kernel-command-line.txt`;
-- exactly one directly writable `guest/*.img`.
+- `guest/system.img`, the release's read-only system disk, and
+  `guest/partition-layout.json`, which describes it; and
+- `guest/data.img`, the guest's writable data disk, which the runtime creates at
+  the first launch and only grows afterwards.
 
 The kernel is supplied by the runtime framework and is not bundle payload. The
-manifest is provenance rather than a runtime compatibility token, and legacy
-bundles without it remain selectable. Missing files and malformed disk images
-fail when opened or parsed. Android appends the host-owned display density,
-ADB authorization policy, and tagged-pointer option at launch. Launches write
-persistent guest changes directly into the image inside the `.kern` bundle.
+manifest is provenance rather than a runtime compatibility token. Missing files
+and malformed disk images fail when opened or parsed. Android appends the
+host-owned display density, ADB authorization policy, and tagged-pointer option
+at launch. Launches write persistent guest changes only to `guest/data.img`.
 
 How Kernarium keeps, relaunches, and copies a bundle is in
 [`../../Kernarium/README.md`](../../Kernarium/README.md#guest-storage).

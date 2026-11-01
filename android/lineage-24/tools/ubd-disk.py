@@ -324,6 +324,32 @@ def verify_gpt(
     )
 
 
+def write_gpt(
+    disk: BinaryIO, geometry: Geometry, disk_guid: uuid.UUID,
+    partitions: tuple[Partition, ...],
+) -> None:
+    """Write the protective MBR, both headers and both entry arrays."""
+    table = partition_entries(partitions, geometry)
+    table_crc = binascii.crc32(table) & 0xFFFFFFFF
+    disk.seek(0)
+    disk.write(protective_mbr(geometry))
+    disk.write(
+        gpt_header(
+            geometry, disk_guid, current_lba=1, backup_lba=geometry.sector_count - 1,
+            entries_lba=2, entries_crc=table_crc,
+        )
+    )
+    disk.write(table)
+    disk.seek(geometry.backup_entries_lba * SECTOR_SIZE)
+    disk.write(table)
+    disk.write(
+        gpt_header(
+            geometry, disk_guid, current_lba=geometry.sector_count - 1, backup_lba=1,
+            entries_lba=geometry.backup_entries_lba, entries_crc=table_crc,
+        )
+    )
+
+
 # --- the policy: what the tree decides ---------------------------------------
 
 
@@ -688,16 +714,6 @@ def assemble(
         for item in placed
     )
     disk_guid = uuid.UUID(system["disk_guid"])
-    table = partition_entries(partitions, geometry)
-    table_crc = binascii.crc32(table) & 0xFFFFFFFF
-    primary_header = gpt_header(
-        geometry, disk_guid, current_lba=1, backup_lba=geometry.sector_count - 1,
-        entries_lba=2, entries_crc=table_crc,
-    )
-    backup_header = gpt_header(
-        geometry, disk_guid, current_lba=geometry.sector_count - 1, backup_lba=1,
-        entries_lba=geometry.backup_entries_lba, entries_crc=table_crc,
-    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     temporary = output_dir / f".{SYSTEM_DISK_FILE}.tmp.{os.getpid()}"
@@ -705,13 +721,7 @@ def assemble(
     try:
         with temporary.open("xb") as disk:
             disk.truncate(disk_size)
-            disk.seek(0)
-            disk.write(protective_mbr(geometry))
-            disk.write(primary_header)
-            disk.write(table)
-            disk.seek(geometry.backup_entries_lba * SECTOR_SIZE)
-            disk.write(table)
-            disk.write(backup_header)
+            write_gpt(disk, geometry, disk_guid, partitions)
             for item in placed:
                 disk.seek(item["start_bytes"])
                 with sources[item["name"]].open("rb") as source:
@@ -786,6 +796,58 @@ def verify_layout_and_disk(layout: Layout, disk_path: Path, *, check_hashes: boo
         raise DiskError("system disk differs from its recorded sha256")
 
 
+def data_disk_gpt(
+    layout: Layout, capacity_gib: int
+) -> tuple[Geometry, uuid.UUID, tuple[Partition, ...]]:
+    """The metadata of a data disk of `capacity_gib` GiB, as the host builds it."""
+    data = layout.data
+    capacity = data["capacity_gib"]
+    if not capacity["minimum"] <= capacity_gib <= capacity["maximum"]:
+        raise DiskError(
+            f"data disk capacity must be {capacity['minimum']} through "
+            f"{capacity['maximum']} GiB"
+        )
+    size = capacity_gib * GIB
+    geometry = Geometry(size, data["partition_entry_count"])
+    partitions = tuple(
+        Partition(
+            item["name"],
+            item["start_bytes"],
+            item["size_bytes"]
+            if item["size_bytes"] is not None
+            else size - data["trailing_free_bytes"] - item["start_bytes"],
+            uuid.UUID(item["type_guid"]),
+            uuid.UUID(item["unique_guid"]),
+        )
+        for item in data["partitions"]
+    )
+    return geometry, uuid.UUID(data["disk_guid"]), partitions
+
+
+def create_data_disk(layout_path: Path, capacity_gib: int | None, output: Path) -> None:
+    """A sparse data disk with only its partition tables written. The host
+    creates the same bytes for each instance; this is the reference."""
+    layout = load_layout(layout_path)
+    gib = capacity_gib if capacity_gib is not None else layout.data["capacity_gib"]["default"]
+    geometry, disk_guid, partitions = data_disk_gpt(layout, gib)
+    with output.open("xb") as disk:
+        disk.truncate(geometry.disk_size_bytes)
+        write_gpt(disk, geometry, disk_guid, partitions)
+    print(f"created data disk: {gib} GiB, {output}")
+
+
+def verify_data_disk(layout_path: Path, disk_path: Path) -> None:
+    layout = load_layout(layout_path)
+    if disk_path.is_symlink() or not disk_path.is_file():
+        raise DiskError(f"disk image must be a regular non-symlink file: {disk_path}")
+    size = disk_path.stat().st_size
+    if size % GIB:
+        raise DiskError("data disk is not a whole number of GiB")
+    geometry, disk_guid, partitions = data_disk_gpt(layout, size // GIB)
+    verify_gpt(disk_path, geometry, disk_guid, partitions)
+    print(f"verified data disk: {size // GIB} GiB")
+
+
 def check_against_policy(layout: Layout, policy: Policy) -> None:
     """A release's layout is what the tracked policy produces: the same
     identities for every partition and the same data disk template."""
@@ -843,6 +905,17 @@ def main() -> None:
     assemble_parser.add_argument("--images-dir", type=Path, required=True)
     assemble_parser.add_argument("--output-dir", type=Path, required=True)
     assemble_parser.add_argument("--image", action="append", default=[])
+    data_parser = subparsers.add_parser(
+        "data", help="create a sparse data disk (the reference for the host's)"
+    )
+    data_parser.add_argument("--layout", type=Path, required=True)
+    data_parser.add_argument("--capacity-gib", type=int)
+    data_parser.add_argument("--output", type=Path, required=True)
+    verify_data_parser = subparsers.add_parser(
+        "verify-data", help="check a data disk against the layout's template"
+    )
+    verify_data_parser.add_argument("--layout", type=Path, required=True)
+    verify_data_parser.add_argument("--disk", type=Path, required=True)
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--layout", type=Path, required=True)
     verify_parser.add_argument("--disk", type=Path, required=True)
@@ -869,6 +942,10 @@ def main() -> None:
                 args.output_dir.resolve(),
                 args.image,
             )
+        elif args.command == "data":
+            create_data_disk(args.layout.resolve(), args.capacity_gib, args.output.resolve())
+        elif args.command == "verify-data":
+            verify_data_disk(args.layout.resolve(), args.disk.resolve())
         else:
             verify(
                 args.layout.resolve(), args.disk.resolve(), args.hash,

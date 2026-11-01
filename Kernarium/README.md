@@ -95,20 +95,23 @@ settings already store, `rootfs.erofs` included, is kept, and every image in
 Documents stays selectable. An Android guest is a `.kern`
 bundle directory in Documents; the
 [Android README](../android/lineage-24/README.md#apple-consumers-and-guest-bundles)
-owns its layout. A bundle holds the guest's persistent, directly writable image,
-and every launch reopens that same image, so rebuilding the application or a
-runtime framework must not erase it and a bundle is never recreated merely to
-relaunch it. When copying a bundle to a device, target the complete
+owns its layout. A bundle holds the release's read-only system disk
+(`guest/system.img`, `guest/partition-layout.json`) and the guest's persistent
+data disk (`guest/data.img`), which the runtime creates at the first launch and
+every later launch reopens, so rebuilding the application or a runtime
+framework must not erase it and a bundle is never recreated merely to relaunch
+it. When copying a bundle to a device, target the complete
 `Documents/<name>.kern` destination; never copy into or replace the Documents
 directory itself, which can flatten the bundle or destroy other guests.
 
 Launch does not compare kernel, runtime, or rootfs release identities; missing
-or malformed inputs fail at their ordinary file or image boundary. Disk
-capacity and compressed delivery are application concerns, so runtime
-frameworks receive only an ordinary disk image and no capacity policy.
-`DiskUtil` owns a raw file's capacity before launch and dispatches any
-format-specific partition-table update; Android GPT growth is in the
-[static disk contract](../android/lineage-24/README.md#static-disk-and-boot-contract).
+or malformed inputs fail at their ordinary file or image boundary. The
+application chooses the Android data disk's capacity and passes it with the
+boot request; the runtime creates the disk or grows it to that capacity, never
+shrinks it, and attaches exactly the system disk and the data disk (the
+[static disk contract](../android/lineage-24/README.md#static-disk-and-boot-contract)
+owns the layout and the partition tables the host writes). Compressed delivery
+is an application concern.
 `ZstdUtil` streams a zstd source into an adjacent temporary file, optionally
 representing zero regions as sparse holes, and publishes the destination only
 after a complete decode.
@@ -411,8 +414,8 @@ Each script documents its options in `--help` or its header:
   `--automation` the automation Linux runtime, with `--android-automation`
   the automation Android runtime, and the host battery and video encoder
   archives only `KernariumTests` links;
-- `make-guest-bundle.py` assembles an Android `.kern` bundle from an installed
-  release;
+- `make-guest-bundle.py` assembles an Android `.kern` bundle (system disk,
+  layout, kernel command line) from an installed release;
 - `ipad-automation.py` drives UI automation on a connected iPad through the
   `KernariumAutomation` host; and
 - `verify-signed-kernel-carrier.py` checks that a kernel image is safe for the

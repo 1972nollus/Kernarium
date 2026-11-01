@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Assemble a Kernarium guest bundle from an installed Android release.
 
-A bundle is a directory the application can boot on its own: the release
-payload including the directly writable disk the guest accumulates. The kernel
-is not part of it: the application carries an independently accepted Android
-kernel artifact in its signed runtime framework.
+A bundle is a directory the application can boot on its own: the release's
+read-only system disk, its partition layout and kernel command line. The
+runtime creates the guest's writable data disk (guest/data.img) at the first
+launch and only grows it afterwards. The kernel is not part of the bundle: the
+application carries an independently accepted Android kernel artifact in its
+signed runtime framework.
 """
 
 from __future__ import annotations
@@ -22,7 +24,8 @@ sys.dont_write_bytecode = True
 BUNDLE_SUFFIX = ".kern"
 MANIFEST = "release-manifest.json"
 COMMAND_LINE = "boot/kernel-command-line.txt"
-GUEST_DIRECTORY = "guest"
+SYSTEM_DISK = "guest/system.img"
+LAYOUT = "guest/partition-layout.json"
 ROOT = Path(__file__).resolve().parents[2]
 ACCEPTANCE = ROOT / "android/lineage-24/metadata/accepted-release.env"
 _ARTIFACTS = str(ROOT / "kernel/common/artifacts")
@@ -45,24 +48,9 @@ def accepted_directory_name() -> str:
     )
 
 
-def release_disk(release: Path) -> Path:
-    disks = sorted(
-        entry
-        for entry in (release / GUEST_DIRECTORY).glob("*.img")
-        if entry.is_file()
-    )
-    if len(disks) != 1:
-        fail(
-            f"expected exactly one disk image under {release / GUEST_DIRECTORY}, "
-            f"found {len(disks)}"
-        )
-    return disks[0]
-
-
 def copy(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    # A clone shares the compact seed's blocks until DiskUtil expands the
-    # bundle-local copy immediately before first boot.
+    # A clone shares the release's blocks instead of copying them.
     cloned = subprocess.run(
         ["cp", "-c", str(source), str(destination)],
         capture_output=True,
@@ -93,24 +81,23 @@ def main() -> int:
     if output.exists():
         if not arguments.replace:
             fail(f"{output} already exists; pass --replace to rebuild it")
-        # Replacing discards the writable disk with the payload it belongs to.
+        # Replacing discards the data disk with the payload it belongs to.
         shutil.rmtree(output)
 
     manifest = json.loads((release / MANIFEST).read_text(encoding="utf-8"))
-    disk = release_disk(release)
+    for relative in (MANIFEST, COMMAND_LINE, SYSTEM_DISK, LAYOUT):
+        if not (release / relative).is_file():
+            fail(f"the release lacks {relative}: {release}")
     print(
         f"assembling {output.name} from {manifest['product_family']} "
         f"{manifest['release_id']}"
     )
     output.mkdir(parents=True)
-    copy(release / MANIFEST, output / MANIFEST)
-    copy(release / COMMAND_LINE, output / COMMAND_LINE)
-    bundle_disk = output / GUEST_DIRECTORY / disk.name
-    copy(disk, bundle_disk)
-    bundle_disk.chmod(bundle_disk.stat().st_mode | 0o200)
+    for relative in (MANIFEST, COMMAND_LINE, SYSTEM_DISK, LAYOUT):
+        copy(release / relative, output / relative)
     print(
         f"guest bundle ready: {output}\n"
-        "  the application opens the bundle-local GPT directly on every boot"
+        "  the application creates guest/data.img at the first boot"
     )
     return 0
 

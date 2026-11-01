@@ -27,12 +27,6 @@ struct KernariumTests {
     private static let zstdOutputSize = 2 * 1024 * 1024 +
         zstdPrefix.count + zstdSuffix.count
 
-    private struct StubDiskCapacityManager: DiskCapacityManaging {
-        func resizeAndroidImage(at _: URL, toGiB _: Int) throws -> Bool {
-            true
-        }
-    }
-
     @Test
     func thermalStateReportHasStableMachineReadableFields() {
         #expect(ThermalStateReport.name(for: .nominal) == "nominal")
@@ -516,52 +510,6 @@ struct KernariumTests {
     }
 
     @Test
-    func diskUtilExpandsRawImageWithoutChangingItsPrefix() throws {
-        let manager = FileManager.default
-        let directory = try makeScratchDirectory("disk-util")
-        defer { try? manager.removeItem(at: directory) }
-        let image = directory.appendingPathComponent("disk.img")
-        let original = Data([0x45, 0x46, 0x49, 0x20, 0x50, 0x41, 0x52, 0x54])
-        try original.write(to: image)
-
-        let diskUtil = DiskUtil()
-        #expect(try diskUtil.resizeImage(at: image, toGiB: 1))
-        #expect(try diskUtil.imageSize(at: image) == DiskUtil.bytesPerGiB)
-        #expect(try !diskUtil.resizeImage(at: image, toGiB: 1))
-        let reader = try FileHandle(forReadingFrom: image)
-        let prefix = try reader.read(upToCount: original.count)
-        try reader.close()
-        #expect(prefix == original)
-    }
-
-    @Test
-    func bundlePreparesItsDirectlyWritableDisk() throws {
-        let manager = FileManager.default
-        let directory = try makeScratchDirectory("bundle-disk")
-        defer { try? manager.removeItem(at: directory) }
-        let guestDirectory = directory.appendingPathComponent("guest")
-        try manager.createDirectory(
-            at: guestDirectory,
-            withIntermediateDirectories: true
-        )
-        let disk = guestDirectory.appendingPathComponent("disk.img")
-        #expect(manager.createFile(atPath: disk.path, contents: Data([1])))
-        let bundle = GuestBundle(
-            url: directory,
-            flavor: .android,
-            disk: disk
-        )
-
-        let diskUtil = StubDiskCapacityManager()
-        #expect(
-            try bundle.prepareDiskCapacity(
-                1,
-                diskUtil: diskUtil
-            )
-        )
-    }
-
-    @Test
     func androidBundleSelectionDoesNotRequireReleaseMetadata() throws {
         let manager = FileManager.default
         let directory = try makeScratchDirectory(
@@ -569,18 +517,31 @@ struct KernariumTests {
             pathExtension: GuestBundle.pathExtension
         )
         defer { try? manager.removeItem(at: directory) }
-        let guestDirectory = directory.appendingPathComponent("guest")
-        try manager.createDirectory(
-            at: guestDirectory,
-            withIntermediateDirectories: true
-        )
-        let disk = guestDirectory.appendingPathComponent("legacy.img")
-        #expect(manager.createFile(atPath: disk.path, contents: Data()))
+        for relative in [
+            GuestBundle.Android.systemDisk,
+            GuestBundle.Android.layout,
+            GuestBundle.Android.commandLine,
+        ] {
+            let file = directory.appendingPathComponent(relative)
+            try manager.createDirectory(
+                at: file.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            #expect(manager.createFile(atPath: file.path, contents: Data()))
+        }
 
         let bundle = GuestBundle.load(at: directory, fileManager: manager)
 
-        #expect(bundle?.disk == disk)
+        #expect(bundle?.systemDisk.lastPathComponent == "system.img")
+        #expect(bundle?.dataDisk.lastPathComponent == "data.img")
         #expect(bundle?.flavor == .android)
+
+        // The data disk is the runtime's to create; a release missing a
+        // required file is no bundle.
+        try manager.removeItem(at: directory.appendingPathComponent(
+            GuestBundle.Android.layout
+        ))
+        #expect(GuestBundle.load(at: directory, fileManager: manager) == nil)
     }
 
     @Test

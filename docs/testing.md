@@ -1147,7 +1147,7 @@ ISA set of a package and the per-ISA artifacts and manifest;
 `lineage24-mesa-venus-port-generator` covers the per-ISA generators of the
 Mesa port and that every arm module is built with Meson's large-file define;
 and `lineage24-mesa-venus-source-contract` pins the regenerated series.
-`KernariumTests` covers the disk range the larger seed GPT needs.
+`KernariumTests` covers the bundle layout and the data disk capacity range.
 
 A release candidate is qualified on its image, opt-in, on every engine that
 runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A

@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <limits>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -26,13 +26,6 @@
 namespace uml::android {
 namespace {
 
-constexpr std::uint64_t sectorSize = 512;
-constexpr std::uint64_t mebibyte = 1'048'576ULL;
-constexpr std::uint64_t gibibyte = 1'073'741'824ULL;
-constexpr std::uint64_t seedDiskSize = 3'123ULL * mebibyte;
-constexpr std::uint64_t backupGptReservation = mebibyte;
-constexpr std::uint64_t minimumDiskSizeGiB = 6;
-constexpr std::uint64_t maximumDiskSizeGiB = 64;
 constexpr std::uint64_t bootImagePageSize = 4096;
 constexpr std::size_t bootImageHeaderSize = 1584;
 constexpr std::string_view recoveryCommand = "boot-recovery";
@@ -40,224 +33,26 @@ constexpr std::string_view bootloaderCommand = "bootonce-bootloader";
 /* The command field that opens the bootloader message (struct
  * bootloader_message in AOSP's bootloader_message.h). */
 constexpr std::size_t bootloaderCommandSize = 32;
+constexpr std::size_t bootloaderMessageSize = 2048;
 
-struct ExpectedPartition {
-	std::string_view name;
-	std::uint64_t offset;
-	std::uint64_t size;
-};
+constexpr std::array<std::string_view, 4> storagePrefixes {
+	"ubd", "initrd", "root=", "rootfstype="};
+constexpr std::string_view bootDevicesPrefix{"androidboot.boot_devices="};
 
-constexpr std::array seedPartitions {
-	ExpectedPartition{"system", 1'048'576ULL, 1'677'721'600ULL},
-	ExpectedPartition{"system_ext", 1'678'770'176ULL, 536'870'912ULL},
-	ExpectedPartition{"product", 2'215'641'088ULL, 603'979'776ULL},
-	ExpectedPartition{"vendor", 2'819'620'864ULL, 268'435'456ULL},
-	ExpectedPartition{"odm", 3'088'056'320ULL, 4'194'304ULL},
-	ExpectedPartition{"metadata", 3'092'250'624ULL, 16'777'216ULL},
-	ExpectedPartition{"init_boot", 3'109'027'840ULL, 8'388'608ULL},
-	ExpectedPartition{"misc", 3'117'416'448ULL, 1'048'576ULL},
-	ExpectedPartition{"recovery", 3'118'465'024ULL, 20'971'520ULL},
-	ExpectedPartition{"userdata", 3'139'436'544ULL, 134'217'728ULL},
-};
-
-constexpr std::size_t initBootPartition = 6;
-constexpr std::size_t miscPartition = 7;
-constexpr std::size_t recoveryPartition = 8;
-constexpr std::size_t userdataPartition = 9;
-
-class File final {
-public:
-	explicit File(const std::filesystem::path &path)
-	{
-		struct stat details {};
-		if (lstat(path.c_str(), &details) != 0)
-			throw std::system_error(errno, std::generic_category(),
-						"cannot inspect " + path.string());
-		if (!S_ISREG(details.st_mode) || details.st_size < 0)
-			throw std::invalid_argument("unsafe regular file: " + path.string());
-		size_ = static_cast<std::uint64_t>(details.st_size);
-		descriptor_ = open(path.c_str(), O_RDONLY);
-		if (descriptor_ < 0)
-			throw std::system_error(errno, std::generic_category(),
-						"cannot open " + path.string());
-	}
-
-	~File()
-	{
-		if (descriptor_ >= 0)
-			(void)close(descriptor_);
-	}
-
-	File(const File &) = delete;
-	File &operator=(const File &) = delete;
-
-	std::uint64_t size() const noexcept { return size_; }
-
-	void read(std::uint64_t offset, std::span<std::byte> output) const
-	{
-		if (offset > size_ || output.size() > size_ - offset ||
-		    offset > static_cast<std::uint64_t>(
-				     std::numeric_limits<off_t>::max()))
-			throw std::invalid_argument("file range is outside its payload");
-		std::size_t completed = 0;
-		while (completed < output.size()) {
-			const auto absolute = offset + completed;
-			const auto count = pread(descriptor_, output.data() + completed,
-						 output.size() - completed,
-						 static_cast<off_t>(absolute));
-			if (count < 0 && errno == EINTR)
-				continue;
-			if (count <= 0)
-				throw std::system_error(
-					count < 0 ? errno : EIO, std::generic_category(),
-					"cannot read file range");
-			completed += static_cast<std::size_t>(count);
-		}
-	}
-
-private:
-	int descriptor_ = -1;
-	std::uint64_t size_ = 0;
-};
-
-std::uint32_t little32(const std::byte *input)
+void validateSystemDisk(const Layout &layout, const std::filesystem::path &path)
 {
-	return std::to_integer<std::uint32_t>(input[0]) |
-		(std::to_integer<std::uint32_t>(input[1]) << 8U) |
-		(std::to_integer<std::uint32_t>(input[2]) << 16U) |
-		(std::to_integer<std::uint32_t>(input[3]) << 24U);
-}
-
-std::uint64_t little64(const std::byte *input)
-{
-	return static_cast<std::uint64_t>(little32(input)) |
-		(static_cast<std::uint64_t>(little32(input + 4)) << 32U);
-}
-
-std::uint32_t crc32(std::span<const std::byte> input)
-{
-	std::uint32_t value = ~std::uint32_t{0};
-	for (const auto byte : input) {
-		value ^= std::to_integer<std::uint8_t>(byte);
-		for (unsigned int bit = 0; bit < 8; ++bit)
-			value = (value >> 1U) ^
-				((value & 1U) != 0 ? 0xedb88320U : 0U);
-	}
-	return ~value;
-}
-
-std::string partitionName(const std::byte *input)
-{
-	std::string result;
-	for (std::size_t index = 0; index < 36; ++index) {
-		const auto low = std::to_integer<unsigned int>(input[index * 2]);
-		const auto high = std::to_integer<unsigned int>(input[index * 2 + 1]);
-		if (low == 0 && high == 0)
-			return result;
-		if (high != 0 || low < 0x20U || low > 0x7eU)
-			throw std::invalid_argument("GPT partition name is not ASCII");
-		result.push_back(static_cast<char>(low));
-	}
-	throw std::invalid_argument("GPT partition name is not terminated");
-}
-
-void validatePartitionEntry(const std::byte *entry,
-			    const ExpectedPartition &expected)
-{
-	const bool unused = std::all_of(entry, entry + 16,
-					[](std::byte value) { return value == std::byte{}; });
-	if (unused)
-		throw std::invalid_argument("fixed GPT partition entry is unused");
-	const auto firstLba = little64(entry + 32);
-	const auto lastLba = little64(entry + 40);
-	if (firstLba > lastLba || firstLba * sectorSize != expected.offset ||
-	    (lastLba - firstLba + 1U) * sectorSize != expected.size ||
-	    partitionName(entry + 56) != expected.name)
-		throw std::invalid_argument("fixed GPT partition layout differs");
-}
-
-bool supportedDiskSize(std::uint64_t size)
-{
-	if (size == seedDiskSize)
-		return true;
-	return size % gibibyte == 0 &&
-		size / gibibyte >= minimumDiskSizeGiB &&
-		size / gibibyte <= maximumDiskSizeGiB;
-}
-
-ExpectedPartition expectedPartition(std::size_t index, std::uint64_t diskSize)
-{
-	auto expected = seedPartitions[index];
-	if (index == userdataPartition)
-		expected.size = diskSize - expected.offset - backupGptReservation;
-	return expected;
-}
-
-void validateGptHeader(std::array<std::byte, sectorSize> header,
-		       std::uint64_t currentLba, std::uint64_t backupLba,
-		       std::uint64_t entriesLba, std::uint64_t lastUsableLba)
-{
-	if (std::memcmp(header.data(), "EFI PART", 8) != 0 ||
-	    little32(header.data() + 8) != 0x00010000U ||
-	    little32(header.data() + 12) != 92U ||
-	    little64(header.data() + 24) != currentLba ||
-	    little64(header.data() + 32) != backupLba ||
-	    little64(header.data() + 40) != 34U ||
-	    little64(header.data() + 48) != lastUsableLba ||
-	    little64(header.data() + 72) != entriesLba ||
-	    little32(header.data() + 80) != 128U ||
-	    little32(header.data() + 84) != 128U)
-		throw std::invalid_argument("Android disk has an invalid GPT header");
-	const auto expectedHeaderCrc = little32(header.data() + 16);
-	std::fill(header.begin() + 16, header.begin() + 20, std::byte{});
-	if (crc32(std::span{header}.first(92)) != expectedHeaderCrc)
-		throw std::invalid_argument("Android disk GPT header CRC differs");
-}
-
-void validateGpt(const File &disk)
-{
-	if (!supportedDiskSize(disk.size()))
-		throw std::invalid_argument("Android disk has the wrong size");
-	const auto physicalLastLba = disk.size() / sectorSize - 1U;
-	std::array<std::byte, sectorSize> header {};
-	disk.read(sectorSize, header);
-	const auto declaredLastLba = little64(header.data() + 32);
-	if (declaredLastLba != physicalLastLba)
+	struct stat details {};
+	if (lstat(path.c_str(), &details) != 0 || !S_ISREG(details.st_mode))
 		throw std::invalid_argument(
-			"Android disk GPT capacity differs from its file");
-	const auto lastUsableLba = declaredLastLba - 33U;
-	validateGptHeader(header, 1U, declaredLastLba, 2U, lastUsableLba);
-
-	std::vector<std::byte> entries(128U * 128U);
-	disk.read(2U * sectorSize, entries);
-	if (crc32(entries) != little32(header.data() + 88))
-		throw std::invalid_argument("Android disk GPT entry CRC differs");
-	for (std::size_t index = 0; index < seedPartitions.size(); ++index)
-		validatePartitionEntry(entries.data() + index * 128U,
-				       expectedPartition(index, disk.size()));
-	for (std::size_t index = seedPartitions.size(); index < 128U; ++index)
-		if (!std::all_of(entries.begin() + index * 128U,
-				 entries.begin() + (index + 1U) * 128U,
-				 [](std::byte value) { return value == std::byte{}; }))
-			throw std::invalid_argument("Android disk has extra partitions");
-
-	std::array<std::byte, sectorSize> backupHeader {};
-	disk.read(declaredLastLba * sectorSize, backupHeader);
-	validateGptHeader(backupHeader, declaredLastLba, 1U,
-			  declaredLastLba - 32U,
-			  lastUsableLba);
-	if (!std::equal(header.begin() + 56, header.begin() + 72,
-			backupHeader.begin() + 56) ||
-	    little32(backupHeader.data() + 88) != little32(header.data() + 88))
-		throw std::invalid_argument("Android disk GPT copies differ");
-	std::vector<std::byte> backupEntries(entries.size());
-	disk.read((declaredLastLba - 32U) * sectorSize, backupEntries);
-	if (backupEntries != entries ||
-	    crc32(backupEntries) != little32(backupHeader.data() + 88))
-		throw std::invalid_argument("Android disk backup GPT entries differ");
+			"the Android system disk is not a regular file: " + path.string());
+	if (access(path.c_str(), R_OK) != 0)
+		throw std::invalid_argument("the Android system disk is not readable");
+	validateUbdPath(path, "Android system disk");
+	const File disk(path);
+	verifyGpt(disk, layout.systemGpt(), "the Android system disk");
 }
 
-FileRange bootRamdisk(const File &disk, const ExpectedPartition &partition)
+FileRange bootRamdisk(const File &disk, const SystemPartition &partition)
 {
 	std::array<std::byte, bootImageHeaderSize> header {};
 	disk.read(partition.offset, header);
@@ -270,55 +65,155 @@ FileRange bootRamdisk(const File &disk, const ExpectedPartition &partition)
 			 [](std::byte value) { return value == std::byte{}; }))
 		throw std::invalid_argument("Android boot partition is not kernelless v4");
 	const auto ramdiskSize = little32(header.data() + 12);
-	if (ramdiskSize == 0 ||
-	    ramdiskSize > partition.size - bootImagePageSize)
+	if (ramdiskSize == 0 || partition.imageBytes <= bootImagePageSize ||
+	    ramdiskSize > partition.imageBytes - bootImagePageSize)
 		throw std::invalid_argument("Android boot partition ramdisk is invalid");
 	return FileRange{partition.offset + bootImagePageSize, ramdiskSize};
 }
 
-bool recoveryRequested(const File &disk)
+std::array<std::byte, bootloaderMessageSize> readBootloaderMessage(
+	const Layout &layout, const std::filesystem::path &dataDisk)
 {
-	std::array<std::byte, 2048> bootloaderMessage {};
-	disk.read(seedPartitions[miscPartition].offset, bootloaderMessage);
-	const auto commandEnd = std::find(
-		bootloaderMessage.begin(), bootloaderMessage.begin() + 32, std::byte{});
-	if (commandEnd == bootloaderMessage.begin() + 32)
-		throw std::invalid_argument("Android bootloader message command is malformed");
-	const std::string_view command(
-		reinterpret_cast<const char *>(bootloaderMessage.data()),
-		static_cast<std::size_t>(commandEnd - bootloaderMessage.begin()));
-	return command == recoveryCommand;
+	std::array<std::byte, bootloaderMessageSize> message {};
+	const File disk(dataDisk);
+	disk.read(layout.data.partition("misc").offset, message);
+	return message;
 }
 
-bool bootloaderRequested(const File &disk)
+/* The command field, or nothing when it has no terminator. */
+std::optional<std::string_view> commandOf(
+	const std::array<std::byte, bootloaderMessageSize> &message)
 {
-	std::array<std::byte, bootloaderCommandSize> command {};
-	disk.read(seedPartitions[miscPartition].offset, command);
-	const auto end = std::find(command.begin(), command.end(), std::byte{});
-	return end != command.end() &&
-		std::string_view(reinterpret_cast<const char *>(command.data()),
-				 static_cast<std::size_t>(end - command.begin())) ==
-			bootloaderCommand;
+	const auto end = std::find(message.begin(),
+				   message.begin() + bootloaderCommandSize, std::byte{});
+	if (end == message.begin() + bootloaderCommandSize)
+		return std::nullopt;
+	return std::string_view{reinterpret_cast<const char *>(message.data()),
+				static_cast<std::size_t>(end - message.begin())};
+}
+
+std::filesystem::path requireAbsolute(std::filesystem::path path, std::string_view label)
+{
+	if (!path.is_absolute())
+		throw std::invalid_argument(std::string{label} + " path must be absolute");
+	return path;
+}
+
+bool startsWithAny(std::string_view argument,
+		   std::span<const std::string_view> prefixes)
+{
+	return std::any_of(prefixes.begin(), prefixes.end(),
+			   [argument](std::string_view prefix) {
+				   return argument.starts_with(prefix);
+			   });
 }
 
 } // namespace
+
+Storage::Storage(std::filesystem::path release, std::filesystem::path dataDisk)
+	: release_(requireAbsolute(std::move(release), "Android release")),
+	  systemDisk_(release_ / releaseSystemDisk),
+	  dataDisk_(requireAbsolute(std::move(dataDisk), "Android data disk")),
+	  layout_(readLayout(release_ / releaseLayout))
+{
+	validate();
+}
+
+void Storage::validate() const
+{
+	validateSystemDisk(layout_, systemDisk_);
+	/* The two checks cannot both pass for one file: a system disk's
+	 * partition tables are not a data disk's. */
+	(void)validateDataDisk(layout_, dataDisk_);
+}
+
+BootSelection Storage::selectBoot(BootMode requestedMode) const
+{
+	if (requestedMode != BootMode::automatic &&
+	    requestedMode != BootMode::normal && requestedMode != BootMode::recovery)
+		throw std::invalid_argument("unknown Android boot mode");
+	validate();
+	const File system(systemDisk_);
+	const auto normal = bootRamdisk(system, layout_.systemPartition("init_boot"));
+	const auto recovery = bootRamdisk(system, layout_.systemPartition("recovery"));
+	auto selected = requestedMode;
+	if (requestedMode == BootMode::automatic) {
+		const auto command = commandOf(readBootloaderMessage(layout_, dataDisk_));
+		if (!command)
+			throw std::invalid_argument(
+				"Android bootloader message command is malformed");
+		selected = *command == recoveryCommand ? BootMode::recovery
+						       : BootMode::normal;
+	}
+	return BootSelection{selected,
+			     selected == BootMode::recovery ? recovery : normal};
+}
+
+bool Storage::consumeBootloaderCommand() const
+{
+	validate();
+	if (commandOf(readBootloaderMessage(layout_, dataDisk_)) != bootloaderCommand)
+		return false;
+	const int descriptor = open(dataDisk_.c_str(), O_WRONLY | O_NOFOLLOW);
+	if (descriptor < 0)
+		throw std::system_error(errno, std::generic_category(),
+					"cannot open " + dataDisk_.string());
+	const std::array<std::byte, bootloaderCommandSize> cleared {};
+	const auto written = pwrite(
+		descriptor, cleared.data(), cleared.size(),
+		static_cast<off_t>(layout_.data.partition("misc").offset));
+	const int writeError = written < 0 ? errno : EIO;
+	const int syncError = fsync(descriptor) == 0 ? 0 : errno;
+	const int closeError = close(descriptor) == 0 ? 0 : errno;
+	if (written != static_cast<ssize_t>(cleared.size()))
+		throw std::system_error(writeError, std::generic_category(),
+					"cannot clear the bootloader command");
+	if (syncError != 0 || closeError != 0)
+		throw std::system_error(syncError != 0 ? syncError : closeError,
+					std::generic_category(),
+					"cannot flush the bootloader command");
+	return true;
+}
+
+RestartBoot Storage::selectRestartBoot() const
+{
+	const bool consumed = consumeBootloaderCommand();
+	return RestartBoot{selectBoot(BootMode::automatic), consumed};
+}
+
+std::vector<std::string> Storage::kernelArguments(const BootSelection &boot) const
+{
+	return {
+		"ubd0r=" + systemDisk_.string(),
+		"ubd1=" + dataDisk_.string(),
+		"initrd=" + systemDisk_.string(),
+		"initrd_offset=" + std::to_string(boot.ramdisk.offset),
+		"initrd_size=" + std::to_string(boot.ramdisk.size),
+		"root=/dev/ram0",
+		"rootfstype=ramfs",
+	};
+}
+
+std::span<const std::string_view> storageArgumentPrefixes() noexcept
+{
+	return storagePrefixes;
+}
+
+void rejectStorageArguments(std::span<const std::string> arguments)
+{
+	for (const auto &argument : arguments)
+		if (startsWithAny(argument, storagePrefixes) ||
+		    argument.starts_with(bootDevicesPrefix))
+			throw std::invalid_argument(
+				"the Android launcher attaches the guest's disks itself; "
+				"the kernel argument is refused: " + argument);
+}
 
 void validateUbdPath(const std::filesystem::path &path, std::string_view label)
 {
 	if (!::uml::block::usable_ubd_path(path.native()))
 		throw std::invalid_argument(std::string{label} +
 			" path is unusable as a UBD device");
-}
-
-void validateWritableDisk(const std::filesystem::path &disk)
-{
-	struct stat details {};
-	if (lstat(disk.c_str(), &details) != 0 || !S_ISREG(details.st_mode))
-		throw std::invalid_argument(
-			"the Android disk is not a regular file");
-	if (access(disk.c_str(), R_OK | W_OK) != 0)
-		throw std::invalid_argument("the Android disk is not writable");
-	validateUbdPath(disk, "Android disk");
 }
 
 std::vector<std::string> readKernelCommandLine(
@@ -342,6 +237,7 @@ std::vector<std::string> readKernelCommandLine(
 		throw std::runtime_error("cannot read " + path.string());
 
 	std::vector<std::string> arguments;
+	bool bootDevices = false;
 	constexpr std::string_view separators{" \n\t"};
 	std::size_t cursor = 0;
 	while (cursor < text.size()) {
@@ -358,47 +254,28 @@ std::vector<std::string> readKernelCommandLine(
 					"the release kernel command line sets " +
 					std::string{prefix} +
 					", which the launcher fixes");
+		if (startsWithAny(argument, storagePrefixes))
+			throw std::invalid_argument(
+				"the release kernel command line sets " +
+				std::string{argument} +
+				", which names a block device or ramdisk the launcher fixes");
+		if (argument.starts_with(bootDevicesPrefix)) {
+			if (argument != bootDevicesArgument || bootDevices)
+				throw std::invalid_argument(
+					"the release kernel command line must name exactly " +
+					std::string{bootDevicesArgument} + " once");
+			bootDevices = true;
+		}
 		arguments.emplace_back(argument);
 	}
 	if (arguments.empty())
 		throw std::invalid_argument(
 			"the release kernel command line is empty");
+	if (!bootDevices)
+		throw std::invalid_argument(
+			"the release kernel command line lacks " +
+			std::string{bootDevicesArgument});
 	return arguments;
-}
-
-bool consumeBootloaderCommand(const std::filesystem::path &diskPath)
-{
-	{
-		const File disk(diskPath);
-		validateGpt(disk);
-		if (!bootloaderRequested(disk))
-			return false;
-	}
-	const int descriptor = open(diskPath.c_str(), O_WRONLY | O_NOFOLLOW);
-	if (descriptor < 0)
-		throw std::system_error(errno, std::generic_category(),
-					"cannot open " + diskPath.string());
-	const std::array<std::byte, bootloaderCommandSize> cleared {};
-	const auto written = pwrite(
-		descriptor, cleared.data(), cleared.size(),
-		static_cast<off_t>(seedPartitions[miscPartition].offset));
-	const int writeError = written < 0 ? errno : EIO;
-	const int syncError = fsync(descriptor) == 0 ? 0 : errno;
-	const int closeError = close(descriptor) == 0 ? 0 : errno;
-	if (written != static_cast<ssize_t>(cleared.size()))
-		throw std::system_error(writeError, std::generic_category(),
-					"cannot clear the bootloader command");
-	if (syncError != 0 || closeError != 0)
-		throw std::system_error(syncError != 0 ? syncError : closeError,
-					std::generic_category(),
-					"cannot flush the bootloader command");
-	return true;
-}
-
-RestartBoot selectRestartBoot(const std::filesystem::path &diskPath)
-{
-	const bool consumed = consumeBootloaderCommand(diskPath);
-	return RestartBoot{selectBoot(diskPath, BootMode::automatic), consumed};
 }
 
 std::string lcdDensityArgument(std::uint32_t dotsPerInch)
@@ -417,23 +294,6 @@ std::uint32_t parseDotsPerInch(std::string_view text)
 		throw std::invalid_argument("invalid dots per inch: " +
 					    std::string{text});
 	return parsed;
-}
-
-BootSelection selectBoot(const std::filesystem::path &diskPath,
-			 BootMode requestedMode)
-{
-	if (requestedMode != BootMode::automatic &&
-	    requestedMode != BootMode::normal && requestedMode != BootMode::recovery)
-		throw std::invalid_argument("unknown Android boot mode");
-	const File disk(diskPath);
-	validateGpt(disk);
-	const auto normal = bootRamdisk(disk, seedPartitions[initBootPartition]);
-	const auto recovery = bootRamdisk(disk, seedPartitions[recoveryPartition]);
-	const auto selected = requestedMode == BootMode::automatic
-		? (recoveryRequested(disk) ? BootMode::recovery : BootMode::normal)
-		: requestedMode;
-	return BootSelection{selected,
-			     selected == BootMode::recovery ? recovery : normal};
 }
 
 } // namespace uml::android
