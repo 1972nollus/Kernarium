@@ -8982,13 +8982,17 @@ void mask_store_keeps_concurrent_unselected_bytes()
 	memory.load(0x40, {0xf0, 0xfe, 0x47, 0x01, 0x0f, 0x05});
 	const auto increment = require_built(gadgets::build(memory, 0x40),
 		"concurrent LOCK INC block did not build");
+	std::atomic<bool> started{false};
 	std::atomic<bool> done{false};
 	std::atomic<bool> healthy{true};
 	std::thread writer{[&] {
 		gadgets::Executor executor;
 		executor.prepare(memory, 42, 1, 1);
-		while (!done.load(std::memory_order_relaxed) &&
-			healthy.load(std::memory_order_relaxed)) {
+		/* A pass that has begun runs to its SYSCALL, and the first one
+		 * runs whatever `done` says: on a loaded host this thread can
+		 * be scheduled only after the increments are over. */
+		do {
+			started.store(true, std::memory_order_release);
 			CpuState cpu{};
 			cpu.gpr(Register::rdi) = block;
 			cpu.gpr(Register::rcx) = 1000;
@@ -9008,8 +9012,15 @@ void mask_store_keeps_concurrent_unselected_bytes()
 			}
 			if (event != uml::cpu::EngineEvent::system_call)
 				healthy.store(false);
-		}
+		} while (!done.load(std::memory_order_relaxed) &&
+			healthy.load(std::memory_order_relaxed));
 	}};
+	/* The increments begin once the writer is in its first pass, so the
+	 * two overlap rather than one ending before the other is scheduled. */
+	require(uml::testing::waitUntil([&] {
+			return started.load(std::memory_order_acquire);
+		}, std::chrono::seconds{10}),
+		"the MASKMOVDQU writer never started");
 	{
 		gadgets::Executor executor;
 		executor.prepare(memory);
