@@ -36,10 +36,10 @@ endforeach()
 find_package(Threads REQUIRED)
 include("${CMAKE_CURRENT_LIST_DIR}/UmlThirdPartyTargets.cmake")
 foreach(_uml_sdk_library IN ITEMS m resolv iconv)
-    _uml_find_sdk_library(_uml_sdk_${_uml_sdk_library} ${_uml_sdk_library})
+    uml_find_sdk_library(_uml_sdk_${_uml_sdk_library} ${_uml_sdk_library})
 endforeach()
 foreach(_uml_framework IN ITEMS Foundation CoreFoundation)
-    _uml_find_sdk_framework(_uml_sdk_${_uml_framework} ${_uml_framework})
+    uml_find_sdk_framework(_uml_sdk_${_uml_framework} ${_uml_framework})
 endforeach()
 
 _uml_import_static_dependency(pcre2 "${_uml_ios_network_lib}/libpcre2-8.a"
