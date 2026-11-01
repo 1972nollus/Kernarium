@@ -54,8 +54,11 @@ The kernel host tools are patch-managed ports of elfutils, musl-obstack,
 libbpf, and dwarves to Darwin, built with argp-standalone. elfutils' Git
 source carries only the generators of its DWARF name and x86 decoder tables,
 so the build first builds the pinned gawk as a build-only tool. The libbpf
-that pahole embeds needs Linux UAPI headers, which come from a pinned Debian
-`linux-libc-dev` package, and the Linux host APIs Darwin lacks, which come from
+that pahole embeds is the v1.8.0 release, not the earlier commit that opened
+the 1.8 cycle, which dwarves 1.32 records for its `lib/bpf` submodule; the
+build ignores that submodule. It needs Linux UAPI headers, which come from a
+pinned Debian `linux-libc-dev` package, and the Linux host APIs Darwin lacks,
+which come from
 [`kernel/mainline-6.18/build/toolchain/darwin-host`](../kernel/mainline-6.18/build/toolchain/darwin-host/)
 shared with Kbuild's host tools. The prefix publishes only `bin/pahole` and
 libelf; the tools target macOS 15.4, the first release with the `strchrnul`
