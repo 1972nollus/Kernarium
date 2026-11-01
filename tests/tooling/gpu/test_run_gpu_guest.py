@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 GPU_INTEGRATION_ROOT = Path(__file__).resolve().parents[2] / "integration/gpu"
 INTEGRATION_CMAKE = Path(__file__).resolve().parents[2] / "integration/CMakeLists.txt"
@@ -467,14 +468,17 @@ class GpuGuestSafetyTests(unittest.TestCase):
         self.assertIn('> "$docker_hello_world_output" 2>&1', run_block)
         subprocess.run(["/bin/sh", "-n"], input=script, text=True, check=True)
 
-        files = run_gpu_guest.runner_guest_files(
-            script, "/dev/ubda", "erofs", payload
-        )
+        # The archive member carries the time it was made, so the two
+        # archives are made at one pinned time: a second boundary between
+        # them is not a difference in the archive.
+        with mock.patch.object(run_gpu_guest.time, "time", return_value=1e9):
+            files = run_gpu_guest.runner_guest_files(
+                script, "/dev/ubda", "erofs", payload
+            )
+            expected_archive = run_gpu_guest.make_docker_rootfs_archive(payload)
         archive_bytes, mode = files[run_gpu_guest.DOCKER_ARCHIVE_GUEST_PATH]
         self.assertEqual(mode, 0o644)
-        self.assertEqual(
-            archive_bytes, run_gpu_guest.make_docker_rootfs_archive(payload)
-        )
+        self.assertEqual(archive_bytes, expected_archive)
         with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
             member = archive.getmember("hello")
             self.assertEqual(member.mode, 0o755)
