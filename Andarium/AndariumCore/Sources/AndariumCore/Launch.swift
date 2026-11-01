@@ -110,6 +110,12 @@ public enum ConsoleReport {
     public static func runtimeReturned(_ result: Int32) -> String {
         "Andarium: runtime returned \(result)"
     }
+
+    /// The application lost or regained focus (a system alert, such as iOS
+    /// asking for local network access, takes it until a person answers).
+    public static func application(active: Bool) -> String {
+        active ? "Andarium: application active" : "Andarium: application inactive"
+    }
 }
 
 /// The Linux key codes Andarium sends the guest for its side keys. Android's

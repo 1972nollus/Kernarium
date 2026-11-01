@@ -36,6 +36,10 @@ THERMAL_STATE = re.compile(
     r"state=(nominal|fair|serious|critical) uptime=([0-9]+(?:\.[0-9]+)?)"
 )
 ADB_AUTH_OFF_LINE = "Kernarium: ADB authorization is off for this launch"
+# The application reports losing and regaining focus, which a system alert
+# (iOS asking for local network access) causes until a person answers it.
+APPLICATION_ACTIVE_LINE = "Andarium: application active"
+APPLICATION_INACTIVE_LINE = "Andarium: application inactive"
 # Only the automation runtime reads the authorization setting, so its name in
 # the Android runtime's binary identifies that build.
 AUTOMATION_SYMBOL = b"KERNARIUM_ANDROID_ADB_AUTH"
@@ -74,6 +78,13 @@ def require_automation_app(app: pathlib.Path) -> None:
                 "Kernarium/scripts/package-ios-frameworks.sh "
                 "--android-automation"
             )
+
+
+def application_is_active(transcript: str) -> bool:
+    """Whether the console's last word on focus is that it is active (or it
+    has said nothing, as a launch that never lost focus does)."""
+    return (transcript.rfind(APPLICATION_INACTIVE_LINE)
+            <= transcript.rfind(APPLICATION_ACTIVE_LINE))
 
 
 def require_adb_authorization_off(transcript: str) -> None:

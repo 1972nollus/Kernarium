@@ -106,6 +106,11 @@ struct ReportTests {
         #expect(ConsoleReport.runtimeReturned(-3) == "Andarium: runtime returned -3")
     }
 
+    @Test func focusLines() {
+        #expect(ConsoleReport.application(active: true) == "Andarium: application active")
+        #expect(ConsoleReport.application(active: false) == "Andarium: application inactive")
+    }
+
     @Test func guestKeysUseLinuxCodes() {
         #expect(GuestKey.back.rawValue == 158)
         #expect(GuestKey.home.rawValue == 172)

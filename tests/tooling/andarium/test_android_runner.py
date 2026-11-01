@@ -301,6 +301,29 @@ class AndroidRunnerTests(unittest.TestCase):
         self.assertTrue((self.scratch.state / "terminated").exists())
         self.assert_container_untouched(outcome)
 
+    def test_the_run_waits_for_an_alert_to_be_answered(self) -> None:
+        outcome = self.run_android(
+            "--script", str(self.scratch.script), "--wait-active", "30",
+            environment={"FAKE_FOCUS": "alert"},
+        )
+        self.assertEqual(outcome.status, 0)
+        self.assertIn("waited_for_active_seconds", outcome.summary)
+        self.assertEqual(
+            outcome.summary["workload"]["script"]["exit_status"], 0)
+
+    def test_an_alert_nobody_answers_ends_the_run_before_its_workload(
+        self,
+    ) -> None:
+        outcome = self.run_android(
+            "--script", str(self.scratch.script), "--wait-active", "2",
+            environment={"FAKE_FOCUS": "stuck"},
+        )
+        self.assertEqual(outcome.status, 1)
+        self.assertIn("still inactive after 2 seconds", outcome.err)
+        self.assertIsNone(outcome.summary["workload"])
+        self.assertEqual(outcome.summary["status"], "failed")
+        self.assert_container_untouched(outcome)
+
     def test_a_guest_that_ends_on_its_own_is_not_a_run(self) -> None:
         outcome = self.run_android(
             "--script", str(self.scratch.script),
