@@ -95,6 +95,12 @@ def launch(arguments: list[str]) -> int:
     if os.environ.get("FAKE_AUTH") != "missing":
         print("Kernarium: ADB authorization is off for this launch",
               flush=True)
+    focus = os.environ.get("FAKE_FOCUS")
+    if focus:
+        print("Andarium: application inactive", flush=True)
+    if focus == "alert":
+        time.sleep(1.5)
+        print("Andarium: application active", flush=True)
     if os.environ.get("FAKE_GUEST") == "dies":
         print("Andarium: runtime returned 1", flush=True)
         return 0

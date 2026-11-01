@@ -319,7 +319,10 @@ final class LiveRuntime: RuntimeDriver {
 
     private func observeLifecycle() {
         let edges: [(Notification.Name, @MainActor (LiveRuntime) -> Void)] = [
-            (UIApplication.willResignActiveNotification, { $0.pause.willResignActive() }),
+            (UIApplication.willResignActiveNotification, {
+                print(ConsoleReport.application(active: false))
+                $0.pause.willResignActive()
+            }),
             (UIApplication.didEnterBackgroundNotification, { $0.pause.didEnterBackground() }),
             (UIApplication.willEnterForegroundNotification, { $0.pause.willEnterForeground() }),
             (UIApplication.willTerminateNotification, { $0.pause.willTerminate() }),
@@ -337,6 +340,7 @@ final class LiveRuntime: RuntimeDriver {
     /// The person may have changed the permissions or the storage while
     /// Andarium was away.
     private func didBecomeActive() {
+        print(ConsoleReport.application(active: true))
         guard let model else { return }
         model.host.freeStorageBytes = AppEntry.freeStorageBytes()
         model.microphoneState = Self.state(microphone.access)

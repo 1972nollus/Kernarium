@@ -146,6 +146,15 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(
             kernarium_environment["DEVICECTL_CHILD_ANDARIUM_ERASE"], "1")
 
+    def test_the_focus_is_what_the_console_said_last(self) -> None:
+        self.assertTrue(andarium.application_is_active(""))
+        self.assertFalse(andarium.application_is_active(
+            "x\nAndarium: application inactive\n"))
+        self.assertTrue(andarium.application_is_active(
+            "Andarium: application inactive\nAndarium: application active\n"))
+        self.assertFalse(andarium.application_is_active(
+            "Andarium: application active\nAndarium: application inactive\n"))
+
     def test_the_two_applications_are_told_apart(self) -> None:
         self.assertEqual(andarium.APPLICATION.bundle_id,
                          "com.imxieyi.andarium")

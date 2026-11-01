@@ -162,10 +162,14 @@ is the launcher, with each setting given as a `TEST_RUNNER_`-prefixed variable
 (`docs/testing.md`). The test run ends the application, so
 `TEST_RUNNER_ANDARIUM_HOLD_SECONDS` keeps the host up for that long.
 
-The console carries the runtime's own `Kernarium:` lines and two of
+The console carries the runtime's own `Kernarium:` lines and these of
 Andarium's: `Andarium: runtime returned <n>` when the run ends (0 is a power
-off) and `Andarium thermal state: phase=start|change|finish state=<state>
-uptime=<seconds>`.
+off), `Andarium thermal state: phase=start|change|finish state=<state>
+uptime=<seconds>`, and `Andarium: application inactive|active` when a system
+alert takes the focus and gives it back. The first launch of a bundle makes iOS
+ask once to allow local network access, which only a person answers; the guest
+keeps running meanwhile, and the harness waits for the focus
+(`run_ios_device_android.py --wait-active`).
 
 The container's `Documents` is the harness's staging area; Andarium never
 deletes a file it did not create. The guest is under `Library/Guest/`

@@ -144,6 +144,12 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--timeout", type=int, default=3600)
     parser.add_argument("--boot-timeout", type=int, default=900)
     parser.add_argument("--launch-timeout", type=int, default=120)
+    parser.add_argument(
+        "--wait-active", type=int, default=0, metavar="SECONDS",
+        help="after the boot, wait this long for the application to be "
+        "active again if a system alert took its focus (iOS asking for local "
+        "network access waits for a person); the run fails when it is not",
+    )
     parser.add_argument("--script-timeout", type=int, default=1800)
     parser.add_argument("--poweroff-timeout", type=int, default=150)
     parser.add_argument("--install-timeout", type=int, default=600)
@@ -357,6 +363,21 @@ def wait_for_adb_authorization_off(
         if time.monotonic() >= deadline:
             andarium.require_adb_authorization_off(console.transcript())
         time.sleep(interval)
+
+
+def wait_for_active(console: ios_device.Console, timeout: int,
+                    interval: float) -> float:
+    """Wait for the application to hold the focus; the seconds it took."""
+    started = time.monotonic()
+    while not andarium.application_is_active(console.transcript()):
+        guard_console(console)
+        if time.monotonic() - started >= timeout:
+            raise andarium.AndariumError(
+                f"the application was still inactive after {timeout} seconds; "
+                "a system alert is waiting for a person to answer it"
+            )
+        time.sleep(interval)
+    return time.monotonic() - started
 
 
 def wait_for_boot(adb: Adb, console: ios_device.Console, *, timeout: int,
@@ -616,6 +637,9 @@ class Run:
             self.summary["boot_seconds"] = round(
                 time.monotonic() - started, 1)
             ready = True
+            self.summary["waited_for_active_seconds"] = round(
+                wait_for_active(console, options.wait_active,
+                                options.poll_interval), 1)
             time.sleep(options.settle)
             self.summary["workload"] = run_workload(
                 adb, self.plan, options, self.artifact,
