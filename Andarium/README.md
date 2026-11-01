@@ -156,6 +156,12 @@ ANDARIUM_SYSTEM_IMAGE=<file>     create or erase from this raw GPT .img or
                                  instead of the bundled system
 ```
 
+On an Apple silicon Mac, `xcodebuild test -scheme Andarium -destination
+'platform=macOS,variant=Designed for iPad' -only-testing:AndariumTests/AutomationHoldTests`
+is the launcher, with each setting given as a `TEST_RUNNER_`-prefixed variable
+(`docs/testing.md`). The test run ends the application, so
+`TEST_RUNNER_ANDARIUM_HOLD_SECONDS` keeps the host up for that long.
+
 The console carries the runtime's own `Kernarium:` lines and two of
 Andarium's: `Andarium: runtime returned <n>` when the run ends (0 is a power
 off) and `Andarium thermal state: phase=start|change|finish state=<state>

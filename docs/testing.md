@@ -749,7 +749,13 @@ application itself builds with Xcode: `AndariumPreview` is its Simulator build
 with mock data, and `Andarium` is the device application
 ([`Andarium/README.md`](../Andarium/README.md#targets)). `AndariumTests` is
 hosted in `Andarium` and runs on an iPad and, as an iPad app, on an Apple
-silicon Mac (`xcodebuild test -scheme Andarium`).
+silicon Mac (`xcodebuild test -scheme Andarium`). A Mac launch of the guest
+itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
+`TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
+([`Andarium/README.md`](../Andarium/README.md#automation)). macOS asks once, per
+bundle ID, to let the application read a removable volume when its derived data
+is on one, and the launch hangs ("the test runner hung before establishing
+connection") until a person answers; build to the internal disk instead.
 
 ### UI automation on a device
 

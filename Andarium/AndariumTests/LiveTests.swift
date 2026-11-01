@@ -115,3 +115,14 @@ struct LiveSeedWriterTests {
         #expect(progress.all.last == 1)
     }
 }
+
+/// A harness launch on a Mac starts Andarium through `xcodebuild test`, which
+/// ends the application with the test run. An automation launch that sets
+/// `ANDARIUM_HOLD_SECONDS` keeps the host up that long, so its guest can boot
+/// and run; without it the test returns at once.
+struct AutomationHoldTests {
+    @Test func anAutomationLaunchHoldsTheHostForTheRequestedTime() async throws {
+        guard let text = ProcessInfo.processInfo.environment["ANDARIUM_HOLD_SECONDS"], let seconds = Double(text), seconds > 0 else { return }
+        try await Task.sleep(for: .seconds(seconds))
+    }
+}
