@@ -23,7 +23,6 @@ Sources/SceneCoverage.swift            whether a window scene fills its screen
 Sources/GuestRestartEvent.swift        a restart the guest asked for, as the runtime
                                        reports it
 Sources/LinuxKeyboard.swift            characters to Linux key codes
-Sources/DiskUtil.swift                 raw disk capacity and the Android GPT growth
 Sources/ZstdUtil.swift                 streamed, sparse zstd decode
 Sources/MicrophonePermission.swift     the system microphone permission, read and requested
 Sources/MetalShaderCache.swift         the bound on Metal's per-application shader cache
@@ -32,8 +31,8 @@ Sources/MetalShaderCache.swift         the bound on Metal's per-application shad
 ## Rules
 
 - A file here depends only on the system frameworks, the runtime header, and
-  the prebuilt `GPTFDisk` and `LibZstd` XCFrameworks. It names neither
-  application's views, settings or product text; an application supplies those.
+  the prebuilt `LibZstd` XCFramework. It names neither application's views,
+  settings or product text; an application supplies those.
 - The applications build with the same Swift settings (Swift 5 language mode,
   main-actor default isolation, approachable concurrency), because these
   sources rely on them.

@@ -39,26 +39,31 @@ struct AppEntry {
             distribution: "LineageOS", android: "", release: "unknown", securityPatch: nil,
             kernel: "", architecture: "", appVersion: version
         )
-        var seed: SeedImage?
-        var commandLine: URL?
+        var carried: SystemFolder.Release?
         if let systemFolder {
             do {
                 let manifest = try Data(contentsOf: systemFolder.appendingPathComponent(SystemFolder.manifest))
                 system = try SystemInfo(manifest: manifest, appVersion: version)
-                commandLine = systemFolder.appendingPathComponent(SystemFolder.commandLine)
-                seed = try SystemFolder.seed(in: systemFolder, release: system.release, stagedName: launch.systemImageName)
+                carried = try SystemFolder.release(in: systemFolder)
             } catch {
                 problem = "This copy of Andarium does not carry a usable system: \(error.localizedDescription)"
             }
         } else {
             problem = "This copy of Andarium does not carry a system."
         }
+        if launch.systemImageName != nil {
+            print("Andarium: ANDARIUM_SYSTEM_IMAGE is not used by the two-disk layout; the carried release starts")
+        }
 
         let locations = GuestLocations(directory: Self.guestDirectory())
-        let storage = SingleImageStorage(
+        let storage = TwoDiskStorage(
             locations: locations,
-            seed: seed ?? SeedImage(url: locations.directory, release: system.release, expandedBytes: 0),
-            appVersion: version, writer: LiveSeedWriter()
+            release: carried?.identity ?? ReleaseIdentity(
+                releaseID: "unavailable", buildFingerprint: "unavailable", buildNumber: 1, securityPatch: "",
+                systemDiskSHA256: String(repeating: "0", count: 64), dataLayout: 1, minimumGiB: 4, defaultGiB: 8,
+                maximumGiB: 64
+            ),
+            releaseDirectory: systemFolder ?? locations.directory
         )
         var guest: Guest?
         do {
@@ -71,7 +76,7 @@ struct AppEntry {
         let model = AppModel(
             guest: guest, host: host, system: system, capabilities: .firstRelease,
             createRequirementBytes: storage.createRequirementBytes,
-            systemBytes: seed?.expandedBytes ?? 0
+            systemBytes: carried?.systemDiskBytes ?? 0
         )
         let options = DisplayOptionsStore.load()
         model.retina = launch.retina ?? options.retina
@@ -82,10 +87,8 @@ struct AppEntry {
             model.notice = .closedInBackground
             print("Andarium: the previous process ended out of the foreground; the guest starts again from boot")
         }
-        if let commandLine {
-            let runtime = LiveRuntime(
-                model: model, storage: storage, commandLine: commandLine, marker: marker
-            )
+        if carried != nil {
+            let runtime = LiveRuntime(model: model, storage: storage, marker: marker)
             model.driver = runtime
         }
         model.alert = problem.map { AppAlert(title: "Android Is Not Available", message: $0) }
@@ -205,57 +208,53 @@ enum DisplayOptionsStore {
     }
 }
 
-/// The system Andarium carries: the staged folder `andarium-system` in the
-/// application bundle (`Andarium/scripts/stage-system-image.py`).
+/// The release Andarium carries: the staged directory `andarium-system` in
+/// the application bundle (`Andarium/scripts/stage-system-image.py`), laid out
+/// as an installed Android release: `release-manifest.json`,
+/// `boot/kernel-command-line.txt`, `guest/system.img` (the read-only system
+/// disk) and `guest/partition-layout.json`. The runtime reads the directory
+/// itself; the application reads the release's identity.
 enum SystemFolder {
     static let name = "andarium-system"
     static let manifest = "release-manifest.json"
-    static let commandLine = "kernel-command-line.txt"
-    static let layout = "partition-layout.json"
+    static let commandLine = "boot/kernel-command-line.txt"
+    static let layout = "guest/partition-layout.json"
+    static let systemDisk = "guest/system.img"
 
-    enum Problem: LocalizedError {
-        case noArchive
-        case severalArchives
-        case noSize
-        case badStagedImage(String)
+    enum Problem: LocalizedError, Equatable {
+        case missing(String)
+        case sizeDiffers(declared: UInt64, actual: UInt64)
 
         var errorDescription: String? {
             switch self {
-            case .noArchive: "the disk archive is missing"
-            case .severalArchives: "there is more than one disk archive"
-            case .noSize: "the disk size is not declared"
-            case .badStagedImage(let name): "the staged image \(name) cannot be used"
+            case .missing(let file): "\(file) is missing"
+            case .sizeDiffers(let declared, let actual):
+                "the system disk is \(actual) bytes, not the \(declared) its layout declares"
             }
         }
     }
 
-    /// The seed: the archive in the folder, or an image staged in Documents
-    /// by a harness launch.
-    static func seed(in folder: URL, release: String, stagedName: String?) throws -> SeedImage {
-        if let stagedName {
-            let documents = try FileManager.default.url(
-                for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false
-            )
-            let url = documents.appendingPathComponent(stagedName)
-            guard FileManager.default.fileExists(atPath: url.path) else { throw Problem.badStagedImage(stagedName) }
-            if stagedName.hasSuffix(".zst") {
-                guard let handle = try? FileHandle(forReadingFrom: url),
-                      let size = ZstdFrame.contentSize(header: handle.readData(ofLength: 18))
-                else { throw Problem.badStagedImage(stagedName) }
-                return SeedImage(url: url, release: "staged \(stagedName)", expandedBytes: size)
-            }
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            guard size > 0 else { throw Problem.badStagedImage(stagedName) }
-            return SeedImage(url: url, release: "staged \(stagedName)", expandedBytes: UInt64(size))
+    struct Release {
+        var identity: ReleaseIdentity
+        var systemDiskBytes: UInt64
+    }
+
+    static func release(in folder: URL) throws -> Release {
+        let manager = FileManager.default
+        for file in [manifest, commandLine, layout, systemDisk]
+        where !manager.fileExists(atPath: folder.appendingPathComponent(file).path) {
+            throw Problem.missing(file)
         }
-        let archives = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
-            .filter { $0.lastPathComponent.hasSuffix(".img.zst") }
-        guard let archive = archives.first else { throw Problem.noArchive }
-        guard archives.count == 1 else { throw Problem.severalArchives }
         let layoutData = try Data(contentsOf: folder.appendingPathComponent(layout))
+        let identity = try ReleaseIdentity(
+            manifest: Data(contentsOf: folder.appendingPathComponent(manifest)), layout: layoutData
+        )
         guard let object = try JSONSerialization.jsonObject(with: layoutData) as? [String: Any],
-              let size = object["disk_size_bytes"] as? Int, size > 0
-        else { throw Problem.noSize }
-        return SeedImage(url: archive, release: release, expandedBytes: UInt64(size))
+              let system = object["system_disk"] as? [String: Any],
+              let declared = (system["size_bytes"] as? NSNumber)?.uint64Value, declared > 0
+        else { throw Problem.missing("the system disk's size in \(layout)") }
+        let actual = UInt64((try? folder.appendingPathComponent(systemDisk).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        guard actual == declared else { throw Problem.sizeDiffers(declared: declared, actual: actual) }
+        return Release(identity: identity, systemDiskBytes: declared)
     }
 }

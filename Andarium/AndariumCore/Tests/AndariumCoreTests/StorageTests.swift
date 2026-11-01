@@ -4,54 +4,22 @@ import Foundation
 import Testing
 @testable import AndariumCore
 
-/// Writes a small file instead of decoding a seed, and records what it was
-/// asked to do.
-final class FakeSeedWriter: SeedWriter, @unchecked Sendable {
-    struct Failure: Error {}
-
-    private let lock = NSLock()
-    private var _writes: [Int] = []
-    private var _grows: [Int] = []
-    var failNextWrite = false
-    /// Bytes the "seed" occupies.
-    let seedBytes = 64 * 1024
-
-    var writes: [Int] { lock.withLock { _writes } }
-    var grows: [Int] { lock.withLock { _grows } }
-
-    func write(
-        seed: SeedImage, to destination: URL, imageGiB: Int,
-        progress: @escaping @Sendable (Double) -> Void
-    ) async throws {
-        progress(0.5)
-        try lock.withLock {
-            _writes.append(imageGiB)
-            if failNextWrite {
-                failNextWrite = false
-                try Data(count: 4096).write(to: destination)
-                throw Failure()
-            }
-        }
-        try Data(repeating: 0xA5, count: seedBytes).write(to: destination)
-    }
-
-    func grow(image: URL, toGiB imageGiB: Int) async throws {
-        lock.withLock { _grows.append(imageGiB) }
-    }
+private func releaseIdentity(
+    _ id: String = "20261031-los24-r4", build: Int = 100, sha: String = String(repeating: "a", count: 64)
+) -> ReleaseIdentity {
+    ReleaseIdentity(
+        releaseID: id, buildFingerprint: "fp-\(id)", buildNumber: build, securityPatch: "2026-10-01",
+        systemDiskSHA256: sha, dataLayout: 1, minimumGiB: 4, defaultGiB: 8, maximumGiB: 64
+    )
 }
 
-private func makeStorage(
-    writer: FakeSeedWriter, release: String = "20261031-los24-r4"
-) throws -> (SingleImageStorage, URL) {
+private func makeStorage(release: ReleaseIdentity = releaseIdentity()) throws -> (TwoDiskStorage, URL) {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("andarium-core-tests-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    let seed = SeedImage(
-        url: root.appendingPathComponent("seed.img.zst"), release: release, expandedBytes: 3_274_702_848
-    )
-    let storage = SingleImageStorage(
+    let storage = TwoDiskStorage(
         locations: GuestLocations(directory: root.appendingPathComponent("Guest")),
-        seed: seed, appVersion: "1.0 (1)", writer: writer
+        release: release, releaseDirectory: root.appendingPathComponent("andarium-system")
     )
     return (storage, root)
 }
@@ -62,145 +30,92 @@ private let host = HostDevice(
 
 struct StorageTests {
     @Test func aStorageWithNothingInItHasNoGuest() throws {
-        let (storage, root) = try makeStorage(writer: FakeSeedWriter())
+        let (storage, root) = try makeStorage()
         defer { try? FileManager.default.removeItem(at: root) }
         #expect(try storage.load() == nil)
     }
 
-    @Test func createWritesTheDiskTheSettingsAndTheInstanceRecord() async throws {
-        let writer = FakeSeedWriter()
-        let (storage, root) = try makeStorage(writer: writer)
+    @Test func createWritesTheSettingsAndTheInstanceButNoDisk() async throws {
+        let (storage, root) = try makeStorage()
         defer { try? FileManager.default.removeItem(at: root) }
 
         let created = try await storage.create(Guest.fresh(on: host))
-        #expect(writer.writes == [8 + SingleImageStorage.systemRegionGiB])
-        #expect(created.usedBytes == 0)
-        #expect(FileManager.default.fileExists(atPath: storage.locations.image.path))
-        #expect(!FileManager.default.fileExists(atPath: storage.locations.partialImage.path))
-
-        let record = try JSONDecoder().decode(InstanceRecord.self, from: Data(contentsOf: storage.locations.instance))
-        #expect(record.dataLayout == "single-image")
-        #expect(record.releaseID == "20261031-los24-r4")
-        #expect(record.createdWith == "1.0 (1)")
-        #expect(record.baselineBytes > 0)
-
-        let loaded = try #require(try storage.load())
-        #expect(loaded.cores == created.cores)
-        #expect(loaded.capacityGiB == 8)
-        #expect(loaded.usedBytes == 0)
+        #expect(created.usedBytes == 0 && created.neverStarted)
+        // The runtime creates the data disk at the first start.
+        #expect(!FileManager.default.fileExists(atPath: storage.locations.data.path))
+        let state = try #require(try InstanceFiles(directory: storage.locations.directory).readState())
+        #expect(state.releaseID == "20261031-los24-r4" && state.createdWith == "20261031-los24-r4")
+        #expect(try storage.load()?.cores == created.cores)
+        #expect(storage.dataGiB(for: created) == UInt32(created.effectiveCapacityGiB))
     }
 
-    @Test func theInstanceRecordUsesTheDocumentedKeys() async throws {
-        let (storage, root) = try makeStorage(writer: FakeSeedWriter())
+    @Test func theDataIsWhatTheDataDiskOccupies() async throws {
+        let (storage, root) = try makeStorage()
         defer { try? FileManager.default.removeItem(at: root) }
         _ = try await storage.create(Guest.fresh(on: host))
-        let text = try String(contentsOf: storage.locations.instance, encoding: .utf8)
-        for key in ["\"schema\"", "\"data_layout\"", "\"release_id\"", "\"created_with\""] {
-            #expect(text.contains(key))
-        }
-        // Schema 0 is the single-image layout's; the two-disk layout's is 1.
-        let record = try JSONDecoder().decode(InstanceRecord.self, from: Data(contentsOf: storage.locations.instance))
-        #expect(record.schema == 0)
-        #expect(record.dataLayout == "single-image")
+        try Data(repeating: 0x5A, count: 3 * 1024 * 1024).write(to: storage.locations.data)
+        let used = try #require(try storage.load()?.usedBytes)
+        #expect(used >= 3 * 1024 * 1024 && used < 8 * 1024 * 1024)
     }
 
-    @Test func dataAndroidWritesCountsAsUsed() async throws {
-        let (storage, root) = try makeStorage(writer: FakeSeedWriter())
+    @Test func eraseDeletesTheDataAndKeepsTheChoices() async throws {
+        let (storage, root) = try makeStorage()
         defer { try? FileManager.default.removeItem(at: root) }
-        _ = try await storage.create(Guest.fresh(on: host))
-
-        let handle = try FileHandle(forWritingTo: storage.locations.image)
-        try handle.seekToEnd()
-        try handle.write(contentsOf: Data(repeating: 1, count: 1 << 20))
-        try handle.synchronize()
-        try handle.close()
-
-        let loaded = try #require(try storage.load())
-        #expect(loaded.usedBytes >= 1 << 20)
-        #expect(loaded.usedBytes < 2 << 20)
+        var guest = Guest.fresh(on: host)
+        guest.cores = 3
+        let created = try await storage.create(guest)
+        try Data(repeating: 1, count: 4096).write(to: storage.locations.data)
+        let erased = try await storage.erase(created)
+        #expect(erased.cores == 3 && erased.usedBytes == 0 && erased.neverStarted)
+        #expect(!FileManager.default.fileExists(atPath: storage.locations.data.path))
     }
 
-    @Test func aFailedSeedWriteLeavesNoDisk() async throws {
-        let writer = FakeSeedWriter()
-        let (storage, root) = try makeStorage(writer: writer)
+    @Test func aGuestOfTheFirstReleaseIsErasedLikeAnyOtherAndItsImageGoes() async throws {
+        let (storage, root) = try makeStorage()
         defer { try? FileManager.default.removeItem(at: root) }
-        writer.failNextWrite = true
-        await #expect(throws: FakeSeedWriter.Failure.self) {
-            _ = try await storage.create(Guest.fresh(on: host))
-        }
-        #expect(!FileManager.default.fileExists(atPath: storage.locations.image.path))
-        #expect(!FileManager.default.fileExists(atPath: storage.locations.partialImage.path))
-        #expect(try storage.load() == nil)
+        let directory = storage.locations.directory
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // The first release kept one image and an instance.json of schema 0.
+        try Data(count: 4096).write(to: directory.appendingPathComponent("guest.img"))
+        try Data(#"{"schema": 0, "data_layout": "single-image"}"#.utf8).write(to: storage.locations.instance)
+        #expect(throws: InstanceError.self) { try storage.completeRun() }
+        await #expect(throws: InstanceError.self) { try await storage.prepareStart(Guest.fresh(on: host)) }
+
+        _ = try await storage.erase(Guest.fresh(on: host))
+        #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("guest.img").path))
+        #expect(try InstanceFiles(directory: directory).readState()?.releaseID == "20261031-los24-r4")
     }
 
-    @Test func eraseReplacesTheDiskAndKeepsTheChoices() async throws {
-        let writer = FakeSeedWriter()
-        let (storage, root) = try makeStorage(writer: writer)
+    @Test func startingAppliesTheUpdateRules() async throws {
+        let (first, root) = try makeStorage()
         defer { try? FileManager.default.removeItem(at: root) }
-        var guest = try await storage.create(Guest.fresh(on: host))
-        guest.microphone = true
-        guest.memoryMiB = 1792
-        guest.didBoot(release: "20261031-los24-r4")
-        guest.setCapacity(16)
-        try storage.save(guest)
+        let guest = try await first.create(Guest.fresh(on: host))
+        // The first start finds no data disk and keeps the new instance; the
+        // runtime then creates the disk.
+        try await first.prepareStart(guest)
+        try Data("android data".utf8).write(to: first.locations.data)
+        try await first.prepareStart(guest)
+        try first.completeRun()
+        #expect(try InstanceFiles(directory: first.locations.directory).readState()?.lastCompleted != nil)
 
-        let erased = try await storage.erase(guest)
-        #expect(writer.writes == [8 + 4, 16 + 4])
-        #expect(erased.neverStarted)
-        #expect(erased.capacityGiB == 16)
-        #expect(erased.pendingCapacityGiB == nil)
-        #expect(erased.microphone)
-        #expect(erased.memoryMiB == 1792)
-        let loaded = try #require(try storage.load())
-        #expect(loaded.capacityGiB == 16)
-        #expect(loaded.neverStarted)
-    }
-
-    @Test func aPendingGrowthGrowsTheDiskAtTheNextStart() async throws {
-        let writer = FakeSeedWriter()
-        let (storage, root) = try makeStorage(writer: writer)
-        defer { try? FileManager.default.removeItem(at: root) }
-        var guest = try await storage.create(Guest.fresh(on: host))
-        try await storage.prepareStart(guest)
-        #expect(writer.grows.isEmpty)
-
-        guest.setCapacity(24)
-        try await storage.prepareStart(guest)
-        #expect(writer.grows == [24 + 4])
-        #expect(writer.writes.count == 1)
-    }
-
-    @Test func aMissingDiskIsWrittenAgainAtStart() async throws {
-        let writer = FakeSeedWriter()
-        let (storage, root) = try makeStorage(writer: writer)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let guest = try await storage.create(Guest.fresh(on: host))
-        try FileManager.default.removeItem(at: storage.locations.image)
-        try await storage.prepareStart(guest)
-        #expect(writer.writes.count == 2)
-        #expect(FileManager.default.fileExists(atPath: storage.locations.image.path))
-    }
-
-    @Test func aLeftoverPartialDiskIsRemovedOnLoad() async throws {
-        let (storage, root) = try makeStorage(writer: FakeSeedWriter())
-        defer { try? FileManager.default.removeItem(at: root) }
-        _ = try await storage.create(Guest.fresh(on: host))
-        try Data(count: 10).write(to: storage.locations.partialImage)
-        _ = try storage.load()
-        #expect(!FileManager.default.fileExists(atPath: storage.locations.partialImage.path))
-    }
-
-    @Test func creatingNeedsTheExpandedSeedPlusTheFirstStartReserve() throws {
-        let (storage, root) = try makeStorage(writer: FakeSeedWriter())
-        defer { try? FileManager.default.removeItem(at: root) }
-        #expect(storage.createRequirementBytes == 3_274_702_848 + Limits.firstStartReserveBytes)
-        #expect(storage.diskPath.hasSuffix("/Guest/guest.img"))
+        // A newer release snapshots the data first.
+        let newer = TwoDiskStorage(
+            locations: first.locations, release: releaseIdentity("20261102-los24-r5", build: 200, sha: String(repeating: "b", count: 64)),
+            releaseDirectory: first.releaseDirectory
+        )
+        try await newer.prepareStart(guest)
+        #expect(FileManager.default.fileExists(atPath: InstanceFiles(directory: first.locations.directory).snapshot(for: "20261102-los24-r5").path))
+        // Until it completes, a start is refused, and so is the older release.
+        await #expect(throws: InstanceError.self) { try await newer.prepareStart(guest) }
+        try newer.completeRun()
+        await #expect(throws: InstanceError.self) { try await first.prepareStart(guest) }
     }
 
     @Test func theGuestIsExcludedFromBackupsUnlessTheUserAsks() async throws {
-        let (storage, root) = try makeStorage(writer: FakeSeedWriter())
+        let (storage, root) = try makeStorage()
         defer { try? FileManager.default.removeItem(at: root) }
         var guest = try await storage.create(Guest.fresh(on: host))
+        try Data(count: 4096).write(to: storage.locations.data)
 
         // A URL caches the resource values it has read, so each read starts
         // from the path. macOS applies a cleared flag through the backup
@@ -217,7 +132,8 @@ struct StorageTests {
             }
             return true
         }
-        let paths = [storage.locations.directory, storage.locations.image, storage.locations.settings, storage.locations.instance]
+        try storage.save(guest)
+        let paths = [storage.locations.directory, storage.locations.data, storage.locations.settings, storage.locations.instance]
         for url in paths {
             #expect(try settles(url, to: true), "\(url.lastPathComponent)")
         }
@@ -230,67 +146,46 @@ struct StorageTests {
     }
 }
 
-struct ZstdFrameTests {
-    private func header(descriptor: UInt8, afterDescriptor: [UInt8]) -> Data {
-        Data([0x28, 0xB5, 0x2F, 0xFD, descriptor] + afterDescriptor)
-    }
-
-    @Test func eightByteSizeInASingleSegmentFrame() {
-        let size: UInt64 = 3_274_702_848
-        let bytes = (0..<8).map { UInt8((size >> UInt64(8 * $0)) & 0xFF) }
-        #expect(ZstdFrame.contentSize(header: header(descriptor: 0xE0, afterDescriptor: bytes)) == size)
-    }
-
-    @Test func oneByteSizeInASingleSegmentFrame() {
-        #expect(ZstdFrame.contentSize(header: header(descriptor: 0x20, afterDescriptor: [200, 0])) == 200)
-    }
-
-    @Test func twoByteSizeCountsFromTwoFiftySix() {
-        // A window byte precedes the size when the frame is not a single segment.
-        #expect(ZstdFrame.contentSize(header: header(descriptor: 0x40, afterDescriptor: [0x10, 0x01, 0x00])) == 257)
-    }
-
-    @Test func aFrameWithNoDeclaredSize() {
-        #expect(ZstdFrame.contentSize(header: header(descriptor: 0x00, afterDescriptor: [0x10, 0, 0])) == nil)
-    }
-
-    @Test func notAZstdFrameOrTruncated() {
-        #expect(ZstdFrame.contentSize(header: Data([1, 2, 3, 4, 5, 6, 7])) == nil)
-        #expect(ZstdFrame.contentSize(header: header(descriptor: 0xE0, afterDescriptor: [1, 2])) == nil)
-    }
-}
-
 struct DiskPathTests {
     @Test func theRuntimesKernelArgumentRefusesWhatItCannotCarry() {
-        #expect(DiskPath.isUsable("/var/mobile/Containers/Data/Application/0E1F-2A/Library/Guest/guest.img"))
+        #expect(DiskPath.isUsable("/var/mobile/Containers/Data/Application/0E1F-2A/Library/Guest/data.img"))
         #expect(!DiskPath.isUsable(""))
         // The Application Support directory has a space in its name, which is
         // why a guest does not live there.
-        #expect(!DiskPath.isUsable("/Library/Application Support/Guest/guest.img"))
-        for refused in ["/a\tb", "/a\nb", "/a,b", "/a:b", "/a\"b", "/caf\u{e0}/guest.img"] {
+        #expect(!DiskPath.isUsable("/Library/Application Support/Guest/data.img"))
+        for refused in ["/a\tb", "/a\nb", "/a,b", "/a:b", "/a\"b", "/caf\u{e0}/data.img"] {
             #expect(!DiskPath.isUsable(refused), "\(refused.debugDescription)")
         }
     }
 
     @Test func aGuestIsNotWrittenToAPathTheRuntimeCannotBoot() async throws {
-        let writer = FakeSeedWriter()
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("andarium-core-tests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let directory = root.appendingPathComponent("Application Support").appendingPathComponent("Guest")
-        let storage = SingleImageStorage(
-            locations: GuestLocations(directory: directory),
-            seed: SeedImage(url: root.appendingPathComponent("seed.img.zst"), release: "r", expandedBytes: 1),
-            appVersion: "1.0 (1)", writer: writer
+        let storage = TwoDiskStorage(
+            locations: GuestLocations(directory: directory), release: releaseIdentity(),
+            releaseDirectory: root.appendingPathComponent("andarium-system")
         )
         let guest = Guest.fresh(on: host)
-        let expected = StorageError.unusableDiskPath(directory.appendingPathComponent("guest.img").path)
+        let expected = StorageError.unusableDiskPath(directory.appendingPathComponent("data.img").path)
 
         await #expect(throws: expected) { try await storage.create(guest) }
         await #expect(throws: expected) { try await storage.erase(guest) }
         await #expect(throws: expected) { try await storage.prepareStart(guest) }
-        #expect(writer.writes.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: directory.path))
         #expect(expected.errorDescription?.contains("Application Support") == true)
+    }
+
+    @Test func theReleaseDirectoryNeedsAUsablePathToo() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("andarium-core-tests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let release = root.appendingPathComponent("Andarium 2.app/andarium-system")
+        let storage = TwoDiskStorage(
+            locations: GuestLocations(directory: root.appendingPathComponent("Guest")), release: releaseIdentity(),
+            releaseDirectory: release
+        )
+        await #expect(throws: StorageError.unusableDiskPath(release.path)) { try await storage.create(Guest.fresh(on: host)) }
     }
 }

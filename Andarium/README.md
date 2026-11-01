@@ -21,8 +21,8 @@ Andarium.xcodeproj/   JSON project (project.xcproj) and its shared schemes
 ```
 
 `../GuestHost/Sources` holds the host code Kernarium and Andarium share to
-run a guest: the runtime loader, the display and touch view, the disk and zstd
-utilities and the shader cache.
+run a guest: the runtime loader, the display and touch view, the zstd utility
+and the shader cache.
 
 The project file is the JSON format Xcode 27 reads and Xcode 27.2 writes
 (`project.xcproj`), kept in the canonical form
@@ -64,9 +64,14 @@ Kernarium/scripts/package-ios-frameworks.sh --runtimes android
 Andarium/scripts/stage-system-image.py
 ```
 
-The frameworks go to `.build/kernarium-xcframeworks`, which Kernarium shares,
-and the system to `.build/andarium-system`. Then the device application builds
-from the `Andarium` scheme:
+The frameworks go to `.build/kernarium-xcframeworks`, which Kernarium shares.
+The staged system, `.build/andarium-system`, is the accepted release as
+installed: the read-only system disk `guest/system.img`, its
+`guest/partition-layout.json`, `boot/kernel-command-line.txt` and
+`release-manifest.json`, checked against the manifest and the layout (size,
+sha256, 4 KiB pages) before they are copied. `--release <directory>` stages
+another installed release. The application bundles the directory as it stands.
+Then the device application builds from the `Andarium` scheme:
 
 ```sh
 xcodebuild -project Andarium/Andarium.xcodeproj -scheme Andarium \
@@ -103,15 +108,29 @@ that value.
 ### Storage
 
 A guest's files live in `Library/Guest/` of the application's container,
-behind `GuestStorage`. They are not in `Application Support`: the runtime
-names the disk in a kernel argument that cannot carry a space, a comma, a
-colon or a quotation mark, so a guest is never created at such a path
-(`DiskPath`). The first release keeps the whole system and the guest's data in
-one GPT image (`SingleImageStorage`), written sparse from the system image the
-application carries: Create and Erase take tens of seconds and each guest
-holds its own copy of the system, and a new system reaches an existing guest
-only by erasing it. That layout is interim; a layout with the system apart
-from the data replaces it behind the same protocol.
+behind `GuestStorage`: `settings.json` (the guest's choices), `data.img` (its
+writable data disk) and `instance.json` (the record of the Android that last
+started on it). The system is Android's, read-only, and stays in the
+application's release directory (`guest/system.img`); the runtime attaches the
+system disk and the data disk, creates `data.img` at the first start sized by
+the guest's capacity, and only grows it afterwards. Create and Erase therefore
+write no disk and take no time.
+
+`InstanceRules.decide` (`Instance.swift`, the rules and vectors of the
+[Android README](../android/lineage-24/README.md#guest-instance-storage))
+chooses what a start does with the carried release: first boot, ordinary boot,
+update, or a refusal. An update first clones `data.img` to
+`data.img.pre-<release id>` (an APFS clone), and an instance counts as
+completed only after Android reported `sys.boot_completed` and the run ended
+cleanly. A guest the first release created as one `guest.img` has no instance
+record the rules can use; it can only be erased.
+
+The runtime passes the data disk's and the release's paths to Linux in a
+kernel argument that cannot carry a space, a tab, a newline, a comma, a colon
+or a quotation mark. So `data.img` and the release directory stay at such
+free paths, and a guest is never created at one (`DiskPath`): that is why the
+guest is in `Library/Guest/` and not in `Application Support`, whose name has
+a space.
 
 The guest is left out of iCloud and computer backups unless the user turns on
 Include in Backups for it: Android can set itself up again, and the files take
@@ -173,5 +192,5 @@ keeps running meanwhile, and the harness waits for the focus
 
 The container's `Documents` is the harness's staging area; Andarium never
 deletes a file it did not create. The guest is under `Library/Guest/`
-(`guest.img`, `settings.json`, `instance.json`) and is not the
+(`data.img`, `settings.json`, `instance.json`) and is not the
 harness's to write.

@@ -2,16 +2,19 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Stage the accepted Android release as the system image Andarium carries.
 
-The application bundles the staged directory as it stands: the guest's disk as
-the zstd archive the release ships, the kernel command line, the release
-manifest and the disk's partition layout. The staged files are copies of an
-accepted release, which is checked against its own manifest; this script
-neither builds nor signs anything.
+The application bundles the staged directory as it stands, laid out as the
+installed release: the read-only system disk `guest/system.img`, its
+`guest/partition-layout.json`, `boot/kernel-command-line.txt` and
+`release-manifest.json`. The runtime boots from that directory and creates the
+writable data disk beside the guest's own files. The staged files are copies of
+an accepted release, which is checked against its own manifest and layout; this
+script neither builds nor signs anything.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -34,8 +37,10 @@ import contract_checks  # noqa: E402
 MANIFEST = "release-manifest.json"
 COMMAND_LINE = "boot/kernel-command-line.txt"
 PARTITION_LAYOUT = "guest/partition-layout.json"
-ARCHIVE_ROLE = "guest-disk-archive"
-ZSTD_MAGIC = bytes.fromhex("28b52ffd")
+SYSTEM_DISK = "guest/system.img"
+SYSTEM_DISK_ROLE = "system-disk"
+FILES = (MANIFEST, COMMAND_LINE, PARTITION_LAYOUT, SYSTEM_DISK)
+LAYOUT_SCHEMA = 2
 GUEST_PAGE_SIZE = 4096
 
 
@@ -57,27 +62,16 @@ def read_json(path: Path) -> dict:
     return value
 
 
-def zstd_content_size(header: bytes) -> int | None:
-    """The decompressed size a zstd frame header declares, if it declares one."""
-    if len(header) < 6 or header[:4] != ZSTD_MAGIC:
-        raise StageError("the disk archive is not a zstd frame")
-    descriptor = header[4]
-    size_flag = descriptor >> 6
-    single_segment = bool(descriptor & 0x20)
-    dictionary_bytes = (0, 1, 2, 4)[descriptor & 0x03]
-    offset = 5 + (0 if single_segment else 1) + dictionary_bytes
-    width = (1 if single_segment else 0, 2, 4, 8)[size_flag]
-    if width == 0:
-        return None
-    field = header[offset:offset + width]
-    if len(field) != width:
-        raise StageError("the zstd frame header is truncated")
-    size = int.from_bytes(field, "little")
-    return size + 256 if width == 2 else size
+def sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 22), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
-def check_release(release: Path, manifest: dict, accepted: dict[str, str] | None) -> Path:
-    """Checks the release and returns its disk archive."""
+def check_release(release: Path, manifest: dict, accepted: dict[str, str] | None) -> None:
+    """Checks the release against its manifest and layout; raises StageError."""
     if manifest.get("acceptance") != "accepted":
         raise StageError("the release is not accepted")
     android = manifest.get("android")
@@ -103,29 +97,29 @@ def check_release(release: Path, manifest: dict, accepted: dict[str, str] | None
     if not isinstance(inventory, list):
         raise StageError("the manifest has no inventory")
     by_path = {entry.get("path"): entry for entry in inventory if isinstance(entry, dict)}
-    archives = [entry for entry in by_path.values() if entry.get("role") == ARCHIVE_ROLE]
-    if len(archives) != 1:
-        raise StageError(f"expected one {ARCHIVE_ROLE} in the inventory, found {len(archives)}")
-    archive = release / str(archives[0]["path"])
-    for path in (archive, release / COMMAND_LINE, release / PARTITION_LAYOUT):
+    disks = [entry for entry in by_path.values() if entry.get("role") == SYSTEM_DISK_ROLE]
+    if len(disks) != 1 or disks[0].get("path") != SYSTEM_DISK:
+        raise StageError(f"expected one {SYSTEM_DISK_ROLE} at {SYSTEM_DISK} in the inventory")
+    for relative in (COMMAND_LINE, PARTITION_LAYOUT, SYSTEM_DISK):
+        path = release / relative
         if not path.is_file() or path.is_symlink():
             raise StageError(f"missing or unsafe release file: {path}")
-    for relative in (archives[0]["path"], COMMAND_LINE, PARTITION_LAYOUT):
         entry = by_path.get(relative)
         if entry is None:
             raise StageError(f"{relative} is not in the manifest inventory")
-        if (release / relative).stat().st_size != entry.get("size"):
+        if path.stat().st_size != entry.get("size"):
             raise StageError(f"{relative} does not match the size in the manifest")
 
     layout = read_json(release / PARTITION_LAYOUT)
-    with archive.open("rb") as handle:
-        declared = zstd_content_size(handle.read(18))
-    if declared is not None and declared != layout.get("disk_size_bytes"):
-        raise StageError(
-            f"the archive expands to {declared} bytes but the partition layout "
-            f"says {layout.get('disk_size_bytes')}"
-        )
-    return archive
+    if layout.get("schema_version") != LAYOUT_SCHEMA:
+        raise StageError(f"the partition layout is not schema {LAYOUT_SCHEMA}")
+    system = layout.get("system_disk")
+    if not isinstance(system, dict):
+        raise StageError("the partition layout has no system_disk")
+    if (release / SYSTEM_DISK).stat().st_size != system.get("size_bytes"):
+        raise StageError("the system disk does not match the size in the partition layout")
+    if sha256_of(release / SYSTEM_DISK) != system.get("sha256"):
+        raise StageError("the system disk does not match the sha256 in the partition layout")
 
 
 def copy(source: Path, destination: Path) -> None:
@@ -137,14 +131,13 @@ def copy(source: Path, destination: Path) -> None:
         shutil.copyfile(source, destination)
 
 
-def stage(release: Path, manifest: dict, archive: Path, output: Path) -> None:
+def stage(release: Path, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
     try:
-        copy(archive, scratch / archive.name)
-        copy(release / COMMAND_LINE, scratch / "kernel-command-line.txt")
-        copy(release / MANIFEST, scratch / MANIFEST)
-        copy(release / PARTITION_LAYOUT, scratch / "partition-layout.json")
+        for relative in FILES:
+            (scratch / relative).parent.mkdir(parents=True, exist_ok=True)
+            copy(release / relative, scratch / relative)
         previous = None
         if output.exists():
             previous = Path(tempfile.mkdtemp(prefix=f".{output.name}.old.", dir=output.parent))
@@ -180,8 +173,8 @@ def main(argv: list[str] | None = None) -> int:
         if not release.is_dir():
             raise StageError(f"the Android release is not installed: {release}")
         manifest = read_json(release / MANIFEST)
-        archive = check_release(release, manifest, accepted)
-        stage(release, manifest, archive, arguments.output)
+        check_release(release, manifest, accepted)
+        stage(release, arguments.output)
     except StageError as error:
         fail(str(error))
     print(f"staged {manifest['product_family']} {manifest['release_id']}: {arguments.output}")

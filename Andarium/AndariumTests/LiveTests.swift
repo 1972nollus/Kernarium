@@ -4,43 +4,53 @@ import Foundation
 import Testing
 @testable import Andarium
 
-/// The pieces of the device application that touch the host: the system it
+/// The pieces of the device application that touch the host: the release it
 /// carries, the console it reads and the options it keeps.
 struct SystemFolderTests {
-    private func folder(archive: String? = "android.img.zst", layout: String? = #"{"disk_size_bytes": 3274702848}"#) throws -> URL {
+    private static let manifest = #"{"release_id": "20261031-los24-r4", "android": {"fingerprint": "Android/x:17/a/b:userdebug/release-keys", "build_number": 1793463711, "security_patch": "2026-10-01"}}"#
+
+    private func layout(size: Int) -> String {
+        #"{"system_disk": {"size_bytes": \#(size), "sha256": "\#(String(repeating: "a", count: 64))"}, "data_disk": {"layout_version": 1, "capacity_gib": {"minimum": 4, "default": 8, "maximum": 64}}}"#
+    }
+
+    /// A release directory with a system disk of `disk` bytes.
+    private func folder(disk: Int = 4096, declared: Int = 4096, omit: String? = nil) throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("andarium-system-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        if let archive { try Data("x".utf8).write(to: url.appendingPathComponent(archive)) }
-        if let layout { try Data(layout.utf8).write(to: url.appendingPathComponent(SystemFolder.layout)) }
+        let files: [String: Data] = [
+            SystemFolder.manifest: Data(Self.manifest.utf8),
+            SystemFolder.commandLine: Data("init=/init\n".utf8),
+            SystemFolder.layout: Data(layout(size: declared).utf8),
+            SystemFolder.systemDisk: Data(count: disk),
+        ]
+        for (name, data) in files where name != omit {
+            let file = url.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: file)
+        }
         return url
     }
 
-    @Test func theSeedIsTheArchiveWithTheDeclaredSize() throws {
+    @Test func theReleaseIsTheDirectoryWithItsSystemDisk() throws {
         let url = try folder()
         defer { try? FileManager.default.removeItem(at: url) }
-        let seed = try SystemFolder.seed(in: url, release: "20261031-los24-r4", stagedName: nil)
-        #expect(seed.url.lastPathComponent == "android.img.zst")
-        #expect(seed.expandedBytes == 3_274_702_848)
-        #expect(seed.release == "20261031-los24-r4")
+        let release = try SystemFolder.release(in: url)
+        #expect(release.identity.releaseID == "20261031-los24-r4")
+        #expect(release.identity.buildNumber == 1_793_463_711)
+        #expect(release.systemDiskBytes == 4096)
     }
 
-    @Test func aFolderWithoutAnArchiveOrSizeIsRefused() throws {
-        let noArchive = try folder(archive: nil)
-        let noSize = try folder(layout: #"{"other": 1}"#)
-        defer {
-            try? FileManager.default.removeItem(at: noArchive)
-            try? FileManager.default.removeItem(at: noSize)
+    @Test func aFileThatIsMissingIsNamed() throws {
+        for name in [SystemFolder.manifest, SystemFolder.commandLine, SystemFolder.layout, SystemFolder.systemDisk] {
+            let url = try folder(omit: name)
+            defer { try? FileManager.default.removeItem(at: url) }
+            #expect(throws: SystemFolder.Problem.missing(name)) { try SystemFolder.release(in: url) }
         }
-        #expect(throws: SystemFolder.Problem.self) { try SystemFolder.seed(in: noArchive, release: "r", stagedName: nil) }
-        #expect(throws: SystemFolder.Problem.self) { try SystemFolder.seed(in: noSize, release: "r", stagedName: nil) }
     }
 
-    @Test func aStagedImageThatIsNotThereIsRefused() throws {
-        let url = try folder()
+    @Test func aSystemDiskOfAnotherSizeIsRefused() throws {
+        let url = try folder(disk: 4096, declared: 8192)
         defer { try? FileManager.default.removeItem(at: url) }
-        #expect(throws: SystemFolder.Problem.self) {
-            try SystemFolder.seed(in: url, release: "r", stagedName: "no-such-image-\(UUID().uuidString).img")
-        }
+        #expect(throws: SystemFolder.Problem.sizeDiffers(declared: 8192, actual: 4096)) { try SystemFolder.release(in: url) }
     }
 }
 
@@ -82,40 +92,6 @@ struct HostDeviceTests {
 /// The system Andarium carries, written the way Create writes it: decoded
 /// sparse from the bundled archive and grown to the guest's size. It is the
 /// one test that reads the real archive, so it takes tens of seconds.
-struct LiveSeedWriterTests {
-    private nonisolated final class Progress: @unchecked Sendable {
-        private let lock = NSLock()
-        private var values: [Double] = []
-        var all: [Double] { lock.withLock { values } }
-        func add(_ value: Double) { lock.withLock { values.append(value) } }
-    }
-
-    @Test func theBundledSystemBecomesAGPTDiskOfTheRequestedSize() async throws {
-        let folder = try #require(Bundle.main.resourceURL?.appendingPathComponent(SystemFolder.name))
-        let seed = try SystemFolder.seed(in: folder, release: "test", stagedName: nil)
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("andarium-seed-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let destination = directory.appendingPathComponent("guest.img")
-        let imageGiB = SingleImageStorage.imageGiB(forCapacity: 8)
-        let progress = Progress()
-
-        try await LiveSeedWriter().write(seed: seed, to: destination, imageGiB: imageGiB) { progress.add($0) }
-
-        let size = try #require(try FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? UInt64)
-        #expect(size == UInt64(imageGiB) << 30)
-        // The GPT header sits at LBA 1 and its backup at the last LBA.
-        let handle = try FileHandle(forReadingFrom: destination)
-        try handle.seek(toOffset: 512)
-        #expect(try handle.read(upToCount: 8) == Data("EFI PART".utf8))
-        try handle.seek(toOffset: size - 512)
-        #expect(try handle.read(upToCount: 8) == Data("EFI PART".utf8))
-        // Progress only moves forward and ends at the whole.
-        #expect(progress.all == progress.all.sorted())
-        #expect(progress.all.last == 1)
-    }
-}
-
 /// A harness launch on a Mac starts Andarium through `xcodebuild test`, which
 /// ends the application with the test run. An automation launch that sets
 /// `ANDARIUM_HOLD_SECONDS` keeps the host up that long, so its guest can boot

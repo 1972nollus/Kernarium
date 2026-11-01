@@ -37,8 +37,9 @@ final class LiveRuntime: RuntimeDriver {
     nonisolated private static let powerMenuHold = 0.8
 
     private weak var model: AppModel?
-    private let storage: SingleImageStorage
-    private let commandLine: URL
+    private let storage: TwoDiskStorage
+    /// The guest reached `sys.boot_completed`, which a clean end records.
+    private var reachedReady = false
     private let pause: PauseController
     private let microphone = SystemMicrophonePermission()
     private var observers: [NSObjectProtocol] = []
@@ -53,10 +54,9 @@ final class LiveRuntime: RuntimeDriver {
     private var thermalObserver: NSObjectProtocol?
     private var console: ConsoleSink?
 
-    init(model: AppModel, storage: SingleImageStorage, commandLine: URL, marker: PauseMarker) {
+    init(model: AppModel, storage: TwoDiskStorage, marker: PauseMarker) {
         self.model = model
         self.storage = storage
-        self.commandLine = commandLine
         pause = PauseController(effects: LivePauseEffects(), marker: marker)
         model.microphoneState = Self.state(microphone.access)
         observeLifecycle()
@@ -164,8 +164,10 @@ final class LiveRuntime: RuntimeDriver {
         view.setGuestDisplay(width: width, height: height)
         UIApplication.shared.isIdleTimerDisabled = true
 
-        let diskPath = storage.diskPath
-        let commandLinePath = commandLine.path
+        let dataDiskPath = storage.dataDiskPath
+        let releasePath = storage.releaseDirectory.path
+        let dataGiB = storage.dataGiB(for: run.guest)
+        reachedReady = false
         let bootMode: UInt32 = run.mode == .recovery ? 2 : 1
         let memoryMiB = UInt32(run.guest.memoryMiB)
         let processorCount = UInt32(run.guest.cores)
@@ -177,7 +179,7 @@ final class LiveRuntime: RuntimeDriver {
         // the cooperative pool it would block for hours.
         let worker = Thread {
             let result = Self.runGuest(
-                view: view, diskPath: diskPath, commandLinePath: commandLinePath, bootMode: bootMode,
+                view: view, dataDiskPath: dataDiskPath, releasePath: releasePath, dataGiB: dataGiB, bootMode: bootMode,
                 width: width, height: height, dotsPerInch: dotsPerInch, memoryMiB: memoryMiB,
                 processorCount: processorCount, autoResize: autoResize
             )
@@ -188,12 +190,12 @@ final class LiveRuntime: RuntimeDriver {
     }
 
     private nonisolated static func runGuest(
-        view: GuestMetalView, diskPath: String, commandLinePath: String, bootMode: UInt32,
+        view: GuestMetalView, dataDiskPath: String, releasePath: String, dataGiB: UInt32, bootMode: UInt32,
         width: UInt32, height: UInt32, dotsPerInch: UInt32, memoryMiB: UInt32,
         processorCount: UInt32, autoResize: Bool
     ) -> Int32 {
-        diskPath.withCString { disk in
-            commandLinePath.withCString { commandLine in
+        dataDiskPath.withCString { dataDisk in
+            releasePath.withCString { release in
                 var request = kernarium_runtime_boot()
                 request.struct_size = UInt32(MemoryLayout<kernarium_runtime_boot>.size)
                 request.width = width
@@ -203,8 +205,9 @@ final class LiveRuntime: RuntimeDriver {
                 request.guest_processor_count = processorCount
                 request.android_boot_mode = bootMode
                 request.auto_resize_guest = autoResize ? 1 : 0
-                request.android_disk_path = disk
-                request.android_command_line_path = commandLine
+                request.android_data_disk_path = dataDisk
+                request.android_release_path = release
+                request.android_data_gib = dataGiB
                 return withUnsafePointer(to: &request) { kernarium_runtime_loader_run(view, $0) }
             }
         }
@@ -215,6 +218,7 @@ final class LiveRuntime: RuntimeDriver {
     private func reached(_ milestones: [BootMilestone]) {
         guard let model else { return }
         let seconds = Int(Date().timeIntervalSince(bootStartedAt))
+        if milestones.contains(.ready) { reachedReady = true }
         for milestone in milestones where model.bootTracker.reach(milestone, atSeconds: seconds) {
             print("Andarium: boot reached \(milestone) at \(seconds) s")
         }
@@ -239,6 +243,11 @@ final class LiveRuntime: RuntimeDriver {
         pause.guestDidEnd()
         UIApplication.shared.isIdleTimerDisabled = false
         print(ConsoleReport.runtimeReturned(result))
+        // A start that reached sys.boot_completed and ended with Android's own
+        // power-off is the one that ends a pending update.
+        if result == 0, reachedReady {
+            do { try storage.completeRun() } catch { print("Andarium: the guest's record was not updated: \(error.localizedDescription)") }
+        }
         let uptime = runStartedAt.map { Int(Date().timeIntervalSince($0)) }
         let loop = result == Int32(KERNARIUM_RUNTIME_RESULT_RESTART_LOOP)
         model?.runEnded(RunEnd(result: result, restartedInALoop: loop), uptimeSeconds: uptime)

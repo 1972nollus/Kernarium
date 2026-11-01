@@ -20,11 +20,10 @@ KernariumAutomation/  long-lived UI-automation host for a connected device
 scripts/              launch, packaging, bundle assembly, and automation tools
 ```
 
-The runtime loader, the guest display and its input, the disk and zstd
-utilities, the microphone permission and the shader-cache bound are not in
-this directory: [`GuestHost/`](../GuestHost/README.md) holds them, compiled
-into this application and into Andarium. `DiskUtil` and `ZstdUtil` below are
-those.
+The runtime loader, the guest display and its input, the zstd utility, the
+microphone permission and the shader-cache bound are not in this directory:
+[`GuestHost/`](../GuestHost/README.md) holds them, compiled into this
+application and into Andarium. `ZstdUtil` below is that utility.
 
 ## Runtimes and runs
 
