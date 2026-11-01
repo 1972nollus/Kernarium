@@ -102,14 +102,16 @@ that value.
 
 ### Storage
 
-A guest's files live in `Library/Application Support/Guest/` of the
-application's container, behind `GuestStorage`. The first release keeps the
-whole system and the guest's data in one GPT image (`SingleImageStorage`),
-written sparse from the system image the application carries: Create and
-Erase take tens of seconds and each guest holds its own copy of the system,
-and a new system reaches an existing guest only by erasing it. That layout is
-interim; a layout with the system apart from the data replaces it behind the
-same protocol.
+A guest's files live in `Library/Guest/` of the application's container,
+behind `GuestStorage`. They are not in `Application Support`: the runtime
+names the disk in a kernel argument that cannot carry a space, a comma, a
+colon or a quotation mark, so a guest is never created at such a path
+(`DiskPath`). The first release keeps the whole system and the guest's data in
+one GPT image (`SingleImageStorage`), written sparse from the system image the
+application carries: Create and Erase take tens of seconds and each guest
+holds its own copy of the system, and a new system reaches an existing guest
+only by erasing it. That layout is interim; a layout with the system apart
+from the data replaces it behind the same protocol.
 
 The guest is left out of iCloud and computer backups unless the user turns on
 Include in Backups for it: Android can set itself up again, and the files take
@@ -160,6 +162,6 @@ off) and `Andarium thermal state: phase=start|change|finish state=<state>
 uptime=<seconds>`.
 
 The container's `Documents` is the harness's staging area; Andarium never
-deletes a file it did not create. The guest is under `Library/Application
-Support/Guest/` (`guest.img`, `settings.json`, `instance.json`) and is not the
+deletes a file it did not create. The guest is under `Library/Guest/`
+(`guest.img`, `settings.json`, `instance.json`) and is not the
 harness's to write.

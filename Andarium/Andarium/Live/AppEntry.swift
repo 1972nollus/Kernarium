@@ -77,7 +77,7 @@ struct AppEntry {
         model.retina = launch.retina ?? options.retina
         model.followWindow = launch.followWindow ?? options.followWindow
 
-        let marker = PauseMarker(url: locations.directory.deletingLastPathComponent().appendingPathComponent("pause.json"))
+        let marker = PauseMarker(url: Self.supportDirectory().appendingPathComponent("pause.json"))
         if marker.consume(), guest != nil {
             model.notice = .closedInBackground
             print("Andarium: the previous process ended out of the foreground; the guest starts again from boot")
@@ -130,12 +130,21 @@ struct AppEntry {
         return "\(short) (\(build))"
     }
 
-    /// `Library/Application Support/Guest/`
+    /// `Library/Guest/`. The disk's path goes to Linux in a kernel argument
+    /// that cannot carry a space, so the guest does not live in `Application
+    /// Support`; the library directory's name is safe on a device and on a Mac.
     static func guestDirectory() -> URL {
-        let support = (try? FileManager.default.url(
+        let library = (try? FileManager.default.url(
+            for: .libraryDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        )) ?? FileManager.default.temporaryDirectory
+        return library.appendingPathComponent("Guest", isDirectory: true)
+    }
+
+    /// `Library/Application Support/`, for the application's own small files.
+    static func supportDirectory() -> URL {
+        (try? FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         )) ?? FileManager.default.temporaryDirectory
-        return support.appendingPathComponent("Guest", isDirectory: true)
     }
 
     @MainActor

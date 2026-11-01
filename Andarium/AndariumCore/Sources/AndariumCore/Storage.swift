@@ -87,8 +87,8 @@ extension GuestStorage {
     }
 }
 
-/// Where a guest keeps its files, under the application's Application
-/// Support directory.
+/// Where a guest keeps its files. The directory's path becomes part of a
+/// kernel argument (see `DiskPath`), so it must be one the runtime accepts.
 public struct GuestLocations: Equatable, Sendable {
     public var directory: URL
 
@@ -132,9 +132,37 @@ public struct InstanceRecord: Codable, Equatable, Sendable {
     }
 }
 
-public enum StorageError: Error, Equatable {
+/// Whether a host file path can name the guest's disk. The runtime passes
+/// the path to Linux in a `ubd<n>=` kernel argument, which the kernel splits
+/// at whitespace (its Latin-1 table, so also a byte 0xa0) and in which a
+/// double quote, a comma or a colon start something else. A path carrying
+/// one, or an empty one, is refused by the runtime at start; this is the same
+/// rule (`darwin/device/block/ubd_path.hpp`), applied before a disk is
+/// written to a place it could never boot from.
+public enum DiskPath {
+    public static func isUsable(_ path: String) -> Bool {
+        guard !path.isEmpty else { return false }
+        let refused: Set<UInt8> = [0x20, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0xa0, 0x22, 0x2c, 0x3a]
+        return !path.utf8.contains { refused.contains($0) }
+    }
+}
+
+public enum StorageError: Error, Equatable, LocalizedError {
     case notEnoughSpace(neededBytes: UInt64)
     case missingSeed
+    /// The guest's disk would sit at a path Android's kernel cannot be given.
+    case unusableDiskPath(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .notEnoughSpace:
+            return "There is not enough free storage to set up Android."
+        case .missingSeed:
+            return "This copy of Andarium does not carry a system."
+        case .unusableDiskPath(let path):
+            return "Android cannot start from \(path): its name has a space, comma, colon or quotation mark."
+        }
+    }
 }
 
 /// One disk image per guest: the whole system and the guest's data in a
@@ -180,7 +208,14 @@ public struct SingleImageStorage: GuestStorage {
         return guest
     }
 
+    /// Refuses a location the runtime could not boot, before anything is
+    /// written there.
+    private func requireUsableDiskPath() throws {
+        guard DiskPath.isUsable(diskPath) else { throw StorageError.unusableDiskPath(diskPath) }
+    }
+
     public func create(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest {
+        try requireUsableDiskPath()
         try FileManager.default.createDirectory(at: locations.directory, withIntermediateDirectories: true)
         try await writeSeed(capacityGiB: guest.effectiveCapacityGiB, progress: progress)
         var created = guest.erased
@@ -191,6 +226,7 @@ public struct SingleImageStorage: GuestStorage {
     }
 
     public func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest {
+        try requireUsableDiskPath()
         // The old disk is going away either way; removing it first keeps
         // the host from holding two.
         try? FileManager.default.removeItem(at: locations.image)
@@ -198,6 +234,7 @@ public struct SingleImageStorage: GuestStorage {
     }
 
     public func prepareStart(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws {
+        try requireUsableDiskPath()
         let manager = FileManager.default
         if !manager.fileExists(atPath: locations.image.path) {
             try await writeSeed(capacityGiB: guest.effectiveCapacityGiB, progress: progress)

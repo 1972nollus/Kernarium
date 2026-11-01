@@ -259,3 +259,38 @@ struct ZstdFrameTests {
         #expect(ZstdFrame.contentSize(header: header(descriptor: 0xE0, afterDescriptor: [1, 2])) == nil)
     }
 }
+
+struct DiskPathTests {
+    @Test func theRuntimesKernelArgumentRefusesWhatItCannotCarry() {
+        #expect(DiskPath.isUsable("/var/mobile/Containers/Data/Application/0E1F-2A/Library/Guest/guest.img"))
+        #expect(!DiskPath.isUsable(""))
+        // The Application Support directory has a space in its name, which is
+        // why a guest does not live there.
+        #expect(!DiskPath.isUsable("/Library/Application Support/Guest/guest.img"))
+        for refused in ["/a\tb", "/a\nb", "/a,b", "/a:b", "/a\"b", "/caf\u{e0}/guest.img"] {
+            #expect(!DiskPath.isUsable(refused), "\(refused.debugDescription)")
+        }
+    }
+
+    @Test func aGuestIsNotWrittenToAPathTheRuntimeCannotBoot() async throws {
+        let writer = FakeSeedWriter()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("andarium-core-tests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("Application Support").appendingPathComponent("Guest")
+        let storage = SingleImageStorage(
+            locations: GuestLocations(directory: directory),
+            seed: SeedImage(url: root.appendingPathComponent("seed.img.zst"), release: "r", expandedBytes: 1),
+            appVersion: "1.0 (1)", writer: writer
+        )
+        let guest = Guest.fresh(on: host)
+        let expected = StorageError.unusableDiskPath(directory.appendingPathComponent("guest.img").path)
+
+        await #expect(throws: expected) { try await storage.create(guest) }
+        await #expect(throws: expected) { try await storage.erase(guest) }
+        await #expect(throws: expected) { try await storage.prepareStart(guest) }
+        #expect(writer.writes.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+        #expect(expected.errorDescription?.contains("Application Support") == true)
+    }
+}
