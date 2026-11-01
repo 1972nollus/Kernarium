@@ -3,21 +3,22 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 23:02:26 +0900
 Subject: [PATCH] x86: 16-bit SHLD and SHRD shift the 32-bit concatenation
 
-A 16-bit double shift's masked count reaches 31. FEXCore cleared CF
-for an immediate SHLD count of 16 and filled the result with zeros
-for counts above 16. Both forms of both instructions now shift the
-32-bit concatenation of the destination and the source, so the bits
-shifted in past the source's width are the source's own and CF is
-the last bit shifted out.
+A 16-bit double shift's masked count reaches 31. FEXCore filled the
+result with zeros for counts above 16 and left CF clear for an
+immediate SHLD count above 16 (it sets CF for a count of 16 itself).
+Both forms of both instructions now shift the 32-bit concatenation of
+the destination and the source, so the bits shifted in past the
+source's width are the source's own and CF is the last bit shifted
+out.
 ---
  .../Interface/Core/OpcodeDispatcher.cpp       | 70 ++++++++++++-------
  1 file changed, 44 insertions(+), 26 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 17adca77f49c7b9b9828bf038694a622dd411a38..7249b6badb67e83d4deb714762738629d433ff3f 100644
+index ceb293cdf6eb01c967be78bed28f5e25ea9bfaec..727221fcd01bf5d8987c0e7065b13b48482f6115 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -1523,14 +1523,23 @@ void OpDispatchBuilder::SHLDOp(OpcodeArgs) {
+@@ -1508,14 +1508,23 @@ void OpDispatchBuilder::SHLDOp(OpcodeArgs) {
      Shift = _And(OpSize::i64Bit, Shift, _InlineConstant(0x1F));
    }
  
@@ -47,7 +48,7 @@ index 17adca77f49c7b9b9828bf038694a622dd411a38..7249b6badb67e83d4deb714762738629
  
    // If shift count was zero then output doesn't change
    // Needs to be checked for the 32bit operand case
-@@ -1556,19 +1565,20 @@ void OpDispatchBuilder::SHLDImmediateOp(OpcodeArgs) {
+@@ -1541,19 +1550,20 @@ void OpDispatchBuilder::SHLDImmediateOp(OpcodeArgs) {
    if (Shift != 0) {
      Ref Res {};
      if (Size < 32) {
@@ -67,15 +68,15 @@ index 17adca77f49c7b9b9828bf038694a622dd411a38..7249b6badb67e83d4deb714762738629
        Res = _Extr(OpSizeFromSrc(Op), Dest, Src, Size - Shift);
      }
  
-     CalculateFlags_ShiftLeftImmediate(OpSizeFromSrc(Op), Res, Dest, Shift);
-+    if (Size < 32 && Shift >= Size) {
+     CalculateFlags_ShiftLeftImmediate(OpSizeFromSrc(Op), Res, Dest, Shift, true);
++    if (Size < 32 && Shift > Size) {
 +      // Bit 16 of the result is the last bit shifted out.
 +      SetCFDirect(Res, Size, true);
 +    }
      CalculateDeferredFlags();
      StoreResultGPR(Op, Res);
    } else if (Shift == 0 && Size == 32) {
-@@ -1596,19 +1606,29 @@ void OpDispatchBuilder::SHRDOp(OpcodeArgs) {
+@@ -1581,19 +1591,29 @@ void OpDispatchBuilder::SHRDOp(OpcodeArgs) {
      Shift = _And(OpSize::i64Bit, Shift, _InlineConstant(0x1F));
    }
  
@@ -110,7 +111,7 @@ index 17adca77f49c7b9b9828bf038694a622dd411a38..7249b6badb67e83d4deb714762738629
  }
  
  void OpDispatchBuilder::SHRDImmediateOp(OpcodeArgs) {
-@@ -1620,21 +1640,19 @@ void OpDispatchBuilder::SHRDImmediateOp(OpcodeArgs) {
+@@ -1605,21 +1625,19 @@ void OpDispatchBuilder::SHRDImmediateOp(OpcodeArgs) {
  
    if (Shift != 0) {
      Ref Res {};

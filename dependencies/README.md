@@ -78,7 +78,7 @@ The `macos` product carries FEXCore for the macOS-only x86-64 JIT engine. The
 `fex` row applies one patch-managed series,
 [`patches/fex`](patches/fex/series.tsv), and the `fmt`, `xxhash`, and
 `unordered-dense` rows pin the three submodules FEXCore needs at the commits
-FEX-2608 records; no iOS product names any of them. The series' topics build
+FEX-2610 records; no iOS product names any of them. The series' topics build
 only FEXCore for an embedding Darwin host, make its utilities portable to
 Darwin, add an embedding mode in which a host that owns guest memory drives
 FEXCore, compat32 code included, and correct x86 semantics where FEXCore
