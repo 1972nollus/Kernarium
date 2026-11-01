@@ -854,23 +854,27 @@ public:
 
 	/* Link the record for `pc` to `body`, which the caller holds and
 	 * validated at `changes`, unless a newer code change has reset the
-	 * address space's links since. Returns the record for the slot's memo. */
-	LinkRecord *activate(std::uint64_t pc, LinkRecord *memo,
-		const Body &body, std::uint64_t changes)
+	 * address space's links since. `known` is the caller's memo of the
+	 * record, or null. Returns the record's link for that memo. */
+	const arm64::gadgets::BlockLink *activate(std::uint64_t pc,
+		const arm64::gadgets::BlockLink *known, const Body &body,
+		std::uint64_t changes)
 	{
 		auto &shard = shard_of(pc);
 		const std::lock_guard guard{shard.mutex};
-		auto *record = memo != nullptr && memo->link.guest_pc == pc ?
-			memo : shard.links.try_emplace(pc, pc).first;
+		auto *record = known != nullptr ?
+			const_cast<LinkRecord *>(record_of(known)) :
+			shard.links.try_emplace(pc, pc).first;
+		assert(record->link.guest_pc == pc);
 		if (gate_.load(std::memory_order_seq_cst) != changes)
-			return record;
+			return &record->link;
 		if (!record->listed) {
 			record->listed = true;
 			shard.live_links.push_back(record);
 		}
 		if (!record->names(body))
 			record->link_to(body);
-		return record;
+		return &record->link;
 	}
 
 	/* Answer a code change: before any executor runs the address space at
@@ -1418,9 +1422,9 @@ public:
 			if (!slab)
 				continue;
 			for (auto &slot : slab->slots) {
-				if (slot.body == nullptr)
+				if (slot.body() == nullptr)
 					continue;
-				space_of(slot).release(slot.body, false);
+				space_of(slot).release(slot.body(), false);
 				slot.vacate();
 			}
 		}
@@ -1572,9 +1576,9 @@ public:
 			if (!slab)
 				continue;
 			for (const auto &slot : slab->slots) {
-				if (slot.body == nullptr)
+				if (slot.body() == nullptr)
 					continue;
-				const auto &body = *slot.body;
+				const auto &body = *slot.body();
 				std::fprintf(out,
 					"P %lu 0x%llx %zu %zu %zu 0x%llx %zu %zu %zu "
 					"%zu %p\n",
@@ -1613,7 +1617,7 @@ public:
 			if (!slab)
 				continue;
 			for (const auto &slot : slab->slots)
-				if (slot.body != nullptr)
+				if (slot.body() != nullptr)
 					++occupied;
 		}
 		return occupied;
@@ -1668,7 +1672,7 @@ public:
 #if UML_GADGET_CACHE_CENSUS
 					history_.hit();
 #endif
-					return slot.body->result();
+					return slot.body()->result();
 				}
 				++diagnostics.validation_attempts;
 				if (!validate(slot, changes, mapping_changes,
@@ -1683,7 +1687,7 @@ public:
 #if UML_GADGET_CACHE_CENSUS
 				history_.revalidated();
 #endif
-				return slot.body->result();
+				return slot.body()->result();
 			}
 		}
 		/* No slot here holds the PC, so ask the address space: another
@@ -1824,21 +1828,35 @@ public:
 		return space().indirect_link(source_pc);
 	}
 
-	/* The record for `pc` in the current address space, through this
-	 * cache's memo of the records its indirect misses named. A record never
-	 * moves while its address space is resident here, and retiring one
-	 * clears its entries, as a sweep clears those naming a record it
-	 * released, so a hit is always the live record; it spares the space's
-	 * lock, which every vCPU's misses would otherwise meet. */
-	[[nodiscard]] const arm64::gadgets::BlockLink *link_record(
-		std::uint64_t pc)
+	/* Where the memo keeps `pc`'s record; activations share it with
+	 * indirect misses, since a slot keeps no record of its own. */
+	[[nodiscard]] auto &memo_entry(std::uint64_t pc)
 	{
 		if (!link_memo_)
 			link_memo_ = std::make_unique<LinkMemo>();
-		auto &entry = (*link_memo_)[((pc >> 2U) ^ (pc >> 14U) ^
+		return (*link_memo_)[((pc >> 2U) ^ (pc >> 14U) ^
 			window_.current_generation) & (link_memo_entries - 1U)];
-		if (entry.link == nullptr || entry.pc != pc ||
-		    entry.generation != window_.current_generation)
+	}
+
+	[[nodiscard]] bool remembers(const auto &entry,
+		std::uint64_t pc) const noexcept
+	{
+		return entry.link != nullptr && entry.pc == pc &&
+			entry.generation == window_.current_generation;
+	}
+
+	/* The record for `pc` in the current address space, through this
+	 * cache's memo of the records its activations and indirect misses
+	 * named. A record never moves while its address space is resident
+	 * here, and retiring one clears its entries, as a sweep clears those
+	 * naming a record it released, so a hit is always the live record; it
+	 * spares the space's lock, which every vCPU's misses would otherwise
+	 * meet. */
+	[[nodiscard]] const arm64::gadgets::BlockLink *link_record(
+		std::uint64_t pc)
+	{
+		auto &entry = memo_entry(pc);
+		if (!remembers(entry, pc))
 			entry = {pc, window_.current_generation,
 				window_.current->space->link(pc)};
 		return entry.link;
@@ -1915,7 +1933,7 @@ public:
 		auto &slot = install(pc, body, changes);
 #if UML_GADGET_CACHE_CENSUS
 		history_.arrive(census_id_, window_.current_generation, pc,
-			body_digest(*slot.body), restored);
+			body_digest(*slot.body()), restored);
 #endif
 		state.space->reclaim(announcement_);
 		/* The build's words are in the body now, so nothing outside what
@@ -1927,7 +1945,7 @@ public:
 		 * executors let go of them at their next entry. */
 		if (gadget_cache::over_budget())
 			gadget_cache::relieve();
-		return slot.body->result();
+		return slot.body()->result();
 	}
 
 	/* Where a build assembles its stream.
@@ -2012,7 +2030,7 @@ private:
 	 * The cache commits a slot per way whether or not it is occupied, so
 	 * the tag size multiplies by slot_count: at 262,144 slots every eight
 	 * bytes here is two mebibytes per executor. A slot therefore holds
-	 * three words, and anything that belongs to one translation belongs
+	 * two words, and anything that belongs to one translation belongs
 	 * in its Body.
 	 */
 	struct Slot final {
@@ -2026,58 +2044,48 @@ private:
 		 * slot's tag is zero and no lookup's is, either.
 		 */
 		std::uint64_t tag{};
-		/* The translation this slot indexes, held in its address space.
-		 * A slot is occupied exactly while this is non-null. */
-		Body *body{};
-		/* Two fields sharing a word, a pointer below the guest's
-		 * 48-bit address-space limit and sixteen bits above it:
+		/* Two fields sharing a word, a pointer below the host's 48-bit
+		 * user address limit and sixteen bits above it:
 		 *
-		 * The link record reactivation resolves every time, so its
-		 * address is memoised here rather than hashed again on each
-		 * pass. The address space keeps its records in chunks that
-		 * never move, and a sweep keeps the record of every block a
-		 * slot holds, so the address stays valid while the slot holds
-		 * this translation: install() and release() reset the memo,
-		 * and retiring the address space releases this slot before the
-		 * cache lets go of the space.
-		 *
-		 * The memo is only ever valid for the address space the tag
-		 * names, and nothing about the record itself says which one
-		 * that is: the guest PC it carries is equal across all of
-		 * them. Ordinary slot replacement does not keep the owner, so
-		 * install() resets the memo rather than letting activate()
-		 * decide from the record alone.
+		 * The translation this slot indexes, held in its address space.
+		 * A slot is occupied exactly while it is non-null.
 		 *
 		 * The epoch of the owner's code (Generation::epoch) when the
 		 * translation was last known to match guest memory, zero for
 		 * never. It is equal to the owner's current one exactly when no
 		 * code change has been seen since.
+		 *
+		 * The link record a reactivation retargets is not kept here: the
+		 * space finds it by the slot's key under the shard lock the
+		 * activation takes anyway, which costs one probe of its index per
+		 * revalidation instead of a word in every way.
 		 */
-		std::uint64_t memo{};
+		std::uint64_t held{};
 
 		static constexpr unsigned epoch_shift = 48;
-		static constexpr std::uint64_t link_mask =
+		static constexpr std::uint64_t body_mask =
 			(std::uint64_t{1} << epoch_shift) - 1U;
 
-		[[nodiscard]] LinkRecord *link() const noexcept
+		[[nodiscard]] Body *body() const noexcept
 		{
-			return reinterpret_cast<LinkRecord *>(
-				static_cast<std::uintptr_t>(memo & link_mask));
+			return reinterpret_cast<Body *>(
+				static_cast<std::uintptr_t>(held & body_mask));
 		}
-		void set_link(LinkRecord *record) noexcept
+		/* Hold `translation`, known to match guest memory at `value`. */
+		void hold(Body *translation, std::uint16_t value) noexcept
 		{
 			const auto address =
-				reinterpret_cast<std::uintptr_t>(record);
-			assert((address & ~link_mask) == 0U);
-			memo = (memo & ~link_mask) | address;
+				reinterpret_cast<std::uintptr_t>(translation);
+			assert(address != 0U && (address & ~body_mask) == 0U);
+			held = address | (std::uint64_t{value} << epoch_shift);
 		}
 		[[nodiscard]] std::uint16_t epoch() const noexcept
 		{
-			return static_cast<std::uint16_t>(memo >> epoch_shift);
+			return static_cast<std::uint16_t>(held >> epoch_shift);
 		}
 		void set_epoch(std::uint16_t value) noexcept
 		{
-			memo = (memo & link_mask) |
+			held = (held & body_mask) |
 				(std::uint64_t{value} << epoch_shift);
 		}
 		[[nodiscard]] std::uint16_t owner() const noexcept
@@ -2093,11 +2101,10 @@ private:
 		void vacate() noexcept
 		{
 			tag = 0;
-			body = nullptr;
-			memo = 0;
+			held = 0;
 		}
 	};
-	static_assert(sizeof(Slot) == 24,
+	static_assert(sizeof(Slot) == 16,
 		"cache slots index translations; they do not hold them");
 
 	struct Slab final {
@@ -2237,14 +2244,14 @@ private:
 
 	void release(Slot &slot, std::uint16_t owner)
 	{
-		if (slot.body == nullptr || slot.owner() != owner)
+		if (slot.body() == nullptr || slot.owner() != owner)
 			return;
 #if UML_GADGET_CACHE_CENSUS
 		history_.depart(generation_of(slot), slot.key(),
-			body_digest(*slot.body), body_bytes(*slot.body),
+			body_digest(*slot.body()), body_bytes(*slot.body()),
 			census::Departure::retired);
 #endif
-		space_of(slot).release(slot.body, false);
+		space_of(slot).release(slot.body(), false);
 		slot.vacate();
 	}
 
@@ -2311,7 +2318,7 @@ private:
 					});
 			}
 		}
-		const auto &body = *slot.body;
+		const auto &body = *slot.body();
 		census::write_words(out, slot.key(),
 			{body.link_entry(), body.words() + body.word_count},
 			text, named->second);
@@ -2391,7 +2398,7 @@ private:
 		const auto forget_epochs = [this](Generation &wrapped) noexcept {
 			const auto id = wrapped.id;
 			const auto forget = [id](Slot &slot) noexcept {
-				if (slot.body != nullptr && slot.owner() == id)
+				if (slot.body() != nullptr && slot.owner() == id)
 					slot.set_epoch(0);
 			};
 			if (wrapped.slots_complete) {
@@ -2422,7 +2429,7 @@ private:
 		std::size_t selected = replacement;
 		for (std::size_t way = 0; way < ways; ++way) {
 			const auto &slot = slab->slots[location.offset + way];
-			if (slot.body == nullptr) {
+			if (slot.body() == nullptr) {
 				selected = way;
 				break;
 			}
@@ -2446,28 +2453,21 @@ private:
 		}
 		/* Whatever occupied the slot lets go of its body, whose address
 		 * space may not be the running one. */
-		if (slot.body != nullptr) {
+		if (slot.body() != nullptr) {
 #if UML_GADGET_CACHE_CENSUS
 			history_.depart(generation_of(slot), slot.key(),
-				body_digest(*slot.body), body_bytes(*slot.body),
+				body_digest(*slot.body()), body_bytes(*slot.body()),
 				census::Departure::evicted);
 #endif
 			auto &evicted = space_of(slot);
-			evicted.release(slot.body, false);
+			evicted.release(slot.body(), false);
 			slot.vacate();
 			renew_if_due(evicted);
 		}
-		/* The memoised record describes whoever held the slot until now,
-		 * and a store may hand the slot to a different address space at
-		 * the same guest PC. Left in place it would publish this
-		 * translation into the *previous* address space's record, so
-		 * taking a slot always resolves the record again; ordinary
-		 * reactivation of an unchanged owner keeps the memo.
-		 */
+		/* The activation finds the record in the running address space,
+		 * which may not be the one that held the slot until now. */
 		slot.tag = tag_of(pc);
-		slot.body = body;
-		slot.memo = 0;
-		slot.set_epoch(window_.current_epoch);
+		slot.hold(body, window_.current_epoch);
 		activate(pc, slot);
 		return slot;
 	}
@@ -2495,19 +2495,19 @@ private:
 		auto &slot = install(pc, body, changes);
 		space.reclaim(announcement_);
 		renew_if_due(space);
-		return slot.body->result();
+		return slot.body()->result();
 	}
 
 	void discard(Slot &slot)
 	{
-		if (slot.body != nullptr) {
+		if (slot.body() != nullptr) {
 #if UML_GADGET_CACHE_CENSUS
 			history_.depart(generation_of(slot), slot.key(),
-				body_digest(*slot.body), body_bytes(*slot.body),
+				body_digest(*slot.body()), body_bytes(*slot.body()),
 				census::Departure::discarded);
 #endif
 			auto &space = space_of(slot);
-			space.release(slot.body, true);
+			space.release(slot.body(), true);
 			slot.vacate();
 			space.reclaim(announcement_);
 			renew_if_due(space);
@@ -2575,7 +2575,7 @@ private:
 		StaticGuestMemory &memory, void *execution_context,
 		GadgetCacheDiagnostics &diagnostics)
 	{
-		switch (validate_body(*slot.body, slot.key(), changes,
+		switch (validate_body(*slot.body(), slot.key(), changes,
 			mapping_changes, memory, execution_context,
 			&diagnostics)) {
 		case Validation::stale:
@@ -2591,13 +2591,17 @@ private:
 		return true;
 	}
 
-	void activate(std::uint64_t pc, Slot &slot)
+	void activate(std::uint64_t pc, const Slot &slot)
 	{
-		const auto &body = *slot.body;
+		const auto &body = *slot.body();
 		if (!body.complete || body.instruction_count == 0)
 			return;
-		slot.set_link(space().activate(pc, slot.link(), body,
-			current().changes));
+		auto &entry = memo_entry(pc);
+		const auto known = remembers(entry, pc);
+		const auto *link = space().activate(pc,
+			known ? entry.link : nullptr, body, current().changes);
+		if (!known)
+			entry = {pc, window_.current_generation, link};
 	}
 
 	/* Release the link records and indirect sites of the running address
@@ -2650,16 +2654,14 @@ private:
 		std::vector<std::uint32_t> held;
 		const auto visit = [&](std::uint32_t index) {
 			const auto &slot = slot_at(index);
-			if (slot.body == nullptr || slot.owner() != state.id ||
+			if (slot.body() == nullptr || slot.owner() != state.id ||
 			    (seen[index / 64] >> (index % 64) & 1U) != 0)
 				return;
 			seen[index / 64] |= std::uint64_t{1} << (index % 64);
 			held.push_back(index);
-			if (const auto *memo = slot.link(); memo != nullptr)
-				links.mark(memo);
-			else if (const auto *own = space.find_link(slot.key()))
+			if (const auto *own = space.find_link(slot.key()))
 				links.mark(own);
-			const auto &body = *slot.body;
+			const auto &body = *slot.body();
 			const auto *end = body.words() + body.word_count;
 			for (const auto *word = body.link_entry(); word != end;
 			     ++word) {
@@ -2679,8 +2681,8 @@ private:
 							slab * slab_slots + offset));
 		}
 		held.shrink_to_fit();
-		/* The memo of the records indirect misses named may hold one
-		 * about to go. */
+		/* The memo of the records activations and indirect misses
+		 * named may hold one about to go. */
 		if (link_memo_)
 			for (auto &entry : *link_memo_)
 				if (entry.generation ==
