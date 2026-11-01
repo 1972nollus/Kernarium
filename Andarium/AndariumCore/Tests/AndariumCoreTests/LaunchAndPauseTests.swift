@@ -55,22 +55,10 @@ struct LaunchOverridesTests {
         #expect(LaunchOverrides(environment: ["KERNARIUM_ANDROID_BOOT_MODE": "normal"], processorCount: 4).start == nil)
     }
 
-    @Test func eraseAndImageName() {
-        let overrides = LaunchOverrides(
-            environment: ["ANDARIUM_ERASE": "1", "ANDARIUM_SYSTEM_IMAGE": "candidate.img.zst"],
-            processorCount: 4
-        )
-        #expect(overrides.erase)
-        #expect(overrides.systemImageName == "candidate.img.zst")
-    }
-
-    @Test func imageNameIsAPlainFileName() {
-        #expect(LaunchOverrides.validImageName("a.img") == "a.img")
-        #expect(LaunchOverrides.validImageName("../a.img") == nil)
-        #expect(LaunchOverrides.validImageName("dir/a.img") == nil)
-        #expect(LaunchOverrides.validImageName(".hidden.img") == nil)
-        #expect(LaunchOverrides.validImageName("a.txt") == nil)
-        #expect(LaunchOverrides.validImageName("") == nil)
+    @Test func erase() {
+        #expect(LaunchOverrides(environment: ["ANDARIUM_ERASE": "1"], processorCount: 4).erase)
+        #expect(!LaunchOverrides(environment: ["ANDARIUM_ERASE": "0"], processorCount: 4).erase)
+        #expect(!LaunchOverrides(environment: [:], processorCount: 4).erase)
     }
 
     @Test func appliesToAGuest() {

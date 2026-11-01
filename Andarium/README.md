@@ -170,9 +170,6 @@ KERNARIUM_HOST_FORWARD, KERNARIUM_FOOTPRINT_LOG_MS, KERNARIUM_EXECUTION_ENGINE,
 KERNARIUM_GUEST_HIBERNATION, KERNARIUM_ANDROID_ADB_AUTH
 ANDARIUM_START=normal|recovery   create the guest if there is none, then start
 ANDARIUM_ERASE=1                 erase the guest's data before the start
-ANDARIUM_SYSTEM_IMAGE=<file>     create or erase from this raw GPT .img or
-                                 .img.zst staged in the container's Documents
-                                 instead of the bundled system
 ```
 
 On an Apple silicon Mac, `xcodebuild test -scheme Andarium -destination
@@ -190,7 +187,8 @@ ask once to allow local network access, which only a person answers; the guest
 keeps running meanwhile, and the harness waits for the focus
 (`run_ios_device_android.py --wait-active`).
 
-The container's `Documents` is the harness's staging area; Andarium never
-deletes a file it did not create. The guest is under `Library/Guest/`
-(`data.img`, `settings.json`, `instance.json`) and is not the
-harness's to write.
+The container's `Documents` is the harness's; Andarium never deletes a file
+it did not create. The guest is under `Library/Guest/` (`data.img`,
+`settings.json`, `instance.json`) and is not the harness's to write. A launch
+boots the system the build carries, so another release means another staged
+build.

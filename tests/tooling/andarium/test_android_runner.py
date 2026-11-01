@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """run_ios_device_android.py drives an iOS device only through its tools.
 
-A fake ``xcrun devicectl``, ``iproxy``, ``adb``, ``afcclient`` and
-``codesign`` on PATH (fake_device_tools.py, wrapped by scripts this test
-writes into its scratch directory) model the application's container, the
-console of Andarium and the guest. The runner is run against them for the
-happy path and for the ways a device run goes wrong: adb that never gets
-ready, a console that never reports the end, a copy that fails, and what a
-run leaves in the container.
+A fake ``xcrun devicectl``, ``iproxy``, ``adb`` and ``codesign`` on PATH
+(fake_device_tools.py, wrapped by scripts this test writes into its scratch
+directory) model the application's container, the console of Andarium and the
+guest. The runner is run against them for the happy path and for the ways a
+device run goes wrong: adb that never gets ready, a console that never reports
+the end, an alert nobody answers, and what a run leaves in the container
+(nothing).
 """
 
 from __future__ import annotations
@@ -35,13 +35,9 @@ sys.path.insert(0, str(REPOSITORY / "tests" / "perf"))
 import run_ios_device_android as runner  # noqa: E402
 
 DEVICE = "fake-device"
-IMAGE = "seed.img.zst"
-IMAGE_BYTES = b"seed image " * 400
 EXISTING = {"keep.txt": b"the owner's file", "rootfs.erofs": b"x" * 64}
 DEVICECTL_ALLOWED = (
     ["device", "info", "lockState"],
-    ["device", "info", "files"],
-    ["device", "copy", "to"],
     ["device", "install", "app"],
     ["device", "process", "launch"],
 )
@@ -110,7 +106,7 @@ class Scratch:
             (self.documents / name).write_bytes(contents)
         bin_dir = root / "bin"
         bin_dir.mkdir()
-        for tool in ("xcrun", "iproxy", "adb", "afcclient", "codesign"):
+        for tool in ("xcrun", "iproxy", "adb", "codesign"):
             wrapper = bin_dir / tool
             wrapper.write_text(
                 f"#!/bin/sh\nexec {sys.executable} -S -B "
@@ -118,8 +114,6 @@ class Scratch:
             )
             wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
         self.bin = bin_dir
-        self.image = root / IMAGE
-        self.image.write_bytes(IMAGE_BYTES)
         self.script = root / "workload.sh"
         self.script.write_text("#!/bin/sh\necho hello\n")
         self.scenario = root / "scenario.json"
@@ -186,7 +180,7 @@ class AndroidRunnerTests(unittest.TestCase):
         leaked = {"DEVICECTL_CHILD_KERNARIUM_ROOTFS": "leak",
                   "DEVICECTL_CHILD_ANDARIUM_ERASE": "1"}
         outcome = self.run_android(
-            "--app", str(app), "--system-image", str(scratch.image),
+            "--app", str(app),
             "--script", str(scratch.script),
             "--launch-app", "settings", "--scenario", str(scratch.scenario),
             "--memory-mib", "1536", "--cpus", "2",
@@ -200,7 +194,7 @@ class AndroidRunnerTests(unittest.TestCase):
         port = outcome.host_port
         environment = launch["environment"]
         self.assertEqual(environment["ANDARIUM_START"], "normal")
-        self.assertEqual(environment["ANDARIUM_SYSTEM_IMAGE"], IMAGE)
+        self.assertNotIn("ANDARIUM_SYSTEM_IMAGE", environment)
         self.assertEqual(environment["KERNARIUM_VCPU_COUNT"], "2")
         self.assertEqual(environment["KERNARIUM_GUEST_MEMORY_MIB"], "1536")
         self.assertEqual(environment["KERNARIUM_ANDROID_ADB_AUTH"], "0")
@@ -208,7 +202,6 @@ class AndroidRunnerTests(unittest.TestCase):
                          f"tcp:127.0.0.1:{port}-5555")
         self.assertNotIn("KERNARIUM_ROOTFS", environment)
         self.assertNotIn("ANDARIUM_ERASE", environment)
-        self.assertFalse(launch["copy_in_flight"])
         self.assertEqual(launch["args"][-1], "com.imxieyi.andarium")
 
         (proxy,) = outcome.tool("iproxy")
@@ -223,11 +216,7 @@ class AndroidRunnerTests(unittest.TestCase):
         order = [c["tool"] for c in outcome.commands]
         self.assertLess(order.index("launch"), order.index("iproxy"))
         self.assertLess(order.index("iproxy"), order.index("adb"))
-        copy = [i for i, c in enumerate(outcome.commands)
-                if c["tool"] == "devicectl" and c["args"][:3]
-                == ["device", "copy", "to"]]
-        self.assertEqual(len(copy), 1)
-        self.assertLess(copy[0], order.index("launch"))
+        self.assertEqual(outcome.devicectl("device", "copy"), [])
         self.assertEqual(len(outcome.devicectl("device", "install", "app")), 1)
         self.assertEqual(len(outcome.tool("codesign")), 1)
         shells = [c["args"][-1] for c in adb_calls if "shell" in c["args"]]
@@ -238,19 +227,12 @@ class AndroidRunnerTests(unittest.TestCase):
             shells.index("reboot -p"),
         )
 
-        (afc,) = outcome.tool("afcclient")
-        self.assertEqual(afc["args"], ["-u", DEVICE, "--container",
-                                       "com.imxieyi.andarium"])
-        self.assertEqual(afc["commands"], [f"rm /Documents/{IMAGE}"])
-
         summary = outcome.summary
         self.assertEqual(summary["status"], "ok")
         self.assertEqual(summary["runtime_result"], 0)
         self.assertEqual(summary["host_port"], port)
-        self.assertEqual(summary["system_image"],
-                         {"name": IMAGE, "copied": True})
-        self.assertEqual(summary["cleanup"],
-                         {"removed": [IMAGE], "failed": []})
+        self.assertNotIn("system_image", summary)
+        self.assertNotIn("cleanup", summary)
         self.assertEqual(summary["thermal"]["start"]["state"], "nominal")
         self.assertEqual(summary["thermal"]["finish"]["state"], "fair")
         self.assertTrue(summary["thermal"]["complete"])
@@ -270,7 +252,6 @@ class AndroidRunnerTests(unittest.TestCase):
 
     def test_adb_that_never_gets_ready_records_no_run(self) -> None:
         outcome = self.run_android(
-            "--system-image", str(self.scratch.image),
             "--script", str(self.scratch.script), "--boot-timeout", "1",
             environment={"FAKE_ADB": "never-ready"},
         )
@@ -287,7 +268,6 @@ class AndroidRunnerTests(unittest.TestCase):
 
     def test_a_console_that_never_reports_the_end_fails_the_run(self) -> None:
         outcome = self.run_android(
-            "--system-image", str(self.scratch.image),
             "--script", str(self.scratch.script), "--poweroff-timeout", "1",
             environment={"FAKE_CONSOLE": "silent"},
         )
@@ -333,53 +313,6 @@ class AndroidRunnerTests(unittest.TestCase):
         self.assertIn("the guest ended on its own", outcome.err)
         self.assertIsNone(outcome.summary["workload"])
 
-    def test_a_failed_copy_launches_nothing_and_removes_the_remains(
-        self
-    ) -> None:
-        outcome = self.run_android(
-            "--system-image", str(self.scratch.image),
-            environment={"FAKE_COPY": "fail"},
-        )
-        self.assertEqual(outcome.status, 1)
-        self.assertIn("non-zero exit status", outcome.err)
-        self.assertEqual(outcome.tool("launch"), [])
-        self.assertEqual(outcome.devicectl("device", "process", "launch"), [])
-        self.assertEqual(outcome.tool("iproxy"), [])
-        self.assertEqual(outcome.tool("adb"), [])
-        # The half-written file was this run's, so it is removed; nothing
-        # else is.
-        (afc,) = outcome.tool("afcclient")
-        self.assertEqual(afc["commands"], [f"rm /Documents/{IMAGE}"])
-        self.assert_container_untouched(outcome)
-
-    def test_a_run_removes_only_what_it_copied(self) -> None:
-        # The same file already on the device is reused and stays; so does
-        # the owner's every other file.
-        (self.scratch.documents / IMAGE).write_bytes(IMAGE_BYTES)
-        outcome = self.run_android("--system-image", str(self.scratch.image))
-        self.assertEqual(outcome.status, 0, outcome.err)
-        self.assertEqual(outcome.devicectl("device", "copy", "to"), [])
-        self.assertEqual(outcome.tool("afcclient"), [])
-        self.assertEqual(outcome.documents, {**EXISTING, IMAGE: IMAGE_BYTES})
-        self.assertEqual(outcome.summary["system_image"]["copied"], False)
-        self.assertIsNone(outcome.summary["cleanup"])
-
-    def test_a_different_file_of_that_name_is_never_replaced(self) -> None:
-        (self.scratch.documents / IMAGE).write_bytes(b"someone else's")
-        outcome = self.run_android("--system-image", str(self.scratch.image))
-        self.assertEqual(outcome.status, 1)
-        self.assertIn("never replaces a file", outcome.err)
-        self.assertEqual(outcome.tool("launch"), [])
-        self.assertEqual(outcome.tool("afcclient"), [])
-        self.assertEqual(outcome.documents[IMAGE], b"someone else's")
-
-    def test_keep_staged_leaves_the_copy_for_the_next_run(self) -> None:
-        outcome = self.run_android(
-            "--system-image", str(self.scratch.image), "--keep-staged")
-        self.assertEqual(outcome.status, 0, outcome.err)
-        self.assertEqual(outcome.tool("afcclient"), [])
-        self.assertEqual(outcome.documents[IMAGE], IMAGE_BYTES)
-
     def test_the_forward_port_must_come_from_somewhere(self) -> None:
         outcome = self.run_android(port=False)
         self.assertEqual(outcome.status, 1)
@@ -411,11 +344,9 @@ class AndroidRunnerTests(unittest.TestCase):
     def test_a_locked_device_is_not_touched(self) -> None:
         outcome = self.run_android(
             "--app", str(self.scratch.app(automation=True)),
-            "--system-image", str(self.scratch.image),
             environment={"FAKE_LOCKED": "1"})
         self.assertEqual(outcome.status, 1)
         self.assertIn("passcode-locked", outcome.err)
-        self.assertEqual(outcome.devicectl("device", "copy", "to"), [])
         self.assertEqual(outcome.devicectl("device", "install", "app"), [])
         self.assertEqual(outcome.tool("launch"), [])
 
@@ -424,7 +355,6 @@ class AndroidRunnerTests(unittest.TestCase):
             (("--launch-app", "nothing"), "no application 'nothing'"),
             (("--scenario", str(self.scratch.scenario)),
              "not a --launch-app"),
-            (("--system-image-filename", "rootfs.erofs"), "seed image name"),
             (("--adb", "/nonexistent/adb"), "adb is unavailable"),
         ):
             outcome = self.run_android(*arguments)

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Stand-ins for xcrun devicectl, iproxy, adb, afcclient and codesign.
+"""Stand-ins for xcrun devicectl, iproxy, adb and codesign.
 
 The tooling tests put one executable wrapper per tool on PATH; each runs
 ``fake_device_tools.py TOOL ARGUMENTS...``. All state lives in the directory
-named by ``FAKE_STATE``: ``documents/`` is the application's container,
-``commands.jsonl`` records every invocation, and ``poweroff`` is written by the
-guest's power-off command and ends the fake console. ``FAKE_*`` variables
-choose a failure: ADB (``never-ready``), CONSOLE (``silent`` after power off),
-COPY (``fail`` part-way), AUTH (``missing`` line), GUEST (``dies``) and
-LOCKED. Nothing here touches a device.
+named by ``FAKE_STATE``: ``documents/`` is the application's container (the
+runner must leave it as it is), ``commands.jsonl`` records every invocation,
+and ``poweroff`` is written by the guest's power-off command and ends the fake
+console. ``FAKE_*`` variables choose a failure: ADB (``never-ready``), CONSOLE
+(``silent`` after power off), AUTH (``missing`` line), FOCUS (``alert`` or
+``stuck``), GUEST (``dies``) and LOCKED. Nothing here touches a device.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ import sys
 import time
 
 STATE = pathlib.Path(os.environ["FAKE_STATE"])
-DOCUMENTS = STATE / "documents"
 CHILD = "DEVICECTL_CHILD_"
 LOGCAT = (
     "100.100 I ActivityTaskManager: START u0 {{cmp={component}}}\n"
@@ -38,39 +37,11 @@ def record(tool: str, arguments: list[str], **extra: object) -> None:
         log.write(json.dumps(entry) + "\n")
 
 
-def option(arguments: list[str], name: str) -> str:
-    return arguments[arguments.index(name) + 1]
-
-
 def devicectl(arguments: list[str]) -> int:
     kind = arguments[:3]
     if kind == ["device", "info", "lockState"]:
         locked = os.environ.get("FAKE_LOCKED") == "1"
         print(f"passcodeRequired: {'true' if locked else 'false'}")
-    elif kind == ["device", "info", "files"]:
-        pathlib.Path(option(arguments, "--json-output")).write_text(
-            json.dumps({"result": {"files": [
-                {"relativePath": path.name,
-                 "metadata": {"size": path.stat().st_size},
-                 "resources": {"isDirectory": False}}
-                for path in sorted(DOCUMENTS.iterdir())
-            ]}})
-        )
-    elif kind == ["device", "copy", "to"]:
-        source = pathlib.Path(option(arguments, "--source"))
-        destination = option(arguments, "--destination")
-        assert destination.startswith("Documents/"), destination
-        target = DOCUMENTS / destination[len("Documents/"):]
-        (STATE / "copying").write_text("")
-        time.sleep(0.2)
-        data = source.read_bytes()
-        if os.environ.get("FAKE_COPY") == "fail":
-            target.write_bytes(data[: len(data) // 2])
-            (STATE / "copying").unlink()
-            print("error: the copy failed part-way", file=sys.stderr)
-            return 1
-        target.write_bytes(data)
-        (STATE / "copying").unlink()
     elif kind == ["device", "install", "app"]:
         pass
     elif kind == ["device", "process", "launch"]:
@@ -86,8 +57,7 @@ def launch(arguments: list[str]) -> int:
         name[len(CHILD):]: value
         for name, value in os.environ.items() if name.startswith(CHILD)
     }
-    record("launch", arguments, environment=environment,
-           copy_in_flight=(STATE / "copying").exists())
+    record("launch", arguments, environment=environment)
     signal.signal(signal.SIGINT, lambda *_: terminate())
     signal.signal(signal.SIGTERM, lambda *_: terminate())
     print("Andarium thermal state: phase=start state=nominal uptime=2.0",
@@ -187,21 +157,6 @@ def shell(text: str) -> int:
     return 0
 
 
-def afcclient(arguments: list[str]) -> int:
-    commands = [line for line in sys.stdin.read().splitlines()
-                if line and line != "quit"]
-    record("afcclient", arguments, commands=commands)
-    for command in commands:
-        verb, _, path = command.partition(" ")
-        assert verb == "rm" and path.startswith("/Documents/"), command
-        target = DOCUMENTS / path[len("/Documents/"):]
-        if target.exists():
-            target.unlink()
-        else:
-            print("Error: no such file")
-    return 0
-
-
 def main() -> int:
     tool, arguments = sys.argv[1], sys.argv[2:]
     if tool == "xcrun":
@@ -211,8 +166,7 @@ def main() -> int:
     if tool == "codesign":
         record("codesign", arguments)
         return 0
-    return {"iproxy": iproxy, "adb": adb, "afcclient": afcclient}[tool](
-        arguments)
+    return {"iproxy": iproxy, "adb": adb}[tool](arguments)
 
 
 if __name__ == "__main__":

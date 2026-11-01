@@ -1246,10 +1246,10 @@ How Kernarium keeps, relaunches, and copies a bundle is in
 
 Andarium carries the accepted release instead: `Andarium/scripts/stage-system-image.py`
 checks it against its own manifest (accepted, 4 KiB pages, a LineageOS family,
-the accepted release identity, file sizes, and the disk archive's declared
-expanded size against the partition layout) and stages the zstd disk archive, the
-kernel command line, the manifest and the partition layout for the application to
-bundle. See [`../../Andarium/README.md`](../../Andarium/README.md#build).
+the accepted release identity, file sizes, and the system disk's size and
+sha256 against the partition layout) and stages the system disk, the partition
+layout, the kernel command line and the manifest, at their release paths, for
+the application to bundle. See [`../../Andarium/README.md`](../../Andarium/README.md#build).
 
 ## Validation boundary
 

@@ -6,11 +6,10 @@ Andarium carries the Android guests that Kernarium used to run on a device
 tests/integration/support/ios_device.py with the settings ``settings_for``
 builds: ``ANDARIUM_START`` starts the guest without Home, the runtime's own
 ``KERNARIUM_*`` settings size it, and a loopback forward publishes the
-guest's adbd for ``iproxy``. A system image to boot instead of the bundled
-one is staged into the container's Documents directory by exact name
-(``ANDARIUM_SYSTEM_IMAGE``), and only a file this module copied is ever
-removed again. The module also reads the console lines a run is judged by:
-the runtime's result and the thermal state at the start and the end.
+guest's adbd for ``iproxy``. The guest boots the system the application
+carries, and nothing is written into the container. The module also reads
+the console lines a run is judged by: the runtime's result and the thermal
+state at the start and the end.
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import pathlib
 import re
-import subprocess
 
 import ios_device
 
@@ -49,8 +47,6 @@ ANDROID_RUNTIME_FRAMEWORKS = ("KRuntime_ACK_6_18_4K",)
 MEMORY_MIB_RANGE = (1024, 4096)
 MEMORY_MIB_STEP = 64
 START_MODES = ("normal", "recovery")
-IMAGE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\.img(?:\.zst)?")
-DOCUMENTS_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 SETTING_NAME = re.compile(r"(?:KERNARIUM|ANDARIUM)_[A-Z0-9_]+")
 SLOT_PORT_VARIABLE = "GUEST_SLOT_PORT_BASE"
 
@@ -119,20 +115,10 @@ def host_forward(port: int) -> str:
     return f"tcp:127.0.0.1:{validate_port(port)}-{GUEST_ADB_PORT}"
 
 
-def system_image_name(name: str) -> str:
-    """A Documents name the application accepts as a seed image."""
-    if IMAGE_NAME.fullmatch(name) is None:
-        raise AndariumError(
-            f"not a seed image name (.img or .img.zst): {name!r}"
-        )
-    return name
-
-
 def settings_for(
     *,
     start: str = "normal",
     erase: bool = False,
-    system_image: str | None = None,
     cpus: int,
     memory_mib: int,
     engine: str,
@@ -165,8 +151,6 @@ def settings_for(
     }
     if erase:
         settings["ANDARIUM_ERASE"] = "1"
-    if system_image is not None:
-        settings["ANDARIUM_SYSTEM_IMAGE"] = system_image_name(system_image)
     if disk_size_gib is not None:
         settings["KERNARIUM_ANDROID_DISK_SIZE_GIB"] = str(disk_size_gib)
     for name, value in (extra or {}).items():
@@ -221,77 +205,3 @@ def thermal_record(transcript: str) -> dict[str, object]:
         ],
         "complete": "start" in first and bool(finishes),
     }
-
-
-def plain_documents_name(name: str) -> str:
-    if DOCUMENTS_NAME.fullmatch(name) is None:
-        raise AndariumError(f"not a plain Documents name: {name!r}")
-    return name
-
-
-class StagedFiles:
-    """The files one run copies into the application's Documents directory.
-
-    ``devicectl`` cannot remove a file from a container, so ``remove`` asks
-    afcclient to. It removes exactly the names this run copied: a file the
-    device already held under that name, and every other file in Documents,
-    stays. A name is recorded before its copy starts, because a copy that
-    fails part-way leaves a partial file of that name, which would refuse the
-    next copy of the real one.
-    """
-
-    def __init__(self, device: str) -> None:
-        self.device = device
-        self.copied: list[str] = []
-
-    def copy(self, source: pathlib.Path, name: str, timeout: int) -> bool:
-        """Copy ``source`` to ``Documents/name``; True when this call did.
-
-        A file of the same name and size already there is reused and left
-        for its owner. A different file of that name is refused.
-        """
-        plain_documents_name(name)
-        held = ios_device.device_documents(self.device, APPLICATION).get(name)
-        if held is None:
-            self.copied.append(name)
-        ios_device.copy_to_device(
-            self.device, APPLICATION, source, name, timeout
-        )
-        return held is None
-
-    def remove(self, afcclient: str, timeout: int = 300) -> dict[str, list]:
-        """Remove what this run copied; report what went and what stayed.
-
-        The listing after the removals decides, not afcclient's output.
-        """
-        report: dict[str, list] = {"removed": [], "failed": []}
-        if not self.copied:
-            return report
-        try:
-            present = set(ios_device.device_documents(
-                self.device, APPLICATION
-            ))
-        except (OSError, subprocess.SubprocessError):
-            present = set(self.copied)
-        attempted = [name for name in self.copied if name in present]
-        for name in attempted:
-            self._afc(afcclient, f"rm /Documents/{name}", timeout)
-        try:
-            left = set(ios_device.device_documents(self.device, APPLICATION))
-        except (OSError, subprocess.SubprocessError):
-            left = set(attempted)
-        report["removed"] = [name for name in attempted if name not in left]
-        report["failed"] = [name for name in attempted if name in left]
-        return report
-
-    def _afc(self, afcclient: str, command: str, timeout: int) -> None:
-        try:
-            subprocess.run(
-                [afcclient, "-u", self.device, "--container", BUNDLE_ID],
-                input=f"{command}\nquit\n",
-                text=True,
-                capture_output=True,
-                timeout=timeout,
-            )
-        except (OSError, subprocess.SubprocessError):
-            pass

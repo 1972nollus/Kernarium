@@ -16,9 +16,6 @@ public struct LaunchOverrides: Equatable, Sendable {
     public var start: StartMode?
     /// Erase the guest's data before the start.
     public var erase = false
-    /// A seed image staged in the container's Documents to create or erase
-    /// from, instead of the one bundled.
-    public var systemImageName: String?
 
     public init() {}
 
@@ -48,15 +45,6 @@ public struct LaunchOverrides: Equatable, Sendable {
             if environment["KERNARIUM_ANDROID_BOOT_MODE"] == "recovery" { start = .recovery }
         }
         erase = environment["ANDARIUM_ERASE"] == "1"
-        systemImageName = environment["ANDARIUM_SYSTEM_IMAGE"].flatMap(Self.validImageName)
-    }
-
-    /// A file name in Documents: no path, and a disk image or its archive.
-    static func validImageName(_ name: String) -> String? {
-        guard !name.isEmpty, !name.contains("/"), !name.hasPrefix("."),
-              name.hasSuffix(".img") || name.hasSuffix(".img.zst")
-        else { return nil }
-        return name
     }
 
     public var isEmpty: Bool { self == LaunchOverrides() }

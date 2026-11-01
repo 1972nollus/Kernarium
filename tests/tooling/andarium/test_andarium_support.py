@@ -48,12 +48,10 @@ class SettingsTests(unittest.TestCase):
 
     def test_the_optional_knobs_are_set_only_when_asked_for(self) -> None:
         asked = settings(
-            start="recovery", erase=True, system_image="seed.img",
-            disk_size_gib=8, extra={"KERNARIUM_FOOTPRINT_LOG_MS": "1000"},
+            start="recovery", erase=True, disk_size_gib=8, extra={"KERNARIUM_FOOTPRINT_LOG_MS": "1000"},
         )
         self.assertEqual(asked["ANDARIUM_START"], "recovery")
         self.assertEqual(asked["ANDARIUM_ERASE"], "1")
-        self.assertEqual(asked["ANDARIUM_SYSTEM_IMAGE"], "seed.img")
         self.assertEqual(asked["KERNARIUM_ANDROID_DISK_SIZE_GIB"], "8")
         self.assertEqual(asked["KERNARIUM_FOOTPRINT_LOG_MS"], "1000")
 
@@ -63,8 +61,7 @@ class SettingsTests(unittest.TestCase):
         for keywords in (
             {"start": "auto"}, {"memory_mib": 512}, {"memory_mib": 8192},
             {"memory_mib": 1500}, {"cpus": 0}, {"host_port": 80},
-            {"host_port": 65535}, {"system_image": "../seed.img"},
-            {"system_image": "rootfs.erofs"},
+            {"host_port": 65535},
             {"extra": {"PATH": "/usr/bin"}},
             {"extra": {"KERNARIUM_ANDROID_ADB_AUTH": "1"}},
             {"extra": {"ANDARIUM_START": "recovery"}},

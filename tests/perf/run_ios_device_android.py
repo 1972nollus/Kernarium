@@ -4,8 +4,8 @@
 
 Android guests on a device run through Andarium; Kernarium keeps Linux
 (``run_ios_device_workload.py``). The runner installs an automation build of
-Andarium, optionally stages a seed system image into the application's
-container, launches the guest with ``ANDARIUM_START`` and a loopback forward,
+Andarium, launches the guest (the system the application carries) with
+``ANDARIUM_START`` and a loopback forward,
 reaches the guest's adbd over USB with ``iproxy`` and a private adb server,
 waits for ``sys.boot_completed``, runs the workload (a guest shell script
 and/or cold launches and scenarios from ``android_launch_suite.py``'s
@@ -14,10 +14,9 @@ The console, the thermal state at the start and the end, and a summary are
 kept in the artifact directory. Nothing is typed on the device.
 
 The runner never uninstalls the application, never restarts the automation
-host, never replaces a file in the container, and removes only the files it
-copied. It never launches while a copy is in flight, and it stops, recording
-no result, when adb is not ready. Andarium/README.md#automation owns the
-application's side, tests/perf/README.md the lane.
+host and writes nothing into the container; it stops, recording no result,
+when adb is not ready. Andarium/README.md#automation owns the application's
+side, tests/perf/README.md the lane.
 """
 
 from __future__ import annotations
@@ -60,8 +59,6 @@ IPROXY_LISTEN_SECONDS = 10
 class Plan:
     """Everything the options name, checked before the device is touched."""
 
-    image: Path | None = None
-    image_name: str | None = None
     script: Path | None = None
     apps: list[launch_suite.App] = field(default_factory=list)
     rounds: int = 0
@@ -73,20 +70,10 @@ class Plan:
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", required=True,
-                        help="the device's UDID (devicectl, iproxy and "
-                        "afcclient all take it)")
+                        help="the device's UDID (devicectl and iproxy "
+                        "both take it)")
     parser.add_argument("--app", type=Path,
                         help="the automation .app bundle to install first")
-    image = parser.add_mutually_exclusive_group()
-    image.add_argument(
-        "--system-image", type=Path, metavar="FILE",
-        help="copy this seed .img or .img.zst into Documents under its own "
-        "name and boot it (ANDARIUM_SYSTEM_IMAGE)",
-    )
-    image.add_argument(
-        "--system-image-filename", metavar="NAME",
-        help="boot a seed image already in Documents",
-    )
     parser.add_argument("--start", choices=andarium.START_MODES,
                         default="normal", help="ANDARIUM_START")
     parser.add_argument("--erase", action="store_true",
@@ -113,9 +100,6 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--adb", help="adb; defaults to the one on PATH")
     parser.add_argument("--iproxy", help="iproxy; defaults to PATH")
-    parser.add_argument("--afcclient",
-                        help="afcclient, which removes what the run copied; "
-                        "defaults to PATH")
     parser.add_argument("--script", type=Path,
                         help="run this POSIX shell script in the guest")
     parser.add_argument(
@@ -139,8 +123,6 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
                         help="seconds between a force-stop and its launch")
     parser.add_argument("--poweroff-command", default="reboot -p",
                         help="the guest shell command that powers it off")
-    parser.add_argument("--keep-staged", action="store_true",
-                        help="leave the files this run copied in Documents")
     parser.add_argument("--timeout", type=int, default=3600)
     parser.add_argument("--boot-timeout", type=int, default=900)
     parser.add_argument("--launch-timeout", type=int, default=120)
@@ -181,15 +163,6 @@ def parse_settings(values: list[str]) -> dict[str, str]:
 def prepare(options: argparse.Namespace) -> Plan:
     """Check every input the run will read, so a mistake costs no boot."""
     plan = Plan()
-    if options.system_image is not None:
-        plan.image = options.system_image.resolve()
-        if not plan.image.is_file():
-            raise andarium.AndariumError(f"no seed image: {plan.image}")
-        plan.image_name = andarium.system_image_name(plan.image.name)
-    elif options.system_image_filename is not None:
-        plan.image_name = andarium.system_image_name(
-            options.system_image_filename
-        )
     if options.script is not None:
         plan.script = options.script.resolve()
         if not plan.script.is_file():
@@ -555,11 +528,9 @@ class Run:
     plan: Plan
     adb_program: str
     iproxy_program: str
-    afcclient: str | None
     host_port: int
     settings: dict[str, str]
     artifact: Path
-    staged: andarium.StagedFiles
     summary: dict
     problems: list[str] = field(default_factory=list)
 
@@ -570,7 +541,7 @@ class Run:
             )
 
     def execute(self) -> None:
-        """Install, stage, boot, drive, power off; fills the summary."""
+        """Install, boot, drive, power off; fills the summary."""
         options, plan = self.options, self.plan
         self.check_unlocked()
         if options.app is not None:
@@ -579,11 +550,6 @@ class Run:
             ios_device.install_app(
                 options.device, app, options.install_timeout
             )
-        if plan.image is not None:
-            self.summary["system_image"]["copied"] = self.staged.copy(
-                plan.image, plan.image_name, options.install_timeout
-            )
-        # Every copy has finished: nothing boots while one is in flight.
         self.check_unlocked()
         adb = Adb(
             self.adb_program,
@@ -670,15 +636,6 @@ class Run:
             encoding="utf-8",
         )
 
-    def clean_up(self) -> None:
-        if not self.staged.copied or self.afcclient is None:
-            return
-        self.summary["cleanup"] = self.staged.remove(self.afcclient)
-        for name in self.summary["cleanup"]["failed"]:
-            print(f"warning: Documents/{name} is still on the device",
-                  file=sys.stderr, flush=True)
-
-
 def main(argv: list[str] | None = None) -> int:
     options = parse_arguments(argv)
     summary: dict = {
@@ -692,24 +649,16 @@ def main(argv: list[str] | None = None) -> int:
             "engine": options.engine,
             "page_size": 4096,
         },
-        "system_image": {"name": None, "copied": False},
         "runtime_result": None,
         "workload": None,
-        "cleanup": None,
     }
     artifact = options.artifact_root.resolve() / time.strftime(
         "%Y%m%d-%H%M%S"
     )
     try:
         plan = prepare(options)
-        summary["system_image"]["name"] = plan.image_name
         adb_program = find_tool("adb", options.adb)
         iproxy_program = find_tool("iproxy", options.iproxy)
-        # Removal needs afcclient; a run that copies nothing or keeps what
-        # it copies does not.
-        afcclient = None
-        if plan.image is not None and not options.keep_staged:
-            afcclient = find_tool("afcclient", options.afcclient)
         host_port = andarium.validate_port(
             options.host_port if options.host_port is not None
             else andarium.host_port_from_slot(os.environ)
@@ -717,7 +666,6 @@ def main(argv: list[str] | None = None) -> int:
         settings = andarium.settings_for(
             start=options.start,
             erase=options.erase,
-            system_image=plan.image_name,
             cpus=options.cpus,
             memory_mib=options.memory_mib,
             engine=options.engine,
@@ -730,9 +678,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"run_ios_device_android.py: {error}", file=sys.stderr)
         return 1
     summary["host_port"] = host_port
-    run = Run(options, plan, adb_program, iproxy_program, afcclient,
-              host_port, settings, artifact,
-              andarium.StagedFiles(options.device), summary)
+    run = Run(options, plan, adb_program, iproxy_program,
+              host_port, settings, artifact, summary)
     try:
         run.execute()
     except (ios_device.DeviceError, subprocess.SubprocessError,
@@ -742,7 +689,6 @@ def main(argv: list[str] | None = None) -> int:
         run.problems.append(f"interrupted by {type(interruption).__name__}")
         raise
     finally:
-        run.clean_up()
         run.write_summary()
     for problem in run.problems:
         print(f"run_ios_device_android.py: {problem}", file=sys.stderr)
@@ -753,7 +699,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def stop_on_sigterm(_number: int, _frame: object) -> None:
-    """Let a SIGTERM unwind the run, so the console stops and cleanup runs."""
+    """Let a SIGTERM unwind the run, so the console stops and the summary
+    is written."""
     raise SystemExit(143)
 
 

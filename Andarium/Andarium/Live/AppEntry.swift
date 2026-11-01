@@ -51,9 +51,6 @@ struct AppEntry {
         } else {
             problem = "This copy of Andarium does not carry a system."
         }
-        if launch.systemImageName != nil {
-            print("Andarium: ANDARIUM_SYSTEM_IMAGE is not used by the two-disk layout; the carried release starts")
-        }
 
         let locations = GuestLocations(directory: Self.guestDirectory())
         let storage = TwoDiskStorage(
