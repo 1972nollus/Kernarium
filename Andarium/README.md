@@ -11,20 +11,37 @@ developer application for Linux guests and for Android bundles.
 ## Ownership
 
 ```text
-Andarium/             SwiftUI application: Home, boot, session, end screens
+Andarium/Shared/      screens and model both targets build
+Andarium/Preview/     mock screens, data and launch arguments (Simulator)
+Andarium/Live/        the runtime, storage and session of the device app
 AndariumCore/         Swift package: the application's model, no UIKit
+AndariumTests/        hosted tests of the device app
+Config/               entitlements, Info.plist, bridging header
 Andarium.xcodeproj/   JSON project (project.xcproj) and its shared schemes
 ```
+
+`../GuestHost/Sources` holds the host code Kernarium and Andarium share to
+run a guest: the runtime loader, the display and touch view, the disk and zstd
+utilities and the shader cache.
 
 The project file is the JSON format Xcode 27 reads and Xcode 27.2 writes
 (`project.xcproj`), kept in the canonical form
 `xcrun xcprojformatter --update Andarium/Andarium.xcodeproj` produces: format
 after every hand edit. Kernarium keeps its `.pbxproj`.
 
-## Preview
+## Targets
 
-`AndariumPreview` is a Simulator-only target built from the application's
-sources with mock data. It embeds no runtime and boots nothing; the iOS
+`Andarium` is the device application (`com.imxieyi.Andarium`, iOS and an
+Apple silicon Mac in Designed for iPad mode). It embeds the Android runtime
+frameworks and carries the system image; Kernarium stays beside it on a
+device. It has no background mode: the guest runs while Andarium is in the
+foreground and is paused when it leaves, and iOS ending a paused Andarium
+shows a notice on the next launch. It runs one scene, because the runtime boots
+one guest per process, and needs the increased memory limit and extended
+virtual addressing entitlements.
+
+`AndariumPreview` is a Simulator-only target built from `Shared` and
+`Preview` with mock data. It embeds no runtime and boots nothing; the iOS
 Simulator has no Metal 4 device for the guest's graphics. Its launch arguments
 (`-screen <name>`, `-play YES`, `-lowSpace YES`, `-resetTips YES`) open any
 screen or state directly so a Simulator driven only by `simctl` reaches every
@@ -48,7 +65,16 @@ Andarium/scripts/stage-system-image.py
 ```
 
 The frameworks go to `.build/kernarium-xcframeworks`, which Kernarium shares,
-and the system to `.build/andarium-system`.
+and the system to `.build/andarium-system`. Then the device application builds
+from the `Andarium` scheme:
+
+```sh
+xcodebuild -project Andarium/Andarium.xcodeproj -scheme Andarium \
+    -destination 'generic/platform=iOS' build
+```
+
+The `AndariumTests` bundle runs hosted in the application on an iPad or, as an
+iPad app, on an Apple silicon Mac (`xcodebuild test`).
 
 ## Model
 
@@ -88,3 +114,52 @@ same protocol.
 The guest is left out of iCloud and computer backups unless the user turns on
 Include in Backups for it: Android can set itself up again, and the files take
 several gigabytes.
+
+## Runtime
+
+The device application drives the Android runtime through the same loader as
+Kernarium. A run starts when the guest's display has its size and the disk is
+ready, on a thread of its own, and lasts the launch: Android's power-off ends
+it, and starting again means opening Andarium again. The boot screen follows
+the guest's console for its milestones (the kernel, Android's init, its
+graphics service and `sys.boot_completed`, or Recovery's service) until the
+runtime reports boot events.
+
+The side keys send Android's keys as Linux key codes: Power 116 (held for the
+power menu), volume 115 and 114, Back 158 and Home 172.
+
+Resolution and Follow Window Size apply at the next start, because the runtime
+takes them at boot, so the session's Settings leaves them out
+(`Capabilities.liveDisplayOptions`). Microphone applies at once and asks iOS
+for access when it is turned on.
+
+## Automation
+
+A harness launch (`xcrun devicectl device process launch`, environment given
+as `DEVICECTL_CHILD_` variables) reaches a state without touching the screen.
+The `KERNARIUM_` names mean what they mean in Kernarium; the automation
+Android runtime (`package-ios-frameworks.sh --runtimes android
+--android-automation`) additionally reads `KERNARIUM_ANDROID_ADB_AUTH`.
+
+```text
+KERNARIUM_VCPU_COUNT, KERNARIUM_GUEST_MEMORY_MIB, KERNARIUM_RETINA_MODE,
+KERNARIUM_GPU_AUTO_RESIZE, KERNARIUM_ANDROID_BOOT_MODE (recovery starts
+Recovery), KERNARIUM_ANDROID_DISK_SIZE_GIB (the guest's storage in GB),
+KERNARIUM_HOST_FORWARD, KERNARIUM_FOOTPRINT_LOG_MS, KERNARIUM_EXECUTION_ENGINE,
+KERNARIUM_GUEST_HIBERNATION, KERNARIUM_ANDROID_ADB_AUTH
+ANDARIUM_START=normal|recovery   create the guest if there is none, then start
+ANDARIUM_ERASE=1                 erase the guest's data before the start
+ANDARIUM_SYSTEM_IMAGE=<file>     create or erase from this raw GPT .img or
+                                 .img.zst staged in the container's Documents
+                                 instead of the bundled system
+```
+
+The console carries the runtime's own `Kernarium:` lines and two of
+Andarium's: `Andarium: runtime returned <n>` when the run ends (0 is a power
+off) and `Andarium thermal state: phase=start|change|finish state=<state>
+uptime=<seconds>`.
+
+The container's `Documents` is the harness's staging area; Andarium never
+deletes a file it did not create. The guest is under `Library/Application
+Support/Guest/` (`guest.img`, `settings.json`, `instance.json`) and is not the
+harness's to write.

@@ -5,7 +5,7 @@ import SwiftUI
 /// its options and Start. Without a guest it offers to set one up.
 struct HomeView: View {
     @Environment(AppModel.self) private var model
-    let launch: LaunchOptions
+    let hints: ScreenHints
 
     var body: some View {
         @Bindable var model = model
@@ -25,7 +25,7 @@ struct HomeView: View {
                                 }
                             }
                             .onAppear {
-                                if let target = launch.scrollTarget {
+                                if let target = hints.scrollTarget {
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                                         proxy.scrollTo(target, anchor: .bottom)
                                     }
@@ -55,9 +55,9 @@ struct HomeView: View {
             case .create: NewGuestSheet()
             case .resize: ResizeSheet()
             case .erase:
-                EraseSheet(confirmed: launch.eraseConfirmed)
+                EraseSheet(confirmed: hints.eraseConfirmed)
                     .presentationSizing(EraseSheetSizing())
-            case .info: InfoSheet(acknowledgements: launch.acknowledgements)
+            case .info: InfoSheet(acknowledgements: hints.acknowledgements)
             }
         }
         .alert("Not Enough Free Space", isPresented: $model.startBlocked) {
@@ -412,7 +412,7 @@ struct OptionsPanel: View {
                     row("Microphone", symbol: "mic.fill") {
                         Toggle("Microphone", isOn: Binding(
                             get: { guest.microphone },
-                            set: { model.guest?.microphone = $0 }
+                            set: { model.setMicrophone($0) }
                         ))
                         .labelsHidden()
                     }

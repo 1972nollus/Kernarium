@@ -613,12 +613,3 @@ struct GuestPowerMenu: View {
 
 /// Colours Android draws with, and the icon colours of the app's mark; the
 /// rest of the app's chrome uses system colours.
-extension Color {
-    init(hex: UInt32) {
-        self.init(
-            red: Double((hex >> 16) & 0xFF) / 255,
-            green: Double((hex >> 8) & 0xFF) / 255,
-            blue: Double(hex & 0xFF) / 255
-        )
-    }
-}

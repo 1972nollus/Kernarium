@@ -5,15 +5,27 @@ import Testing
 @testable import AndariumCore
 
 struct ConsoleScannerTests {
-    @Test func findsTheThreeMilestonesInOrder() {
+    @Test func findsTheMilestonesInOrder() {
         var scanner = ConsoleScanner()
         let text = """
             [    0.000000] Linux version 6.18.54-g4bcc3653b86a (clang) #1 SMP
             [    1.2] init: init first stage started!
+            [    9.3] init: starting service 'surfaceflinger'...
             [   22.9] init: processing action (sys.boot_completed=1) from (/system/etc/init/hw/init.rc:1)
 
             """
-        #expect(scanner.feed(text) == [.kernelRunning, .androidStarting, .androidReady])
+        #expect(scanner.feed(text) == [.kernelRunning, .androidStarting, .screenStarting, .ready])
+    }
+
+    @Test func recoveryIsReadyWhenItsServiceStarts() {
+        var scanner = ConsoleScanner()
+        let text = """
+            [    0.000000] Linux version 6.18.54-g4bcc3653b86a (clang) #1 SMP
+            [    0.6] init: init first stage started!
+            [    0.8] init: starting service 'recovery'...
+
+            """
+        #expect(scanner.feed(text) == [.kernelRunning, .androidStarting, .ready])
     }
 
     @Test func aLineSplitAcrossChunksIsStillFound() {
@@ -55,7 +67,7 @@ struct BootTrackerTests {
         #expect(tracker.milestone == .androidStarting)
         #expect(tracker.reached[.androidStarting] == 12)
         #expect(!tracker.isReady)
-        let ready = tracker.reach(.androidReady, atSeconds: 40)
+        let ready = tracker.reach(.ready, atSeconds: 40)
         #expect(ready)
         #expect(tracker.isReady)
     }

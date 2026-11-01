@@ -108,13 +108,16 @@ public struct RunEnd: Equatable, Sendable {
     /// The runtime stopped a guest that kept restarting within seconds of
     /// booting.
     public var restartedInALoop: Bool
+    /// Why the run could not begin, when it did not.
+    public var startFailure: String?
 
-    public init(result: Int32, restartedInALoop: Bool = false) {
+    public init(result: Int32, restartedInALoop: Bool = false, startFailure: String? = nil) {
         self.result = result
         self.restartedInALoop = restartedInALoop
+        self.startFailure = startFailure
     }
 
-    public var poweredOff: Bool { result == 0 && !restartedInALoop }
+    public var poweredOff: Bool { result == 0 && !restartedInALoop && startFailure == nil }
 
     public var phase: Phase { poweredOff ? .poweredOff : .failed }
 
@@ -126,7 +129,13 @@ public struct RunEnd: Equatable, Sendable {
             "Andarium \(appVersion) · \(system.distribution) \(system.release)",
             "\(system.kernel) · \(guest?.cores ?? 0) vCPUs · \(Formats.memory(guest?.memoryMiB ?? 0))",
         ]
-        let reason = restartedInALoop ? "the guest kept restarting" : "runtime result \(result)"
+        let reason = if let startFailure {
+            "it could not start (\(startFailure))"
+        } else if restartedInALoop {
+            "the guest kept restarting"
+        } else {
+            "runtime result \(result)"
+        }
         if let uptimeSeconds {
             lines.append("Guest ended: \(reason) after \(Formats.elapsed(uptimeSeconds))")
         } else {

@@ -146,6 +146,19 @@ final class AppModel {
     /// Seconds the boot screen shows when it is held.
     var frozenElapsed = 9
 
+    /// The runtime and storage behind the screens; nil plays mock data.
+    var driver: (any RuntimeDriver)?
+    /// A long task the screens wait for.
+    var busy: BusyState?
+    var alert: AppAlert?
+    /// How far the current boot has got, from the guest's console.
+    var bootTracker = BootTracker()
+    /// The guest's disk is being written before the run can begin.
+    var preparingDisk = false
+    var diskProgress: Double?
+    var microphoneState = MicrophoneState.notAsked
+    private var persistTask: Task<Void, Never>?
+
     init(
         guest: Guest?, host: HostDevice, system: SystemInfo, capabilities: Capabilities,
         createRequirementBytes: UInt64, systemBytes: UInt64
@@ -160,7 +173,10 @@ final class AppModel {
 
     var guest: Guest? {
         get { lifecycle.guest }
-        set { lifecycle.guest = newValue }
+        set {
+            lifecycle.guest = newValue
+            persistSoon()
+        }
     }
 
     var phase: Phase {
@@ -187,18 +203,92 @@ final class AppModel {
         guest?.bootKind(mode, currentRelease: updateTarget) ?? .normal
     }
 
+    /// Records the guest's choices a moment after the last change, so a
+    /// drag on a ruler writes once.
+    private func persistSoon() {
+        guard driver != nil else { return }
+        persistTask?.cancel()
+        persistTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self?.persistNow()
+        }
+    }
+
+    func persistNow() {
+        persistTask?.cancel()
+        guard let driver, let guest else { return }
+        do {
+            try driver.save(guest)
+        } catch {
+            alert = AppAlert(title: "Settings Not Saved", message: error.localizedDescription)
+        }
+    }
+
     func create(_ guest: Guest) {
-        lifecycle.create(guest)
+        guard let driver else {
+            lifecycle.create(guest)
+            return
+        }
+        runBusy(
+            BusyState(
+                title: "Creating Android",
+                detail: "Preparing \(guest.effectiveCapacityGiB) GB for \(system.distribution).", progress: 0
+            ),
+            failure: "Android Could Not Be Created"
+        ) { progress in
+            let made = try await driver.create(guest, progress: progress)
+            self.lifecycle.create(made)
+        }
     }
 
     func erase() {
-        lifecycle.erase()
+        guard let driver, let current = guest else {
+            lifecycle.erase()
+            return
+        }
+        runBusy(
+            BusyState(title: "Erasing Android", detail: "Writing a fresh copy of the system.", progress: 0),
+            failure: "Android Could Not Be Erased"
+        ) { progress in
+            _ = try await driver.erase(current, progress: progress)
+            self.lifecycle.erase()
+            self.persistNow()
+        }
+    }
+
+    /// Runs `work` behind the busy overlay, with a failure alert if it throws.
+    private func runBusy(
+        _ state: BusyState, failure: String,
+        _ work: @escaping @MainActor (@escaping @Sendable (Double) -> Void) async throws -> Void
+    ) {
+        guard busy == nil else { return }
+        busy = state
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await work { fraction in
+                    Task { @MainActor in self.busy?.progress = fraction }
+                }
+            } catch {
+                alert = AppAlert(title: failure, message: error.localizedDescription)
+            }
+            busy = nil
+        }
     }
 
     func start(_ mode: StartMode) {
         startMenu = false
         switch lifecycle.start(mode, host: host, currentRelease: updateTarget) {
-        case .allowed: frozenBootStage = nil
+        case let .allowed(kind):
+            frozenBootStage = nil
+            bootTracker = BootTracker()
+            preparingDisk = false
+            diskProgress = nil
+            if let driver, let guest {
+                persistNow()
+                driver.begin(guest: guest, mode: mode, kind: kind)
+            }
         case .lowSpace: startBlocked = true
         case .noGuest: break
         }
@@ -207,7 +297,9 @@ final class AppModel {
     func finishBoot(_ kind: BootKind) {
         let firstStart = guest?.neverStarted ?? false
         lifecycle.finishBoot(kind, release: system.release)
-        if firstStart, kind != .recovery {
+        if driver != nil {
+            persistNow()
+        } else if firstStart, kind != .recovery {
             sessionPreset.guestScreen = .setup
             guest?.usedBytes = 2_100_000_000
         }
@@ -224,6 +316,15 @@ final class AppModel {
         lifecycle.fail()
     }
 
+    /// The runtime's run returned: the guest powered off, or stopped for a
+    /// reason the failure screen reports.
+    func runEnded(_ end: RunEnd, uptimeSeconds: Int?) {
+        runEnd = end
+        runUptimeSeconds = uptimeSeconds
+        lifecycle.phase = end.phase
+        persistNow()
+    }
+
     /// Android's own Restart boots the guest again in place. ADB and the
     /// install list belong to the run that ended.
     func restart() {
@@ -232,11 +333,26 @@ final class AppModel {
         let showStats = session.showStats
         session = SessionState()
         session.showStats = showStats
+        bootTracker = BootTracker()
         lifecycle.restart()
     }
 
     func factoryReset() {
         lifecycle.factoryReset()
+        persistNow()
+    }
+
+    /// The microphone switch: the guest's choice, then the system's answer.
+    func setMicrophone(_ on: Bool) {
+        guard guest != nil else { return }
+        guest?.microphone = on
+        persistNow()
+        driver?.setMicrophone(on)
+    }
+
+    /// The step of the boot under way, from the runtime's milestones.
+    var liveBootStage: Int {
+        BootSteps.current(preparingDisk: preparingDisk, milestone: bootTracker.milestone)
     }
 
     /// The failure screen's copyable report.

@@ -19,7 +19,11 @@ final class FakeSeedWriter: SeedWriter, @unchecked Sendable {
     var writes: [Int] { lock.withLock { _writes } }
     var grows: [Int] { lock.withLock { _grows } }
 
-    func write(seed: SeedImage, to destination: URL, imageGiB: Int) async throws {
+    func write(
+        seed: SeedImage, to destination: URL, imageGiB: Int,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws {
+        progress(0.5)
         try lock.withLock {
             _writes.append(imageGiB)
             if failNextWrite {
@@ -31,7 +35,7 @@ final class FakeSeedWriter: SeedWriter, @unchecked Sendable {
         try Data(repeating: 0xA5, count: seedBytes).write(to: destination)
     }
 
-    func grow(image: URL, toGiB imageGiB: Int) throws {
+    func grow(image: URL, toGiB imageGiB: Int) async throws {
         lock.withLock { _grows.append(imageGiB) }
     }
 }
@@ -94,6 +98,10 @@ struct StorageTests {
         for key in ["\"schema\"", "\"data_layout\"", "\"release_id\"", "\"created_with\""] {
             #expect(text.contains(key))
         }
+        // Schema 0 is the single-image layout's; the two-disk layout's is 1.
+        let record = try JSONDecoder().decode(InstanceRecord.self, from: Data(contentsOf: storage.locations.instance))
+        #expect(record.schema == 0)
+        #expect(record.dataLayout == "single-image")
     }
 
     @Test func dataAndroidWritesCountsAsUsed() async throws {
@@ -194,17 +202,49 @@ struct StorageTests {
         defer { try? FileManager.default.removeItem(at: root) }
         var guest = try await storage.create(Guest.fresh(on: host))
 
+        // A URL caches the resource values it has read, so each read starts
+        // from the path.
         func excluded(_ url: URL) throws -> Bool? {
-            try url.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup
+            try URL(fileURLWithPath: url.path).resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup
         }
-        for url in [storage.locations.image, storage.locations.settings, storage.locations.instance] {
+        for url in [storage.locations.directory, storage.locations.image, storage.locations.settings, storage.locations.instance] {
             #expect(try excluded(url) == true)
         }
 
         guest.includeInBackups = true
         try storage.save(guest)
-        for url in [storage.locations.image, storage.locations.settings, storage.locations.instance] {
+        for url in [storage.locations.directory, storage.locations.image, storage.locations.settings, storage.locations.instance] {
             #expect(try excluded(url) == false)
         }
+    }
+}
+
+struct ZstdFrameTests {
+    private func header(descriptor: UInt8, afterDescriptor: [UInt8]) -> Data {
+        Data([0x28, 0xB5, 0x2F, 0xFD, descriptor] + afterDescriptor)
+    }
+
+    @Test func eightByteSizeInASingleSegmentFrame() {
+        let size: UInt64 = 3_274_702_848
+        let bytes = (0..<8).map { UInt8((size >> UInt64(8 * $0)) & 0xFF) }
+        #expect(ZstdFrame.contentSize(header: header(descriptor: 0xE0, afterDescriptor: bytes)) == size)
+    }
+
+    @Test func oneByteSizeInASingleSegmentFrame() {
+        #expect(ZstdFrame.contentSize(header: header(descriptor: 0x20, afterDescriptor: [200, 0])) == 200)
+    }
+
+    @Test func twoByteSizeCountsFromTwoFiftySix() {
+        // A window byte precedes the size when the frame is not a single segment.
+        #expect(ZstdFrame.contentSize(header: header(descriptor: 0x40, afterDescriptor: [0x10, 0x01, 0x00])) == 257)
+    }
+
+    @Test func aFrameWithNoDeclaredSize() {
+        #expect(ZstdFrame.contentSize(header: header(descriptor: 0x00, afterDescriptor: [0x10, 0, 0])) == nil)
+    }
+
+    @Test func notAZstdFrameOrTruncated() {
+        #expect(ZstdFrame.contentSize(header: Data([1, 2, 3, 4, 5, 6, 7])) == nil)
+        #expect(ZstdFrame.contentSize(header: header(descriptor: 0xE0, afterDescriptor: [1, 2])) == nil)
     }
 }

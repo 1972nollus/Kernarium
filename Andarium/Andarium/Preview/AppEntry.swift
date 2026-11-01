@@ -3,19 +3,19 @@ import Foundation
 import SwiftUI
 import TipKit
 
-/// Review entry points. `-screen <name>` opens any screen or state directly
-/// with mock data, so a simulator driven only by `simctl` reaches every flow.
-/// The list is in the README.
-struct LaunchOptions {
+/// The Simulator preview's entry. `-screen <name>` opens any screen or state
+/// directly with mock data, so a simulator driven only by `simctl` reaches
+/// every flow. The list is in the README.
+struct AppEntry {
     var screen: String
     /// Boot screens animate and continue into the session instead of holding.
     var play: Bool
     var lowSpace: Bool
     var resetTips: Bool
 
-    static func fromArguments() -> LaunchOptions {
+    static func fromArguments() -> AppEntry {
         let defaults = UserDefaults.standard
-        return LaunchOptions(
+        return AppEntry(
             screen: defaults.string(forKey: "screen") ?? "home",
             play: defaults.bool(forKey: "play"),
             lowSpace: defaults.bool(forKey: "lowSpace"),
@@ -23,13 +23,12 @@ struct LaunchOptions {
         )
     }
 
-    var eraseConfirmed: Bool { screen == "erase-confirm" }
-    var acknowledgements: Bool { screen == "info-acknowledgements" }
-    var scrollTarget: String? {
-        switch screen {
-        case "home-options": "erase"
-        default: nil
-        }
+    var hints: ScreenHints {
+        ScreenHints(
+            scrollTarget: screen == "home-options" ? "erase" : nil,
+            eraseConfirmed: screen == "erase-confirm",
+            acknowledgements: screen == "info-acknowledgements"
+        )
     }
 
     /// The side-keys tip. A screenshot of the tip shows it whatever the

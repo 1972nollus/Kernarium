@@ -10,8 +10,12 @@ public enum BootMilestone: Int, Comparable, Sendable {
     case kernelRunning
     /// Android's init has taken over.
     case androidStarting
-    /// Android has finished booting.
-    case androidReady
+    /// Android's graphics service has started, so the display is about to
+    /// have content.
+    case screenStarting
+    /// Android has finished booting, or Recovery is up: the guest has
+    /// something to show.
+    case ready
 
     public static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 }
@@ -56,7 +60,9 @@ public struct ConsoleScanner: Sendable {
     }
 
     static func milestone(in line: String) -> BootMilestone? {
-        if line.contains("processing action (sys.boot_completed=1)") { return .androidReady }
+        if line.contains("processing action (sys.boot_completed=1)") { return .ready }
+        if line.contains("init: starting service 'recovery'") { return .ready }
+        if line.contains("init: starting service 'surfaceflinger'") { return .screenStarting }
         if line.contains("init: init first stage started!") { return .androidStarting }
         if line.hasPrefix("Linux version ") || line.contains("] Linux version ") { return .kernelRunning }
         return nil
@@ -80,5 +86,31 @@ public struct BootTracker: Equatable, Sendable {
         return true
     }
 
-    public var isReady: Bool { milestone == .androidReady }
+    /// The boot screen has done its work: there is something of the guest's
+    /// to show.
+    public var isReady: Bool { milestone == .ready }
+
+    /// A restarted guest boots again from the start.
+    public mutating func restart() {
+        self = BootTracker()
+    }
+}
+
+/// Which of the boot screen's steps is under way, as the boot reaches its
+/// milestones. The steps are System, Linux Kernel, Storage, Android and
+/// Screen, in that order; `count` is past the last. Preparing the guest's
+/// disk is the System step: it writes the system the application carries.
+public enum BootSteps {
+    public static let count = 5
+
+    public static func current(preparingDisk: Bool, milestone: BootMilestone) -> Int {
+        if preparingDisk { return 0 }
+        switch milestone {
+        case .starting: return 1
+        case .kernelRunning: return 2
+        case .androidStarting: return 3
+        case .screenStarting: return 4
+        case .ready: return count
+        }
+    }
 }

@@ -172,27 +172,33 @@ struct SessionSettingsSheet: View {
         @Bindable var model = model
         if let guest = model.guest {
             Section {
-                LabeledContent {
-                    Picker("Resolution", selection: $model.retina) {
-                        Text("Points").tag(false)
-                        Text("Retina").tag(true)
+                if model.capabilities.liveDisplayOptions {
+                    LabeledContent {
+                        Picker("Resolution", selection: $model.retina) {
+                            Text("Points").tag(false)
+                            Text("Retina").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 150)
+                    } label: {
+                        rowLabel("Resolution", symbol: "rectangle.inset.filled")
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: 150)
-                } label: {
-                    rowLabel("Resolution", symbol: "rectangle.inset.filled")
-                }
-                Toggle(isOn: $model.followWindow) {
-                    rowLabel("Follow Window Size", symbol: "arrow.up.left.and.arrow.down.right")
+                    Toggle(isOn: $model.followWindow) {
+                        rowLabel("Follow Window Size", symbol: "arrow.up.left.and.arrow.down.right")
+                    }
                 }
                 Toggle(isOn: Binding(
                     get: { guest.microphone },
-                    set: { model.guest?.microphone = $0 }
+                    set: { model.setMicrophone($0) }
                 )) {
                     rowLabel("Microphone", symbol: "mic.fill")
                 }
             } header: {
                 Text("Options")
+            } footer: {
+                if guest.microphone && model.microphoneState == .denied {
+                    Text("iOS has not allowed Andarium to use the microphone, so Android records silence. Allow it for Andarium in Settings.")
+                }
             }
         }
     }

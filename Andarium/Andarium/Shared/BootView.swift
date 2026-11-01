@@ -21,7 +21,7 @@ struct BootView: View {
 
     var body: some View {
         let guest = model.guest ?? Guest.fresh(on: model.host)
-        let steps = Self.steps(kind, guest: guest, system: model.system)
+        let steps = shownSteps(guest: guest)
         let frozen = model.frozenBootStage.map { min($0, steps.count - 1) }
         let current = frozen ?? stage
         let progress = min(1, (Double(current) + (frozen != nil ? 0.45 : 0.5)) / Double(steps.count))
@@ -37,6 +37,10 @@ struct BootView: View {
         .statusBarHidden(true)
         .task(id: kind) {
             guard frozen == nil else { return }
+            if model.driver != nil {
+                await followRuntime(stepCount: steps.count)
+                return
+            }
             for (index, step) in steps.enumerated() {
                 withAnimation(.snappy) { stage = index }
                 try? await Task.sleep(for: .seconds(step.seconds))
@@ -46,6 +50,33 @@ struct BootView: View {
             try? await Task.sleep(for: .seconds(0.4))
             model.finishBoot(kind)
         }
+    }
+
+    /// The steps, with the first saying what the disk write is doing while
+    /// one is under way.
+    private func shownSteps(guest: Guest) -> [Step] {
+        var steps = Self.steps(kind, guest: guest, system: model.system)
+        if model.preparingDisk {
+            let detail = model.diskProgress.map { "Preparing the system \u{00B7} \(Int(($0 * 100).rounded()))%" }
+                ?? "Preparing the system"
+            steps[0] = Step(title: steps[0].title, detail: detail, seconds: 0)
+        }
+        return steps
+    }
+
+    /// The device application: the boot is as far as the guest's console
+    /// says, and ends when the guest has something to show.
+    private func followRuntime(stepCount: Int) async {
+        while !Task.isCancelled && !model.bootTracker.isReady {
+            let live = min(model.liveBootStage, stepCount - 1)
+            if live != stage { withAnimation(.snappy) { stage = live } }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        if Task.isCancelled { return }
+        withAnimation(.snappy) { stage = stepCount }
+        try? await Task.sleep(for: .seconds(0.4))
+        if Task.isCancelled { return }
+        model.finishBoot(kind)
     }
 
     // MARK: Parts
