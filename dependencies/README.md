@@ -254,7 +254,8 @@ without the sanitizer.
 
 The idle trim of a context (`EGL_MESA_context_trim`, `pipe_context::trim`) is
 exercised by `gpu-host-context-trim` and `gpu-host-context-trim-concurrent` in
-`check-gpu`. The second has four contexts of one Zink screen draw, flush and
+`check-gpu`; `gpu-host-context0-trim` makes the renderer's own context release
+the textures a guest made and deleted without naming a context. The second has four contexts of one Zink screen draw, flush and
 trim at once, and is the program for a ThreadSanitizer pass over the trim, the
 flush queue's reset of the screen's batch-state lists and their lock order: build
 the Zink and EGL stack with `-Db_sanitize=thread` (the same object stays without

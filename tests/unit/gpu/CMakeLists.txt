@@ -204,6 +204,16 @@ if(TARGET uml_gpu_service)
         UNIT_DIRECTORY
         TIMEOUT 120)
 
+    # The renderer's own context (context 0) is trimmed like a guest context:
+    # textures a guest made and deleted without naming a context give their
+    # memory back within a few idle intervals.
+    uml_add_gpu_unit_test(gpu-host-context0-trim
+        uml_gpu_host_context0_trim_tests host_gl_context0_trim_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY
+        TIMEOUT 120)
+
     # Contexts that draw, flush and trim at once on one driver screen.
     uml_add_gpu_unit_test(gpu-host-context-trim-concurrent
         uml_gpu_host_context_trim_concurrent_tests

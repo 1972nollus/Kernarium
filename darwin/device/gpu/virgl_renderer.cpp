@@ -44,6 +44,9 @@ constexpr auto maximumFenceWait = std::chrono::seconds(60);
 constexpr std::uint32_t virglCapsetId = 1;
 constexpr std::uint32_t virgl2CapsetId = 2;
 constexpr std::uint32_t venusCapsetId = 4;
+// The renderer's own context, which no guest names: resources are made and
+// transferred on it when a command carries no context.
+constexpr std::uint32_t hostContextId = 0;
 
 /* UML_GPU_IDLE_TRIM_MS is how long a guest GL context stays quiet before the
  * renderer asks the host driver to release what it keeps for it: a whole
@@ -319,6 +322,13 @@ VirglRenderer::VirglRenderer()
                 std::to_string(checkedResult));
         }
         initialized = true;
+        try {
+            /* The renderer's own context is where a resource is made and
+             * transferred when the guest names no context of its own. */
+            idleContexts_.add(hostContextId, ContextIdleTracker::Clock::now());
+        } catch (...) {
+            // A context that is not tracked is never trimmed; that is all.
+        }
         if (deviceMemoryPool) {
             /* A refused reservation first frees what the host GL driver
              * caches. The hook reaches this renderer's provider, so it is
@@ -479,6 +489,7 @@ int VirglRenderer::submit(
 int VirglRenderer::createResource3d(
     const Resource3d& resource) noexcept
 {
+    noteContextActivity(hostContextId);
     virgl_renderer_resource_create_args arguments {
         .handle = resource.resourceId,
         .target = resource.target,
@@ -644,6 +655,7 @@ int VirglRenderer::readResourceRectangle(
     const auto stride = width * protocol::gpuBytesPerPixel;
     if (height > destination.size() / stride)
         return ENOSPC;
+    noteContextActivity(hostContextId);
     iovec vector {
         .iov_base = destination.data(),
         .iov_len = destination.size(),
@@ -1060,8 +1072,6 @@ void VirglRenderer::writeContextFence(
 
 void VirglRenderer::noteContextActivity(std::uint32_t contextId) noexcept
 {
-    if (contextId == 0)
-        return;
     try {
         idleContexts_.activity(contextId, ContextIdleTracker::Clock::now());
     } catch (...) {

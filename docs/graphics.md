@@ -1230,7 +1230,16 @@ with `virgl_renderer_context_trim`, and trimmed once more a second later, and
 any new activity arms it again. The second trim is the one that matters to a
 context that only uploads: the flush inside the first trim submits its last
 batch, which has not completed when that trim looks at it, and the idle context
-would not submit again to reset it. The GPU service thread sleeps on a timer for
+would not submit again to reset it. The renderer's own context, context 0, is
+tracked the same way. A texture or buffer made and written when a command names
+no guest context (a gralloc allocation, an upload before the guest's first
+command) is made and written there, and its GL context kept the storage of what
+the guest had since deleted until the renderer next submitted on it, which
+for a guest that had stopped allocating was never: 48 textures of 4 MiB stayed
+allocated, 384 MiB, for as long as the renderer was quiet, and counted against
+the budget. A resource's creation, a transfer and a readback on it count as the
+activity of context 0, and `virgl_renderer_context_trim(0)` trims vrend's own
+context. The GPU service thread sleeps on a timer for
 the earliest moment a context could be due, so an idle guest costs no wakeups. A
 texture one context deletes may still have a sampler view that another made, and
 Mesa destroys a context's own views when that context next flushes. A resource

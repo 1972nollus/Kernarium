@@ -25,7 +25,8 @@ namespace uml::gpu {
  * Resources the host drops for other contexts' sake bring two more
  * (noteRelease), for the same reason.
  *
- * Only contexts that were added are tracked. Safe to call from any thread. */
+ * Only contexts that were added are tracked: the guest's, and the renderer's
+ * own context 0. Safe to call from any thread. */
 class ContextIdleTracker {
 public:
     using Clock = std::chrono::steady_clock;

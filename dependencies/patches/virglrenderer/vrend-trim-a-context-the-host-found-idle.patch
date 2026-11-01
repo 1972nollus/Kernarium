@@ -17,17 +17,23 @@ current one is restored.  Nothing waits for the GPU.  A context that is not a
 GL context, or an error context, ignores the call.  The vtable entry is
 optional.
 
+Context 0, the renderer's own context, has no virgl_context, so the call
+trims it directly.  It is where a resource is made and transferred when the
+guest names no context of its own, and a host that deletes such a resource
+would otherwise leave its storage referenced by that context's GL context for
+as long as the renderer stays quiet.
+
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
  src/virgl_context.h          |  4 ++++
- src/virglrenderer.c          | 10 ++++++++++
- src/virglrenderer.h          |  9 +++++++++
+ src/virglrenderer.c          | 17 +++++++++++++++++
+ src/virglrenderer.h          | 11 +++++++++++
  src/vrend/vrend_decode.c     |  8 ++++++++
- src/vrend/vrend_renderer.c   | 22 ++++++++++++++++++++++
- src/vrend/vrend_renderer.h   |  2 ++
+ src/vrend/vrend_renderer.c   | 32 ++++++++++++++++++++++++++++++++
+ src/vrend/vrend_renderer.h   |  3 +++
  src/vrend/vrend_winsys_egl.c | 17 +++++++++++++++++
  src/vrend/vrend_winsys_egl.h |  1 +
- 8 files changed, 73 insertions(+)
+ 8 files changed, 93 insertions(+)
 
 diff --git a/src/virgl_context.h b/src/virgl_context.h
 index 25bc10603f0a6bc80db759af8911cba2186e74a3..822917cc32d88d6b02c0c9d88d2495f3546e55ae 100644
@@ -45,16 +51,23 @@ index 25bc10603f0a6bc80db759af8911cba2186e74a3..822917cc32d88d6b02c0c9d88d2495f3
     int (*get_device_fd)(struct virgl_context *ctx);
  
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index c13846ab9dd420ed8112d761f062d7ec3b6aaa0a..f9d1e6e5948d6445702723d5331b549cf32ecd92 100644
+index c13846ab9dd420ed8112d761f062d7ec3b6aaa0a..d8b9e1b89c5ea249dfdaafdb4d7ceaa0b00ef0a4 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
-@@ -458,6 +458,16 @@ void virgl_renderer_context_poll(uint32_t ctx_id)
+@@ -458,6 +458,23 @@ void virgl_renderer_context_poll(uint32_t ctx_id)
     ctx->retire_fences(ctx);
  }
  
 +void virgl_renderer_context_trim(uint32_t ctx_id)
 +{
 +   TRACE_FUNC();
++   if (ctx_id == 0) {
++      /* The renderer's own context has no virgl_context. */
++      if (state.vrend_initialized)
++         vrend_renderer_host_context_trim();
++      return;
++   }
++
 +   struct virgl_context *ctx = virgl_context_lookup(ctx_id);
 +   if (!ctx || !ctx->trim)
 +      return;
@@ -66,10 +79,10 @@ index c13846ab9dd420ed8112d761f062d7ec3b6aaa0a..f9d1e6e5948d6445702723d5331b549c
  {
     struct virgl_context *ctx = virgl_context_lookup(ctx_id);
 diff --git a/src/virglrenderer.h b/src/virglrenderer.h
-index 88372ec8bc0b688810895001081f6d9d20bd5ff4..70085259bf47ebb119c3034e64e94821d432f0d2 100644
+index 88372ec8bc0b688810895001081f6d9d20bd5ff4..2b9c5dab5e96c54f71940a69aebe475bd41c9659 100644
 --- a/src/virglrenderer.h
 +++ b/src/virglrenderer.h
-@@ -487,6 +487,15 @@ VIRGL_EXPORT int virgl_renderer_context_create_fence(uint32_t ctx_id,
+@@ -487,6 +487,17 @@ VIRGL_EXPORT int virgl_renderer_context_create_fence(uint32_t ctx_id,
  VIRGL_EXPORT void virgl_renderer_context_poll(uint32_t ctx_id); /* force fences */
  VIRGL_EXPORT int virgl_renderer_context_get_poll_fd(uint32_t ctx_id);
  
@@ -78,8 +91,10 @@ index 88372ec8bc0b688810895001081f6d9d20bd5ff4..70085259bf47ebb119c3034e64e94821
 + * renderer flushes what the context's GL contexts still hold back and asks
 + * the host GL driver to release what they keep for completed work. It
 + * never waits for the GPU, and the context stays usable. A context that
-+ * has nothing to trim, or is not a GL context, ignores it. Call it from
-+ * the thread that runs the renderer. */
++ * has nothing to trim, or is not a GL context, ignores it. Context 0 is the
++ * renderer's own context, where a resource is made and transferred when no
++ * guest context is named; it is trimmed the same way. Call it from the
++ * thread that runs the renderer. */
 +VIRGL_EXPORT void virgl_renderer_context_trim(uint32_t ctx_id);
 +
  /* Map a resource to an specific userspace address. If successful, the
@@ -110,10 +125,10 @@ index e76f006d2a577f714399b7271b4a46ab6eabaf42..05fa41fca31d80f89ed6b206d5732c10
 +   ctx->trim = vrend_decode_ctx_trim;
  }
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 89e060fb4e0e158037642934742e0aaad85e6ad3..2474d3ee0fdbf38fa7c252e0a868a28243065bda 100644
+index 89e060fb4e0e158037642934742e0aaad85e6ad3..2ce2b0081c0c370e6d641f5df0f43f90db614a39 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -12832,6 +12832,28 @@ bool vrend_hw_switch_context(struct vrend_context *ctx, bool now)
+@@ -12832,6 +12832,38 @@ bool vrend_hw_switch_context(struct vrend_context *ctx, bool now)
     return true;
  }
  
@@ -139,18 +154,29 @@ index 89e060fb4e0e158037642934742e0aaad85e6ad3..2474d3ee0fdbf38fa7c252e0a868a282
 +   vrend_hw_switch_context_with_sub(ctx, selected->sub_ctx_id);
 +}
 +
++/* The host's own context, context 0, is where a resource is made, written and
++ * read when the guest names no context of its own: a texture a guest creates
++ * and fills before its first command, a gralloc allocation.  Its GL context
++ * keeps what that work used until it next submits, so it is trimmed like any
++ * other. */
++void vrend_renderer_host_context_trim(void)
++{
++   vrend_renderer_context_trim(vrend_state.ctx0);
++}
++
  static void vrend_finish_context_switch(struct vrend_context *ctx)
  {
     if (ctx->ctx_switch_pending == false)
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index 76426e4d3c0170ab7b9857a8e58e3cfe76e12a8c..b62c0586be45d4dca2077005646cf2f74ec980f2 100644
+index 76426e4d3c0170ab7b9857a8e58e3cfe76e12a8c..943351838ee3f60e73123124eefa7869d525f70d 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
-@@ -591,6 +591,8 @@ void vrend_renderer_get_rect(struct pipe_resource *pres,
+@@ -591,6 +591,9 @@ void vrend_renderer_get_rect(struct pipe_resource *pres,
                               uint32_t offset,
                               int x, int y, int width, int height);
  
 +void vrend_renderer_context_trim(struct vrend_context *ctx);
++void vrend_renderer_host_context_trim(void);
 +
  void vrend_renderer_attach_res_ctx(struct vrend_context *ctx,
                                     struct virgl_resource *res);
