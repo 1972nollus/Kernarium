@@ -7,6 +7,9 @@
  * streaming mode, so the tests of that contract run a long streaming loop
  * under it and check that the guest's FPSR and FPCR survive.
  */
+#include "require.hpp"
+#include "wait_until.hpp"
+
 #include <mach/mach.h>
 
 #include <atomic>
@@ -22,6 +25,15 @@ public:
 		: target_{mach_thread_self()}, period_{period},
 		  thread_{[this] { interrupt(); }}
 	{
+		/* The run that follows is stopped only once this thread is
+		 * going: a loaded host can schedule it after that run is
+		 * over. */
+		const auto stopped = [this] {
+			return stops_.load(std::memory_order_acquire) != 0;
+		};
+		uml::testing::require(uml::testing::waitUntil(stopped,
+				std::chrono::seconds{10}),
+			"the thread that stops this one never stopped it");
 	}
 
 	KernelStops(const KernelStops &) = delete;

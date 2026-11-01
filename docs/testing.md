@@ -403,10 +403,19 @@ load/store-exclusive pairs, and every token must remain. `guest-aarch32-exclusiv
 
 `UML_TEST_APPLE_AUDIO=ON` enables `apple-audio-playback`, which sends a brief,
 low-volume stereo tone through the real macOS output and verifies completion
-and restart. It requires access to macOS audio services. The microphone has
-no opt-in test: `virtio-sound-microphone` runs over fakes, and the real input
-is checked by hand (see the Microphone section of the audio README) because
-granting microphone access is the user's act.
+and restart. It requires access to macOS audio services. It also enables
+`apple-audio-interruption`, which builds the playback sink for the iOS
+Simulator, plays a stream there and posts the audio-session notifications iOS
+posts when another app interrupts it (the Simulator never does), with hooks on
+the session's activation and its hint about other apps' audio and on the
+player's scheduling: playback must stop while interrupted without slowing the
+guest's clock, resume when the system lets the session resume or, with no
+notification, when no other app plays, never take the session from an app that
+does, keep completing periods through a slow session activation, and never
+wedge. It skips when no iOS Simulator device at the deployment target exists.
+The microphone has no opt-in test: `virtio-sound-microphone` runs over fakes,
+and the real input is checked by hand (see the Microphone section of the audio
+README) because granting microphone access is the user's act.
 
 The full sanitizer suites remain separate because of their runtime cost:
 

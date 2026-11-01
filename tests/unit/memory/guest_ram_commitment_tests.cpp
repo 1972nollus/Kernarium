@@ -9,6 +9,7 @@
 #include "named_tests.hpp"
 #include "require.hpp"
 #include "scratch_directory.hpp"
+#include "wait_until.hpp"
 
 #include <atomic>
 #include <cerrno>
@@ -268,8 +269,11 @@ void take_signal(int) noexcept
 }
 
 /* Posts SIGUSR1 to one thread every few microseconds while it lives, as
- * guest CPUs post their IPI wake signal to one another. The handler stays
- * installed, so a signal still pending when the storm ends is harmless. */
+ * guest CPUs post their IPI wake signal to one another. Its constructor
+ * returns once the first is posted, because a loaded host can schedule the
+ * sender only after the work it is meant to disturb is over. The handler
+ * stays installed, so a signal still pending when the storm ends is
+ * harmless. */
 class SignalStorm final {
 public:
 	explicit SignalStorm(pthread_t target)
@@ -280,12 +284,18 @@ public:
 		require(sigaction(SIGUSR1, &action, nullptr) == 0,
 			"cannot catch SIGUSR1");
 		sender_ = std::thread([this, target] {
-			while (!stopping_.load(std::memory_order_relaxed)) {
+			do {
 				(void)pthread_kill(target, SIGUSR1);
+				posted_.fetch_add(1, std::memory_order_release);
 				std::this_thread::sleep_for(
 					std::chrono::microseconds{20});
-			}
+			} while (!stopping_.load(std::memory_order_relaxed));
 		});
+		const auto sent = [this] {
+			return posted_.load(std::memory_order_acquire) != 0;
+		};
+		require(uml::testing::waitUntil(sent, std::chrono::seconds{10}),
+			"the signal sender never ran");
 	}
 	~SignalStorm()
 	{
@@ -297,6 +307,7 @@ public:
 
 private:
 	std::atomic<bool> stopping_{false};
+	std::atomic<unsigned long> posted_{0};
 	std::thread sender_;
 };
 

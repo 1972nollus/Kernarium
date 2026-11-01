@@ -17,6 +17,7 @@
 #include "cpu/x86_64/gadgets/native_symbols.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
 #include "require.hpp"
+#include "wait_until.hpp"
 #include "x86_64_flat_memory.hpp"
 
 #include <atomic>
@@ -174,6 +175,17 @@ struct alignas(16) SeparateBounds final {
 
 constexpr auto run_time = std::chrono::milliseconds(750);
 
+/* Waits until `count` threads have begun their first pass, so the run time
+ * that follows is spent with all of them going: a loaded host can schedule
+ * them only after it is over. */
+void await_started(const std::atomic<unsigned> &started, unsigned count)
+{
+	require(uml::testing::waitUntil([&] {
+			return started.load(std::memory_order_acquire) == count;
+		}, std::chrono::seconds{10}),
+		"the threads of the run never started");
+}
+
 struct Candidates final {
 	gadgets::BuildResult shorter;
 	gadgets::BuildResult longer;
@@ -200,6 +212,7 @@ void test_retargeting_reader()
 		"the link pair is not aligned");
 
 	std::atomic<bool> stop{false};
+	std::atomic<unsigned> started{0};
 	std::atomic<std::uint64_t> torn{0};
 	std::atomic<std::uint64_t> reads{0};
 	std::atomic<std::uint64_t> retargets{0};
@@ -207,7 +220,9 @@ void test_retargeting_reader()
 	const auto writer = [&](unsigned seed) {
 		std::uint64_t state = seed;
 		std::uint64_t done = 0;
-		while (!stop.load(std::memory_order_relaxed)) {
+		started.fetch_add(1, std::memory_order_release);
+		/* The first pass is made whatever `stop` says. */
+		do {
 			state = state * 6364136223846793005ULL + 1442695040888963407ULL;
 			const auto choice = (state >> 33) % 3U;
 			if (choice == 2)
@@ -220,14 +235,15 @@ void test_retargeting_reader()
 						programs[choice]->native_stream().data()),
 					programs[choice]->instruction_count());
 			++done;
-		}
+		} while (!stop.load(std::memory_order_relaxed));
 		retargets.fetch_add(done);
 	};
 
 	const auto reader = [&] {
 		std::uint64_t seen = 0;
 		std::uint64_t bad = 0;
-		while (!stop.load(std::memory_order_relaxed)) {
+		started.fetch_add(1, std::memory_order_release);
+		do {
 			const auto link = load_pair(&record.link.stream);
 			const auto bounds = load_pair(
 				reinterpret_cast<const std::byte *>(link.first) - 16);
@@ -247,7 +263,7 @@ void test_retargeting_reader()
 			}
 			bad += good ? 0 : 1;
 			++seen;
-		}
+		} while (!stop.load(std::memory_order_relaxed));
 		reads.fetch_add(seen);
 		torn.fetch_add(bad);
 	};
@@ -257,6 +273,7 @@ void test_retargeting_reader()
 		threads.emplace_back(writer, 17U + index);
 	for (unsigned index = 0; index < 2; ++index)
 		threads.emplace_back(reader);
+	await_started(started, static_cast<unsigned>(threads.size()));
 	std::this_thread::sleep_for(run_time);
 	stop.store(true);
 	for (auto &thread : threads)
@@ -286,11 +303,13 @@ void test_separate_bounds_tear()
 	record.link.stream = &record.fallback_stream;
 
 	std::atomic<bool> stop{false};
+	std::atomic<unsigned> started{0};
 	std::atomic<std::uint64_t> torn{0};
 
 	const auto writer = [&] {
 		std::uint64_t flip = 0;
-		while (!stop.load(std::memory_order_relaxed)) {
+		started.fetch_add(1, std::memory_order_release);
+		do {
 			const auto *program = programs[flip++ & 1U];
 			store_pair(&record.link.stream,
 				reinterpret_cast<std::uintptr_t>(
@@ -300,11 +319,12 @@ void test_separate_bounds_tear()
 			}
 			store_pair(&record.begin, program->address(),
 				program->address() + program->byte_count());
-		}
+		} while (!stop.load(std::memory_order_relaxed));
 	};
 	const auto reader = [&] {
 		std::uint64_t bad = 0;
-		while (!stop.load(std::memory_order_relaxed)) {
+		started.fetch_add(1, std::memory_order_release);
+		do {
 			const auto link = load_pair(&record.link.stream);
 			const auto bounds = load_pair(&record.begin);
 			for (const auto *program : programs)
@@ -313,13 +333,14 @@ void test_separate_bounds_tear()
 				    bounds.second != program->address() +
 						program->byte_count())
 					++bad;
-		}
+		} while (!stop.load(std::memory_order_relaxed));
 		torn.fetch_add(bad);
 	};
 	std::vector<std::thread> threads;
 	threads.emplace_back(writer);
 	threads.emplace_back(reader);
 	threads.emplace_back(reader);
+	await_started(started, static_cast<unsigned>(threads.size()));
 	std::this_thread::sleep_for(run_time);
 	stop.store(true);
 	for (auto &thread : threads)
