@@ -147,7 +147,7 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
             vulkan_device_address_commands kosmickrisp_geometry_invocations
             kosmickrisp_partial_position kosmickrisp_pipeline_statistics
             kosmickrisp_point_clipping kosmickrisp_tessellation_feedback
-            kosmickrisp_command_storage kosmickrisp_raster_polygon
+            kosmickrisp_raster_polygon
             kosmickrisp_raster_line kosmickrisp_raster_state
             kosmickrisp_geometry_side_effects)
         string(REPLACE "_" "-" test_name "gpu-${stem}")
@@ -156,6 +156,14 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
             LIBRARIES uml_gpu_vulkan_draw_test_support
             VULKAN)
     endforeach()
+    # The command storage guard counts Metal command allocators, so it is
+    # Objective-C++ and links Metal.
+    uml_add_gpu_unit_test(gpu-kosmickrisp-command-storage
+        uml_gpu_kosmickrisp_command_storage_tests
+        kosmickrisp_command_storage_tests.mm
+        LIBRARIES uml_gpu_vulkan_draw_test_support
+            "-framework Foundation" "-framework Metal"
+        VULKAN)
     foreach(stem geometry_invocations raster_line geometry_side_effects)
         target_link_libraries(uml_gpu_kosmickrisp_${stem}_tests PRIVATE
             Threads::Threads)

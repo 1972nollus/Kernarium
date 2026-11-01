@@ -318,6 +318,8 @@ SubmitStormResult DrawContext::submit_storm(const SubmitStormConfig &config)
             VK_CHECK(WaitForFences, api.device, 1, &fences[slot], VK_TRUE, 30'000'000'000ull);
             VK_CHECK(ResetFences, api.device, 1, &fences[slot]);
             pending[slot] = false;
+            if (config.completed)
+                config.completed(index - outstanding);
         }
         VkCommandBufferBeginInfo begin = structure<VkCommandBufferBeginInfo>(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -354,6 +356,12 @@ SubmitStormResult DrawContext::submit_storm(const SubmitStormConfig &config)
         if (!pending[slot])
             continue;
         VK_CHECK(WaitForFences, api.device, 1, &fences[slot], VK_TRUE, 30'000'000'000ull);
+        if (config.completed) {
+            // The slot's last submission: the largest index below `submissions`
+            // that is congruent to the slot modulo `outstanding`.
+            const uint32_t last = slot + (config.submissions - 1 - slot) / outstanding * outstanding;
+            config.completed(last);
+        }
     }
     result.wall_nanoseconds = double(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now() - started).count());
