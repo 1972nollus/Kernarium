@@ -200,7 +200,7 @@ $RSYNC -a --exclude .git "$SOURCE_ROOT/proxy-libintl/" \
 $RSYNC -a --exclude .git "$SOURCE_ROOT/gvdb/" \
 	"$GLIB_SOURCE/subprojects/gvdb/"
 
-printf '%s\n' "building PCRE2 10.48 for $PLATFORM"
+printf '%s\n' "building PCRE2 10.49 for $PLATFORM"
 "$CMAKE" -S "$SOURCE_ROOT/pcre2" -B "$BUILDS/pcre2" -G Ninja \
 	-DCMAKE_MAKE_PROGRAM="$NINJA" \
 	-DCMAKE_BUILD_TYPE=Release \
@@ -220,7 +220,7 @@ printf '%s\n' "building PCRE2 10.48 for $PLATFORM"
 "$CMAKE" --build "$BUILDS/pcre2" --parallel "$JOBS"
 "$CMAKE" --install "$BUILDS/pcre2"
 
-printf '%s\n' "building libffi 3.7.1 for $PLATFORM"
+printf '%s\n' "building libffi 3.8.0 for $PLATFORM"
 (
 	CDPATH= cd -- "$LIBFFI_SOURCE"
 	./autogen.sh
@@ -282,7 +282,7 @@ meson_setup()
 		"$MESON" setup "$@" --cross-file "$CROSS_FILE"
 }
 
-printf '%s\n' "building GLib 2.88.3 for $PLATFORM"
+printf '%s\n' "building GLib 2.90.1 for $PLATFORM"
 meson_setup "$BUILDS/glib" "$GLIB_SOURCE" \
 	--prefix "$STAGE" --libdir=lib --buildtype=release \
 	--default-library=static --wrap-mode=nodownload \
