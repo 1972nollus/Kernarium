@@ -16,7 +16,7 @@ WORK_ROOT=${UML_KERNEL_HOST_TOOLS_BUILD_ROOT:-"$ROOT_DIR/.build/dependency-build
 ARCHIVE_MANIFEST="$ROOT_DIR/dependencies/kernel-host-tools/archives.tsv"
 VERIFY_SCRIPT="$ROOT_DIR/dependencies/cmake/VerifyKernelHostToolsPrefix.cmake"
 DARWIN_HOST="$ROOT_DIR/kernel/mainline-6.18/build/toolchain/darwin-host"
-UAPI_ARCHIVE_NAME=linux-libc-dev_6.12.107-1_all.deb
+UAPI_ARCHIVE_NAME=linux-libc-dev_6.12.113-1_all.deb
 JOBS=${UML_KERNEL_HOST_TOOLS_JOBS:-8}
 # The tools run only on the kernel build host. elfutils calls strchrnul, which
 # Darwin provides from macOS 15.4.
