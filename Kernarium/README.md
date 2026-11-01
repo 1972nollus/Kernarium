@@ -209,7 +209,9 @@ refuses a release runtime that contains the setting's name.
 
 Kernarium attaches:
 
-- an absolute touchscreen and evdev keyboard;
+- an absolute touchscreen and evdev keyboard, which advertises Linux key codes
+  1 through 127 and, above them, Back (158) and Home (172) for Android's
+  navigation keys; the guest ignores any other code;
 - a signed-16-bit 48 kHz playback stream (stereo) and capture stream
   (mono or stereo) through Virtio-Sound, whose capture records silence unless
   the user turns on Microphone;
