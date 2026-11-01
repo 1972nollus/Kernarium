@@ -702,6 +702,16 @@ the automation Android runtime
 `KERNARIUM_ANDROID_ADB_AUTH=0` and a loopback forward, and reaches the forward
 over USB with `iproxy`.
 
+On a connected iOS device that driver is
+[`tests/perf/run_ios_device_android.py`](../tests/perf/README.md): Android runs
+on a device go through Andarium
+([`Andarium/README.md`](../Andarium/README.md#automation)), and Kernarium's
+device runners (`run_ios_device_workload.py`, `run_ios_device_discard_bench.py`
+and the device CTS lane) keep Linux. Both share
+`tests/integration/support/ios_device.py`, and its tooling tests
+(`andarium-android-runner`, `andarium-device-support`) run the runner against a
+fake `devicectl`, `iproxy`, `adb` and `afcclient`, so no device is needed.
+
 Android recovery qualification uses a fresh disposable bundle and sets
 `TEST_RUNNER_KERNARIUM_ANDROID_BOOT_MODE=recovery`. Verify the LineageOS
 recovery UI, touch input, ADB, `adb sideload` of a signed package, fixed-GPT

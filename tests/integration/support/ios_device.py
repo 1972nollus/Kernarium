@@ -31,6 +31,7 @@ import signal
 import subprocess
 import tempfile
 import time
+from typing import IO
 
 
 PROGRESS_INTERVAL_SECONDS = 60
@@ -126,6 +127,33 @@ def copy_to_device(
     )
 
 
+def device_lock_state(device: str, timeout: int = 60) -> str:
+    """``unlocked``, ``locked`` or ``unknown`` (a failed or unreadable query).
+
+    A passcode-locked device refuses every launch, and only its owner can
+    unlock it.
+    """
+    try:
+        completed = subprocess.run(
+            device_command(
+                "device", "info", "lockState", "--device", device
+            ),
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if completed.returncode != 0:
+        return "unknown"
+    if "passcodeRequired: false" in completed.stdout:
+        return "unlocked"
+    if "passcodeRequired: true" in completed.stdout:
+        return "locked"
+    return "unknown"
+
+
 def install_app(device: str, app: pathlib.Path, timeout: int) -> None:
     subprocess.run(
         ["codesign", "--verify", "--deep", "--strict", str(app)],
@@ -180,6 +208,63 @@ def runtime_result(application: Application, transcript: str) -> int | None:
     return int(results[-1]) if results else None
 
 
+class Console:
+    """The console of a launched application, held until the block ends.
+
+    ``devicectl device process launch --console`` stays attached for as long
+    as the application runs and writes what it prints to ``log``; leaving the
+    block interrupts it.
+    """
+
+    def __init__(
+        self,
+        device: str,
+        application: Application,
+        settings: Mapping[str, str],
+        log: pathlib.Path,
+    ) -> None:
+        self.log = log
+        self._command = device_command(
+            "device", "process", "launch", "--device", device,
+            "--console", "--terminate-existing", application.bundle_id,
+        )
+        self._environment = device_launch_environment(application, settings)
+        self._output: IO[bytes] | None = None
+        self._process: subprocess.Popen[bytes] | None = None
+
+    def __enter__(self) -> "Console":
+        self._output = self.log.open("wb")
+        try:
+            self._process = subprocess.Popen(
+                self._command,
+                stdout=self._output,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                env=self._environment,
+            )
+        except BaseException:
+            self._output.close()
+            raise
+        return self
+
+    def __exit__(self, *_exception: object) -> None:
+        assert self._output is not None and self._process is not None
+        try:
+            stop_console(self._process)
+        finally:
+            self._output.close()
+
+    def transcript(self) -> str:
+        return self.log.read_text(encoding="utf-8", errors="replace")
+
+    def size(self) -> int:
+        return self.log.stat().st_size
+
+    def running(self) -> bool:
+        assert self._process is not None
+        return self._process.poll() is None
+
+
 def run_device_console(
     device: str,
     application: Application,
@@ -197,53 +282,39 @@ def run_device_console(
     ``finished`` accepts the transcript. The wait is bounded by an overall
     deadline and by a stall deadline that only a growing console resets.
     """
-    command = device_command(
-        "device", "process", "launch", "--device", device,
-        "--console", "--terminate-existing", application.bundle_id,
-    )
     started = time.monotonic()
     deadline = started + timeout
     stall_deadline = started + stall_timeout
     next_update = started + PROGRESS_INTERVAL_SECONDS
     observed = 0
-    with log.open("wb") as output:
-        process = subprocess.Popen(
-            command,
-            stdout=output,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            env=device_launch_environment(application, settings),
-        )
-        try:
-            while True:
-                transcript = log.read_text(encoding="utf-8", errors="replace")
-                result = application.runtime_result
-                if result.search(transcript) is not None or (
-                    finished is not None and finished(transcript)
-                ):
-                    return transcript
-                if process.poll() is not None:
-                    return transcript
-                now = time.monotonic()
-                size = log.stat().st_size
-                if size > observed:
-                    observed = size
-                    stall_deadline = now + stall_timeout
-                if now >= deadline:
-                    raise DeviceError(
-                        f"{label} exceeded {timeout} seconds; see {log}"
-                    )
-                if now >= stall_deadline:
-                    raise DeviceError(
-                        f"the console of {label} stopped growing for "
-                        f"{stall_timeout} seconds; see {log}"
-                    )
-                if now >= next_update:
-                    print(
-                        f"{label} is running; console_bytes={size}",
-                        flush=True,
-                    )
-                    next_update = now + PROGRESS_INTERVAL_SECONDS
-                time.sleep(1.0)
-        finally:
-            stop_console(process)
+    with Console(device, application, settings, log) as console:
+        while True:
+            transcript = console.transcript()
+            result = application.runtime_result
+            if result.search(transcript) is not None or (
+                finished is not None and finished(transcript)
+            ):
+                return transcript
+            if not console.running():
+                return transcript
+            now = time.monotonic()
+            size = console.size()
+            if size > observed:
+                observed = size
+                stall_deadline = now + stall_timeout
+            if now >= deadline:
+                raise DeviceError(
+                    f"{label} exceeded {timeout} seconds; see {log}"
+                )
+            if now >= stall_deadline:
+                raise DeviceError(
+                    f"the console of {label} stopped growing for "
+                    f"{stall_timeout} seconds; see {log}"
+                )
+            if now >= next_update:
+                print(
+                    f"{label} is running; console_bytes={size}",
+                    flush=True,
+                )
+                next_update = now + PROGRESS_INTERVAL_SECONDS
+            time.sleep(1.0)

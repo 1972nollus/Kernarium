@@ -11,9 +11,9 @@ host and power state, page profile, engine, guest topology, command, repeated
 result, and exit/shutdown status. Diagnostic profiler runs are not score
 evidence.
 
-The Mac runners default to `--cpus 4`, `run_ios_device_workload.py` and
-`run_ios_device_discard_bench.py` to `--cpus 2`, and a runner's `--workers`
-defaults to its `--cpus`. These are defaults, not host requirements. Each
+The Mac runners default to `--cpus 4`, `run_ios_device_workload.py`,
+`run_ios_device_discard_bench.py` and `run_ios_device_android.py` to
+`--cpus 2`, and a runner's `--workers` defaults to its `--cpus`. These are defaults, not host requirements. Each
 runner's report line or JSON record carries the vCPU count; do not compare
 results taken at different counts, and keep one count for a whole series.
 
@@ -90,6 +90,49 @@ return:
 python3 tests/perf/run_ios_device_workload.py --device DEVICE-IDENTIFIER \
   --geekbench --geekbench-workloads 101
 ```
+
+Android guests on a device run through Andarium, not Kernarium.
+`run_ios_device_android.py` installs an automation build of Andarium
+(`--app`; `package-ios-frameworks.sh --android-automation`), optionally copies
+a seed system image into the container's Documents directory by its own file
+name (`--system-image`, a raw `.img` or `.img.zst`, which the launch names in
+`ANDARIUM_SYSTEM_IMAGE`; `--system-image-filename` boots one already there),
+and launches the guest without Home: `ANDARIUM_START=normal` (`--start
+recovery`), 2 vCPUs, 1536 MiB, a fresh data disk only with `--erase`. The
+guest's adbd is published on the device's loopback at the port of the guest
+slot (`GUEST_SLOT_PORT_BASE`, or `--host-port`; the runner stops with a message
+when neither is set), `iproxy` carries it over USB to the same port on the
+Mac, and a private adb server at that port plus 10 keeps other lanes' adb
+alone. The runner waits, under hard deadlines, for the automation runtime to
+report ADB authorization off and for `sys.boot_completed`; checks adb is ready
+again before the workload and stops, recording nothing, when it is not; runs
+the workload; powers the guest off with `adb shell reboot -p`; and waits for
+`Andarium: runtime returned`. The workload is a guest shell script
+(`--script`, whose `ANDARIUM_SCRIPT_EXIT:<status>` the runner reads) and/or
+`--cold-launches N` rounds of force-stopped launches of the `--launch-app`
+applications of `android_launch_apps.tsv`, each timed by `am start -W`'s
+`TotalTime` and by the manifest's logcat marker, and `--scenario` files in the
+format of `android_launch_suite.py` that follow an application's first launch.
+
+```sh
+python3 tests/perf/run_ios_device_android.py --device DEVICE-UDID \
+  --app Andarium.app --system-image seed.img.zst --launch-app settings
+```
+
+The artifact directory holds `console.log`, `summary.json` (the settings, the
+boot time, the workload records, the runtime's result, and the thermal state
+at the start, the finish and every change, from the `Andarium thermal state`
+lines) and the script's output. The device must be unlocked and the UDID is
+the one `devicectl`, `iproxy` and `afcclient` all take. The runner never
+uninstalls the application, never restarts the automation host, never replaces
+a file in the container and never passes `--remove-existing-content`; it
+launches only after every copy has finished. `devicectl` cannot remove a file
+from a container, so `afcclient` removes exactly the files this run copied
+once the guest has stopped (`--keep-staged` leaves them for the next run of a
+series; a file already there under the same name and size is reused and never
+removed). Hold the iPad lease for the whole run and settle about 45 s between
+runs. The application side is in
+[Andarium/README.md](../../Andarium/README.md#automation).
 
 Attached Instruments or other sampling changes the run into a diagnostic
 capture. Back-to-back device runs need a settle pause, because iOS releases
