@@ -37,11 +37,13 @@ _uml_add_emulator_boundary(uml_emulator_boundary 0)
 
 # An emulator archive is a final product, and CMake merges only object
 # libraries and interface-carried objects into it, never a linked static
-# archive. Socket-path ownership remains a separate archive for the in-tree
-# device libraries, so each emulator archive also carries its object; a link
-# that names both archives loads only one copy of the slot table.
+# archive. Socket-path ownership and the guest-end registry remain separate
+# archives for the in-tree device libraries, so each emulator archive also
+# carries their objects; a link that names both archives loads only one copy
+# of each table.
 set(_uml_emulator_carried_objects
-    $<TARGET_OBJECTS:uml_device_socket_paths>)
+    $<TARGET_OBJECTS:uml_device_socket_paths>
+    $<TARGET_OBJECTS:uml_device_guest_end>)
 
 add_library(uml_emulator STATIC
     $<TARGET_OBJECTS:uml_emulator_boundary>
@@ -107,7 +109,7 @@ install(TARGETS uml_emulator
 
 # A static C API implemented in C++ and Objective-C++ must carry its runtime
 # link requirements to installed C consumers. Keep this small config
-# relocatable and describe the exact platform/page/profile represented by the
+# relocatable and describe the exact platform/profile represented by the
 # archive beside it.
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/UMLEmulatorConfig.cmake.in

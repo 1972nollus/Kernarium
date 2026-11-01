@@ -40,9 +40,6 @@ using ::uml::memory::Access;
 
 namespace {
 
-constexpr unsigned fallback_n = 9;
-constexpr unsigned fallback_m = 10;
-constexpr unsigned address_register = 8;
 constexpr unsigned s_data = 0;
 constexpr unsigned s_view = 6;
 
@@ -233,7 +230,6 @@ A32Compiler::Flow A32Compiler::emit_vector_register_transfer(bool store) {
   if (store) {
     track_direct_store(address_register, bytes);
     vmem_granule(false, log2_size, reg, 0);
-    clear_exclusive_monitor();
   } else if (s_shadowing_ && bytes == 4U) {
     /* VLDR of one S register (begin_s_shadows): the word goes to a shadow,
      * after the translation's cold paths, and from there to its lane. */
@@ -286,8 +282,6 @@ A32Compiler::Flow A32Compiler::emit_vector_block_transfer(bool store) {
   if (store)
     track_direct_store(address_register, bytes);
   vmem_run(!store, single, first, regs, fold);
-  if (store)
-    clear_exclusive_monitor();
   if (o.wback) {
     const auto dest = def(n, true, fallback_m);
     emit(o.add ? enc::add_i(dest.native.host, dest.native.host, offset)
@@ -447,8 +441,6 @@ A32Compiler::Flow A32Compiler::emit_vector_structure(const VInfo &v) {
         vmem_d_from(dregs[s], s_data + s, 0);
     }
   }
-  if (store)
-    clear_exclusive_monitor();
 
   if (o.wback) {
     const auto dest = def(n, true, fallback_m);

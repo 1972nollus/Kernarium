@@ -3,6 +3,7 @@
 
 #include "context.hpp"
 
+#include "device/guest_end/guest_end.hpp"
 #include "device/sockets/socket_paths.hpp"
 #include "guest_files.hpp"
 #include "memory/shared_backing.hpp"
@@ -14,11 +15,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string_view>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
 namespace {
+
+using ::uml::runtime::GuestShutdownKind;
+
+static_assert(static_cast<int>(GuestShutdownKind::power_off) ==
+	DARWIN_UML_SHUTDOWN_POWER_OFF);
+static_assert(static_cast<int>(GuestShutdownKind::halt) ==
+	DARWIN_UML_SHUTDOWN_HALT);
+static_assert(static_cast<int>(GuestShutdownKind::restart) ==
+	DARWIN_UML_SHUTDOWN_RESTART);
 
 constexpr char anonymous_physical_memory_path[] =
 	"uml:anonymous-physical-memory";
@@ -105,6 +116,69 @@ int darwin_uml_stop_requested(void)
 {
 	auto *context = uml::runtime::current_context();
 	return context != nullptr && context->stop_requested();
+}
+
+/*
+ * The kernel calls this when it decides how the guest ends: from a reboot
+ * notifier, before it shuts any driver down, and again from machine_restart(),
+ * machine_power_off() or machine_halt(), before it runs its exitcalls. The
+ * run's context keeps the kind and the command; the log line names them once,
+ * as one write so that concurrent output cannot split it, and a repeat of the
+ * report the context already holds logs nothing. A report that is new to the
+ * run also tells the devices that hold guest requests back that the guest is
+ * ending (device/guest_end/guest_end.hpp), because the guest's shutdown waits
+ * for those requests.
+ */
+void darwin_uml_guest_shutdown(int kind, const char *command)
+{
+	const char *what;
+	GuestShutdownKind recorded;
+	switch (kind) {
+	case DARWIN_UML_SHUTDOWN_POWER_OFF:
+		recorded = GuestShutdownKind::power_off;
+		what = "guest powered off";
+		break;
+	case DARWIN_UML_SHUTDOWN_HALT:
+		recorded = GuestShutdownKind::halt;
+		what = "guest halted";
+		break;
+	case DARWIN_UML_SHUTDOWN_RESTART:
+		recorded = GuestShutdownKind::restart;
+		what = "guest requested restart";
+		break;
+	default:
+		dprintf(STDERR_FILENO, "Darwin: guest reported shutdown kind %d\n",
+			kind);
+		return;
+	}
+	const std::string_view text = command == nullptr ?
+		std::string_view{} :
+		std::string_view{command, strnlen(command,
+			::uml::runtime::guest_shutdown_command_limit)};
+	if (auto *context = ::uml::runtime::current_context();
+	    context != nullptr) {
+		if (!context->record_guest_shutdown(recorded, text))
+			return;
+		::uml::device::notify_guest_end();
+	}
+	/* The guest chose the command: keep control characters out of the log. */
+	char line[96 + ::uml::runtime::guest_shutdown_command_limit];
+	size_t length = static_cast<size_t>(
+		snprintf(line, sizeof(line), "%s", what));
+	if (!text.empty()) {
+		length += static_cast<size_t>(snprintf(line + length,
+			sizeof(line) - length, " (command '"));
+		for (const char character : text)
+			line[length++] = (character >= ' ' && character != 0x7f) ?
+				character : '?';
+		line[length++] = '\'';
+		line[length++] = ')';
+	}
+	line[length++] = '\n';
+	ssize_t written;
+	do {
+		written = write(STDERR_FILENO, line, length);
+	} while (written < 0 && errno == EINTR);
 }
 
 void darwin_uml_abort(void)

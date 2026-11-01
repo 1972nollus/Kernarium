@@ -515,7 +515,7 @@ index 0000000000000000000000000000000000000000..d53a32784c40172e8d95777ef3e033f8
 +}
 +#endif
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index f5763f16931a1c03257acf0dd528584b61b685e7..f3ac85948251dc2cda1b19afbf69dc2958ddb1a8 100644
+index e3d1a676e0913cdb27f2095bdcaea1fbf11d3361..8cefdd104d61117daf0f8ffa11936e6429ca1334 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -362,7 +362,7 @@ if with_tests
@@ -528,7 +528,7 @@ index f5763f16931a1c03257acf0dd528584b61b685e7..f3ac85948251dc2cda1b19afbf69dc29
      ]
        test(
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_growth.c b/src/kosmickrisp/vulkan/tests/test_heap_growth.c
-index d0c37c02524fd0922a455e8d524fc074f3da9843..8f5f0433bf69f2ec58d1659bef351230dc28bcf7 100644
+index 5c6b177f2ce0435acc4724f1e3409e299c6abb68..fe39c707ef440cd4321026ac363958558aa89643 100644
 --- a/src/kosmickrisp/vulkan/tests/test_heap_growth.c
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_growth.c
 @@ -10,15 +10,27 @@
@@ -768,7 +768,7 @@ index d0c37c02524fd0922a455e8d524fc074f3da9843..8f5f0433bf69f2ec58d1659bef351230
     KK_LOAD_DEVICE_FUNCTIONS(*t);
     LOAD_D(vkCmdDrawIndirect);
     PFN_vkCmdDrawMultiEXT vkCmdDrawMultiEXT =
-@@ -301,13 +491,37 @@ run(struct kk_test_device *t, const struct draw_case *c)
+@@ -276,13 +466,37 @@ run(struct kk_test_device *t, const struct draw_case *c)
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
                                        &pipeline_info, NULL, &pipeline));
  
@@ -808,7 +808,7 @@ index d0c37c02524fd0922a455e8d524fc074f3da9843..8f5f0433bf69f2ec58d1659bef351230
     VK_CHECK(vkBeginCommandBuffer(commands, &begin));
     VkRenderingAttachmentInfo color_attachment = {
        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-@@ -382,12 +596,58 @@ run(struct kk_test_device *t, const struct draw_case *c)
+@@ -357,12 +571,58 @@ run(struct kk_test_device *t, const struct draw_case *c)
        }
     }
  
@@ -869,7 +869,7 @@ index d0c37c02524fd0922a455e8d524fc074f3da9843..8f5f0433bf69f2ec58d1659bef351230
  
     vkDestroyPipeline(device, pipeline, NULL);
     vkDestroyPipelineLayout(device, layout, NULL);
-@@ -417,13 +677,51 @@ report(struct kk_test_device *t, const struct draw_case *c)
+@@ -392,13 +652,51 @@ report(struct kk_test_device *t, const struct draw_case *c)
     printf(":");
     for (unsigned s = 0u; s < c->submissions; s++)
        printf(" submission %u %u red,", s + 1u, outcome.red[s]);
@@ -924,7 +924,7 @@ index d0c37c02524fd0922a455e8d524fc074f3da9843..8f5f0433bf69f2ec58d1659bef351230
  #define MIB(n) ((uint64_t)(n) << 20)
  
  int
-@@ -523,6 +821,82 @@ main(void)
+@@ -498,6 +796,82 @@ main(void)
     CHECK(o.red[0] == 64u * TILE_TEXELS && o.heap_B == MIB(128) &&
           o.peak_B == MIB(16 + 32 + 64 + 128) && !o.loss_reported);
  

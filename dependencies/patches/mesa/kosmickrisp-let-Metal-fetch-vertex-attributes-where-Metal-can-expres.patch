@@ -136,8 +136,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../fetch_single.vert                         |   16 +
  .../fetch_single.vert.h                       |   76 ++
  .../metal_vertex_fetch_shaders/generate.sh    |    8 +
- .../vulkan/tests/test_metal_vertex_fetch.cpp  | 1059 +++++++++++++++++
- 25 files changed, 1964 insertions(+), 10 deletions(-)
+ .../vulkan/tests/test_metal_vertex_fetch.cpp  | 1058 +++++++++++++++++
+ 25 files changed, 1963 insertions(+), 10 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.frag
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.frag.h
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/fetch.vert
@@ -960,7 +960,7 @@ index 889ecc06804ac229cbfca446cabb3e74187ba26d..3b30bc48aef7216669c71bfa0cbb5ce4
            * accepted the pipeline's colour blend state and the fragment shader
            * therefore kept its stores instead of carrying a lowered blend. */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index faa1adc3cd32448c48a21d60c0c8e8cc64501f38..0de9046658cfb26a45bd523c6d1f73749ac5fefb 100644
+index 6afef36d1bd67a9408ce2f188119edb543875db5..5bda031ed06c824e570e8cc18ddb94d6d0ea7b80 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -661,6 +661,20 @@ if with_tests
@@ -1354,10 +1354,10 @@ index 0000000000000000000000000000000000000000..cfce2d234e095076c934abe207ce5d9f
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/test_metal_vertex_fetch.cpp b/src/kosmickrisp/vulkan/tests/test_metal_vertex_fetch.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..869c35a09057cd3196e9d6f61b5d9c1fc2e91af9
+index 0000000000000000000000000000000000000000..7b98a21e9ea1c4528b42df804231032acd64c359
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_metal_vertex_fetch.cpp
-@@ -0,0 +1,1059 @@
+@@ -0,0 +1,1058 @@
 +/*
 + * SPDX-License-Identifier: MIT
 + */
@@ -1536,7 +1536,6 @@ index 0000000000000000000000000000000000000000..869c35a09057cd3196e9d6f61b5d9c1f
 +              VK_SUCCESS,
 +           "vkCreateDevice");
 +
-+   int failures = 0;
 +   {
 +      LOAD_D(vkDestroyDevice);
 +      LOAD_D(vkCreateShaderModule);

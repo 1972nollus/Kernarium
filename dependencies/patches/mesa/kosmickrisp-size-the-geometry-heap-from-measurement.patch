@@ -1088,7 +1088,7 @@ index 0000000000000000000000000000000000000000..65ad692a99d258a32b9bcb17037d6dc2
 +   }
 +}
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 3fe246188e3a1d09da94e6d89fbd37bd3b8389c1..565f62abad8758d17572f3f5dc6e33a8c7cf4ffb 100644
+index e0a1cdeddc95115ce4211138dab6fb71723d1176..28aa9f23a9ab108a2b155f7ce1eb9330cd5282e4 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -95,6 +95,7 @@ kk_files = files(

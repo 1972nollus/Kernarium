@@ -12,6 +12,7 @@
 // session's activation, its hint about other apps' audio and the player's
 // scheduling are observed and driven through hooks on AVFAudio's methods.
 
+#include "period_clock.hpp"
 #include "playback_sink.hpp"
 
 #import <AVFAudio/AVFAudio.h>
@@ -37,6 +38,7 @@ namespace {
 
 using namespace std::chrono_literals;
 using uml::audio::PlaybackEnqueueResult;
+using uml::audio::PlaybackOutcome;
 
 constexpr std::uint32_t frames = 1024;
 constexpr std::uint32_t channels = 2;
@@ -153,11 +155,14 @@ struct Observed final {
 };
 
 // The device thread of a Virtio sound stream: it keeps the sink's period
-// queue full, sleeps on the sink's event descriptor and collects completions.
+// queue full, sleeps on the descriptor of the device's clock, which the sink
+// signals, and collects completions.
 class Stream final {
 public:
-    explicit Stream(uml::audio::PlaybackSink& sink)
-        : sink_(sink)
+    Stream()
+        : clock_(uml::audio::makePeriodClock())
+        , sinkOwner_(uml::audio::makeApplePlaybackSink(clock_))
+        , sink_(*sinkOwner_)
     {
         for (std::uint32_t frame = 0; frame < frames; ++frame) {
             // Eight cycles per period, so periods join without a click.
@@ -187,8 +192,9 @@ public:
     {
         sink_.stop();
         sink_.release();
-        sink_.drainEventSource();
-        collect();
+        service();
+        // A release hands every queued period back unplayed.
+        collect(true);
     }
 
     // What the guest does when it suspends and resumes the stream.
@@ -200,9 +206,9 @@ public:
         const auto deadline = std::chrono::steady_clock::now() + span;
         do {
             fill();
-            pollfd descriptor {sink_.eventDescriptor(), POLLIN, 0};
+            pollfd descriptor {clock_->descriptor(), POLLIN, 0};
             (void)poll(&descriptor, 1, 10);
-            sink_.drainEventSource();
+            service();
             collect();
         } while (std::chrono::steady_clock::now() < deadline);
     }
@@ -219,7 +225,7 @@ public:
         const auto completed = completed_;
         const auto scheduled = scheduledPeriods.load();
         if (eventFirst) {
-            sink_.drainEventSource();
+            service();
             collect();
         }
         pump(span);
@@ -234,9 +240,9 @@ public:
     {
         const auto deadline = std::chrono::steady_clock::now() + span;
         do {
-            pollfd descriptor {sink_.eventDescriptor(), POLLIN, 0};
+            pollfd descriptor {clock_->descriptor(), POLLIN, 0};
             (void)poll(&descriptor, 1, 10);
-            sink_.drainEventSource();
+            service();
             collect();
         } while (std::chrono::steady_clock::now() < deadline);
     }
@@ -258,12 +264,12 @@ public:
     // does, on its timer, until the stream stops.
     [[nodiscard]] bool wakes(std::chrono::milliseconds span)
     {
-        sink_.drainEventSource();
+        service();
         collect();
         std::this_thread::sleep_for(100ms);
-        sink_.drainEventSource();
+        service();
         collect();
-        pollfd descriptor {sink_.eventDescriptor(), POLLIN, 0};
+        pollfd descriptor {clock_->descriptor(), POLLIN, 0};
         return poll(&descriptor, 1, static_cast<int>(span.count())) > 0;
     }
 
@@ -279,11 +285,21 @@ public:
     }
 
 private:
+    // What the device does when its clock's descriptor is readable.
+    void service()
+    {
+        clock_->drain();
+        sink_.handleEvents();
+    }
+
     void fill()
     {
         for (;;) {
             const auto result = sink_.enqueue(nextRequest_, period_);
-            if (result == PlaybackEnqueueResult::failed)
+            // A sink that cannot play reports `discarded`, and the device then
+            // paces the guest itself: no scenario here expects that.
+            if (result == PlaybackEnqueueResult::failed ||
+                result == PlaybackEnqueueResult::discarded)
                 failed_ = true;
             if (result != PlaybackEnqueueResult::accepted)
                 return;
@@ -291,7 +307,9 @@ private:
         }
     }
 
-    void collect()
+    // `released` is true for the completions a release returns: a period the
+    // output dropped is a failure of the sink at any other time.
+    void collect(bool released = false)
     {
         uml::audio::PlaybackCompletion completion;
         while (sink_.takeCompletion(completion)) {
@@ -300,10 +318,14 @@ private:
                 longestWait_ = std::max(longestWait_, now - lastCompletion_);
             lastCompletion_ = now;
             ++completed_;
-            rejected_ += completion.success ? 0 : 1;
+            const bool dropped = completion.outcome == PlaybackOutcome::failed ||
+                (completion.outcome == PlaybackOutcome::discarded && !released);
+            rejected_ += dropped ? 1 : 0;
         }
     }
 
+    std::shared_ptr<uml::audio::PeriodClock> clock_;
+    std::unique_ptr<uml::audio::PlaybackSink> sinkOwner_;
     uml::audio::PlaybackSink& sink_;
     std::array<std::uint8_t, periodBytes> period_ {};
     std::uint64_t nextRequest_ {1};
@@ -404,8 +426,7 @@ void postInterruptionEnded(bool shouldResume)
 
 void interruptionMutesAndResumes()
 {
-    auto sink = uml::audio::makeApplePlaybackSink();
-    Stream stream(*sink);
+    Stream stream;
     check(stream.open(), "the stream opens");
     auto seen = stream.window(500ms, 1500ms);
     check(seen.playing(), "the stream plays", seen.text());
@@ -476,8 +497,7 @@ void interruptionMutesAndResumes()
 // to notice by itself.
 void beganWithNoEnd()
 {
-    auto sink = uml::audio::makeApplePlaybackSink();
-    Stream stream(*sink);
+    Stream stream;
     otherAudioPlaying = false;
     check(stream.open(), "the stream opens for the interruption without an end");
     auto seen = stream.window(500ms, 1000ms);
@@ -541,8 +561,7 @@ void beganWithNoEnd()
 // four periods) gets an I/O error, and the stream restarts with a gap.
 void slowActivationKeepsTheClock()
 {
-    auto sink = uml::audio::makeApplePlaybackSink();
-    Stream stream(*sink);
+    Stream stream;
     otherAudioPlaying = false;
     check(stream.open(), "the stream opens for the slow activation");
     auto seen = stream.window(500ms, 1000ms);
@@ -585,8 +604,7 @@ void slowActivationKeepsTheClock()
 // that makes up the time that passed.
 void idleMuteBuildsNoCredit()
 {
-    auto sink = uml::audio::makeApplePlaybackSink();
-    Stream stream(*sink);
+    Stream stream;
     otherAudioPlaying = false;
     check(stream.open(), "the stream opens for the idle mute");
     (void)stream.window(300ms, 300ms);
@@ -614,8 +632,7 @@ void idleMuteBuildsNoCredit()
 // from the app that holds it.
 void noActivationWhileInterrupted()
 {
-    auto sink = uml::audio::makeApplePlaybackSink();
-    Stream stream(*sink);
+    Stream stream;
     otherAudioPlaying = false;
     check(stream.open(), "the stream opens for the interrupted restarts");
     (void)stream.window(300ms, 300ms);
@@ -661,8 +678,7 @@ void noActivationWhileInterrupted()
 // into it.
 void interruptionBeforeStart()
 {
-    auto sink = uml::audio::makeApplePlaybackSink();
-    Stream stream(*sink);
+    Stream stream;
     postInterruptionBegan();
     postInterruptionEnded(true);
     check(stream.open(), "a stream opens after an interruption");
@@ -687,8 +703,7 @@ void interruptionBeforeStart()
 
 void restartDuringInterruption()
 {
-    auto sink = uml::audio::makeApplePlaybackSink();
-    Stream stream(*sink);
+    Stream stream;
     otherAudioPlaying = false;
     check(stream.open(), "the stream opens again");
     (void)stream.window(300ms, 300ms);
@@ -712,8 +727,7 @@ void destroyWhileInterrupted()
 {
     otherAudioPlaying = true;
     {
-        auto sink = uml::audio::makeApplePlaybackSink();
-        Stream stream(*sink);
+        Stream stream;
         check(stream.open(), "a stream opens before the sink is destroyed");
         (void)stream.window(300ms, 300ms);
         postInterruptionBegan();
@@ -726,8 +740,7 @@ void destroyWhileInterrupted()
     otherAudioPlaying = false;
     std::this_thread::sleep_for(1500ms);
 
-    auto sink = uml::audio::makeApplePlaybackSink();
-    Stream stream(*sink);
+    Stream stream;
     check(stream.open(), "a new sink opens after a destroyed one");
     const auto seen = stream.window(500ms, 1500ms);
     check(seen.playing(),

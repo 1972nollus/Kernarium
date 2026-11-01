@@ -10,6 +10,7 @@ import argparse
 import functools
 import os
 import pathlib
+import shlex
 import sys
 
 
@@ -38,6 +39,16 @@ def parse_arguments() -> argparse.Namespace:
         type=int,
         help="concurrent probe processes (default: --cpus)",
     )
+    parser.add_argument(
+        "--probe-argument",
+        action="append",
+        default=[],
+        help=(
+            "argument passed to every probe process (repeatable); the "
+            "guest_tagged_*_loop.S probes run their untagged control when "
+            "given one"
+        ),
+    )
     parser.add_argument("--repetitions", type=int, default=5)
     parser.add_argument("--boot-timeout", type=int, default=180)
     parser.add_argument(
@@ -49,7 +60,14 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--guest-top-byte-ignore",
         action="store_true",
-        help="run the guest with the top address byte ignored, as Android is",
+        help="run the guest with the top address byte ignored, which is the "
+        "default and how Android runs",
+    )
+    parser.add_argument(
+        "--guest-no-top-byte-ignore",
+        action="store_true",
+        help="run the guest with the top address byte not ignored, the "
+        "control of a tagged-pointer probe",
     )
     boot_mode = parser.add_mutually_exclusive_group()
     boot_mode.add_argument(
@@ -72,13 +90,14 @@ def parse_arguments() -> argparse.Namespace:
     return arguments
 
 
-def workload_command(workers: int) -> str:
+def workload_command(workers: int, probe_arguments: list[str]) -> str:
+    probe = shlex.join([GUEST_LINK_LOOP, *probe_arguments])
     return (
         "rm -f /tmp/link-loop-output.*; "
         ": >/tmp/link-loop-pids; "
         "i=0; "
         f"while [ \"$i\" -lt {workers} ]; do "
-        f"{GUEST_LINK_LOOP} >\"/tmp/link-loop-output.$i\" 2>&1 & "
+        f"{probe} >\"/tmp/link-loop-output.$i\" 2>&1 & "
         "echo \"$!\" >>/tmp/link-loop-pids; "
         "i=$((i + 1)); "
         "done; "
@@ -128,6 +147,8 @@ def main() -> int:
             f"ncpus={arguments.cpus}",
             *(("--guest-top-byte-ignore",)
               if arguments.guest_top_byte_ignore else ()),
+            *(("--guest-no-top-byte-ignore",)
+              if arguments.guest_no_top_byte_ignore else ()),
         ),
         init_shell=arguments.shell_init,
         overlay_shell=not arguments.shell_init,
@@ -142,7 +163,7 @@ def main() -> int:
         boot(guest, arguments.shell_init, arguments.boot_timeout)
         elapsed, utilization = measure(
             guest,
-            workload_command(arguments.workers),
+            workload_command(arguments.workers, arguments.probe_argument),
             arguments.repetitions,
             arguments.command_timeout,
             check=functools.partial(check_probe_output, arguments.workers),

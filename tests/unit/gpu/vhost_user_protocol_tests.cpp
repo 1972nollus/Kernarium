@@ -994,8 +994,9 @@ void aDisabledRingKeepsTheBuffersTheDeviceFills()
 }
 
 /* A device whose requests are one byte long and answered with that byte plus
- * 0xa0. It records the order in which it saw them, can be told to block
- * inside a request, and has an event source to raise. */
+ * 0xa0, or with that byte plus 0xd0 when the request is discarded. It records
+ * the order in which it saw them, can be told to block inside a request, and
+ * has an event source to raise. */
 class OrderedRequestDevice final : public FixtureDevice {
 public:
     OrderedRequestDevice(bool keepsRequestsOnDisabledRing, bool signalsReadiness)
@@ -1007,6 +1008,14 @@ public:
     [[nodiscard]] bool keepsRequestsOnDisabledRing() const noexcept override
     {
         return keeps_;
+    }
+    [[nodiscard]] std::vector<std::uint8_t> discardedResponse(
+        std::uint32_t index,
+        std::span<const std::uint8_t> request) const override
+    {
+        require(index == 0);
+        require(request.size() == 1);
+        return {static_cast<std::uint8_t>(0xd0U + request.front())};
     }
     [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
         std::uint32_t index,
@@ -1124,6 +1133,20 @@ public:
             require(ring_.usedElement(request).length == 1);
             require(ring_.memory()[responseOffset + request] ==
                 0xa0U + request + 1U);
+        }
+    }
+
+    /* Requires the used ring to hold `discarded` requests in order, each
+     * completed with the byte the device derives for a request it did not
+     * run. */
+    void requireDiscarded(std::uint16_t discarded) const
+    {
+        require(ring_.usedIndex() == discarded);
+        for (std::uint16_t request = 0; request < discarded; ++request) {
+            require(ring_.usedElement(request).id == 2U * request);
+            require(ring_.usedElement(request).length == 1);
+            require(ring_.memory()[responseOffset + request] ==
+                0xd0U + request + 1U);
         }
     }
 
@@ -1309,6 +1332,318 @@ void aDisabledRingKeepsRequestsOnlyForADeviceThatAsksForThem()
                 recorder->calls(), std::array<std::uint8_t, 2> {1, 2}));
         });
     }
+}
+
+/* Only a closed gate discards, and opening it ends the discarding. */
+void aGateDiscardsOnlyWhileItIsClosed()
+{
+    RequestGate gate;
+    require(gate.state() == RequestGate::State::open);
+    require(!gate.discard());
+    require(!gate.held() && !gate.discarding());
+
+    require(gate.hold(std::chrono::milliseconds {10}));
+    require(gate.state() == RequestGate::State::held);
+    require(gate.discard());
+    require(gate.held() && gate.discarding());
+    /* Closing it again, and discarding again, change nothing. */
+    require(gate.hold(std::chrono::milliseconds {10}));
+    require(gate.discard());
+    require(gate.state() == RequestGate::State::discarding);
+    require(!gate.enter());
+
+    gate.returnToHold();
+    require(gate.state() == RequestGate::State::held);
+    gate.returnToHold();
+    require(gate.state() == RequestGate::State::held);
+    require(!gate.enter());
+
+    require(gate.discard());
+    gate.release();
+    require(gate.state() == RequestGate::State::open);
+    require(!gate.discard());
+    gate.returnToHold();
+    require(gate.state() == RequestGate::State::open);
+    require(static_cast<bool>(gate.enter()));
+}
+
+/* A guest that ends behind a closed gate cannot stop until its GPU requests
+ * complete, so a discarding gate completes each one, those already waiting and
+ * those that arrive, with the device's answer for a request that did not run,
+ * and never calls the device. The next guest finds a plain closed gate: its
+ * requests wait and run, in order, when the gate opens. */
+void aDiscardingGateCompletesRequestsWithoutRunningThem()
+{
+    auto device = std::make_unique<OrderedRequestDevice>(true, false);
+    const auto* recorder = device.get();
+    const auto gate = std::make_shared<RequestGate>();
+    VhostUserServer server {std::move(device)};
+    server.setRequestGate(gate);
+    OrderedRequestRing requests {2};
+    require(gate->hold(std::chrono::milliseconds {100}));
+
+    withServerConnection(server, [&](int socket) {
+        negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
+        configureMemory(socket, requests.ring().descriptor());
+        const auto channels = startQueue(socket, requests.ring());
+        writeKick(channels.kick);
+        require(nothingRuns(requests, *recorder, channels.call.readEnd.get()));
+
+        require(gate->discard());
+        awaitCall(channels.call.readEnd.get());
+        requests.requireDiscarded(2);
+        require(recorder->calls().empty());
+
+        requests.append(2);
+        writeKick(channels.kick);
+        awaitCall(channels.call.readEnd.get());
+        requests.requireDiscarded(3);
+        require(recorder->calls().empty());
+
+        gate->returnToHold();
+        requests.append(3);
+        writeKick(channels.kick);
+        pollfd call {.fd = channels.call.readEnd.get(), .events = POLLIN};
+        require(::poll(&call, 1, 200) == 0);
+        require(requests.ring().usedIndex() == 3);
+        require(recorder->calls().empty());
+
+        gate->release();
+        awaitCall(channels.call.readEnd.get());
+        require(requests.ring().usedIndex() == 4);
+        require(requests.ring().usedElement(3).length == 1);
+        require(requests.ring().memory()
+                [OrderedRequestRing::responseOffset + 3] == 0xa0U + 4U);
+        require(std::ranges::equal(
+            recorder->calls(), std::array<std::uint8_t, 1> {4}));
+    });
+}
+
+/* A ring the guest disabled is one it no longer waits on: a discarding gate
+ * leaves its requests where they are, as a closed gate does, until the ring is
+ * enabled again. */
+void aDiscardingGateLeavesADisabledRingAlone()
+{
+    auto device = std::make_unique<OrderedRequestDevice>(true, true);
+    auto* recorder = device.get();
+    const auto gate = std::make_shared<RequestGate>();
+    VhostUserServer server {std::move(device)};
+    server.setRequestGate(gate);
+    const OrderedRequestRing requests {2};
+    require(gate->hold(std::chrono::milliseconds {100}));
+
+    withServerConnection(server, [&](int socket) {
+        negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
+        configureMemory(socket, requests.ring().descriptor());
+        const auto channels = startQueue(socket, requests.ring(), 0, false);
+        const auto passOverTheRings = [&] {
+            const auto before = recorder->drained();
+            recorder->raise();
+            awaitCondition([&] { return recorder->drained() != before; });
+            require(recorder->drained() == before + 1U);
+        };
+
+        require(gate->discard());
+        passOverTheRings();
+        require(nothingRuns(requests, *recorder, channels.call.readEnd.get()));
+
+        const protocol::VringState enabled {.index = 0, .value = 1};
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringEnable, bytesOf(enabled));
+        passOverTheRings();
+        awaitCall(channels.call.readEnd.get());
+        requests.requireDiscarded(2);
+        require(recorder->calls().empty());
+    });
+}
+
+/* The Virtio-GPU control request a guest sends while it renders, header only:
+ * a command that could not run as it stands, so that an answer that is not an
+ * error shows it was not run. */
+struct DiscardedControlRequest {
+    protocol::GpuCommand command;
+    std::uint32_t flags;
+    std::uint64_t fenceId;
+    std::uint32_t contextId;
+    std::uint8_t ringIndex;
+};
+
+void aDiscardingGateAnswersGpuRequestsWithTheirFences()
+{
+    constexpr std::uint32_t header = sizeof(protocol::GpuControlHeader);
+    constexpr std::size_t requestsOffset = 0x300;
+    constexpr std::size_t responsesOffset = 0x800;
+    constexpr std::size_t stride = 0x40;
+    constexpr std::uint32_t both =
+        protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
+    /* Two requests wait, one arrives afterwards, and a fourth, the display
+     * query, runs; the queue holds four chains. */
+    const std::array<DiscardedControlRequest, 3> discarded {{
+        {protocol::GpuCommand::submit3d, both, 0x1000'0000'0000'0001ULL, 7, 2},
+        {protocol::GpuCommand::getDisplayInfo, 0, 0, 0, 0},
+        {protocol::GpuCommand::resourceFlush, protocol::gpuFlagFence, 0x77, 0, 0},
+    }};
+    const SplitRing ring;
+    const auto memory = ring.memory();
+    std::array<protocol::VirtqueueDescriptor, 8> descriptors {};
+    std::uint16_t published = 0;
+    const auto append = [&](const DiscardedControlRequest& request) {
+        const std::uint16_t index = published;
+        const std::uint16_t first = static_cast<std::uint16_t>(2U * index);
+        const auto chain = requestChain(
+            requestsOffset + index * stride, header,
+            responsesOffset + index * stride, header, first);
+        descriptors[first] = chain[0];
+        descriptors[first + 1U] = chain[1];
+        protocol::GpuControlHeader wire {};
+        wire.type = static_cast<std::uint32_t>(request.command);
+        wire.flags = request.flags;
+        wire.fenceId = request.fenceId;
+        wire.contextId = request.contextId;
+        wire.ringIndex = request.ringIndex;
+        wire.padding = {1, 2, 3};
+        std::memcpy(memory.data() + requestsOffset + index * stride,
+            &wire, sizeof(wire));
+        std::memset(memory.data() + responsesOffset + index * stride, 0xa5,
+            header);
+        ring.writeDescriptors(descriptors);
+        const std::array<std::uint16_t, 1> head {first};
+        ring.writeHeads(head, index);
+        ++published;
+        ring.setAvailableIndex(published);
+    };
+    const auto requireAnswered = [&](std::uint16_t index) {
+        const auto& request = discarded[index];
+        require(ring.usedElement(index).id == 2U * index);
+        require(ring.usedElement(index).length == header);
+        protocol::GpuControlHeader answer {};
+        std::memcpy(&answer, memory.data() + responsesOffset + index * stride,
+            sizeof(answer));
+        require(answer.type ==
+            static_cast<std::uint32_t>(protocol::GpuResponse::okNoData));
+        require(answer.flags == (request.flags & both));
+        require(answer.fenceId == request.fenceId);
+        require(answer.contextId == request.contextId);
+        require(answer.ringIndex == request.ringIndex);
+        require(answer.padding == std::array<std::uint8_t, 3> {});
+    };
+
+    const auto gate = std::make_shared<RequestGate>();
+    const auto ownedServer =
+        makeGpuVhostUserServer("127.0.0.1", 0, {}, 64, 64, false);
+    ownedServer->setRequestGate(gate);
+    require(gate->hold(std::chrono::milliseconds {100}));
+    append(discarded[0]);
+    append(discarded[1]);
+
+    withServerConnection(*ownedServer, [&](int socket) {
+        negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
+        configureMemory(socket, ring.descriptor());
+        const auto channels = startQueue(socket, ring);
+        writeKick(channels.kick);
+        pollfd call {.fd = channels.call.readEnd.get(), .events = POLLIN};
+        require(::poll(&call, 1, 200) == 0);
+        require(ring.usedIndex() == 0);
+
+        require(gate->discard());
+        awaitCall(channels.call.readEnd.get());
+        require(ring.usedIndex() == 2);
+        requireAnswered(0);
+        requireAnswered(1);
+
+        append(discarded[2]);
+        writeKick(channels.kick);
+        awaitCall(channels.call.readEnd.get());
+        require(ring.usedIndex() == 3);
+        requireAnswered(2);
+
+        /* The next guest finds a plain closed gate, and a request the device
+         * can run waits for the gate to open and then runs. */
+        gate->returnToHold();
+        const std::uint16_t index = published;
+        const std::uint16_t first = static_cast<std::uint16_t>(2U * index);
+        const auto chain = requestChain(
+            requestsOffset + index * stride, header,
+            responsesOffset + index * stride,
+            sizeof(protocol::GpuDisplayInfo), first);
+        descriptors[first] = chain[0];
+        descriptors[first + 1U] = chain[1];
+        protocol::GpuControlHeader wire {};
+        wire.type =
+            static_cast<std::uint32_t>(protocol::GpuCommand::getDisplayInfo);
+        std::memcpy(memory.data() + requestsOffset + index * stride,
+            &wire, sizeof(wire));
+        ring.writeDescriptors(descriptors);
+        const std::array<std::uint16_t, 1> head {first};
+        ring.writeHeads(head, index);
+        ++published;
+        ring.setAvailableIndex(published);
+        writeKick(channels.kick);
+        require(::poll(&call, 1, 200) == 0);
+        require(ring.usedIndex() == 3);
+
+        gate->release();
+        awaitCall(channels.call.readEnd.get());
+        require(ring.usedIndex() == 4);
+        require(ring.usedElement(3).length == sizeof(protocol::GpuDisplayInfo));
+        protocol::GpuControlHeader answer {};
+        std::memcpy(&answer, memory.data() + responsesOffset + index * stride,
+            sizeof(answer));
+        require(answer.type == static_cast<std::uint32_t>(
+            protocol::GpuResponse::okDisplayInfo));
+    });
+}
+
+/* The cursor queue has no response: its commands are consumed and completed
+ * empty. */
+void aDiscardingGateCompletesCursorCommandsEmpty()
+{
+    constexpr std::uint32_t header = sizeof(protocol::GpuControlHeader);
+    constexpr std::size_t requestsOffset = 0x300;
+    const SplitRing ring;
+    const auto memory = ring.memory();
+    std::array<protocol::VirtqueueDescriptor, 3> descriptors {};
+    for (std::uint16_t index = 0; index < descriptors.size(); ++index) {
+        descriptors[index] = {
+            .address = SplitRing::guestBase + requestsOffset + index * 0x40U,
+            .length = header,
+            .flags = 0,
+            .next = 0,
+        };
+        protocol::GpuControlHeader wire {};
+        wire.type = static_cast<std::uint32_t>(
+            index == 1 ? protocol::GpuCommand::moveCursor
+                       : protocol::GpuCommand::updateCursor);
+        std::memcpy(memory.data() + requestsOffset + index * 0x40U,
+            &wire, sizeof(wire));
+    }
+    const std::array<std::uint16_t, 3> heads {0, 1, 2};
+    ring.publish(descriptors, heads);
+
+    const auto gate = std::make_shared<RequestGate>();
+    const auto ownedServer =
+        makeGpuVhostUserServer("127.0.0.1", 0, {}, 64, 64, false);
+    ownedServer->setRequestGate(gate);
+    require(gate->hold(std::chrono::milliseconds {100}));
+
+    withServerConnection(*ownedServer, [&](int socket) {
+        negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
+        configureMemory(socket, ring.descriptor());
+        const auto channels =
+            startQueue(socket, ring, protocol::gpuCursorQueue);
+        writeKick(channels.kick);
+        pollfd call {.fd = channels.call.readEnd.get(), .events = POLLIN};
+        require(::poll(&call, 1, 200) == 0);
+        require(ring.usedIndex() == 0);
+
+        require(gate->discard());
+        awaitCall(channels.call.readEnd.get());
+        require(ring.usedIndex() == heads.size());
+        for (std::size_t index = 0; index < heads.size(); ++index) {
+            require(ring.usedElement(index).id == heads[index]);
+            require(ring.usedElement(index).length == 0);
+        }
+    });
 }
 
 void validConfigurationProtocol(VhostUserServer& server)
@@ -2073,6 +2408,11 @@ void runVhostUserProtocolTests()
     completedPrefixNotifiesBeforeRetry();
     aDisabledRingKeepsTheBuffersTheDeviceFills();
     aDisabledRingKeepsRequestsOnlyForADeviceThatAsksForThem();
+    aGateDiscardsOnlyWhileItIsClosed();
+    aDiscardingGateCompletesRequestsWithoutRunningThem();
+    aDiscardingGateLeavesADisabledRingAlone();
+    aDiscardingGateAnswersGpuRequestsWithTheirFences();
+    aDiscardingGateCompletesCursorCommandsEmpty();
     heldRequestsRunInOrderAfterRelease();
     heldRequestsSurviveADisabledRing(false);
     heldRequestsSurviveADisabledRing(true);

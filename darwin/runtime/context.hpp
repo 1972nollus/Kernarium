@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <string_view>
 #include <utility>
 
 namespace uml::runtime {
@@ -26,6 +27,26 @@ using GuestEntry = int (*)(void *, void *, unsigned long, unsigned long,
 	unsigned long *);
 
 class Context;
+
+/* How the guest kernel said its run is ending (darwin_uml_guest_shutdown).
+ * The values are the bridge's DARWIN_UML_SHUTDOWN_* kinds, which bridge.cpp
+ * checks; none means the kernel said nothing. */
+enum class GuestShutdownKind : int {
+	none = 0,
+	power_off = 1,
+	halt = 2,
+	restart = 3,
+};
+
+/* The most of a restart command a record keeps. */
+inline constexpr std::size_t guest_shutdown_command_limit = 255;
+
+struct GuestShutdown final {
+	GuestShutdownKind kind{GuestShutdownKind::none};
+	/* The restart command cut to guest_shutdown_command_limit bytes and
+	 * NUL-terminated; empty when the guest gave none. */
+	char command[guest_shutdown_command_limit + 1]{};
+};
 
 /* Pins one host thread's execution object and the Context memory domain that
  * backs its translated caches. Run transitions and Context destruction wait
@@ -96,6 +117,19 @@ public:
 	[[nodiscard]] GuestEntry guest_entry() const noexcept;
 	[[nodiscard]] std::uint64_t memory_domain() const noexcept;
 
+	/* The guest kernel's report of how its run ends, recorded before the
+	 * kernel shuts its drivers down or runs its exitcalls, so that it stays
+	 * on record if one never returns. The kernel reports twice, from a reboot
+	 * notifier and again from machine_restart(), machine_halt() or
+	 * machine_power_off(); a later report replaces an earlier one, as the
+	 * later shutdown call is the one that ends the run. begin_run() clears
+	 * the record and end_run() keeps it, so the owner reads it once the run
+	 * has returned and until the next run begins. Returns whether the report
+	 * changed the record, which a repeat of the same report does not. */
+	bool record_guest_shutdown(GuestShutdownKind kind,
+		std::string_view command) noexcept;
+	[[nodiscard]] GuestShutdown guest_shutdown() const noexcept;
+
 	[[nodiscard]] ThreadExecutionStateAccess thread_execution_state();
 
 private:
@@ -116,6 +150,8 @@ private:
 	mutable memory::WordSharedMutex execution_lifecycle_mutex_;
 	mutable std::mutex states_mutex_;
 	std::shared_ptr<ThreadStateStore> state_store_;
+	mutable std::mutex shutdown_mutex_;
+	GuestShutdown guest_shutdown_;
 };
 
 /* Composition-facing run route. The provider endpoint is opaque here so the
@@ -173,23 +209,6 @@ private:
  * guest's HWCAPs; with no context, the profile both engines implement. */
 [[nodiscard]] const ::uml::platform::HostCapabilities &
 current_guest_host_capabilities() noexcept;
-
-/* How much of the AArch32 EL0 profile a run on `engine` presents to its
- * guest: what the engine implements (cpu::engine_a32_support) while the
- * guest-AArch32 policy (DARWIN_UML_GUEST_AARCH32=1) is on, and none
- * otherwise. The compat HWCAPs derive from it, so a run advertises exactly
- * what its engine runs, and the runtime enters an AArch32 task into the
- * engine only at base or above. An unresolved (automatic) engine presents
- * what both engines do. */
-[[nodiscard]] ::uml::cpu::arm64::A32Support guest_a32_support(
-	::uml::cpu::EngineKind kind) noexcept;
-[[nodiscard]] ::uml::cpu::arm64::A32Support guest_a32_support(
-	ExecutionEngine engine) noexcept;
-
-/* That of the current context's engine, from which the bridge derives the
- * guest's compat HWCAPs; with no context, what both engines present. */
-[[nodiscard]] ::uml::cpu::arm64::A32Support
-current_guest_a32_support() noexcept;
 
 /* A process runs one guest. Its guest is spent once a run's kernel has claimed
  * guest RAM, which the host hands out once per process and never takes back. */

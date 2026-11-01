@@ -3,6 +3,7 @@
 
 #include "cpu/arm64/aarch32/decode.hpp"
 #include "cpu/arm64/aarch32/decode_support.hpp"
+#include "cpu/arm64/aarch32/form_operation.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/semantics.hpp"
 
@@ -15,7 +16,7 @@
 
 /*
  * What the AArch32 semantic library's sources share (semantics.hpp): the
- * operations the decoder's forms group into, the operand context of one
+ * library's table of the decoder's forms, the operand context of one
  * instruction, and the handler each family of operations defines.
  */
 
@@ -26,56 +27,6 @@
 namespace uml::cpu::arm64::aarch32::detail {
 
 inline constexpr std::uint32_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
-
-/* The operations the library executes, which group the decoder's forms (one
- * per XML encoding) by mnemonic. The register or immediate shape of a form
- * and its operands come from the decoded instruction. */
-enum class Op : std::uint8_t {
-	none,
-	/* Data processing. */
-	adc, add, addw, adr, and_, bic, cmn, cmp, eor, mov, movw, movt, mvn, orn,
-	orr, rsb, rsc, sbc, sub, subw, teq, tst,
-	/* Bit fields, counts, reversals, extensions and packing. */
-	bfc, bfi, sbfx, ubfx, clz, rbit, rev, rev16, revsh, sxtb, sxth, uxtb,
-	uxth, sxtab, sxtah, uxtab, uxtah, sxtb16, uxtb16, sxtab16, uxtab16, pkh,
-	sel,
-	/* Multiplies and divides. */
-	mul, mla, mls, umull, umlal, smull, smlal, umaal, sdiv, udiv, smla_xy,
-	smul_xy, smlal_xy, smlaw, smulw, smlad, smlsd, smuad, smusd, smlald,
-	smlsld, smmla, smmls, smmul, usad8, usada8,
-	/* Saturation and parallel arithmetic. */
-	qadd, qsub, qdadd, qdsub, ssat, usat, ssat16, usat16, parallel,
-	/* Branches. */
-	b, bl, blx, bx, cbz, cbnz, tb,
-	/* Single loads and stores. */
-	ldr, ldrb, ldrh, ldrsb, ldrsh, ldrd, str, strb, strh, strd, ldrt, ldrbt,
-	ldrht, ldrsbt, ldrsht, strt, strbt, strht,
-	/* Multiple loads and stores, pushes and pops. */
-	ldm, stm,
-	/* Exclusives and the acquire/release group. */
-	ldrex, ldrexb, ldrexh, ldrexd, strex, strexb, strexh, strexd, ldaex,
-	ldaexb, ldaexh, ldaexd, stlex, stlexb, stlexh, stlexd, lda, ldab, ldah,
-	stl, stlb, stlh, clrex,
-	/* System. */
-	prefetch, svc, bkpt, udf, mrs, msr, coprocessor, nop, dmb, dsb, isb, it,
-	/* VFP and Advanced SIMD memory: VLDR, VSTR, VLDM, VSTM (FLDMX and FSTMX
-	 * included) and the structure loads and stores. */
-	vldr, vstr, vldm, vstm, vld, vst,
-	/* VFP and Advanced SIMD data processing and moves, executed by the
-	 * handler the form's table row names (OpInfo::vector). */
-	vector,
-};
-
-/* The suffix of a parallel add or subtract, with its signedness and mode. */
-enum class ParallelKind : std::uint8_t { add16, add8, asx, sax, sub16, sub8 };
-enum class ParallelMode : std::uint8_t {
-	signed_wrap, saturating, signed_halving, unsigned_wrap,
-	unsigned_saturating, unsigned_halving,
-};
-
-/* How a data-processing form names its second operand: an immediate, a
- * register shifted by an immediate, or a register shifted by a register. */
-enum class Shape : std::uint8_t { other, immediate, reg, reg_shifted, literal };
 
 /* The addressing mode of a multiple transfer: increment after or before,
  * decrement after or before. */
@@ -92,13 +43,9 @@ class Exec;
  * passed, as the family handlers do. */
 using VectorHandler = bool (*)(Exec &x);
 
-struct OpInfo final {
-	Op op{Op::none};
-	ParallelKind kind{};
-	ParallelMode mode{};
-	Shape shape{Shape::other};
-	/* The form's Rn is SP, which its operands leave out. */
-	bool sp_base{};
+/* A form's operation (form_operation.hpp) and what the library needs to
+ * execute it. */
+struct OpInfo final : FormOperation {
 	/* A multiple transfer's mode, and whether it is PUSH or POP, whose base
 	 * is SP with writeback. */
 	Mode transfer{Mode::ia};

@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 12U
+#define KERNARIUM_RUNTIME_API_VERSION 14U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -57,9 +57,23 @@ typedef struct kernarium_runtime_boot {
     const char* android_command_line_path;
 } kernarium_runtime_boot;
 
+/* Boots the guest and returns when it is over. A guest that restarts itself is
+ * booted again inside this call, on the same view, disk and network, so the
+ * call returns only when the guest powers off, the application stops it, a run
+ * fails, or the guest restarts itself again and again within seconds of
+ * booting. It returns the guest's own status (0 for a power-off or a stop), a
+ * negated uml_emulator error constant for a run or start-up that failed, or
+ * KERNARIUM_RUNTIME_RESULT_RESTART_LOOP. */
 typedef int (*kernarium_runtime_run_function)(
     KernariumMetalView view,
     const kernarium_runtime_boot* boot);
+
+enum {
+    /* The guest restarted itself five times in a row, each within 15 seconds
+     * of its boot, so the runtime stopped booting it. It is outside the range
+     * of the negated uml_emulator errors (-1 through -4). */
+    KERNARIUM_RUNTIME_RESULT_RESTART_LOOP = -100,
+};
 
 typedef void (*kernarium_runtime_request_stop_function)(void);
 /* Flushes the guest's writable host files. Safe to call from any thread while
@@ -133,11 +147,64 @@ typedef int (*kernarium_runtime_set_background_throttle_function)(int enabled);
  * background. Quiescing trims once by itself. It may wait for the guest's
  * console, so call it away from the main thread. */
 typedef int (*kernarium_runtime_set_page_cache_trimming_function)(int enabled);
+/* What set_microphone leaves, as its return value. */
+enum {
+    /* The Microphone setting is off. The guest records silence. */
+    KERNARIUM_RUNTIME_MICROPHONE_OFF = 0,
+    /* On, but the system has not been asked for access: the guest records
+     * silence until the application has asked, and the application, not the
+     * runtime, is the one that asks. */
+    KERNARIUM_RUNTIME_MICROPHONE_UNASKED = 1,
+    /* On, but the system refuses access. The guest records silence. */
+    KERNARIUM_RUNTIME_MICROPHONE_DENIED = 2,
+    /* On and permitted: a guest that records hears the microphone. */
+    KERNARIUM_RUNTIME_MICROPHONE_ON = 3,
+};
+/* Turns the guest's microphone on (nonzero) or off (zero) and returns the
+ * resulting KERNARIUM_RUNTIME_MICROPHONE_ value. It is off until the
+ * application turns it on, and while it is off, or the system has not granted
+ * access, a guest that records gets silence and nothing opens the microphone.
+ * The runtime never asks the system for access and never shows a permission
+ * prompt: the application asks, as the direct result of the user turning the
+ * setting on, and then calls this. Calling it again with a nonzero value after
+ * the answer, or when the application becomes active, lets a guest that is
+ * recording pick the microphone up. It may be called whether or not a guest
+ * runs; a guest that starts later follows it. */
+typedef int (*kernarium_runtime_set_microphone_function)(int enabled);
+
+/* What a restart event reports. */
+enum {
+    /* The guest asked to restart and the old guest is gone: its devices are
+     * stopped and the runtime is preparing the next boot, which waits while
+     * the application holds the guest's GPU requests or has quiesced the guest
+     * (the new guest's GPU probe would otherwise time out and its boot would
+     * run without 3D). */
+    KERNARIUM_RUNTIME_RESTART_BEGAN = 0,
+    /* The restarted guest's management console answers, so what belongs to a
+     * kernel, the vCPU throttle and the page-cache trimming, can be applied to
+     * the new one: it boots with neither. If the console has not answered
+     * within two minutes the event is sent anyway. It is not sent when the
+     * guest ends first. */
+    KERNARIUM_RUNTIME_RESTART_BOOTED = 1,
+};
+/* `restart_count` is the number of times this launch's guest has restarted,
+ * 1 for the first restart. An event follows BEGAN with the same count, or the
+ * guest ends. It runs on a runtime thread and must return promptly. */
+typedef void (*kernarium_runtime_restart_callback)(
+    void* context,
+    uint32_t event,
+    uint32_t restart_count);
+/* Sets, or with a null callback clears, the one receiver of restart events.
+ * Once it returns, no call to the previous callback is running or will start,
+ * so its context may be released; the callback must not call this. */
+typedef void (*kernarium_runtime_set_restart_callback_function)(
+    kernarium_runtime_restart_callback callback,
+    void* context);
 
 /* The application resolves only this versioned getter after loading exactly
  * one runtime framework. The table is immutable and remains valid until
- * process exit. The selected framework owns one page-profile-specific host
- * runtime and its matching code-signed kernel carrier. */
+ * process exit. The selected framework owns one host runtime and its
+ * matching code-signed kernel carrier. */
 typedef struct kernarium_runtime_api {
     uint32_t abi_version;
     uint32_t struct_size;
@@ -158,6 +225,8 @@ typedef struct kernarium_runtime_api {
     kernarium_runtime_set_background_throttle_function set_background_throttle;
     kernarium_runtime_set_page_cache_trimming_function
         set_page_cache_trimming;
+    kernarium_runtime_set_microphone_function set_microphone;
+    kernarium_runtime_set_restart_callback_function set_restart_callback;
 } kernarium_runtime_api;
 
 #if defined(__GNUC__)
@@ -167,7 +236,16 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v12(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v14(void);
+
+/* An automation-only extension, outside the versioned table: only a runtime
+ * built for automation exports this symbol, and the application looks it up
+ * without requiring it. It returns nonzero when the launch asked, through the
+ * environment, for the background job to start as soon as the guest runs, and
+ * zero otherwise. The setting's name is in the automation runtimes alone, so a
+ * release runtime cannot be asked. */
+KERNARIUM_RUNTIME_EXPORT
+int kernarium_runtime_automation_job_at_start(void);
 
 #ifdef __cplusplus
 }

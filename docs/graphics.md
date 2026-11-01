@@ -22,6 +22,12 @@ dependencies come from the verified `apple-gpu-vulkan-experiment` prefix. No
 Apple GPU product links CGL, OpenGL.framework, EAGL, MoltenVK, a Vulkan
 loader, or a second ambient libepoxy/virglrenderer family.
 
+Destroying a GL context frees the pipelines, shader variants, pipeline cache
+and library references of the Zink programs it built, although the screen's
+shared shaders outlive it, so closing a guest application returns the Metal
+pipelines and generated MSL it caused instead of keeping them for the life of
+the process.
+
 macOS and the iOS device both build that stack from the same sources; the
 prefixes differ only in their platform contract. The iOS
 Simulator has no build of it, because KosmicKrisp requires Metal 4 and the
@@ -135,8 +141,26 @@ mutate or tear down renderer state wait until those deferred fences retire;
 reset cancels the timer and discards deferred transport state before releasing
 renderer resources. A command buffer or transfer the renderer refuses fails
 alone: the context error it reports is cleared with it, so a context that only
-transfers, as Android's gralloc mapper does to lock a buffer for reading, keeps
+transfers, as Android's gralloc mapper does to lock a buffer for reading (a
+buffer with padded rows by a command buffer that holds one transfer), keeps
 working after one refusal.
+
+A texture a guest context created and wrapped in a blob, as Android's gralloc
+does for every GPU-only buffer, has no guest pages. The guest reaches its pixels
+through a staging buffer: a copy transfer moves them between the texture and
+the staging buffer's guest storage. The renderer requires that storage of the
+staging buffer, whichever way the pixels move, and asks nothing of the texture.
+
+A texture the renderer creates for a guest reads as zeros until the guest
+writes it, as the zeroed pages the guest allocated for it would. The host
+driver hands out the memory of a released resource again with its pixels still
+in it, so without a clear a new texture shows what an earlier one held, which
+may have belonged to another guest process. The renderer clears every level of
+a new texture at creation. A texture imported from an image keeps the content it
+was imported with, and a texture in a compressed format keeps what the driver
+allocated, because a clear cannot write one. The clear is queued on the GPU and
+adds no CPU time to the creating thread; it costs GPU time per level, plus the
+bandwidth to fill the texture, before the first frame that uses it.
 
 Pointer semantics are selected by the product launcher. Android native and VNC
 input is exposed as one direct touch contact with absolute coordinates; hover,
@@ -172,19 +196,100 @@ a depth format only where the host's own storage has the width and datatype
 that format names, and a guest config with 32 depth bits is backed by a real
 32-bit float depth buffer.
 
+The scanout mask is held to the same standard. Only the 8-bit RGB layouts the
+display presents carry a scanout bit, and no YUV format does. The guest's
+minigbm keeps the scanout use on exactly the combinations the mask names, and
+it refuses an NV12 combination that has both scanout and its emulation over R8
+buffers, so a scanout bit on NV12 costs the guest every video encoder, video
+decoder and camera use of that format. P010 carries no scanout bit either,
+because the host does not sample it: minigbm emulates it over an R8 resource for
+CPU access, as the input of a video encoder and the output of a video decoder,
+and keeps scanout off it.
+
+Without a host allocator the renderer cannot create any multi-planar resource,
+so a YUV buffer exists on the host only as the bytes of an R8 image, whatever
+the buffer is used for. minigbm decides that by what the host can create rather
+than by the capabilities a buffer's use flags name, which are none for a buffer
+only the CPU, a codec or a camera touches: the renderer refuses a native NV12
+create as an invalid parameter and every later command on that resource as an
+invalid resource id.
+
+The renderer samples such an image as the planes it holds, when the guest says
+what the image is. A resource created with `VIRGL_RESOURCE_FLAG_YUV_BIPLANAR`
+(luma rows, then interleaved chroma rows) or `VIRGL_RESOURCE_FLAG_YUV_TRIPLANAR`
+(luma rows, then the two half-stride chroma planes) and the picture's width in
+pixels in the high half of the flags is checked to be one picture, and keeps a
+texture for each plane: R8 for luma, RG8 for interleaved chroma, and R8 for each
+planar chroma plane. A sampler view of the image sends the plane it selects where
+a view carries its layers, plane 0 as the ordinary layer range and a later plane
+as its number, and reads that plane's texture. The textures are made when the
+first view is, from the image as it then is, and every write the guest transfers
+into the image redraws the plane rows its bytes feed in the blitter's own
+context; an image that only a codec or the CPU touches never gets them. Writes
+the GPU makes into such an image are not followed, because nothing allocates it
+as a render target. The capability `VIRGL_CAP_V2_PACKED_YUV` says the renderer
+knows the flags. minigbm sends them for the 8-bit YUV buffers it emulates (NV12,
+NV21 and YV12), only when the capability is present, so an older renderer is
+never sent a flag it refuses and an older minigbm sends none, which leaves the
+image the single R8 texture it always was. A P010 buffer is not tagged: its
+two-byte samples do not fit the R8 plane textures, and nothing samples it. A guest that imports each plane of a picture as its own
+resource sends the plane number as well, and the renderer reads it as the whole
+texture of that resource unless the resource has the plane's image, so a planar
+picture whose planes are separate buffers samples correctly too.
+
+A single-plane buffer's rows are padded to the first whole number of pixels
+that makes them a multiple of 16 bytes (a 642-pixel RGBA row is 2576 bytes and
+the buffer's stride 644 pixels), because the host imports a buffer into Vulkan
+at the pitch the guest reports and Metal reads a texture over a buffer only at
+such a pitch. The buffer and its host texture keep their width, which Android
+allows to be smaller than the stride and which the guest samples the texture
+by. A swapchain image, a GPU blob, is laid out by the same rule. The renderer
+takes the guest rows of a transfer at the row length of the texture's width
+unless the transfer names a stride, and the kernel's transfer ioctls carry none
+for a classic resource, so a buffer with padded rows is locked and unlocked by a
+`VIRGL_CCMD_TRANSFER3D` in a command buffer, which names the pitch as its stride
+and the offset of the box's first byte. That is one command, and one readback or
+upload, for a whole lock or a rectangle of it in either direction, however tall
+the buffer is: a transfer for each row cost one each, and half a second to lock
+a 342x604 buffer.
+
+The emulated layouts are the layouts Android defines, so that the media
+framework, the Image API and an importer that reads the buffer's own plane
+offsets and strides agree on where a plane is. An NV12 image is the luma rows
+followed by the interleaved chroma rows, and a row is padded to a multiple of 16
+bytes, which also holds the one extra chroma byte of an odd width. A P010 image
+is the same with two-byte samples, its rows padded the same way and the chroma
+box of a partial lock clamped at the padded width. A YV12 image is Android's:
+the V plane after the Y plane, the U plane after the V plane, and a chroma stride of half
+the luma stride, which minigbm makes a multiple of 32 so that the half is a
+multiple of 16. A chroma row is therefore half as wide as the R8 image and two
+of them fill one image row, so a 1920x1080 frame is a 1920x1620 image. Locking
+part of a buffer flushes and invalidates exactly the bytes of that rectangle,
+as one box for the luma plane and as up to two boxes for each planar chroma
+plane, and gives every box the offset of its first byte, because the renderer
+reads a box from the guest copy at the offset of the transfer.
+
 Applications that use stateful V4L2 decoding can instead use the independent
 [Virtio video service](../darwin/device/video/README.md). It exposes the same
 host codec profile set through the shared Linux and Android driver and copies
 decoded planes into guest memory. Its protocol and buffer ownership do not
 depend on Virgl or VA-API.
 
-Which decode API a guest application can reach is a property of that
-application's own build, not of this device. A Linux Chromium or CEF built for
-arm64 discovers the stateful decoder through `/dev/video-dec*`; the same
-upstream project built for x86-64 carries no stateful V4L2 decoder at all and
-offers only VA-API, for which no driver over a V4L2 stateful decoder exists.
-An x86-64 guest therefore reaches this service only from an application that
-speaks V4L2 itself.
+Which codec API a guest application can reach is a property of that
+application's own build, not of this device. Chromium on Linux enumerates
+`/dev/video0` through `/dev/video255` itself where it has a V4L2 decoder at all
+(the `/dev/video-dec*` names are a ChromeOS convention), and its only hardware
+encode on Linux is VA-API. Valve's x86-64 CEF carries no stateful V4L2 decoder,
+only VA-API. The guest therefore ships a VA-API driver over the same V4L2 nodes,
+[`uml_drv_video.so`](../tools/video/va-v4l2/README.md): the Debian Chromium
+images select it through `/etc/chromium.d/kernarium-video`, and it gives
+FFmpeg, GStreamer and any other VA-API client H.264 and HEVC encode on both
+guest architectures. Chromium's own H.264 encode is on there: the gbm module
+below allocates the NV12 frames it encodes, and a guest kernel that exports
+virtio-gpu buffers read-write and transfers them around a CPU access makes the
+frames the GPU painted readable; the driver README owns the contract.
+An application that speaks V4L2 itself, such as FFmpeg's `*_v4l2m2m` codecs or
+GStreamer's `v4l2` elements, reaches the service without it.
 
 H.264 High10 is advertised only on Apple targets where a profile-specific
 VideoToolbox hardware probe succeeds. Qualified physical iOS hardware produces
@@ -227,6 +332,19 @@ Virtio-GPU and DRM interfaces; a kernel-to-emulator extension is acceptable
 only when negotiated, bounded, invisible to guest userspace, and presented
 through an ABI the unmodified guest Mesa and libdrm already understand. A
 private userspace ioctl or library must never become a production dependency.
+
+One guest file is the single exception: the gbm backend module
+`virtio_gpu_gbm.so`, which the Debian desktop images ship beside the video
+driver ([va-v4l2](../tools/video/va-v4l2/README.md#the-gbm-module-planar-buffers-for-debians-libgbm)).
+Debian's libgbm cannot allocate NV12, P010 or any other planar format, so a
+video pipeline has nowhere to put its frames (Chromium's frame for a hardware
+encoder is `gbm_bo_create(NV12)`), and neither the kernel nor the host can
+change that. The module is not a replacement or a preload: Debian's unmodified
+libgbm loads it through its documented backend interface, by the DRM driver
+name, and it makes the device Mesa's own backend makes, adding only planar
+buffers, one resource per plane. Mesa, its EGL platform and every call on a
+colour buffer stay as shipped, and deleting the file, or `GBM_BACKEND=dri` for
+one process, restores Mesa alone.
 
 Two framebuffers for which `KHR-GL46.direct_state_access.framebuffers_check_status`
 prefers an incomplete status are reported complete, as the specification
@@ -527,8 +645,11 @@ modifier, because Metal describes no tiling an agent outside the driver could
 agree on. A modifier image is therefore exactly a linear image with a name for
 its layout and inherits nearly every linear limit: one 2D level and layer, a
 dedicated allocation, no depth or stencil attachment, and an explicit plane
-layout accepted only where it matches the layout Metal's own alignment rule
-produces. What it carries that plain linear tiling does not is a colour and an
+layout accepted only where Metal can read it: a plane may start at any offset
+that is a multiple of Metal's alignment and may have any row pitch that holds a
+row, keeps to the same alignment and is no wider than the widest texture, which
+is how a half-width chroma plane laid out at the pitch of its luma plane is
+imported. What it carries that plain linear tiling does not is a colour and an
 input attachment, because a swapchain image is one: Mesa's common WSI has no
 fallback when no modifier can hold a colour attachment (it filters the modifier
 list with `vkGetPhysicalDeviceImageFormatProperties2` and, when nothing
@@ -918,64 +1039,41 @@ Two consequences follow.
 
 The per-device geometry heap starts at 16 MiB rather than a fixed 128 MiB,
 because a Venus host pays it once per guest `VkDevice` that draws through it;
-a device that never does allocates none. The heaviest command buffer in the CTS
-tessellation, geometry, draw and rasterization groups asks it for 1.53 MiB, but
-that under-measures real demand, which is linear in patches and primitives: 130
-quad patches at tessellation level 64 need 17.2 MB. The heap therefore grows,
-at least doubling and in one step to what a draw is known to need, up to
-128 MiB or its starting size, whichever is larger.
-`MESA_KK_HEAP_SIZE_MIB` sets the start from 1 to 4095 MiB without a rebuild,
-and any other value keeps 16 MiB.
+a device that never does allocates none. It grows, at least doubling, to a cap
+of 128 MiB or its starting size, whichever is larger, and
+`MESA_KK_HEAP_SIZE_MIB` sets the start from 1 to 4095 MiB without a rebuild.
+What a guest sees:
 
-A direct draw whose reservations the driver can bound grows the heap before it
-is recorded and renders on its first submission. The restart unroll's bound is
-exact. Tessellation is bounded at the largest level the TCS writes when every
-level the domain reads is a compile-time constant, and at the level-64 maximum
-otherwise. The first heap is created at the size such a draw needs, and a
-multi-draw grows the heap once for all its entries. A reservation only the GPU
-can size, from an indirect draw or a stage after tessellation or geometry, is
-refused when it does not fit. The device library is compiled without `printf`,
-and its `abort()` would end only the allocating kernel invocation, so every
-kernel that reserves heap space checks the reservation instead and, when it is
-refused, empties its draw; the command buffer completes. The heap header counts
-refusals, and the driver reads them at the next draw and when the recording is
-reset. It grows the heap for later command buffers in one step to hold what
-every refused render segment needed, what it reserved plus every size it was
-refused, and logs the first loss once per device. The kernel that resets the
-heap for each segment folds the segment before it into the header. Reservations
-advance the heap by compare-exchange and never past its end, so a refused one
-leaves the heap as it was. A tessellated draw reserves its indices and all its
-patches' domain points at once, so its patches do not contend for the heap. A
-recording keeps every heap it used until it is reset or freed. If Metal refuses
-the first heap, a draw that needs it is not recorded and its command buffer
-ends with `VK_ERROR_OUT_OF_DEVICE_MEMORY`; if it refuses a larger one, the
-device keeps the heap it has. The level-64 bound is conservative, so when the
-TCS computes its levels the heap grows with the patches a render pass draws
-directly, whatever their levels: past about a thousand quad patches it reaches
-the cap. Constant levels bound it by the level written instead, and 65,536
-triangle patches at level 1 fit the starting 16 MiB.
+- A direct draw whose reservations the driver can bound grows the heap before
+  it is recorded and renders on its first submission. The restart unroll's
+  bound is exact; tessellation is bounded at the largest level the TCS writes
+  when every level the domain reads is a compile-time constant, and at the
+  level-64 maximum otherwise.
+- A reservation only the GPU can size, from an indirect draw or a stage after
+  tessellation or geometry, is refused when it does not fit. That draw loses its
+  output and the command buffer completes; the first loss on a device is logged
+  once, and later command buffers get a heap large enough for what the refused
+  render segments needed, as far as the pool below allows.
+- If Metal refuses the first heap, a draw that needs it is not recorded and its
+  command buffer ends with `VK_ERROR_OUT_OF_DEVICE_MEMORY`; if it refuses a
+  larger one, the device keeps the heap it has.
+
+The level-64 bound is conservative, so when the TCS computes its levels the
+heap grows with the patches a render pass draws directly, whatever their
+levels: past about a thousand quad patches it reaches the cap. Constant levels
+bound it by the level written instead, and 65,536 triangle patches at level 1
+fit the starting 16 MiB.
 
 A Venus device charges its heap to the renderer's device-memory pool (see [the
 Venus share](#host-visible-memory-is-bounded-by-the-blob-aperture)), so the
 heap and the guest's allocations share one bound. A heap the device creates or
-grows takes at most half of the pool's headroom, rounded down to 64 KiB, so it
-never takes more than it leaves the guest. Only a device's first heap may take
-1 MiB even when that is more than half of what is left, and the pool still
-refuses it when not even that fits. A bound the driver computes still grows the heap no
-further than the cap above, because it overstates a draw's need up to 4096
-times for levels a TCS computes. Growth to what refused reservations measured
-goes as far as the pool allows, up to 4095 MiB, the most the header can
-address, or Metal's largest buffer if that is smaller. A heap the pool cannot
-hold is not created. The device keeps the heap it has, and draws that do not
-fit it lose their output through the refusal path above. A device with no heap
-yet fails the command buffer of a draw that needs one, as when Metal refuses
-the first heap, and tries again at its next such draw. Heaps a recording still
-holds are Metal allocations and count against the headroom. When a reset, freed or re-recorded recording leaves
-the device's heap held by nothing else, a heap grown past its start is freed
-once the headroom has fallen below half its size, and the next draw that needs
-a heap creates one from what the pool then leaves. A device created without a
-pool, as host GL through Zink creates, keeps the fixed cap and counts in the
-pool only as Metal memory.
+grows takes at most half of the pool's headroom, except that a device's first
+heap may take 1 MiB, and a heap the pool cannot hold is not created. A heap
+grown past its start is freed once nothing holds it and the headroom has fallen
+below half its size. A device created without a pool, as host GL through Zink
+creates, keeps the fixed cap. The rules are the comment above
+`KK_HEAP_START_MIB` in `src/kosmickrisp/vulkan/kk_cmd_draw.c` and
+`kk_device_memory_pool.h`, in this project's Mesa series.
 
 An uninterrupted released mustpass fraction runs about 200,000 cases in one
 `deqp-vk` process, and a 1536 MiB guest cannot hold every group in that

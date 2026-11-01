@@ -15,12 +15,6 @@
 
 namespace uml::platform::apple {
 
-using ::uml::platform::ArmFeature;
-using ::uml::platform::ArmFeatureSet;
-using ::uml::platform::arm_feature_count;
-using ::uml::platform::arm_feature_labels;
-using ::uml::platform::arm_inventory_feature_count;
-
 enum class HostCapabilityResult : std::uint8_t {
 	unsupported,
 	supported,
@@ -153,36 +147,6 @@ inline constexpr const char *guest_sme_policy_variable = "DARWIN_UML_GUEST_SME";
 {
 	static const GuestSmePolicy policy =
 		parse_guest_sme_policy(std::getenv(guest_sme_policy_variable));
-	return policy;
-}
-
-/* Whether the virtual CPU may run AArch32 (A32 and T32) EL0 tasks. Off by
- * default until both engines implement the profile completely and the
- * default is turned on; setting DARWIN_UML_GUEST_AARCH32 to exactly "1"
- * turns it on for development. Unlike the SME policy it adds no host
- * token: AArch32 uses the A64 features the host already reports, so the
- * policy and each engine's level (cpu/arm64/aarch32/a32_profile.hpp,
- * a32_presented_support) are all that decide what a run presents. */
-enum class GuestAarch32Policy : std::uint8_t {
-	off,
-	on,
-};
-
-inline constexpr const char *guest_aarch32_policy_variable =
-	"DARWIN_UML_GUEST_AARCH32";
-
-[[nodiscard]] inline GuestAarch32Policy parse_guest_aarch32_policy(
-	const char *value) noexcept
-{
-	return value != nullptr && std::strcmp(value, "1") == 0 ?
-		GuestAarch32Policy::on : GuestAarch32Policy::off;
-}
-
-/* Read once, as the guest-SME policy is. */
-[[nodiscard]] inline GuestAarch32Policy guest_aarch32_policy() noexcept
-{
-	static const GuestAarch32Policy policy = parse_guest_aarch32_policy(
-		std::getenv(guest_aarch32_policy_variable));
 	return policy;
 }
 

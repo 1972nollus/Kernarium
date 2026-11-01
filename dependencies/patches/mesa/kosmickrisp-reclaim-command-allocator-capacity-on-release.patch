@@ -152,7 +152,7 @@ index 9962c952d9612ba18f409cf16e87ed97bf6990f3..e505acdf6e537df2696af29175c11948
  kk_TrimCommandPool(VkDevice device, VkCommandPool commandPool,
                     VkCommandPoolTrimFlags flags)
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 8eedb0cef99b902199141a7e230fda8ad6386569..8215464f9654579461f952a19b3bc4585c4eb15d 100644
+index 97cfe19cf16e39d0e554aaca62fa9b3cc13da341..ee47b277137ebbf97140d36170ee567034fb4774 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -601,6 +601,28 @@ if with_tests

@@ -16,7 +16,7 @@ struct ContentView: View {
     /// mode sets it; the serial console's keyboard is its terminal's focus.
     @State private var framebufferKeyboardVisible = false
     @State private var specialKeysExpanded = false
-    @State private var presentedSheet: PresentedSheet?
+    @State private var settingsPresented = false
     /// Whether the window scene fills the screen. Until the view is in a
     /// scene, it is taken to be a window, which is the system's own default.
     @State private var sceneCoversScreen = false
@@ -51,6 +51,10 @@ struct ContentView: View {
                 if case let .ended(result) = launcher.phase {
                     GuestEndedNotice(end: GuestRunEnd(result: result))
                         .padding()
+                } else if launcher.restarting {
+                    GuestRestartingBadge()
+                        .padding()
+                        .frame(maxHeight: .infinity, alignment: .top)
                 } else if let restart = backgroundSession.restart {
                     GuestRestartedNotice(restart: restart) {
                         backgroundSession.dismissRestartNotice()
@@ -77,11 +81,8 @@ struct ContentView: View {
         .background {
             SceneCoverageReader { sceneCoversScreen = $0 }
         }
-        .sheet(item: $presentedSheet) { destination in
-            switch destination {
-            case .settings:
-                EmulatorSettingsView()
-            }
+        .sheet(isPresented: $settingsPresented) {
+            EmulatorSettingsView()
         }
         .onAppear {
             serialConsole.startObserving()
@@ -104,6 +105,13 @@ struct ContentView: View {
         }
         .onReceive(
             NotificationCenter.default.publisher(
+                for: UIApplication.didBecomeActiveNotification
+            )
+        ) { _ in
+            MicrophoneSetting.shared.refresh()
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
                 for: UserDefaults.didChangeNotification
             )
         ) { _ in
@@ -113,6 +121,7 @@ struct ContentView: View {
         .onChange(of: launcher.phase) { _, phase in
             GuestPictureInPicture.shared.guestRunningChanged(phase == .running)
             refreshKeepRunning()
+            if phase == .running { startJobIfAutomationAsked() }
             // Nothing is left to type into, and the keyboard would cover
             // the notice.
             guard case .ended = phase else { return }
@@ -150,17 +159,35 @@ struct ContentView: View {
             identifier: "backgroundJobButton"
         ) {
             if backgroundJob.state == .idle {
-                guard let guest = launcher.runningGuestName else { return }
-                backgroundJob.start(
-                    limitMinutes: BackgroundSettings().limitMinutes(
-                        forGuest: guest
-                    ),
-                    guestName: (guest as NSString).deletingPathExtension
-                )
+                startKeepRunningJob()
             } else {
                 backgroundJob.cancel()
             }
         }
+    }
+
+    /// Submits the job for the running guest, as the button does.
+    private func startKeepRunningJob() {
+        guard let guest = launcher.runningGuestName else { return }
+        backgroundJob.start(
+            limitMinutes: BackgroundSettings().limitMinutes(forGuest: guest),
+            guestName: (guest as NSString).deletingPathExtension
+        )
+    }
+
+    /// An automation launch can ask for the job as the guest starts, the one
+    /// request iOS accepts while the application is in front, so a driver
+    /// without the UI automation host can reach a guest that runs behind it.
+    /// Only a runtime built for automation answers yes, and only a guest in
+    /// the keep-running mode takes a job.
+    private func startJobIfAutomationAsked() {
+        guard BackgroundJob.startsWithGuest(
+            asked: kernarium_runtime_loader_automation_job_at_start() != 0,
+            mode: keepRunningChosen ? .keepRunning : .off,
+            state: backgroundJob.state
+        ) else { return }
+        print("Kernarium: automation starts the background job")
+        startKeepRunningJob()
     }
 
     private var keepRunningLabel: String {
@@ -196,7 +223,7 @@ struct ContentView: View {
             accessibilityLabel: "Emulator Settings",
             identifier: "settingsButton"
         ) {
-            presentedSheet = .settings
+            settingsPresented = true
         }
     }
 
@@ -251,7 +278,7 @@ struct ContentView: View {
             accessibilityLabel: key.accessibilityLabel,
             identifier: key.accessibilityIdentifier
         ) {
-            sendGuestKey(key.code)
+            key.press()
         }
     }
 
@@ -308,11 +335,6 @@ struct ContentView: View {
             guestViewMode = .framebuffer
         }
     }
-
-    private func sendGuestKey(_ code: UInt16) {
-        kernarium_runtime_loader_send_key(code, 1)
-        kernarium_runtime_loader_send_key(code, 0)
-    }
 }
 
 enum GuestViewMode {
@@ -326,19 +348,77 @@ enum GuestViewMode {
 struct GuestRunEnd: Equatable {
     let result: Int32
 
+    /// The runtime stopped a guest that restarted itself again and again
+    /// within seconds of booting. A guest that restarts once in a while is
+    /// booted again by the runtime and never reaches this notice.
+    var restartedInALoop: Bool {
+        result == Int32(KERNARIUM_RUNTIME_RESULT_RESTART_LOOP)
+    }
+
     var title: String {
-        result == 0 ? "Guest Shut Down" : "Guest Stopped with an Error"
+        if restartedInALoop { return "Guest Kept Restarting" }
+        return result == 0 ? "Guest Shut Down" : "Guest Stopped with an Error"
     }
 
     var message: String {
         let relaunch = "Relaunch Kernarium to start it again."
+        if restartedInALoop {
+            return "The guest restarted itself again and again within " +
+                "seconds of booting, so Kernarium stopped booting it. " +
+                relaunch
+        }
         return result == 0
             ? relaunch
             : "The runtime returned \(result). \(relaunch)"
     }
 
     var systemName: String {
-        result == 0 ? "power" : "exclamationmark.triangle"
+        if restartedInALoop { return "arrow.trianglehead.2.clockwise.rotate.90" }
+        return result == 0 ? "power" : "exclamationmark.triangle"
+    }
+}
+
+/// A restart the guest asked for, as the runtime reports it. The guest runs
+/// on after it, in the same launch.
+enum GuestRestartEvent: Equatable {
+    /// The guest asked to restart and is gone; the next boot is being
+    /// prepared, and waits while the GPU is held or the guest is paused.
+    case began(restart: Int)
+    /// The restarted guest's console answers.
+    case booted(restart: Int)
+
+    init?(event: UInt32, restartCount: UInt32) {
+        switch Int(event) {
+        case KERNARIUM_RUNTIME_RESTART_BEGAN:
+            self = .began(restart: Int(restartCount))
+        case KERNARIUM_RUNTIME_RESTART_BOOTED:
+            self = .booted(restart: Int(restartCount))
+        default:
+            return nil
+        }
+    }
+}
+
+/// Whether the guest is between two boots. A restart the guest asked for
+/// shows no notice, only a badge while the next boot is under way.
+struct GuestRestartIndicator: Equatable {
+    private(set) var restarting = false
+    private(set) var restarts = 0
+
+    mutating func apply(_ event: GuestRestartEvent) {
+        switch event {
+        case let .began(restart):
+            restarts = max(restarts, restart)
+            restarting = true
+        case let .booted(restart):
+            // An event of an earlier restart ends nothing of a later one.
+            if restart >= restarts { restarting = false }
+        }
+    }
+
+    /// The run ended, so nothing restarts any more.
+    mutating func runEnded() {
+        restarting = false
     }
 }
 
@@ -349,21 +429,32 @@ private struct GuestEndedNotice: View {
     let end: GuestRunEnd
 
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: end.systemName)
-                .font(.title)
-            Text(end.title)
-                .font(.headline)
-            Text(end.message)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(20)
-        .frame(maxWidth: 320)
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        GuestNoticeCard(
+            systemName: end.systemName,
+            title: end.title,
+            message: end.message
+        )
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("guestEndedNotice")
+    }
+}
+
+/// Shown over the guest views while a guest that restarted itself boots
+/// again. It takes no input and goes by itself when the new guest's console
+/// answers.
+private struct GuestRestartingBadge: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+            Text("Restarting")
+                .font(.subheadline)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .glassEffect(.regular, in: .capsule)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("guestRestartingBadge")
     }
 }
 
@@ -377,27 +468,49 @@ private struct GuestRestartedNotice: View {
 
     var body: some View {
         Button(action: dismiss) {
-            VStack(spacing: 8) {
-                Image(systemName: restart.systemName)
-                    .font(.title)
-                Text(restart.title)
-                    .font(.headline)
-                Text(restart.message)
-                    .font(.subheadline)
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(.center)
-                Text("Tap to dismiss")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(20)
-            .frame(maxWidth: 320)
-            .glassEffect(.regular, in: .rect(cornerRadius: 20))
+            GuestNoticeCard(
+                systemName: restart.systemName,
+                title: restart.title,
+                message: restart.message,
+                messageStyle: .primary,
+                footer: "Tap to dismiss"
+            )
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("guestRestartedNotice")
+    }
+}
+
+/// The card both notices share: an icon, a headline and a message, with an
+/// optional line beneath.
+private struct GuestNoticeCard: View {
+    let systemName: String
+    let title: String
+    let message: String
+    var messageStyle = HierarchicalShapeStyle.secondary
+    var footer: String?
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: systemName)
+                .font(.title)
+            Text(title)
+                .font(.headline)
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(messageStyle)
+                .multilineTextAlignment(.center)
+            if let footer {
+                Text(footer)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: 320)
+        .glassEffect(.regular, in: .rect(cornerRadius: 20))
     }
 }
 
@@ -416,6 +529,12 @@ enum GuestSpecialKey: UInt16, CaseIterable, Identifiable {
 
     var id: Self { self }
     var code: UInt16 { rawValue }
+
+    /// Presses and releases the key.
+    func press() {
+        kernarium_runtime_loader_send_key(code, 1)
+        kernarium_runtime_loader_send_key(code, 0)
+    }
 
     var systemName: String {
         switch self {
@@ -449,12 +568,6 @@ enum GuestSpecialKey: UInt16, CaseIterable, Identifiable {
         case .home: "guestHomeButton"
         }
     }
-}
-
-private enum PresentedSheet: String, Identifiable {
-    case settings
-
-    var id: String { rawValue }
 }
 
 private struct GuestDisplayGeometry {
@@ -510,28 +623,33 @@ struct GuestInputCoordinateSpace {
             contentSize: contentSize,
             in: drawableSize
         ) else { return nil }
-        var drawablePoint = CGPoint(
+        let drawablePoint = CGPoint(
             x: point.x * drawableSize.width / bounds.width,
             y: point.y * drawableSize.height / bounds.height
         )
-        if clampToContent {
-            drawablePoint.x = min(
-                max(drawablePoint.x, viewport.minX), viewport.maxX
-            )
-            drawablePoint.y = min(
-                max(drawablePoint.y, viewport.minY), viewport.maxY
-            )
-        } else if drawablePoint.x < viewport.minX ||
-                    drawablePoint.x > viewport.maxX ||
-                    drawablePoint.y < viewport.minY ||
-                    drawablePoint.y > viewport.maxY {
+        if !clampToContent, drawablePoint.x < viewport.minX ||
+            drawablePoint.x > viewport.maxX ||
+            drawablePoint.y < viewport.minY ||
+            drawablePoint.y > viewport.maxY {
             return nil
         }
+        return coordinate(ofDrawable: drawablePoint, in: viewport)
+    }
+
+    /// The position `drawablePoint` has in this space once it is clamped into
+    /// `viewport`, the aspect-fit rectangle the guest's display occupies.
+    func coordinate(
+        ofDrawable drawablePoint: CGPoint,
+        in viewport: CGRect
+    ) -> (x: UInt32, y: UInt32) {
+        let clamped = CGPoint(
+            x: min(max(drawablePoint.x, viewport.minX), viewport.maxX),
+            y: min(max(drawablePoint.y, viewport.minY), viewport.maxY)
+        )
         let x = min(
             max(
                 (
-                    (drawablePoint.x - viewport.minX) * size.width /
-                        viewport.width
+                    (clamped.x - viewport.minX) * size.width / viewport.width
                 ).rounded(.down),
                 0
             ),
@@ -540,8 +658,7 @@ struct GuestInputCoordinateSpace {
         let y = min(
             max(
                 (
-                    (drawablePoint.y - viewport.minY) * size.height /
-                        viewport.height
+                    (clamped.y - viewport.minY) * size.height / viewport.height
                 ).rounded(.down),
                 0
             ),
@@ -597,7 +714,6 @@ struct GuestTouchGeometry {
     private let coordinateSpace: GuestInputCoordinateSpace
     private let boundsSize: CGSize
     private let drawableSize: CGSize
-    private let contentSize: CGSize
     private let viewport: CGRect
 
     init?(
@@ -617,7 +733,6 @@ struct GuestTouchGeometry {
         self.coordinateSpace = coordinateSpace
         self.boundsSize = boundsSize
         self.drawableSize = drawableSize
-        self.contentSize = contentSize
         self.viewport = viewport
     }
 
@@ -642,17 +757,13 @@ struct GuestTouchGeometry {
         at drawablePoint: CGPoint,
         pressed: Bool
     ) -> GuestTouchEvent? {
-        let boundsPoint = CGPoint(
-            x: drawablePoint.x * boundsSize.width / drawableSize.width,
-            y: drawablePoint.y * boundsSize.height / drawableSize.height
+        guard drawablePoint.x.isFinite, drawablePoint.y.isFinite else {
+            return nil
+        }
+        let location = coordinateSpace.coordinate(
+            ofDrawable: drawablePoint,
+            in: viewport
         )
-        guard let location = coordinateSpace.location(
-            boundsPoint,
-            in: boundsSize,
-            drawableSize: drawableSize,
-            contentSize: contentSize,
-            clampToContent: true
-        ) else { return nil }
         return GuestTouchEvent(
             x: location.x,
             y: location.y,
@@ -838,13 +949,6 @@ struct GuestTouchPath {
         appendLastRelease(to: &events)
         previousPoint = nil
         return events
-    }
-
-    mutating func cancel(
-        at point: CGPoint,
-        geometry: GuestTouchGeometry?
-    ) -> [GuestTouchEvent] {
-        end(at: point, geometry: geometry)
     }
 
     mutating func release() -> [GuestTouchEvent] {
@@ -1043,7 +1147,7 @@ private struct GuestDisplayView: UIViewControllerRepresentable {
         _ controller: GuestDisplayViewController,
         coordinator: ()
     ) {
-        controller.metalView.releaseGuestInput()
+        controller.metalView.releaseTrackedTouch()
         controller.metalView.finishHostResize()
         controller.metalView.resignFirstResponder()
     }
@@ -1191,10 +1295,6 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         )
     }
 
-    func releaseGuestInput() {
-        releaseTrackedTouch()
-    }
-
     func setKeyboardVisible(_ visible: Bool) {
         if visible {
             becomeFirstResponder()
@@ -1262,19 +1362,15 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         with event: UIEvent?
     ) {
         super.touchesCancelled(touches, with: event)
-        finishTouch(in: touches, cancelled: true)
+        finishTouch(in: touches)
     }
 
-    private func finishTouch(
-        in touches: Set<UITouch>,
-        cancelled: Bool = false
-    ) {
+    private func finishTouch(in touches: Set<UITouch>) {
         guard let touch = trackedTouch, touches.contains(touch) else { return }
-        let point = touch.location(in: self)
-        let events = cancelled ?
-            touchPath.cancel(at: point, geometry: touchGeometry()) :
-            touchPath.end(at: point, geometry: touchGeometry())
-        sendTouchEvents(events)
+        sendTouchEvents(touchPath.end(
+            at: touch.location(in: self),
+            geometry: touchGeometry()
+        ))
         trackedTouch = nil
     }
 
@@ -1297,7 +1393,7 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         }
     }
 
-    private func releaseTrackedTouch() {
+    func releaseTrackedTouch() {
         guard trackedTouch != nil else { return }
         sendTouchEvents(touchPath.release())
         trackedTouch = nil
@@ -1425,19 +1521,6 @@ enum ThermalStateReport {
         return "Kernarium thermal state: phase=\(phase.rawValue) " +
             "state=\(name(for: state)) uptime=\(uptimeText)"
     }
-
-    static func probeLine(
-        state: ProcessInfo.ThermalState,
-        uptime: TimeInterval
-    ) -> String {
-        let uptimeText = String(
-            format: "%.3f",
-            locale: Locale(identifier: "en_US_POSIX"),
-            uptime
-        )
-        return "Kernarium thermal probe: state=\(name(for: state)) " +
-            "uptime=\(uptimeText)"
-    }
 }
 
 /// The paths one boot needs, in the order the boot request declares them.
@@ -1517,9 +1600,11 @@ private func runGuest(
     }
 }
 
-/// Where this launch's guest is. A launch runs its guest at most once: the
-/// runtime cannot boot a second guest in the same process, so once the run
-/// returns the application can only ask to be relaunched.
+/// Where this launch's guest is. A launch makes one run, and the runtime boots
+/// a guest that restarts itself again inside it, so the phase stays `running`
+/// across restarts. Once the run returns the guest is over: it powered off, was
+/// stopped, failed, or kept restarting, and the application can only ask to be
+/// relaunched.
 enum GuestRunPhase: Equatable {
     /// No run has started. A failure before the run begins, such as a
     /// missing rootfs, leaves the launch here, and a later layout retries.
@@ -1534,7 +1619,13 @@ final class EmulatorLauncher: ObservableObject {
     static let shared = EmulatorLauncher(configuration: .load())
 
     private let configuration: EmulatorConfiguration
+    /// The job that keeps the guest running in the background, which ends
+    /// with the run.
+    private let job: BackgroundJob
     @Published private(set) var phase = GuestRunPhase.idle
+    /// Whether the guest is between two boots.
+    @Published private(set) var restarting = false
+    private var restartIndicator = GuestRestartIndicator()
     /// The name the running guest's own settings are stored under.
     private(set) var runningGuestName: String?
     private(set) var runningGuestIsAndroid = false
@@ -1542,8 +1633,10 @@ final class EmulatorLauncher: ObservableObject {
 
     var retinaMode: Bool { configuration.retinaMode }
 
-    private init(configuration: EmulatorConfiguration) {
+    /// The unit tests make launchers of their own, with a job of their own.
+    init(configuration: EmulatorConfiguration, job: BackgroundJob? = nil) {
         self.configuration = configuration
+        self.job = job ?? .shared
     }
 
     fileprivate func start(
@@ -1551,18 +1644,6 @@ final class EmulatorLauncher: ObservableObject {
         geometry: GuestDisplayGeometry
     ) {
         guard phase == .idle else { return }
-        if ProcessInfo.processInfo.environment[
-            "KERNARIUM_THERMAL_PROBE_ONLY"
-        ] == "1" {
-            phase = .running
-            print(
-                ThermalStateReport.probeLine(
-                    state: ProcessInfo.processInfo.thermalState,
-                    uptime: ProcessInfo.processInfo.systemUptime
-                )
-            )
-            return
-        }
         guard let rootfsFilename = RootfsImage.selectedFilename(
             configuredFilename: configuration.rootfsFilename
         ) else {
@@ -1575,14 +1656,28 @@ final class EmulatorLauncher: ObservableObject {
         }
         runningGuestName = rootfsFilename
         runningGuestIsAndroid = selection.flavor == .android
-        // Every runtime carries a 4 KiB kernel.
         guard kernarium_runtime_loader_select(
-            selection.flavor.rawValue,
-            4096
+            selection.flavor.rawValue
         ) == 0 else {
             print("Kernarium: cannot load the runtime")
             return
         }
+        // A guest that restarts itself is booted again inside the run; the
+        // runtime says when, so the application can show it and apply what
+        // belongs to a kernel to the new one.
+        // The loader delivers each event on the main queue.
+        kernarium_runtime_loader_set_restart_handler {
+            @Sendable event, restartCount in
+            guard let restart = GuestRestartEvent(
+                event: event, restartCount: restartCount
+            ) else { return }
+            MainActor.assumeIsolated {
+                EmulatorLauncher.shared.guestRestarted(restart)
+            }
+        }
+        // A Microphone setting the user turned on earlier follows the guest;
+        // a setting that is off leaves the microphone alone.
+        MicrophoneSetting.shared.restoreForGuest()
         let boot: PreparedBoot
         switch selection {
         case let .image(rootfs, _):
@@ -1597,13 +1692,10 @@ final class EmulatorLauncher: ObservableObject {
         let size = GuestInputCoordinateSpace.boundedDisplaySize(
             geometry.pixelSize
         )
-        view.setGuestDisplay(
-            width: UInt32(size.width.rounded(.down)),
-            height: UInt32(size.height.rounded(.down))
-        )
-        UIApplication.shared.isIdleTimerDisabled = true
         let width = UInt32(size.width.rounded(.down))
         let height = UInt32(size.height.rounded(.down))
+        view.setGuestDisplay(width: width, height: height)
+        UIApplication.shared.isIdleTimerDisabled = true
         let guestMemoryMiB = UInt32(configuration.guestMemoryMiB)
         let vCPUCount = UInt32(configuration.vCPUCount)
         let dotsPerInch = geometry.dotsPerInch
@@ -1688,11 +1780,28 @@ final class EmulatorLauncher: ObservableObject {
         )
     }
 
-    fileprivate func finished(result: Int32) {
+    fileprivate func guestRestarted(_ event: GuestRestartEvent) {
+        guard phase == .running else { return }
+        restartIndicator.apply(event)
+        restarting = restartIndicator.restarting
+        print("Kernarium: \(event)")
+        if case .booted = event {
+            // What the policy applied to the old kernel belongs to a kernel.
+            GuestPersistence.shared.background?.guestDidRestart()
+        }
+    }
+
+    func finished(result: Int32) {
         stopThermalObservation()
+        restartIndicator.runEnded()
+        restarting = false
         phase = .ended(result: result)
         UIApplication.shared.isIdleTimerDisabled = false
         print("Kernarium: runtime returned \(result)")
+        // The job keeps a guest running in the background. A guest whose run
+        // is over has nothing left to keep, whichever way it ended, and a job
+        // that went on would hold the application alive for no reason.
+        job.guestRunEnded(result: result)
     }
 
     func stop() {

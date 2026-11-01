@@ -287,10 +287,10 @@ index a56b44522766fec85a945ad8788b2b3019b4673b..b1bda9aa701f912895b8d4eb8bfefa29
  			break;
  		}
 diff --git a/arch/um/kernel/skas/syscall.c b/arch/um/kernel/skas/syscall.c
-index ba7494f9bfe41254a0c5987fe50c1d073668130d..276273b4470e6f412dece700242b332851648a3f 100644
+index 99205d38d4299263f2f77288fd1ed12495cbd1c5..99cad951786d0aba68089f899382af1aa9434975 100644
 --- a/arch/um/kernel/skas/syscall.c
 +++ b/arch/um/kernel/skas/syscall.c
-@@ -14,13 +14,37 @@
+@@ -14,6 +14,30 @@
  #include <asm/unistd.h>
  #include <asm/delay.h>
  
@@ -318,18 +318,19 @@ index ba7494f9bfe41254a0c5987fe50c1d073668130d..276273b4470e6f412dece700242b3328
 +#define UPT_SYSCALL_ARCH_NR(regs) PT_SYSCALL_NR((regs)->gp)
 +#endif
 +
- void handle_syscall(struct uml_pt_regs *r)
- {
- 	struct pt_regs *regs = container_of(r, struct pt_regs, regs);
+ /*
+  * A port whose first argument register is also its return register (arm64's
+  * x0) defines these in sysdep/ptrace.h, so that the register holds the
+@@ -43,7 +67,7 @@ void handle_syscall(struct uml_pt_regs *r)
  	int syscall;
  
  	/* Initialize the syscall number and default return value. */
 -	UPT_SYSCALL_NR(r) = PT_SYSCALL_NR(r->gp);
 +	UPT_SYSCALL_NR(r) = UPT_SYSCALL_ARCH_NR(r);
- 	PT_REGS_SET_SYSCALL_RETURN(regs, -ENOSYS);
+ 	if (UPT_SYSCALL_PRESET_ENOSYS(r))
+ 		PT_REGS_SET_SYSCALL_RETURN(regs, -ENOSYS);
  
- 	if (syscall_trace_enter(regs))
-@@ -39,18 +63,22 @@ void handle_syscall(struct uml_pt_regs *r)
+@@ -63,18 +87,22 @@ void handle_syscall(struct uml_pt_regs *r)
  	 */
  	if ((time_travel_mode == TT_MODE_INFCPU ||
  	     time_travel_mode == TT_MODE_EXTERNAL) &&

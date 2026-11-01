@@ -12,6 +12,12 @@
 NS_ASSUME_NONNULL_BEGIN
 
 typedef void (^KernariumConsoleOutputHandler)(NSData* data);
+/* A restart event of the guest, delivered on the main queue: `event` is a
+ * KERNARIUM_RUNTIME_RESTART_ value and `restartCount` the number of times the
+ * guest has restarted. */
+typedef void (^KernariumRestartHandler)(
+    uint32_t event,
+    uint32_t restartCount);
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,9 +26,7 @@ extern "C" {
 /* Selects and loads one bundled runtime for the lifetime of the process. The
  * flavour names exactly one embedded framework; every runtime has 4 KiB
  * guest pages. */
-int kernarium_runtime_loader_select(
-    uint32_t guest_flavor,
-    uint32_t guest_page_size);
+int kernarium_runtime_loader_select(uint32_t guest_flavor);
 
 int kernarium_runtime_loader_run(
     MTKView* view,
@@ -57,6 +61,11 @@ int kernarium_runtime_loader_set_frame_sink(
  * otherwise, -1 when no runtime is loaded. Call it away from the main thread:
  * it may wait for the guest's console. */
 int kernarium_runtime_loader_set_page_cache_trimming(int enabled);
+/* Turns the guest's microphone on (nonzero) or off (zero), as
+ * kernarium_runtime_set_microphone_function does, and returns the resulting
+ * KERNARIUM_RUNTIME_MICROPHONE_ value, or -1 when no runtime is loaded. It
+ * never asks the system for access; the caller asks first. */
+int kernarium_runtime_loader_set_microphone(int enabled);
 void kernarium_runtime_loader_send_touch(
     uint32_t x,
     uint32_t y,
@@ -64,6 +73,15 @@ void kernarium_runtime_loader_send_touch(
 void kernarium_runtime_loader_send_key(uint16_t code, int pressed);
 void kernarium_runtime_loader_set_console_output_handler(
     KernariumConsoleOutputHandler _Nullable handler);
+/* Receives the guest's restart events (see
+ * kernarium_runtime_set_restart_callback_function), or none for a nil handler.
+ * It may be set before a runtime is selected. */
+void kernarium_runtime_loader_set_restart_handler(
+    KernariumRestartHandler _Nullable handler);
+/* Whether the selected runtime is an automation build and the launch asked it,
+ * through the environment, to start the background job with the guest. Always
+ * zero for a release runtime, which cannot be asked, and when none is loaded. */
+int kernarium_runtime_loader_automation_job_at_start(void);
 int kernarium_runtime_loader_send_console_input(
     const void* buffer,
     size_t length);

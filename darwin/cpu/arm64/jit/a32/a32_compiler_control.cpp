@@ -13,13 +13,6 @@ namespace uml::cpu::arm64::jit::a32 {
 using aarch32::InstrSet;
 using aarch32::Status;
 
-namespace {
-
-constexpr unsigned fallback_n = 9;
-constexpr unsigned fallback_m = 10;
-
-} // namespace
-
 A32Compiler::Flow A32Compiler::emit_operation() {
   const auto &inst = cur().inst;
   if (inst.status == Status::nop)
@@ -31,7 +24,7 @@ A32Compiler::Flow A32Compiler::emit_operation() {
   case Op::orr: case Op::rsb: case Op::rsc: case Op::sbc: case Op::sub:
   case Op::teq: case Op::tst:
     return emit_data_processing(info);
-  case Op::adr: case Op::add_w: case Op::sub_w: case Op::movw: case Op::movt:
+  case Op::adr: case Op::addw: case Op::subw: case Op::movw: case Op::movt:
     return emit_address_forms(info);
   case Op::mul: case Op::mla: case Op::mls: case Op::umull: case Op::umlal:
   case Op::smull: case Op::smlal: case Op::umaal: case Op::sdiv: case Op::udiv:
@@ -82,7 +75,7 @@ A32Compiler::Flow A32Compiler::emit_operation() {
     return Flow::next;
   case Op::clrex:
     emit(0xd503'3f5fU); // clrex
-    emitter_.store_b(31, 15, offsetof(CpuState, exclusive_size));
+    clear_exclusive_monitor();
     return Flow::next;
   case Op::ldr: case Op::ldrb: case Op::ldrh: case Op::ldrsb: case Op::ldrsh:
   case Op::ldrd: case Op::ldm: case Op::str: case Op::strb: case Op::strh:

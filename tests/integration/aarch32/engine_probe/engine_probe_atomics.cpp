@@ -5,7 +5,12 @@
  * page (the exclusive pair has to make forward progress), and with the
  * ordering a DMB gives between a data word and its flag. A count that is
  * short means a lost update; a thread that does not finish in the deadline
- * means the engine's exclusives livelock. */
+ * means the engine's exclusives livelock. While abi.swp is 1 (or can be set
+ * to it) SWP and SWPB, which the kernel emulates with one atomic exchange,
+ * take part: threads and processes hand tokens through one word with SWP,
+ * with LDREX/STREX from A32 and T32 and with the kernel's cmpxchg, and the
+ * tokens that come out must be the ones that went in; SWPB on one byte of a
+ * word must leave the LDREXB counters on its neighbours exact. */
 #include "engine_probe.hpp"
 
 extern "C" {
@@ -20,10 +25,15 @@ extern "C" {
 	void at_pair_writer_##isa(probe::u64 *p, probe::u32 n);              \
 	probe::u32 at_pair_reader_ldrexd_##isa(probe::u64 *p, volatile probe::u32 *stop); \
 	probe::u32 at_pair_reader_ldrd_##isa(probe::u64 *p, volatile probe::u32 *stop);   \
-	void at_monitor_##isa(probe::u32 *p, probe::u32 *out);
+	void at_monitor_##isa(probe::u32 *p, probe::u32 *out);                \
+	probe::u32 at_swap_ldrex_##isa(probe::u32 *p, probe::u32 token, probe::u32 n);    \
+	probe::u32 at_swap_cmpxchg_##isa(probe::u32 *p, probe::u32 token, probe::u32 n);
 AT_FUNCTIONS(arm)
 AT_FUNCTIONS(thumb)
 #undef AT_FUNCTIONS
+/* A32 only. */
+probe::u32 at_swap_swp_arm(probe::u32 *p, probe::u32 token, probe::u32 n);
+probe::u32 at_swap_swpb_arm(probe::u8 *p, probe::u32 token, probe::u32 n);
 }
 
 namespace probe {
@@ -40,6 +50,10 @@ enum Kind : u32 {
 	pair_writer,
 	pair_reader_ldrexd,
 	pair_reader_ldrd,
+	swap_swp,
+	swap_swpb,
+	swap_ldrex,
+	swap_cmpxchg,
 };
 
 struct Work {
@@ -50,6 +64,8 @@ struct Work {
 	volatile u32 *go;
 	volatile u32 *stop;
 	u32 result;
+	/* The token a swap thread starts with. */
+	u32 token = 0;
 };
 
 long worker(void *argument)
@@ -106,6 +122,20 @@ long worker(void *argument)
 	case pair_reader_ldrd:
 		work->result = t ? at_pair_reader_ldrd_thumb(static_cast<u64 *>(work->target), work->stop) :
 				   at_pair_reader_ldrd_arm(static_cast<u64 *>(work->target), work->stop);
+		break;
+	case swap_swp:
+		work->result = at_swap_swp_arm(static_cast<u32 *>(work->target), work->token, work->count);
+		break;
+	case swap_swpb:
+		work->result = at_swap_swpb_arm(static_cast<u8 *>(work->target), work->token, work->count);
+		break;
+	case swap_ldrex:
+		work->result = t ? at_swap_ldrex_thumb(static_cast<u32 *>(work->target), work->token, work->count) :
+				   at_swap_ldrex_arm(static_cast<u32 *>(work->target), work->token, work->count);
+		break;
+	case swap_cmpxchg:
+		work->result = t ? at_swap_cmpxchg_thumb(static_cast<u32 *>(work->target), work->token, work->count) :
+				   at_swap_cmpxchg_arm(static_cast<u32 *>(work->target), work->token, work->count);
 		break;
 	}
 	return 0;
@@ -239,6 +269,95 @@ void group_atomics()
 		run_workers(work, 6, go, stop, 6, "mixed counter");
 		check_eq(*counter, 6 * rounds, "LDREX/STREX and the kuser cmpxchg on one word lose no update");
 	}
+	/* SWP and SWPB beside the exclusives. The kernel emulates them, so each
+	 * one is a trap and far slower than a loop of LDREX/STREX: the slow
+	 * threads do a few thousand exchanges, the fast ones enough to run
+	 * beside them. */
+	bool swp_ready = false;
+	if (under_qemu()) {
+		swp_ready = true;
+	} else {
+		const long setting = swp_setting();
+		swp_ready = setting == 1 || (setting == 0 && swp_set(1));
+		if (!swp_ready)
+			line("NOTE atomics: abi.swp is 0 and not writable by this process; the SWP checks are skipped");
+	}
+	if (swp_ready) {
+		constexpr u32 trap_rounds = 8000;
+		constexpr u32 fast_rounds = 1000000;
+		/* Tokens, one bit each: the word starts with bit 0 and each thread
+		 * with its own. Each swaps its token for the word's, so at the end
+		 * the word and the threads hold the bits between them, each once.
+		 * First SWP beside LDREX/STREX pairs from A32 and T32, whose pair
+		 * is adjacent, then SWP beside the kernel's cmpxchg helper, whose
+		 * LDREX and STREX have a comparison between them. */
+		struct Mix {
+			const char *name;
+			Kind kind;
+		};
+		static const Mix mixes[] = {
+			{"SWP and LDREX/STREX handing tokens through one word lose and duplicate none", swap_ldrex},
+			{"SWP and the kuser cmpxchg handing tokens through one word lose and duplicate none",
+			 swap_cmpxchg},
+		};
+		auto *cell = ptr<u32>(region + 3072);
+		for (const Mix &mix : mixes) {
+			*cell = 1U << 0;
+			Work work[4] = {
+				{swap_swp, false, cell, trap_rounds, nullptr, nullptr, 0, 1U << 1},
+				{swap_swp, false, cell, trap_rounds, nullptr, nullptr, 0, 1U << 2},
+				{mix.kind, false, cell, fast_rounds, nullptr, nullptr, 0, 1U << 3},
+				{mix.kind, true, cell, fast_rounds, nullptr, nullptr, 0, 1U << 4},
+			};
+			run_workers(work, 4, go, stop, 4, "SWP token exchange");
+			u32 sum = *cell, bits = *cell;
+			for (const Work &item : work) {
+				sum += item.result;
+				bits |= item.result;
+			}
+			check_eq(bits, 0x1f, mix.name);
+			if (bits == 0x1f)
+				check_eq(sum, 0x1f, "and no token is held twice");
+		}
+
+		/* SWPB on one byte beside LDREXB counters on the next. */
+		auto *bytes = ptr<u8>(region + 3328);
+		bytes[0] = 0x04;
+		bytes[1] = bytes[2] = bytes[3] = 0;
+		constexpr u32 counter_rounds = 500000;
+		Work byte_work[4] = {
+			{swap_swpb, false, bytes + 0, trap_rounds, nullptr, nullptr, 0, 0x01},
+			{swap_swpb, false, bytes + 0, trap_rounds, nullptr, nullptr, 0, 0x02},
+			{add_byte, false, bytes + 1, counter_rounds, nullptr, nullptr, 0},
+			{add_byte, true, bytes + 1, counter_rounds, nullptr, nullptr, 0},
+		};
+		run_workers(byte_work, 4, go, stop, 4, "SWPB token exchange beside a counter");
+		check(byte_work[0].result + byte_work[1].result + bytes[0] == 7 &&
+		      (byte_work[0].result | byte_work[1].result | bytes[0]) == 7,
+		      "SWPB hands its byte tokens through without loss or duplication");
+		check_eq(bytes[1], static_cast<u8>(2 * counter_rounds),
+			 "two LDREXB counters on the next byte lose no update beside SWPB");
+		check(bytes[2] == 0 && bytes[3] == 0, "and the other bytes of the word stay zero");
+
+		/* Processes: a child on a shared page swaps with LDREX/STREX from
+		 * T32 while the parent swaps with SWP. */
+		auto *shared_cell = ptr<u32>(shared_region + 512);
+		auto *child_result = ptr<volatile u32>(shared_region + 516);
+		*shared_cell = 1;
+		*child_result = 0;
+		const long child = fork_child();
+		if (child == 0) {
+			*child_result = at_swap_ldrex_thumb(shared_cell, 2, fast_rounds);
+			quit(0);
+		}
+		const u32 parent_token = at_swap_swp_arm(shared_cell, 4, trap_rounds);
+		const long status = wait_child(child);
+		check(exited_with(status, 0), "the child swapping on the shared page exited");
+		const u32 total = *shared_cell + parent_token + *child_result;
+		check(total == 7 && (*shared_cell | parent_token | *child_result) == 7,
+		      "two processes swapping on one shared page, one by SWP, lose and duplicate no token");
+	}
+
 	{
 		/* Neighbouring bytes and halfwords of one word, a thread for each. */
 		auto *bytes = ptr<u8>(region + 1024);

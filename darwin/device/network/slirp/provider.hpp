@@ -152,8 +152,10 @@ private:
 	static void timer_modify_callback(void *timer, std::int64_t expires_ms,
 					  void *opaque) noexcept;
 	static void notify_callback(void *opaque) noexcept;
-	static void ignore_poll_socket(slirp_os_socket descriptor,
-				       void *opaque) noexcept;
+	static void register_poll_socket(slirp_os_socket descriptor,
+					 void *opaque) noexcept;
+	static void unregister_poll_socket(slirp_os_socket descriptor,
+					   void *opaque) noexcept;
 	static int add_poll_descriptor(slirp_os_socket descriptor, int events,
 				       void *opaque) noexcept;
 	static int get_poll_events(int index, void *opaque) noexcept;

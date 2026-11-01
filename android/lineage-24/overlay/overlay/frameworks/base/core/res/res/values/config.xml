@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <resources>
-    <bool name="config_disableLockscreenByDefault">true</bool>
+    <!-- The product boots straight to the home screen, but its lock screen can
+         be turned on: LockPatternUtils.isLockScreenDisabled ORs this flag with
+         the stored lockscreen.disabled value, so a true flag would keep a swipe
+         lock screen off whatever `locksettings set-disabled false` or the
+         Settings app sets. The default lives in ro.lockscreen.disable.default
+         (lineage_darwin.mk), which seeds the stored value when the lock
+         settings database is created. -->
+    <bool name="config_disableLockscreenByDefault">false</bool>
     <integer name="config_audio_notif_vol_default">7</integer>
     <integer name="config_audio_ring_vol_default">7</integer>
     <string name="config_defaultBrowser" translatable="false">org.lineageos.jelly</string>

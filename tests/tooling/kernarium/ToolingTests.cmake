@@ -21,6 +21,13 @@ uml_add_tooling_test(
     LABELS kernarium
     TIMEOUT 60)
 
+uml_add_tooling_test(
+    NAME kernarium-payload-removal
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernarium/test_payload_removal.py
+    LABELS kernarium
+    TIMEOUT 60)
+
 if(TARGET uml-initramfs)
     uml_add_tooling_test(
         NAME kernarium-automation-payload

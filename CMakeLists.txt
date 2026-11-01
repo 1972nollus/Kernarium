@@ -19,6 +19,8 @@ include(UmlTesting)
 include(VerifyDependencies)
 include(VerifyAbi)
 include(UmlArchitecture)
+include(UmlAppleSdk)
+uml_track_apple_sdk()
 
 # The one interpreter for every Python tool and test. Python 3.11 or newer:
 # tomllib is in the standard library from 3.11. Later find_package(Python3)
@@ -85,7 +87,7 @@ option(UML_BUILD_AUDIO "Build the host Virtio Sound playback provider"
 option(UML_BUILD_KERNARIUM_RUNTIME
     "Build the Kernarium application framework for iOS" OFF)
 option(UML_KERNARIUM_AUTOMATION_HARNESS
-    "Build the automation-only Kernarium Linux runtime, which boots host payloads"
+    "Build the automation-only Kernarium runtime: Linux boots host payloads, Android lets a launch turn ADB authorization off"
     OFF)
 option(UML_BUILD_NETWORK_PROVIDER
     "Build the optional SLiRP network provider"

@@ -169,13 +169,6 @@ struct ProgramCase final {
    * budget, and the final state still are.
    */
   bool variable_instruction_count{};
-  /*
-   * The program is run on the gadget engine only. The JIT clears the local
-   * exclusive monitor at every ordinary store, as the architecture permits,
-   * so a load/store-exclusive loop with a store between the pair is not
-   * guaranteed to finish there; the gadget engine's software completion is.
-   */
-  bool gadgets_only{};
 };
 
 struct EngineTestCounts final {

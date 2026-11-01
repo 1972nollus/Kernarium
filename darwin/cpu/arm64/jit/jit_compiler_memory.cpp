@@ -62,6 +62,12 @@ void JitCompiler::emit_tlb_set(unsigned address) {
     emitter_.add_shifted(0, 14, 0, 5);
   }
 
+void JitCompiler::emit_untag_data_address(unsigned address) {
+    if (!top_byte_ignore())
+      return;
+    emitter_.ubfm(address, address, 0, 55);
+  }
+
 void JitCompiler::emit_translation_cold(const TranslationColdPath &path) {
     emitter_.bind(path.label);
     if (!path.bridge) {
@@ -103,12 +109,14 @@ void JitCompiler::emit_misalignment_check(unsigned address, std::size_t alignmen
     emitter_.compare_zero(misaligned, 0, true, true);
   }
 
+/*
+ * Ends the software monitor where the guest's pair ends: after a fused
+ * store-exclusive and on a fused run's mismatch exit. An ordinary store of the
+ * guest's own leaves it standing (see the monitor contract in
+ * docs/architecture.md); reservation versions fail a store-exclusive that a
+ * store to the reserved granule has beaten.
+ */
 void JitCompiler::clear_local_exclusive_monitor() {
-    /*
-     * An ordinary store is permitted to clear the local monitor
-     * unconditionally.  Keep this as one straight-line instruction after the
-     * store: no opcode or monitor-state checks belong in the JIT hot path.
-     */
     emitter_.store_b(31, 15, offsetof(CpuState, exclusive_size));
   }
 
@@ -234,12 +242,9 @@ void JitCompiler::clear_local_exclusive_monitor() {
         cold_exit(load_instruction, pc, ColdPath::Action::memory_fault);
 
     load_gpr(8, base, true);
-    if (base == 31U) {
+    if (base == 31U)
       emit_misalignment_check(8, 16, slow);
-    } else {
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
-    }
+    emit_untag_data_address(8);
     emit_misalignment_check(8, bytes, slow);
 
     /*
@@ -258,6 +263,7 @@ void JitCompiler::clear_local_exclusive_monitor() {
      */
     track_direct_store(21, bytes, count_ + store_index);
     load_gpr(8, base, true);
+    emit_untag_data_address(8);
     emit_translate(8, Access::read, slow, fault, bytes);
     emitter_.compare_register(8, 21);
     emitter_.branch_condition(slow, 1); // NE
@@ -431,13 +437,8 @@ void JitCompiler::emit_native_atomic_address(std::uint32_t instruction,
         cold_exit(instruction, pc, ColdPath::Action::exclusive_slow);
     const auto fault =
         cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-    if (base == 31U) {
-      emit_misalignment_check(8, 16, slow);
-    } else {
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
-      emit_misalignment_check(8, bytes, slow);
-    }
+    emit_untag_data_address(8);
+    emit_misalignment_check(8, base == 31U ? 16 : bytes, slow);
     emit_translate(8, Access::write, slow, fault, 1);
     track_direct_store(8, bytes);
   }
@@ -459,13 +460,8 @@ void JitCompiler::emit_native_ordered_load(std::uint32_t instruction,
     const auto slow = cold_exit(instruction, pc, slow_action);
     const auto fault =
         cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-    if (base == 31U) {
-      emit_misalignment_check(8, 16, slow);
-    } else {
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
-      emit_misalignment_check(8, bytes, slow);
-    }
+    emit_untag_data_address(8);
+    emit_misalignment_check(8, base == 31U ? 16 : bytes, slow);
     emit_translate(8, Access::read, slow, fault, 1);
     const auto native_destination =
         write_native_gpr(destination, false, false, 9);
@@ -494,7 +490,6 @@ void JitCompiler::emit_native_scalar_atomic(std::uint32_t instruction,
               native_destination.host;
     emitter_.emit(native);
     commit_native_gpr(native_destination, destination, false);
-    clear_local_exclusive_monitor();
   }
 
 void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
@@ -523,7 +518,6 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
               native_replacement.host;
     emitter_.emit(native);
     commit_native_gpr(native_result, compare, false);
-    clear_local_exclusive_monitor();
   }
 
 [[nodiscard]] bool JitCompiler::emit_pair_memory(std::uint32_t instruction,
@@ -569,15 +563,9 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
        * check before either memory or writeback can change. */
       emit_misalignment_check(8, 16, slow);
     }
-    if (base != 31U) {
-      /* Top-byte-ignore untagging stays on the exact semantic bridge.
-       * Untagged programs take the straight native path, and an SP base
-       * is never untagged. */
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
-    }
     if (mode != 1U)
       emit_displacement(8, 8);
+    emit_untag_data_address(8);
 
     /* The helper remains responsible for cross-page atomicity. The common
      * same-page case needs one TLB lookup and one native pair instruction. */
@@ -638,8 +626,6 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
         if (second != first)
           commit_native_gpr(native_second_gpr, second, false);
       }
-    } else {
-      clear_local_exclusive_monitor();
     }
 
     const bool writeback =
@@ -729,15 +715,7 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     if (base == 31U) {
       emit_misalignment_check(8, 16, slow);
     }
-    if (base != 31U) {
-      /*
-       * Untagged programs retain the direct native transfer. Top-byte
-       * ignore selects the cold bridge, which strips the logical tag; an SP
-       * base is never untagged.
-       */
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
-    }
+    emit_untag_data_address(8);
     emit_translate(8, load ? Access::read : Access::write, slow, fault,
                    transfer_size);
     if (!load)
@@ -780,8 +758,6 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
                       ((first + index) & 31U) *
                           sizeof(arm64::VectorRegister));
       }
-    } else {
-      clear_local_exclusive_monitor();
     }
     if (post_index) {
       load_gpr(8, base, true);
@@ -852,13 +828,7 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
         cold_exit(instruction, pc, ColdPath::Action::memory_slow);
     const auto fault =
         cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-    if (base != 31U) {
-      /* Tagged-address handling stays on the exact semantic cold path. The
-       * ordinary untagged hot path pays one load and one predicted branch;
-       * an SP base is never untagged. */
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(fallback, 0, false, true);
-    }
+    emit_untag_data_address(8);
     emit_translate(8, load ? Access::read : Access::write, fallback, fault,
                    bytes);
     if (!load)
@@ -883,8 +853,6 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
         commit_native_vector(native_vector, transfer);
       else
         commit_native_gpr(native_gpr, transfer, false);
-    } else {
-      clear_local_exclusive_monitor();
     }
 
     const bool writeback =
@@ -907,8 +875,8 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
  * register that is Z, or the halfword access of the zero register that is a
  * predicate register's, with the signed byte offset added to the base. It
  * is emit_other_memory's unscaled access without the encoding's 9-bit limit
- * on the offset, so its slow paths (a tagged base, a misaligned SP) run the
- * word through the semantic library, which has no such limit either.
+ * on the offset, so its slow paths (a misaligned SP, a page crossing) run
+ * the word through the semantic library, which has no such limit either.
  */
 void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
                                  std::uint32_t instruction, std::uint64_t pc) {
@@ -931,10 +899,7 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
     emitter_.add_shifted(8, 8, 9, 0);
   }
   const auto fault = cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-  if (base != 31U) {
-    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-    emitter_.compare_zero(slow, 0, false, true);
-  }
+  emit_untag_data_address(8);
   emit_translate(8, load ? Access::read : Access::write, slow, fault, bytes);
   if (!load)
     track_direct_store(8, bytes);
@@ -958,8 +923,6 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
       commit_native_vector(native_vector, spill.transfer);
     else
       commit_native_gpr(native_gpr, 31U, false);
-  } else {
-    clear_local_exclusive_monitor();
   }
 }
 
@@ -1012,6 +975,68 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
     return true;
   }
 
+namespace {
+
+/* The run collect_unsigned_run() found: up to maximum_run operations on one
+ * base and in one direction, and the span of their offsets. */
+template <std::size_t maximum_run, typename Operation>
+struct UnsignedRun final {
+  std::array<Operation, maximum_run> operations{};
+  std::size_t length{};
+  unsigned base{};
+  bool load{};
+  std::uint64_t first_offset{};
+  std::uint64_t maximum_end{};
+};
+
+/* The leading instructions that `decode` accepts as unsigned-offset
+ * operations on the first one's base and in its direction, at most
+ * maximum_run of them, cut from the end until their furthest bytes lie
+ * within one page. A length under two is no run. */
+template <std::size_t maximum_run, typename Operation, typename Decode>
+[[nodiscard]] UnsignedRun<maximum_run, Operation>
+collect_unsigned_run(std::span<const std::uint32_t> instructions,
+                     Decode decode) {
+  UnsignedRun<maximum_run, Operation> run;
+  std::array<std::uint64_t, maximum_run> first_offsets{};
+  std::array<std::uint64_t, maximum_run> maximum_ends{};
+  std::size_t candidates = 0;
+  std::uint64_t first_offset = 0;
+  std::uint64_t maximum_end = 0;
+  while (candidates < run.operations.size() &&
+         candidates < instructions.size()) {
+    Operation operation{};
+    if (!decode(instructions[candidates], operation))
+      break;
+    if (candidates == 0) {
+      run.base = operation.base;
+      run.load = operation.load;
+      first_offset = operation.offset;
+    } else if (operation.base != run.base || operation.load != run.load) {
+      break;
+    }
+    first_offset = std::min(first_offset, operation.offset);
+    maximum_end = std::max(maximum_end, operation.offset + operation.bytes);
+    run.operations[candidates] = operation;
+    first_offsets[candidates] = first_offset;
+    maximum_ends[candidates] = maximum_end;
+    ++candidates;
+  }
+
+  std::size_t length = candidates;
+  while (length >= 2 &&
+         maximum_ends[length - 1] - first_offsets[length - 1] > page_size)
+    --length;
+  if (length >= 2) {
+    run.length = length;
+    run.first_offset = first_offsets[length - 1];
+    run.maximum_end = maximum_ends[length - 1];
+  }
+  return run;
+}
+
+} // namespace
+
 [[nodiscard]] bool JitCompiler::decode_simd_unsigned_memory(
       std::uint32_t instruction,
       UnsignedMemoryOperation &operation) noexcept {
@@ -1046,39 +1071,9 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
         instructions.size() < 2)
       return 0;
 
-    std::array<UnsignedMemoryOperation, maximum_run> operations{};
-    std::array<std::uint64_t, maximum_run> first_offsets{};
-    std::array<std::uint64_t, maximum_run> maximum_ends{};
-    std::size_t candidates = 0;
-    unsigned base = 0;
-    bool load = false;
-    std::uint64_t first_offset = 0;
-    std::uint64_t maximum_end = 0;
-    while (candidates < operations.size() &&
-           candidates < instructions.size()) {
-      UnsignedMemoryOperation operation{};
-      if (!decode_simd_unsigned_memory(instructions[candidates], operation))
-        break;
-      if (candidates == 0) {
-        base = operation.base;
-        load = operation.load;
-        first_offset = operation.offset;
-      } else if (operation.base != base || operation.load != load) {
-        break;
-      }
-      first_offset = std::min(first_offset, operation.offset);
-      maximum_end =
-          std::max(maximum_end, operation.offset + operation.bytes);
-      operations[candidates] = operation;
-      first_offsets[candidates] = first_offset;
-      maximum_ends[candidates] = maximum_end;
-      ++candidates;
-    }
-
-    std::size_t length = candidates;
-    while (length >= 2 &&
-           maximum_ends[length - 1] - first_offsets[length - 1] > page_size)
-      --length;
+    const auto [operations, length, base, load, first_offset, maximum_end] =
+        collect_unsigned_run<maximum_run, UnsignedMemoryOperation>(
+            instructions, decode_simd_unsigned_memory);
     if (length < 2)
       return 0;
 
@@ -1101,18 +1096,8 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
       /* All retained operations name SP, so its architectural alignment is
        * checked once before any destination or memory becomes observable. */
       emit_misalignment_check(8, 16, alignment);
-    } else {
-      /*
-       * Tagged-address handling remains on the existing exact semantic path.
-       * Consecutive operations share the immutable effective state, so one
-       * translation-selected check is sufficient for the complete run.
-       */
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
     }
 
-    first_offset = first_offsets[length - 1];
-    maximum_end = maximum_ends[length - 1];
     RunStraddle straddle{
         .label = emitter_.make_label(),
         .slow = slow,
@@ -1133,6 +1118,7 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
         emitter_.test_zero(straddle.label, 0, page_shift - 4U, true);
         proved = true;
       }
+      emit_untag_data_address(8);
     } else {
       proved = emit_run_span_proof(first_offset, maximum_end, straddle.label);
     }
@@ -1160,10 +1146,8 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
       run_straddles_.push_back(straddle);
     }
 
-    if (!load) {
+    if (!load)
       mark_direct_memory_writes(length);
-      clear_local_exclusive_monitor();
-    }
     return length;
   }
 
@@ -1260,6 +1244,7 @@ bool JitCompiler::emit_run_span_proof(std::uint64_t first, std::uint64_t end,
      * their own unsigned offsets.
      */
     move_run_base(first, true);
+    emit_untag_data_address(8);
     const auto last_delta = end - first - 1U;
     if (last_delta == 0U)
       return false;
@@ -1385,38 +1370,13 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
     if (track_direct_stores_ || instructions.size() < 2)
       return 0;
 
-    std::array<UnsignedMemoryOperation, maximum_run> operations{};
-    std::array<std::uint64_t, maximum_run> first_offsets{};
-    std::array<std::uint64_t, maximum_run> maximum_ends{};
-    std::size_t candidates = 0;
-    bool load = false;
-    std::uint64_t first_offset = 0;
-    std::uint64_t maximum_end = 0;
-    while (candidates < operations.size() &&
-           candidates < instructions.size()) {
-      UnsignedMemoryOperation operation{};
-      if (!decode_scalar_unsigned_memory(instructions[candidates], true,
-                                         operation))
-        break;
-      if (candidates == 0) {
-        load = operation.load;
-        first_offset = operation.offset;
-      } else if (operation.load != load) {
-        break;
-      }
-      first_offset = std::min(first_offset, operation.offset);
-      maximum_end =
-          std::max(maximum_end, operation.offset + operation.bytes);
-      operations[candidates] = operation;
-      first_offsets[candidates] = first_offset;
-      maximum_ends[candidates] = maximum_end;
-      ++candidates;
-    }
-
-    std::size_t length = candidates;
-    while (length >= 2 &&
-           maximum_ends[length - 1] - first_offsets[length - 1] > page_size)
-      --length;
+    const auto [operations, length, base, load, first_offset, maximum_end] =
+        collect_unsigned_run<maximum_run, UnsignedMemoryOperation>(
+            instructions,
+            [](std::uint32_t instruction, UnsignedMemoryOperation &operation) {
+              return decode_scalar_unsigned_memory(instruction, true,
+                                                   operation);
+            });
     if (length < 2)
       return 0;
 
@@ -1430,8 +1390,6 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
      * alignment once before observing any memory or destination register. */
     emit_misalignment_check(8, 16, alignment);
 
-    first_offset = first_offsets[length - 1];
-    maximum_end = maximum_ends[length - 1];
     RunStraddle straddle{
         .label = emitter_.make_label(),
         .slow = slow,
@@ -1453,6 +1411,7 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
         emitter_.test_zero(straddle.label, 0, page_shift - 4U, true);
         proved = true;
       }
+      emit_untag_data_address(8);
     } else {
       proved = emit_run_span_proof(first_offset, maximum_end, straddle.label);
     }
@@ -1462,10 +1421,8 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
     emit_native_gpr_run(std::span{operations}.first(length), load, straddle,
                         proved);
 
-    if (!load) {
+    if (!load)
       mark_direct_memory_writes(length);
-      clear_local_exclusive_monitor();
-    }
     return length;
   }
 
@@ -1475,48 +1432,20 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
     if (track_direct_stores_ || instructions.size() < 2)
       return 0;
 
-    std::array<UnsignedMemoryOperation, maximum_run> operations{};
-    std::array<std::uint64_t, maximum_run> first_offsets{};
-    std::array<std::uint64_t, maximum_run> maximum_ends{};
-    std::size_t candidates = 0;
-    unsigned base = 0;
-    bool load = false;
-    std::uint64_t first_offset = 0;
-    std::uint64_t maximum_end = 0;
-    while (candidates < operations.size() &&
-           candidates < instructions.size()) {
-      UnsignedMemoryOperation operation{};
-      if (!decode_scalar_unsigned_memory(instructions[candidates], false,
-                                         operation))
-        break;
-      if (candidates == 0) {
-        base = operation.base;
-        load = operation.load;
-        first_offset = operation.offset;
-      } else if (operation.base != base || operation.load != load) {
-        break;
-      }
-      /*
-       * A load into Rn changes the architectural base observed by every
-       * following instruction. Keeping the translated host base in x8 would
-       * therefore be stale. Store Rt==Rn is safe because stores do not change
-       * the source register.
-       */
-      if (load && operation.transfer == base)
-        break;
-      first_offset = std::min(first_offset, operation.offset);
-      maximum_end =
-          std::max(maximum_end, operation.offset + operation.bytes);
-      operations[candidates] = operation;
-      first_offsets[candidates] = first_offset;
-      maximum_ends[candidates] = maximum_end;
-      ++candidates;
-    }
-
-    std::size_t length = candidates;
-    while (length >= 2 &&
-           maximum_ends[length - 1] - first_offsets[length - 1] > page_size)
-      --length;
+    const auto [operations, length, base, load, first_offset, maximum_end] =
+        collect_unsigned_run<maximum_run, UnsignedMemoryOperation>(
+            instructions,
+            [](std::uint32_t instruction, UnsignedMemoryOperation &operation) {
+              /*
+               * A load into Rn changes the architectural base observed by
+               * every following instruction. Keeping the translated host
+               * base in x8 would therefore be stale. Store Rt==Rn is safe
+               * because stores do not change the source register.
+               */
+              return decode_scalar_unsigned_memory(instruction, false,
+                                                   operation) &&
+                     !(operation.load && operation.transfer == operation.base);
+            });
     if (length < 2)
       return 0;
 
@@ -1530,10 +1459,6 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
                                 ColdPath::Action::memory_slow);
 
     load_gpr(8, base, true);
-    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-    emitter_.compare_zero(slow, 0, false, true);
-    first_offset = first_offsets[length - 1];
-    maximum_end = maximum_ends[length - 1];
     RunStraddle straddle{
         .label = emitter_.make_label(),
         .slow = slow,
@@ -1548,10 +1473,8 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
     emit_native_gpr_run(std::span{operations}.first(length), load, straddle,
                         proved);
 
-    if (!load) {
+    if (!load)
       mark_direct_memory_writes(length);
-      clear_local_exclusive_monitor();
-    }
     return length;
   }
 
@@ -1601,10 +1524,7 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
         cold_exit(instruction, pc, ColdPath::Action::memory_slow);
     const auto fault =
         cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-    if (base != 31U) {
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(fallback, 0, false, true);
-    }
+    emit_untag_data_address(8);
     emit_translate(8, load ? Access::read : Access::write, fallback, fault,
                    bytes);
     if (!load)
@@ -1628,8 +1548,6 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
         commit_native_vector(native_vector, transfer);
       else
         commit_native_gpr(native_gpr, transfer, false);
-    } else {
-      clear_local_exclusive_monitor();
     }
     return true;
   }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* Group "simd" (the simd level): VFP and Advanced SIMD state and semantics.
+/* Group "simd": VFP and Advanced SIMD state and semantics.
  * D0-D31 and FPSCR survive system calls, rescheduling, fork, threads and
  * signals (in the frame too, which the handler can change); the FPSCR control
  * bits (rounding, flush to zero, default NaN, alternative half precision)
@@ -299,8 +299,7 @@ const Op ops[] = {
 	 "VADD.I32"},
 };
 
-/* The Armv8 floating-point additions (VRINTx, VCVTA/N/P/M and VMAXNM/VMINNM):
- * they exist at the complete level only. */
+/* The Armv8 floating-point additions (VRINTx, VCVTA/N/P/M and VMAXNM/VMINNM). */
 const Op armv8_ops[] = {
 	{fp_vrintn_f32, 0x40200000, 0, 0, rn, 0x40000000, all32, 0, "VRINTN 2.5 is 2.0"},
 	{fp_vrintn_f32, 0x40600000, 0, 0, rn, 0x40800000, all32, 0, "VRINTN 3.5 is 4.0"},
@@ -865,8 +864,7 @@ void group_simd()
 	split_block_cases();
 }
 
-/* The Armv8 floating-point additions against known answers, at the complete
- * level. Below it each is UNDEFINED, which the absent group proves. */
+/* The Armv8 floating-point additions against known answers. */
 void group_armv8_fp()
 {
 	for (const Op &op : armv8_ops) {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // The delayed-answer test device holds back the answers its policy chooses,
-// wakes the transport when one falls due, and drops the rest at a reset.
+// wakes the transport when one falls due, drops the rest at a reset, and
+// answers in the wrapped device's place when its answerer chooses to.
 #include "delayed_answer_device.hpp"
 #include "require.hpp"
 
@@ -87,13 +88,15 @@ struct Fixture {
     std::vector<std::string> log;
     std::unique_ptr<DelayedAnswerDevice> device;
 
-    explicit Fixture(DelayedAnswerDevice::Policy policy)
+    explicit Fixture(DelayedAnswerDevice::Policy policy,
+                     DelayedAnswerDevice::Answerer answerer = {})
     {
         auto inner = std::make_unique<EchoDevice>(resets);
         echo = inner.get();
         device = std::make_unique<DelayedAnswerDevice>(
             std::move(inner), std::move(policy),
-            [this](std::string_view line) { log.emplace_back(line); });
+            [this](std::string_view line) { log.emplace_back(line); },
+            std::move(answerer));
     }
 };
 
@@ -164,6 +167,27 @@ void neverHoldsWhatTheDeviceDefers()
     require(fixture.log.empty());
 }
 
+void answersInTheDevicesPlace()
+{
+    Fixture fixture(
+        [](std::uint32_t, std::span<const std::uint8_t>) {
+            return std::optional<std::chrono::milliseconds> {};
+        },
+        [](std::uint32_t queue, std::span<const std::uint8_t> request) {
+            return queue == 0 && request[0] == 9 ?
+                std::optional {std::vector<std::uint8_t> {0x90}} : std::nullopt;
+        });
+    const auto answered = send(*fixture.device, 1, 9);
+    require(answered.action == VhostUserQueueAction::complete);
+    require(answered.response == std::vector<std::uint8_t> {0x90},
+            "the answerer's answer goes back, not the device's");
+    require(fixture.log.size() == 1 &&
+                fixture.log[0] == "answered a request in the device's place");
+    require(send(*fixture.device, 2, 4).response == std::vector<std::uint8_t> {5},
+            "a request the answerer leaves goes to the device");
+    require(fixture.log.size() == 1);
+}
+
 void forwardsTheDevicesOwnEvents()
 {
     Fixture fixture([](std::uint32_t, std::span<const std::uint8_t>) {
@@ -184,6 +208,7 @@ int main()
     deliversAHeldAnswerWhenItFallsDue();
     dropsWhatItHoldsAtAReset();
     neverHoldsWhatTheDeviceDefers();
+    answersInTheDevicesPlace();
     forwardsTheDevicesOwnEvents();
     std::puts("delayed-answer device tests passed");
     return 0;

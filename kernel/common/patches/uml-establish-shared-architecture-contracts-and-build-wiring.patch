@@ -21,7 +21,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/include/asm/pgtable.h           | 129 ++++++++++++++++++++++--
  arch/um/include/asm/processor-generic.h |  10 ++
  arch/um/include/asm/smp.h               |  21 +++-
- arch/um/include/asm/syscall-generic.h   |   6 +-
+ arch/um/include/asm/syscall-generic.h   |  22 +++-
  arch/um/include/asm/tlb_sync_ranges.h   |  64 ++++++++++++
  arch/um/include/asm/tlbflush.h          |  15 +++
  arch/um/include/asm/topology.h          |  21 ++++
@@ -36,7 +36,9 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/include/shared/skas/skas.h      |   6 ++
  arch/um/include/shared/smp.h            |  21 ++++
  arch/um/kernel/dyn.lds.S                |  13 +++
- 31 files changed, 624 insertions(+), 36 deletions(-)
+ arch/um/kernel/ptrace.c                 |   3 +-
+ arch/um/kernel/skas/syscall.c           |  28 ++++-
+ 33 files changed, 667 insertions(+), 40 deletions(-)
  create mode 100644 arch/um/Makefile-os-Darwin
  create mode 100644 arch/um/include/asm/mm_hooks.h
  create mode 100644 arch/um/include/asm/tlb_sync_ranges.h
@@ -800,10 +802,10 @@ index a8cc1d46ddcbda53947d667072db54167f018102..e74677bbe27ac94a71253a645484d1d4
  
  #endif
 diff --git a/arch/um/include/asm/syscall-generic.h b/arch/um/include/asm/syscall-generic.h
-index bcd73bcfe5771e955ea0082493808bf3361ff844..215668ff8df026f330892cbf03bb84a4c1c63add 100644
+index bcd73bcfe5771e955ea0082493808bf3361ff844..bdc58cc1bded808980bea44f8f0eec6619cf5d4f 100644
 --- a/arch/um/include/asm/syscall-generic.h
 +++ b/arch/um/include/asm/syscall-generic.h
-@@ -15,6 +15,10 @@
+@@ -15,6 +15,20 @@
  #include <linux/sched.h>
  #include <sysdep/ptrace.h>
  
@@ -811,10 +813,20 @@ index bcd73bcfe5771e955ea0082493808bf3361ff844..215668ff8df026f330892cbf03bb84a4
 +#define UPT_SYSCALL_ROLLBACK(regs) do { } while (0)
 +#endif
 +
++/*
++ * The first argument as the task passed it.  A port whose first argument
++ * register is also its return register (arm64's x0) keeps that copy apart,
++ * because the register itself holds what a tracer wrote or what the call
++ * returned by the time anyone asks.
++ */
++#ifndef UPT_SYSCALL_ENTRY_ARG1
++#define UPT_SYSCALL_ENTRY_ARG1(regs) UPT_SYSCALL_ARG1(regs)
++#endif
++
  static inline int syscall_get_nr(struct task_struct *task, struct pt_regs *regs)
  {
  
-@@ -29,7 +33,7 @@ static inline void syscall_set_nr(struct task_struct *task, struct pt_regs *regs
+@@ -29,7 +43,7 @@ static inline void syscall_set_nr(struct task_struct *task, struct pt_regs *regs
  static inline void syscall_rollback(struct task_struct *task,
  				    struct pt_regs *regs)
  {
@@ -823,6 +835,26 @@ index bcd73bcfe5771e955ea0082493808bf3361ff844..215668ff8df026f330892cbf03bb84a4
  }
  
  static inline long syscall_get_error(struct task_struct *task,
+@@ -59,7 +73,7 @@ static inline void syscall_get_arguments(struct task_struct *task,
+ {
+ 	const struct uml_pt_regs *r = &regs->regs;
+ 
+-	*args++ = UPT_SYSCALL_ARG1(r);
++	*args++ = UPT_SYSCALL_ENTRY_ARG1(r);
+ 	*args++ = UPT_SYSCALL_ARG2(r);
+ 	*args++ = UPT_SYSCALL_ARG3(r);
+ 	*args++ = UPT_SYSCALL_ARG4(r);
+@@ -73,7 +87,9 @@ static inline void syscall_set_arguments(struct task_struct *task,
+ {
+ 	struct uml_pt_regs *r = &regs->regs;
+ 
+-	UPT_SYSCALL_ARG1(r) = *args++;
++	/* The call dispatches from the register, its reports from the copy. */
++	UPT_SYSCALL_ARG1(r) = *args;
++	UPT_SYSCALL_ENTRY_ARG1(r) = *args++;
+ 	UPT_SYSCALL_ARG2(r) = *args++;
+ 	UPT_SYSCALL_ARG3(r) = *args++;
+ 	UPT_SYSCALL_ARG4(r) = *args++;
 diff --git a/arch/um/include/asm/tlb_sync_ranges.h b/arch/um/include/asm/tlb_sync_ranges.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..b8cb01088c5fa5cb9f05f17fbc68f8e8de27f186
@@ -1306,3 +1338,77 @@ index ad3cefeff2acb19718364ee8d1a0bcb504a2aed2..21cb40a672f97440f555af3df2fbcaa7
  
    /* Read-only sections, merged into text segment: */
    .hash           : { *(.hash) }
+diff --git a/arch/um/kernel/ptrace.c b/arch/um/kernel/ptrace.c
+index fdbb37b5c3996188d92cf307d31eeaeca1f0acce..3507bf10ecd8dbaf7b7cd4f0391537943c219f0f 100644
+--- a/arch/um/kernel/ptrace.c
++++ b/arch/um/kernel/ptrace.c
+@@ -8,6 +8,7 @@
+ #include <linux/sched.h>
+ #include <linux/uaccess.h>
+ #include <asm/ptrace-abi.h>
++#include <asm/syscall.h>
+ 
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/syscalls.h>
+@@ -124,7 +125,7 @@ static void send_sigtrap(struct uml_pt_regs *regs, int error_code)
+ int syscall_trace_enter(struct pt_regs *regs)
+ {
+ 	audit_syscall_entry(UPT_SYSCALL_NR(&regs->regs),
+-			    UPT_SYSCALL_ARG1(&regs->regs),
++			    UPT_SYSCALL_ENTRY_ARG1(&regs->regs),
+ 			    UPT_SYSCALL_ARG2(&regs->regs),
+ 			    UPT_SYSCALL_ARG3(&regs->regs),
+ 			    UPT_SYSCALL_ARG4(&regs->regs));
+diff --git a/arch/um/kernel/skas/syscall.c b/arch/um/kernel/skas/syscall.c
+index ba7494f9bfe41254a0c5987fe50c1d073668130d..99205d38d4299263f2f77288fd1ed12495cbd1c5 100644
+--- a/arch/um/kernel/skas/syscall.c
++++ b/arch/um/kernel/skas/syscall.c
+@@ -14,6 +14,29 @@
+ #include <asm/unistd.h>
+ #include <asm/delay.h>
+ 
++/*
++ * A port whose first argument register is also its return register (arm64's
++ * x0) defines these in sysdep/ptrace.h, so that the register holds the
++ * argument for as long as the task is stopped at the system call's entry:
++ * a tracer reads it there, and what it writes there is what the call gets.
++ *
++ *   UPT_SYSCALL_PRESET_ENOSYS(r)	whether the return register holds
++ *					-ENOSYS until the call sets it, as it
++ *					does on x86 (the default)
++ *   UPT_SYSCALL_REPORT_ENOSYS(r, nr)	whether a number the kernel has no
++ *					call for returns -ENOSYS here, because
++ *					nothing preset it (the default is no)
++ *
++ * The number -1 is the one a tracer or seccomp sets to skip a call and leave
++ * the return register as it is, so such a port presets it for -1 alone.
++ */
++#ifndef UPT_SYSCALL_PRESET_ENOSYS
++#define UPT_SYSCALL_PRESET_ENOSYS(r) 1
++#endif
++#ifndef UPT_SYSCALL_REPORT_ENOSYS
++#define UPT_SYSCALL_REPORT_ENOSYS(r, nr) 0
++#endif
++
+ void handle_syscall(struct uml_pt_regs *r)
+ {
+ 	struct pt_regs *regs = container_of(r, struct pt_regs, regs);
+@@ -21,7 +44,8 @@ void handle_syscall(struct uml_pt_regs *r)
+ 
+ 	/* Initialize the syscall number and default return value. */
+ 	UPT_SYSCALL_NR(r) = PT_SYSCALL_NR(r->gp);
+-	PT_REGS_SET_SYSCALL_RETURN(regs, -ENOSYS);
++	if (UPT_SYSCALL_PRESET_ENOSYS(r))
++		PT_REGS_SET_SYSCALL_RETURN(regs, -ENOSYS);
+ 
+ 	if (syscall_trace_enter(regs))
+ 		goto out;
+@@ -67,6 +91,8 @@ void handle_syscall(struct uml_pt_regs *r)
+ 			um_udelay(1);
+ 			schedule();
+ 		}
++	} else if (UPT_SYSCALL_REPORT_ENOSYS(r, syscall)) {
++		PT_REGS_SET_SYSCALL_RETURN(regs, -ENOSYS);
+ 	}
+ 
+ out:

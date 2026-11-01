@@ -178,7 +178,7 @@ def word_of(isa: str, word: int) -> tuple[int, ...]:
 
 
 def decode(context: Context, isa: str, word: int):
-    return context.reference.operands(isa, word, 0, "complete", FEATURES)
+    return context.reference.operands(isa, word, 0, FEATURES)
 
 
 def fields_of(form: tm.FormModel) -> dict[str, tuple[int, int]]:

@@ -47,8 +47,8 @@ requirement the day the answer becomes true.
  .../tests/pipeline_library_shaders/gpl.frag.h |  26 ++
  .../tests/pipeline_library_shaders/gpl.vert   |  11 +
  .../tests/pipeline_library_shaders/gpl.vert.h |  72 ++++
- .../tests/test_pipeline_library_link_time.cpp | 398 ++++++++++++++++++
- 7 files changed, 535 insertions(+)
+ .../tests/test_pipeline_library_link_time.cpp | 397 ++++++++++++++++++
+ 7 files changed, 534 insertions(+)
  create mode 100755 src/kosmickrisp/vulkan/tests/pipeline_library_shaders/generate.sh
  create mode 100644 src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl.frag
  create mode 100644 src/kosmickrisp/vulkan/tests/pipeline_library_shaders/gpl.frag.h
@@ -57,7 +57,7 @@ requirement the day the answer becomes true.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 9e3c5b17529c945cacdf77416d5053f284563eb7..2f849dd4ea8d34cfbe3421efb59c3eae40cad37b 100644
+index 6fd397bf692dd16b86e982efa961f6978a15487a..770cad75802e4005d7fd0df5c74dbc337590a7d3 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -633,6 +633,20 @@ if with_tests
@@ -236,10 +236,10 @@ index 0000000000000000000000000000000000000000..e23bbc377b87823c1ea22c531b098999
 +0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp b/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..7d857970ff93abff45f9fce3955acc946e85897f
+index 0000000000000000000000000000000000000000..ffe76ccc62ca7db5f7d4831fe8b108c8c95f5d1f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
-@@ -0,0 +1,398 @@
+@@ -0,0 +1,397 @@
 +/*
 + * SPDX-License-Identifier: MIT
 + */
@@ -329,7 +329,6 @@ index 0000000000000000000000000000000000000000..7d857970ff93abff45f9fce3955acc94
 +   require(result == VK_SUCCESS, "create instance", result);
 +   LOAD_I(vkDestroyInstance);
 +   LOAD_I(vkEnumeratePhysicalDevices);
-+   LOAD_I(vkGetPhysicalDeviceProperties);
 +   LOAD_I(vkGetPhysicalDeviceProperties2);
 +   LOAD_I(vkGetPhysicalDeviceQueueFamilyProperties);
 +   LOAD_I(vkCreateDevice);

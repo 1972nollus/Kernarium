@@ -161,7 +161,7 @@ class Affine:
                 self.columns[bit] = (probe ^ self.constant) & MASK
 
     def value(self, word: int):
-        result, operands = self.context.reference.operands(self.isa, word, 0, "complete", FEATURES)
+        result, operands = self.context.reference.operands(self.isa, word, 0, FEATURES)
         if result.status == "undefined" or result.form != self.form.name:
             return None
         value = operands.get(self.operand)
@@ -621,7 +621,7 @@ def pc_reads(context, suite, results):
             isa_word = isa or ("T32" if word & 0xFFFF or word >> 27 >= 0x1D else "T16")
             if isa_word != "A32" and not (word >> 27 >= 0x1D) and word & 0xFFFF == 0:
                 isa_word = "T16"
-            result, _operands = context.reference.operands(isa_word, word, 0, "complete", FEATURES)
+            result, _operands = context.reference.operands(isa_word, word, 0, FEATURES)
             if result.status == "undefined":
                 raise ValueError(f"{word:08x} is not a legal {isa_word} word")
             name = result.form
@@ -666,7 +666,7 @@ PC_IN_PLACE_A = (0xE08F1001, 0xE081100F, 0xE091100F, 0xE041100F, 0xE06F1001)
 
 def pc_operands(context, suite, results):
     for word, initial in PC_OPERANDS_A:
-        result, _operands = context.reference.operands("A32", word, 0, "complete", FEATURES)
+        result, _operands = context.reference.operands("A32", word, 0, FEATURES)
         if result.status == "undefined":
             raise ValueError(f"{word:08x} is not a legal A32 word")
         for lead in (0, 1, 2, 3):
@@ -685,7 +685,7 @@ def pc_operands(context, suite, results):
         make(results, suite, f"LDR_r_A1_off/e79f0001.fault{lead}", "LDR_r_A1_off", ARM, prog,
              {"r1": 0x11000000}, fault_retired=lead, target=lead)
     for word in PC_OPERANDS_T:
-        result, _operands = context.reference.operands("T16", word, 0, "complete", FEATURES)
+        result, _operands = context.reference.operands("T16", word, 0, FEATURES)
         if result.status == "undefined":
             raise ValueError(f"{word:08x} is not a legal T16 word")
         for lead in (0, 1, 2, 3):
@@ -696,7 +696,7 @@ def pc_operands(context, suite, results):
             make(results, suite, f"{result.form}/{word:08x}.{lead}", result.form, THUMB, prog, {},
                  retired=lead + 2, check=False, target=lead)
     for word, initial in PC_CONDITIONAL_A:
-        result, _operands = context.reference.operands("A32", word, 0, "complete", FEATURES)
+        result, _operands = context.reference.operands("A32", word, 0, FEATURES)
         if result.status == "undefined":
             raise ValueError(f"{word:08x} is not a legal A32 word")
         for flags in (0, 0x40000000):
@@ -708,7 +708,7 @@ def pc_operands(context, suite, results):
                 make(results, suite, f"{result.form}/{word:08x}.eq{flags >> 28:x}.{lead}", result.form, ARM,
                      prog, {**initial, "apsr": flags}, retired=lead + 2, check=False, target=lead)
     for word in PC_CONDITIONAL_T:
-        result, _operands = context.reference.operands("T16", word, 0, "complete", FEATURES)
+        result, _operands = context.reference.operands("T16", word, 0, FEATURES)
         if result.status == "undefined":
             raise ValueError(f"{word:08x} is not a legal T16 word")
         for flags in (0, 0x40000000):
@@ -729,7 +729,7 @@ def pc_operands(context, suite, results):
             make(results, suite, f"ADD_r_T2/it-eq-{flags >> 28:x}.{lead}", "ADD_r_T2", THUMB, prog,
                  {"apsr": flags}, retired=lead + 3, check=False, target=lead + 1)
     for word in PC_IN_PLACE_A:
-        result, _operands = context.reference.operands("A32", word, 0, "complete", FEATURES)
+        result, _operands = context.reference.operands("A32", word, 0, FEATURES)
         if result.status == "undefined":
             raise ValueError(f"{word:08x} is not a legal A32 word")
         for lead in (0, 1, 2, 3):

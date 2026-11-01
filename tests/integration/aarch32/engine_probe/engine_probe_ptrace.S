@@ -150,3 +150,34 @@ pt_step_arm_t1:
 	movs	r0, #0x30
 	adds	r0, r0, r1
 	pop	{r4, r7, pc}
+
+@ ---- long pt_step_swp(void): single steps over an emulated and a skipped SWP ----
+@ A word on the stack holds 0x55 and r1 0xaa. After the bkpt the tracer steps:
+@ swp r0, r1, [r2] (emulated: r0 = 0x55, the word 0xaa), cmp r1, #0 (Z clear),
+@ mov r5, #0x77, swpeq r5, r1, [r2] (its condition false: r5 stays 0x77). The
+@ routine returns the word, 0xaa.
+	.arm
+	.balign	4
+	.globl	pt_step_swp
+	.type	pt_step_swp, %function
+pt_step_swp:
+	push	{r4, r5, lr}
+	sub	sp, sp, #8
+	mov	r2, sp
+	mov	r4, #0x55
+	str	r4, [r2]
+	mov	r1, #0xaa
+	.globl	pt_step_swp_stop
+pt_step_swp_stop:
+	bkpt	#1
+	.globl	pt_step_swp_s1
+pt_step_swp_s1:
+	swp	r0, r1, [r2]
+	cmp	r1, #0
+	mov	r5, #0x77
+	.globl	pt_step_swp_s4
+pt_step_swp_s4:
+	swpeq	r5, r1, [r2]
+	ldr	r0, [r2]
+	add	sp, sp, #8
+	pop	{r4, r5, pc}

@@ -14,14 +14,18 @@
  *   store       the writer's protocol: a store over a block's source makes it
  *               stale for every executor and resets the link another executor
  *               armed, a build a store landed across is not kept, and no link
- *               is armed to a stale body.
+ *               is armed to a stale body. Dropping the stale check at arming,
+ *               the store count at publication or the reset at the store each
+ *               fails it.
  *   concurrent  executors on their own threads running one address space
  *               through rounds of code patched by an engine store.
  *   bound       what bounds a shared space: one that holds mostly freed arena
- *               is renewed for every executor attached, the process's byte
- *               budget reaches every executor of a space it asks to shed, and
- *               executors on their own threads keep running while spaces are
- *               shed and renewed under them.
+ *               (executors let go of it down to the bodies of one, by being
+ *               destroyed or by the MMU destroying the address space) is
+ *               renewed for every executor attached and a smaller one is left
+ *               alone, the process's byte budget reaches every executor of a
+ *               space it asks to shed, and executors on their own threads
+ *               keep running while spaces are shed and renewed under them.
  */
 #include "cpu/gadget_cache_budget.hpp"
 #include "cpu/x86_64/cpu_state.hpp"

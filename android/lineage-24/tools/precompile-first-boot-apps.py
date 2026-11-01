@@ -9,15 +9,37 @@ APEX, and a presigned prebuilt can opt out. The build subcommand runs the host
 dex2oat for exactly those packages, with the flags and class loader context ART
 Service uses on the device, and writes the artifacts where ART looks first:
 
-* an APK inside an APEX: /system/framework/oat/arm64/apex@<apex>@<path>@classes.{odex,vdex}
+* an APK inside an APEX: /system/framework/oat/<isa>/apex@<apex>@<path>@classes.{odex,vdex}
   (OatFileAssistant::DexLocationToOdexFilename names this file for a dex
   location under /apex);
-* any other APK: <apk directory>/oat/arm64/<name>.{odex,vdex}.
+* any other APK: <apk directory>/oat/<isa>/<name>.{odex,vdex}.
 
 The output directory holds the files, a PRODUCT_COPY_FILES fragment that
 installs them (first-boot-oat.mk) and a manifest. The verify subcommand checks
 a packaged target-files tree: every APK with dex code must carry artifacts, and
 the ones this tool produced must match the manifest byte for byte.
+
+A multilib image runs applications in two instruction sets. ART Service
+compiles a package for every ISA of its ABI set, so each package gets one
+artifact pair per ISA it can run in. The set follows PackageAbiHelperImpl: a
+package without native code runs in the device's preferred ISA (arm64); a
+multiArch package with libraries for both ABIs runs in both; any other package
+runs in the ISA of the first supported ABI it has libraries for; and a package
+with preinstalled libraries for both ISAs next to its APK counts as both. The
+set is the same whichever ABI is primary, so use32bitAbi does not change it.
+
+Soong dexpreopts an application for the targets of its own compile_multilib,
+the first target by default, so a product records an application invocation for
+the primary ISA only; libraries are preopted for every ISA. dex2oat's command
+for an application differs between ISAs in nothing but --instruction-set,
+--instruction-set-variant, --instruction-set-features and the output paths
+(dexpreopt.go, dexpreoptCommand: the boot image location is the same for every
+ISA, and dex2oat finds <isa>/boot.art beside it). The tool therefore takes the
+recorded application invocation of the primary ISA and replaces those three
+flags with the ones Soong recorded for libraries of the other ISA. Before it
+does, it checks the rule against Soong's own run: for every library recorded
+for both ISAs, the primary ISA's invocation with the other ISA's flags must be
+that other ISA's invocation, token for token.
 """
 
 from __future__ import annotations
@@ -28,6 +50,7 @@ import argparse
 import concurrent.futures
 import hashlib
 import json
+import mmap
 import os
 import re
 import shutil
@@ -39,7 +62,13 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-ISA = "arm64"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import android_image  # noqa: E402
+
+PRIMARY_ISA = "arm64"
+ISAS = ("arm64", "arm")
+ABI_ISA = {"arm64-v8a": "arm64", "armeabi-v7a": "arm"}   # in SUPPORTED_ABIS order
 FILTER = "verify"
 REASON = "prebuilt"
 PARTITIONS = ("system", "system_ext", "product", "vendor", "odm")
@@ -58,6 +87,9 @@ TEMPLATE_DROP_PREFIXES = (
     "--compiler-filter=", "--compilation-reason=", "--copy-dex-files=",
 )
 TEMPLATE_DROP_FLAGS = ("--strip", "--generate-debug-info", "--abort-on-hard-verifier-error")
+# The flags that name the ISA the artifact is compiled for.
+ISA_FLAG_PREFIXES = ("--instruction-set=", "--instruction-set-variant=", "--instruction-set-features=")
+OAT_ISA_DIRECTORY = re.compile(r"/oat/(?:arm64|arm)/")
 SDK_P = 28
 SDK_Q = 29
 APACHE_HTTP_LEGACY = "org.apache.http.legacy"
@@ -76,11 +108,18 @@ class Package:
     host_apk: Path
     device_location: str          # the dex location the runtime uses
     partition: str                # partition that holds the artifacts
-    odex_relative: str            # odex path relative to that partition's root
+    oat_parent: str = ""          # <oat_parent>/<isa>/<odex_name> inside the partition
+    odex_name: str = ""
     apex: str = ""
     target_sdk: int = 0
     uses_libraries: list[str] = field(default_factory=list)
     uses_optional_libraries: list[str] = field(default_factory=list)
+    multi_arch: bool = False
+    isas: tuple[str, ...] = ()
+
+    def odex_relative(self, isa: str) -> str:
+        """The odex path relative to the partition's root, for one ISA."""
+        return f"{self.oat_parent}/{isa}/{self.odex_name}"
 
 
 # --------------------------------------------------------------------------
@@ -123,9 +162,27 @@ def parse_xmltree(text: str) -> tuple[int, list[str], list[str]]:
                 quoted = re.match(r'"([^"]*)"', value)
                 name = quoted.group(1) if quoted else value
             elif attribute == "required":
-                is_required = value.strip() not in ("false", "(type 0x12)0x0")
+                is_required = is_true(value)
     flush()
     return target, required, optional
+
+
+def is_true(value: str) -> bool:
+    return value.strip() not in ("false", "(type 0x12)0x0", "(type 0x12)0x00000000", "0")
+
+
+def parse_multi_arch(text: str) -> bool:
+    """Whether the application element declares android:multiArch."""
+    in_application = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("E: "):
+            in_application = stripped[3:].split()[0] == "application"
+            continue
+        match = re.match(r"A: (?:\S+:)?(\w+)\(0x[0-9a-f]+\)=(.*)$", stripped)
+        if match and in_application and match.group(1) == "multiArch":
+            return is_true(match.group(2))
+    return False
 
 
 def apply_backward_compatibility(
@@ -196,22 +253,94 @@ class Tools:
     def __init__(self, aosp: Path, out_dir: str, host_bin: Path | None = None) -> None:
         self.aosp = aosp
         self.out = out_dir
+        self._recorded: dict[tuple[str, str], list[tuple[Path, list[str]]]] | None = None
         self.bin = host_bin or aosp / out_dir / "host" / "linux-x86" / "bin"
-        for tool in ("debugfs", "aapt2"):
+        for tool in ("debugfs", "fsck.erofs", "aapt2"):
             if not (self.bin / tool).is_file():
                 fail(f"missing host tool: {self.bin / tool}")
 
-    def template(self) -> list[str]:
-        """Soong's own dex2oat flags for an application, from a recorded run."""
-        base = self.aosp / self.out / "soong" / ".intermediates"
-        for path in sorted(base.glob(f"**/dexpreopt/*/oat/{ISA}/package.invocation")):
-            text = [t for t in path.read_text(encoding="utf-8").split("\n") if t]
-            if (any(t.startswith("--boot-image=") for t in text)
+    def _index(self) -> dict[tuple[str, str], list[tuple[Path, list[str]]]]:
+        """Every dex2oat invocation Soong recorded, by (ISA directory, file name)."""
+        if self._recorded is None:
+            self._recorded = {}
+            base = self.aosp / self.out / "soong" / ".intermediates"
+            for path in sorted(base.glob("**/dexpreopt/*/oat/*/*.invocation")):
+                text = [t for t in path.read_text(encoding="utf-8").split("\n") if t]
+                self._recorded.setdefault((path.parent.name, path.name), []).append((path, text))
+        return self._recorded
+
+    def recorded(self, isa: str, name: str) -> list[list[str]]:
+        """The tokens of every invocation Soong recorded as <name> for one ISA."""
+        return [text for _, text in self._index().get((isa, name), [])]
+
+    def library_pairs(self, isa: str) -> list[tuple[list[str], list[str]]]:
+        """The library invocations of the primary ISA and `isa` for each module that has both."""
+        primary = {path.parents[1]: text
+                   for path, text in self._index().get((PRIMARY_ISA, "javalib.invocation"), [])}
+        return [(primary[path.parents[1]], text)
+                for path, text in self._index().get((isa, "javalib.invocation"), [])
+                if path.parents[1] in primary]
+
+    def template(self, isa: str) -> list[str]:
+        """Soong's own dex2oat flags for an application of one ISA.
+
+        A recorded application invocation for the ISA is used as it is.
+        Otherwise it is the primary ISA's, with the ISA flags Soong records for
+        libraries of this ISA, once Soong's libraries have shown that these
+        flags are all that separates the ISAs."""
+        def complete(text: list[str]) -> bool:
+            return (any(t.startswith("--boot-image=") for t in text)
                     and any(t.startswith("-Xbootclasspath:") for t in text)
-                    and any(t.startswith("--dex-location=/") for t in text)):
+                    and any(t.startswith("--dex-location=/") for t in text))
+
+        for text in self.recorded(isa, "package.invocation"):
+            if complete(text):
                 return text
-        fail(f"no recorded dex2oat invocation under {base}; build an application with dexpreopt first")
-        return []
+        if isa == PRIMARY_ISA:
+            fail(f"no recorded {isa} application dex2oat invocation under "
+                 f"{self.aosp / self.out / 'soong' / '.intermediates'}; "
+                 f"build an application that Soong dexpreopts first")
+        primary = next((t for t in self.recorded(PRIMARY_ISA, "package.invocation") if complete(t)), None)
+        if primary is None:
+            fail(f"no recorded {PRIMARY_ISA} application dex2oat invocation to derive the {isa} one from")
+        pairs = self.library_pairs(isa)
+        if not pairs:
+            fail(f"no recorded {isa} application dex2oat invocation, and no library recorded for "
+                 f"both {PRIMARY_ISA} and {isa} to show how they differ; build the libraries first")
+        flags = isa_flags(pairs[0][1])
+        for primary_library, other_library in pairs:
+            if isa_flags(other_library) != flags:
+                fail(f"Soong recorded different {isa} ISA flags for different libraries: "
+                     f"{isa_flags(other_library)} and {flags}")
+            derived = oat_neutral(retarget(primary_library, flags))
+            recorded = oat_neutral(other_library)
+            if derived != recorded:
+                difference = next((a, b) for a, b in zip(derived, recorded) if a != b) \
+                    if len(derived) == len(recorded) else f"{len(derived)} against {len(recorded)} arguments"
+                fail(f"Soong's {isa} library invocation differs from its {PRIMARY_ISA} one in more than "
+                     f"the ISA flags ({difference}); the application template cannot be derived")
+        return retarget(primary, flags)
+
+
+def isa_flags(tokens: list[str]) -> list[str]:
+    """The ISA flags of an invocation, in the order ISA_FLAG_PREFIXES lists them."""
+    found = [next((t for t in tokens if t.startswith(prefix)), None) for prefix in ISA_FLAG_PREFIXES]
+    if None in found:
+        fail("a recorded dex2oat invocation lacks an ISA flag")
+    return found
+
+
+def retarget(tokens: list[str], flags: list[str]) -> list[str]:
+    """The invocation with its ISA flags replaced by `flags`."""
+    isa_flags(tokens)
+    by_prefix = dict(zip(ISA_FLAG_PREFIXES, flags))
+    return [by_prefix[next(p for p in ISA_FLAG_PREFIXES if t.startswith(p))]
+            if t.startswith(ISA_FLAG_PREFIXES) else t for t in tokens]
+
+
+def oat_neutral(tokens: list[str]) -> list[str]:
+    """The invocation with the ISA directory of its output paths blanked."""
+    return [OAT_ISA_DIRECTORY.sub("/oat/ISA/", t) for t in tokens]
 
 
 def run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -259,6 +388,88 @@ def debugfs_files(tools: Tools, image: Path, directory: str) -> list[str]:
     return found
 
 
+def embedded_isas(apk: Path) -> set[str]:
+    """ISAs that have libraries inside the APK."""
+    found: set[str] = set()
+    with zipfile.ZipFile(apk) as archive:
+        for info in archive.infolist():
+            match = re.fullmatch(r"lib/([^/]+)/[^/]+\.so", info.filename)
+            if match and match.group(1) in ABI_ISA:
+                found.add(ABI_ISA[match.group(1)])
+    return found
+
+
+def preinstalled_isas(package: Package) -> set[str]:
+    """ISAs that have a library directory beside the APK (Soong's jni_libs install)."""
+    if package.apex:
+        return set()
+    return {isa for isa in ISAS if (package.host_apk.parent / "lib" / isa).is_dir()}
+
+
+def resolve_isas(tools: Tools, package: Package) -> None:
+    """Set the ISAs the package runs in, as PackageAbiHelperImpl derives its ABIs."""
+    found = preinstalled_isas(package)
+    embedded = embedded_isas(package.host_apk)
+    if len(embedded) > 1:
+        read_manifest(tools, package)
+        # A multiArch package keeps every ABI; any other takes the first one in
+        # SUPPORTED_ABIS order.
+        first = next(isa for isa in ISAS if isa in embedded)
+        found |= embedded if package.multi_arch else {first}
+    else:
+        found |= embedded
+    # A package without native code runs in the device's preferred ISA.
+    package.isas = tuple(isa for isa in ISAS if isa in found) or (PRIMARY_ISA,)
+
+
+def payload_error(message: str) -> SystemExit:
+    return SystemExit(f"precompile-first-boot-apps: {message}")
+
+
+def ext4_payload_apks(tools: Tools, payload: Path, scratch: Path, name: str) -> list[tuple[str, Path]]:
+    """The APKs under /app and /priv-app of an ext4 APEX payload, with their paths in the APEX."""
+    found: list[tuple[str, Path]] = []
+    for path in (p for d in ("/app", "/priv-app") for p in debugfs_files(tools, payload, d)):
+        if not path.endswith(".apk"):
+            continue
+        target = scratch / (name + path.replace("/", "@"))
+        result = run([str(tools.bin / "debugfs"), "-R", f"dump {path} {target}", str(payload)])
+        if not target.is_file():
+            fail(f"cannot extract {path} from {name}: {result.stderr.strip()}")
+        found.append((path, target))
+    return found
+
+
+def erofs_payload_apks(tools: Tools, payload: Path, scratch: Path, name: str) -> list[tuple[str, Path]]:
+    """The APKs under /app and /priv-app of an EROFS APEX payload, with their paths in the APEX.
+
+    The payload's directories say whether it has either; only then fsck.erofs extracts the whole
+    payload (the AOSP fsck.erofs cannot extract one directory) and the APKs are taken from it.
+    """
+    with payload.open("rb") as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as image:
+        present = [
+            directory for directory in ("app", "priv-app")
+            if android_image.erofs_file_type(image, directory, name, payload_error)
+            == android_image.EROFS_FILE_TYPE_DIRECTORY
+        ]
+    if not present:
+        return []
+    extracted = scratch / f"{name}.extracted"
+    result = run([str(tools.bin / "fsck.erofs"), f"--extract={extracted}", str(payload)])
+    if result.returncode != 0 or not extracted.is_dir():
+        fail(f"cannot extract the payload of {name}: {result.stderr.strip() or result.stdout.strip()}")
+    found: list[tuple[str, Path]] = []
+    for directory in present:
+        for apk in sorted((extracted / directory).rglob("*.apk")):
+            if apk.is_file() and not apk.is_symlink():
+                relative = apk.relative_to(extracted / directory).as_posix()
+                target = scratch / (name + f"@{directory}@" + relative.replace("/", "@"))
+                shutil.move(apk, target)
+                found.append((f"/{directory}/{relative}", target))
+    shutil.rmtree(extracted)
+    return found
+
+
 def apex_packages(layout: Layout, tools: Tools, scratch: Path) -> list[Package]:
     packages: list[Package] = []
     for partition in PARTITIONS:
@@ -273,19 +484,17 @@ def apex_packages(layout: Layout, tools: Tools, scratch: Path) -> list[Package]:
                 payload = scratch / f"{name}.payload.img"
                 with archive.open("apex_payload.img") as source, payload.open("wb") as sink:
                     shutil.copyfileobj(source, sink, 1 << 20)
-            for path in (p for d in ("/app", "/priv-app") for p in debugfs_files(tools, payload, d)):
-                if not path.endswith(".apk"):
-                    continue
-                target = scratch / (name + path.replace("/", "@"))
-                result = run([str(tools.bin / "debugfs"), "-R", f"dump {path} {target}", str(payload)])
-                if not target.is_file():
-                    fail(f"cannot extract {path} from {apex}: {result.stderr.strip()}")
+            with payload.open("rb") as stream:
+                erofs = stream.read(android_image.EROFS_SUPERBLOCK_OFFSET + 4)[
+                    android_image.EROFS_SUPERBLOCK_OFFSET:] == android_image.EROFS_MAGIC
+            extract = erofs_payload_apks if erofs else ext4_payload_apks
+            for path, target in extract(tools, payload, scratch, name):
                 if not zip_has_dex(target):
                     target.unlink()
                     continue
                 packages.append(Package(
                     host_apk=target, device_location=f"/apex/{name}{path}", partition="system",
-                    odex_relative=f"framework/oat/{ISA}/{apex_odex_name(name, path)}", apex=name,
+                    oat_parent="framework/oat", odex_name=apex_odex_name(name, path), apex=name,
                 ))
             payload.unlink()
     return packages
@@ -308,13 +517,14 @@ def installed_packages(layout: Layout) -> list[Package]:
                     host_apk=apk,
                     device_location="/" + (PurePosixPath(partition) / relative.as_posix()).as_posix(),
                     partition=partition,
-                    odex_relative=(relative.parent / "oat" / ISA / (apk.stem + ".odex")).as_posix(),
+                    oat_parent=(relative.parent / "oat").as_posix(),
+                    odex_name=apk.stem + ".odex",
                 ))
     return packages
 
 
-def artifact_paths(layout: Layout, package: Package) -> tuple[Path, Path]:
-    odex = layout.partition(package.partition) / package.odex_relative
+def artifact_paths(layout: Layout, package: Package, isa: str) -> tuple[Path, Path]:
+    odex = layout.partition(package.partition) / package.odex_relative(isa)
     return odex, odex.with_suffix(".vdex")
 
 
@@ -324,6 +534,7 @@ def read_manifest(tools: Tools, package: Package) -> None:
     if result.returncode != 0:
         fail(f"aapt2 cannot read {package.host_apk}: {result.stderr.strip()}")
     target, required, optional = parse_xmltree(result.stdout)
+    package.multi_arch = parse_multi_arch(result.stdout)
     package.target_sdk = target or 37
     package.uses_libraries, package.uses_optional_libraries = apply_backward_compatibility(
         package.target_sdk, True, required, optional
@@ -365,8 +576,8 @@ def contexts(layout: Layout, libraries: dict[str, str], aosp: Path, package: Pac
 
 
 def compile_one(layout: Layout, tools: Tools, template: list[str], libraries: dict[str, str],
-                package: Package, output: Path) -> dict:
-    odex = output / package.partition / package.odex_relative
+                package: Package, isa: str, output: Path) -> dict:
+    odex = output / package.partition / package.odex_relative(isa)
     odex.parent.mkdir(parents=True, exist_ok=True)
     host_clc, stored_clc = contexts(layout, libraries, tools.aosp, package)
     command = [
@@ -387,12 +598,14 @@ def compile_one(layout: Layout, tools: Tools, template: list[str], libraries: di
     result = run(command, cwd=tools.aosp)
     vdex = odex.with_suffix(".vdex")
     if result.returncode != 0 or not odex.is_file() or not vdex.is_file():
-        fail(f"dex2oat failed for {package.device_location}:\n{result.stderr[-2000:]}")
+        fail(f"dex2oat failed for {package.device_location} ({isa}):\n{result.stderr[-2000:]}")
+    relative = package.odex_relative(isa)
     return {
         "location": package.device_location,
+        "isa": isa,
         "partition": package.partition,
-        "odex": f"{package.partition}/{package.odex_relative}",
-        "vdex": f"{package.partition}/{Path(package.odex_relative).with_suffix('.vdex')}",
+        "odex": f"{package.partition}/{relative}",
+        "vdex": f"{package.partition}/{Path(relative).with_suffix('.vdex')}",
         "odex_sha256": sha256(odex),
         "vdex_sha256": sha256(vdex),
         "filter": FILTER,
@@ -438,35 +651,38 @@ def cmd_build(args: argparse.Namespace) -> int:
         fail(f"missing host tool: {tools.bin / 'dex2oatd64'}")
     if args.output.exists():
         fail(f"output exists: {args.output}")
-    template = tools.template()
     libraries = shared_libraries(layout)
     ours = previous_artifacts(args.previous)
     args.output.mkdir(parents=True)
     with tempfile.TemporaryDirectory(prefix="first-boot-apps.") as scratch_name:
-        packages = []
+        work: list[tuple[Package, str]] = []
         for package in apex_packages(layout, tools, Path(scratch_name)) + installed_packages(layout):
-            odex, vdex = artifact_paths(layout, package)
-            key = f"{package.partition}/{package.odex_relative}"
-            if odex.exists() or vdex.exists():
-                # Soong's own artifact, unless it is a copy of one this tool made earlier.
-                if not (key in ours and odex.is_file() and vdex.is_file()
-                        and ours[key] == (sha256(odex), sha256(vdex))):
-                    continue
-            packages.append(package)
-        if not packages:
+            resolve_isas(tools, package)
+            for isa in package.isas:
+                odex, vdex = artifact_paths(layout, package, isa)
+                key = f"{package.partition}/{package.odex_relative(isa)}"
+                if odex.exists() or vdex.exists():
+                    # Soong's own artifact, unless it is a copy of one this tool made earlier.
+                    if not (key in ours and odex.is_file() and vdex.is_file()
+                            and ours[key] == (sha256(odex), sha256(vdex))):
+                        continue
+                work.append((package, isa))
+        if not work:
             fail("nothing to precompile")
-        for package in packages:
+        templates = {isa: tools.template(isa) for isa in ISAS if any(w[1] == isa for w in work)}
+        for package in {id(p): p for p, _ in work}.values():
             read_manifest(tools, package)
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
             entries = list(pool.map(
-                lambda p: compile_one(layout, tools, template, libraries, p, args.output), packages))
-    entries.sort(key=lambda entry: entry["location"])
+                lambda item: compile_one(layout, tools, templates[item[1]], libraries,
+                                         item[0], item[1], args.output), work))
+    entries.sort(key=lambda entry: (entry["location"], ISAS.index(entry["isa"])))
     write_makefile(args.output, entries)
     (args.output / "manifest.json").write_text(
-        json.dumps({"isa": ISA, "filter": FILTER, "packages": entries}, indent=2, sort_keys=True) + "\n",
+        json.dumps({"filter": FILTER, "packages": entries}, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    print(f"precompiled {len(entries)} packages into {args.output}")
+    print(f"precompiled {len(entries)} artifact sets into {args.output}")
     return 0
 
 
@@ -474,28 +690,38 @@ def cmd_verify(args: argparse.Namespace) -> int:
     layout = Layout(args.target_files_dir.resolve(), "target-files")
     tools = Tools(Path(), "", args.host_bin.resolve())
     manifest = json.loads((args.artifacts / "manifest.json").read_text(encoding="utf-8"))
-    produced = {p["location"]: p for p in manifest["packages"]}
+    if any("isa" not in p for p in manifest["packages"]):
+        fail("the manifest predates per-ISA artifacts; rebuild the first-boot output")
+    produced = {(p["location"], p["isa"]): p for p in manifest["packages"]}
     problems: list[str] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
+    packages = 0
     with tempfile.TemporaryDirectory(prefix="first-boot-verify.") as scratch_name:
         for package in apex_packages(layout, tools, Path(scratch_name)) + installed_packages(layout):
-            seen.add(package.device_location)
-            odex, vdex = artifact_paths(layout, package)
-            if not odex.is_file() or not vdex.is_file():
-                problems.append(f"first boot would compile {package.device_location}: no artifacts at {odex}")
-                continue
-            entry = produced.get(package.device_location)
-            if entry is None:
-                continue  # a Soong artifact
-            if (sha256(odex), sha256(vdex)) != (entry["odex_sha256"], entry["vdex_sha256"]):
-                problems.append(f"{package.device_location}: packaged artifacts differ from the manifest")
-            if dex_crcs(package.host_apk) != entry["dex_crc32"]:
-                problems.append(f"{package.device_location}: the packaged APK no longer matches its artifacts")
-    for location in sorted(set(produced) - seen):
-        problems.append(f"artifacts exist for a package that is not in the image: {location}")
+            packages += 1
+            resolve_isas(tools, package)
+            for isa in package.isas:
+                seen.add((package.device_location, isa))
+                odex, vdex = artifact_paths(layout, package, isa)
+                if not odex.is_file() or not vdex.is_file():
+                    problems.append(f"first boot would compile {package.device_location} "
+                                    f"for {isa}: no artifacts at {odex}")
+                    continue
+                entry = produced.get((package.device_location, isa))
+                if entry is None:
+                    continue  # a Soong artifact
+                if (sha256(odex), sha256(vdex)) != (entry["odex_sha256"], entry["vdex_sha256"]):
+                    problems.append(f"{package.device_location} ({isa}): "
+                                    "packaged artifacts differ from the manifest")
+                if dex_crcs(package.host_apk) != entry["dex_crc32"]:
+                    problems.append(f"{package.device_location} ({isa}): "
+                                    "the packaged APK no longer matches its artifacts")
+    for location, isa in sorted(set(produced) - seen):
+        problems.append(f"artifacts exist for a package or ISA that is not in the image: "
+                        f"{location} ({isa})")
     if problems:
         fail("\n".join(problems))
-    print(f"verified first-boot artifacts for {len(seen)} packages")
+    print(f"verified first-boot artifacts for {packages} packages ({len(seen)} ISA sets)")
     return 0
 
 
@@ -513,7 +739,7 @@ def main() -> int:
     build.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     build.set_defaults(func=cmd_build)
     verify.add_argument("--host-bin", type=Path, required=True,
-                        help="host tool directory holding debugfs and aapt2 (out/host/linux-x86/bin)")
+                        help="host tool directory holding debugfs, fsck.erofs and aapt2 (out/host/linux-x86/bin)")
     verify.add_argument("--target-files-dir", type=Path, required=True, help="extracted target-files staging")
     verify.add_argument("--artifacts", type=Path, required=True, help="the build output directory")
     verify.set_defaults(func=cmd_verify)

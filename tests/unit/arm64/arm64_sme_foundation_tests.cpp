@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* The SME foundation every SME lane builds on: the guest-SME policy and the
- * host prober, the virtual CPU's SME profile, the SVL-sized storage layout,
- * the SVCR write rules and the lazy state transfer. */
+ * host prober (checked against the host's own sysctls under either policy),
+ * the virtual CPU's SME profile (its identification registers and HWCAP2
+ * against arm64 Linux's table, with injected SME hosts at every streaming
+ * vector length from 16 to 256 bytes and every engine support level), the
+ * SVL-sized storage layout, the SVCR write rules and the lazy state
+ * transfer. */
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/gadgets/sme_support.hpp"

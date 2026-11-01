@@ -27,6 +27,12 @@ public:
 	~MappedBacking();
 
 	[[nodiscard]] std::byte *at(std::uint64_t offset) const noexcept;
+	/* The address of offset 0: the inverse of at(), so the offset of an
+	 * address inside the backing is the address less base(). */
+	[[nodiscard]] std::byte *base() const noexcept
+	{
+		return static_cast<std::byte *>(mapping_.data());
+	}
 	[[nodiscard]] std::size_t size() const noexcept { return size_; }
 	/* Code-page records are shared by every virtual alias of one physical
 	 * backing page. Their addresses remain stable for the backing lifetime so

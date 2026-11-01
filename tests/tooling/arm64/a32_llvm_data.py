@@ -219,7 +219,7 @@ def build_samples(model: tm.Model, reference, features: set[str], seed: str,
                     if (isa, word) in seen:
                         continue
                     seen.add((isa, word))
-                    expected = reference.decode(isa, word, 0, "complete", features)
+                    expected = reference.decode(isa, word, 0, features)
                     sample = Sample(isa, word, row.kind, form.name, clean, False, "-", False)
                     sample.expected = expected
                     (ok if expected.status != "undefined" else rejected).append(sample)
@@ -227,7 +227,7 @@ def build_samples(model: tm.Model, reference, features: set[str], seed: str,
             chosen = ok[:limit] + _distinct_reasons(rejected, REJECTED_PER_ROW)
             samples.extend(chosen)
     for isa, word, sysreg in POLICY_WORDS:
-        expected = reference.decode(isa, word, 0, "complete", features)
+        expected = reference.decode(isa, word, 0, features)
         if expected.status != "ok" or expected.sysreg != sysreg:
             raise ValueError(
                 f"policy word {isa} {word:#010x} decodes to {expected.form} "
@@ -240,7 +240,7 @@ def build_samples(model: tm.Model, reference, features: set[str], seed: str,
         sample.expected = expected
         samples.append(sample)
     for sample in violation_samples(model, seed):
-        sample.expected = reference.decode(sample.isa, sample.word, 0, "complete", features)
+        sample.expected = reference.decode(sample.isa, sample.word, 0, features)
         samples.append(sample)
     decode_samples(tool, runner, [s for s in samples if not s.violation])
     return samples
@@ -346,7 +346,7 @@ def t16_reference(model: tm.Model, reference, features: set[str], tool: Path, ru
     results = llvm.decode_words(tool, "T32", [(hw << 16, 2) for hw in halfwords], runner)
     runs = []
     for hw, result in zip(halfwords, results):
-        outcome = reference.decode("T16", hw << 16, 0, "complete", features)
+        outcome = reference.decode("T16", hw << 16, 0, features)
         opcode, soft = ("-", False) if result is None else result
         key = (outcome.form, opcode, soft, outcome.status, outcome.reason)
         if runs and runs[-1][2:] == key and runs[-1][1] == hw - 1:

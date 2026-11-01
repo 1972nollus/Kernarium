@@ -335,7 +335,7 @@ void test_allocation_failures_are_balanced_and_retryable()
 	require(darwin_uml_static_vm_destroy(walker_generation) == 0);
 
 	constexpr unsigned long mapping_generation = 304;
-	fail_next_allocation(AllocationSite::mapping);
+	fail_next_allocation(AllocationSite::reserve);
 	require(darwin_uml_static_vm_map_generation(
 			mapping_generation, reinterpret_cast<void *>(base), backing.descriptor(),
 			0, DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) ==
@@ -361,7 +361,7 @@ void test_allocation_failures_are_balanced_and_retryable()
 	require(darwin_uml_static_vm_map_generation(
 			batch_generation, reinterpret_cast<void *>(base), backing.descriptor(), 0,
 			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0);
-	fail_next_allocation(AllocationSite::mapping);
+	fail_next_allocation(AllocationSite::reserve);
 	require(darwin_uml_static_vm_batch_end() == -1);
 	require(active_backing_mappings() == 0);
 	require_unmapped(batch_generation, base);
@@ -385,7 +385,7 @@ void test_multi_page_and_history_failures_are_atomic()
 	ScratchBacking backing{backing_name, pages * DARWIN_UML_GUEST_PAGE_SIZE};
 	const auto initial = darwin_uml_static_vm_sequences(generation);
 
-	fail_allocation_at(AllocationSite::mapping, 2);
+	fail_allocation_at(AllocationSite::reserve, 2);
 	require(darwin_uml_static_vm_map_generation(generation,
 		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		pages * DARWIN_UML_GUEST_PAGE_SIZE,
@@ -1164,7 +1164,7 @@ void test_an_entered_context_fill_follows_every_mapping_change()
 	require(map(base + 3 * page, 3 * page, page, PROT_READ, 0) == 0);
 	require(map(base, 5 * page, 2 * page, PROT_READ | PROT_WRITE, 0) == 0);
 	/* The second page's insertion fails after the first one's. */
-	fail_allocation_at(AllocationSite::mapping, 2);
+	fail_allocation_at(AllocationSite::reserve, 2);
 	require(darwin_uml_static_vm_batch_end() == -1);
 	agrees();
 	require(darwin_uml_static_vm_unmap_generation(generation,

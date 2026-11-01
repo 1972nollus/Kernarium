@@ -8,20 +8,16 @@ import Testing
 /// edge it can see so that the next launch can say what happened.
 @MainActor
 struct BackgroundSessionTests {
-    private func scratchMarker() throws -> BackgroundMarker {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("background-session-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true
-        )
-        return BackgroundMarker(
-            url: directory.appendingPathComponent("marker.json")
-        )
+    /// The marker file of a test, in the scratch directory the test removes.
+    private func scratchMarker(in directory: URL) -> BackgroundMarker {
+        BackgroundMarker(url: directory.appendingPathComponent("marker.json"))
     }
 
     @Test
     func aMarkerLeftInTheBackgroundIsReportedOnceAtTheNextLaunch() throws {
-        let marker = try scratchMarker()
+        let directory = try makeScratchDirectory("background-session")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = scratchMarker(in: directory)
         let entered = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(marker.arm(at: entered))
 
@@ -36,7 +32,9 @@ struct BackgroundSessionTests {
 
     @Test
     func returningToTheForegroundMeansThereIsNothingToReport() throws {
-        let marker = try scratchMarker()
+        let directory = try makeScratchDirectory("background-session")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = scratchMarker(in: directory)
         let session = BackgroundSession(marker: marker)
         session.didEnterBackground()
         #expect(FileManager.default.fileExists(atPath: marker.url.path))
@@ -50,7 +48,9 @@ struct BackgroundSessionTests {
     /// guest restarted.
     @Test
     func theMarkerStaysUntilTheGuestHasResumed() throws {
-        let marker = try scratchMarker()
+        let directory = try makeScratchDirectory("background-session")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = scratchMarker(in: directory)
         let session = BackgroundSession(marker: marker)
         session.didEnterBackground()
         session.guestResumeStarted()
@@ -63,7 +63,9 @@ struct BackgroundSessionTests {
 
     @Test
     func aResumeThatEndsInTheBackgroundLeavesTheMarker() throws {
-        let marker = try scratchMarker()
+        let directory = try makeScratchDirectory("background-session")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = scratchMarker(in: directory)
         let session = BackgroundSession(marker: marker)
         session.didEnterBackground()
         session.guestResumeStarted()
@@ -73,7 +75,9 @@ struct BackgroundSessionTests {
 
     @Test
     func aProcessThatExitsOnItsOwnAccountLeavesNoMarker() throws {
-        let marker = try scratchMarker()
+        let directory = try makeScratchDirectory("background-session")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = scratchMarker(in: directory)
         let session = BackgroundSession(marker: marker)
         session.didEnterBackground()
         session.willTerminate()
@@ -82,7 +86,9 @@ struct BackgroundSessionTests {
 
     @Test
     func anUnreadableMarkerStillCountsAndNoticeCanBeDismissed() throws {
-        let marker = try scratchMarker()
+        let directory = try makeScratchDirectory("background-session")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = scratchMarker(in: directory)
         try Data("not json".utf8).write(to: marker.url)
         let session = BackgroundSession(marker: marker)
         #expect(session.restart != nil)
@@ -93,7 +99,9 @@ struct BackgroundSessionTests {
 
     @Test
     func aLaunchWithNoMarkerReportsNothing() throws {
-        let marker = try scratchMarker()
+        let directory = try makeScratchDirectory("background-session")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = scratchMarker(in: directory)
         #expect(BackgroundSession(marker: marker).restart == nil)
     }
 }

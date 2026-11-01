@@ -122,7 +122,7 @@ index 19b89ceb4d6260b25d5806795d9fc4a1a796adee..27c38f2f26f4ba841d48b565ba754744
  
  /* Initialized in mconsole_init, which is an initcall */
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
-index 15e501e58d4d2b84c1217e2e60c197a5f72e068c..aa401501c034272cf9e4f2391b4921f3f00ded4f 100644
+index 5a09df19640fde539603624516fa61d37268d333..57420503f97bf7e44596591f6fad1f4e21c1766b 100644
 --- a/arch/um/include/shared/kern_util.h
 +++ b/arch/um/include/shared/kern_util.h
 @@ -44,6 +44,17 @@ void darwin_timer_kernel_checkpoint(void);

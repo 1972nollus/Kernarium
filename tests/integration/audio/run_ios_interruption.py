@@ -5,8 +5,8 @@ interruption test there.
 
 ios_interruption_tests.mm plays through the sink and posts the audio-session
 notifications iOS posts when another app interrupts the session; it prints one
-PASS or FAIL line per check. This runner compiles it with the sink, runs it in
-a booted iOS Simulator device (or boots one and shuts it down again), and
+PASS or FAIL line per check. This runner compiles it with the sink, the
+session and the clock it uses, runs it in a booted iOS Simulator device (or boots one and shuts it down again), and
 passes when the test does. It exits 77, which CTest reports as skipped, when
 the host has no iOS Simulator runtime at the deployment target.
 """
@@ -89,6 +89,8 @@ def main() -> int:
             f"-I{arguments.sink_directory}", f"-I{arguments.include_directory}",
             str(here / "ios_interruption_tests.mm"),
             str(arguments.sink_directory / "apple_playback_sink.mm"),
+            str(arguments.sink_directory / "audio_session.mm"),
+            str(arguments.sink_directory / "period_clock.cpp"),
             "-framework", "AVFAudio", "-framework", "Foundation",
             "-o", str(binary),
         ]

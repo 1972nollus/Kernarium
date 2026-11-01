@@ -126,8 +126,7 @@ void decode_form(Instruction &result, const Row &row, std::uint32_t word, ItStat
 		undefine(result, Reason::unpredictable);
 		return;
 	}
-	if (info.availability == Availability::undefined_at_el0
-		|| info.level > profile.level) {
+	if (info.availability == Availability::undefined_at_el0) {
 		undefine(result, Reason::profile);
 		return;
 	}

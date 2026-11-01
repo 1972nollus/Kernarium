@@ -64,6 +64,22 @@ uml_add_tooling_test(
     TIMEOUT 300)
 
 uml_add_tooling_test(
+    NAME arm64-instruction-corpus-tbi-memory
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_tbi_memory.py
+        ${UML_ARM64_INSTRUCTION_CORPUS}
+    LABELS cpu
+    TIMEOUT 300)
+
+uml_add_tooling_test(
+    NAME arm64-instruction-corpus-tbi-equivalence
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_tbi_equivalence.py
+        ${UML_ARM64_INSTRUCTION_CORPUS}
+    LABELS cpu
+    TIMEOUT 300)
+
+uml_add_tooling_test(
     NAME arm64-instruction-corpus-invalid-encoding
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_invalid_encoding.py
@@ -96,6 +112,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         LABELS cpu
         TIMEOUT 60)
 endif()
+
+# The bounded generator runner's process-group rules (the generators below
+# run their commands through it).
+uml_add_tooling_test(
+    NAME arm64-bounded-generation
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_a64_bounded_generation.py
+    LABELS cpu
+    TIMEOUT 120)
 
 # The AArch32 decoder's generated tables and test data agree with each other
 # (offline; the generator's inputs are not needed).

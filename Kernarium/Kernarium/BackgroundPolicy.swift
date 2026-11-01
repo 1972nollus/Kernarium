@@ -99,6 +99,15 @@ struct BackgroundSettings {
             stored : Self.defaultLimitMinutes
     }
 
+    /// A time limit as its owner reads it: "1 hour", "2 hours" or
+    /// "90 minutes".
+    static func limitTitle(minutes: Int) -> String {
+        if minutes % 60 == 0 {
+            return minutes == 60 ? "1 hour" : "\(minutes / 60) hours"
+        }
+        return "\(minutes) minutes"
+    }
+
     func setLimitMinutes(_ minutes: Int, forGuest guest: String) {
         if minutes == Self.defaultLimitMinutes ||
             !Self.limitRangeMinutes.contains(minutes) {
@@ -257,10 +266,7 @@ final class BackgroundController {
     func jobDidEnd() {
         guard phase == .jobRunning else { return }
         effects.setPageCacheTrimming(false)
-        quiesce(
-            reason: "job ended",
-            until: DispatchTime.now() + Self.edgeBudget
-        )
+        quiesce(reason: "job ended")
     }
 
     /// The Picture in Picture window is on screen.
@@ -274,10 +280,7 @@ final class BackgroundController {
     func pictureInPictureDidFailToStart() {
         guard phase == .awaitingPictureInPicture else { return }
         endWait()
-        quiesce(
-            reason: "picture in picture did not start",
-            until: DispatchTime.now() + Self.edgeBudget
-        )
+        quiesce(reason: "picture in picture did not start")
     }
 
     /// The user closed the window. In the foreground that is the app's own
@@ -290,10 +293,7 @@ final class BackgroundController {
         case .keptRunning:
             endKeptRunning()
             holdGPU()
-            quiesce(
-                reason: "picture in picture closed",
-                until: DispatchTime.now() + Self.edgeBudget
-            )
+            quiesce(reason: "picture in picture closed")
         case .foreground, .jobRunning, .quiesced:
             break
         }
@@ -303,6 +303,26 @@ final class BackgroundController {
     func didBecomeActive() {
         if effects.pictureInPictureActive {
             effects.stopPictureInPicture()
+        }
+    }
+
+    /// The guest restarted itself and its new kernel's console answers. What
+    /// the policy applied to the guest belongs to a kernel, and the new one
+    /// boots with neither the page-cache trimming nor the throttled vCPUs, so
+    /// a guest kept running in the background gets both again. A guest in the
+    /// foreground or paused wants neither; a guest that paused or is waiting
+    /// for the window cannot have restarted into a running boot, since the
+    /// runtime holds the next boot back while the GPU is held.
+    func guestDidRestart() {
+        switch phase {
+        case .keptRunning:
+            effects.setPageCacheTrimming(true)
+            effects.setBackgroundThrottle(true)
+        case .jobRunning:
+            // iOS already runs a continued task at background priority.
+            effects.setPageCacheTrimming(true)
+        case .foreground, .awaitingPictureInPicture, .quiesced:
+            break
         }
     }
 
@@ -360,6 +380,11 @@ final class BackgroundController {
     private func endKeptRunning() {
         effects.setBackgroundThrottle(false)
         effects.setPageCacheTrimming(false)
+    }
+
+    /// Quiesces with the whole of the edge budget, from now.
+    private func quiesce(reason: String) {
+        quiesce(reason: reason, until: DispatchTime.now() + Self.edgeBudget)
     }
 
     private func quiesce(reason: String, until deadline: DispatchTime) {

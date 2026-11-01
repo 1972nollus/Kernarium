@@ -4,8 +4,8 @@
 
 Weak compare-and-swap loops of every exclusive width, ordering and the pair
 forms make progress when the page they store to shares the target's TLB set,
-and when a copy-on-write break lands between the pair. The gadget engine also
-runs the loops with a store between the pair.
+and when a copy-on-write break lands between the pair. Both engines also run
+the loops with a store between the pair.
 """
 from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
@@ -25,7 +25,7 @@ def main() -> int:
         subject="exclusive progress",
         kernel_arguments=("ncpus=2", "panic=1"),
         engine=arguments.engine,
-        probe_arguments=("inside",) if arguments.engine == "gadgets" else (),
+        probe_arguments=("inside",),
         probe_timeout_seconds=60,
         command_timeout_seconds=100,
         pass_marker="UML_EXCLUSIVE_PROGRESS: PASS",

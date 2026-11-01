@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "../domain_heap.hpp"
 #include "page_index.hpp"
 
 #include <array>
@@ -8,6 +9,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <memory>
 #include <unordered_map>
@@ -20,11 +22,15 @@
 
 namespace uml::memory {
 
-/* Every native index is keyed by a host page or slot address. */
-using PageAddressSet = std::unordered_set<std::uintptr_t, PageAddressHash>;
+/* Every native index is keyed by a host page or slot address, and takes its
+ * nodes from the heap of the unit that owns it. */
+using PageAddressSet = std::unordered_set<std::uintptr_t, PageAddressHash,
+	std::equal_to<std::uintptr_t>, DomainAllocator<std::uintptr_t>>;
 template <typename Value>
 using PageAddressMap =
-	std::unordered_map<std::uintptr_t, Value, PageAddressHash>;
+	std::unordered_map<std::uintptr_t, Value, PageAddressHash,
+		std::equal_to<std::uintptr_t>,
+		DomainAllocator<std::pair<const std::uintptr_t, Value>>>;
 
 class NativeAddressSpace final {
 public:
@@ -66,6 +72,9 @@ public:
 		noexcept;
 	[[nodiscard]] std::size_t direct_mapping_count_for_testing() const
 		noexcept;
+	/* Whether a mapping's page copy is zero once the mapping is destroyed. */
+	[[nodiscard]] static bool mapping_clears_its_page_copy_for_testing()
+		noexcept;
 
 private:
 	struct BackingIdentity final {
@@ -94,8 +103,25 @@ private:
 		std::uint64_t offset;
 		int protection;
 		BackingIdentity identity;
+		/* A copy of the guest page as the shadow slot last agreed with its
+		 * backing. It dies with the mapping and takes nothing of a guest's
+		 * memory with it into freed heap, which a guest that restarts itself
+		 * hands to its successor in the same process. */
 		std::array<std::byte, 4096> original{};
 		bool loaded{};
+
+		~Mapping()
+		{
+			/* The copy holds guest data only once it is loaded. Darwin has
+			 * no explicit_bzero and exposes memset_s only for C11 Annex K;
+			 * the empty asm that reads the pointer and clobbers memory is
+			 * what stops the compiler from dropping the clear as a dead
+			 * store to a dying object. */
+			if (!loaded)
+				return;
+			std::memset(original.data(), 0, original.size());
+			__asm__ __volatile__("" : : "r"(original.data()) : "memory");
+		}
 	};
 	struct DirectMapping final {
 		int fd;
@@ -144,13 +170,19 @@ private:
 	int update_slot_protection_locked(std::uintptr_t slot);
 	[[nodiscard]] bool contains_shadow_locked(
 		std::uintptr_t address, std::uint64_t length) const;
+	/* Every index below takes its nodes from this heap, which retire() gives
+	 * back whole. It is declared first so that it outlives them. */
+	DomainHeap heap_;
 	mutable std::mutex mutex_;
-	PageAddressMap<Mapping> mappings_;
+	PageAddressMap<Mapping> mappings_{DomainAllocator<char>{&heap_}};
 	std::unordered_multimap<BackingPageKey, std::uintptr_t,
-		BackingPageKeyHash> backing_index_;
-	PageAddressMap<int> slot_protections_;
-	PageAddressSet materialized_slots_;
-	PageAddressMap<DirectMapping> direct_mappings_;
+		BackingPageKeyHash, std::equal_to<BackingPageKey>,
+		DomainAllocator<std::pair<const BackingPageKey, std::uintptr_t>>>
+		backing_index_{DomainAllocator<char>{&heap_}};
+	PageAddressMap<int> slot_protections_{DomainAllocator<char>{&heap_}};
+	PageAddressSet materialized_slots_{DomainAllocator<char>{&heap_}};
+	PageAddressMap<DirectMapping> direct_mappings_{
+		DomainAllocator<char>{&heap_}};
 	bool backing_index_ready_{};
 
 	/* Every software mapping of a guest page publishes its backing first, and
@@ -188,7 +220,7 @@ private:
 		return true;
 	}
 
-	PageAddressSet direct_slots_;
+	PageAddressSet direct_slots_{DomainAllocator<char>{&heap_}};
 	std::uint64_t ownership_id_{};
 	std::atomic_bool retired_{};
 };

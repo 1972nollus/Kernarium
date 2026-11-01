@@ -21,6 +21,7 @@ import pathlib
 import re
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -42,6 +43,7 @@ NEWC_MAGIC = b"070701"
 # framework binary identifies that build.
 AUTOMATION_SYMBOL = b"KERNARIUM_BOOT_PAYLOAD"
 AUTOMATION_BOOT_LINE = "Kernarium: automation boot with a "
+PAYLOAD_REMOVED_LINE = "Kernarium: removed the boot payload Documents/"
 RUNTIME_RESULT = re.compile(r"Kernarium: runtime returned (-?[0-9]+)")
 SESSION_EXIT = re.compile(r"UML_SESSION_EXIT:([0-9]+)")
 SYSTEMD_TARGET = re.compile(r"[A-Za-z0-9@_.:-]{1,121}\.target")
@@ -223,6 +225,21 @@ def require_automation_boot(transcript: str) -> None:
         guest.require_host_fast_paths(transcript)
     except RuntimeError as error:
         raise KernariumError(str(error)) from None
+
+
+def report_payload_removal(transcript: str, name: str) -> None:
+    """Warn when a launch that asked for the payload's removal left it.
+
+    A run is not judged by its cleanup, but a runtime that predates the
+    setting, or a refused unlink, leaves one payload per run on the device.
+    """
+    if PAYLOAD_REMOVED_LINE + name not in transcript:
+        print(
+            f"warning: the runtime did not remove Documents/{name}; see "
+            "the console for why",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def device_command(*arguments: str) -> list[str]:
@@ -420,17 +437,27 @@ def settings_for(
     cpus: int,
     memory_mib: int,
     engine: str,
+    remove_payload: bool = False,
     extra: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """The application settings for one run, without the child prefix."""
+    """The application settings for one run, without the child prefix.
+
+    ``remove_payload`` makes the runtime delete the payload once it has read
+    it, so only a launch that is the payload's one use may ask: a device
+    cannot remove a file for the host, and a second launch would find none.
+    """
     settings = {
         "KERNARIUM_ROOTFS": rootfs,
         "KERNARIUM_VCPU_COUNT": str(cpus),
         "KERNARIUM_GUEST_MEMORY_MIB": str(memory_mib),
         "KERNARIUM_EXECUTION_ENGINE": engine,
     }
+    if remove_payload and payload is None:
+        raise KernariumError("only a boot payload can be removed")
     if payload is not None:
         settings["KERNARIUM_BOOT_PAYLOAD"] = payload
+    if remove_payload:
+        settings["KERNARIUM_PAYLOAD_REMOVE"] = "1"
     if unit is not None:
         settings["KERNARIUM_SYSTEMD_UNIT"] = validate_systemd_target(unit)
     settings.update(extra or {})

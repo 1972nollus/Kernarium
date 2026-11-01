@@ -15,15 +15,22 @@
 
 namespace {
 
-constexpr uint32_t fourKiB = 4096U;
-
 std::mutex selectionMutex;
 std::atomic<const kernarium_runtime_api*> selectedApi;
-uint32_t selectedPageSize;
 uint32_t selectedFlavor;
 bool selectionAttempted;
+/* The selected runtime's automation extension (KernariumRuntime.h), or null:
+ * a release runtime does not export it. */
+int (*automationJobAtStart)(void);
 std::mutex consoleOutputHandlerMutex;
 KernariumConsoleOutputHandler consoleOutputHandler;
+/* The handler is read on the runtime's callback path, under the runtime's own
+ * lock, so it has a mutex of its own that is held only to copy it. Changing
+ * the registration, which takes the runtime's lock, is serialized by the
+ * other one, which the callback path never takes. */
+std::mutex restartHandlerMutex;
+std::mutex restartRegistrationMutex;
+KernariumRestartHandler restartHandler;
 
 void forwardConsoleOutput(
     void*,
@@ -53,6 +60,36 @@ void updateConsoleOutputForwarder(const kernarium_runtime_api* runtime)
         nullptr);
 }
 
+/* Runs on a runtime thread, inside the runtime's call, so it only hands the
+ * event to the main queue. */
+void forwardRestart(
+    void*,
+    uint32_t event,
+    uint32_t restartCount)
+{
+    KernariumRestartHandler handler;
+    {
+        std::lock_guard lock(restartHandlerMutex);
+        handler = restartHandler;
+    }
+    if (handler == nil)
+        return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        handler(event, restartCount);
+    });
+}
+
+void updateRestartForwarder(const kernarium_runtime_api* runtime)
+{
+    std::lock_guard registration(restartRegistrationMutex);
+    bool wanted;
+    {
+        std::lock_guard lock(restartHandlerMutex);
+        wanted = restartHandler != nil;
+    }
+    runtime->set_restart_callback(wanted ? forwardRestart : nullptr, nullptr);
+}
+
 [[noreturn]] void guestTimerMaskFailure() noexcept
 {
     static constexpr char message[] =
@@ -79,11 +116,6 @@ void blockGuestTimer() noexcept
 __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
 {
     blockGuestTimer();
-}
-
-[[nodiscard]] NSString* pageVariant(uint32_t guestPageSize)
-{
-    return guestPageSize == fourKiB ? @"4K" : nil;
 }
 
 /* The flavour leads the framework name. Linux additionally requires a numeric
@@ -119,7 +151,6 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
 
 [[nodiscard]] NSURL* findRuntimeFramework(
     NSString* prefix,
-    NSString* variant,
     uint32_t guestFlavor)
 {
     NSURL* frameworks = NSBundle.mainBundle.privateFrameworksURL;
@@ -140,12 +171,11 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         return nil;
     }
 
-    NSString* suffix = [NSString stringWithFormat:@"_%@.framework", variant];
     NSMutableArray<NSURL*>* matches = [NSMutableArray array];
     for (NSURL* candidate in contents) {
         NSString* name = candidate.lastPathComponent;
         if (matchesFlavor(name, prefix, guestFlavor) &&
-            [name hasSuffix:suffix])
+            [name hasSuffix:@"_4K.framework"])
             [matches addObject:candidate];
     }
     [matches sortUsingComparator:^NSComparisonResult(NSURL* first, NSURL* second) {
@@ -154,25 +184,25 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     if (matches.count != 1U) {
         std::fprintf(
             stderr,
-            "Kernarium: expected one embedded %s%s runtime framework, "
+            "Kernarium: expected one embedded %s4K runtime framework, "
             "found %lu\n",
             prefix.UTF8String,
-            variant.UTF8String,
             static_cast<unsigned long>(matches.count));
         return nil;
     }
     return matches.firstObject;
 }
 
+/* Every embedded runtime has 4 KiB guest pages; a framework that says
+ * otherwise is stale. */
 [[nodiscard]] bool validApi(
     const kernarium_runtime_api* api,
-    uint32_t guestFlavor,
-    uint32_t guestPageSize)
+    uint32_t guestFlavor)
 {
     if (api == nullptr ||
         api->abi_version != KERNARIUM_RUNTIME_API_VERSION ||
         api->struct_size < sizeof(kernarium_runtime_api) ||
-        api->guest_page_size != guestPageSize ||
+        api->guest_page_size != 4096U ||
         api->guest_flavor != guestFlavor ||
         api->run == nullptr ||
         api->request_stop == nullptr ||
@@ -186,23 +216,20 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->set_gpu_hold == nullptr ||
         api->set_frame_sink == nullptr ||
         api->set_background_throttle == nullptr ||
-        api->set_page_cache_trimming == nullptr) {
+        api->set_page_cache_trimming == nullptr ||
+        api->set_microphone == nullptr ||
+        api->set_restart_callback == nullptr) {
         std::fputs("Kernarium: runtime API validation failed\n", stderr);
         return false;
     }
     return true;
 }
 
-/* `prefix` and `variant` name the framework for `guestFlavor` and
- * `guestPageSize`; the caller has resolved both. The handle stays loaded for
- * the life of the process. */
-[[nodiscard]] int loadRuntime(
-    NSString* prefix,
-    NSString* variant,
-    uint32_t guestFlavor,
-    uint32_t guestPageSize)
+/* `prefix` names the framework for `guestFlavor`; the caller has resolved it.
+ * The handle stays loaded for the life of the process. */
+[[nodiscard]] int loadRuntime(NSString* prefix, uint32_t guestFlavor)
 {
-    NSURL* framework = findRuntimeFramework(prefix, variant, guestFlavor);
+    NSURL* framework = findRuntimeFramework(prefix, guestFlavor);
     NSBundle* bundle = framework == nil ? nil : [NSBundle bundleWithURL:framework];
     NSString* executable = bundle.executablePath;
     if (executable == nil) {
@@ -222,12 +249,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v12");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v14");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v12: %s\n",
+            "Kernarium: selected runtime lacks API v14: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;
@@ -235,18 +262,22 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     const auto getter = reinterpret_cast<
         const kernarium_runtime_api* (*)(void)>(symbol);
     const kernarium_runtime_api* api = getter();
-    if (!validApi(api, guestFlavor, guestPageSize)) {
+    if (!validApi(api, guestFlavor)) {
         (void)dlclose(handle);
         return -1;
     }
 
     updateConsoleOutputForwarder(api);
-    selectedPageSize = guestPageSize;
+    updateRestartForwarder(api);
+    /* Optional: only a runtime built for automation has it. */
+    automationJobAtStart = reinterpret_cast<int (*)(void)>(
+        dlsym(handle, "kernarium_runtime_automation_job_at_start"));
+    (void)dlerror();
     selectedFlavor = guestFlavor;
     selectedApi.store(api, std::memory_order_release);
     std::printf(
-        "Kernarium: loaded runtime with %u-byte guest pages\n",
-        api->guest_page_size);
+        "Kernarium: loaded runtime %s\n",
+        framework.lastPathComponent.UTF8String);
     return 0;
 }
 
@@ -257,31 +288,24 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
 
 } // namespace
 
-extern "C" int kernarium_runtime_loader_select(
-    uint32_t guestFlavor,
-    uint32_t guestPageSize)
+extern "C" int kernarium_runtime_loader_select(uint32_t guestFlavor)
 {
-    NSString* variant = pageVariant(guestPageSize);
     NSString* prefix = flavorPrefix(guestFlavor);
-    if (variant == nil || prefix == nil) {
+    if (prefix == nil) {
         std::fprintf(
             stderr,
-            "Kernarium: unsupported guest flavour %u or page size %u\n",
-            guestFlavor,
-            guestPageSize);
+            "Kernarium: unsupported guest flavour %u\n",
+            guestFlavor);
         return -1;
     }
 
     std::lock_guard lock(selectionMutex);
-    if (api() != nullptr) {
-        return selectedPageSize == guestPageSize &&
-                selectedFlavor == guestFlavor
-            ? 0 : -1;
-    }
+    if (api() != nullptr)
+        return selectedFlavor == guestFlavor ? 0 : -1;
     if (selectionAttempted)
         return -1;
     selectionAttempted = true;
-    return loadRuntime(prefix, variant, guestFlavor, guestPageSize);
+    return loadRuntime(prefix, guestFlavor);
 }
 
 extern "C" int kernarium_runtime_loader_run(
@@ -352,6 +376,12 @@ extern "C" int kernarium_runtime_loader_set_page_cache_trimming(int enabled)
     return runtime == nullptr ? -1 : runtime->set_page_cache_trimming(enabled);
 }
 
+extern "C" int kernarium_runtime_loader_set_microphone(int enabled)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ? -1 : runtime->set_microphone(enabled);
+}
+
 extern "C" void kernarium_runtime_loader_send_touch(
     uint32_t x,
     uint32_t y,
@@ -379,6 +409,25 @@ extern "C" void kernarium_runtime_loader_set_console_output_handler(
     const kernarium_runtime_api* runtime = api();
     if (runtime != nullptr)
         updateConsoleOutputForwarder(runtime);
+}
+
+extern "C" void kernarium_runtime_loader_set_restart_handler(
+    KernariumRestartHandler handler)
+{
+    {
+        std::lock_guard lock(restartHandlerMutex);
+        restartHandler = [handler copy];
+    }
+    const kernarium_runtime_api* runtime = api();
+    if (runtime != nullptr)
+        updateRestartForwarder(runtime);
+}
+
+extern "C" int kernarium_runtime_loader_automation_job_at_start(void)
+{
+    return api() != nullptr && automationJobAtStart != nullptr
+        ? automationJobAtStart()
+        : 0;
 }
 
 extern "C" int kernarium_runtime_loader_send_console_input(

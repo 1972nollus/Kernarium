@@ -136,7 +136,7 @@ public:
 class JitBlockPublication final {
 public:
   [[gnu::always_inline]] explicit JitBlockPublication(
-      JitStoreParticipant &participant, const CpuState &cpu) noexcept
+      JitStoreParticipant &participant) noexcept
       : participant_{participant} {
     current_jit_store_participant = &participant_;
     participant_.state().store(JitStoreState::checking,
@@ -168,13 +168,11 @@ public:
         }
       } while (jit_exclusive_operation_is_active(phase));
     }
-    const auto active =
-        active_jit_reservations.load(std::memory_order_seq_cst);
+    /* Every vCPU's store tracks while any vCPU holds a reservation, the
+     * holder's own included: its store to the reserved granule must fail
+     * its store-exclusive, and one to any other granule must not. */
     tracked_ =
-        active != 0 &&
-        (active != 1 ||
-         participant_.reservation_cpu.load(std::memory_order_seq_cst) !=
-             &cpu);
+        active_jit_reservations.load(std::memory_order_seq_cst) != 0;
     participant_.state().store(tracked_ ? JitStoreState::tracked
                                       : JitStoreState::direct,
                              std::memory_order_seq_cst);

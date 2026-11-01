@@ -295,7 +295,9 @@ records, and appends them, so the steps run in one order, followed by one
 `--repack`: [LSE2 alignment](#lse2-alignment-cases),
 [absent features](#absent-feature-cases), [native SME](#native-sme-cases),
 [native floating-point trap](#native-floating-point-trap-cases),
-[SM = 0 family](#sm--0-family-cases), [16 KiB retirement](#16-kib-retirement),
+[SM = 0 family](#sm--0-family-cases),
+[top-byte-ignore memory](#top-byte-ignore-memory-cases),
+[16 KiB retirement](#16-kib-retirement),
 and [invalid-encoding bits](#invalid-encoding-bits). A
 hardware step's `--carry PACK` copies the pack's records for a request that
 is unchanged, so a regeneration that changes no request needs no host. The
@@ -523,7 +525,7 @@ python3 -B tools/arm64-tests/floating-trap-native-corpus.py native.jsonl \
   trap.jsonl --response trap.response --response trap.response2
 ```
 
-The SM = 0 family step below follows on `trap.jsonl` before the repack.
+The SM = 0 family step below follows on `trap.jsonl`.
 
 The cases that need FEAT_AFP or FEAT_BF16, which the M1 lacks, form a second
 request, which `--afp-request` writes and an FEAT_AFP and FEAT_BF16 host, the
@@ -595,20 +597,118 @@ python3 -B tools/arm64-tests/sm0-vl-corpus.py trap.jsonl sm0-vl.jsonl
 `arm64-instruction-corpus-sm0-vl` tooling test re-derives the record and checks
 the model against hand-written values.
 
+## Top-byte-ignore memory cases
+
+With top-byte ignore (TBI) a data address's top byte is not part of the
+address, whatever register is the base: a pointer tagged in bits 63:56 reaches
+the byte its low 56 bits name, a fault reports that untagged address, the base
+register keeps its tag, also across a writeback, and the exclusive monitor,
+which guards a location and not a pointer, does not see the tag. Android runs
+every process this way, and the virtual CPU does unless the host passes
+`--guest-no-top-byte-ignore` (`CpuState::tbi_enabled`); with it a tagged
+pointer is an address outside the guest's range and faults at that pointer.
+[`tools/arm64-tests/tbi-memory-corpus.py`](../../../../tools/arm64-tests/tbi-memory-corpus.py)
+holds the cases in sections, one per family of memory forms, and writes two
+kinds of record.
+
+The `arm64-tbi-memory` record holds the atomic, ordered and exclusive forms.
+Its expectations come from the architecture's pseudocode, written
+independently of the engines. Every case reaches memory through a tagged base
+register, with tag bytes from a fixed rotation, and each family is a section
+of the script with functions of its own:
+
+- atomic read-modify-write: LDADD, LDCLR, LDEOR, LDSET, LDSMAX, LDSMIN, LDUMAX,
+  LDUMIN and SWP in every width and ordering, with the source and the result
+  each a register or the zero register, and the misaligned access across a
+  16-byte block, which faults on every host with or without FEAT_LSE2;
+- CAS and CASP, matching and not, in every width, ordering and register mode,
+  and across a block;
+- LDAR and STLR, LDAPR, LDAPUR with every extension and offsets of both signs,
+  and STLUR, completing and across a block;
+- LDXR, LDAXR, STXR, STLXR and the pair forms, paired so that every load form
+  and store form is some program's, the monitor across pointers that differ
+  only in the tag or in having none, a store-exclusive with no load before it,
+  and the forms across a block;
+- translation faults of a tagged access to an unmapped page and to a read-only
+  page, which report the untagged address, and the controls with TBI off, where
+  the same pointer faults at the pointer, aligned or across a block.
+
+An atomic, ordered, RCpc or exclusive access that crosses a 16-byte block
+faults before it translates, so these cases pin the fault address the gadget
+engine reports for a misaligned tagged access: the untagged address, as a
+translation fault reports. A store-exclusive to an unmapped or read-only page
+is not here, because the architecture leaves it IMPLEMENTATION DEFINED whether
+the abort or the failed monitor check comes first. A completed access cannot
+show which TLB key an engine filled; the `arm64-tlb` test and the
+`guest_tagged_*_loop.S` probes
+([performance tools](../../perf/README.md#focused-assembly-probes)) own that.
+
+The equivalence section writes the `arm64-tbi-equivalence` records. Each case
+is an existing corpus case that reaches memory through an untagged base
+register (a single instruction, or a straight run of them off one base),
+rerun with the base tagged by a fixed rotation of tag bytes. Its expectations
+are the source's, whose goldens come from the architecture's pseudocode or
+the hardware, with the one change TBI makes: a writeback adds to the tagged
+register. The sources are the loads and stores of general and SIMD&FP
+registers, every addressing mode, the pairs, the structure loads and stores,
+DC ZVA, and the SVE and SME memory forms, whose cases keep their record's
+options and SVL (`svl=64`) and their native SME requirements, so a host
+without SME skips them. A class of sources by instruction shape, base-register
+range, event and record contributes its first, its last and an even spread
+between. The section derives four more families from sources of a shape that
+allows them:
+
+- the register-offset forms with the tag in the index register, and with the
+  sum of a base a page below the top of the 56-bit range and an index
+  carrying into the tag byte, for every extension and scaling;
+- the source rewritten to name SP, with SP tagged, where it completes as the
+  source did;
+- the TBI-off controls, where the same tagged pointer, SP or not, faults at
+  the pointer and nothing moves; and
+- no case of the exclusive, atomic, compare-and-swap, ordered and RCpc forms,
+  which the `arm64-tbi-memory` record holds, or of MOPS, which updates its
+  registers in place; a misaligned SP is not a source, since the architecture
+  does not say whether its fault reports the tag.
+
+A case name is its source's with ` [tbi VARIANT 0xTAG]` appended, which is what
+the tooling test follows to the source.
+
+The step needs no hardware and appends after the SM = 0 family step. It
+reruns after any change to the script, on the previous step's dump or the
+pack's own `--dump`:
+
+```sh
+python3 -B tools/arm64-tests/tbi-memory-corpus.py sm0-vl.jsonl tbi-memory.jsonl
+```
+
+Its records hold 4 KiB only, so the retirement step keeps them all. Run on the
+pack's own dump, which is already retired, go straight to the
+[invalid-encoding step](#invalid-encoding-bits): retiring again would replace
+the recorded retirement counts with zeros.
+
+`provenance.json` records the script's hash and the case counts under
+`tbi_memory`; `build-unit-corpus.py --check` verifies the hash. The
+`arm64-instruction-corpus-tbi-memory` tooling test re-derives the
+`arm64-tbi-memory` record and checks the model against hand-written values,
+and the `arm64-instruction-corpus-tbi-equivalence` tooling test re-derives
+each equivalence case from its source in the pack, checks the helpers against
+hand-written words and values, and checks that a case with TBI on has a
+tagged base and no tagged fault address.
+
 ## 16 KiB retirement
 
 The guest has 4 KiB pages only, but the producer export ran both page
 profiles. [`tools/arm64-tests/retire-16k-corpus.py`](../../../../tools/arm64-tests/retire-16k-corpus.py)
-rewrites the SM = 0 step's dump: a record for both profiles becomes a record
-for 4 KiB, and a record for 16 KiB alone is deleted. A deleted case whose
-entry word no 4 KiB case executes is relocated into the 4 KiB code page and
-carried, so the pack's encodings do not shrink, only its page-geometry cases;
-the script's docstring owns the placement rules, and the runner executes a
-carried case like any other. The step needs no hardware and appends before the
-invalid-encoding step:
+rewrites the top-byte-ignore memory step's dump: a record for both profiles
+becomes a record for 4 KiB, and a record for 16 KiB alone is deleted. A
+deleted case whose entry word no 4 KiB case executes is relocated into the
+4 KiB code page and carried, so the pack's encodings do not shrink, only its
+page-geometry cases; the script's docstring owns the placement rules, and the
+runner executes a carried case like any other. The step needs no hardware and
+appends before the invalid-encoding step:
 
 ```sh
-python3 -B tools/arm64-tests/retire-16k-corpus.py sm0-vl.jsonl retired.jsonl
+python3 -B tools/arm64-tests/retire-16k-corpus.py tbi-memory.jsonl retired.jsonl
 ```
 
 `provenance.json` records the script hash and the counts under `retired_16k`.

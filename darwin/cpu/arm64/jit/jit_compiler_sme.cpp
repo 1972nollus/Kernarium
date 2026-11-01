@@ -293,14 +293,9 @@ void JitCompiler::emit_sme_array_vector(std::uint32_t instruction,
   const auto fault =
       cold_exit(instruction, pc, ColdPath::Action::memory_fault);
   load_gpr(8, base, true);
-  /* A misaligned SP and a tagged address take the helper, which reports
-   * the alignment fault or untags the address. */
-  if (base == 31U) {
+  /* A misaligned SP takes the helper, which reports the alignment fault. */
+  if (base == 31U)
     emit_misalignment_check(8, 16, slow);
-  } else {
-    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-    emitter_.compare_zero(slow, 0, false, true);
-  }
   const bool streaming = streaming_translation();
   load_vector_length(emitter_, streaming, 1);
   if (offset != 0U) {
@@ -311,6 +306,7 @@ void JitCompiler::emit_sme_array_vector(std::uint32_t instruction,
       emitter_.emit(multiply_add(8, 1, 2, 8));
     }
   }
+  emit_untag_data_address(8);
   /* The vector's SVL bytes must lie in one page: SVL is below a page, so
    * the page bit of (address & page_mask) + SVL - 1 is the test. A
    * crossing vector takes the helper, which translates both pages first. */
@@ -349,8 +345,6 @@ void JitCompiler::emit_sme_array_vector(std::uint32_t instruction,
     emitter_.subtract_immediate(10, 10, 16);
     emitter_.compare_zero(loop, 10, true, true);
   }
-  if (!load)
-    clear_local_exclusive_monitor();
 }
 
 void JitCompiler::emit_sme_zt0_address() {
@@ -371,12 +365,9 @@ void JitCompiler::emit_sme_zt0_transfer(std::uint32_t instruction,
   const auto fault =
       cold_exit(instruction, pc, ColdPath::Action::memory_fault);
   load_gpr(8, base, true);
-  if (base == 31U) {
+  if (base == 31U)
     emit_misalignment_check(8, 16, slow);
-  } else {
-    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-    emitter_.compare_zero(slow, 0, false, true);
-  }
+  emit_untag_data_address(8);
   emit_translate(8, load ? Access::read : Access::write, slow, fault,
                  sme_zt0_bytes);
   if (!load)
@@ -390,8 +381,6 @@ void JitCompiler::emit_sme_zt0_transfer(std::uint32_t instruction,
       emitter_.emit(pair_post_index(false, load ? 9U : 8U));
     }
   }
-  if (!load)
-    clear_local_exclusive_monitor();
 }
 
 std::optional<JitCompiler::StreamingWord>
@@ -723,9 +712,9 @@ bool JitCompiler::emit_streaming_memory(const detail::SmeEncoding &row,
    * The guest address is in x8. When every byte the access can span,
    * whichever elements are active, lies in one guest page that the TLB
    * holds, the guest's own word runs on the host address with its offset
-   * zeroed. A crossing, a miss, a misaligned SP base or a tagged base
-   * takes the helper, which alone knows which elements are active, so a
-   * failed translation goes there too rather than to a fault exit.
+   * zeroed. A crossing, a miss or a misaligned SP base takes the helper,
+   * which alone knows which elements are active, so a failed translation
+   * goes there too rather than to a fault exit.
    */
   using Shape = detail::SmeMemoryShape;
   const auto &memory = *detail::sme_encoding_memory_of(row);
@@ -767,12 +756,8 @@ bool JitCompiler::emit_streaming_memory(const detail::SmeEncoding &row,
     mark_direct_memory_write();
   const auto slow = cold_exit(instruction, pc, ColdPath::Action::sme_slow);
   load_gpr(8, base, true);
-  if (base == 31U) {
+  if (base == 31U)
     emit_misalignment_check(8, 16, slow);
-  } else {
-    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-    emitter_.compare_zero(slow, 0, false, true);
-  }
   if (!constant_span)
     emit_memory_span(memory, instruction, 10);
   switch (memory.offset) {
@@ -811,6 +796,7 @@ bool JitCompiler::emit_streaming_memory(const detail::SmeEncoding &row,
   case detail::SmeAddressOffset::register_byte:
     break;
   }
+  emit_untag_data_address(8);
   if (constant_span) {
     emit_translate(8, access, slow, slow, constant_bytes);
   } else {
@@ -849,8 +835,6 @@ bool JitCompiler::emit_streaming_memory(const detail::SmeEncoding &row,
     place(slice_operand->segments[1].low, slice_operand->segments[1].width, 0);
   }
   emitter_.emit(word);
-  if (store)
-    clear_local_exclusive_monitor();
   return true;
 }
 
@@ -861,8 +845,8 @@ bool JitCompiler::emit_streaming_fp_memory(std::uint32_t instruction,
    * resident Z registers: when the bytes it moves lie in one guest page
    * the TLB holds, the unsigned-offset (or pair offset) form of the word
    * runs on the host address in x8 and the guest's writeback follows. A
-   * crossing, a miss, a misaligned SP base or a tagged base takes the
-   * helper, as the vector memory forms do.
+   * crossing, a miss or a misaligned SP base takes the helper, as the
+   * vector memory forms do.
    */
   const auto decoded = jit::decode_streaming_fp_memory(instruction);
   if (!decoded || detail::classify_fp_simd_streaming(instruction) !=
@@ -880,12 +864,8 @@ bool JitCompiler::emit_streaming_fp_memory(std::uint32_t instruction,
         8, pc + static_cast<std::uint64_t>(memory.immediate));
   } else {
     load_gpr(8, memory.base, true);
-    if (memory.base == 31U) {
+    if (memory.base == 31U)
       emit_misalignment_check(8, 16, slow);
-    } else {
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
-    }
     if (memory.mode == Mode::register_offset) {
       /* ADD x8, x8, Rm, <extend> #shift; XZR reads as zero. */
       const auto index = read_native_gpr(memory.index, false, 9);
@@ -906,6 +886,7 @@ bool JitCompiler::emit_streaming_fp_memory(std::uint32_t instruction,
           emitter_.add_immediate(8, 8, part, high);
       }
     }
+    emit_untag_data_address(8);
   }
   emit_translate(8, access, slow, slow, bytes);
   if (!memory.load)
@@ -927,8 +908,6 @@ bool JitCompiler::emit_streaming_fp_memory(std::uint32_t instruction,
     word = (size << 30) | 0x3d00'0000U | (opc << 22) | (8U << 5) | rt;
   }
   emitter_.emit(word);
-  if (!memory.load)
-    clear_local_exclusive_monitor();
   if ((memory.mode == Mode::pre_index || memory.mode == Mode::post_index) &&
       memory.immediate != 0) {
     const auto base = write_native_gpr(memory.base, true, true, 9);

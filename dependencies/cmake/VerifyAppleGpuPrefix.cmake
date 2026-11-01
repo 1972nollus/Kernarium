@@ -122,12 +122,6 @@ file(STRINGS "${_receipt}" _receipt_rows)
 set(_receipt_fields
     format product platform sdk_name sdk_version sdk_path compiler
     built_at_utc venus_protocol_generated_sha256)
-# Receipts written before these four fields were dropped still carry them.
-# Nothing reads them: the manifest rows, source trees, and platform contract
-# above identify what a prefix was built from.
-set(_receipt_known_fields ${_receipt_fields}
-    source_manifest_sha256 platform_contract_sha256
-    mesa_base_commit vulkan_headers_base_commit)
 # A row is a field and its value, with no list separator in either. Each field
 # is known and appears once; _receipt_value_<field> holds its value.
 foreach(_row IN LISTS _receipt_rows)
@@ -140,7 +134,7 @@ foreach(_row IN LISTS _receipt_rows)
     endif()
     set(_field "${CMAKE_MATCH_1}")
     set(_value "${CMAKE_MATCH_2}")
-    list(FIND _receipt_known_fields "${_field}" _field_index)
+    list(FIND _receipt_fields "${_field}" _field_index)
     if(_field_index EQUAL -1 OR DEFINED _receipt_value_${_field})
         message(FATAL_ERROR
             "Unexpected or duplicate Apple GPU receipt field: ${_field}")

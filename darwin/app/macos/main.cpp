@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "audio/in_process_service.hpp"
+#include "audio/microphone_switch.hpp"
 #include "audio/protocol.hpp"
 #include "balloon/in_process_service.hpp"
 #include "balloon/protocol.hpp"
@@ -7,6 +8,7 @@
 #include "battery/protocol.hpp"
 #include "video/in_process_service.hpp"
 #include "video/virtio_video_device.hpp"
+#include "video/virtio_video_encoder_device.hpp"
 #include "console/in_process_service.hpp"
 #include "console/protocol.hpp"
 #include "gpu/in_process_service.hpp"
@@ -15,6 +17,8 @@
 #include "gpu/protocol.hpp"
 #include "launcher.hpp"
 #include "guest_memory_argument.hpp"
+#include "platform/microphone_authorization.hpp"
+#include "restart_loop_guard.hpp"
 #include "sockets/socket_paths.hpp"
 #include "uml/emulator.h"
 #if UML_APP_HAS_SLIRP
@@ -22,6 +26,7 @@
 #endif
 
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <charconv>
 #include <csignal>
@@ -37,6 +42,9 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include <mach/arm/thread_status.h>
@@ -45,9 +53,9 @@
 
 extern "C" {
 extern const unsigned char uml_elf_start[]
-	__asm("section$start$__DATA$__uml_elf");
+	__asm("section$start$__TEXT$__uml_elf");
 extern const unsigned char uml_elf_end[]
-	__asm("section$end$__DATA$__uml_elf");
+	__asm("section$end$__TEXT$__uml_elf");
 }
 
 namespace {
@@ -101,6 +109,29 @@ public:
 #else
 		(void)specification;
 		return -ENOTSUP;
+#endif
+	}
+
+	/* The link goes down with the guest that used it: its connections end,
+	 * as they would if the cable were pulled, and a connection the guest
+	 * never closed does not keep the host side open for the next guest. The
+	 * new link is up at once, so the host forwards listen again while the
+	 * next guest boots; the guest's own open() then finds it open. The
+	 * provider replays the recorded forwards onto the new instance and keeps
+	 * the descriptors the guest's IRQ registration borrows. */
+	void reset_link() noexcept
+	{
+#if UML_APP_HAS_SLIRP
+		if (context_ == nullptr)
+			return;
+		uml_slirp_net_stop(context_);
+		unsigned char mac[6]{};
+		unsigned int mtu{};
+		if (const int opened = uml_slirp_net_open(context_, mac, &mtu);
+		    opened < 0)
+			std::fprintf(stderr,
+				"Unable to bring the user network up again: %d\n",
+				opened);
 #endif
 	}
 
@@ -211,6 +242,21 @@ void install_host_faults()
 			std::abort();
 }
 
+/* A write to a socket whose peer has gone must fail with EPIPE, not kill the
+ * process. The guest's kernel ignores SIGPIPE while it runs, but the library
+ * hands the host's own disposition back when a run ends, so a launcher that
+ * left it at the default would lose the process to the first host socket
+ * written between two boots (libslirp writes its sockets with plain send()).
+ * Set before the first run, it is the disposition every later run returns to. */
+void ignore_broken_pipes()
+{
+	struct sigaction action {};
+	action.sa_handler = SIG_IGN;
+	sigemptyset(&action.sa_mask);
+	if (sigaction(SIGPIPE, &action, nullptr) < 0)
+		std::abort();
+}
+
 /* Metal reads the whole index of the process's shader cache at its first
  * compile, and conformance campaigns grow that index without bound. Cache the
  * guest's shaders only while the index is small; a removal is the only event
@@ -252,17 +298,59 @@ struct HostGpuOptions {
 	std::uint32_t width {1280};
 	std::uint32_t height {720};
 	std::uint32_t dots_per_inch {};
+
+	[[nodiscard]] bool operator==(const HostGpuOptions &) const = default;
 };
 
 struct PreparedArguments {
 	HostGpuOptions gpu;
 	bool audio {};
+	uml::audio::OutputMode audio_output {uml::audio::OutputMode::host};
+	bool audio_input_host {};
 	bool battery {};
 	bool video {};
+	bool video_encoder {};
 	std::string console_socket;
 	std::string serial_socket;
 	std::vector<std::string> net_forwards;
 	std::vector<std::string> kernel;
+
+	/* Whether `other` gives the emulator the same machine: the arguments it
+	 * reads for the vCPU count, the guest memory, the engine and the JIT and
+	 * gadget cache budgets. The budgets are published once per process and a
+	 * restarted run asks for the value the first did. */
+	[[nodiscard]] bool same_machine(const PreparedArguments &other) const
+	{
+		const auto machine = [](const std::vector<std::string> &arguments) {
+			std::vector<std::string> selected;
+			for (const auto &argument : arguments)
+				for (const std::string_view prefix : {
+					     "ncpus=", "mem=", "--execution-engine",
+					     "--jit", "--gadget-", "--guest-",
+					     "--memory-limit="})
+					if (argument.starts_with(prefix)) {
+						selected.push_back(argument);
+						break;
+					}
+			return selected;
+		};
+		return machine(kernel) == machine(other.kernel);
+	}
+
+	/* Whether `other` asks for the same host devices. A guest that restarts
+	 * keeps the devices the first boot created once (the display, the
+	 * network, the forwards) and only its kernel arguments may differ. */
+	[[nodiscard]] bool same_host_devices(
+		const PreparedArguments &other) const
+	{
+		return std::tie(gpu, audio, audio_output, audio_input_host, battery,
+				video, video_encoder, console_socket, serial_socket,
+				net_forwards) ==
+			std::tie(other.gpu, other.audio, other.audio_output,
+				 other.audio_input_host, other.battery, other.video,
+				 other.video_encoder, other.console_socket,
+				 other.serial_socket, other.net_forwards);
+	}
 };
 
 void append_default_kernel_argument(std::vector<std::string> &arguments,
@@ -327,10 +415,30 @@ PreparedArguments prepare_host_arguments(
 			prepared.gpu.enabled = true;
 		} else if (argument == "--audio") {
 			prepared.audio = true;
+		} else if (valued("--audio-output=")) {
+			if (value == "host")
+				prepared.audio_output = uml::audio::OutputMode::host;
+			else if (value == "null")
+				prepared.audio_output = uml::audio::OutputMode::null;
+			else
+				throw std::invalid_argument(
+					"--audio-output must be host or null");
+			prepared.audio = true;
+		} else if (valued("--audio-input=")) {
+			if (value == "silent")
+				prepared.audio_input_host = false;
+			else if (value == "host")
+				prepared.audio_input_host = true;
+			else
+				throw std::invalid_argument(
+					"--audio-input must be silent or host");
+			prepared.audio = true;
 		} else if (argument == "--battery") {
 			prepared.battery = true;
 		} else if (argument == "--video") {
 			prepared.video = true;
+		} else if (argument == "--video-encoder") {
+			prepared.video_encoder = true;
 		} else if (valued("--virtio-console-socket=")) {
 			set_socket_path(prepared.console_socket,
 					"--virtio-console-socket", value);
@@ -473,6 +581,445 @@ bool informational_option(std::string_view argument)
 		argument == "--showconfig";
 }
 
+using VirtioService = std::unique_ptr<uml::gpu::InProcessVhostUserService>;
+
+/* The Virtio services that belong to one boot. The guest they serve is gone
+ * once its kernel returns, so a restarted guest is given fresh ones. */
+struct BootServices final {
+	VirtioService battery;
+	VirtioService balloon;
+	VirtioService video;
+	VirtioService video_encoder;
+	VirtioService audio;
+	/* The guest records silence unless the user asked for the host's
+	 * microphone; the switch ends with the boot's audio service. */
+	std::shared_ptr<uml::audio::MicrophoneSwitch> microphone;
+	VirtioService console;
+
+	void stop() noexcept
+	{
+		if (audio)
+			audio->stop();
+		if (battery)
+			battery->stop();
+		if (video)
+			video->stop();
+		if (video_encoder)
+			video_encoder->stop();
+		if (console)
+			console->stop();
+		if (balloon)
+			balloon->stop();
+	}
+};
+
+/* One launch: the machine and the boots of its guest.
+ *
+ * The machine is what a guest that restarts itself keeps: the emulator
+ * handle, the user network with the forwards it was asked for, and the GPU
+ * service with the display it owns (the VNC listener and its clients, or the
+ * native window). It is created once. A boot is what the restarted guest does
+ * not keep: the Virtio services, the guest's connection to the GPU, and the
+ * kernel command line that names them. Every boot creates its own, and the
+ * boots follow each other in one process until the guest powers off, is
+ * stopped, fails, or restarts early too often. */
+class Launch final {
+public:
+	Launch(const uml::app::LaunchConfiguration &configuration,
+	       PreparedArguments prepared, bool information_only, char *envp[])
+		: configuration_(configuration), prepared_(std::move(prepared)),
+		  information_only_(information_only)
+	{
+		for (auto entry = envp; entry != nullptr && *entry != nullptr; ++entry)
+			environment_.push_back(*entry);
+		environment_.push_back(nullptr);
+	}
+
+	/* Creates the machine. False, with the reason on stderr, when that
+	 * fails. */
+	[[nodiscard]] bool create()
+	{
+		if (user_network_enabled()) {
+			try {
+				network_ = std::make_unique<AppNetwork>();
+				network_callbacks_ = network_->callbacks();
+			} catch (const std::exception &error) {
+				std::fprintf(stderr, "Unable to create user network: %s\n",
+					error.what());
+				return false;
+			}
+			for (const auto &specification : prepared_.net_forwards) {
+				if (network_->forward(specification) == 0)
+					continue;
+				std::fprintf(stderr,
+					"Unable to accept --net-forward=%s\n",
+					specification.c_str());
+				return false;
+			}
+		} else if (!prepared_.net_forwards.empty()) {
+			std::fputs("--net-forward requires the user network\n", stderr);
+			return false;
+		}
+
+		const uml_emulator_config config{
+			.abi_version = UML_EMULATOR_ABI_VERSION,
+			.struct_size = sizeof(uml_emulator_config),
+			.rootfs_path = configuration_.rootfs_path,
+			.kernel_image = uml_elf_start,
+			.kernel_image_size = static_cast<std::size_t>(
+				uml_elf_end - uml_elf_start),
+			.network = network_ ? &network_callbacks_ : nullptr,
+		};
+		uml_emulator *created = nullptr;
+		const int create_result = uml_emulator_create(&config, &created);
+		if (create_result != UML_EMULATOR_OK) {
+			std::fprintf(stderr, "Unable to create UML emulator: %d\n",
+				create_result);
+			return false;
+		}
+		emulator_.reset(created);
+		/* GPU memory is charged to the process like guest RAM, so the GPU may
+		 * use at most half of the guest's allocation and the balloon takes
+		 * what it uses out of the guest. */
+		guest_memory_ =
+			uml::emulator::configured_guest_memory_bytes(prepared_.kernel);
+		device_memory_limit_ = guest_memory_ / 2;
+		if (prepared_.gpu.enabled && !information_only_) {
+			if (has_virtio_device_argument(
+				prepared_.kernel, uml::gpu::protocol::virtioGpuDeviceId)) {
+				std::fputs("--gpu cannot be combined with an explicit "
+					   "Virtio-GPU transport argument\n",
+					   stderr);
+				return false;
+			}
+			try {
+				gpu_service_ =
+					std::make_unique<uml::gpu::InProcessGpuService>(
+						uml::gpu::InProcessGpuOptions{
+							.displayMode = prepared_.gpu.display_mode,
+							.vncBindAddress =
+								prepared_.gpu.vnc_bind_address,
+							.vncPort = prepared_.gpu.vnc_port,
+							.vncPassword =
+								prepared_.gpu.vnc_password,
+							.width = prepared_.gpu.width,
+							.height = prepared_.gpu.height,
+							.dotsPerInch =
+								prepared_.gpu.dots_per_inch,
+							.pointerMode = configuration_.input_mode !=
+									uml::app::DisplayInput::mouse ?
+								uml::input::vnc::PointerMode::touchscreen :
+								uml::input::vnc::PointerMode::mouse,
+							.autoResizeGuest =
+								prepared_.gpu.auto_resize_guest,
+							.sharedMemoryRegions =
+								shared_memory_regions_,
+							.deviceMemoryLimit =
+								device_memory_limit_,
+						});
+			} catch (const std::exception &error) {
+				std::fprintf(stderr,
+					"Unable to start in-process Virtio-GPU: %s\n",
+					error.what());
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/* Whether the guest's window, if it has one, wants the guest to stop. */
+	[[nodiscard]] bool native_display() const noexcept
+	{
+		return prepared_.gpu.enabled &&
+			prepared_.gpu.display_mode == uml::gpu::DisplayMode::native;
+	}
+
+	/* Ends the run in progress, and every boot after it. May be called from
+	 * any thread. A stop request made while no run is active is not inherited
+	 * by the next one, so the loop also keeps the request itself. */
+	void request_stop() noexcept
+	{
+		stop_requested_.store(true, std::memory_order_release);
+		uml_emulator_request_stop(emulator_.get());
+	}
+
+	/* Boots the guest, and boots it again each time it restarts itself,
+	 * until it powers off, is stopped, fails to run, or the loop guard ends
+	 * the loop. Returns the exit status of the launch. */
+	[[nodiscard]] int run()
+	{
+		uml::emulator::RestartLoopGuard guard;
+		std::vector<std::string> base_kernel = prepared_.kernel;
+		unsigned restarts = 0;
+		for (;;) {
+			std::vector<std::string> kernel = base_kernel;
+			if (!start_boot(kernel, restarts != 0))
+				return 1;
+			std::vector<const char *> arguments;
+			arguments.reserve(kernel.size());
+			for (const auto &argument : kernel)
+				arguments.push_back(argument.c_str());
+			guard.boot_started(uml::emulator::RestartLoopGuard::Clock::now());
+			/* A stop that came between two boots was dropped by the handle. */
+			if (stop_requested_.load(std::memory_order_acquire))
+				return 0;
+			int status = enter(arguments);
+			/* The library refuses to take a restarted guest back while a
+			 * kernel thread of the old one is still ending, and changes
+			 * nothing when it does. */
+			for (unsigned attempt = 1;
+			     restarts != 0 && status == -UML_EMULATOR_RUNTIME_ERROR &&
+			     attempt <= uml::emulator::restart_run_retries &&
+			     !stop_requested_.load(std::memory_order_acquire);
+			     ++attempt) {
+				std::fprintf(stderr,
+					"The restarted guest is not handed back yet; trying "
+					"again (%u of %u)\n", attempt,
+					uml::emulator::restart_run_retries);
+				std::this_thread::sleep_for(
+					uml::emulator::restart_run_retry_delay);
+				status = enter(arguments);
+			}
+			uml_emulator_run_end end{.struct_size = sizeof(end)};
+			const bool known =
+				uml_emulator_get_run_end(emulator_.get(), &end) ==
+				UML_EMULATOR_OK;
+			if (restarts != 0 && status < 0) {
+				std::fprintf(stderr,
+					"Unable to boot the restarted guest: %d\n", status);
+				return 1;
+			}
+			if (!known || end.kind != UML_EMULATOR_RUN_END_RESTART)
+				return status;
+			/* The guest restarted as the user quit: the quit wins, and is
+			 * a clean stop whatever status the restart carried. */
+			if (stop_requested_.load(std::memory_order_acquire))
+				return 0;
+			/* The guest is gone: its services stop before the library hands
+			 * its RAM back to the process, and its connections end with its
+			 * network link. */
+			services_.stop();
+			if (network_)
+				network_->reset_link();
+			if (!guard.may_restart(
+				    uml::emulator::RestartLoopGuard::Clock::now())) {
+				std::fprintf(stderr,
+					"The guest restarted %u times in a row within %lld s "
+					"of booting; not booting it again (status %d)\n",
+					guard.early_restarts(),
+					static_cast<long long>(
+						uml::emulator::early_restart_window.count()),
+					uml::emulator::early_restart_exit_status);
+				return uml::emulator::early_restart_exit_status;
+			}
+			++restarts;
+			end.restart_command[sizeof(end.restart_command) - 1U] = '\0';
+			std::fprintf(stderr,
+				"guest restarting (command '%s', restart %u)\n",
+				uml::emulator::printable_restart_command(
+					end.restart_command).c_str(),
+				restarts);
+			if (configuration_.restart_command_line &&
+			    !take_restart_command_line(base_kernel))
+				return 1;
+		}
+	}
+
+	/* Ends the launch: the network first, then what the boot left. */
+	void finish() noexcept
+	{
+		if (network_)
+			network_->shutdown();
+		services_.stop();
+		if (gpu_service_)
+			gpu_service_->stop();
+		if (!configuration_.run_scratch.empty()) {
+			std::error_code ignored;
+			std::filesystem::remove_all(configuration_.run_scratch, ignored);
+		}
+	}
+
+private:
+	[[nodiscard]] int enter(const std::vector<const char *> &arguments)
+	{
+		return uml_emulator_run(
+			emulator_.get(), static_cast<int>(arguments.size()),
+			arguments.data(), environment_.data());
+	}
+
+	/* The kernel arguments of the boot after a restart: what the launcher's
+	 * restart command line says, which may differ from the first boot's (an
+	 * Android guest picks its ramdisk again). The host devices it asks for
+	 * must be the first boot's, which the machine was created for. */
+	[[nodiscard]] bool take_restart_command_line(
+		std::vector<std::string> &base_kernel)
+	{
+		try {
+			auto next = prepare_host_arguments(
+				configuration_.restart_command_line(), configuration_);
+			if (!prepared_.same_host_devices(next) ||
+			    !prepared_.same_machine(next)) {
+				std::fputs("The restart command line asks for another "
+					   "machine than the first boot's\n", stderr);
+				return false;
+			}
+			base_kernel = std::move(next.kernel);
+		} catch (const std::exception &error) {
+			std::fprintf(stderr,
+				"Unable to prepare the restarted guest: %s\n",
+				error.what());
+			return false;
+		}
+		return true;
+	}
+
+	/* Starts the boot's services, in the order the guest's Virtio devices are
+	 * numbered by, and names them on `kernel`. `restart` says an earlier
+	 * guest of this launch exists, whose GPU connection the new one
+	 * replaces. */
+	[[nodiscard]] bool start_boot(std::vector<std::string> &kernel,
+				      bool restart)
+	{
+		services_ = {};
+		if (gpu_service_) {
+			try {
+				if (restart)
+					gpu_service_->startNextConnection();
+				kernel.emplace_back(uml::gpu::virtioDeviceArgument(
+					gpu_service_->takeConnectionName(),
+					uml::gpu::protocol::virtioGpuDeviceId));
+				kernel.emplace_back("uml_vnc_input." +
+					gpu_service_->takeInputConnectionName());
+			} catch (const std::exception &error) {
+				std::fprintf(stderr,
+					restart ? "Unable to restart in-process Virtio-GPU: %s\n" :
+						  "Unable to start in-process Virtio-GPU: %s\n",
+					error.what());
+				return false;
+			}
+		}
+		/* Android's vendor policy labels the battery's sysfs path by its
+		 * position among the Virtio devices
+		 * (android/lineage-24/overlay/sepolicy/vendor/genfs_contexts).
+		 * Straight after the GPU it is always virtio-uml.1/virtio1, whatever
+		 * optional devices follow. */
+		if (prepared_.battery && !information_only_ &&
+		    !start_virtio_device(
+			    kernel, services_.battery,
+			    uml::battery::protocol::deviceId,
+			    [] { return uml::battery::makeInProcessService(); },
+			    "--battery", "Virtio battery"))
+			return false;
+		if (gpu_service_ && device_memory_limit_ != 0 &&
+		    !has_virtio_device_argument(
+			    kernel, uml::balloon::protocol::deviceId)) {
+			try {
+				services_.balloon = uml::balloon::makeInProcessService(
+					uml::balloon::BalloonOptions{
+						.guestMemoryBytes = guest_memory_,
+						.target = uml::balloon::hostGpuMemoryTarget(
+							device_memory_limit_),
+						.hostPageSize = static_cast<std::size_t>(
+							getpagesize()),
+					});
+				kernel.emplace_back(
+					uml::gpu::virtioDeviceArgument(
+						services_.balloon->takeConnectionName(),
+						uml::balloon::protocol::deviceId));
+			} catch (const std::exception &error) {
+				std::fprintf(stderr,
+					"Unable to start in-process Virtio balloon: %s\n",
+					error.what());
+				return false;
+			}
+		}
+		/* The guest's host-visible shared-memory region belongs to the GPU
+		 * backend, and the video decoder fills capture buffers that live in
+		 * it, so both backends share one index of the ranges published
+		 * there. */
+		if (prepared_.video && !information_only_ &&
+		    !start_virtio_device(
+			    kernel, services_.video, uml::video::deviceId,
+			    [&] {
+				    return uml::video::makeInProcessService(
+					    gpu_service_ ? shared_memory_regions_ : nullptr);
+			    },
+			    "--video", "Virtio video"))
+			return false;
+		if (prepared_.video_encoder && !information_only_ &&
+		    !start_virtio_device(
+			    kernel, services_.video_encoder,
+			    uml::video::encoderDeviceId,
+			    [&] {
+				    return uml::video::makeInProcessEncoderService(
+					    gpu_service_ ? shared_memory_regions_ : nullptr);
+			    },
+			    "--video-encoder", "Virtio video encoder"))
+			return false;
+		/* Creating the switch touches nothing; only turning it on below
+		 * can make the system ask for permission. */
+		if (prepared_.audio_input_host)
+			services_.microphone =
+				std::make_shared<uml::audio::MicrophoneSwitch>(
+					uml::platform::makeAppleMicrophoneAuthorization());
+		if (prepared_.audio && !information_only_ &&
+		    !start_virtio_device(
+			    kernel, services_.audio,
+			    uml::audio::protocol::deviceId,
+			    [&] {
+				    return uml::audio::makeInProcessService(
+					    {.output = prepared_.audio_output,
+					     .microphone = services_.microphone});
+			    },
+			    "--audio", "Virtio Sound"))
+			return false;
+		if (services_.microphone && services_.audio) {
+			using State = uml::audio::MicrophoneSwitch::State;
+			const auto report = [](State state) {
+				std::fprintf(stderr, "Microphone: %s\n",
+					     uml::audio::describe(state));
+			};
+			report(services_.microphone->enable(report));
+		}
+		const bool named_serial = !prepared_.serial_socket.empty();
+		if ((named_serial || !prepared_.console_socket.empty()) &&
+		    !information_only_ &&
+		    !start_virtio_device(
+			    kernel, services_.console,
+			    uml::console::protocol::deviceId,
+			    [&] {
+				    return named_serial ?
+					    uml::console::makeInProcessService(
+						    prepared_.serial_socket,
+						    std::string(uml::console::protocol::
+								hostSerialPortName)) :
+					    uml::console::makeInProcessService(
+						    prepared_.console_socket);
+			    },
+			    "a host Virtio console or serial socket",
+			    named_serial ? "Virtio serial" : "Virtio console",
+			    "Virtio console"))
+			return false;
+		return true;
+	}
+
+	const uml::app::LaunchConfiguration &configuration_;
+	PreparedArguments prepared_;
+	const bool information_only_;
+	std::vector<const char *> environment_;
+	std::unique_ptr<AppNetwork> network_;
+	uml_emulator_network_callbacks network_callbacks_{};
+	std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)> emulator_{
+		nullptr, uml_emulator_destroy};
+	std::shared_ptr<uml::virtio::SharedMemoryRegions> shared_memory_regions_{
+		std::make_shared<uml::virtio::SharedMemoryRegions>()};
+	std::unique_ptr<uml::gpu::InProcessGpuService> gpu_service_;
+	BootServices services_;
+	std::uint64_t guest_memory_{};
+	std::uint64_t device_memory_limit_{};
+	std::atomic<bool> stop_requested_{};
+};
+
 } // namespace
 
 bool uml::app::has_argument(
@@ -497,6 +1044,7 @@ int uml::app::runEmbeddedKernel(
 	const LaunchConfiguration &configuration)
 {
 	install_host_faults();
+	ignore_broken_pipes();
 	::uml::device::install_socket_path_signal_cleanup();
 	PreparedArguments prepared;
 	try {
@@ -512,216 +1060,18 @@ int uml::app::runEmbeddedKernel(
 	/* Before anything in the process can create a Metal device. */
 	if (prepared.gpu.enabled && !information_only)
 		bound_metal_shader_cache();
-	std::unique_ptr<AppNetwork> app_network;
-	uml_emulator_network_callbacks network_callbacks{};
-	if (user_network_enabled()) {
-		try {
-			app_network = std::make_unique<AppNetwork>();
-			network_callbacks = app_network->callbacks();
-		} catch (const std::exception &error) {
-			std::fprintf(stderr, "Unable to create user network: %s\n",
-				error.what());
-			return 1;
-		}
-		for (const auto &specification : prepared.net_forwards) {
-			if (app_network->forward(specification) == 0)
-				continue;
-			std::fprintf(stderr,
-				"Unable to accept --net-forward=%s\n",
-				specification.c_str());
-			return 1;
-		}
-	} else if (!prepared.net_forwards.empty()) {
-		std::fputs("--net-forward requires the user network\n", stderr);
+	Launch launch{configuration, std::move(prepared), information_only, envp};
+	if (!launch.create())
 		return 1;
-	}
-
-	const uml_emulator_config config{
-		.abi_version = UML_EMULATOR_ABI_VERSION,
-		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = configuration.rootfs_path,
-		.kernel_image = uml_elf_start,
-		.kernel_image_size = static_cast<std::size_t>(
-			uml_elf_end - uml_elf_start),
-		.network = app_network ? &network_callbacks : nullptr,
-	};
-	uml_emulator *created = nullptr;
-	const int create_result = uml_emulator_create(&config, &created);
-	if (create_result != UML_EMULATOR_OK) {
-		std::fprintf(stderr, "Unable to create UML emulator: %d\n",
-			create_result);
-		return 1;
-	}
-	const std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)> emulator{
-		created, uml_emulator_destroy};
-	std::unique_ptr<uml::gpu::InProcessGpuService> gpu_service;
-	/* The guest's host-visible shared-memory region belongs to the GPU
-	 * backend, and the video decoder fills capture buffers that live in it,
-	 * so both backends share one index of the ranges published there. */
-	auto shared_memory_regions =
-		std::make_shared<uml::virtio::SharedMemoryRegions>();
-	/* GPU memory is charged to the process like guest RAM, so the GPU may
-	 * use at most half of the guest's allocation and the balloon takes what
-	 * it uses out of the guest. */
-	const std::uint64_t guest_memory =
-		uml::emulator::configured_guest_memory_bytes(prepared.kernel);
-	const std::uint64_t device_memory_limit = guest_memory / 2;
-	if (prepared.gpu.enabled && !information_only) {
-		if (has_virtio_device_argument(
-			prepared.kernel, uml::gpu::protocol::virtioGpuDeviceId)) {
-			std::fputs("--gpu cannot be combined with an explicit "
-				   "Virtio-GPU transport argument\n",
-				   stderr);
-			return 1;
-		}
-		try {
-			gpu_service =
-				std::make_unique<uml::gpu::InProcessGpuService>(
-					uml::gpu::InProcessGpuOptions{
-						.displayMode = prepared.gpu.display_mode,
-						.vncBindAddress =
-							prepared.gpu.vnc_bind_address,
-						.vncPort = prepared.gpu.vnc_port,
-						.vncPassword =
-							prepared.gpu.vnc_password,
-						.width = prepared.gpu.width,
-						.height = prepared.gpu.height,
-						.dotsPerInch =
-							prepared.gpu.dots_per_inch,
-						.pointerMode = configuration.input_mode != DisplayInput::mouse ?
-							uml::input::vnc::PointerMode::touchscreen :
-							uml::input::vnc::PointerMode::mouse,
-						.autoResizeGuest =
-							prepared.gpu.auto_resize_guest,
-						.sharedMemoryRegions =
-							shared_memory_regions,
-						.deviceMemoryLimit =
-							device_memory_limit,
-					});
-			prepared.kernel.emplace_back(
-				uml::gpu::virtioDeviceArgument(
-					gpu_service->takeConnectionName(),
-					uml::gpu::protocol::virtioGpuDeviceId));
-			prepared.kernel.emplace_back(
-				"uml_vnc_input." + gpu_service->takeInputConnectionName());
-		} catch (const std::exception &error) {
-			std::fprintf(stderr,
-				"Unable to start in-process Virtio-GPU: %s\n",
-				error.what());
-			return 1;
-		}
-	}
-	std::unique_ptr<uml::gpu::InProcessVhostUserService> battery_service;
-	/* Android's vendor policy labels the battery's sysfs path by its
-	 * position among the Virtio devices
-	 * (android/lineage-24/overlay/sepolicy/vendor/genfs_contexts).
-	 * Straight after the GPU it is always virtio-uml.1/virtio1, whatever
-	 * optional devices follow. */
-	if (prepared.battery && !information_only &&
-	    !start_virtio_device(
-		    prepared.kernel, battery_service,
-		    uml::battery::protocol::deviceId,
-		    [] { return uml::battery::makeInProcessService(); },
-		    "--battery", "Virtio battery"))
-		return 1;
-	std::unique_ptr<uml::gpu::InProcessVhostUserService> balloon_service;
-	if (gpu_service && device_memory_limit != 0 &&
-	    !has_virtio_device_argument(
-		    prepared.kernel, uml::balloon::protocol::deviceId)) {
-		try {
-			balloon_service = uml::balloon::makeInProcessService(
-				uml::balloon::BalloonOptions{
-					.guestMemoryBytes = guest_memory,
-					.target = uml::balloon::hostGpuMemoryTarget(
-						device_memory_limit),
-					.hostPageSize = static_cast<std::size_t>(
-						getpagesize()),
-				});
-			prepared.kernel.emplace_back(
-				uml::gpu::virtioDeviceArgument(
-					balloon_service->takeConnectionName(),
-					uml::balloon::protocol::deviceId));
-		} catch (const std::exception &error) {
-			std::fprintf(stderr,
-				"Unable to start in-process Virtio balloon: %s\n",
-				error.what());
-			return 1;
-		}
-	}
-	std::unique_ptr<uml::gpu::InProcessVhostUserService> video_service;
-	if (prepared.video && !information_only &&
-	    !start_virtio_device(
-		    prepared.kernel, video_service, uml::video::deviceId,
-		    [&] {
-			    return uml::video::makeInProcessService(
-				    gpu_service ? shared_memory_regions : nullptr);
-		    },
-		    "--video", "Virtio video"))
-		return 1;
-	std::unique_ptr<uml::gpu::InProcessVhostUserService> audio_service;
-	if (prepared.audio && !information_only &&
-	    !start_virtio_device(
-		    prepared.kernel, audio_service,
-		    uml::audio::protocol::deviceId,
-		    [] { return uml::audio::makeInProcessService(); },
-		    "--audio", "Virtio Sound"))
-		return 1;
-	std::unique_ptr<uml::gpu::InProcessVhostUserService> console_service;
-	const bool named_serial = !prepared.serial_socket.empty();
-	if ((named_serial || !prepared.console_socket.empty()) &&
-	    !information_only &&
-	    !start_virtio_device(
-		    prepared.kernel, console_service,
-		    uml::console::protocol::deviceId,
-		    [&] {
-			    return named_serial ?
-				    uml::console::makeInProcessService(
-					    prepared.serial_socket,
-					    std::string(uml::console::protocol::
-							hostSerialPortName)) :
-				    uml::console::makeInProcessService(
-					    prepared.console_socket);
-		    },
-		    "a host Virtio console or serial socket",
-		    named_serial ? "Virtio serial" : "Virtio console",
-		    "Virtio console"))
-		return 1;
-	std::vector<const char *> arguments;
-	arguments.reserve(prepared.kernel.size());
-	for (const auto &argument : prepared.kernel)
-		arguments.push_back(argument.c_str());
-	std::vector<const char *> environment;
-	for (auto entry = envp; entry != nullptr && *entry != nullptr; ++entry)
-		environment.push_back(*entry);
-	environment.push_back(nullptr);
-	const auto run = [&] {
-		return uml_emulator_run(
-			emulator.get(), static_cast<int>(arguments.size()),
-			arguments.data(), environment.data());
-	};
-	const int result = prepared.gpu.enabled &&
-		prepared.gpu.display_mode == uml::gpu::DisplayMode::native ?
+	/* A native display runs AppKit on the main thread and the guest on a
+	 * worker; closing its window stops the guest. The boots all run on the
+	 * worker, so the window outlives a guest that restarts. */
+	const int result = launch.native_display() ?
 		uml::gpu::runNativeDisplayApplication(
-			run, [&] { uml_emulator_request_stop(emulator.get()); }) :
-		run();
-	if (app_network)
-		app_network->shutdown();
-	if (audio_service)
-		audio_service->stop();
-	if (battery_service)
-		battery_service->stop();
-	if (video_service)
-		video_service->stop();
-	if (console_service)
-		console_service->stop();
-	if (balloon_service)
-		balloon_service->stop();
-	if (gpu_service)
-		gpu_service->stop();
-	if (!configuration.run_scratch.empty()) {
-		std::error_code ignored;
-		std::filesystem::remove_all(configuration.run_scratch, ignored);
-	}
+			[&] { return launch.run(); },
+			[&] { launch.request_stop(); }) :
+		launch.run();
+	launch.finish();
 	/* The loader hands the kernel's signal state back to the host before
 	 * uml_elf_run returns, so no Linux handler is left behind. The launcher
 	 * still leaves through _Exit, which runs no static destructor or atexit

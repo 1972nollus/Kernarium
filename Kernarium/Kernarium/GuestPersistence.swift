@@ -60,85 +60,45 @@ final class GuestPersistence {
         background = controller
         BackgroundJob.shared.controller = controller
         pictureInPicture?.controller = controller
-        let center = NotificationCenter.default
-        observers.append(
-            center.addObserver(
-                forName: UIApplication.willResignActiveNotification,
+        let edges: [(Notification.Name, @MainActor () -> Void)] = [
+            (UIApplication.willResignActiveNotification, {
+                self.flush(
+                    reason: "inactive",
+                    departure: .flush,
+                    waitingUntil: nil
+                )
+            }),
+            (UIApplication.didEnterBackgroundNotification, {
+                BackgroundSession.shared.didEnterBackground()
+                self.background?.didEnterBackground()
+            }),
+            (UIApplication.didBecomeActiveNotification, {
+                self.background?.didBecomeActive()
+            }),
+            (UIApplication.willTerminateNotification, {
+                BackgroundSession.shared.willTerminate()
+                self.flush(
+                    reason: "terminating",
+                    departure: .quiesce,
+                    waitingUntil: .now() + Self.terminationBudget
+                )
+            }),
+            (UIApplication.willEnterForegroundNotification, {
+                // The policy resumes a quiesced guest, which the session
+                // must know has begun before it may drop its marker.
+                self.background?.willEnterForeground()
+                BackgroundSession.shared.willEnterForeground()
+            }),
+        ]
+        observers = edges.map { name, edge in
+            NotificationCenter.default.addObserver(
+                forName: name,
                 object: nil,
                 queue: .main
             ) { _ in
-                MainActor.assumeIsolated {
-                    GuestPersistence.shared.flush(
-                        reason: "inactive",
-                        departure: .flush,
-                        waitingUntil: nil
-                    )
-                }
+                MainActor.assumeIsolated(edge)
             }
-        )
-        observers.append(
-            center.addObserver(
-                forName: UIApplication.didEnterBackgroundNotification,
-                object: nil,
-                queue: .main
-            ) { _ in
-                MainActor.assumeIsolated {
-                    BackgroundSession.shared.didEnterBackground()
-                    GuestPersistence.shared.background?.didEnterBackground()
-                }
-            }
-        )
-        observers.append(
-            center.addObserver(
-                forName: UIApplication.didBecomeActiveNotification,
-                object: nil,
-                queue: .main
-            ) { _ in
-                MainActor.assumeIsolated {
-                    GuestPersistence.shared.background?.didBecomeActive()
-                }
-            }
-        )
-        observers.append(
-            center.addObserver(
-                forName: UIApplication.willTerminateNotification,
-                object: nil,
-                queue: .main
-            ) { _ in
-                MainActor.assumeIsolated {
-                    BackgroundSession.shared.willTerminate()
-                    GuestPersistence.shared.flush(
-                        reason: "terminating",
-                        departure: .quiesce,
-                        waitingUntil: .now() + Self.terminationBudget
-                    )
-                }
-            }
-        )
-        observers.append(
-            center.addObserver(
-                forName: UIApplication.willEnterForegroundNotification,
-                object: nil,
-                queue: .main
-            ) { _ in
-                MainActor.assumeIsolated {
-                    // The policy resumes a quiesced guest, which the session
-                    // must know has begun before it may drop its marker.
-                    GuestPersistence.shared.background?.willEnterForeground()
-                    BackgroundSession.shared.willEnterForeground()
-                }
-            }
-        )
-    }
-
-    /// Writes the guest's storage back and leaves it running.
-    func syncGuest(reason: String, until deadline: DispatchTime?) {
-        flush(reason: reason, departure: .flush, waitingUntil: deadline)
-    }
-
-    /// Writes the guest's storage back and suspends it.
-    func quiesceGuest(reason: String, until deadline: DispatchTime?) {
-        flush(reason: reason, departure: .quiesce, waitingUntil: deadline)
+        }
     }
 
     /// Resumes on the flush queue, behind any quiesce still in flight. A quick
@@ -181,22 +141,19 @@ final class GuestPersistence {
         observers.removeAll()
     }
 
+    /// Writes the guest's storage back, and suspends it for `.quiesce`.
+    ///
     /// - Parameter waitingUntil: when to stop holding the main thread for the
     ///   flush to finish, or nil to return at once. Backgrounding and
     ///   termination wait, because the process may not be scheduled again;
     ///   merely losing focus does not, since the app keeps running and the
     ///   flush would only stall the UI.
-    private func flush(
+    func flush(
         reason: String,
         departure: Departure,
         waitingUntil deadline: DispatchTime?
     ) {
-        let application = UIApplication.shared
-        var assertion = UIBackgroundTaskIdentifier.invalid
-        assertion = application.beginBackgroundTask(withName: "guest-sync") {
-            application.endBackgroundTask(assertion)
-            assertion = .invalid
-        }
+        let assertion = BackgroundTaskAssertion(named: "guest-sync")
         let finished = DispatchSemaphore(value: 0)
         queue.async {
             let unflushed = switch departure {
@@ -206,10 +163,7 @@ final class GuestPersistence {
             finished.signal()
             Task { @MainActor in
                 GuestPersistence.report(reason: reason, unflushed: unflushed)
-                if assertion != .invalid {
-                    application.endBackgroundTask(assertion)
-                    assertion = .invalid
-                }
+                assertion.end()
             }
         }
         if let deadline {
@@ -226,6 +180,29 @@ final class GuestPersistence {
         } else if unflushed == 0 {
             print("Kernarium: guest storage settled on \(reason)")
         }
+    }
+}
+
+/// A background-task assertion that keeps the process scheduled until it
+/// ends: the caller ends it, or iOS expires it. Ending it twice is harmless.
+@MainActor
+final class BackgroundTaskAssertion: BackgroundCancellable {
+    private var identifier = UIBackgroundTaskIdentifier.invalid
+
+    init(named name: String) {
+        identifier = UIApplication.shared.beginBackgroundTask(withName: name) {
+            self.end()
+        }
+    }
+
+    func end() {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+        identifier = .invalid
+    }
+
+    func cancel() {
+        end()
     }
 }
 
@@ -285,11 +262,19 @@ final class SystemBackgroundEffects: BackgroundEffects {
     }
 
     func flushGuest(until deadline: DispatchTime?) {
-        persistence.syncGuest(reason: "background", until: deadline)
+        persistence.flush(
+            reason: "background",
+            departure: .flush,
+            waitingUntil: deadline
+        )
     }
 
     func quiesceGuest(reason: String, until deadline: DispatchTime?) {
-        persistence.quiesceGuest(reason: reason, until: deadline)
+        persistence.flush(
+            reason: reason,
+            departure: .quiesce,
+            waitingUntil: deadline
+        )
     }
 
     func resumeGuest() {
@@ -318,9 +303,7 @@ final class SystemBackgroundEffects: BackgroundEffects {
     var guestIsAndroid: Bool { EmulatorLauncher.shared.runningGuestIsAndroid }
 
     func pressPowerKey() {
-        let power = GuestSpecialKey.power.code
-        kernarium_runtime_loader_send_key(power, 1)
-        kernarium_runtime_loader_send_key(power, 0)
+        GuestSpecialKey.power.press()
     }
 
     var pictureInPictureCanStart: Bool { window?.canStart ?? false }
@@ -331,18 +314,7 @@ final class SystemBackgroundEffects: BackgroundEffects {
     }
 
     func keepScheduled(named name: String) -> any BackgroundCancellable {
-        let application = UIApplication.shared
-        var assertion = UIBackgroundTaskIdentifier.invalid
-        assertion = application.beginBackgroundTask(withName: name) {
-            application.endBackgroundTask(assertion)
-            assertion = .invalid
-        }
-        return Token {
-            if assertion != .invalid {
-                application.endBackgroundTask(assertion)
-                assertion = .invalid
-            }
-        }
+        BackgroundTaskAssertion(named: name)
     }
 
     func schedule(

@@ -2,22 +2,14 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Guest probe: the guest kernel's AArch32 (armhf) task support.
 
-Run as `aarch32_guest_probe.py --elf PROGRAM --elf-4k PROGRAM4K [--expect
-unsupported|run]` inside an arm64 guest.  PROGRAM is the freestanding armhf
-program built from aarch32_probe.S, aligned to 64 KiB, and PROGRAM4K the same
-program aligned to 4 KiB only, as 11 files of a stock Debian armhf image are.
+Run as `aarch32_guest_probe.py --elf PROGRAM --elf-4k PROGRAM4K` inside an
+arm64 guest.  PROGRAM is the freestanding armhf program built from
+aarch32_probe.S, aligned to 64 KiB, and PROGRAM4K the same program aligned to
+4 KiB only, as 11 files of a stock Debian armhf image are.
 
-What every guest shows, with or without an engine that runs AArch32:
-a 64-bit task sees aarch64 from uname and arm64 Linux's /proc/cpuinfo layout
+A 64-bit task sees aarch64 from uname and arm64 Linux's /proc/cpuinfo layout
 without a model name, vm.mmap_rnd_compat_bits has the range of the page
-profile, and abi.cp15_barrier is present.
-
---expect unsupported (the default) is a host whose engines do not run
-AArch32, so the bridge reports no compat HWCAPs and the guest behaves like an
-arm64 CPU without 32-bit EL0: executing either ELF32 program fails with
-ENOEXEC and personality(PER_LINUX32) with EINVAL.
-
---expect run is a host that does run it.  The program runs its own checks to
+profile, and abi.cp15_barrier is present.  The program runs its own checks to
 a zero failure count, in its default mode and in the "extra" and "tracer"
 modes of aarch32_probe.S; PER_LINUX32 changes uname and /proc/cpuinfo; a
 64-bit tracer sees the program's exec stop and signal stop through the
@@ -26,7 +18,17 @@ VFP and TLS registers, follows its system calls (PTRACE_GET_SYSCALL_INFO
 names AUDIT_ARCH_ARM) and single steps, and sees the VFP context of its
 signal frames; the faults end the program in SIGSEGV, SIGILL and SIGTRAP; a
 core dump is a 32-bit ARM core file; and many runs at once all complete.  The
-4 KiB-layout program loads and runs.
+4 KiB-layout program loads and runs.  With --aarch64-helper, the guest
+assembles aarch64_dirty.s, a 64-bit program that leaves x15-x30 set, and the
+program's every exclusive and ordered form runs on each CPU right after it:
+first through its execve, then between sched_yield calls of a copy that
+spins on the same CPU.  --only exclusives runs that check alone.
+abi.swp is present and 0, so SWP ends the program in SIGILL, with 1 the
+program's SWP and SWPB run (their conditions, pages, and faults), and the
+pc as an operand is SIGILL either way; with the helper, the program's SWP and
+SWPB trade tokens through a page it shares with a 64-bit task that uses
+load/store-exclusive pairs on the same words, which stay a permutation of
+the tokens only if every swap is atomic against them.
 Prints one line per check and exits with the number of failures.
 """
 
@@ -42,7 +44,6 @@ import subprocess
 import sys
 
 PER_LINUX32 = 8
-PER_LINUX32_3GB = 0x08000008
 PTRACE_TRACEME = 0
 PTRACE_CONT = 7
 PTRACE_SINGLESTEP = 9
@@ -124,7 +125,7 @@ def read(path):
 
 
 def check_native_view():
-    """What a 64-bit task sees, whatever the host runs."""
+    """What a 64-bit task sees."""
     check("uname is aarch64", os.uname().machine == "aarch64",
           os.uname().machine)
     blocks = [block for block in read("/proc/cpuinfo").split("\n\n")
@@ -175,25 +176,6 @@ def exec_errno(path, argument=None):
     except OSError as error:
         return error.errno, None
     return 0, result.returncode
-
-
-def check_unsupported(elf, elf_4k):
-    """No engine runs AArch32: the guest has no 32-bit EL0."""
-    for name, path in (("an ELF32 program", elf),
-                       ("an ELF32 program laid out for 4 KiB pages", elf_4k)):
-        result = exec_errno(path)[0]
-        check(f"executing {name} fails with ENOEXEC", result == errno.ENOEXEC,
-              errno.errorcode.get(result, str(result)))
-
-    for name, value in (("PER_LINUX32", PER_LINUX32),
-                        ("PER_LINUX32 with ADDR_LIMIT_3GB", PER_LINUX32_3GB)):
-        result = personality(value)
-        check(f"personality({name}) fails with EINVAL",
-              result == -errno.EINVAL, str(result))
-    check("a refused personality() leaves the persona alone",
-          personality(0xffffffff) == 0, str(personality(0xffffffff)))
-    check("uname is still aarch64 after personality()",
-          os.uname().machine == "aarch64")
 
 
 def run_program(elf, mode=None, label="program", minimum=60):
@@ -618,6 +600,155 @@ def check_core_dump(elf):
     os.unlink(os.path.join(directory, names[0]))
 
 
+def build_aarch64_helper(source):
+    """aarch64_dirty.s, assembled and linked by the guest's own tools."""
+    program = "/tmp/a64-dirty"
+    for command in (["as", "-o", program + ".o", source],
+                    ["ld", "-static", "-o", program, program + ".o"]):
+        result = subprocess.run(command, stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, timeout=120)
+        check(f"{command[0]} builds the 64-bit helper", result.returncode == 0,
+              result.stderr.strip()[-500:])
+        if result.returncode != 0:
+            return None
+    return program
+
+
+def check_exclusives_after_aarch64(elf, helper):
+    """The exclusive and ordered forms on a CPU that runs 64-bit code.
+
+    The runtime enters a 32-bit task with R0-R14 only, so x15-x30 are what
+    the 64-bit task before it left.  On each CPU, the helper executes the
+    program with them set, and a second copy of it sets them before each of
+    its sched_yield calls on the same CPU, which the program's own calls
+    let it run between."""
+    for cpu in sorted(os.sched_getaffinity(0)):
+        def pin(cpu=cpu):
+            os.sched_setaffinity(0, {cpu})
+        spinner = subprocess.Popen([helper, "spin"], stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, preexec_fn=pin)
+        try:
+            result = subprocess.run([helper, "exec", elf, "exclusives"],
+                                    stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True,
+                                    timeout=300, preexec_fn=pin)
+        finally:
+            spinner.kill()
+            spinner.wait()
+        check(f"exclusives beside a 64-bit task on CPU {cpu}",
+              result.returncode == 0,
+              f"status {result.returncode}: {result.stdout.strip()[-300:]}")
+
+
+def write_swp(value):
+    with open("/proc/sys/abi/swp", "w") as sink:
+        sink.write(f"{value}\n")
+
+
+def check_swp_tokens(elf, helper):
+    """SWP and SWPB beside load/store-exclusive pairs of a 64-bit task."""
+    path = "/tmp/a32-swp-tokens"
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.unlink(path)
+    # The word slot holds 4 and the byte slot 4: the two tasks hold 1 and 2.
+    os.write(descriptor, struct.pack("<I", 4) + bytes(4) + struct.pack("<I", 4)
+             + bytes(4096 - 12))
+    shared = os.dup2(descriptor, 9)
+    os.close(descriptor)
+    processes = []
+    try:
+        for command in ([elf, "swp-tokens"], [helper, "tokens"]):
+            processes.append(subprocess.Popen(
+                command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, pass_fds=(shared,)))
+        codes = []
+        for process in processes:
+            try:
+                codes.append(process.wait(timeout=240))
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                codes.append("timeout")
+        check("the swapping tasks both finish", codes == [0, 0], str(codes))
+        page = os.pread(shared, 56, 0)
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        os.close(shared)
+    if len(page) != 56:
+        check("the shared page reads back", False, str(len(page)))
+        return
+    (slot, ready, byte_slot, _, own_word, own_byte, other_word, seen_word,
+     seen_byte, rounds, done, other_byte,
+     other_swaps) = struct.unpack("<12IQ", page)
+    check("the page was set up and used by both tasks", ready == 2 and done == 1,
+          f"ready {ready} done {done}")
+    check("the words are a permutation of the tokens, so no swap tore",
+          sorted((slot, own_word, other_word)) == [1, 2, 4],
+          f"slot {slot} SWP task {own_word} exclusives task {other_word}")
+    check("the bytes are a permutation of the tokens",
+          sorted((byte_slot & 0xff, own_byte, other_byte)) == [1, 2, 4],
+          f"slot {byte_slot:#x} SWPB task {own_byte} exclusives task "
+          f"{other_byte}")
+    check("SWPB wrote one byte of its slot", byte_slot >> 8 == 0,
+          hex(byte_slot))
+    check("the SWP task met all three tokens, so the tasks overlapped",
+          seen_word == 7 and seen_byte == 7,
+          f"{seen_word} {seen_byte} after {rounds} rounds")
+    check("the exclusives task swapped as well", other_swaps > 0,
+          str(other_swaps))
+
+
+def check_swp(elf, helper):
+    """abi.swp: SWP and SWPB are UNDEFINED by default, emulated with 1."""
+    path = "/proc/sys/abi/swp"
+    check("abi.swp is present", os.path.exists(path))
+    if not os.path.exists(path):
+        return
+    original = int(read(path))
+    check("abi.swp defaults to 0, so SWP is UNDEFINED", original == 0,
+          str(original))
+    for bad in ("2", "-1", "x"):
+        try:
+            with open(path, "w") as sink:
+                sink.write(f"{bad}\n")
+            refused = False
+        except OSError as error:
+            refused = error.errno == errno.EINVAL
+        check(f"abi.swp refuses {bad}", refused)
+    try:
+        for value in (1, 0):
+            write_swp(value)
+            check(f"abi.swp accepts {value}", int(read(path)) == value)
+        result = subprocess.run([elf, "swp-one"], stdin=subprocess.DEVNULL,
+                                capture_output=True, timeout=60)
+        check("SWP ends the program in SIGILL with abi.swp 0",
+              result.returncode == -signal.SIGILL, str(result.returncode))
+        write_swp(1)
+        result = subprocess.run([elf, "swp-one"], stdin=subprocess.DEVNULL,
+                                capture_output=True, timeout=60)
+        check("SWP runs with abi.swp 1", result.returncode == 6,
+              str(result.returncode))
+        result = subprocess.run([elf, "swp-pc"], stdin=subprocess.DEVNULL,
+                                capture_output=True, timeout=60)
+        check("SWP with the pc as Rt is SIGILL with abi.swp 1",
+              result.returncode == -signal.SIGILL, str(result.returncode))
+        run_program(elf, "swp", "swp checks", 60)
+        if helper:
+            check_swp_tokens(elf, helper)
+    finally:
+        write_swp(original)
+    check("abi.swp is back to its value", int(read(path)) == original)
+    result = subprocess.run([elf, "swp-one"], stdin=subprocess.DEVNULL,
+                            capture_output=True, timeout=60)
+    check("SWP is UNDEFINED again", result.returncode == -signal.SIGILL,
+          str(result.returncode))
+
+
 def check_parallel(elf):
     """Many AArch32 programs at once, each one on its own."""
     codes = [subprocess.run([elf, "leaf"],
@@ -649,33 +780,47 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--elf", required=True)
     parser.add_argument("--elf-4k", required=True)
-    parser.add_argument("--expect", choices=("unsupported", "run"),
-                        default="unsupported")
     parser.add_argument("--deadline", type=int, default=280,
                         metavar="SECONDS",
-                        help="in run mode, kill the probe after this long")
+                        help="kill the probe after this long")
+    parser.add_argument("--aarch64-helper", metavar="SOURCE",
+                        help="aarch64_dirty.s, for the exclusives check")
+    parser.add_argument("--only", choices=("exclusives",),
+                        help="run this check alone")
     arguments = parser.parse_args()
     if os.uname().machine != "aarch64":
         print("SKIP aarch32: not an arm64 guest")
         return 0
+    if arguments.only and not arguments.aarch64_helper:
+        parser.error("--only exclusives needs --aarch64-helper")
+
+    if arguments.only == "exclusives":
+        signal.alarm(arguments.deadline)
+        helper = build_aarch64_helper(arguments.aarch64_helper)
+        if helper:
+            check_exclusives_after_aarch64(arguments.elf, helper)
+        print(f"aarch32-probe: {failures} failure(s)", flush=True)
+        return min(failures, 100)
 
     check_native_view()
-    if arguments.expect == "unsupported":
-        check_unsupported(arguments.elf, arguments.elf_4k)
-    else:
-        signal.alarm(arguments.deadline)
-        check_personality()
-        check_page_layout(arguments.elf_4k)
-        if run_program(arguments.elf):
-            check_tracer(arguments.elf)
-            run_program(arguments.elf, "extra", "extra checks", 50)
-            run_program(arguments.elf, "tracer", "32-bit tracer", 15)
-            check_fault_modes(arguments.elf)
-            check_syscall_stops(arguments.elf)
-            check_single_step(arguments.elf)
-            check_vfp_frame(arguments.elf)
-            check_core_dump(arguments.elf)
-            check_parallel(arguments.elf)
+    signal.alarm(arguments.deadline)
+    check_personality()
+    check_page_layout(arguments.elf_4k)
+    if run_program(arguments.elf):
+        check_tracer(arguments.elf)
+        run_program(arguments.elf, "extra", "extra checks", 50)
+        run_program(arguments.elf, "tracer", "32-bit tracer", 15)
+        check_fault_modes(arguments.elf)
+        check_syscall_stops(arguments.elf)
+        check_single_step(arguments.elf)
+        check_vfp_frame(arguments.elf)
+        check_core_dump(arguments.elf)
+        check_parallel(arguments.elf)
+        helper = (build_aarch64_helper(arguments.aarch64_helper)
+                  if arguments.aarch64_helper else None)
+        check_swp(arguments.elf, helper)
+        if helper:
+            check_exclusives_after_aarch64(arguments.elf, helper)
     print(f"aarch32-probe: {failures} failure(s)", flush=True)
     return min(failures, 100)
 

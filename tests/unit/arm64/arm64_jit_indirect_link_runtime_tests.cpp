@@ -508,8 +508,10 @@ void trained_sites_remain_scoped_to_their_address_space() {
   require(executor.indirect_link_diagnostics().deactivated_sites == 1);
 }
 
-void indirect_cycles_obey_fairness_checkpoint() {
-  constexpr unsigned long generation = 8207;
+/* The checkpoint stores the target PC. With top-byte ignore the matched
+ * record's key also carries a state bit, which is not part of a guest PC. */
+void indirect_cycles_obey_fairness_checkpoint(bool top_byte_ignore) {
+  const unsigned long generation = top_byte_ignore ? 8227 : 8207;
   constexpr std::uint64_t base = 0xd8'0000;
   constexpr auto other = base + 0x100;
   JitBacking backing{1};
@@ -520,6 +522,7 @@ void indirect_cycles_obey_fairness_checkpoint() {
   StaticGuestMemory memory;
   arm64::CpuState cpu{};
   cpu.pc = base;
+  cpu.tbi_enabled = top_byte_ignore;
   cpu.registers[5] = other;
   cpu.registers[6] = base;
 
@@ -557,6 +560,7 @@ int main() {
   trained_target_with_missing_native_environment_falls_back();
   pending_training_does_not_cross_task_boundary();
   trained_sites_remain_scoped_to_their_address_space();
-  indirect_cycles_obey_fairness_checkpoint();
+  indirect_cycles_obey_fairness_checkpoint(false);
+  indirect_cycles_obey_fairness_checkpoint(true);
   return 0;
 }

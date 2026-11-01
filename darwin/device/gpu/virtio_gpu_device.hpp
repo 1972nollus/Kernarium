@@ -103,6 +103,15 @@ public:
     [[nodiscard]] bool canProcessWhileFencesPending(
         std::span<const std::uint8_t> request,
         bool cursorQueue) const noexcept;
+    /* The answer to a request that will not run, because the guest that sent
+     * it is ending: a control header of type OK_NODATA that echoes the
+     * request's fence flag, fence id, context id and ring index, with the rest
+     * zero, so the guest retires the request's fence and goes on. Nothing is
+     * created, submitted or changed. A cursor command, which has no response,
+     * and a request too short for a header get nothing. */
+    [[nodiscard]] std::vector<std::uint8_t> discardedResponse(
+        std::span<const std::uint8_t> request,
+        bool cursorQueue) const;
     [[nodiscard]] int pollContextFences(
         std::uint32_t contextId) noexcept;
     [[nodiscard]] int pollRenderer() noexcept;

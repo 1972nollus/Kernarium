@@ -40,13 +40,24 @@ struct EmulatorConfiguration: Equatable {
     static let guestMemoryRangeMiB = 512...4096
     static let guestMemoryStepMiB = 64
     static let overlaySizeRangeGiB = 1...32
-    static let androidDiskSizeRangeGiB = 4...64
+    // The 32-bit userspace grows the immutable partitions, so a smaller disk
+    // would leave userdata too little room.
+    static let androidDiskSizeRangeGiB = 6...64
     // A real iPhone or iPad enforces a jetsam limit that a 4 GiB guest would
-    // cross, so the device default stays at half the range. The same slice
-    // running on an Apple silicon Mac in Designed for iPad mode is given the
-    // host's memory instead and keeps the full guest.
+    // cross. iOS killed a 2048 MiB guest on the 4 GiB iPad mini 6 in a
+    // nine-application budget run, so a device defaults to 1536 MiB until the
+    // graphics-memory reductions land, when the value is revisited. A value
+    // the user stored is kept. The same slice running on an Apple silicon Mac
+    // in Designed for iPad mode is given the host's memory instead and keeps
+    // the full guest.
     static var defaultGuestMemoryMiB: Int {
-        ProcessInfo.processInfo.isiOSAppOnMac ? 4096 : 2048
+        defaultGuestMemoryMiB(
+            appRunsOnMac: ProcessInfo.processInfo.isiOSAppOnMac
+        )
+    }
+
+    static func defaultGuestMemoryMiB(appRunsOnMac: Bool) -> Int {
+        appRunsOnMac ? 4096 : 1536
     }
     static let defaultOverlaySizeGiB = 8
     static let defaultAndroidDiskSizeGiB = 8
@@ -54,14 +65,14 @@ struct EmulatorConfiguration: Equatable {
     static let defaultAutoResizeGuest = true
     static let defaultAndroidBootMode = AndroidBootMode.automatic
 
-    let vCPUCount: Int
-    let guestMemoryMiB: Int
-    let overlaySizeGiB: Int
-    let androidDiskSizeGiB: Int
-    let rootfsFilename: String
-    let retinaMode: Bool
-    let autoResizeGuest: Bool
-    let androidBootMode: AndroidBootMode
+    var vCPUCount: Int
+    var guestMemoryMiB: Int
+    var overlaySizeGiB: Int
+    var androidDiskSizeGiB: Int
+    var rootfsFilename: String
+    var retinaMode: Bool
+    var autoResizeGuest: Bool
+    var androidBootMode: AndroidBootMode
 
     static var physicalProcessorCount: Int {
         max(ProcessInfo.processInfo.processorCount, 1)
@@ -81,48 +92,39 @@ struct EmulatorConfiguration: Equatable {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         documentsDirectory: URL = RootfsImage.documentsDirectory
     ) -> Self {
-        // The kernel page-size setting is retired. A stored choice of 16 KB
-        // no longer names a runtime, so it is dropped rather than kept.
-        defaults.removeObject(forKey: Key.retiredKernelPageSize)
         let maximumVCPUCount = max(physicalProcessorCount, 1)
-        let storedVCPUCount = defaults.object(forKey: Key.vCPUCount) == nil
-            ? maximumVCPUCount
-            : defaults.integer(forKey: Key.vCPUCount)
-        let storedGuestMemoryMiB = defaults.object(
-            forKey: Key.guestMemoryMiB
-        ) == nil
-            ? defaultGuestMemoryMiB
-            : defaults.integer(forKey: Key.guestMemoryMiB)
-        let storedOverlaySizeGiB = defaults.object(
-            forKey: Key.overlaySizeGiB
-        ) == nil
-            ? defaultOverlaySizeGiB
-            : defaults.integer(forKey: Key.overlaySizeGiB)
-        let storedAndroidDiskSizeGiB = defaults.object(
-            forKey: Key.androidDiskSizeGiB
-        ) == nil
-            ? defaultAndroidDiskSizeGiB
-            : defaults.integer(forKey: Key.androidDiskSizeGiB)
+        func stored(_ key: String, _ fallback: Int) -> Int {
+            defaults.object(forKey: key) == nil
+                ? fallback
+                : defaults.integer(forKey: key)
+        }
+        func stored(_ key: String, _ fallback: Bool) -> Bool {
+            defaults.object(forKey: key) == nil
+                ? fallback
+                : defaults.bool(forKey: key)
+        }
+        let storedVCPUCount = stored(Key.vCPUCount, maximumVCPUCount)
+        let storedGuestMemoryMiB = stored(
+            Key.guestMemoryMiB, defaultGuestMemoryMiB
+        )
+        let storedOverlaySizeGiB = stored(
+            Key.overlaySizeGiB, defaultOverlaySizeGiB
+        )
+        let storedAndroidDiskSizeGiB = stored(
+            Key.androidDiskSizeGiB, defaultAndroidDiskSizeGiB
+        )
         let storedRootfsFilename = defaults.string(
             forKey: Key.rootfsFilename
         ) ?? RootfsImage.defaultFilename
-        let storedRetinaMode = defaults.object(forKey: Key.retinaMode) == nil
-            ? defaultRetinaMode
-            : defaults.bool(forKey: Key.retinaMode)
-        let storedAutoResizeGuest = defaults.object(
-            forKey: Key.autoResizeGuest
-        ) == nil
-            ? defaultAutoResizeGuest
-            : defaults.bool(forKey: Key.autoResizeGuest)
-        let storedAndroidBootMode = defaults.object(
-            forKey: Key.androidBootMode
-        ) == nil
-            ? defaultAndroidBootMode
-            : AndroidBootMode(
-                rawValue: UInt32(clamping: defaults.integer(
-                    forKey: Key.androidBootMode
-                ))
-            ) ?? defaultAndroidBootMode
+        let storedRetinaMode = stored(Key.retinaMode, defaultRetinaMode)
+        let storedAutoResizeGuest = stored(
+            Key.autoResizeGuest, defaultAutoResizeGuest
+        )
+        let storedAndroidBootMode = AndroidBootMode(
+            rawValue: UInt32(clamping: stored(
+                Key.androidBootMode, Int(defaultAndroidBootMode.rawValue)
+            ))
+        ) ?? defaultAndroidBootMode
         let environmentVCPUCount = environmentInteger(
             environment[vCPUEnvironmentKey], in: 1...maximumVCPUCount
         )
@@ -140,23 +142,17 @@ struct EmulatorConfiguration: Equatable {
             environment[androidDiskSizeEnvironmentKey],
             in: androidDiskSizeRangeGiB
         )
-        let environmentRetinaMode = environment[retinaEnvironmentKey].flatMap {
-            value in
-            switch value {
-            case "0": false
-            case "1": true
+        func environmentFlag(_ key: String) -> Bool? {
+            switch environment[key] {
+            case "0"?: false
+            case "1"?: true
             default: nil
             }
         }
-        let environmentAutoResizeGuest = environment[
+        let environmentRetinaMode = environmentFlag(retinaEnvironmentKey)
+        let environmentAutoResizeGuest = environmentFlag(
             autoResizeGuestEnvironmentKey
-        ].flatMap { value in
-            switch value {
-            case "0": false
-            case "1": true
-            default: nil
-            }
-        }
+        )
         let environmentAndroidBootMode = environment[
             AndroidBootMode.environmentKey
         ].flatMap(AndroidBootMode.init(environmentValue:))
@@ -233,8 +229,6 @@ struct EmulatorConfiguration: Equatable {
         static let overlaySizeGiB = "emulator.overlaySizeGiB"
         static let androidDiskSizeGiB = "emulator.androidDiskSizeGiB"
         static let rootfsFilename = "emulator.rootfsFilename"
-        /// The retired kernel page-size setting: every guest is 4 KiB.
-        static let retiredKernelPageSize = "emulator.kernelPageSize"
         static let retinaMode = "emulator.retinaMode"
         static let autoResizeGuest = "emulator.autoResizeGuest"
         static let androidBootMode = "emulator.androidBootMode"

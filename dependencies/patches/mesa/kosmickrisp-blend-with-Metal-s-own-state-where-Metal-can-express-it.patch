@@ -98,8 +98,8 @@ no slower and is the better default for a monolithic pipeline as well.
  .../tests/metal_blend_shaders/blend_dual.frag |  13 +
  .../metal_blend_shaders/blend_dual.frag.h     |  35 +
  .../tests/metal_blend_shaders/generate.sh     |   7 +
- .../vulkan/tests/test_metal_blend.cpp         | 803 ++++++++++++++++++
- 24 files changed, 1460 insertions(+), 16 deletions(-)
+ .../vulkan/tests/test_metal_blend.cpp         | 797 ++++++++++++++++++
+ 24 files changed, 1454 insertions(+), 16 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.frag
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.frag.h
  create mode 100644 src/kosmickrisp/vulkan/tests/metal_blend_shaders/blend.vert
@@ -316,7 +316,7 @@ index 108d2e6be4ab0f19d844048a581393be16f2891a..ad18d56a1c604a534e4f3c604c442493
  mtl_set_depth_bias(mtl_render_encoder *encoder, float depth_bias,
                     float slope_scale, float clamp)
 diff --git a/src/kosmickrisp/bridge/vk_to_mtl_map.c b/src/kosmickrisp/bridge/vk_to_mtl_map.c
-index cc7cfc49a8a97523f74f3552273d145d1ee4ef1d..c49bfa622c4313df8995ad0622333d29aeeae97f 100644
+index 6968bef2c7509c8973e18da3b6cebb60f78e3cc0..328eefc67e7555dae3529bca0707d881ebbd7b47 100644
 --- a/src/kosmickrisp/bridge/vk_to_mtl_map.c
 +++ b/src/kosmickrisp/bridge/vk_to_mtl_map.c
 @@ -184,6 +184,79 @@ vk_sampler_mipmap_mode_to_mtl_sampler_mip_filter(enum VkSamplerMipmapMode mode)
@@ -400,7 +400,7 @@ index cc7cfc49a8a97523f74f3552273d145d1ee4ef1d..c49bfa622c4313df8995ad0622333d29
  vk_compare_op_to_mtl_compare_function(enum VkCompareOp op)
  {
 diff --git a/src/kosmickrisp/bridge/vk_to_mtl_map.h b/src/kosmickrisp/bridge/vk_to_mtl_map.h
-index fa4b9cde1df9456a76b4fa4066081d08bf6cbfed..8319e2d10da17d3dfb4275500076fda506f17f56 100644
+index 48962190dc0cd4d9699e9aa303e482f1897ab424..3e2c59b6686259df2e4baba4bb74847456a2a70a 100644
 --- a/src/kosmickrisp/bridge/vk_to_mtl_map.h
 +++ b/src/kosmickrisp/bridge/vk_to_mtl_map.h
 @@ -6,6 +6,8 @@
@@ -843,7 +843,7 @@ index ef1aed242386292a86b14e08f2c36b242560b676..889ecc06804ac229cbfca446cabb3e74
           bool has_alpha_to_coverage_enabled;
           bool has_alpha_to_one_enabled;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 2f849dd4ea8d34cfbe3421efb59c3eae40cad37b..faa1adc3cd32448c48a21d60c0c8e8cc64501f38 100644
+index 770cad75802e4005d7fd0df5c74dbc337590a7d3..6afef36d1bd67a9408ce2f188119edb543875db5 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -647,6 +647,20 @@ if with_tests
@@ -1062,10 +1062,10 @@ index 0000000000000000000000000000000000000000..c16500ee146ea60d9a09bbea900c9087
 +done
 diff --git a/src/kosmickrisp/vulkan/tests/test_metal_blend.cpp b/src/kosmickrisp/vulkan/tests/test_metal_blend.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..3fc30861cda5cccaab3e9f331005b5f79fc68625
+index 0000000000000000000000000000000000000000..d14f00ef5e68d2e1d2d447b32a42b29dd74fc9f0
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_metal_blend.cpp
-@@ -0,0 +1,803 @@
+@@ -0,0 +1,797 @@
 +/*
 + * SPDX-License-Identifier: MIT
 + */
@@ -1131,14 +1131,8 @@ index 0000000000000000000000000000000000000000..3fc30861cda5cccaab3e9f331005b5f7
 +static const uint32_t kExtent = 4u;
 +
 +/* Vulkan blends an sRGB attachment in linear space and stores the encoded
-+ * value, and Metal does the same in its own hardware, so the host model has to
-+ * decode the destination and encode the result to compare like with like. */
-+static float srgb_decode(float encoded)
-+{
-+   return encoded <= 0.04045f ? encoded / 12.92f
-+                              : std::pow((encoded + 0.055f) / 1.055f, 2.4f);
-+}
-+
++ * value, and Metal does the same in its own hardware, so the host model blends
++ * the linear clear value and encodes the result to compare like with like. */
 +static float srgb_encode(float linear)
 +{
 +   return linear <= 0.0031308f

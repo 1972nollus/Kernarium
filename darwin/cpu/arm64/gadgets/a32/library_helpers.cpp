@@ -62,14 +62,12 @@ extern "C" [[gnu::noinline]] std::uint32_t uml_arm64_gadget_a32_execute(
 	const auto word = static_cast<std::uint32_t>(operand);
 	const a32::ItState it{static_cast<std::uint8_t>(
 		operand >> UML_GADGET_A32_LIBRARY_IT_SHIFT)};
-	const auto level = static_cast<a32::Level>(
-		operand >> UML_GADGET_A32_LIBRARY_LEVEL_SHIFT & 3U);
 	const auto form = static_cast<a32::Form>(
 		operand >> UML_GADGET_A32_LIBRARY_FORM_SHIFT);
 	/* The builder emitted this gadget for a word it decoded in the engine's
 	 * profile (a32::decode_profile), so the decode here only recovers
 	 * what it found and needs no host knowledge. */
-	const auto profile = a32::Profile::at(level);
+	const a32::Profile profile;
 	const bool thumb =
 		(operand >> UML_GADGET_A32_LIBRARY_THUMB_SHIFT & 1U) != 0U;
 	const auto instruction = thumb ? a32::decode_thumb(word, it, profile) :

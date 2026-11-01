@@ -40,7 +40,7 @@ struct JitA32Entry : detail::EntryDefaults {
   /* The host loads an AArch32 task's D registers and FPSCR before the entry
    * (they are deferred, as an A64 task's are), and the exit saves them from
    * CpuState; load them now so no block has to know whether it needs them. */
-  static void prepare(CpuState &cpu) { cpu.access_fp_state(); }
+  static void prepare(JitExecutor &, CpuState &cpu) { cpu.access_fp_state(); }
 
   [[nodiscard]] static EngineEvent run_block(
       JitExecutor &executor, CpuState &cpu, memory::StaticGuestMemory &guest,

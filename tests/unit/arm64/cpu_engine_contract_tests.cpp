@@ -162,6 +162,12 @@ public:
 		return event;
 	}
 
+	void enter_aarch32(uml::cpu::arm64::CpuState &) noexcept
+	{
+		a32_entry_before_block = a32_calls == 0;
+		++a32_entries;
+	}
+
 	[[nodiscard]] uml::cpu::EngineEvent run_a32_block(
 		uml::cpu::arm64::CpuState &, uml::memory::StaticGuestMemory &,
 		unsigned long, std::size_t &executed)
@@ -196,6 +202,8 @@ public:
 	std::size_t end_calls{};
 	std::size_t a64_calls{};
 	std::size_t a32_calls{};
+	std::size_t a32_entries{};
+	bool a32_entry_before_block{};
 };
 
 struct InterruptPollState final {
@@ -942,6 +950,9 @@ void test_translated_entries_report_the_exit_of_their_isa()
 			system_call.executor.a32_calls == (aarch32 ? 1U : 0U) &&
 			system_call.executor.end_calls == 1,
 			"entry did not run its ISA's block from the PC");
+		require(system_call.executor.a32_entries == (aarch32 ? 1U : 0U) &&
+			system_call.executor.a32_entry_before_block == aarch32,
+			"an AArch32 entry did not prepare its executor once, first");
 	}
 }
 

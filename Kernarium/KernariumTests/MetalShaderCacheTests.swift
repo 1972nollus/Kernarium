@@ -8,18 +8,6 @@ struct MetalShaderCacheTests {
     private static let bundleIdentifier = "com.example.Guest"
     private static let limit: UInt64 = 1000
 
-    private static func makeRoot() throws -> URL {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "MetalShaderCacheTests-\(UUID().uuidString)",
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(
-            at: root,
-            withIntermediateDirectories: true
-        )
-        return root
-    }
-
     private static func write(_ count: Int, to file: URL) throws {
         try FileManager.default.createDirectory(
             at: file.deletingLastPathComponent(),
@@ -72,7 +60,7 @@ struct MetalShaderCacheTests {
 
     @Test
     func theIndexIsEveryListFileAtAnyDepth() throws {
-        let root = try Self.makeRoot()
+        let root = try makeScratchDirectory("metal-shader-cache")
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = Self.cache(in: root)
         // A device keeps the GPU binaries' pair directly in the cache.
@@ -88,7 +76,7 @@ struct MetalShaderCacheTests {
 
     @Test
     func aCacheBelowTheLimitIsKept() throws {
-        let root = try Self.makeRoot()
+        let root = try makeScratchDirectory("metal-shader-cache")
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = Self.cache(in: root)
         try Self.writeCache(at: cache, functionsIndex: 600, librariesIndex: 399)
@@ -100,7 +88,7 @@ struct MetalShaderCacheTests {
 
     @Test
     func aCacheAtTheLimitIsKept() throws {
-        let root = try Self.makeRoot()
+        let root = try makeScratchDirectory("metal-shader-cache")
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = Self.cache(in: root)
         try Self.writeCache(at: cache, functionsIndex: 600, librariesIndex: 400)
@@ -112,7 +100,7 @@ struct MetalShaderCacheTests {
 
     @Test
     func aCacheAboveTheLimitIsRemovedAndItsSiblingsStay() throws {
-        let root = try Self.makeRoot()
+        let root = try makeScratchDirectory("metal-shader-cache")
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = Self.cache(in: root)
         try Self.writeCache(at: cache, functionsIndex: 600, librariesIndex: 401)
@@ -129,7 +117,7 @@ struct MetalShaderCacheTests {
 
     @Test
     func theApplicationLimitDecidesByDefault() throws {
-        let root = try Self.makeRoot()
+        let root = try makeScratchDirectory("metal-shader-cache")
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = Self.cache(in: root)
         let limit = MetalShaderCache.indexLimit
@@ -150,7 +138,7 @@ struct MetalShaderCacheTests {
 
     @Test
     func anAbsentCacheIsNotAnError() throws {
-        let root = try Self.makeRoot()
+        let root = try makeScratchDirectory("metal-shader-cache")
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = Self.cache(in: root)
         #expect(MetalShaderCache.size(at: cache) == nil)

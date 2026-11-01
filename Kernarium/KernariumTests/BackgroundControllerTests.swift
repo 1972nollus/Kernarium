@@ -261,6 +261,71 @@ struct BackgroundControllerTests {
         #expect(policy.phase == .foreground)
     }
 
+    /// A restarted guest boots a new kernel with neither the page-cache
+    /// trimming nor the throttled vCPUs the policy gave the old one, so a
+    /// guest kept running in a window gets both again, and nothing else.
+    @Test
+    func aGuestKeptRunningInAWindowThatRestartsGetsItsEdgesAgain() {
+        let effects = Effects()
+        effects.pictureInPictureCanStart = true
+        let policy = controller(.pictureInPicture, effects)
+        policy.didEnterBackground()
+        policy.pictureInPictureDidStart()
+        effects.calls.removeAll()
+
+        policy.guestDidRestart()
+        #expect(effects.calls == ["trim on", "throttle on"])
+        #expect(policy.phase == .keptRunning)
+
+        // The guest still leaves the background the way it entered it.
+        policy.willEnterForeground()
+        #expect(effects.calls.suffix(2) == ["throttle off", "trim off"])
+        #expect(!effects.calls.contains("resume"))
+    }
+
+    /// iOS already runs a continued task at background priority, so a job
+    /// gets the trimming alone, as it did when the job began.
+    @Test
+    func aJobThatKeepsTheGuestRunningGetsOnlyTheTrimmingAgain() {
+        let effects = Effects()
+        effects.jobActive = true
+        let policy = controller(.keepRunning, effects)
+        policy.didEnterBackground()
+        effects.calls.removeAll()
+
+        policy.guestDidRestart()
+        #expect(effects.calls == ["trim on"])
+        #expect(policy.phase == .jobRunning)
+    }
+
+    /// A guest in the foreground, or one the policy paused, wants neither
+    /// edge: asking would trim the cache of a guest the user is using, or
+    /// throttle one that is paused.
+    @Test
+    func aRestartAsksNothingOfAGuestThatIsInTheForegroundOrPaused() {
+        let foreground = Effects()
+        let inForeground = controller(.keepRunning, foreground)
+        inForeground.guestDidRestart()
+        #expect(foreground.calls.isEmpty)
+
+        let paused = Effects()
+        let policy = controller(.off, paused)
+        policy.didEnterBackground()
+        paused.calls.removeAll()
+        policy.guestDidRestart()
+        #expect(paused.calls.isEmpty)
+        #expect(policy.phase == .quiesced)
+
+        let waiting = Effects()
+        waiting.pictureInPictureCanStart = true
+        let waitingPolicy = controller(.pictureInPicture, waiting)
+        waitingPolicy.didEnterBackground()
+        waiting.calls.removeAll()
+        waitingPolicy.guestDidRestart()
+        #expect(waiting.calls.isEmpty)
+        #expect(waitingPolicy.phase == .awaitingPictureInPicture)
+    }
+
     /// The application's effects pass the policy's trimming edges to the
     /// runtime, in order and away from the main thread, since the switch may
     /// wait for the guest's console.
@@ -478,5 +543,16 @@ struct BackgroundControllerTests {
         // A value from a newer build that this one does not know pauses.
         defaults.set("someday", forKey: BackgroundSettings.keyPrefix + "x")
         #expect(settings.mode(forGuest: "x") == .off)
+    }
+
+    @Test
+    func aLimitIsTitledInWholeHoursWhereItIsOne() {
+        for (minutes, title) in [
+            (15, "15 minutes"), (30, "30 minutes"), (60, "1 hour"),
+            (120, "2 hours"), (90, "90 minutes"), (1, "1 minutes"),
+            (24 * 60, "24 hours"),
+        ] {
+            #expect(BackgroundSettings.limitTitle(minutes: minutes) == title)
+        }
     }
 }

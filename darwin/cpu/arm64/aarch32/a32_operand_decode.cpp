@@ -724,24 +724,8 @@ Outcome program_40([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* BIC_i_A1 */
-Outcome program_41([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_S = (word >> 20) & UINT64_C(0x1);
-	const std::uint64_t f_imm12 = (word >> 0) & UINT64_C(0xfff);
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.setflags = (f_S == UINT64_C(1));
-	out.a32 = true;
-	out.imm = static_cast<std::uint64_t>(f_imm12);
-	return Outcome::ok;
-}
-
 /* BIC_i_T1 */
-Outcome program_42([[maybe_unused]] std::uint32_t word,
+Outcome program_41([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -760,49 +744,8 @@ Outcome program_42([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* BIC_r_A1_RRX */
-Outcome program_43([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_S = (word >> 20) & UINT64_C(0x1);
-	const std::uint64_t f_imm5 = (word >> 7) & UINT64_C(0x1f);
-	const std::uint64_t f_stype = (word >> 5) & UINT64_C(0x3);
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.setflags = (f_S == UINT64_C(1));
-	const auto t4 = detail::decode_imm_shift(f_stype, f_imm5);
-	out.shift_t = t4.type;
-	out.shift_n = static_cast<std::int32_t>(t4.amount);
-	return Outcome::ok;
-}
-
-/* BICS_rr_A1 */
-Outcome program_44([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rs = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_S = (word >> 20) & UINT64_C(0x1);
-	const std::uint64_t f_stype = (word >> 5) & UINT64_C(0x3);
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.s = static_cast<std::int32_t>(static_cast<int64_t>(f_Rs));
-	out.setflags = (f_S == UINT64_C(1));
-	out.shift_t = detail::decode_reg_shift(f_stype);
-	if ((((out.d == INT64_C(15)) || (out.n == INT64_C(15))) || (out.m == INT64_C(15))) || (out.s == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* BKPT_A1 */
-Outcome program_45([[maybe_unused]] std::uint32_t word,
+Outcome program_42([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_cond = (word >> 28) & UINT64_C(0xf);
@@ -815,7 +758,7 @@ Outcome program_45([[maybe_unused]] std::uint32_t word,
 }
 
 /* BKPT_T1 */
-Outcome program_46([[maybe_unused]] std::uint32_t word,
+Outcome program_43([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_imm8 = (word >> 16) & UINT64_C(0xff);
@@ -824,7 +767,7 @@ Outcome program_46([[maybe_unused]] std::uint32_t word,
 }
 
 /* BL_i_A1 */
-Outcome program_47([[maybe_unused]] std::uint32_t word,
+Outcome program_44([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_imm24 = (word >> 0) & UINT64_C(0xffffff);
@@ -834,7 +777,7 @@ Outcome program_47([[maybe_unused]] std::uint32_t word,
 }
 
 /* BL_i_A2 */
-Outcome program_48([[maybe_unused]] std::uint32_t word,
+Outcome program_45([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_H = (word >> 24) & UINT64_C(0x1);
@@ -845,7 +788,7 @@ Outcome program_48([[maybe_unused]] std::uint32_t word,
 }
 
 /* BL_i_T1 */
-Outcome program_49([[maybe_unused]] std::uint32_t word,
+Outcome program_46([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_J1 = (word >> 13) & UINT64_C(0x1);
@@ -863,7 +806,7 @@ Outcome program_49([[maybe_unused]] std::uint32_t word,
 }
 
 /* BL_i_T2 */
-Outcome program_50([[maybe_unused]] std::uint32_t word,
+Outcome program_47([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_H = (word >> 0) & UINT64_C(0x1);
@@ -884,7 +827,7 @@ Outcome program_50([[maybe_unused]] std::uint32_t word,
 }
 
 /* BLX_r_A1 */
-Outcome program_51([[maybe_unused]] std::uint32_t word,
+Outcome program_48([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -895,7 +838,7 @@ Outcome program_51([[maybe_unused]] std::uint32_t word,
 }
 
 /* BLX_r_T1 */
-Outcome program_52([[maybe_unused]] std::uint32_t word,
+Outcome program_49([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 19) & UINT64_C(0xf);
@@ -908,7 +851,7 @@ Outcome program_52([[maybe_unused]] std::uint32_t word,
 }
 
 /* BX_A1 */
-Outcome program_53([[maybe_unused]] std::uint32_t word,
+Outcome program_50([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -917,7 +860,7 @@ Outcome program_53([[maybe_unused]] std::uint32_t word,
 }
 
 /* BX_T1 */
-Outcome program_54([[maybe_unused]] std::uint32_t word,
+Outcome program_51([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 19) & UINT64_C(0xf);
@@ -928,7 +871,7 @@ Outcome program_54([[maybe_unused]] std::uint32_t word,
 }
 
 /* BXJ_T1 */
-Outcome program_55([[maybe_unused]] std::uint32_t word,
+Outcome program_52([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 16) & UINT64_C(0xf);
@@ -941,7 +884,7 @@ Outcome program_55([[maybe_unused]] std::uint32_t word,
 }
 
 /* CBNZ_T1 */
-Outcome program_56([[maybe_unused]] std::uint32_t word,
+Outcome program_53([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0x7);
@@ -957,15 +900,7 @@ Outcome program_56([[maybe_unused]] std::uint32_t word,
 }
 
 /* CLRBHB_A1 */
-Outcome program_57([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	return Outcome::nop;
-	return Outcome::ok;
-}
-
-/* CLRBHB_T1 */
-Outcome program_58([[maybe_unused]] std::uint32_t word,
+Outcome program_54([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	return Outcome::nop;
@@ -973,21 +908,14 @@ Outcome program_58([[maybe_unused]] std::uint32_t word,
 }
 
 /* CLREX_A1 */
-Outcome program_59([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	return Outcome::ok;
-}
-
-/* CLREX_T1 */
-Outcome program_60([[maybe_unused]] std::uint32_t word,
+Outcome program_55([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	return Outcome::ok;
 }
 
 /* CLZ_A1 */
-Outcome program_61([[maybe_unused]] std::uint32_t word,
+Outcome program_56([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -1000,7 +928,7 @@ Outcome program_61([[maybe_unused]] std::uint32_t word,
 }
 
 /* CLZ_T1 */
-Outcome program_62([[maybe_unused]] std::uint32_t word,
+Outcome program_57([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -1015,7 +943,7 @@ Outcome program_62([[maybe_unused]] std::uint32_t word,
 }
 
 /* CMN_i_A1 */
-Outcome program_63([[maybe_unused]] std::uint32_t word,
+Outcome program_58([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -1026,7 +954,7 @@ Outcome program_63([[maybe_unused]] std::uint32_t word,
 }
 
 /* CMN_i_T1 */
-Outcome program_64([[maybe_unused]] std::uint32_t word,
+Outcome program_59([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -1041,7 +969,7 @@ Outcome program_64([[maybe_unused]] std::uint32_t word,
 }
 
 /* CMN_r_A1_RRX */
-Outcome program_65([[maybe_unused]] std::uint32_t word,
+Outcome program_60([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -1057,7 +985,7 @@ Outcome program_65([[maybe_unused]] std::uint32_t word,
 }
 
 /* CMN_r_T1 */
-Outcome program_66([[maybe_unused]] std::uint32_t word,
+Outcome program_61([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 19) & UINT64_C(0x7);
@@ -1070,7 +998,7 @@ Outcome program_66([[maybe_unused]] std::uint32_t word,
 }
 
 /* CMN_r_T2_RRX */
-Outcome program_67([[maybe_unused]] std::uint32_t word,
+Outcome program_62([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -1089,7 +1017,7 @@ Outcome program_67([[maybe_unused]] std::uint32_t word,
 }
 
 /* CMN_rr_A1 */
-Outcome program_68([[maybe_unused]] std::uint32_t word,
+Outcome program_63([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -1106,7 +1034,7 @@ Outcome program_68([[maybe_unused]] std::uint32_t word,
 }
 
 /* CMP_i_T1 */
-Outcome program_69([[maybe_unused]] std::uint32_t word,
+Outcome program_64([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 24) & UINT64_C(0x7);
@@ -1117,7 +1045,7 @@ Outcome program_69([[maybe_unused]] std::uint32_t word,
 }
 
 /* CMP_r_T2 */
-Outcome program_70([[maybe_unused]] std::uint32_t word,
+Outcome program_65([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_N = (word >> 23) & UINT64_C(0x1);
@@ -1135,7 +1063,7 @@ Outcome program_70([[maybe_unused]] std::uint32_t word,
 }
 
 /* CPS_A1_AS */
-Outcome program_71([[maybe_unused]] std::uint32_t word,
+Outcome program_66([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_A = (word >> 8) & UINT64_C(0x1);
@@ -1161,7 +1089,7 @@ Outcome program_71([[maybe_unused]] std::uint32_t word,
 }
 
 /* CPSID_T1_AS */
-Outcome program_72([[maybe_unused]] std::uint32_t word,
+Outcome program_67([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_A = (word >> 18) & UINT64_C(0x1);
@@ -1183,7 +1111,7 @@ Outcome program_72([[maybe_unused]] std::uint32_t word,
 }
 
 /* CPS_T2_AS */
-Outcome program_73([[maybe_unused]] std::uint32_t word,
+Outcome program_68([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_A = (word >> 7) & UINT64_C(0x1);
@@ -1211,7 +1139,7 @@ Outcome program_73([[maybe_unused]] std::uint32_t word,
 }
 
 /* CRC32B_A1 */
-Outcome program_74([[maybe_unused]] std::uint32_t word,
+Outcome program_69([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_C = (word >> 9) & UINT64_C(0x1);
@@ -1237,7 +1165,7 @@ Outcome program_74([[maybe_unused]] std::uint32_t word,
 }
 
 /* CRC32B_T1 */
-Outcome program_75([[maybe_unused]] std::uint32_t word,
+Outcome program_70([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_C = (word >> 20) & UINT64_C(0x1);
@@ -1262,7 +1190,7 @@ Outcome program_75([[maybe_unused]] std::uint32_t word,
 }
 
 /* CSDB_A1 */
-Outcome program_76([[maybe_unused]] std::uint32_t word,
+Outcome program_71([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_cond = (word >> 28) & UINT64_C(0xf);
@@ -1272,7 +1200,7 @@ Outcome program_76([[maybe_unused]] std::uint32_t word,
 }
 
 /* CSDB_T1 */
-Outcome program_77([[maybe_unused]] std::uint32_t word,
+Outcome program_72([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	if (ctx.it.active())
@@ -1280,69 +1208,8 @@ Outcome program_77([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* DBG_A1 */
-Outcome program_78([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	return Outcome::ok;
-}
-
-/* DBG_T1 */
-Outcome program_79([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	return Outcome::ok;
-}
-
-/* EOR_i_T1 */
-Outcome program_80([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_S = (word >> 20) & UINT64_C(0x1);
-	const std::uint64_t f_i = (word >> 26) & UINT64_C(0x1);
-	const std::uint64_t f_imm3 = (word >> 12) & UINT64_C(0x7);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if ((f_Rd == UINT64_C(15)) && (f_S == UINT64_C(1)))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.setflags = (f_S == UINT64_C(1));
-	out.a32 = false;
-	out.imm = static_cast<std::uint64_t>(((((f_i << 3) | f_imm3) << 8) | f_imm8));
-	if (((out.d == INT64_C(15)) && (!out.setflags)) || (out.n == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* EOR_r_T2_RRX */
-Outcome program_81([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_S = (word >> 20) & UINT64_C(0x1);
-	const std::uint64_t f_imm2 = (word >> 6) & UINT64_C(0x3);
-	const std::uint64_t f_imm3 = (word >> 12) & UINT64_C(0x7);
-	const std::uint64_t f_stype = (word >> 4) & UINT64_C(0x3);
-	if ((f_Rd == UINT64_C(15)) && (f_S == UINT64_C(1)))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.setflags = (f_S == UINT64_C(1));
-	const auto t6 = detail::decode_imm_shift(f_stype, ((f_imm3 << 2) | f_imm2));
-	out.shift_t = t6.type;
-	out.shift_n = static_cast<std::int32_t>(t6.amount);
-	if ((((out.d == INT64_C(15)) && (!out.setflags)) || (out.n == INT64_C(15))) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* ESB_A1 */
-Outcome program_82([[maybe_unused]] std::uint32_t word,
+Outcome program_73([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_cond = (word >> 28) & UINT64_C(0xf);
@@ -1353,7 +1220,7 @@ Outcome program_82([[maybe_unused]] std::uint32_t word,
 }
 
 /* ESB_T1 */
-Outcome program_83([[maybe_unused]] std::uint32_t word,
+Outcome program_74([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	return Outcome::nop;
@@ -1363,7 +1230,7 @@ Outcome program_83([[maybe_unused]] std::uint32_t word,
 }
 
 /* IT_T1 */
-Outcome program_84([[maybe_unused]] std::uint32_t word,
+Outcome program_75([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_firstcond = (word >> 20) & UINT64_C(0xf);
@@ -1378,20 +1245,7 @@ Outcome program_84([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDA_A1 */
-Outcome program_85([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	if ((out.t == INT64_C(15)) || (out.n == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* LDA_T1 */
-Outcome program_86([[maybe_unused]] std::uint32_t word,
+Outcome program_76([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -1404,7 +1258,7 @@ Outcome program_86([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDAEXD_A1 */
-Outcome program_87([[maybe_unused]] std::uint32_t word,
+Outcome program_77([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -1418,7 +1272,7 @@ Outcome program_87([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDAEXD_T1 */
-Outcome program_88([[maybe_unused]] std::uint32_t word,
+Outcome program_78([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -1433,7 +1287,7 @@ Outcome program_88([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDM_A1 */
-Outcome program_89([[maybe_unused]] std::uint32_t word,
+Outcome program_79([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -1450,7 +1304,7 @@ Outcome program_89([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDM_T1 */
-Outcome program_90([[maybe_unused]] std::uint32_t word,
+Outcome program_80([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 24) & UINT64_C(0x7);
@@ -1464,7 +1318,7 @@ Outcome program_90([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDM_T2 */
-Outcome program_91([[maybe_unused]] std::uint32_t word,
+Outcome program_81([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 14) & UINT64_C(0x1);
@@ -1487,7 +1341,7 @@ Outcome program_91([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDR_i_A1_off */
-Outcome program_92([[maybe_unused]] std::uint32_t word,
+Outcome program_82([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -1512,7 +1366,7 @@ Outcome program_92([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDR_i_T1 */
-Outcome program_93([[maybe_unused]] std::uint32_t word,
+Outcome program_83([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 19) & UINT64_C(0x7);
@@ -1528,7 +1382,7 @@ Outcome program_93([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDR_i_T2 */
-Outcome program_94([[maybe_unused]] std::uint32_t word,
+Outcome program_84([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rt = (word >> 24) & UINT64_C(0x7);
@@ -1543,7 +1397,7 @@ Outcome program_94([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDR_i_T3 */
-Outcome program_95([[maybe_unused]] std::uint32_t word,
+Outcome program_85([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -1563,7 +1417,7 @@ Outcome program_95([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDR_i_T4_off */
-Outcome program_96([[maybe_unused]] std::uint32_t word,
+Outcome program_86([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 10) & UINT64_C(0x1);
@@ -1590,7 +1444,7 @@ Outcome program_96([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDR_l_A1 */
-Outcome program_97([[maybe_unused]] std::uint32_t word,
+Outcome program_87([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -1610,7 +1464,7 @@ Outcome program_97([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDR_l_T1 */
-Outcome program_98([[maybe_unused]] std::uint32_t word,
+Outcome program_88([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rt = (word >> 24) & UINT64_C(0x7);
@@ -1622,7 +1476,7 @@ Outcome program_98([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDR_l_T2 */
-Outcome program_99([[maybe_unused]] std::uint32_t word,
+Outcome program_89([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
@@ -1637,7 +1491,7 @@ Outcome program_99([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDR_r_A1_off */
-Outcome program_100([[maybe_unused]] std::uint32_t word,
+Outcome program_90([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -1667,7 +1521,7 @@ Outcome program_100([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDR_r_T1 */
-Outcome program_101([[maybe_unused]] std::uint32_t word,
+Outcome program_91([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 22) & UINT64_C(0x7);
@@ -1685,7 +1539,7 @@ Outcome program_101([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDR_r_T2 */
-Outcome program_102([[maybe_unused]] std::uint32_t word,
+Outcome program_92([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -1710,7 +1564,7 @@ Outcome program_102([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRB_i_A1_off */
-Outcome program_103([[maybe_unused]] std::uint32_t word,
+Outcome program_93([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -1735,7 +1589,7 @@ Outcome program_103([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRB_i_T1 */
-Outcome program_104([[maybe_unused]] std::uint32_t word,
+Outcome program_94([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 19) & UINT64_C(0x7);
@@ -1751,7 +1605,7 @@ Outcome program_104([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRB_i_T2 */
-Outcome program_105([[maybe_unused]] std::uint32_t word,
+Outcome program_95([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -1771,7 +1625,7 @@ Outcome program_105([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRB_i_T3_off */
-Outcome program_106([[maybe_unused]] std::uint32_t word,
+Outcome program_96([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 10) & UINT64_C(0x1);
@@ -1800,7 +1654,7 @@ Outcome program_106([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRB_l_A1 */
-Outcome program_107([[maybe_unused]] std::uint32_t word,
+Outcome program_97([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -1820,7 +1674,7 @@ Outcome program_107([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRB_l_T1 */
-Outcome program_108([[maybe_unused]] std::uint32_t word,
+Outcome program_98([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
@@ -1835,7 +1689,7 @@ Outcome program_108([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRB_r_A1_off */
-Outcome program_109([[maybe_unused]] std::uint32_t word,
+Outcome program_99([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -1865,7 +1719,7 @@ Outcome program_109([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRB_r_T1 */
-Outcome program_110([[maybe_unused]] std::uint32_t word,
+Outcome program_100([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 22) & UINT64_C(0x7);
@@ -1883,7 +1737,7 @@ Outcome program_110([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRB_r_T2 */
-Outcome program_111([[maybe_unused]] std::uint32_t word,
+Outcome program_101([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -1908,7 +1762,7 @@ Outcome program_111([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRBT_A1 */
-Outcome program_112([[maybe_unused]] std::uint32_t word,
+Outcome program_102([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -1930,7 +1784,7 @@ Outcome program_112([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRBT_A2 */
-Outcome program_113([[maybe_unused]] std::uint32_t word,
+Outcome program_103([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -1955,7 +1809,7 @@ Outcome program_113([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRBT_T1 */
-Outcome program_114([[maybe_unused]] std::uint32_t word,
+Outcome program_104([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -1978,7 +1832,7 @@ Outcome program_114([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRD_i_A1_off */
-Outcome program_115([[maybe_unused]] std::uint32_t word,
+Outcome program_105([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -2009,7 +1863,7 @@ Outcome program_115([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRD_i_T1_off */
-Outcome program_116([[maybe_unused]] std::uint32_t word,
+Outcome program_106([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -2038,7 +1892,7 @@ Outcome program_116([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRD_l_A1 */
-Outcome program_117([[maybe_unused]] std::uint32_t word,
+Outcome program_107([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
@@ -2057,7 +1911,7 @@ Outcome program_117([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRD_l_T1 */
-Outcome program_118([[maybe_unused]] std::uint32_t word,
+Outcome program_108([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -2080,7 +1934,7 @@ Outcome program_118([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRD_r_A1_off */
-Outcome program_119([[maybe_unused]] std::uint32_t word,
+Outcome program_109([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -2108,7 +1962,7 @@ Outcome program_119([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDREX_A1 */
-Outcome program_120([[maybe_unused]] std::uint32_t word,
+Outcome program_110([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -2122,7 +1976,7 @@ Outcome program_120([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDREX_T1 */
-Outcome program_121([[maybe_unused]] std::uint32_t word,
+Outcome program_111([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -2136,36 +1990,8 @@ Outcome program_121([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* LDREXB_T1 */
-Outcome program_122([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	if ((out.t == INT64_C(15)) || (out.n == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* LDREXD_T1 */
-Outcome program_123([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rt2 = (word >> 8) & UINT64_C(0xf);
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.t2 = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt2));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	if ((((out.t == INT64_C(15)) || (out.t2 == INT64_C(15))) || (out.t == out.t2)) || (out.n == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* LDRH_i_A1_off */
-Outcome program_124([[maybe_unused]] std::uint32_t word,
+Outcome program_112([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -2191,7 +2017,7 @@ Outcome program_124([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRH_i_T1 */
-Outcome program_125([[maybe_unused]] std::uint32_t word,
+Outcome program_113([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 19) & UINT64_C(0x7);
@@ -2206,28 +2032,8 @@ Outcome program_125([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* LDRH_i_T2 */
-Outcome program_126([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_imm12 = (word >> 0) & UINT64_C(0xfff);
-	if (f_Rt == UINT64_C(15))
-		return Outcome::see;
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(f_imm12);
-	out.index = true;
-	out.add = true;
-	out.wback = false;
-	return Outcome::ok;
-}
-
 /* LDRH_i_T3_off */
-Outcome program_127([[maybe_unused]] std::uint32_t word,
+Outcome program_114([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 10) & UINT64_C(0x1);
@@ -2256,7 +2062,7 @@ Outcome program_127([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRH_l_A1 */
-Outcome program_128([[maybe_unused]] std::uint32_t word,
+Outcome program_115([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -2276,23 +2082,8 @@ Outcome program_128([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* LDRH_l_T1 */
-Outcome program_129([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_imm12 = (word >> 0) & UINT64_C(0xfff);
-	if (f_Rt == UINT64_C(15))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.imm32 = static_cast<std::int64_t>(f_imm12);
-	out.add = (f_U == UINT64_C(1));
-	return Outcome::ok;
-}
-
 /* LDRH_r_A1_off */
-Outcome program_130([[maybe_unused]] std::uint32_t word,
+Outcome program_116([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -2319,7 +2110,7 @@ Outcome program_130([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRH_r_T2 */
-Outcome program_131([[maybe_unused]] std::uint32_t word,
+Outcome program_117([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -2344,7 +2135,7 @@ Outcome program_131([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRHT_A1 */
-Outcome program_132([[maybe_unused]] std::uint32_t word,
+Outcome program_118([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -2365,7 +2156,7 @@ Outcome program_132([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRHT_A2 */
-Outcome program_133([[maybe_unused]] std::uint32_t word,
+Outcome program_119([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -2385,7 +2176,7 @@ Outcome program_133([[maybe_unused]] std::uint32_t word,
 }
 
 /* LDRHT_T1 */
-Outcome program_134([[maybe_unused]] std::uint32_t word,
+Outcome program_120([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -2401,222 +2192,12 @@ Outcome program_134([[maybe_unused]] std::uint32_t word,
 	out.imm32 = static_cast<std::int64_t>(f_imm8);
 	out.m = static_cast<std::int32_t>(0);
 	if (out.t == INT64_C(15))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* LDRSB_i_A1_off */
-Outcome program_135([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	const std::uint64_t f_imm4H = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_imm4L = (word >> 0) & UINT64_C(0xf);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	if ((f_P == UINT64_C(0)) && (f_W == UINT64_C(1)))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(((f_imm4H << 4) | f_imm4L));
-	out.index = (f_P == UINT64_C(1));
-	out.add = (f_U == UINT64_C(1));
-	out.wback = ((f_P == UINT64_C(0)) || (f_W == UINT64_C(1)));
-	if ((out.t == INT64_C(15)) || (out.wback && (out.n == out.t)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* LDRSB_i_T1 */
-Outcome program_136([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_imm12 = (word >> 0) & UINT64_C(0xfff);
-	if (f_Rt == UINT64_C(15))
-		return Outcome::see;
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(f_imm12);
-	out.index = true;
-	out.add = true;
-	out.wback = false;
-	return Outcome::ok;
-}
-
-/* LDRSB_i_T2_off */
-Outcome program_137([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_P = (word >> 10) & UINT64_C(0x1);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 9) & UINT64_C(0x1);
-	const std::uint64_t f_W = (word >> 8) & UINT64_C(0x1);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if ((((f_Rt == UINT64_C(15)) && (f_P == UINT64_C(1))) && (f_U == UINT64_C(0))) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	if (((f_P == UINT64_C(1)) && (f_U == UINT64_C(1))) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_P == UINT64_C(0)) && (f_W == UINT64_C(0)))
-		return Outcome::undefined;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(f_imm8);
-	out.index = (f_P == UINT64_C(1));
-	out.add = (f_U == UINT64_C(1));
-	out.wback = (f_W == UINT64_C(1));
-	if (((out.t == INT64_C(15)) && (f_W == UINT64_C(1))) || (out.wback && (out.n == out.t)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* LDRSB_l_A1 */
-Outcome program_138([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	const std::uint64_t f_imm4H = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_imm4L = (word >> 0) & UINT64_C(0xf);
-	if ((f_P == UINT64_C(0)) && (f_W == UINT64_C(1)))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.imm32 = static_cast<std::int64_t>(((f_imm4H << 4) | f_imm4L));
-	out.add = (f_U == UINT64_C(1));
-	out.wback = ((f_P == UINT64_C(0)) || (f_W == UINT64_C(1)));
-	if ((out.t == INT64_C(15)) || out.wback)
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* LDRSB_l_T1 */
-Outcome program_139([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_imm12 = (word >> 0) & UINT64_C(0xfff);
-	if (f_Rt == UINT64_C(15))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.imm32 = static_cast<std::int64_t>(f_imm12);
-	out.add = (f_U == UINT64_C(1));
-	return Outcome::ok;
-}
-
-/* LDRSB_r_A1_off */
-Outcome program_140([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	if ((f_P == UINT64_C(0)) && (f_W == UINT64_C(1)))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.index = (f_P == UINT64_C(1));
-	out.add = (f_U == UINT64_C(1));
-	out.wback = ((f_P == UINT64_C(0)) || (f_W == UINT64_C(1)));
-	out.shift_t = SRType::LSL;
-	out.shift_n = static_cast<std::int32_t>(INT64_C(0));
-	if ((out.t == INT64_C(15)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	if (out.wback && ((out.n == INT64_C(15)) || (out.n == out.t)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* LDRSB_r_T2 */
-Outcome program_141([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_imm2 = (word >> 4) & UINT64_C(0x3);
-	if (f_Rt == UINT64_C(15))
-		return Outcome::see;
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.index = true;
-	out.add = true;
-	out.wback = false;
-	out.shift_t = SRType::LSL;
-	out.shift_n = static_cast<std::int32_t>(static_cast<int64_t>(f_imm2));
-	if (out.m == INT64_C(15))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* LDRSBT_T1 */
-Outcome program_142([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.postindex = false;
-	out.add = true;
-	out.register_form = false;
-	out.imm32 = static_cast<std::int64_t>(f_imm8);
-	out.m = static_cast<std::int32_t>(0);
-	if (out.t == INT64_C(15))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* LDRSH_i_A1_off */
-Outcome program_143([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	const std::uint64_t f_imm4H = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_imm4L = (word >> 0) & UINT64_C(0xf);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	if ((f_P == UINT64_C(0)) && (f_W == UINT64_C(1)))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(((f_imm4H << 4) | f_imm4L));
-	out.index = (f_P == UINT64_C(1));
-	out.add = (f_U == UINT64_C(1));
-	out.wback = ((f_P == UINT64_C(0)) || (f_W == UINT64_C(1)));
-	if ((out.t == INT64_C(15)) || (out.wback && (out.n == out.t)))
 		return Outcome::unpredictable;
 	return Outcome::ok;
 }
 
 /* LDRSH_i_T1 */
-Outcome program_144([[maybe_unused]] std::uint32_t word,
+Outcome program_121([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -2632,185 +2213,11 @@ Outcome program_144([[maybe_unused]] std::uint32_t word,
 	out.index = true;
 	out.add = true;
 	out.wback = false;
-	return Outcome::ok;
-}
-
-/* LDRSH_i_T2_off */
-Outcome program_145([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_P = (word >> 10) & UINT64_C(0x1);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 9) & UINT64_C(0x1);
-	const std::uint64_t f_W = (word >> 8) & UINT64_C(0x1);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	if ((((f_Rt == UINT64_C(15)) && (f_P == UINT64_C(1))) && (f_U == UINT64_C(0))) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if (((f_P == UINT64_C(1)) && (f_U == UINT64_C(1))) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_P == UINT64_C(0)) && (f_W == UINT64_C(0)))
-		return Outcome::undefined;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(f_imm8);
-	out.index = (f_P == UINT64_C(1));
-	out.add = (f_U == UINT64_C(1));
-	out.wback = (f_W == UINT64_C(1));
-	if (((out.t == INT64_C(15)) && (f_W == UINT64_C(1))) || (out.wback && (out.n == out.t)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* LDRSH_l_A1 */
-Outcome program_146([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	const std::uint64_t f_imm4H = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_imm4L = (word >> 0) & UINT64_C(0xf);
-	if ((f_P == UINT64_C(0)) && (f_W == UINT64_C(1)))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.imm32 = static_cast<std::int64_t>(((f_imm4H << 4) | f_imm4L));
-	out.add = (f_U == UINT64_C(1));
-	out.wback = ((f_P == UINT64_C(0)) || (f_W == UINT64_C(1)));
-	if ((out.t == INT64_C(15)) || out.wback)
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* LDRSH_l_T1 */
-Outcome program_147([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_imm12 = (word >> 0) & UINT64_C(0xfff);
-	if (f_Rt == UINT64_C(15))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.imm32 = static_cast<std::int64_t>(f_imm12);
-	out.add = (f_U == UINT64_C(1));
-	return Outcome::ok;
-}
-
-/* LDRSH_r_A1_off */
-Outcome program_148([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	if ((f_P == UINT64_C(0)) && (f_W == UINT64_C(1)))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.index = (f_P == UINT64_C(1));
-	out.add = (f_U == UINT64_C(1));
-	out.wback = ((f_P == UINT64_C(0)) || (f_W == UINT64_C(1)));
-	out.shift_t = SRType::LSL;
-	out.shift_n = static_cast<std::int32_t>(INT64_C(0));
-	if ((out.t == INT64_C(15)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	if (out.wback && ((out.n == INT64_C(15)) || (out.n == out.t)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* LDRSH_r_T2 */
-Outcome program_149([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_imm2 = (word >> 4) & UINT64_C(0x3);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	if (f_Rt == UINT64_C(15))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.index = true;
-	out.add = true;
-	out.wback = false;
-	out.shift_t = SRType::LSL;
-	out.shift_n = static_cast<std::int32_t>(static_cast<int64_t>(f_imm2));
-	if (out.m == INT64_C(15))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* LDRSHT_T1 */
-Outcome program_150([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.postindex = false;
-	out.add = true;
-	out.register_form = false;
-	out.imm32 = static_cast<std::int64_t>(f_imm8);
-	out.m = static_cast<std::int32_t>(0);
-	if (out.t == INT64_C(15))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* LDRT_T1 */
-Outcome program_151([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.postindex = false;
-	out.add = true;
-	out.register_form = false;
-	out.imm32 = static_cast<std::int64_t>(f_imm8);
-	out.m = static_cast<std::int32_t>(0);
-	out.shift_n = static_cast<std::int32_t>(0);
-	out.shift_t = SRType::LSL;
-	if (out.t == INT64_C(15))
-		return Outcome::unpredictable;
 	return Outcome::ok;
 }
 
 /* MCR_A1 */
-Outcome program_152([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_cp15 = (word >> 8) & UINT64_C(0x1);
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.cp = static_cast<std::int32_t>(((f_cp15 == UINT64_C(0)) ? INT64_C(14) : INT64_C(15)));
-	if (out.t == INT64_C(15))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* MCR_T1 */
-Outcome program_153([[maybe_unused]] std::uint32_t word,
+Outcome program_122([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
@@ -2823,22 +2230,7 @@ Outcome program_153([[maybe_unused]] std::uint32_t word,
 }
 
 /* MCRR_A1 */
-Outcome program_154([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rt2 = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_cp15 = (word >> 8) & UINT64_C(0x1);
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.t2 = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt2));
-	out.cp = static_cast<std::int32_t>(((f_cp15 == UINT64_C(0)) ? INT64_C(14) : INT64_C(15)));
-	if ((out.t == INT64_C(15)) || (out.t2 == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* MCRR_T1 */
-Outcome program_155([[maybe_unused]] std::uint32_t word,
+Outcome program_123([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
@@ -2853,7 +2245,7 @@ Outcome program_155([[maybe_unused]] std::uint32_t word,
 }
 
 /* MLAS_A1 */
-Outcome program_156([[maybe_unused]] std::uint32_t word,
+Outcome program_124([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Ra = (word >> 12) & UINT64_C(0xf);
@@ -2872,7 +2264,7 @@ Outcome program_156([[maybe_unused]] std::uint32_t word,
 }
 
 /* MLA_T1 */
-Outcome program_157([[maybe_unused]] std::uint32_t word,
+Outcome program_125([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Ra = (word >> 12) & UINT64_C(0xf);
@@ -2892,7 +2284,7 @@ Outcome program_157([[maybe_unused]] std::uint32_t word,
 }
 
 /* MLS_A1 */
-Outcome program_158([[maybe_unused]] std::uint32_t word,
+Outcome program_126([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Ra = (word >> 12) & UINT64_C(0xf);
@@ -2909,7 +2301,7 @@ Outcome program_158([[maybe_unused]] std::uint32_t word,
 }
 
 /* MLS_T1 */
-Outcome program_159([[maybe_unused]] std::uint32_t word,
+Outcome program_127([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Ra = (word >> 12) & UINT64_C(0xf);
@@ -2926,7 +2318,7 @@ Outcome program_159([[maybe_unused]] std::uint32_t word,
 }
 
 /* MOV_i_A1 */
-Outcome program_160([[maybe_unused]] std::uint32_t word,
+Outcome program_128([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -2942,7 +2334,7 @@ Outcome program_160([[maybe_unused]] std::uint32_t word,
 }
 
 /* MOV_i_A2 */
-Outcome program_161([[maybe_unused]] std::uint32_t word,
+Outcome program_129([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -2958,7 +2350,7 @@ Outcome program_161([[maybe_unused]] std::uint32_t word,
 }
 
 /* MOV_i_T1 */
-Outcome program_162([[maybe_unused]] std::uint32_t word,
+Outcome program_130([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 24) & UINT64_C(0x7);
@@ -2972,7 +2364,7 @@ Outcome program_162([[maybe_unused]] std::uint32_t word,
 }
 
 /* MOV_i_T2 */
-Outcome program_163([[maybe_unused]] std::uint32_t word,
+Outcome program_131([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -2992,7 +2384,7 @@ Outcome program_163([[maybe_unused]] std::uint32_t word,
 }
 
 /* MOV_i_T3 */
-Outcome program_164([[maybe_unused]] std::uint32_t word,
+Outcome program_132([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -3009,26 +2401,8 @@ Outcome program_164([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* MOV_r_A1_RRX */
-Outcome program_165([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_S = (word >> 20) & UINT64_C(0x1);
-	const std::uint64_t f_imm5 = (word >> 7) & UINT64_C(0x1f);
-	const std::uint64_t f_stype = (word >> 5) & UINT64_C(0x3);
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.setflags = (f_S == UINT64_C(1));
-	const auto t3 = detail::decode_imm_shift(f_stype, f_imm5);
-	out.shift_t = t3.type;
-	out.shift_n = static_cast<std::int32_t>(t3.amount);
-	return Outcome::ok;
-}
-
 /* MOV_r_T1 */
-Outcome program_166([[maybe_unused]] std::uint32_t word,
+Outcome program_133([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 23) & UINT64_C(0x1);
@@ -3045,7 +2419,7 @@ Outcome program_166([[maybe_unused]] std::uint32_t word,
 }
 
 /* MOV_r_T2 */
-Outcome program_167([[maybe_unused]] std::uint32_t word,
+Outcome program_134([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 16) & UINT64_C(0x7);
@@ -3064,7 +2438,7 @@ Outcome program_167([[maybe_unused]] std::uint32_t word,
 }
 
 /* MOV_r_T3_RRX */
-Outcome program_168([[maybe_unused]] std::uint32_t word,
+Outcome program_135([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -3085,7 +2459,7 @@ Outcome program_168([[maybe_unused]] std::uint32_t word,
 }
 
 /* MOVS_rr_A1 */
-Outcome program_169([[maybe_unused]] std::uint32_t word,
+Outcome program_136([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -3104,7 +2478,7 @@ Outcome program_169([[maybe_unused]] std::uint32_t word,
 }
 
 /* MOV_rr_T1_ASR */
-Outcome program_170([[maybe_unused]] std::uint32_t word,
+Outcome program_137([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rdm = (word >> 16) & UINT64_C(0x7);
@@ -3121,7 +2495,7 @@ Outcome program_170([[maybe_unused]] std::uint32_t word,
 }
 
 /* MOVS_rr_T2 */
-Outcome program_171([[maybe_unused]] std::uint32_t word,
+Outcome program_138([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -3140,7 +2514,7 @@ Outcome program_171([[maybe_unused]] std::uint32_t word,
 }
 
 /* MOVT_A1 */
-Outcome program_172([[maybe_unused]] std::uint32_t word,
+Outcome program_139([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -3154,7 +2528,7 @@ Outcome program_172([[maybe_unused]] std::uint32_t word,
 }
 
 /* MOVT_T1 */
-Outcome program_173([[maybe_unused]] std::uint32_t word,
+Outcome program_140([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -3170,18 +2544,7 @@ Outcome program_173([[maybe_unused]] std::uint32_t word,
 }
 
 /* MRC_A1 */
-Outcome program_174([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_cp15 = (word >> 8) & UINT64_C(0x1);
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.cp = static_cast<std::int32_t>(((f_cp15 == UINT64_C(0)) ? INT64_C(14) : INT64_C(15)));
-	return Outcome::ok;
-}
-
-/* MRC_T1 */
-Outcome program_175([[maybe_unused]] std::uint32_t word,
+Outcome program_141([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
@@ -3192,22 +2555,7 @@ Outcome program_175([[maybe_unused]] std::uint32_t word,
 }
 
 /* MRRC_A1 */
-Outcome program_176([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rt2 = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_cp15 = (word >> 8) & UINT64_C(0x1);
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.t2 = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt2));
-	out.cp = static_cast<std::int32_t>(((f_cp15 == UINT64_C(0)) ? INT64_C(14) : INT64_C(15)));
-	if (((out.t == INT64_C(15)) || (out.t2 == INT64_C(15))) || (out.t == out.t2))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* MRRC_T1 */
-Outcome program_177([[maybe_unused]] std::uint32_t word,
+Outcome program_142([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
@@ -3222,7 +2570,7 @@ Outcome program_177([[maybe_unused]] std::uint32_t word,
 }
 
 /* MRS_A1_AS */
-Outcome program_178([[maybe_unused]] std::uint32_t word,
+Outcome program_143([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_R = (word >> 22) & UINT64_C(0x1);
@@ -3235,7 +2583,7 @@ Outcome program_178([[maybe_unused]] std::uint32_t word,
 }
 
 /* MRS_T1_AS */
-Outcome program_179([[maybe_unused]] std::uint32_t word,
+Outcome program_144([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_R = (word >> 20) & UINT64_C(0x1);
@@ -3248,7 +2596,7 @@ Outcome program_179([[maybe_unused]] std::uint32_t word,
 }
 
 /* MSR_i_A1_AS */
-Outcome program_180([[maybe_unused]] std::uint32_t word,
+Outcome program_145([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_R = (word >> 22) & UINT64_C(0x1);
@@ -3264,7 +2612,7 @@ Outcome program_180([[maybe_unused]] std::uint32_t word,
 }
 
 /* MSR_r_A1_AS */
-Outcome program_181([[maybe_unused]] std::uint32_t word,
+Outcome program_146([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_R = (word >> 22) & UINT64_C(0x1);
@@ -3280,7 +2628,7 @@ Outcome program_181([[maybe_unused]] std::uint32_t word,
 }
 
 /* MSR_r_T1_AS */
-Outcome program_182([[maybe_unused]] std::uint32_t word,
+Outcome program_147([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_R = (word >> 20) & UINT64_C(0x1);
@@ -3296,7 +2644,7 @@ Outcome program_182([[maybe_unused]] std::uint32_t word,
 }
 
 /* MULS_A1 */
-Outcome program_183([[maybe_unused]] std::uint32_t word,
+Outcome program_148([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 16) & UINT64_C(0xf);
@@ -3313,7 +2661,7 @@ Outcome program_183([[maybe_unused]] std::uint32_t word,
 }
 
 /* MUL_T1 */
-Outcome program_184([[maybe_unused]] std::uint32_t word,
+Outcome program_149([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rdm = (word >> 16) & UINT64_C(0x7);
@@ -3326,7 +2674,7 @@ Outcome program_184([[maybe_unused]] std::uint32_t word,
 }
 
 /* MUL_T2 */
-Outcome program_185([[maybe_unused]] std::uint32_t word,
+Outcome program_150([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -3342,7 +2690,7 @@ Outcome program_185([[maybe_unused]] std::uint32_t word,
 }
 
 /* MVN_i_A1 */
-Outcome program_186([[maybe_unused]] std::uint32_t word,
+Outcome program_151([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -3356,7 +2704,7 @@ Outcome program_186([[maybe_unused]] std::uint32_t word,
 }
 
 /* MVN_i_T1 */
-Outcome program_187([[maybe_unused]] std::uint32_t word,
+Outcome program_152([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -3374,7 +2722,7 @@ Outcome program_187([[maybe_unused]] std::uint32_t word,
 }
 
 /* MVN_r_T1 */
-Outcome program_188([[maybe_unused]] std::uint32_t word,
+Outcome program_153([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 16) & UINT64_C(0x7);
@@ -3387,29 +2735,8 @@ Outcome program_188([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* NOP_A1 */
-Outcome program_189([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	return Outcome::ok;
-}
-
-/* NOP_T1 */
-Outcome program_190([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	return Outcome::ok;
-}
-
-/* NOP_T2 */
-Outcome program_191([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	return Outcome::ok;
-}
-
 /* ORNS_i_T1 */
-Outcome program_192([[maybe_unused]] std::uint32_t word,
+Outcome program_154([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -3431,54 +2758,7 @@ Outcome program_192([[maybe_unused]] std::uint32_t word,
 }
 
 /* ORN_r_T1_RRX */
-Outcome program_193([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_S = (word >> 20) & UINT64_C(0x1);
-	const std::uint64_t f_imm2 = (word >> 6) & UINT64_C(0x3);
-	const std::uint64_t f_imm3 = (word >> 12) & UINT64_C(0x7);
-	const std::uint64_t f_stype = (word >> 4) & UINT64_C(0x3);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.setflags = (f_S == UINT64_C(1));
-	const auto t6 = detail::decode_imm_shift(f_stype, ((f_imm3 << 2) | f_imm2));
-	out.shift_t = t6.type;
-	out.shift_n = static_cast<std::int32_t>(t6.amount);
-	if ((out.d == INT64_C(15)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* ORR_i_T1 */
-Outcome program_194([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_S = (word >> 20) & UINT64_C(0x1);
-	const std::uint64_t f_i = (word >> 26) & UINT64_C(0x1);
-	const std::uint64_t f_imm3 = (word >> 12) & UINT64_C(0x7);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.setflags = (f_S == UINT64_C(1));
-	out.a32 = false;
-	out.imm = static_cast<std::uint64_t>(((((f_i << 3) | f_imm3) << 8) | f_imm8));
-	if (out.d == INT64_C(15))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* ORR_r_T2_RRX */
-Outcome program_195([[maybe_unused]] std::uint32_t word,
+Outcome program_155([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -3503,7 +2783,7 @@ Outcome program_195([[maybe_unused]] std::uint32_t word,
 }
 
 /* PKHBT_A1 */
-Outcome program_196([[maybe_unused]] std::uint32_t word,
+Outcome program_156([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -3524,7 +2804,7 @@ Outcome program_196([[maybe_unused]] std::uint32_t word,
 }
 
 /* PKHBT_T1 */
-Outcome program_197([[maybe_unused]] std::uint32_t word,
+Outcome program_157([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -3550,18 +2830,7 @@ Outcome program_197([[maybe_unused]] std::uint32_t word,
 }
 
 /* PLD_l_A1 */
-Outcome program_198([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_imm12 = (word >> 0) & UINT64_C(0xfff);
-	out.imm32 = static_cast<std::int64_t>(f_imm12);
-	out.add = (f_U == UINT64_C(1));
-	return Outcome::ok;
-}
-
-/* PLD_l_T1 */
-Outcome program_199([[maybe_unused]] std::uint32_t word,
+Outcome program_158([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
@@ -3572,7 +2841,7 @@ Outcome program_199([[maybe_unused]] std::uint32_t word,
 }
 
 /* PLD_i_A1 */
-Outcome program_200([[maybe_unused]] std::uint32_t word,
+Outcome program_159([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_R = (word >> 22) & UINT64_C(0x1);
@@ -3589,7 +2858,7 @@ Outcome program_200([[maybe_unused]] std::uint32_t word,
 }
 
 /* PLD_i_T1 */
-Outcome program_201([[maybe_unused]] std::uint32_t word,
+Outcome program_160([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -3605,7 +2874,7 @@ Outcome program_201([[maybe_unused]] std::uint32_t word,
 }
 
 /* PLD_i_T2 */
-Outcome program_202([[maybe_unused]] std::uint32_t word,
+Outcome program_161([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -3621,7 +2890,7 @@ Outcome program_202([[maybe_unused]] std::uint32_t word,
 }
 
 /* PLD_r_A1 */
-Outcome program_203([[maybe_unused]] std::uint32_t word,
+Outcome program_162([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_R = (word >> 22) & UINT64_C(0x1);
@@ -3643,7 +2912,7 @@ Outcome program_203([[maybe_unused]] std::uint32_t word,
 }
 
 /* PLD_r_T1 */
-Outcome program_204([[maybe_unused]] std::uint32_t word,
+Outcome program_163([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -3664,7 +2933,7 @@ Outcome program_204([[maybe_unused]] std::uint32_t word,
 }
 
 /* PLI_i_A1 */
-Outcome program_205([[maybe_unused]] std::uint32_t word,
+Outcome program_164([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -3677,7 +2946,7 @@ Outcome program_205([[maybe_unused]] std::uint32_t word,
 }
 
 /* PLI_i_T1 */
-Outcome program_206([[maybe_unused]] std::uint32_t word,
+Outcome program_165([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -3691,7 +2960,7 @@ Outcome program_206([[maybe_unused]] std::uint32_t word,
 }
 
 /* PLI_i_T2 */
-Outcome program_207([[maybe_unused]] std::uint32_t word,
+Outcome program_166([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -3705,7 +2974,7 @@ Outcome program_207([[maybe_unused]] std::uint32_t word,
 }
 
 /* PLI_i_T3 */
-Outcome program_208([[maybe_unused]] std::uint32_t word,
+Outcome program_167([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
@@ -3717,7 +2986,7 @@ Outcome program_208([[maybe_unused]] std::uint32_t word,
 }
 
 /* PLI_r_A1_RRX */
-Outcome program_209([[maybe_unused]] std::uint32_t word,
+Outcome program_168([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -3737,7 +3006,7 @@ Outcome program_209([[maybe_unused]] std::uint32_t word,
 }
 
 /* PLI_r_T1 */
-Outcome program_210([[maybe_unused]] std::uint32_t word,
+Outcome program_169([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -3756,7 +3025,7 @@ Outcome program_210([[maybe_unused]] std::uint32_t word,
 }
 
 /* POP_T1 */
-Outcome program_211([[maybe_unused]] std::uint32_t word,
+Outcome program_170([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -3770,17 +3039,8 @@ Outcome program_211([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* PSSBB_T1 */
-Outcome program_212([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	if (ctx.it.active())
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* PUSH_T1 */
-Outcome program_213([[maybe_unused]] std::uint32_t word,
+Outcome program_171([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 24) & UINT64_C(0x1);
@@ -3793,7 +3053,7 @@ Outcome program_213([[maybe_unused]] std::uint32_t word,
 }
 
 /* QADD_A1 */
-Outcome program_214([[maybe_unused]] std::uint32_t word,
+Outcome program_172([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -3808,7 +3068,7 @@ Outcome program_214([[maybe_unused]] std::uint32_t word,
 }
 
 /* QADD_T1 */
-Outcome program_215([[maybe_unused]] std::uint32_t word,
+Outcome program_173([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -3818,55 +3078,12 @@ Outcome program_215([[maybe_unused]] std::uint32_t word,
 	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
 	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
 	if (((out.d == INT64_C(15)) || (out.n == INT64_C(15))) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* QADD16_A1 */
-Outcome program_216([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	if (((out.d == INT64_C(15)) || (out.n == INT64_C(15))) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* QADD16_T1 */
-Outcome program_217([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	if (((out.d == INT64_C(15)) || (out.n == INT64_C(15))) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* RBIT_A1 */
-Outcome program_218([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	if ((out.d == INT64_C(15)) || (out.m == INT64_C(15)))
 		return Outcome::unpredictable;
 	return Outcome::ok;
 }
 
 /* REV_T1 */
-Outcome program_219([[maybe_unused]] std::uint32_t word,
+Outcome program_174([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 16) & UINT64_C(0x7);
@@ -3877,7 +3094,7 @@ Outcome program_219([[maybe_unused]] std::uint32_t word,
 }
 
 /* RSB_i_T1 */
-Outcome program_220([[maybe_unused]] std::uint32_t word,
+Outcome program_175([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 16) & UINT64_C(0x7);
@@ -3890,7 +3107,7 @@ Outcome program_220([[maybe_unused]] std::uint32_t word,
 }
 
 /* SBFX_A1 */
-Outcome program_221([[maybe_unused]] std::uint32_t word,
+Outcome program_176([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -3910,7 +3127,7 @@ Outcome program_221([[maybe_unused]] std::uint32_t word,
 }
 
 /* SBFX_T1 */
-Outcome program_222([[maybe_unused]] std::uint32_t word,
+Outcome program_177([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -3931,7 +3148,7 @@ Outcome program_222([[maybe_unused]] std::uint32_t word,
 }
 
 /* SDIV_A1 */
-Outcome program_223([[maybe_unused]] std::uint32_t word,
+Outcome program_178([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 16) & UINT64_C(0xf);
@@ -3945,38 +3162,8 @@ Outcome program_223([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* SDIV_T1 */
-Outcome program_224([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	if (((out.d == INT64_C(15)) || (out.n == INT64_C(15))) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* SEL_A1 */
-Outcome program_225([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	if (((out.d == INT64_C(15)) || (out.n == INT64_C(15))) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* SMLABB_A1 */
-Outcome program_226([[maybe_unused]] std::uint32_t word,
+Outcome program_179([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 6) & UINT64_C(0x1);
@@ -3997,7 +3184,7 @@ Outcome program_226([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMLABB_T1 */
-Outcome program_227([[maybe_unused]] std::uint32_t word,
+Outcome program_180([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 4) & UINT64_C(0x1);
@@ -4020,7 +3207,7 @@ Outcome program_227([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMLAD_A1 */
-Outcome program_228([[maybe_unused]] std::uint32_t word,
+Outcome program_181([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
@@ -4041,7 +3228,7 @@ Outcome program_228([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMLAD_T1 */
-Outcome program_229([[maybe_unused]] std::uint32_t word,
+Outcome program_182([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 4) & UINT64_C(0x1);
@@ -4062,7 +3249,7 @@ Outcome program_229([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMLALS_A1 */
-Outcome program_230([[maybe_unused]] std::uint32_t word,
+Outcome program_183([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_RdHi = (word >> 16) & UINT64_C(0xf);
@@ -4083,7 +3270,7 @@ Outcome program_230([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMLAL_T1 */
-Outcome program_231([[maybe_unused]] std::uint32_t word,
+Outcome program_184([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_RdHi = (word >> 8) & UINT64_C(0xf);
@@ -4103,7 +3290,7 @@ Outcome program_231([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMLALBB_A1 */
-Outcome program_232([[maybe_unused]] std::uint32_t word,
+Outcome program_185([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 6) & UINT64_C(0x1);
@@ -4126,7 +3313,7 @@ Outcome program_232([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMLALBB_T1 */
-Outcome program_233([[maybe_unused]] std::uint32_t word,
+Outcome program_186([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 4) & UINT64_C(0x1);
@@ -4149,7 +3336,7 @@ Outcome program_233([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMLALD_A1 */
-Outcome program_234([[maybe_unused]] std::uint32_t word,
+Outcome program_187([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
@@ -4170,7 +3357,7 @@ Outcome program_234([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMLALD_T1 */
-Outcome program_235([[maybe_unused]] std::uint32_t word,
+Outcome program_188([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 4) & UINT64_C(0x1);
@@ -4191,7 +3378,7 @@ Outcome program_235([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMLAWB_A1 */
-Outcome program_236([[maybe_unused]] std::uint32_t word,
+Outcome program_189([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 6) & UINT64_C(0x1);
@@ -4210,7 +3397,7 @@ Outcome program_236([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMLAWB_T1 */
-Outcome program_237([[maybe_unused]] std::uint32_t word,
+Outcome program_190([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 4) & UINT64_C(0x1);
@@ -4230,71 +3417,8 @@ Outcome program_237([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* SMLSD_A1 */
-Outcome program_238([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_Ra = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rd = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 0) & UINT64_C(0xf);
-	if (f_Ra == UINT64_C(15))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.a = static_cast<std::int32_t>(static_cast<int64_t>(f_Ra));
-	out.m_swap = (f_M == UINT64_C(1));
-	if (((out.d == INT64_C(15)) || (out.n == INT64_C(15))) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* SMLSD_T1 */
-Outcome program_239([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_M = (word >> 4) & UINT64_C(0x1);
-	const std::uint64_t f_Ra = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	if (f_Ra == UINT64_C(15))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.a = static_cast<std::int32_t>(static_cast<int64_t>(f_Ra));
-	out.m_swap = (f_M == UINT64_C(1));
-	if (((out.d == INT64_C(15)) || (out.n == INT64_C(15))) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* SMLSLD_T1 */
-Outcome program_240([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_M = (word >> 4) & UINT64_C(0x1);
-	const std::uint64_t f_RdHi = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_RdLo = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	out.dLo = static_cast<std::int32_t>(static_cast<int64_t>(f_RdLo));
-	out.dHi = static_cast<std::int32_t>(static_cast<int64_t>(f_RdHi));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.m_swap = (f_M == UINT64_C(1));
-	if ((((out.dLo == INT64_C(15)) || (out.dHi == INT64_C(15))) || (out.n == INT64_C(15))) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	if (out.dHi == out.dLo)
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* SMMLA_A1 */
-Outcome program_241([[maybe_unused]] std::uint32_t word,
+Outcome program_191([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_R = (word >> 5) & UINT64_C(0x1);
@@ -4315,7 +3439,7 @@ Outcome program_241([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMMLA_T1 */
-Outcome program_242([[maybe_unused]] std::uint32_t word,
+Outcome program_192([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_R = (word >> 4) & UINT64_C(0x1);
@@ -4336,7 +3460,7 @@ Outcome program_242([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMMLS_A1 */
-Outcome program_243([[maybe_unused]] std::uint32_t word,
+Outcome program_193([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_R = (word >> 5) & UINT64_C(0x1);
@@ -4355,7 +3479,7 @@ Outcome program_243([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMMLS_T1 */
-Outcome program_244([[maybe_unused]] std::uint32_t word,
+Outcome program_194([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_R = (word >> 4) & UINT64_C(0x1);
@@ -4374,7 +3498,7 @@ Outcome program_244([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMMUL_A1 */
-Outcome program_245([[maybe_unused]] std::uint32_t word,
+Outcome program_195([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_R = (word >> 5) & UINT64_C(0x1);
@@ -4391,7 +3515,7 @@ Outcome program_245([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMMUL_T1 */
-Outcome program_246([[maybe_unused]] std::uint32_t word,
+Outcome program_196([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_R = (word >> 4) & UINT64_C(0x1);
@@ -4408,7 +3532,7 @@ Outcome program_246([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMUAD_A1 */
-Outcome program_247([[maybe_unused]] std::uint32_t word,
+Outcome program_197([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
@@ -4425,7 +3549,7 @@ Outcome program_247([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMUAD_T1 */
-Outcome program_248([[maybe_unused]] std::uint32_t word,
+Outcome program_198([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 4) & UINT64_C(0x1);
@@ -4442,7 +3566,7 @@ Outcome program_248([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMULBB_A1 */
-Outcome program_249([[maybe_unused]] std::uint32_t word,
+Outcome program_199([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 6) & UINT64_C(0x1);
@@ -4461,7 +3585,7 @@ Outcome program_249([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMULBB_T1 */
-Outcome program_250([[maybe_unused]] std::uint32_t word,
+Outcome program_200([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 4) & UINT64_C(0x1);
@@ -4480,7 +3604,7 @@ Outcome program_250([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMULWB_A1 */
-Outcome program_251([[maybe_unused]] std::uint32_t word,
+Outcome program_201([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 6) & UINT64_C(0x1);
@@ -4497,7 +3621,7 @@ Outcome program_251([[maybe_unused]] std::uint32_t word,
 }
 
 /* SMULWB_T1 */
-Outcome program_252([[maybe_unused]] std::uint32_t word,
+Outcome program_202([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 4) & UINT64_C(0x1);
@@ -4514,7 +3638,7 @@ Outcome program_252([[maybe_unused]] std::uint32_t word,
 }
 
 /* SSAT_A1_ASR */
-Outcome program_253([[maybe_unused]] std::uint32_t word,
+Outcome program_203([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -4534,7 +3658,7 @@ Outcome program_253([[maybe_unused]] std::uint32_t word,
 }
 
 /* SSAT_T1_ASR */
-Outcome program_254([[maybe_unused]] std::uint32_t word,
+Outcome program_204([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -4557,7 +3681,7 @@ Outcome program_254([[maybe_unused]] std::uint32_t word,
 }
 
 /* SSAT16_A1 */
-Outcome program_255([[maybe_unused]] std::uint32_t word,
+Outcome program_205([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -4572,7 +3696,7 @@ Outcome program_255([[maybe_unused]] std::uint32_t word,
 }
 
 /* SSAT16_T1 */
-Outcome program_256([[maybe_unused]] std::uint32_t word,
+Outcome program_206([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -4587,7 +3711,7 @@ Outcome program_256([[maybe_unused]] std::uint32_t word,
 }
 
 /* STL_A1 */
-Outcome program_257([[maybe_unused]] std::uint32_t word,
+Outcome program_207([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -4600,7 +3724,7 @@ Outcome program_257([[maybe_unused]] std::uint32_t word,
 }
 
 /* STLEX_A1 */
-Outcome program_258([[maybe_unused]] std::uint32_t word,
+Outcome program_208([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -4617,7 +3741,7 @@ Outcome program_258([[maybe_unused]] std::uint32_t word,
 }
 
 /* STLEX_T1 */
-Outcome program_259([[maybe_unused]] std::uint32_t word,
+Outcome program_209([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 0) & UINT64_C(0xf);
@@ -4634,7 +3758,7 @@ Outcome program_259([[maybe_unused]] std::uint32_t word,
 }
 
 /* STLEXD_A1 */
-Outcome program_260([[maybe_unused]] std::uint32_t word,
+Outcome program_210([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -4652,7 +3776,7 @@ Outcome program_260([[maybe_unused]] std::uint32_t word,
 }
 
 /* STLEXD_T1 */
-Outcome program_261([[maybe_unused]] std::uint32_t word,
+Outcome program_211([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 0) & UINT64_C(0xf);
@@ -4671,7 +3795,7 @@ Outcome program_261([[maybe_unused]] std::uint32_t word,
 }
 
 /* STM_A1 */
-Outcome program_262([[maybe_unused]] std::uint32_t word,
+Outcome program_212([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -4686,7 +3810,7 @@ Outcome program_262([[maybe_unused]] std::uint32_t word,
 }
 
 /* STM_T1 */
-Outcome program_263([[maybe_unused]] std::uint32_t word,
+Outcome program_213([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 24) & UINT64_C(0x7);
@@ -4700,7 +3824,7 @@ Outcome program_263([[maybe_unused]] std::uint32_t word,
 }
 
 /* STM_T2 */
-Outcome program_264([[maybe_unused]] std::uint32_t word,
+Outcome program_214([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 14) & UINT64_C(0x1);
@@ -4723,7 +3847,7 @@ Outcome program_264([[maybe_unused]] std::uint32_t word,
 }
 
 /* STR_i_A1_off */
-Outcome program_265([[maybe_unused]] std::uint32_t word,
+Outcome program_215([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -4746,7 +3870,7 @@ Outcome program_265([[maybe_unused]] std::uint32_t word,
 }
 
 /* STR_i_T3 */
-Outcome program_266([[maybe_unused]] std::uint32_t word,
+Outcome program_216([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -4766,7 +3890,7 @@ Outcome program_266([[maybe_unused]] std::uint32_t word,
 }
 
 /* STR_i_T4_off */
-Outcome program_267([[maybe_unused]] std::uint32_t word,
+Outcome program_217([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 10) & UINT64_C(0x1);
@@ -4790,38 +3914,8 @@ Outcome program_267([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* STR_r_A1_off */
-Outcome program_268([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	const std::uint64_t f_imm5 = (word >> 7) & UINT64_C(0x1f);
-	const std::uint64_t f_stype = (word >> 5) & UINT64_C(0x3);
-	if ((f_P == UINT64_C(0)) && (f_W == UINT64_C(1)))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.index = (f_P == UINT64_C(1));
-	out.add = (f_U == UINT64_C(1));
-	out.wback = ((f_P == UINT64_C(0)) || (f_W == UINT64_C(1)));
-	const auto t8 = detail::decode_imm_shift(f_stype, f_imm5);
-	out.shift_t = t8.type;
-	out.shift_n = static_cast<std::int32_t>(t8.amount);
-	if (out.m == INT64_C(15))
-		return Outcome::unpredictable;
-	if (out.wback && ((out.n == INT64_C(15)) || (out.n == out.t)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* STR_r_T2 */
-Outcome program_269([[maybe_unused]] std::uint32_t word,
+Outcome program_218([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -4844,7 +3938,7 @@ Outcome program_269([[maybe_unused]] std::uint32_t word,
 }
 
 /* STRB_i_A1_off */
-Outcome program_270([[maybe_unused]] std::uint32_t word,
+Outcome program_219([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -4862,81 +3956,6 @@ Outcome program_270([[maybe_unused]] std::uint32_t word,
 	out.add = (f_U == UINT64_C(1));
 	out.wback = ((f_P == UINT64_C(0)) || (f_W == UINT64_C(1)));
 	if (out.t == INT64_C(15))
-		return Outcome::unpredictable;
-	if (out.wback && ((out.n == INT64_C(15)) || (out.n == out.t)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* STRB_i_T2 */
-Outcome program_271([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_imm12 = (word >> 0) & UINT64_C(0xfff);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::undefined;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(f_imm12);
-	out.index = true;
-	out.add = true;
-	out.wback = false;
-	if (out.t == INT64_C(15))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* STRB_i_T3_offn */
-Outcome program_272([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_P = (word >> 10) & UINT64_C(0x1);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 9) & UINT64_C(0x1);
-	const std::uint64_t f_W = (word >> 8) & UINT64_C(0x1);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if (((f_P == UINT64_C(1)) && (f_U == UINT64_C(1))) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_Rn == UINT64_C(15)) || ((f_P == UINT64_C(0)) && (f_W == UINT64_C(0))))
-		return Outcome::undefined;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(f_imm8);
-	out.index = (f_P == UINT64_C(1));
-	out.add = (f_U == UINT64_C(1));
-	out.wback = (f_W == UINT64_C(1));
-	if ((out.t == INT64_C(15)) || (out.wback && (out.n == out.t)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* STRB_r_A1_off */
-Outcome program_273([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	const std::uint64_t f_imm5 = (word >> 7) & UINT64_C(0x1f);
-	const std::uint64_t f_stype = (word >> 5) & UINT64_C(0x3);
-	if ((f_P == UINT64_C(0)) && (f_W == UINT64_C(1)))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.index = (f_P == UINT64_C(1));
-	out.add = (f_U == UINT64_C(1));
-	out.wback = ((f_P == UINT64_C(0)) || (f_W == UINT64_C(1)));
-	const auto t8 = detail::decode_imm_shift(f_stype, f_imm5);
-	out.shift_t = t8.type;
-	out.shift_n = static_cast<std::int32_t>(t8.amount);
-	if ((out.t == INT64_C(15)) || (out.m == INT64_C(15)))
 		return Outcome::unpredictable;
 	if (out.wback && ((out.n == INT64_C(15)) || (out.n == out.t)))
 		return Outcome::unpredictable;
@@ -4944,7 +3963,7 @@ Outcome program_273([[maybe_unused]] std::uint32_t word,
 }
 
 /* STRBT_T1 */
-Outcome program_274([[maybe_unused]] std::uint32_t word,
+Outcome program_220([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -4967,7 +3986,7 @@ Outcome program_274([[maybe_unused]] std::uint32_t word,
 }
 
 /* STRD_i_A1_off */
-Outcome program_275([[maybe_unused]] std::uint32_t word,
+Outcome program_221([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -4996,7 +4015,7 @@ Outcome program_275([[maybe_unused]] std::uint32_t word,
 }
 
 /* STRD_i_T1_off */
-Outcome program_276([[maybe_unused]] std::uint32_t word,
+Outcome program_222([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -5023,7 +4042,7 @@ Outcome program_276([[maybe_unused]] std::uint32_t word,
 }
 
 /* STRD_r_A1_off */
-Outcome program_277([[maybe_unused]] std::uint32_t word,
+Outcome program_223([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -5051,7 +4070,7 @@ Outcome program_277([[maybe_unused]] std::uint32_t word,
 }
 
 /* STREX_A1 */
-Outcome program_278([[maybe_unused]] std::uint32_t word,
+Outcome program_224([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -5069,7 +4088,7 @@ Outcome program_278([[maybe_unused]] std::uint32_t word,
 }
 
 /* STREX_T1 */
-Outcome program_279([[maybe_unused]] std::uint32_t word,
+Outcome program_225([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -5087,44 +4106,8 @@ Outcome program_279([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* STREXB_T1 */
-Outcome program_280([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	if (((out.d == INT64_C(15)) || (out.t == INT64_C(15))) || (out.n == INT64_C(15)))
-		return Outcome::unpredictable;
-	if ((out.d == out.n) || (out.d == out.t))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* STREXD_T1 */
-Outcome program_281([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rt2 = (word >> 8) & UINT64_C(0xf);
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.t2 = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt2));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	if ((((out.d == INT64_C(15)) || (out.t == INT64_C(15))) || (out.t2 == INT64_C(15))) || (out.n == INT64_C(15)))
-		return Outcome::unpredictable;
-	if (((out.d == out.n) || (out.d == out.t)) || (out.d == out.t2))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* STRH_i_A1_off */
-Outcome program_282([[maybe_unused]] std::uint32_t word,
+Outcome program_226([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
@@ -5149,60 +4132,8 @@ Outcome program_282([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* STRH_i_T3_offn */
-Outcome program_283([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_P = (word >> 10) & UINT64_C(0x1);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 9) & UINT64_C(0x1);
-	const std::uint64_t f_W = (word >> 8) & UINT64_C(0x1);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if (((f_P == UINT64_C(1)) && (f_U == UINT64_C(1))) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_Rn == UINT64_C(15)) || ((f_P == UINT64_C(0)) && (f_W == UINT64_C(0))))
-		return Outcome::undefined;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(f_imm8);
-	out.index = (f_P == UINT64_C(1));
-	out.add = (f_U == UINT64_C(1));
-	out.wback = (f_W == UINT64_C(1));
-	if ((out.t == INT64_C(15)) || (out.wback && (out.n == out.t)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* STRH_r_A1_off */
-Outcome program_284([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	if ((f_P == UINT64_C(0)) && (f_W == UINT64_C(1)))
-		return Outcome::see;
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.index = (f_P == UINT64_C(1));
-	out.add = (f_U == UINT64_C(1));
-	out.wback = ((f_P == UINT64_C(0)) || (f_W == UINT64_C(1)));
-	out.shift_t = SRType::LSL;
-	out.shift_n = static_cast<std::int32_t>(INT64_C(0));
-	if ((out.t == INT64_C(15)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	if (out.wback && ((out.n == INT64_C(15)) || (out.n == out.t)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* STRHT_T1 */
-Outcome program_285([[maybe_unused]] std::uint32_t word,
+Outcome program_227([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -5223,7 +4154,7 @@ Outcome program_285([[maybe_unused]] std::uint32_t word,
 }
 
 /* STRT_A1 */
-Outcome program_286([[maybe_unused]] std::uint32_t word,
+Outcome program_228([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -5245,7 +4176,7 @@ Outcome program_286([[maybe_unused]] std::uint32_t word,
 }
 
 /* STRT_A2 */
-Outcome program_287([[maybe_unused]] std::uint32_t word,
+Outcome program_229([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
@@ -5269,72 +4200,8 @@ Outcome program_287([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* SUB_i_A1 */
-Outcome program_288([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_S = (word >> 20) & UINT64_C(0x1);
-	const std::uint64_t f_imm12 = (word >> 0) & UINT64_C(0xfff);
-	if ((f_Rn == UINT64_C(15)) && (f_S == UINT64_C(0)))
-		return Outcome::see;
-	if (f_Rn == UINT64_C(13))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.setflags = (f_S == UINT64_C(1));
-	out.imm32 = static_cast<std::int64_t>(detail::a32_expand_imm(f_imm12));
-	return Outcome::ok;
-}
-
-/* SUB_i_T3 */
-Outcome program_289([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_S = (word >> 20) & UINT64_C(0x1);
-	const std::uint64_t f_i = (word >> 26) & UINT64_C(0x1);
-	const std::uint64_t f_imm3 = (word >> 12) & UINT64_C(0x7);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if ((f_Rd == UINT64_C(15)) && (f_S == UINT64_C(1)))
-		return Outcome::see;
-	if (f_Rn == UINT64_C(13))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.setflags = (f_S == UINT64_C(1));
-	out.imm32 = static_cast<std::int64_t>(detail::t32_expand_imm(((((f_i << 3) | f_imm3) << 8) | f_imm8)));
-	if (((out.d == INT64_C(15)) && (!out.setflags)) || (out.n == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* SUB_i_T4 */
-Outcome program_290([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_i = (word >> 26) & UINT64_C(0x1);
-	const std::uint64_t f_imm3 = (word >> 12) & UINT64_C(0x7);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	if (f_Rn == UINT64_C(13))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.setflags = false;
-	out.imm32 = static_cast<std::int64_t>(((((f_i << 3) | f_imm3) << 8) | f_imm8));
-	if (out.d == INT64_C(15))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* SUBS_PC_T5_AS */
-Outcome program_291([[maybe_unused]] std::uint32_t word,
+Outcome program_230([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -5352,99 +4219,8 @@ Outcome program_291([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* SUB_r_A1_RRX */
-Outcome program_292([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_S = (word >> 20) & UINT64_C(0x1);
-	const std::uint64_t f_imm5 = (word >> 7) & UINT64_C(0x1f);
-	const std::uint64_t f_stype = (word >> 5) & UINT64_C(0x3);
-	if (f_Rn == UINT64_C(13))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.setflags = (f_S == UINT64_C(1));
-	const auto t6 = detail::decode_imm_shift(f_stype, f_imm5);
-	out.shift_t = t6.type;
-	out.shift_n = static_cast<std::int32_t>(t6.amount);
-	return Outcome::ok;
-}
-
-/* SUB_r_T2_RRX */
-Outcome program_293([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_S = (word >> 20) & UINT64_C(0x1);
-	const std::uint64_t f_imm2 = (word >> 6) & UINT64_C(0x3);
-	const std::uint64_t f_imm3 = (word >> 12) & UINT64_C(0x7);
-	const std::uint64_t f_stype = (word >> 4) & UINT64_C(0x3);
-	if ((f_Rd == UINT64_C(15)) && (f_S == UINT64_C(1)))
-		return Outcome::see;
-	if (f_Rn == UINT64_C(13))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.setflags = (f_S == UINT64_C(1));
-	const auto t8 = detail::decode_imm_shift(f_stype, ((f_imm3 << 2) | f_imm2));
-	out.shift_t = t8.type;
-	out.shift_n = static_cast<std::int32_t>(t8.amount);
-	if ((((out.d == INT64_C(15)) && (!out.setflags)) || (out.n == INT64_C(15))) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* SUB_SP_i_T2 */
-Outcome program_294([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_S = (word >> 20) & UINT64_C(0x1);
-	const std::uint64_t f_i = (word >> 26) & UINT64_C(0x1);
-	const std::uint64_t f_imm3 = (word >> 12) & UINT64_C(0x7);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if ((f_Rd == UINT64_C(15)) && (f_S == UINT64_C(1)))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.setflags = (f_S == UINT64_C(1));
-	out.imm32 = static_cast<std::int64_t>(detail::t32_expand_imm(((((f_i << 3) | f_imm3) << 8) | f_imm8)));
-	if ((out.d == INT64_C(15)) && (!out.setflags))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* SUB_SP_r_T1_RRX */
-Outcome program_295([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_S = (word >> 20) & UINT64_C(0x1);
-	const std::uint64_t f_imm2 = (word >> 6) & UINT64_C(0x3);
-	const std::uint64_t f_imm3 = (word >> 12) & UINT64_C(0x7);
-	const std::uint64_t f_stype = (word >> 4) & UINT64_C(0x3);
-	if ((f_Rd == UINT64_C(15)) && (f_S == UINT64_C(1)))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.setflags = (f_S == UINT64_C(1));
-	const auto t5 = detail::decode_imm_shift(f_stype, ((f_imm3 << 2) | f_imm2));
-	out.shift_t = t5.type;
-	out.shift_n = static_cast<std::int32_t>(t5.amount);
-	if (((out.d == INT64_C(15)) && (!out.setflags)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* SVC_A1 */
-Outcome program_296([[maybe_unused]] std::uint32_t word,
+Outcome program_231([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_imm24 = (word >> 0) & UINT64_C(0xffffff);
@@ -5453,7 +4229,7 @@ Outcome program_296([[maybe_unused]] std::uint32_t word,
 }
 
 /* SVC_T1 */
-Outcome program_297([[maybe_unused]] std::uint32_t word,
+Outcome program_232([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_imm8 = (word >> 16) & UINT64_C(0xff);
@@ -5462,7 +4238,7 @@ Outcome program_297([[maybe_unused]] std::uint32_t word,
 }
 
 /* SXTAB_A1 */
-Outcome program_298([[maybe_unused]] std::uint32_t word,
+Outcome program_233([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -5481,83 +4257,7 @@ Outcome program_298([[maybe_unused]] std::uint32_t word,
 }
 
 /* SXTAB_T1 */
-Outcome program_299([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_rotate = (word >> 4) & UINT64_C(0x3);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.rotation = static_cast<std::int32_t>(static_cast<int64_t>(((f_rotate << 3) | UINT64_C(0))));
-	if ((out.d == INT64_C(15)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* SXTAB16_A1 */
-Outcome program_300([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_rotate = (word >> 10) & UINT64_C(0x3);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.rotation = static_cast<std::int32_t>(static_cast<int64_t>(((f_rotate << 3) | UINT64_C(0))));
-	if ((out.d == INT64_C(15)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* SXTAB16_T1 */
-Outcome program_301([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_rotate = (word >> 4) & UINT64_C(0x3);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.rotation = static_cast<std::int32_t>(static_cast<int64_t>(((f_rotate << 3) | UINT64_C(0))));
-	if ((out.d == INT64_C(15)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* SXTAH_A1 */
-Outcome program_302([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_rotate = (word >> 10) & UINT64_C(0x3);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.rotation = static_cast<std::int32_t>(static_cast<int64_t>(((f_rotate << 3) | UINT64_C(0))));
-	if ((out.d == INT64_C(15)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* SXTAH_T1 */
-Outcome program_303([[maybe_unused]] std::uint32_t word,
+Outcome program_234([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -5576,7 +4276,7 @@ Outcome program_303([[maybe_unused]] std::uint32_t word,
 }
 
 /* SXTB_A1 */
-Outcome program_304([[maybe_unused]] std::uint32_t word,
+Outcome program_235([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -5591,7 +4291,7 @@ Outcome program_304([[maybe_unused]] std::uint32_t word,
 }
 
 /* SXTB_T1 */
-Outcome program_305([[maybe_unused]] std::uint32_t word,
+Outcome program_236([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 16) & UINT64_C(0x7);
@@ -5603,7 +4303,7 @@ Outcome program_305([[maybe_unused]] std::uint32_t word,
 }
 
 /* SXTB_T2 */
-Outcome program_306([[maybe_unused]] std::uint32_t word,
+Outcome program_237([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -5618,7 +4318,7 @@ Outcome program_306([[maybe_unused]] std::uint32_t word,
 }
 
 /* TBB_T1 */
-Outcome program_307([[maybe_unused]] std::uint32_t word,
+Outcome program_238([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_H = (word >> 4) & UINT64_C(0x1);
@@ -5635,7 +4335,7 @@ Outcome program_307([[maybe_unused]] std::uint32_t word,
 }
 
 /* TEQ_i_A1 */
-Outcome program_308([[maybe_unused]] std::uint32_t word,
+Outcome program_239([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -5647,7 +4347,7 @@ Outcome program_308([[maybe_unused]] std::uint32_t word,
 }
 
 /* TEQ_i_T1 */
-Outcome program_309([[maybe_unused]] std::uint32_t word,
+Outcome program_240([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
@@ -5662,44 +4362,8 @@ Outcome program_309([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* TSB_A1 */
-Outcome program_310([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_cond = (word >> 28) & UINT64_C(0xf);
-	return Outcome::nop;
-	if (f_cond != UINT64_C(14))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* TSB_T1 */
-Outcome program_311([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	return Outcome::nop;
-	if (ctx.it.active())
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* UADD8_T1 */
-Outcome program_312([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	if (((out.d == INT64_C(15)) || (out.n == INT64_C(15))) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* UDF_A1 */
-Outcome program_313([[maybe_unused]] std::uint32_t word,
+Outcome program_241([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_imm12 = (word >> 8) & UINT64_C(0xfff);
@@ -5708,17 +4372,8 @@ Outcome program_313([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* UDF_T1 */
-Outcome program_314([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_imm8 = (word >> 16) & UINT64_C(0xff);
-	out.imm32 = static_cast<std::int64_t>(f_imm8);
-	return Outcome::ok;
-}
-
 /* UDF_T2 */
-Outcome program_315([[maybe_unused]] std::uint32_t word,
+Outcome program_242([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_imm12 = (word >> 0) & UINT64_C(0xfff);
@@ -5728,7 +4383,7 @@ Outcome program_315([[maybe_unused]] std::uint32_t word,
 }
 
 /* UMAAL_A1 */
-Outcome program_316([[maybe_unused]] std::uint32_t word,
+Outcome program_243([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_RdHi = (word >> 16) & UINT64_C(0xf);
@@ -5747,7 +4402,7 @@ Outcome program_316([[maybe_unused]] std::uint32_t word,
 }
 
 /* UMAAL_T1 */
-Outcome program_317([[maybe_unused]] std::uint32_t word,
+Outcome program_244([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_RdHi = (word >> 8) & UINT64_C(0xf);
@@ -5765,38 +4420,8 @@ Outcome program_317([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* USAD8_A1 */
-Outcome program_318([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 0) & UINT64_C(0xf);
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	if (((out.d == INT64_C(15)) || (out.n == INT64_C(15))) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* USAD8_T1 */
-Outcome program_319([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	if (((out.d == INT64_C(15)) || (out.n == INT64_C(15))) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* USADA8_A1 */
-Outcome program_320([[maybe_unused]] std::uint32_t word,
+Outcome program_245([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Ra = (word >> 12) & UINT64_C(0xf);
@@ -5815,7 +4440,7 @@ Outcome program_320([[maybe_unused]] std::uint32_t word,
 }
 
 /* USADA8_T1 */
-Outcome program_321([[maybe_unused]] std::uint32_t word,
+Outcome program_246([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Ra = (word >> 12) & UINT64_C(0xf);
@@ -5834,7 +4459,7 @@ Outcome program_321([[maybe_unused]] std::uint32_t word,
 }
 
 /* USAT_A1_ASR */
-Outcome program_322([[maybe_unused]] std::uint32_t word,
+Outcome program_247([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -5854,7 +4479,7 @@ Outcome program_322([[maybe_unused]] std::uint32_t word,
 }
 
 /* USAT_T1_ASR */
-Outcome program_323([[maybe_unused]] std::uint32_t word,
+Outcome program_248([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -5877,7 +4502,7 @@ Outcome program_323([[maybe_unused]] std::uint32_t word,
 }
 
 /* USAT16_A1 */
-Outcome program_324([[maybe_unused]] std::uint32_t word,
+Outcome program_249([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
@@ -5892,7 +4517,7 @@ Outcome program_324([[maybe_unused]] std::uint32_t word,
 }
 
 /* USAT16_T1 */
-Outcome program_325([[maybe_unused]] std::uint32_t word,
+Outcome program_250([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
@@ -5906,122 +4531,8 @@ Outcome program_325([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* UXTAB_A1 */
-Outcome program_326([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_rotate = (word >> 10) & UINT64_C(0x3);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.rotation = static_cast<std::int32_t>(static_cast<int64_t>(((f_rotate << 3) | UINT64_C(0))));
-	if ((out.d == INT64_C(15)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* UXTAB_T1 */
-Outcome program_327([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_rotate = (word >> 4) & UINT64_C(0x3);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.rotation = static_cast<std::int32_t>(static_cast<int64_t>(((f_rotate << 3) | UINT64_C(0))));
-	if ((out.d == INT64_C(15)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* UXTAB16_A1 */
-Outcome program_328([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_rotate = (word >> 10) & UINT64_C(0x3);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.rotation = static_cast<std::int32_t>(static_cast<int64_t>(((f_rotate << 3) | UINT64_C(0))));
-	if ((out.d == INT64_C(15)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* UXTAB16_T1 */
-Outcome program_329([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_rotate = (word >> 4) & UINT64_C(0x3);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.rotation = static_cast<std::int32_t>(static_cast<int64_t>(((f_rotate << 3) | UINT64_C(0))));
-	if ((out.d == INT64_C(15)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* UXTAH_A1 */
-Outcome program_330([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_rotate = (word >> 10) & UINT64_C(0x3);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.rotation = static_cast<std::int32_t>(static_cast<int64_t>(((f_rotate << 3) | UINT64_C(0))));
-	if ((out.d == INT64_C(15)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* UXTAH_T1 */
-Outcome program_331([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rd = (word >> 8) & UINT64_C(0xf);
-	const std::uint64_t f_Rm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_rotate = (word >> 4) & UINT64_C(0x3);
-	if (f_Rn == UINT64_C(15))
-		return Outcome::see;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(f_Rd));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(f_Rm));
-	out.rotation = static_cast<std::int32_t>(static_cast<int64_t>(((f_rotate << 3) | UINT64_C(0))));
-	if ((out.d == INT64_C(15)) || (out.m == INT64_C(15)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* AESD_A1 */
-Outcome program_332([[maybe_unused]] std::uint32_t word,
+Outcome program_251([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6041,7 +4552,7 @@ Outcome program_332([[maybe_unused]] std::uint32_t word,
 }
 
 /* AESD_T1 */
-Outcome program_333([[maybe_unused]] std::uint32_t word,
+Outcome program_252([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6063,106 +4574,7 @@ Outcome program_333([[maybe_unused]] std::uint32_t word,
 }
 
 /* FLDMDBX_A1 */
-Outcome program_334([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if (((f_P == UINT64_C(0)) && (f_U == UINT64_C(0))) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_P == UINT64_C(1)) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_P == f_U) && (f_W == UINT64_C(1)))
-		return Outcome::undefined;
-	out.single_regs = false;
-	out.add = (f_U == UINT64_C(1));
-	out.wback = (f_W == UINT64_C(1));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(((f_imm8 << 2) | UINT64_C(0)));
-	out.regs = static_cast<std::int32_t>((static_cast<int64_t>(f_imm8) / INT64_C(2)));
-	if ((out.n == INT64_C(15)) && (out.wback || ((ctx.thumb ? InstrSet::T32 : InstrSet::A32) != InstrSet::A32)))
-		return Outcome::unpredictable;
-	if (((out.regs == INT64_C(0)) || (out.regs > INT64_C(16))) || ((out.d + out.regs) > INT64_C(32)))
-		return Outcome::unpredictable;
-	if ((((f_imm8 >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)) && ((out.d + out.regs) > INT64_C(16)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* FLDMDBX_T1 */
-Outcome program_335([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if (((f_P == UINT64_C(0)) && (f_U == UINT64_C(0))) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_P == UINT64_C(1)) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_P == f_U) && (f_W == UINT64_C(1)))
-		return Outcome::undefined;
-	out.single_regs = false;
-	out.add = (f_U == UINT64_C(1));
-	out.wback = (f_W == UINT64_C(1));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(((f_imm8 << 2) | UINT64_C(0)));
-	out.regs = static_cast<std::int32_t>((static_cast<int64_t>(f_imm8) / INT64_C(2)));
-	if ((out.n == INT64_C(15)) && (out.wback || ((ctx.thumb ? InstrSet::T32 : InstrSet::A32) != InstrSet::A32)))
-		return Outcome::unpredictable;
-	if (((out.regs == INT64_C(0)) || (out.regs > INT64_C(16))) || ((out.d + out.regs) > INT64_C(32)))
-		return Outcome::unpredictable;
-	if ((((f_imm8 >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)) && ((out.d + out.regs) > INT64_C(16)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* FSTMDBX_A1 */
-Outcome program_336([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if (((f_P == UINT64_C(0)) && (f_U == UINT64_C(0))) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_P == UINT64_C(1)) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_P == f_U) && (f_W == UINT64_C(1)))
-		return Outcome::undefined;
-	out.single_regs = false;
-	out.add = (f_U == UINT64_C(1));
-	out.wback = (f_W == UINT64_C(1));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(((f_imm8 << 2) | UINT64_C(0)));
-	out.regs = static_cast<std::int32_t>((static_cast<int64_t>(f_imm8) / INT64_C(2)));
-	if ((out.n == INT64_C(15)) && (out.wback || ((ctx.thumb ? InstrSet::T32 : InstrSet::A32) != InstrSet::A32)))
-		return Outcome::unpredictable;
-	if (((out.regs == INT64_C(0)) || (out.regs > INT64_C(16))) || ((out.d + out.regs) > INT64_C(32)))
-		return Outcome::unpredictable;
-	if ((((f_imm8 >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)) && ((out.d + out.regs) > INT64_C(16)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* FSTMDBX_T1 */
-Outcome program_337([[maybe_unused]] std::uint32_t word,
+Outcome program_253([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6195,7 +4607,7 @@ Outcome program_337([[maybe_unused]] std::uint32_t word,
 }
 
 /* SHA1C_A1 */
-Outcome program_338([[maybe_unused]] std::uint32_t word,
+Outcome program_254([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6218,7 +4630,7 @@ Outcome program_338([[maybe_unused]] std::uint32_t word,
 }
 
 /* SHA1C_T1 */
-Outcome program_339([[maybe_unused]] std::uint32_t word,
+Outcome program_255([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6243,7 +4655,7 @@ Outcome program_339([[maybe_unused]] std::uint32_t word,
 }
 
 /* SHA1H_A1 */
-Outcome program_340([[maybe_unused]] std::uint32_t word,
+Outcome program_256([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6263,7 +4675,7 @@ Outcome program_340([[maybe_unused]] std::uint32_t word,
 }
 
 /* SHA1H_T1 */
-Outcome program_341([[maybe_unused]] std::uint32_t word,
+Outcome program_257([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6285,7 +4697,7 @@ Outcome program_341([[maybe_unused]] std::uint32_t word,
 }
 
 /* SHA256H_A1 */
-Outcome program_342([[maybe_unused]] std::uint32_t word,
+Outcome program_258([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6308,7 +4720,7 @@ Outcome program_342([[maybe_unused]] std::uint32_t word,
 }
 
 /* SHA256H_T1 */
-Outcome program_343([[maybe_unused]] std::uint32_t word,
+Outcome program_259([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6333,7 +4745,7 @@ Outcome program_343([[maybe_unused]] std::uint32_t word,
 }
 
 /* SHA256SU0_A1 */
-Outcome program_344([[maybe_unused]] std::uint32_t word,
+Outcome program_260([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6353,7 +4765,7 @@ Outcome program_344([[maybe_unused]] std::uint32_t word,
 }
 
 /* SHA256SU0_T1 */
-Outcome program_345([[maybe_unused]] std::uint32_t word,
+Outcome program_261([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6375,7 +4787,7 @@ Outcome program_345([[maybe_unused]] std::uint32_t word,
 }
 
 /* VABA_A1_D */
-Outcome program_346([[maybe_unused]] std::uint32_t word,
+Outcome program_262([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6403,7 +4815,7 @@ Outcome program_346([[maybe_unused]] std::uint32_t word,
 }
 
 /* VABA_T1_D */
-Outcome program_347([[maybe_unused]] std::uint32_t word,
+Outcome program_263([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6431,7 +4843,7 @@ Outcome program_347([[maybe_unused]] std::uint32_t word,
 }
 
 /* VABAL_A1 */
-Outcome program_348([[maybe_unused]] std::uint32_t word,
+Outcome program_264([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6458,7 +4870,7 @@ Outcome program_348([[maybe_unused]] std::uint32_t word,
 }
 
 /* VABAL_T1 */
-Outcome program_349([[maybe_unused]] std::uint32_t word,
+Outcome program_265([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6485,7 +4897,7 @@ Outcome program_349([[maybe_unused]] std::uint32_t word,
 }
 
 /* VABD_f_A1_D */
-Outcome program_350([[maybe_unused]] std::uint32_t word,
+Outcome program_266([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6510,7 +4922,7 @@ Outcome program_350([[maybe_unused]] std::uint32_t word,
 }
 
 /* VABD_f_T1_D */
-Outcome program_351([[maybe_unused]] std::uint32_t word,
+Outcome program_267([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6537,7 +4949,7 @@ Outcome program_351([[maybe_unused]] std::uint32_t word,
 }
 
 /* VABS_A1_D */
-Outcome program_352([[maybe_unused]] std::uint32_t word,
+Outcome program_268([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6566,7 +4978,7 @@ Outcome program_352([[maybe_unused]] std::uint32_t word,
 }
 
 /* VABS_A2_H */
-Outcome program_353([[maybe_unused]] std::uint32_t word,
+Outcome program_269([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6592,7 +5004,7 @@ Outcome program_353([[maybe_unused]] std::uint32_t word,
 }
 
 /* VABS_T1_D */
-Outcome program_354([[maybe_unused]] std::uint32_t word,
+Outcome program_270([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6623,7 +5035,7 @@ Outcome program_354([[maybe_unused]] std::uint32_t word,
 }
 
 /* VABS_T2_H */
-Outcome program_355([[maybe_unused]] std::uint32_t word,
+Outcome program_271([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6648,7 +5060,7 @@ Outcome program_355([[maybe_unused]] std::uint32_t word,
 }
 
 /* VACGE_A1_D */
-Outcome program_356([[maybe_unused]] std::uint32_t word,
+Outcome program_272([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6675,7 +5087,7 @@ Outcome program_356([[maybe_unused]] std::uint32_t word,
 }
 
 /* VACGE_T1_D */
-Outcome program_357([[maybe_unused]] std::uint32_t word,
+Outcome program_273([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6704,7 +5116,7 @@ Outcome program_357([[maybe_unused]] std::uint32_t word,
 }
 
 /* VADD_f_A1_D */
-Outcome program_358([[maybe_unused]] std::uint32_t word,
+Outcome program_274([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6730,7 +5142,7 @@ Outcome program_358([[maybe_unused]] std::uint32_t word,
 }
 
 /* VADD_f_A2_H */
-Outcome program_359([[maybe_unused]] std::uint32_t word,
+Outcome program_275([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6758,7 +5170,7 @@ Outcome program_359([[maybe_unused]] std::uint32_t word,
 }
 
 /* VADD_f_T1_D */
-Outcome program_360([[maybe_unused]] std::uint32_t word,
+Outcome program_276([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6786,7 +5198,7 @@ Outcome program_360([[maybe_unused]] std::uint32_t word,
 }
 
 /* VADD_f_T2_H */
-Outcome program_361([[maybe_unused]] std::uint32_t word,
+Outcome program_277([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6813,30 +5225,7 @@ Outcome program_361([[maybe_unused]] std::uint32_t word,
 }
 
 /* VADD_i_A1_D */
-Outcome program_362([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Q = (word >> 6) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_size = (word >> 20) & UINT64_C(0x3);
-	if ((f_Q == UINT64_C(1)) && (((((f_Vd >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)) || (((f_Vn >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))) || (((f_Vm >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))))
-		return Outcome::undefined;
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(f_size)));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_N << 4) | f_Vn)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	out.regs = static_cast<std::int32_t>(((f_Q == UINT64_C(0)) ? INT64_C(1) : INT64_C(2)));
-	return Outcome::ok;
-}
-
-/* VADD_i_T1_D */
-Outcome program_363([[maybe_unused]] std::uint32_t word,
+Outcome program_278([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6859,30 +5248,7 @@ Outcome program_363([[maybe_unused]] std::uint32_t word,
 }
 
 /* VADDHN_A1 */
-Outcome program_364([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_size = (word >> 20) & UINT64_C(0x3);
-	if (f_size == UINT64_C(3))
-		return Outcome::see;
-	if ((((f_Vn >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)) || (((f_Vm >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)))
-		return Outcome::undefined;
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(f_size)));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_N << 4) | f_Vn)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	return Outcome::ok;
-}
-
-/* VADDHN_T1 */
-Outcome program_365([[maybe_unused]] std::uint32_t word,
+Outcome program_279([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6905,7 +5271,7 @@ Outcome program_365([[maybe_unused]] std::uint32_t word,
 }
 
 /* VADDL_A1 */
-Outcome program_366([[maybe_unused]] std::uint32_t word,
+Outcome program_280([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6932,7 +5298,7 @@ Outcome program_366([[maybe_unused]] std::uint32_t word,
 }
 
 /* VADDL_T1 */
-Outcome program_367([[maybe_unused]] std::uint32_t word,
+Outcome program_281([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6959,27 +5325,7 @@ Outcome program_367([[maybe_unused]] std::uint32_t word,
 }
 
 /* VAND_r_A1_D */
-Outcome program_368([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Q = (word >> 6) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	if ((f_Q == UINT64_C(1)) && (((((f_Vd >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)) || (((f_Vn >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))) || (((f_Vm >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))))
-		return Outcome::undefined;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_N << 4) | f_Vn)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	out.regs = static_cast<std::int32_t>(((f_Q == UINT64_C(0)) ? INT64_C(1) : INT64_C(2)));
-	return Outcome::ok;
-}
-
-/* VAND_r_T1_D */
-Outcome program_369([[maybe_unused]] std::uint32_t word,
+Outcome program_282([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -6999,7 +5345,7 @@ Outcome program_369([[maybe_unused]] std::uint32_t word,
 }
 
 /* VBIC_i_A1_D */
-Outcome program_370([[maybe_unused]] std::uint32_t word,
+Outcome program_283([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7020,7 +5366,7 @@ Outcome program_370([[maybe_unused]] std::uint32_t word,
 }
 
 /* VBIC_i_T1_D */
-Outcome program_371([[maybe_unused]] std::uint32_t word,
+Outcome program_284([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7041,39 +5387,7 @@ Outcome program_371([[maybe_unused]] std::uint32_t word,
 }
 
 /* VBIF_A1_D */
-Outcome program_372([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Q = (word >> 6) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_op = (word >> 20) & UINT64_C(0x3);
-	if ((f_Q == UINT64_C(1)) && (((((f_Vd >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)) || (((f_Vn >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))) || (((f_Vm >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))))
-		return Outcome::undefined;
-	if (f_op == UINT64_C(0))
-		return Outcome::see;
-	if (f_op == UINT64_C(1)) {
-		out.operation = VBitOps::VBSL;
-	}
-	if (f_op == UINT64_C(2)) {
-		out.operation = VBitOps::VBIT;
-	}
-	if (f_op == UINT64_C(3)) {
-		out.operation = VBitOps::VBIF;
-	}
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_N << 4) | f_Vn)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	out.regs = static_cast<std::int32_t>(((f_Q == UINT64_C(0)) ? INT64_C(1) : INT64_C(2)));
-	return Outcome::ok;
-}
-
-/* VBIF_T1_D */
-Outcome program_373([[maybe_unused]] std::uint32_t word,
+Outcome program_285([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7105,7 +5419,7 @@ Outcome program_373([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCADD_A1_D */
-Outcome program_374([[maybe_unused]] std::uint32_t word,
+Outcome program_286([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7132,7 +5446,7 @@ Outcome program_374([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCADD_T1_D */
-Outcome program_375([[maybe_unused]] std::uint32_t word,
+Outcome program_287([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7161,7 +5475,7 @@ Outcome program_375([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCEQ_i_A1_D */
-Outcome program_376([[maybe_unused]] std::uint32_t word,
+Outcome program_288([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7189,7 +5503,7 @@ Outcome program_376([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCEQ_i_T1_D */
-Outcome program_377([[maybe_unused]] std::uint32_t word,
+Outcome program_289([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7219,7 +5533,7 @@ Outcome program_377([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCEQ_r_A1_D */
-Outcome program_378([[maybe_unused]] std::uint32_t word,
+Outcome program_290([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7245,7 +5559,7 @@ Outcome program_378([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCEQ_r_A2_D */
-Outcome program_379([[maybe_unused]] std::uint32_t word,
+Outcome program_291([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7270,34 +5584,8 @@ Outcome program_379([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* VCEQ_r_T1_D */
-Outcome program_380([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Q = (word >> 6) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_size = (word >> 20) & UINT64_C(0x3);
-	if ((f_Q == UINT64_C(1)) && (((((f_Vd >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)) || (((f_Vn >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))) || (((f_Vm >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))))
-		return Outcome::undefined;
-	if (f_size == UINT64_C(3))
-		return Outcome::undefined;
-	out.int_operation = true;
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(f_size)));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_N << 4) | f_Vn)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	out.regs = static_cast<std::int32_t>(((f_Q == UINT64_C(0)) ? INT64_C(1) : INT64_C(2)));
-	return Outcome::ok;
-}
-
 /* VCEQ_r_T2_D */
-Outcome program_381([[maybe_unused]] std::uint32_t word,
+Outcome program_292([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7325,7 +5613,7 @@ Outcome program_381([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCGE_i_A1_D */
-Outcome program_382([[maybe_unused]] std::uint32_t word,
+Outcome program_293([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7353,7 +5641,7 @@ Outcome program_382([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCGE_r_A1_D */
-Outcome program_383([[maybe_unused]] std::uint32_t word,
+Outcome program_294([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7380,7 +5668,7 @@ Outcome program_383([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCGE_r_A2_D */
-Outcome program_384([[maybe_unused]] std::uint32_t word,
+Outcome program_295([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7406,7 +5694,7 @@ Outcome program_384([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCGE_r_T1_D */
-Outcome program_385([[maybe_unused]] std::uint32_t word,
+Outcome program_296([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7433,7 +5721,7 @@ Outcome program_385([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCGE_r_T2_D */
-Outcome program_386([[maybe_unused]] std::uint32_t word,
+Outcome program_297([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7461,7 +5749,7 @@ Outcome program_386([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCGT_r_A1_D */
-Outcome program_387([[maybe_unused]] std::uint32_t word,
+Outcome program_298([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7488,7 +5776,7 @@ Outcome program_387([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCGT_r_A2_D */
-Outcome program_388([[maybe_unused]] std::uint32_t word,
+Outcome program_299([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7514,7 +5802,7 @@ Outcome program_388([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCGT_r_T1_D */
-Outcome program_389([[maybe_unused]] std::uint32_t word,
+Outcome program_300([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7541,7 +5829,7 @@ Outcome program_389([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCGT_r_T2_D */
-Outcome program_390([[maybe_unused]] std::uint32_t word,
+Outcome program_301([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7569,7 +5857,7 @@ Outcome program_390([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCLS_A1_D */
-Outcome program_391([[maybe_unused]] std::uint32_t word,
+Outcome program_302([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7591,7 +5879,7 @@ Outcome program_391([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCMLA_A1_D */
-Outcome program_392([[maybe_unused]] std::uint32_t word,
+Outcome program_303([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7618,7 +5906,7 @@ Outcome program_392([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCMLA_T1_D */
-Outcome program_393([[maybe_unused]] std::uint32_t word,
+Outcome program_304([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7647,7 +5935,7 @@ Outcome program_393([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCMLA_s_A1_DH */
-Outcome program_394([[maybe_unused]] std::uint32_t word,
+Outcome program_305([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7675,7 +5963,7 @@ Outcome program_394([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCMLA_s_T1_DH */
-Outcome program_395([[maybe_unused]] std::uint32_t word,
+Outcome program_306([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7705,7 +5993,7 @@ Outcome program_395([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCMP_A1_H */
-Outcome program_396([[maybe_unused]] std::uint32_t word,
+Outcome program_307([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7728,7 +6016,7 @@ Outcome program_396([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCMP_A2_H */
-Outcome program_397([[maybe_unused]] std::uint32_t word,
+Outcome program_308([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7749,7 +6037,7 @@ Outcome program_397([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCMP_T1_H */
-Outcome program_398([[maybe_unused]] std::uint32_t word,
+Outcome program_309([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7773,7 +6061,7 @@ Outcome program_398([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCMP_T2_H */
-Outcome program_399([[maybe_unused]] std::uint32_t word,
+Outcome program_310([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7795,7 +6083,7 @@ Outcome program_399([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCNT_A1_D */
-Outcome program_400([[maybe_unused]] std::uint32_t word,
+Outcome program_311([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7817,22 +6105,7 @@ Outcome program_400([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVT_ds_A1 */
-Outcome program_401([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_size = (word >> 8) & UINT64_C(0x3);
-	out.double_to_single = (f_size == UINT64_C(3));
-	out.d = static_cast<std::int32_t>((out.double_to_single ? static_cast<int64_t>(((f_Vd << 1) | f_D)) : static_cast<int64_t>(((f_D << 4) | f_Vd))));
-	out.m = static_cast<std::int32_t>((out.double_to_single ? static_cast<int64_t>(((f_M << 4) | f_Vm)) : static_cast<int64_t>(((f_Vm << 1) | f_M))));
-	return Outcome::ok;
-}
-
-/* VCVT_ds_T1 */
-Outcome program_402([[maybe_unused]] std::uint32_t word,
+Outcome program_312([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7847,7 +6120,7 @@ Outcome program_402([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVT_xs_A1_D */
-Outcome program_403([[maybe_unused]] std::uint32_t word,
+Outcome program_313([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7880,7 +6153,7 @@ Outcome program_403([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVT_xs_T1_D */
-Outcome program_404([[maybe_unused]] std::uint32_t word,
+Outcome program_314([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7913,7 +6186,7 @@ Outcome program_404([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVT_toxv_A1_H */
-Outcome program_405([[maybe_unused]] std::uint32_t word,
+Outcome program_315([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7941,7 +6214,7 @@ Outcome program_405([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVT_toxv_T1_H */
-Outcome program_406([[maybe_unused]] std::uint32_t word,
+Outcome program_316([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7968,7 +6241,7 @@ Outcome program_406([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVT_is_A1_D */
-Outcome program_407([[maybe_unused]] std::uint32_t word,
+Outcome program_317([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -7995,7 +6268,7 @@ Outcome program_407([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVT_is_T1_D */
-Outcome program_408([[maybe_unused]] std::uint32_t word,
+Outcome program_318([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8024,7 +6297,7 @@ Outcome program_408([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVT_sh_A1 */
-Outcome program_409([[maybe_unused]] std::uint32_t word,
+Outcome program_319([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8048,7 +6321,7 @@ Outcome program_409([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVT_uiv_A1_H */
-Outcome program_410([[maybe_unused]] std::uint32_t word,
+Outcome program_320([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8077,7 +6350,7 @@ Outcome program_410([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVT_uiv_T1_H */
-Outcome program_411([[maybe_unused]] std::uint32_t word,
+Outcome program_321([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8105,7 +6378,7 @@ Outcome program_411([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVT_bfs_A1 */
-Outcome program_412([[maybe_unused]] std::uint32_t word,
+Outcome program_322([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8122,7 +6395,7 @@ Outcome program_412([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVTA_asimd_A1_D */
-Outcome program_413([[maybe_unused]] std::uint32_t word,
+Outcome program_323([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8150,7 +6423,7 @@ Outcome program_413([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVTA_asimd_T1_D */
-Outcome program_414([[maybe_unused]] std::uint32_t word,
+Outcome program_324([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8180,7 +6453,7 @@ Outcome program_414([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVTA_vfp_A1_H */
-Outcome program_415([[maybe_unused]] std::uint32_t word,
+Outcome program_325([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8203,7 +6476,7 @@ Outcome program_415([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVTA_vfp_T1_H */
-Outcome program_416([[maybe_unused]] std::uint32_t word,
+Outcome program_326([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8228,26 +6501,7 @@ Outcome program_416([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVTB_A1_SH */
-Outcome program_417([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_T = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_op = (word >> 16) & UINT64_C(0x1);
-	const std::uint64_t f_sz = (word >> 8) & UINT64_C(0x1);
-	out.d = static_cast<std::int32_t>((((f_sz == UINT64_C(1)) && (f_op == UINT64_C(0))) ? static_cast<int64_t>(((f_D << 4) | f_Vd)) : static_cast<int64_t>(((f_Vd << 1) | f_D))));
-	out.m = static_cast<std::int32_t>((((f_sz == UINT64_C(1)) && (f_op == UINT64_C(1))) ? static_cast<int64_t>(((f_M << 4) | f_Vm)) : static_cast<int64_t>(((f_Vm << 1) | f_M))));
-	out.uses_double = (f_sz == UINT64_C(1));
-	out.convert_from_half = (f_op == UINT64_C(0));
-	out.lowbit = static_cast<std::int32_t>(((f_T == UINT64_C(1)) ? INT64_C(16) : INT64_C(0)));
-	return Outcome::ok;
-}
-
-/* VCVTB_T1_SH */
-Outcome program_418([[maybe_unused]] std::uint32_t word,
+Outcome program_327([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8266,22 +6520,7 @@ Outcome program_418([[maybe_unused]] std::uint32_t word,
 }
 
 /* VCVTB_A1_bfs */
-Outcome program_419([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	if (!ctx.features.has(Feature::bf16))
-		return Outcome::feature;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_Vd << 1) | f_D)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_Vm << 1) | f_M)));
-	return Outcome::ok;
-}
-
-/* VCVTB_T1_bfs */
-Outcome program_420([[maybe_unused]] std::uint32_t word,
+Outcome program_328([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8296,7 +6535,7 @@ Outcome program_420([[maybe_unused]] std::uint32_t word,
 }
 
 /* VDIV_A1_H */
-Outcome program_421([[maybe_unused]] std::uint32_t word,
+Outcome program_329([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8321,7 +6560,7 @@ Outcome program_421([[maybe_unused]] std::uint32_t word,
 }
 
 /* VDIV_T1_H */
-Outcome program_422([[maybe_unused]] std::uint32_t word,
+Outcome program_330([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8345,7 +6584,7 @@ Outcome program_422([[maybe_unused]] std::uint32_t word,
 }
 
 /* VDOT_s_A1_D */
-Outcome program_423([[maybe_unused]] std::uint32_t word,
+Outcome program_331([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8368,7 +6607,7 @@ Outcome program_423([[maybe_unused]] std::uint32_t word,
 }
 
 /* VDOT_s_T1_D */
-Outcome program_424([[maybe_unused]] std::uint32_t word,
+Outcome program_332([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8393,7 +6632,7 @@ Outcome program_424([[maybe_unused]] std::uint32_t word,
 }
 
 /* VDOT_A1_D */
-Outcome program_425([[maybe_unused]] std::uint32_t word,
+Outcome program_333([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8415,7 +6654,7 @@ Outcome program_425([[maybe_unused]] std::uint32_t word,
 }
 
 /* VDOT_T1_D */
-Outcome program_426([[maybe_unused]] std::uint32_t word,
+Outcome program_334([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8439,31 +6678,7 @@ Outcome program_426([[maybe_unused]] std::uint32_t word,
 }
 
 /* VDUP_r_A1_D */
-Outcome program_427([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_B = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_D = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_E = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_Q = (word >> 21) & UINT64_C(0x1);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vd = (word >> 16) & UINT64_C(0xf);
-	if ((f_Q == UINT64_C(1)) && (((f_Vd >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)))
-		return Outcome::undefined;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.regs = static_cast<std::int32_t>(((f_Q == UINT64_C(0)) ? INT64_C(1) : INT64_C(2)));
-	if (((f_B << 1) | f_E) == UINT64_C(3))
-		return Outcome::undefined;
-	out.esize = static_cast<std::int32_t>((INT64_C(32) >> static_cast<int64_t>(((f_B << 1) | f_E))));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	if (out.t == INT64_C(15))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* VDUP_r_T1_D */
-Outcome program_428([[maybe_unused]] std::uint32_t word,
+Outcome program_335([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_B = (word >> 22) & UINT64_C(0x1);
@@ -8487,7 +6702,7 @@ Outcome program_428([[maybe_unused]] std::uint32_t word,
 }
 
 /* VDUP_s_A1_D */
-Outcome program_429([[maybe_unused]] std::uint32_t word,
+Outcome program_336([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8511,7 +6726,7 @@ Outcome program_429([[maybe_unused]] std::uint32_t word,
 }
 
 /* VEXT_A1_D */
-Outcome program_430([[maybe_unused]] std::uint32_t word,
+Outcome program_337([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8535,7 +6750,7 @@ Outcome program_430([[maybe_unused]] std::uint32_t word,
 }
 
 /* VFMA_A1_D */
-Outcome program_431([[maybe_unused]] std::uint32_t word,
+Outcome program_338([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8563,7 +6778,7 @@ Outcome program_431([[maybe_unused]] std::uint32_t word,
 }
 
 /* VFMA_A2_H */
-Outcome program_432([[maybe_unused]] std::uint32_t word,
+Outcome program_339([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8592,7 +6807,7 @@ Outcome program_432([[maybe_unused]] std::uint32_t word,
 }
 
 /* VFMA_T1_D */
-Outcome program_433([[maybe_unused]] std::uint32_t word,
+Outcome program_340([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8622,7 +6837,7 @@ Outcome program_433([[maybe_unused]] std::uint32_t word,
 }
 
 /* VFMA_T2_H */
-Outcome program_434([[maybe_unused]] std::uint32_t word,
+Outcome program_341([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8650,7 +6865,7 @@ Outcome program_434([[maybe_unused]] std::uint32_t word,
 }
 
 /* VFMA_bfs_A1_Q */
-Outcome program_435([[maybe_unused]] std::uint32_t word,
+Outcome program_342([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8674,7 +6889,7 @@ Outcome program_435([[maybe_unused]] std::uint32_t word,
 }
 
 /* VFMA_bfs_T1_Q */
-Outcome program_436([[maybe_unused]] std::uint32_t word,
+Outcome program_343([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8700,7 +6915,7 @@ Outcome program_436([[maybe_unused]] std::uint32_t word,
 }
 
 /* VFMA_bf_A1_Q */
-Outcome program_437([[maybe_unused]] std::uint32_t word,
+Outcome program_344([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8723,7 +6938,7 @@ Outcome program_437([[maybe_unused]] std::uint32_t word,
 }
 
 /* VFMA_bf_T1_Q */
-Outcome program_438([[maybe_unused]] std::uint32_t word,
+Outcome program_345([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8748,7 +6963,7 @@ Outcome program_438([[maybe_unused]] std::uint32_t word,
 }
 
 /* VFMAL_s_A1_D */
-Outcome program_439([[maybe_unused]] std::uint32_t word,
+Outcome program_346([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8775,7 +6990,7 @@ Outcome program_439([[maybe_unused]] std::uint32_t word,
 }
 
 /* VFMAL_s_T1_D */
-Outcome program_440([[maybe_unused]] std::uint32_t word,
+Outcome program_347([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8804,7 +7019,7 @@ Outcome program_440([[maybe_unused]] std::uint32_t word,
 }
 
 /* VFMAL_A1_D */
-Outcome program_441([[maybe_unused]] std::uint32_t word,
+Outcome program_348([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8830,7 +7045,7 @@ Outcome program_441([[maybe_unused]] std::uint32_t word,
 }
 
 /* VFMAL_T1_D */
-Outcome program_442([[maybe_unused]] std::uint32_t word,
+Outcome program_349([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8858,7 +7073,7 @@ Outcome program_442([[maybe_unused]] std::uint32_t word,
 }
 
 /* VFNMA_A1_H */
-Outcome program_443([[maybe_unused]] std::uint32_t word,
+Outcome program_350([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8883,7 +7098,7 @@ Outcome program_443([[maybe_unused]] std::uint32_t word,
 }
 
 /* VFNMA_T1_H */
-Outcome program_444([[maybe_unused]] std::uint32_t word,
+Outcome program_351([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8907,7 +7122,7 @@ Outcome program_444([[maybe_unused]] std::uint32_t word,
 }
 
 /* VHADD_A1_D */
-Outcome program_445([[maybe_unused]] std::uint32_t word,
+Outcome program_352([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8936,7 +7151,7 @@ Outcome program_445([[maybe_unused]] std::uint32_t word,
 }
 
 /* VHADD_T1_D */
-Outcome program_446([[maybe_unused]] std::uint32_t word,
+Outcome program_353([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8965,7 +7180,7 @@ Outcome program_446([[maybe_unused]] std::uint32_t word,
 }
 
 /* VINS_A1 */
-Outcome program_447([[maybe_unused]] std::uint32_t word,
+Outcome program_354([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8980,7 +7195,7 @@ Outcome program_447([[maybe_unused]] std::uint32_t word,
 }
 
 /* VINS_T1 */
-Outcome program_448([[maybe_unused]] std::uint32_t word,
+Outcome program_355([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -8997,7 +7212,7 @@ Outcome program_448([[maybe_unused]] std::uint32_t word,
 }
 
 /* VJCVT_A1 */
-Outcome program_449([[maybe_unused]] std::uint32_t word,
+Outcome program_356([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9015,7 +7230,7 @@ Outcome program_449([[maybe_unused]] std::uint32_t word,
 }
 
 /* VJCVT_T1 */
-Outcome program_450([[maybe_unused]] std::uint32_t word,
+Outcome program_357([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9032,7 +7247,7 @@ Outcome program_450([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD1_m_A1_nowb */
-Outcome program_451([[maybe_unused]] std::uint32_t word,
+Outcome program_358([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9058,7 +7273,7 @@ Outcome program_451([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD1_m_A2_nowb */
-Outcome program_452([[maybe_unused]] std::uint32_t word,
+Outcome program_359([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9084,7 +7299,7 @@ Outcome program_452([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD1_m_A3_nowb */
-Outcome program_453([[maybe_unused]] std::uint32_t word,
+Outcome program_360([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9110,7 +7325,7 @@ Outcome program_453([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD1_m_A4_nowb */
-Outcome program_454([[maybe_unused]] std::uint32_t word,
+Outcome program_361([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9134,7 +7349,7 @@ Outcome program_454([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD1_a_A1_nowb */
-Outcome program_455([[maybe_unused]] std::uint32_t word,
+Outcome program_362([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9160,7 +7375,7 @@ Outcome program_455([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD1_1_A1_nowb */
-Outcome program_456([[maybe_unused]] std::uint32_t word,
+Outcome program_363([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9187,7 +7402,7 @@ Outcome program_456([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD1_1_A2_nowb */
-Outcome program_457([[maybe_unused]] std::uint32_t word,
+Outcome program_364([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9214,7 +7429,7 @@ Outcome program_457([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD1_1_A3_nowb */
-Outcome program_458([[maybe_unused]] std::uint32_t word,
+Outcome program_365([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9243,7 +7458,7 @@ Outcome program_458([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD2_m_A1_nowb */
-Outcome program_459([[maybe_unused]] std::uint32_t word,
+Outcome program_366([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9274,7 +7489,7 @@ Outcome program_459([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD2_m_A2_nowb */
-Outcome program_460([[maybe_unused]] std::uint32_t word,
+Outcome program_367([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9302,7 +7517,7 @@ Outcome program_460([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD2_a_A1_nowb */
-Outcome program_461([[maybe_unused]] std::uint32_t word,
+Outcome program_368([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9329,7 +7544,7 @@ Outcome program_461([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD2_1_A1_nowb */
-Outcome program_462([[maybe_unused]] std::uint32_t word,
+Outcome program_369([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9356,7 +7571,7 @@ Outcome program_462([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD2_1_A2_nowb */
-Outcome program_463([[maybe_unused]] std::uint32_t word,
+Outcome program_370([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9383,7 +7598,7 @@ Outcome program_463([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD2_1_A3_nowb */
-Outcome program_464([[maybe_unused]] std::uint32_t word,
+Outcome program_371([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9412,7 +7627,7 @@ Outcome program_464([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD3_m_A1_nowb */
-Outcome program_465([[maybe_unused]] std::uint32_t word,
+Outcome program_372([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9443,7 +7658,7 @@ Outcome program_465([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD3_a_A1_nowb */
-Outcome program_466([[maybe_unused]] std::uint32_t word,
+Outcome program_373([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9470,7 +7685,7 @@ Outcome program_466([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD3_1_A1_nowb */
-Outcome program_467([[maybe_unused]] std::uint32_t word,
+Outcome program_374([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9499,7 +7714,7 @@ Outcome program_467([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD3_1_A2_nowb */
-Outcome program_468([[maybe_unused]] std::uint32_t word,
+Outcome program_375([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9528,7 +7743,7 @@ Outcome program_468([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD3_1_A3_nowb */
-Outcome program_469([[maybe_unused]] std::uint32_t word,
+Outcome program_376([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9557,7 +7772,7 @@ Outcome program_469([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD4_m_A1_nowb */
-Outcome program_470([[maybe_unused]] std::uint32_t word,
+Outcome program_377([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9589,7 +7804,7 @@ Outcome program_470([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD4_a_A1_nowb */
-Outcome program_471([[maybe_unused]] std::uint32_t word,
+Outcome program_378([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9618,7 +7833,7 @@ Outcome program_471([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD4_1_A1_nowb */
-Outcome program_472([[maybe_unused]] std::uint32_t word,
+Outcome program_379([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9647,7 +7862,7 @@ Outcome program_472([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD4_1_A2_nowb */
-Outcome program_473([[maybe_unused]] std::uint32_t word,
+Outcome program_380([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9676,7 +7891,7 @@ Outcome program_473([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLD4_1_A3_nowb */
-Outcome program_474([[maybe_unused]] std::uint32_t word,
+Outcome program_381([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9707,38 +7922,7 @@ Outcome program_474([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLDMDB_A2 */
-Outcome program_475([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if (((f_P == UINT64_C(0)) && (f_U == UINT64_C(0))) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_P == UINT64_C(1)) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_P == f_U) && (f_W == UINT64_C(1)))
-		return Outcome::undefined;
-	out.single_regs = true;
-	out.add = (f_U == UINT64_C(1));
-	out.wback = (f_W == UINT64_C(1));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_Vd << 1) | f_D)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(((f_imm8 << 2) | UINT64_C(0)));
-	out.regs = static_cast<std::int32_t>(static_cast<int64_t>(f_imm8));
-	if ((out.n == INT64_C(15)) && (out.wback || ((ctx.thumb ? InstrSet::T32 : InstrSet::A32) != InstrSet::A32)))
-		return Outcome::unpredictable;
-	if ((out.regs == INT64_C(0)) || ((out.d + out.regs) > INT64_C(32)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* VLDMDB_T2 */
-Outcome program_476([[maybe_unused]] std::uint32_t word,
+Outcome program_382([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9769,7 +7953,7 @@ Outcome program_476([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLDR_A1_H */
-Outcome program_477([[maybe_unused]] std::uint32_t word,
+Outcome program_383([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9792,7 +7976,7 @@ Outcome program_477([[maybe_unused]] std::uint32_t word,
 }
 
 /* VLDR_T1_H */
-Outcome program_478([[maybe_unused]] std::uint32_t word,
+Outcome program_384([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9814,7 +7998,7 @@ Outcome program_478([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMAX_f_A1_D */
-Outcome program_479([[maybe_unused]] std::uint32_t word,
+Outcome program_385([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9841,7 +8025,7 @@ Outcome program_479([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMAX_f_T1_D */
-Outcome program_480([[maybe_unused]] std::uint32_t word,
+Outcome program_386([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9870,7 +8054,7 @@ Outcome program_480([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMAX_i_A1_D */
-Outcome program_481([[maybe_unused]] std::uint32_t word,
+Outcome program_387([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9899,7 +8083,7 @@ Outcome program_481([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMAX_i_T1_D */
-Outcome program_482([[maybe_unused]] std::uint32_t word,
+Outcome program_388([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9928,7 +8112,7 @@ Outcome program_482([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMAXNM_A1_D */
-Outcome program_483([[maybe_unused]] std::uint32_t word,
+Outcome program_389([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9956,7 +8140,7 @@ Outcome program_483([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMAXNM_A2_H */
-Outcome program_484([[maybe_unused]] std::uint32_t word,
+Outcome program_390([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -9981,7 +8165,7 @@ Outcome program_484([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMAXNM_T1_D */
-Outcome program_485([[maybe_unused]] std::uint32_t word,
+Outcome program_391([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10011,7 +8195,7 @@ Outcome program_485([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMAXNM_T2_H */
-Outcome program_486([[maybe_unused]] std::uint32_t word,
+Outcome program_392([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10038,7 +8222,7 @@ Outcome program_486([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMLA_s_A1_D */
-Outcome program_487([[maybe_unused]] std::uint32_t word,
+Outcome program_393([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10072,7 +8256,7 @@ Outcome program_487([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMLA_s_T1_D */
-Outcome program_488([[maybe_unused]] std::uint32_t word,
+Outcome program_394([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10108,7 +8292,7 @@ Outcome program_488([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMLA_f_A1_D */
-Outcome program_489([[maybe_unused]] std::uint32_t word,
+Outcome program_395([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10136,7 +8320,7 @@ Outcome program_489([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMLA_f_A2_H */
-Outcome program_490([[maybe_unused]] std::uint32_t word,
+Outcome program_396([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10165,7 +8349,7 @@ Outcome program_490([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMLA_f_T1_D */
-Outcome program_491([[maybe_unused]] std::uint32_t word,
+Outcome program_397([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10195,7 +8379,7 @@ Outcome program_491([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMLA_f_T2_H */
-Outcome program_492([[maybe_unused]] std::uint32_t word,
+Outcome program_398([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10223,7 +8407,7 @@ Outcome program_492([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMLA_i_A1_D */
-Outcome program_493([[maybe_unused]] std::uint32_t word,
+Outcome program_399([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10252,7 +8436,7 @@ Outcome program_493([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMLA_i_T1_D */
-Outcome program_494([[maybe_unused]] std::uint32_t word,
+Outcome program_400([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10281,7 +8465,7 @@ Outcome program_494([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMLAL_s_A1 */
-Outcome program_495([[maybe_unused]] std::uint32_t word,
+Outcome program_401([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10312,7 +8496,7 @@ Outcome program_495([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMLAL_s_T1 */
-Outcome program_496([[maybe_unused]] std::uint32_t word,
+Outcome program_402([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10343,7 +8527,7 @@ Outcome program_496([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMLAL_i_A1 */
-Outcome program_497([[maybe_unused]] std::uint32_t word,
+Outcome program_403([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10372,7 +8556,7 @@ Outcome program_497([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMLAL_i_T1 */
-Outcome program_498([[maybe_unused]] std::uint32_t word,
+Outcome program_404([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10401,7 +8585,7 @@ Outcome program_498([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMMLA_A1_Q */
-Outcome program_499([[maybe_unused]] std::uint32_t word,
+Outcome program_405([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10422,7 +8606,7 @@ Outcome program_499([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMMLA_T1_Q */
-Outcome program_500([[maybe_unused]] std::uint32_t word,
+Outcome program_406([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10445,7 +8629,7 @@ Outcome program_500([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOV_toh_A1 */
-Outcome program_501([[maybe_unused]] std::uint32_t word,
+Outcome program_407([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
@@ -10466,7 +8650,7 @@ Outcome program_501([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOV_toh_T1 */
-Outcome program_502([[maybe_unused]] std::uint32_t word,
+Outcome program_408([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
@@ -10486,23 +8670,7 @@ Outcome program_502([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOV_tos_A1 */
-Outcome program_503([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_op = (word >> 20) & UINT64_C(0x1);
-	out.to_arm_register = (f_op == UINT64_C(1));
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_Vn << 1) | f_N)));
-	if (out.t == INT64_C(15))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* VMOV_tos_T1 */
-Outcome program_504([[maybe_unused]] std::uint32_t word,
+Outcome program_409([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
@@ -10518,27 +8686,7 @@ Outcome program_504([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOV_tod_A1 */
-Outcome program_505([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rt2 = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_op = (word >> 20) & UINT64_C(0x1);
-	out.to_arm_registers = (f_op == UINT64_C(1));
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.t2 = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt2));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	if ((out.t == INT64_C(15)) || (out.t2 == INT64_C(15)))
-		return Outcome::unpredictable;
-	if (out.to_arm_registers && (out.t == out.t2))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* VMOV_tod_T1 */
-Outcome program_506([[maybe_unused]] std::uint32_t word,
+Outcome program_410([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
@@ -10558,28 +8706,7 @@ Outcome program_506([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOV_toss_A1 */
-Outcome program_507([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Rt2 = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_op = (word >> 20) & UINT64_C(0x1);
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.t2 = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt2));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_Vm << 1) | f_M)));
-	out.m2 = static_cast<std::int32_t>((out.m + INT64_C(1)));
-	out.to_arm_registers = (f_op == UINT64_C(1));
-	if (((out.t == INT64_C(15)) || (out.t2 == INT64_C(15))) || (out.m == INT64_C(31)))
-		return Outcome::unpredictable;
-	if (out.to_arm_registers && (out.t == out.t2))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* VMOV_toss_T1 */
-Outcome program_508([[maybe_unused]] std::uint32_t word,
+Outcome program_411([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
@@ -10600,30 +8727,7 @@ Outcome program_508([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOV_rs_A1 */
-Outcome program_509([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vd = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_opc1 = (word >> 21) & UINT64_C(0x3);
-	const std::uint64_t f_opc2 = (word >> 5) & UINT64_C(0x3);
-	out.opc = static_cast<std::uint8_t>(((f_opc1 << 2) | f_opc2));
-	if ((out.opc & UINT64_C(11)) == UINT64_C(2))
-		return Outcome::undefined;
-	out.lsb = static_cast<std::int32_t>(detail::lowest_set_bit(((((out.opc >> INT64_C(0)) & UINT64_C(1)) << 1) | ((out.opc >> INT64_C(3)) & UINT64_C(1))), 2));
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << out.lsb));
-	out.index_value = static_cast<std::int32_t>(static_cast<int64_t>(((out.opc >> out.lsb) & ((UINT64_C(1) << ((INT64_C(2) - out.lsb + 1))) - 1))));
-	out.advsimd = (out.esize < INT64_C(32));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	if (out.t == INT64_C(15))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* VMOV_rs_T1 */
-Outcome program_510([[maybe_unused]] std::uint32_t word,
+Outcome program_412([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 7) & UINT64_C(0x1);
@@ -10646,7 +8750,7 @@ Outcome program_510([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOV_i_A1_D */
-Outcome program_511([[maybe_unused]] std::uint32_t word,
+Outcome program_413([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10672,7 +8776,7 @@ Outcome program_511([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOV_i_A2_H */
-Outcome program_512([[maybe_unused]] std::uint32_t word,
+Outcome program_414([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10694,7 +8798,7 @@ Outcome program_512([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOV_i_T1_D */
-Outcome program_513([[maybe_unused]] std::uint32_t word,
+Outcome program_415([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10720,7 +8824,7 @@ Outcome program_513([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOV_i_T2_H */
-Outcome program_514([[maybe_unused]] std::uint32_t word,
+Outcome program_416([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10741,23 +8845,7 @@ Outcome program_514([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOV_r_A2_S */
-Outcome program_515([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_size = (word >> 8) & UINT64_C(0x3);
-	out.d = static_cast<std::int32_t>(((f_size == UINT64_C(3)) ? static_cast<int64_t>(((f_D << 4) | f_Vd)) : static_cast<int64_t>(((f_Vd << 1) | f_D))));
-	out.m = static_cast<std::int32_t>(((f_size == UINT64_C(3)) ? static_cast<int64_t>(((f_M << 4) | f_Vm)) : static_cast<int64_t>(((f_Vm << 1) | f_M))));
-	out.single_register = (f_size == UINT64_C(2));
-	out.advsimd = false;
-	return Outcome::ok;
-}
-
-/* VMOV_r_T2_S */
-Outcome program_516([[maybe_unused]] std::uint32_t word,
+Outcome program_417([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10773,32 +8861,7 @@ Outcome program_516([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOV_sr_A1 */
-Outcome program_517([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_opc1 = (word >> 21) & UINT64_C(0x3);
-	const std::uint64_t f_opc2 = (word >> 5) & UINT64_C(0x3);
-	out.opc = static_cast<std::uint8_t>(((f_opc1 << 2) | f_opc2));
-	if (((((f_U << 4) | out.opc) & UINT64_C(27)) == UINT64_C(16)) || ((((f_U << 4) | out.opc) & UINT64_C(11)) == UINT64_C(2)))
-		return Outcome::undefined;
-	out.lsb = static_cast<std::int32_t>(detail::lowest_set_bit(((((out.opc >> INT64_C(0)) & UINT64_C(1)) << 1) | ((out.opc >> INT64_C(3)) & UINT64_C(1))), 2));
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << out.lsb));
-	out.index_value = static_cast<std::int32_t>(static_cast<int64_t>(((out.opc >> out.lsb) & ((UINT64_C(1) << ((INT64_C(2) - out.lsb + 1))) - 1))));
-	out.advsimd = (out.esize < INT64_C(32));
-	out.unsigned_ = (f_U == UINT64_C(1));
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_N << 4) | f_Vn)));
-	if (out.t == INT64_C(15))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* VMOV_sr_T1 */
-Outcome program_518([[maybe_unused]] std::uint32_t word,
+Outcome program_418([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
@@ -10823,7 +8886,7 @@ Outcome program_518([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOVL_A1 */
-Outcome program_519([[maybe_unused]] std::uint32_t word,
+Outcome program_419([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10847,7 +8910,7 @@ Outcome program_519([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOVL_T1 */
-Outcome program_520([[maybe_unused]] std::uint32_t word,
+Outcome program_420([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10871,7 +8934,7 @@ Outcome program_520([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMOVN_A1 */
-Outcome program_521([[maybe_unused]] std::uint32_t word,
+Outcome program_421([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10891,21 +8954,7 @@ Outcome program_521([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMRS_A1_AS */
-Outcome program_522([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_reg = (word >> 16) & UINT64_C(0xf);
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	if (!(((f_reg & UINT64_C(14)) == UINT64_C(0)) || (f_reg == UINT64_C(5)) || ((f_reg & UINT64_C(14)) == UINT64_C(6)) || (f_reg == UINT64_C(8))))
-		return Outcome::unpredictable;
-	if ((out.t == INT64_C(15)) && (f_reg != UINT64_C(1)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* VMRS_T1_AS */
-Outcome program_523([[maybe_unused]] std::uint32_t word,
+Outcome program_422([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
@@ -10919,22 +8968,7 @@ Outcome program_523([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMSR_A1_AS */
-Outcome program_524([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_reg = (word >> 16) & UINT64_C(0xf);
-	out.t = static_cast<std::int32_t>(static_cast<int64_t>(f_Rt));
-	if ((!((f_reg & UINT64_C(14)) == UINT64_C(0))) && (f_reg != UINT64_C(8))) {
-		return Outcome::undefined;
-	}
-	if (out.t == INT64_C(15))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* VMSR_T1_AS */
-Outcome program_525([[maybe_unused]] std::uint32_t word,
+Outcome program_423([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_Rt = (word >> 12) & UINT64_C(0xf);
@@ -10949,7 +8983,7 @@ Outcome program_525([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMUL_s_A1_D */
-Outcome program_526([[maybe_unused]] std::uint32_t word,
+Outcome program_424([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -10981,7 +9015,7 @@ Outcome program_526([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMUL_s_T1_D */
-Outcome program_527([[maybe_unused]] std::uint32_t word,
+Outcome program_425([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11015,7 +9049,7 @@ Outcome program_527([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMUL_f_A2_H */
-Outcome program_528([[maybe_unused]] std::uint32_t word,
+Outcome program_426([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11042,7 +9076,7 @@ Outcome program_528([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMUL_f_T1_D */
-Outcome program_529([[maybe_unused]] std::uint32_t word,
+Outcome program_427([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11070,7 +9104,7 @@ Outcome program_529([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMUL_f_T2_H */
-Outcome program_530([[maybe_unused]] std::uint32_t word,
+Outcome program_428([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11096,7 +9130,7 @@ Outcome program_530([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMUL_i_A1_D */
-Outcome program_531([[maybe_unused]] std::uint32_t word,
+Outcome program_429([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11125,7 +9159,7 @@ Outcome program_531([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMUL_i_T1_D */
-Outcome program_532([[maybe_unused]] std::uint32_t word,
+Outcome program_430([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11154,7 +9188,7 @@ Outcome program_532([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMULL_s_A1 */
-Outcome program_533([[maybe_unused]] std::uint32_t word,
+Outcome program_431([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11183,7 +9217,7 @@ Outcome program_533([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMULL_s_T1 */
-Outcome program_534([[maybe_unused]] std::uint32_t word,
+Outcome program_432([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11212,7 +9246,7 @@ Outcome program_534([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMULL_i_A1 */
-Outcome program_535([[maybe_unused]] std::uint32_t word,
+Outcome program_433([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11245,7 +9279,7 @@ Outcome program_535([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMULL_i_T1 */
-Outcome program_536([[maybe_unused]] std::uint32_t word,
+Outcome program_434([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11280,7 +9314,7 @@ Outcome program_536([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMVN_i_A1_D */
-Outcome program_537([[maybe_unused]] std::uint32_t word,
+Outcome program_435([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11301,7 +9335,7 @@ Outcome program_537([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMVN_i_T1_D */
-Outcome program_538([[maybe_unused]] std::uint32_t word,
+Outcome program_436([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11322,7 +9356,7 @@ Outcome program_538([[maybe_unused]] std::uint32_t word,
 }
 
 /* VMVN_r_A1_D */
-Outcome program_539([[maybe_unused]] std::uint32_t word,
+Outcome program_437([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11342,7 +9376,7 @@ Outcome program_539([[maybe_unused]] std::uint32_t word,
 }
 
 /* VNEG_A1_D */
-Outcome program_540([[maybe_unused]] std::uint32_t word,
+Outcome program_438([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11369,7 +9403,7 @@ Outcome program_540([[maybe_unused]] std::uint32_t word,
 }
 
 /* VNEG_A2_H */
-Outcome program_541([[maybe_unused]] std::uint32_t word,
+Outcome program_439([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11393,7 +9427,7 @@ Outcome program_541([[maybe_unused]] std::uint32_t word,
 }
 
 /* VNEG_T1_D */
-Outcome program_542([[maybe_unused]] std::uint32_t word,
+Outcome program_440([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11422,7 +9456,7 @@ Outcome program_542([[maybe_unused]] std::uint32_t word,
 }
 
 /* VNEG_T2_H */
-Outcome program_543([[maybe_unused]] std::uint32_t word,
+Outcome program_441([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11445,7 +9479,7 @@ Outcome program_543([[maybe_unused]] std::uint32_t word,
 }
 
 /* VNMLA_A1_H */
-Outcome program_544([[maybe_unused]] std::uint32_t word,
+Outcome program_442([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11470,7 +9504,7 @@ Outcome program_544([[maybe_unused]] std::uint32_t word,
 }
 
 /* VNMLA_T1_H */
-Outcome program_545([[maybe_unused]] std::uint32_t word,
+Outcome program_443([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11494,7 +9528,7 @@ Outcome program_545([[maybe_unused]] std::uint32_t word,
 }
 
 /* VNMUL_A1_H */
-Outcome program_546([[maybe_unused]] std::uint32_t word,
+Outcome program_444([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11518,7 +9552,7 @@ Outcome program_546([[maybe_unused]] std::uint32_t word,
 }
 
 /* VNMUL_T1_H */
-Outcome program_547([[maybe_unused]] std::uint32_t word,
+Outcome program_445([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11541,7 +9575,7 @@ Outcome program_547([[maybe_unused]] std::uint32_t word,
 }
 
 /* VORR_i_A1_D */
-Outcome program_548([[maybe_unused]] std::uint32_t word,
+Outcome program_446([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11562,7 +9596,7 @@ Outcome program_548([[maybe_unused]] std::uint32_t word,
 }
 
 /* VORR_i_T1_D */
-Outcome program_549([[maybe_unused]] std::uint32_t word,
+Outcome program_447([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11583,7 +9617,7 @@ Outcome program_549([[maybe_unused]] std::uint32_t word,
 }
 
 /* VPADAL_A1_D */
-Outcome program_550([[maybe_unused]] std::uint32_t word,
+Outcome program_448([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11607,7 +9641,7 @@ Outcome program_550([[maybe_unused]] std::uint32_t word,
 }
 
 /* VPADD_f_A1 */
-Outcome program_551([[maybe_unused]] std::uint32_t word,
+Outcome program_449([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11631,7 +9665,7 @@ Outcome program_551([[maybe_unused]] std::uint32_t word,
 }
 
 /* VPADD_f_T1 */
-Outcome program_552([[maybe_unused]] std::uint32_t word,
+Outcome program_450([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11657,29 +9691,7 @@ Outcome program_552([[maybe_unused]] std::uint32_t word,
 }
 
 /* VPADD_i_A1 */
-Outcome program_553([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Q = (word >> 6) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_size = (word >> 20) & UINT64_C(0x3);
-	if ((f_size == UINT64_C(3)) || (f_Q == UINT64_C(1)))
-		return Outcome::undefined;
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(f_size)));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_N << 4) | f_Vn)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	return Outcome::ok;
-}
-
-/* VPADD_i_T1 */
-Outcome program_554([[maybe_unused]] std::uint32_t word,
+Outcome program_451([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11701,7 +9713,7 @@ Outcome program_554([[maybe_unused]] std::uint32_t word,
 }
 
 /* VPMAX_f_A1 */
-Outcome program_555([[maybe_unused]] std::uint32_t word,
+Outcome program_452([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11724,7 +9736,7 @@ Outcome program_555([[maybe_unused]] std::uint32_t word,
 }
 
 /* VPMAX_f_T1 */
-Outcome program_556([[maybe_unused]] std::uint32_t word,
+Outcome program_453([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11749,7 +9761,7 @@ Outcome program_556([[maybe_unused]] std::uint32_t word,
 }
 
 /* VPMAX_i_A1 */
-Outcome program_557([[maybe_unused]] std::uint32_t word,
+Outcome program_454([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11774,7 +9786,7 @@ Outcome program_557([[maybe_unused]] std::uint32_t word,
 }
 
 /* VPMAX_i_T1 */
-Outcome program_558([[maybe_unused]] std::uint32_t word,
+Outcome program_455([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11799,7 +9811,7 @@ Outcome program_558([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQADD_A1_D */
-Outcome program_559([[maybe_unused]] std::uint32_t word,
+Outcome program_456([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11824,7 +9836,7 @@ Outcome program_559([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQADD_T1_D */
-Outcome program_560([[maybe_unused]] std::uint32_t word,
+Outcome program_457([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11849,7 +9861,7 @@ Outcome program_560([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQDMLAL_A1 */
-Outcome program_561([[maybe_unused]] std::uint32_t word,
+Outcome program_458([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11876,61 +9888,7 @@ Outcome program_561([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQDMLAL_A2 */
-Outcome program_562([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_op = (word >> 10) & UINT64_C(0x1);
-	const std::uint64_t f_size = (word >> 20) & UINT64_C(0x3);
-	if (f_size == UINT64_C(3))
-		return Outcome::see;
-	if ((f_size == UINT64_C(0)) || (((f_Vd >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)))
-		return Outcome::undefined;
-	out.add = (f_op == UINT64_C(0));
-	out.scalar_form = true;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_N << 4) | f_Vn)));
-	out.m = static_cast<std::int32_t>(((f_size == UINT64_C(1)) ? static_cast<int64_t>(((f_Vm >> 0) & UINT64_C(7))) : static_cast<int64_t>(f_Vm)));
-	out.index_value = static_cast<std::int32_t>(((f_size == UINT64_C(1)) ? static_cast<int64_t>(((f_M << 1) | ((f_Vm >> INT64_C(3)) & UINT64_C(1)))) : static_cast<int64_t>(f_M)));
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(f_size)));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	return Outcome::ok;
-}
-
-/* VQDMLAL_T1 */
-Outcome program_563([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_op = (word >> 9) & UINT64_C(0x1);
-	const std::uint64_t f_size = (word >> 20) & UINT64_C(0x3);
-	if (f_size == UINT64_C(3))
-		return Outcome::see;
-	if ((f_size == UINT64_C(0)) || (((f_Vd >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)))
-		return Outcome::undefined;
-	out.add = (f_op == UINT64_C(0));
-	out.scalar_form = false;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_N << 4) | f_Vn)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(f_size)));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	out.index_value = static_cast<std::int32_t>(0);
-	return Outcome::ok;
-}
-
-/* VQDMLAL_T2 */
-Outcome program_564([[maybe_unused]] std::uint32_t word,
+Outcome program_459([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11957,7 +9915,7 @@ Outcome program_564([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQDMULH_A1_D */
-Outcome program_565([[maybe_unused]] std::uint32_t word,
+Outcome program_460([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -11984,7 +9942,7 @@ Outcome program_565([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQDMULH_A2_D */
-Outcome program_566([[maybe_unused]] std::uint32_t word,
+Outcome program_461([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12012,35 +9970,8 @@ Outcome program_566([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* VQDMULH_T1_D */
-Outcome program_567([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Q = (word >> 6) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_size = (word >> 20) & UINT64_C(0x3);
-	if ((f_Q == UINT64_C(1)) && (((((f_Vd >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)) || (((f_Vn >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))) || (((f_Vm >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))))
-		return Outcome::undefined;
-	if ((f_size == UINT64_C(0)) || (f_size == UINT64_C(3)))
-		return Outcome::undefined;
-	out.scalar_form = false;
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(f_size)));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_N << 4) | f_Vn)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	out.regs = static_cast<std::int32_t>(((f_Q == UINT64_C(0)) ? INT64_C(1) : INT64_C(2)));
-	out.index_value = static_cast<std::int32_t>(0);
-	return Outcome::ok;
-}
-
 /* VQDMULH_T2_D */
-Outcome program_568([[maybe_unused]] std::uint32_t word,
+Outcome program_462([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12069,7 +10000,7 @@ Outcome program_568([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQDMULL_A1 */
-Outcome program_569([[maybe_unused]] std::uint32_t word,
+Outcome program_463([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12094,57 +10025,7 @@ Outcome program_569([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQDMULL_A2 */
-Outcome program_570([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_size = (word >> 20) & UINT64_C(0x3);
-	if (f_size == UINT64_C(3))
-		return Outcome::see;
-	if ((f_size == UINT64_C(0)) || (((f_Vd >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)))
-		return Outcome::undefined;
-	out.scalar_form = true;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_N << 4) | f_Vn)));
-	out.m = static_cast<std::int32_t>(((f_size == UINT64_C(1)) ? static_cast<int64_t>(((f_Vm >> 0) & UINT64_C(7))) : static_cast<int64_t>(f_Vm)));
-	out.index_value = static_cast<std::int32_t>(((f_size == UINT64_C(1)) ? static_cast<int64_t>(((f_M << 1) | ((f_Vm >> INT64_C(3)) & UINT64_C(1)))) : static_cast<int64_t>(f_M)));
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(f_size)));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	return Outcome::ok;
-}
-
-/* VQDMULL_T1 */
-Outcome program_571([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_size = (word >> 20) & UINT64_C(0x3);
-	if (f_size == UINT64_C(3))
-		return Outcome::see;
-	if ((f_size == UINT64_C(0)) || (((f_Vd >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)))
-		return Outcome::undefined;
-	out.scalar_form = false;
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_N << 4) | f_Vn)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(f_size)));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	out.index_value = static_cast<std::int32_t>(0);
-	return Outcome::ok;
-}
-
-/* VQDMULL_T2 */
-Outcome program_572([[maybe_unused]] std::uint32_t word,
+Outcome program_464([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12169,7 +10050,7 @@ Outcome program_572([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQMOVN_A1 */
-Outcome program_573([[maybe_unused]] std::uint32_t word,
+Outcome program_465([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12192,7 +10073,7 @@ Outcome program_573([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQRDMLAH_A1_D */
-Outcome program_574([[maybe_unused]] std::uint32_t word,
+Outcome program_466([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12222,7 +10103,7 @@ Outcome program_574([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQRDMLAH_A2_D */
-Outcome program_575([[maybe_unused]] std::uint32_t word,
+Outcome program_467([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12254,7 +10135,7 @@ Outcome program_575([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQRDMLAH_T1_D */
-Outcome program_576([[maybe_unused]] std::uint32_t word,
+Outcome program_468([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12286,7 +10167,7 @@ Outcome program_576([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQRDMLAH_T2_D */
-Outcome program_577([[maybe_unused]] std::uint32_t word,
+Outcome program_469([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12320,7 +10201,7 @@ Outcome program_577([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQRDMLSH_A1_D */
-Outcome program_578([[maybe_unused]] std::uint32_t word,
+Outcome program_470([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12350,7 +10231,7 @@ Outcome program_578([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQRDMLSH_A2_D */
-Outcome program_579([[maybe_unused]] std::uint32_t word,
+Outcome program_471([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12382,7 +10263,7 @@ Outcome program_579([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQRDMLSH_T1_D */
-Outcome program_580([[maybe_unused]] std::uint32_t word,
+Outcome program_472([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12414,7 +10295,7 @@ Outcome program_580([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQRDMLSH_T2_D */
-Outcome program_581([[maybe_unused]] std::uint32_t word,
+Outcome program_473([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12448,7 +10329,7 @@ Outcome program_581([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQRSHL_A1_D */
-Outcome program_582([[maybe_unused]] std::uint32_t word,
+Outcome program_474([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12473,7 +10354,7 @@ Outcome program_582([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQRSHL_T1_D */
-Outcome program_583([[maybe_unused]] std::uint32_t word,
+Outcome program_475([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12498,7 +10379,7 @@ Outcome program_583([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQRSHRN_A1 */
-Outcome program_584([[maybe_unused]] std::uint32_t word,
+Outcome program_476([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12525,7 +10406,7 @@ Outcome program_584([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQRSHRN_T1 */
-Outcome program_585([[maybe_unused]] std::uint32_t word,
+Outcome program_477([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12552,7 +10433,7 @@ Outcome program_585([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQSHL_i_A1_D */
-Outcome program_586([[maybe_unused]] std::uint32_t word,
+Outcome program_478([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12582,7 +10463,7 @@ Outcome program_586([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQSHL_i_T1_D */
-Outcome program_587([[maybe_unused]] std::uint32_t word,
+Outcome program_479([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12612,7 +10493,7 @@ Outcome program_587([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQSHRN_A1 */
-Outcome program_588([[maybe_unused]] std::uint32_t word,
+Outcome program_480([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12639,7 +10520,7 @@ Outcome program_588([[maybe_unused]] std::uint32_t word,
 }
 
 /* VQSHRN_T1 */
-Outcome program_589([[maybe_unused]] std::uint32_t word,
+Outcome program_481([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12666,30 +10547,7 @@ Outcome program_589([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRADDHN_A1 */
-Outcome program_590([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_size = (word >> 20) & UINT64_C(0x3);
-	if (f_size == UINT64_C(3))
-		return Outcome::see;
-	if ((((f_Vn >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)) || (((f_Vm >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)))
-		return Outcome::undefined;
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(f_size)));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_N << 4) | f_Vn)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	return Outcome::ok;
-}
-
-/* VRADDHN_T1 */
-Outcome program_591([[maybe_unused]] std::uint32_t word,
+Outcome program_482([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12712,7 +10570,7 @@ Outcome program_591([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRECPE_A1_D */
-Outcome program_592([[maybe_unused]] std::uint32_t word,
+Outcome program_483([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12736,7 +10594,7 @@ Outcome program_592([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRECPE_T1_D */
-Outcome program_593([[maybe_unused]] std::uint32_t word,
+Outcome program_484([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12762,7 +10620,7 @@ Outcome program_593([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRECPS_A1_D */
-Outcome program_594([[maybe_unused]] std::uint32_t word,
+Outcome program_485([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12787,7 +10645,7 @@ Outcome program_594([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRECPS_T1_D */
-Outcome program_595([[maybe_unused]] std::uint32_t word,
+Outcome program_486([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12814,7 +10672,7 @@ Outcome program_595([[maybe_unused]] std::uint32_t word,
 }
 
 /* VREV16_A1_D */
-Outcome program_596([[maybe_unused]] std::uint32_t word,
+Outcome program_487([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12839,7 +10697,7 @@ Outcome program_596([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRHADD_A1_D */
-Outcome program_597([[maybe_unused]] std::uint32_t word,
+Outcome program_488([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12866,7 +10724,7 @@ Outcome program_597([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRHADD_T1_D */
-Outcome program_598([[maybe_unused]] std::uint32_t word,
+Outcome program_489([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12893,7 +10751,7 @@ Outcome program_598([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRINTA_asimd_A1_D */
-Outcome program_599([[maybe_unused]] std::uint32_t word,
+Outcome program_490([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12920,7 +10778,7 @@ Outcome program_599([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRINTA_asimd_T1_D */
-Outcome program_600([[maybe_unused]] std::uint32_t word,
+Outcome program_491([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12949,7 +10807,7 @@ Outcome program_600([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRINTA_vfp_A1_H */
-Outcome program_601([[maybe_unused]] std::uint32_t word,
+Outcome program_492([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12969,7 +10827,7 @@ Outcome program_601([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRINTA_vfp_T1_H */
-Outcome program_602([[maybe_unused]] std::uint32_t word,
+Outcome program_493([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -12991,7 +10849,7 @@ Outcome program_602([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRINTR_vfp_A1_H */
-Outcome program_603([[maybe_unused]] std::uint32_t word,
+Outcome program_494([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13014,7 +10872,7 @@ Outcome program_603([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRINTR_vfp_T1_H */
-Outcome program_604([[maybe_unused]] std::uint32_t word,
+Outcome program_495([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13036,7 +10894,7 @@ Outcome program_604([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRINTX_asimd_A1_D */
-Outcome program_605([[maybe_unused]] std::uint32_t word,
+Outcome program_496([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13060,7 +10918,7 @@ Outcome program_605([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRINTX_asimd_T1_D */
-Outcome program_606([[maybe_unused]] std::uint32_t word,
+Outcome program_497([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13086,7 +10944,7 @@ Outcome program_606([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRINTX_vfp_A1_H */
-Outcome program_607([[maybe_unused]] std::uint32_t word,
+Outcome program_498([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13107,7 +10965,7 @@ Outcome program_607([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRINTX_vfp_T1_H */
-Outcome program_608([[maybe_unused]] std::uint32_t word,
+Outcome program_499([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13127,7 +10985,7 @@ Outcome program_608([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRINTZ_asimd_A1_D */
-Outcome program_609([[maybe_unused]] std::uint32_t word,
+Outcome program_500([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13151,7 +11009,7 @@ Outcome program_609([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRINTZ_asimd_T1_D */
-Outcome program_610([[maybe_unused]] std::uint32_t word,
+Outcome program_501([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13177,7 +11035,7 @@ Outcome program_610([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRSHR_A1_D */
-Outcome program_611([[maybe_unused]] std::uint32_t word,
+Outcome program_502([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13203,7 +11061,7 @@ Outcome program_611([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRSHR_T1_D */
-Outcome program_612([[maybe_unused]] std::uint32_t word,
+Outcome program_503([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13229,28 +11087,7 @@ Outcome program_612([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRSHRN_A1 */
-Outcome program_613([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_imm6 = (word >> 16) & UINT64_C(0x3f);
-	if ((f_imm6 & UINT64_C(56)) == UINT64_C(0))
-		return Outcome::see;
-	if (((f_Vm >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))
-		return Outcome::undefined;
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(63 - std::countl_zero(((f_imm6 >> 3) & UINT64_C(7))))));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	out.shift_amount = static_cast<std::int32_t>(((out.esize << INT64_C(1)) - static_cast<int64_t>(f_imm6)));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	return Outcome::ok;
-}
-
-/* VRSHRN_T1 */
-Outcome program_614([[maybe_unused]] std::uint32_t word,
+Outcome program_504([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13271,7 +11108,7 @@ Outcome program_614([[maybe_unused]] std::uint32_t word,
 }
 
 /* VRSQRTE_T1_D */
-Outcome program_615([[maybe_unused]] std::uint32_t word,
+Outcome program_505([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13299,7 +11136,7 @@ Outcome program_615([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSDOT_s_A1_D */
-Outcome program_616([[maybe_unused]] std::uint32_t word,
+Outcome program_506([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13325,7 +11162,7 @@ Outcome program_616([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSDOT_s_T1_D */
-Outcome program_617([[maybe_unused]] std::uint32_t word,
+Outcome program_507([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13353,7 +11190,7 @@ Outcome program_617([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSDOT_A1_D */
-Outcome program_618([[maybe_unused]] std::uint32_t word,
+Outcome program_508([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13378,7 +11215,7 @@ Outcome program_618([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSDOT_T1_D */
-Outcome program_619([[maybe_unused]] std::uint32_t word,
+Outcome program_509([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13405,7 +11242,7 @@ Outcome program_619([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSELEQ_A1_H */
-Outcome program_620([[maybe_unused]] std::uint32_t word,
+Outcome program_510([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13427,7 +11264,7 @@ Outcome program_620([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSELEQ_T1_H */
-Outcome program_621([[maybe_unused]] std::uint32_t word,
+Outcome program_511([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13451,31 +11288,7 @@ Outcome program_621([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSHL_i_A1_D */
-Outcome program_622([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_L = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_Q = (word >> 6) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_imm6 = (word >> 16) & UINT64_C(0x3f);
-	if ((((f_L << 6) | f_imm6) & UINT64_C(120)) == UINT64_C(0))
-		return Outcome::see;
-	if ((f_Q == UINT64_C(1)) && ((((f_Vd >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)) || (((f_Vm >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))))
-		return Outcome::undefined;
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(63 - std::countl_zero(((((f_L << 6) | f_imm6) >> 3) & UINT64_C(15))))));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	out.shift_amount = static_cast<std::int32_t>((static_cast<int64_t>(((f_L << 6) | f_imm6)) - out.esize));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	out.regs = static_cast<std::int32_t>(((f_Q == UINT64_C(0)) ? INT64_C(1) : INT64_C(2)));
-	return Outcome::ok;
-}
-
-/* VSHL_i_T1_D */
-Outcome program_623([[maybe_unused]] std::uint32_t word,
+Outcome program_512([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13499,7 +11312,7 @@ Outcome program_623([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSHLL_A1 */
-Outcome program_624([[maybe_unused]] std::uint32_t word,
+Outcome program_513([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13524,7 +11337,7 @@ Outcome program_624([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSHLL_A2 */
-Outcome program_625([[maybe_unused]] std::uint32_t word,
+Outcome program_514([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13544,7 +11357,7 @@ Outcome program_625([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSHLL_T1 */
-Outcome program_626([[maybe_unused]] std::uint32_t word,
+Outcome program_515([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13569,28 +11382,7 @@ Outcome program_626([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSHRN_A1 */
-Outcome program_627([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_imm6 = (word >> 16) & UINT64_C(0x3f);
-	if ((f_imm6 & UINT64_C(56)) == UINT64_C(0))
-		return Outcome::see;
-	if (((f_Vm >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))
-		return Outcome::undefined;
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(63 - std::countl_zero(((f_imm6 >> 3) & UINT64_C(7))))));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	out.shift_amount = static_cast<std::int32_t>(((INT64_C(2) * out.esize) - static_cast<int64_t>(f_imm6)));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	return Outcome::ok;
-}
-
-/* VSHRN_T1 */
-Outcome program_628([[maybe_unused]] std::uint32_t word,
+Outcome program_516([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13611,7 +11403,7 @@ Outcome program_628([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSMMLA_A1_Q */
-Outcome program_629([[maybe_unused]] std::uint32_t word,
+Outcome program_517([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_B = (word >> 23) & UINT64_C(0x1);
@@ -13654,7 +11446,7 @@ Outcome program_629([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSMMLA_T1_Q */
-Outcome program_630([[maybe_unused]] std::uint32_t word,
+Outcome program_518([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_B = (word >> 23) & UINT64_C(0x1);
@@ -13699,7 +11491,7 @@ Outcome program_630([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSQRT_A1_H */
-Outcome program_631([[maybe_unused]] std::uint32_t word,
+Outcome program_519([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13719,7 +11511,7 @@ Outcome program_631([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSQRT_T1_H */
-Outcome program_632([[maybe_unused]] std::uint32_t word,
+Outcome program_520([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13738,31 +11530,7 @@ Outcome program_632([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSRI_A1_D */
-Outcome program_633([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_L = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_Q = (word >> 6) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_imm6 = (word >> 16) & UINT64_C(0x3f);
-	if ((((f_L << 6) | f_imm6) & UINT64_C(120)) == UINT64_C(0))
-		return Outcome::see;
-	if ((f_Q == UINT64_C(1)) && ((((f_Vd >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)) || (((f_Vm >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))))
-		return Outcome::undefined;
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(63 - std::countl_zero(((((f_L << 6) | f_imm6) >> 3) & UINT64_C(15))))));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	out.shift_amount = static_cast<std::int32_t>(((out.esize * INT64_C(2)) - static_cast<int64_t>(((f_L << 6) | f_imm6))));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	out.regs = static_cast<std::int32_t>(((f_Q == UINT64_C(0)) ? INT64_C(1) : INT64_C(2)));
-	return Outcome::ok;
-}
-
-/* VSRI_T1_D */
-Outcome program_634([[maybe_unused]] std::uint32_t word,
+Outcome program_521([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13786,7 +11554,7 @@ Outcome program_634([[maybe_unused]] std::uint32_t word,
 }
 
 /* VST1_1_A1_nowb */
-Outcome program_635([[maybe_unused]] std::uint32_t word,
+Outcome program_522([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13813,7 +11581,7 @@ Outcome program_635([[maybe_unused]] std::uint32_t word,
 }
 
 /* VST1_1_A2_nowb */
-Outcome program_636([[maybe_unused]] std::uint32_t word,
+Outcome program_523([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13840,7 +11608,7 @@ Outcome program_636([[maybe_unused]] std::uint32_t word,
 }
 
 /* VST1_1_A3_nowb */
-Outcome program_637([[maybe_unused]] std::uint32_t word,
+Outcome program_524([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13869,7 +11637,7 @@ Outcome program_637([[maybe_unused]] std::uint32_t word,
 }
 
 /* VST2_1_A1_nowb */
-Outcome program_638([[maybe_unused]] std::uint32_t word,
+Outcome program_525([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13896,7 +11664,7 @@ Outcome program_638([[maybe_unused]] std::uint32_t word,
 }
 
 /* VST2_1_A2_nowb */
-Outcome program_639([[maybe_unused]] std::uint32_t word,
+Outcome program_526([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13923,7 +11691,7 @@ Outcome program_639([[maybe_unused]] std::uint32_t word,
 }
 
 /* VST2_1_A3_nowb */
-Outcome program_640([[maybe_unused]] std::uint32_t word,
+Outcome program_527([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13952,7 +11720,7 @@ Outcome program_640([[maybe_unused]] std::uint32_t word,
 }
 
 /* VST3_m_A1_nowb */
-Outcome program_641([[maybe_unused]] std::uint32_t word,
+Outcome program_528([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -13994,7 +11762,7 @@ Outcome program_641([[maybe_unused]] std::uint32_t word,
 }
 
 /* VST3_1_A1_nowb */
-Outcome program_642([[maybe_unused]] std::uint32_t word,
+Outcome program_529([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14023,7 +11791,7 @@ Outcome program_642([[maybe_unused]] std::uint32_t word,
 }
 
 /* VST3_1_A2_nowb */
-Outcome program_643([[maybe_unused]] std::uint32_t word,
+Outcome program_530([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14052,7 +11820,7 @@ Outcome program_643([[maybe_unused]] std::uint32_t word,
 }
 
 /* VST3_1_A3_nowb */
-Outcome program_644([[maybe_unused]] std::uint32_t word,
+Outcome program_531([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14081,7 +11849,7 @@ Outcome program_644([[maybe_unused]] std::uint32_t word,
 }
 
 /* VST4_m_A1_nowb */
-Outcome program_645([[maybe_unused]] std::uint32_t word,
+Outcome program_532([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14113,7 +11881,7 @@ Outcome program_645([[maybe_unused]] std::uint32_t word,
 }
 
 /* VST4_1_A1_nowb */
-Outcome program_646([[maybe_unused]] std::uint32_t word,
+Outcome program_533([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14144,7 +11912,7 @@ Outcome program_646([[maybe_unused]] std::uint32_t word,
 }
 
 /* VST4_1_A2_nowb */
-Outcome program_647([[maybe_unused]] std::uint32_t word,
+Outcome program_534([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14175,7 +11943,7 @@ Outcome program_647([[maybe_unused]] std::uint32_t word,
 }
 
 /* VST4_1_A3_nowb */
-Outcome program_648([[maybe_unused]] std::uint32_t word,
+Outcome program_535([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14207,70 +11975,8 @@ Outcome program_648([[maybe_unused]] std::uint32_t word,
 	return Outcome::ok;
 }
 
-/* VSTMDB_A2 */
-Outcome program_649([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if (((f_P == UINT64_C(0)) && (f_U == UINT64_C(0))) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_P == UINT64_C(1)) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_P == f_U) && (f_W == UINT64_C(1)))
-		return Outcome::undefined;
-	out.single_regs = true;
-	out.add = (f_U == UINT64_C(1));
-	out.wback = (f_W == UINT64_C(1));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_Vd << 1) | f_D)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(((f_imm8 << 2) | UINT64_C(0)));
-	out.regs = static_cast<std::int32_t>(static_cast<int64_t>(f_imm8));
-	if ((out.n == INT64_C(15)) && (out.wback || ((ctx.thumb ? InstrSet::T32 : InstrSet::A32) != InstrSet::A32)))
-		return Outcome::unpredictable;
-	if ((out.regs == INT64_C(0)) || ((out.d + out.regs) > INT64_C(32)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
-/* VSTMDB_T2 */
-Outcome program_650([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_P = (word >> 24) & UINT64_C(0x1);
-	const std::uint64_t f_Rn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_U = (word >> 23) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_W = (word >> 21) & UINT64_C(0x1);
-	const std::uint64_t f_imm8 = (word >> 0) & UINT64_C(0xff);
-	if (((f_P == UINT64_C(0)) && (f_U == UINT64_C(0))) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_P == UINT64_C(1)) && (f_W == UINT64_C(0)))
-		return Outcome::see;
-	if ((f_P == f_U) && (f_W == UINT64_C(1)))
-		return Outcome::undefined;
-	out.single_regs = true;
-	out.add = (f_U == UINT64_C(1));
-	out.wback = (f_W == UINT64_C(1));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_Vd << 1) | f_D)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(f_Rn));
-	out.imm32 = static_cast<std::int64_t>(((f_imm8 << 2) | UINT64_C(0)));
-	out.regs = static_cast<std::int32_t>(static_cast<int64_t>(f_imm8));
-	if ((out.n == INT64_C(15)) && (out.wback || ((ctx.thumb ? InstrSet::T32 : InstrSet::A32) != InstrSet::A32)))
-		return Outcome::unpredictable;
-	if ((out.regs == INT64_C(0)) || ((out.d + out.regs) > INT64_C(32)))
-		return Outcome::unpredictable;
-	return Outcome::ok;
-}
-
 /* VSTR_A1_H */
-Outcome program_651([[maybe_unused]] std::uint32_t word,
+Outcome program_536([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14295,7 +12001,7 @@ Outcome program_651([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSTR_T1_H */
-Outcome program_652([[maybe_unused]] std::uint32_t word,
+Outcome program_537([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14319,7 +12025,7 @@ Outcome program_652([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSUB_f_A2_H */
-Outcome program_653([[maybe_unused]] std::uint32_t word,
+Outcome program_538([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14345,7 +12051,7 @@ Outcome program_653([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSUB_f_T2_H */
-Outcome program_654([[maybe_unused]] std::uint32_t word,
+Outcome program_539([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14370,7 +12076,7 @@ Outcome program_654([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSUBL_A1 */
-Outcome program_655([[maybe_unused]] std::uint32_t word,
+Outcome program_540([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14397,7 +12103,7 @@ Outcome program_655([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSUBL_T1 */
-Outcome program_656([[maybe_unused]] std::uint32_t word,
+Outcome program_541([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14424,7 +12130,7 @@ Outcome program_656([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSUDOT_s_A1_D */
-Outcome program_657([[maybe_unused]] std::uint32_t word,
+Outcome program_542([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14450,7 +12156,7 @@ Outcome program_657([[maybe_unused]] std::uint32_t word,
 }
 
 /* VSUDOT_s_T1_D */
-Outcome program_658([[maybe_unused]] std::uint32_t word,
+Outcome program_543([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14478,7 +12184,7 @@ Outcome program_658([[maybe_unused]] std::uint32_t word,
 }
 
 /* VTBL_A1 */
-Outcome program_659([[maybe_unused]] std::uint32_t word,
+Outcome program_544([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14500,32 +12206,7 @@ Outcome program_659([[maybe_unused]] std::uint32_t word,
 }
 
 /* VTST_A1_D */
-Outcome program_660([[maybe_unused]] std::uint32_t word,
-	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
-{
-	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
-	const std::uint64_t f_M = (word >> 5) & UINT64_C(0x1);
-	const std::uint64_t f_N = (word >> 7) & UINT64_C(0x1);
-	const std::uint64_t f_Q = (word >> 6) & UINT64_C(0x1);
-	const std::uint64_t f_Vd = (word >> 12) & UINT64_C(0xf);
-	const std::uint64_t f_Vm = (word >> 0) & UINT64_C(0xf);
-	const std::uint64_t f_Vn = (word >> 16) & UINT64_C(0xf);
-	const std::uint64_t f_size = (word >> 20) & UINT64_C(0x3);
-	if ((f_Q == UINT64_C(1)) && (((((f_Vd >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1)) || (((f_Vn >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))) || (((f_Vm >> INT64_C(0)) & UINT64_C(1)) == UINT64_C(1))))
-		return Outcome::undefined;
-	if (f_size == UINT64_C(3))
-		return Outcome::undefined;
-	out.esize = static_cast<std::int32_t>((INT64_C(8) << static_cast<int64_t>(f_size)));
-	out.elements = static_cast<std::int32_t>((INT64_C(64) / out.esize));
-	out.d = static_cast<std::int32_t>(static_cast<int64_t>(((f_D << 4) | f_Vd)));
-	out.n = static_cast<std::int32_t>(static_cast<int64_t>(((f_N << 4) | f_Vn)));
-	out.m = static_cast<std::int32_t>(static_cast<int64_t>(((f_M << 4) | f_Vm)));
-	out.regs = static_cast<std::int32_t>(((f_Q == UINT64_C(0)) ? INT64_C(1) : INT64_C(2)));
-	return Outcome::ok;
-}
-
-/* VTST_T1_D */
-Outcome program_661([[maybe_unused]] std::uint32_t word,
+Outcome program_545([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14550,7 +12231,7 @@ Outcome program_661([[maybe_unused]] std::uint32_t word,
 }
 
 /* VUSDOT_A1_D */
-Outcome program_662([[maybe_unused]] std::uint32_t word,
+Outcome program_546([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14572,7 +12253,7 @@ Outcome program_662([[maybe_unused]] std::uint32_t word,
 }
 
 /* VUSDOT_T1_D */
-Outcome program_663([[maybe_unused]] std::uint32_t word,
+Outcome program_547([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14596,7 +12277,7 @@ Outcome program_663([[maybe_unused]] std::uint32_t word,
 }
 
 /* VUZP_A1_D */
-Outcome program_664([[maybe_unused]] std::uint32_t word,
+Outcome program_548([[maybe_unused]] std::uint32_t word,
 	[[maybe_unused]] const Context &ctx, [[maybe_unused]] Operands &out) noexcept
 {
 	const std::uint64_t f_D = (word >> 22) & UINT64_C(0x1);
@@ -14710,26 +12391,7 @@ const ProgramFn kPrograms[kProgramCount] = {
 	program_528, program_529, program_530, program_531, program_532, program_533,
 	program_534, program_535, program_536, program_537, program_538, program_539,
 	program_540, program_541, program_542, program_543, program_544, program_545,
-	program_546, program_547, program_548, program_549, program_550, program_551,
-	program_552, program_553, program_554, program_555, program_556, program_557,
-	program_558, program_559, program_560, program_561, program_562, program_563,
-	program_564, program_565, program_566, program_567, program_568, program_569,
-	program_570, program_571, program_572, program_573, program_574, program_575,
-	program_576, program_577, program_578, program_579, program_580, program_581,
-	program_582, program_583, program_584, program_585, program_586, program_587,
-	program_588, program_589, program_590, program_591, program_592, program_593,
-	program_594, program_595, program_596, program_597, program_598, program_599,
-	program_600, program_601, program_602, program_603, program_604, program_605,
-	program_606, program_607, program_608, program_609, program_610, program_611,
-	program_612, program_613, program_614, program_615, program_616, program_617,
-	program_618, program_619, program_620, program_621, program_622, program_623,
-	program_624, program_625, program_626, program_627, program_628, program_629,
-	program_630, program_631, program_632, program_633, program_634, program_635,
-	program_636, program_637, program_638, program_639, program_640, program_641,
-	program_642, program_643, program_644, program_645, program_646, program_647,
-	program_648, program_649, program_650, program_651, program_652, program_653,
-	program_654, program_655, program_656, program_657, program_658, program_659,
-	program_660, program_661, program_662, program_663, program_664,
+	program_546, program_547, program_548,
 };
 
 } // namespace

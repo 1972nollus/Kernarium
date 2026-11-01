@@ -71,7 +71,6 @@ waiting_store_precedes_queued_helper_for_testing(bool queue_helper_first) {
     return false;
 
   JitStoreParticipant participant;
-  CpuState cpu{};
   register_jit_store_participant(participant);
 
   std::binary_semaphore first_helper_entered{0};
@@ -94,7 +93,7 @@ waiting_store_precedes_queued_helper_for_testing(bool queue_helper_first) {
   const auto start_store = [&] {
     store = std::thread{[&] {
       store_started.release();
-      JitBlockPublication publication{participant, cpu};
+      JitBlockPublication publication{participant};
       store_order.store(
           entry_order.fetch_add(1, std::memory_order_relaxed) + 1U,
           std::memory_order_relaxed);
@@ -210,11 +209,10 @@ bool normal_store_leaves_exclusive_gate_unchanged_for_testing() {
     return false;
 
   JitStoreParticipant participant;
-  CpuState cpu{};
   register_jit_store_participant(participant);
   bool direct_without_mutation = false;
   {
-    JitBlockPublication publication{participant, cpu};
+    JitBlockPublication publication{participant};
     direct_without_mutation =
         !publication.needs_tracking() &&
         participant.state().load(std::memory_order_seq_cst) ==
@@ -234,7 +232,6 @@ bool store_first_publication_handshake_for_testing() {
     return false;
 
   JitStoreParticipant participant;
-  CpuState cpu{};
   register_jit_store_participant(participant);
 
   std::binary_semaphore store_entered{0};
@@ -242,7 +239,7 @@ bool store_first_publication_handshake_for_testing() {
   std::binary_semaphore helper_entered{0};
   std::binary_semaphore release_helper{0};
   std::thread store{[&] {
-    JitBlockPublication publication{participant, cpu};
+    JitBlockPublication publication{participant};
     store_entered.release();
     release_store.acquire();
   }};
@@ -291,8 +288,6 @@ bool all_waiting_stores_precede_queued_helper_for_testing() {
 
   JitStoreParticipant first_participant;
   JitStoreParticipant second_participant;
-  CpuState first_cpu{};
-  CpuState second_cpu{};
   register_jit_store_participant(first_participant);
   register_jit_store_participant(second_participant);
 
@@ -317,13 +312,13 @@ bool all_waiting_stores_precede_queued_helper_for_testing() {
 
   std::thread first_store{[&] {
     first_store_started.release();
-    JitBlockPublication publication{first_participant, first_cpu};
+    JitBlockPublication publication{first_participant};
     first_store_entered.release();
     release_first_store.acquire();
   }};
   std::thread second_store{[&] {
     second_store_started.release();
-    JitBlockPublication publication{second_participant, second_cpu};
+    JitBlockPublication publication{second_participant};
     second_store_entered.release();
     release_second_store.acquire();
   }};
@@ -402,7 +397,6 @@ bool late_store_waits_for_current_helper_for_testing() {
     return false;
 
   JitStoreParticipant participant;
-  CpuState cpu{};
   register_jit_store_participant(participant);
   std::binary_semaphore helper_entered{0};
   std::binary_semaphore release_helper{0};
@@ -415,7 +409,7 @@ bool late_store_waits_for_current_helper_for_testing() {
   }};
   helper_entered.acquire();
   std::thread store{[&] {
-    JitBlockPublication publication{participant, cpu};
+    JitBlockPublication publication{participant};
     store_entered.release();
   }};
   while (participant.state().load(std::memory_order_seq_cst) !=
@@ -465,12 +459,13 @@ bool tracked_store_invalidation_does_not_deadlock_for_testing() {
 
   std::thread store{[shared] {
     {
-      JitBlockPublication publication{shared->participant, shared->store_cpu};
+      JitBlockPublication publication{shared->participant};
       shared->tracked.store(publication.needs_tracking(),
                             std::memory_order_seq_cst);
       shared->store_published.release();
       shared->begin_invalidation.acquire();
-      semantic::invalidate_store_ranges({&shared->range, 1U});
+      semantic::invalidate_store_ranges(shared->store_cpu,
+                                        {&shared->range, 1U});
     }
     shared->invalidation_finished.release();
   }};
@@ -532,7 +527,6 @@ bool publication_gate_randomized_stress_for_testing() {
   constexpr unsigned helper_iterations = 400;
   constexpr unsigned store_iterations = 600;
   std::array<JitStoreParticipant, store_threads> participants;
-  std::array<CpuState, store_threads> cpus{};
   for (auto &participant : participants)
     register_jit_store_participant(participant);
 
@@ -580,7 +574,7 @@ bool publication_gate_randomized_stress_for_testing() {
       for (unsigned iteration = 0; iteration < store_iterations;
            ++iteration) {
         jitter(random);
-        JitBlockPublication publication{participants[index], cpus[index]};
+        JitBlockPublication publication{participants[index]};
         active_stores.fetch_add(1, std::memory_order_seq_cst);
         if (active_helpers.load(std::memory_order_seq_cst) != 0U)
           failed.store(true, std::memory_order_seq_cst);
@@ -685,9 +679,9 @@ run_translation_on_tlb(const JitCompiler::Result &compiled, CpuState &cpu,
 run_block_on_tlb_for_testing(std::uint64_t pc,
                              std::span<const std::uint32_t> instructions,
                              CpuState &cpu, ::uml::memory::Tlb &tlb,
-                             std::uint8_t sme_mode) {
+                             std::uint8_t mode) {
   JitCompiler compiler{};
-  compiler.set_sme_mode(sme_mode);
+  compiler.set_translation_mode(mode);
   return run_translation_on_tlb(compiler.compile(pc, instructions), cpu, tlb);
 }
 
@@ -766,7 +760,7 @@ ModeCompilation compile_block_in_mode(
       shape == LinkShape::direct ? direct : nullptr,
       shape == LinkShape::tracked,
       shape == LinkShape::indirect ? indirect : nullptr};
-  compiler.set_sme_mode(mode);
+  compiler.set_translation_mode(mode);
   const auto compiled = compiler.compile(pc, instructions);
   context.result.code = copied_code(compiled);
   for (const auto &relocation : compiled.relocations)
@@ -939,6 +933,10 @@ materialize_constant_for_testing(unsigned destination, std::uint64_t value) {
   return {words.begin(), words.end()};
 }
 
+std::size_t reservation_slot_for_testing(const void *host) noexcept {
+  return semantic::reservation_slot_index(static_cast<const std::byte *>(host));
+}
+
 std::size_t successful_link_host_word_savings() noexcept {
   /*
    * The common basic-frame transition would reload x0/x1/x2 and unwind
@@ -1054,6 +1052,22 @@ bool indirect_link_table_is_bounded(std::size_t capacity) {
          first->entries[0].link == &empty &&
          table.find_or_create(0x8000'0000) == nullptr &&
          table.size() == capacity;
+}
+
+ExclusiveMonitorState exclusive_monitor_state_for_testing() {
+  ExclusiveMonitorState state;
+  state.active_reservations =
+      active_jit_reservations.load(std::memory_order_seq_cst);
+  {
+    std::scoped_lock lock{jit_reservations_mutex};
+    state.reservations = jit_reservations.size();
+  }
+  {
+    std::scoped_lock lock{jit_store_participants_mutex};
+    state.store_participants = jit_store_participants.size();
+  }
+  state.gate_quiescent = jit_exclusive_gate_is_quiescent_for_testing();
+  return state;
 }
 
 } // namespace jit::testing

@@ -27,7 +27,7 @@ kernel and the separate x86_64-userspace kernel, both with 4 KiB guest pages.
 When omitted, `mem=` defaults to 8 GiB and `ncpus=`
 to 10; explicit kernel arguments override either value independently.
 `cmake --preset macos-x86_64` selects the dedicated x86_64 artifact and host
-gadget backend; ordinary 4 KiB presets continue to select arm64 userspace. The
+gadget backend; the other presets select arm64 userspace. The
 x86_64 product defaults to `cgroup.memory=nokmem`: userspace memory-controller
 accounting remains available, while kernel-object charging is outside this
 compatibility slice. An explicit `cgroup.memory=` argument overrides the
@@ -77,8 +77,11 @@ sections.
 Engine selection, executable-memory ownership, the JIT's semantic slow path,
 the x86_64 slice's userspace profile, and the gadget cache's address-space tags
 are in the
-[architecture](../docs/architecture.md#cpu-execution-and-scheduling). This
-section owns the engines' internal detail.
+[architecture](../docs/architecture.md#cpu-execution-and-scheduling). Each
+engine's lowering is in the README beside it, for the arm64
+[gadgets](cpu/arm64/gadgets/README.md) and [JIT](cpu/arm64/jit/README.md) as
+for the x86_64 engines; this section owns the rest of the engines' internal
+detail.
 
 The x86_64 backend's CPUID advertises ERMS: a repeated string operation moves
 whole page-bounded blocks, so the REP MOVSB that ERMS steers libc onto is this
@@ -138,7 +141,11 @@ product, so that macOS behaves like iOS, and a slot is committed whether or not
 it is occupied; an explicit `-DUML_GADGET_CACHE_SLOTS` selects another power
 of two. Their payloads and mutable branch links remain ISA-specific. Cached
 x86 programs release spare decoder and native-stream capacity before
-publication.
+publication. The resident address spaces themselves, with the ids a slot's tag
+names its owner by, the epochs that validate a slot and the order that retires
+the least recently current, are one template shared by both caches
+(`cpu/gadget_generation_window.hpp`); the engines keep the slot layout, lookup
+and what retiring an address space releases.
 
 Unless `DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private, arm64 gadget
 executors running one address space with the same build options and SVCR mode
@@ -164,13 +171,19 @@ Apple Silicon product has): it halves the four-vCPU Geekbench multi-core
 cache, and renewal, below, keeps a shared space from accumulating the freed
 arena and link records that process churn leaves in it, which WebGL
 Aquarium's cache did before (G227, G267, G268). A private cache sweeps away
-the link records and indirect sites that nothing it holds names any more; a
-shared space is never swept, and renewal replaces it instead. The parts of
-this that do not depend on an engine's record types are engine-independent
-headers in `cpu/`: the body arena (`gadget_body_arena.hpp`), and what each
-executor announces, the executors attached to a space, the limbo a body waits
-in, the renewal counts and the registry that hands a space out
-(`gadget_shared_space.hpp`). The arm64 engine builds its space from them.
+the link records and indirect sites that nothing it holds names any more, once
+they number half again what its last sweep kept and enough of its translations
+have left the cache to have left some unnamed: a record no resident
+translation's stream names and no resident block owns is released for reuse,
+and the site cells and target-table entries naming it are emptied, so link
+state follows what the cache holds rather than all the code the address space
+ever ran. A shared space is never swept, and renewal replaces it instead. The
+parts of this that do not depend on an engine's record types are
+engine-independent headers in `cpu/`: the body arena
+(`gadget_body_arena.hpp`), and what each executor announces, the executors
+attached to a space, the limbo a body waits in, the renewal counts and the
+registry that hands a space out (`gadget_shared_space.hpp`). The arm64 engine
+builds its space from them.
 
 A shared space bounds its freed arena by renewal. It counts the bytes of its
 arena and of the bodies some slot holds; once it holds at least two mebibytes
@@ -219,8 +232,9 @@ twice the budget.
 
 The emulator sets the budget before the run's first executor: a quarter of
 guest memory, at least 128 MiB, and at most an eighth of the footprint the
-host lets the process reach where it sets one (iOS; macOS sets none), or the
-size `--gadget-cache-budget=` gives. A process that never sets one, such as a
+host lets the process reach where it sets one (iOS; on macOS the launch states
+it with `--memory-limit=` or `UML_MEMORY_LIMIT_MIB`, and otherwise there is
+none), or the size `--gadget-cache-budget=` gives. A process that never sets one, such as a
 unit test, keeps 1 GiB. No measured workload was asked to shed: on four vCPUs
 and 8 GiB the largest, x86 multi-core Geekbench, peaked at a seventh of its
 2 GiB budget, and at the iPad's geometry WebGL Aquarium, the least headroom,
@@ -339,25 +353,13 @@ acknowledgements; a completed teardown or a failed map releases it for reuse.
 The devices Kernarium attaches and its display geometry are listed in
 [`../Kernarium/README.md`](../Kernarium/README.md#devices-and-display).
 
-The audio device owns a bounded period/completion ring. The callback path does
-not allocate or lock. On iOS the sink mutes when the system interrupts its
-audio session (the app's own deactivations are not interruptions): nothing
-reaches the player, and the guest's periods complete on the schedule the
-hardware would have kept, so it sees no pause and its clock keeps its rate.
-The sink takes the session back on the system's resumption recommendation
-whichever advice it carries, and, because iOS posts none when the interrupter
-simply stops or is killed, once no other app plays primary audio, asked once a
-second while the stream runs. It never takes the session from an app that still
-plays, except when the guest starts a stream at a moment nothing interrupts
-it: a stream that starts or resumes during an interruption, or a route change
-during one, joins the mute. Route changes otherwise restart the engine. Taking
-the session back, starting the engine and the audio hardware's first cycle
-(about 70, 75 and 210 ms on an iPad mini 6) run on another thread while the mute
-clock goes on completing the guest's periods, and the held periods are handed
-to the player only once it has consumed a buffer of silence, so that no guest
-write waits longer than its stream's buffer lasts (100 ms with four periods,
-about 330 ms with a 300 ms buffer), which ends in an I/O error.
-Capture and mixer controls are not exposed.
+The audio device is described in
+[`device/audio/README.md`](device/audio/README.md): a bounded period/completion
+ring whose callback path does not allocate or lock, playback completions paced
+on the device's own clock when the host output cannot play, a null output, and
+a capture stream that delivers silence in real time unless the user turns on
+the microphone setting. iOS owns AVAudioSession interruption and route
+recovery. Mixer controls are not exposed.
 
 SLiRP host forwards are owned by the provider so they survive provider reopen.
 An unavailable individual host port is reported without removing the guest's
@@ -374,7 +376,12 @@ free buffer (`slirp-network-tcp-window`). SLiRP closes the host end of a
 connection whose guest end stops answering within about ten minutes, whether
 it was retransmitting to the guest or probing a window the guest closed
 (`slirp-network-tcp-liveness`). An idle connection has no keep-alive, the
-RFC 1122 default, and stays open until one side closes it.
+RFC 1122 default, and stays open until one side closes it. A guest connect
+the host stack refuses at once is answered with ICMP net-unreachable, except
+a connect to port 0: Darwin refuses it before sending anything, where Linux
+sends the SYN, so SLiRP leaves it unanswered and the guest connect times out,
+or resets it when the destination is the host's gateway address, as the host's
+own stack would (`slirp-network-connect-failure`).
 
 The guest network driver has no transmit flow control, so a frame the provider
 refuses is lost and TCP must retransmit it. A guest transmit into a full

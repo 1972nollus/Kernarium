@@ -276,8 +276,6 @@ int main(int argc, char **argv)
 				static_cast<int>(engine.size()), engine.data());
 			continue;
 		}
-		const bool a32 = uml::cpu::engine_a32_support(kind) !=
-			arm64::A32Support::none;
 		const std::pair<Guest, std::string_view> guests[] = {
 			{Guest::a64, "a64"},
 			{Guest::a32, "a32"},
@@ -285,8 +283,6 @@ int main(int argc, char **argv)
 		};
 		for (const auto &[guest, guest_name] : guests) {
 			if (!only_guest.empty() && only_guest != guest_name)
-				continue;
-			if (guest != Guest::a64 && !a32)
 				continue;
 			run_case(kind, guest, generation++, engine);
 		}

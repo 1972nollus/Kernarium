@@ -300,7 +300,7 @@ index 2585bfa7e23fde21bc6c9984389124388ca818d5..1db28abe9d40c61beccfd70c3920d82b
  
  void flush_tlb_mm(struct mm_struct *mm)
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 433b6fda3da3428817c1ca7e81304b6b6bc02c7a..dbb4d6cf068d0bbadd846a42d7bbbd117cad5d72 100644
+index 41d0c399dbb0fca2d0a42c0eb3ab1bcc0b216f89..82adf37a8519edcc21e7cf41db9fd0641caef52f 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
 @@ -18,6 +18,7 @@
@@ -311,7 +311,7 @@ index 433b6fda3da3428817c1ca7e81304b6b6bc02c7a..dbb4d6cf068d0bbadd846a42d7bbbd11
  extern int darwin_uml_vm_retry_fault(unsigned long address, int execute,
  				     int write);
  #endif
-@@ -384,7 +385,11 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -389,7 +390,11 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  		show_regs(container_of(regs, struct pt_regs, regs));
  		panic("Segfault with no mm");
  	}

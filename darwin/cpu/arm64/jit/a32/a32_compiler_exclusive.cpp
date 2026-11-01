@@ -35,9 +35,6 @@ using ::uml::memory::Access;
 
 namespace {
 
-constexpr unsigned fallback_n = 9;
-constexpr unsigned fallback_m = 10;
-constexpr unsigned address_register = 8;
 constexpr unsigned host_address = 21;
 /* Instructions between the load and the store. */
 constexpr std::size_t maximum_interval = 4;

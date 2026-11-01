@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "backing_slots.hpp"
+#include "../domain_heap.hpp"
 #include "fill_index.hpp"
 #include "mapped_backing.hpp"
 #include "uml_darwin_static_mmu.h"
@@ -37,10 +39,23 @@ struct AddressSpaceLifetime final {
 };
 
 struct GenerationState final {
+	GenerationState() noexcept = default;
+	explicit GenerationState(std::shared_ptr<DomainHeap> domain_heap) noexcept
+		: heap{std::move(domain_heap)}, fill_index{heap.get()}
+	{
+	}
+	/* The domain's heap holds the fill index's nodes and the mapping history,
+	 * so a retired domain gives that bookkeeping back to the host whole. It is
+	 * declared first: it outlives everything allocated from it. */
+	std::shared_ptr<DomainHeap> heap;
 	mutable WordSharedMutex mappings_mutex;
-	std::unordered_map<std::uint64_t, Mapping> mappings;
-	/* `mappings` again, for the lock-free fill of an entered context. */
+	/* Every page the generation maps, as one word each, which the lock-free
+	 * fill of an entered context reads, and the backings the words' slots
+	 * name. */
 	FillIndex fill_index;
+	BackingSlots backings;
+	/* The pages mapped. */
+	std::size_t mapped_pages{};
 	std::atomic_uint64_t mapping_changes{1};
 	std::atomic_uint64_t code_changes{1};
 	std::atomic_uint64_t invalidation_epoch{};
@@ -53,7 +68,8 @@ struct GenerationState final {
 		std::uint64_t address;
 		std::uint64_t length;
 	};
-	std::deque<MappingChange> mapping_history;
+	std::deque<MappingChange, DomainAllocator<MappingChange>> mapping_history{
+		DomainAllocator<MappingChange>{heap.get()}};
 	/* Which bytes each code change touched. A reader only a few changes
 	 * behind retires exactly the translations covering them instead of every
 	 * translation it holds.

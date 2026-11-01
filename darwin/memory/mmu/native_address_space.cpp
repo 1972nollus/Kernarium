@@ -689,11 +689,21 @@ public:
 					host_page_size());
 			position = owners_.erase(position);
 		}
+		/* The registry belongs to the process and outlives every domain. Once
+		 * the last domain's records are gone its heap goes back, bucket array
+		 * included, which is most of what a long-lived registry holds. */
+		if (owners_.empty()) {
+			owners_ = PageAddressMap<Ownership>{
+				DomainAllocator<char>{&heap_}};
+			heap_.release();
+		}
 	}
 
 private:
+	/* Declared first, so that the records are gone before it is. */
+	DomainHeap heap_;
 	mutable std::mutex mutex_;
-	PageAddressMap<Ownership> owners_;
+	PageAddressMap<Ownership> owners_{DomainAllocator<char>{&heap_}};
 };
 
 std::atomic<HostOwnershipRegistry *> published_host_ownership_registry{};
@@ -757,12 +767,17 @@ int NativeAddressSpace::map_direct(
 	auto *registry = registry_or_enomem(host_ownership_registry());
 	if (registry == nullptr)
 		return -1;
-	std::vector<std::uintptr_t> inserted;
+	/* The call's own lists live in the thread's scratch and go with the
+	 * call. */
+	ScratchScope scratch;
+	std::vector<std::uintptr_t, ScratchAllocator<std::uintptr_t>> inserted{
+		ScratchAllocator<std::uintptr_t>{scratch.arena()}};
 	struct DirectSnapshot final {
 		std::uintptr_t page;
 		std::optional<DirectMapping> mapping;
 	};
-	std::vector<DirectSnapshot> direct_snapshots;
+	std::vector<DirectSnapshot, ScratchAllocator<DirectSnapshot>>
+		direct_snapshots{ScratchAllocator<DirectSnapshot>{scratch.arena()}};
 	std::size_t new_page_count = 0;
 	/* A whole host page of one backing replaces the shadow that held its
 	 * quarters until now; the shadow's own writes are published first. */
@@ -1406,7 +1421,7 @@ int NativeAddressSpace::ensure_backing_index_locked()
 {
 	if (backing_index_ready_)
 		return 0;
-	decltype(backing_index_) index;
+	decltype(backing_index_) index{DomainAllocator<char>{&heap_}};
 	UML_MEMORY_ALLOCATION_CHECKPOINT(
 		testing::AllocationSite::native_backing_index);
 	index.reserve(mappings_.size());
@@ -2406,6 +2421,23 @@ std::size_t NativeAddressSpace::direct_mapping_count_for_testing() const
 	return retired_.load(std::memory_order_acquire) ? 0 :
 		direct_slots_.size();
 }
+
+bool NativeAddressSpace::mapping_clears_its_page_copy_for_testing() noexcept
+{
+	alignas(Mapping) unsigned char storage[sizeof(Mapping)];
+	auto *const mapping = ::new (storage) Mapping{};
+	mapping->original.fill(std::byte{0xa5});
+	mapping->loaded = true;
+	/* Read through the bytes the object occupied once it is destroyed. */
+	const volatile unsigned char *const copy =
+		reinterpret_cast<const unsigned char *>(mapping->original.data());
+	const std::size_t size = mapping->original.size();
+	mapping->~Mapping();
+	for (std::size_t index = 0; index < size; ++index)
+		if (copy[index] != 0)
+			return false;
+	return true;
+}
 #endif
 
 NativeAddressSpace::~NativeAddressSpace()
@@ -2418,20 +2450,37 @@ void NativeAddressSpace::retire() noexcept
 	std::lock_guard lock{mutex_};
 	if (retired_.exchange(true, std::memory_order_acq_rel))
 		return;
-	for (const auto slot : materialized_slots_)
-		(void)mprotect(reinterpret_cast<void *>(slot), host_page_size(),
-			PROT_READ | PROT_WRITE);
-	for (const auto slot : materialized_slots_)
-		(void)flush_slot_locked(slot);
-	mappings_.clear();
-	backing_index_.clear();
-	slot_protections_.clear();
-	materialized_slots_.clear();
-	direct_mappings_.clear();
+	/* A shadow of a descriptor's backing is published, because the backing
+	 * outlives the space. A shadow of guest RAM is discarded: nothing reads RAM
+	 * once the run is over, and the loader has already released the kernel
+	 * image, whose tail is the first RAM the guest owns, so the root's span
+	 * holds unmapped or reserved pages that a publication would fault on. */
+	for (const auto slot : materialized_slots_) {
+		for (std::uintptr_t position = 0; position < host_page_size();
+		     position += guest_page_size) {
+			const auto found = mappings_.find(slot + position);
+			if (found == mappings_.end() || !found->second.loaded ||
+			    anonymous_shared_backing_memory(
+				    found->second.identity.device,
+				    found->second.identity.inode).anonymous)
+				continue;
+			(void)flush_page_locked(slot + position);
+		}
+	}
 	backing_index_ready_ = false;
 	if (auto *registry = host_ownership_registry(); registry != nullptr)
 		registry->retire(ownership_id_);
-	direct_slots_.clear();
+	/* Empty the indexes and drop their bucket arrays, which clear() keeps,
+	 * then give the heap back whole: a space that has ended holds no memory,
+	 * and every operation on it fails before it could allocate. */
+	const DomainAllocator<char> allocator{&heap_};
+	mappings_ = decltype(mappings_){allocator};
+	backing_index_ = decltype(backing_index_){allocator};
+	slot_protections_ = decltype(slot_protections_){allocator};
+	materialized_slots_ = decltype(materialized_slots_){allocator};
+	direct_mappings_ = decltype(direct_mappings_){allocator};
+	direct_slots_ = decltype(direct_slots_){allocator};
+	heap_.release();
 }
 
 namespace {

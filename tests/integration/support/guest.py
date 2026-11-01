@@ -853,6 +853,7 @@ class Guest(ConsoleProcess):
         payloads: Mapping[str, GuestFile] = {},
         root_type: str | None = None,
         network: str = "user-network",
+        environment: Mapping[str, str] | None = None,
     ) -> None:
         if init_shell == overlay_shell:
             raise ValueError(
@@ -889,6 +890,7 @@ class Guest(ConsoleProcess):
                     core_class=core_class,
                     guest_files=guest_files,
                 ),
+                environment=environment,
                 pass_fds=pass_fds,
                 console_sink=console_sink,
             )
@@ -916,6 +918,31 @@ class Guest(ConsoleProcess):
 
     def boot_and_login(self, timeout_seconds: float = BOOT_TIMEOUT_SECONDS) -> None:
         self.boot_to_shell(timeout_seconds)
+
+    def restart_to_shell(
+        self,
+        timeout_seconds: float = BOOT_TIMEOUT_SECONDS,
+        command: str = "reboot -f",
+    ) -> None:
+        """Restart the guest and reach the root shell of its next boot.
+
+        The launcher boots a guest that restarts itself again in the same
+        emulator process, so the console, the process and its ID carry on and
+        only the guest is new."""
+        start = len(self._transcript)
+        self._write(f"sync; {command}\n")
+        ready = self._read_until(
+            re.compile(
+                console_text(f"{SESSION_READY_MARKER}/bin/sh")
+                + _KERNEL_LINES
+                + rb"\r?\n"
+            ),
+            timeout_seconds,
+            start,
+        )
+        self._read_until(
+            re.compile(LINE_START + rb"# $"), timeout_seconds, ready.end() - 1
+        )
 
     def shutdown(self, timeout_seconds: float = 30) -> bool:
         """Request an orderly halt and wait for the emulator to exit."""

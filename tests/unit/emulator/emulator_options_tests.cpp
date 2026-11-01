@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "mach_vm_region_test_support.hpp"
+#include "native_window_test_support.hpp"
 #include "options.hpp"
 #include "require.hpp"
 #include "runtime/native_kernel_layout.hpp"
@@ -57,6 +58,19 @@ void test_defaults_and_engine_selection()
 	require(!contains(options, "--guest-top-byte-ignore"),
 		"guest top-byte-ignore host option reached the kernel command line");
 	require(contains(options, "console=ttyS0"), "kernel argument was lost");
+	{
+		/* The off switch is a host option as well: it turns the default
+		 * off and never reaches the guest. */
+		const char *off[]{"uml-test", "--guest-no-top-byte-ignore",
+			"console=ttyS0"};
+		const auto disabled = uml::emulator::prepare_emulator_options(
+			3, off, "/tmp/rootfs.erofs");
+		require(disabled.valid, "the top-byte-ignore off switch was rejected");
+		require(!disabled.top_byte_ignore,
+			"--guest-no-top-byte-ignore did not turn the ignore off");
+		require(!contains(disabled, "--guest-no-top-byte-ignore"),
+			"the off switch reached the kernel command line");
+	}
 	require(contains(options, "ubd0c=/tmp/rootfs.erofs"),
 		"rootfs default was not added");
 	require(contains(options, "root=/dev/ubda"), "root default was not added");
@@ -103,8 +117,8 @@ void test_explicit_defaults_are_preserved()
 	const auto options = uml::emulator::prepare_emulator_options(
 		9, arguments, "/unused/rootfs");
 	require(options.valid, "explicit emulator options were rejected");
-	require(!options.top_byte_ignore,
-		"guest top-byte-ignore mode was enabled by default");
+	require(options.top_byte_ignore,
+		"guest top-byte-ignore mode was not the default");
 	require(options.engine == uml::runtime::ExecutionEngine::gadgets,
 		"separate engine argument was not parsed");
 	/* The seven explicit values, plus the management-console name and
@@ -274,6 +288,27 @@ void test_gadget_cache_budget_option()
 		"the gadget cache budget ignored trailing text");
 }
 
+void test_memory_limit_option()
+{
+	const char *absent[]{"uml-test"};
+	require(uml::emulator::prepare_emulator_options(
+		1, absent, "/tmp/rootfs.erofs").memory_limit_bytes == 0,
+		"a memory limit was stated without being asked for");
+	const char *chosen[]{"uml-test", "--memory-limit=2867M", "ip=dhcp"};
+	auto options = uml::emulator::prepare_emulator_options(
+		3, chosen, "/tmp/rootfs.erofs");
+	require(options.valid &&
+		options.memory_limit_bytes == 2867U * 1024U * 1024U &&
+		!contains(options, chosen[1]) && contains(options, "ip=dhcp"),
+		"the memory limit was not consumed by the host");
+	for (const char *refused : {"--memory-limit=0", "--memory-limit=",
+		     "--memory-limit=1Gignored", "--memory-limit=lots"}) {
+		const char *arguments[]{"uml-test", refused};
+		require(!uml::emulator::prepare_emulator_options(
+			2, arguments, "/tmp/rootfs.erofs").valid, refused);
+	}
+}
+
 void test_guest_hibernation_option()
 {
 	using uml::runtime::HibernationMode;
@@ -419,9 +454,11 @@ void test_scalable_native_kernel_layout_geometry()
 			12ULL * gib + product_reserved &&
 		high.load_bias == high.window_start - 48ULL * gib,
 		"high native placement did not retain the scalable window");
-	const auto product = uml::runtime::prepare_native_kernel_layout(gib);
+	const auto placement = uml::runtime::native_kernel_placement(gib);
+	const auto &product = placement.geometry;
 #if DARWIN_UML_NATIVE_HIGH_PLACEMENT
-	require(product.valid &&
+	require(product.valid && !product.reserved &&
+		placement.placement == uml::runtime::WindowPlacement::exact &&
 		product.window_start == 96ULL * 1024ULL * gib &&
 		product.window_end - product.window_start ==
 			2ULL * gib + product_reserved &&
@@ -432,49 +469,46 @@ void test_scalable_native_kernel_layout_geometry()
 	 * window is always reserved: a failed reservation fails the run rather
 	 * than fall back to the packed geometry. The host picks where it goes
 	 * when it declines the packed address, as iOS 27 does. */
-	require(product.valid && product.reserved &&
+	require(product.valid && !product.reserved &&
+		placement.placement == uml::runtime::WindowPlacement::anywhere &&
 		product.window_end - product.window_start ==
 			2ULL * gib + product_reserved &&
 		product.load_bias ==
 			product.window_start - DARWIN_UML_NATIVE_LINK_ADDRESS,
-		"iOS did not reserve its dynamic native window");
+		"iOS did not derive its dynamic native window");
 #endif
 }
 
-#if defined(__has_feature)
-#if __has_feature(address_sanitizer)
-#define UML_OPTIONS_TEST_UNDER_ASAN 1
-#endif
-#endif
-
-/* A reserved native window must reach the loader whole. Darwin places its
- * next unhinted allocation in a range freed inside it, which the guest's next
- * fixed mapping would then replace without telling either owner. */
-void test_reserved_native_window_has_no_gap()
+/* The process holds its native window as one reservation without a gap, for
+ * as long as it lives. Darwin places its next unhinted allocation in a range
+ * freed inside it, which the guest's next fixed mapping would then replace
+ * without telling either owner. */
+void test_process_native_window_is_one_reservation()
 {
-#if defined(UML_OPTIONS_TEST_UNDER_ASAN)
-	/* AddressSanitizer keeps its allocator heap at 0x600000000000 on arm64
-	 * macOS, the product's macOS native window, so the window cannot be
-	 * reserved beside it. */
-	std::puts("unsupported: the reserved native window has no gap: "
-		"AddressSanitizer's heap occupies the macOS native window");
-#else
 	constexpr std::uint64_t gib = 1024ULL * 1024ULL * 1024ULL;
-	constexpr std::uintptr_t start = DARWIN_UML_MACOS_NATIVE_ADDRESS;
-	constexpr std::uintptr_t length = 2U * gib +
-		DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION +
-		DARWIN_UML_NATIVE_STUB_PAGES * DARWIN_UML_GUEST_PAGE_SIZE;
-	const auto window = uml::runtime::reserve_native_kernel_window({
-		.load_bias = start - DARWIN_UML_NATIVE_LINK_ADDRESS,
-		.window_start = start,
-		.window_end = start + length,
-		.valid = true,
-	});
+	/* A macOS window at the start the test chose: the product's, or one a
+	 * sanitizer leaves free. */
+	constexpr std::uintptr_t start = uml::testing::native_test_window_start;
+	using Macos = uml::runtime::MacosNativeKernelGeometry;
+	const auto geometry = Macos::derive_at(2U * gib, start);
+	require(geometry.valid, "the test window did not derive");
+	const std::size_t length = geometry.window_end - geometry.window_start;
+	require(uml::runtime::process_native_window().end == 0,
+		"a window was reserved before the first guest asked for one");
+
+	const auto window = uml::runtime::reserve_process_native_window(
+		geometry, uml::runtime::WindowPlacement::exact);
 	require(window.valid && window.reserved &&
 		window.window_start == start &&
 		window.window_end == start + length &&
 		window.load_bias == start - DARWIN_UML_NATIVE_LINK_ADDRESS,
 		"the native window was not reserved where the host offered it");
+	/* The reservation is whole host pages. */
+	const auto host_page = static_cast<std::uintptr_t>(getpagesize());
+	const auto held = uml::runtime::process_native_window();
+	require(held.begin == start && held.end >= start + length &&
+		held.end - (start + length) < host_page,
+		"the process does not report the window it holds");
 	mach_vm_address_t cursor = window.window_start;
 	while (cursor < window.window_end) {
 		const auto query = uml::testing::query_vm_region(
@@ -486,11 +520,46 @@ void test_reserved_native_window_has_no_gap()
 			"the reserved native window is accessible");
 		cursor = query.region.start + query.region.size;
 	}
-	require(munmap(reinterpret_cast<void *>(window.window_start),
-		length) == 0, "the reserved native window could not be released");
+
+	/* A smaller guest takes the window it holds, a larger one extends it at
+	 * the same address, and none of them gives anything back. */
+	const auto again = uml::runtime::reserve_process_native_window(
+		geometry, uml::runtime::WindowPlacement::exact);
+	require(again.valid && again.window_start == start &&
+		again.window_end == window.window_end,
+		"a second guest did not get the window the process holds");
+	const auto small = uml::runtime::reserve_process_native_window(
+		Macos::derive_at(gib, start),
+		uml::runtime::WindowPlacement::exact);
+	require(small.valid && small.window_start == start &&
+		small.window_end < window.window_end &&
+		uml::runtime::process_native_window().end == held.end,
+		"a smaller guest did not take part of the window");
+	const auto larger_geometry = Macos::derive_at(4U * gib, start);
+	const auto larger = uml::runtime::reserve_process_native_window(
+		larger_geometry, uml::runtime::WindowPlacement::exact);
+	require(larger.valid && larger.window_start == start &&
+		larger.window_end == larger_geometry.window_end &&
+		uml::runtime::process_native_window().begin == start &&
+		uml::runtime::process_native_window().end >= larger.window_end &&
+		uml::runtime::process_native_window().end - larger.window_end <
+			host_page,
+		"a larger guest did not extend the window in place");
+	cursor = start;
+	while (cursor < uml::runtime::process_native_window().end) {
+		const auto query = uml::testing::query_vm_region(
+			static_cast<std::uintptr_t>(cursor));
+		require(query.status == KERN_SUCCESS &&
+			query.region.start == cursor && query.region.size != 0 &&
+			query.region.protection == VM_PROT_NONE,
+			"the extended native window has a gap or is accessible");
+		cursor = query.region.start + query.region.size;
+	}
 	require(!uml::runtime::reserve_native_kernel_window({}).valid,
 		"an invalid geometry reserved a native window");
-#endif
+	require(!uml::runtime::reserve_process_native_window({},
+			uml::runtime::WindowPlacement::exact).valid,
+		"an invalid geometry took the process's window");
 }
 
 void test_guest_cpu_count_matches_kernel_policy()
@@ -600,10 +669,11 @@ int main()
 		test_x86_64_kernel_memory_accounting_policy();
 		test_guest_memory_budget_matches_kernel_memparse();
 		test_gadget_cache_budget_option();
+		test_memory_limit_option();
 		test_jit_tier_option();
 		test_guest_hibernation_option();
 		test_scalable_native_kernel_layout_geometry();
-		test_reserved_native_window_has_no_gap();
+		test_process_native_window_is_one_reservation();
 		test_guest_cpu_count_matches_kernel_policy();
 		test_invalid_and_informational_inputs();
 		return EXIT_SUCCESS;

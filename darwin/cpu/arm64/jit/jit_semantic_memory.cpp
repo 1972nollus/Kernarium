@@ -94,7 +94,7 @@ extern "C" void *uml_arm64_jit_tlb_translate(Tlb *tlb, std::uint64_t address,
 
 [[nodiscard]] bool jit_pair_write(Tlb &tlb, std::uint64_t address,
                                   std::span<const std::byte> bytes,
-                                  bool invalidate_reservations = false) noexcept {
+                                  CpuState *writer = nullptr) noexcept {
   /* Pair stores are architecturally one memory access. Translate every
    * page before the first host store so a second-page fault cannot expose a
    * partial guest update. A pair spans at most two supported guest pages.
@@ -130,9 +130,9 @@ extern "C" void *uml_arm64_jit_tlb_translate(Tlb *tlb, std::uint64_t address,
     stored[page] = {reinterpret_cast<std::uintptr_t>(destinations[page]),
                     lengths[page]};
   }
-  if (invalidate_reservations)
+  if (writer != nullptr)
     jit::semantic::invalidate_store_ranges(
-        std::span<const JitStoreRange>{stored}.first(pages));
+        *writer, std::span<const JitStoreRange>{stored}.first(pages));
   return true;
 }
 
@@ -357,6 +357,8 @@ uml_arm64_jit_execute_memory(CpuState *cpu, Tlb *tlb,
  * later takes its snapshot under the same mutex, after this store.
  */
 struct JitMopsStore final {
+  CpuState &writer;
+
   template <typename Transfer>
   [[nodiscard]] bool operator()(Tlb &tlb, std::uint64_t address,
                                 Transfer &&transfer) const noexcept {
@@ -368,7 +370,7 @@ struct JitMopsStore final {
     if (active_jit_reservations.load(std::memory_order_seq_cst) != 0U) {
       const JitStoreRange range{
           reinterpret_cast<std::uintptr_t>(stored.pointer), stored.size};
-      jit::semantic::invalidate_store_ranges(std::span{&range, 1});
+      jit::semantic::invalidate_store_ranges(writer, std::span{&range, 1});
     }
     return true;
   }
@@ -398,7 +400,7 @@ execute_mops(CpuState &cpu, Tlb &tlb,
   const std::size_t retired = stages == 3U ? 2U : 0U;
   cpu.pc += retired * 4U;
   switch (arm64::detail::mops_epilogue<family>(cpu, tlb, destination, count,
-                                               source, JitMopsStore{})) {
+                                               source, JitMopsStore{cpu})) {
   case arm64::detail::MopsOutcome::complete:
     cpu.pc += 4;
     return pack_jit_result(Event::continued, retired + 1U);
@@ -463,7 +465,7 @@ uml_arm64_jit_execute_pair(CpuState *cpu, Tlb *tlb,
       tagged_base + static_cast<std::uint64_t>(displacement);
   const auto tagged_address = mode == 1U ? tagged_base : adjusted;
   const auto address =
-      cpu->untag_data_address(tagged_address, base_register == 31U);
+      cpu->untag_data_address(tagged_address);
   const unsigned first = instruction & 31U;
   const unsigned second = (instruction >> 10) & 31U;
   std::array<std::byte, 32> bytes{};
@@ -502,7 +504,7 @@ uml_arm64_jit_execute_pair(CpuState *cpu, Tlb *tlb,
     }
     /* This helper runs inside the block's store publication, so an
      * exclusive store waiting in its operation scope sees the invalidation. */
-    if (!jit_pair_write(*tlb, address, transfer, true))
+    if (!jit_pair_write(*tlb, address, transfer, cpu))
       return pack_jit_result(Event::memory_fault, 0);
   }
 
@@ -561,7 +563,7 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
   const unsigned base = (instruction >> 5) & 31U;
   const unsigned transfer = instruction & 31U;
   const auto tagged_address = cpu->read_register(base, true);
-  const auto address = cpu->untag_data_address(tagged_address, base == 31U);
+  const auto address = cpu->untag_data_address(tagged_address);
   if (arm64::detail::single_copy_alignment_faults(address, size,
                                                   tlb->unaligned_atomics)) {
     tlb->fault_alignment = 1;
@@ -593,16 +595,16 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
 }
 
 /*
- * The shared structure transfer, which the gadget engine also uses, stores
+ * The shared memory transfer, which the gadget engine also uses, stores
  * without touching the JIT's software reservations. Invalidate every granule
  * it wrote, even when the stored bits are unchanged, from the same untagged
  * address it translated. The helper runs inside the block's store
  * publication, so an exclusive store waiting in its operation scope sees it.
  */
 void invalidate_structure_store(CpuState &cpu, Tlb &tlb,
-                                std::uint64_t tagged_address, bool base_sp,
+                                std::uint64_t tagged_address,
                                 std::size_t size) noexcept {
-  const auto address = cpu.untag_data_address(tagged_address, base_sp);
+  const auto address = cpu.untag_data_address(tagged_address);
   std::array<JitStoreRange, 2> stored{};
   std::size_t pages = 0;
   for (std::size_t completed = 0;
@@ -618,7 +620,7 @@ void invalidate_structure_store(CpuState &cpu, Tlb &tlb,
     completed += length;
   }
   jit::semantic::invalidate_store_ranges(
-      std::span<const JitStoreRange>{stored}.first(pages));
+      cpu, std::span<const JitStoreRange>{stored}.first(pages));
 }
 
 extern "C" std::uint64_t
@@ -709,11 +711,13 @@ uml_arm64_jit_execute_simd_structure(CpuState *cpu, Tlb *tlb,
       single ? element_size * register_count : vector_size * register_count;
   std::array<std::byte, 64> bytes{};
   auto transfer = std::span{bytes}.first(transfer_size);
-  const bool base_sp = base_register == 31U;
+  /* Not the structure wrapper uml_arm64_simd_structure_memory_transfer,
+   * which also drops the exclusive monitor for the gadget engine: a vector
+   * store of the guest's own between a pair leaves it standing. */
+  const auto untagged_address = cpu->untag_data_address(tagged_address);
   if (load) {
-    if (uml_arm64_simd_structure_memory_transfer(
-            cpu, tlb, tagged_address, transfer.data(), transfer.size(), 0,
-            base_sp) == 0U)
+    if (uml_arm64_memory_transfer(tlb, untagged_address, transfer.data(),
+                                  transfer.size(), 0) == 0U)
       return pack_jit_result(Event::memory_fault, 0);
     for (unsigned index = 0; index < register_count; ++index) {
       auto &destination = cpu->vectors[(first_register + index) & 31U].bytes;
@@ -758,12 +762,10 @@ uml_arm64_jit_execute_simd_structure(CpuState *cpu, Tlb *tlb,
                     source.data() + lane_offset, element_size);
       }
     }
-    if (uml_arm64_simd_structure_memory_transfer(
-            cpu, tlb, tagged_address, transfer.data(), transfer.size(), 1,
-            base_sp) == 0U)
+    if (uml_arm64_memory_transfer(tlb, untagged_address, transfer.data(),
+                                  transfer.size(), 1) == 0U)
       return pack_jit_result(Event::memory_fault, 0);
-    invalidate_structure_store(*cpu, *tlb, tagged_address, base_sp,
-                               transfer.size());
+    invalidate_structure_store(*cpu, *tlb, tagged_address, transfer.size());
   }
   if (post_index) {
     const auto offset = offset_register == 31U
@@ -783,7 +785,7 @@ uml_arm64_jit_execute_simd_structure(CpuState *cpu, Tlb *tlb,
  */
 class JitSpillMemory final : public arm64::detail::Sm0Memory {
 public:
-  explicit JitSpillMemory(Tlb &tlb) noexcept : tlb_{tlb} {}
+  JitSpillMemory(CpuState &cpu, Tlb &tlb) noexcept : cpu_{cpu}, tlb_{tlb} {}
 
   std::byte *translate(std::uint64_t address,
                        ::uml::memory::MemoryAccess access) noexcept override {
@@ -792,10 +794,11 @@ public:
 
   void stored(std::byte *host, std::size_t size) noexcept override {
     const JitStoreRange range{reinterpret_cast<std::uintptr_t>(host), size};
-    jit::semantic::invalidate_store_ranges(std::span{&range, 1});
+    jit::semantic::invalidate_store_ranges(cpu_, std::span{&range, 1});
   }
 
 private:
+  CpuState &cpu_;
   Tlb &tlb_;
 };
 
@@ -808,7 +811,7 @@ uml_arm64_jit_execute_sm0_spill(CpuState *cpu, Tlb *tlb,
   if (cpu == nullptr || tlb == nullptr)
     return pack_jit_result(Event::fatal, 0);
   materialize_semantic_cpu_state(*cpu);
-  JitSpillMemory memory{*tlb};
+  JitSpillMemory memory{*cpu, *tlb};
   const auto result =
       arm64::detail::execute_sm0_spill(*cpu, instruction, memory);
   switch (result.event) {

@@ -51,13 +51,29 @@ endif()
 target_compile_definitions(uml_runtime_context PRIVATE
     UML_DEFAULT_EXECUTION_ENGINE_JIT=$<BOOL:${_uml_default_execution_engine_jit}>)
 
-# Process signal state an embedded kernel image leaves behind; the loader
-# closes this scope before it releases the image.
+# Process signal state an embedded kernel image leaves behind, which the loader
+# closes before it releases the image, and that release, which keeps the image's
+# guest-RAM tail while a host-service view borrows it.
 add_library(uml_runtime_kernel_signals OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/kernel_signal_scope.cpp)
 add_library(UML::RuntimeKernelSignals ALIAS uml_runtime_kernel_signals)
 uml_declare_architecture_target(uml_runtime_kernel_signals runtime)
 target_include_directories(uml_runtime_kernel_signals PUBLIC
+    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+target_link_libraries(uml_runtime_kernel_signals PUBLIC
+    UML::MemorySharedBacking)
+
+# What an embedded kernel creates through its imports and does not give back:
+# descriptors, pthread keys, allocations and mappings. The loader resolves the
+# kernel's creating imports to this ledger, and a restarted guest's hand-back
+# gives everything in it back.
+add_library(uml_runtime_kernel_resources OBJECT
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/kernel_resources.cpp)
+add_library(UML::RuntimeKernelResources ALIAS uml_runtime_kernel_resources)
+uml_declare_architecture_target(uml_runtime_kernel_resources runtime)
+target_link_libraries(uml_runtime_kernel_resources PRIVATE
+    UML::RuntimeContract)
+target_include_directories(uml_runtime_kernel_resources PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin/runtime)
 
 # The threads an embedded kernel creates and the fence that holds them. The
@@ -82,6 +98,18 @@ target_include_directories(uml_runtime_hibernation PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin
     ${PROJECT_SOURCE_DIR}/darwin/runtime)
 
+# The line a Mac run writes where iOS would have ended the process, for a
+# limit the launch stated.
+add_library(uml_runtime_virtual_jetsam OBJECT
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/virtual_jetsam.cpp)
+add_library(UML::RuntimeVirtualJetsam ALIAS uml_runtime_virtual_jetsam)
+uml_declare_architecture_target(uml_runtime_virtual_jetsam runtime)
+target_link_libraries(uml_runtime_virtual_jetsam PRIVATE
+    UML::HostEnvironment)
+target_include_directories(uml_runtime_virtual_jetsam PUBLIC
+    ${PROJECT_SOURCE_DIR}/darwin
+    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+
 add_library(uml_runtime_guest_selector OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/guest_selector.cpp)
 uml_declare_architecture_target(uml_runtime_guest_selector runtime)
@@ -94,9 +122,11 @@ target_include_directories(uml_runtime_guest_selector PRIVATE
 
 add_library(uml_runtime_entry OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/bridge.cpp
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/guest_hand_back.cpp
     ${PROJECT_SOURCE_DIR}/darwin/runtime/guest_sync.cpp)
 uml_declare_architecture_target(uml_runtime_entry runtime)
 target_link_libraries(uml_runtime_entry PRIVATE
+    UML::DeviceGuestEnd
     UML::DeviceSocketPaths
     UML::GuestFiles
     UML::MemorySharedBacking
@@ -114,8 +144,10 @@ target_link_libraries(uml_runtime_objects INTERFACE UML::RuntimeContract)
 target_sources(uml_runtime_objects INTERFACE
 	$<TARGET_OBJECTS:uml_runtime_context>
     $<TARGET_OBJECTS:uml_runtime_kernel_signals>
+    $<TARGET_OBJECTS:uml_runtime_kernel_resources>
     $<TARGET_OBJECTS:uml_runtime_thread_fence>
     $<TARGET_OBJECTS:uml_runtime_hibernation>
+    $<TARGET_OBJECTS:uml_runtime_virtual_jetsam>
     $<TARGET_OBJECTS:uml_runtime_guest_selector>
     $<TARGET_OBJECTS:uml_runtime_entry>
     $<TARGET_OBJECTS:uml_static_runtime>)

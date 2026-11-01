@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "provider.hpp"
 
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -111,7 +112,21 @@ void SlirpProvider::timer_modify_callback(
 		static_cast<Timer *>(timer)->expires_ms = expires_ms;
 }
 
-void SlirpProvider::ignore_poll_socket(
+void SlirpProvider::register_poll_socket(
+	slirp_os_socket descriptor, void *opaque) noexcept
+{
+	(void)opaque;
+	/* libslirp writes the host sockets it makes or accepts with plain send(),
+	 * which raises SIGPIPE when the peer has already reset the connection: an
+	 * adb server dropping its transport while the guest restarts is enough to
+	 * kill the process. The signal's disposition belongs to whoever runs the
+	 * guest, so the socket says it wants EPIPE instead. */
+	const int enabled = 1;
+	(void)setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled,
+			 sizeof(enabled));
+}
+
+void SlirpProvider::unregister_poll_socket(
 	slirp_os_socket descriptor, void *opaque) noexcept
 {
 	(void)descriptor;
@@ -219,8 +234,8 @@ const SlirpCb &SlirpProvider::callbacks() noexcept
 		.timer_mod = timer_modify_callback,
 		.notify = notify_callback,
 		.timer_new_opaque = timer_new_callback,
-		.register_poll_socket = ignore_poll_socket,
-		.unregister_poll_socket = ignore_poll_socket,
+		.register_poll_socket = register_poll_socket,
+		.unregister_poll_socket = unregister_poll_socket,
 	};
 	return callbacks;
 }

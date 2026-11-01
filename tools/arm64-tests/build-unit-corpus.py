@@ -271,12 +271,11 @@ def fill_zt0() -> bytes:
 
 
 def feature_tokens() -> tuple[str, ...]:
-    text = FEATURES.read_text(encoding="utf-8")
-    start = text.index("arm_feature_tokens{")
-    end = text.index("};", start)
+    # The X(token, "Label") rows of the header's feature lists, in order.
     tokens = tuple(
-        item.split('"')[1]
-        for item in text[start:end].split("std::string_view{")[1:]
+        line.strip()[2:].split(",")[0]
+        for line in FEATURES.read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("X(")
     )
     if len(tokens) < 100 or len(set(tokens)) != len(tokens):
         fail("cannot read the stable ArmFeature token table")
@@ -1546,6 +1545,8 @@ def metadata(corpus: Corpus, pack: bytes) -> dict[str, bytes]:
            if "floating_trap_native" in corpus.meta else {}),
         **({"sm0_vl": corpus.meta["sm0_vl"]}
            if "sm0_vl" in corpus.meta else {}),
+        **({"tbi_memory": corpus.meta["tbi_memory"]}
+           if "tbi_memory" in corpus.meta else {}),
         **({"retired_16k": corpus.meta["retired_16k"]}
            if "retired_16k" in corpus.meta else {}),
         **({"invalid_encoding": corpus.meta["invalid_encoding"]}
@@ -1729,6 +1730,12 @@ def check(options: argparse.Namespace) -> int:
             (REPOSITORY / trap["script"]).read_bytes()) != trap["sha256"]:
         stale.append(trap["script"] + " (not the native trap records' "
                      "script)")
+    # And the top-byte-ignore memory records.
+    memory = corpus.meta.get("tbi_memory")
+    if memory is not None and sha256(
+            (REPOSITORY / memory["script"]).read_bytes()) != memory["sha256"]:
+        stale.append(memory["script"] + " (not the top-byte-ignore memory "
+                     "records' script)")
     if stale:
         fail("stale corpus files: " + ", ".join(stale))
     # Every inventory entry has a case, or an illegal-instruction case.

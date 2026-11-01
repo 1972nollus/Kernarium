@@ -15,7 +15,9 @@ archives and three raw GPT disks:
   logged-in root shell on `hvc0`; and
 - `debian-13-plasma-wayland.img` starts Plasma on Wayland as `debian`, carries
   System Settings, Konsole, Chromium, the stock Debian Mesa VA-API driver,
-  `vainfo`, FFmpeg, and a PipeWire audio server for the guest sound device,
+  `vainfo`, FFmpeg, the [Virtio video VA-API driver](../../video/va-v4l2/README.md)
+  with the `/etc/chromium.d` file that makes Chromium use it, and a PipeWire
+  audio server for the guest sound device,
   logs `debian` in on `hvc0`, and grants that user passwordless sudo. Its
   panel pins only installed applications, so Discover and its PackageKit
   daemon are omitted. The session's XDG directories exist before the first

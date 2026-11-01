@@ -12,14 +12,17 @@ engine, holds no state, and is a CPU-layer `shared` target.
 library's; their comments state what each call takes, returns and guarantees,
 including the fault ordering and what each exit leaves in the PC and
 ITSTATE, which the engines follow. `a32_profile.hpp` builds the `Profile` an
-engine decodes against from the host and the engine's level.
+engine decodes against from the host.
 
 The profile is Armv8-A AArch32 at EL0 (see
 [`../../../../docs/architecture.md`](../../../../docs/architecture.md) and
 [`../../../../docs/a32-instruction-coverage.md`](../../../../docs/a32-instruction-coverage.md)).
 The decoder implements these choices on top of the XML:
 
-- SWP and SWPB, which Armv8 AArch32 does not have, decode as unallocated;
+- SWP and SWPB, which Armv8 AArch32 does not have, decode as unallocated, so
+  an engine raises the undefined-instruction event for them whatever the
+  condition and leaves the choice to the guest kernel, which emulates them
+  behind `abi.swp` ([`kernel/common/README.md`](../../../../kernel/common/README.md));
   SETEND, SETPAN, SRS, RFE, ERET, HVC, SMC, HLT, DCPS, the banked-register and
   user-register forms of MRS, MSR, LDM and STM, and LDC and STC are undefined
   at EL0;
@@ -55,11 +58,17 @@ tooling-time oracle that no build uses. Never edit them.
   partitions the space exactly, so the rows that remain after the unallocated
   ones are dropped decide every word. A decision tree per instruction set
   selects the candidate rows, which the row's mask, value and constraints then
-  confirm.
+  confirm; a subtree that occurs more than once is stored once.
 - An operand program is a form's Decode pseudocode translated to C++ by
-  `a32_operand_codegen.py`. The helpers it calls are Arm's shared
-  pseudocode functions in `decode_support.hpp`. A construct the translator
-  does not know fails the generation.
+  `a32_operand_codegen.py`. Forms whose pseudocode translates to the same C++
+  share one program. The helpers it calls are Arm's shared pseudocode
+  functions in `decode_support.hpp`. A construct the translator does not know
+  fails the generation.
+- `form_operation.hpp` groups the forms into operations (`Op`) by mnemonic,
+  with each form's operand shape and SP base read from its name. It is the
+  one such table: the semantic library adds its handlers and transfer modes
+  to it, and the JIT's compiler adds its classes for the VFP, Advanced SIMD
+  and Armv8 forms.
 - The unit test `arm64-aarch32-decoder` decodes the stored sample words of
   every row and the whole 16-bit Thumb space and compares the answers
   against `a32_expected.py`, an independent evaluation of the same pseudocode
@@ -78,7 +87,10 @@ The engines reach it through `execute_a32`, with the instruction they
 decoded; `step_a32`, which fetches and decodes as well, is the model lane's
 and the semantic tests' entry. It covers the whole profile, A32 and T32
 ([`../../../../docs/a32-instruction-coverage.md`](../../../../docs/a32-instruction-coverage.md)
-lists the forms).
+lists the forms). The unit tests that require a lowered form to stay out of
+the library link `uml_arm64_aarch32_semantics_exit_counting`, the library
+built with per-form counters of `execute_a32` calls
+(`semantics_exit_counters.hpp`); the library the products link has none.
 
 Floating point runs the host's own scalar instruction on bit patterns under
 the FPCR the form defines, the guest's control bits for VFP and the Standard

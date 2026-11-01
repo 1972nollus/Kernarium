@@ -49,9 +49,8 @@ void materialize(CpuState &cpu) noexcept {
  * at `address` and `file`. Every page is translated before any byte moves,
  * so a store is never half applied, and a fault reports the first byte of
  * the first page that fails, as the M4 does (the S3b native records). A
- * store revalidates write permission at this boundary, invalidates the
- * software reservations it overlaps and clears the local monitor, as the
- * native fast path does.
+ * store revalidates write permission at this boundary and invalidates the
+ * software reservations it overlaps, as the native fast path does.
  */
 [[nodiscard]] std::uint64_t transfer(CpuState &cpu, Tlb &tlb,
                                      std::uint64_t address, std::byte *file,
@@ -88,11 +87,9 @@ void materialize(CpuState &cpu) noexcept {
     }
     completed += lengths[page];
   }
-  if (!load) {
+  if (!load)
     jit::semantic::invalidate_store_ranges(
-        std::span<const JitStoreRange>{stored}.first(pages));
-    cpu.exclusive_size = 0;
-  }
+        cpu, std::span<const JitStoreRange>{stored}.first(pages));
   return retire(cpu);
 }
 
@@ -165,8 +162,7 @@ public:
             reinterpret_cast<std::uintptr_t>(hosts_[index] + low_[index]),
             high_[index] - low_[index]};
     jit::semantic::invalidate_store_ranges(
-        std::span<const JitStoreRange>{stored}.first(ranges));
-    cpu.exclusive_size = 0;
+        cpu, std::span<const JitStoreRange>{stored}.first(ranges));
   }
 
 private:
@@ -315,8 +311,7 @@ void elements(const VectorAccess &access, Visit &&visit) noexcept {
   access.file = cpu.sme_registers;
   access.svl = svl;
   access.address = cpu.untag_data_address(
-      tagged + jit::sme_memory_offset(memory, instruction, svl, index),
-      base == 31U);
+      tagged + jit::sme_memory_offset(memory, instruction, svl, index));
   access.esize = jit::sme_memory_element_bytes(memory, instruction);
   access.msize = memory.msize / 8U;
   for (unsigned operand = 0; operand < row.operand_count; ++operand) {
@@ -476,7 +471,7 @@ void elements(const VectorAccess &access, Visit &&visit) noexcept {
     } else if (memory.mode != Mode::post_index) {
       offset = static_cast<std::uint64_t>(memory.immediate);
     }
-    address = cpu.untag_data_address(base + offset, memory.base == 31U);
+    address = cpu.untag_data_address(base + offset);
   }
   Pages pages{tlb, memory.load};
   if (const auto fault = pages.unreachable(
@@ -573,7 +568,7 @@ uml_arm64_jit_execute_sme(CpuState *cpu, Tlb *tlb,
   /* CheckSPAlignment() comes before any access. */
   if (base == 31U && (tagged & 15U) != 0U)
     return report_fault(*tlb, tagged, load, true);
-  auto address = cpu->untag_data_address(tagged, base == 31U);
+  auto address = cpu->untag_data_address(tagged);
   if (!array_vector)
     return transfer(*cpu, *tlb, address, zt0, sme_zt0_bytes, load);
   /* LDR and STR ZA[Wv, #off4], [Xn|SP, #off4, MUL VL]: one horizontal ZA

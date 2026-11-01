@@ -67,7 +67,7 @@ struct HostGraphicsStackTests {
     /// Loads the runtime that links the graphics frameworks into this process.
     private static func selectRuntime() throws {
         let selected = kernarium_runtime_loader_select(
-            UInt32(KERNARIUM_RUNTIME_GUEST_LINUX), 4096
+            UInt32(KERNARIUM_RUNTIME_GUEST_LINUX)
         )
         try #require(selected == 0, "no bundled 4 KiB Linux runtime loaded")
     }

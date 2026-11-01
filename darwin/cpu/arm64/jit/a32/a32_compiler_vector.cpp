@@ -137,10 +137,10 @@ ShadowEffect shadow_effect(const aarch32::Instruction &inst) noexcept {
   if (inst.status != aarch32::Status::ok)
     return ShadowEffect::forget;
   switch (op_info(inst.form).op) {
-  case Op::adc: case Op::add: case Op::add_w: case Op::adr: case Op::and_:
+  case Op::adc: case Op::add: case Op::addw: case Op::adr: case Op::and_:
   case Op::bic: case Op::cmn: case Op::cmp: case Op::eor: case Op::mov:
   case Op::mvn: case Op::orn: case Op::orr: case Op::rsb: case Op::rsc:
-  case Op::sbc: case Op::sub: case Op::sub_w: case Op::teq: case Op::tst:
+  case Op::sbc: case Op::sub: case Op::subw: case Op::teq: case Op::tst:
   case Op::movw: case Op::movt:
   case Op::bfc: case Op::bfi: case Op::sbfx: case Op::ubfx: case Op::clz:
   case Op::rbit: case Op::rev: case Op::rev16: case Op::revsh: case Op::sxtb:

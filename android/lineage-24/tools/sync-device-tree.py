@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Synchronize the checked Kernarium device overlay into the AOSP workspace."""
+"""Synchronize the checked Kernarium device overlay into the AOSP workspace.
+
+The copy gives every file whose bytes or mode differ from what the destination
+held before a fresh modification time, and restores the time of every file that
+did not change. Make decides by modification time whether an output is up to
+date, and a checkout keeps the time of the commit that wrote each file: an
+overlay that switches back to older content would otherwise find the output of
+the newer content, installed by an earlier build, newer than its own input and
+leave it in place. A file that did not change keeps its time, so the build does
+not redo work that depends only on it.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +20,7 @@ import argparse
 import os
 import shutil
 import stat
+import time
 from pathlib import Path, PurePosixPath
 
 
@@ -72,19 +83,39 @@ def verify(source: Path, destination: Path) -> None:
             fail(f"destination entry differs: {relative}")
 
 
+def file_times(root: Path, entries: dict[PurePosixPath, tuple[str, int, bytes | None]]) -> dict[PurePosixPath, int]:
+    """The modification time, in nanoseconds, of every regular file of the inventory."""
+    return {
+        relative: (root / relative).stat().st_mtime_ns
+        for relative, entry in entries.items()
+        if entry[0] == "file"
+    }
+
+
 def synchronize(source: Path, destination: Path) -> None:
     # copytree follows links, so reject a linked source entry before copying.
-    inventory(source)
+    source_entries = inventory(source)
+    before: dict[PurePosixPath, tuple[str, int, bytes | None]] = {}
+    times: dict[PurePosixPath, int] = {}
     if destination.exists() or destination.is_symlink():
         if destination.is_symlink() or not destination.is_dir():
             fail(f"destination is not a regular directory: {destination}")
         # Inspect before removing so a stale symbolic link cannot redirect any
         # operation outside the one exact device subtree.
-        inventory(destination)
+        before = inventory(destination)
+        times = file_times(destination, before)
         shutil.rmtree(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source, destination, copy_function=shutil.copy2)
     verify(source, destination)
+    # A file that changed is new to the build whatever its checkout time says; one
+    # that did not keeps the time the build already saw.
+    now = time.time_ns()
+    for relative, entry in source_entries.items():
+        if entry[0] != "file":
+            continue
+        stamp = times[relative] if before.get(relative) == entry else now
+        os.utime(destination / relative, ns=(stamp, stamp))
 
 
 def main() -> None:

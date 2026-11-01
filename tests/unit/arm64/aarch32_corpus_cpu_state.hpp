@@ -32,11 +32,26 @@ namespace uml::testing::aarch32_corpus {
 inline constexpr std::uint32_t kFpscrControlMask = 0x07c8'0000U;
 inline constexpr std::uint32_t kFpscrStatusMask = 0x0800'009fU;
 
+/* What an AArch64 task leaves in the general-register slots that are no
+ * AArch32 register: the runtime loads R0-R14 for an AArch32 entry and keeps
+ * x15-x30 and SP of whatever ran on the virtual CPU before. Both halves of
+ * every value are set, so an engine that reads one, whole or as a 32-bit
+ * value, depends on it. The lanes start every case from this, as a task does
+ * on a virtual CPU that has run 64-bit code. */
+inline void leave_aarch64_task_state(::uml::cpu::arm64::CpuState &cpu)
+{
+	for (unsigned index = kRegisters; index < cpu.registers.size(); ++index)
+		cpu.registers[index] = 0xa64d'0000'0000'0badULL |
+			std::uint64_t{index} << 32 | std::uint64_t{index} << 16;
+	cpu.sp = 0xa64d'5050'5050'0badULL;
+}
+
 /* The CpuState a case starts in, entered at `entry` in the case's state. */
 [[nodiscard]] inline ::uml::cpu::arm64::CpuState cpu_from(const State &state, bool thumb, std::uint32_t entry)
 {
 	namespace dec = ::uml::cpu::arm64::aarch32;
 	::uml::cpu::arm64::CpuState cpu{};
+	leave_aarch64_task_state(cpu);
 	cpu.a32 = 1;
 	cpu.pc = thumb ? dec::t32_key(entry) : dec::a32_key(entry);
 	for (unsigned index = 0; index < kRegisters; ++index)

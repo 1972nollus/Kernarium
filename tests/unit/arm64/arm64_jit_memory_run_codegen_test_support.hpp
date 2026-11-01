@@ -41,6 +41,8 @@ inline constexpr std::uint32_t cbnz_x0 = 0xb500'0000U;
 inline constexpr std::uint32_t sp_span_offset_extract =
     0xd340'0000U | (4U << 16U) | ((page_shift - 1U) << 10U) |
     (8U << 5U);
+// The store that drops the software monitor (strb wzr, [x15, #exclusive_size]).
+// Only a fused exclusive pair and CLREX emit it; an ordinary store emits none.
 inline constexpr std::uint32_t monitor_clear =
     0x3900'0000U |
     (static_cast<std::uint32_t>(

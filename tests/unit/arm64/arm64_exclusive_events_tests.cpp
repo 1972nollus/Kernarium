@@ -12,7 +12,13 @@
  * - straight-line code that crosses block ends and a code page;
  * - a load whose page misses the TLB, while the host page is resident;
  * - an instruction the gadget engine's library runs (A32 and T32);
- * - another thread's stores to another line of the page, all the while.
+ * - another thread's stores to another line of the page, all the while;
+ * - the guest's own store to another line, its pair store (a spill's STP or
+ *   STRD) to another page, and in A64 a structure store (ST2) to that page,
+ *   one that crosses into the next page, and one through a tagged pointer;
+ * - in A64 the whole pair through a base that carries a tag in its top byte,
+ *   which the engine ignores (top-byte ignore), so the monitor guards the
+ *   location and not the pointer.
  *
  * Every case runs in A64, A32 and T32, for a single register (a doubleword in
  * A64, a word in AArch32) and a pair of words, on both engines. A store may
@@ -94,6 +100,12 @@ enum class Between {
 	tlb_miss,
 	library,
 	other_thread,
+	own_store,
+	own_pair_store,
+	own_structure_store,
+	own_structure_store_crossing,
+	own_tagged_structure_store,
+	tagged_base,
 };
 
 [[nodiscard]] const char *name(Isa isa) noexcept
@@ -135,6 +147,18 @@ enum class Between {
 		return "an instruction the library runs";
 	case Between::other_thread:
 		return "another thread storing to another line";
+	case Between::own_store:
+		return "a store of its own to another line";
+	case Between::own_pair_store:
+		return "a pair store of its own to another page";
+	case Between::own_structure_store:
+		return "a structure store of its own to another page";
+	case Between::own_structure_store_crossing:
+		return "a structure store of its own across a page";
+	case Between::own_tagged_structure_store:
+		return "a structure store of its own through a tagged pointer";
+	case Between::tagged_base:
+		return "nothing between, through a tagged base";
 	}
 	return "?";
 }
@@ -346,6 +370,45 @@ public:
 		}
 	}
 
+	/* str w5, [x0, #0x200] / str r5, [r0, #0x200]: another line. */
+	void own_store()
+	{
+		switch (isa_) {
+		case Isa::a64:
+			word(0xb902'0005U);
+			return;
+		case Isa::a32:
+			word(0xe580'5200U);
+			return;
+		case Isa::t32:
+			word(0xf8c0'5200U);
+			return;
+		}
+	}
+
+	/* stp w4, w5, [x6, #8] / strd r4, r5, [r6, #8]: a spill's shape. */
+	void own_pair_store()
+	{
+		switch (isa_) {
+		case Isa::a64:
+			word(0x2901'14c4U);
+			return;
+		case Isa::a32:
+			word(0xe1c6'40f8U);
+			return;
+		case Isa::t32:
+			word(0xe9c6'4502U);
+			return;
+		}
+	}
+
+	/* st2 {v0.4s, v1.4s}, [x6]: A64 only. */
+	void own_structure_store()
+	{
+		require(isa_ == Isa::a64);
+		word(0x4c00'88c0U);
+	}
+
 	/* usad8 r4, r5, r6, which the gadget engine runs in its library. */
 	void library_instruction()
 	{
@@ -406,6 +469,17 @@ struct Program final {
 		break;
 	case Between::library:
 		c.library_instruction();
+		break;
+	case Between::own_store:
+		c.own_store();
+		break;
+	case Between::own_pair_store:
+		c.own_pair_store();
+		break;
+	case Between::own_structure_store:
+	case Between::own_structure_store_crossing:
+	case Between::own_tagged_structure_store:
+		c.own_structure_store();
 		break;
 	default:
 		break;
@@ -545,6 +619,19 @@ template<typename T>
 	const Program &built)
 {
 	auto cpu = machine.cpu_at(built.start);
+	/* With top-byte ignore on, which Android's tasks have, the engines
+	 * ignore the tag a pointer carries in its top byte. */
+	constexpr std::uint64_t tag = std::uint64_t{0x5a} << 56;
+	cpu.tbi_enabled = c.between == Between::tagged_base ||
+		c.between == Between::own_tagged_structure_store;
+	if (c.between == Between::tagged_base)
+		cpu.registers[0] |= tag;
+	if (c.between == Between::own_tagged_structure_store)
+		cpu.registers[6] |= tag;
+	/* A structure store of 32 bytes that ends one page on: the JIT leaves
+	 * a store that crosses a page to its semantic helper. */
+	if (c.between == Between::own_structure_store_crossing)
+		cpu.registers[6] = data_base + 3 * page - 16;
 	const auto reason = machine.run(cpu);
 	if (reason != uml::cpu::ExitReason::system_call)
 		failed(c, "the program did not finish; exit reason",
@@ -668,13 +755,9 @@ int main(int argc, char **argv)
 				static_cast<int>(engine.size()), engine.data());
 			continue;
 		}
-		const bool a32 = uml::cpu::engine_a32_support(kind) !=
-			arm64::A32Support::none;
 		unsigned cases = 0;
 		unsigned retried = 0;
 		for (const auto isa : {Isa::a64, Isa::a32, Isa::t32}) {
-			if (isa != Isa::a64 && !a32)
-				continue;
 			for (const auto width : {Width::single, Width::pair})
 				for (const auto between : {Between::nothing,
 					     Between::translated_branch,
@@ -684,9 +767,21 @@ int main(int argc, char **argv)
 					     Between::straight_line,
 					     Between::tlb_miss,
 					     Between::library,
-					     Between::other_thread}) {
-					if (between == Between::library &&
-					    isa == Isa::a64)
+					     Between::other_thread,
+					     Between::own_store,
+					     Between::own_pair_store,
+					     Between::own_structure_store,
+					     Between::own_structure_store_crossing,
+					     Between::own_tagged_structure_store,
+					     Between::tagged_base}) {
+					/* The library case has no A64 form, nor the
+					 * structure store or a tagged base an AArch32
+					 * one. */
+					const bool a64_only =
+						between >= Between::own_structure_store;
+					if ((between == Between::library &&
+					     isa == Isa::a64) ||
+					    (a64_only && isa != Isa::a64))
 						continue;
 					const Case c{engine, isa, width, between};
 					const auto taken =

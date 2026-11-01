@@ -21,10 +21,12 @@
 #include <pthread.h>
 #include <signal.h>
 #include <sys/ptrace.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <ucontext.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -187,9 +189,13 @@ void mark_cleanup(void *)
 	cleanup_ran = true;
 }
 
+// The thread a cancellation case is about, once it is about to make its call.
+std::atomic<int> worker_tid;
+
 void *blocked_reader(void *)
 {
 	pthread_cleanup_push(mark_cleanup, nullptr);
+	worker_tid.store(static_cast<int>(syscall(SYS_gettid)));
 	char byte;
 	(void)read(pipe_descriptors[0], &byte, 1);
 	pthread_cleanup_pop(0);
@@ -199,10 +205,42 @@ void *blocked_reader(void *)
 void *polling_worker(void *)
 {
 	pthread_cleanup_push(mark_cleanup, nullptr);
+	worker_tid.store(static_cast<int>(syscall(SYS_gettid)));
 	for (;;)
 		pthread_testcancel();
 	pthread_cleanup_pop(0);
 	return nullptr;
+}
+
+// The scheduling state of a thread of this process, or '?'.
+char task_state(int tid)
+{
+	char path[64];
+	std::snprintf(path, sizeof(path), "/proc/self/task/%d/stat", tid);
+	std::FILE *file = std::fopen(path, "r");
+	if (file == nullptr)
+		return '?';
+	char line[512] = "";
+	const bool read_line = std::fgets(line, sizeof(line), file) != nullptr;
+	std::fclose(file);
+	// The state follows the command name, which is in parentheses.
+	const char *name_end = read_line ? std::strrchr(line, ')') : nullptr;
+	return name_end != nullptr && name_end[1] == ' ' ? name_end[2] : '?';
+}
+
+// Waits, for at most ten seconds, until the worker is in its call: for a
+// reader that is asleep in read(), as only then does the cancellation signal
+// interrupt a system call. A loaded guest can schedule the worker long after
+// a fixed pause.
+bool wait_for_worker(bool must_sleep)
+{
+	for (int attempt = 0; attempt < 10000; ++attempt) {
+		const int tid = worker_tid.load();
+		if (tid != 0 && (!must_sleep || task_state(tid) == 'S'))
+			return true;
+		usleep(1000);
+	}
+	return false;
 }
 
 // Cancelling a thread runs its cleanup handler through a forced unwind. For
@@ -215,7 +253,10 @@ int cancel_case(void *(*worker)(void *))
 	pthread_t thread;
 	if (pthread_create(&thread, nullptr, worker, nullptr) != 0)
 		return 2;
-	usleep(20000);
+	if (!wait_for_worker(worker == blocked_reader)) {
+		std::printf("  the worker never reached its call\n");
+		return 5;
+	}
 	pthread_cancel(thread);
 	void *result = nullptr;
 	pthread_join(thread, &result);

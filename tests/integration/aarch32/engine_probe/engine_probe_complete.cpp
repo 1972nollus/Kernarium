@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* Group "complete" (the complete level): CRC32, AES, PMULL, SHA-1, SHA-256,
+/* Group "complete": CRC32, AES, PMULL, SHA-1, SHA-256,
  * the dot product, half-precision arithmetic and FMLAL against known answers,
  * from A32 and from T32, for each extension the HWCAP words advertise. */
 #include "engine_probe.hpp"

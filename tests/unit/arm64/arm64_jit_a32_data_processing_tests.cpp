@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* A32 data processing on the JIT against the reference
  * (arm64_jit_a32_reference.hpp): random sequences of instructions under
- * random conditions and flags. The corpus lane carries T32, and the control
- * test the IT blocks. */
+ * random conditions and flags. Every parallel add and subtract form also runs
+ * against a model of the lanes, and the lowered ones must stay out of the
+ * semantic library. The corpus lane carries T32, and the control test the IT
+ * blocks. */
 #include "arm64_jit_a32_reference.hpp"
 #include "arm64_jit_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 
-#include "cpu/arm64/jit/a32/a32_helpers.hpp"
+#include "cpu/arm64/aarch32/semantics_exit_counters.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -17,7 +19,7 @@
 using namespace uml::emulator::tests;
 using namespace uml::emulator::tests::a32;
 using ::uml::cpu::ExitReason;
-namespace jit_a32 = ::uml::cpu::arm64::jit::a32;
+namespace aarch32 = ::uml::cpu::arm64::aarch32;
 
 namespace {
 
@@ -307,7 +309,7 @@ void parallel_arithmetic() {
   };
   constexpr Registers shapes[] = {{2, 3, 4}, {3, 3, 4}, {4, 3, 4},
                                   {3, 3, 3}, {12, 5, 6}, {0, 1, 2}};
-  jit_a32::reset_helper_exits();
+  aarch32::reset_a32_library_exits();
   std::size_t executed_inline = 0;
   for (const unsigned prefix : {1U, 2U, 3U, 5U, 6U, 7U}) {
     for (const unsigned op2 : {0U, 1U, 2U, 3U, 4U, 7U}) {
@@ -332,9 +334,9 @@ void parallel_arithmetic() {
           cpu.a32_ge_mask = old_ge;
           const auto before = cpu;
           const bool counted = prefix != 2U;
-          jit_a32::count_helper_exits(counted);
+          aarch32::count_a32_library_exits(counted);
           const auto outcome = fixture.run(cpu);
-          jit_a32::count_helper_exits(false);
+          aarch32::count_a32_library_exits(false);
           require(outcome.reason == ExitReason::system_call);
           const std::uint32_t right = shape.m == shape.n ? a : b;
           const auto expected = parallel_model(prefix, op2, a, right, old_ge);
@@ -356,7 +358,7 @@ void parallel_arithmetic() {
     }
   }
   require(executed_inline > 0U);
-  require(jit_a32::helper_exit_total() == 0U);
+  require(aarch32::a32_library_exit_total() == 0U);
 }
 
 } // namespace

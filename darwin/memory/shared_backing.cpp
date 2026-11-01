@@ -3,6 +3,8 @@
 
 #include "guest_ram_commitment.hpp"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -12,6 +14,8 @@
 #include <mach/mach.h>
 #include <mutex>
 #include <new>
+#include <pthread.h>
+#include <signal.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -52,6 +56,26 @@ void report_mapping_failure(const char *what, const void *address,
 		what, length, address, error,
 		seen + 1 == reported_limit ? "; further failures are not reported"
 					   : "");
+}
+
+int wire_host_range(void *address, std::size_t length) noexcept
+{
+	/* Every signal that only arrives asynchronously. A fault signal is
+	 * never held: a thread that faults with it blocked re-executes the
+	 * faulting instruction forever. */
+	sigset_t held;
+	sigfillset(&held);
+	for (const int synchronous : {SIGILL, SIGTRAP, SIGABRT, SIGEMT, SIGFPE,
+		     SIGBUS, SIGSEGV, SIGSYS})
+		sigdelset(&held, synchronous);
+	sigset_t previous;
+	const bool masked = pthread_sigmask(SIG_BLOCK, &held, &previous) == 0;
+	const int result = mlock(address, length);
+	const int error = errno;
+	if (masked)
+		(void)pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+	errno = error;
+	return result;
 }
 
 namespace {
@@ -282,7 +306,8 @@ struct AnonymousTail final {
 	/* Guest RAM is wired so that it is never compressed, but only as the
 	 * guest commits it; see guest_ram_commitment.hpp. The reserved tail sits
 	 * below everything the guest allocates and is wired now. */
-	if (tail.address != nullptr && mlock(tail.address, tail.length) != 0) {
+	if (tail.address != nullptr &&
+	    wire_host_range(tail.address, tail.length) != 0) {
 		const int saved_errno = errno;
 		dprintf(STDERR_FILENO,
 			"Darwin anonymous guest RAM: failed to wire the %zu-byte "
@@ -400,7 +425,7 @@ int release_alias(void *address, std::size_t length, bool fixed) noexcept
 				std::min<std::size_t>(length, managed - offset) : 0;
 		}
 		if (protection != PROT_NONE && unmanaged != 0 &&
-		    mlock(address, unmanaged) != 0)
+		    wire_host_range(address, unmanaged) != 0)
 			report_mapping_failure("guest RAM wiring", address,
 				unmanaged, errno);
 #endif
@@ -513,6 +538,39 @@ bool anonymous_shared_backing_registered() noexcept
 	return anonymous_backing.registered;
 }
 
+bool guest_ram_borrowed() noexcept
+{
+	std::lock_guard lock{anonymous_backing.mutex};
+	return anonymous_backing.borrowed_views != 0;
+}
+
+int hand_back_anonymous_guest_ram(void *window, std::size_t length) noexcept
+{
+	std::lock_guard lock{anonymous_backing.mutex};
+	if (anonymous_backing.borrowed_views != 0) {
+		errno = EBUSY;
+		return -1;
+	}
+	/* The window is replaced whole, around the ranges the host keeps. A
+	 * failure leaves the guest registered, so it can still be handed back
+	 * later. */
+	if (window != nullptr && reserve_host_range(window, length) != 0)
+		return -1;
+	retire_guest_ram_commitment();
+	/* No view is borrowed, so no page was waiting for the last one. */
+	anonymous_backing.retained.clear();
+	anonymous_backing.retained.shrink_to_fit();
+	anonymous_backing.retained_pages = 0;
+	anonymous_backing.root = nullptr;
+	anonymous_backing.size = 0;
+	anonymous_backing.device = 0;
+	anonymous_backing.inode = 0;
+	anonymous_backing.registered = false;
+	dprintf(STDERR_FILENO,
+		"Darwin anonymous guest RAM: handed back to the process\n");
+	return 0;
+}
+
 bool is_anonymous_shared_backing(int fd) noexcept
 {
 	struct stat status {};
@@ -600,15 +658,104 @@ bool retain_borrowed_guest_ram(void *address, std::size_t length) noexcept
 	return true;
 }
 
-int reserve_host_range(void *address, std::size_t length) noexcept
+namespace {
+
+struct KeptHostRange final {
+	std::uintptr_t begin{};
+	std::uintptr_t end{};
+};
+
+/* The ranges the host keeps (keep_host_range). Every reservation reads them
+ * and only the loader adds one, so an entry is written once, before the count
+ * that publishes it, and never changes. A kernel image has a few executable
+ * segments, and a process loads one image into one window at a time. */
+struct KeptHostRanges final {
+	std::mutex mutex;
+	std::array<KeptHostRange, 32> ranges{};
+	std::atomic<std::size_t> count{0};
+};
+
+[[clang::no_destroy]] constinit KeptHostRanges kept_host_ranges;
+
+[[nodiscard]] int reserve_exact_host_range(
+	std::uintptr_t begin, std::uintptr_t end) noexcept
 {
-	if (length == 0)
-		return 0;
-	if (mmap(address, length, PROT_NONE,
+	if (mmap(reinterpret_cast<void *>(begin), end - begin, PROT_NONE,
 		    MAP_FIXED | MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0) ==
 	    MAP_FAILED)
 		return -1;
 	return 0;
+}
+
+} // namespace
+
+int reserve_host_range(void *address, std::size_t length) noexcept
+{
+	if (length == 0)
+		return 0;
+	auto begin = reinterpret_cast<std::uintptr_t>(address);
+	if (begin > std::numeric_limits<std::uintptr_t>::max() - length) {
+		errno = EINVAL;
+		return -1;
+	}
+	const std::uintptr_t end = begin + length;
+	const std::size_t kept =
+		kept_host_ranges.count.load(std::memory_order_acquire);
+	/* Each part before the lowest kept range left in [begin, end), then the
+	 * part after the last. XNU refuses a replacement that touches a
+	 * permanent mapping whole, so the parts are reserved separately. */
+	while (begin < end) {
+		const KeptHostRange *next = nullptr;
+		for (std::size_t index = 0; index < kept; ++index) {
+			const auto &range = kept_host_ranges.ranges[index];
+			if (range.begin < end && range.end > begin &&
+			    (next == nullptr || range.begin < next->begin))
+				next = &range;
+		}
+		const std::uintptr_t stop =
+			next == nullptr ? end : std::max(next->begin, begin);
+		if (stop > begin && reserve_exact_host_range(begin, stop) != 0)
+			return -1;
+		if (next == nullptr)
+			break;
+		begin = next->end;
+	}
+	return 0;
+}
+
+bool keep_host_range(void *address, std::size_t length) noexcept
+{
+	const auto begin = reinterpret_cast<std::uintptr_t>(address);
+	if (length == 0 || begin % vm_page_size != 0 ||
+	    length % vm_page_size != 0 ||
+	    begin > std::numeric_limits<std::uintptr_t>::max() - length)
+		return false;
+	std::lock_guard lock{kept_host_ranges.mutex};
+	const std::size_t count =
+		kept_host_ranges.count.load(std::memory_order_relaxed);
+	for (std::size_t index = 0; index < count; ++index) {
+		const auto &range = kept_host_ranges.ranges[index];
+		if (range.begin == begin && range.end == begin + length)
+			return true;
+	}
+	if (count == kept_host_ranges.ranges.size())
+		return false;
+	kept_host_ranges.ranges[count] = {begin, begin + length};
+	kept_host_ranges.count.store(count + 1, std::memory_order_release);
+	return true;
+}
+
+bool host_range_kept(const void *address, std::size_t length) noexcept
+{
+	const auto begin = reinterpret_cast<std::uintptr_t>(address);
+	const std::size_t count =
+		kept_host_ranges.count.load(std::memory_order_acquire);
+	for (std::size_t index = 0; index < count; ++index) {
+		const auto &range = kept_host_ranges.ranges[index];
+		if (range.begin == begin && range.end - range.begin == length)
+			return true;
+	}
+	return false;
 }
 
 void *map_shared_backing(void *address, std::size_t length,

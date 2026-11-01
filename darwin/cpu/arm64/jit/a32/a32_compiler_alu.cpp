@@ -25,12 +25,7 @@ using aarch32::SRType;
 
 namespace {
 
-constexpr unsigned fallback_n = 9;
-constexpr unsigned fallback_m = 10;
 constexpr unsigned fallback_s = 1;
-constexpr unsigned temp0 = 0;
-constexpr unsigned temp1 = 1;
-constexpr unsigned temp2 = 8;
 constexpr unsigned shifted = 16;
 constexpr unsigned image = 11;
 /* Where a predicated instruction builds its result. */
@@ -619,13 +614,13 @@ A32Compiler::Flow A32Compiler::emit_address_forms(const OpInfo &info) {
     done(dest);
     return Flow::next;
   }
-  case Op::add_w:
-  case Op::sub_w: {
+  case Op::addw:
+  case Op::subw: {
     const unsigned n_guest = info.sp_base ? 13U : static_cast<unsigned>(o.n);
     const auto imm = static_cast<std::uint32_t>(o.imm32);
     const unsigned n = use(n_guest, fallback_n);
     const auto dest = def(d_guest, false, fallback_n);
-    if (info.op == Op::add_w)
+    if (info.op == Op::addw)
       emit(enc::add_i(dest.native.host, n, imm));
     else
       emit(enc::sub_i(dest.native.host, n, imm));

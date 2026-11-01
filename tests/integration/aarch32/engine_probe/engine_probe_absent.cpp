@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* Group "absent": an instruction of an extension the process does not see in
  * its HWCAP words is UNDEFINED: SIGILL with the instruction's address, from
- * A32 and from T32. At the base level that is every VFP and Advanced SIMD
- * instruction; below the complete level it is the crypto and CRC32 groups the
- * HWCAP2 bits leave out. Each SIGILL is counted as expected. The VFP and NEON
+ * A32 and from T32: VFP and Advanced SIMD where the HWCAP words leave them
+ * out, and the crypto, CRC32, dot-product and half-precision groups the
+ * HWCAP bits leave out. Each SIGILL is counted as expected. The VFP and NEON
  * state registers that user mode cannot read are covered by the simd group. */
 #include "engine_probe.hpp"
 

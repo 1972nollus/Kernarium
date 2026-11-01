@@ -36,11 +36,12 @@ public:
 
   void set_table_list_planning_enabled(bool enabled) noexcept;
 
-  /* Compiles for the guest SVCR mode `mode` (svcr_sm, svcr_za): the mode
-   * the translation's key carries (translation_key()), and so the mode its
-   * code runs in. Mode 0, the default, is the translation without SME
-   * state. */
-  void set_sme_mode(std::uint8_t mode) noexcept;
+  /* Compiles for the translation mode `mode`: the guest SVCR mode
+   * (svcr_sm, svcr_za) and translation_mode_tbi, the mode the translation's
+   * key carries (translation_key()), and so the mode its code runs in.
+   * Mode 0, the default, is the translation without SME state whose data
+   * addresses keep their top byte. */
+  void set_translation_mode(std::uint8_t mode) noexcept;
 
   struct Result final {
     std::span<const std::uint32_t> words;
@@ -227,26 +228,8 @@ private:
 
   void emit_code_change_check(std::uint32_t instruction, std::uint64_t pc);
 
-  void emit_pair_slow(std::uint32_t instruction, std::uint64_t pc,
-                      std::size_t count);
-
-  void emit_simd_structure_slow(std::uint32_t instruction, std::uint64_t pc,
-                                std::size_t count);
-
-  void emit_alignment_fault(std::uint32_t instruction, std::uint64_t pc,
-                            std::size_t count);
-
-  void emit_ordered_slow(std::uint32_t instruction, std::uint64_t pc,
-                         std::size_t count);
-
-  void emit_exclusive_slow(std::uint32_t instruction, std::uint64_t pc,
-                           std::size_t count);
-
   void emit_deferred_exclusive_slow(std::uint32_t instruction,
                                     std::uint64_t pc, std::size_t count);
-
-  void emit_memory_slow(std::uint32_t instruction, std::uint64_t pc,
-                        std::size_t count);
 
   /* Moves 1 to 63 bytes between host pointers, from the given start and
    * end registers, then branches to done. A fill uses v0's low byte. */
@@ -352,9 +335,17 @@ private:
 
   void emit_translation_cold(const TranslationColdPath &path);
 
+  /* Strips the top byte of the final data address in `address`, as a
+   * translation compiled for translation_mode_tbi does for every base,
+   * SP included; it emits nothing otherwise. The address is the one the
+   * access reaches, after any displacement, so a fault reports the untagged
+   * address as the semantic path does. Flag-neutral. */
+  void emit_untag_data_address(unsigned address);
+
   void emit_misalignment_check(unsigned address, std::size_t alignment,
                                Arm64Emitter::Label misaligned);
 
+  /* Ends the software monitor at the end of a fused pair. */
   void clear_local_exclusive_monitor();
 
   [[nodiscard]] std::size_t
@@ -379,7 +370,7 @@ private:
                                   std::uint64_t pc);
 
   /* LDAR or LDAPR as the host's own load-acquire through the translated
-   * base. A misaligned or tagged address takes `slow`. */
+   * base. A misaligned address takes `slow`. */
   void emit_native_ordered_load(std::uint32_t instruction, std::uint64_t pc,
                                 ColdPath::Action slow);
 
@@ -433,8 +424,9 @@ private:
 
   /* Advances x8 from a run's guest base to the first byte the run
    * accesses, base + first, and branches to `outside` unless the bytes up
-   * to base + end lie in that byte's page. Returns whether it emitted
-   * that branch. */
+   * to base + end lie in that byte's page. It strips the top byte of that
+   * first address first (emit_untag_data_address()). Returns whether it
+   * emitted that branch. */
   bool emit_run_span_proof(std::uint64_t first, std::uint64_t end,
                            Arm64Emitter::Label outside);
 

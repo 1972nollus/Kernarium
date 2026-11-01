@@ -73,7 +73,7 @@ struct CpuState final {
 	std::uint32_t fpsr{};
 	std::uint64_t tls{};
 	/* Effective TBI0, imported from the task: EL0 data addresses ignore
-	 * their top byte. SP-based addresses are never untagged. */
+	 * their top byte, whatever register is the base. */
 	bool tbi_enabled{};
 	/* EL0-visible PSTATE fields controlled by MSR (immediate).  DAIF access is
 	 * explicitly gated because SCTLR_EL1.UMA determines whether userspace may
@@ -170,6 +170,9 @@ struct CpuState final {
 	 * tls, and its PC in key form (aarch32/guest_key.hpp) for the whole entry;
 	 * these are the parts that have no A64 field. The runtime writes every one
 	 * of them on each AArch32 entry and an A64 entry never reads them.
+	 * registers[15..30] and sp hold what the virtual CPU ran before, an
+	 * AArch64 task's x15-x30 and SP among it, and an engine that borrows one
+	 * sets it before it reads it.
 	 *
 	 * a32 marks an AArch32 entry for assertions and the sampler. a32_q is the
 	 * sticky Q flag. a32_ge_mask is GE[3:0] with each flag widened to the byte
@@ -212,9 +215,9 @@ struct CpuState final {
 	 * two instructions. */
 	alignas(16) std::array<std::uint8_t, 64> a32_cross{};
 	[[nodiscard]] std::uint64_t untag_data_address(
-		std::uint64_t address, bool base_sp) const noexcept
+		std::uint64_t address) const noexcept
 	{
-		return !base_sp && tbi_enabled ?
+		return tbi_enabled ?
 			address & 0x00ff'ffff'ffff'ffffULL : address;
 	}
 

@@ -41,10 +41,25 @@ Observation
   user mode.
 - uname reports armv8l under PER_LINUX32, and /proc/cpuinfo prints
   arm64 Linux's compat form (model name, Features from the compat
-  HWCAPs); a 64-bit task sees the unchanged output. The CP15 barrier
-  is switched by abi.cp15_barrier (default 1, as natively); SWP and
-  SETEND are UNDEFINED. The SME vector-length prctls refuse AArch32
-  tasks.
+  HWCAPs); a 64-bit task sees the unchanged output. The SME
+  vector-length prctls refuse AArch32 tasks.
+
+Deprecated instructions
+- The CP15 barrier is switched by abi.cp15_barrier (default 1, as
+  natively).
+- abi.swp (0 or 1, default 0, as natively) makes the kernel emulate SWP
+  and SWPB on the engines' undefined-instruction event, as arm64 Linux
+  does. The exchange is one atomic operation on the page the task sees,
+  so it is atomic against exclusive pairs and atomic instructions on
+  other vCPUs. An access that fails, an unaligned SWP included, raises
+  SIGSEGV with the pc at the instruction; a failing condition retires
+  the instruction untouched; a stepped one ends with TRAP_TRACE at the
+  next pc. A pc operand, which the architecture leaves UNPREDICTABLE,
+  is UNDEFINED, where arm64 Linux uses an unrelated register. Every
+  emulation is counted as an emulation fault, traced as
+  emulation:instruction_emulation and logged with a rate limit.
+- SETEND is UNDEFINED, as on a CPU without mixed-endian EL0, and has no
+  switch.
 
 Bridge
 - The topic leaves the bridge at ABI 24: an arm64 task's register tail
@@ -54,11 +69,11 @@ Bridge
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
  arch/arm64/um/Kconfig                       |  33 ++
- arch/arm64/um/Makefile                      |   2 +
+ arch/arm64/um/Makefile                      |   5 +
  arch/arm64/um/aarch32.c                     | 275 ++++++++++++
  arch/arm64/um/aarch32_pages.S               |   8 +
- arch/arm64/um/armv8_deprecated.c            |  46 ++
- arch/arm64/um/asm/aarch32.h                 | 119 +++++
+ arch/arm64/um/armv8_deprecated.c            | 209 +++++++++
+ arch/arm64/um/asm/aarch32.h                 | 122 +++++
  arch/arm64/um/asm/compat-abi.h              |  68 +++
  arch/arm64/um/asm/elf.h                     |  58 +++
  arch/arm64/um/asm/processor.h               |  13 +
@@ -66,7 +81,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  arch/arm64/um/asm/syscall.h                 |  23 +
  arch/arm64/um/ptrace.c                      |  18 +-
  arch/arm64/um/ptrace32.c                    | 366 +++++++++++++++
- arch/arm64/um/shared/sysdep/ptrace.h        |  30 +-
+ arch/arm64/um/shared/sysdep/ptrace.h        |  41 +-
  arch/arm64/um/signal.c                      |   8 +-
  arch/arm64/um/signal32.c                    | 472 ++++++++++++++++++++
  arch/arm64/um/signal_frame.h                |   8 +
@@ -80,13 +95,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  arch/um/kernel/Makefile                     |  16 +-
  arch/um/kernel/exec.c                       |   1 +
  arch/um/kernel/hwcaps_arm64.c               |  18 +
+ arch/um/kernel/skas/uaccess.c               |  55 +++
  arch/um/kernel/um_arch.c                    |  36 ++
  arch/um/kernel/um_arch.h                    |   5 +
- arch/um/os-Darwin/skas/process.c            |  25 +-
+ arch/um/os-Darwin/skas/process.c            |  47 +-
  arch/um/os-Darwin/uml_darwin_abi.h          |  55 ++-
  arch/um/os-Darwin/uml_darwin_abi_identity.h |   4 +-
  arch/um/os-Darwin/uml_darwin_cpu.h          |  10 +
- 33 files changed, 1986 insertions(+), 19 deletions(-)
+ 34 files changed, 2243 insertions(+), 19 deletions(-)
  create mode 100644 arch/arm64/um/aarch32.c
  create mode 100644 arch/arm64/um/aarch32_pages.S
  create mode 100644 arch/arm64/um/armv8_deprecated.c
@@ -149,15 +165,18 @@ index 8b8b7d797c4dfc841eaa5c8f1b3ddc888fda9e1f..e195e71dc38a3774ed660e4f7b722f6f
  	def_bool y
  
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index 8fb8cd5c5933244bf3a8889ff565b177da73d682..bc1a5cf91ff8dac93986b266eadbe3f193a8c616 100644
+index 8fb8cd5c5933244bf3a8889ff565b177da73d682..52e93d87551bb9ede3c0a780eabe8d66a1061475 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
-@@ -3,6 +3,8 @@
+@@ -3,6 +3,11 @@
  obj-y := bugs.o delay.o fault.o mem.o ptrace.o registers.o setjmp.o \
  	signal.o subarch.o syscall_table.o syscalls.o sysrq.o tls.o
  obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o
 +obj-$(CONFIG_UML_ARM64_AARCH32) += aarch32.o aarch32_pages.o \
 +	armv8_deprecated.o ptrace32.o signal32.o sys32.o sys_compat.o
++
++# The emulation tracepoint is arm64 Linux's own.
++CFLAGS_armv8_deprecated.o := -I$(srctree)/arch/arm64/kernel
  
  $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
  targets += user-offsets.s
@@ -458,32 +477,56 @@ index 0000000000000000000000000000000000000000..7edfd1aacdba48acfaaa4d2d1056ce9e
 +#include "../kernel/sigreturn32.S"
 diff --git a/arch/arm64/um/armv8_deprecated.c b/arch/arm64/um/armv8_deprecated.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..2ad8824a5773cea4bc7e16642d7f3970d524420b
+index 0000000000000000000000000000000000000000..98fc0f942f67f2c36c6e69a0a3ea6054f6a86688
 --- /dev/null
 +++ b/arch/arm64/um/armv8_deprecated.c
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,209 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
-+ * The one deprecated AArch32 instruction family that executes: the CP15
-+ * barrier operations (mcr p15, 0, Rt, c7, c10, 4 and 5, and c7, c5, 4).
++ * The deprecated AArch32 instructions of arm64 Linux's armv8_deprecated.c
++ * that this port has: the CP15 barrier operations and SWP and SWPB.
 + *
-+ * arm64 Linux emulates them by default (abi.cp15_barrier is 1), or lets the
++ * CP15 barriers (mcr p15, 0, Rt, c7, c10, 4 and 5, and c7, c5, 4): arm64
++ * Linux emulates them by default (abi.cp15_barrier is 1), or lets the
 + * hardware execute them (2) when SCTLR_EL1.CP15BEN is set, or makes them
 + * UNDEFINED (0).  The engines execute a barrier, so 1 and 2 behave alike;
 + * the kernel passes whether the value is non-zero as
 + * DARWIN_UML_DISPATCH_A32_CP15BEN, and a task which runs one with the
-+ * switch off gets SIGILL.  SWP and SWPB are UNDEFINED, like native's
-+ * default, and so is SETEND, which native would emulate: there is no
-+ * mixed-endian EL0.  Neither has a switch.
++ * switch off gets SIGILL.
++ *
++ * SWP and SWPB: the engines raise the undefined-instruction event for the
++ * word whatever its condition.  abi.swp is 0 (SIGILL) by default, as
++ * natively, and 1 makes the kernel emulate them on that event with arm64
++ * Linux's semantics.  The exchange is one atomic operation on the page the
++ * task sees, so it is atomic against load-exclusive/store-exclusive pairs
++ * and atomic instructions on other vCPUs.  An access that fails raises
++ * SIGSEGV with the pc left at the instruction, an unaligned SWP included,
++ * and a failing condition retires the instruction without touching anything.
++ * A word that names the pc as Rt, Rt2 or Rn is UNPREDICTABLE, which this
++ * port makes UNDEFINED: arm64 Linux uses an unrelated host register there.
++ *
++ * SETEND is UNDEFINED, which native arm64 Linux makes it on a CPU without
++ * mixed-endian EL0: there is none.  It has no switch.
 + */
 +
 +#include <linux/init.h>
++#include <linux/mm.h>
++#include <linux/perf_event.h>
++#include <linux/ratelimit.h>
++#include <linux/sched.h>
++#include <linux/sched/signal.h>
 +#include <linux/sysctl.h>
++#include <linux/uaccess.h>
 +#include <asm/aarch32.h>
 +#include <asm/ptrace.h>
 +
++#define CREATE_TRACE_POINTS
++#include "trace-events-emulation.h"
++
 +static int cp15_barrier = 1;
 +static int cp15_barrier_max = 2;
++/* abi.swp: 0 leaves SWP and SWPB UNDEFINED, 1 emulates them. */
++static int swp;
 +
 +int uml_arm64_cp15_barrier_enabled(void)
 +{
@@ -500,6 +543,15 @@ index 0000000000000000000000000000000000000000..2ad8824a5773cea4bc7e16642d7f3970
 +		.extra1		= SYSCTL_ZERO,
 +		.extra2		= &cp15_barrier_max,
 +	},
++	{
++		.procname	= "swp",
++		.data		= &swp,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax,
++		.extra1		= SYSCTL_ZERO,
++		.extra2		= SYSCTL_ONE,
++	},
 +};
 +
 +static int __init uml_arm64_deprecated_init(void)
@@ -508,12 +560,142 @@ index 0000000000000000000000000000000000000000..2ad8824a5773cea4bc7e16642d7f3970
 +	return 0;
 +}
 +core_initcall(uml_arm64_deprecated_init);
++
++/*
++ * Whether the flags of an AArch32 pstate satisfy a condition field other
++ * than 0xf: arm64 Linux's aarch32_opcode_cond_checks, which lives in
++ * arch/arm64/kernel/traps.c, a file this port does not build.
++ */
++static bool aarch32_condition_passed(u32 cond, unsigned long pstate)
++{
++	bool n = pstate & PSR_AA32_N_BIT;
++	bool z = pstate & PSR_AA32_Z_BIT;
++	bool c = pstate & PSR_AA32_C_BIT;
++	bool v = pstate & PSR_AA32_V_BIT;
++	bool passed;
++
++	switch (cond >> 1) {
++	case 0:				/* EQ, NE */
++		passed = z;
++		break;
++	case 1:				/* CS, CC */
++		passed = c;
++		break;
++	case 2:				/* MI, PL */
++		passed = n;
++		break;
++	case 3:				/* VS, VC */
++		passed = v;
++		break;
++	case 4:				/* HI, LS */
++		passed = c && !z;
++		break;
++	case 5:				/* GE, LT */
++		passed = n == v;
++		break;
++	case 6:				/* GT, LE */
++		passed = !z && n == v;
++		break;
++	default:			/* AL */
++		return true;
++	}
++	return (cond & 1) ? !passed : passed;
++}
++
++/* SWP{<c>} Rt, Rt2, [Rn] and SWPB{<c>} Rt, Rt2, [Rn]; bits 11:8 are zero. */
++#define A32_SWP_MASK		0x0fb00ff0
++#define A32_SWP_VALUE		0x01000090
++/* Bit 22 selects SWPB. */
++#define A32_SWPB		(1U << 22)
++
++/*
++ * SIGSEGV for the access arm64_notify_segfault() refuses, with its code:
++ * SEGV_ACCERR when any mapping lies at or above the address (find_vma() does
++ * not mean "contains"), SEGV_MAPERR when none does.  The frame's fault
++ * address and error code stay zero, as arm64_notify_die() leaves them, and
++ * the pc stays at the instruction.
++ */
++static int swp_segfault(struct uml_pt_regs *regs, unsigned long address)
++{
++	struct mm_struct *mm = current->mm;
++	int code;
++
++	mmap_read_lock(mm);
++	code = find_vma(mm, address) ? SEGV_ACCERR : SEGV_MAPERR;
++	mmap_read_unlock(mm);
++
++	memset(&regs->faultinfo, 0, sizeof(regs->faultinfo));
++	current->thread.arch.faultinfo = regs->faultinfo;
++	force_sig_fault(SIGSEGV, code, (void __user *)address);
++	return UML_ARM64_A32_SIGNALLED;
++}
++
++/*
++ * Exchange Rt2 with the word or byte at [Rn] in one atomic operation and
++ * leave the old contents in Rt, as arm64 Linux's swp_handler() does.  One
++ * atomic exchange cannot fail, so there is no retry loop and no way to retire
++ * an exchange that did not happen.  Rt, Rt2 or Rn as the pc is UNPREDICTABLE
++ * and made UNDEFINED, whatever the condition.  Rn equal to Rt or Rt2 is
++ * UNPREDICTABLE too and runs as arm64 Linux runs it: the address and the data
++ * are read before Rt is written.
++ */
++static int swp_emulate(struct uml_pt_regs *regs, u32 insn)
++{
++	u32 cond = insn >> 28;
++	unsigned int rn = (insn >> 16) & 0xf;
++	unsigned int rt = (insn >> 12) & 0xf;
++	unsigned int rt2 = insn & 0xf;
++	bool byte = insn & A32_SWPB;
++	u32 address, data;
++
++	if (cond == 0xf || rn == 15 || rt == 15 || rt2 == 15)
++		return UML_ARM64_A32_UNDEFINED;
++
++	perf_sw_event(PERF_COUNT_SW_EMULATION_FAULTS, 1,
++		      container_of(regs, struct pt_regs, regs), UPT_IP(regs));
++
++	if (aarch32_condition_passed(cond, UPT_PSTATE(regs))) {
++		address = (u32)UPT_X(regs, rn);
++		data = (u32)UPT_X(regs, rt2);
++
++		/* An unaligned SWP is not permitted; SWPB has no alignment. */
++		if ((!byte && (address & 3)) ||
++		    uml_xchg_user((void __user *)(unsigned long)address,
++				  byte ? 1 : 4, &data))
++			return swp_segfault(regs, address);
++		UPT_X(regs, rt) = data;
++	}
++
++	trace_instruction_emulation(byte ? "swpb" : "swp", UPT_IP(regs));
++	pr_warn_ratelimited("\"%s\" (%ld) uses obsolete SWP{B} instruction at 0x%llx\n",
++			    current->comm, (unsigned long)current->pid,
++			    (unsigned long long)UPT_IP(regs));
++	UPT_IP(regs) += 4;
++	return UML_ARM64_A32_RETIRED;
++}
++
++int uml_arm64_aarch32_emulate(struct uml_pt_regs *regs)
++{
++	u32 insn;
++
++	/* A write of the switch can race with an event; read it once. */
++	if (!READ_ONCE(swp))
++		return UML_ARM64_A32_UNDEFINED;
++	/* SWP and SWPB exist in ARM state only. */
++	if (UPT_PSTATE(regs) & PSR_AA32_T_BIT)
++		return UML_ARM64_A32_UNDEFINED;
++	if (get_user(insn, (u32 __user *)UPT_IP(regs)))
++		return UML_ARM64_A32_UNDEFINED;
++	if ((insn & A32_SWP_MASK) != A32_SWP_VALUE)
++		return UML_ARM64_A32_UNDEFINED;
++	return swp_emulate(regs, insn);
++}
 diff --git a/arch/arm64/um/asm/aarch32.h b/arch/arm64/um/asm/aarch32.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..48b9ed062f84037ab4e30c11d1c9e8f3e1aa6a1f
+index 0000000000000000000000000000000000000000..8dc3743a68da6fddbf17093b58a001cb34fec23b
 --- /dev/null
 +++ b/arch/arm64/um/asm/aarch32.h
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,122 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef _ASM_UM_ARM64_AARCH32_H
 +#define _ASM_UM_ARM64_AARCH32_H
@@ -626,6 +808,9 @@ index 0000000000000000000000000000000000000000..48b9ed062f84037ab4e30c11d1c9e8f3
 +extern unsigned long uml_arm64_compat_hwcap;
 +extern unsigned long uml_arm64_compat_hwcap2;
 +extern bool uml_arm64_aarch32_supported(void);
++
++/* arch/um/kernel/skas/uaccess.c */
++extern int uml_xchg_user(void __user *uaddr, unsigned int size, u32 *value);
 +
 +/* arch/arm64/um/ptrace32.c */
 +extern bool uml_arm64_valid_compat_pstate(unsigned long *pstate);
@@ -1336,7 +1521,7 @@ index 0000000000000000000000000000000000000000..ae23fd3375c722ddcdb38ee130fbfbea
 +	return ret;
 +}
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
-index 3a493972d6b40e4f5500325140850a61069660e4..cef8b448bcf82f5e76972650365888c9d10898f3 100644
+index 83096ca4112793252c70c677913a0d7ae505aad5..4188e5b95ef1a04deee6b4ce6f2d740b08332d76 100644
 --- a/arch/arm64/um/shared/sysdep/ptrace.h
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
 @@ -22,6 +22,20 @@
@@ -1357,10 +1542,10 @@ index 3a493972d6b40e4f5500325140850a61069660e4..cef8b448bcf82f5e76972650365888c9
 +	(UPT_AARCH32(regs) ? (unsigned int)UPT_X((regs), 7) : \
 +	 UPT_X((regs), 8))
 +
- #define UPT_SYSCALL_ARG1(regs) ((regs)->orig_x0)
- #define UPT_SYSCALL_ARG2(regs) UPT_X((regs), 1)
- #define UPT_SYSCALL_ARG3(regs) UPT_X((regs), 2)
-@@ -53,6 +67,11 @@ struct uml_pt_regs {
+ /*
+  * x0 is both the first argument and the return-value register, and, as on
+  * native arm64, it is the argument until the call returns: a tracer reads it
+@@ -69,6 +83,11 @@ struct uml_pt_regs {
  	 * the flexible floating-point register tail.
  	 */
  	unsigned long compat_tls[3][2];
@@ -1372,7 +1557,7 @@ index 3a493972d6b40e4f5500325140850a61069660e4..cef8b448bcf82f5e76972650365888c9
  	unsigned long fp[];
  };
  
-@@ -64,11 +83,20 @@ struct uml_pt_regs {
+@@ -80,11 +99,31 @@ struct uml_pt_regs {
  	/* AArch64 returns syscall results in x0, which is also argument 1. \
  	 * Restore it before re-executing SVC; unlike x86, rewinding the PC \
  	 * alone would retry with -ERESTART* as the first argument. \
@@ -1390,6 +1575,17 @@ index 3a493972d6b40e4f5500325140850a61069660e4..cef8b448bcf82f5e76972650365888c9
 +extern int uml_arm64_aarch32_break(struct uml_pt_regs *regs);
 +/* Whether abi.cp15_barrier lets an AArch32 task execute CP15 barriers. */
 +extern int uml_arm64_cp15_barrier_enabled(void);
++
++/*
++ * What uml_arm64_aarch32_emulate() made of the undefined instruction at an
++ * AArch32 task's pc (armv8_deprecated.c): it is not one the kernel emulates
++ * here, so the task gets SIGILL; it was emulated and the pc is past it; or
++ * it raised a signal itself and left the pc at the instruction.
++ */
++#define UML_ARM64_A32_UNDEFINED 0
++#define UML_ARM64_A32_RETIRED 1
++#define UML_ARM64_A32_SIGNALLED 2
++extern int uml_arm64_aarch32_emulate(struct uml_pt_regs *regs);
 +
  extern unsigned long host_fp_size;
  extern int arch_init_registers(int pid);
@@ -2070,7 +2266,7 @@ index 0000000000000000000000000000000000000000..8b19e9cc82fdb36f509ff4b7ddd8cf8f
 +}
 diff --git a/arch/arm64/um/sys_compat.c b/arch/arm64/um/sys_compat.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..543f463cd929c125beb7a8f07cdb3e421f8cbceb
+index 0000000000000000000000000000000000000000..86f69c07139896a632c691e0620e4d4e7d68d32d
 --- /dev/null
 +++ b/arch/arm64/um/sys_compat.c
 @@ -0,0 +1,93 @@
@@ -2125,8 +2321,8 @@ index 0000000000000000000000000000000000000000..543f463cd929c125beb7a8f07cdb3e42
 +
 +/*
 + * Handle all unrecognised system calls.  The number is past the end of the
-+ * table.  handle_syscall() has already set x0 to -ENOSYS, so the call's first
-+ * argument is the original x0, and the other argument registers are intact.
++ * table.  As in native compat_arm_syscall(), the arguments are r0-r2 (x0-x2)
++ * as they stand, which are what the task passed unless a tracer rewrote them.
 + */
 +long compat_arm_syscall(struct uml_pt_regs *regs, int scno)
 +{
@@ -2351,6 +2547,76 @@ index ae6b892773f3d92d13b839acb0a08ff33469371a..651022c60550de3ea6409725368e82c3
 +		compat_hwcap2_str[feature] : NULL;
 +}
 +#endif
+diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
+index 7915c1b421f91df67001dbcf97de9b87d2e06e47..a6d32d27031a4ecdc38d8f81873b7e106b4902cd 100644
+--- a/arch/um/kernel/skas/uaccess.c
++++ b/arch/um/kernel/skas/uaccess.c
+@@ -15,6 +15,9 @@
+ #include <asm/page.h>
+ #include <kern_util.h>
+ #include <asm/futex.h>
++#ifdef CONFIG_UML_ARM64_AARCH32
++#include <asm/aarch32.h>
++#endif
+ #include <mem_user.h>
+ #include <os.h>
+ #include <skas.h>
+@@ -649,3 +652,55 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+ 	return ret;
+ }
+ EXPORT_SYMBOL(futex_atomic_cmpxchg_inatomic);
++
++#ifdef CONFIG_UML_ARM64_AARCH32
++/**
++ * uml_xchg_user() - Atomically exchange a byte or a word of user memory.
++ *
++ * @uaddr:	user address of the byte, or of the word, which must be
++ *		aligned
++ * @size:	1 or 4
++ * @value:	the value to store, replaced by the previous contents of the
++ *		location, zero-extended
++ *
++ * It is SWP and SWPB for an AArch32 task.  The exchange is one host atomic
++ * instruction on the page's kernel alias, which is the memory the engines'
++ * software MMU maps for the task, as for the futex operations above.  It
++ * is therefore atomic against exclusive pairs, atomic instructions and
++ * futex operations on other vCPUs.  Unlike them it may sleep, to
++ * demand-page or copy the page.
++ *
++ * Return:
++ * 0 - On success
++ * -EFAULT - The access is refused: the address is not a user address, it is
++ *	     misaligned, or the page cannot be mapped for writing
++ */
++int uml_xchg_user(void __user *uaddr, unsigned int size, u32 *value)
++{
++	unsigned long addr = (unsigned long)uaddr;
++	struct page *page;
++	void *alias;
++
++	might_sleep();
++	if ((size != 1 && size != 4) || (addr & (size - 1)) ||
++	    !access_ok(uaddr, size))
++		return -EFAULT;
++	page = maybe_map(addr, 1);
++	if (page == NULL)
++		return -EFAULT;
++
++	preempt_disable();
++	pagefault_disable();
++	alias = page_address(page) + (addr & ~PAGE_MASK);
++	if (size == 1)
++		*value = xchg((u8 *)alias, (u8)*value);
++	else
++		*value = xchg((u32 *)alias, *value);
++	pagefault_enable();
++	preempt_enable();
++
++	mark_user_page_dirty(addr, page, true);
++	unpin_user_mapping(page, 1);
++	return 0;
++}
++#endif
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
 index 335dbab37bb2c88b5e020181fc2b37352a385bd7..95fabf70e1ee8b0c4f4f0db0cba663664a8cf851 100644
 --- a/arch/um/kernel/um_arch.c
@@ -2428,7 +2694,7 @@ index feb6c2eb55b5db90284304c3402d4d06c7d475fb..75201de007c9a3ee075664d6d5c6463e
  
  #endif
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index cdf178045d08ff70e525b3e7c6e1f9e3463d46e0..7d81a61fc00d443796cac2e18323851da910ba6c 100644
+index cdf178045d08ff70e525b3e7c6e1f9e3463d46e0..3c1e95c811b6f5a0d237723edd5148fd42d1f2e1 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -38,6 +38,9 @@ _Static_assert(offsetof(struct uml_pt_regs, fpmr) ==
@@ -2462,18 +2728,40 @@ index cdf178045d08ff70e525b3e7c6e1f9e3463d46e0..7d81a61fc00d443796cac2e18323851d
  
  			/* UDF and other architecturally undefined instructions are
  			 * guest events, not failures of the host dispatcher.  Preserve
-@@ -544,13 +554,22 @@ void userspace(struct uml_pt_regs *registers)
+@@ -544,13 +554,44 @@ void userspace(struct uml_pt_regs *registers)
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);
  			registers->faultinfo.trap_no = 0;
 -			signal_info.si_signo = SIGILL;
 +#ifdef CONFIG_UML_ARM64_AARCH32
-+			/* The three encodings a debugger plants on an AArch32
-+			 * program are breakpoints, as on arm64 Linux. */
-+			if (UPT_AARCH32(registers) &&
-+			    uml_arm64_aarch32_break(registers)) {
-+				signal_number = SIGTRAP;
-+				signal_code = TRAP_BRKPT;
++			if (UPT_AARCH32(registers)) {
++				/* The three encodings a debugger plants on an
++				 * AArch32 program are breakpoints, as on arm64
++				 * Linux; the instructions abi.* makes the kernel
++				 * emulate retire here, or raise their own
++				 * signal. */
++				if (uml_arm64_aarch32_break(registers)) {
++					signal_number = SIGTRAP;
++					signal_code = TRAP_BRKPT;
++				} else {
++					int emulated =
++						uml_arm64_aarch32_emulate(registers);
++
++					if (emulated == UML_ARM64_A32_SIGNALLED)
++						break;
++					if (emulated == UML_ARM64_A32_RETIRED) {
++						/* A stepped entry ends with the
++						 * emulation, as it does for
++						 * any retired instruction:
++						 * TRAP_TRACE at the next PC. */
++						if (!stepping)
++							break;
++						signal_number = SIGTRAP;
++						signal_code = TRAP_TRACE;
++						registers->faultinfo.cr2 =
++							UPT_IP(registers);
++					}
++				}
 +			}
 +#endif
 +			signal_info.si_signo = signal_number;

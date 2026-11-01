@@ -1156,7 +1156,7 @@ index 0000000000000000000000000000000000000000..542d48943acd8a7643b577429a36a0c9
 +0x00000011,0x00000012,0x0000000f,0x0003003e,
 +0x00000009,0x00000013,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp b/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
-index 7d857970ff93abff45f9fce3955acc946e85897f..aff0c55f3e6f4030bf859ba4fd00b35e6b3d50de 100644
+index ffe76ccc62ca7db5f7d4831fe8b108c8c95f5d1f..372df408e652d4b20049e6aeb1c3207cea70a218 100644
 --- a/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
 +++ b/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
 @@ -12,17 +12,20 @@
@@ -1210,15 +1210,15 @@ index 7d857970ff93abff45f9fce3955acc946e85897f..aff0c55f3e6f4030bf859ba4fd00b35e
  /* The conformance test reports a quality warning above this ratio, and a
   * driver that advertises fast linking has to stay under it. */
  static constexpr double kRatioLimit = 10.0;
-@@ -89,6 +104,7 @@ int main()
+@@ -88,6 +103,7 @@ int main()
+    LOAD_I(vkDestroyInstance);
     LOAD_I(vkEnumeratePhysicalDevices);
-    LOAD_I(vkGetPhysicalDeviceProperties);
     LOAD_I(vkGetPhysicalDeviceProperties2);
 +   LOAD_I(vkGetPhysicalDeviceMemoryProperties);
     LOAD_I(vkGetPhysicalDeviceQueueFamilyProperties);
     LOAD_I(vkCreateDevice);
     LOAD_I(vkGetDeviceProcAddr);
-@@ -155,6 +171,33 @@ int main()
+@@ -154,6 +170,33 @@ int main()
        LOAD_D(vkDestroyPipelineLayout);
        LOAD_D(vkCreateGraphicsPipelines);
        LOAD_D(vkDestroyPipeline);
@@ -1252,7 +1252,7 @@ index 7d857970ff93abff45f9fce3955acc946e85897f..aff0c55f3e6f4030bf859ba4fd00b35e
  
        auto make_module = [&](const uint32_t *code, size_t size) {
           VkShaderModuleCreateInfo module_info{
-@@ -181,9 +224,18 @@ int main()
+@@ -180,9 +223,18 @@ int main()
        rendering.pColorAttachmentFormats = &color_format;
  
        /* Each library carries a distinct constant so that no two of the
@@ -1274,7 +1274,7 @@ index 7d857970ff93abff45f9fce3955acc946e85897f..aff0c55f3e6f4030bf859ba4fd00b35e
        VkSpecializationMapEntry entry{0, 0, sizeof(int32_t)};
  
        VkPipeline libraries[8] = {};
-@@ -387,6 +439,347 @@ int main()
+@@ -386,6 +438,347 @@ int main()
  
        for (VkPipeline library : libraries)
           vkDestroyPipeline(device, library, nullptr);

@@ -2,11 +2,11 @@
 /* Group "ill": what an AArch32 task may not execute raises SIGILL with the
  * address of the instruction, from both instruction sets: UDF, undefined
  * encodings, coprocessor instructions that do not exist or that need a
- * privilege, SMC, HVC, ERET, and SWP and SETEND, which the profile makes
- * UNDEFINED. The encodings a debugger plants (BKPT, UDF #16, and the two
- * Thumb forms) raise SIGTRAP. The CP15 barrier operations run, unless
- * abi.cp15_barrier is 0. The hints, barriers and exclusives that must run,
- * do. */
+ * privilege, SMC, HVC, ERET, SETEND, and SWP and SWPB while abi.swp is 0 (the
+ * "swp" group runs them at 1). The encodings a debugger plants (BKPT, UDF
+ * #16, and the two Thumb forms) raise SIGTRAP. The CP15 barrier operations
+ * run, unless abi.cp15_barrier is 0. The hints, barriers and exclusives that
+ * must run, do. */
 #include "engine_probe.hpp"
 
 extern "C" {
@@ -36,6 +36,8 @@ struct Case {
 	const char *name;
 	/* qemu-user runs these instead of raising SIGILL. */
 	bool implemented_by_qemu;
+	/* The kernel emulates these when abi.swp is 1. */
+	bool swp = false;
 };
 
 const Case undefined_cases[] = {
@@ -53,8 +55,8 @@ const Case undefined_cases[] = {
 	{ill_smc_arm, 4, "A32 smc", false},
 	{ill_hvc_arm, 4, "A32 hvc", false},
 	{ill_eret_arm, 4, "A32 eret", false},
-	{ill_swp_arm, 4, "A32 swp", true},
-	{ill_swpb_arm, 4, "A32 swpb", true},
+	{ill_swp_arm, 4, "A32 swp", true, true},
+	{ill_swpb_arm, 4, "A32 swpb", true, true},
 	{ill_setend_arm, 4, "A32 setend be", true},
 	{ill_udf0_thumb, 2, "T32 udf #0", false},
 	{ill_udf2_thumb, 2, "T32 udf #2 (not the breakpoint encoding)", false},
@@ -95,6 +97,17 @@ const char *labelled(char *buffer, const char *prefix, const char *text)
 	return buffer;
 }
 
+/* Whether the process may write abi.cp15_barrier: root may, an Android shell
+ * may not, and then its checks have nothing to switch. */
+bool cp15_barrier_writable()
+{
+	const long fd = sys(nr_openat, -100, addr("/proc/sys/abi/cp15_barrier"), 1);
+	if (fd < 0)
+		return false;
+	sys(nr_close, fd);
+	return true;
+}
+
 bool set_cp15_barrier(const char *value)
 {
 	const long fd = sys(nr_openat, -100, addr("/proc/sys/abi/cp15_barrier"), 1);
@@ -127,8 +140,12 @@ u32 run_barriers(u32 *wrong_address)
 void group_ill()
 {
 	char name[128];
+	/* SWP and SWPB raise SIGILL only while abi.swp is 0. */
+	const bool swp_emulated = !under_qemu() && swp_setting() == 1;
 	for (const Case &test : undefined_cases) {
 		if (test.implemented_by_qemu && under_qemu())
+			continue;
+		if (test.swp && swp_emulated)
 			continue;
 		catch_signal(sigill, test.skip);
 		test.routine();
@@ -163,7 +180,9 @@ void group_ill()
 	check_eq(static_cast<u32>(ok_hints_thumb(&word_value)), 1, "T32 hints, barriers, clrex, pld and pli run");
 
 	/* abi.cp15_barrier: 0 makes the barriers UNDEFINED, 1 and 2 run them. */
-	if (!under_qemu()) {
+	if (!under_qemu() && !cp15_barrier_writable()) {
+		line("NOTE ill: abi.cp15_barrier is not writable by this process; the switch is not tested");
+	} else if (!under_qemu()) {
 		check(set_cp15_barrier("0\n"), "abi.cp15_barrier accepts 0");
 		wrong_address = 0;
 		const u32 raised = run_barriers(&wrong_address);

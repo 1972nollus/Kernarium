@@ -50,8 +50,8 @@ void every_scalar_variant_coalesces() {
             "GPR pair has the wrong memory-write mask");
     require(compiled.direct_memory_write_mask == expected_mask,
             "GPR pair has the wrong direct-store mask");
-    require(count_word(hot, monitor_clear) == (variant.load ? 0U : 1U),
-            "GPR store pair did not use one local-monitor clear");
+    require(count_word(hot, monitor_clear) == 0U,
+            "GPR pair cleared the local monitor");
 
     if (!variant.load) {
       const auto tracked = jit_test::compile_tracked_block(
@@ -283,8 +283,8 @@ void store_masks_include_every_grouped_instruction() {
           "prefixed GPR run omitted a memory-write bit");
   require(compiled.direct_memory_write_mask == 0x1eU,
           "prefixed GPR run omitted a direct-store bit");
-  require(count_word(hot, monitor_clear) == 1,
-          "four-store GPR run repeated its monitor clear");
+  require(count_word(hot, monitor_clear) == 0,
+          "four-store GPR run cleared the local monitor");
 }
 
 void reserved_and_unrelated_allocations_do_not_coalesce() {

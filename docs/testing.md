@@ -38,6 +38,12 @@ A process-heavy test runs many times slower there than alone. A wait inside a
 test for a process, file or thread the test started outlasts the same load,
 stays below the test's bound, and is never retried or unbounded.
 
+A test that runs a built tool, named by a `$<TARGET_FILE:...>` argument of its
+command, requires a CTest fixture that builds the tool: a `<suite>-build-<tool>`
+test of the suite of the first test that needs it. Running the test by name
+after a configure is enough. The check workflows build the suite's binaries
+first, and the fixture then finds nothing to build.
+
 Tooling tests run tools against fixtures; they do not grep tracked source for
 expected tokens or restate values that another file owns. A shell tooling
 test's `$TMPDIR` is its `test-scratch/<test>` in the build tree, which
@@ -130,8 +136,10 @@ cmake --workflow --preset check-loader-asan-ubsan
 The `unit-gpu` test preset's name filter is the one selection of GPU workflow
 tests, and the other `unit-gpu*` test presets inherit it. It selects every
 registered test named `gpu-*` (the two `gpu-guest-*` tooling tests among them),
-and the Virtio balloon, battery, console, input, sound and video protocol
-tests and `platform-video-decoder` that the GPU configuration also builds. A
+and the Virtio balloon, battery, console, input, sound, video and video encoder
+protocol tests, `video-encoder-capabilities`, `platform-video-decoder`, and the
+hardware `platform-video-encoder`, `-recovery` and `-cache` tests that the GPU
+configuration also builds. A
 new GPU test joins the workflow by its name: `uml_add_gpu_unit_test` refuses a
 name that does not start with `gpu-`. Configure derives the
 `gpu-unit-test-binaries` target from that filter, so a selected test's binary
@@ -198,7 +206,9 @@ device through the opt-in `apple-ios-device-vk-cts` lane. It registers only
 when the device is named, expects the application and the authenticated Venus
 image to be on the device already, copies the campaign's payload beside them,
 and reads the artifact frames from the launch console, because the
-guest-session log is an XCTest path that a device launch does not take:
+guest-session log is an XCTest path that a device launch does not take. The
+launch sets `KERNARIUM_PAYLOAD_REMOVE=1`, so the runtime deletes that payload
+once it has read it and the lane leaves nothing but the image behind:
 
 ```sh
 cmake --preset macos-integration \
@@ -251,13 +261,87 @@ the guest architecture and configure an integration preset with
 `UML_V4L2_PROBE_BINARY` pointing to it. The rootfs needs a shell, `ip`,
 `sha256sum` and `timeout`. The test boots a disposable overlay with the probe
 and its fixtures installed as payload files, checks their SHA-256 list, checks
-every advertised profile's pixels, raw layouts including packed BGRA capture,
-imported dma-buf capture, timestamps, source-change and EOS events, and rejects
-kernel faults or failed shutdown. Android uses its own 4 KiB guest and
-deployment workflow.
+every advertised profile's pixels, raw layouts including packed BGRA capture
+and 8-bit capture of a 10-bit stream, the rows of every raw format at the
+padded pitch the device states (TRY_FMT and S_FMT against the rule at widths
+that are and are not whole pitches, and the 120 x 90 window streams read row by
+row), imported dma-buf capture, timestamps,
+source-change and EOS events, the display order of H.264 and HEVC B-pictures
+and a seek in both (over open-group streams for HEVC), reads the H.264 and HEVC
+profile and level menus (Constrained High beside High, levels from 1.0 up to
+5.2 and from 1 up to 6.2, the current level the highest), decodes flat portrait
+and square H.264 and HEVC pictures (2304 x 4096, 4096 x 4096, 4320 x 8192) to
+frames of their own size inside a frame range that is a rectangle, and rejects
+kernel faults or failed shutdown. Imported capture covers the queue's own
+buffers handed back and guest memory a client brings, with each buffer's planes
+in separate dma-bufs or in one and their lengths stated as QUERYBUF gave them,
+as the whole dma-buf, or not at all. `guest-v4l2-decode-gpu` runs the same probe
+with the GPU, where capture buffers are host-visible blobs and an imported
+dma-buf takes another path in the driver. A stream that changes its picture size
+twice is decoded the way Android's V4L2 codec handles it, including a drain asked
+for while the last change is still on its way: every picture of a size returns,
+then the LAST buffer, before the source change is visible. A client that queues
+the whole stream and drains straight away, with both changes inside its drain,
+gets every picture of all three sizes before the one LAST buffer that ends the
+drain. Every profile is also
+started in v4l2_codec2's order, with a provisional 64 x 64 capture format (and
+queued buffers for it) before the size is known, the parameter sets and the
+picture as two coded buffers, and the capture format chosen only after the
+source change: the buffer that declared the size is held until then, nothing
+lands in the provisional buffers, and the picture arrives whole before the LAST
+buffer. The large buffers are also created with the guest's free memory in
+blocks of 32 KiB, none larger, the state a guest that has run for days is in:
+a 124 MiB coded buffer, the most the device attaches, is created, exported and
+imported again, and the 4096 x 4096 and 4320 x 8192 flat pictures are decoded
+into mapped buffers. The scatter lists of these buffers are hundreds of
+kilobytes, so a driver that asks the kernel for a list in one block fails them
+with `page allocation failure: order:4`, as it did a 4K HEVC decode on a
+1536 MiB Android guest. Android uses its own 4 KiB guest and deployment workflow.
 The fixed x86_64 userspace product registers no CTest suites, so the x86_64
-slice exercises its own V4L2 path by running `run_v4l2_decode.py` directly with
-an x86-64 probe and an x86-64 rootfs, the way its boot check below is run.
+slice exercises its own V4L2 path by running `run_v4l2_decode.py`, with `--gpu`
+for the GPU case, directly with an x86-64 probe and an x86-64 rootfs, the way
+its boot check below is run.
+
+`guest-video-error-answer` needs no probe or rootfs. Its arm64 guest has a
+decoder whose device, the production one behind a test-only shim, answers the
+capture buffers the guest queues as failed, and the test checks that the client
+dequeues one flagged as an error, empty, and with the timestamp the device
+named, a contract the encoder's driver shares.
+
+The optional `guest-v4l2-encode` test qualifies the Virtio video encoder the
+same way. Build `tests/integration/video/v4l2_encode_probe.cpp` as a static
+C++20 executable for the guest architecture and configure
+`UML_V4L2_ENCODE_PROBE_BINARY`. The guest boots with `--video` and
+`--video-encoder`, and the probe finds the encoder and the decoder by their
+card names. For every advertised coded format, profile and raw layout it
+encodes generated pictures from mapped and imported dma-buf input, and checks
+the key-frame flags, header buffers, timestamps, forced key frames, controls
+refused while streaming, crop, drain with the last flag and end-of-stream
+event, resumption, a restart after STREAMOFF without a drain, and a resolution
+change. It also holds every control and raw format the guest registers
+against the host table, so a control the driver dropped or a format listed
+under another fourcc fails; encodes packed BGRA and RGBA pictures, whose red
+and blue blocks show the channel order; encodes every raw layout at a width
+that is not a whole pitch (342 x 120), where the rows lie at the padded pitch
+that TRY_FMT and S_FMT both state; and checks the parameter sets that
+`PREPEND_SPSPPS_TO_IDR` adds and the layers that hierarchical coding makes.
+Colorimetry stated on the raw queue, including `V4L2_COLORSPACE_RAW` with a
+transfer function and range, must read back as stated, survive a repeated
+`S_FMT` and `S_PARM`, and appear in the H.264 stream's VUI; BT.2020 with PQ
+and with HLG (`V4L2_XFER_FUNC_HLG`, the kernel line's local value 8), stated on
+a P010 raw queue, must read back and show as transfer characteristics 16 and 18
+in the HEVC Main 10 stream's VUI; the B-frame control
+must run from zero in steps of one and the level menus default to their lowest
+item, as the host describes them. Each stream is decoded back through the guest decoder and compared with the
+pictures by luma PSNR. The x86_64 slice runs `run_v4l2_encode.py`
+directly, like the decoder.
+
+The optional `guest-v4l2-mmap-capture` test covers what that one cannot: with a
+GPU the decoder's capture buffers are host-visible Virtio-GPU blobs, and an
+allocation of them has to finish on an idle guest. Build
+`tests/integration/video/v4l2_mmap_capture_probe.cpp` the same way and configure
+`UML_V4L2_MMAP_CAPTURE_PROBE_BINARY`. The probe allocates and maps the buffers
+and fails when that takes ten seconds or when the buffers are not blobs.
 
 The optional `guest-futex-atomic` test checks the futex contract in
 [`../kernel/common/README.md`](../kernel/common/README.md). Configure
@@ -266,24 +350,53 @@ The optional `guest-futex-atomic` test checks the futex contract in
 probe's shell tools. Run it on the Linux guest and the maintained Android
 kernel.
 
+The optional `guest-gbm-dmabuf` test checks the virtio-gpu dma-buf contract in
+[`../kernel/common/README.md`](../kernel/common/README.md). Build
+`tests/integration/gpu/gbm_dmabuf_probe.cpp` as a dynamically linked C++20
+executable for the guest architecture (`c++ -std=c++20 -O2 -ldl`) and configure
+`UML_GBM_DMABUF_PROBE_BINARY`. The guest boots with the GPU, and the probe opens
+the render node through the image's own libgbm and libEGL. It requires an
+export that asked for no write access to be read-write, a GPU write to be
+visible through the dma-buf mapping after `DMA_BUF_IOCTL_SYNC` (twice), and a
+CPU write through it, bracketed the same way, to be what the GPU reads (twice).
+The x86_64 slice registers no CTest suites, so it runs `run_gpu_guest.py`
+directly with an x86-64 probe and an x86-64 image that carries Mesa, naming the
+test's `--command` lines and kernel arguments.
+
+The optional `guest-drm-vblank` test checks that Virtio-GPU paces its display
+as the vblank contract in
+[`../kernel/common/README.md`](../kernel/common/README.md) describes. Build
+`tests/integration/gpu/drm_flip_probe.cpp` as a static C++20 executable for the
+guest architecture and configure `UML_DRM_FLIP_PROBE_BINARY`. The guest boots
+with the GPU; the probe sets the first output's preferred mode, waits for 30
+vblanks and flips two buffers for two seconds, and requires both rates to be
+within 10% of the mode's refresh rate. The x86_64 slice runs
+`run_gpu_guest.py` directly with an x86-64 probe, naming the test's `--command`
+lines and kernel arguments.
+
 `guest-aarch32-kernel` checks the kernel's AArch32 task support in
-[`../kernel/common/README.md`](../kernel/common/README.md), and needs `python3`
-in the rootfs. The build generates a freestanding
+[`../kernel/common/README.md`](../kernel/common/README.md), and needs `python3`,
+`as` and `ld` in the rootfs. The build generates a freestanding
 armhf program from `tests/integration/aarch32/aarch32_probe.S` with the
 configured compiler's ARM backend, wraps it into an ELF32 executable with
 `make_elf32.py` (the toolchain has no ARM linker), aligned to 64 KiB and aligned
-to 4 KiB only, and never commits either. While no engine implements AArch32
-(`UML_AARCH32_EXPECT=unsupported`, the default) the test
-requires `ENOEXEC` for both programs, `EINVAL` for `personality(PER_LINUX32)`,
-and unchanged 64-bit `uname`, `/proc/cpuinfo`, `vm.mmap_rnd_compat_bits` and
-`abi.cp15_barrier`. With `UML_AARCH32_EXPECT=run` it runs the program (kuser
-helpers, signals and VFP state, `cacheflush`, Thumb, `mmap2`, `PER_LINUX32`
+to 4 KiB only, and never commits either. The test requires unchanged 64-bit
+`uname`, `/proc/cpuinfo`, `vm.mmap_rnd_compat_bits` and `abi.cp15_barrier`, and
+that `abi.swp` is 0, makes SWP end the program in SIGILL, then sets it to 1 and
+runs the program's SWP and SWPB checks, and runs the program (kuser helpers, signals and VFP state, `cacheflush`, Thumb,
+`mmap2`, `PER_LINUX32`
 views, restarts and exec between ABIs; threads through `clone` and `clone3`,
 fault signals and stack growth, the time64 and socket calls with
 `SCM_RIGHTS`, `vfork`, timers, `seccomp` and a 32-bit tracer), a 64-bit
 tracer's session (registers, system call and single-step stops, signal-frame
 VFP state), a core dump and many runs at once, and requires the 4 KiB-only
-program to run on the guest. The tooling test
+program to run on the guest. Last, the guest assembles `aarch64_dirty.s`, a
+64-bit program that leaves x15-x30 set, and the program runs every exclusive
+and ordered transfer on each CPU right after it, through its execve and
+between its `sched_yield` calls; the same two programs trade tokens through a
+shared page, the armhf one with SWP and SWPB and the 64-bit one with
+load/store-exclusive pairs, and every token must remain. `guest-aarch32-exclusives-gadgets` and
+`-jit` run that check alone on four vCPUs of each engine. The tooling test
 `aarch32-elf32-wrapper` checks the two layouts the wrapper writes, and
 `aarch32-elf32-linker` the multi-object linker of the engine probe below.
 
@@ -298,8 +411,10 @@ player's scheduling: playback must stop while interrupted without slowing the
 guest's clock, resume when the system lets the session resume or, with no
 notification, when no other app plays, never take the session from an app that
 does, keep completing periods through a slow session activation, and never
-wedge. It skips when no iOS Simulator device at the deployment
-target exists.
+wedge. It skips when no iOS Simulator device at the deployment target exists.
+The microphone has no opt-in test: `virtio-sound-microphone` runs over fakes,
+and the real input is checked by hand (see the Microphone section of the audio
+README) because granting microphone access is the user's act.
 
 The full sanitizer suites remain separate because of their runtime cost:
 
@@ -313,12 +428,44 @@ cmake --build --preset tsan
 ctest --preset unit-tsan
 ```
 
-Both sanitizers keep the product's macOS native window for themselves, so a
-sanitized test, and every run it makes through the emulator test variant,
-takes a native window that both leave free
-(`tests/unit/memory/native_window_test_support.hpp`). AddressSanitizer also
-ignores `mlock()`, so under it the cases that need wired guest RAM report
-themselves unsupported instead of running.
+Every sanitizer preset, these two and the GPU and embedded-loader ones,
+instruments Objective-C++ as well as C++.
+
+Both sanitizers keep the product's macOS native window for themselves, and a
+process reserves its window once, so a sanitized test, and every run it makes
+through the emulator test variant, takes a native window that both leave free
+(`tests/unit/memory/native_window_test_support.hpp`; the test variant places
+its runs there by default). AddressSanitizer also ignores `mlock()`, so under
+it the cases that need wired guest RAM report themselves unsupported instead
+of running.
+
+A guest that restarts itself boots again in the same process, and
+`runtime-restart-*` (one process per mode, `sequential_run_tests.cpp`) covers
+it with a test kernel that leaves behind what a real one does: descriptors,
+pthread keys, allocations and mappings through the imports the loader follows,
+changed signal state, a guest RAM root, kernel threads and a guest file. At the
+moment each of 64 hand-backs completes the test checks that none of it is left
+and that the process is as it was before the first run; the other modes cover
+the ends that stay spent, another handle, a host service that borrows guest RAM
+and a kernel thread that still runs, and a stop or a resume that is inside the
+hibernation's abort request while the restart drops the hibernation
+(`abort-stop`, `abort-resume`). The default malloc zone keeps what a boot freed,
+so the test gates the heap's in-use bytes, not its size; under a sanitizer it
+reads the sanitizer allocator's live bytes.
+
+The gadget cache census
+([`tests/perf/README.md`](../tests/perf/README.md#cache-census)) compiles
+diagnostic code into both gadget engines. A change to either gadget cache or
+to the census runs:
+
+```sh
+cmake --workflow --preset check-unit-census
+```
+
+It builds the unit suite with `UML_GADGET_CACHE_CENSUS=ON` and runs every unit
+test with the census writing to `/dev/null`, every stream sampled and a
+snapshot due each second, so a census build must give a default build's
+results, under failed allocations too.
 
 ## Integration prerequisites and workflows
 
@@ -366,6 +513,29 @@ A behaviour that one program checks inside the guest runs through
 `--cxxflags`. The probe's exit status is its failure count, and the test also
 fails on a console line that the registration's `--console-failure` pattern
 matches.
+
+A guest that ends behind a closed GPU request gate must still be able to stop:
+`gpu-service-fd-ownership` completes the requests of a held gate with their
+fences when the guest-end registry reports the guest's end, runs none of them,
+and holds the next guest plainly; `runtime-guest-shutdown` covers the report
+that reaches the registry once per new report.
+
+`guest-restart` runs the macOS launcher through a guest that restarts itself.
+Under each of the gadgets and the JIT engine, one `uml-darwin` process boots,
+restarts twice and powers off, with the same pid throughout. The test loads a
+process audit (`tests/integration/restart/process_audit.cpp`) into the launcher
+and, at the settle point of each boot, compares what it lists with boot 1's:
+descriptors by kind, threads by name, Mach ports, the next pthread key, signal
+dispositions and the flags of descriptors 0 to 2. A pattern the first boot
+writes into anonymous memory and tmpfs must be found in guest RAM before the
+restart and nowhere in the process, window included, after it. A second phase
+runs a guest that restarts at once and checks that the launcher ends the loop
+with exit status 3 after five early restarts. `emulator-restart-loop-guard`
+covers the guard's policy and its escaping of the guest's command, and
+`slirp-network-reset-peer` covers a SLiRP connection whose peer resets while
+the guest has data to send, which must not end the process.
+`android-partition-boot-selection` covers the consumption of a
+`bootonce-bootloader` command and the boot a restart selects.
 
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
@@ -482,9 +652,10 @@ and no Simulator variant; see
 [`graphics.md`](graphics.md#current-path).
 `Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
-Xcode. It also packages the Apple battery provider's archive, as the Android
-runtime links it, as `HostBattery.xcframework`; only `KernariumTests` links
-it, so the test process reaches the provider without loading a second runtime.
+Xcode. It also packages the Apple battery provider's archive and the hardware
+video encoder's, as the Android runtime links them, as `HostBattery.xcframework`
+and `HostVideoEncoder.xcframework`; only `KernariumTests` links them, so the
+test process reaches each without loading a second runtime.
 `dependencies/build-ios-storage.sh --verify-only` and
 `dependencies/build-ios-zstd.sh --verify-only` check both arm64 Apple slices,
 their provenance and deployment targets, required APIs, and the absence of
@@ -523,7 +694,12 @@ passes `-enableCodeCoverage YES` to `xcodebuild test`.
 For an opt-in diagnostic, pass one SLiRP forwarding specification as
 `TEST_RUNNER_KERNARIUM_HOST_FORWARD` when launching the app. For example,
 `tcp:127.0.0.1:5567-5555` exposes guest ADB on host loopback port 5567. Normal
-launches leave the variable unset and publish no host port.
+launches leave the variable unset and publish no host port. A device driver
+that cannot answer the first-connection "Allow USB debugging" prompt launches
+the automation Android runtime
+([`Kernarium/README.md`](../Kernarium/README.md#automation-runs)) with
+`KERNARIUM_ANDROID_ADB_AUTH=0` and a loopback forward, and reaches the forward
+over USB with `iproxy`.
 
 Android recovery qualification uses a fresh disposable bundle and sets
 `TEST_RUNNER_KERNARIUM_ANDROID_BOOT_MODE=recovery`. Verify the LineageOS
@@ -646,8 +822,9 @@ and launch it again: the console reports that the previous process ended in
 the background and the guest display carries the dismissible Guest Restarted
 card. A guest this large can also be reclaimed by iOS in the first seconds of
 the background, which looks like a missing hold and is not; the next launch
-shows the notice. Remove the guest bundles and payloads the check copied to the
-application's Documents afterwards.
+shows the notice. Remove the guest bundles the check copied to the
+application's Documents afterwards, and any payload it launched without
+`KERNARIUM_PAYLOAD_REMOVE=1`.
 
 ## LTP
 
@@ -714,23 +891,39 @@ holds a vector length or non-streaming SVE state. The `arm64-absent-sve`
 records pin every SVE encoding that the removed profile executed UNDEFINED
 outside the SM = 0 family below, in both engines on every host.
 
-A virtual CPU with SME and without SVE executes CNT, INC, DEC, RDVL, ADDVL and
-ADDPL at SM = 0 for a vector length of 16 bytes, and LDR and STR of Z and P
-registers (16 and 2 bytes), a deliberate departure from the architecture (see
-[CPU execution and
-scheduling](architecture.md#cpu-execution-and-scheduling)). No host observes
-the results, because an M4 traps those words, so the `arm64-sm0-vl` record
-holds the project's own, written from the pseudocode, with the spills' pages,
-faults, tagged pointers and misaligned SPs and controls that stay UNDEFINED
-beside them, and `arm64-instruction-corpus-sm0-vl` re-derives it. The
-`arm64-sme-native` records hold no family word at SM = 0, and
+The SM = 0 family is the one set of SVE words that a virtual CPU with SME and
+without SVE executes outside streaming mode, at a vector length of 16 bytes: a
+deliberate departure from the architecture that [CPU execution and
+scheduling](architecture.md#cpu-execution-and-scheduling) defines. No host
+observes its results, because an M4 traps those words, so the `arm64-sm0-vl`
+record holds the project's own, written from the pseudocode, and
+`arm64-instruction-corpus-sm0-vl` re-derives it. The `arm64-sme-native`
+records hold no family word at SM = 0, and
 `arm64-instruction-corpus-sm0-vl-profile` runs the `arm64-sm0-vl`,
 `arm64-absent-sve` and `arm64-absent-sme` records for a virtual CPU with the
-SME profile assumed on any host, which also pins every other SVE word
-UNDEFINED at SM = 0 in both engines. The unit tests `arm64-sm0-vector-length`,
+SME profile assumed on any host. The unit tests `arm64-sm0-vector-length`,
 `arm64-gadget-sme`, `arm64-jit-sme-control` and `arm64-jit-sme-codegen` check
-the family against a model of the pseudocode, run it in each engine, and pin
-the same for the rest of the encoding table.
+the family against a model of the pseudocode and run it in each engine.
+
+Top-byte ignore (TBI), which every arm64 guest runs with unless the host
+passes `--guest-no-top-byte-ignore`, ignores the top byte of every data
+address, SP-based or not. The `arm64-tbi-memory` record
+holds the atomic, compare-and-swap, ordered, RCpc and exclusive forms reaching
+memory through a pointer tagged in its top byte, with the virtual CPU's
+top-byte ignore on, and the controls with it off. Its expectations come from
+the architecture's pseudocode, it needs no host feature, and
+`arm64-instruction-corpus-tbi-memory` re-derives it. The `arm64-tlb` unit test
+pins that an entry filled through any tag goes with its page, and the
+`guest_tagged_*_loop.S` probes time the form and the aliasing a tag could
+cause.
+
+The `arm64-tbi-equivalence` records rerun existing memory cases (general,
+SIMD&FP, pair, structure, SVE and SME forms) with a tagged base register and
+expect the source's result, add the tag-in-index, carry and SP-base forms, and
+pin that a tagged pointer faults at itself with TBI off;
+`arm64-instruction-corpus-tbi-equivalence` re-derives them, and
+`arm64-jit-top-byte-ignore` runs the JIT's strip across the forms. The SME
+cases need an SME host.
 
 The `arm64-floating-trap-native` records, and the outcomes of the
 register-only `arm64-floating-trap-scalar`, `-vector` and `-control` cases,
@@ -776,13 +969,10 @@ M4 or newer Mac.
 
 ## AArch32 decoder
 
-`arm64-aarch32-decoder` (unit) decodes the stored sample
-words of every row of the encoding table and the whole 16-bit Thumb space. It
-compares each answer with the one `tests/tooling/arm64/a32_expected.py`
-computes from the same XML pseudocode independently of the C++ translation,
-and requires LLVM MC to have decoded whatever the decoder accepts. The
-`arm64-a32-encoding-table` tooling test checks the generated tables and the
-test data against each other offline.
+`arm64-aarch32-decoder` (unit) checks the decoder against the answers
+`tests/tooling/arm64/a32_expected.py` computes independently of the C++
+translation, and against LLVM MC. The `arm64-a32-encoding-table` tooling test
+checks the generated tables and the test data against each other offline.
 
 To change the table, the profile policy (`a32_profile_policy.py`) or the pinned
 release, run `tests/tooling/arm64/generate_a32_encoding_table.py
@@ -798,16 +988,12 @@ the decoder's table and the counts in
 
 ## AArch32 corpus
 
-`arm64-aarch32-corpus` (unit) checks every case of the
-generated AArch32 corpus against the decoder: the program decodes in order,
-in the IT state its instructions leave, to legal forms except at the
-instruction that raised an event; the instruction under test is the form the
-case names; the event is one its kind can raise; and the retired count, fault
-position, state changes and memory runs agree. A case whose forms need a level
-above `--level` is skipped. The `arm64-a32-corpus` tooling test regenerates
-the pack from `tests/unit/arm64/aarch32_corpus/source` and compares it,
-`provenance.json`, `manifest.tsv`, `coverage.tsv` and `excluded.tsv` with the
-checked-in bytes, and requires cases for every executed base inventory entry.
+`arm64-aarch32-corpus` (unit) checks every case of the generated AArch32
+corpus against the decoder, running no engine. The `arm64-a32-corpus` tooling
+test regenerates the pack from `tests/unit/arm64/aarch32_corpus/source` and
+compares it, `provenance.json`, `manifest.tsv`, `coverage.tsv` and
+`excluded.tsv` with the checked-in bytes, and requires cases for every
+executed base inventory entry.
 Neither needs an oracle. The corpus README owns the format, the oracles and how
 to record a suite with `tools/arm64-tests/a32-corpus.py`; recording runs
 `qemu-arm` on a build host over ssh and is opt-in. With
@@ -819,36 +1005,25 @@ before the table goes stale; it skips without the archive.
 
 ## AArch32 semantic library
 
-`arm64-aarch32-semantics` (unit) checks the library's
-contract that the corpus cannot record: fault ordering and the unchanged
-state at a fault, the exclusive monitor, the single-instruction entry's IT
-handling, the events, the library-exit counters and the coverage predicate.
-`arm64-aarch32-semantics-corpus` is the corpus's model lane: it runs every
-case of the pack through `step_a32()` on a model of the oracle's address space
-(page by page, so a crossing access splits across separate host pages) and
-requires the recorded event, retired count, fault address, registers, flags,
-FPSCR, D registers, thread registers and data bytes, with 0 failures. The
-library covers the whole profile, so a case with a form it does not cover is a
-failure of the lane too; `--skipped` lists such forms. It runs the BFloat16,
-8-bit matrix multiply and FHM forms on any host, because the library does not
-need those features. Run one record with
+`arm64-aarch32-semantics` (unit) checks the library's own contract, which the
+corpus cannot record. `arm64-aarch32-semantics-corpus` is the corpus's model
+lane: it runs every case of the pack through the library on a model of the
+oracle's address space and requires 0 failures. It runs the BFloat16, 8-bit
+matrix multiply and FHM forms on any host, because the library does not need
+those features. Run one record with
 `uml_arm64_aarch32_semantics_corpus_tests <pack> --record <name>`, one case
-with `--case`, and `--trace` for its steps and initial state.
+with `--case`, and `--trace` for its steps and initial state; `--skipped` lists
+the forms of a case the library does not cover, which fail the lane.
 
 ## Guest SME policy
 
 Unit binaries take the guest-SME policy from their environment, like any
 run: on by default, off with `DARWIN_UML_GUEST_SME=0`. The suites hold
-either way on every host, and a host without SME sees no difference.
-`arm64-sme-foundation` checks the prober against the host's own sysctls under
-either policy, and the identification registers and HWCAP2 against arm64
-Linux's table with injected SME hosts at every SVL from 16 to 256 bytes and
-every engine support level. On
-an SME host, an M4 Mac, also run it, `arm64-advertised-features`,
-`arm64-jit-sme-control`, `arm64-jit-sme-register`,
-`arm64-jit-sme-memory` and `arm64-instruction-corpus`, which then runs the
-native SME records on both engines, with the policy at its default and with
-`DARWIN_UML_GUEST_SME=0`.
+either way on every host, and a host without SME sees no difference. On an SME
+host, an M4 Mac, also run `arm64-sme-foundation`, `arm64-advertised-features`,
+`arm64-jit-sme-control`, `arm64-jit-sme-register`, `arm64-jit-sme-memory` and
+`arm64-instruction-corpus`, which then runs the native SME records on both
+engines, with the policy at its default and with `DARWIN_UML_GUEST_SME=0`.
 Elsewhere `arm64-jit-sme-control` runs only its SM=0 cases, on an injected
 profile, `arm64-jit-sme-register` and `arm64-jit-sme-memory` skip, and the
 corpus skips its native SME records. Integration runs read the policy the same
@@ -856,19 +1031,11 @@ way: on an M4, `guest-gadgets-smoke` and `guest-jit-smoke` expect the SME
 HWCAP2 bits and `guest-hwcap-sanity` executes the SME families.
 
 `guest-sme-gadgets` and `guest-sme-jit` check the guest kernel's SME contract
-with the policy at its default. Each skips, naming its reason, unless the host has SME
-and its engine's SME support is `control` or better. The freestanding
-`sme_probe.cpp` boots as `/init` and checks signal frames, invalid
-sigreturns, the system-call exit from streaming mode, fork, vfork, clone,
-exec, regsets, `AT_MINSIGSTKSZ`, prctl and the sysctl, first through
-sigreturn and ptrace alone, then with SME executed by the engine; further
-boots send host signals and each terminating signal while a vCPU streams,
-and `glibc_za_probe.py` checks the image's glibc and libgcc SME ABI: the ZA
-lazy-save commits at fork, spawn, thread creation, longjmp and siglongjmp,
-a glibc-installed handler for a signal that interrupts a streaming region,
-returning or leaving by siglongjmp, and libgcc's SME support routines. The
-`kernel`, `spin` and `terminate` modes need no engine support; on an SME host
-they run by hand with
+with the policy at its default, in the modes
+`tests/integration/sme/run_guest_sme.py` lists. Each skips, naming its reason,
+unless the host has SME and its engine's SME support is `control` or better.
+The `kernel`, `spin` and `terminate` modes need no engine support; on an SME
+host they run by hand with
 `run_guest_sme.py --minimum-support none --modes kernel,spin,terminate`.
 `guest-sme-off-gadgets` and `guest-sme-off-jit` run on every host and check
 that with the policy forced off the probe sees no SME.
@@ -894,191 +1061,165 @@ both tools on synthetic ELF fixtures.
 ## No guest SVE
 
 `arm64-no-sve` checks that the virtual CPU presents no SVE outside streaming
-mode whatever the host reports: the prober's token set, the engines' presented
-profiles, ID_AA64PFR0_EL1.SVE and ID_AA64ZFR0_EL1, and the SVE bits of
-AT_HWCAP and AT_HWCAP2. `arm64-advertised-features` pins the words and
-registers of named hosts.
-
-`guest-no-sve-gadgets` and `guest-no-sve-jit` run on every host. The
-freestanding `no_sve_probe.cpp` boots as `/init` and checks that the guest
-kernel and the engine agree: no SVE bit in AT_HWCAP or AT_HWCAP2, no SVE
-prctl, sysctl or ptrace regset, no sve_context in a signal frame without SME
-and only its bare header outside streaming mode with it (as Linux gives a CPU
-with SME and without SVE; `guest-sme-gadgets` and `guest-sme-jit` check the
-streaming record), and undefined SVE instructions.
+mode whatever the host reports, and `arm64-advertised-features` pins the words
+and registers of named hosts. `guest-no-sve-gadgets` and `guest-no-sve-jit` run
+on every host: the freestanding `no_sve_probe.cpp` boots as `/init` and checks
+that the guest kernel and the engine agree, and `guest-sme-gadgets` and
+`guest-sme-jit` check the streaming record.
 
 ## Guest AArch32 foundation
 
-`arm64-a32-foundation` checks the state `CpuState` appends and its assembly
-offsets, the guest-AArch32 policy, the engines' support levels and what a
-policy presents of them, the AArch32 identification registers and compat
-HWCAP words at each level over every subset of the host features they follow,
-and that an engine below `base` takes the AArch32 entry as the
-illegal-instruction exit without changing the state. `arm64-a32-guest-key` checks the tagged
-translation keys (round trips, interworking, that no key collides with an A64
-key, the empty cell or a fault position, and the hash-visible bit) and the
-key-aware validation of saved guest units across page boundaries. `arm64-jit-shared-translation-cache` also checks that the
-shared tier keys and sizes AArch32 translations by ISA. Unit binaries take the
-policy from their environment as well; the suites must hold unchanged with
-`DARWIN_UML_GUEST_AARCH32=1`.
+The AArch32 foundation and gadget-engine tests are `arm64-a32-foundation`,
+`arm64-a32-guest-key`, `arm64-a32-host` and `arm64-gadget-a32-*`;
+`ctest -N -R '^arm64-(a32-|gadget-a32-)'` lists them, with the AArch32
+tooling tests, and each test's header states what it checks. Instruction
+semantics belong to the instruction corpus, not to `arm64-gadget-a32-control`,
+which pins the translator's control behaviour, or `arm64-gadget-a32-forms`,
+which holds the engine to the decoder's answer for every stored sample word.
 
-`arm64-gadget-a32-control` runs small A32 and T32 programs through the gadget
-engine's production AArch32 loop and checks what its translator decides:
-retirement counts (skipped conditional instructions retire, a fault or an
-undefined word does not), the key left in the PC, the architectural fault
-address, ITSTATE at an SVC, at a fault and when an entry resumes in the middle
-of a block, interworking in both directions, the A32 target with bit 1 set,
-the instruction budget, single step, code that changes in place, the
-exclusives and the Armv8 acquire and release forms (including loops whose
-plain stores share the target's TLB set and the compare-and-swap helpers of
-the kernel's user-helper page), the CP15 and counter reads, and LDM, STM and
-LDRD across a page, mapped and not, and that Advanced SIMD floating point
-runs under the standard FPSCR value while VFP keeps the guest's (in either
-order, in a skipped conditional run and across a block that ends inside a
-run), that the conversions, VMAX, VMIN, VADD, VSUB and VMUL run in whichever
-environment is native exactly when their operands allow it, with the value,
-flags and environment left checked against the host's own instruction under
-the matching FPCR, that no gadget writes the callee-saved halves of V8-V15
-(the corpus runner checks them around every case), that every writeback of a
-VLD1 or VST1 copy moves the bytes and the base inside a page and across one,
-that a VFP word is illegal when the engine translates at the base
-level, and that at the complete level a form of an extension (CRC32, AES,
-SHA-1, PMULL, FP16, DotProd, RDM, FCMA, FHM, BF16, I8MM, JSCVT) executes on a
-host that has it, as a gadget or in the semantic library, and is the
-illegal-instruction exit, not retired, on one that does not (the test builds
-one guest on the machine's capabilities and one on a host with none of the
-optional ones). `arm64-gadget-a32-forms` runs every
-stored sample word of the decoder's data and the whole 16-bit Thumb space and
-requires the engine to raise the illegal-instruction exit exactly where the
-decoder, at the engine's level, rejects the word. Both also hold the
-library-exit count gate: with the semantic library's exit counters on from a
-clean state, only a form the engine leaves to the library, or a block transfer
-that crossed a page, may reach it, and the forms the engine leaves to it do.
-`arm64-gadget-a32-corpus`
-runs the cases of the AArch32 corpus whose instructions the engine's level
-implements in the oracle's memory map and compares the signal or system call,
-the instruction and address it was raised at, the registers, flags, Q, GE,
-D0-D31, FPSCR, the data region and the retired count (a case whose forms need an
-extension the host lacks, BF16 and I8MM on the M1 Ultra, is skipped);
-`--level` runs the
-cases of another level with the engine translating at it, which is how a
-level is brought up before the engine's own moves. The `unaligned` and
+`arm64-gadget-a32-corpus` runs the cases of the AArch32 corpus whose
+instructions the engine decodes. A case whose forms need an extension the host
+lacks (BF16 and I8MM on the M1 Ultra) is skipped. The `unaligned` and
 `fpscr-reserved` suites are recorded from hardware (a Raspberry Pi 4), as the
-corpus README describes. A store-exclusive may fail
-without cause, and the gadgets' fails whenever a host interrupt lands between
-the load and the store, which a loaded host makes frequent enough to see in a
-gate; the oracle's never does. A case whose only difference is that failure
-runs again, up to 16 attempts in all, and the summary counts the cases that
-needed it. `arm64-gadget-a32-corpus-interrupted` runs the `exclusive-qemu`
-and `sequences-qemu` records (`--record` takes a comma-separated list) at
-least 200 times with a timer signal every few microseconds aimed at the
-guest's thread, and goes on past that until a store-exclusive has lost its
-reservation (at most 60 s, because whether a signal lands in the window is
-chance). It requires that one was lost and that every case then agreed.
-Instruction semantics belong to the instruction corpus, not to the first two.
-
-`arm64-a32-host` and `arm64-a32-host-policy-on` check the host runtime side:
-the architectural positions of the status word's fields, the load and save of
-every field around an engine's AArch32 entry (key, flags, GE, IT, FPSCR
-split, TPIDR registers, CP15BEN; load then save is the identity over random
-states in both Thumb and ARM state), which entries the kernel may hand over,
-the bridge event of every exit, and that the compat HWCAPs and the guest entry
-points follow the level the run presents, with the policy off and on. An
-engine that has reached `base` makes the policy-on run enter it for real: an
-entry at an unmapped PC must fault there.
+corpus README describes. A store-exclusive may fail without cause, and the
+gadgets' fails whenever a host interrupt lands between the load and the store,
+which a loaded host makes frequent enough to see in a gate; a case whose only
+difference is that failure runs again, up to 16 attempts in all, and the
+summary counts the cases that needed it. `arm64-gadget-a32-corpus-interrupted`
+makes the failure happen on purpose: it runs the `exclusive-qemu` and
+`sequences-qemu` records (`--record` takes a comma-separated list) under a
+timer signal aimed at the guest's thread, and requires that a store-exclusive
+lost its reservation and that every case then agreed (it waits for that at
+most 60 s, because whether a signal lands in the window is chance).
 
 `guest-aarch32-engine-gadgets` and `guest-aarch32-engine-jit` run the engine
 probe, a freestanding armhf program from `tests/integration/aarch32/engine_probe/`
-that boots as the guest's `/init` under `DARWIN_UML_GUEST_AARCH32=1`. The build
-compiles it with the configured compiler's ARM backend and links it with
-`link_elf32.py`, aligned to 64 KiB and aligned to 4 KiB only. Its groups cover
-system calls and errno, A32/T32 interworking, signal frames with VFP state
-through the sigpage and `SA_RESTORER`, every kuser helper, TPIDRURO and
-TPIDRURW, `cacheflush` with self-modifying code, alignment and memory faults,
-UNDEFINED encodings (UDF, SETEND, SWP, a CP15 barrier with `abi.cp15_barrier`
-cleared), `SIGTRAP` from BKPT and `udf #16` under ptrace and a single step
-through an IT block, LDREX/STREX and the kuser cmpxchg under contention across
-threads and processes, VFP, Advanced SIMD and FPSCR semantics (including
-structure loads and stores alone in a block, across a reschedule), and, at the
-complete level, the Armv8 floating-point additions (VRINT, VCVT with a rounding
-mode, VMAXNM/VMINNM) and the crypto, CRC32, dot-product and half-precision
-extensions against known answers. A group needing a higher level than the
-engine's is skipped inside the probe from the HWCAP words it sees, and an
-extension the words leave out must raise `SIGILL`. Every SIGILL is counted: one
-the probe did not expect fails the run. A test skips, naming its reason, while
-its engine implements no AArch32 (the level `uml-a32-engine-support` prints is
-`none`). `A32_PROBE_GROUPS` selects groups by hand through the runner's
-`--groups`, and `A32_PROBE_VERBOSE=1` makes the runner print every line of the
-guest's output, passes included.
+that boots as the guest's `/init`. The build compiles it with the configured
+compiler's ARM backend and links it with `link_elf32.py`, aligned to 64 KiB and
+aligned to 4 KiB only. Each group's source states what it checks, and a group
+needing an extension the HWCAP words leave out is skipped inside the probe.
+Every SIGILL is counted: one the probe did not expect fails the run.
+`A32_PROBE_GROUPS` selects groups by hand through the runner's `--groups`, and
+`A32_PROBE_VERBOSE=1` makes the runner print every line of the guest's output,
+passes included.
 
 ## AArch32 JIT
 
-The JIT's AArch32 tests run on the macOS JIT only.
-`arm64-jit-a32-corpus` runs every case of the AArch32 corpus pack
-through `CpuEngine::run_aarch32` on the oracle's memory map, with an svc at
-each of the oracle's two epilogues, and compares registers, APSR, thread
-registers, changed data, event, fault address and retired count. A
-store-exclusive may fail without cause, and the JIT's fails whenever a host
-interrupt lands between the load and the store; a case whose only difference
-is that failure (a status of 1 where the pack has 0, and the store not made)
-runs again, up to 16 attempts in all, and the summary counts the cases that
-needed it. `arm64-jit-a32-corpus-interrupted` runs the `exclusive-qemu` record
-with a signal storm aimed at the guest's thread until four cases have lost a
-reservation, and requires that every case then agreed. The corpus then
-requires every lowered form to stay out of the slow helper from a clean state:
-each event-free case runs twice, and past the first run one case
-in which the form always executes must take no helper exit (the others cross a
-page or write back over the loaded register). The forms that the semantic
-library runs (the parallel arithmetic and the Armv8 extensions the compiler does
-not lower) must take it in all of them, and every vector form of the simd level
-must have a lowering. A case whose form is of an extension the host lacks
-(BFloat16 and the 8-bit matrix forms on an M1) is skipped, because the JIT
-decodes it as UNDEFINED there. The corpus's VJCVT cases include a flush-to-zero
-subnormal input, which exercises the correction for a host whose FJCVTZS
-reports it as exact. `arm64-jit-a32-runtime`,
-`arm64-jit-a32-data-processing` and `arm64-jit-a32-memory` run random A32
-programs, conditions included, against an independent reference of the
-instruction forms (the corpus carries T32); `arm64-jit-a32-data-processing` also runs every parallel add and
-subtract form against a lane model and requires the lowered ones to stay out
-of the library.
-`arm64-jit-a32-exclusive` covers the fused LL/SC runs, the compare-and-swap
-idiom, the monitor rules, fault and alignment exits, two threads counting
-exactly and an ordinary store clearing a reservation, and requires the fused
-loop to make no helper call, also with a compare and conditional branch or a
-CBNZ between the load and the store (A32 and T32). `arm64-jit-a32-acquire-release` covers LDA and
-STL with their byte and halfword forms, the always-checked alignment, the fused
-and helper LDAEX/STLEX paths, the doubleword pair, SEVL and the kernel's kuser
-helpers word for word. `arm64-jit-a32-control` runs IT blocks whole, a
-step at a time and from the middle, random A32 and T32 programs of
-conditional branches, forward and back (B, CBZ, CBNZ), among data processing
-whole and one instruction at a time, the shape of a block that goes on past a
-branch back and of one that ends at a branch to its own first instruction, the
-code shape of a linked block (the fifteen core registers loaded once before its
-internal entry, none written back before a link) and the registers across the
-budget returns of a chain with a call and a return, random loops with memory, Advanced SIMD and
-side exits in their bodies that end by a count, a branch out or a fault, and
-the counted loop's translation as a host loop through the chain budget, long blocks under a small budget, code
-rewritten under translations, and one form of each optional extension on hosts
-with every extension and on hosts lacking one (the form is UNDEFINED, A32 and
-T32, and nothing else changes). `arm64-jit-a32-vector` covers what the corpus
-does not see of VFP and Advanced SIMD: the guest's FPCR for a VFP instruction
-and the Standard FPSCR value for a Neon one across a conditional arm, a chained
-branch, an exit and alternating blocks (the host FPCR keeps its mode across
-them), VMAX, VMIN, VADD, VSUB, VMUL, VMLA and VMLS on every special operand,
-rounding mode and flush mode in the contexts that guard them and the one that
-does not, QC across runs, the flags of VCMP and VCMPE reaching the APSR
-through VMRS (adjacent or not, conditional or not), and the vector memory forms staying inline and
-taking the library, with its data and faults, across a page, on a misalignment
-and into an unmapped page (every load form across a page at every offset, with
-the two pages adjacent in the host and not, and with no library call once the
-TLB holds both), where the library leaves the guest's FP environment
-installed. `arm64-jit-a32-encoder` compares the compiler's A64 encoders with LLVM
-MC, and `arm64-jit-a32-vector-encoder` those of the vector instruction
-classes.
+The JIT's AArch32 tests run on the macOS JIT only. They are `arm64-jit-a32-*`
+and `arm64-jit-executor-paths`; `ctest -N -R '^arm64-jit-(a32-|executor-paths)'`
+lists them, and each test's header states what it checks.
+
+`arm64-jit-a32-corpus` runs every case of the AArch32 corpus pack through
+`CpuEngine::run_aarch32` on the oracle's memory map. A case whose form is of
+an extension the host lacks (BFloat16 and the 8-bit matrix forms on an M1) is
+skipped, because the JIT decodes it as UNDEFINED there. A store-exclusive may
+fail without cause, and the JIT's fails whenever a host interrupt lands between
+the load and the store; a case whose only difference is that failure (a status
+of 1 where the pack has 0, and the store not made) runs again, up to 16
+attempts in all, and the summary counts the cases that needed it.
+`arm64-jit-a32-corpus-interrupted` makes it happen on purpose: it runs the
+`exclusive-qemu` record under a signal storm aimed at the guest's thread until
+cases have lost a reservation, and requires that every case then agreed.
+
+## Android 32-bit userspace
+
+The Android product runs `armeabi-v7a` applications beside `arm64-v8a` ones
+([`../android/lineage-24/README.md`](../android/lineage-24/README.md#android-product)).
+The build side needs no Android build. `lineage24-target-files-fixtures` drives the
+target-files verifier over fixtures (ABI lists, the 32-bit runtime, ELF32
+placement and alignment, per-ISA ART artifacts, the 32-bit Mesa and HAL files
+and their 64-suffixed `mmap` and `lseek` imports, the compressed-EROFS contract of
+the read-only partitions (the two parameters, `misc_info`, the compress hints, each
+image's superblock, the EROFS kernel options and the fstabs; each APEX payload's
+filesystem and superblock, and the example HALs' service binaries read from the payload's
+directories), the userdata inode count,
+the application read of the vendor security patch level, the built-in
+microphone and companion device setup feature declarations, the userdata `quota` flag, and the
+suspend blocker with the adb host-connected property it follows, the network
+setup tool with the ARP policy init sets before it, its library, label and domain
+transition, the script that saves the virtual Wi-Fi network once, after boot and
+without touching the user's Wi-Fi switch, with its core domain, its binder transfer to the Wi-Fi service's process and the call back, and its marker, the Wi-Fi
+HAL and supplicant with their manifest fragments and services, the Wi-Fi feature
+declaration and the absent Ethernet, Aware, RTT, Direct and Passpoint ones, the built-in macvlan, cfg80211 and virt_wifi
+options of the packaged kernel configuration, the absent wificond, the ClearKey HAL's access to the memfd files of applications, the
+policy without the LineageOS grants that Android's neverallow tests refuse, and the
+discrete app-op list that keeps AOSP's default ops, the example thermal HAL
+with its manifest fragment and service, the default CAS HAL with its ClearKey
+plugin, the vendor `build.prop` without the unreliable-present-fence property
+and with `ro.incremental.enable=1`, the software decoders' 3840x2160 limits, the
+hardware video encoder service, a codec list of its two encoders and two
+decoders, their properties and no other enabled decoder, the video nodes' group,
+the service's seccomp calls and its label), and `lineage24-builder-lane` the
+builder's other assertions;
+`lineage24-first-boot-precompile` covers the
+ISA set of a package and the per-ISA artifacts and manifest;
+`lineage24-mesa-venus-port-generator` covers the per-ISA generators of the
+Mesa port and that every arm module is built with Meson's large-file define;
+and `lineage24-mesa-venus-source-contract` pins the regenerated series.
+`KernariumTests` covers the disk range the larger seed GPT needs.
+
+A release candidate is qualified on its image, opt-in, on every engine that
+runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
+`SIGILL` anywhere is a blocker, as everywhere.
+
+- **Boot.** `boot_completed` with `ro.product.cpu.abilist` listing
+  `arm64-v8a,armeabi-v7a`, `ro.zygote=zygote64_32` and the secondary zygote
+  running without restarts; SELinux enforcing with no denial from the 32-bit
+  zygote, `crash_dump32`, the WebView zygote or its RELRO process; native
+  daemons and HALs 64-bit. ART Service's first-boot pass skips every package,
+  the WebView's `arm` artifacts included, and `odrefresh` compiles nothing for
+  either ISA.
+- **Applications.** A set of real 32-bit applications: some `armeabi-v7a`
+  only, some dual-ABI installed with `adb install --abi armeabi-v7a` against a
+  64-bit control install, and a Java-only one forced to 32 bits. Each shows
+  `primaryCpuAbi=armeabi-v7a` in `dumpsys package`, descends from the
+  secondary zygote, draws through GLES and, where it uses it, Vulkan, and
+  leaves no tombstone. A deliberate `SIGSEGV` in one must leave a symbolized
+  `crash_dump32` tombstone. The 64-bit browser's pages load through the 64-bit
+  WebView renderer, and a 32-bit application's WebView talks to it.
+- **CTS.** The 32-bit and 64-bit variants of the bionic, binder, OS, JNI,
+  seccomp, ABI-override and ASLR modules run on the same candidate; a test that
+  fails only on `armeabi-v7a` is triaged before acceptance.
+- **Alignment.** The engine probe (`tests/integration/aarch32/engine_probe`)
+  runs from `/data/local/tmp` on both engines: its fault section must give
+  `SIGBUS` with `BUS_ADRALN` for misaligned LDM, STM, LDRD, STRD and VLDM while
+  unaligned LDR, LDRH, STR and STRH succeed, as on Linux guests (the kernel has
+  no `COMPAT_ALIGNMENT_FIXUPS`).
+- **Cost.** Boot to `sys.boot_completed` (dmesg), cold and warm, in an
+  ABBA order against the previous release on the same host build; `MemAvailable`
+  after a settle and `dumpsys meminfo` for the zygotes and the WebView zygote;
+  and the image and compressed sizes. The stock secondary zygote stays unless
+  it costs more than 3 s of iPad cold boot or 100 MiB of guest `MemAvailable`;
+  then one started on demand is designed.
+
+## Android hardware video encoding and decoding
+
+A release candidate whose product carries the hardware codecs
+([`../android/lineage-24/README.md`](../android/lineage-24/README.md#hardware-video-encoding-and-decoding))
+is qualified opt-in, on a guest started with the host's Virtio video device
+enabled (`--video`).
+
+- **Codec list.** `MediaCodecList` shows `c2.v4l2.avc.encoder`,
+  `c2.v4l2.hevc.encoder`, `c2.v4l2.avc.decoder` and `c2.v4l2.hevc.decoder`
+  beside the `c2.android.*` components; the service runs without restarts,
+  with no SELinux denial and no seccomp kill in its log.
+- **CTS.** The encoder tests of `CtsMediaEncoderTestCases`,
+  `CtsMediaV2TestCases`, `CtsVideoCodecTestCases`, `CtsVideoTestCases`,
+  `CtsMediaCodecTestCases` and `CtsMediaRecorderTestCases`, filtered to the two
+  encoder names, and the decoder classes of `CtsMediaV2TestCases` and
+  `CtsVideoTestCases` (the performance and availability classes among them) and
+  `AdaptivePlaybackTest`, `DecoderBlockModelTest` and `VideoDecoderPerfTest` of
+  `CtsMediaDecoderTestCases`, filtered to the two decoder names, pass on
+  `arm64-v8a` and `armeabi-v7a`, and the software `c2.android.*` results do
+  not regress. The encoder tests that decode their output pass through the
+  hardware decoders. The decoders' rates swing with the load of the host, so
+  the performance classes run on a quiet one.
+- **Host.** The host's video activity log shows hardware encodes and decodes
+  for those runs; a pass that never reached the host codec does not qualify.
 
 ## x86 instruction conformance
 
-The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
+The x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
 from the pinned FEX `x86-conformance` dependency as its external instruction
 campaign. For the gadget engine FEX is a test input only; FEXCore is linked
 into nothing but the macOS-only x86-64 JIT.
@@ -1103,76 +1244,19 @@ context. The macOS unit tree also runs the build-generated x86-64 corpus
 through the x86-64 JIT. `x86-64-jit-instruction-corpus` holds it to
 `tests/unit/x86_64/jit_corpus_exclusions.tsv`, whose rows name each record the
 engine is known to fail with its class and fail the test when the record passes
-or names nothing. `x86-64-jit-emitted-registers` repeats the run and walks
-every block FEXCore translates, failing on a reachable instruction that names
-x18 or that the same oracle cannot classify, or on a block that does not parse.
-`x86-64-jit-code-buffer-growth` repeats the run from one byte
-of host code per IR node, requires the code buffer to grow, and requires the
-same results. `x86-64-retirement` and `x86-64-jit-retirement` hold the gadget
-engine and the JIT to the same count of retired instructions before each kind
-of stop, in long64 and compat32, including a store into the code of the block
-running it. `x86-64-jit-space-recycling` has an engine make a gone address
-space's space over for the next one and requires the new bytes to run.
-`x86-64-jit-code-change` has a program rewrite a function it has run, with a
-plain, a locked and a repeated store, and requires every publication of the
-change to follow the store; it also has a function rewritten, as another vCPU
-would, behind a flag the program reads before CPUID or IRET, and requires the
-call after either to run the new code.
-`x86-64-tier-switch-corpus` and `x86-64-tier-switch-retirement` run the corpus
-and the retirement cases on the gadget engine for the first K retired
-instructions and on the JIT for the rest, over a sweep of K, and require each
-case to end as the engines alone do; `tests/unit/x86_64/tier_switch_exclusions.tsv`
-lists the one record that differs, in a result the architecture leaves
-undefined.
-`x86-64-gadget-link-layout` holds the layout translated code reads a cached
-link by -- an aligned stream-and-count pair, with the target's guest bounds in
-the two words in front of its stream -- against real programs and the
-executor's own records, and shows a reader following a link that writers
-retarget never sees bounds that belong to another stream; the same reader
-does see them torn when the bounds are stored apart from the pair.
-`x86-64-gadget-bodies` holds what a cached translation is: a body in its address
-space's arena with its stream behind it and its source apart, the program a
-view of both, the move of an owning program, a replay on a stored program, and
-several threads racing to replay one program and agreeing on a single decode.
-`x86-64-gadget-shared-bodies` holds what sharing an address space's
-translations does: a second executor adopts a block instead of building it, a
-code change reaches the links another executor armed, an executor letting go
-leaves the others their blocks, executors built for different exceptions share
-nothing, a shared space is never swept while a private one is under the same
-churn, and a fault in a block only the address space holds is reported where it
-is. `x86-64-gadget-shared-store` holds the writer's protocol: a store resets the
-link another executor armed, a build a store landed across is kept by nobody,
-and no link is armed to a stale body; dropping the stale check at arming, the
-store count at publication, or the reset at the store each fails it.
-`x86-64-gadget-shared-concurrent` runs executors on threads through rounds of
-code an engine store patches, and carries the `tsan` label.
-`x86-64-gadget-shared-bound` closes a shared space that executors let go of
-down to the bodies of one, whether by destroying the executor or by the MMU
-destroying the address space, and leaves a smaller one alone; shows the
-byte budget reaching the second executor of a space it asks to shed; and runs
-four executors on threads while the budget has the space shed and replaced
-under them. It carries the `tsan` label.
-`x86-64-gadget-bootstrap` runs the whole bootstrap suite with the executors
-sharing, as they do by default, and `x86-64-gadget-bootstrap-private` with each
-keeping its own.
-`x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
-of XE2's request sets through each engine's ordinary path with every
-exception masked and hold the MXCSR flags each instruction leaves to an Intel
-Xeon's, except the documented inexact cases the test names.
-`x86-64-masked-flags-checked` runs the same cases through the gadget engine's
-checked path, whose flags come from the SIMD floating-point model the JIT
-shares, and allows no difference; it then runs each case with invalid
-operation, a denormal operand, division by zero or precision unmasked, alone
-and in pairs, and requires the #XM and the flags the Xeon's imply.
-`x86-64-half-round` holds the integer rounding of a single to a half, which
-the model's VCVTPS2PH flags follow, to a second derivation over every finite
-single in all four rounding controls. `x86-64-fp-model` holds the model's
-two other integer answers, whether a square root is exact and whether an
-integer fits the float it converts to, to SoftFloat's flags over every single
-significand, the squares of integers, random doubles, and the integers around
-every power of two. The
-`ios-products-carry-no-fexcore` tooling test checks the script the iOS
-packaging runs to keep FEXCore out of every iOS product.
+or names nothing. `x86-64-tier-switch-corpus` runs the corpus on the gadget
+engine for the first K retired instructions and on the JIT for the rest, over a
+sweep of K, and requires each case to end as the engines alone do;
+`tests/unit/x86_64/tier_switch_exclusions.tsv` lists the one record that
+differs, in a result the architecture leaves undefined.
+
+The other x86-64 unit tests (`ctest -N -L x86-64` lists them) state in their
+headers, or in the comment above their registration in
+`tests/unit/x86_64/CMakeLists.txt`, what they check. The `x86-64-jit-*` and
+tier-switch tests exist only where the JIT does, on macOS, and the `tsan` label
+marks those the TSan workflow also runs. The `ios-products-carry-no-fexcore`
+tooling test checks the script the iOS packaging runs to keep FEXCore out of
+every iOS product.
 
 ## Performance and external campaigns
 

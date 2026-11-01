@@ -118,12 +118,6 @@ void Arm64Emitter::store_w(unsigned source, unsigned base, std::size_t offset) {
          ((base & 31U) << 5) | (source & 31U));
   }
 
-void Arm64Emitter::load_h(unsigned destination, unsigned base,
-                          std::size_t offset) {
-    emit(0x7940'0000U | (static_cast<std::uint32_t>(offset / 2U) << 10) |
-         ((base & 31U) << 5) | (destination & 31U));
-  }
-
 void Arm64Emitter::load_b(unsigned destination, unsigned base, std::size_t offset) {
     emit(0x3940'0000U | (static_cast<std::uint32_t>(offset) << 10) |
          ((base & 31U) << 5) | (destination & 31U));

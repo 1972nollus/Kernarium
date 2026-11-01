@@ -220,9 +220,8 @@ void every_full_one_register_form_is_direct() {
           require(count_if(hot, &is_cpu_state_vector_store) ==
                       (load ? 1U : 0U),
                   "full one-register form exported the wrong vector");
-          require(count_word(hot, monitor_clear) ==
-                      (load ? 0U : 1U),
-                  "full one-register store did not clear the monitor once");
+          require(count_word(hot, monitor_clear) == 0U,
+                  "full one-register form cleared the monitor");
           require(compiled.memory_write_mask == (load ? 0U : 1U) &&
                       compiled.direct_memory_write_mask ==
                           (load ? 0U : 1U),
@@ -261,9 +260,8 @@ void every_lane_one_register_form_is_direct() {
               require(count_if(hot, &is_cpu_state_vector_store) ==
                           (load ? 1U : 0U),
                       "lane form exported the wrong vector state");
-              require(count_word(hot, monitor_clear) ==
-                          (load ? 0U : 1U),
-                      "lane store did not clear the monitor once");
+              require(count_word(hot, monitor_clear) == 0U,
+                      "lane form cleared the monitor");
               require(compiled.memory_write_mask == (load ? 0U : 1U) &&
                           compiled.direct_memory_write_mask ==
                               (load ? 0U : 1U),

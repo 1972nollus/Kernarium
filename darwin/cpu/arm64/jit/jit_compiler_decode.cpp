@@ -184,7 +184,9 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     const auto ordered_memory = [&](bool store) {
       if (store)
         mark_memory_write();
-      emit_memory_slow(instruction, pc, resulting_count);
+      emit_terminal_helper(
+          reinterpret_cast<const void *>(&uml_arm64_jit_execute_memory),
+          instruction, pc, resulting_count);
       return Action::terminate;
     };
 

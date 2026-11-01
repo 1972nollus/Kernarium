@@ -3,16 +3,8 @@
 # The guest kernel's AArch32 task support (run_guest_aarch32.py). The armhf
 # program is built with the configured compiler's ARM backend and wrapped
 # into an ELF32 executable by make_elf32.py, because the toolchain has no
-# ARM linker. It is generated here and never committed.
-#
-# Until a host engine runs AArch32 the bridge reports no compat HWCAPs and the
-# test expects the kernel to behave like a CPU without 32-bit EL0: ENOEXEC for
-# the programs and EINVAL for personality(PER_LINUX32). A lane that lands an
-# engine switches UML_AARCH32_EXPECT to run, which executes the program and
-# checks that a program laid out for 4 KiB pages runs.
-set(UML_AARCH32_EXPECT "unsupported" CACHE STRING
-    "What guest-aarch32 expects of the host: unsupported or run")
-set_property(CACHE UML_AARCH32_EXPECT PROPERTY STRINGS unsupported run)
+# ARM linker. It is generated here and never committed. The test executes the
+# program and checks that the one aligned to 4 KiB only runs.
 
 set(_uml_aarch32_object "${CMAKE_CURRENT_BINARY_DIR}/aarch32_probe.o")
 set(UML_GUEST_AARCH32_PROBE "${CMAKE_CURRENT_BINARY_DIR}/guest-aarch32-probe")
@@ -49,23 +41,43 @@ add_custom_target(uml-guest-aarch32-probe
     DEPENDS "${UML_GUEST_AARCH32_PROBE}" "${UML_GUEST_AARCH32_PROBE_4K}")
 add_dependencies(integration-test-binaries uml-guest-aarch32-probe)
 
+# The timeout is above the runner's longest path: boot, the probe's 900 s
+# bound on the gadget engine, and the closing command.
 uml_add_guest_integration_test(
     NAME guest-aarch32-kernel
     SCRIPT run_guest_aarch32.py
     ARGS --probe ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_guest_probe.py
         --elf ${UML_GUEST_AARCH32_PROBE}
         --elf-4k ${UML_GUEST_AARCH32_PROBE_4K}
-        --expect ${UML_AARCH32_EXPECT}
+        --aarch64-helper ${CMAKE_CURRENT_SOURCE_DIR}/aarch64_dirty.s
     LABELS guest;kernel;aarch32;smoke
-    TIMEOUT 420
+    TIMEOUT 1200
     CPUS 2)
+
+# guest-aarch32-exclusives-<engine> runs the probe's exclusives check alone on
+# an engine: every exclusive and ordered form on each of four CPUs, right
+# after a 64-bit task left its registers there.
+foreach(_engine IN ITEMS gadgets jit)
+    uml_add_guest_integration_test(
+        NAME guest-aarch32-exclusives-${_engine}
+        SCRIPT run_guest_aarch32.py
+        ARGS --engine ${_engine} --ncpus 4 --only exclusives
+            --probe ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_guest_probe.py
+            --elf ${UML_GUEST_AARCH32_PROBE}
+            --elf-4k ${UML_GUEST_AARCH32_PROBE_4K}
+            --aarch64-helper ${CMAKE_CURRENT_SOURCE_DIR}/aarch64_dirty.s
+            --probe-timeout 600
+        LABELS guest;kernel;aarch32;${_engine}
+        TIMEOUT 900
+        CPUS 4)
+endforeach()
 
 # The engine probe: a freestanding armhf program (engine_probe/) that the
 # AArch32 execution engines run as the guest's /init. Its C++ and assembly
 # objects are compiled with the configured compiler's ARM backend and linked
-# by link_elf32.py, because the toolchain has no ARM linker. Groups the engine
-# does not yet implement are skipped inside the probe from the HWCAP words it
-# sees, so one program serves every engine level. Every run counts SIGILLs.
+# by link_elf32.py, because the toolchain has no ARM linker. Groups that need
+# an extension the host lacks are skipped inside the probe from the HWCAP words
+# it sees, so one program serves every host. Every run counts SIGILLs.
 set(_uml_a32_probe_directory "${CMAKE_CURRENT_SOURCE_DIR}/engine_probe")
 set(_uml_a32_probe_objects "${CMAKE_CURRENT_BINARY_DIR}/engine_probe")
 set(_uml_a32_probe_header "${_uml_a32_probe_directory}/engine_probe.hpp")
@@ -90,7 +102,7 @@ set(_uml_a32_probe_complete_asm_flags
 
 set(_uml_a32_probe_object_files)
 foreach(_name IN ITEMS runtime groups basic interwork signals kuser tls
-        cacheflush faults ill ptrace atomics absent simd complete)
+        cacheflush faults ill ptrace swp atomics absent simd complete)
     set(_source "${_uml_a32_probe_directory}/engine_probe_${_name}.cpp")
     set(_object "${_uml_a32_probe_objects}/${_name}.o")
     add_custom_command(
@@ -106,7 +118,7 @@ endforeach()
 # Assembly: the simd file needs VFP and NEON, the complete ones the Armv8.2
 # extensions, and the rest nothing but the integer instruction set.
 foreach(_name IN ITEMS start threads basic interwork signals kuser
-        cacheflush faults ill ptrace atomics simd absent_complete complete)
+        cacheflush faults ill ptrace swp atomics simd absent_complete complete)
     if(_name MATCHES "_complete$|^complete$")
         set(_flags ${_uml_a32_probe_complete_asm_flags})
     elseif(_name STREQUAL "simd")
@@ -156,17 +168,8 @@ add_custom_target(uml-guest-aarch32-engine-probe
         "${UML_GUEST_AARCH32_ENGINE_PROBE_4K}")
 add_dependencies(integration-test-binaries uml-guest-aarch32-engine-probe)
 
-# Test support only: reports how much of the AArch32 profile each engine
-# implements, as "gadgets=<level> jit=<level>".
-add_executable(uml-a32-engine-support a32_engine_support.cpp)
-target_include_directories(uml-a32-engine-support PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin)
-target_link_libraries(uml-a32-engine-support PRIVATE UML::CpuContract)
-add_dependencies(integration-test-binaries uml-a32-engine-support)
-
-# guest-aarch32-engine-<engine> runs the probe under DARWIN_UML_GUEST_AARCH32=1
-# on an engine that implements AArch32 and skips, naming the reason, on one
-# that does not. The four-vCPU guest gives the exclusives real contention.
+# guest-aarch32-engine-<engine> runs the probe on an engine. The four-vCPU
+# guest gives the exclusives real contention.
 foreach(_engine IN ITEMS gadgets jit)
     if(_engine STREQUAL "gadgets")
         set(_timeout 2400)
@@ -179,11 +182,8 @@ foreach(_engine IN ITEMS gadgets jit)
         ARGS --engine ${_engine}
             --probe ${UML_GUEST_AARCH32_ENGINE_PROBE}
             --probe-4k ${UML_GUEST_AARCH32_ENGINE_PROBE_4K}
-            --engine-support-tool $<TARGET_FILE:uml-a32-engine-support>
             --timeout ${_timeout}
         LABELS guest;aarch32;kernel;${_engine}
         TIMEOUT ${_timeout}
         CPUS 4)
-    set_tests_properties(guest-aarch32-engine-${_engine}
-        PROPERTIES SKIP_RETURN_CODE 77)
 endforeach()

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/engine.hpp"
@@ -25,32 +26,53 @@ inline constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 inline constexpr unsigned page_shift = DARWIN_UML_GUEST_PAGE_SHIFT;
 inline constexpr std::size_t maximum_chain_instructions = 4096;
 
-/* A translation's key: its guest PC with the guest SVCR mode (svcr_sm and
- * svcr_za) it was compiled for in the two low bits, which every PC that
- * reaches a translation leaves clear. The block cache, the shared cache,
- * every link record and every indirect site use it, so code compiled for
- * one mode only ever runs, links or chains in that mode. A mode-0 key is
- * its PC.
+/* The mode a translation is compiled for: the guest SVCR mode (svcr_sm and
+ * svcr_za) in the two low bits, and translation_mode_tbi when the guest's
+ * data addresses ignore their top byte (CpuState::tbi_enabled), so the code
+ * strips it inline instead of testing the flag at every access.
+ */
+inline constexpr std::uint8_t translation_mode_tbi = 4;
+static_assert((translation_mode_tbi & svcr_mask) == 0);
+
+/* A translation's key: its guest PC with its mode (above). The SVCR mode
+ * is in the two low bits, which every PC that reaches a translation leaves
+ * clear; the top-byte-ignore bit is aarch32::a64_tbi_key_bit, which no
+ * user PC reaches. The block cache, the shared cache, every link record and
+ * every indirect site use the key, so code compiled for one mode only ever
+ * runs, links or chains in that mode. A mode-0 key is its PC.
  */
 [[nodiscard]] constexpr std::uint64_t
 translation_key(std::uint64_t pc, std::uint8_t mode) noexcept {
-  return pc | (mode & svcr_mask);
+  return pc | (mode & svcr_mask) |
+         ((mode & translation_mode_tbi) != 0U ? aarch32::a64_tbi_key_bit
+                                              : std::uint64_t{0});
 }
 
 [[nodiscard]] constexpr std::uint64_t
 translation_key_pc(std::uint64_t key) noexcept {
-  return key & ~std::uint64_t{svcr_mask};
+  return key & ~(std::uint64_t{svcr_mask} | aarch32::a64_tbi_key_bit);
 }
 
 [[nodiscard]] constexpr std::uint8_t
 translation_key_mode(std::uint64_t key) noexcept {
-  return static_cast<std::uint8_t>(key & svcr_mask);
+  return static_cast<std::uint8_t>(
+      (key & svcr_mask) |
+      ((key & aarch32::a64_tbi_key_bit) != 0U ? translation_mode_tbi : 0U));
 }
 
 static_assert(translation_key(0x4000'1000U, 0) == 0x4000'1000U);
 static_assert(translation_key_pc(translation_key(0x4000'1000U, 3)) ==
               0x4000'1000U);
 static_assert(translation_key_mode(translation_key(0x4000'1000U, 2)) == 2);
+static_assert(translation_key(0x4000'1000U, translation_mode_tbi) ==
+              (aarch32::a64_tbi_key_bit | 0x4000'1000U));
+static_assert(translation_key_pc(translation_key(
+                  0x4000'1000U, translation_mode_tbi | 3U)) == 0x4000'1000U);
+static_assert(translation_key_mode(translation_key(
+                  0x4000'1000U, translation_mode_tbi | 1U)) ==
+              (translation_mode_tbi | 1U));
+static_assert(!aarch32::key_is_aarch32(
+    translation_key(0x4000'1000U, translation_mode_tbi)));
 
 [[nodiscard]] constexpr bool
 floating_or_vector_primary_class(std::uint32_t instruction) noexcept {

@@ -174,6 +174,15 @@ class CensusTests(unittest.TestCase):
         # A capture written before the census carried the budget says nothing
         # of it.
         self.assertNotIn("gadget-cache budget", text)
+        # Every departure and store was recorded.
+        self.assertNotIn("no memory to record", text)
+
+    def test_report_states_what_the_census_could_not_record(self) -> None:
+        path = write(self.root, CAPTURE.replace(
+            "departed=2 distance=", "departed=2 unrecorded=3 distance="))
+        text = run_main(path)
+        self.assertIn("departures and stores the census had no memory to "
+                      "record 3: the repeats above are lower bounds", text)
 
     def test_report_states_the_budget(self) -> None:
         budgeted = CAPTURE.replace(

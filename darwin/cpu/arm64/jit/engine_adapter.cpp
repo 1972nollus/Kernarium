@@ -32,27 +32,27 @@ public:
 
 	[[nodiscard]] ExecutionResult run(ExecutionRequest &request) noexcept override
 	{
-		if (!native_jit_available())
-			return {.reason = ExitReason::fatal};
-		try {
-			if (session_ == 0)
-				return standalone_ == nullptr ?
-					ExecutionResult{.reason = ExitReason::fatal} :
-					run_translated(*standalone_, request);
-			if (!pool_configuration_admitted_)
-				return {.reason = ExitReason::fatal};
-			auto borrowed = borrow_jit_executor(session_, preferred_slot_);
-			if (!borrowed)
-				return {.reason = ExitReason::fatal};
-			preferred_slot_ = borrowed.slot();
-			return run_translated(borrowed.executor(), request);
-		} catch (...) {
-			return {.reason = ExitReason::fatal};
-		}
+		return with_executor(request, [](JitExecutor &executor,
+						 ExecutionRequest &entry) {
+			return run_translated(executor, entry);
+		});
 	}
 
 	[[nodiscard]] ExecutionResult run_aarch32(
 		ExecutionRequest &request) noexcept override
+	{
+		return with_executor(request, [](JitExecutor &executor,
+						 ExecutionRequest &entry) {
+			return jit::a32::run_a32_loop(executor, entry);
+		});
+	}
+
+private:
+	/* Runs `loop` over the request on this engine's executor: the standalone
+	 * one, or one borrowed from the session's pool for the entry. */
+	template <typename Loop>
+	[[nodiscard]] ExecutionResult with_executor(ExecutionRequest &request,
+						    Loop loop) noexcept
 	{
 		if (!native_jit_available())
 			return {.reason = ExitReason::fatal};
@@ -60,20 +60,19 @@ public:
 			if (session_ == 0)
 				return standalone_ == nullptr ?
 					ExecutionResult{.reason = ExitReason::fatal} :
-					jit::a32::run_a32_loop(*standalone_, request);
+					loop(*standalone_, request);
 			if (!pool_configuration_admitted_)
 				return {.reason = ExitReason::fatal};
 			auto borrowed = borrow_jit_executor(session_, preferred_slot_);
 			if (!borrowed)
 				return {.reason = ExitReason::fatal};
 			preferred_slot_ = borrowed.slot();
-			return jit::a32::run_a32_loop(borrowed.executor(), request);
+			return loop(borrowed.executor(), request);
 		} catch (...) {
 			return {.reason = ExitReason::fatal};
 		}
 	}
 
-private:
 	JitExecutorOptions options_;
 	JitExecutorPoolSessionToken session_{};
 	std::unique_ptr<JitExecutor> standalone_;

@@ -268,7 +268,7 @@ index 6821a7e4ed4128309533871fefd8c5fa0ca38b77..7cd60977abe8119d28fc8a7112813ed0
        result = kk_compile_graphics_pipeline(dev, shader);
     }
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index b969535cfa93b49394943942ac0ecab92de1e4ad..8eedb0cef99b902199141a7e230fda8ad6386569 100644
+index 1bcd4a3b6c3a0f2eaf03458f0b97397f387a0bac..97cfe19cf16e39d0e554aaca62fa9b3cc13da341 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -396,6 +396,20 @@ if with_tests

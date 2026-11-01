@@ -54,8 +54,7 @@ extern "C" std::uint32_t uml_arm64_memory_transfer(
 extern "C" std::uint32_t uml_arm64_simd_structure_memory_transfer(
 	uml::cpu::arm64::CpuState *cpu,
 	::uml::memory::Tlb *tlb, std::uint64_t tagged_address,
-	void *data, std::size_t size, std::uint32_t access,
-	std::uint32_t base_sp) noexcept
+	void *data, std::size_t size, std::uint32_t access) noexcept
 {
 	using ::uml::memory::Access;
 	if (cpu == nullptr || tlb == nullptr)
@@ -63,8 +62,7 @@ extern "C" std::uint32_t uml_arm64_simd_structure_memory_transfer(
 	const auto direction =
 		access == static_cast<std::uint32_t>(Access::write) ?
 			Access::write : Access::read;
-	const auto address =
-		cpu->untag_data_address(tagged_address, base_sp != 0U);
+	const auto address = cpu->untag_data_address(tagged_address);
 	const auto transferred = uml_arm64_memory_transfer(
 		tlb, address, data, size, access);
 	if (transferred != 0U && direction == Access::write)

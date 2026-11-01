@@ -12,8 +12,7 @@ mode. Build, launch, and test commands are in
 ```text
 Kernarium/            SwiftUI application: settings, guest selection, disk
                       capacity, decompression, console, shader cache
-Runtime/              runtime framework target, one per kernel flavour and page
-                      profile
+Runtime/              runtime framework target, one per kernel flavour
 KernariumTests/       hosted application and runtime tests
 KernariumUITests/     UI tests
 KernariumAutomation/  long-lived UI-automation host for a connected device
@@ -29,16 +28,62 @@ commits, and each carries its kernel ELF in signed Mach-O `__TEXT` (see the
 application embeds every framework, links none at launch, and loads exactly
 one for the process lifetime.
 
-The library runs one guest per process, so a launch runs its guest once. When
-the run returns, whether the guest powered off or the runtime failed, the
-application says how it ended and asks to be relaunched; it never starts a
-second run in the same process. The guest runs on the named `uml-launcher`
-thread, which leaves the main thread to UIKit and MetalKit.
+The library runs one guest per process, so a launch makes one run. A guest that
+restarts itself (a reboot, `adb reboot`, a recovery or bootloader round trip) is
+booted again inside that run, in the same process, and the run returns only when
+the guest is over: it powered off, the user stopped it, a boot failed, or it
+kept restarting. The application then says how it ended and asks to be
+relaunched; it never starts a second run in the same process. The guest runs on
+the named `uml-launcher` thread, which leaves the main thread to UIKit and
+MetalKit. [Restarts](#restarts) describes what a restart keeps and what the
+application shows.
 
 Kernarium defaults to Linux, the processor count `NSProcessInfo` reports, and
 4 GiB of guest memory where the process is given the host's memory (Designed
-for iPad on a Mac) or 2 GiB on a physical device, whose jetsam limit a 4 GiB
-guest would cross.
+for iPad on a Mac) or 1.5 GiB on a physical device, whose jetsam limit a 4 GiB
+guest would cross and a 2 GiB guest crossed on a 4 GiB iPad mini 6. The device
+value stays until the graphics-memory reductions land, and a value the user
+stored is kept.
+
+## Restarts
+
+The runtime makes the machine once: the emulator handle, the user network with
+its forwards, the GPU service with the view it draws on, the microphone switch
+and the footprint log. Each boot makes its own Virtio services, GPU connection,
+console bridge, input registrations and command line. When the guest asks to
+restart, the runtime stops the boot's services, resets the network link so the
+old guest's connections end, and boots again; an Android guest boots in `auto`
+mode on every restart. The loop and its guarantees (the retry of a run the
+library refuses, the stop request checked before every boot, the loop guard) are
+in [`../docs/architecture.md`](../docs/architecture.md#guest-lifecycle); the
+host test `kernarium-restart-loop` runs the loop against a recording fake.
+
+The application does not announce a restart the guest asked for. While the next
+boot is under way it shows a transient Restarting badge, which goes when the new
+guest's console answers. The runtime reports both edges through
+`set_restart_callback` (runtime API 14), and `BackgroundController` applies the
+page-cache trimming and the vCPU throttle again to a guest it keeps running,
+since both belong to a kernel and the new one boots with neither. A guest that
+restarts five times in a row within 15 s of booting is not booted again: the
+run returns `KERNARIUM_RUNTIME_RESULT_RESTART_LOOP` and the notice says so
+instead of printing a status. The restart notice for iOS ending the process in
+the background is a different event and is unchanged.
+
+The next boot waits while the guest's GPU requests are held or the guest is
+paused. A guest that boots behind a closed gate finds its GPU unanswered: the
+`virtio_gpu` probe times out on each capset and drops them all for that boot, so
+it would run without 3D after the user came back. A `keepRunning` job holds the
+GPU for its whole stay, so a guest that restarts during a job boots when the
+user returns; a Picture in Picture window releases the gate and the guest boots
+at once. The old guest still stops while the gate is closed: the report of its
+restart makes the gate complete its GPU requests without running them, which its
+shutdown waits for, and the gate holds the next guest as before.
+
+`KERNARIUM_FOOTPRINT_LOG_MS` also writes `Kernarium: memory` lines (`tick`,
+and for a restart `ended` and `booted`): the footprint, the lifetime peak iOS
+acts on, the wired bytes, the address space, and the default malloc zone's
+bytes in use and held: the figures a restart must return to the first boot's
+level.
 
 ## Guest storage
 
@@ -103,9 +148,16 @@ the release one. Only it reads:
 - `KERNARIUM_BOOT_PAYLOAD`, a plain file name in Documents: a padded newc
   segment of at most 64 MiB, written by `uml-initramfs`, that the runtime
   appends after its own, so its files, `/boot.env` included, replace the
-  runtime's; and
+  runtime's;
 - `KERNARIUM_SYSTEMD_UNIT`, the `*.target` the guest boots instead of
-  `graphical.target`.
+  `graphical.target`; and
+- `KERNARIUM_PAYLOAD_REMOVE=1`, which makes the runtime delete the payload
+  file once it holds the bytes and print `Kernarium: removed the boot payload
+  Documents/<name>` (or one line naming why it could not, which does not stop
+  the boot). A host copies a payload for one launch and sets it; a launch that
+  reuses a copied payload leaves it unset. `devicectl` cannot remove a file in
+  an application container, so this is how the device runners avoid leaving
+  one payload per run behind.
 
 A payload also attaches the artifact relay, a Virtio serial port whose
 acknowledged frames the runtime prints on standard output. The runtime prints
@@ -118,12 +170,42 @@ harness session runs before powering the guest off. The lanes are in
 [`testing.md`](../docs/testing.md#apple-builds-and-kernarium) and
 [`tests/perf/README.md`](../tests/perf/README.md).
 
+The Android runtime has an automation variant of its own, the
+`kernarium-ios-device-android-automation` preset packaged with
+`scripts/package-ios-frameworks.sh --android-automation`. The release runtime
+always starts the guest with `androidboot.kernarium.adb_auth=1`, so a fresh
+bundle's first ADB connection waits for the "Allow USB debugging" prompt, and
+a driver without a person at the screen cannot answer it. Only the automation
+runtime reads `KERNARIUM_ANDROID_ADB_AUTH`: `0` starts one launch with
+authorization off, as the macOS launcher does, and `1` or unset keeps the
+prompt. It prints `Kernarium: ADB authorization is off for this launch`, and
+it refuses the setting unless `KERNARIUM_HOST_FORWARD` is unset or listens on
+loopback, because authorization off also makes `adb root` available to
+whatever reaches the forward. A host on USB reaches a loopback forward through
+`iproxy`; a forward on every interface or on a network address is refused.
+The packaging script refuses a release runtime that carries the switch.
+
+Every automation runtime also reads `KERNARIUM_BACKGROUND_JOB_AT_START=1`
+(`0` or unset asks for nothing; anything else is reported and ignored). A guest
+in the keep-running mode (`KERNARIUM_BACKGROUND_MODE=keepRunning`) then gets
+the background job as soon as it runs, the request the job button makes, and
+the application prints `Kernarium: automation starts the background job`
+followed by the job's own `submitted` or `refused` line. iOS accepts the
+request only from the application in front, so the driver launches it there and
+sends it to the background afterwards; a driver that cannot get the job
+submitted still needs the UI automation host. The application learns of the
+setting from `kernarium_runtime_automation_job_at_start`, an export outside the
+versioned table that only an automation runtime has, and the packaging script
+refuses a release runtime that contains the setting's name.
+
 ## Devices and display
 
 Kernarium attaches:
 
 - an absolute touchscreen and evdev keyboard;
-- one signed-16-bit stereo 48 kHz playback stream through Virtio-Sound;
+- a signed-16-bit 48 kHz playback stream (stereo) and capture stream
+  (mono or stereo) through Virtio-Sound, whose capture records silence unless
+  the user turns on Microphone;
 - an Android-only Virtio battery reflecting the Apple host's percentage and
   charging state, with a 100-percent charging fallback when the host has no
   readable battery;
@@ -155,12 +237,37 @@ Tiling and Slide Over, from the Window menu of a window zoomed to the screen,
 only arrange that window, and the guest display follows its size as it does a
 resize.
 
+### Microphone
+
+Emulator Settings has a Microphone switch, off by default. While it is off, or
+iOS has not granted access, a guest that records gets silence in real time
+and nothing opens the microphone. Turning it on is the one place iOS is asked
+for access: the application asks (`MicrophoneSetting`), as the direct result of
+the switch, and then tells the runtime (`set_microphone`), which never asks and
+never shows a prompt. The switch applies at once, unlike the rest of the form,
+which is why Cancel does not undo it. A launch that finds it on carries it into
+the guest without asking, so a user who dismissed the question is not asked
+again at launch; iOS's Settings is where to change the answer, and the
+application picks the change up when it becomes active.
+
+The microphone is opened only while a program in the guest records, so iOS's
+recording indicator is lit only then, and it is closed when the program stops.
+The audio session is play-and-record, still mixing with other audio, only for
+that time; the Picture in Picture window keeps that category when it finds it
+rather than replacing it with the playback category, which its movie mode needs.
+A guest kept running in the background may keep recording while the program
+does, under the `audio` background mode; iOS's indicator shows it.
+[`../darwin/device/audio/README.md`](../darwin/device/audio/README.md#microphone)
+owns the device side.
+
 ## Lifecycle
 
 Kernarium asks the guest to write back when the application loses focus,
 quiesces it before the application is backgrounded or terminated, and resumes
-it on foregrounding. Its Power key also wakes a guest that suspended itself,
-such as Android once its display is off. The runtime side of sync, quiesce,
+it on foregrounding. A key press also wakes a guest that suspended itself,
+such as Android once its display is off, as a phone wakes to its keyboard;
+a touch does not. Power wakes it at every press, any other key at most once a
+second. The runtime side of sync, quiesce,
 resume, and wake is in
 [`../docs/architecture.md`](../docs/architecture.md#guest-lifecycle).
 
@@ -274,9 +381,10 @@ on the efficiency cores at background priority: a computing guest there ran at
 about a third of its foreground rate for a fifth of a watt. If iOS ends the
 process during a job, its card reports the job as failed, and the next launch
 shows the restart notice. The job ends when its time is up, when the user stops
-it, or when iOS expires it; in the background that quiesces the guest, and in
-the foreground nothing changes. A job belongs to the mode, so choosing another
-mode ends it. `KERNARIUM_BACKGROUND_LIMIT_MINUTES` sets the time for one launch.
+it, when iOS expires it, or when the guest's run returns, whether it powered
+off, failed to start or kept restarting; in the background that quiesces the
+guest, and in the foreground nothing changes. A job belongs to the mode, so
+choosing another mode ends it. `KERNARIUM_BACKGROUND_LIMIT_MINUTES` sets the time for one launch.
 
 An Android guest that is kept running this way has its screen turned off with
 its power key as the application leaves, and on again, after the GPU is back and
@@ -300,8 +408,9 @@ Each script documents its options in `--help` or its header:
   on an Apple silicon Mac in Designed for iPad mode;
 - `package-ios-frameworks.sh` packages the selected runtime and graphics slices
   and the static GPT fdisk and zstd XCFrameworks for Xcode, with
-  `--automation` the automation Linux runtime, and the host battery archive
-  only `KernariumTests` links;
+  `--automation` the automation Linux runtime, with `--android-automation`
+  the automation Android runtime, and the host battery and video encoder
+  archives only `KernariumTests` links;
 - `make-guest-bundle.py` assembles an Android `.kern` bundle from an installed
   release;
 - `ipad-automation.py` drives UI automation on a connected iPad through the

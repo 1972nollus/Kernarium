@@ -6,17 +6,22 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import contextlib
 import gzip
 import importlib.util
 import io
 import json
 import re
+import shutil
 import struct
 import subprocess
 import sys
 import tempfile
+import traceback
 import zipfile
 from pathlib import Path
+
+from erofs_fixture import synthetic_erofs_image
 
 
 def fail(message: str) -> None:
@@ -47,12 +52,61 @@ def run_tool(
     )
 
 
+def with_imports(payload: bytes, elf64: bool, imports: tuple[str, ...]) -> bytes:
+    """Append a dynamic symbol table that imports the given functions, and the
+    section headers that name it, to a synthetic ELF."""
+    data = bytearray(payload)
+    strings = bytearray(b"\0")
+    symbols = bytearray(24 if elf64 else 16)
+    for name in imports:
+        offset = len(strings)
+        strings.extend(name.encode() + b"\0")
+        symbols.extend(
+            struct.pack("<IBBHQQ", offset, 0x12, 0, 0, 0, 0)
+            if elf64 else struct.pack("<IIIBBH", offset, 0, 0, 0x12, 0, 0)
+        )
+    data.extend(b"\0" * (-len(data) % 8))
+    string_offset = len(data)
+    data.extend(strings)
+    data.extend(b"\0" * (-len(data) % 8))
+    symbol_offset = len(data)
+    data.extend(symbols)
+    data.extend(b"\0" * (-len(data) % 8))
+    section_offset = len(data)
+    entry_size = 64 if elf64 else 40
+    data.extend(b"\0" * entry_size)  # SHT_NULL
+    for kind, offset, size, link, entry in (
+        (11, symbol_offset, len(symbols), 2, 24 if elf64 else 16),  # .dynsym
+        (3, string_offset, len(strings), 0, 0),                     # .dynstr
+    ):
+        data.extend(
+            struct.pack("<IIQQQQIIQQ", 0, kind, 2, 0, offset, size, link, 1, 8, entry)
+            if elf64 else
+            struct.pack("<IIIIIIIIII", 0, kind, 2, 0, offset, size, link, 1, 4, entry)
+        )
+    if elf64:
+        struct.pack_into("<Q", data, 40, section_offset)
+        struct.pack_into("<HH", data, 58, entry_size, 3)
+    else:
+        struct.pack_into("<I", data, 32, section_offset)
+        struct.pack_into("<HH", data, 46, entry_size, 3)
+    return bytes(data)
+
+
+# What a library built with -D_FILE_OFFSET_BITS=64 imports on a 32-bit target,
+# and what the same source imports on a 64-bit one, where Bionic has one off_t.
+LARGE_FILE_IMPORTS_32 = ("open", "mmap64", "lseek64", "munmap")
+LARGE_FILE_IMPORTS_64 = ("open", "mmap", "lseek", "munmap")
+
+
 def synthetic_aarch64_elf(
     alignment: int = 16384,
     needed: tuple[str, ...] = (),
     edit: tuple[str, int, int] | None = None,
+    imports: tuple[str, ...] | None = None,
 ) -> bytes:
-    """An AArch64 ET_DYN; `edit` is a (struct format, offset, value) overwrite."""
+    """An AArch64 ET_DYN; `edit` is a (struct format, offset, value) overwrite
+    and `imports` adds a dynamic symbol table."""
     program_headers = 2 if needed else 1
     dynamic_entries = 3 + len(needed) if needed else 0
     dynamic_offset = 64 + 56 * program_headers
@@ -111,7 +165,97 @@ def synthetic_aarch64_elf(
         payload[string_offset:] = string_table
     if edit is not None:
         struct.pack_into(edit[0], payload, edit[1], edit[2])
-    return bytes(payload)
+    return with_imports(bytes(payload), True, imports) if imports is not None else bytes(payload)
+
+
+def synthetic_arm_elf(
+    alignment: int = 4096,
+    needed: tuple[str, ...] = (),
+    edit: tuple[str, int, int] | None = None,
+    flags: int = 0x05000200,
+    imports: tuple[str, ...] | None = None,
+) -> bytes:
+    """An Arm ET_DYN of the softfp EABI; `edit` is a (struct format, offset,
+    value) overwrite and `imports` adds a dynamic symbol table."""
+    program_headers = 2 if needed else 1
+    dynamic_entries = 3 + len(needed) if needed else 0
+    dynamic_offset = 52 + 32 * program_headers
+    string_table = bytearray(b"\0")
+    string_offsets: dict[str, int] = {}
+    for item in needed:
+        string_offsets[item] = len(string_table)
+        string_table.extend(item.encode())
+        string_table.append(0)
+    payload_size = dynamic_offset + 8 * dynamic_entries
+    string_offset = payload_size
+    if needed:
+        payload_size += len(string_table)
+    payload = bytearray(payload_size)
+    payload[:4] = b"\x7fELF"
+    payload[4] = 1
+    payload[5] = 1
+    payload[6] = 1
+    struct.pack_into("<HHI", payload, 16, 3, 40, 1)
+    struct.pack_into("<I", payload, 28, 52)
+    struct.pack_into("<I", payload, 36, flags)
+    struct.pack_into("<HHH", payload, 40, 52, 32, program_headers)
+    struct.pack_into(
+        "<IIIIIIII", payload, 52, 1, 0, 0, 0, len(payload), len(payload), 5, alignment
+    )
+    if needed:
+        dynamic_size = 8 * dynamic_entries
+        struct.pack_into(
+            "<IIIIIIII", payload, 84, 2, dynamic_offset, dynamic_offset,
+            dynamic_offset, dynamic_size, dynamic_size, 4, 4,
+        )
+        entries = [(5, string_offset), (10, len(string_table))]
+        for name in needed:
+            entries.append((1, string_offsets[name]))
+        entries.append((0, 0))
+        for index, (tag, value) in enumerate(entries):
+            struct.pack_into("<iI", payload, dynamic_offset + index * 8, tag, value)
+        payload[string_offset:] = string_table
+    if edit is not None:
+        struct.pack_into(edit[0], payload, edit[1], edit[2])
+    return with_imports(bytes(payload), False, imports) if imports is not None else bytes(payload)
+
+
+def run_in_process(module, *arguments: object) -> subprocess.CompletedProcess[str]:
+    """Run a loaded tool's main() as `run_tool` would run its script.
+
+    The result carries the exit status the interpreter would report and the
+    tool's stdout and stderr together: a tool that exits with a message
+    reports status 1 and prints the message, and an uncaught exception reports
+    status 1 and prints its traceback. A fixture-heavy test runs a verifier
+    hundreds of times; a process each would spend most of its time starting
+    Python and importing the verifier.
+    """
+    output = io.StringIO()
+    status = 0
+    saved = sys.argv
+    sys.argv = [str(module.__file__), *map(str, arguments)]
+    try:
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            try:
+                module.main()
+            except SystemExit as stop:
+                if stop.code is None:
+                    status = 0
+                elif isinstance(stop.code, int):
+                    status = stop.code
+                else:
+                    print(stop.code, file=sys.stderr)
+                    status = 1
+            except Exception:
+                traceback.print_exc()
+                status = 1
+    finally:
+        sys.argv = saved
+    return subprocess.CompletedProcess(
+        [sys.executable, str(module.__file__), *map(str, arguments)],
+        status,
+        output.getvalue(),
+    )
 
 
 def load_tool(path: Path):
@@ -135,22 +279,38 @@ def tracked_fstab(android_root: Path) -> str:
     return (android_root / "overlay/config/fstab.uml").read_text()
 
 
-def erofs_system_fstab(fstab: str) -> str:
-    """`fstab` with /system declared erofs, which the UBD contract forbids."""
-    changed = fstab.replace("/system ext4", "/system erofs", 1)
+def ext4_system_fstab(fstab: str) -> str:
+    """`fstab` with /system declared ext4, which the compressed-EROFS contract forbids."""
+    changed = fstab.replace("/system erofs", "/system ext4", 1)
     if changed == fstab:
-        fail("the tracked fstab has no ext4 /system line to corrupt")
+        fail("the tracked fstab has no erofs /system line to corrupt")
     return changed
 
 
-def synthetic_apex(filesystem: str = "ext4") -> bytes:
-    payload = bytearray(1024 + 0x38 + 2)
+def tracked_erofs_parameters(android_root: Path) -> tuple[str, str]:
+    """The compressor and the cluster size the product makefile sets, once each."""
+    text = (android_root / "overlay/lineage_darwin.mk").read_text()
+    found = []
+    for name in ("UML_ANDROID_EROFS_COMPRESSOR", "UML_ANDROID_EROFS_PCLUSTER_SIZE"):
+        values = re.findall(rf"^{name} := (\S+)$", text, re.MULTILINE)
+        if len(values) != 1:
+            fail(f"lineage_darwin.mk does not set {name} exactly once")
+        found.append(values[0])
+    return found[0], found[1]
+
+
+def synthetic_apex(filesystem: str = "erofs", content: bytes = b"", **superblock) -> bytes:
+    """An APEX container whose payload has the superblock of `filesystem` and then `content`."""
     if filesystem == "ext4":
+        payload = bytearray(1024 + 0x38 + 2)
         payload[1024 + 0x38 : 1024 + 0x38 + 2] = b"\x53\xef"
     elif filesystem == "erofs":
-        payload[1024 : 1024 + 4] = b"\xe2\xe1\xf5\xe0"
+        payload = bytearray(synthetic_erofs_image(**superblock))
+    elif filesystem == "unknown":
+        payload = bytearray(4096)
     else:
         fail(f"unsupported synthetic APEX filesystem: {filesystem}")
+    payload += content
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as apex:
         apex.writestr("apex_payload.img", payload)
@@ -221,6 +381,23 @@ def verify_kernel_elf_fixtures(verifier: Path) -> None:
                 )
 
 
+def adjust_archive(path: Path, entries: dict[str, bytes | None]) -> None:
+    """Rewrite a fixture archive: drop the entries mapped to None and add or
+    replace the others."""
+    with zipfile.ZipFile(path) as source:
+        kept = [
+            (info.filename, source.read(info))
+            for info in source.infolist()
+            if info.filename not in entries
+        ]
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, payload in kept:
+            archive.writestr(name, payload)
+        for name, payload in entries.items():
+            if payload is not None:
+                archive.writestr(name, payload)
+
+
 def verify_target_files_fixtures(verifier: Path) -> None:
     sys.path.insert(0, str(verifier.parent))
     from release_common import BUILD_VARIANTS, configured_build_variant
@@ -231,6 +408,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         entry for entry in tool.REQUIRED_ENTRIES
         if entry.endswith(".apk") and entry not in tool.REQUIRED_PREOPT_APKS
     )
+    arm_preopt_apks = sorted(tool.REQUIRED_ARM_PREOPT_APKS)
     permission_files = [
         entry for entry in tool.REQUIRED_ENTRIES
         if entry.startswith("PRODUCT/etc/permissions/")
@@ -239,6 +417,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         fail(f"expected one required PRODUCT permission file: {permission_files}")
     fdroid_permissions = permission_files[0]
     uml_fstab = tracked_fstab(verifier.parents[1])
+    erofs_compressor, erofs_pcluster_size = tracked_erofs_parameters(verifier.parents[1])
+    erofs_compress_hints = (
+        verifier.parents[1] / "overlay/config/erofs_compress_hints.txt"
+    ).read_bytes()
     tracked_variant = configured_build_variant(verifier.parents[1])
     other_variant = next(name for name in BUILD_VARIANTS if name != tracked_variant)
     with tempfile.TemporaryDirectory(prefix="android-target-files-") as temporary:
@@ -247,9 +429,32 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         kernel = root / "kernel/vmlinux"
         kernel.write_bytes(synthetic_aarch64_elf())
         kernel_config = root / "kernel/config"
-        kernel_config.write_text(
-            "CONFIG_PAGE_SIZE_4KB=y\n# CONFIG_MODULES is not set\n"
-        )
+        # The options the virtual Wi-Fi and the EROFS mounts need, and the ways a configuration
+        # can lack one.
+        wifi_kernel_options = {
+            "CONFIG_MACVLAN": "y", "CONFIG_CFG80211": "y", "CONFIG_VIRT_WIFI": "y",
+            "CONFIG_EROFS_FS": "y", "CONFIG_EROFS_FS_ZIP": "y",
+            "CONFIG_EROFS_FS_ZIP_ZSTD": "y",
+        }
+
+        def kernel_config_text(variant: str | None) -> str:
+            options = dict(wifi_kernel_options)
+            lines = []
+            if variant is not None:
+                kind, name = variant.rsplit(":", 1)
+                if kind == "missing":
+                    del options[name]
+                elif kind == "module":
+                    options[name] = "m"
+                elif kind == "unset":
+                    del options[name]
+                    lines.append(f"# {name} is not set\n")
+                else:
+                    fail(f"unknown kernel configuration variant {variant}")
+            lines.extend(f"{name}={value}\n" for name, value in options.items())
+            return "CONFIG_PAGE_SIZE_4KB=y\n# CONFIG_MODULES is not set\n" + "".join(lines)
+
+        kernel_config.write_text(kernel_config_text(None))
         kernel_release = root / "kernel/kernel.release"
         kernel_release.write_text("6.18.21-uml-fixture\n")
         kernel_options = [
@@ -261,21 +466,161 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             str(kernel_release),
         ]
 
+        video_service = tool.VIDEO_ENCODER_SERVICE
+        video_codecs = tool.VIDEO_ENCODER_CODECS
+        video_ueventd = tool.VIDEO_ENCODER_UEVENTD
+        video_seccomp_default = tool.VIDEO_ENCODER_SECCOMP_DEFAULT
+        video_seccomp_extended = tool.VIDEO_ENCODER_SECCOMP_EXTENDED
+        good_video_properties = {
+            **tool.VIDEO_ENCODER_PROPERTIES,
+            **tool.VIDEO_DECODER_PROPERTIES,
+        }
+        good_video_rc = (
+            f"service vendor.media.c2 /vendor/bin/hw/{video_service}\n"
+            "    class hal\n"
+            "    user mediacodec\n"
+            "    group mediadrm drmrpc camera\n"
+        )
+        good_video_seccomp = "".join(
+            f"{call}: 1\n"
+            for call in ("read", *tool.VIDEO_ENCODER_SECCOMP_CALLS,
+                         *tool.VIDEO_CRASH_HANDLER_SECCOMP_CALLS)
+        )
+        # The vendor file contexts as the builder emits them: the serial device, the label
+        # of the network setup tool, and the label of the video codec service.
+        good_net_setup_label = (
+            "/vendor/bin/kernarium_net_setup  u:object_r:kernarium_net_setup_exec:s0\n"
+        )
+        good_video_contexts = (
+            "/dev/hvc0  u:object_r:serial_device:s0\n"
+            + good_net_setup_label
+            + "/(vendor|system/vendor)/bin/hw/android\\.hardware\\.media\\.c2-service-v4l2"
+            "  u:object_r:mediacodec_exec:s0\n"
+        )
+
+        def software_update(name: str, hevc_rate: str, vp9_size: str, vp9_blocks: str) -> str:
+            # The software decoders' 3840x2160 update (config/media_codecs_c2.xml).
+            if name == "c2.android.vp9.decoder":
+                return (
+                    f'    <MediaCodec name="{name}" type="video/x-vnd.on2.vp9" update="true">\n'
+                    f'      <Limit name="size" min="2x2" max="{vp9_size}"/>\n'
+                    f'      <Limit name="block-count" range="{vp9_blocks}"/>\n'
+                    '      <Limit name="blocks-per-second" range="1-2000000"/>\n'
+                    "    </MediaCodec>\n"
+                )
+            return (
+                f'    <MediaCodec name="{name}" type="video/hevc" update="true">\n'
+                f'      <Limit name="blocks-per-second" range="{hevc_rate}"/>\n'
+                "    </MediaCodec>\n"
+            )
+
+        def video_codec_list(*, decoders: tuple[str, ...] = (),
+                             hardware_decoders: dict[str, str] | None = None,
+                             decoder_features: tuple[str, ...] = (
+                                 "adaptive-playback", "dynamic-color-aspects"),
+                             encoders: dict[str, str] | None = None,
+                             performance_points: bool = True,
+                             measured_frame_rates: bool = True,
+                             performance_point: str = "1920x1080 30-45",
+                             decoder_performance_points: bool = True,
+                             decoder_measured_frame_rates: bool = True,
+                             decoder_performance_point: str = "3840x2160 49-55",
+                             encoder_minimum_size: str = "64x64",
+                             encoder_minimum_bitrate: str = "20000",
+                             software_updates: tuple[str, ...] = (
+                                 "c2.android.hevc.decoder", "c2.android.vp9.decoder"),
+                             hevc_rate: str = "1-16711680",
+                             vp9_size: str = "4096x4096",
+                             vp9_blocks: str = "1-65536") -> bytes:
+            encoders = video_codecs if encoders is None else encoders
+            hardware_decoders = (tool.VIDEO_DECODER_CODECS if hardware_decoders is None
+                                 else hardware_decoders)
+            limits = (
+                f'      <Limit name="size" min="{encoder_minimum_size}" max="4096x4096"/>\n'
+                f'      <Limit name="bitrate" range="{encoder_minimum_bitrate}-60000000"/>\n'
+                + (f'      <Limit name="performance-point-{performance_point.split()[0]}"'
+                 f' range="{performance_point.split()[1]}"/>\n'
+                 if performance_points else "")
+                + ('      <Limit name="measured-frame-rate-1920x1080" range="31-45"/>\n'
+                   if measured_frame_rates else "")
+            )
+            decoder_limits = (
+                (f'      <Limit name="performance-point-{decoder_performance_point.split()[0]}"'
+                 f' range="{decoder_performance_point.split()[1]}"/>\n'
+                 if decoder_performance_points else "")
+                + ('      <Limit name="measured-frame-rate-3840x2160" range="49-55"/>\n'
+                   if decoder_measured_frame_rates else "")
+            )
+            return (
+                "<MediaCodecs>\n"
+                "  <Decoders>\n"
+                + "".join(software_update(name, hevc_rate, vp9_size, vp9_blocks)
+                          for name in software_updates)
+                + "".join(f'    <MediaCodec name="{name}" type="{kind}">\n'
+                          '      <Limit name="size" min="64x64" max="4096x4096"/>\n'
+                          + decoder_limits
+                          + "".join(f'      <Feature name="{feature}"/>\n'
+                                    for feature in decoder_features)
+                          + "    </MediaCodec>\n"
+                          for name, kind in hardware_decoders.items())
+                + "".join(f'    <MediaCodec name="{name}" type="video/avc"/>\n'
+                          for name in decoders)
+                + "  </Decoders>\n  <Encoders>\n"
+                + "".join(f'    <MediaCodec name="{name}" type="{kind}">\n{limits}'
+                          "    </MediaCodec>\n"
+                          for name, kind in encoders.items())
+                + "  </Encoders>\n</MediaCodecs>\n"
+            ).encode()
+
         def write_fixture(path: Path, *, module: bool = False,
                           module_loader: bool = False, dlkm_image: bool = False,
                           dynamic_image: bool = False, ota_tool: bool = False,
-                          virtual_ab: bool = False, abi32: bool = False,
+                          virtual_ab: bool = False,
                           wrong_fstab: bool = False, stock_fstab: bool = False,
                           wrong_filesystem: bool = False,
+                          misc_info_edits: dict[str, str | None] | None = None,
+                          wrong_userdata_inodes: bool = False,
+                          missing_userdata_quota: bool = False,
                           wrong_apex_filesystem: bool = False,
                           seriallogging: bool = False,
                           boot_control: bool = False,
                           context_hub: bool = False,
                           unsupported_hal: bool = False,
                           unsupported_feature: bool = False,
+                          missing_microphone_feature: bool = False,
+                          missing_companion_feature: bool = False,
+                          missing_mic_policy: bool = False,
+                          extra_input_device: bool = False,
                           wrong_kernel_config: bool = False,
+                          kernel_config_variant: str | None = None,
                           wrong_kernel_release: bool = False,
                           missing_memfd_policy: bool = False,
+                          missing_spl_policy: bool = False,
+                          blocker_variant: str | None = None,
+                          missing_blocker_binary: bool = False,
+                          net_setup_variant: str | None = None,
+                          missing_net_setup_binary: bool = False,
+                          missing_net_library: bool = False,
+                          net_policy_variant: str | None = None,
+                          wifi_network_variant: str | None = None,
+                          wifi_hal_variant: str | None = None,
+                          wifi_dirs_variant: str | None = None,
+                          supplicant_variant: str | None = None,
+                          missing_wifi_feature: bool = False,
+                          wifi_feature_file: str | None = None,
+                          missing_wifi_network_script: bool = False,
+                          missing_adb_prop_context: bool = False,
+                          missing_adb_prop_policy: bool = False,
+                          core_sets_vendor_prop: bool = False,
+                          missing_audio_binder_policy: bool = False,
+                          clearkey_memfd_variant: str | None = None,
+                          oversize_platform_policy: bool = False,
+                          media_codecs_variant: str | None = None,
+                          system_ext_core_sets_vendor_prop: bool = False,
+                          adb_prop_not_system: bool = False,
+                          adb_prop_unreadable_by_vendor_init: bool = False,
+                          lineage_policy: str | None = None,
+                          missing_mediaserver_audit: bool = False,
                           missing_virtio_console: bool = False,
                           unsupported_hvc: bool = False,
                           missing_mesa_gles: bool = False,
@@ -291,13 +636,36 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           half_preopt_pair: bool = False,
                           wrong_audio_defaults: bool = False,
                           wrong_product_model: bool = False,
+                          missing_lockscreen_default: bool = False,
+                          use_fiemap_variant: str | None = None,
+                          userdata_grow_variant: str | None = None,
+                          userdata_grow_policy_variant: str | None = None,
+                          discrete_ops_variant: str | None = None,
+                          thermal_hal_variant: str | None = None,
+                          cas_hal_variant: str | None = None,
+                          vendor_property_variant: str | None = None,
                           wide_fdroid_permissions: bool = False,
+                          video_properties: dict[str, str] | None = None,
+                          missing_video_ueventd: bool = False,
                           mesa_gles_alignment: int = 16384,
                           elf_edit: tuple[str, int, int] | None = None,
+                          abilist32: str = "armeabi-v7a",
+                          vendor_abilist32: str = "armeabi-v7a",
+                          zygote: str = "zygote64_32",
+                          dex2oat64: bool = True,
+                          arm_alignment: int = 4096,
+                          arm_flags: int = 0x05000200,
+                          arm_edit: tuple[str, int, int] | None = None,
+                          missing_arm_gallium_dependency: bool = False,
+                          entries: dict[str, bytes | None] | None = None,
                           init_variant: str | None = None,
                           extra_entry: str | None = None,
                           build_variant: str = tracked_variant,
                           alignment: int = 16384) -> None:
+            # The UML build's configuration and the packaged copy agree unless the
+            # fixture is the wrong-configuration one, so that each variant is judged
+            # on the options it lacks and not on a difference.
+            kernel_config.write_text(kernel_config_text(kernel_config_variant))
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("BOOT/kernel", kernel.read_bytes())
                 archive.writestr("INIT_BOOT/RAMDISK/init", b"init")
@@ -314,39 +682,57 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     if wrong_kernel_release
                     else kernel_release.read_bytes(),
                 )
+                misc_info = {
+                    "system_fs_type": "ext4" if wrong_filesystem else "erofs",
+                    "system_ext_fs_type": "erofs",
+                    "product_fs_type": "erofs",
+                    "vendor_fs_type": "erofs",
+                    "odm_fs_type": "erofs",
+                    "erofs_default_compressor": erofs_compressor,
+                    "erofs_pcluster_size": erofs_pcluster_size,
+                    "erofs_default_compress_hints": "device/kernarium/darwin/config/erofs_compress_hints.txt",
+                    "erofs_sparse_flag": "-s",
+                    "userdata_extfs_inode_count": (
+                        "32768" if wrong_userdata_inodes else "8192"
+                    ),
+                }
+                for key, value in (misc_info_edits or {}).items():
+                    if value is None:
+                        del misc_info[key]
+                    else:
+                        misc_info[key] = value
                 archive.writestr(
                     "META/misc_info.txt",
-                    "system_fs_type=erofs\n"
-                    if wrong_filesystem
-                    else (
-                        "system_fs_type=ext4\n"
-                        "system_ext_fs_type=ext4\n"
-                        "product_fs_type=ext4\n"
-                        "vendor_fs_type=ext4\n"
-                        "odm_fs_type=ext4\n"
-                    ),
+                    "".join(f"{key}={value}\n" for key, value in misc_info.items()),
+                )
+                archive.writestr(
+                    "META/erofs_default_compress_hints.txt", erofs_compress_hints
                 )
                 archive.writestr("META/ramdisk_node_list", "")
-                for image in (
-                    "init_boot.img",
-                    "odm.img",
-                    "product.img",
-                    "recovery.img",
-                    "system.img",
-                    "system_ext.img",
-                    "userdata.img",
-                    "vendor.img",
-                ):
+                for image in ("init_boot.img", "recovery.img", "userdata.img"):
                     archive.writestr(f"IMAGES/{image}", b"image")
+                # AOSP writes the EROFS images sparse; one of them is here, to read both forms.
+                for image in ("odm", "product", "system", "system_ext", "vendor"):
+                    archive.writestr(
+                        f"IMAGES/{image}.img",
+                        synthetic_erofs_image(sparse=image == "product"),
+                    )
                 archive.writestr("ROOT/system_dlkm/", b"")
                 archive.writestr("SYSTEM/system_dlkm/etc/build.prop", "")
-                abilist32 = "armeabi-v7a" if abi32 else ""
                 virtual_ab_property = "ro.virtual_ab.enabled=true\n" if virtual_ab else ""
+
+                def abi_properties(partition: str, thirty_two: str) -> str:
+                    abilist = "arm64-v8a" + ("," + thirty_two if thirty_two else "")
+                    return (
+                        f"ro.{partition}.product.cpu.abilist={abilist}\n"
+                        f"ro.{partition}.product.cpu.abilist32={thirty_two}\n"
+                        f"ro.{partition}.product.cpu.abilist64=arm64-v8a\n"
+                    )
+
                 archive.writestr(
                     "SYSTEM/build.prop",
                     "ro.product.cpu.abi=arm64-v8a\n"
-                    "ro.product.cpu.abilist=arm64-v8a\n"
-                    f"ro.product.cpu.abilist32={abilist32}\n"
+                    + abi_properties("system", abilist32)
                     + "".join(
                         f"{name}={value}\n"
                         for name, value in BUILD_VARIANTS[build_variant].items()
@@ -365,23 +751,48 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "ro.config.system_vol_default=7\n"
                     "ro.config.assistant_vol_default=15\n"
                     "persist.sys.usb.config=adb\n"
-                    f"ro.product.product.model="
+                    + ("" if missing_lockscreen_default else "ro.lockscreen.disable.default=true\n")
+                    + {
+                        None: "apexd.config.use_fiemap=false\n",
+                        "missing": "",
+                        "true": "apexd.config.use_fiemap=true\n",
+                    }[use_fiemap_variant]
+                    + f"ro.product.product.model="
                     f"{'Android 17 on Darwin UML' if wrong_product_model else 'Darwin UML'}\n",
                 )
                 archive.writestr(
                     "SYSTEM/bin/android-fixture",
                     synthetic_aarch64_elf(alignment, edit=elf_edit),
                 )
-                for tool in ("e2fsck", "resize2fs"):
+                for tool in ("e2fsck", "resize2fs", "sgdisk"):
                     archive.writestr(
                         f"SYSTEM/bin/{tool}",
                         synthetic_aarch64_elf(alignment),
                     )
+                # The 32-bit runtime: the second zygote's process, the
+                # bootstrap linker, the BoringSSL self test and the ART boot
+                # image of the arm ISA.
+                archive.writestr(
+                    "SYSTEM/bin/app_process32",
+                    synthetic_arm_elf(arm_alignment, edit=arm_edit, flags=arm_flags),
+                )
+                for entry in (
+                    "SYSTEM/bin/bootstrap/linker",
+                    "SYSTEM/bin/boringssl_self_test32",
+                    "SYSTEM/framework/arm/boot.oat",
+                    "SYSTEM/framework/arm/boot-framework.oat",
+                ):
+                    archive.writestr(entry, synthetic_arm_elf())
+                archive.writestr(
+                    "SYSTEM/etc/init/hw/init.zygote64_32.rc", "service zygote_secondary\n"
+                )
                 archive.writestr(
                     "SYSTEM/apex/com.android.fixture.apex",
-                    synthetic_apex(
-                        "erofs" if wrong_apex_filesystem else "ext4"
-                    ),
+                    synthetic_apex("ext4" if wrong_apex_filesystem else "erofs"),
+                )
+                # The presigned CTS shim keeps its checked-in ext4 payload.
+                archive.writestr(
+                    "SYSTEM/apex/com.android.apex.cts.shim.apex", synthetic_apex("ext4")
                 )
                 required_sdk_apexes = (
                     "com.android.bt",
@@ -398,9 +809,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     if missing_sdk_apex and index == 0:
                         continue
                     archive.writestr(
-                        f"SYSTEM/apex/{apex}.apex", synthetic_apex("ext4")
+                        f"SYSTEM/apex/{apex}.apex", synthetic_apex()
                     )
-                fstab = erofs_system_fstab(uml_fstab) if wrong_fstab else uml_fstab
+                fstab = ext4_system_fstab(uml_fstab) if wrong_fstab else uml_fstab
+                if missing_userdata_quota:
+                    fstab = fstab.replace(",quota", "")
                 archive.writestr("VENDOR/etc/fstab.uml", fstab)
                 archive.writestr(
                     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
@@ -428,18 +841,94 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     rcu_restore = ""
                 elif init_variant != "rcu-restore-at-boot":
                     rcu_restore = "on property:sys.boot_completed=1\n" + rcu_restore
+                # The directories the Wi-Fi HAL and the supplicant use.
+                wifi_dirs = (
+                    ""
+                    if wifi_dirs_variant == "missing"
+                    else "    mkdir /data/vendor/wifi 0770 wifi wifi\n"
+                    + (
+                        "    mkdir /data/vendor/wifi/wpa 0770 system system\n"
+                        if wifi_dirs_variant == "wrong-owner"
+                        else "    mkdir /data/vendor/wifi/wpa 0770 wifi wifi\n"
+                    )
+                    + "    mkdir /data/vendor/wifi/wpa/sockets 0770 wifi wifi\n"
+                )
+                # The wakelock that keeps the guest awake while an adb host is connected.
+                blocker_rules = ""
+                if blocker_variant != "missing-service":
+                    blocker_rules += (
+                        "service suspend_blocker /vendor/bin/suspend_blocker\n"
+                        "    user root\n    group system\n"
+                        + ("    class early_hal\n" if blocker_variant == "class-started"
+                           else "    disabled\n")
+                    )
+                blocker_rules += (
+                    "on property:sys.kernarium.adb.host_connected=1\n"
+                    "    start suspend_blocker\n"
+                )
+                if blocker_variant != "no-stop":
+                    blocker_rules += (
+                        "on property:sys.kernarium.adb.host_connected=0\n"
+                        "    stop suspend_blocker\n"
+                    )
+                if blocker_variant == "started-at-boot":
+                    blocker_rules += "on boot\n    start suspend_blocker\n"
+                # The network setup tool: init limits ARP, then waits for the tool.
+                net_rules = ""
+                if net_setup_variant != "missing-service":
+                    net_rules += (
+                        "service kernarium_net_setup /vendor/bin/kernarium_net_setup\n"
+                        "    user root\n"
+                        + ("" if net_setup_variant == "not-oneshot" else "    oneshot\n")
+                        + ("" if net_setup_variant == "not-disabled" else "    disabled\n")
+                    )
+                sysctls = (
+                    "    write /proc/sys/net/ipv4/conf/all/arp_ignore 1\n"
+                    + ("" if net_setup_variant == "no-announce" else
+                       "    write /proc/sys/net/ipv4/conf/all/arp_announce 2\n")
+                )
+                start_tool = "    exec_start kernarium_net_setup\n"
+                if net_setup_variant == "sysctl-after-start":
+                    net_rules += "on post-fs-data\n" + start_tool + sysctls
+                elif net_setup_variant == "no-exec-start":
+                    net_rules += "on post-fs-data\n" + sysctls
+                elif net_setup_variant == "started-at-boot":
+                    net_rules += "on post-fs-data\n" + sysctls + "on boot\n" + start_tool
+                else:
+                    net_rules += "on post-fs-data\n" + sysctls + start_tool
+                online = "    exec - root system -- /system/bin/resize2fs /dev/block/by-name/userdata\n"
+                offline = "    exec -- /system/bin/resize2fs /dev/block/by-name/userdata\n"
+                forced = "    exec - root system -- /system/bin/resize2fs -f /dev/block/by-name/userdata\n"
+                userdata_grow_late = {
+                    "offline-also": offline,
+                    "offline-only": offline,
+                }.get(userdata_grow_variant, "")
+                userdata_grow_data = {
+                    None: online,
+                    "missing": "",
+                    "offline-only": "",
+                    "offline-also": online,
+                    "twice": online + online,
+                    "forced": online + forced,
+                    "no-group": offline,
+                    "at-boot": online,
+                }[userdata_grow_variant]
+                userdata_grow_block = (
+                    "on post-fs-data\n" + userdata_grow_data if userdata_grow_data else ""
+                ) + ("on boot\n" + online if userdata_grow_variant == "at-boot" else "")
                 archive.writestr(
                     "VENDOR/etc/init/init.kernarium.rc",
                     "on early-init\n" + graphics + density +
                     "on fs\n    mount_all --early\n"
                     "on late-fs\n"
-                    "    exec -- /system/bin/resize2fs "
-                    "/dev/block/by-name/userdata\n"
+                    + userdata_grow_late +
                     "    mount_all --late\n"
+                    + userdata_grow_block +
                     "on boot\n"
                     "    setprop ro.hardware.audio.primary goldfish\n"
-                    "    setprop service.adb.tcp.port 5555\n"
-                    "    start adbd\n" + rcu_restore,
+                    + wifi_dirs
+                    + "    setprop service.adb.tcp.port 5555\n"
+                    "    start adbd\n" + rcu_restore + blocker_rules + net_rules,
                 )
                 if extra_entry is not None:
                     archive.writestr(extra_entry, "on early-init\n")
@@ -460,16 +949,49 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "VENDOR/etc/primary_audio_policy_configuration.xml",
                     '<module name="primary" halVersion="3.0">'
-                    '<attachedDevices><item>Speaker</item></attachedDevices>'
+                    '<attachedDevices><item>Speaker</item>'
+                    + ("" if missing_mic_policy else "<item>Built-In Mic</item>")
+                    + '</attachedDevices>'
                     '<defaultOutputDevice>Speaker</defaultOutputDevice>'
                     '<mixPorts><mixPort name="primary output" role="source" '
                     'flags="AUDIO_OUTPUT_FLAG_PRIMARY"><profile name="" '
                     'format="AUDIO_FORMAT_PCM_16_BIT" samplingRates="48000" '
-                    'channelMasks="AUDIO_CHANNEL_OUT_STEREO"/></mixPort></mixPorts>'
+                    'channelMasks="AUDIO_CHANNEL_OUT_STEREO"/></mixPort>'
+                    + (
+                        ""
+                        if missing_mic_policy
+                        else '<mixPort name="primary input" role="sink"><profile '
+                        'name="" format="AUDIO_FORMAT_PCM_16_BIT" '
+                        'samplingRates="48000" channelMasks="AUDIO_CHANNEL_IN_STEREO '
+                        'AUDIO_CHANNEL_IN_MONO"/></mixPort>'
+                    )
+                    + '</mixPorts>'
                     '<devicePorts><devicePort tagName="Speaker" '
-                    'type="AUDIO_DEVICE_OUT_SPEAKER" role="sink"/></devicePorts>'
+                    'type="AUDIO_DEVICE_OUT_SPEAKER" role="sink"/>'
+                    + (
+                        ""
+                        if missing_mic_policy
+                        else '<devicePort tagName="Built-In Mic" '
+                        'type="AUDIO_DEVICE_IN_BUILTIN_MIC" address="bottom" '
+                        'role="source"/>'
+                    )
+                    + (
+                        '<devicePort tagName="Back Mic" '
+                        'type="AUDIO_DEVICE_IN_BACK_MIC" address="back" '
+                        'role="source"/>'
+                        if extra_input_device
+                        else ""
+                    )
+                    + '</devicePorts>'
                     '<routes><route type="mix" sink="Speaker" '
-                    'sources="primary output"/></routes></module>',
+                    'sources="primary output"/>'
+                    + (
+                        ""
+                        if missing_mic_policy
+                        else '<route type="mix" sink="primary input" '
+                        'sources="Built-In Mic"/>'
+                    )
+                    + '</routes></module>',
                 )
                 archive.writestr(
                     "VENDOR/etc/audio_policy_volumes.xml",
@@ -487,18 +1009,297 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "VENDOR/bin/hw/android.hardware.health-service.example",
                     b"health",
                 )
+                if not missing_blocker_binary:
+                    archive.writestr("VENDOR/bin/suspend_blocker", b"blocker")
+                if not missing_net_setup_binary:
+                    archive.writestr("VENDOR/bin/kernarium_net_setup", b"net setup")
+                if not missing_net_library:
+                    archive.writestr("VENDOR/lib64/cuttlefish_net.so", b"net library")
+                # The script that saves VirtWifi once, with its init file and labels.
+                if not missing_wifi_network_script:
+                    script = (
+                        "#!/system/bin/sh\n# cmd wifi set-wifi-enabled in a comment is fine\n"
+                        'marker=persist.sys.kernarium.virtwifi_saved\n'
+                        + (
+                            ""
+                            if wifi_network_variant == "no-add"
+                            else "cmd wifi add-network VirtWifi open\n"
+                        )
+                        + ('setprop "$marker" 1\n' if wifi_network_variant != "no-marker" else "")
+                        + {
+                            "enables-wifi": "cmd wifi set-wifi-enabled enabled\n",
+                            "connects": "cmd wifi connect-network VirtWifi open\n",
+                            "settings-put": "settings put global wifi_on 1\n",
+                        }.get(wifi_network_variant or "", "")
+                    )
+                    archive.writestr("SYSTEM_EXT/bin/kernarium_wifi_network.sh", script)
+                if wifi_network_variant != "missing-rc":
+                    wifi_trigger = (
+                        "on boot\n"
+                        if wifi_network_variant == "started-at-boot"
+                        else "on property:sys.boot_completed=1\n"
+                    )
+                    archive.writestr(
+                        "SYSTEM_EXT/etc/init/kernarium_wifi_network.rc",
+                        (
+                            ""
+                            if wifi_network_variant == "missing-service"
+                            else "service kernarium_wifi_network "
+                            "/system_ext/bin/kernarium_wifi_network.sh\n    user root\n"
+                            + ("" if wifi_network_variant == "not-oneshot" else "    oneshot\n")
+                            + ("" if wifi_network_variant == "not-disabled" else "    disabled\n")
+                        )
+                        + (
+                            ""
+                            if wifi_network_variant == "no-start"
+                            else wifi_trigger + "    start kernarium_wifi_network\n"
+                        ),
+                    )
+                archive.writestr(
+                    "SYSTEM_EXT/etc/selinux/system_ext_file_contexts",
+                    "/(system_ext|system/system_ext)/bin/other\\.sh  u:object_r:system_file:s0\n"
+                    + (
+                        ""
+                        if wifi_network_variant == "missing-label"
+                        else "/(system_ext|system/system_ext)/bin/kernarium_wifi_network\\.sh  "
+                        "u:object_r:kernarium_wifi_network_exec:s0\n"
+                    ),
+                )
+                # Platform, vendor and system_ext policy as the builder emits them: the
+                # platform's core domains, a vendor-owned property that only
+                # vendor_init sets, and the system-owned property adbd reports its host in.
+                # The real platform policy is 3.4 MB; the filler keeps the fixture realistic in size.
+                archive.writestr(
+                    "SYSTEM/etc/selinux/plat_sepolicy.cil",
+                    "(typeattributeset coredomain (adbd init system_server))\n"
+                    "(typeattributeset domain (adbd init system_server vendor_init))\n"
+                    "(allow domain boot_status_prop (file (read getattr map open)))\n"
+                    "(allow domain bootloader_prop (file (read getattr map open)))\n"
+                    "(typeattributeset mlstrustedsubject (artd installd"
+                    + (" mediaprovider_app" if lineage_policy == "mediaprovider-trusted" else "")
+                    + "))\n(typepermissive su)\n"
+                    + "; padding to the size of a real platform policy\n" * (
+                        (17 << 20 if oversize_platform_policy else 3_441_569) // 48
+                    ),
+                )
+                archive.writestr(
+                    "SYSTEM/etc/selinux/plat_property_contexts",
+                    "sys.boot_completed    u:object_r:boot_status_prop:s0 exact bool\n"
+                    "ro.boot.              u:object_r:bootloader_prop:s0\n",
+                )
+                archive.writestr(
+                    "VENDOR/etc/selinux/vendor_property_contexts",
+                    "ro.boot.lcd_density   u:object_r:vendor_graphics_config_prop:s0 exact int\n",
+                )
+                archive.writestr(
+                    "SYSTEM_EXT/etc/selinux/system_ext_property_contexts",
+                    "ro.vendor.aware_available  u:object_r:vendor_aware_available_prop:s0\n"
+                    + (
+                        ""
+                        if missing_adb_prop_context
+                        else "sys.kernarium.adb.host_connected    "
+                        "u:object_r:kernarium_adb_host_prop:s0 exact bool\n"
+                    )
+                    + (
+                        ""
+                        if wifi_network_variant == "missing-marker-context"
+                        else "persist.sys.kernarium.virtwifi_saved    "
+                        "u:object_r:kernarium_wifi_network_prop:s0 exact bool\n"
+                    ),
+                )
+                archive.writestr(
+                    "SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil",
+                    "(typeattributeset vendor_property_type (vendor_aware_available_prop ))\n"
+                    # A relabelto on a contextmount type is allowed; only the Lineage rules are not.
+                    "(typeattributeset fs_type (fixture_rootfs sdcard_posix))\n"
+                    "(typeattributeset contextmount_type (fixture_rootfs))\n"
+                    "(allow init fixture_rootfs (filesystem (relabelto)))\n"
+                    + (
+                        ""
+                        if missing_mediaserver_audit
+                        else "(dontaudit mediaserver vendor_default_prop (file (read)))\n"
+                    )
+                    + (
+                        "(allow fsck_untrusted self (capability (sys_admin)))\n"
+                        if lineage_policy == "fsck-sys-admin"
+                        else ""
+                    )
+                    + (
+                        "(allow vold sdcard_posix (filesystem (relabelfrom relabelto)))\n"
+                        if lineage_policy == "vold-relabelto"
+                        else ""
+                    )
+                    + (
+                        "(typepermissive backuptool)\n"
+                        if lineage_policy == "permissive-backuptool"
+                        else ""
+                    )
+                    + (
+                        "(allow mediaprovider_app privapp_data_file (file (create unlink)))\n"
+                        if lineage_policy == "mediaprovider-privapp"
+                        else ""
+                    )
+                    + "(typeattributeset system_property_type (apexd_prop "
+                    + ("" if adb_prop_not_system else "kernarium_adb_host_prop ")
+                    + ("" if wifi_network_variant == "marker-not-system"
+                       else "kernarium_wifi_network_prop ")
+                    + "))\n"
+                    + (
+                        ""
+                        if wifi_network_variant == "missing-transition"
+                        else "(typetransition init kernarium_wifi_network_exec process "
+                        "kernarium_wifi_network)\n"
+                    )
+                    + (
+                        ""
+                        if wifi_network_variant == "missing-marker-rule"
+                        else "(allow kernarium_wifi_network kernarium_wifi_network_prop "
+                        "(property_service (set)))\n"
+                    )
+                    + (
+                        ""
+                        if wifi_network_variant == "missing-binder-transfer"
+                        else "(allow kernarium_wifi_network system_server (binder (transfer)))\n"
+                    )
+                    + (
+                        ""
+                        if wifi_network_variant == "missing-binder-call"
+                        else "(allow system_server kernarium_wifi_network (binder (call)))\n"
+                    )
+                    + (
+                        ""
+                        if missing_adb_prop_policy
+                        else "(allow adbd kernarium_adb_host_prop (property_service (set)))\n"
+                    )
+                    + (
+                        ""
+                        if adb_prop_unreadable_by_vendor_init
+                        else "(allow vendor_init kernarium_adb_host_prop (file (getattr open read map)))\n"
+                    )
+                    + (
+                        "(allow system_server vendor_aware_available_prop (property_service (set)))\n"
+                        if system_ext_core_sets_vendor_prop
+                        else ""
+                    ),
+                )
                 archive.writestr(
                     "VENDOR/etc/selinux/vendor_sepolicy.cil",
                     "(policycap open_perms)\n"
                     if missing_memfd_policy
-                    else "(policycap memfd_class)\n",
+                    else "(policycap memfd_class)\n"
+                    + (
+                        ""
+                        if missing_spl_policy
+                        else "(allow appdomain vendor_security_patch_level_prop_202604 "
+                        "(file (read getattr map open)))\n"
+                    )
+                    + "(typeattributeset vendor_property_type (vendor_mesa_prop "
+                    "virtual_face_hal_prop_202604))\n"
+                    "(allow vendor_init_202604 vendor_mesa_prop (property_service (set)))\n"
+                    "(allow vendor_init_202604 vendor_graphics_config_prop "
+                    "(file (read getattr map open)))\n"
+                    "(allow init virtual_face_hal_prop_202604 (property_service (set)))\n"
+                    + (
+                        ""
+                        if missing_audio_binder_policy
+                        else "(allow hal_audio_default hal_audio_default (binder (call transfer)))\n"
+                    )
+                    + (
+                        "(allow adbd_202604 virtual_face_hal_prop_202604 (property_service (set)))\n"
+                        if core_sets_vendor_prop
+                        else ""
+                    )
+                    # init enters the network setup domain through its executable's label.
+                    + (
+                        ""
+                        if net_policy_variant == "missing-transition"
+                        else "(typetransition init_202604 kernarium_net_setup_exec process "
+                        "kernarium_net_setup)\n"
+                    )
+                    # The ClearKey HAL's rule for the memfd files of application domains: the
+                    # generated attribute names the application domains less the isolated ones.
+                    + (
+                        ""
+                        if clearkey_memfd_variant == "missing"
+                        else "(typeattributeset base_typeattr_9_202604 (and (appdomain) "
+                        "(not (" + ("isolated_app_202604" if clearkey_memfd_variant == "isolated-only"
+                                    else "isolated_app_all_202604") + "))))\n"
+                        "(allow hal_drm_clearkey_aidl "
+                        + ("appdomain_202604" if clearkey_memfd_variant == "all-apps"
+                           else "base_typeattr_9_202604")
+                        + " (memfd_file ("
+                        + ("getattr map read" if clearkey_memfd_variant == "no-write"
+                           else "getattr map read write")
+                        + ")))\n"
+                    )
+                    # The online grow of userdata by resize2fs, in the fsck domain.
+                    + (
+                        ""
+                        if userdata_grow_policy_variant == "no-capability"
+                        else "(allow fsck_202604 self (capability (sys_resource)))\n"
+                    )
+                    + (
+                        ""
+                        if userdata_grow_policy_variant == "no-dir-open"
+                        else "(allow fsck_202604 system_data_root_file_202604 (dir (ioctl read open)))\n"
+                    )
+                    + (
+                        ""
+                        if userdata_grow_policy_variant == "no-ioctl"
+                        else "(allowx fsck_202604 system_data_root_file_202604 (ioctl dir ("
+                        + ("0x6610 0x5401" if userdata_grow_policy_variant == "more-ioctls" else "0x6610")
+                        + ")))\n"
+                    ),
                 )
                 ueventd = "/dev/ttyS0 0660 root shell\n"
                 if not missing_virtio_console:
                     ueventd += "/dev/hvc0 0660 root shell\n"
                 if unsupported_hvc:
                     ueventd += "/dev/hvc1 0660 root shell\n"
+                if not missing_video_ueventd:
+                    ueventd += video_ueventd + "\n"
                 archive.writestr("VENDOR/etc/ueventd.rc", ueventd)
+                # The hardware video encoders: the Codec2 service, its plugin
+                # store, the codec list, its seccomp policies and labels.
+                archive.writestr(
+                    f"VENDOR/bin/hw/{video_service}", synthetic_aarch64_elf(alignment)
+                )
+                archive.writestr("VENDOR/lib64/libc2plugin_store.so",
+                                 synthetic_aarch64_elf(alignment))
+                archive.writestr(
+                    f"VENDOR/etc/init/{video_service}.rc", good_video_rc
+                )
+                if media_codecs_variant != "missing":
+                    archive.writestr(
+                        "VENDOR/etc/media_codecs_c2.xml",
+                        b"<broken" if media_codecs_variant == "malformed" else video_codec_list(
+                            software_updates=(
+                                ("c2.android.vp9.decoder",) if media_codecs_variant == "no-hevc"
+                                else ("c2.android.hevc.decoder", "c2.android.vp9.decoder")),
+                            hevc_rate=("1-3000000" if media_codecs_variant == "low-hevc-rate"
+                                       else "1-16711680"),
+                            vp9_size=("2048x2048" if media_codecs_variant == "small-vp9-size"
+                                      else "4096x4096"),
+                            vp9_blocks=("1-16384" if media_codecs_variant == "small-vp9-blocks"
+                                        else "1-65536")),
+                    )
+                archive.writestr(
+                    f"VENDOR/etc/seccomp_policy/{video_seccomp_default}",
+                    "read: 1\n",
+                )
+                archive.writestr(
+                    f"VENDOR/etc/seccomp_policy/{video_seccomp_extended}",
+                    good_video_seccomp,
+                )
+                archive.writestr(
+                    "VENDOR/etc/selinux/vendor_file_contexts",
+                    good_video_contexts.replace(good_net_setup_label, "")
+                    if net_policy_variant == "missing-label" else good_video_contexts,
+                )
+                archive.writestr(
+                    f"VENDOR/etc/vintf/manifest/{video_service}.xml",
+                    '<manifest version="1.0" type="device"/>\n',
+                )
                 for apk in preopt_apks:
                     archive.writestr(apk, b"apk")
                     apk_path = Path(apk)
@@ -516,6 +1317,39 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             archive.writestr(f"{artifact}.vdex", b"vdex")
                 for apk in plain_apks:
                     archive.writestr(apk, b"apk")
+                # The runtime resource overlay Soong generates from the product's
+                # SimpleDeviceConfig overlays. Its string pool holds each DeviceConfig list:
+                # LineageOS's, then the product's, which adds the ops of AOSP's default.
+                lineage_ops = (
+                    "0,109,1,108,26,101,27,102,106,100,8,9,6,7,4,5,62,59,60,90,77,111,114,112,51,65,"
+                    "13,6,7,52,53,54,69,74,79,113,20,16,14,19,18,57"
+                )
+                device_ops = (
+                    "0,1,2,4,5,6,7,8,9,13,14,16,18,19,20,25,26,27,41,42,51,52,53,54,57,59,60,62,63,"
+                    "65,69,73,74,77,79,88,89,90,100,101,102,106,108,109,111,112,113,114,120,136,141,"
+                    "147,149,150,152,170,171,172,173"
+                )
+                if discrete_ops_variant == "short-device-list":
+                    device_ops = device_ops.replace(",141,", ",")
+                if discrete_ops_variant != "missing-overlay":
+                    key = b"privacy/discrete_history_ops_cslist="
+                    table = b"\x00" + key + lineage_ops.encode() + b"\x00"
+                    if discrete_ops_variant != "lineage-list-only":
+                        table += key + device_ops.encode() + b"\x00"
+                    overlay_apk = io.BytesIO()
+                    with zipfile.ZipFile(overlay_apk, "w") as overlay:
+                        overlay.writestr("resources.arsc", table)
+                    archive.writestr(
+                        "PRODUCT/overlay/"
+                        "SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk",
+                        overlay_apk.getvalue(),
+                    )
+                for apk in arm_preopt_apks:
+                    apk_path = Path(apk)
+                    for isa in ("arm64", "arm"):
+                        artifact = apk_path.parent / "oat" / isa / apk_path.stem
+                        archive.writestr(f"{artifact}.odex", b"odex")
+                        archive.writestr(f"{artifact}.vdex", b"vdex")
                 archive.writestr(
                     fdroid_permissions,
                     '<permissions><privapp-permissions '
@@ -529,14 +1363,29 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     )
                     + '</privapp-permissions></permissions>',
                 )
-                advertised_feature = (
-                    "android.hardware.microphone"
-                    if unsupported_feature
-                    else "android.hardware.touchscreen"
-                )
+                advertised_features = ["android.hardware.touchscreen"]
+                if not missing_microphone_feature:
+                    advertised_features.append("android.hardware.microphone")
+                if not missing_companion_feature:
+                    advertised_features.append("android.software.companion_device_setup")
+                if unsupported_feature:
+                    advertised_features.append("android.hardware.camera")
+                # The virtual Wi-Fi's feature declaration, a file of the platform's own.
+                if not missing_wifi_feature:
+                    archive.writestr(
+                        "VENDOR/etc/permissions/android.hardware.wifi.xml",
+                        '<permissions><feature name="android.hardware.wifi"/></permissions>',
+                    )
+                if wifi_feature_file is not None:
+                    archive.writestr(
+                        f"VENDOR/etc/permissions/{wifi_feature_file}.xml",
+                        f'<permissions><feature name="{wifi_feature_file}"/></permissions>',
+                    )
                 archive.writestr(
                     "VENDOR/etc/permissions/handheld_core_hardware.xml",
-                    f'<permissions><feature name="{advertised_feature}"/></permissions>',
+                    "<permissions>"
+                    + "".join(f'<feature name="{name}"/>' for name in advertised_features)
+                    + "</permissions>",
                 )
                 archive.writestr(
                     "VENDOR/etc/permissions/bluetooth_excluded_hardware.xml",
@@ -573,9 +1422,33 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             ()
                             if missing_gallium_dependency or index == 0
                             else ("venus_gallium_dri.so",),
+                            imports=LARGE_FILE_IMPORTS_64,
                         )
                     )
                     archive.writestr(entry, payload)
+                for index, entry in enumerate((
+                    "VENDOR/lib/venus_gallium_dri.so",
+                    "VENDOR/lib/egl/libEGL_kernarium.so",
+                    "VENDOR/lib/egl/libGLESv1_CM_kernarium.so",
+                    "VENDOR/lib/egl/libGLESv2_kernarium.so",
+                )):
+                    archive.writestr(
+                        entry,
+                        synthetic_arm_elf(
+                            needed=()
+                            if missing_arm_gallium_dependency or index == 0
+                            else ("venus_gallium_dri.so",),
+                            imports=LARGE_FILE_IMPORTS_32,
+                        ),
+                    )
+                for hal in ("vulkan.virtio", "gralloc.minigbm", "mapper.minigbm"):
+                    archive.writestr(
+                        f"VENDOR/lib64/hw/{hal}.so",
+                        synthetic_aarch64_elf(imports=LARGE_FILE_IMPORTS_64),
+                    )
+                    archive.writestr(
+                        f"VENDOR/lib/hw/{hal}.so", synthetic_arm_elf(imports=LARGE_FILE_IMPORTS_32)
+                    )
                 if retired_egl_library:
                     archive.writestr(
                         "VENDOR/lib64/egl/libGLES_mesa.so", synthetic_aarch64_elf()
@@ -587,12 +1460,38 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "VENDOR/build.prop",
                     "ro.vendor.build.fingerprint=kernarium\n"
+                    + abi_properties("vendor", vendor_abilist32)
+                    + f"ro.zygote={zygote}\n"
+                    "# Removed by post_process_props.py because overridden by "
+                    "ro.zygote=zygote64_32\n#ro.zygote?=zygote32\n"
+                    + ("dalvik.vm.dex2oat64.enabled=true\n" if dex2oat64 else "")
+                    + "ro.bionic.2nd_arch=arm\n"
+                    "ro.bionic.2nd_cpu_variant=cortex-a53\n"
+                    "dalvik.vm.isa.arm.variant=cortex-a53\n"
+                    # post_process_props.py comments out a denylisted vendor property; the
+                    # product denylists the unreliable present fence of the inherited config.
+                    "#ro.vendor.hwc.drm.present_fence_not_reliable=true\n"
+                    + {
+                        "present-fence-unreliable":
+                            "ro.vendor.hwc.drm.present_fence_not_reliable=true\n",
+                        "no-incremental": "",
+                        "incremental-off": "ro.incremental.enable=0\n",
+                    }.get(vendor_property_variant, "ro.incremental.enable=1\n")
                     + (
                         f"ro.hardware.{vendor_hal_property}=selected\n"
                         if vendor_hal_property
                         else ""
+                    )
+                    + "".join(
+                        f"{name}={value}\n"
+                        for name, value in (
+                            good_video_properties
+                            if video_properties is None
+                            else video_properties
+                        ).items()
                     ),
                 )
+                archive.writestr("ODM/etc/build.prop", abi_properties("odm", "armeabi-v7a"))
                 if module:
                     archive.writestr("VENDOR/lib/modules/forbidden.ko", b"module")
                 if module_loader:
@@ -617,6 +1516,92 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     )
                 if unsupported_hal:
                     archive.writestr("VENDOR/apex/com.google.cf.light.apex", b"apex")
+                # The AOSP example thermal service as the vendor APEX Cuttlefish installs: the service
+                # binary as a file under bin/hw, the VINTF fragment that declares it and the init
+                # script that starts it. The init script names the binary too, so the file is read
+                # from the payload's directories, not found by its name.
+                thermal_binary = b"android.hardware.thermal-service.example"
+                thermal_content = b"\x00" * 8
+                thermal_files = ("etc/init.rc",)
+                if thermal_hal_variant != "no-binary":
+                    thermal_files += (f"bin/hw/{thermal_binary.decode()}",)
+                if thermal_hal_variant != "no-fragment":
+                    thermal_content += (
+                        b'<manifest version="1.0" type="device"><hal format="aidl">'
+                        b"<name>android.hardware.thermal</name><version>3</version>"
+                        b"<fqname>IThermal/default</fqname></hal></manifest>"
+                    )
+                if thermal_hal_variant != "no-service":
+                    thermal_content += (
+                        b"service vendor.thermal-example "
+                        b"/apex/com.android.hardware.thermal/bin/hw/" + thermal_binary + b"\n"
+                    )
+                if thermal_hal_variant != "missing-apex":
+                    archive.writestr(
+                        "VENDOR/apex/com.android.hardware.thermal.apex",
+                        synthetic_apex("erofs", thermal_content, files=thermal_files),
+                    )
+                # The Wi-Fi HAL and the supplicant (with hostapd), packaged the same way.
+                def hal_apex(apex, binary, name, fqname, service, variant):
+                    content = b"\x00" * 8
+                    files = ("etc/init.rc",)
+                    if variant != "no-binary":
+                        files += (f"bin/hw/{binary.decode()}",)
+                    if variant != "no-fragment":
+                        content += (
+                            b'<manifest version="1.0" type="device"><hal format="aidl">'
+                            b"<name>" + name + b"</name><fqname>" + fqname
+                            + b"</fqname></hal></manifest>"
+                        )
+                    if variant != "no-service":
+                        content += (
+                            b"service " + service + b" /apex/" + apex + b"/bin/hw/" + binary
+                            + b" \\\n    -O/data/vendor/wifi/wpa/sockets\n"
+                        )
+                    if variant != "missing-apex":
+                        archive.writestr(
+                            f"VENDOR/apex/{apex.decode()}.apex",
+                            synthetic_apex("erofs", content, files=files),
+                        )
+
+                hal_apex(b"com.android.hardware.wifi", b"android.hardware.wifi-service",
+                         b"android.hardware.wifi", b"IWifi/default", b"vendor.wifi_hal_legacy",
+                         wifi_hal_variant)
+                hal_apex(b"com.google.cf.wpa_supplicant", b"wpa_supplicant",
+                         b"android.hardware.wifi.supplicant", b"ISupplicant/default",
+                         b"wpa_supplicant", supplicant_variant)
+                # The default CAS HAL, packaged the same way, and the ClearKey CAS plugin it loads
+                # from /vendor/lib*/mediacas for both ISAs.
+                cas_binary = b"android.hardware.cas-service.example"
+                cas_content = b"\x00" * 8
+                cas_files = ("etc/init.rc",)
+                if cas_hal_variant != "no-binary":
+                    cas_files += (f"bin/hw/{cas_binary.decode()}",)
+                if cas_hal_variant != "no-fragment":
+                    cas_content += (
+                        b'<manifest version="1.0" type="device"><hal format="aidl">'
+                        b"<name>android.hardware.cas</name>"
+                        b"<fqname>IMediaCasService/default</fqname></hal></manifest>"
+                    )
+                if cas_hal_variant != "no-service":
+                    cas_content += (
+                        b"service vendor.cas-default "
+                        b"/apex/com.android.hardware.cas/bin/hw/" + cas_binary + b"\n"
+                    )
+                if cas_hal_variant != "missing-apex":
+                    archive.writestr(
+                        "VENDOR/apex/com.android.hardware.cas.apex",
+                        synthetic_apex("erofs", cas_content, files=cas_files),
+                    )
+                if cas_hal_variant != "no-plugin64":
+                    archive.writestr(
+                        "VENDOR/lib64/mediacas/libclearkeycasplugin.so",
+                        synthetic_aarch64_elf(alignment),
+                    )
+                if cas_hal_variant != "no-plugin32":
+                    archive.writestr(
+                        "VENDOR/lib/mediacas/libclearkeycasplugin.so", synthetic_arm_elf()
+                    )
                 if system_other:
                     archive.writestr(
                         "SYSTEM_OTHER/app/Fixture/Fixture.apk", b"apk"
@@ -624,14 +1609,17 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 if removed_payload:
                     archive.writestr(
                         "SYSTEM/apex/com.android.hardware.rebootescrow.apex",
-                        synthetic_apex("ext4"),
+                        synthetic_apex(),
                     )
+            if entries:
+                adjust_archive(path, entries)
 
         good = root / "good.zip"
         write_fixture(good)
         run_tool(verifier, "--target-files", good, *kernel_options, check=True)
         # Every supported variant verifies as itself and is rejected as any
-        # other: the build-type properties follow the requested variant.
+        # other: the build-type properties follow the requested variant. These
+        # run as processes, like the good archive: they state the command line.
         for variant in BUILD_VARIANTS:
             for requested in BUILD_VARIANTS:
                 fixture = root / f"{variant}-as-{requested}.zip"
@@ -646,6 +1634,31 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         f"{result.returncode} {result.stdout}"
                     )
 
+        # A rejection fixture is built and verified once however many tables
+        # state it: the cases whose options are the same share one run, which
+        # must satisfy every assertion of every case (the status and the
+        # verifier's own message of the first table, the named cause of the
+        # second).
+        rejections: dict[str, dict[str, object]] = {}
+
+        def canonical(value: object) -> str:
+            if isinstance(value, dict):
+                return "{" + ",".join(
+                    f"{key!r}:{canonical(item)}" for key, item in sorted(value.items())
+                ) + "}"
+            return repr(value)
+
+        def reject(label: str, options: dict[str, object], reason: str | None = None) -> None:
+            case = rejections.setdefault(
+                canonical(options),
+                {"options": options, "labels": [], "reasons": [], "message": False},
+            )
+            case["labels"].append(label)
+            if reason is None:
+                case["message"] = True
+            else:
+                case["reasons"].append(reason)
+
         for label, options in (
             ("module", {"module": True}),
             ("module-loader", {"module_loader": True}),
@@ -653,21 +1666,216 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("dynamic-image", {"dynamic_image": True}),
             ("ota-tool", {"ota_tool": True}),
             ("virtual-ab", {"virtual_ab": True}),
-            ("abi32", {"abi32": True}),
+            ("no-32-bit-abi", {"abilist32": ""}),
+            ("no-32-bit-vendor-abi", {"vendor_abilist32": ""}),
+            ("single-zygote", {"zygote": "zygote64"}),
+            ("no-64-bit-compiler", {"dex2oat64": False}),
+            ("missing-32-bit-runtime",
+             {"entries": {"SYSTEM/bin/app_process32": None}}),
+            ("missing-sgdisk",
+             {"entries": {"SYSTEM/bin/sgdisk": None}}),
+            ("missing-32-bit-boot-image",
+             {"entries": {"SYSTEM/framework/arm/boot-framework.oat": None}}),
+            ("missing-32-bit-gallium-driver",
+             {"entries": {"VENDOR/lib/venus_gallium_dri.so": None}}),
+            ("missing-32-bit-egl",
+             {"entries": {"VENDOR/lib/egl/libGLESv2_kernarium.so": None}}),
+            ("missing-32-bit-vulkan-hal",
+             {"entries": {"VENDOR/lib/hw/vulkan.virtio.so": None}}),
+            ("missing-32-bit-gralloc",
+             {"entries": {"VENDOR/lib/hw/gralloc.minigbm.so": None}}),
+            ("missing-32-bit-mapper",
+             {"entries": {"VENDOR/lib/hw/mapper.minigbm.so": None}}),
+            ("32-bit-gallium-dependency", {"missing_arm_gallium_dependency": True}),
+            ("32-bit-egl-is-aarch64",
+             {"entries": {"VENDOR/lib/egl/libEGL_kernarium.so": synthetic_aarch64_elf()}}),
+            ("64-bit-egl-is-arm",
+             {"entries": {"VENDOR/lib64/egl/libEGL_kernarium.so": synthetic_arm_elf()}}),
+            ("missing-webview-32-bit-odex",
+             {"entries": {"PRODUCT/app/webview/oat/arm/webview.odex": None}}),
+            ("missing-webview-32-bit-vdex",
+             {"entries": {"PRODUCT/app/webview/oat/arm/webview.vdex": None}}),
+            ("32-bit-odex-without-arm64",
+             {"entries": {"PRODUCT/app/Orphan/oat/arm/Orphan.odex": b"odex",
+                          "PRODUCT/app/Orphan/oat/arm/Orphan.vdex": b"vdex"}}),
+            ("unknown-isa",
+             {"entries": {"PRODUCT/app/Jelly/oat/x86_64/Jelly.odex": b"odex"}}),
+            ("32-bit-elf-in-lib64",
+             {"entries": {"VENDOR/lib64/libfixture.so": synthetic_arm_elf()}}),
+            ("64-bit-elf-in-lib",
+             {"entries": {"SYSTEM/lib/libfixture.so": synthetic_aarch64_elf()}}),
+            ("32-bit-daemon",
+             {"entries": {"SYSTEM/bin/mediaserver": synthetic_arm_elf()}}),
+            ("32-bit-vendor-daemon",
+             {"entries": {"VENDOR/bin/hw/android.hardware.fixture-service": synthetic_arm_elf()}}),
+            ("32-bit-alignment", {"arm_alignment": 2048}),
+            ("32-bit-hard-float", {"arm_flags": 0x05000400}),
             ("alignment", {"alignment": 4096}),
             ("untracked-variant", {"build_variant": other_variant}),
             ("wrong-fstab", {"wrong_fstab": True}),
             ("wrong-filesystem", {"wrong_filesystem": True}),
+            ("wrong-erofs-compressor",
+             {"misc_info_edits": {"erofs_default_compressor": "lz4hc,9"}}),
+            ("wrong-erofs-level",
+             {"misc_info_edits": {"erofs_default_compressor": "zstd,19"}}),
+            ("wrong-erofs-cluster",
+             {"misc_info_edits": {"erofs_pcluster_size": "4096"}}),
+            ("missing-erofs-compressor",
+             {"misc_info_edits": {"erofs_default_compressor": None}}),
+            ("erofs-dedupe", {"misc_info_edits": {"erofs_enable_dedupe": "true"}}),
+            ("erofs-shared-blocks",
+             {"misc_info_edits": {"erofs_share_dup_blocks": "true"}}),
+            ("erofs-legacy-compression",
+             {"misc_info_edits": {"erofs_use_legacy_compression": "true"}}),
+            ("erofs-block-size", {"misc_info_edits": {"erofs_blocksize": "16384"}}),
+            ("erofs-system-block-size",
+             {"misc_info_edits": {"system_erofs_blocksize": "16384"}}),
+            ("erofs-vendor-compressor",
+             {"misc_info_edits": {"vendor_erofs_compressor": "lz4hc,9"}}),
+            ("erofs-system-ext-cluster",
+             {"misc_info_edits": {"system_ext_erofs_pcluster_size": "65536"}}),
+            ("missing-erofs-hints",
+             {"entries": {"META/erofs_default_compress_hints.txt": None}}),
+            ("wrong-erofs-hints",
+             {"entries": {"META/erofs_default_compress_hints.txt": b"0 .*\\.img$\n"}}),
+            ("ext4-system-image",
+             {"entries": {"IMAGES/system.img": bytes(4096)}}),
+            ("lz4-vendor-image",
+             {"entries": {"IMAGES/vendor.img": synthetic_erofs_image(algorithms=1 << 0)}}),
+            ("lzma-product-image",
+             {"entries": {"IMAGES/product.img": synthetic_erofs_image(
+                 algorithms=1 << 1, sparse=True)}}),
+            ("two-algorithm-odm-image",
+             {"entries": {"IMAGES/odm.img": synthetic_erofs_image(
+                 algorithms=(1 << 0) | (1 << 3))}}),
+            ("small-cluster-system-ext-image",
+             {"entries": {"IMAGES/system_ext.img": synthetic_erofs_image(features=0x1)}}),
+            ("tail-packing-system-image",
+             {"entries": {"IMAGES/system.img": synthetic_erofs_image(features=0x3 | 0x10)}}),
+            ("fragments-vendor-image",
+             {"entries": {"IMAGES/vendor.img": synthetic_erofs_image(features=0x3 | 0x20)}}),
+            ("16k-block-system-image",
+             {"entries": {"IMAGES/system.img": synthetic_erofs_image(block_bits=14)}}),
+            ("wrong-userdata-inodes", {"wrong_userdata_inodes": True}),
+            ("missing-userdata-quota", {"missing_userdata_quota": True}),
             ("wrong-apex-filesystem", {"wrong_apex_filesystem": True}),
+            ("apex-lz4-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 algorithms=1 << 0)}}),
+            ("apex-small-cluster-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 features=0x1)}}),
+            ("apex-extended-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 features=0x3 | 0x20)}}),
+            ("apex-16k-block-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 block_bits=14)}}),
+            ("apex-unknown-payload",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex("unknown")}}),
+            ("shim-lookalike-ext4-payload",
+             {"entries": {"SYSTEM/apex/com.android.apex.cts.shim2.apex": synthetic_apex("ext4")}}),
             ("stock-fstab", {"stock_fstab": True}),
             ("seriallogging", {"seriallogging": True}),
             ("boot-control", {"boot_control": True}),
             ("context-hub", {"context_hub": True}),
             ("unsupported-hal", {"unsupported_hal": True}),
             ("unsupported-feature", {"unsupported_feature": True}),
+            ("missing-microphone-feature", {"missing_microphone_feature": True}),
+            ("missing-companion-feature", {"missing_companion_feature": True}),
+            ("missing-mic-policy", {"missing_mic_policy": True}),
+            ("extra-input-device", {"extra_input_device": True}),
             ("kernel-config", {"wrong_kernel_config": True}),
+            ("kernel-no-macvlan", {"kernel_config_variant": "missing:CONFIG_MACVLAN"}),
+            ("kernel-no-cfg80211", {"kernel_config_variant": "unset:CONFIG_CFG80211"}),
+            ("kernel-no-virt-wifi", {"kernel_config_variant": "missing:CONFIG_VIRT_WIFI"}),
+            ("kernel-macvlan-module", {"kernel_config_variant": "module:CONFIG_MACVLAN"}),
+            ("kernel-cfg80211-module", {"kernel_config_variant": "module:CONFIG_CFG80211"}),
+            ("kernel-virt-wifi-module", {"kernel_config_variant": "module:CONFIG_VIRT_WIFI"}),
+            ("kernel-no-erofs", {"kernel_config_variant": "missing:CONFIG_EROFS_FS"}),
+            ("kernel-no-erofs-zstd",
+             {"kernel_config_variant": "unset:CONFIG_EROFS_FS_ZIP_ZSTD"}),
+            ("kernel-erofs-zip-module", {"kernel_config_variant": "module:CONFIG_EROFS_FS_ZIP"}),
             ("kernel-release", {"wrong_kernel_release": True}),
             ("memfd-policy", {"missing_memfd_policy": True}),
+            ("spl-policy", {"missing_spl_policy": True}),
+            ("blocker-missing-service", {"blocker_variant": "missing-service"}),
+            ("blocker-class-started", {"blocker_variant": "class-started"}),
+            ("blocker-started-at-boot", {"blocker_variant": "started-at-boot"}),
+            ("blocker-no-stop", {"blocker_variant": "no-stop"}),
+            ("blocker-binary", {"missing_blocker_binary": True}),
+            ("net-setup-missing-service", {"net_setup_variant": "missing-service"}),
+            ("net-setup-not-oneshot", {"net_setup_variant": "not-oneshot"}),
+            ("net-setup-not-disabled", {"net_setup_variant": "not-disabled"}),
+            ("net-setup-no-exec-start", {"net_setup_variant": "no-exec-start"}),
+            ("net-setup-sysctl-after-start", {"net_setup_variant": "sysctl-after-start"}),
+            ("net-setup-no-announce", {"net_setup_variant": "no-announce"}),
+            ("net-setup-started-at-boot", {"net_setup_variant": "started-at-boot"}),
+            ("net-setup-binary", {"missing_net_setup_binary": True}),
+            ("net-library", {"missing_net_library": True}),
+            ("net-policy-label", {"net_policy_variant": "missing-label"}),
+            ("net-policy-transition", {"net_policy_variant": "missing-transition"}),
+            ("wifi-network-missing-rc", {"wifi_network_variant": "missing-rc"}),
+            ("wifi-network-missing-service", {"wifi_network_variant": "missing-service"}),
+            ("wifi-network-not-oneshot", {"wifi_network_variant": "not-oneshot"}),
+            ("wifi-network-not-disabled", {"wifi_network_variant": "not-disabled"}),
+            ("wifi-network-no-start", {"wifi_network_variant": "no-start"}),
+            ("wifi-network-started-at-boot", {"wifi_network_variant": "started-at-boot"}),
+            ("wifi-network-no-add", {"wifi_network_variant": "no-add"}),
+            ("wifi-network-no-marker", {"wifi_network_variant": "no-marker"}),
+            ("wifi-network-enables-wifi", {"wifi_network_variant": "enables-wifi"}),
+            ("wifi-network-connects", {"wifi_network_variant": "connects"}),
+            ("wifi-network-settings-put", {"wifi_network_variant": "settings-put"}),
+            ("wifi-network-missing-label", {"wifi_network_variant": "missing-label"}),
+            ("wifi-network-missing-transition", {"wifi_network_variant": "missing-transition"}),
+            ("wifi-network-marker-not-system", {"wifi_network_variant": "marker-not-system"}),
+            ("wifi-network-missing-marker-rule", {"wifi_network_variant": "missing-marker-rule"}),
+            ("wifi-network-missing-binder-transfer", {"wifi_network_variant": "missing-binder-transfer"}),
+            ("wifi-network-missing-binder-call", {"wifi_network_variant": "missing-binder-call"}),
+            ("wifi-network-missing-marker-context", {"wifi_network_variant": "missing-marker-context"}),
+            ("wifi-network-script", {"missing_wifi_network_script": True}),
+            ("wificond-present", {"entries": {"SYSTEM/bin/wificond": synthetic_aarch64_elf()}}),
+            ("wifi-dirs-missing", {"wifi_dirs_variant": "missing"}),
+            ("wifi-dirs-wrong-owner", {"wifi_dirs_variant": "wrong-owner"}),
+            ("missing-wifi-feature", {"missing_wifi_feature": True}),
+            ("missing-wifi-overlay", {"entries": {"VENDOR/overlay/KernariumWifiOverlay.apk": None}}),
+            ("ethernet-feature", {"wifi_feature_file": "android.hardware.ethernet"}),
+            ("wifi-aware-feature", {"wifi_feature_file": "android.hardware.wifi.aware"}),
+            ("wifi-rtt-feature", {"wifi_feature_file": "android.hardware.wifi.rtt"}),
+            ("wifi-direct-feature", {"wifi_feature_file": "android.hardware.wifi.direct"}),
+            ("wifi-passpoint-feature", {"wifi_feature_file": "android.hardware.wifi.passpoint"}),
+            ("missing-wifi-hal-apex", {"wifi_hal_variant": "missing-apex"}),
+            ("wifi-hal-without-binary", {"wifi_hal_variant": "no-binary"}),
+            ("wifi-hal-without-fragment", {"wifi_hal_variant": "no-fragment"}),
+            ("wifi-hal-without-service", {"wifi_hal_variant": "no-service"}),
+            ("missing-supplicant-apex", {"supplicant_variant": "missing-apex"}),
+            ("supplicant-without-binary", {"supplicant_variant": "no-binary"}),
+            ("supplicant-without-fragment", {"supplicant_variant": "no-fragment"}),
+            ("supplicant-without-service", {"supplicant_variant": "no-service"}),
+            ("adb-prop-context", {"missing_adb_prop_context": True}),
+            ("adb-prop-policy", {"missing_adb_prop_policy": True}),
+            ("core-sets-vendor-prop", {"core_sets_vendor_prop": True}),
+            ("audio-binder-policy", {"missing_audio_binder_policy": True}),
+            ("clearkey-memfd-missing", {"clearkey_memfd_variant": "missing"}),
+            ("clearkey-memfd-no-write", {"clearkey_memfd_variant": "no-write"}),
+            ("clearkey-memfd-isolated-apps", {"clearkey_memfd_variant": "all-apps"}),
+            ("clearkey-memfd-wrong-exclusion", {"clearkey_memfd_variant": "isolated-only"}),
+            ("oversize-platform-policy", {"oversize_platform_policy": True}),
+            ("media-codecs-missing", {"media_codecs_variant": "missing"}),
+            ("media-codecs-malformed", {"media_codecs_variant": "malformed"}),
+            ("media-codecs-no-hevc", {"media_codecs_variant": "no-hevc"}),
+            ("media-codecs-low-hevc-rate", {"media_codecs_variant": "low-hevc-rate"}),
+            ("media-codecs-small-vp9-size", {"media_codecs_variant": "small-vp9-size"}),
+            ("media-codecs-small-vp9-blocks", {"media_codecs_variant": "small-vp9-blocks"}),
+            ("system-ext-core-sets-vendor-prop", {"system_ext_core_sets_vendor_prop": True}),
+            ("adb-prop-not-system", {"adb_prop_not_system": True}),
+            ("adb-prop-unreadable-by-vendor-init", {"adb_prop_unreadable_by_vendor_init": True}),
+            ("lineage-mediaprovider-trusted", {"lineage_policy": "mediaprovider-trusted"}),
+            ("lineage-mediaprovider-privapp", {"lineage_policy": "mediaprovider-privapp"}),
+            ("lineage-fsck-sys-admin", {"lineage_policy": "fsck-sys-admin"}),
+            ("lineage-vold-relabelto", {"lineage_policy": "vold-relabelto"}),
+            ("lineage-permissive-backuptool", {"lineage_policy": "permissive-backuptool"}),
+            ("missing-mediaserver-audit", {"missing_mediaserver_audit": True}),
             ("missing-virtio-console", {"missing_virtio_console": True}),
             ("unsupported-hvc", {"unsupported_hvc": True}),
             ("missing-mesa-gles", {"missing_mesa_gles": True}),
@@ -685,6 +1893,36 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("half-preopt-pair", {"half_preopt_pair": True}),
             ("audio-defaults", {"wrong_audio_defaults": True}),
             ("product-model", {"wrong_product_model": True}),
+            ("missing-lockscreen-default", {"missing_lockscreen_default": True}),
+            ("missing-use-fiemap", {"use_fiemap_variant": "missing"}),
+            ("use-fiemap-true", {"use_fiemap_variant": "true"}),
+            ("userdata-grow-missing", {"userdata_grow_variant": "missing"}),
+            ("userdata-grow-offline-only", {"userdata_grow_variant": "offline-only"}),
+            ("userdata-grow-offline-also", {"userdata_grow_variant": "offline-also"}),
+            ("userdata-grow-twice", {"userdata_grow_variant": "twice"}),
+            ("userdata-grow-forced", {"userdata_grow_variant": "forced"}),
+            ("userdata-grow-no-group", {"userdata_grow_variant": "no-group"}),
+            ("userdata-grow-at-boot", {"userdata_grow_variant": "at-boot"}),
+            ("userdata-grow-policy-no-capability", {"userdata_grow_policy_variant": "no-capability"}),
+            ("userdata-grow-policy-no-dir-open", {"userdata_grow_policy_variant": "no-dir-open"}),
+            ("userdata-grow-policy-no-ioctl", {"userdata_grow_policy_variant": "no-ioctl"}),
+            ("userdata-grow-policy-more-ioctls", {"userdata_grow_policy_variant": "more-ioctls"}),
+            ("missing-discrete-ops-overlay", {"discrete_ops_variant": "missing-overlay"}),
+            ("unreliable-present-fence", {"vendor_property_variant": "present-fence-unreliable"}),
+            ("missing-incremental-property", {"vendor_property_variant": "no-incremental"}),
+            ("disabled-incremental-property", {"vendor_property_variant": "incremental-off"}),
+            ("missing-thermal-apex", {"thermal_hal_variant": "missing-apex"}),
+            ("thermal-apex-without-binary", {"thermal_hal_variant": "no-binary"}),
+            ("thermal-apex-without-fragment", {"thermal_hal_variant": "no-fragment"}),
+            ("thermal-apex-without-service", {"thermal_hal_variant": "no-service"}),
+            ("missing-cas-apex", {"cas_hal_variant": "missing-apex"}),
+            ("cas-apex-without-binary", {"cas_hal_variant": "no-binary"}),
+            ("cas-apex-without-fragment", {"cas_hal_variant": "no-fragment"}),
+            ("cas-apex-without-service", {"cas_hal_variant": "no-service"}),
+            ("missing-cas-plugin-64", {"cas_hal_variant": "no-plugin64"}),
+            ("missing-cas-plugin-32", {"cas_hal_variant": "no-plugin32"}),
+            ("lineage-discrete-ops-list-only", {"discrete_ops_variant": "lineage-list-only"}),
+            ("short-discrete-ops-list", {"discrete_ops_variant": "short-device-list"}),
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
@@ -703,14 +1941,105 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("curated-out-profiles",
              {"extra_entry": "SYSTEM_EXT/app/Profiles/Profiles.apk"}),
             ("fdroid-wide-permissions", {"wide_fdroid_permissions": True}),
+            ("missing-video-encoder-service",
+             {"entries": {f"VENDOR/bin/hw/{video_service}": None}}),
+            ("missing-video-plugin-store",
+             {"entries": {"VENDOR/lib64/libc2plugin_store.so": None}}),
+            ("missing-video-codec-list",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": None}}),
+            ("video-codec-list-lacks-hevc",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 encoders={"c2.v4l2.avc.encoder": "video/avc"})}}),
+            ("video-codec-list-lacks-hevc-decoder",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 hardware_decoders={"c2.v4l2.avc.decoder": "video/avc"})}}),
+            ("video-unapproved-hardware-decoder",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 hardware_decoders={**tool.VIDEO_DECODER_CODECS,
+                                    "c2.v4l2.vp9.decoder": "video/x-vnd.on2.vp9"})}}),
+            ("video-decoder-without-adaptive-playback",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_features=("dynamic-color-aspects",))}}),
+            ("video-software-decoder-listed-not-updated",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoders=("c2.android.avc.decoder",))}}),
+            ("video-codec-list-invalid",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": b"<MediaCodecs>"}}),
+            ("video-encoder-without-performance-point",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_points=False)}}),
+            ("video-encoder-without-measured-frame-rate",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 measured_frame_rates=False)}}),
+            ("video-encoder-below-the-size-floor",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 encoder_minimum_size="16x16")}}),
+            ("video-encoder-below-the-bitrate-floor",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 encoder_minimum_bitrate="1")}}),
+            ("video-performance-point-above-capacity",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_point="3840x2160 30-60")}}),
+            ("video-performance-point-malformed",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_point="3840x2160 fast")}}),
+            ("video-decoder-without-performance-point",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_points=False)}}),
+            ("video-decoder-without-measured-frame-rate",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_measured_frame_rates=False)}}),
+            ("video-decoder-point-above-capacity",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_point="3840x2160 60-120")}}),
+            ("video-decoder-points-far-below-capacity",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_point="1280x720 60-90")}}),
+            ("video-pixel-rate-property",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.video_pixel_rate": "1000"}}),
+            ("video-decode-pixel-rate-property",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.video_decode_pixel_rate": "1000"}}),
+            ("video-unapproved-decoder-property",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.decoder.supported.vp9": "true"}}),
+            ("missing-video-decoder-property",
+             {"video_properties": {
+                 name: value for name, value in good_video_properties.items()
+                 if not name.endswith("decoder.supported.h264")}}),
+            ("video-decode-concurrency-property",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.decode_concurrent_instances": "1"}}),
+            ("missing-video-hevc-property",
+             {"video_properties": {
+                 name: value for name, value in good_video_properties.items()
+                 if not name.endswith("supported.hevc")}}),
+            ("video-concurrency-property",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.encode_concurrent_instances": "1"}}),
+            ("missing-video-ueventd", {"missing_video_ueventd": True}),
+            ("video-service-without-camera-group",
+             {"entries": {f"VENDOR/etc/init/{video_service}.rc": good_video_rc.replace(
+                 " camera", "").encode()}}),
+            ("video-seccomp-lacks-eventfd",
+             {"entries": {
+                 f"VENDOR/etc/seccomp_policy/{video_seccomp_extended}":
+                 b"read: 1\n# eventfd2: 1\n"}}),
+            ("video-seccomp-lacks-crash-handler-call",
+             {"entries": {
+                 f"VENDOR/etc/seccomp_policy/{video_seccomp_extended}":
+                 good_video_seccomp.replace("uname: 1\n", "").encode()}}),
+            ("video-service-label",
+             {"entries": {"VENDOR/etc/selinux/vendor_file_contexts":
+                          good_video_contexts.replace("mediacodec_exec", "vendor_file").encode()}}),
         ):
-            fixture = root / f"bad-{label}.zip"
-            write_fixture(fixture, **options)
-            result = run_tool(verifier, "--target-files", fixture, *kernel_options)
-            if result.returncode == 0:
-                fail(f"target-files verifier accepted the {label} fixture")
-            if result.returncode != 1:
-                fail(f"target-files verifier did not reject the {label} fixture: {result.stdout}")
+            reject(label, options)
 
         # Rejections that must name their cause: kernel module files and
         # metadata in any case, and a target ELF whose header is not an
@@ -720,16 +2049,758 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("module-metadata", {"extra_entry": "VENDOR/etc/modules.dep"}, "kernel module"),
             ("module-metadata-case", {"extra_entry": "VENDOR/etc/MODULES.Dep"}, "kernel module"),
             ("module-blocklist", {"extra_entry": "VENDOR/etc/modules.blocklist"}, "kernel module"),
-            ("elf32", {"elf_edit": ("<B", 4, 1)}, "little-endian ELF64"),
-            ("elf-big-endian", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF64"),
+            ("elf-class", {"elf_edit": ("<B", 4, 3)}, "ELF32 or ELF64"),
+            ("elf-big-endian", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF32 or ELF64"),
             ("elf-machine", {"elf_edit": ("<H", 18, 62)}, "not AArch64"),
             ("elf-program-header-size", {"elf_edit": ("<H", 54, 32)}, "program.header"),
+            ("armeabi", {"abilist32": "armeabi-v7a,armeabi"}, "armeabi is forbidden|legacy armeabi"),
+            ("no-32-bit-abi-cause", {"abilist32": ""}, "unexpected ABI"),
+            ("single-zygote-cause", {"zygote": "zygote64"}, "zygote"),
+            ("blocker-missing-service-cause", {"blocker_variant": "missing-service"},
+             "does not declare the suspend_blocker service"),
+            ("blocker-class-started-cause", {"blocker_variant": "class-started"},
+             "starts suspend_blocker with its class"),
+            ("blocker-started-at-boot-cause", {"blocker_variant": "started-at-boot"},
+             "starts suspend_blocker under 'boot'"),
+            ("blocker-no-stop-cause", {"blocker_variant": "no-stop"},
+             "does not stop suspend_blocker when the last adb host leaves"),
+            ("blocker-binary-cause", {"missing_blocker_binary": True},
+             "VENDOR/bin/suspend_blocker"),
+            ("net-setup-missing-service-cause", {"net_setup_variant": "missing-service"},
+             "does not declare the kernarium_net_setup service"),
+            ("net-setup-not-oneshot-cause", {"net_setup_variant": "not-oneshot"},
+             "does not declare kernarium_net_setup as oneshot"),
+            ("net-setup-not-disabled-cause", {"net_setup_variant": "not-disabled"},
+             "does not declare kernarium_net_setup as disabled"),
+            ("net-setup-no-exec-start-cause", {"net_setup_variant": "no-exec-start"},
+             "does not wait for kernarium_net_setup at post-fs-data"),
+            ("net-setup-sysctl-after-start-cause", {"net_setup_variant": "sysctl-after-start"},
+             "arp_ignore 1' before kernarium_net_setup"),
+            ("net-setup-no-announce-cause", {"net_setup_variant": "no-announce"},
+             "arp_announce 2' before kernarium_net_setup"),
+            ("net-setup-started-at-boot-cause", {"net_setup_variant": "started-at-boot"},
+             "starts kernarium_net_setup under 'boot'"),
+            ("net-setup-binary-cause", {"missing_net_setup_binary": True},
+             "VENDOR/bin/kernarium_net_setup"),
+            ("net-library-cause", {"missing_net_library": True},
+             "VENDOR/lib64/cuttlefish_net.so"),
+            ("net-policy-label-cause", {"net_policy_variant": "missing-label"},
+             "do not label /vendor/bin/kernarium_net_setup"),
+            ("net-policy-transition-cause", {"net_policy_variant": "missing-transition"},
+             "does not move init into the network setup domain"),
+            ("wifi-network-missing-rc-cause", {"wifi_network_variant": "missing-rc"},
+             "SYSTEM_EXT/etc/init/kernarium_wifi_network.rc"),
+            ("wifi-network-missing-service-cause", {"wifi_network_variant": "missing-service"},
+             "does not declare the kernarium_wifi_network service"),
+            ("wifi-network-not-oneshot-cause", {"wifi_network_variant": "not-oneshot"},
+             "does not declare kernarium_wifi_network as oneshot"),
+            ("wifi-network-not-disabled-cause", {"wifi_network_variant": "not-disabled"},
+             "does not declare kernarium_wifi_network as disabled"),
+            ("wifi-network-no-start-cause", {"wifi_network_variant": "no-start"},
+             "does not start kernarium_wifi_network when boot completes"),
+            ("wifi-network-started-at-boot-cause", {"wifi_network_variant": "started-at-boot"},
+             "starts kernarium_wifi_network under 'boot'"),
+            ("wifi-network-no-add-cause", {"wifi_network_variant": "no-add"},
+             "does not contain 'cmd wifi add-network VirtWifi open'"),
+            ("wifi-network-no-marker-cause", {"wifi_network_variant": "no-marker"},
+             "does not contain 'setprop'"),
+            ("wifi-network-enables-wifi-cause", {"wifi_network_variant": "enables-wifi"},
+             "contains 'set-wifi-enabled'"),
+            ("wifi-network-connects-cause", {"wifi_network_variant": "connects"},
+             "contains 'connect-network'"),
+            ("wifi-network-settings-put-cause", {"wifi_network_variant": "settings-put"},
+             "contains 'settings put'"),
+            ("wifi-network-missing-label-cause", {"wifi_network_variant": "missing-label"},
+             "do not label /system_ext/bin/kernarium_wifi_network.sh"),
+            ("wifi-network-missing-transition-cause", {"wifi_network_variant": "missing-transition"},
+             "does not move init into the Wi-Fi network domain"),
+            ("wifi-network-marker-not-system-cause", {"wifi_network_variant": "marker-not-system"},
+             "does not define the system-owned kernarium_wifi_network_prop"),
+            ("wifi-network-missing-marker-rule-cause", {"wifi_network_variant": "missing-marker-rule"},
+             "does not let the Wi-Fi network domain set persist.sys.kernarium.virtwifi_saved"),
+            ("wifi-network-missing-binder-transfer-cause", {"wifi_network_variant": "missing-binder-transfer"},
+             "does not let the Wi-Fi network domain transfer binders to system_server"),
+            ("wifi-network-missing-binder-call-cause", {"wifi_network_variant": "missing-binder-call"},
+             "does not let system_server call the Wi-Fi network domain's binder"),
+            ("wifi-network-missing-marker-context-cause", {"wifi_network_variant": "missing-marker-context"},
+             "do not label persist.sys.kernarium.virtwifi_saved"),
+            ("wifi-network-script-cause", {"missing_wifi_network_script": True},
+             "SYSTEM_EXT/bin/kernarium_wifi_network.sh"),
+            ("wificond-present-cause", {"entries": {"SYSTEM/bin/wificond": synthetic_aarch64_elf()}},
+             "nonstatic image or metadata is forbidden: SYSTEM/bin/wificond"),
+            ("kernel-no-macvlan-cause", {"kernel_config_variant": "missing:CONFIG_MACVLAN"},
+             "packaged kernel configuration lacks CONFIG_MACVLAN=y"),
+            ("kernel-no-cfg80211-cause", {"kernel_config_variant": "unset:CONFIG_CFG80211"},
+             "packaged kernel configuration lacks CONFIG_CFG80211=y"),
+            ("kernel-no-virt-wifi-cause", {"kernel_config_variant": "missing:CONFIG_VIRT_WIFI"},
+             "packaged kernel configuration lacks CONFIG_VIRT_WIFI=y"),
+            ("kernel-macvlan-module-cause", {"kernel_config_variant": "module:CONFIG_MACVLAN"},
+             "packaged kernel configuration lacks CONFIG_MACVLAN=y"),
+            ("kernel-cfg80211-module-cause", {"kernel_config_variant": "module:CONFIG_CFG80211"},
+             "packaged kernel configuration lacks CONFIG_CFG80211=y"),
+            ("kernel-virt-wifi-module-cause", {"kernel_config_variant": "module:CONFIG_VIRT_WIFI"},
+             "packaged kernel configuration lacks CONFIG_VIRT_WIFI=y"),
+            ("kernel-no-erofs-cause", {"kernel_config_variant": "missing:CONFIG_EROFS_FS"},
+             "packaged kernel configuration lacks CONFIG_EROFS_FS=y"),
+            ("kernel-no-erofs-zstd-cause",
+             {"kernel_config_variant": "unset:CONFIG_EROFS_FS_ZIP_ZSTD"},
+             "packaged kernel configuration lacks CONFIG_EROFS_FS_ZIP_ZSTD=y"),
+            ("kernel-erofs-zip-module-cause",
+             {"kernel_config_variant": "module:CONFIG_EROFS_FS_ZIP"},
+             "packaged kernel configuration lacks CONFIG_EROFS_FS_ZIP=y"),
+            ("wifi-dirs-missing-cause", {"wifi_dirs_variant": "missing"},
+             "does not run 'mkdir /data/vendor/wifi 0770 wifi wifi' at boot"),
+            ("wifi-dirs-wrong-owner-cause", {"wifi_dirs_variant": "wrong-owner"},
+             "does not run 'mkdir /data/vendor/wifi/wpa 0770 wifi wifi' at boot"),
+            ("missing-wifi-feature-cause", {"missing_wifi_feature": True},
+             "required feature is not declared: android.hardware.wifi"),
+            ("missing-wifi-overlay-cause",
+             {"entries": {"VENDOR/overlay/KernariumWifiOverlay.apk": None}},
+             "VENDOR/overlay/KernariumWifiOverlay.apk"),
+            ("ethernet-feature-cause", {"wifi_feature_file": "android.hardware.ethernet"},
+             "VENDOR/etc/permissions/android.hardware.ethernet.xml"),
+            ("wifi-aware-feature-cause", {"wifi_feature_file": "android.hardware.wifi.aware"},
+             "absent hardware feature declaration is forbidden"),
+            ("wifi-rtt-feature-cause", {"wifi_feature_file": "android.hardware.wifi.rtt"},
+             "absent hardware feature declaration is forbidden"),
+            ("wifi-direct-feature-cause", {"wifi_feature_file": "android.hardware.wifi.direct"},
+             "absent hardware feature declaration is forbidden"),
+            ("wifi-passpoint-feature-cause", {"wifi_feature_file": "android.hardware.wifi.passpoint"},
+             "absent hardware feature declaration is forbidden"),
+            ("missing-wifi-hal-apex-cause", {"wifi_hal_variant": "missing-apex"},
+             "com.android.hardware.wifi.apex is missing: the product needs the Wi-Fi HAL"),
+            ("wifi-hal-without-binary-cause", {"wifi_hal_variant": "no-binary"},
+             "does not hold the service binary bin/hw/android.hardware.wifi-service"),
+            ("wifi-hal-without-fragment-cause", {"wifi_hal_variant": "no-fragment"},
+             "does not declare IWifi/default in a VINTF fragment"),
+            ("wifi-hal-without-service-cause", {"wifi_hal_variant": "no-service"},
+             "does not start the vendor.wifi_hal_legacy service"),
+            ("missing-supplicant-apex-cause", {"supplicant_variant": "missing-apex"},
+             "com.google.cf.wpa_supplicant.apex is missing: the product needs the Wi-Fi supplicant"),
+            ("supplicant-without-binary-cause", {"supplicant_variant": "no-binary"},
+             "does not hold the service binary bin/hw/wpa_supplicant"),
+            ("supplicant-without-fragment-cause", {"supplicant_variant": "no-fragment"},
+             "does not declare ISupplicant/default in a VINTF fragment"),
+            ("supplicant-without-service-cause", {"supplicant_variant": "no-service"},
+             "does not start the wpa_supplicant service"),
+            ("adb-prop-context-cause", {"missing_adb_prop_context": True},
+             "do not label sys.kernarium.adb.host_connected"),
+            ("adb-prop-policy-cause", {"missing_adb_prop_policy": True},
+             "does not let adbd set sys.kernarium.adb.host_connected"),
+            ("media-codecs-missing-cause", {"media_codecs_variant": "missing"},
+             "VENDOR/etc/media_codecs_c2.xml"),
+            ("media-codecs-malformed-cause", {"media_codecs_variant": "malformed"},
+             "media_codecs_c2.xml is not (valid XML|well-formed)"),
+            ("media-codecs-no-hevc-cause", {"media_codecs_variant": "no-hevc"},
+             "does not update c2.android.hevc.decoder"),
+            ("media-codecs-low-hevc-rate-cause", {"media_codecs_variant": "low-hevc-rate"},
+             "allows the HEVC decoder only 3000000 blocks per second"),
+            ("media-codecs-small-vp9-size-cause", {"media_codecs_variant": "small-vp9-size"},
+             "limits the VP9 decoder to 2048x2048"),
+            ("media-codecs-small-vp9-blocks-cause", {"media_codecs_variant": "small-vp9-blocks"},
+             "allows the VP9 decoder 16384 blocks"),
+            ("oversize-platform-policy-cause", {"oversize_platform_policy": True},
+             "SYSTEM/etc/selinux/plat_sepolicy.cil"),
+            ("audio-binder-policy-cause", {"missing_audio_binder_policy": True},
+             "audio HAL processes call each other's binder"),
+            ("clearkey-memfd-missing-cause", {"clearkey_memfd_variant": "missing"},
+             "ClearKey DRM HAL read, write and map the memfd files"),
+            ("clearkey-memfd-no-write-cause", {"clearkey_memfd_variant": "no-write"},
+             "ClearKey DRM HAL read, write and map the memfd files"),
+            ("clearkey-memfd-isolated-apps-cause", {"clearkey_memfd_variant": "all-apps"},
+             "other than isolated apps"),
+            ("core-sets-vendor-prop-cause", {"core_sets_vendor_prop": True},
+             "lets the core domain adbd set the vendor property type virtual_face_hal_prop"),
+            ("system-ext-core-sets-vendor-prop-cause", {"system_ext_core_sets_vendor_prop": True},
+             "system_ext policy lets the core domain system_server set the vendor property type"),
+            ("adb-prop-not-system-cause", {"adb_prop_not_system": True},
+             "does not define the system-owned kernarium_adb_host_prop"),
+            ("lineage-mediaprovider-trusted-cause", {"lineage_policy": "mediaprovider-trusted"},
+             "makes mediaprovider_app an mlstrustedsubject"),
+            ("lineage-mediaprovider-privapp-cause", {"lineage_policy": "mediaprovider-privapp"},
+             "lets mediaprovider_app use privapp_data_file"),
+            ("lineage-fsck-sys-admin-cause", {"lineage_policy": "fsck-sys-admin"},
+             "gives fsck_untrusted sys_admin"),
+            ("lineage-vold-relabelto-cause", {"lineage_policy": "vold-relabelto"},
+             "lets vold relabel a filesystem to sdcard_posix"),
+            ("lineage-permissive-backuptool-cause", {"lineage_policy": "permissive-backuptool"},
+             "makes the domain backuptool permissive"),
+            ("missing-mediaserver-audit-cause", {"missing_mediaserver_audit": True},
+             "does not silence the denial of mediaserver reading vendor_default_prop"),
+            ("adb-prop-unreadable-by-vendor-init-cause",
+             {"adb_prop_unreadable_by_vendor_init": True},
+             "names sys.kernarium.adb.host_connected, labelled kernarium_adb_host_prop, "
+             "which vendor_init may not read"),
+            ("missing-lockscreen-default-cause", {"missing_lockscreen_default": True},
+             "unexpected product property ro.lockscreen.disable.default"),
+            ("missing-use-fiemap-cause", {"use_fiemap_variant": "missing"},
+             "unexpected product property apexd.config.use_fiemap: \\[\\]"),
+            ("use-fiemap-true-cause", {"use_fiemap_variant": "true"},
+             "unexpected product property apexd.config.use_fiemap: \\['true'\\]"),
+            ("userdata-grow-missing-cause", {"userdata_grow_variant": "missing"},
+             "does not run 'exec - root system -- /system/bin/resize2fs [^']*' once at "
+             "post-fs-data"),
+            ("userdata-grow-offline-only-cause", {"userdata_grow_variant": "offline-only"},
+             "does not run 'exec - root system -- /system/bin/resize2fs [^']*' once at "
+             "post-fs-data"),
+            ("userdata-grow-offline-also-cause", {"userdata_grow_variant": "offline-also"},
+             "handles userdata differently under 'late-fs': exec -- /system/bin/resize2fs "
+             "/dev/block/by-name/userdata"),
+            ("userdata-grow-twice-cause", {"userdata_grow_variant": "twice"},
+             "does not run 'exec - root system -- /system/bin/resize2fs [^']*' once at "
+             "post-fs-data"),
+            ("userdata-grow-forced-cause", {"userdata_grow_variant": "forced"},
+             "handles userdata differently under 'post-fs-data': exec - root system -- "
+             "/system/bin/resize2fs -f /dev/block/by-name/userdata"),
+            ("userdata-grow-no-group-cause", {"userdata_grow_variant": "no-group"},
+             "does not run 'exec - root system -- /system/bin/resize2fs [^']*' once at "
+             "post-fs-data"),
+            ("userdata-grow-at-boot-cause", {"userdata_grow_variant": "at-boot"},
+             "handles userdata differently under 'boot': exec - root system -- "
+             "/system/bin/resize2fs /dev/block/by-name/userdata"),
+            ("userdata-grow-policy-no-capability-cause", {"userdata_grow_policy_variant": "no-capability"},
+             "does not let the fsck domain have \\['sys_resource'\\] on self:capability"),
+            ("userdata-grow-policy-no-dir-open-cause", {"userdata_grow_policy_variant": "no-dir-open"},
+             "does not let the fsck domain have \\['ioctl', 'open', 'read'\\] on "
+             "system_data_root_file:dir"),
+            ("userdata-grow-policy-no-ioctl-cause", {"userdata_grow_policy_variant": "no-ioctl"},
+             "does not let the fsck domain issue EXT4_IOC_RESIZE_FS"),
+            ("userdata-grow-policy-more-ioctls-cause", {"userdata_grow_policy_variant": "more-ioctls"},
+             "lets the fsck domain issue more ioctls on /data than EXT4_IOC_RESIZE_FS"),
+            ("unreliable-present-fence-cause", {"vendor_property_variant": "present-fence-unreliable"},
+             "marks the present fences unreliable: ro.vendor.hwc.drm.present_fence_not_reliable=true"),
+            ("missing-incremental-property-cause", {"vendor_property_variant": "no-incremental"},
+             "VENDOR/build.prop lacks ro.incremental.enable=1: None"),
+            ("disabled-incremental-property-cause", {"vendor_property_variant": "incremental-off"},
+             "VENDOR/build.prop lacks ro.incremental.enable=1: '0'"),
+            ("missing-thermal-apex-cause", {"thermal_hal_variant": "missing-apex"},
+             "com.android.hardware.thermal.apex is missing: the product needs a thermal HAL"),
+            ("thermal-apex-without-binary-cause", {"thermal_hal_variant": "no-binary"},
+             "does not hold the service binary bin/hw/android.hardware.thermal-service.example"),
+            ("thermal-apex-without-fragment-cause", {"thermal_hal_variant": "no-fragment"},
+             "does not declare IThermal/default in a VINTF fragment"),
+            ("thermal-apex-without-service-cause", {"thermal_hal_variant": "no-service"},
+             "does not start the vendor.thermal-example service"),
+            ("missing-cas-apex-cause", {"cas_hal_variant": "missing-apex"},
+             "com.android.hardware.cas.apex is missing: the product needs the default CAS HAL"),
+            ("cas-apex-without-binary-cause", {"cas_hal_variant": "no-binary"},
+             "does not hold the service binary bin/hw/android.hardware.cas-service.example"),
+            ("cas-apex-without-fragment-cause", {"cas_hal_variant": "no-fragment"},
+             "does not declare IMediaCasService/default in a VINTF fragment"),
+            ("cas-apex-without-service-cause", {"cas_hal_variant": "no-service"},
+             "does not start the vendor.cas-default service"),
+            ("missing-cas-plugin-64-cause", {"cas_hal_variant": "no-plugin64"},
+             "the ClearKey CAS plugin is missing: VENDOR/lib64/mediacas/libclearkeycasplugin.so"),
+            ("missing-cas-plugin-32-cause", {"cas_hal_variant": "no-plugin32"},
+             "the ClearKey CAS plugin is missing: VENDOR/lib/mediacas/libclearkeycasplugin.so"),
+            ("missing-discrete-ops-overlay-cause", {"discrete_ops_variant": "missing-overlay"},
+             "SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk is missing"),
+            ("lineage-discrete-ops-list-only-cause", {"discrete_ops_variant": "lineage-list-only"},
+             "keeps AOSP's default ops; the closest lacks 2, 25, 41, 42, 63, 73, 88, 89, 120, "
+             "136, 141, 147, 149, 150, 152, 170, 171, 172, 173"),
+            ("short-discrete-ops-list-cause", {"discrete_ops_variant": "short-device-list"},
+             "the closest lacks 141$"),
+            ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
+             "userdata entry lacks the fs_mgr quota flag"),
+            ("wrong-apex-filesystem-cause", {"wrong_apex_filesystem": True},
+             "APEX payload must use compressed erofs, not ext4: SYSTEM/apex/com.android.fixture.apex"),
+            ("apex-lz4-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 algorithms=1 << 0)}},
+             "APEX payload SYSTEM/apex/com.android.fixture.apex is not compressed with zstd alone: "
+             "algorithms 0x1"),
+            ("apex-small-cluster-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 features=0x1)}},
+             "APEX payload SYSTEM/apex/com.android.fixture.apex has no physical cluster larger "
+             "than a block"),
+            ("apex-extended-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 features=0x3 | 0x20)}},
+             "APEX payload SYSTEM/apex/com.android.fixture.apex uses an extended option"),
+            ("apex-16k-block-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex(
+                 block_bits=14)}},
+             "APEX payload SYSTEM/apex/com.android.fixture.apex does not use 4 KiB blocks"),
+            ("apex-unknown-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.fixture.apex": synthetic_apex("unknown")}},
+             "APEX payload must use compressed erofs: SYSTEM/apex/com.android.fixture.apex"),
+            ("shim-lookalike-ext4-payload-cause",
+             {"entries": {"SYSTEM/apex/com.android.apex.cts.shim2.apex": synthetic_apex("ext4")}},
+             "APEX payload must use compressed erofs, not ext4: "
+             "SYSTEM/apex/com.android.apex.cts.shim2.apex"),
+            ("wrong-filesystem-cause", {"wrong_filesystem": True},
+             "system_fs_type must select read-only erofs images"),
+            ("wrong-erofs-compressor-cause",
+             {"misc_info_edits": {"erofs_default_compressor": "lz4hc,9"}},
+             re.escape(f"erofs_default_compressor must be {erofs_compressor}: 'lz4hc,9'")),
+            ("wrong-erofs-level-cause",
+             {"misc_info_edits": {"erofs_default_compressor": "zstd,19"}},
+             re.escape(f"erofs_default_compressor must be {erofs_compressor}: 'zstd,19'")),
+            ("wrong-erofs-cluster-cause",
+             {"misc_info_edits": {"erofs_pcluster_size": "4096"}},
+             re.escape(f"erofs_pcluster_size must be {erofs_pcluster_size}: '4096'")),
+            ("missing-erofs-compressor-cause",
+             {"misc_info_edits": {"erofs_default_compressor": None}},
+             "erofs_default_compressor must be .*: None"),
+            ("erofs-dedupe-cause", {"misc_info_edits": {"erofs_enable_dedupe": "true"}},
+             "policy beyond the product's two parameters is set: erofs_enable_dedupe"),
+            ("erofs-shared-blocks-cause",
+             {"misc_info_edits": {"erofs_share_dup_blocks": "true"}},
+             "policy beyond the product's two parameters is set: erofs_share_dup_blocks"),
+            ("erofs-legacy-compression-cause",
+             {"misc_info_edits": {"erofs_use_legacy_compression": "true"}},
+             "policy beyond the product's two parameters is set: erofs_use_legacy_compression"),
+            ("erofs-block-size-cause", {"misc_info_edits": {"erofs_blocksize": "16384"}},
+             "policy beyond the product's two parameters is set: erofs_blocksize"),
+            ("erofs-system-block-size-cause",
+             {"misc_info_edits": {"system_erofs_blocksize": "16384"}},
+             "policy beyond the product's two parameters is set: system_erofs_blocksize"),
+            ("erofs-vendor-compressor-cause",
+             {"misc_info_edits": {"vendor_erofs_compressor": "lz4hc,9"}},
+             "policy beyond the product's two parameters is set: vendor_erofs_compressor"),
+            ("erofs-system-ext-cluster-cause",
+             {"misc_info_edits": {"system_ext_erofs_pcluster_size": "65536"}},
+             "policy beyond the product's two parameters is set: system_ext_erofs_pcluster_size"),
+            ("missing-erofs-hints-cause",
+             {"entries": {"META/erofs_default_compress_hints.txt": None}},
+             "erofs_default_compress_hints.txt is missing: the .apex files would be compressed"),
+            ("wrong-erofs-hints-cause",
+             {"entries": {"META/erofs_default_compress_hints.txt": b"0 .*\\.img$\n"}},
+             "EROFS compress hints differ from the tracked product file"),
+            ("ext4-system-image-cause",
+             {"entries": {"IMAGES/system.img": bytes(4096)}},
+             "IMAGES/system.img is not an EROFS image"),
+            ("lz4-vendor-image-cause",
+             {"entries": {"IMAGES/vendor.img": synthetic_erofs_image(algorithms=1 << 0)}},
+             "IMAGES/vendor.img is not compressed with zstd alone: algorithms 0x1"),
+            ("lzma-product-image-cause",
+             {"entries": {"IMAGES/product.img": synthetic_erofs_image(
+                 algorithms=1 << 1, sparse=True)}},
+             "IMAGES/product.img is not compressed with zstd alone: algorithms 0x2"),
+            ("two-algorithm-odm-image-cause",
+             {"entries": {"IMAGES/odm.img": synthetic_erofs_image(
+                 algorithms=(1 << 0) | (1 << 3))}},
+             "IMAGES/odm.img is not compressed with zstd alone: algorithms 0x9"),
+            ("small-cluster-system-ext-image-cause",
+             {"entries": {"IMAGES/system_ext.img": synthetic_erofs_image(features=0x1)}},
+             "IMAGES/system_ext.img has no physical cluster larger than a block"),
+            ("tail-packing-system-image-cause",
+             {"entries": {"IMAGES/system.img": synthetic_erofs_image(features=0x3 | 0x10)}},
+             "IMAGES/system.img uses an extended option"),
+            ("fragments-vendor-image-cause",
+             {"entries": {"IMAGES/vendor.img": synthetic_erofs_image(features=0x3 | 0x20)}},
+             "IMAGES/vendor.img uses an extended option"),
+            ("16k-block-system-image-cause",
+             {"entries": {"IMAGES/system.img": synthetic_erofs_image(block_bits=14)}},
+             "IMAGES/system.img does not use 4 KiB blocks"),
+            ("missing-microphone-feature-cause", {"missing_microphone_feature": True},
+             "feature is not declared: android.hardware.microphone"),
+            ("missing-companion-feature-cause", {"missing_companion_feature": True},
+             "feature is not declared: android.software.companion_device_setup"),
+            ("camera-feature-cause", {"unsupported_feature": True},
+             "absent hardware feature is advertised.*android.hardware.camera"),
+            ("missing-mic-policy-cause", {"missing_mic_policy": True},
+             "ordinary mixer input"),
+            ("extra-input-device-cause", {"extra_input_device": True},
+             "only its speaker and built-in microphone"),
+            ("no-64-bit-compiler-cause", {"dex2oat64": False}, "dalvik.vm.dex2oat64.enabled"),
+            ("missing-32-bit-runtime-cause",
+             {"entries": {"SYSTEM/bin/app_process32": None}}, "required entries are missing"),
+            ("missing-sgdisk-cause",
+             {"entries": {"SYSTEM/bin/sgdisk": None}}, "SYSTEM/bin/sgdisk"),
+            ("32-bit-gallium-dependency-cause",
+             {"missing_arm_gallium_dependency": True}, "does not link the gallium driver"),
+            ("32-bit-egl-is-aarch64-cause",
+             {"entries": {"VENDOR/lib/egl/libEGL_kernarium.so": synthetic_aarch64_elf()}},
+             "64-bit ELF in a 32-bit library directory"),
+            ("64-bit-egl-is-arm-cause",
+             {"entries": {"VENDOR/lib64/egl/libEGL_kernarium.so": synthetic_arm_elf()}},
+             "32-bit ELF outside"),
+            ("missing-webview-32-bit-odex-cause",
+             {"entries": {"PRODUCT/app/webview/oat/arm/webview.odex": None}},
+             "32-bit application dexpreopt artifact is missing"),
+            ("32-bit-odex-without-arm64-cause",
+             {"entries": {"PRODUCT/app/Orphan/oat/arm/Orphan.odex": b"odex",
+                          "PRODUCT/app/Orphan/oat/arm/Orphan.vdex": b"vdex"}},
+             "has no ARM64 one"),
+            ("unknown-isa-cause",
+             {"entries": {"PRODUCT/app/Jelly/oat/x86_64/Jelly.odex": b"odex"}},
+             "not for an ISA of this product"),
+            ("32-bit-elf-in-lib64-cause",
+             {"entries": {"VENDOR/lib64/libfixture.so": synthetic_arm_elf()}},
+             "32-bit ELF outside"),
+            ("64-bit-elf-in-lib-cause",
+             {"entries": {"SYSTEM/lib/libfixture.so": synthetic_aarch64_elf()}},
+             "64-bit ELF in a 32-bit library directory"),
+            ("32-bit-daemon-cause",
+             {"entries": {"SYSTEM/bin/mediaserver": synthetic_arm_elf()}},
+             "32-bit ELF outside"),
+            ("32-bit-alignment-cause", {"arm_alignment": 2048}, "below 4 KiB"),
+            ("32-bit-hard-float-cause", {"arm_flags": 0x05000400}, "hard-float"),
+            ("32-bit-eabi-version", {"arm_flags": 0x04000000}, "EABI version 5"),
+            ("32-bit-machine", {"arm_edit": ("<H", 18, 62)}, "not Arm"),
+            ("32-bit-big-endian", {"arm_edit": ("<B", 5, 2)}, "little-endian ELF32 or ELF64"),
+            ("32-bit-program-header-size", {"arm_edit": ("<H", 42, 16)}, "program.header"),
+            # The Venus ICD built without -D_FILE_OFFSET_BITS=64 imports the
+            # 32-bit-offset mmap and lseek, and fails to map a DRM offset.
+            ("32-bit-vulkan-icd-plain-mmap",
+             {"entries": {"VENDOR/lib/hw/vulkan.virtio.so": synthetic_arm_elf(
+                 imports=("open", "mmap", "lseek64", "munmap"))}},
+             r"32-bit VENDOR/lib/hw/vulkan.virtio.so imports mmap instead of mmap64"),
+            ("32-bit-gallium-plain-lseek",
+             {"entries": {"VENDOR/lib/venus_gallium_dri.so": synthetic_arm_elf(
+                 imports=("open", "mmap64", "lseek"))}},
+             r"venus_gallium_dri.so imports lseek instead of lseek64"),
+            ("32-bit-gralloc-both-plain",
+             {"entries": {"VENDOR/lib/hw/gralloc.minigbm.so": synthetic_arm_elf(
+                 imports=("mmap", "lseek"))}},
+             r"gralloc.minigbm.so imports lseek, mmap instead of lseek64, mmap64"),
+            ("32-bit-stack-without-symbols",
+             {"entries": {"VENDOR/lib/egl/libEGL_kernarium.so": synthetic_arm_elf(
+                 needed=("venus_gallium_dri.so",))}},
+             r"no readable section headers"),
+            ("missing-video-encoder-service-cause",
+             {"entries": {f"VENDOR/bin/hw/{video_service}": None}},
+             "required entries are missing"),
+            ("video-codec-list-lacks-hevc-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 encoders={"c2.v4l2.avc.encoder": "video/avc"})}},
+             "exactly the hardware encoders"),
+            ("video-software-decoder-listed-not-updated-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoders=("c2.android.avc.decoder",))}},
+             "outside the hardware codecs and the software updates"),
+            ("video-encoder-without-performance-point-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_points=False)}},
+             "publishes no performance-point-"),
+            ("video-encoder-without-measured-frame-rate-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 measured_frame_rates=False)}},
+             "publishes no measured-frame-rate-"),
+            ("video-performance-point-above-capacity-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_point="3840x2160 30-60")}},
+             "above the pixel rate capacity 108000000"),
+            ("video-performance-point-malformed-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_point="3840x2160 fast")}},
+             "publishes a malformed performance-point-3840x2160"),
+            ("video-encoder-below-the-size-floor-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 encoder_minimum_size="16x16")}},
+             r"c2\.v4l2\.\w+\.encoder must start at 64x64 pixels"),
+            ("video-encoder-below-the-bitrate-floor-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 encoder_minimum_bitrate="1")}},
+             r"c2\.v4l2\.\w+\.encoder must start at 20000 bit/s"),
+            ("video-decoder-without-performance-point-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_points=False)}},
+             r"c2\.v4l2\.\w+\.decoder publishes no performance-point-"),
+            ("video-decoder-without-measured-frame-rate-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_measured_frame_rates=False)}},
+             r"c2\.v4l2\.\w+\.decoder publishes no measured-frame-rate-"),
+            ("video-decoder-point-above-capacity-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_point="3840x2160 60-120")}},
+             "above the decode pixel rate capacity 456192000"),
+            ("video-decoder-points-far-below-capacity-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_point="1280x720 60-90")}},
+             "below 60% of the capacity 456192000"),
+            ("video-pixel-rate-property-cause",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.video_pixel_rate": "1000"}},
+             "lacks ro.vendor.v4l2_codec2.video_pixel_rate=108000000"),
+            ("video-decode-pixel-rate-property-cause",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.video_decode_pixel_rate": "1000"}},
+             "lacks ro.vendor.v4l2_codec2.video_decode_pixel_rate=456192000"),
+            ("video-codec-list-lacks-hevc-decoder-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 hardware_decoders={"c2.v4l2.avc.decoder": "video/avc"})}},
+             "must name the hardware decoders"),
+            ("video-unapproved-hardware-decoder-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 hardware_decoders={**tool.VIDEO_DECODER_CODECS,
+                                    "c2.v4l2.vp9.decoder": "video/x-vnd.on2.vp9"})}},
+             "must name the hardware decoders"),
+            ("video-decoder-without-adaptive-playback-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_features=("dynamic-color-aspects",))}},
+             "does not publish adaptive-playback"),
+            ("video-unapproved-decoder-property-cause",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.decoder.supported.vp9": "true"}},
+             "outside the approved set"),
+            ("missing-video-decoder-property-cause",
+             {"video_properties": {
+                 name: value for name, value in good_video_properties.items()
+                 if not name.endswith("decoder.supported.h264")}},
+             "lacks ro.vendor.v4l2_codec2.decoder.supported.h264"),
+            ("video-decode-concurrency-property-cause",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.decode_concurrent_instances": "1"}},
+             "lacks ro.vendor.v4l2_codec2.decode_concurrent_instances=4"),
+            ("missing-video-hevc-property-cause",
+             {"video_properties": {
+                 name: value for name, value in good_video_properties.items()
+                 if not name.endswith("supported.hevc")}},
+             "lacks ro.vendor.v4l2_codec2.encoder.supported.hevc"),
+            ("video-concurrency-property-cause",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.encode_concurrent_instances": "1"}},
+             "lacks ro.vendor.v4l2_codec2.encode_concurrent_instances=8"),
+            ("missing-video-ueventd-cause",
+             {"missing_video_ueventd": True}, "video nodes' group"),
+            ("video-service-without-camera-group-cause",
+             {"entries": {f"VENDOR/etc/init/{video_service}.rc": good_video_rc.replace(
+                 " camera", "").encode()}},
+             "does not join the group"),
+            ("video-seccomp-lacks-eventfd-cause",
+             {"entries": {
+                 f"VENDOR/etc/seccomp_policy/{video_seccomp_extended}":
+                 b"read: 1\n# eventfd2: 1\n"}},
+             "does not allow eventfd2"),
+            ("video-seccomp-lacks-crash-handler-call-cause",
+             {"entries": {
+                 f"VENDOR/etc/seccomp_policy/{video_seccomp_extended}":
+                 good_video_seccomp.replace("uname: 1\n", "").encode()}},
+             "does not allow uname"),
+            ("video-service-label-cause",
+             {"entries": {"VENDOR/etc/selinux/vendor_file_contexts":
+                          good_video_contexts.replace("mediacodec_exec", "vendor_file").encode()}},
+             "not labeled mediacodec_exec"),
         ):
-            fixture = root / f"bad-{label}.zip"
-            write_fixture(fixture, **options)
-            result = run_tool(verifier, "--target-files", fixture, *kernel_options)
-            if result.returncode != 1 or not re.search(reason, result.stdout):
-                fail(f"target-files verifier did not reject the {label} fixture for {reason!r}: {result.stdout}")
+            reject(label, options, reason)
+
+        for index, case in enumerate(rejections.values()):
+            label = "/".join(case["labels"])
+            fixture = root / f"bad-{case['labels'][0]}.zip"
+            write_fixture(fixture, **case["options"])
+            result = run_in_process(tool, "--target-files", fixture, *kernel_options)
+            if index == 0:
+                # The harness answers as the script does: the first case also
+                # runs as a process.
+                process = run_tool(verifier, "--target-files", fixture, *kernel_options)
+                if (process.returncode, process.stdout) != (result.returncode, result.stdout):
+                    fail(
+                        f"the in-process run of the {label} fixture differs from the "
+                        f"script's: {result.returncode} {result.stdout!r} against "
+                        f"{process.returncode} {process.stdout!r}"
+                    )
+            if result.returncode == 0:
+                fail(f"target-files verifier accepted the {label} fixture")
+            if result.returncode != 1 or (
+                case["message"]
+                and "Android target-files verifier: " not in result.stdout
+            ):
+                fail(f"target-files verifier did not reject the {label} fixture: {result.stdout}")
+            for reason in case["reasons"]:
+                if not re.search(reason, result.stdout):
+                    fail(
+                        f"target-files verifier did not reject the {label} fixture "
+                        f"for {reason!r}: {result.stdout}"
+                    )
+
+
+def verify_net_setup_tool(android_root: Path) -> None:
+    """RTM_NEWLINK with a flag mask replaces the new link's flags with ifi_flags, and with none
+    given that clears IFF_MULTICAST (ether_setup sets it), which the IPv6 neighbour and router
+    discovery of buried_eth0 and wlan0 need. The tool leaves ifi_change at 0; the library's
+    AddIfInfo sets IFF_UP."""
+    source = (android_root / "overlay/tools/kernarium_net_setup.cpp").read_text()
+    if re.search(r"\bifi_change\s*=", source):
+        fail("kernarium_net_setup.cpp assigns ifi_change: a link-creation flag mask clears IFF_MULTICAST")
+
+
+def verify_erofs_board(android_root: Path) -> None:
+    """The five read-only partitions are compressed EROFS from one pair of parameters.
+
+    The compressor and the cluster size are written once, in the product makefile; the board
+    file hands them on, and neither it nor the build script repeats a value. The fstabs mount the
+    partitions as EROFS, read-only, and the hints keep every .apex uncompressed."""
+    compressor, pcluster_size = tracked_erofs_parameters(android_root)
+    if not compressor.startswith("zstd,") or int(pcluster_size) % 4096 != 0:
+        fail(f"unexpected EROFS parameters: {compressor} {pcluster_size}")
+    board = (android_root / "overlay/BoardConfig.mk").read_text()
+    for partition in ("SYSTEM", "SYSTEM_EXT", "PRODUCT", "VENDOR", "ODM"):
+        line = f"BOARD_{partition}IMAGE_FILE_SYSTEM_TYPE := erofs\n"
+        if board.count(line) != 1:
+            fail(f"BoardConfig.mk does not select erofs for {partition} exactly once")
+    for line in (
+        "BOARD_EROFS_COMPRESSOR := $(UML_ANDROID_EROFS_COMPRESSOR)\n",
+        "BOARD_EROFS_PCLUSTER_SIZE := $(UML_ANDROID_EROFS_PCLUSTER_SIZE)\n",
+        "BOARD_EROFS_COMPRESS_HINTS := device/kernarium/darwin/config/erofs_compress_hints.txt\n",
+    ):
+        if board.count(line) != 1:
+            fail(f"BoardConfig.mk does not contain {line.strip()!r} exactly once")
+    for repeated in (compressor, pcluster_size):
+        for name in ("overlay/BoardConfig.mk", "build/build-aosp.sh"):
+            if re.search(rf"(?<![0-9A-Za-z_]){re.escape(repeated)}(?![0-9A-Za-z_])",
+                         (android_root / name).read_text()):
+                fail(f"{name} repeats the EROFS parameter {repeated}")
+    for name, flags in (
+        ("overlay/config/fstab.uml", "wait,first_stage_mount"),
+        ("overlay/config/recovery.fstab", "wait"),
+    ):
+        text = (android_root / name).read_text()
+        for partition in ("system", "system_ext", "product", "vendor", "odm"):
+            expected = f"/dev/block/by-name/{partition} /{partition} erofs ro {flags}\n"
+            if text.count(expected) != 1:
+                fail(f"{name} does not mount {partition} as '{expected.strip()}'")
+    hints = (android_root / "overlay/config/erofs_compress_hints.txt").read_text()
+    if [line for line in hints.splitlines() if line and not line.startswith("#")] != [
+        "0 .*\\.apex$"
+    ]:
+        fail("erofs_compress_hints.txt is not the single rule that stores .apex uncompressed")
+
+
+def verify_userdata_grow(android_root: Path) -> None:
+    """The product grows userdata online, on every boot, once /data is mounted.
+
+    An offline resize2fs refuses an unmounted filesystem mounted after its last full check, and
+    mount_all's e2fsck skips a clean one, so it works on the first boot and fails on every later
+    one. The kernel's online resize needs neither; the product's own init script runs it at
+    post-fs-data, and the fsck domain, which runs resize2fs, holds exactly the rules it needs."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    script = (android_root / "overlay/config/init.vendor.rc").read_text()
+    verifier.check_userdata_grow(verifier.init_actions(script))
+    offline = script.replace(
+        "    exec - root system -- /system/bin/resize2fs /dev/block/by-name/userdata\n",
+        "    exec -- /system/bin/resize2fs /dev/block/by-name/userdata\n",
+    )
+    if offline == script:
+        fail("init.vendor.rc does not contain the online resize2fs this guard looks for")
+    try:
+        verifier.check_userdata_grow(verifier.init_actions(offline))
+    except SystemExit:
+        pass
+    else:
+        fail("a resize2fs without root's group passes the userdata grow check")
+    # The overlay's fsck rules, in the CIL form the vendor policy has them in.
+    rules = (android_root / "overlay/sepolicy/vendor/fsck.te").read_text()
+    for needle in (
+        "allow fsck self:capability sys_resource;",
+        "allow fsck system_data_root_file:dir { open read ioctl };",
+        "allowxperm fsck system_data_root_file:dir ioctl 0x6610;",
+    ):
+        if needle not in rules:
+            fail(f"overlay/sepolicy/vendor/fsck.te does not contain '{needle}'")
+    for line in rules.splitlines():
+        if line.startswith("allow") and "fsck_untrusted" in line:
+            fail("overlay/sepolicy/vendor/fsck.te grants the untrusted fsck domain something")
+    policy = (
+        b"(allow fsck_202604 self (capability (sys_resource)))\n"
+        b"(allow fsck_202604 system_data_root_file_202604 (dir (ioctl read open)))\n"
+        b"(allowx fsck_202604 system_data_root_file_202604 (ioctl dir (0x6610)))\n"
+    )
+    verifier.check_userdata_grow_policy(policy)
+
+
+def verify_overlay_sepolicy(android_root: Path) -> None:
+    """The overlay's sepolicy sources keep core domains off vendor-owned properties."""
+    tool = android_root / "tools/check-overlay-sepolicy.py"
+    overlay = android_root / "overlay"
+    subprocess.run([str(tool), "--overlay", str(overlay)], check=True)
+    with tempfile.TemporaryDirectory(prefix="overlay-sepolicy-") as scratch:
+        copy = Path(scratch) / "overlay"
+        shutil.copytree(overlay / "sepolicy", copy / "sepolicy")
+        (copy / "config").mkdir()
+        shutil.copy(overlay / "config/init.vendor.rc", copy / "config/init.vendor.rc")
+        bad = copy / "sepolicy/vendor/adb_host_prop.te"
+        bad.write_text(
+            "vendor_public_prop(vendor_kernarium_adb_prop)\n"
+            "set_prop(adbd, vendor_kernarium_adb_prop)\n"
+        )
+        result = subprocess.run(
+            [str(tool), "--overlay", str(copy)], capture_output=True, text=True
+        )
+        if result.returncode == 0 or "adbd may be a core domain" not in result.stderr:
+            fail(f"the overlay sepolicy check accepted a core domain on a vendor property: {result.stderr!r}")
+        # A domain the overlay declares itself, and vendor_init, may set a vendor property.
+        bad.write_text(
+            "type kernarium_helper, domain;\n"
+            "vendor_public_prop(vendor_kernarium_helper_prop)\n"
+            "set_prop(kernarium_helper, vendor_kernarium_helper_prop)\n"
+            "set_prop(vendor_init, vendor_kernarium_helper_prop)\n"
+        )
+        subprocess.run([str(tool), "--overlay", str(copy)], check=True)
+        bad.write_text(
+            "vendor_public_prop(vendor_kernarium_adb_prop)\n"
+            "allow system_server vendor_kernarium_adb_prop:property_service { set };\n"
+        )
+        result = subprocess.run(
+            [str(tool), "--overlay", str(copy)], capture_output=True, text=True
+        )
+        if result.returncode == 0 or "system_server may be a core domain" not in result.stderr:
+            fail("the overlay sepolicy check accepted an allow rule of a core domain")
+        # A property that a product init trigger names must be readable by vendor_init.
+        system_ext = copy / "sepolicy/system_ext/private"
+        good = (system_ext / "adb_host_prop.te").read_text()
+        for broken, needle in (
+            (good.replace("system_public_prop(", "system_internal_prop("), "system_internal_prop"),
+            (good.replace("get_prop(vendor_init, kernarium_adb_host_prop)", ""), "lacks get_prop(vendor_init"),
+        ):
+            bad.unlink(missing_ok=True)
+            (system_ext / "adb_host_prop.te").write_text(broken)
+            result = subprocess.run(
+                [str(tool), "--overlay", str(copy)], capture_output=True, text=True
+            )
+            if result.returncode == 0 or needle not in result.stderr:
+                fail(f"the overlay sepolicy check accepted a trigger on an unreadable property ({needle}): "
+                     f"{result.stderr!r}")
+
+
+def verify_media_codecs_overlay(android_root: Path) -> None:
+    """The tracked software decoder update satisfies the verifier that checks the image."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    verifier.check_media_codecs_c2(
+        (android_root / "overlay/config/media_codecs_c2.xml").read_bytes()
+    )
+
+
+def verify_package_assertions(android_root: Path) -> None:
+    """The producer's package assertions agree with the product's removed-package list."""
+    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    removed_block = re.search(
+        r"^KERNARIUM_REMOVED_PACKAGES := \\\n((?:    \S+ \\\n)+    \S+)$", product, re.MULTILINE
+    )
+    if removed_block is None:
+        fail("lineage_darwin.mk has no KERNARIUM_REMOVED_PACKAGES list")
+    removed = set(removed_block.group(1).replace("\\", " ").split())
+    script = (android_root / "build/build-aosp.sh").read_text()
+    excluded_block = re.search(
+        r'^PRODUCT_PACKAGES_EXCLUDE=.*\nfor package in \\\n((?:\t\S+ \\\n)+\t\S+); do$', script, re.MULTILINE
+    )
+    if excluded_block is None:
+        fail("build-aosp.sh has no list of packages asserted to be excluded")
+    asserted_excluded = set(excluded_block.group(1).replace("\\", " ").split())
+    for package in sorted(asserted_excluded - removed):
+        fail(f"build-aosp.sh asserts {package} is excluded, but the product does not remove it")
+    present = set(re.findall(r'\[\[ "\$PRODUCT_PACKAGES" == \*" (\S+) "\* \]\]', script))
+    for package in sorted(present & removed):
+        fail(f"build-aosp.sh asserts {package} is present, but the product removes it")
+    for package in (
+        "com.android.hardware.thermal",
+        "com.android.hardware.cas",
+        "libclearkeycasplugin",
+        "com.android.hardware.wifi",
+        "com.google.cf.wpa_supplicant",
+        "KernariumWifiOverlay",
+        "kernarium_net_setup",
+        "kernarium_wifi_network_script",
+    ):
+        if package not in present:
+            fail(f"build-aosp.sh does not assert that {package} is present")
 
 
 def verify_hal_selections(android_root: Path) -> None:
@@ -751,6 +2822,16 @@ def verify_hal_selections(android_root: Path) -> None:
     module = f"vulkan.{verifier.BOOT_HAL_SELECTIONS['vulkan']}"
     if f"MESA_VENUS_HAL_MODULE='{module}'" not in metadata.splitlines():
         fail(f"the Vulkan HAL selection does not name the Venus module {module}")
+
+    # ro.serialno comes from androidboot.serialno, and Build.getSerial() must match
+    # ^[a-zA-Z0-9]+$ (CTS AccessSerialNumberTest#testGetSerialReturnsExpectedFormat).
+    serials = [
+        token.partition("=")[2]
+        for token in command_line
+        if token.partition("=")[0] == "androidboot.serialno"
+    ]
+    if len(serials) != 1 or not re.fullmatch(r"[a-zA-Z0-9]+", serials[0]):
+        fail(f"boot command line serial number {serials} is not one alphanumeric value")
 
     # A setprop that expands a missing ro.boot property fails at every boot.
     # The product init script may therefore expand only properties the command
@@ -805,7 +2886,7 @@ def synthetic_initramfs(fstab: str, *, wrong_fstab: bool = False,
                         duplicate_file: bool = False,
                         module_file: str | None = None) -> bytes:
     if wrong_fstab:
-        fstab = erofs_system_fstab(fstab)
+        fstab = ext4_system_fstab(fstab)
     entries = [
         newc_entry("dev", 0o40755, b"", 1),
         newc_entry("dev", 0o40755, b"", 2),
@@ -1292,11 +3373,22 @@ def verify_layout_consumers(root: Path, android_root: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, required=True)
+    parser.add_argument(
+        "--part",
+        choices=("all", "verifiers", "target-files"),
+        default="all",
+        help="run the target-files fixtures alone, everything else alone, or both",
+    )
     args = parser.parse_args()
     root = args.source_root.resolve()
 
     android_root = root / "android/lineage-24"
     kernel_root = root / "kernel/mainline-6.18"
+
+    if args.part == "target-files":
+        verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
+        print("Android 17 target-files verifier fixtures passed")
+        return
 
     subprocess.run(
         [
@@ -1307,8 +3399,15 @@ def main() -> None:
         check=True,
     )
     verify_kernel_elf_fixtures(android_root / "build/verify-kernel-elf.py")
-    verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
+    if args.part == "all":
+        verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
     verify_hal_selections(android_root)
+    verify_net_setup_tool(android_root)
+    verify_erofs_board(android_root)
+    verify_userdata_grow(android_root)
+    verify_overlay_sepolicy(android_root)
+    verify_media_codecs_overlay(android_root)
+    verify_package_assertions(android_root)
     verify_pin_manifest(android_root / "tools/render-pin-manifest.py")
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_boot_image_fixtures(android_root / "tools/boot-image.py")

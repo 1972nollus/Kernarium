@@ -79,9 +79,12 @@ which only the automation build of the runtime boots
 ([Kernarium/README.md](../../Kernarium/README.md#automation-runs)); the
 harness session runs it over the image's overlay root without systemd or a
 desktop, prints `UML_SESSION_EXIT:<status>` and powers the guest off. Nothing
-is typed, so a script's own markers are safe to key on. A successful run
-reaches its markers, a zero session status, and a status-zero managed
-emulator return:
+is typed, so a script's own markers are safe to key on. The runner sets
+`KERNARIUM_PAYLOAD_REMOVE=1`, so the runtime deletes the copied payload once
+it has read it (`devicectl` cannot remove a file in the container), and the
+runner warns when the console does not show that. A successful run reaches
+its markers, a zero session status, and a status-zero managed emulator
+return:
 
 ```sh
 python3 tests/perf/run_ios_device_workload.py --device DEVICE-IDENTIFIER \
@@ -189,12 +192,11 @@ correctness threshold.
 
 ## Steam appliance boot time
 
-`run_steam_boot_bench.py` measures how long a Kernarium Steam appliance takes
-to reach its own readiness contract: an X window named `Steam Big Picture Mode`
-whose map state is `IsViewable`. One run creates a fresh GPT user-data disk,
-times a first boot while Steam downloads and installs its own update, shuts the
-guest down through systemd, then times a second boot on that same disk with no
-download. It works for any image that uses the Kernarium init and session
+`run_steam_boot_bench.py` times a Kernarium Steam appliance from emulator exec
+to its own readiness contract, first on a fresh disk while Steam downloads and
+installs its own update and then on the same, seeded disk. Its docstring
+describes the phases and how the harness reads them without modifying an
+image. It works for any image that uses the Kernarium init and session
 supervisor, so two images or two emulator builds are directly comparable.
 
 ```sh
@@ -203,10 +205,6 @@ python3 tests/perf/run_steam_boot_bench.py \
   --image candidate --emulator BUILD-B/bin/uml-darwin --rootfs B.erofs \
   --output-dir RESULTS --runs 3
 ```
-
-The readiness query runs as the user who owns the display socket rather than as
-the console's root shell, because the session's X server refuses an
-unauthorized client whatever its window state is.
 
 Runs are strictly sequential and counterbalanced across images, so host drift
 cannot masquerade as an image difference. Each run records host load and memory
@@ -226,17 +224,6 @@ is gone. The kept path is printed to the run log and recorded as
 `userdata_image` in `run.json` and in the campaign's `results.json`.
 `--discard-failed-disks` deletes it anyway, for a long unattended campaign on a
 full volume; `--keep-disks` keeps every run's disk, successful ones included.
-
-The harness never modifies an image. Phase times therefore come from records an
-unmodified appliance already keeps — systemd's monotonic unit timestamps, the
-storage stage's progress file, and Steam's `bootstrap_log.txt` — read once per
-boot over the ttyS0 console and converted to seconds since emulator exec through
-one clock anchor that is read in a command of its own and bracketed by host
-monotonic readings. Readiness is polled, so its resolution is the poll interval;
-the other phases resolve to half an anchor round trip, reported per boot as
-`phase_anchor_round_trip`. Storage preparation completes before the console
-exists, so it is recovered from that progress file's modification time rather
-than observed live.
 
 The display is `--gpu-display=vnc` with no client attached, which accepts and
 drops each scanout: measured boots are unattended and free of window-server
@@ -268,9 +255,13 @@ napped emulator drops from 31 to 4 and launches several times slower), and the
 host load. A launch that misses its limit is recorded with no time and left out
 of the medians. The source disk's `.release-id` must name the release, because
 the launcher re-creates a disk from another release. `--env KEY=VALUE` sets one
-arm's emulator environment; `--guest-samples PATH` profiles the boot with the
-guest code sampler below. Guests are not serialized by the tool: run one
-guest per measurement, and alternate arms (ABBA) across runs.
+arm's emulator environment; `--engine gadgets|jit` selects the execution
+engine (gadgets by default); `--guest-samples PATH` profiles the boot with the
+guest code sampler below. Each record names the engine and carries the boot's
+wall seconds and the emulator's CPU seconds at boot completion, which measure
+the boot's translation and execution work whatever the host load. Guests are
+not serialized by the tool: run one guest per measurement, and alternate arms
+(ABBA) across runs.
 
 `--scenario android_scenarios/NAME.json` follows each successful launch with a
 fixed sequence of sleeps and taps and waits for the scenario's completion line;
@@ -372,70 +363,21 @@ profile is cumulative, so copy it at a phase boundary and pass that copy as
 ## Cache census
 
 A separate `UML_GADGET_CACHE_CENSUS=ON` build reports what every executor's
-cache holds and how it came to hold it. Set `DARWIN_UML_GADGET_CACHE_CENSUS`
-to a path; each cache appends a snapshot of itself when its executor is
+cache holds and how it came to hold it. Set `DARWIN_UML_GADGET_CACHE_CENSUS` to
+a path; each cache appends a snapshot of itself when its executor is
 destroyed, and another every `DARWIN_UML_GADGET_CACHE_CENSUS_SECONDS` seconds
-when that is set, taken by its own vCPU at its next lookup. Summarize a
-capture with `analyze_gadget_cache_census.py --help`: it reports one snapshot
-(`--snapshot`, by default the one taken at teardown) or one line per snapshot
-(`--series`).
-
-A snapshot is an `E` record with the cache's geometry, measured footprint and
-history, a `G` record per resident address space, a `P` record per resident
-translation, and, for one in every `DARWIN_UML_GADGET_CACHE_CENSUS_WORDS`
-bodies and link records, a `W` record listing the body's stream word by word
-as a gadget, a link or indirect record named by guest PC, or another operand,
-and an `L` record naming the link record's guest PC. Both gadget engines write
-the same records, so a private cache costs measured bytes rather than an
-estimate on either; a field an engine has no counterpart for is simply absent.
-The footprint is the committed slabs, every resident translation's allocations
-as the allocator sized them, the link and indirect records and target tables,
-and the per-address-space indexes the cache owns; on arm64 it also says how
-much of the body arena is chunks that hold no live body. The `E` record also
-counts the link sweeps, the link records and indirect sites they released, and
-the time they took. A `P` record carries its translation's allocation and the
-header, stream and validation bytes in it. Every `E` record also carries the
-process's gadget-cache budget (`budget=`), what every address space is charged
-against it (`metered=`, of which `metered_shedding=` is in address spaces
-asked to shed), the most the open ones held when a store passed the budget
-(`metered_peak=`), and how many reliefs asked how many address spaces to shed
-(`reliefs=`, `shed=`); an x86 `E` record adds what its own address spaces are
-charged (`charged=`), and an arm64 `S` record what its space is charged and
-whether it is shedding. The report states the budget line.
-
-When arm64 executors share an address space's translations, an `E` record
-counts only what its cache owns (slot slabs and slot lists), each `G` record
-names the space its slots point into, every cache holding a space writes the
-space's arena, link and indirect bytes on an `S` record, and a `P` record
-names its body. The report counts each space and each body once, and the
-history counts the misses that adopted another cache's body. Each `G` and `S`
-record also says whether the MMU still has the address space's generation
-(`alive=1`) or has destroyed it (`alive=0`; negative when it cannot say from the
-thread taking the snapshot), and the report counts the bytes of the destroyed
-ones. An x86 cache, which keeps its address spaces to itself, writes `alive=`
-and the bytes of the address space's translations (`held=`) on its `G` record.
-
-The history counts how each lookup ended, why each departing translation
-left (way eviction, address-space retirement, or a discard), and, for every
-store, whether the cache had held the same code under the same key before and
-why it was gone. A store of code that another cache translated first is
-counted against the executors of its own address space or against another
-address space. For a translation evicted and later stored again unchanged,
-the number of evictions in between goes into a power-of-two histogram, which
-says how many of those misses an exclusive victim tier of a given size would
-have served.
+when that is set. `DARWIN_UML_GADGET_CACHE_CENSUS_WORDS=N` also writes one in
+every N bodies' streams word by word, and
+`DARWIN_UML_GADGET_CACHE_CENSUS_TOTALS=1` only each cache's totals, which is
+what a browser guest on a loaded host can afford. Summarize a capture with
+`analyze_gadget_cache_census.py`, whose `--help` describes the records: it
+reports one snapshot (`--snapshot`, by default the one taken at teardown) or
+one line per snapshot (`--series`).
 
 A census build pays for this on every store and pauses a vCPU for each
 snapshot, so it runs slower than a default build; its timings are not
-measurements. `DARWIN_UML_GADGET_CACHE_CENSUS_TOTALS=1` keeps only the `E` and
-`G` records and leaves stores unmatched against other caches, which is what a
-browser guest on a loaded host can afford; read such a capture with
-`--series`.
-
-Identity is the consumed guest code, not the produced stream, because two
-executors translating the same code embed pointers to their own link records.
-That is what lets the report separate duplication between executors sharing an
-address space from the same code translated again for another address space.
+measurements. `check-unit-census` checks such a build
+([testing](../../docs/testing.md)).
 
 ## Focused assembly probes
 
@@ -454,6 +396,17 @@ registrations and do not enter ordinary suite aggregates.
 
 The LSE atomic probe needs assembler support for that extension. Other probes declare any restriction in
 the manifest.
+
+The `guest_tagged_*_loop.S` probes reach memory through a pointer tagged in
+its top byte, as a process with heap pointer tagging does; the emulator ignores
+the top byte by default, and the runner's `--guest-no-top-byte-ignore` turns
+that off. Given a probe argument
+(`--probe-argument x`) they run the same instructions through an untagged
+pointer, which is their matched control. The two alias probes use the tagged
+pointer and a plain one on the same page, so they time an engine whose
+translation cache keys a page by the address as presented; the other two use
+the tagged pointer alone, so they time the form itself. `tbi_atomic_probe.inc`
+holds their shared setup.
 
 ## Loader corpus
 

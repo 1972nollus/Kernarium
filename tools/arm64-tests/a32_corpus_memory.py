@@ -20,6 +20,8 @@ address zero.
   compat task, so only hardware records settle them (decision D3);
 - exclusive: LDREX/STREX sequences, with CLREX, with a lone STREX and across
   addresses;
+- exclusive-spill: the same pairs with a register spill (STR or STRD to the
+  stack) between the load and the store, which hardware's monitor survives;
 - positions: single-register and doubleword loads and stores, VLDR, VSTR, TBB
   and TBH that fault after other instructions, some in a block a branch
   reaches: unmapped, crossing from the read-only region into unmapped memory,
@@ -341,6 +343,16 @@ def suite_prefetch(context: Context) -> list[Case]:
 
 EXCLUSIVE_SIZES = ("", "B", "H", "D")
 CLREX = {"A": [0xF57FF01F], "T": [0xF3BF, 0x8F2F]}
+# A register spill between the pair, as a compiler leaves one when it runs out
+# of registers: STR r8 and STRD r8, r9 to [sp, #8], a granule none of the
+# exclusive addresses is in. Hardware keeps the monitor across them. The
+# program spills once before the pair as well, which an engine whose TLB the
+# spill's page would miss (the gadgets') has filled by then, so that the
+# spill between the pair costs no host exclusive monitor. They are a suite of
+# their own: the lanes that interrupt the guest throughout measure the bare
+# window of the pair, and a longer one only adds losses to them.
+SPILLS = {"A": {"spill": [0xE58D8008], "spill_pair": [0xE1CD80F8]},
+          "T": {"spill": [0xF8CD, 0x8008], "spill_pair": [0xE9CD, 0x8902]}}
 
 
 def exclusive_word(context, name: str, **registers):
@@ -368,7 +380,9 @@ def program_units(word: int, isa: str) -> list[int]:
     return [word >> 16] if isa == "T16" else [word >> 16, word & 0xFFFF]
 
 
-def exclusive_cases(context: Context, suite: str, load_stem: str, store_stem: str) -> list[Case]:
+def exclusive_cases(context: Context, suite: str, load_stem: str, store_stem: str,
+                    spill: bool = False) -> list[Case]:
+    """The pairs, or with `spill` the pairs with a spill between them."""
     cases = []
     for state, suffix in (("A", "A1"), ("T", "T1")):
         letter = "a" if state == "A" else "t"
@@ -390,8 +404,10 @@ def exclusive_cases(context: Context, suite: str, load_stem: str, store_stem: st
                     return solve({**loads[1], "n": 4}, address, 0, choice)
                 return {"r4": address}
 
-            shapes = {"pair": [ldrex, strex], "lone": [strex], "clrex": [ldrex, clrex, strex],
-                      "twice": [ldrex, ldrex, strex]}
+            shapes = ({name: [spilled, ldrex, spilled, strex] for name, spilled in SPILLS[state].items()}
+                      if spill else
+                      {"pair": [ldrex, strex], "lone": [strex], "clrex": [ldrex, clrex, strex],
+                       "twice": [ldrex, ldrex, strex]})
             for index, (scenario, address) in enumerate((("a", D + 0x1040), ("x4", D + 0x2000 - size),
                                                           ("last", D + 0x8000 - size))):
                 aim = aimed(address, index)
@@ -401,6 +417,8 @@ def exclusive_cases(context: Context, suite: str, load_stem: str, store_stem: st
                     recipe = f"{('edges', 'pattern')[index % 2]}-{letter}"
                     cases.append(Case(suite, f"{store_name}/{shape}.{scenario}", store_name, state,
                                       tuple(units), target, recipe, {**aim, "r5": 9}))
+            if spill:
+                continue
             # A load that faults: unmapped, or misaligned (an alignment fault, which
             # no kernel fixes up for an exclusive).
             faulting = {"unmapped": 0x60000000, "zero": 0}
@@ -420,6 +438,12 @@ def suite_exclusive(context: Context) -> list[Case]:
     """LDREX/STREX and the acquire/release LDAEX/STLEX, which are base too."""
     return (exclusive_cases(context, "exclusive", "LDREX", "STREX")
             + exclusive_cases(context, "exclusive", "LDAEX", "STLEX"))
+
+
+def suite_exclusive_spill(context: Context) -> list[Case]:
+    """The exclusive pairs with a spill between the load and the store."""
+    return (exclusive_cases(context, "exclusive-spill", "LDREX", "STREX", True)
+            + exclusive_cases(context, "exclusive-spill", "LDAEX", "STLEX", True))
 
 
 # Positions -------------------------------------------------------------------------------------------------
@@ -632,5 +656,5 @@ def suite_positions_unaligned(context: Context) -> list[Case]:
 
 
 SUITES = {"memory": suite_memory, "unaligned": suite_unaligned, "exclusive": suite_exclusive,
-          "prefetch": suite_prefetch, "positions": suite_positions,
-          "positions-unaligned": suite_positions_unaligned}
+          "exclusive-spill": suite_exclusive_spill, "prefetch": suite_prefetch,
+          "positions": suite_positions, "positions-unaligned": suite_positions_unaligned}

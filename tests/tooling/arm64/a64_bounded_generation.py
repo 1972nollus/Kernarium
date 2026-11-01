@@ -409,6 +409,22 @@ def _group_exists(process_group: int) -> bool:
     return True
 
 
+def _group_gone_within(process_group: int, grace_seconds: float) -> bool:
+    """Whether the group has no member after `grace_seconds`.
+
+    Darwin keeps reporting an exited leader's group (EPERM from killpg) for a
+    few milliseconds after the leader is reaped, so a group seen right after
+    the leader's exit is given the grace period to disappear before it counts
+    as surviving descendants.
+    """
+    deadline = time.monotonic() + grace_seconds
+    while _group_exists(process_group):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.005)
+    return True
+
+
 def _terminate_group(process: subprocess.Popen[bytes]) -> None:
     group = process.pid
     if _group_exists(group):
@@ -579,7 +595,9 @@ def run_bounded(
                 break
             returncode = process.poll()
             if returncode is not None:
-                if _group_exists(process.pid):
+                if not _group_gone_within(
+                    process.pid, TERMINATION_GRACE_SECONDS
+                ):
                     violation.append(
                         "generator leader exited while descendants remained"
                     )

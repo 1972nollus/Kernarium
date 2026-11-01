@@ -3,7 +3,7 @@
  * the virtual CPU implements SME. Nothing here is pushed into a base part,
  * so no base entry moves or changes for it.
  *
- * Streaming discipline (docs/architecture.md). The host is in streaming mode
+ * Streaming discipline (../README.md). The host is in streaming mode
  * only while a program translated for SVCR.SM = 1 runs, entered through
  * uml_arm64_gadget_enter_streaming, with host ZA on exactly when the guest's
  * is; guest ZA and ZT0 are then resident in host ZA and ZT0, and in the

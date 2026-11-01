@@ -11,9 +11,9 @@
 
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/semantics.hpp"
+#include "cpu/arm64/aarch32/semantics_exit_counters.hpp"
 #include "cpu/arm64/engine_execution.hpp"
 #include "cpu/arm64/gadgets/a32/a32_builder.hpp"
-#include "cpu/arm64/gadgets/a32_support.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "static_mmu_test_support.hpp"
 
@@ -44,19 +44,12 @@ constexpr std::uint32_t data_base = 0x5000'0000U;
 constexpr std::uint32_t unmapped = 0x6000'0000U;
 constexpr std::size_t data_pages = 2;
 
-[[nodiscard]] inline gadgets::BuildOptions options_at(arm64::A32Support level)
-{
-	gadgets::BuildOptions options;
-	options.a32_level = level;
-	return options;
-}
-
 /* The options of an engine that translates on a host with these capabilities
  * rather than the machine's own. */
 [[nodiscard]] inline gadgets::BuildOptions options_on(
-	arm64::A32Support level, const ::uml::cpu::HostCapabilities &host)
+	const ::uml::cpu::HostCapabilities &host)
 {
-	auto options = options_at(level);
+	gadgets::BuildOptions options;
 	options.host_capabilities = host;
 	return options;
 }
@@ -66,27 +59,24 @@ constexpr std::size_t data_pages = 2;
  * after the data is unmapped. */
 class Guest final {
 public:
-	/* `level` is the AArch32 level the engine translates at (the engine's
-	 * own by default). */
-	explicit Guest(unsigned long generation,
-		       arm64::A32Support level = gadgets::a32_support)
+	explicit Guest(unsigned long generation)
 		: generation_{generation}
 		, code_{data_pages}
 		, data_{data_pages}
 		, executor_{std::make_unique<gadgets::GadgetExecutor>(
-			  options_at(level))}
+			  gadgets::BuildOptions{})}
 	{
 		map_pages();
 	}
 
 	/* The same, translating as a host with `host` would. */
-	Guest(unsigned long generation, arm64::A32Support level,
+	Guest(unsigned long generation,
 	      const ::uml::cpu::HostCapabilities &host)
 		: generation_{generation}
 		, code_{data_pages}
 		, data_{data_pages}
 		, executor_{std::make_unique<gadgets::GadgetExecutor>(
-			  options_on(level, host))}
+			  options_on(host))}
 	{
 		map_pages();
 	}

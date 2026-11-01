@@ -32,11 +32,7 @@ using aarch32::SRType;
 
 namespace {
 
-constexpr unsigned fallback_n = 9;
-constexpr unsigned fallback_m = 10;
 constexpr unsigned writeback_m = 1;
-constexpr unsigned address_register = 8;
-constexpr unsigned temp0 = 0;
 
 } // namespace
 
@@ -225,7 +221,10 @@ void A32Compiler::track_direct_store(unsigned address, std::size_t size) {
   emitter_.store_x(4, 3, offset + offsetof(JitStoreRange, size));
 }
 
-/* An ordinary store may clear the local monitor, and does, unconditionally. */
+/* Ends the software monitor where the guest's pair ends: a CLREX, the
+ * store-exclusive of a fused run and its exits. An ordinary store of the
+ * guest's own leaves it standing (the monitor contract in
+ * docs/architecture.md). */
 void A32Compiler::clear_exclusive_monitor() {
   emitter_.store_b(31, 15, offsetof(CpuState, exclusive_size));
 }
@@ -265,25 +264,10 @@ A32Compiler::Flow A32Compiler::emit_through_helper() {
 // ---------------------------------------------------------------------------
 // Addresses.
 
-void A32Compiler::form_address(const Transfer &transfer) {
-  if (transfer.literal) {
-    const std::uint32_t base = pc_align_read();
-    load_u32(address_register,
-             transfer.add ? base + transfer.imm : base - transfer.imm);
-    return;
-  }
-  const unsigned n = use(transfer.n, fallback_n);
-  if (!transfer.index || (!transfer.register_offset && transfer.imm == 0U)) {
-    if (n != address_register)
-      emit(enc::mov(address_register, n));
-    return;
-  }
-  if (!transfer.register_offset) {
-    emit(transfer.add ? enc::add_i(address_register, n, transfer.imm)
-                      : enc::sub_i(address_register, n, transfer.imm));
-    return;
-  }
-  const unsigned m = use(transfer.m, fallback_m);
+/* destination = base plus or minus the register offset m, shifted as the
+ * transfer says. */
+void A32Compiler::emit_register_offset(unsigned destination, unsigned base,
+                                       const Transfer &transfer, unsigned m) {
   enc::Shift fold = enc::lsl;
   unsigned amount = 0;
   unsigned operand = m;
@@ -307,8 +291,30 @@ void A32Compiler::form_address(const Transfer &transfer) {
     operand = shift_value(m, transfer.shift_type, transfer.shift_amount, temp0);
     break;
   }
-  emit(transfer.add ? enc::add(address_register, n, operand, fold, amount)
-                    : enc::sub(address_register, n, operand, fold, amount));
+  emit(transfer.add ? enc::add(destination, base, operand, fold, amount)
+                    : enc::sub(destination, base, operand, fold, amount));
+}
+
+void A32Compiler::form_address(const Transfer &transfer) {
+  if (transfer.literal) {
+    const std::uint32_t base = pc_align_read();
+    load_u32(address_register,
+             transfer.add ? base + transfer.imm : base - transfer.imm);
+    return;
+  }
+  const unsigned n = use(transfer.n, fallback_n);
+  if (!transfer.index || (!transfer.register_offset && transfer.imm == 0U)) {
+    if (n != address_register)
+      emit(enc::mov(address_register, n));
+    return;
+  }
+  if (!transfer.register_offset) {
+    emit(transfer.add ? enc::add_i(address_register, n, transfer.imm)
+                      : enc::sub_i(address_register, n, transfer.imm));
+    return;
+  }
+  emit_register_offset(address_register, n, transfer,
+                       use(transfer.m, fallback_m));
 }
 
 /* The base register's new value: base plus or minus the offset, computed
@@ -322,33 +328,8 @@ void A32Compiler::write_back(const Transfer &transfer) {
       emit(transfer.add ? enc::add_i(host, host, transfer.imm)
                         : enc::sub_i(host, host, transfer.imm));
   } else {
-    const unsigned m = use(transfer.m, writeback_m);
-    enc::Shift fold = enc::lsl;
-    unsigned amount = 0;
-    unsigned operand = m;
-    switch (transfer.shift_type) {
-    case SRType::LSL:
-      amount = transfer.shift_amount;
-      break;
-    case SRType::LSR:
-      if (transfer.shift_amount < 32U) {
-        fold = enc::lsr;
-        amount = transfer.shift_amount;
-      } else {
-        operand = shift_value(m, SRType::LSR, transfer.shift_amount, temp0);
-      }
-      break;
-    case SRType::ASR:
-      fold = enc::asr;
-      amount = transfer.shift_amount >= 32U ? 31U : transfer.shift_amount;
-      break;
-    default:
-      operand =
-          shift_value(m, transfer.shift_type, transfer.shift_amount, temp0);
-      break;
-    }
-    emit(transfer.add ? enc::add(host, host, operand, fold, amount)
-                      : enc::sub(host, host, operand, fold, amount));
+    emit_register_offset(host, host, transfer,
+                         use(transfer.m, writeback_m));
   }
   done(dest);
 }
@@ -414,7 +395,6 @@ A32Compiler::Flow A32Compiler::emit_single(const Transfer &transfer) {
       default: emit(indexed(enc::str_w(value, base, 0))); break;
       }
     }
-    clear_exclusive_monitor();
     if (transfer.wback)
       write_back(transfer);
     return Flow::next;
@@ -486,7 +466,6 @@ A32Compiler::Flow A32Compiler::emit_pair(const Transfer &transfer) {
     const unsigned second = use(transfer.t2, fallback_m);
     emit(enc::x::orr(temp0, first, second, enc::lsl, 32));
     emit(enc::str_x(temp0, address_register, 0));
-    clear_exclusive_monitor();
   } else {
     emit(enc::ldr_x(fallback_m, address_register, 0));
     const auto low = def(transfer.t, false, fallback_n);
@@ -553,8 +532,6 @@ A32Compiler::Flow A32Compiler::emit_multiple(const Transfer &transfer) {
     }
     offset += 4U;
   }
-  if (store)
-    clear_exclusive_monitor();
   if (transfer.wback) {
     const auto dest = def(transfer.n, true, fallback_m);
     const unsigned host = dest.native.host;

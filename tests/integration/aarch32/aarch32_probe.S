@@ -38,6 +38,22 @@
  *   trace    sets r4 and r5 to known values, stops itself with SIGSTOP for
  *            a tracer to read and rewrite them, and exits with the r5 it
  *            then finds.
+ *   exclusives  every exclusive and ordered transfer, each after a
+ *            sched_yield, for a run beside a 64-bit task that leaves its
+ *            registers set on the same CPU (aarch64_dirty.s); exits with
+ *            the number of words that came out wrong.
+ *   swp      SWP and SWPB on a stack word, a page nothing touched, a page
+ *            only read, a file mapping, with every condition, and the faults
+ *            of an unaligned or unmapped address and a read-only page; run
+ *            with abi.swp 1.
+ *   swp-one, swp-pc  one SWP, and one with the pc as Rt: with abi.swp 0 the
+ *            first ends in SIGILL, with 1 it exits 6 and the second ends in
+ *            SIGILL.
+ *   swp-tokens  swaps a word and a byte of the shared page that descriptor 9
+ *            maps with SWP and SWPB, beside the 64-bit task of aarch64_dirty.s
+ *            doing the same with load/store-exclusive pairs, until both have
+ *            met each other's token (the "tokens" mode there); the page
+ *            holds the result.
  */
 
 	.syntax	unified
@@ -175,6 +191,11 @@ _start:
 	mode	s_extra, mode_extra
 	mode	s_tracer, mode_tracer
 	mode	s_vfp, mode_vfp
+	mode	s_exclusives, mode_exclusives
+	mode	s_swp, mode_swp
+	mode	s_swp_one, mode_swp_one
+	mode	s_swp_pc, mode_swp_pc
+	mode	s_swp_tokens, mode_swp_tokens
 
 run_all:
 	lea	r0, s_start
@@ -2074,6 +2095,646 @@ mode_vfp:
 	sc	SYS_exit_group
 
 
+/* ---- SWP and SWPB (modes "swp", "swp-one", "swp-pc", "swp-tokens") ---- */
+
+	.equ	SYS_mprotect,	125
+
+/* With abi.swp 0 this ends in SIGILL; with 1 the swap runs and it exits 6. */
+mode_swp_one:
+	add	r2, r11, #F_WORK
+	mov	r1, #1
+	swp	r0, r1, [r2]
+	mov	r0, #6
+	sc	SYS_exit_group
+
+/* The pc as Rt is UNDEFINED whatever abi.swp is; exits 6 if it ran. */
+mode_swp_pc:
+	add	r2, r11, #F_WORK
+	mov	r1, #1
+	.word	0xe102f091		/* swp pc, r1, [r2] */
+	mov	r0, #6
+	sc	SYS_exit_group
+
+mode_swp:
+	lea	r0, s_start
+	bl	puts
+	bl	t_swp
+	bl	t_swp_pages
+	bl	t_swp_faults
+	b	summary
+
+/* The exchange and its conditions on a stack word (F_WORK + 0..16). */
+t_swp:
+	push	{r4, r5, r6, lr}
+	add	r4, r11, #F_WORK
+	movi	r0, 0x11223344
+	str	r0, [r4]
+	movi	r1, 0xaabbccdd
+	swp	r3, r1, [r4]
+	mov	r0, r3
+	eq	0x11223344, n_sw_old
+	ldr	r0, [r4]
+	eq	0xaabbccdd, n_sw_new
+	add	r2, r4, #1
+	mov	r1, #0x5a
+	swpb	r3, r1, [r2]
+	mov	r0, r3
+	eq	0xcc, n_sw_byte_old
+	ldr	r0, [r4]
+	eq	0xaabb5add, n_sw_byte_new
+
+	/* Rt == Rt2, the form CTS runs. */
+	mov	r1, #9
+	str	r1, [r4, #4]
+	add	r2, r4, #4
+	mov	r0, #7
+	swp	r0, r0, [r2]
+	eq	9, n_sw_same_old
+	ldr	r0, [r4, #4]
+	eq	7, n_sw_same_new
+
+	/* A condition that fails changes neither Rt nor memory; one that
+	 * holds swaps. */
+	mov	r0, #0xaa
+	str	r0, [r4, #8]
+	mov	r1, #0xbb
+	add	r2, r4, #8
+	mov	r3, #0x77
+	cmp	r1, r1			/* Z set */
+	swpne	r3, r1, [r2]
+	mov	r0, r3
+	eq	0x77, n_sw_ne_rt
+	ldr	r0, [r4, #8]
+	eq	0xaa, n_sw_ne_mem
+	mov	r1, #0xbb
+	add	r2, r4, #8
+	mov	r3, #0x77
+	cmp	r1, r1
+	swpeq	r3, r1, [r2]
+	mov	r0, r3
+	eq	0xaa, n_sw_eq_rt
+	ldr	r0, [r4, #8]
+	eq	0xbb, n_sw_eq_mem
+	mov	r1, #0xcc
+	add	r2, r4, #8
+	mov	r3, #0x77
+	cmp	r1, r1
+	swpbne	r3, r1, [r2]
+	mov	r0, r3
+	eq	0x77, n_sw_bne_rt
+	ldr	r0, [r4, #8]
+	eq	0xbb, n_sw_bne_mem
+	mov	r1, #0xcc
+	add	r2, r4, #8
+	mov	r3, #0x77
+	cmp	r1, #0			/* Z clear, C set */
+	swpbcs	r3, r1, [r2]
+	mov	r0, r3
+	eq	0xbb, n_sw_bcs_rt
+	ldr	r0, [r4, #8]
+	eq	0xcc, n_sw_bcs_mem
+	pop	{r4, r5, r6, pc}
+
+/* Pages in the states a store can meet. */
+t_swp_pages:
+	push	{r4, r5, r6, lr}
+	mov	r0, #0
+	movi	r1, 3 * 4096
+	mov	r2, #3			/* PROT_READ | PROT_WRITE */
+	mov	r3, #0x22		/* MAP_PRIVATE | MAP_ANONYMOUS */
+	mvn	r4, #0
+	mov	r5, #0
+	sc	SYS_mmap2
+	mov	r6, r0
+	cmn	r0, #4096
+	movlo	r0, #1
+	movhs	r0, #0
+	lea	r1, n_swp_mmap
+	bl	report
+	cmn	r6, #4096
+	bhs	9f
+
+	/* A page nothing touched. */
+	movi	r1, 0x600dcafe
+	swp	r3, r1, [r6]
+	mov	r0, r3
+	eq	0, n_swp_fresh_old
+	ldr	r0, [r6]
+	eq	0x600dcafe, n_swp_fresh_new
+
+	/* A page the task only read: the zero page until it is written. */
+	add	r4, r6, #0x1000
+	ldr	r0, [r4]
+	eq	0, n_swp_zero_read
+	movi	r1, 0x5eed0001
+	swp	r3, r1, [r4]
+	mov	r0, r3
+	eq	0, n_swp_zero_old
+	ldr	r0, [r4]
+	eq	0x5eed0001, n_swp_zero_new
+
+	/* A byte of another fresh page: only that byte is written. */
+	add	r4, r6, #0x2000
+	mov	r1, #0x5a
+	add	r2, r4, #3
+	swpb	r3, r1, [r2]
+	mov	r0, r3
+	eq	0, n_swp_byte_old
+	ldr	r0, [r4]
+	eq	0x5a000000, n_swp_byte_only
+	mov	r0, r6
+	movi	r1, 3 * 4096
+	sc	SYS_munmap
+
+	/* A shared file mapping: the file sees the swap. */
+	lea	r0, s_tmpfile
+	movi	r1, 0x242		/* O_RDWR | O_CREAT | O_TRUNC */
+	mov	r2, #0x180		/* 0600 */
+	sc	SYS_open
+	str	r0, [r11, #(F_WORK + 40)]
+	cmp	r0, #0
+	movge	r0, #1
+	movlt	r0, #0
+	lea	r1, n_swp_open
+	bl	report
+	ldr	r0, [r11, #(F_WORK + 40)]
+	cmp	r0, #0
+	blt	9f
+	mov	r1, #0			/* ftruncate64 (fd, pad, lo, hi) */
+	movi	r2, 4096
+	mov	r3, #0
+	sc	SYS_ftruncate64
+	eq	0, n_swp_truncate
+	mov	r0, #0
+	movi	r1, 4096
+	mov	r2, #3
+	mov	r3, #1			/* MAP_SHARED */
+	ldr	r4, [r11, #(F_WORK + 40)]
+	mov	r5, #0
+	sc	SYS_mmap2
+	mov	r6, r0
+	cmn	r0, #4096
+	movlo	r0, #1
+	movhs	r0, #0
+	lea	r1, n_swp_file_map
+	bl	report
+	cmn	r6, #4096
+	bhs	8f
+	movi	r1, 0xf11e0001
+	swp	r3, r1, [r6]
+	mov	r0, r3
+	eq	0, n_swp_file_old
+	ldr	r0, [r11, #(F_WORK + 40)]	/* pread64 (fd, buf, 4, pad, lo, hi) */
+	add	r1, r11, #F_FILE
+	mov	r2, #4
+	mov	r3, #0
+	mov	r4, #0
+	mov	r5, #0
+	sc	SYS_pread64
+	eq	4, n_swp_file_pread
+	add	r0, r11, #F_FILE
+	ldr	r0, [r0]
+	eq	0xf11e0001, n_swp_file_data
+	mov	r0, r6
+	movi	r1, 4096
+	sc	SYS_munmap
+8:	ldr	r0, [r11, #(F_WORK + 40)]
+	sc	SYS_close
+	lea	r0, s_tmpfile
+	sc	SYS_unlink
+9:	pop	{r4, r5, r6, pc}
+
+/* The signal an access that cannot be made raises: SIGSEGV with the pc at
+ * the instruction, si_addr the address, and a zero fault address in the
+ * frame; the handler steps over the instruction. */
+t_swp_faults:
+	push	{r4, r5, r6, lr}
+	lea	r0, segv_handler
+	str	r0, [r11, #F_SA]
+	mov	r0, #SA_SIGINFO
+	str	r0, [r11, #(F_SA + 4)]
+	mov	r0, #0
+	str	r0, [r11, #(F_SA + 8)]
+	str	r0, [r11, #(F_SA + 12)]
+	str	r0, [r11, #(F_SA + 16)]
+	str	r0, [r11, #(F_WORK + 36)]
+	mov	r0, #SIGSEGV
+	add	r1, r11, #F_SA
+	mov	r2, #0
+	mov	r3, #8
+	sc	SYS_rt_sigaction
+	eq	0, n_swpf_sigaction
+
+	/* An unaligned SWP: the stack word's mapping exists, so ACCERR. */
+	add	r4, r11, #F_WORK
+	movi	r0, 0x0badf00d
+	str	r0, [r4]
+	add	r2, r4, #1
+	movi	r3, 0x07777777
+	mov	r1, #0x33
+	swp	r3, r1, [r2]
+	mov	r0, r3
+	eq	0x07777777, n_swpf_un_rt
+	ldr	r0, [r4]
+	eq	0x0badf00d, n_swpf_un_mem
+	ldr	r0, [r11, #(F_WORK + 24)]
+	add	r1, r4, #1
+	lea	r2, n_swpf_un_addr
+	bl	check_eq
+	ldr	r0, [r11, #(F_WORK + 28)]
+	eq	2, n_swpf_un_code
+	ldr	r0, [r11, #(F_WORK + 32)]
+	eq	0, n_swpf_un_frame
+	ldr	r0, [r11, #(F_WORK + 36)]
+	eq	1, n_swpf_un_count
+
+	/* Above every mapping: MAPERR. */
+	movi	r2, 0xfffff000
+	movi	r3, 0x07777777
+	mov	r1, #0x33
+	swp	r3, r1, [r2]
+	mov	r0, r3
+	eq	0x07777777, n_swpf_hi_rt
+	ldr	r0, [r11, #(F_WORK + 24)]
+	eq	0xfffff000, n_swpf_hi_addr
+	ldr	r0, [r11, #(F_WORK + 28)]
+	eq	1, n_swpf_hi_code
+	ldr	r0, [r11, #(F_WORK + 32)]
+	eq	0, n_swpf_hi_frame
+	ldr	r0, [r11, #(F_WORK + 36)]
+	eq	2, n_swpf_hi_count
+
+	/* Below the first mapping: arm64 Linux's find_vma gives ACCERR. */
+	mov	r2, #0x10
+	movi	r3, 0x07777777
+	mov	r1, #0x33
+	swpb	r3, r1, [r2]
+	mov	r0, r3
+	eq	0x07777777, n_swpf_lo_rt
+	ldr	r0, [r11, #(F_WORK + 24)]
+	eq	0x10, n_swpf_lo_addr
+	ldr	r0, [r11, #(F_WORK + 28)]
+	eq	2, n_swpf_lo_code
+	ldr	r0, [r11, #(F_WORK + 36)]
+	eq	3, n_swpf_lo_count
+
+	/* A condition that fails makes no access: no fault. */
+	mov	r2, #0x10
+	movi	r3, 0x07777777
+	mov	r1, #0x33
+	cmp	r1, r1
+	swpne	r3, r1, [r2]
+	mov	r0, r3
+	eq	0x07777777, n_swpf_cond_rt
+	ldr	r0, [r11, #(F_WORK + 36)]
+	eq	3, n_swpf_cond_count
+
+	/* A read-only page: ACCERR, memory untouched; writable again, it works. */
+	mov	r0, #0
+	movi	r1, 4096
+	mov	r2, #3
+	mov	r3, #0x22
+	mvn	r4, #0
+	mov	r5, #0
+	sc	SYS_mmap2
+	mov	r6, r0
+	cmn	r0, #4096
+	movlo	r0, #1
+	movhs	r0, #0
+	lea	r1, n_swpf_mmap
+	bl	report
+	cmn	r6, #4096
+	bhs	9f
+	movi	r0, 0x600d600d
+	str	r0, [r6]
+	mov	r0, r6
+	movi	r1, 4096
+	mov	r2, #1			/* PROT_READ */
+	sc	SYS_mprotect
+	eq	0, n_swpf_mprotect_ro
+	movi	r3, 0x07777777
+	mov	r1, #0x33
+	swp	r3, r1, [r6]
+	mov	r0, r3
+	eq	0x07777777, n_swpf_ro_rt
+	ldr	r0, [r6]
+	eq	0x600d600d, n_swpf_ro_mem
+	ldr	r0, [r11, #(F_WORK + 24)]
+	mov	r1, r6
+	lea	r2, n_swpf_ro_addr
+	bl	check_eq
+	ldr	r0, [r11, #(F_WORK + 28)]
+	eq	2, n_swpf_ro_code
+	ldr	r0, [r11, #(F_WORK + 36)]
+	eq	4, n_swpf_ro_count
+	mov	r0, r6
+	movi	r1, 4096
+	mov	r2, #3
+	sc	SYS_mprotect
+	eq	0, n_swpf_mprotect_rw
+	mov	r1, #0x33
+	swp	r3, r1, [r6]
+	mov	r0, r3
+	eq	0x600d600d, n_swpf_rw_old
+	ldr	r0, [r6]
+	eq	0x33, n_swpf_rw_new
+	ldr	r0, [r11, #(F_WORK + 36)]
+	eq	4, n_swpf_rw_count
+9:	pop	{r4, r5, r6, pc}
+
+/* Swaps beside a 64-bit task (aarch64_dirty.s, mode "tokens"). Descriptor 9
+ * is a file page both map shared:
+ *
+ *   +0  word slot    +4  ready count    +8  byte slot (a word of 0..255)
+ *   +16 this task's word  +20 its byte    +24 the 64-bit task's word
+ *   +28 words this task saw (OR)  +32 bytes it saw  +36 its swaps
+ *   +40 done flag    +44 the 64-bit task's byte  +48 its swaps
+ *
+ * Three tokens, 1 (here), 2 (there) and 4 (the slot), move between the
+ * holders, so the three always hold a permutation of them unless a swap
+ * tore. This task swaps the word with SWP and the byte with SWPB until it
+ * has seen all three tokens in each slot, at least SWP_MIN_ROUNDS and at
+ * most SWP_MAX_ROUNDS times; the other swaps with LDAXR/STLXR meanwhile.
+ * Exits 0, 98 if the other never came, 99 if the page did not map. */
+	.equ	SWP_MIN_ROUNDS,	20000
+	.equ	SWP_MAX_ROUNDS,	400000
+
+mode_swp_tokens:
+	mov	r0, #0
+	movi	r1, 4096
+	mov	r2, #3
+	mov	r3, #1			/* MAP_SHARED */
+	mov	r4, #9
+	mov	r5, #0
+	sc	SYS_mmap2
+	cmn	r0, #4096
+	movhs	r0, #99
+	bhs	9f
+	mov	r6, r0
+	add	r3, r6, #4		/* ready: wait for both tasks */
+1:	ldrex	r1, [r3]
+	add	r1, r1, #1
+	strex	r2, r1, [r3]
+	cmp	r2, #0
+	bne	1b
+	movi	r5, 200000
+2:	ldr	r1, [r6, #4]
+	cmp	r1, #2
+	bhs	3f
+	sc	SYS_sched_yield
+	subs	r5, r5, #1
+	bne	2b
+	mov	r0, #98
+	b	9f
+3:	mov	r4, #1			/* the word token */
+	mov	r5, #1			/* the byte token */
+	mov	r8, #0			/* the word tokens seen */
+	mov	r9, #0			/* the byte tokens seen */
+	mov	r10, #0			/* the rounds */
+	add	r12, r6, #8
+4:	swp	r0, r4, [r6]
+	orr	r8, r8, r0
+	mov	r4, r0
+	swpb	r0, r5, [r12]
+	orr	r9, r9, r0
+	mov	r5, r0
+	add	r10, r10, #1
+	movi	r1, SWP_MAX_ROUNDS
+	cmp	r10, r1
+	bhs	5f
+	movi	r1, SWP_MIN_ROUNDS
+	cmp	r10, r1
+	blo	4b
+	and	r0, r8, r9
+	cmp	r0, #7
+	bne	4b
+5:	str	r4, [r6, #16]
+	str	r5, [r6, #20]
+	str	r8, [r6, #28]
+	str	r9, [r6, #32]
+	str	r10, [r6, #36]
+	dmb	ish
+	mov	r1, #1
+	str	r1, [r6, #40]
+	mov	r0, #0
+9:	sc	SYS_exit_group
+
+/* ---- exclusives after 64-bit code (mode "exclusives") ---- */
+
+/* A 64-bit task (aarch64_dirty.s) set x15-x30 when it executed this
+ * program, and another one on the same CPU sets them again before each of
+ * its sched_yield calls, so every return from one of ours enters with them
+ * set. Each of XROUNDS rounds takes a fresh page of an anonymous mapping:
+ * the Thumb half reads it with a plain LDR first, so the first exclusive
+ * load meets the read-only zero page and the store the write fault, as a
+ * fresh .bss page does; then every exclusive and ordered form adds one to a
+ * word of its own, each after a sched_yield. Exits with the number of
+ * words that did not come out 1; a fault ends it in SIGSEGV. */
+	.equ	XROUNDS,	64
+
+mode_exclusives:
+	mov	r0, #0
+	movi	r1, XROUNDS * 4096
+	mov	r2, #3			/* PROT_READ | PROT_WRITE */
+	mov	r3, #0x22		/* MAP_PRIVATE | MAP_ANONYMOUS */
+	mvn	r4, #0
+	mov	r5, #0
+	sc	SYS_mmap2
+	cmn	r0, #4096
+	movhi	r0, #99
+	bhi	9f
+	mov	r6, r0			/* the mapping */
+	mov	r10, #0			/* the round */
+	mov	r8, #0			/* failures */
+1:	add	r4, r6, r10, lsl #12
+	lea	r0, x_thumb
+	orr	r0, r0, #1
+	blx	r0
+	add	r8, r8, r0
+	add	r4, r6, r10, lsl #12
+	add	r4, r4, #0x800
+	bl	x_arm
+	add	r8, r8, r0
+	add	r10, r10, #1
+	cmp	r10, #XROUNDS
+	blt	1b
+	lea	r0, s_x_line
+	bl	puts
+	mov	r0, r8
+	bl	putdec
+	lea	r0, s_summary_b
+	bl	puts
+	mov	r0, #(XROUNDS * 20)
+	bl	putdec
+	lea	r0, s_summary_c
+	bl	puts
+	mov	r0, r8
+	cmp	r0, #100
+	movgt	r0, #100
+9:	sc	SYS_exit_group
+
+	.arch	armv8-a
+
+/* One round's Thumb half, on the page at r4: returns its failures in r0.
+ * r6 counts them, r5 the attempts of one sequence, r7 is the system call. */
+.macro t_yield
+	movs	r7, #SYS_sched_yield
+	svc	#0
+.endm
+
+/* The word at r3 is 1, or count a failure. */
+.macro t_expect_one
+	ldr	r1, [r3]
+	cmp	r1, #1
+	it	ne
+	addne	r6, r6, #1
+.endm
+
+/* LDREX and STREX with an offset: the base stays in r4. */
+.macro t_offset off
+	t_yield
+	ldr	r1, [r4, #\off]
+	movs	r5, #0
+1:	ldrex	r1, [r4, #\off]
+	adds	r1, r1, #1
+	strex	r2, r1, [r4, #\off]
+	adds	r5, r5, #1
+	cmp	r2, #0
+	beq	2f
+	cmp	r5, #255
+	blo	1b
+2:	add	r3, r4, #\off
+	t_expect_one
+.endm
+
+/* A load and store exclusive pair of one register at r4 + off. */
+.macro t_single load, store, off
+	t_yield
+	add	r3, r4, #\off
+	movs	r5, #0
+1:	\load	r1, [r3]
+	adds	r1, r1, #1
+	\store	r2, r1, [r3]
+	adds	r5, r5, #1
+	cmp	r2, #0
+	beq	2f
+	cmp	r5, #255
+	blo	1b
+2:	t_expect_one
+.endm
+
+.macro t_double load, store, off
+	t_yield
+	add	r3, r4, #\off
+	movs	r5, #0
+1:	\load	r0, r1, [r3]
+	adds	r0, r0, #1
+	\store	r2, r0, r1, [r3]
+	adds	r5, r5, #1
+	cmp	r2, #0
+	beq	2f
+	cmp	r5, #255
+	blo	1b
+2:	t_expect_one
+.endm
+
+	.thumb
+	.thumb_func
+x_thumb:
+	push	{r4, r5, r6, r7, lr}
+	movs	r6, #0
+	t_offset 0x40
+	t_offset 0x3fc
+	t_offset 0
+	t_single ldaex, stlex, 0x100
+	t_single ldrexb, strexb, 0x104
+	t_single ldrexh, strexh, 0x108
+	t_single ldaexb, stlexb, 0x10c
+	t_single ldaexh, stlexh, 0x110
+	t_double ldrexd, strexd, 0x118
+	t_double ldaexd, stlexd, 0x120
+	t_yield
+	add	r3, r4, #0x128
+	movs	r1, #1
+	stl	r1, [r3]
+	lda	r1, [r3]
+	add	r3, r4, #0x12c
+	stl	r1, [r3]
+	t_expect_one
+	mov	r0, r6
+	pop	{r4, r5, r6, r7, pc}
+
+	.arm
+	.p2align 2
+
+/* One round's ARM half, on r4 = the page + 0x800: the same, with no offset
+ * form, which A32 does not have. */
+.macro a_yield
+	mov	r7, #SYS_sched_yield
+	svc	#0
+.endm
+
+.macro a_expect_one
+	ldr	r1, [r3]
+	cmp	r1, #1
+	addne	r6, r6, #1
+.endm
+
+.macro a_single load, store, off
+	a_yield
+	add	r3, r4, #\off
+	mov	r5, #0
+1:	\load	r1, [r3]
+	add	r1, r1, #1
+	\store	r2, r1, [r3]
+	add	r5, r5, #1
+	cmp	r2, #0
+	beq	2f
+	cmp	r5, #255
+	blo	1b
+2:	a_expect_one
+.endm
+
+.macro a_double load, store, off
+	a_yield
+	add	r3, r4, #\off
+	mov	r5, #0
+1:	\load	r0, r1, [r3]
+	add	r0, r0, #1
+	\store	r2, r0, r1, [r3]
+	add	r5, r5, #1
+	cmp	r2, #0
+	beq	2f
+	cmp	r5, #255
+	blo	1b
+2:	a_expect_one
+.endm
+
+x_arm:
+	push	{r4, r5, r6, r7, lr}
+	mov	r6, #0
+	a_single ldrex, strex, 0
+	a_single ldaex, stlex, 0x8
+	a_single ldrexb, strexb, 0x10
+	a_single ldrexh, strexh, 0x14
+	a_single ldaexb, stlexb, 0x18
+	a_single ldaexh, stlexh, 0x1c
+	a_double ldrexd, strexd, 0x20
+	a_double ldaexd, stlexd, 0x28
+	a_yield
+	add	r3, r4, #0x30
+	mov	r1, #1
+	stl	r1, [r3]
+	lda	r1, [r3]
+	add	r3, r4, #0x34
+	stl	r1, [r3]
+	a_expect_one
+	mov	r0, r6
+	pop	{r4, r5, r6, r7, pc}
+
+	.arch	armv7-a
+
+
 /* ---- strings ---- */
 
 	.balign	4
@@ -2218,6 +2879,69 @@ mode_vfp:
 	str_	n_sc_open_dir, "syscalls: open O_DIRECTORY"
 	str_	n_sc_getdents64, "syscalls: getdents64"
 	str_	s_vfp, "vfp"
+	str_	s_exclusives, "exclusives"
+	str_	s_swp, "swp"
+	str_	s_swp_one, "swp-one"
+	str_	s_swp_pc, "swp-pc"
+	str_	s_swp_tokens, "swp-tokens"
+	str_	n_sw_old, "swp: Rt gets the old word"
+	str_	n_sw_new, "swp: the word is Rt2"
+	str_	n_sw_byte_old, "swpb: Rt gets the old byte"
+	str_	n_sw_byte_new, "swpb: only the byte changes"
+	str_	n_sw_same_old, "swp r0, r0: Rt gets the old word"
+	str_	n_sw_same_new, "swp r0, r0: the word is the old r0"
+	str_	n_sw_ne_rt, "swpne with Z set leaves Rt"
+	str_	n_sw_ne_mem, "swpne with Z set leaves the word"
+	str_	n_sw_eq_rt, "swpeq with Z set takes the old word"
+	str_	n_sw_eq_mem, "swpeq with Z set stores"
+	str_	n_sw_bne_rt, "swpbne with Z set leaves Rt"
+	str_	n_sw_bne_mem, "swpbne with Z set leaves the byte"
+	str_	n_sw_bcs_rt, "swpbcs with C set takes the old byte"
+	str_	n_sw_bcs_mem, "swpbcs with C set stores"
+	str_	n_swp_mmap, "swp: mmap2 of three pages"
+	str_	n_swp_fresh_old, "swp: a page nothing touched reads 0"
+	str_	n_swp_fresh_new, "swp: the store reaches a page nothing touched"
+	str_	n_swp_zero_read, "swp: a page the task read is the zero page"
+	str_	n_swp_zero_old, "swp: the zero page reads 0"
+	str_	n_swp_zero_new, "swp: the store replaces the zero page"
+	str_	n_swp_byte_old, "swpb: a fresh page's byte reads 0"
+	str_	n_swp_byte_only, "swpb: only one byte of the fresh page changes"
+	str_	n_swp_open, "swp: open the file"
+	str_	n_swp_truncate, "swp: ftruncate64 of the file"
+	str_	n_swp_file_map, "swp: mmap2 of the file, shared"
+	str_	n_swp_file_old, "swp: the file page reads 0"
+	str_	n_swp_file_pread, "swp: pread64 of the file"
+	str_	n_swp_file_data, "swp: the file holds the stored word"
+	str_	n_swpf_sigaction, "swp faults: rt_sigaction"
+	str_	n_swpf_un_rt, "unaligned swp leaves Rt"
+	str_	n_swpf_un_mem, "unaligned swp leaves the word"
+	str_	n_swpf_un_addr, "unaligned swp: si_addr is the address"
+	str_	n_swpf_un_code, "unaligned swp: si_code is SEGV_ACCERR"
+	str_	n_swpf_un_frame, "unaligned swp: fault_address in the frame is 0"
+	str_	n_swpf_un_count, "unaligned swp: SIGSEGV once"
+	str_	n_swpf_hi_rt, "swp above every mapping leaves Rt"
+	str_	n_swpf_hi_addr, "swp above every mapping: si_addr"
+	str_	n_swpf_hi_code, "swp above every mapping: SEGV_MAPERR"
+	str_	n_swpf_hi_frame, "swp above every mapping: fault_address in the frame is 0"
+	str_	n_swpf_hi_count, "swp above every mapping: SIGSEGV again"
+	str_	n_swpf_lo_rt, "swpb below the first mapping leaves Rt"
+	str_	n_swpf_lo_addr, "swpb below the first mapping: si_addr"
+	str_	n_swpf_lo_code, "swpb below the first mapping: SEGV_ACCERR"
+	str_	n_swpf_lo_count, "swpb below the first mapping: SIGSEGV again"
+	str_	n_swpf_cond_rt, "swpne at a bad address leaves Rt"
+	str_	n_swpf_cond_count, "swpne at a bad address raises no signal"
+	str_	n_swpf_mmap, "swp faults: mmap2 of a page"
+	str_	n_swpf_mprotect_ro, "swp faults: mprotect PROT_READ"
+	str_	n_swpf_ro_rt, "swp to a read-only page leaves Rt"
+	str_	n_swpf_ro_mem, "swp to a read-only page leaves the word"
+	str_	n_swpf_ro_addr, "swp to a read-only page: si_addr"
+	str_	n_swpf_ro_code, "swp to a read-only page: SEGV_ACCERR"
+	str_	n_swpf_ro_count, "swp to a read-only page: SIGSEGV again"
+	str_	n_swpf_mprotect_rw, "swp faults: mprotect PROT_READ|PROT_WRITE"
+	str_	n_swpf_rw_old, "swp to the page once writable: old word"
+	str_	n_swpf_rw_new, "swp to the page once writable: new word"
+	str_	n_swpf_rw_count, "swp to the page once writable: no signal"
+	str_	s_x_line, "a32-probe: exclusives: "
 	str_	n_tr_exec_stop, "tracer: exec stop with SIGTRAP"
 	str_	n_tr_getregs, "tracer: PTRACE_GETREGS"
 	str_	n_tr_pc, "tracer: pc is the entry"

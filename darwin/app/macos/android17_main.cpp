@@ -4,6 +4,7 @@
 #include "block/android_boot.hpp"
 
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -23,6 +24,7 @@ constexpr std::string_view android_default_guest_cpus{"ncpus=10"};
 constexpr std::string_view release_option{"--android-release="};
 constexpr std::string_view disk_option{"--android-disk="};
 constexpr std::string_view boot_mode_option{"--android-boot-mode="};
+constexpr std::string_view dpi_option{"--gpu-dpi="};
 constexpr std::string_view adb_authorization_prefix{
 	"androidboot.kernarium.adb_auth="};
 
@@ -31,6 +33,8 @@ struct AndroidOptions {
 	std::filesystem::path disk;
 	uml::android::BootMode boot_mode = uml::android::BootMode::automatic;
 	bool boot_mode_set = false;
+	/* The EDID density the GPU device advertises; 0 advertises none. */
+	std::uint32_t dots_per_inch = 0;
 	std::vector<std::string> forwarded;
 };
 
@@ -61,12 +65,20 @@ AndroidOptions parse_options(int argc, char *const argv[])
 	bool has_gpu_display = false;
 	bool has_audio = false;
 	bool has_battery = false;
+	bool has_video = false;
+	bool has_video_encoder = false;
 	for (int index = 1; index < argc; ++index) {
 		const std::string_view argument =
 			argv[index] == nullptr ? std::string_view{} : argv[index];
 		if (argument.starts_with(adb_authorization_prefix))
 			throw std::invalid_argument(
 				"macOS fixes Android ADB authorization at boot");
+		if (argument.starts_with(uml::android::lcdDensityPrefix))
+			throw std::invalid_argument(
+				"the Android density follows --gpu-dpi");
+		if (argument.starts_with(dpi_option))
+			options.dots_per_inch = uml::android::parseDotsPerInch(
+				argument.substr(dpi_option.size()));
 		if (argument.starts_with(release_option)) {
 			if (!options.release.empty())
 				throw std::invalid_argument(
@@ -98,8 +110,12 @@ AndroidOptions parse_options(int argc, char *const argv[])
 		}
 		has_gpu |= argument == "--gpu";
 		has_gpu_display |= argument.starts_with("--gpu-display=");
-		has_audio |= argument == "--audio";
+		has_audio |= argument == "--audio" ||
+			     argument.starts_with("--audio-output=") ||
+			     argument.starts_with("--audio-input=");
 		has_battery |= argument == "--battery";
+		has_video |= argument == "--video";
+		has_video_encoder |= argument == "--video-encoder";
 		options.forwarded.emplace_back(argument);
 	}
 	if (options.release.empty())
@@ -119,6 +135,10 @@ AndroidOptions parse_options(int argc, char *const argv[])
 		options.forwarded.emplace_back("--audio");
 	if (!has_battery)
 		options.forwarded.emplace_back("--battery");
+	if (!has_video)
+		options.forwarded.emplace_back("--video");
+	if (!has_video_encoder)
+		options.forwarded.emplace_back("--video-encoder");
 	return options;
 }
 
@@ -155,11 +175,61 @@ void print_usage()
 			"  --android-release=/absolute/release\n"
 			"  --android-disk=/absolute/writable-disk.img\n"
 			"  --android-boot-mode=auto|normal|recovery\n"
+			"  --gpu-dpi=N (also the guest density; 213 without it)\n"
 			"  --virtio-console-socket=/absolute/console.sock\n"
 			"The same values may be supplied through UML_ANDROID17_RELEASE, "
 			"UML_ANDROID17_DISK, "
-			"and UML_ANDROID17_BOOT_MODE.\n",
+			"and UML_ANDROID17_BOOT_MODE.\n"
+			"The boot mode picks the first boot's ramdisk. A guest that "
+			"restarts itself boots again in the same process, and each "
+			"restart picks the ramdisk in auto mode.\n",
 		stderr);
+}
+
+/* The kernel arguments that give a guest `boot`'s ramdisk, appended to the
+ * host's arguments. */
+std::vector<std::string> boot_command_line(
+	const std::vector<std::string> &host_arguments,
+	const std::filesystem::path &release,
+	const std::filesystem::path &disk, const uml::android::BootSelection &boot,
+	std::uint32_t dots_per_inch)
+{
+	auto forwarded = host_arguments;
+	forwarded.emplace_back("ubd0=" + disk.string());
+	forwarded.emplace_back("initrd=" + disk.string());
+	forwarded.emplace_back(
+		"initrd_offset=" + std::to_string(boot.ramdisk.offset));
+	forwarded.emplace_back("initrd_size=" + std::to_string(boot.ramdisk.size));
+	forwarded.emplace_back("root=/dev/ram0");
+	forwarded.emplace_back("rootfstype=ramfs");
+	constexpr std::array launcher_prefixes{
+		adb_authorization_prefix,
+		uml::android::lcdDensityPrefix};
+	for (auto &argument : uml::android::readKernelCommandLine(
+		     release / "boot/kernel-command-line.txt", launcher_prefixes))
+		forwarded.push_back(std::move(argument));
+	/* Android init imports this as ro.boot.lcd_density, which the vendor
+	 * init script publishes as ro.sf.lcd_density: a guest without it has an
+	 * empty property. */
+	forwarded.emplace_back(uml::android::lcdDensityArgument(dots_per_inch));
+	forwarded.emplace_back(std::string{adb_authorization_prefix} + "0");
+	std::fprintf(
+		stderr,
+			"Android rootfs %s, %s boot, writable disk %s\n",
+			release.c_str(),
+			boot.mode == uml::android::BootMode::recovery
+				? "recovery" : "normal",
+			disk.c_str());
+	return forwarded;
+}
+
+/* There is no bootloader to take the request `reboot bootloader` leaves, and
+ * left in place it stops init from writing the next `reboot recovery`'s. */
+void say_bootloader_consumed()
+{
+	std::fputs("Android: the guest asked for the bootloader; there is none, "
+		   "so the request is cleared and the guest boots normally\n",
+		   stderr);
 }
 
 } // namespace
@@ -171,47 +241,43 @@ int main(int argc, char *argv[], char *envp[])
 		if (uml::app::has_argument(argc, argv, "--help"))
 			print_usage();
 		auto options = parse_options(argc, argv);
+		uml::app::LaunchConfiguration configuration{
+			.rootfs_path = nullptr,
+			.default_guest_memory = android_default_guest_memory,
+			.default_guest_cpus = android_default_guest_cpus,
+			.top_byte_ignore = true,
+			.input_mode = uml::app::DisplayInput::touchscreen,
+		};
 		if (!information_only) {
 			if (options.release.empty() || options.disk.empty())
 				throw std::invalid_argument(
 					"Android launch requires release and disk paths");
 			const auto release = validated_release_root(options.release);
 			const auto disk = validated_disk(options.disk);
+			if (uml::android::consumeBootloaderCommand(disk))
+				say_bootloader_consumed();
 			const auto boot = uml::android::selectBoot(
 				disk, options.boot_mode);
-			options.forwarded.emplace_back("ubd0=" + disk.string());
-			options.forwarded.emplace_back("initrd=" + disk.string());
-			options.forwarded.emplace_back(
-				"initrd_offset=" + std::to_string(boot.ramdisk.offset));
-			options.forwarded.emplace_back(
-				"initrd_size=" + std::to_string(boot.ramdisk.size));
-			options.forwarded.emplace_back("root=/dev/ram0");
-			options.forwarded.emplace_back("rootfstype=ramfs");
-			constexpr std::array launcher_prefixes{
-				adb_authorization_prefix};
-			for (auto &argument : uml::android::readKernelCommandLine(
-				     release / "boot/kernel-command-line.txt",
-				     launcher_prefixes))
-				options.forwarded.push_back(std::move(argument));
-			options.forwarded.emplace_back(
-				std::string{adb_authorization_prefix} + "0");
-			std::fprintf(
-				stderr,
-					"Android rootfs %s, %s boot, writable disk %s\n",
-					release.c_str(),
-					boot.mode == uml::android::BootMode::recovery
-						? "recovery" : "normal",
-					disk.c_str());
+			const auto host_arguments = options.forwarded;
+			options.forwarded =
+				boot_command_line(
+					host_arguments, release, disk, boot, options.dots_per_inch);
+			/* The mode the user gave picks the first boot's ramdisk only: a
+			 * guest that restarts has said what it wants in the disk's
+			 * bootloader message. */
+			configuration.restart_command_line =
+				[host_arguments, release, disk,
+				 dots_per_inch = options.dots_per_inch] {
+					const auto next = uml::android::selectRestartBoot(disk);
+					if (next.bootloaderConsumed)
+						say_bootloader_consumed();
+					return boot_command_line(
+						host_arguments, release, disk, next.boot,
+						dots_per_inch);
+				};
 		}
 		return uml::app::runEmbeddedKernel(
-			options.forwarded, envp,
-			{
-				.rootfs_path = nullptr,
-				.default_guest_memory = android_default_guest_memory,
-				.default_guest_cpus = android_default_guest_cpus,
-				.top_byte_ignore = true,
-				.input_mode = uml::app::DisplayInput::touchscreen,
-			});
+			options.forwarded, envp, configuration);
 	} catch (const std::exception &error) {
 		std::fprintf(stderr, "Unable to configure Android guest: %s\n",
 			     error.what());

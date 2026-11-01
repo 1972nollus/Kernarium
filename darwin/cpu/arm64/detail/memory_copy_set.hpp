@@ -190,18 +190,18 @@ template <MopsFamily family, typename Store = MopsDirectStore>
 		}
 		amount = std::min(amount, remaining);
 		const auto to_address = cpu.untag_data_address(
-			backward ? to - amount : to, false);
+			backward ? to - amount : to);
 
 		const std::byte *read_pointer{};
 		if constexpr (!set) {
 			const auto from_address = cpu.untag_data_address(
-				backward ? from - amount : from, false);
+				backward ? from - amount : from);
 			read_pointer = tlb.translate(from_address, Access::read);
 			if (read_pointer == nullptr) {
 				/* Report the first byte the copy would read. */
 				if (backward) {
 					tlb.fault_address =
-						cpu.untag_data_address(from - 1, false);
+						cpu.untag_data_address(from - 1);
 					tlb.fault_access = Access::read;
 				}
 				commit();
@@ -242,7 +242,7 @@ template <MopsFamily family, typename Store = MopsDirectStore>
 		if (!stored) {
 			if (backward) {
 				tlb.fault_address =
-					cpu.untag_data_address(to - 1, false);
+					cpu.untag_data_address(to - 1);
 				tlb.fault_access = Access::write;
 			}
 			commit();

@@ -87,6 +87,8 @@ def launch(
             cpus=arguments.cpus,
             memory_mib=arguments.memory_mib,
             engine="gadgets",
+            # Each mode copies its own payload and launches it once.
+            remove_payload=True,
             extra={"KERNARIUM_OVERLAY_SIZE_GIB": "1"},
         ),
         log,
@@ -95,6 +97,7 @@ def launch(
         label=f"iPad discard benchmark {mode}",
     )
     kernarium.require_automation_boot(transcript)
+    kernarium.report_payload_removal(transcript, name)
     if kernarium.runtime_result(transcript) != 0:
         raise RuntimeError(f"{mode} runtime did not return zero; see {log}")
     if kernarium.session_exit(transcript) != 0:
