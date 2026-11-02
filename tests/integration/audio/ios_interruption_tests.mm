@@ -185,10 +185,14 @@ struct Observed final {
     double expected {nominalRate};
 
     [[nodiscard]] double rate() const { return completed / seconds; }
-    // The guest's frame position advances at the rate of real audio.
+    // The guest's frame position advances at the rate of real audio. Periods
+    // complete one at a time and a window starts and ends between them, so
+    // the count may be a period or two off however long the window is: a
+    // second holds 46 or 47 of them, a difference of more than two percent.
     [[nodiscard]] bool nominal(double tolerance = 0.02) const
     {
-        return std::abs(rate() / expected - 1.0) <= tolerance;
+        const double ideal = expected * seconds;
+        return std::abs(completed - ideal) <= std::max(tolerance * ideal, 2.0);
     }
     [[nodiscard]] bool playing() const
     {
