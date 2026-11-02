@@ -54,7 +54,30 @@ namespace uml::cpu::gadget_cache {
  *
  * A table given an Account (`meter`) charges it every change in bytes(), so
  * the account holds exactly what the table does.
+ *
+ * A record type may shape its chunks. `Record::chunk_prefix` bytes come before
+ * a chunk's first record, which `Record::prepare_chunk(storage)` initializes
+ * when the chunk is made; a released place zeroes only the record's first
+ * `Record::cleared_bytes`; and `Record::Companion`, when the type names one, is
+ * a value kept for each record apart from it, in an array behind the chunk's
+ * records, reached by the record's number (`companion_at`). That lets a record
+ * that generated code reads keep only what the code reads, and lets a record
+ * hold words that belong to its neighbour.
  */
+template <typename Record>
+struct RecordCompanion final {
+	struct None final {};
+	using type = None;
+	static constexpr std::size_t bytes = 0;
+};
+
+template <typename Record>
+	requires requires { typename Record::Companion; }
+struct RecordCompanion<Record> final {
+	using type = typename Record::Companion;
+	static constexpr std::size_t bytes = sizeof(type);
+};
+
 template <typename Record, typename KeyOf>
 class StableRecordTable final {
 	static_assert(std::is_trivially_destructible_v<Record>,
@@ -62,7 +85,28 @@ class StableRecordTable final {
 	static_assert(alignof(Record) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__,
 		"chunks come from the ordinary array allocation");
 
+	static constexpr std::size_t prefix_bytes = [] {
+		if constexpr (requires { Record::chunk_prefix; })
+			return std::size_t{Record::chunk_prefix};
+		else
+			return std::size_t{0};
+	}();
+	static constexpr std::size_t cleared_bytes = [] {
+		if constexpr (requires { Record::cleared_bytes; })
+			return std::size_t{Record::cleared_bytes};
+		else
+			return sizeof(Record);
+	}();
+	static_assert(prefix_bytes % alignof(Record) == 0 &&
+		cleared_bytes <= sizeof(Record));
+
 public:
+	using Companion = typename RecordCompanion<Record>::type;
+	static constexpr std::size_t companion_bytes =
+		RecordCompanion<Record>::bytes;
+	static_assert(std::is_trivially_destructible_v<Companion> &&
+		alignof(Companion) <= alignof(Record));
+
 	/* The records a sweep keeps, found from their addresses, over one table
 	 * or several (marks_of), so that a value can be tried against every table
 	 * an owner keeps at once. They also remember which records each table
@@ -193,18 +237,26 @@ public:
 
 	[[nodiscard]] Record *find(std::uint64_t key) const noexcept
 	{
+		const auto number = find_number(key);
+		return number == 0 ? nullptr : record_at(number);
+	}
+
+	/* The number of the record for `key`, or zero: one-based, and the
+	 * record's for as long as it lives. */
+	[[nodiscard]] std::uint32_t find_number(std::uint64_t key) const noexcept
+	{
 		if (index_ == nullptr)
-			return nullptr;
+			return 0;
 		const auto hash = mix(key);
 		const auto tag = tag_of(hash);
 		for (auto position = hash & mask_;; position = (position + 1) & mask_) {
 			const auto entry = index_[position];
 			if (entry == 0)
-				return nullptr;
+				return 0;
 			if ((entry & tag_mask) == tag) {
-				auto *record = record_at(entry & ~tag_mask);
-				if (KeyOf{}(*record) == key)
-					return record;
+				const auto number = entry & ~tag_mask;
+				if (KeyOf{}(*record_at(number)) == key)
+					return number;
 			}
 		}
 	}
@@ -214,21 +266,49 @@ public:
 	[[nodiscard]] std::pair<Record *, bool> try_emplace(
 		std::uint64_t key, Arguments &&...arguments)
 	{
+		const auto [number, inserted] = try_emplace_number(key,
+			std::forward<Arguments>(arguments)...);
+		return {record_at(number), inserted};
+	}
+
+	/* try_emplace() by number; a new record's companion is
+	 * value-initialized. */
+	template <typename... Arguments>
+	[[nodiscard]] std::pair<std::uint32_t, bool> try_emplace_number(
+		std::uint64_t key, Arguments &&...arguments)
+	{
 		/* A place is taken before its record is constructed, which a
 		 * constructor that threw would leave taken and unindexed. */
 		static_assert(std::is_nothrow_constructible_v<Record, Arguments...>);
-		if (auto *found = find(key); found != nullptr)
+		if (const auto found = find_number(key); found != 0)
 			return {found, false};
 		const ChargeScope charged{meter_, [this] { return bytes(); }};
 		if ((size_ + 1) * 4 > capacity() * 3)
 			grow();
 		const auto ordinal = take();
-		auto *record = new (place(ordinal)) Record(
+		[[maybe_unused]] auto *record = new (place(ordinal)) Record(
 			std::forward<Arguments>(arguments)...);
+		if constexpr (companion_bytes != 0)
+			new (companion_place(ordinal)) Companion{};
 		assert(KeyOf{}(*record) == key);
-		insert(static_cast<std::uint32_t>(ordinal + 1U), mix(key));
+		const auto number = static_cast<std::uint32_t>(ordinal + 1U);
+		insert(number, mix(key));
 		++size_;
-		return {record, true};
+		return {number, true};
+	}
+
+	/* The record with one-based number `number`, which must live. */
+	[[nodiscard]] Record *record_at(std::uint32_t number) const noexcept
+	{
+		return std::launder(reinterpret_cast<Record *>(place(number - 1U)));
+	}
+
+	/* The companion of the record with number `number`. */
+	[[nodiscard]] Companion &companion_at(std::uint32_t number) const noexcept
+		requires(companion_bytes != 0)
+	{
+		return *std::launder(reinterpret_cast<Companion *>(
+			companion_place(number - 1U)));
 	}
 
 	[[nodiscard]] std::size_t size() const noexcept { return size_; }
@@ -299,7 +379,7 @@ public:
 			std::size_t first = 0;
 			for (const auto &chunk : table->chunks_) {
 				const auto begin = reinterpret_cast<std::uintptr_t>(
-					chunk.storage);
+					chunk.storage + prefix_bytes);
 				const auto used = &chunk == &table->chunks_.back() ?
 					table->used_ : chunk.count;
 				marks.ranges_.push_back({begin,
@@ -417,8 +497,10 @@ private:
 	 * reaching the bound hold `doubling_records` between them; every chunk
 	 * after them holds `largest_chunk`. */
 	static constexpr std::size_t first_chunk = 32;
+	static constexpr std::size_t stride_bytes =
+		sizeof(Record) + companion_bytes;
 	static constexpr std::size_t largest_chunk =
-		std::max<std::size_t>(first_chunk, (std::size_t{128} << 10) / sizeof(Record));
+		std::max<std::size_t>(first_chunk, (std::size_t{128} << 10) / stride_bytes);
 	static constexpr unsigned doubling_chunks = static_cast<unsigned>(
 		std::bit_width((largest_chunk - 1U) / first_chunk));
 	static constexpr std::size_t doubling_records =
@@ -433,6 +515,14 @@ private:
 		~((std::uint32_t{1} << number_bits) - 1U);
 	static constexpr std::size_t maximum_records =
 		(std::size_t{1} << number_bits) - 1U;
+
+	/* What a chunk of `count` records takes: its prefix, the records and
+	 * their companions. */
+	[[nodiscard]] static constexpr std::size_t chunk_bytes(
+		std::size_t count) noexcept
+	{
+		return prefix_bytes + count * stride_bytes;
+	}
 
 	/* A chunk's storage comes from the engine's leased heap. Its size is the
 	 * chunk's own count, so that the deleting is stateless and a Chunk stays
@@ -468,7 +558,7 @@ private:
 		{
 			if (storage != nullptr)
 				::uml::memory::HeapLease::heap().deallocate(
-					storage, count * sizeof(Record),
+					storage, chunk_bytes(count),
 					alignof(Record));
 		}
 	};
@@ -499,28 +589,42 @@ private:
 			doubling_records + (chunk - doubling_chunks) * largest_chunk;
 	}
 
+	struct Position final {
+		std::size_t chunk;
+		std::size_t slot;
+	};
+
+	/* Which chunk holds zero-based ordinal `ordinal`, and where in it. */
+	[[nodiscard]] static Position position_of(std::size_t ordinal) noexcept
+	{
+		if (ordinal < doubling_records) {
+			/* Chunk k begins at first_chunk * (2^k - 1). */
+			const auto chunk = static_cast<std::size_t>(
+				std::bit_width(ordinal / first_chunk + 1U)) - 1U;
+			return {chunk, ordinal -
+				first_chunk * ((std::size_t{1} << chunk) - 1U)};
+		}
+		const auto beyond = ordinal - doubling_records;
+		return {doubling_chunks + beyond / largest_chunk,
+			beyond % largest_chunk};
+	}
+
 	/* Where the record with zero-based ordinal `ordinal` lives. */
 	[[nodiscard]] std::byte *place(std::size_t ordinal) const noexcept
 	{
-		std::size_t chunk = 0;
-		std::size_t slot = 0;
-		if (ordinal < doubling_records) {
-			/* Chunk k begins at first_chunk * (2^k - 1). */
-			chunk = static_cast<std::size_t>(
-				std::bit_width(ordinal / first_chunk + 1U)) - 1U;
-			slot = ordinal - first_chunk * ((std::size_t{1} << chunk) - 1U);
-		} else {
-			const auto beyond = ordinal - doubling_records;
-			chunk = doubling_chunks + beyond / largest_chunk;
-			slot = beyond % largest_chunk;
-		}
-		return chunks_[chunk].storage + slot * sizeof(Record);
+		const auto at = position_of(ordinal);
+		return chunks_[at.chunk].storage + prefix_bytes +
+			at.slot * sizeof(Record);
 	}
 
-	/* The record with one-based number `number`. */
-	[[nodiscard]] Record *record_at(std::uint32_t number) const noexcept
+	/* Where its companion lives, behind the chunk's records. */
+	[[nodiscard]] std::byte *companion_place(
+		std::size_t ordinal) const noexcept
 	{
-		return std::launder(reinterpret_cast<Record *>(place(number - 1U)));
+		const auto at = position_of(ordinal);
+		const auto &chunk = chunks_[at.chunk];
+		return chunk.storage + prefix_bytes +
+			chunk.count * sizeof(Record) + at.slot * companion_bytes;
 	}
 
 	[[nodiscard]] bool vacant(std::size_t ordinal) const noexcept
@@ -588,9 +692,13 @@ private:
 					8, chunks_.size() * 2));
 			chunks_.emplace_back(static_cast<std::byte *>(
 				::uml::memory::HeapLease::heap().allocate(
-					count * sizeof(Record), alignof(Record))),
+					chunk_bytes(count), alignof(Record))),
 				count);
-			record_bytes_ += count * sizeof(Record);
+			if constexpr (requires(std::byte *storage) {
+					      Record::prepare_chunk(storage);
+				      })
+				Record::prepare_chunk(chunks_.back().storage);
+			record_bytes_ += chunk_bytes(count);
 			used_ = 0;
 		}
 		++used_;
@@ -600,7 +708,10 @@ private:
 	void free_place(std::size_t ordinal) noexcept
 	{
 		assert(!vacant(ordinal));
-		std::memset(static_cast<void *>(place(ordinal)), 0, sizeof(Record));
+		std::memset(static_cast<void *>(place(ordinal)), 0, cleared_bytes);
+		if constexpr (companion_bytes != 0)
+			std::memset(static_cast<void *>(
+				companion_place(ordinal)), 0, companion_bytes);
 		vacant_[ordinal / 64] |= std::uint64_t{1} << (ordinal % 64);
 		++vacancies_;
 	}
@@ -618,7 +729,7 @@ private:
 					~(std::uint64_t{1} << (ordinal % 64));
 			vacancies_ -= carved_ - first;
 			carved_ = first;
-			record_bytes_ -= chunks_.back().count * sizeof(Record);
+			record_bytes_ -= chunk_bytes(chunks_.back().count);
 			chunks_.pop_back();
 			used_ = chunks_.empty() ? 0 : chunks_.back().count;
 			vacant_.resize((carved_ + 63) / 64);
