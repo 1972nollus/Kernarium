@@ -64,7 +64,7 @@ closing its encoders must not reach the pool's released Metal objects.
  src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 183 ++++--
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |  39 ++
  src/kosmickrisp/vulkan/kk_cmd_draw.c          |  36 +-
- src/kosmickrisp/vulkan/kk_queue.c             | 134 +++--
+ src/kosmickrisp/vulkan/kk_queue.c             | 135 +++--
  src/kosmickrisp/vulkan/kk_queue.h             |   4 +
  src/kosmickrisp/vulkan/meson.build            |  33 ++
  .../tests/command_buffer_shaders/color.frag   |   7 +
@@ -75,7 +75,7 @@ closing its encoders must not reach the pool's released Metal objects.
  .../tests/test_command_buffer_consolidation.c | 526 ++++++++++++++++++
  .../tests/test_layered_draw_sequence.cpp      |  29 +-
  .../vulkan/tests/test_query_pool_lifetime.c   | 224 ++++++++
- 15 files changed, 1236 insertions(+), 99 deletions(-)
+ 15 files changed, 1236 insertions(+), 100 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.frag
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.frag.h
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.vert
@@ -592,10 +592,10 @@ index dee753c51689efdd6341e640adbddef2274ef0e8..82b6c1c1746ec4f16514704347f6aa7d
  kk_CmdDraw(VkCommandBuffer commandBuffer, uint32_t vertexCount,
             uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance)
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index d595b8a606cdcd547dd3c8b75fc9e40aedfd27d9..9ae1099aa9c95e4cef2ac570f855eedcaad081c9 100644
+index ed0a65c9d0fa19e8a439d473f052b2d6362998f1..7dabd36bae5bafd9b696402c716f16d6102dca9d 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
-@@ -569,6 +569,7 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
+@@ -570,6 +570,7 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
     recording->queue = mtl_retain(queue);
     recording->allocator_cache = kk_command_allocator_cache_ref(
        kk_cmd_buffer_device(cmd)->allocator_cache);
@@ -603,7 +603,7 @@ index d595b8a606cdcd547dd3c8b75fc9e40aedfd27d9..9ae1099aa9c95e4cef2ac570f855eedc
     recording->command_buffers = cmd->submit_cmd_bufs;
     cmd->submit_cmd_bufs = UTIL_DYNARRAY_INIT;
  
-@@ -591,13 +592,47 @@ rerecord_cmd_buffer(struct kk_cmd_buffer *cmd)
+@@ -592,13 +593,47 @@ rerecord_cmd_buffer(struct kk_cmd_buffer *cmd)
     vk_cmd_queue_execute(&cmd->vk.cmd_queue, kk_cmd_buffer_to_handle(cmd),
                          &dev->vk.dispatch_table);
  
@@ -653,7 +653,7 @@ index d595b8a606cdcd547dd3c8b75fc9e40aedfd27d9..9ae1099aa9c95e4cef2ac570f855eedc
  static VkResult
  kk_queue_submit_locked(struct kk_queue *queue, struct vk_queue_submit *submit)
  {
-@@ -641,47 +676,72 @@ kk_queue_submit_locked(struct kk_queue *queue, struct vk_queue_submit *submit)
+@@ -642,48 +677,72 @@ kk_queue_submit_locked(struct kk_queue *queue, struct vk_queue_submit *submit)
        uint32_t count = util_dynarray_num_elements(&cmd_buffer->submit_cmd_bufs,
                                                    mtl_command_buffer *);
  
@@ -743,21 +743,22 @@ index d595b8a606cdcd547dd3c8b75fc9e40aedfd27d9..9ae1099aa9c95e4cef2ac570f855eedc
              mtl_commit_options_add_feedback_handler(
 -               options, kk_completed_recording_callback, recording);
 +               parts[p].options, queue->feedback_callback, submission);
-+            mtl_command_queue_commit(queue->mtl_handle, cmds + start,
-+                                     end - start, parts[p].options);
++            kk_device_commit_to_queue(dev, queue->mtl_handle, cmds + start,
++                                      end - start, parts[p].options);
 +            mtl_release(parts[p].options);
 +            start = end;
           }
 -         mtl_commit_options_add_feedback_handler(
 -            options, queue->feedback_callback, submission);
--         mtl_command_queue_commit(queue->mtl_handle, cmds, count, options);
+-         kk_device_commit_to_queue(dev, queue->mtl_handle, cmds, count,
+-                                   options);
 -         mtl_release(options);
 +         assert(start == count && w == wait_count);
 +         free(parts);
           if (recording)
              kk_completed_recording_unref(recording);
        }
-@@ -783,8 +843,13 @@ kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
+@@ -785,8 +844,13 @@ kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
     queue->feedback->submit_timing = KK_DEBUG(SUBMIT_TIMING);
     queue->feedback_callback = commit_callback;
  
@@ -772,7 +773,7 @@ index d595b8a606cdcd547dd3c8b75fc9e40aedfd27d9..9ae1099aa9c95e4cef2ac570f855eedc
        mtx_destroy(&queue->submit_mutex);
        kk_queue_feedback_unref(queue->feedback);
        vk_queue_finish(&queue->vk);
-@@ -816,5 +881,6 @@ kk_queue_finish(struct kk_device *dev, struct kk_queue *queue)
+@@ -818,5 +882,6 @@ kk_queue_finish(struct kk_device *dev, struct kk_queue *queue)
     mtl_command_queue_remove_residency_set(queue->mtl_handle,
                                            dev->residency_set.handle);
     mtl_release(queue->mtl_handle);
@@ -795,12 +796,12 @@ index 2db571e81f8dbbeb9dbe032215dd5bdb9aa4a886..ce5aa43bac0921d9001d5cf72ae2fbae
  
  static inline struct kk_device *
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 4558224e4e7235f2cd0b671e79154f5958a76415..a58e71270d4582fd997571393b8d4d26d658fc8d 100644
+index 34a1c315eb79ed07db4d1ef8d620c2fe0c920545..b7ac08ca99af70683277d4e16e1d3e55b1f711c8 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -1104,6 +1104,39 @@ if with_tests
-       env : ['MESA_SHADER_CACHE_DISABLE=true'],
-       timeout : 60,
+@@ -1120,6 +1120,39 @@ if with_tests
+       env : ['MESA_SHADER_CACHE_DISABLE=true', 'MTL_SHADER_VALIDATION=1'],
+       timeout : 120,
      )
 +    test(
 +      'kosmickrisp_command_buffer_consolidation',

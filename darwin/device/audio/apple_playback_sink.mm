@@ -44,6 +44,8 @@ struct NotificationFlags final {
 #if TARGET_OS_IPHONE
     std::atomic_bool interruptionBegan {};
     std::atomic_bool interruptionEnded {};
+    // A recommendation since the last look said to resume.
+    std::atomic_bool resumeRecommended {};
 #endif
 };
 
@@ -114,6 +116,8 @@ struct PlaybackState final {
         std::uint32_t remaining {};
         if (!consumePending(remaining))
             return;
+        finished[static_cast<std::size_t>(outcome)].fetch_add(
+            1, std::memory_order_relaxed);
         completions.push({
             .requestId = requestId,
             .latencyBytes = remaining * periodBytes,
@@ -147,6 +151,11 @@ public:
     std::unique_ptr<Slot[]> slots;
     CompletionQueue completions;
     std::atomic<std::uint32_t> pending {};
+    // Periods completed so far, by outcome, and how many of the played ones
+    // a mute completed rather than the output: only the pace check reads
+    // them.
+    std::array<std::atomic<std::uint64_t>, 3> finished {};
+    std::atomic<std::uint64_t> finishedByMute {};
 #if TARGET_OS_IPHONE
     // Bumped when a mute takes over the queued periods: the completion
     // handlers of buffers scheduled before it then stand down.
@@ -190,10 +199,9 @@ public:
         /* iOS 27 replaces the interruption notification with two: the session
          * becoming inactive, which also reports the app's own deactivations,
          * and the system's resumption recommendation. An interruption is a
-         * deactivation that carries an interruption context. The sink
-         * resumes on every recommendation, whether it says to resume or not:
-         * the guest cannot see a pause, so a sink left paused would strand
-         * its queued periods until the guest restarts the stream. */
+         * deactivation that carries an interruption context. Every
+         * recommendation ends the interruption; whether the sink takes the
+         * session back at once depends on its advice (see endInterruption). */
         deactivationObserver_ = [[NSNotificationCenter defaultCenter]
             addObserverForName:AVAudioSessionDidBecomeInactiveNotification
                         object:[AVAudioSession sharedInstance]
@@ -212,9 +220,19 @@ public:
             addObserverForName:AVAudioSessionResumptionRecommendationNotification
                         object:[AVAudioSession sharedInstance]
                          queue:nil
-                    usingBlock:^(NSNotification*) {
-                      if (const auto flags = weakNotifications.lock())
-                          flags->signal(flags->interruptionEnded);
+                    usingBlock:^(NSNotification* notification) {
+                      const auto flags = weakNotifications.lock();
+                      if (!flags)
+                          return;
+                      const AVAudioSessionResumptionContext* context =
+                          notification.userInfo[
+                              AVAudioSessionResumptionContextKey];
+                      if (context.recommendation ==
+                          AVAudioSessionResumptionRecommendationShouldResume) {
+                          flags->resumeRecommended.store(
+                              true, std::memory_order_release);
+                      }
+                      flags->signal(flags->interruptionEnded);
                     }];
 #endif
     }
@@ -256,7 +274,7 @@ public:
             [engine_ stop];
             deactivateSession();
 #if TARGET_OS_IPHONE
-            endMute();
+            endStreamMute();
 #endif
             configured_ = false;
             prepared_ = false;
@@ -279,6 +297,10 @@ public:
 #if TARGET_OS_IPHONE
             muteClock_ = MuteClock(parameters.sampleRate, frameCapacity);
 #endif
+            periodFrames_ = frameCapacity;
+            periodsPerSecond_ = static_cast<double>(parameters.sampleRate) /
+                static_cast<double>(frameCapacity);
+            paceSampled_ = {};
             for (std::size_t index = 0; index < state->slotCount; ++index) {
                 state->slots[index].buffer = [[AVAudioPCMBuffer alloc]
                     initWithPCMFormat:format_
@@ -295,7 +317,7 @@ public:
                 configured_ = false;
                 prepared_ = false;
                 running_ = false;
-                faulted_ = true;
+                fault("the engine would not connect");
                 return false;
             }
             configured_ = true;
@@ -307,7 +329,7 @@ public:
             configured_ = false;
             prepared_ = false;
             running_ = false;
-            faulted_ = true;
+            fault("the sink could not be configured");
             return false;
         }
     }
@@ -325,7 +347,7 @@ public:
             faulted_ = false;
             return true;
         } @catch (NSException*) {
-            faulted_ = true;
+            fault("the engine would not prepare");
             return false;
         }
     }
@@ -347,7 +369,7 @@ public:
         running_ = true;
         bool sessionReady = false;
         if (interrupted_) {
-            if (otherAudioPlaying() || !activateSession()) {
+            if (session::otherAudioPlaying() || !activateSession()) {
                 faulted_ = false;
                 enterMute();
                 return true;
@@ -408,7 +430,7 @@ public:
         abortPending();
         deactivateSession();
 #if TARGET_OS_IPHONE
-        endMute();
+        endStreamMute();
 #endif
         prepared_ = false;
         running_ = false;
@@ -427,7 +449,7 @@ public:
         }
         deactivateSession();
 #if TARGET_OS_IPHONE
-        endMute();
+        endStreamMute();
 #endif
         try {
             state_ = std::make_shared<PlaybackState>(wake_);
@@ -450,8 +472,11 @@ public:
         if (!prepared_ || pcm.size() != state->periodBytes ||
             state->slotCount == 0)
             return PlaybackEnqueueResult::failed;
-        if (faulted_)
+        if (faulted_) {
+            ++arrived_;
+            ++declined_;
             return PlaybackEnqueueResult::discarded;
+        }
         PlaybackState::Slot* selected = nullptr;
         std::size_t selectedIndex = 0;
         for (std::size_t offset = 0; offset < state->slotCount; ++offset) {
@@ -482,6 +507,7 @@ public:
             selected->ticket.store(ticket, std::memory_order_release);
             [[maybe_unused]] const auto queued =
                 state->pending.fetch_add(1, std::memory_order_release);
+            ++arrived_;
 #if TARGET_OS_IPHONE
             if (muted_) {
                 // The mute clock completes the period; nothing is played.
@@ -500,7 +526,7 @@ public:
                         expected, 0, std::memory_order_acq_rel))
                     state->discard();
             }
-            faulted_ = true;
+            fault("a period could not be queued");
             return PlaybackEnqueueResult::discarded;
         }
     }
@@ -511,6 +537,7 @@ public:
 #if TARGET_OS_IPHONE
             applyInterruptionEvents();
 #endif
+            watchPace();
 #if TARGET_OS_IPHONE
             // A resumption in flight owns the engine: a configuration change
             // it provokes is acted on once it has ended.
@@ -548,7 +575,7 @@ public:
                 } else {
                     abortPending();
                     running_ = false;
-                    faulted_ = true;
+                    fault("the output did not restart after a change");
                 }
             }
 #if TARGET_OS_IPHONE
@@ -557,7 +584,7 @@ public:
         } @catch (NSException*) {
             abortPending();
             running_ = false;
-            faulted_ = true;
+            fault("the output raised an exception");
 #if TARGET_OS_IPHONE
             endMute();
 #endif
@@ -615,17 +642,8 @@ private:
      * every write. So an interrupted sink is muted instead: its queued periods
      * complete on the schedule the audio hardware would have kept, the guest's
      * clock keeps running, and the sink takes the session back as soon as the
-     * system's resumption recommendation arrives or no other app is playing
-     * primary audio. */
-    [[nodiscard]] bool otherAudioPlaying() const noexcept
-    {
-        @try {
-            return [AVAudioSession sharedInstance]
-                .secondaryAudioShouldBeSilencedHint;
-        } @catch (NSException*) {
-            return false;
-        }
-    }
+     * system advises resuming or no other app is playing primary audio (see
+     * endInterruption). */
 
     // Acts on the notifications that arrived since the last look, so a
     // request that follows them sees the interruption they report.
@@ -639,7 +657,8 @@ private:
         }
         if (notifications_->interruptionEnded.exchange(
                 false, std::memory_order_acq_rel)) {
-            endInterruption();
+            endInterruption(notifications_->resumeRecommended.exchange(
+                false, std::memory_order_acq_rel));
         }
     }
 
@@ -698,17 +717,37 @@ private:
         endMute();
     }
 
-    // Forgets any interruption: the session is released or the sink is reset.
-    void endMute() noexcept
+    /* The stream's mute ends: its periods are no longer the mute clock's.
+     * The interruption does not. It is the session's, held by the app that
+     * took it, and only the system's word that it is over, the session taken
+     * back, or no other app playing ends it; a stream that is torn down and
+     * set up again, as when the guest suspends and resumes, finds the session
+     * as it was left. */
+    void endStreamMute() noexcept
     {
         muted_ = false;
-        interrupted_ = false;
         cancelMuteTimer();
     }
 
-    // The system says the interrupter let go.
-    void endInterruption()
+    // Forgets any interruption: the session is ours again, or the sink faulted.
+    void endMute() noexcept
     {
+        endStreamMute();
+        interrupted_ = false;
+    }
+
+    /* The system says the interrupter let go. Taking the session back
+     * activates it, and a playback session that does not mix with others
+     * interrupts an app that plays, such as a call. So the sink takes it back
+     * at once only on the system's advice to resume. Without that advice an
+     * app that still plays keeps the session: the sink stays muted, its
+     * periods keep completing on the mute clock, and the next hint poll takes
+     * the session back once that app has stopped. A stream that is not running
+     * stays interrupted, and its next start asks the same question. */
+    void endInterruption(bool resumeRecommended)
+    {
+        if (!resumeRecommended && session::otherAudioPlaying())
+            return;
         if (!muted_) {
             interrupted_ = false;
             return;
@@ -860,7 +899,7 @@ private:
         }
         abortPending();
         running_ = false;
-        faulted_ = true;
+        fault("the engine did not start after the session came back");
         endMute();
     }
 
@@ -894,7 +933,7 @@ private:
                 if (outcome == Resumption::Outcome::engineFailed) {
                     abortPending();
                     running_ = false;
-                    faulted_ = true;
+                    fault("the engine did not start after the session came back");
                     endMute();
                     return;
                 }
@@ -906,7 +945,7 @@ private:
             }
         } else if (now >= nextHintPoll_) {
             nextHintPoll_ = now + hintPollInterval;
-            if (!otherAudioPlaying())
+            if (!session::otherAudioPlaying())
                 beginResume();
         }
         armMute();
@@ -932,6 +971,7 @@ private:
         auto expected = oldestTicket;
         if (state.slots[oldest].ticket.compare_exchange_strong(
                 expected, 0, std::memory_order_acq_rel)) {
+            state.finishedByMute.fetch_add(1, std::memory_order_relaxed);
             state.finish(state.slots[oldest].requestId,
                 PlaybackOutcome::played, state.periodBytes);
         }
@@ -978,11 +1018,98 @@ private:
     }
 #endif
 
+    /* A guest that plays has its periods complete at the rate of real audio,
+     * whoever completes them: the output, the mute clock, or the device's
+     * pacing of the periods the sink discards. Periods arriving much faster
+     * for seconds on end mean the guest's clock runs ahead of audio, which
+     * nothing else reports, so the sink says so, with who completed them and
+     * what the output is doing. A guest that writes a backlog stays under it:
+     * a sample covers two seconds. */
+    void watchPace() noexcept
+    {
+        if (!running_ || periodsPerSecond_ <= 0.0) {
+            paceSampled_ = {};
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        const auto state = state_;
+        const std::array<std::uint64_t, 4> counts {
+            arrived_,
+            state->finished[static_cast<std::size_t>(PlaybackOutcome::played)]
+                    .load(std::memory_order_relaxed) -
+                state->finishedByMute.load(std::memory_order_relaxed),
+            state->finishedByMute.load(std::memory_order_relaxed),
+            state->finished[static_cast<std::size_t>(PlaybackOutcome::discarded)]
+                    .load(std::memory_order_relaxed) +
+                declined_,
+        };
+        if (paceSampled_ == std::chrono::steady_clock::time_point {}) {
+            paceSampled_ = now;
+            paceCounts_ = counts;
+            return;
+        }
+        const auto span = std::chrono::duration<double>(now - paceSampled_);
+        if (span < std::chrono::seconds(2))
+            return;
+        const double rate =
+            static_cast<double>(counts[0] - paceCounts_[0]) / span.count();
+        if (rate > periodsPerSecond_ * 1.25 &&
+            (paceLogged_ == std::chrono::steady_clock::time_point {} ||
+                now - paceLogged_ >= std::chrono::seconds(10))) {
+            paceLogged_ = now;
+            double hardwareRate = 0.0;
+            double engineRate = 0.0;
+            bool engineRunning = false;
+            bool playerPlaying = false;
+            @try {
+                engineRate =
+                    [engine_.outputNode outputFormatForBus:0].sampleRate;
+                engineRunning = engine_.isRunning;
+                playerPlaying = player_.isPlaying;
+#if TARGET_OS_IPHONE
+                hardwareRate = [AVAudioSession sharedInstance].sampleRate;
+#endif
+            } @catch (NSException*) {
+            }
+            std::fprintf(stderr,
+                "Audio pace: %.0f periods/s arrive, %.0f expected (completed "
+                "by the output %llu, the mute clock %llu, the device's "
+                "pacing %llu in %.1f s; periods of %u frames, engine %s, "
+                "player %s, hardware %.0f Hz, engine output %.0f Hz)\n",
+                rate, periodsPerSecond_,
+                static_cast<unsigned long long>(counts[1] - paceCounts_[1]),
+                static_cast<unsigned long long>(counts[2] - paceCounts_[2]),
+                static_cast<unsigned long long>(counts[3] - paceCounts_[3]),
+                span.count(), periodFrames_,
+                engineRunning ? "runs" : "stopped",
+                playerPlaying ? "plays" : "stopped", hardwareRate, engineRate);
+        }
+        paceSampled_ = now;
+        paceCounts_ = counts;
+    }
+
     void failToStart() noexcept
     {
         // Periods queued before the start will never play.
         abortPending();
+        fault("the output would not start");
+    }
+
+    /* The output cannot play: the sink discards what it is given and the
+     * device paces the guest on its own clock, so the guest hears nothing and
+     * notices nothing. One line says so, and a sink that faults again and
+     * again says it once in ten seconds. */
+    void fault(const char* reason) noexcept
+    {
         faulted_ = true;
+        const auto now = std::chrono::steady_clock::now();
+        if (faultLogged_ != std::chrono::steady_clock::time_point {} &&
+            now - faultLogged_ < std::chrono::seconds(10))
+            return;
+        faultLogged_ = now;
+        std::fprintf(stderr,
+            "Audio output unavailable (%s): periods are discarded and the "
+            "device paces the guest\n", reason);
     }
 
     /* Hands back every queued period unplayed. The device completes them
@@ -1040,6 +1167,17 @@ private:
     bool prepared_ {};
     bool running_ {};
     bool faulted_ {};
+    std::chrono::steady_clock::time_point faultLogged_ {};
+    // The completion counts the pace check last looked at, and when.
+    std::chrono::steady_clock::time_point paceSampled_ {};
+    std::chrono::steady_clock::time_point paceLogged_ {};
+    std::array<std::uint64_t, 4> paceCounts_ {};
+    double periodsPerSecond_ {};
+    std::uint32_t periodFrames_ {};
+    // Periods the guest has handed in, and how many of them the sink refused
+    // to play because the output is unavailable: device thread only.
+    std::uint64_t arrived_ {};
+    std::uint64_t declined_ {};
 };
 
 } // namespace

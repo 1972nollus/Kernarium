@@ -44,6 +44,15 @@ bool apply() noexcept
 
 } // namespace
 
+bool otherAudioPlaying() noexcept
+{
+    @try {
+        return [AVAudioSession sharedInstance].secondaryAudioShouldBeSilencedHint;
+    } @catch (NSException*) {
+        return false;
+    }
+}
+
 bool acquire(Client client) noexcept
 {
     const std::lock_guard guard(lock);
@@ -75,6 +84,11 @@ void release(Client client) noexcept
 }
 
 #else
+
+bool otherAudioPlaying() noexcept
+{
+    return false;
+}
 
 bool acquire(Client) noexcept
 {

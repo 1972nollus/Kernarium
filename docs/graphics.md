@@ -974,7 +974,9 @@ failing under Metal validation or on a busy GPU. That is KosmicKrisp's
 `KK_WORKAROUND_21`. Each kill is a GPU lockup that the system recovers from by
 discarding the in-flight work of every process on the GPU, WindowServer and
 other guests included, and Metal 4 reports those discards with the same
-timeout code. A store-free shader is left alone: killed, it would lose its
+timeout code. KosmicKrisp's report of a failed submission therefore adds the
+reason Metal nests under the error, which names a hang or a discard. A
+store-free shader is left alone: killed, it would lose its
 draw's rasterized output and set off that recovery, but no realistic one comes
 near the limit.
 The routed draws of a pass overlap as vertex functions do and cost about
@@ -994,6 +996,14 @@ registers the textures of bound images, image views and texel buffer views for
 their lifetimes. Without validation it registers none, since that costs about
 1.4 us per image view on an M1 Ultra. The Mesa test
 `kosmickrisp_validated_image_access` runs the copy under shader validation.
+Metal reads the residency sets of a queue while it commits to it, and a set's
+methods are not thread-safe; under shader validation the commit walks every
+heap of the device set, and a heap freed on another thread meanwhile crashed
+the process. Every queue commit therefore holds the lock that every write to
+the set holds, so a write waits for at most the commit in flight and a freed
+allocation still stops counting against the device when `vkFreeMemory`
+returns. The Mesa test `kosmickrisp_residency_commit_race` frees memory on one
+thread while another submits under shader validation.
 
 Linked graphics pipelines share native programs and dynamic vertex-input
 variants only while a live Vulkan pipeline owns them. The lookup cache drops

@@ -54,13 +54,21 @@ paces only the periods a sink discards. An interruption is the session
 becoming inactive with an interruption context; the app's own deactivations
 are not interruptions.
 
-The sink takes the session back when the system recommends resuming, whichever
-advice it carries, and, because iOS posts nothing when the interrupter simply
-stops or is killed, once no other app plays primary audio, asked once a second
-while the stream runs. It never takes the session from an app that still
-plays, except when the guest starts a stream at a moment nothing interrupts
-it: a stream that starts or resumes during an interruption, or a route change
-during one, joins the mute. Route changes otherwise restart the engine.
+The sink takes the session back when the system recommends resuming, and,
+because iOS posts nothing when the interrupter simply stops or is killed, once
+no other app plays primary audio, asked once a second while the stream runs. A
+recommendation that does not advise resuming takes it back only if no other app
+plays: activating a playback session interrupts an app that plays, so that app
+keeps the session while the sink stays muted. It never takes the session from
+an app that still plays, except when the guest starts a stream at a moment
+nothing interrupts it: a stream that starts or resumes during an interruption,
+or a route change during one, joins the mute. Route changes otherwise restart
+the engine. The
+interruption belongs to the session, not to the stream: closing the stream,
+resetting the device, or the guest suspending and resuming (which tears the
+stream down and sets it up again) leaves it in place, so the new stream joins
+the mute until the system says the interrupter let go, the sink takes the
+session back, or no other app plays.
 
 Taking the session back, starting the engine and the audio hardware's first
 cycle (about 70, 75 and 210 ms on an iPad mini 6) run on another thread while
@@ -69,6 +77,13 @@ clock still holds go to the player only once it has consumed a buffer of
 silence, so that no guest write waits longer than its stream's buffer lasts
 (100 ms with four periods, about 330 ms with a 300 ms buffer): a longer wait
 ends in an I/O error.
+
+The sink says what it cannot do on stderr, each line rate limited: `Audio muted` and `Audio resumed after` for an interruption, `Audio
+output unavailable` when the output will not start and the device paces the
+guest alone, and `Audio pace`, which a guest whose periods arrive more than a
+quarter faster than audio for two seconds draws, with who completed them (the
+output, the mute clock or the device's pacing), the period size, and the state
+of the engine, the player and the sample rates.
 
 ## Capture
 
@@ -109,8 +124,13 @@ reads or opens the microphone, and no permission prompt can appear.
   the transport worker, which decides on its own thread.
 - `AppleMicrophoneInput` taps the engine's input node and converts to 48 kHz
   signed 16-bit in the guest's channel count. A route change restarts the
-  engine; on iOS an interruption stops the microphone and its end starts it
-  again.
+  engine. On iOS an interruption stops the microphone, and the system's
+  recommendation to resume starts it again if the guest still records. A
+  recommendation not to resume starts it only when no other app plays
+  (`session::otherAudioPlaying`), because starting takes the session and the
+  microphone must never take it from an app that plays or records, such as a
+  call; it then stays stopped until the next recommendation or the guest's
+  next recording.
 - The audio session is shared with the output (`audio_session.hpp`): playback
   alone uses the playback category, and while the microphone is captured the
   category is play-and-record, still mixing with other audio. macOS has no
@@ -139,8 +159,9 @@ pacing and capture delivery under an injected clock, and the production clock.
 over fakes; it never opens the microphone or shows a permission prompt.
 `audio-mute-clock` covers the schedule a muted sink completes periods on.
 `UML_TEST_APPLE_AUDIO=ON` adds `apple-audio-playback`, which plays a brief tone
-through the real output, and `apple-audio-interruption`, which runs the sink in
-the iOS Simulator against posted interruption notifications (see
+through the real output, and `apple-audio-interruption`, which runs the sink
+and the microphone, with no real input, in the iOS Simulator against posted
+interruption notifications (see
 [`../../../docs/testing.md`](../../../docs/testing.md)). A real interruption on
 a device comes from Kernarium's `AudioInterrupter` test application, which
 `devicectl` launches and ends (see
