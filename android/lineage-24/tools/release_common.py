@@ -6,6 +6,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import csv
+import datetime
 import json
 import os
 import re
@@ -32,13 +33,14 @@ require_hex = _CHECKS.require_hex
 safe_relative = _CHECKS.safe_relative
 parse_env = _CHECKS.parse_env
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 PRODUCT_FAMILY = "lineage-24-mainline-6.18-4k"
 DIRECTORY_PREFIX = "lineage24-mainline6.18-4k-"
 # The kernel artifact family of the Android product. Kernarium and CMake key
 # Android mode on it.
 KERNEL_FAMILY = "android-6.18"
 RELEASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+SECURITY_PATCH_RE = re.compile(r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$")
 
 # The Android build variants a release may be built as, with the build
 # properties each one fixes. LINEAGE24_BUILD_VARIANT in metadata/lineage.env
@@ -59,8 +61,8 @@ def configured_build_variant(android_root: Path) -> str:
 
 PAYLOAD_SPECS = {
     "boot/kernel-command-line.txt": ("kernel-command-line", "utf8-text"),
-    "guest/android-17-uml-arm64.img.zst": ("guest-disk-archive", "zstd-raw-gpt"),
     "guest/partition-layout.json": ("partition-layout", "json"),
+    "guest/system.img": ("system-disk", "raw-gpt-read-only"),
     "kernel/System.map": ("kernel-symbol-map", "utf8-text"),
     "kernel/config": ("kernel-config", "kconfig"),
     "kernel/modules.builtin": ("built-in-module-list", "utf8-text"),
@@ -91,6 +93,8 @@ ANDROID_KEYS = {
     "major",
     "sdk",
     "build_id",
+    "build_number",
+    "security_patch",
     "build_variant",
     "fingerprint",
     "vendor_api_level",
@@ -202,6 +206,15 @@ def validate_manifest(value: object) -> dict:
     if android["build_variant"] not in BUILD_VARIANTS:
         fail("Android build variant is not user or userdebug")
     require_integer(android["vendor_api_level"], "vendor API level", minimum=202604)
+    if require_integer(android["build_number"], "Android build number", minimum=1) > 9_999_999_999:
+        fail("Android build number has more than ten digits")
+    patch_level = require_string(android["security_patch"], "Android security patch level")
+    if SECURITY_PATCH_RE.fullmatch(patch_level) is None:
+        fail("Android security patch level is not a YYYY-MM-DD date")
+    try:
+        datetime.date.fromisoformat(patch_level)
+    except ValueError:
+        fail("Android security patch level is not a calendar date")
 
     source = require_exact_keys(manifest["source"], SOURCE_KEYS, "source")
     for key in ("manifest_repository", "manifest_revision", "aosp_tag"):
@@ -451,10 +464,8 @@ def inventory_map(manifest: dict) -> dict[str, dict]:
     return {entry["path"]: entry for entry in manifest["inventory"]}
 
 
-def verify_inventory(release_root: Path, manifest: dict, *, allow_expanded_disk: bool = False) -> None:
+def verify_inventory(release_root: Path, manifest: dict) -> None:
     expected_files = set(PAYLOAD_SPECS) | {"release-manifest.json"}
-    if allow_expanded_disk:
-        expected_files.add("guest/android-17-uml-arm64.img")
     expected_dirs = {"."}
     for relative in expected_files:
         parent = PurePosixPath(relative).parent
@@ -604,31 +615,10 @@ def verify_disk_boot_payloads(
     ])
 
 
-def resolve_zstd(value: Path | None) -> Path:
-    if value is not None:
-        candidate = value
-    else:
-        located = shutil.which("zstd")
-        if located is None:
-            fail("zstd is not available; pass --zstd with an absolute local path")
-        candidate = Path(located)
-    if not candidate.is_absolute():
-        fail("zstd must be an absolute local executable")
-    candidate = candidate.resolve()
-    if not candidate.is_file():
-        fail("zstd must be an absolute regular local executable")
-    if not os.access(candidate, os.X_OK):
-        fail("zstd is not executable")
-    return candidate
-
-
 def verify_semantics(
     release_root: Path,
     android_root: Path,
-    zstd: Path | None,
-    expanded_disk: Path | None,
     *,
-    verify_archive: bool,
     enforce_tracked_policy: bool,
 ) -> None:
     run_checked([
@@ -645,10 +635,6 @@ def verify_semantics(
             android_root / "support/boot/kernel-command-line.txt"
         ).read_bytes():
             fail("release kernel command line differs from tracked policy")
-        if (release_root / "guest/partition-layout.json").read_bytes() != (
-            android_root / "support/image/partition-layout.json"
-        ).read_bytes():
-            fail("release partition layout differs from tracked policy")
 
     fstab = (release_root / "support/fstab.uml").read_text(encoding="utf-8")
     for name in (
@@ -684,27 +670,29 @@ def verify_semantics(
         if forbidden in receipt.lower():
             fail("build receipt contains builder endpoint, credential, or local path state")
 
-    if verify_archive:
-        zstd_path = resolve_zstd(zstd)
-        archive = release_root / "guest/android-17-uml-arm64.img.zst"
-        run_checked([str(zstd_path), "-q", "-t", str(archive)])
-    if expanded_disk is not None:
-        if not expanded_disk.is_file() or expanded_disk.is_symlink():
-            fail("expanded guest disk is missing or unsafe")
-        run_checked([
-            str(android_root / "tools/ubd-disk.py"),
-            "verify",
-            "--layout",
-            str(release_root / "guest/partition-layout.json"),
-            "--disk",
-            str(expanded_disk),
-        ])
-        verify_disk_boot_payloads(
-            expanded_disk,
-            release_root / "guest/partition-layout.json",
-            android_root,
-            structural=not enforce_tracked_policy,
-        )
+    # The system disk is checked whole: its GPT, every partition's SHA-256,
+    # and, for a release the tracked tree builds, that its layout is what the
+    # tracked disk policy produces.
+    disk = release_root / "guest/system.img"
+    layout = release_root / "guest/partition-layout.json"
+    arguments = [
+        str(android_root / "tools/ubd-disk.py"),
+        "verify",
+        "--layout",
+        str(layout),
+        "--disk",
+        str(disk),
+        "--hash",
+    ]
+    if enforce_tracked_policy:
+        arguments += ["--policy", str(android_root / "support/image/disk-policy.json")]
+    run_checked(arguments)
+    verify_disk_boot_payloads(
+        disk,
+        layout,
+        android_root,
+        structural=not enforce_tracked_policy,
+    )
 
     schema = android_root / "support/release/release-manifest.schema.json"
     if not schema.is_file():
@@ -716,11 +704,7 @@ def verify_release(
     android_root: Path,
     *,
     acceptance_path: Path | None = None,
-    zstd: Path | None = None,
-    expanded_disk: Path | None = None,
-    allow_expanded_disk: bool = False,
     semantic: bool = True,
-    verify_archive: bool = True,
 ) -> dict:
     if not release_root.is_absolute():
         fail("release source must be an absolute local path")
@@ -739,14 +723,11 @@ def verify_release(
         # accepted kernel artifact owns that compatibility check now, allowing
         # an old rootfs bundle's writable disk to survive a kernel-only
         # application update.
-    verify_inventory(release_root, manifest, allow_expanded_disk=allow_expanded_disk)
+    verify_inventory(release_root, manifest)
     if semantic:
         verify_semantics(
             release_root,
             android_root,
-            zstd,
-            expanded_disk,
-            verify_archive=verify_archive,
             enforce_tracked_policy=acceptance_path is None,
         )
     return manifest

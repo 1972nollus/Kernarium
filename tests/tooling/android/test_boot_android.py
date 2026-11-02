@@ -7,6 +7,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import importlib.util
+import json
 import os
 from pathlib import Path
 import signal
@@ -25,25 +26,58 @@ SPEC.loader.exec_module(boot_android)
 
 
 class BootAndroidTests(unittest.TestCase):
-    def installed_release(self, root: Path, name: str = "accepted-1") -> Path:
+    def installed_release(
+        self,
+        root: Path,
+        name: str = "accepted-1",
+        *,
+        build: int = 100,
+        data_layout: int = 1,
+    ) -> Path:
         release = root / name
         (release / "boot").mkdir(parents=True)
         (release / "guest").mkdir()
         (release / "release-manifest.json").write_text(
-            '{"release_id":"' + name + '"}\n', encoding="utf-8"
+            json.dumps({
+                "release_id": name,
+                "android": {
+                    "fingerprint": "fixture/fingerprint",
+                    "build_number": build,
+                    "security_patch": "2026-10-05",
+                },
+            }) + "\n",
+            encoding="utf-8",
+        )
+        (release / "guest/partition-layout.json").write_text(
+            json.dumps({
+                "system_disk": {"sha256": f"{build:064x}"},
+                "data_disk": {
+                    "layout_version": data_layout,
+                    "capacity_gib": {"minimum": 4, "default": 8, "maximum": 64},
+                },
+            }) + "\n",
+            encoding="utf-8",
         )
         (release / "boot/kernel-command-line.txt").write_text(
             "console=ttyS0\n", encoding="utf-8"
         )
-        (release / "guest/android-17-uml-arm64.img").write_bytes(b"image")
+        (release / "guest/system.img").write_bytes(b"image")
         return release
+
+    def fake_tools(self, root: Path) -> tuple[Path, Path]:
+        emulator = root / "uml-darwin-android17"
+        adb = root / "adb"
+        for executable in (emulator, adb):
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            executable.chmod(0o755)
+        return emulator, adb
 
     def test_defaults_use_native_portrait_configuration(self) -> None:
         options = boot_android.parse_arguments([])
         command = boot_android.emulator_command(
             options,
             Path("/tmp/release"),
-            Path("/tmp/android.img"),
+            Path("/tmp/instance/data.img"),
             Path("/tmp/uml-darwin-android17"),
         )
         self.assertIn("--gpu-display=native", command)
@@ -55,9 +89,17 @@ class BootAndroidTests(unittest.TestCase):
         self.assertIn("ncpus=10", command)
         self.assertIn("mem=8G", command)
         self.assertIn("--android-boot-mode=auto", command)
-        self.assertIn("--android-disk=/tmp/android.img", command)
-        self.assertFalse(any("android-instance" in value for value in command))
-        self.assertFalse(any("android-base-disk" in value for value in command))
+        self.assertIn("--android-data-disk=/tmp/instance/data.img", command)
+        self.assertFalse(any(value.startswith("--android-disk") for value in command))
+        self.assertFalse(any("android-data-gib" in value for value in command))
+        grown = boot_android.emulator_command(
+            options,
+            Path("/tmp/release"),
+            Path("/tmp/instance/data.img"),
+            Path("/tmp/uml-darwin-android17"),
+            12,
+        )
+        self.assertIn("--android-data-gib=12", grown)
         self.assertFalse(options.build)
         self.assertTrue(boot_android.parse_arguments(["--build"]).build)
 
@@ -228,115 +270,54 @@ class BootAndroidTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     boot_android.parse_arguments(arguments)
 
-    def test_default_disk_is_the_stable_persistent_image(self) -> None:
-        disk = boot_android.disk_path(None)
-        self.assertEqual(disk.name, "android-17.img")
-        # disk_path() resolves symbolic links, and `.build` may be one.
+    def test_default_instance_is_the_stable_directory(self) -> None:
+        instance = boot_android.instance_path(None)
+        self.assertEqual(instance.name, "android-17")
+        # instance_path() resolves symbolic links, and `.build` may be one.
         self.assertEqual(
-            disk.parent, boot_android.INSTANCES_ROOT.resolve(strict=False)
+            instance.parent, boot_android.INSTANCES_ROOT.resolve(strict=False)
         )
 
-    def test_disk_is_resized_with_sgdisk(self) -> None:
+    def test_data_capacity_stays_inside_the_releases_range(self) -> None:
         with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
-            root = Path(temporary)
-            disk = root / "android.img"
-            disk.write_bytes(b"image")
-            sgdisk = root / "sgdisk"
-            sgdisk.write_text("#!/bin/sh\n", encoding="utf-8")
-            sgdisk.chmod(0o755)
-            completed = boot_android.subprocess.CompletedProcess(
-                [], 0, "The operation has completed successfully.\n", ""
+            release = boot_android.android_instance.read_release(
+                self.installed_release(Path(temporary))
             )
-            with (
-                mock.patch.object(
-                    boot_android,
-                    "gpt_layout_matches",
-                    return_value=True,
-                ),
-                mock.patch.object(
-                    boot_android,
-                    "run_sgdisk",
-                    return_value=completed,
-                ) as run_sgdisk,
-            ):
-                self.assertTrue(
-                    boot_android.resize_android_disk(disk, 4, sgdisk=sgdisk)
-                )
-                self.assertFalse(
-                    boot_android.resize_android_disk(disk, 4, sgdisk=sgdisk)
-                )
-            self.assertEqual(disk.stat().st_size, 4 * 1024**3)
-            mutation = run_sgdisk.call_args.args
-            self.assertEqual(mutation[0], sgdisk)
-            self.assertIn("--move-second-header", mutation)
-            self.assertIn("--delete=10", mutation)
-            self.assertIn(
-                "--new=10:6131712:8386559",
-                mutation,
-            )
+        self.assertIsNone(
+            boot_android.data_capacity(boot_android.parse_arguments([]), release)
+        )
+        for gib, accepted in ((3, False), (4, True), (64, True), (65, False)):
+            options = boot_android.parse_arguments(["--data-gib", str(gib)])
+            if accepted:
+                self.assertEqual(boot_android.data_capacity(options, release), gib)
+            else:
+                with self.assertRaises(boot_android.LauncherError):
+                    boot_android.data_capacity(options, release)
 
-    def test_new_release_recreates_the_persistent_disk(self) -> None:
+    def test_update_flags_exclude_each_other(self) -> None:
+        for arguments in (
+            ["--retry", "--reset"],
+            ["--retry", "--restore-snapshot"],
+            ["--restore-snapshot", "--reset"],
+        ):
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(SystemExit):
+                    boot_android.parse_arguments(arguments)
+        for removed in (["--disk", "x.img"], ["--sgdisk", "sgdisk"]):
+            with self.subTest(removed=removed):
+                with self.assertRaises(SystemExit):
+                    boot_android.parse_arguments(removed)
+
+    def test_a_release_before_the_two_disk_layout_is_refused(self) -> None:
         with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
-            root = Path(temporary)
-            release = self.installed_release(root / "releases", "release-2")
-            disk = root / "android.img"
-            disk.write_bytes(b"old")
-            boot_android.disk_release_path(disk).write_text(
-                "release-1\n", encoding="utf-8"
-            )
-            sgdisk = root / "sgdisk"
-            sgdisk.write_text("#!/bin/sh\n", encoding="utf-8")
-            sgdisk.chmod(0o755)
-            def resize(image: Path, _capacity: int, **_kwargs: object) -> bool:
-                with image.open("r+b") as handle:
-                    handle.truncate(boot_android.DEFAULT_DISK_SIZE_GIB * 1024**3)
-                return True
-
-            with mock.patch.object(
-                boot_android, "resize_android_disk", side_effect=resize
-            ):
-                self.assertTrue(
-                    boot_android.prepare_persistent_disk(
-                        release, disk, sgdisk=sgdisk
-                    )
-                )
-            self.assertEqual(
-                boot_android.disk_release_path(disk).read_text(encoding="utf-8"),
-                "release-2\n",
-            )
-            self.assertEqual(disk.stat().st_size, 8 * 1024**3)
-            with mock.patch.object(
-                boot_android, "gpt_layout_matches", return_value=True
-            ):
-                self.assertFalse(
-                    boot_android.prepare_persistent_disk(
-                        release, disk, sgdisk=sgdisk
-                    )
-                )
-
-    def test_sgdisk_requires_an_executable_candidate(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
-            unavailable = Path(temporary) / "sgdisk"
+            release = Path(temporary) / "old"
+            (release / "boot").mkdir(parents=True)
+            (release / "guest").mkdir()
+            (release / "release-manifest.json").write_text("{}\n", encoding="utf-8")
+            (release / "boot/kernel-command-line.txt").write_text("x\n", encoding="utf-8")
+            (release / "guest/android-17-uml-arm64.img").write_bytes(b"image")
             with self.assertRaises(boot_android.LauncherError):
-                boot_android.find_sgdisk((unavailable,), search_path=temporary)
-
-    def test_sgdisk_is_found_on_path_before_the_fallbacks(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
-            root = Path(temporary).resolve()
-            on_path = root / "bin"
-            on_path.mkdir()
-            fallback = root / "fallback-sgdisk"
-            for executable in (on_path / "sgdisk", fallback):
-                executable.write_text("#!/bin/sh\n", encoding="utf-8")
-                executable.chmod(0o755)
-            self.assertEqual(
-                boot_android.find_sgdisk((fallback,), search_path=str(on_path)),
-                on_path / "sgdisk",
-            )
-            self.assertEqual(
-                boot_android.find_sgdisk((fallback,), search_path=str(root)),
-                fallback,
-            )
+                boot_android.release_path(release)
 
     def test_build_commands_use_the_checked_in_preset(self) -> None:
         self.assertEqual(
@@ -374,59 +355,92 @@ class BootAndroidTests(unittest.TestCase):
             ):
                 boot_android.wait_for_adb(Path("adb"), "127.0.0.1:5555", guest, 5)
 
+    class Guest:
+        """A guest that exits with `status` once waited for."""
+
+        pid = 123
+
+        def __init__(self, status: int = 0) -> None:
+            self.status = status
+            self.exited = False
+            self.waits = 0
+            self.returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.status if self.exited else None
+
+        def wait(self, timeout: int | None = None) -> int:
+            del timeout
+            self.waits += 1
+            self.exited = True
+            self.returncode = self.status
+            return self.status
+
+    def run_main(
+        self,
+        root: Path,
+        release: Path,
+        instance: Path,
+        extra: list[str] | None = None,
+        *,
+        guest: "BootAndroidTests.Guest | None" = None,
+        booted: bool = True,
+    ) -> tuple[int, "BootAndroidTests.Guest", mock.Mock]:
+        emulator, adb = self.fake_tools(root)
+        guest = guest or self.Guest()
+        with (
+            mock.patch.object(
+                boot_android, "start_guest", return_value=guest
+            ) as popen,
+            mock.patch.object(boot_android, "ensure_loopback_port_available"),
+            mock.patch.object(boot_android, "wait_for_adb") as wait_for_adb,
+            mock.patch.object(
+                boot_android, "wait_for_boot_completed", return_value=booted
+            ),
+            mock.patch.object(boot_android, "install_shutdown_handlers"),
+            mock.patch.object(boot_android, "disconnect_adb"),
+        ):
+            result = boot_android.main(
+                [
+                    "--release", str(release),
+                    "--instance", str(instance),
+                    "--emulator", str(emulator),
+                    "--adb", str(adb),
+                    *(extra or []),
+                ]
+            )
+        popen.wait_for_adb = wait_for_adb
+        return result, guest, popen
+
     def test_normal_exit_disconnects_adb_and_reaps_guest(self) -> None:
-        class Guest:
-            pid = 123
-
-            def __init__(self) -> None:
-                self.exited = False
-
-            def poll(self) -> int | None:
-                return 0 if self.exited else None
-
-            def wait(self, timeout: int | None = None) -> int:
-                del timeout
-                self.exited = True
-                return 0
-
         with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
             root = Path(temporary)
             release = self.installed_release(root / "releases")
-            emulator = root / "uml-darwin-android17"
-            adb = root / "adb"
-            for executable in (emulator, adb):
-                executable.write_text("#!/bin/sh\n", encoding="utf-8")
-                executable.chmod(0o755)
-            disk = root / "android.img"
-            guest = Guest()
+            emulator, adb = self.fake_tools(root)
+            guest = self.Guest()
             with (
                 mock.patch.object(
-                    boot_android.subprocess, "Popen", return_value=guest
+                    boot_android, "start_guest", return_value=guest
                 ) as popen,
-                mock.patch.object(
-                    boot_android, "prepare_persistent_disk", return_value=False
-                ),
                 mock.patch.object(boot_android, "ensure_loopback_port_available"),
                 mock.patch.object(boot_android, "wait_for_adb"),
+                mock.patch.object(
+                    boot_android, "wait_for_boot_completed", return_value=True
+                ),
                 mock.patch.object(boot_android, "install_shutdown_handlers"),
                 mock.patch.object(boot_android, "disconnect_adb") as disconnect,
             ):
                 result = boot_android.main(
                     [
-                        "--release",
-                        str(release),
-                        "--disk",
-                        str(disk),
-                        "--emulator",
-                        str(emulator),
-                        "--adb",
-                        str(adb),
+                        "--release", str(release),
+                        "--instance", str(root / "instance"),
+                        "--emulator", str(emulator),
+                        "--adb", str(adb),
                     ]
                 )
             self.assertEqual(result, 0)
             self.assertTrue(guest.exited)
             popen.assert_called_once()
-            self.assertTrue(popen.call_args.kwargs["start_new_session"])
             self.assertEqual(
                 disconnect.call_args_list,
                 [
@@ -434,67 +448,169 @@ class BootAndroidTests(unittest.TestCase):
                     mock.call(adb.resolve(), "127.0.0.1:5555"),
                 ],
             )
+            command = popen.call_args.args[0]
+            self.assertIn(
+                f"--android-data-disk={(root / 'instance').resolve()}/data.img",
+                command,
+            )
 
     def test_a_restarting_guest_is_one_process_until_it_ends(self) -> None:
         # The emulator restarts the guest inside its process, so the launcher
         # starts it once and waits on that process alone. The wait returns the
         # status that ended the whole run, here the loop guard's 3.
-        class Guest:
-            pid = 123
-
-            def __init__(self) -> None:
-                self.exited = False
-                self.waits = 0
-
-            def poll(self) -> int | None:
-                return 3 if self.exited else None
-
-            def wait(self, timeout: int | None = None) -> int:
-                del timeout
-                self.waits += 1
-                self.exited = True
-                return 3
-
         with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
             root = Path(temporary)
             release = self.installed_release(root / "releases")
-            emulator = root / "uml-darwin-android17"
-            adb = root / "adb"
-            for executable in (emulator, adb):
-                executable.write_text("#!/bin/sh\n", encoding="utf-8")
-                executable.chmod(0o755)
-            guest = Guest()
-            with (
-                mock.patch.object(
-                    boot_android.subprocess, "Popen", return_value=guest
-                ) as popen,
-                mock.patch.object(
-                    boot_android, "prepare_persistent_disk", return_value=False
-                ),
-                mock.patch.object(boot_android, "ensure_loopback_port_available"),
-                mock.patch.object(boot_android, "wait_for_adb") as wait_for_adb,
-                mock.patch.object(boot_android, "install_shutdown_handlers"),
-                mock.patch.object(boot_android, "disconnect_adb"),
-            ):
-                result = boot_android.main(
-                    [
-                        "--release",
-                        str(release),
-                        "--disk",
-                        str(root / "android.img"),
-                        "--emulator",
-                        str(emulator),
-                        "--adb",
-                        str(adb),
-                    ]
-                )
+            result, guest, popen = self.run_main(
+                root, release, root / "instance", guest=self.Guest(3)
+            )
             self.assertEqual(result, 3)
             popen.assert_called_once()
-            wait_for_adb.assert_called_once()
+            popen.wait_for_adb.assert_called_once()
             self.assertEqual(guest.waits, 1)
-            self.assertIn(
-                "--android-boot-mode=auto", popen.call_args.args[0]
+            self.assertIn("--android-boot-mode=auto", popen.call_args.args[0])
+
+    def test_a_new_instance_records_the_release_and_completes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary)
+            release = self.installed_release(root / "releases", "rel-a", build=100)
+            instance = root / "instance"
+            result, _guest, popen = self.run_main(root, release, instance)
+            self.assertEqual(result, 0)
+            state = json.loads((instance / "instance.json").read_text())
+            self.assertEqual(state["release_id"], "rel-a")
+            self.assertEqual(state["created_with"], "rel-a")
+            self.assertEqual(state["build_incremental"], "100")
+            self.assertEqual(state["last_completed"]["release_id"], "rel-a")
+            self.assertIsNone(state["pending_update"])
+            # A new disk asks for no capacity: the release's default applies.
+            self.assertFalse(
+                any("android-data-gib" in argument for argument in popen.call_args.args[0])
             )
+
+    def test_a_start_that_never_booted_or_died_is_not_complete(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary)
+            release = self.installed_release(root / "releases", "rel-a", build=100)
+            for label, booted, status in (
+                ("no boot_completed", False, 0),
+                ("a failing exit", True, 1),
+            ):
+                with self.subTest(label):
+                    instance = root / label.replace(" ", "-")
+                    result, _guest, _popen = self.run_main(
+                        root, release, instance, booted=booted, guest=self.Guest(status)
+                    )
+                    self.assertEqual(result, status)
+                    state = json.loads((instance / "instance.json").read_text())
+                    self.assertIsNone(state["last_completed"])
+
+    def test_a_newer_release_snapshots_and_the_snapshot_ends_with_a_clean_boot(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary)
+            releases = root / "releases"
+            first = self.installed_release(releases, "rel-a", build=100)
+            second = self.installed_release(releases, "rel-b", build=200)
+            instance = root / "instance"
+            self.run_main(root, first, instance)
+            (instance / "data.img").write_bytes(b"guest data")
+
+            # The second release's first boot does not complete.
+            result, _guest, _popen = self.run_main(
+                root, second, instance, booted=False
+            )
+            self.assertEqual(result, 0)
+            state = json.loads((instance / "instance.json").read_text())
+            self.assertEqual(state["release_id"], "rel-b")
+            self.assertEqual(state["pending_update"]["to_release_id"], "rel-b")
+            self.assertEqual(state["pending_update"]["from"]["release_id"], "rel-a")
+            snapshot = instance / "data.img.pre-rel-b"
+            self.assertEqual(snapshot.read_bytes(), b"guest data")
+
+            # Nothing starts until the user decides.
+            blocked, _guest, popen = self.run_main(root, second, instance)
+            self.assertEqual(blocked, 1)
+            popen.assert_not_called()
+
+            # Restoring puts back the data the update started from.
+            (instance / "data.img").write_bytes(b"damaged by the update")
+            result, _guest, _popen = self.run_main(
+                root, second, instance, ["--restore-snapshot"]
+            )
+            self.assertEqual(result, 0)
+            state = json.loads((instance / "instance.json").read_text())
+            self.assertIsNone(state["pending_update"])
+            self.assertEqual(state["last_completed"]["release_id"], "rel-b")
+            self.assertEqual((instance / "data.img").read_bytes(), b"guest data")
+            self.assertFalse(snapshot.exists())
+
+    def test_retry_keeps_the_snapshot_until_a_clean_boot(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary)
+            releases = root / "releases"
+            first = self.installed_release(releases, "rel-a", build=100)
+            second = self.installed_release(releases, "rel-b", build=200)
+            instance = root / "instance"
+            self.run_main(root, first, instance)
+            (instance / "data.img").write_bytes(b"guest data")
+            self.run_main(root, second, instance, booted=False)
+            snapshot = instance / "data.img.pre-rel-b"
+            self.run_main(root, second, instance, ["--retry"], booted=False)
+            self.assertTrue(snapshot.exists())
+            self.run_main(root, second, instance, ["--retry"])
+            self.assertFalse(snapshot.exists())
+            state = json.loads((instance / "instance.json").read_text())
+            self.assertIsNone(state["pending_update"])
+
+    def test_a_downgrade_is_refused_before_the_guest_starts(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary)
+            releases = root / "releases"
+            newer = self.installed_release(releases, "rel-b", build=200)
+            older = self.installed_release(releases, "rel-a", build=100)
+            instance = root / "instance"
+            self.run_main(root, newer, instance)
+            (instance / "data.img").write_bytes(b"guest data")
+            before = (instance / "instance.json").read_bytes()
+            result, _guest, popen = self.run_main(root, older, instance)
+            self.assertEqual(result, 1)
+            popen.assert_not_called()
+            self.assertEqual((instance / "instance.json").read_bytes(), before)
+            self.assertEqual((instance / "data.img").read_bytes(), b"guest data")
+            dry = boot_android.main([
+                "--release", str(older), "--instance", str(instance), "--dry-run",
+                "--adb", str(self.fake_tools(root)[1]),
+            ])
+            self.assertEqual(dry, 1)
+
+            # Resetting is the user's way out.
+            result, _guest, _popen = self.run_main(
+                root, older, instance, ["--reset"]
+            )
+            self.assertEqual(result, 0)
+            state = json.loads((instance / "instance.json").read_text())
+            self.assertEqual(state["release_id"], "rel-a")
+            self.assertFalse((instance / "data.img").exists())
+
+    def test_dry_run_changes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary)
+            release = self.installed_release(root / "releases")
+            _emulator, adb = self.fake_tools(root)
+            instance = root / "instance"
+            result = boot_android.main([
+                "--release", str(release), "--instance", str(instance),
+                "--dry-run", "--adb", str(adb),
+            ])
+            self.assertEqual(result, 0)
+            self.assertFalse(instance.exists())
+
+    def test_the_emulator_leads_its_own_process_group(self) -> None:
+        with mock.patch.object(boot_android.subprocess, "Popen") as popen:
+            boot_android.start_guest(["emulator"])
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
 
     def test_guest_that_leads_no_group_is_still_stopped(self) -> None:
         guest = mock.Mock()

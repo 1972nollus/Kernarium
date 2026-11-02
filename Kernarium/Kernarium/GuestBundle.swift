@@ -14,34 +14,28 @@ enum GuestFlavor: UInt32 {
 struct GuestBundle: Equatable {
     static let pathExtension = "kern"
 
-    /// Android rootfs payload layout. The signed runtime carries its kernel
+    /// Android rootfs payload layout: the release's files, which the runtime
+    /// reads in place, and the instance's writable data disk, which it creates
+    /// at the first launch. The signed runtime carries its kernel
     /// independently, so a kernel-only app update does not rewrite the bundle.
     enum Android {
         static let commandLine = "boot/kernel-command-line.txt"
-        static let guestDirectory = "guest"
-        static let diskExtension = "img"
+        static let systemDisk = "guest/system.img"
+        static let layout = "guest/partition-layout.json"
+        static let dataDisk = "guest/data.img"
     }
 
     let url: URL
     let flavor: GuestFlavor
-    let disk: URL
 
     var name: String { url.lastPathComponent }
     var commandLine: URL { url.appendingPathComponent(Android.commandLine) }
-
-    /// The host grows the bundle-local raw image and its userdata GPT entry.
-    /// Android grows ext4 during boot only after observing the larger
-    /// partition. The same image is opened directly on every later boot.
-    @discardableResult
-    func prepareDiskCapacity(
-        _ capacityGiB: Int,
-        diskUtil: any DiskCapacityManaging = DiskUtil()
-    ) throws -> Bool {
-        return try diskUtil.resizeAndroidImage(
-            at: disk,
-            toGiB: capacityGiB
-        )
-    }
+    var systemDisk: URL { url.appendingPathComponent(Android.systemDisk) }
+    var layout: URL { url.appendingPathComponent(Android.layout) }
+    /// The guest's only writable disk. Every launch reopens it, so guest state
+    /// survives the app being closed and reopened. The runtime creates it when
+    /// it is absent and only ever grows it.
+    var dataDisk: URL { url.appendingPathComponent(Android.dataDisk) }
 
     /// Recognises a bundle from the inputs needed to launch it. The release
     /// manifest is provenance for people and tools, not a runtime identity.
@@ -54,32 +48,14 @@ struct GuestBundle: Equatable {
         else {
             return nil
         }
-        guard let disk = androidDisk(in: url, fileManager: fileManager)
+        let bundle = GuestBundle(url: url, flavor: .android)
+        guard isRegularFile(bundle.systemDisk, fileManager: fileManager),
+              isRegularFile(bundle.layout, fileManager: fileManager),
+              isRegularFile(bundle.commandLine, fileManager: fileManager)
         else {
             return nil
         }
-        return GuestBundle(url: url, flavor: .android, disk: disk)
-    }
-
-    /// The disk image is discovered rather than named by a release. Exactly one
-    /// candidate keeps the launch input unambiguous.
-    private static func androidDisk(
-        in url: URL,
-        fileManager: FileManager
-    ) -> URL? {
-        let directory = url.appendingPathComponent(Android.guestDirectory)
-        guard let entries = try? fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return nil
-        }
-        let disks = entries.filter { entry in
-            entry.pathExtension.lowercased() == Android.diskExtension &&
-                isRegularFile(entry, fileManager: fileManager)
-        }
-        return disks.count == 1 ? disks[0] : nil
+        return bundle
     }
 
     private static func isDirectory(
