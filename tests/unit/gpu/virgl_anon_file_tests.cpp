@@ -131,7 +131,19 @@ void requireFootprintBacking()
     const std::uint64_t file = footprintOfSegment("1");
     require(shared >= bytes - (bytes >> 3),
         "shared memory did not count in the footprint");
-    require(file <= bytes >> 3, "a container file counted in the footprint");
+    /* AddressSanitizer unpoisons the shadow of a mapping the process writes,
+     * one shadow byte per eight, and that shadow is anonymous memory. */
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+    constexpr std::uint64_t shadow = bytes >> 3;
+#else
+    constexpr std::uint64_t shadow = 0;
+#endif
+#else
+    constexpr std::uint64_t shadow = 0;
+#endif
+    require(file <= (bytes >> 3) + shadow,
+        "a container file counted in the footprint");
 }
 
 } // namespace
