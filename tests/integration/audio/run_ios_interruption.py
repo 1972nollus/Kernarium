@@ -87,10 +87,13 @@ def main() -> int:
             "-x", "objective-c++", "-std=c++20", "-fobjc-arc", "-O1",
             "-Wall", "-Wextra", "-Werror",
             f"-I{arguments.sink_directory}", f"-I{arguments.include_directory}",
+            f"-I{arguments.include_directory / 'device' / 'vhost_user'}",
             str(here / "ios_interruption_tests.mm"),
             str(arguments.sink_directory / "apple_playback_sink.mm"),
             str(arguments.sink_directory / "audio_session.mm"),
             str(arguments.sink_directory / "period_clock.cpp"),
+            str(arguments.sink_directory / "virtio_sound_device.cpp"),
+            str(arguments.sink_directory / "silent_capture_source.cpp"),
             "-framework", "AVFAudio", "-framework", "Foundation",
             "-o", str(binary),
         ]
