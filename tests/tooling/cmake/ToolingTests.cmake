@@ -99,3 +99,17 @@ uml_add_tooling_test(
         --toolchain ${PROJECT_SOURCE_DIR}/cmake/toolchains/Apple.cmake
     LABELS audit
     TIMEOUT 120)
+
+# An Xcode update installs another SDK or rewrites the selected one. A tree
+# configured before it must reconfigure at its next build and take its SDK
+# libraries and frameworks from the SDK installed now.
+uml_add_tooling_test(
+    NAME apple-sdk-update
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_apple_sdk_update.py
+        --cmake ${CMAKE_COMMAND}
+        --make-program ${CMAKE_MAKE_PROGRAM}
+        --toolchain ${PROJECT_SOURCE_DIR}/cmake/toolchains/Apple.cmake
+        --repository ${PROJECT_SOURCE_DIR}
+    LABELS audit
+    TIMEOUT 120)

@@ -2531,10 +2531,10 @@ index 79a25e436086aed18bd760f68efb87a77e18586e..980cb4daeef7de8a48034a42cd2a5759
  {
  	/* Send us the fake SIGTRAP */
 diff --git a/arch/um/kernel/skas/process.c b/arch/um/kernel/skas/process.c
-index e7a6d0e0fb9c2a6d3632579052ac6e69a98b9475..64abc74d0ca80a9311d0cea12c4dde52077d44f2 100644
+index 705b9ca9d065199f8c0e288e93eccbccf50dd8d2..3578f84851a571004edecacfae919460c31e0bcc 100644
 --- a/arch/um/kernel/skas/process.c
 +++ b/arch/um/kernel/skas/process.c
-@@ -67,6 +67,15 @@ unsigned long current_tls(void)
+@@ -69,6 +69,15 @@ unsigned long current_tls(void)
  	return current->thread.arch.tpidr_el0;
  }
  

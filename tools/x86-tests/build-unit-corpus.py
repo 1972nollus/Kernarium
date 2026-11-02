@@ -127,11 +127,13 @@ FLAG_NAMES = ("CF", "PF", "AF", "ZF", "SF", "DF", "OF")
 # The ordinary unit profile is the portable userspace ISA through AVX2.  AES,
 # PCLMUL, XSAVE, FSGSBASE, and ADX remain because they are already part of the
 # product's documented userspace profile and are useful to desktop software.
+# So are the AVX-VNNI dot products, which both x86 engines run.
 # ADX is what guest OpenSSL dispatches its Montgomery multiply on, so its two
 # carry chains and their flags belong in the pinned corpus.
 ALLOWED_FEX_FEATURES = frozenset(
     {
         "AVX",
+        "AVX_VNNI",
         "SSE4.1",
         "SSSE3",
         "SSE4.2",
@@ -405,6 +407,9 @@ def register_class(register: str) -> str:
 
 def canonical_form(assembly: str) -> tuple[str, str]:
     instruction = assembly.split("#", 1)[0].strip()
+    # LLVM marks the VEX encoding of an instruction that also has an EVEX one,
+    # as AVX-VNNI's does, with a pseudo-prefix that is not part of its form.
+    instruction = instruction.removeprefix("{vex}").strip()
     if not instruction:
         return "", ""
     fields = instruction.split(None, 1)
@@ -1506,7 +1511,7 @@ def write_outputs(
     ]
     provenance = {
         "schema": 1,
-        "profile": "x86-64-v3 plus AES, PCLMUL, XSAVE, FSGSBASE, and ADX",
+        "profile": "x86-64-v3 plus AES, PCLMUL, XSAVE, FSGSBASE, ADX, and AVX-VNNI",
         "inputs": identities,
         "records": len(records),
         "cases": sum(record.case_count for record in records),

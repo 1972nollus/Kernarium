@@ -54,8 +54,11 @@ The kernel host tools are patch-managed ports of elfutils, musl-obstack,
 libbpf, and dwarves to Darwin, built with argp-standalone. elfutils' Git
 source carries only the generators of its DWARF name and x86 decoder tables,
 so the build first builds the pinned gawk as a build-only tool. The libbpf
-that pahole embeds needs Linux UAPI headers, which come from a pinned Debian
-`linux-libc-dev` package, and the Linux host APIs Darwin lacks, which come from
+that pahole embeds is the v1.8.0 release, not the earlier commit that opened
+the 1.8 cycle, which dwarves 1.32 records for its `lib/bpf` submodule; the
+build ignores that submodule. It needs Linux UAPI headers, which come from a
+pinned Debian `linux-libc-dev` package, and the Linux host APIs Darwin lacks,
+which come from
 [`kernel/mainline-6.18/build/toolchain/darwin-host`](../kernel/mainline-6.18/build/toolchain/darwin-host/)
 shared with Kbuild's host tools. The prefix publishes only `bin/pahole` and
 libelf; the tools target macOS 15.4, the first release with the `strchrnul`
@@ -78,13 +81,16 @@ The `macos` product carries FEXCore for the macOS-only x86-64 JIT engine. The
 `fex` row applies one patch-managed series,
 [`patches/fex`](patches/fex/series.tsv), and the `fmt`, `xxhash`, and
 `unordered-dense` rows pin the three submodules FEXCore needs at the commits
-FEX-2608 records; no iOS product names any of them. The series' topics build
+FEX-2610 records; no iOS product names any of them. The series' topics build
 only FEXCore for an embedding Darwin host, make its utilities portable to
 Darwin, add an embedding mode in which a host that owns guest memory drives
 FEXCore, compat32 code included, and correct x86 semantics where FEXCore
 differs from hardware. The series touches nothing the `x86-conformance` corpus
 producers read, so one prepared FEX source serves both products and still
-yields the pinned corpus.
+yields the pinned corpus. The `nasm` row that assembles that corpus applies one
+topic, [`patches/nasm`](patches/nasm/series.tsv): `smsw` of a 16-bit register
+keeps its operand-size prefix in 32-bit and 64-bit code, which NASM 3.02 drops,
+so the SMSW test runs as FEX wrote it.
 
 The prefix installs FEXCore's static archives (`libFEXCore.a`,
 `libFEXCore_Base.a`, and `libJemallocDummy.a`, its allocator entry points over

@@ -51,10 +51,10 @@ index 35faf93789f7b0683258acb000b2f2a37e76c271..7d7dd98b9d212b97196e19669372308e
  struct OpHandlers<IR::OP_F80XTRACT_EXP> {
    FEXCORE_PRESERVE_ALL_ATTR static VectorRegType handle(uint16_t FCW, VectorRegType Src1, FEXCore::Core::CpuStateFrame* Frame) {
 diff --git a/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/InterpreterFallbacks.cpp b/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/InterpreterFallbacks.cpp
-index d4a14a150fe4b906dc69bd5654b547345f70dfbb..9b998c1e5dbf74f5058a82ccb88290eb18575e00 100644
+index f203ba928383e593dc1887f07c9d193507aab767..9d41904f55bbda6ef3767c41b62fd3d7cec9eea7 100644
 --- a/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/InterpreterFallbacks.cpp
 +++ b/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/InterpreterFallbacks.cpp
-@@ -52,6 +52,8 @@ void InterpreterOps::FillFallbackIndexPointers(Core::FallbackABIInfo* Info, uint
+@@ -47,6 +47,8 @@ void InterpreterOps::FillFallbackIndexPointers(Core::FallbackABIInfo* Info, uint
    Info[Core::OPINDEX_F80COS] = {ABIHandlers[FABI_F80_I16_F80_PTR], reinterpret_cast<uint64_t>(&FEXCore::CPU::OpHandlers<IR::OP_F80COS>::handle)};
    Info[Core::OPINDEX_F80SINCOS] = {ABIHandlers[FABI_F80x2_I16_F80_PTR],
                                     reinterpret_cast<uint64_t>(&FEXCore::CPU::OpHandlers<IR::OP_F80SINCOS>::handle)};
@@ -63,7 +63,7 @@ index d4a14a150fe4b906dc69bd5654b547345f70dfbb..9b998c1e5dbf74f5058a82ccb88290eb
    Info[Core::OPINDEX_F80XTRACT_EXP] = {ABIHandlers[FABI_F80_I16_F80_PTR],
                                         reinterpret_cast<uint64_t>(&FEXCore::CPU::OpHandlers<IR::OP_F80XTRACT_EXP>::handle)};
    Info[Core::OPINDEX_F80XTRACT_SIG] = {ABIHandlers[FABI_F80_I16_F80_PTR],
-@@ -247,6 +249,7 @@ bool InterpreterOps::GetFallbackHandler(const IR::IROp_Header* IROp, FallbackInf
+@@ -237,6 +239,7 @@ bool InterpreterOps::GetFallbackHandler(const IR::IROp_Header* IROp, FallbackInf
      COMMON_UNARY_X87_OP(SIN)
      COMMON_UNARY_X87_OP(COS)
      COMMON_UNARYPAIR_X87_OP(SINCOS)
@@ -72,10 +72,10 @@ index d4a14a150fe4b906dc69bd5654b547345f70dfbb..9b998c1e5dbf74f5058a82ccb88290eb
      COMMON_UNARY_X87_OP(XTRACT_SIG)
      COMMON_UNARY_X87_OP(BCDSTORE)
 diff --git a/FEXCore/Source/Interface/IR/IR.json b/FEXCore/Source/Interface/IR/IR.json
-index 8268ca80995af7beaf1b3d269605762545214f81..c966beb6ed074e681e86bfd684a32e5e021b0cf7 100644
+index 7e8d3de42eafe63a42c7d8d1663cfef7221e7cb4..fa4f6846f8085789ce6f35ebf7ae7a9b231f5611 100644
 --- a/FEXCore/Source/Interface/IR/IR.json
 +++ b/FEXCore/Source/Interface/IR/IR.json
-@@ -3265,6 +3265,11 @@
+@@ -3359,6 +3359,11 @@
          "HasSideEffects": true,
          "JITDispatch": false
        },
@@ -88,10 +88,10 @@ index 8268ca80995af7beaf1b3d269605762545214f81..c966beb6ed074e681e86bfd684a32e5e
          "X87": true,
          "HasSideEffects": true
 diff --git a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
-index c8aecf492bdf20ad18a14c4f6274fb0387814293..5a96f9767da51d9f80514f2fae852e5c29fc9972 100644
+index 491f1d090e6ebf5d59abf4238d12e16af692730d..f53310936de149a81190b15d25c7af71b428ac7b 100644
 --- a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 +++ b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
-@@ -1000,12 +1000,14 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -1004,12 +1004,14 @@ void X87StackOptimization::Run(IREmitter* Emit) {
          if (Embedded && !ReducedPrecisionMode) {
            Ref Full = GetX87ValidTag_Slow(7);
            Ref Operand = TwoResultOperand(LoadStackValue(), Full);
@@ -112,7 +112,7 @@ index c8aecf492bdf20ad18a14c4f6274fb0387814293..5a96f9767da51d9f80514f2fae852e5c
          }
          HandleUnop(OP_F64TAN, false, OP_F80TAN);
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 0f081faa5bf01a57b093b0972a40ee12edbfdf37..59cab9f7f54cbf49000433b1f86c558fd4b13103 100644
+index c12f83da21c56932bbf3c2d688f1ac30ca0fa287..91041396df5a925b4ca6c8cd2ccb60cad6190c66 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
 @@ -291,6 +291,7 @@ enum FallbackHandlerIndex {

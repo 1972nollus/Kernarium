@@ -410,6 +410,12 @@ the same 27.0 deployment target. The toolchain refuses any other
 floor; a build tree configured before the floor moved is reconfigured with
 `--fresh` or in a new binary directory.
 
+The toolchain takes the SDK from `xcrun` at every configure, and the SDK
+libraries and frameworks the products link are looked up in it again each
+time rather than cached. The selected SDK's `SDKSettings.json` is a configure
+dependency, so a build tree notices an Xcode update at its next build and
+reconfigures, with no manual step; the update's new SDK recompiles the tree.
+
 Apple products consume accepted kernel bundles and never invoke Kbuild. The
 arm64 userspace product uses the same accepted mainline
 artifact on macOS and on the iOS device. The macOS x86_64 userspace
@@ -847,9 +853,11 @@ Exact x87 formats and transcendentals use bounded software-math primitives
 called by those native gadgets. The userspace ISA boundary includes scalar x86
 and x87/MMX, SSE through SSE4.2, AVX/AVX2,
 F16C/FMA, AES/PCLMUL, BMI1/2, atomic and extended-state operations in both
-long64 and compat32 modes. The pinned FEX handwritten x86-64 and i386 corpora
-are the external instruction acceptance gate. AVX-512 and later encodings,
-RTM/MPX, obsolete protected-mode bounds, 16-bit code segments, and
+long64 and compat32 modes. The AVX-VNNI dot products VPDPBUSD, VPDPBUSDS,
+VPDPWSSD and VPDPWSSDS run on both x86 engines, as the FEX corpus requires,
+although CPUID does not report them. The pinned FEX handwritten x86-64 and
+i386 corpora are the external instruction acceptance gate. AVX-512 and later
+encodings, RTM/MPX, obsolete protected-mode bounds, 16-bit code segments, and
 privileged, real-mode, virtual-machine, enclave, and system-management
 instructions are outside this Linux userspace profile, and AMD's 3DNow!, SSE4a
 and CLZERO raise #UD, as on an Intel core. That gate is not proof of an
@@ -1122,7 +1130,11 @@ or a kick's acknowledgement alike. Serving a request inside a wait records its
 interrupt and replies on the request stream without touching the control
 socket. Darwin drops a read edge whose data is gone before it is collected, so
 a request read there leaves no edge for the request IRQ; the interrupts it
-recorded are delivered through `irq_work` instead.
+recorded are delivered through `irq_work` instead. A suspend disables each ring
+with such a wait, so that `irq_work` can run inside the suspend, where it reads
+the request stream once more and must find it nonblocking.
+`guest-vhost-user-suspend-drain` has a console take a backend request between
+the ring disables of a suspend and requires the suspend to end at its alarm.
 
 A backend request that needs an acknowledgement (an in-band completion, a
 config change, or a shared-memory map or unmap) waits for it while still

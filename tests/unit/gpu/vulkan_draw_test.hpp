@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <source_location>
@@ -186,6 +187,12 @@ struct SubmitStormConfig {
     // the context underneath them: a completion that runs after the device is
     // gone must still be safe.
     bool abandon = false;
+    // Called with a submission's index right after the host has waited for its
+    // fence, before the storm records anything else. A test that observes the
+    // driver's completion handling uses it to let that handling finish, so what
+    // it counts does not depend on how the host's threads happen to be
+    // scheduled. Not called for an abandoned storm.
+    std::function<void(uint32_t)> completed;
 };
 
 struct SubmitStormResult {

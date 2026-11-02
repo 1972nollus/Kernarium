@@ -19,6 +19,8 @@ include(UmlTesting)
 include(VerifyDependencies)
 include(VerifyAbi)
 include(UmlArchitecture)
+include(UmlAppleSdk)
+uml_track_apple_sdk()
 
 # The one interpreter for every Python tool and test. Python 3.11 or newer:
 # tomllib is in the standard library from 3.11. Later find_package(Python3)

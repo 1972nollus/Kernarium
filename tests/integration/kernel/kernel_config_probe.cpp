@@ -5,15 +5,18 @@
 //   both:    IPv4 multicast (/proc/net/igmp, a group join, a looped datagram),
 //            no RDS socket family, no listener on TCP port 16385, the
 //            stack protector and hardened usercopy in /proc/config.gz,
-//            a macvlan link that rtnetlink creates over a dummy link, the
+//            64 KiB virtually mapped task stacks with the end-of-stack
+//            check, a macvlan link that rtnetlink creates over a dummy link, the
 //            accept_ra_rt_table sysctl (0 until written; a prefix route
 //            lands in the device's own table once it is -1000, where the
 //            kernel has IPv6 multiple tables), and an XFRM SPI allocated twice
-//   linux:   SysV IPC works, the NFS client and SCTP are present, a piped
+//   linux:   SysV IPC works, the NFS and SMB clients, XFS, Btrfs and SCTP are
+//            present, a piped
 //            core_pattern runs its helper, /sys/power has no wake_lock,
 //            there is no 802.11 stack (no nl80211 family, no phy), and one
 //            ESP SPI is refused for a second destination address
-//   android: no SysV IPC (ENOSYS, no /proc/sysvipc), no NFS client, no SCTP,
+//   android: no SysV IPC (ENOSYS, no /proc/sysvipc), no NFS or SMB client, no
+//            XFS or Btrfs, no SCTP,
 //            /sys/power/wake_lock takes and releases a wakelock, the
 //            static usermode helper runs no piped core_pattern helper, and
 //            the Incremental file system mounts, serves a filled block and
@@ -323,6 +326,24 @@ void check_nfs(bool wanted)
 		report("no-nfs-client", !nfs && !nfs4, detail);
 }
 
+// XFS, Btrfs and the SMB client: the desktop product keeps them, Android
+// mounts none of them and leaves them out.
+void check_other_filesystems(bool wanted)
+{
+	std::string filesystems = slurp("/proc/filesystems");
+	bool xfs = filesystems.find("\txfs\n") != std::string::npos;
+	bool btrfs = filesystems.find("\tbtrfs\n") != std::string::npos;
+	bool smb = filesystems.find("\tcifs\n") != std::string::npos ||
+		   filesystems.find("\tsmb3\n") != std::string::npos;
+	std::string detail = std::string("xfs ") + (xfs ? "present" : "absent") + ", btrfs " +
+			     (btrfs ? "present" : "absent") + ", smb client " +
+			     (smb ? "present" : "absent");
+	if (wanted)
+		report("xfs-btrfs-smb", xfs && btrfs && smb, detail);
+	else
+		report("no-xfs-btrfs-smb", !xfs && !btrfs && !smb, detail);
+}
+
 void check_sctp(bool wanted)
 {
 	int fd = socket(AF_INET, SOCK_SEQPACKET, IPPROTO_SCTP);
@@ -436,6 +457,25 @@ void check_hardening_config(bool android)
 			     (helper ? (empty_path ? " with an empty path" : " with a path") : "");
 	report("hardening-config",
 	       protector && usercopy && (android ? helper && empty_path : !helper), detail);
+}
+
+// Every task's kernel stack is 64 KiB of virtually mapped pages, so an overrun
+// reaches an unmapped guard group, and the scheduler checks the stack's last
+// word. Overflow behaviour itself is documented in the kernel README.
+void check_stack_config()
+{
+	std::string config = kernel_config();
+	if (config.empty()) {
+		report("stack-config", false, "/proc/config.gz is unreadable");
+		return;
+	}
+	bool order = config_has(config, "CONFIG_KERNEL_STACK_ORDER=4");
+	bool vmap = config_has(config, "CONFIG_VMAP_STACK=y");
+	bool end_check = config_has(config, "CONFIG_SCHED_STACK_END_CHECK=y");
+	std::string detail = std::string("stack order 4 ") + (order ? "yes" : "no") + ", vmapped " +
+			     (vmap ? "yes" : "no") + ", end-of-stack check " +
+			     (end_check ? "yes" : "no");
+	report("stack-config", order && vmap && end_check, detail);
 }
 
 // The Incremental file system of the Android common kernel, whose only user is
@@ -1360,9 +1400,11 @@ int main(int argc, char **argv)
 	check_no_rds_listener();
 	check_sysv(!android);
 	check_nfs(!android);
+	check_other_filesystems(!android);
 	check_sctp(!android);
 	check_wake_lock(android);
 	check_hardening_config(android);
+	check_stack_config();
 	check_usermode_helper(android);
 	check_incfs(android);
 	check_macvlan();
