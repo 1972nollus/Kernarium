@@ -51,7 +51,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  6 files changed, 191 insertions(+)
 
 diff --git a/src/venus/vkr_common.c b/src/venus/vkr_common.c
-index 83b925ea665393b031c9196e9fdb187649bd12a6..6b1866d1394b2e7aa97ec72b88ca7cbdef6ccc57 100644
+index fc526b6f2877fb983f5cc5d64105ef7138c5671c..7a4436330a70f4c42ca08b39f46e72912e8f1132 100644
 --- a/src/venus/vkr_common.c
 +++ b/src/venus/vkr_common.c
 @@ -127,6 +127,7 @@ static const struct vn_info_extension_table vkr_extension_table = {
@@ -63,7 +63,7 @@ index 83b925ea665393b031c9196e9fdb187649bd12a6..6b1866d1394b2e7aa97ec72b88ca7cbd
     .KHR_ray_query = true,
     .KHR_ray_tracing_maintenance1 = true,
 diff --git a/src/venus/vkr_common.h b/src/venus/vkr_common.h
-index 439b36d32e4989b25ee87ec3bf523a76b9f7f122..1f442697874e60044c7474ac67714ee0083df6f4 100644
+index fd23df9d0eba15d3ab57ffd3ab77f4b3191da1d3..bb541e91ffc3104f1ccafe32051506f917329f63 100644
 --- a/src/venus/vkr_common.h
 +++ b/src/venus/vkr_common.h
 @@ -160,6 +160,7 @@ struct vkr_object {
@@ -74,7 +74,7 @@ index 439b36d32e4989b25ee87ec3bf523a76b9f7f122..1f442697874e60044c7474ac67714ee0
     } handle;
  
     struct list_head track_head;
-@@ -298,6 +299,8 @@ vkr_is_recognized_object_type(VkObjectType type)
+@@ -299,6 +300,8 @@ vkr_is_recognized_object_type(VkObjectType type)
     case VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE:
     /* VK_KHR_acceleration_structure */
     case VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR:
@@ -84,7 +84,7 @@ index 439b36d32e4989b25ee87ec3bf523a76b9f7f122..1f442697874e60044c7474ac67714ee0
     default:
        vkr_log("unrecognized object type %u", type);
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
-index 8594ac308bea36ba0e5b37b3a8fb24d5ac86227b..d3dbac12ee1b7e0c9e8398dfe2dcb2aa99af4fb9 100644
+index 479199d9d10120eeef9868b3934763beab1a7785..e5bd69651d45c66c3e30c237c068ba953973b3ff 100644
 --- a/src/venus/vkr_context.c
 +++ b/src/venus/vkr_context.c
 @@ -118,6 +118,7 @@ vkr_context_init_dispatch(struct vkr_context *ctx)

@@ -24,10 +24,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 4 insertions(+), 1 deletion(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 3282e399c204d9a4f70f6713d443efb333279548..3bdb490a2124eca7a5a5c5db8b9f990c0228f178 100644
+index 682db3962fa509952a786b14b6deb4c02fa90bc5..74129d804475167b34cbd98f7da5aa772b38b99c 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -12743,7 +12743,10 @@ static void vrend_renderer_fill_caps_v2(int gl_ver, int gles_ver,  union virgl_c
+@@ -12755,7 +12755,10 @@ static void vrend_renderer_fill_caps_v2(int gl_ver, int gles_ver,  union virgl_c
  
     if (has_feature(feat_arb_buffer_storage) && !vrend_state.use_external_blob) {
        const char *vendor = (const char *)glGetString(GL_VENDOR);

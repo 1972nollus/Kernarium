@@ -22,7 +22,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 28 insertions(+), 1 deletion(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index feedf6323aae45e7368771c972f0badbc5ddba36..08f809b508840f670680ff9a86701a96a755c33e 100644
+index eab47ccf447bf0cb3fd7f1675cae9aeb4c597948..ecc009fa146f9c7c525f41f501df1f211009e980 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -490,6 +490,8 @@ struct vrend_linked_shader_program {

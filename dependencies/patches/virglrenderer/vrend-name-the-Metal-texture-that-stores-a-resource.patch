@@ -42,13 +42,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  5 files changed, 113 insertions(+)
 
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index 086bbb985c82597ed8aa48a547f06115a1798f4b..c13846ab9dd420ed8112d761f062d7ec3b6aaa0a 100644
+index f6b570dbcccfaba5bc963e4b43c94aeaedae6e43..4a4b28791803a38f358d88f499f6caba779e7ef2 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
-@@ -558,6 +558,19 @@ int virgl_renderer_resource_get_info_ext(int res_handle,
- 
+@@ -598,6 +598,19 @@ int virgl_renderer_resource_get_info_ext(int res_handle,
     info_ext->version = VIRGL_RENDERER_RESOURCE_INFO_EXT_VERSION;
  
+ #ifdef ENABLE_VREND
 +#ifdef ENABLE_METAL
 +   /* On an Apple host a GL texture is stored in a Metal texture, which a
 +    * presenter can sample instead of reading the resource back. */
@@ -66,10 +66,10 @@ index 086bbb985c82597ed8aa48a547f06115a1798f4b..c13846ab9dd420ed8112d761f062d7ec
        return vrend_winsys_get_attrs_for_texture(info_ext->base.tex_id,
                                                  info_ext->base.virgl_format,
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 7f56e71e09f066f187af3b42dd8198a010707b2a..7bba85f7932e498b7f1c31f9d1f62735d05bb351 100644
+index fe7f886d17c3be46d1403e496c292e0b952dd898..bec8b28f9cd5ca9b8a09a88cda7cefa46b19e8e5 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -13917,6 +13917,42 @@ vrend_renderer_resource_d3d11_texture2d(struct pipe_resource *pres, void **d3d_t
+@@ -13929,6 +13929,42 @@ vrend_renderer_resource_d3d11_texture2d(struct pipe_resource *pres, void **d3d_t
  #endif
  }
  
@@ -113,10 +113,10 @@ index 7f56e71e09f066f187af3b42dd8198a010707b2a..7bba85f7932e498b7f1c31f9d1f62735
                                  uint32_t *max_size)
  {
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index 85ae6022da13af4ab24809de8b68fe75a949a36c..a8072a9286e3794ec62036a316d0d115bfbdf2fa 100644
+index 81b09b32b19124d16a504edfad97d1eb115e24ba..3cc9d9ca608130cba64734a5ec401c63bc872647 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
-@@ -686,6 +686,11 @@ struct vrend_video_context *vrend_context_get_video_ctx(struct vrend_context *ct
+@@ -685,6 +685,11 @@ struct vrend_video_context *vrend_context_get_video_ctx(struct vrend_context *ct
  int
  vrend_renderer_resource_d3d11_texture2d(struct pipe_resource *res, void **handle);
  

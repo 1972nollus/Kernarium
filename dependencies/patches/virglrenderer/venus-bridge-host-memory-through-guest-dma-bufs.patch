@@ -13,23 +13,29 @@ resource whenever it likes. The mapping is therefore reference counted: the
 resource holds one reference, each memory that imports it holds another,
 and the pages are unmapped when the last of them is released.
 
+Importing a shared-memory resource into the context ends the request's
+ownership of its descriptor: the import path closes it once the mapping is
+made, so the descriptor no longer outlives the request. Creating a
+shared-memory blob returns the descriptor to its caller and leaves it open.
+
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- src/venus/vkr_context.c         | 116 ++++++++++++++--
+ src/venus/vkr_context.c         | 124 +++++++++++++++---
  src/venus/vkr_context.h         |  26 ++++
  src/venus/vkr_device.c          |  12 ++
  src/venus/vkr_device.h          |   2 +
  src/venus/vkr_device_memory.c   | 226 +++++++++++++++++++++++++++-----
  src/venus/vkr_device_memory.h   |   8 ++
  src/venus/vkr_physical_device.c |  17 +++
- src/venus/vkr_renderer.c        |   3 +-
+ src/venus/vkr_renderer.c        |   4 +-
  src/virgl_resource.c            | 171 ++++++++++++++++++++++++
  src/virgl_resource.h            |  25 ++++
  src/virglrenderer.c             |   2 +-
- 11 files changed, 562 insertions(+), 46 deletions(-)
+ 11 files changed, 569 insertions(+), 48 deletions(-)
 
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
-index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..a0271aa7abd50e941ad52e2ce0c43953d3642ffa 100644
+index cc82c42de8af9c4844d71ef23b88809a054fade9..14302e1c0d44a6f2972b7f8d297a27cb1c33bcaf 100644
 --- a/src/venus/vkr_context.c
 +++ b/src/venus/vkr_context.c
 @@ -185,14 +185,33 @@ vkr_context_submit_cmd(struct vkr_context *ctx, const void *buffer, size_t size)
@@ -121,7 +127,7 @@ index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..a0271aa7abd50e941ad52e2ce0c43953
        free(res);
        return false;
     }
-@@ -257,16 +299,26 @@ static bool
+@@ -257,21 +299,30 @@ static bool
  vkr_context_import_resource_from_shm(struct vkr_context *ctx,
                                       uint32_t res_id,
                                       uint64_t blob_size,
@@ -151,7 +157,12 @@ index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..a0271aa7abd50e941ad52e2ce0c43953
        munmap(mmap_ptr, blob_size);
        return false;
     }
-@@ -299,7 +351,9 @@ vkr_context_create_resource_from_shm(struct vkr_context *ctx,
+ 
+-   close(fd);
+    return true;
+ }
+ 
+@@ -300,7 +351,9 @@ vkr_context_create_resource_from_shm(struct vkr_context *ctx,
     }
  
     if (!vkr_context_import_resource_internal(ctx, res_id, alloc_size,
@@ -162,7 +173,7 @@ index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..a0271aa7abd50e941ad52e2ce0c43953
        munmap(mmap_ptr, alloc_size);
        close(fd);
        return false;
-@@ -332,6 +386,29 @@ vkr_context_create_resource_from_device_memory(struct vkr_context *ctx,
+@@ -333,6 +386,29 @@ vkr_context_create_resource_from_device_memory(struct vkr_context *ctx,
     if (!vkr_device_memory_export_blob(mem, blob_size, blob_flags, &blob))
        return false;
  
@@ -192,7 +203,7 @@ index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..a0271aa7abd50e941ad52e2ce0c43953
     /* If memory might get exported, store a dup'ed fd in vkr_resource for:
      * - vkAllocateMemory for dma_buf import
      * - vkGetMemoryFdPropertiesKHR for dma_buf fd properties query
-@@ -345,8 +422,9 @@ vkr_context_create_resource_from_device_memory(struct vkr_context *ctx,
+@@ -346,8 +422,9 @@ vkr_context_create_resource_from_device_memory(struct vkr_context *ctx,
        }
     }
  
@@ -204,7 +215,7 @@ index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..a0271aa7abd50e941ad52e2ce0c43953
        if (res_fd >= 0)
           close(res_fd);
        close(blob.u.fd);
-@@ -383,10 +461,20 @@ vkr_context_import_resource(struct vkr_context *ctx,
+@@ -384,10 +461,27 @@ vkr_context_import_resource(struct vkr_context *ctx,
                              int fd,
                              uint64_t size)
  {
@@ -216,9 +227,16 @@ index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..a0271aa7abd50e941ad52e2ce0c43953
 +      void *native_handle = NULL;
 +      uint64_t native_resource_id = virgl_resource_native_acquire(
 +         fd, &native_handle_type, &native_handle);
-+      return vkr_context_import_resource_from_shm(
-+         ctx, res_id, size, fd, native_resource_id, native_handle_type,
-+         native_handle);
++      if (!vkr_context_import_resource_from_shm(
++             ctx, res_id, size, fd, native_resource_id, native_handle_type,
++             native_handle))
++         return false;
++
++      /* The mapping outlives the descriptor, and a successful import is the
++       * end of the request's ownership of it.
++       */
++      close(fd);
++      return true;
 +   }
  
 -   return vkr_context_import_resource_internal(ctx, res_id, size, fd_type, fd, NULL);
@@ -663,10 +681,10 @@ index b82e8786c059919c83d06eeb961ac1a3b315cb44..19456f74a27f6c787decc9c5a5a0b809
     uint32_t memory_type_index;
  
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index 7cd2c6dfbae9be0903d7ad96df122b1d4f686d0c..6581f97ba214b3b73fac503f19f1685e7959b740 100644
+index 6efa397a866dcf3a3ca3b4356213a3151fb3cb35..204473cb224c9a82b1841884607689ac106eb39d 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
-@@ -368,6 +368,23 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
+@@ -388,6 +388,23 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
           if (props->specVersion > spec_ver)
              props->specVersion = spec_ver;
           exts[advertised_count++] = exts[i];
@@ -691,14 +709,15 @@ index 7cd2c6dfbae9be0903d7ad96df122b1d4f686d0c..6581f97ba214b3b73fac503f19f1685e
     }
  
 diff --git a/src/venus/vkr_renderer.c b/src/venus/vkr_renderer.c
-index 8aae92419da38b5be295cf5c6e478e9b3c3edaa8..3a69b928c507bb87ab0b8af5f7eac49d3fb53897 100644
+index d04f11b3437152ab8ccd76a9090df98faa41d597..3a69b928c507bb87ab0b8af5f7eac49d3fb53897 100644
 --- a/src/venus/vkr_renderer.c
 +++ b/src/venus/vkr_renderer.c
-@@ -220,7 +220,8 @@ vkr_renderer_import_resource(uint32_t ctx_id,
+@@ -220,8 +220,8 @@ vkr_renderer_import_resource(uint32_t ctx_id,
     TRACE_FUNC();
  
     assert(res_id);
--   assert(fd_type == VIRGL_RESOURCE_FD_DMABUF || fd_type == VIRGL_RESOURCE_FD_OPAQUE);
+-   assert(fd_type == VIRGL_RESOURCE_FD_DMABUF || fd_type == VIRGL_RESOURCE_FD_OPAQUE ||
+-          fd_type == VIRGL_RESOURCE_FD_SHM);
 +   assert(fd_type == VIRGL_RESOURCE_FD_SHM || fd_type == VIRGL_RESOURCE_FD_DMABUF ||
 +          fd_type == VIRGL_RESOURCE_FD_OPAQUE);
     assert(fd >= 0);
@@ -966,10 +985,10 @@ index 8eb770e78e69dffd54746cd89ffdd8816c2be329..5d90e60f4429e2f31094141c2850334e
 +
  #endif /* VIRGL_RESOURCE_H */
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index a37b108e0fe486ffd61b057993d564bf59129bce..c927c0d5062ecfa7d0790e3aeb018ecae7d66072 100644
+index ce2b03d72ecee68c97bac77668e8a0a8a9b2d8fa..80d848d46beb6b0f3ec4be3e7437cb51fa762adf 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
-@@ -1136,7 +1136,7 @@ int virgl_renderer_resource_create_blob(const struct virgl_renderer_resource_cre
+@@ -1243,7 +1243,7 @@ int virgl_renderer_resource_create_blob(const struct virgl_renderer_resource_cre
     TRACE_FUNC();
     struct virgl_resource *res;
     struct virgl_context *ctx;

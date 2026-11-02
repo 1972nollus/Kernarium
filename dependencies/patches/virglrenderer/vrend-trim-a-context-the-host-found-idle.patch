@@ -51,10 +51,10 @@ index 25bc10603f0a6bc80db759af8911cba2186e74a3..822917cc32d88d6b02c0c9d88d2495f3
     int (*get_device_fd)(struct virgl_context *ctx);
  
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index c13846ab9dd420ed8112d761f062d7ec3b6aaa0a..d8b9e1b89c5ea249dfdaafdb4d7ceaa0b00ef0a4 100644
+index 4a4b28791803a38f358d88f499f6caba779e7ef2..168cd8a1755ded1861f0e4a3042d4e2f3f5799d2 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
-@@ -458,6 +458,23 @@ void virgl_renderer_context_poll(uint32_t ctx_id)
+@@ -491,6 +491,23 @@ void virgl_renderer_context_poll(uint32_t ctx_id)
     ctx->retire_fences(ctx);
  }
  
@@ -101,7 +101,7 @@ index 88372ec8bc0b688810895001081f6d9d20bd5ff4..2b9c5dab5e96c54f71940a69aebe475b
   * mapping is owned by the caller and is its responsibility to unmap
   * the resource by its own means (i.e. overriding the map with
 diff --git a/src/vrend/vrend_decode.c b/src/vrend/vrend_decode.c
-index e76f006d2a577f714399b7271b4a46ab6eabaf42..05fa41fca31d80f89ed6b206d5732c102766492e 100644
+index b7c6b2ff0cfff4aaa8cef7bfc237351104515537..69f9919e030c2d72884c3026f96851bf2dab44f9 100644
 --- a/src/vrend/vrend_decode.c
 +++ b/src/vrend/vrend_decode.c
 @@ -1700,6 +1700,13 @@ static void vrend_decode_ctx_detach_resource(struct virgl_context *ctx,
@@ -125,10 +125,10 @@ index e76f006d2a577f714399b7271b4a46ab6eabaf42..05fa41fca31d80f89ed6b206d5732c10
 +   ctx->trim = vrend_decode_ctx_trim;
  }
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 224d99df8d68dd777752cfb653b3d5793110d1bc..a685788a3bbc6a2e7d3e0e20751ed191fe52682d 100644
+index a22fb7507c554bfeffd5575a0f8ff2815749fb32..68d9d60fe49891c9bc61f37f04dd9d45f290cdc5 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -13109,6 +13109,38 @@ bool vrend_hw_switch_context(struct vrend_context *ctx, bool now)
+@@ -13121,6 +13121,38 @@ bool vrend_hw_switch_context(struct vrend_context *ctx, bool now)
     return true;
  }
  
@@ -168,10 +168,10 @@ index 224d99df8d68dd777752cfb653b3d5793110d1bc..a685788a3bbc6a2e7d3e0e20751ed191
  {
     if (ctx->ctx_switch_pending == false)
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index a2440259de2f14a96f7bb58de2e6af14ffe99a7c..83539173b331e2965e076ec2d4825acd8419c919 100644
+index 2889d4b18cf5729efb495b7daf937e603c0d7b95..522c4db9d8f50fcaee2c8be6b42418279a0041b5 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
-@@ -598,6 +598,9 @@ void vrend_renderer_get_rect(struct pipe_resource *pres,
+@@ -597,6 +597,9 @@ void vrend_renderer_get_rect(struct pipe_resource *pres,
                               uint32_t offset,
                               int x, int y, int width, int height);
  

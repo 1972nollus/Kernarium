@@ -38,7 +38,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  3 files changed, 37 insertions(+), 4 deletions(-)
 
 diff --git a/src/vrend/vrend_decode.c b/src/vrend/vrend_decode.c
-index 72fdab49f59df4fe328e36154ff32f4ce3de99c3..9c5e85dddc44696e96d6cc022e5ca9566c6afba4 100644
+index ad45ca94fc6ea350f15e9571deec05937fff7f0f..71cf1aff031ba8711616e288f718bc67dc3c11cb 100644
 --- a/src/vrend/vrend_decode.c
 +++ b/src/vrend/vrend_decode.c
 @@ -1695,7 +1695,13 @@ static int vrend_decode_ctx_transfer_3d(struct virgl_context *ctx,
@@ -98,7 +98,7 @@ index 72fdab49f59df4fe328e36154ff32f4ce3de99c3..9c5e85dddc44696e96d6cc022e5ca956
  
  static int vrend_decode_ctx_get_fencing_fd(UNUSED struct virgl_context *ctx)
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 2ac1a1aa3bdd680995422b7538e7db02c7bee912..f6ff49763dd5414a4907279a8caa68d5aa9499c4 100644
+index 1114c7795b4133a49bdc25225f263035dfd55d22..b495975eda721276b039b9d60a9d77cc5c377d63 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -1158,6 +1158,19 @@ void vrend_report_context_error_internal(const char *fname, struct vrend_context
@@ -122,10 +122,10 @@ index 2ac1a1aa3bdd680995422b7538e7db02c7bee912..f6ff49763dd5414a4907279a8caa68d5
  #define CORE_PROFILE_WARN_STIPPLE 1
  #define CORE_PROFILE_WARN_POLYGON_MODE 2
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index 4bc62f35f94d86b41306dc2c6bcc1dbf22fa5d83..bbf2635d232b8cad39d3cdf252cecf1873e489b1 100644
+index a64a6dc149a3c7b6fe738159889ebf9c0fa79118..8993593a77a7a889b2a301a1b82f3c01f58feb09 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
-@@ -586,6 +586,8 @@ void vrend_report_context_error_internal(const char *fname, struct vrend_context
+@@ -585,6 +585,8 @@ void vrend_report_context_error_internal(const char *fname, struct vrend_context
  #define vrend_report_buffer_error(ctx, cmd) \
      vrend_report_context_error(ctx, VIRGL_ERROR_CTX_ILLEGAL_CMD_BUFFER, cmd)
  

@@ -25,10 +25,10 @@ Subject: [PATCH] venus: use truthful Apple external-memory capabilities
  delete mode 100644 src/venus/vkr_metal_helpers.m
 
 diff --git a/src/meson.build b/src/meson.build
-index c956715952e88a5875df79aa9a50e39d6109da4c..6d1ce14b423e62ffc5188dbf00c2bf27ba1d1be2 100644
+index d37dec703216cd869773de598a10a6923ca7b225..cbde781ba79ab59c889e919d66e59486d021d13c 100644
 --- a/src/meson.build
 +++ b/src/meson.build
-@@ -76,6 +76,7 @@ venus_sources = [
+@@ -81,6 +81,7 @@ venus_sources = [
     'venus/vkr_descriptor_set.c',
     'venus/vkr_device.c',
     'venus/vkr_device_memory.c',
@@ -36,7 +36,7 @@ index c956715952e88a5875df79aa9a50e39d6109da4c..6d1ce14b423e62ffc5188dbf00c2bf27
     'venus/vkr_host_copy.c',
     'venus/vkr_image.c',
     'venus/vkr_instance.c',
-@@ -227,9 +228,6 @@ if with_venus
+@@ -237,9 +238,6 @@ if with_venus
     virgl_sources += venus_sources
     virgl_sources += venus_codegen
     virgl_depends += [venus_dep]
@@ -47,7 +47,7 @@ index c956715952e88a5875df79aa9a50e39d6109da4c..6d1ce14b423e62ffc5188dbf00c2bf27
  
  if with_drm_renderers
 diff --git a/src/venus/vkr_buffer.c b/src/venus/vkr_buffer.c
-index 9e466f832eeef1607413223b65addf484b201240..99ec8dd9d71a8319298f320cd3d4ec006f55231e 100644
+index bba1f6a5e85d40b81cd653a375dd2ab1a6d2f2f6..e9236fa49cde77270173206edde0f83fd32e4f05 100644
 --- a/src/venus/vkr_buffer.c
 +++ b/src/venus/vkr_buffer.c
 @@ -6,7 +6,6 @@
@@ -147,7 +147,7 @@ index c71f08537b434fc3db6e382bd13111c5486a97f0..a8c185c6807c5ffc8be7b01b9d23a5b5
  VKR_DEFINE_OBJECT_CAST(device, VK_OBJECT_TYPE_DEVICE, VkDevice)
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 1abc23a8aef6cfe4905697144709e30c0e971433..4517cb3513bb16510770e73b70cd32aad88b2544 100644
+index 7d57c7ce67a5aa1f20ffe02d5faa1e7c8abcb6b6..12ba65bda639525be12e247abbea5a784b640036 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -10,7 +10,7 @@
@@ -178,7 +178,7 @@ index 1abc23a8aef6cfe4905697144709e30c0e971433..4517cb3513bb16510770e73b70cd32aa
      *
      * Skip forcing external if a valid VkImportMemoryResourceInfoMESA is provided, since
      * the mapping will be directly set up from the existing virgl resource.
-@@ -297,11 +298,51 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -300,11 +301,51 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
     uint32_t valid_fd_types = 0;
     int udmabuf_fd = -1;
     void *gbm_bo = NULL;
@@ -233,7 +233,7 @@ index 1abc23a8aef6cfe4905697144709e30c0e971433..4517cb3513bb16510770e73b70cd32aa
        /* An implementation can support dma_buf import along with opaque fd export/import.
         * If the client driver is using external memory and requesting dma_buf, without
         * dma_buf fd export support, we must use gbm bo import path instead of forcing
-@@ -349,23 +390,6 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -352,23 +393,6 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
                    align(alloc_info->allocationSize, getpagesize());
              }
           }
@@ -257,7 +257,7 @@ index 1abc23a8aef6cfe4905697144709e30c0e971433..4517cb3513bb16510770e73b70cd32aa
        } else if (physical_dev->EXT_external_memory_dma_buf) {
           /* Allocate dma_buf externally and force to import. */
           if (export_info) {
-@@ -409,7 +433,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -412,7 +436,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
           close(local_import_info.fd);
        if (gbm_bo)
           vkr_gbm_bo_destroy(gbm_bo);
@@ -266,16 +266,16 @@ index 1abc23a8aef6cfe4905697144709e30c0e971433..4517cb3513bb16510770e73b70cd32aa
        return;
     }
  
-@@ -419,7 +443,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -422,7 +446,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
     mem->valid_fd_types = valid_fd_types;
     mem->udmabuf_fd = udmabuf_fd;
     mem->gbm_bo = gbm_bo;
 -   mem->mtl_shm = mtl_shm;
 +   mem->host_shm = host_shm;
     mem->allocation_size = alloc_info->allocationSize;
-    mem->memory_type_index = mem_type_index;
+    mem->memory_type_index = alloc_info->memoryTypeIndex;
  }
-@@ -528,7 +552,7 @@ vkr_context_init_device_memory_dispatch(struct vkr_context *ctx)
+@@ -532,7 +556,7 @@ vkr_context_init_device_memory_dispatch(struct vkr_context *ctx)
  void
  vkr_device_memory_release(struct vkr_device_memory *mem)
  {
@@ -284,7 +284,7 @@ index 1abc23a8aef6cfe4905697144709e30c0e971433..4517cb3513bb16510770e73b70cd32aa
     if (mem->gbm_bo)
        vkr_gbm_bo_destroy(mem->gbm_bo);
     if (mem->udmabuf_fd >= 0)
-@@ -566,14 +590,16 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
+@@ -570,14 +594,16 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
                                        : VIRGL_RENDERER_MAP_CACHE_WC;
     }
  
@@ -434,10 +434,10 @@ index 0000000000000000000000000000000000000000..55c2f5c81299a342f8c6a07ddc23d6c4
 +
 +#endif /* VKR_HOST_MEMORY_H */
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index 2b627e371b1e36717c4597a05d0065254c70ef2a..5634aa74b67ba0ffed00b04210de22eb5755c1f1 100644
+index e1dee8e00ae1069d4c29b73f6f88756576739f6a..4248c95b9cf2cf6c04f46d1533d45d636b33ae53 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
-@@ -162,6 +162,13 @@ vkr_dispatch_vkGetImageDrmFormatModifierPropertiesEXT(
+@@ -167,6 +167,13 @@ vkr_dispatch_vkGetImageDrmFormatModifierPropertiesEXT(
     struct vkr_device *dev = vkr_device_from_handle(args->device);
     struct vn_device_proc_table *vk = &dev->proc_table;
  
@@ -553,7 +553,7 @@ index 4f5208bd1720210c6d89ce4177a45b6887687b77..00000000000000000000000000000000
 -#endif /* VKR_METAL_HELPERS_H */
 diff --git a/src/venus/vkr_metal_helpers.m b/src/venus/vkr_metal_helpers.m
 deleted file mode 100644
-index f0373ed10bf23bc0a8dde6e9a6a542325b93a4aa..0000000000000000000000000000000000000000
+index d40ae70feaaa8ba261b0d08c2e89770ab74fa72b..0000000000000000000000000000000000000000
 --- a/src/venus/vkr_metal_helpers.m
 +++ /dev/null
 @@ -1,99 +0,0 @@
@@ -572,7 +572,7 @@ index f0373ed10bf23bc0a8dde6e9a6a542325b93a4aa..00000000000000000000000000000000
 -#include <unistd.h>
 -
 -#include "util/anon_file.h"
--#include "venus-protocol/vulkan_metal.h"
+-#include "vulkan/vulkan_metal.h"
 -
 -#include "vkr_metal_helpers.h"
 -
@@ -657,10 +657,10 @@ index f0373ed10bf23bc0a8dde6e9a6a542325b93a4aa..00000000000000000000000000000000
 -
 -#endif /* __APPLE__ */
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index bc387548a5fd5f4a0bd667f2d0443a5a4e168786..f4037789a7de6efc133d7f1c1ddd99a7cdbd5279 100644
+index 0d63a0bba255c527b2744f940705a3aa669fe283..5d7a95522a5abf0b1bed75abc76ffac31fd6128d 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
-@@ -282,6 +282,8 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
+@@ -313,6 +313,8 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
           physical_dev->EXT_external_memory_dma_buf = true;
        else if (!strcmp(props->extensionName, "VK_KHR_external_fence_fd"))
           physical_dev->KHR_external_fence_fd = true;
@@ -669,7 +669,7 @@ index bc387548a5fd5f4a0bd667f2d0443a5a4e168786..f4037789a7de6efc133d7f1c1ddd99a7
        else if (!strcmp(props->extensionName, "VK_EXT_external_memory_metal"))
           physical_dev->EXT_external_memory_metal = true;
        else if (!strcmp(props->extensionName, "VK_EXT_metal_objects"))
-@@ -311,39 +313,34 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
+@@ -346,39 +348,34 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
           physical_dev->KHR_external_fence_fd = false;
     }
  
@@ -733,7 +733,7 @@ index bc387548a5fd5f4a0bd667f2d0443a5a4e168786..f4037789a7de6efc133d7f1c1ddd99a7
  static void
  vkr_physical_device_init_properties(struct vkr_physical_device *physical_dev)
  {
-@@ -444,6 +441,7 @@ vkr_dispatch_vkEnumeratePhysicalDevices(struct vn_dispatch_context *dispatch,
+@@ -479,6 +476,7 @@ vkr_dispatch_vkEnumeratePhysicalDevices(struct vn_dispatch_context *dispatch,
        physical_dev->api_version =
           MIN2(physical_dev->properties.apiVersion, instance->api_version);
        vkr_physical_device_init_extensions(physical_dev);
@@ -742,7 +742,7 @@ index bc387548a5fd5f4a0bd667f2d0443a5a4e168786..f4037789a7de6efc133d7f1c1ddd99a7
        vkr_physical_device_init_id_properties(physical_dev);
        vkr_physical_device_init_queue_family_properties(physical_dev);
 diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
-index 371899b3982c23c8410eed1d18370bf6d2ebd728..77fc62510cce22e88cd0c272094064c52f6c4e09 100644
+index 8ec55a6a90f6e82f44f1cce776a7a752da7d26a5..e6302891e864f2571d62e65cd2559c4982816b96 100644
 --- a/src/venus/vkr_physical_device.h
 +++ b/src/venus/vkr_physical_device.h
 @@ -28,6 +28,8 @@ struct vkr_physical_device {

@@ -24,7 +24,7 @@ reference to the storage and is unaffected.
  4 files changed, 50 insertions(+), 14 deletions(-)
 
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
-index d3dbac12ee1b7e0c9e8398dfe2dcb2aa99af4fb9..b13f428f42eab673750e5d0ca50d6a2bf5745479 100644
+index e5bd69651d45c66c3e30c237c068ba953973b3ff..5fc6b43d9fc0dff013a1e6ab2f8f82ea2f0a3cd1 100644
 --- a/src/venus/vkr_context.c
 +++ b/src/venus/vkr_context.c
 @@ -266,6 +266,7 @@ vkr_context_import_resource_internal(struct vkr_context *ctx,
@@ -89,7 +89,7 @@ index d3dbac12ee1b7e0c9e8398dfe2dcb2aa99af4fb9..b13f428f42eab673750e5d0ca50d6a2b
  }
  
  bool
-@@ -478,6 +482,28 @@ vkr_context_import_resource(struct vkr_context *ctx,
+@@ -485,6 +489,28 @@ vkr_context_import_resource(struct vkr_context *ctx,
        VIRGL_RESOURCE_NATIVE_HANDLE_NONE, NULL);
  }
  
@@ -118,7 +118,7 @@ index d3dbac12ee1b7e0c9e8398dfe2dcb2aa99af4fb9..b13f428f42eab673750e5d0ca50d6a2b
  void
  vkr_context_destroy_resource(struct vkr_context *ctx, uint32_t res_id)
  {
-@@ -504,6 +530,9 @@ vkr_context_destroy_resource(struct vkr_context *ctx, uint32_t res_id)
+@@ -511,6 +537,9 @@ vkr_context_destroy_resource(struct vkr_context *ctx, uint32_t res_id)
     }
     mtx_unlock(&ctx->ring_mutex);
  

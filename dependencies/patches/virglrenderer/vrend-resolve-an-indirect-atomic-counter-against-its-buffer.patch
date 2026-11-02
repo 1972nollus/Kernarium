@@ -27,10 +27,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 33 insertions(+), 16 deletions(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index 80fdebc881ffdab0625dfa7547aa68407edc87ba..3fa887fe2c9f712887b534958effd6285a4828ba 100644
+index 0ad8c523f7cb71156e520b5e0dbdf6526ce1baf5..bfc8d2b53aed9bec15b82ac96b21c8e72114e6eb 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
-@@ -5409,26 +5409,43 @@ get_source_info(struct dump_ctx *ctx,
+@@ -5424,26 +5424,43 @@ get_source_info(struct dump_ctx *ctx,
              return false;
        } break;
        case TGSI_FILE_HW_ATOMIC: {

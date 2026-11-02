@@ -26,7 +26,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  3 files changed, 30 insertions(+), 6 deletions(-)
 
 diff --git a/src/vrend/vrend_decode.c b/src/vrend/vrend_decode.c
-index f70eda6f737e2fab568d98813ebed5182f304e32..a2bd100ba1820a833bed30040e0c7606ca57ca0b 100644
+index 62a94beba98078dc9659ab3b9d96129e2bd3cab2..b4fa098fb412259fe59cc80e2d1c87bffea592b8 100644
 --- a/src/vrend/vrend_decode.c
 +++ b/src/vrend/vrend_decode.c
 @@ -1232,7 +1232,9 @@ static int vrend_decode_create_sub_ctx(struct vrend_context *ctx, const uint32_t
@@ -41,7 +41,7 @@ index f70eda6f737e2fab568d98813ebed5182f304e32..a2bd100ba1820a833bed30040e0c7606
  }
  
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 7bba85f7932e498b7f1c31f9d1f62735d05bb351..7168c37eb0e0052ce21a080785faea4425656a54 100644
+index bec8b28f9cd5ca9b8a09a88cda7cefa46b19e8e5..adec6a9f95687e46c9897a29c826f64c88b75aa6 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -8476,7 +8476,17 @@ struct vrend_context *vrend_create_context(int id, uint32_t nlen, const char *de
@@ -63,7 +63,7 @@ index 7bba85f7932e498b7f1c31f9d1f62735d05bb351..7168c37eb0e0052ce21a080785faea44
     vrend_renderer_set_sub_ctx(grctx, 0);
  
     int glver = get_glsl_version();
-@@ -13972,26 +13982,37 @@ void vrend_renderer_get_cap_set(uint32_t cap_set, uint32_t *max_ver,
+@@ -13984,26 +13994,37 @@ void vrend_renderer_get_cap_set(uint32_t cap_set, uint32_t *max_ver,
     }
  }
  
@@ -104,7 +104,7 @@ index 7bba85f7932e498b7f1c31f9d1f62735d05bb351..7168c37eb0e0052ce21a080785faea44
     sub->parent = ctx;
     vrend_clicbs->make_current(sub->gl_context);
  
-@@ -14038,6 +14059,7 @@ void vrend_renderer_create_sub_ctx(struct vrend_context *ctx, int sub_ctx_id)
+@@ -14050,6 +14071,7 @@ void vrend_renderer_create_sub_ctx(struct vrend_context *ctx, int sub_ctx_id)
        ctx->sub0 = sub;
  
     vrend_set_tweak_from_env(&ctx->sub->tweaks);
@@ -113,10 +113,10 @@ index 7bba85f7932e498b7f1c31f9d1f62735d05bb351..7168c37eb0e0052ce21a080785faea44
  
  unsigned vrend_context_has_debug_flag(const struct vrend_context *ctx, enum virgl_debug_flags flag)
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index a8072a9286e3794ec62036a316d0d115bfbdf2fa..f90870f13a8979eb773d464078ce855aee7a4959 100644
+index 3cc9d9ca608130cba64734a5ec401c63bc872647..a0500d696ed210afe18467fd1d78215264b84fda 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
-@@ -604,7 +604,7 @@ void vrend_renderer_resource_get_info(struct pipe_resource *pres,
+@@ -603,7 +603,7 @@ void vrend_renderer_resource_get_info(struct pipe_resource *pres,
  void vrend_renderer_get_cap_set(uint32_t cap_set, uint32_t *max_ver,
                                  uint32_t *max_size);
  

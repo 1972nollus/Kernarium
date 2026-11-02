@@ -23,18 +23,18 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/virgl_host_memory.h
 
 diff --git a/src/meson.build b/src/meson.build
-index 6d1ce14b423e62ffc5188dbf00c2bf27ba1d1be2..4aca6a18881be8c7ca97a5cb74e18b6a668852e6 100644
+index cbde781ba79ab59c889e919d66e59486d021d13c..0cafd3bbb5a447764ac4931ad2a15a46834bc0a7 100644
 --- a/src/meson.build
 +++ b/src/meson.build
-@@ -27,6 +27,7 @@ subdir('gallium')
+@@ -32,6 +32,7 @@ endif
  virgl_sources = [
     'virgl_context.c',
     'virgl_fence.c',
 +   'virgl_host_memory.c',
+    'virgl_iov.c',
     'virgl_resource.c',
     'virgl_util.c',
- ]
-@@ -76,7 +77,6 @@ venus_sources = [
+@@ -81,7 +82,6 @@ venus_sources = [
     'venus/vkr_descriptor_set.c',
     'venus/vkr_device.c',
     'venus/vkr_device_memory.c',
