@@ -642,8 +642,8 @@ private:
      * every write. So an interrupted sink is muted instead: its queued periods
      * complete on the schedule the audio hardware would have kept, the guest's
      * clock keeps running, and the sink takes the session back as soon as the
-     * system's resumption recommendation arrives or no other app is playing
-     * primary audio. */
+     * system advises resuming or no other app is playing primary audio (see
+     * endInterruption). */
 
     // Acts on the notifications that arrived since the last look, so a
     // request that follows them sees the interruption they report.
