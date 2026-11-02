@@ -1250,8 +1250,8 @@ enabled (`--video`).
 
 ## Android UI rendering CTS
 
-`CtsUiRenderingTestCases` qualifies on the iPad's gadget engine, in the
-automation application or in Andarium, not on the shared Mac. Its
+`CtsUiRenderingTestCases` qualifies on the iPad's gadget engine in the
+automation application, not on the shared Mac. Its
 `ColorSpaceTests#testMultiAtlasGlyphsWithColorSpace` paints a thousand glyphs
 of the COLRv1 emoji font at 13 sizes on the CPU in each of two renders, and
 each render must finish within the test's 60 s wait. On the iPad mini 6 the
