@@ -197,7 +197,8 @@ frames. Under `VIRTIO_BALLOON_F_MUST_TELL_HOST`, a deflate commits the page
 before the guest may use it.
 
 The process's memory limit, L, is the figure the memory budgets derive from;
-the gadget-cache budget takes at most an eighth of it. iOS enforces one per
+the gadget-cache budget takes at most an eighth of it, and where a limit is set
+no more than the cap of the guest's vCPU count (below). iOS enforces one per
 application and reports it (`platform::process_memory_limit_bytes()`: the
 footprint plus the limit remaining, 2,867 MiB on the iPad mini 6). macOS
 enforces none, so a measurement run states it with `--memory-limit=2867M` or
@@ -219,23 +220,57 @@ hosts):
 B = clamp(L - A - G - E - S, 384 MiB, G / 2)
 ```
 
-G is the guest's RAM. E is the gadget-cache budget in effect plus the rest of
-the guest side's host memory. A is the application's own expected ceiling and S
-the headroom left unused. Half the guest's RAM is the most the GPU may take, so
-where that is under the floor the maximum wins and B is G / 2; with no limit B
-is G / 2 as well. A, the rest of E and S are launch parameters, all in MiB:
-`--gpu-budget-app=`, `--gpu-budget-engine=` and `--gpu-budget-headroom=` on the
-macOS command line (an optional `K`, `M` or `G` suffix), the fields of the
-runtime's boot request on iOS, which `KERNARIUM_GPU_BUDGET_APP_MIB`,
-`KERNARIUM_GPU_BUDGET_ENGINE_MIB` and `KERNARIUM_GPU_BUDGET_HEADROOM_MIB` set for
-a measurement run. Their defaults are zero until the product owner chooses
-values, so B is G / 2 except where L - G leaves the GPU less than that. A launch
-whose L - A - G - E - S is under the floor is never refused: B is the floor,
-and the launch says the process is likely to be ended, as one `uml-darwin:`
-line on stderr and as a dismissible notice in Kernarium
-(`kernarium_runtime_plan_gpu_budget_function` evaluates the plan before the run
-so the application can show it). The device memory budget section of
+G is the guest's RAM. E is the gadget-cache budget in effect, the slot tags of
+the guest's vCPUs and the rest of the guest side's host memory. A is the
+application's own expected ceiling and S the headroom left unused. Half the
+guest's RAM is the most the GPU may take, so where that is under the floor the
+maximum wins and B is G / 2; with no limit B is G / 2 as well. A, the rest of E
+and S are launch parameters, all in MiB: `--gpu-budget-app=`,
+`--gpu-budget-engine=` and `--gpu-budget-headroom=` on the macOS command line (an
+optional `K`, `M` or `G` suffix), the fields of the runtime's boot request on
+iOS, which `KERNARIUM_GPU_BUDGET_APP_MIB`, `KERNARIUM_GPU_BUDGET_ENGINE_MIB` and
+`KERNARIUM_GPU_BUDGET_HEADROOM_MIB` set for a measurement run. Each defaults to
+the launch set, one constant in `runtime/guest_memory_budget.hpp` that every
+launcher and the application take their defaults from; its values are zero until
+the product owner chooses them (the header names the candidates), so B is G / 2
+except where L - G leaves the GPU less than that. A launch whose L - A - G - E - S
+is under the floor is never refused: B is the floor, and the launch says the
+process is likely to be ended, as one `uml-darwin:` line on stderr and as a
+dismissible notice in Kernarium (`kernarium_runtime_plan_gpu_budget_function`
+evaluates the plan, for the guest's memory and vCPU count, before the run so the
+application can show it). The device memory budget section of
 [graphics](graphics.md) owns what B bounds.
+
+The guest side's memory follows the vCPU count, v, and `runtime/guest_memory_budget.hpp`
+is the one place that says how:
+
+```text
+E(v, G) = c(v, G) + 4 MiB * v + E_rest
+c(v, G) = min(derive_budget(G, L), cap(v))      where L is set; derive_budget(G, L) alone otherwise
+```
+
+`cap(v)` is the gadget cache's measured worst ceiling at v vCPUs, rounded up to
+16 MiB, plus 32 MiB: 176, 208, 240, 288, 304, 304, 336 and 336 MiB for 1 to 8
+vCPUs, and 16 MiB more for each vCPU beyond. It sits above every measured
+ceiling, so the budget's own shedding (an eighth of the budget below it, when
+the accounts pass it) stays what bounds the cache in the measured loads. The
+4 MiB per vCPU are the slot tags, which the cache's ledger does not charge. An
+explicit `--gadget-cache-budget=` is used as stated and is not capped. The run
+(`runtime::set_gadget_cache_budget`), the plan's E and the application's bound
+below all evaluate this header; none states the formula itself.
+
+The largest guest RAM a limit leaves, `G_max(v)`, is the largest G of 512 to
+4096 MiB in 64 MiB steps for which L - G - A - E(v, G) - S is at least the
+384 MiB floor; with no limit (macOS, and an iOS application running on a Mac)
+it is 4096, and where even 512 MiB leaves less than the floor it is 512 and the
+launch warns as above. On the iPad mini 6 (L = 2,867 MiB) and with A, E_rest and
+S at zero it is 2240, 2240, 2176, 2176, 2112, 2112, 2112 and 2112 MiB for 1 to 8
+vCPUs. Kernarium's settings offer no more than `G_max(v)` for the chosen vCPU
+count; the application reads the limit itself and evaluates the header through
+its loader, because the runtime framework is loaded once per process, for the
+flavour chosen at launch, and cannot be asked before that
+([Kernarium](../Kernarium/README.md)). The launch does not
+refuse a larger value that automation states.
 
 Every iOS memory control carries its macOS path, or records here why none can
 exist, so that a Mac run stays an accurate ground for measuring the device. The

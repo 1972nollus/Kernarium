@@ -15,6 +15,13 @@ struct EmulatorSettingsView: View {
     private let rootfsFilenames: [String]
     private let documentsDirectory: URL
 
+    /// The most guest RAM the memory limit leaves at the chosen vCPU count.
+    private var maximumGuestMemoryMiB: Int {
+        configuration.maximumGuestMemoryMiB(
+            vCPUCount: configuration.vCPUCount
+        )
+    }
+
     private var androidBundleSelected: Bool {
         RootfsImage.selection(
             named: configuration.rootfsFilename,
@@ -100,14 +107,32 @@ struct EmulatorSettingsView: View {
                         in: 1...maximumVCPUCount
                     )
                     .accessibilityIdentifier("vCPUCountStepper")
+                    .onChange(of: configuration.vCPUCount) { oldCount, _ in
+                        configuration.vCPUCountChanged(from: oldCount)
+                    }
 
                     Stepper(
                         "Guest RAM: \(configuration.guestMemoryMiB) MB",
                         value: $configuration.guestMemoryMiB,
-                        in: EmulatorConfiguration.guestMemoryRangeMiB,
+                        in: EmulatorConfiguration.guestMemoryRangeMiB
+                            .lowerBound...maximumGuestMemoryMiB,
                         step: EmulatorConfiguration.guestMemoryStepMiB
                     )
                     .accessibilityIdentifier("guestMemoryStepper")
+
+                    if maximumGuestMemoryMiB <
+                        EmulatorConfiguration.guestMemoryRangeMiB.upperBound {
+                        Text(
+                            "With \(configuration.vCPUCount) vCPUs the " +
+                                "system leaves room for at most " +
+                                "\(maximumGuestMemoryMiB) MB of guest RAM " +
+                                "beside graphics and the emulator. More " +
+                                "vCPUs lower it."
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("guestMemoryLimitNote")
+                    }
 
                     Stepper(
                         "Overlay FS: \(configuration.overlaySizeGiB) GB",
