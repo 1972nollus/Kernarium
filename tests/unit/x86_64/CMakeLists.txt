@@ -296,4 +296,12 @@ if(TARGET uml_x86_64_jit)
         COMMAND uml_x86_64_jit_cpuid_tests
         LABELS cpu;x86-64
         TIMEOUT 300)
+    # VPDPBUSD and its relatives under every lowering the host can run.
+    uml_add_x86_64_test_binary(uml_x86_64_jit_vnni_tests
+        x86_64_jit_vnni_tests.cpp JIT)
+    uml_add_unit_test(
+        NAME x86-64-jit-vnni
+        COMMAND uml_x86_64_jit_vnni_tests
+        LABELS cpu;x86-64
+        TIMEOUT 300)
 endif()
