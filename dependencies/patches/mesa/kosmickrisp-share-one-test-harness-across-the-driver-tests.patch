@@ -57,7 +57,7 @@ variants of its one shader.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- src/kosmickrisp/vulkan/meson.build            | 1489 ++++------------
+ src/kosmickrisp/vulkan/meson.build            | 1497 ++++------------
  .../alpha_to_coverage_shaders/generate.sh     |    7 -
  .../tests/command_buffer_shaders/generate.sh  |    7 -
  .../early_sample_mask_shaders/generate.sh     |    7 -
@@ -137,6 +137,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  .../test_post_depth_coverage_sample_mask.cpp  | 1031 +++++------
  .../vulkan/tests/test_query_pool_lifetime.c   |  108 +-
  .../vulkan/tests/test_raster_discard.cpp      |  777 ++++-----
+ .../tests/test_residency_commit_race.cpp      |  151 +-
  .../vulkan/tests/test_residency_release.m     |   64 +-
  .../vulkan/tests/test_rgb32_texel_format.c    |    9 +-
  .../vulkan/tests/test_rgb32_texel_lowering.c  |    9 +-
@@ -157,7 +158,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  .../tests/test_unused_attachment_gaps.cpp     |  751 ++++----
  .../texel_buffer_bounds_shaders/generate.sh   |    5 -
  .../unused_attachment_shaders/generate.sh     |    7 -
- 100 files changed, 8422 insertions(+), 16404 deletions(-)
+ 101 files changed, 8441 insertions(+), 16544 deletions(-)
  delete mode 100755 src/kosmickrisp/vulkan/tests/alpha_to_coverage_shaders/generate.sh
  delete mode 100755 src/kosmickrisp/vulkan/tests/command_buffer_shaders/generate.sh
  delete mode 100755 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/generate.sh
@@ -195,10 +196,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  delete mode 100755 src/kosmickrisp/vulkan/tests/unused_attachment_shaders/generate.sh
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index e1927a2531a96b682037e6243a7e93043ad5683b..1b1d0a9bb70d75fb14a76fd7720b4a15a57eae9e 100644
+index 621cdc02cf11e720a6297a6178624838487791c4..cc5ace87ece355b9fb0f2ffc4cb559d084f70cfe 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -227,598 +227,234 @@ if with_tests
+@@ -227,598 +227,250 @@ if with_tests
      include_directories('../../vulkan/runtime'),
    ]
  
@@ -759,20 +760,6 @@ index e1927a2531a96b682037e6243a7e93043ad5683b..1b1d0a9bb70d75fb14a76fd7720b4a15
 -      executable(
 -        'test_kosmickrisp_geometry_primitive_id_link',
 -        files('tests/test_geometry_primitive_id_link.cpp'),
--        include_directories : kk_test_include_directories,
--        dependencies : [idep_vulkan_runtime_headers],
--        link_with : libvulkan_kosmickrisp,
--        override_options : ['cpp_std=c++20'],
--      ),
--      suite : ['kosmickrisp'],
--      env : ['MESA_SHADER_CACHE_DISABLE=true'],
--      timeout : 120,
--    )
--    test(
--      'kosmickrisp_max_varyings',
--      executable(
--        'test_kosmickrisp_max_varyings',
--        files('tests/test_max_varyings.cpp'),
 +  kk_test_env = ['MESA_SHADER_CACHE_DISABLE=true']
 +
 +  if host_machine.system() == 'darwin'
@@ -872,6 +859,26 @@ index e1927a2531a96b682037e6243a7e93043ad5683b..1b1d0a9bb70d75fb14a76fd7720b4a15
 +        )
 +      endforeach
 +    endforeach
++    # Queue commits against residency set writes on another thread, under
++    # the shader validation that walks the set's heaps in each commit.
+     test(
+-      'kosmickrisp_max_varyings',
++      'kosmickrisp_residency_commit_race',
+       executable(
+-        'test_kosmickrisp_max_varyings',
+-        files('tests/test_max_varyings.cpp'),
++        'test_kosmickrisp_residency_commit_race',
++        files('tests/test_residency_commit_race.cpp'),
+         include_directories : kk_test_include_directories,
+         dependencies : [idep_vulkan_runtime_headers],
+         link_with : libvulkan_kosmickrisp,
+         override_options : ['cpp_std=c++20'],
+       ),
+       suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
++      env : kk_test_env + ['MTL_SHADER_VALIDATION=1'],
+       timeout : 120,
+     )
 +    # Tests that link the driver library whole to reach its internals:
 +    # tests/test_<name>.c.
 +    foreach kk_internal_test : [
@@ -1017,7 +1024,7 @@ index e1927a2531a96b682037e6243a7e93043ad5683b..1b1d0a9bb70d75fb14a76fd7720b4a15
        link_whole : libkk,
        link_args : ['-Wl,-undefined,dynamic_lookup'],
      )
-@@ -828,7 +464,7 @@ if with_tests
+@@ -828,7 +480,7 @@ if with_tests
          timeline_wait_loss_test,
          args : [wait_mode],
          suite : ['kosmickrisp'],
@@ -1026,7 +1033,7 @@ index e1927a2531a96b682037e6243a7e93043ad5683b..1b1d0a9bb70d75fb14a76fd7720b4a15
          timeout : 15,
        )
      endforeach
-@@ -838,7 +474,7 @@ if with_tests
+@@ -838,7 +490,7 @@ if with_tests
          timeline_wait_loss_test,
          args : [wait_mode],
          suite : ['kosmickrisp'],
@@ -1035,7 +1042,7 @@ index e1927a2531a96b682037e6243a7e93043ad5683b..1b1d0a9bb70d75fb14a76fd7720b4a15
          timeout : 90,
        )
      endforeach
-@@ -861,7 +497,7 @@ if with_tests
+@@ -861,7 +513,7 @@ if with_tests
            timeline_host_wait_test,
            args : [submit_api],
            suite : ['kosmickrisp'],
@@ -1044,7 +1051,7 @@ index e1927a2531a96b682037e6243a7e93043ad5683b..1b1d0a9bb70d75fb14a76fd7720b4a15
            timeout : 90,
          )
          test(
-@@ -869,7 +505,7 @@ if with_tests
+@@ -869,7 +521,7 @@ if with_tests
            timeline_host_wait_test,
            args : [submit_api, 'mixed'],
            suite : ['kosmickrisp'],
@@ -1053,13 +1060,10 @@ index e1927a2531a96b682037e6243a7e93043ad5683b..1b1d0a9bb70d75fb14a76fd7720b4a15
            timeout : 30,
          )
        endforeach
-@@ -879,464 +515,140 @@ if with_tests
-       files('tests/test_timeline_pending_wait.cpp'),
-       include_directories : kk_test_include_directories,
-       dependencies : [idep_vulkan_runtime_headers, dep_thread],
--      link_with : libvulkan_kosmickrisp,
--      override_options : ['cpp_std=c++20'],
--    )
+@@ -882,477 +534,137 @@ if with_tests
+       link_with : libvulkan_kosmickrisp,
+       override_options : ['cpp_std=c++20'],
+     )
 -    foreach pending_mode : ['deadlock', 'throughput']
 -      test(
 -        'kosmickrisp_timeline_pending_wait_' + pending_mode,
@@ -1282,6 +1286,22 @@ index e1927a2531a96b682037e6243a7e93043ad5683b..1b1d0a9bb70d75fb14a76fd7720b4a15
 -      env : ['MESA_SHADER_CACHE_DISABLE=true'],
 -      timeout : 60,
 -    )
+-    # Queue commits against residency set writes on another thread, under
+-    # the shader validation that walks the set's heaps in each commit.
+-    test(
+-      'kosmickrisp_residency_commit_race',
+-      executable(
+-        'test_kosmickrisp_residency_commit_race',
+-        files('tests/test_residency_commit_race.cpp'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [idep_vulkan_runtime_headers],
+-        link_with : libvulkan_kosmickrisp,
+-        override_options : ['cpp_std=c++20'],
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true', 'MTL_SHADER_VALIDATION=1'],
+-      timeout : 120,
+-    )
 -    test(
 -      'kosmickrisp_command_allocator_budget',
 -      executable(
@@ -1301,9 +1321,7 @@ index e1927a2531a96b682037e6243a7e93043ad5683b..1b1d0a9bb70d75fb14a76fd7720b4a15
 -      suite : ['kosmickrisp'],
 -      env : ['MESA_SHADER_CACHE_DISABLE=true'],
 -      timeout : 60,
-+      link_with : libvulkan_kosmickrisp,
-+      override_options : ['cpp_std=c++20'],
-     )
+-    )
 +    foreach pending_mode : ['deadlock', 'throughput']
 +      test(
 +        'kosmickrisp_timeline_pending_wait_' + pending_mode,
@@ -1597,7 +1615,7 @@ index e1927a2531a96b682037e6243a7e93043ad5683b..1b1d0a9bb70d75fb14a76fd7720b4a15
  
    test(
      'kosmickrisp_logic_op',
-@@ -1369,50 +681,6 @@ if with_tests
+@@ -1385,50 +697,6 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -1648,7 +1666,7 @@ index e1927a2531a96b682037e6243a7e93043ad5683b..1b1d0a9bb70d75fb14a76fd7720b4a15
    test(
      'kosmickrisp_fragment_output_swizzle',
      executable(
-@@ -1433,137 +701,28 @@ if with_tests
+@@ -1449,137 +717,28 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -21573,6 +21591,206 @@ index b48923070b625aa6a378b03b6267abdcfe6f3ca9..d77515c831b54ac639a23f26f185876a
 +   for (auto module : modules)
 +      vkDestroyShaderModule(device, module, nullptr);
 +   vkDestroyPipelineLayout(device, layout, nullptr);
++   kk_test_destroy(&t);
+    return 0;
+ }
+diff --git a/src/kosmickrisp/vulkan/tests/test_residency_commit_race.cpp b/src/kosmickrisp/vulkan/tests/test_residency_commit_race.cpp
+index 0417b201c397aeb5c2614d206039ff7eef138e0c..5723d480ee801f9c9adcf43f6ecac5867f2cda2c 100644
+--- a/src/kosmickrisp/vulkan/tests/test_residency_commit_race.cpp
++++ b/src/kosmickrisp/vulkan/tests/test_residency_commit_race.cpp
+@@ -28,32 +28,7 @@
+ #include <thread>
+ #include <vector>
+ 
+-extern "C" PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+-
+-static void require(bool ok, const char *operation, VkResult value = VK_SUCCESS)
+-{
+-   if (!ok) {
+-      std::fprintf(stderr, "%s: %d\n", operation, value);
+-      std::exit(1);
+-   }
+-}
+-
+-template <typename T> static T load(VkInstance instance, const char *name)
+-{
+-   auto function = reinterpret_cast<T>(vkGetInstanceProcAddr(instance, name));
+-   require(function != nullptr, name);
+-   return function;
+-}
+-
+-#define LOAD_I(name) auto name = load<PFN_##name>(instance, #name)
+-#define LOAD_D(name)                                                             \
+-   auto name = reinterpret_cast<PFN_##name>(vkGetDeviceProcAddr(device, #name)); \
+-   require(name != nullptr, #name)
+-#define VK_CHECK(expr)                                                         \
+-   do {                                                                        \
+-      VkResult vk_check_result = (expr);                                       \
+-      require(vk_check_result == VK_SUCCESS, #expr, vk_check_result);          \
+-   } while (0)
++#include "kk_test.h"
+ 
+ int
+ main(int argc, char **argv)
+@@ -66,110 +41,23 @@ main(int argc, char **argv)
+          heaps = uint32_t(strtoul(argv[i + 1], nullptr, 0));
+    }
+ 
+-   VkInstance instance = VK_NULL_HANDLE;
+-   LOAD_I(vkCreateInstance);
+-   VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+-   app.pApplicationName = "kosmickrisp_residency_commit_race";
+-   app.apiVersion = VK_API_VERSION_1_3;
+-   VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+-   instance_info.pApplicationInfo = &app;
+-   VK_CHECK(vkCreateInstance(&instance_info, nullptr, &instance));
+-   LOAD_I(vkDestroyInstance);
+-   LOAD_I(vkEnumeratePhysicalDevices);
+-   LOAD_I(vkGetPhysicalDeviceQueueFamilyProperties);
+-   LOAD_I(vkGetPhysicalDeviceMemoryProperties);
+-   LOAD_I(vkCreateDevice);
+-   LOAD_I(vkGetDeviceProcAddr);
+-   uint32_t physical_count = 1;
+-   VkPhysicalDevice physical = VK_NULL_HANDLE;
+-   VkResult enumerated =
+-      vkEnumeratePhysicalDevices(instance, &physical_count, &physical);
+-   require((enumerated == VK_SUCCESS || enumerated == VK_INCOMPLETE) &&
+-              physical_count,
+-           "physical device", enumerated);
+-   uint32_t queue_count = 0;
+-   vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count, nullptr);
+-   std::vector<VkQueueFamilyProperties> queues(queue_count);
+-   vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count,
+-                                            queues.data());
+-   uint32_t family = 0;
+-   while (family < queue_count &&
+-          !(queues[family].queueFlags & VK_QUEUE_GRAPHICS_BIT))
+-      ++family;
+-   require(family < queue_count, "graphics queue");
+-   float priority = 1.0f;
+-   VkDeviceQueueCreateInfo queue_info{
+-      VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+-   queue_info.queueFamilyIndex = family;
+-   queue_info.queueCount = 1;
+-   queue_info.pQueuePriorities = &priority;
+-   VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+-   device_info.queueCreateInfoCount = 1;
+-   device_info.pQueueCreateInfos = &queue_info;
+-   VkDevice device = VK_NULL_HANDLE;
+-   VK_CHECK(vkCreateDevice(physical, &device_info, nullptr, &device));
+-   LOAD_D(vkDestroyDevice);
+-   LOAD_D(vkGetDeviceQueue);
+-   LOAD_D(vkCreateBuffer);
+-   LOAD_D(vkDestroyBuffer);
+-   LOAD_D(vkGetBufferMemoryRequirements);
+-   LOAD_D(vkAllocateMemory);
+-   LOAD_D(vkFreeMemory);
+-   LOAD_D(vkBindBufferMemory);
+-   LOAD_D(vkMapMemory);
+-   LOAD_D(vkCreateCommandPool);
+-   LOAD_D(vkDestroyCommandPool);
+-   LOAD_D(vkResetCommandPool);
+-   LOAD_D(vkAllocateCommandBuffers);
+-   LOAD_D(vkBeginCommandBuffer);
+-   LOAD_D(vkEndCommandBuffer);
++   kk_test_device t;
++   kk_test_create_instance(&t, "kosmickrisp_residency_commit_race");
++   kk_test_create_device(&t, nullptr, nullptr, 0, nullptr);
++   KK_LOAD_DEVICE_FUNCTIONS(t);
+    LOAD_D(vkCmdFillBuffer);
+-   LOAD_D(vkCreateFence);
+-   LOAD_D(vkDestroyFence);
+-   LOAD_D(vkWaitForFences);
+-   LOAD_D(vkResetFences);
+-   LOAD_D(vkQueueSubmit);
+-   LOAD_D(vkQueueWaitIdle);
+-   VkQueue queue = VK_NULL_HANDLE;
+-   vkGetDeviceQueue(device, family, 0, &queue);
+-
+-   VkPhysicalDeviceMemoryProperties memory_properties;
+-   vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
+-   auto memory_type = [&](uint32_t bits, VkMemoryPropertyFlags flags) {
+-      uint32_t type = 0;
+-      while (type < memory_properties.memoryTypeCount &&
+-             (!(bits & (1u << type)) ||
+-              (memory_properties.memoryTypes[type].propertyFlags & flags) !=
+-                 flags))
+-         ++type;
+-      require(type < memory_properties.memoryTypeCount, "memory type");
+-      return type;
+-   };
+ 
+    const VkDeviceSize size = 64u * 1024u;
+-   VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+-   buffer_info.size = size;
+-   buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+-   VkBuffer target = VK_NULL_HANDLE;
+-   VK_CHECK(vkCreateBuffer(device, &buffer_info, nullptr, &target));
+-   VkMemoryRequirements requirements;
+-   vkGetBufferMemoryRequirements(device, target, &requirements);
+-   VkMemoryAllocateInfo target_allocate{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+-   target_allocate.allocationSize = requirements.size;
+-   target_allocate.memoryTypeIndex =
+-      memory_type(requirements.memoryTypeBits,
+-                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+-                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+-   VkDeviceMemory target_memory = VK_NULL_HANDLE;
+-   VK_CHECK(vkAllocateMemory(device, &target_allocate, nullptr, &target_memory));
+-   VK_CHECK(vkBindBufferMemory(device, target, target_memory, 0));
++   VkBuffer target;
++   VkDeviceMemory target_memory;
+    void *mapped = nullptr;
+-   VK_CHECK(vkMapMemory(device, target_memory, 0, VK_WHOLE_SIZE, 0, &mapped));
++   kk_test_buffer(&t, size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
++                  KK_TEST_HOST_MEMORY, &target, &target_memory, &mapped);
+ 
+    VkMemoryAllocateInfo allocate = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocate.allocationSize = size;
+    allocate.memoryTypeIndex =
+-      memory_type(~0u, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
++      kk_test_memory_type(&t, ~0u, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+ 
+    /* Heaps that stay resident, so every commit has a set to walk. */
+    std::vector<VkDeviceMemory> resident(heaps);
+@@ -196,18 +84,10 @@ main(int argc, char **argv)
+    VkFenceCreateInfo fence_info = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    for (uint32_t i = 0; i < ring; i++) {
+-      VkCommandPoolCreateInfo pool_info{
+-         VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+-      pool_info.queueFamilyIndex = family;
+-      VK_CHECK(vkCreateCommandPool(device, &pool_info, nullptr, &pools[i]));
+-      VkCommandBufferAllocateInfo command_info{
+-         VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+-      command_info.commandPool = pools[i];
+-      command_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+-      command_info.commandBufferCount = 1;
+-      VK_CHECK(vkAllocateCommandBuffers(device, &command_info, &commands[i]));
++      kk_test_command_buffer(&t, 0, &pools[i], &commands[i]);
+       VK_CHECK(vkCreateFence(device, &fence_info, nullptr, &fences[i]));
+    }
++   LOAD_D(vkResetFences);
+ 
+    for (uint32_t s = 0; s < submits; s++) {
+       const uint32_t slot = s % ring;
+@@ -224,9 +104,9 @@ main(int argc, char **argv)
+       VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+       submit.commandBufferCount = 1;
+       submit.pCommandBuffers = &commands[slot];
+-      VK_CHECK(vkQueueSubmit(queue, 1, &submit, fences[slot]));
++      VK_CHECK(vkQueueSubmit(t.queue, 1, &submit, fences[slot]));
+    }
+-   VK_CHECK(vkQueueWaitIdle(queue));
++   VK_CHECK(vkQueueWaitIdle(t.queue));
+    done.store(true);
+    churn.join();
+ 
+@@ -251,7 +131,6 @@ main(int argc, char **argv)
+       vkFreeMemory(device, memory, nullptr);
+    vkDestroyBuffer(device, target, nullptr);
+    vkFreeMemory(device, target_memory, nullptr);
+-   vkDestroyDevice(device, nullptr);
+-   vkDestroyInstance(instance, nullptr);
 +   kk_test_destroy(&t);
     return 0;
  }

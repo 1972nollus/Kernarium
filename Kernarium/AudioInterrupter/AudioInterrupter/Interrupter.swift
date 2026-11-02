@@ -118,6 +118,9 @@ final class Interrupter {
             }
         case .switch:
             _ = establish(mixable: true)
+            // The tick takes the session three seconds after other audio
+            // starts, not before the first interruption.
+            nextAttempt = Date()
         }
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }

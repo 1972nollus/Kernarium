@@ -12,32 +12,47 @@ device takes coded buffers of 8 MiB.
 
 Read the size of the coded buffers the device negotiates from its input
 queue when the codec is listed (a TRY_FMT with no size requested, which
-the driver raises to the largest packet it takes), and make that the
-default maximum input size, within 1 MiB and 16 MiB. A device that states
-none gets 16 MiB.
+the driver raises to the largest packet it takes), and make that the most
+an input block is asked to be, within 1 MiB and 16 MiB. A device that
+states none gets 16 MiB. The default maximum input size follows the
+picture size up to that: 1 MiB up to 1280x720, 2 MiB up to 1920x1088,
+4 MiB up to 4096x2304 and the device's size above, the sizes the device
+states once a client gives it the picture size. A stream that keeps eight
+blocks held 64 MiB of them at any size, 32 MiB at 4K now and 16 MiB at
+1080p.
 
-The maximum input size is never below that size, whatever a client
-states: a client states the largest sample of the clip it starts with
-(a few tens of KB in CTS AdaptivePlaybackTest) and the stream carries
-larger ones later. The old calculator raised the value for the same
-reason. The floor reaches the setter through a read-only setting of the
-component's own, since a setter cannot see the interface. The decoder
+The decoder states the same picture size with the coded format it sets on
+the device. It stated none: ui::Size() is -1 x -1, which the driver clamps
+to the largest picture the device decodes, and for that the device asks
+for its largest packet, 8 MiB, so the first coded buffer of a block
+smaller than that was refused (V4L2 QBUF failed, error 14). The size is
+the interface's picture size, the one the blocks follow.
+
+The maximum input size is never below that size for the picture size,
+whatever a client states: a client states the largest sample of the clip
+it starts with (a few tens of KB in CTS AdaptivePlaybackTest) and the
+stream carries larger ones later. The old calculator raised the value for
+the same reason. The setting of the device's size is read-only and the
+component's own, and the setter reads it and the picture size. A sample
+larger than the blocks is the client's to split or refuse. The decoder
 logs a device that needs more than the blocks it has.
 ---
- README.md                                     | 23 +++++--
- common/include/v4l2_codec2/common/Common.h    |  4 ++
- components/DecodeInterface.cpp                | 61 ++++++++-----------
- .../v4l2_codec2/components/DecodeInterface.h  | 20 ++++--
- v4l2/V4L2Decoder.cpp                          |  7 +++
- v4l2/V4L2Device.cpp                           | 24 ++++++++
- v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |  4 ++
- 7 files changed, 99 insertions(+), 44 deletions(-)
+ README.md                                     | 32 +++++--
+ common/include/v4l2_codec2/common/Common.h    |  4 +
+ components/DecodeInterface.cpp                | 96 +++++++++++--------
+ .../v4l2_codec2/components/DecodeInterface.h  | 26 ++++-
+ v4l2/V4L2DecodeComponent.cpp                  |  4 +-
+ v4l2/V4L2Decoder.cpp                          | 45 ++++++---
+ v4l2/V4L2Device.cpp                           | 24 +++++
+ v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h   | 10 +-
+ v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |  4 +
+ 9 files changed, 177 insertions(+), 68 deletions(-)
 
 diff --git a/README.md b/README.md
-index c2a99109d9d6663be009d810586dfe1d90b6613a..8c552cbfb5743f85cb65ba869a615fa93b2296ac 100644
+index c2a99109d9d6663be009d810586dfe1d90b6613a..e9b7d501a5219113ec5eb9d728cfb9b04ed5c00c 100644
 --- a/README.md
 +++ b/README.md
-@@ -482,12 +482,23 @@ again with every queue operation.
+@@ -482,12 +482,32 @@ again with every queue operation.
  ### Input Blocks
  
  The device takes a coded buffer in a dma-buf at least as large as the buffer
@@ -47,22 +62,31 @@ index c2a99109d9d6663be009d810586dfe1d90b6613a..8c552cbfb5743f85cb65ba869a615fa9
 -blocks, and the component copies a block smaller than the maximum input size
 -into a block of a pool it creates on first use, and queues that one. A secure
 -block is never copied.
-+size it negotiated, and refuses a smaller one. The component reads that size
-+from the device when it lists the codec (the size the input queue reports for
-+the codec before any is requested) and makes it the default maximum input
-+size, within 1 MiB and 16 MiB; a device that states none gets 16 MiB. A client
-+may state a larger maximum, but never a smaller one: the parameter is raised to
-+the device's size, since a client states the largest sample of the clip it
-+starts with and an adaptive stream carries larger ones later. The size comes
-+from the device because the framework allocates every input block at the
-+maximum input size and a stream keeps several of them: blocks of 64 MiB held
-+about 0.9 GB for one 4K stream, while the component copies only the bytes a
-+frame uses. The decoder logs a device that needs more than the block size.
++size it negotiated, and refuses a smaller one. The component reads the largest
++such size from the device when it lists the codec (the size the input queue
++reports for the codec before any is requested), within 1 MiB and 16 MiB; a
++device that states none gets 16 MiB. The default maximum input size follows the
++picture size up to it: 1 MiB up to 1280x720, 2 MiB up to 1920x1088, 4 MiB up to
++4096x2304 and the device's size above that, which are the sizes the device
++itself asks for once a client states the picture size. A client may state a
++larger maximum, but never a smaller one: the parameter is raised to that size,
++since a client states the largest sample of the clip it starts with and an
++adaptive stream carries larger ones later. The size follows the picture because
++the framework allocates every input block at the maximum input size and a
++stream keeps several of them: blocks of 64 MiB held about 0.9 GB for one 4K
++stream, and blocks of the device's largest packet (8 MiB) are 64 MiB for any
++picture size, while the component copies only the bytes a frame uses. A sample
++larger than the blocks is the client's to split or refuse. The decoder states the
++same picture size with the coded format it sets on the device, because the
++device sizes its coded buffers by the size it is told: a size left out reads as
++the largest picture the device decodes (the default `ui::Size()` is -1 x -1),
++for which the device asks for its largest packet, 8 MiB, which no block of 1 MiB
++holds. The decoder logs a device that needs more than the block size.
 +
 +The input blocks the framework allocates for the component are as large as the
 +maximum input size and are queued as they are. A client of the block model
 +chooses the size of its own blocks, and the component copies a block smaller
-+than the device's size into a block of a pool it creates on first use, and
++than the maximum input size into a block of a pool it creates on first use, and
 +queues that one. A secure block is never copied.
  
  ### Picture Size
@@ -83,7 +107,7 @@ index 167828b1384fe1c61f2a9206c8d05f392e7219d0..0f95c832e8c0e1e95e4cc65c86fca4a1
      // controls. A control the device does not expose leaves its value at the default below, and
      // the component then keeps the matching parameter out of its interface.
 diff --git a/components/DecodeInterface.cpp b/components/DecodeInterface.cpp
-index d882db3342bada2a134e20fdb1170942471f3e40..270505bc3ca0b8713a5fef10fe6be5d01d13b51f 100644
+index d882db3342bada2a134e20fdb1170942471f3e40..d2b322b00edd8f59c95e25e5cee85338e452a6d7 100644
 --- a/components/DecodeInterface.cpp
 +++ b/components/DecodeInterface.cpp
 @@ -23,16 +23,13 @@
@@ -102,15 +126,15 @@ index d882db3342bada2a134e20fdb1170942471f3e40..270505bc3ca0b8713a5fef10fe6be5d0
 -constexpr size_t kInputBufferSizeFor4K = 4 * kInputBufferSizeFor1080p;
 +// The range of the input blocks the component asks for by default. The framework allocates every
 +// input block at the maximum input size and a stream keeps several of them, so a size beyond what
-+// the device takes is memory that no frame uses: 64 MiB blocks held about 0.9 GB for one 4K stream,
-+// while the component copies only the bytes a frame uses. The size comes from the device (see
-+// inputBufferSizeFor), within these bounds.
++// the stream's pictures need is memory that no frame uses: 64 MiB blocks held about 0.9 GB for one
++// 4K stream, while the component copies only the bytes a frame uses. The size follows the picture
++// size and never exceeds what the device takes (see inputBufferSizeFor), within these bounds.
 +constexpr size_t kMinInputBufferSize = 1 * 1024 * 1024;
 +constexpr size_t kMaxInputBufferSize = 16 * 1024 * 1024;
  
  // The levels of the HEVC Main tier that have a High tier counterpart, and that counterpart.
  struct HevcTierPair {
-@@ -65,15 +62,13 @@ void addHevcHighTierLevels(std::vector<unsigned int>* levels) {
+@@ -65,15 +62,31 @@ void addHevcHighTierLevels(std::vector<unsigned int>* levels) {
      }
  }
  
@@ -118,8 +142,24 @@ index d882db3342bada2a134e20fdb1170942471f3e40..270505bc3ca0b8713a5fef10fe6be5d0
 -    if (area > k4KArea) {
 -        ALOGW("Input buffer size for video size (%zu) larger than 4K (%zu) might be too small.",
 -              area, k4KArea);
--    }
--
++// The size of the input blocks for pictures of |width| x |height|, for a device whose coded buffers
++// are at most |ceiling| bytes (see inputBufferSizeFor): 1 MiB up to 1280x720, 2 MiB up to 1920x1088,
++// 4 MiB up to 4096x2304 and the ceiling above. A compressed picture is a fraction of its raw size,
++// and these are the sizes the device itself asks a client that states the picture size for, so a
++// block is never smaller than the device's buffer for the size.
++size_t inputBufferSizeForPicture(size_t ceiling, uint32_t width, uint32_t height) {
++    const uint64_t area = uint64_t(width) * height;
++    size_t size = kMaxInputBufferSize;
++    if (area <= 1280u * 720u) {
++        size = 1 * 1024 * 1024;
++    } else if (area <= 1920u * 1088u) {
++        size = 2 * 1024 * 1024;
++    } else if (area <= 4096u * 2304u) {
++        size = 4 * 1024 * 1024;
+     }
++    return std::min(size, ceiling);
++}
+ 
 -    // Enlarge the input buffer for 4k video
 -    if (area > k1080pArea) return kInputBufferSizeFor4K;
 -    return kInputBufferSizeFor1080p;
@@ -133,20 +173,24 @@ index d882db3342bada2a134e20fdb1170942471f3e40..270505bc3ca0b8713a5fef10fe6be5d0
  }
  }  // namespace
  
-@@ -120,7 +115,11 @@ C2R DecodeInterface::SizeSetter(bool /* mayBlock */,
+@@ -120,7 +133,15 @@ C2R DecodeInterface::SizeSetter(bool /* mayBlock */,
  }
  
  C2R DecodeInterface::InputSizeSetter(bool /* mayBlock */,
 -                                     C2P<C2StreamMaxBufferSizeInfo::input>& inputSize) {
 +                                     C2P<C2StreamMaxBufferSizeInfo::input>& inputSize,
++                                     const C2P<C2StreamPictureSizeInfo::output>& size,
 +                                     const C2P<C2V4l2InputBlockSizeSetting>& inputBlockSize) {
 +    // A client states the largest sample of the clip it starts with, and the stream can carry
-+    // larger ones (adaptive playback); the blocks never get smaller than the device's buffers.
-+    if (inputSize.v.value < inputBlockSize.v.value) inputSize.set().value = inputBlockSize.v.value;
++    // larger ones (adaptive playback); the blocks never get smaller than the device's buffers for
++    // the picture size.
++    const size_t blockSize =
++            inputBufferSizeForPicture(inputBlockSize.v.value, size.v.width, size.v.height);
++    if (inputSize.v.value < blockSize) inputSize.set().value = static_cast<uint32_t>(blockSize);
      return inputSize.F(inputSize.v.value).validatePossible(inputSize.v.value);
  }
  
-@@ -157,17 +156,6 @@ C2R DecodeInterface::MergedColorAspectsSetter(bool /* mayBlock */,
+@@ -157,17 +178,6 @@ C2R DecodeInterface::MergedColorAspectsSetter(bool /* mayBlock */,
      return C2R::Ok();
  }
  
@@ -164,7 +208,7 @@ index d882db3342bada2a134e20fdb1170942471f3e40..270505bc3ca0b8713a5fef10fe6be5d0
  DecodeInterface::DecodeInterface(const std::string& name,
                                   const std::shared_ptr<C2ReflectorHelper>& helper,
                                   const SupportedCapabilities& caps)
-@@ -179,6 +167,7 @@ DecodeInterface::DecodeInterface(const std::string& name,
+@@ -179,6 +189,7 @@ DecodeInterface::DecodeInterface(const std::string& name,
  
      // The system resources are a struct that the reflector does not know yet.
      helper->addStructDescriptors<C2SystemResourceStruct>();
@@ -172,40 +216,60 @@ index d882db3342bada2a134e20fdb1170942471f3e40..270505bc3ca0b8713a5fef10fe6be5d0
  
      addParameter(DefineParam(mKind, C2_PARAMKEY_COMPONENT_KIND)
                           .withConstValue(new C2ComponentKindSetting(C2Component::KIND_DECODER))
-@@ -456,14 +445,18 @@ DecodeInterface::DecodeInterface(const std::string& name,
+@@ -456,15 +467,20 @@ DecodeInterface::DecodeInterface(const std::string& name,
                               .build());
      }
  
+-    addParameter(
+-            DefineParam(mMaxInputSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
+-                    .withDefault(new C2StreamMaxBufferSizeInfo::input(0u, kInputBufferSizeFor1080p))
+-                    .withFields({
+-                            C2F(mMaxInputSize, value).any(),
+-                    })
+-                    .withSetter(InputSizeSetter)
+-                    .calculatedAs(MaxInputBufferSizeCalculator, mSize)
+-                    .build());
 +    const uint32_t inputBlockSize =
 +            static_cast<uint32_t>(inputBufferSizeFor(caps.codedBufferSize));
 +    addParameter(DefineParam(mInputBlockSize, C2_PARAMKEY_V4L2_INPUT_BLOCK_SIZE)
 +                         .withConstValue(new C2V4l2InputBlockSizeSetting(inputBlockSize))
 +                         .build());
-     addParameter(
-             DefineParam(mMaxInputSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
--                    .withDefault(new C2StreamMaxBufferSizeInfo::input(0u, kInputBufferSizeFor1080p))
-+                    .withDefault(new C2StreamMaxBufferSizeInfo::input(0u, inputBlockSize))
-                     .withFields({
-                             C2F(mMaxInputSize, value).any(),
-                     })
--                    .withSetter(InputSizeSetter)
--                    .calculatedAs(MaxInputBufferSizeCalculator, mSize)
-+                    .withSetter(InputSizeSetter, mInputBlockSize)
-                     .build());
++    addParameter(DefineParam(mMaxInputSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
++                         .withDefault(new C2StreamMaxBufferSizeInfo::input(
++                                 0u, static_cast<uint32_t>(inputBufferSizeForPicture(
++                                             inputBlockSize, mSize->width, mSize->height))))
++                         .withFields({
++                                 C2F(mMaxInputSize, value).any(),
++                         })
++                         .withSetter(InputSizeSetter, mSize, mInputBlockSize)
++                         .build());
  
      bool secureMode = name.find(".secure") != std::string::npos;
+     const C2Allocator::id_t inputAllocators[] = {secureMode ? V4L2AllocatorId::SECURE_LINEAR
+@@ -593,6 +609,10 @@ size_t DecodeInterface::getInputBufferSize() const {
+     return mMaxInputSize->value;
+ }
+ 
++ui::Size DecodeInterface::getPictureSize() const {
++    return ui::Size(mSize->width, mSize->height);
++}
++
+ c2_status_t DecodeInterface::queryColorAspects(
+         std::shared_ptr<C2StreamColorAspectsInfo::output>* targetColorAspects) {
+     std::unique_ptr<C2StreamColorAspectsInfo::output> colorAspects =
 diff --git a/components/include/v4l2_codec2/components/DecodeInterface.h b/components/include/v4l2_codec2/components/DecodeInterface.h
-index 7e5d900cb0de023d94c2a7af54e1725d07f028bf..15eaa31ba42b13c6f7d0af9423841b46f2fdb924 100644
+index 7e5d900cb0de023d94c2a7af54e1725d07f028bf..338b4b10746981103b7763ff0c431ac48e33387d 100644
 --- a/components/include/v4l2_codec2/components/DecodeInterface.h
 +++ b/components/include/v4l2_codec2/components/DecodeInterface.h
-@@ -17,6 +17,15 @@
+@@ -17,6 +17,16 @@
  
  namespace android {
  
-+// The size of the input blocks the component asks for by default and never below: the size of the
-+// coded buffers the device negotiates, within the bounds the component keeps. A setting of the
-+// component's own that no client sets; the maximum input size depends on it, because a client
-+// states a maximum from its first clip (a few tens of KB) and later samples are larger.
++// The most the component asks for the size of an input block: the size of the coded buffers the
++// device negotiates, within the bounds the component keeps. The blocks follow the picture size up
++// to it, and never go below the device's buffer for the size, because a client states a maximum
++// from its first clip (a few tens of KB) and later samples are larger. A setting of the component's
++// own that no client sets.
 +constexpr C2Param::type_index_t kParamIndexInputBlockSize = C2Param::TYPE_INDEX_VENDOR_START + 1;
 +typedef C2GlobalParam<C2Setting, C2Uint32Value, kParamIndexInputBlockSize>
 +        C2V4l2InputBlockSizeSetting;
@@ -214,17 +278,22 @@ index 7e5d900cb0de023d94c2a7af54e1725d07f028bf..15eaa31ba42b13c6f7d0af9423841b46
  class DecodeInterface : public C2InterfaceHelper {
  public:
      DecodeInterface(const std::string& name, const std::shared_ptr<C2ReflectorHelper>& helper,
-@@ -35,6 +44,9 @@ public:
+@@ -35,7 +45,14 @@ public:
  
      static uint32_t getOutputDelay(VideoCodec codec);
  
 +    // The size of the coded buffers the decoder asks the device for, which an input block is at
-+    // least as large as when it is queued: the maximum input size, which is never below the size
-+    // the device negotiates.
++    // least as large as when it is queued: the maximum input size, which follows the picture size
++    // and is never below the device's coded buffer for it.
      size_t getInputBufferSize() const;
++    // The picture size the instance is configured for: the client's, else the component's default.
++    // The decoder states it with the coded format, so the device sizes its coded buffers for the
++    // pictures the input blocks are sized for.
++    ui::Size getPictureSize() const;
      // Get the system resources that the configured instance needs, as the framework reads them: a
      // copy of the parameter, and the pixel rate in it, for telling two states apart.
-@@ -55,10 +67,8 @@ private:
+     std::unique_ptr<C2Param> copyResourcesNeeded() const {
+@@ -55,10 +72,9 @@ private:
      // Configurable parameter setters.
      static C2R ProfileLevelSetter(bool mayBlock, C2P<C2StreamProfileLevelInfo::input>& info);
      static C2R SizeSetter(bool mayBlock, C2P<C2StreamPictureSizeInfo::output>& videoSize);
@@ -233,24 +302,116 @@ index 7e5d900cb0de023d94c2a7af54e1725d07f028bf..15eaa31ba42b13c6f7d0af9423841b46
 -                                            C2P<C2StreamMaxBufferSizeInfo::input>& me,
 -                                            const C2P<C2StreamPictureSizeInfo::output>& size);
 +    static C2R InputSizeSetter(bool mayBlock, C2P<C2StreamMaxBufferSizeInfo::input>& inputSize,
++                               const C2P<C2StreamPictureSizeInfo::output>& size,
 +                               const C2P<C2V4l2InputBlockSizeSetting>& inputBlockSize);
  
      static C2R OperatingRateSetter(bool mayBlock, C2P<C2OperatingRateTuning>& me);
  
-@@ -120,6 +130,8 @@ private:
+@@ -120,6 +136,8 @@ private:
      // The system resources the instance needs for the configuration. Read-only.
      std::shared_ptr<C2ResourcesNeededTuning> mResourcesNeeded;
      uint64_t mPixelRateCapacity = 0;
-+    // The size of the input blocks by default and the least the maximum input size takes. Read-only.
++    // The most an input block is asked to be, the device's coded buffer size. Read-only.
 +    std::shared_ptr<C2V4l2InputBlockSizeSetting> mInputBlockSize;
      // Maximum size of one input buffer.
      std::shared_ptr<C2StreamMaxBufferSizeInfo::input> mMaxInputSize;
      // The suggested usage of input buffer allocator ID.
+diff --git a/v4l2/V4L2DecodeComponent.cpp b/v4l2/V4L2DecodeComponent.cpp
+index d6f38114093a185430a5b64389c08c8764193b42..3835e0fbc7e5b390a6aa1f3ab7ec2b6f0f8249aa 100644
+--- a/v4l2/V4L2DecodeComponent.cpp
++++ b/v4l2/V4L2DecodeComponent.cpp
+@@ -95,11 +95,13 @@ void V4L2DecodeComponent::startTask(c2_status_t* status, ::base::WaitableEvent*
+         return;
+     }
+     const size_t inputBufferSize = mIntfImpl->getInputBufferSize();
++    const ui::Size pictureSize = mIntfImpl->getPictureSize();
+     const size_t minNumOutputBuffers = getMinNumOutputBuffers(*codec);
+ 
+     // ::base::Unretained(this) is safe here because |mDecoder| is always destroyed before
+     // |mDecoderThread| is stopped, so |*this| is always valid during |mDecoder|'s lifetime.
+-    mDecoder = V4L2Decoder::Create(mDebugStreamId, *codec, inputBufferSize, minNumOutputBuffers,
++    mDecoder = V4L2Decoder::Create(mDebugStreamId, *codec, inputBufferSize, pictureSize,
++                                   minNumOutputBuffers,
+                                    ::base::BindRepeating(&V4L2DecodeComponent::getVideoFramePool,
+                                                          ::base::Unretained(this)),
+                                    ::base::BindRepeating(&V4L2DecodeComponent::onOutputFrameReady,
 diff --git a/v4l2/V4L2Decoder.cpp b/v4l2/V4L2Decoder.cpp
-index 83fad685e1cd020046159a7ee54f6605c593c0e4..5211d01bb1c78e91fc4f6961d711aeacb2849680 100644
+index 83fad685e1cd020046159a7ee54f6605c593c0e4..e2752f2f978f14ef8b72a1fbacaae7fddd943b93 100644
 --- a/v4l2/V4L2Decoder.cpp
 +++ b/v4l2/V4L2Decoder.cpp
-@@ -211,6 +211,13 @@ bool V4L2Decoder::setupInputFormat(const uint32_t inputPixelFormat, const size_t
+@@ -69,13 +69,13 @@ bool waitForDRC(const C2ConstLinearBlock& input, std::optional<VideoCodec> codec
+ // static
+ std::unique_ptr<VideoDecoder> V4L2Decoder::Create(
+         uint32_t debugStreamId, const VideoCodec& codec, const size_t inputBufferSize,
+-        const size_t minNumOutputBuffers, GetPoolCB getPoolCb, OutputCB outputCb, ErrorCB errorCb,
+-        scoped_refptr<::base::SequencedTaskRunner> taskRunner, bool isSecure,
+-        GetOutputFormatCB getOutputFormatCb) {
++        const ui::Size& pictureSize, const size_t minNumOutputBuffers, GetPoolCB getPoolCb,
++        OutputCB outputCb, ErrorCB errorCb, scoped_refptr<::base::SequencedTaskRunner> taskRunner,
++        bool isSecure, GetOutputFormatCB getOutputFormatCb) {
+     std::unique_ptr<V4L2Decoder> decoder =
+             ::base::WrapUnique<V4L2Decoder>(new V4L2Decoder(debugStreamId, taskRunner));
+-    if (!decoder->start(codec, inputBufferSize, minNumOutputBuffers, std::move(getPoolCb),
+-                        std::move(outputCb), std::move(errorCb), isSecure,
++    if (!decoder->start(codec, inputBufferSize, pictureSize, minNumOutputBuffers,
++                        std::move(getPoolCb), std::move(outputCb), std::move(errorCb), isSecure,
+                         std::move(getOutputFormatCb))) {
+         return nullptr;
+     }
+@@ -117,11 +117,13 @@ V4L2Decoder::~V4L2Decoder() {
+ }
+ 
+ bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
+-                        const size_t minNumOutputBuffers, GetPoolCB getPoolCb, OutputCB outputCb,
+-                        ErrorCB errorCb, bool isSecure, GetOutputFormatCB getOutputFormatCb) {
++                        const ui::Size& pictureSize, const size_t minNumOutputBuffers,
++                        GetPoolCB getPoolCb, OutputCB outputCb, ErrorCB errorCb, bool isSecure,
++                        GetOutputFormatCB getOutputFormatCb) {
+     ATRACE_CALL();
+-    ALOGV("%s(codec=%s, inputBufferSize=%zu, minNumOutputBuffers=%zu)", __func__,
+-          VideoCodecToString(codec), inputBufferSize, minNumOutputBuffers);
++    ALOGV("%s(codec=%s, inputBufferSize=%zu, pictureSize=%s, minNumOutputBuffers=%zu)", __func__,
++          VideoCodecToString(codec), inputBufferSize, toString(pictureSize).c_str(),
++          minNumOutputBuffers);
+     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
+ 
+     mMinNumOutputBuffers = minNumOutputBuffers;
+@@ -171,7 +173,7 @@ bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
+         ALOGE("Failed to create V4L2 queue.");
+         return false;
+     }
+-    if (!setupInputFormat(inputPixelFormat, inputBufferSize)) {
++    if (!setupInputFormat(inputPixelFormat, inputBufferSize, pictureSize)) {
+         ALOGE("Failed to setup input format.");
+         return false;
+     }
+@@ -191,9 +193,10 @@ bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
+     return true;
+ }
+ 
+-bool V4L2Decoder::setupInputFormat(const uint32_t inputPixelFormat, const size_t inputBufferSize) {
+-    ALOGV("%s(inputPixelFormat=%u, inputBufferSize=%zu)", __func__, inputPixelFormat,
+-          inputBufferSize);
++bool V4L2Decoder::setupInputFormat(const uint32_t inputPixelFormat, const size_t inputBufferSize,
++                                   const ui::Size& pictureSize) {
++    ALOGV("%s(inputPixelFormat=%u, inputBufferSize=%zu, pictureSize=%s)", __func__,
++          inputPixelFormat, inputBufferSize, toString(pictureSize).c_str());
+     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
+ 
+     // Check if the format is supported.
+@@ -204,13 +207,25 @@ bool V4L2Decoder::setupInputFormat(const uint32_t inputPixelFormat, const size_t
+         return false;
+     }
+ 
+-    // Setup the input format.
+-    auto format = mInputQueue->setFormat(inputPixelFormat, ui::Size(), inputBufferSize, 0);
++    // Setup the input format. The picture size is the one the input blocks were sized for, and
++    // the device sizes its coded buffers by the size it is told: an invalid size (the default
++    // ui::Size() is -1 x -1) is clamped by the driver to the largest picture the device decodes,
++    // for which the device asks for its largest packet, 8 MiB.
++    auto format = mInputQueue->setFormat(inputPixelFormat, pictureSize, inputBufferSize, 0);
+     if (!format) {
+         ALOGE("Failed to call IOCTL to set input format.");
          return false;
      }
      ALOG_ASSERT(format->fmt.pix_mp.pixelformat == inputPixelFormat);
@@ -258,8 +419,10 @@ index 83fad685e1cd020046159a7ee54f6605c593c0e4..5211d01bb1c78e91fc4f6961d711aeac
 +    // largest of the size asked for and the one it needs. The component asks for the size of its
 +    // input blocks, so a device that needs more cannot be given a block it accepts.
 +    if (format->fmt.pix_mp.plane_fmt[0].sizeimage > inputBufferSize) {
-+        ALOGW("The device needs coded buffers of %u bytes, the input blocks are %zu bytes",
-+              format->fmt.pix_mp.plane_fmt[0].sizeimage, inputBufferSize);
++        ALOGW("The device needs coded buffers of %u bytes for %s pictures, the input blocks are "
++              "%zu bytes",
++              format->fmt.pix_mp.plane_fmt[0].sizeimage, toString(pictureSize).c_str(),
++              inputBufferSize);
 +    }
  
      if (mInputQueue->allocateBuffers(kNumInputBuffers, V4L2_MEMORY_DMABUF) == 0) {
@@ -302,6 +465,36 @@ index 0f9c4a19c2c8661ffa78b71a6810f64461448cd1..fccc79ca30abfe299d631a4d463ac3ba
  // static
  SupportedCapabilities V4L2Device::queryEncodingCapabilities(VideoCodec codec) {
      SupportedCapabilities caps;
+diff --git a/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h b/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
+index 3a35831e9e86fcaa7edd51202e47429cefda64c3..0e5b61ed774ecb0988418e1ce000f0099e9e089b 100644
+--- a/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
++++ b/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
+@@ -40,8 +40,9 @@ class V4L2Decoder : public VideoDecoder {
+ public:
+     static std::unique_ptr<VideoDecoder> Create(
+             uint32_t debugStreamId, const VideoCodec& codec, const size_t inputBufferSize,
+-            const size_t minNumOutputBuffers, GetPoolCB getPoolCB, OutputCB outputCb,
+-            ErrorCB errorCb, scoped_refptr<::base::SequencedTaskRunner> taskRunner, bool isSecure,
++            const ui::Size& pictureSize, const size_t minNumOutputBuffers, GetPoolCB getPoolCB,
++            OutputCB outputCb, ErrorCB errorCb,
++            scoped_refptr<::base::SequencedTaskRunner> taskRunner, bool isSecure,
+             GetOutputFormatCB getOutputFormatCb = GetOutputFormatCB());
+     ~V4L2Decoder() override;
+ 
+@@ -71,10 +72,11 @@ private:
+     };
+ 
+     V4L2Decoder(uint32_t debugStreamId, scoped_refptr<::base::SequencedTaskRunner> taskRunner);
+-    bool start(const VideoCodec& codec, const size_t inputBufferSize,
++    bool start(const VideoCodec& codec, const size_t inputBufferSize, const ui::Size& pictureSize,
+                const size_t minNumOutputBuffers, GetPoolCB getPoolCb, OutputCB outputCb,
+                ErrorCB errorCb, bool isSecure, GetOutputFormatCB getOutputFormatCb);
+-    bool setupInputFormat(const uint32_t inputPixelFormat, const size_t inputBufferSize);
++    bool setupInputFormat(const uint32_t inputPixelFormat, const size_t inputBufferSize,
++                          const ui::Size& pictureSize);
+ 
+     // Sets minimal resolution and allocates minimal amount of output buffers for
+     // drain done signaling.
 diff --git a/v4l2/include/v4l2_codec2/v4l2/V4L2Device.h b/v4l2/include/v4l2_codec2/v4l2/V4L2Device.h
 index 0150c6e30f21815d125e1ac8d54f210936e0b0ce..49d592e91b89f7993c4b2245b028da921c964052 100644
 --- a/v4l2/include/v4l2_codec2/v4l2/V4L2Device.h

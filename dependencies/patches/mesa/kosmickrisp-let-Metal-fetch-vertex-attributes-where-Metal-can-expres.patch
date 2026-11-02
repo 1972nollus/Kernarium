@@ -220,7 +220,7 @@ index 6730f8af364c6ca79be47d39b9ddf9e29d6c0d48..def3b7f6a0708a677444b963341c64ba
  mtl_render_pipeline_descriptor_set_blend(mtl_render_pipeline_descriptor *descriptor,
                                           uint8_t index,
 diff --git a/src/kosmickrisp/bridge/mtl_types.h b/src/kosmickrisp/bridge/mtl_types.h
-index 7ee56bf47fa0d4737a3e8cd39503abb8044baf9e..838e17e3c68241e14bc3329f0ef904fa6cb08a34 100644
+index 1a4d1bb622d2a789c5ab0b11abe42b11280190ad..2abf93b7d65a1b33b82f7f3f73b6117a349de03f 100644
 --- a/src/kosmickrisp/bridge/mtl_types.h
 +++ b/src/kosmickrisp/bridge/mtl_types.h
 @@ -229,6 +229,72 @@ enum mtl_visibility_result_mode {

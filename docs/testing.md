@@ -88,13 +88,17 @@ assembler, upstream checkout, or reference hardware. The
 [source contract](../tools/instruction-corpus/README.md) owns their format and
 promotion; the binary assets are not tracked.
 
-Unit tests assert with `require`, `fail` and `requireThrows` from
-`tests/unit/require/require.hpp`, which every unit binary links. A failure
+Unit tests assert with `require`, `requireSyscall`, `fail` and `requireThrows`
+from `tests/unit/require/require.hpp`, which every unit binary links. A failure
 prints the caller's `file:line` and its message, then aborts, so no `catch` in
-the test or in the code under test can swallow it. The same directory holds
-the other shared helpers: `waitUntil` for a bounded wait on a condition,
-`Watchdog` to end a hung binary with a message, `runNamedTests` for a table of
-named cases, and `wire_bytes.hpp` to build and read device records.
+the test or in the code under test can swallow it; `requireSyscall` also names
+the errno of the failed call. A test that posts signals to one of its own
+threads builds what it needs before the first signal, files and mappings
+included, because a signal that reaches a thread inside a setup call can end
+it with `EINTR`. The same directory holds the other shared helpers: `waitUntil`
+for a bounded wait on a condition, `Watchdog` to end a hung binary with a
+message, `runNamedTests` for a table of named cases, and `wire_bytes.hpp` to
+build and read device records.
 
 For one test, use an anchored expression:
 
@@ -408,13 +412,21 @@ Simulator, plays a stream there and posts the audio-session notifications iOS
 posts when another app interrupts it (the Simulator never does), with hooks on
 the session's activation and its hint about other apps' audio and on the
 player's scheduling: playback must stop while interrupted without slowing the
-guest's clock, resume when the system lets the session resume or, with no
+guest's clock, resume when the system advises resuming or, with no advice or
 notification, when no other app plays, never take the session from an app that
-does, keep completing periods through a slow session activation, and never
-wedge. It skips when no iOS Simulator device at the deployment target exists.
-The microphone has no opt-in test: `virtio-sound-microphone` runs over fakes,
-and the real input is checked by hand (see the Microphone section of the audio
-README) because granting microphone access is the user's act.
+does, keep completing periods through a slow session activation, keep an
+interruption across the guest closing, resetting and reopening the stream, and
+never wedge. It also drives the Virtio Sound device the way the Linux driver
+does and checks that the guest's periods complete at the rate of audio in every
+state the sink can be in. It also starts the Apple microphone over hooked
+AVFAudio, with no real input and no permission prompt, and checks that an
+interruption stops it and releases the session, that the system's advice to
+resume starts it again, and that a recommendation not to resume starts it only
+when no other app plays. It skips when no iOS Simulator device at the
+deployment target exists.
+`virtio-sound-microphone` runs the rest of the microphone over fakes, and the
+real input is checked by hand (see the Microphone section of the audio README)
+because granting microphone access is the user's act.
 
 The full sanitizer suites remain separate because of their runtime cost:
 
@@ -622,10 +634,13 @@ included, in both modes.
 `fenv_probe.cpp` with the image's g++, so it needs an image with a toolchain
 such as the x86-64 LTP rootfs, and checks what glibc's `fetestexcept`,
 STMXCSR and `fadd` show of the sticky SIMD exception flags against an Intel
-Xeon's, on either engine. The slice's SMBIOS tables and thread names, which
-`guest-kernel-dmi` and `guest-kernel-thread-names` check on arm64, are checked
-by running `tests/integration/support/run_guest_probe.py --probe
-tests/integration/kernel/dmi_probe.py --ncpus 2 --probe-timeout 120` and
+Xeon's, on either engine. `run_guest_x86_64_vnni.py`, which takes the same
+options, runs a freestanding probe that dispatches on CPUID leaf 7 subleaf 1
+the way ggml and oneDNN do and requires the AVX-VNNI path, with the AVX2 and
+AVX-VNNI forms of its kernels agreeing exactly. The slice's SMBIOS tables and
+thread names, which `guest-kernel-dmi` and `guest-kernel-thread-names` check on
+arm64, are checked by running `tests/integration/support/run_guest_probe.py
+--probe tests/integration/kernel/dmi_probe.py --ncpus 2 --probe-timeout 120` and
 `tests/integration/kernel/run_guest_thread_names.py` the same way.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.

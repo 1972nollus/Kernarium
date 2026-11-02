@@ -22,7 +22,7 @@ capture buffers: 71 MiB less in the guest and 72 MiB less on the host at 4K.
  2 files changed, 26 insertions(+), 2 deletions(-)
 
 diff --git a/README.md b/README.md
-index a06c201418358dfed79db2ae77907e178352aecb..21f95188bce0eb64bf93323628891f78960ef509 100644
+index 0de91967e2e3e683b29d72285e514072aeec0b49..c4508be6c215b43c1c8e43d988a20bf908df17f1 100644
 --- a/README.md
 +++ b/README.md
 @@ -479,6 +479,16 @@ are still in use against the number of V4L2 buffers, and the decoder lets a free
@@ -43,10 +43,10 @@ index a06c201418358dfed79db2ae77907e178352aecb..21f95188bce0eb64bf93323628891f78
  
  The device takes a coded buffer in a dma-buf at least as large as the buffer
 diff --git a/components/DecodeInterface.cpp b/components/DecodeInterface.cpp
-index 270505bc3ca0b8713a5fef10fe6be5d01d13b51f..4a07b15656321e921ed3529313c42429bafd9f96 100644
+index d2b322b00edd8f59c95e25e5cee85338e452a6d7..6a4ea4b0d5ecfd73f4b33b29bc63b3639f7cbab6 100644
 --- a/components/DecodeInterface.cpp
 +++ b/components/DecodeInterface.cpp
-@@ -70,6 +70,20 @@ size_t inputBufferSizeFor(uint32_t codedBufferSize) {
+@@ -88,6 +88,20 @@ size_t inputBufferSizeFor(uint32_t codedBufferSize) {
      if (codedBufferSize == 0) return kMaxInputBufferSize;
      return std::clamp<size_t>(codedBufferSize, kMinInputBufferSize, kMaxInputBufferSize);
  }
@@ -67,7 +67,7 @@ index 270505bc3ca0b8713a5fef10fe6be5d01d13b51f..4a07b15656321e921ed3529313c42429
  }  // namespace
  
  // static
-@@ -606,9 +620,9 @@ uint32_t DecodeInterface::getOutputDelay(VideoCodec codec) {
+@@ -633,9 +647,9 @@ uint32_t DecodeInterface::getOutputDelay(VideoCodec codec) {
          // queued before being able to output the associated decoded buffers. We need to tell the
          // codec2 framework that it should not stop queuing new work items until the maximum number
          // of frame reordering is reached, to avoid stalling the decoder.

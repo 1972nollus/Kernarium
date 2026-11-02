@@ -54,14 +54,31 @@ struct Capture final : std::enable_shared_from_this<Capture> {
         (void)open();
     }
 
-    void interrupt(bool began) noexcept
+    /* Another app took the session: the engine stops and the session is
+     * released, so the system's recording indicator goes out. */
+    void interrupt() noexcept
     {
         const std::lock_guard guard(lock);
         if (!wanted)
             return;
         close();
-        if (!began)
-            (void)open();
+    }
+
+    /* The system recommends resuming after an interruption. The microphone
+     * starts again if the guest still records. Starting it takes the session,
+     * and the microphone must never take the session from an app that is
+     * playing or recording, such as a call: the system's advice to resume
+     * settles that, and without the advice another app that plays keeps it. A
+     * microphone left closed then starts again with the next recommendation
+     * or the guest's next recording. */
+    void resume(bool recommended) noexcept
+    {
+        const std::lock_guard guard(lock);
+        if (!wanted || engine != nil)
+            return;
+        if (!recommended && session::otherAudioPlaying())
+            return;
+        (void)open();
     }
 
     std::mutex lock;
@@ -210,33 +227,48 @@ public:
     {
 #if TARGET_OS_IPHONE
         const std::weak_ptr<Capture> weak = capture_;
-        /* iOS 27 deprecates this notification. The playback sink observes
-         * its replacements; moving the microphone to them needs a device test
-         * of an interruption. */
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        interruptionObserver_ = [NSNotificationCenter.defaultCenter
-            addObserverForName:AVAudioSessionInterruptionNotification
-                        object:nil
+        /* iOS 27 replaces the interruption notification with two, which the
+         * playback sink observes too: the session becoming inactive, which
+         * also reports the app's own deactivations (its release of the
+         * session when the microphone stops), and the system's resumption
+         * recommendation. An interruption is a deactivation that carries an
+         * interruption context. */
+        deactivationObserver_ = [NSNotificationCenter.defaultCenter
+            addObserverForName:AVAudioSessionDidBecomeInactiveNotification
+                        object:[AVAudioSession sharedInstance]
                          queue:nil
                     usingBlock:^(NSNotification* notification) {
                       const auto capture = weak.lock();
                       if (!capture)
                           return;
-                      const NSNumber* type = notification.userInfo
-                          [AVAudioSessionInterruptionTypeKey];
-                      capture->interrupt(
-                          type.unsignedIntegerValue ==
-                          AVAudioSessionInterruptionTypeBegan);
+                      const AVAudioSessionDeactivationContext* context =
+                          notification.userInfo
+                              [AVAudioSessionDeactivationContextKey];
+                      if (context.interruptionContext != nil)
+                          capture->interrupt();
                     }];
-#pragma clang diagnostic pop
+        resumptionObserver_ = [NSNotificationCenter.defaultCenter
+            addObserverForName:AVAudioSessionResumptionRecommendationNotification
+                        object:[AVAudioSession sharedInstance]
+                         queue:nil
+                    usingBlock:^(NSNotification* notification) {
+                      const auto capture = weak.lock();
+                      if (!capture)
+                          return;
+                      const AVAudioSessionResumptionContext* context =
+                          notification.userInfo
+                              [AVAudioSessionResumptionContextKey];
+                      capture->resume(context.recommendation ==
+                          AVAudioSessionResumptionRecommendationShouldResume);
+                    }];
 #endif
     }
 
     ~AppleMicrophoneInput() override
     {
 #if TARGET_OS_IPHONE
-        [NSNotificationCenter.defaultCenter removeObserver:interruptionObserver_];
+        [NSNotificationCenter.defaultCenter removeObserver:deactivationObserver_];
+        [NSNotificationCenter.defaultCenter removeObserver:resumptionObserver_];
 #endif
         capture_->stop();
     }
@@ -253,7 +285,8 @@ public:
 private:
     std::shared_ptr<Capture> capture_;
 #if TARGET_OS_IPHONE
-    id __strong interruptionObserver_;
+    id __strong deactivationObserver_;
+    id __strong resumptionObserver_;
 #endif
 };
 

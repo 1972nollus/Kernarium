@@ -281,10 +281,10 @@ index 91ed11fad6f28cc5309d3153403f26cb8807bc16..8fa23b4077e5553c0071de0ca4466036
     ctx.indentlevel--;
     P(&ctx, "}\n");
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 365f5e1ab6ea05697c5ec1ddfc2a958efc464d96..3809392a74528fbff7fa027a3a3cb32f85537b50 100644
+index 5875f020e09451dad4a2cd33f259c33329c8f1f8..f89a18924cf57552bc2e490cf68363c3251ee207 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -387,6 +387,7 @@ if with_tests
+@@ -403,6 +403,7 @@ if with_tests
      foreach kk_public_test : [
        ['metal_objects_export', []],
        ['texel_buffer_bounds', []],
@@ -292,7 +292,7 @@ index 365f5e1ab6ea05697c5ec1ddfc2a958efc464d96..3809392a74528fbff7fa027a3a3cb32f
        ['address_binding_planes', []],
        ['drm_plane_offset', []],
        ['undescribed_format', []],
-@@ -732,6 +733,7 @@ if with_tests
+@@ -748,6 +749,7 @@ if with_tests
      'msl_temporaries',
      'msl_coherent_access',
      'msl_compare_exchange',
