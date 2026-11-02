@@ -77,10 +77,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  2 files changed, 149 insertions(+), 3 deletions(-)
 
 diff --git a/fs/ext4/ext4.h b/fs/ext4/ext4.h
-index 996ffdc2dd13dc7bba549fe1a8a90a7126a2476e..3aa4ee9ab7253e8f50a616ad51397c433c71519b 100644
+index dae7fb8bc598e32311f4c64524709923805d94d1..1c1ccadc49a130baae9356448116e8869e1ea34c 100644
 --- a/fs/ext4/ext4.h
 +++ b/fs/ext4/ext4.h
-@@ -3539,6 +3539,18 @@ struct ext4_group_info {
+@@ -3542,6 +3542,18 @@ struct ext4_group_info {
  	ext4_grpblk_t	bb_largest_free_order;/* order of largest frag in BG */
  	ext4_group_t	bb_group;	/* Group number */
  	struct          list_head bb_prealloc_list;

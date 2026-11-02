@@ -49,10 +49,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  3 files changed, 109 insertions(+)
 
 diff --git a/drivers/gpu/drm/virtio/virtgpu_drv.h b/drivers/gpu/drm/virtio/virtgpu_drv.h
-index 1a6b956f090d90e18f974696c8374221f9c20f3f..1913cd2ebeeaa48b294626882917989671106905 100644
+index 60efab16c485afaa0f2b6aab2499e318c7f4092a..123d40174886823dd0994e892be6f3d71c4f1c13 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_drv.h
 +++ b/drivers/gpu/drm/virtio/virtgpu_drv.h
-@@ -116,6 +116,13 @@ struct virtio_gpu_object {
+@@ -118,6 +118,13 @@ struct virtio_gpu_object {
  	bool host3d_blob, guest_blob;
  	uint32_t blob_mem, blob_flags;
  
@@ -67,7 +67,7 @@ index 1a6b956f090d90e18f974696c8374221f9c20f3f..1913cd2ebeeaa48b2946268829179896
  	uuid_t uuid;
  };
 diff --git a/drivers/gpu/drm/virtio/virtgpu_ioctl.c b/drivers/gpu/drm/virtio/virtgpu_ioctl.c
-index c33c057365f85a2ace536f91655c903036827312..8d8aa42868b3c9078debc45114534ef41c1786bd 100644
+index 86777a7d41d8ffef394991afe29d2ab22db5a47c..d619ee042590d48b26f0c82ab2a258b98c3dde23 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_ioctl.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_ioctl.c
 @@ -178,6 +178,20 @@ static int virtio_gpu_resource_create_ioctl(struct drm_device *dev, void *data,
@@ -90,9 +90,9 @@ index c33c057365f85a2ace536f91655c903036827312..8d8aa42868b3c9078debc45114534ef4
 +
  	ret = drm_gem_handle_create(file, obj, &handle);
  	if (ret) {
- 		drm_gem_object_release(obj);
+ 		drm_gem_object_put(obj);
 diff --git a/drivers/gpu/drm/virtio/virtgpu_prime.c b/drivers/gpu/drm/virtio/virtgpu_prime.c
-index 947892f8c8919600759811777ce95877dae64bc1..214b1bede3fbd99195466b619c8fbe3edfc728d9 100644
+index 0a99e656b6667c146f953a171c8bbe01823f7f20..7f69e658d652af78f38d0f53ec1b2fe0f8a47d95 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_prime.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_prime.c
 @@ -104,12 +104,100 @@ static void virtgpu_gem_unmap_dma_buf(struct dma_buf_attachment *attach,

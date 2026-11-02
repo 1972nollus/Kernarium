@@ -31,7 +31,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  1 file changed, 90 insertions(+), 3 deletions(-)
 
 diff --git a/io_uring/memmap.c b/io_uring/memmap.c
-index 462872a716698309b5410e23599fb59aeb45ac5d..ee70a9da397810245dbbb9e271da3d0922a1eb01 100644
+index 4cc1529fd0b88f36654d460f6b6e77fe2649f878..1fd77b8d3d4246db22affd0619de060118daddd0 100644
 --- a/io_uring/memmap.c
 +++ b/io_uring/memmap.c
 @@ -88,12 +88,35 @@ enum {
@@ -63,7 +63,7 @@ index 462872a716698309b5410e23599fb59aeb45ac5d..ee70a9da397810245dbbb9e271da3d09
 +	return mr->nr_pages;
 +}
 +
- void io_free_region(struct io_ring_ctx *ctx, struct io_mapped_region *mr)
+ void io_free_region(struct user_struct *user, struct io_mapped_region *mr)
  {
  	if (mr->pages) {
 -		long nr_refs = mr->nr_pages;
@@ -71,7 +71,7 @@ index 462872a716698309b5410e23599fb59aeb45ac5d..ee70a9da397810245dbbb9e271da3d09
  
  		if (mr->flags & IO_REGION_F_SINGLE_REF)
  			nr_refs = 1;
-@@ -120,6 +143,24 @@ void io_free_region(struct io_ring_ctx *ctx, struct io_mapped_region *mr)
+@@ -120,6 +143,24 @@ void io_free_region(struct user_struct *user, struct io_mapped_region *mr)
  	memset(mr, 0, sizeof(*mr));
  }
  
@@ -116,7 +116,7 @@ index 462872a716698309b5410e23599fb59aeb45ac5d..ee70a9da397810245dbbb9e271da3d09
  	if (!ptr)
  		return -ENOMEM;
  
-@@ -168,6 +220,26 @@ static int io_region_pin_pages(struct io_ring_ctx *ctx,
+@@ -167,6 +219,26 @@ static int io_region_pin_pages(struct io_mapped_region *mr,
  	return 0;
  }
  
@@ -140,10 +140,10 @@ index 462872a716698309b5410e23599fb59aeb45ac5d..ee70a9da397810245dbbb9e271da3d09
 +	return i;
 +}
 +
- static int io_region_allocate_pages(struct io_ring_ctx *ctx,
- 				    struct io_mapped_region *mr,
+ static int io_region_allocate_pages(struct io_mapped_region *mr,
  				    struct io_uring_region_desc *reg,
-@@ -176,10 +248,12 @@ static int io_region_allocate_pages(struct io_ring_ctx *ctx,
+ 				    unsigned long mmap_offset)
+@@ -174,10 +246,12 @@ static int io_region_allocate_pages(struct io_mapped_region *mr,
  	gfp_t gfp = GFP_KERNEL_ACCOUNT | __GFP_ZERO | __GFP_NOWARN;
  	size_t size = (size_t) mr->nr_pages << PAGE_SHIFT;
  	unsigned long nr_allocated;
@@ -157,7 +157,7 @@ index 462872a716698309b5410e23599fb59aeb45ac5d..ee70a9da397810245dbbb9e271da3d09
  	if (!pages)
  		return -ENOMEM;
  
-@@ -189,6 +263,19 @@ static int io_region_allocate_pages(struct io_ring_ctx *ctx,
+@@ -187,6 +261,19 @@ static int io_region_allocate_pages(struct io_mapped_region *mr,
  		goto done;
  	}
  

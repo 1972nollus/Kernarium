@@ -420,6 +420,15 @@ A virtio-gpu PRIME export is always read-write. The first export of a buffer
 fixes the mode of every later one, and guest Mesa exports without `DRM_RDWR`,
 so a buffer it exported first could otherwise never be mapped writable.
 
+A virtio-gpu device with 3D refuses a dma-buf another driver exported (udmabuf,
+a DMA-BUF heap) with `-ENODEV`: the driver has no way to import a foreign
+scatter-gather table, and stable 6.18 reverted the change that routed such a
+buffer to the generic importer. A buffer this device exported still imports as
+its own object. Do not restore the change; a consumer that needs foreign
+memory in the GPU must take it through the device's own allocation. No product
+path imports foreign memory: gralloc, screencap, and hardware video encode and
+decode import only the device's own exports.
+
 The virtio-gpu resource-creation ioctl, for a 2D or classic 3D resource,
 waits for the host's answer. The driver queues the fenced creation, kicks the
 control queue and waits (at most 15 s) for the response before it queues the

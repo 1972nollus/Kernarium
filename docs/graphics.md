@@ -950,6 +950,19 @@ float arrays. A component no store reaches keeps the value the output is
 initialized with, which for the clip coordinate is the identity `(0, 0, 0, 1)`
 rather than a degenerate zero `w`.
 
+An image atomic is complete before the invocation's next image or global
+access, barrier or termination, and before the shader ends. Metal issues an
+atomic whose result goes unused without waiting for it, and the texture fence
+does not order it, so a load could read the texel from before the atomic and a
+store could land ahead of it. That is KosmicKrisp's `KK_WORKAROUND_20`,
+reproduced in plain Metal on Apple7, where `compute_shader.resource-image`
+read zero for one SIMD group's block of texels. The driver emits one
+device-scope fence over device and texture memory where an atomic may still be
+outstanding rather than one after every atomic, which keeps an atomic-only
+kernel within about 2% of its unordered time. The Mesa tests
+`kosmickrisp_image_atomic_order` and `kosmickrisp_msl_image_atomic_order`
+cover the order and the placement.
+
 Linked graphics pipelines share native programs and dynamic vertex-input
 variants only while a live Vulkan pipeline owns them. The lookup cache drops
 its entry and releases those resources when the last pipeline owner is

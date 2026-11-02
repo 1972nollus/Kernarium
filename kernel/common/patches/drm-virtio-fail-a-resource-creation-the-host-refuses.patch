@@ -23,10 +23,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  3 files changed, 84 insertions(+), 8 deletions(-)
 
 diff --git a/drivers/gpu/drm/virtio/virtgpu_drv.h b/drivers/gpu/drm/virtio/virtgpu_drv.h
-index 1913cd2ebeeaa48b294626882917989671106905..cbb40d4937321da2ffca77849b04ec3d0ceb7eca 100644
+index 123d40174886823dd0994e892be6f3d71c4f1c13..12403757ea727a9e4dbeb8221c13af2b16725128 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_drv.h
 +++ b/drivers/gpu/drm/virtio/virtgpu_drv.h
-@@ -116,6 +116,14 @@ struct virtio_gpu_object {
+@@ -118,6 +118,14 @@ struct virtio_gpu_object {
  	bool host3d_blob, guest_blob;
  	uint32_t blob_mem, blob_flags;
  
@@ -125,10 +125,10 @@ index d228b5be375a3f30bdb4caaa8478222828746264..8780f860ec6a680bbf367572900b4560
  	virtio_gpu_array_put_free(objs);
  err_free_entry:
 diff --git a/drivers/gpu/drm/virtio/virtgpu_vq.c b/drivers/gpu/drm/virtio/virtgpu_vq.c
-index 4a72c69fe28ec84d00d79183b93e1cbbabfa224a..da2413edc05d24b1972df7bec18de3213b47cda1 100644
+index 592ad4f9b100d9e90a15cd27b18ff3551b93721d..1ccfb2041520415a2487c2c6de1c1f0395a89385 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_vq.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_vq.c
-@@ -590,6 +590,22 @@ static void virtio_gpu_queue_cursor(struct virtio_gpu_device *vgdev,
+@@ -617,6 +617,22 @@ static void virtio_gpu_queue_cursor(struct virtio_gpu_device *vgdev,
   */
  
  /* create a basic resource */
@@ -151,7 +151,7 @@ index 4a72c69fe28ec84d00d79183b93e1cbbabfa224a..da2413edc05d24b1972df7bec18de321
  void virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
  				    struct virtio_gpu_object *bo,
  				    struct virtio_gpu_object_params *params,
-@@ -599,9 +615,12 @@ void virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
+@@ -626,9 +642,12 @@ void virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
  	struct virtio_gpu_resource_create_2d *cmd_p;
  	struct virtio_gpu_vbuffer *vbuf;
  
@@ -165,7 +165,7 @@ index 4a72c69fe28ec84d00d79183b93e1cbbabfa224a..da2413edc05d24b1972df7bec18de321
  
  	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_RESOURCE_CREATE_2D);
  	cmd_p->resource_id = cpu_to_le32(bo->hw_res_handle);
-@@ -1155,9 +1174,12 @@ virtio_gpu_cmd_resource_create_3d(struct virtio_gpu_device *vgdev,
+@@ -1182,9 +1201,12 @@ virtio_gpu_cmd_resource_create_3d(struct virtio_gpu_device *vgdev,
  	struct virtio_gpu_resource_create_3d *cmd_p;
  	struct virtio_gpu_vbuffer *vbuf;
  

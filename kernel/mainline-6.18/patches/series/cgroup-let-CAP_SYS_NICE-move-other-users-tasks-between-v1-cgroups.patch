@@ -35,10 +35,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  2 files changed, 18 insertions(+), 1 deletion(-)
 
 diff --git a/init/Kconfig b/init/Kconfig
-index 6ce315af48c1521cc6e29fe077bc9d663517de9b..fd8b09049434408f1bd5800446c21cf9113fa406 100644
+index 1858e55bfd7cde401a0109369d513997d88be51d..86890b5206971ffd9decf8847a078600a5e8fae0 100644
 --- a/init/Kconfig
 +++ b/init/Kconfig
-@@ -1026,6 +1026,21 @@ config CGROUP_FAVOR_DYNMODS
+@@ -1031,6 +1031,21 @@ config CGROUP_FAVOR_DYNMODS
  
            Say N if unsure.
  
