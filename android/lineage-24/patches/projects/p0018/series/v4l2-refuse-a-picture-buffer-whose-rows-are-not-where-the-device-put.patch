@@ -36,11 +36,11 @@ refuses a buffer shorter than its negotiated size.
  6 files changed, 69 insertions(+), 2 deletions(-)
 
 diff --git a/README.md b/README.md
-index 8c552cbfb5743f85cb65ba869a615fa93b2296ac..a06c201418358dfed79db2ae77907e178352aecb 100644
+index e9b7d501a5219113ec5eb9d728cfb9b04ed5c00c..0de91967e2e3e683b29d72285e514072aeec0b49 100644
 --- a/README.md
 +++ b/README.md
-@@ -500,6 +500,22 @@ chooses the size of its own blocks, and the component copies a block smaller
- than the device's size into a block of a pool it creates on first use, and
+@@ -509,6 +509,22 @@ chooses the size of its own blocks, and the component copies a block smaller
+ than the maximum input size into a block of a pool it creates on first use, and
  queues that one. A secure block is never copied.
  
 +### Buffer Pitch
@@ -111,10 +111,10 @@ index 2077d73f72c27204b93422f3af2bdf154f2023b8..09d8248138aad089767c18f95948c120
      C2ConstGraphicBlock getGraphicBlock();
  
 diff --git a/v4l2/V4L2Decoder.cpp b/v4l2/V4L2Decoder.cpp
-index 5211d01bb1c78e91fc4f6961d711aeacb2849680..6a9b482e6c2b3f708d8c32a67bce3a606bd86188 100644
+index e2752f2f978f14ef8b72a1fbacaae7fddd943b93..6a0818b412dbdac86d8b82d91bae0a00d5e08495 100644
 --- a/v4l2/V4L2Decoder.cpp
 +++ b/v4l2/V4L2Decoder.cpp
-@@ -335,6 +335,7 @@ bool V4L2Decoder::startOutputQueue(size_t minOutputBuffersCount, enum v4l2_memor
+@@ -343,6 +343,7 @@ bool V4L2Decoder::startOutputQueue(size_t minOutputBuffersCount, enum v4l2_memor
          return false;
      }
      mCodedSize.set(adjustedFormat->fmt.pix_mp.width, adjustedFormat->fmt.pix_mp.height);
@@ -122,7 +122,7 @@ index 5211d01bb1c78e91fc4f6961d711aeacb2849680..6a9b482e6c2b3f708d8c32a67bce3a60
      mVisibleRect = getVisibleRect(mCodedSize);
  
      ALOGI("Need %zu output buffers. coded size: %s, visible rect: %s", *numOutputBuffers,
-@@ -974,6 +975,19 @@ void V4L2Decoder::onVideoFrameReady(
+@@ -982,6 +983,19 @@ void V4L2Decoder::onVideoFrameReady(
          return;
      }
  
@@ -181,10 +181,10 @@ index 48b0611c3cfa5bb0aafe6e2743bba4623738d0dc..07b91758dec06f9d249b3cf16a1a5cda
          // TODO(crbug.com/901264): The way to pass an offset within a DMA-buf is not defined
          // in V4L2 specification, so we abuse data_offset for now. Fix it when we have the
 diff --git a/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h b/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
-index 3a35831e9e86fcaa7edd51202e47429cefda64c3..14af269b8a00dc0eeca0dc5ca2c0061260a95f43 100644
+index 0e5b61ed774ecb0988418e1ce000f0099e9e089b..ccff9964ca0eaa130954b43b86306ba90a9ea965 100644
 --- a/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
 +++ b/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
-@@ -149,6 +149,8 @@ private:
+@@ -151,6 +151,8 @@ private:
  
      ui::Size mCodedSize;
      Rect mVisibleRect;
