@@ -92,10 +92,13 @@ Unit tests assert with `require`, `requireSyscall`, `fail` and `requireThrows`
 from `tests/unit/require/require.hpp`, which every unit binary links. A failure
 prints the caller's `file:line` and its message, then aborts, so no `catch` in
 the test or in the code under test can swallow it; `requireSyscall` also names
-the errno of the failed call. The same directory holds the other shared
-helpers: `waitUntil` for a bounded wait on a condition, `Watchdog` to end a
-hung binary with a message, `runNamedTests` for a table of named cases, and
-`wire_bytes.hpp` to build and read device records.
+the errno of the failed call. A test that posts signals to one of its own
+threads builds what it needs before the first signal, files and mappings
+included, because a signal that reaches a thread inside a setup call can end
+it with `EINTR`. The same directory holds the other shared helpers: `waitUntil`
+for a bounded wait on a condition, `Watchdog` to end a hung binary with a
+message, `runNamedTests` for a table of named cases, and `wire_bytes.hpp` to
+build and read device records.
 
 For one test, use an anchored expression:
 
