@@ -2,8 +2,21 @@
 
 add_executable(uml_guest_console_tests guest_console_tests.cpp)
 target_link_libraries(uml_guest_console_tests PRIVATE UML::DeviceGuestConsole)
+# A suspend with no reply at the one ten-second deadline is aborted with a wake.
+# The request's socket stays open for its final reply, which decides a refusal
+# (the guest runs) from silence or a "suspended" that followed the wake
+# (unconfirmed, woken at the resume); a busy retry shares the deadline.
 uml_add_unit_test(NAME guest-console-suspend-timeout
     COMMAND uml_guest_console_tests suspend-timeout
+    LABELS console)
+uml_add_unit_test(NAME guest-console-suspend-silent
+    COMMAND uml_guest_console_tests suspend-silent
+    LABELS console)
+uml_add_unit_test(NAME guest-console-suspend-suspended-after-wake
+    COMMAND uml_guest_console_tests suspend-suspended-after-wake
+    LABELS console)
+uml_add_unit_test(NAME guest-console-suspend-retry-deadline
+    COMMAND uml_guest_console_tests suspend-retry-deadline
     LABELS console)
 # A guest that reports itself busy is asked again for two seconds; any other
 # refusal, or one that stays busy, leaves it running with no stop.

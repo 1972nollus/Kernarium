@@ -550,7 +550,9 @@ uml_add_guest_integration_test(
 # for that one of the guest's own wake sources ended is entered again. A
 # suspend the guest entered by itself ends for a wake, for a power key typed
 # on the VNC display, which reaches the guest once, or for a network frame,
-# which never ends or fails one the host asked for.
+# which never ends or fails one the host asked for. A suspend whose freezer is
+# held by an unanswered FUSE request gives no reply, answers a wake while it
+# blocks, and then fails on its own socket, so a host can abort it at a deadline.
 uml_add_guest_integration_test(
     NAME guest-suspend-holds
     SCRIPT kernel/run_guest_suspend_holds.py

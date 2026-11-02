@@ -10,8 +10,14 @@
 namespace uml::device {
 
 enum class GuestSuspension {
+	/* The guest runs, or no request reached it. A resume sends nothing. */
 	none,
+	/* The guest replied that it entered system suspend. */
 	system,
+	/* The guest may be suspended or running: the suspend did not reply within
+	 * its deadline, was aborted with a wake, and gave no final word. A resume
+	 * sends the wake. */
+	unconfirmed,
 };
 
 /*
@@ -91,14 +97,21 @@ guest_console_location();
  *
  * The returned mode records whether the wake request is required. The guest
  * replies to a suspend request once it has synced its filesystems, so the
- * request waits up to eight seconds for that reply. A guest that reports
- * itself busy (EBUSY) within them is asked again every 250 ms for two seconds.
- * Any other refusal, or a busy guest that stays busy, logs that the guest
- * keeps running, writes its filesystems back, and returns none. A request that
- * has not replied by the wait still selects system wake: timeout cannot prove
- * that the kernel did not already enter suspend. None also means no request
- * reached the console. Resuming is best effort and reports nothing, and sends
- * nothing for none.
+ * whole request, its busy retries included, has one ten-second deadline from
+ * the first send. A guest that reports itself busy (EBUSY) is asked again every
+ * 250 ms for two seconds while the deadline leaves time for the answer. Any
+ * other refusal, or a busy guest that stays busy, logs that the guest keeps
+ * running, writes its filesystems back, and returns none.
+ *
+ * A request with no reply at the deadline is aborted, not trusted, because a
+ * guest whose freezer is held fails its suspend tens of seconds later. The
+ * request's socket stays open, a wake is sent, and the final reply is read for
+ * two seconds more, then the filesystems are written back. A reply that
+ * arrived before the wake decides: "suspended" is system. After the wake, a
+ * refusal is none (the guest is known to run), and "suspended" or silence is
+ * unconfirmed. None also means no request reached the console. Resuming is
+ * best effort and reports nothing, wakes a system or unconfirmed guest, and
+ * sends nothing for none.
  */
 [[nodiscard]] GuestSuspension suspend_guest(
 	unsigned int writeback_settle_ms) noexcept;
