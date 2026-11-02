@@ -1315,17 +1315,25 @@ suspended guest itself: at every Power press and at most once a second for any
 other key, so a held key does not repeat it, and never for a touch. The macOS
 VNC display maps XF86PowerOff to the guest's power key, and VNC input is itself
 a wake source. The guest replies to a suspend only after syncing its file
-systems, so the host waits up to eight seconds for that reply. A guest that
-reports itself busy (EBUSY) within that wait is asked again every 250 ms for two
-seconds. Any other refusal, or a guest that stays busy, is not frozen: the host
-logs that it keeps running, asks it to write back, and treats it as not
-suspended (it is not hibernated, and a resume sends nothing). The management
-console's own stop is no fallback, since the kernel blocks signals per vCPU and
-the stop halts only the vCPU that takes it, so every other vCPU and guest time
-run on. A process freeze, as on iOS, halts every vCPU regardless. Guests that
-need writeback requests boot with magic SysRq enabled; if the physical iOS
-sandbox cannot bind the console, host-file flushing still runs but guest
-writeback and freeze are unavailable.
+systems, so the host gives the whole request, its busy retries included, one
+ten-second deadline from the first send. A guest that reports itself busy
+(EBUSY) is asked again every 250 ms for two seconds while the deadline leaves
+time for the answer. Any other refusal, or a guest that stays busy, is not
+frozen: the host logs that it keeps running, asks it to write back, and treats
+it as not suspended (it is not hibernated, and a resume sends nothing). A
+request with no reply at the deadline is aborted: a guest whose freezer cannot
+finish fails its suspend tens of seconds later, so silence proves nothing. The
+host keeps the request's socket, sends the wake edge, which the guest answers
+while its suspend blocks, reads the request's final reply for up to two seconds,
+and asks the guest to write back. Only a "suspended" reply that arrived before
+the wake counts as suspended; a refusal is a guest known to run, and "suspended"
+after the wake, or silence, leaves it unconfirmed: never hibernated, and
+woken at the resume. The management console's own stop is no fallback, since
+the kernel blocks signals per vCPU and the stop halts only the vCPU that takes
+it, so every other vCPU and guest time run on. A process freeze, as on iOS,
+halts every vCPU regardless. Guests that need writeback requests boot with
+magic SysRq enabled; if the physical iOS sandbox cannot bind the console,
+host-file flushing still runs but guest writeback and freeze are unavailable.
 
 The kernel says how the guest ends before it shuts its drivers down or runs
 its exitcalls, with the bridge import `darwin_uml_guest_shutdown()`: power-off,
@@ -1474,8 +1482,8 @@ run reach the same code. The order is the contract:
   Memory a guest ran on while part of it was missing would be corrupt, which is
   worse than the restart.
 
-A quiesce whose guest did not suspend, a guest without a console, and a guest
-kept running (Picture in Picture, the job) never hibernate.
+A quiesce whose guest did not confirm its suspend, a guest without a console,
+and a guest kept running (Picture in Picture, the job) never hibernate.
 
 ## Tests and structural audit
 

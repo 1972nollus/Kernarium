@@ -49,6 +49,16 @@ end it promptly and be echoed, and the interface's wakeup source must have
 reported it. The host's suspend asked for right after a burst must then hold
 under the same traffic, entered once, as the network arm requires of any suspend
 the host asked for.
+The freezer-hold arm holds the freezer with a FUSE request that is never
+answered, so one task can neither freeze nor be killed by the freezer's fake
+signal, and the guest's suspend keeps failing every 20 s. A host that waits for
+the suspend's reply must stop at its deadline: the guest replies to nothing in
+eight seconds, a ``wake`` is answered ``running`` while the suspend blocks, and
+the suspend's own socket then carries its ``Suspend failed: -16`` within two
+seconds, with the PM core reporting that freezing user space was aborted. The
+shell answers, and once the holder is released the next suspend holds and wakes.
+The arm checks the kernel half of the host's abort; the host half is the
+guest-console and emulator-lifecycle unit tests.
 The contract is the suspend paragraph of the mainline kernel README.
 """
 
@@ -128,6 +138,54 @@ done.set()
 print(f"hold-freeze: {result}", flush=True)
 """
 HOLDER_REFUSED = "hold-freeze: refused"
+# Holds the freezer for as long as it runs: a FUSE mount whose LOOKUP is read
+# and never answered. INIT is answered so that the request is not left in
+# fuse_get_req(), whose wait is freezable; the stat child then sleeps in
+# request_wait_answer(), killable after the freezer's fake signal but not
+# freezable, so the freezer fails after pm_freeze_timeout (20 s). Killing the
+# holder closes /dev/fuse, which aborts the connection and ends the child.
+FREEZER_HOLDER = "/opt/uml-test/freeze_hold.py"
+FREEZER_HOLDER_LOG = "/run/freeze-hold.log"
+FREEZER_HOLDER_SOURCE = """\
+import ctypes, os, struct, sys, time
+
+FUSE_INIT = 26
+libc = ctypes.CDLL(None, use_errno=True)
+os.makedirs("/run/freeze-hold", exist_ok=True)
+fd = os.open("/dev/fuse", os.O_RDWR)
+options = f"fd={fd},rootmode=40000,user_id=0,group_id=0".encode()
+if libc.mount(b"freeze-hold", b"/run/freeze-hold", b"fuse", 0, options) != 0:
+    print("freeze-hold: mount failed: " + os.strerror(ctypes.get_errno()),
+          flush=True)
+    sys.exit(1)
+request = os.read(fd, 1 << 20)
+length, opcode, unique = struct.unpack_from("<IIQ", request)
+major, minor = struct.unpack_from("<II", request, 40)
+if opcode != FUSE_INIT:
+    print(f"freeze-hold: first request {opcode}, not INIT", flush=True)
+    sys.exit(1)
+body = struct.pack("<IIIIHHIIHHIIH11H", 7, min(minor, 31), 0, 0, 0, 0,
+                   4096, 0, 0, 0, 0, 0, 0, *([0] * 11))
+os.write(fd, struct.pack("<IiQ", 16 + len(body), 0, unique) + body)
+if os.fork() == 0:
+    try:
+        os.stat("/run/freeze-hold/x")
+        os._exit(0)
+    except OSError as error:
+        os._exit(error.errno & 0x7F)
+os.read(fd, 1 << 20)
+print("freeze-hold: held", flush=True)
+while True:
+    time.sleep(3600)
+"""
+# The reply the guest must not give within this long of a suspend whose
+# freezer is held.
+FREEZER_SILENCE_SECONDS = 8.0
+# The PM core's report that a wake ended the freezing, which proves the abort
+# came from the wake and not from the freezer's own timeout.
+FREEZER_ABORTED = "Freezing user space processes aborted"
+# How soon after the wake the aborted suspend's own socket reports its end.
+FREEZER_FINAL_SECONDS = 2.0
 # The holder with no readers only suspends and reports. Before a suspend,
 # the sync arms leave dirty data on a loop device whose backing file is on a
 # frozen ext4 on a scratch disk, held open so that closing it writes nothing
@@ -1125,6 +1183,130 @@ def run_power(arguments, private: pathlib.Path) -> None:
             raise RuntimeError("power: the guest did not power off")
 
 
+def wait_for_answer(
+    guest: Guest, request: Request, seconds: float
+) -> tuple[int, str] | None:
+    """The request's reply if one arrives within ``seconds``, draining the
+    guest's console meanwhile; None when none does."""
+    deadline = time.monotonic() + seconds
+    while (answer := request.answer()) is None:
+        if time.monotonic() >= deadline:
+            return None
+        drain(guest, 0.02)
+    return answer
+
+
+def run_freezer_hold(arguments, private: pathlib.Path) -> None:
+    """A suspend whose freezer is held stays unanswered, and the host's abort
+    is a wake: answered while the suspend blocks, and followed by the
+    suspend's own failure on the request's socket."""
+    with Guest(
+        arguments.emulator,
+        arguments.rootfs,
+        "1G",
+        "tmpfs",
+        (f"ncpus={VCPUS}",),
+        overlay_shell=True,
+        engine=arguments.engine,
+        payloads={
+            FREEZER_HOLDER: GuestFile(FREEZER_HOLDER_SOURCE.encode(), 0o755)
+        },
+    ) as guest:
+        guest.boot_to_shell(180)
+        console = ManagementConsole(guest, private)
+        request = len(guest.output())
+        guest.check_command(
+            f"(python3 -B {FREEZER_HOLDER} </dev/null >{FREEZER_HOLDER_LOG} "
+            "2>&1 & echo $! >/run/freeze-hold.pid)",
+            30,
+        )
+        deadline = time.monotonic() + 30
+        while "freeze-hold: held" not in guest.check_command(
+            f"cat {FREEZER_HOLDER_LOG}", 30
+        ):
+            if time.monotonic() > deadline:
+                raise RuntimeError(
+                    "freezer-hold: the holder never held a request:\n"
+                    + guest.check_command(f"cat {FREEZER_HOLDER_LOG}; true", 30)
+                )
+            drain(guest, 0.5)
+
+        # The freezer cannot finish, so the suspend gives no reply at all.
+        suspend = console.send("suspend")
+        try:
+            early = wait_for_answer(guest, suspend, FREEZER_SILENCE_SECONDS)
+            if early is not None:
+                raise RuntimeError(
+                    f"freezer-hold: the suspend replied {early!r} within "
+                    f"{FREEZER_SILENCE_SECONDS:g} s, so the freezer was not "
+                    "held and the arm tested nothing:\n"
+                    + guest.output()[request:][-4000:]
+                )
+
+            # The wake is answered although the suspend request still blocks
+            # the console's handler.
+            woken = time.monotonic()
+            wake = console.send("wake")
+            try:
+                error, text = console.collect(wake)
+            finally:
+                wake.close()
+            if error or "running" not in text:
+                raise RuntimeError(
+                    f"freezer-hold: wake replied {(error, text)!r}"
+                )
+            answered = time.monotonic() - woken
+
+            # The aborted suspend reports its own end on its own socket.
+            final = wait_for_answer(guest, suspend, FREEZER_FINAL_SECONDS)
+            if final is None:
+                raise RuntimeError(
+                    "freezer-hold: the suspend gave no final reply within "
+                    f"{FREEZER_FINAL_SECONDS:g} s of the wake:\n"
+                    + guest.output()[request:][-4000:]
+                )
+            final_error, final_text = final
+            reported = time.monotonic() - woken
+            if not final_error or not final_text.startswith(
+                SUSPEND_FAILED + "-16"
+            ):
+                raise RuntimeError(
+                    f"freezer-hold: the aborted suspend replied {final!r}, "
+                    f"not '{SUSPEND_FAILED}-16'"
+                )
+        finally:
+            suspend.close()
+        # The PM core says a wake ended the freezing, not the freezer's own
+        # timeout, and the guest runs.
+        counted = guest.check_command(
+            f"echo freezer-aborted:$(dmesg | grep -c '{FREEZER_ABORTED}'):end",
+            60,
+        )
+        found = re.search(r"freezer-aborted:(\d+):end", counted)
+        if found is None or int(found[1]) < 1:
+            raise RuntimeError(
+                f"freezer-hold: dmesg has no {FREEZER_ABORTED!r} ({counted!r}):\n"
+                + guest.output()[request:][-4000:]
+            )
+        guest.check_command("echo freezer-hold-running", 60)
+
+        # Released, the freezer finishes: the next suspend holds and wakes.
+        guest.check_command(
+            "kill $(cat /run/freeze-hold.pid); sleep 1; "
+            "umount -l /run/freeze-hold; true",
+            60,
+        )
+        hold(guest, console, "freezer-hold", lambda: None)
+        print(
+            f"freezer-hold: no reply in {FREEZER_SILENCE_SECONDS:g} s, "
+            f"the wake was answered in {answered * 1000:.0f} ms and the "
+            f"suspend failed {reported * 1000:.0f} ms after it ({final_text})"
+        )
+        require_clean(guest, "freezer-hold", request)
+        if not guest.shutdown(60):
+            raise RuntimeError("freezer-hold: the guest did not power off")
+
+
 ARMS = {
     "network": run_network,
     "console": run_console,
@@ -1136,6 +1318,7 @@ ARMS = {
     "sync-host-wake": run_sync_host_wake,
     "power": run_power,
     "network-wake": run_network_wake,
+    "freezer-hold": run_freezer_hold,
 }
 
 
