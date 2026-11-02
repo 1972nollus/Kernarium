@@ -178,7 +178,7 @@ offsets above 4 GiB.
 
 diff --git a/Android.bp b/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..fc20157199ab406a37ec7d257f80cf17c8407b1b
+index 0000000000000000000000000000000000000000..6541973d9680a9c806e9f1e9e0d3a64583aa2f2c
 --- /dev/null
 +++ b/Android.bp
 @@ -0,0 +1,399 @@
@@ -186,10 +186,10 @@ index 0000000000000000000000000000000000000000..fc20157199ab406a37ec7d257f80cf17
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -803,7 +803,7 @@ index aaddb17a8a4e21865979da25d770bd79786d631e..00000000000000000000000000000000
 -endif
 diff --git a/bin/Android.bp b/bin/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..7160ab4b4785cda78b2bf23c131008d9267c19c3
+index 0000000000000000000000000000000000000000..83d0da4556e9c5c7ccb7000c680cfc01d33fab2c
 --- /dev/null
 +++ b/bin/Android.bp
 @@ -0,0 +1,27 @@
@@ -811,10 +811,10 @@ index 0000000000000000000000000000000000000000..7160ab4b4785cda78b2bf23c131008d9
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -836,7 +836,7 @@ index 0000000000000000000000000000000000000000..7160ab4b4785cda78b2bf23c131008d9
 +}
 diff --git a/include/Android.bp b/include/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..1827e6c73f07c43708ff011381fb8ecfbda7e46d
+index 0000000000000000000000000000000000000000..f4ef169a91a1d011286ee0ace9b71cb1c8acea65
 --- /dev/null
 +++ b/include/Android.bp
 @@ -0,0 +1,23 @@
@@ -844,10 +844,10 @@ index 0000000000000000000000000000000000000000..1827e6c73f07c43708ff011381fb8ecf
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -865,7 +865,7 @@ index 0000000000000000000000000000000000000000..1827e6c73f07c43708ff011381fb8ecf
 +}
 diff --git a/src/Android.bp b/src/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..e43c66d111b862f2801459c5da9c9efc2c947670
+index 0000000000000000000000000000000000000000..9148e71511966bb129b01ebb7248245a5ad66d51
 --- /dev/null
 +++ b/src/Android.bp
 @@ -0,0 +1,53 @@
@@ -873,10 +873,10 @@ index 0000000000000000000000000000000000000000..e43c66d111b862f2801459c5da9c9efc
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -924,7 +924,7 @@ index 0000000000000000000000000000000000000000..e43c66d111b862f2801459c5da9c9efc
 +}
 diff --git a/src/c11/impl/Android.bp b/src/c11/impl/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..4e7670669d0f31c886cd833e4fa1c53f8467b006
+index 0000000000000000000000000000000000000000..d2397680a302906e1a30e820fe42e4356aa15388
 --- /dev/null
 +++ b/src/c11/impl/Android.bp
 @@ -0,0 +1,42 @@
@@ -932,10 +932,10 @@ index 0000000000000000000000000000000000000000..4e7670669d0f31c886cd833e4fa1c53f
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -972,7 +972,7 @@ index 0000000000000000000000000000000000000000..4e7670669d0f31c886cd833e4fa1c53f
 +}
 diff --git a/src/compiler/Android.bp b/src/compiler/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..bd8eff5137cfaa78290686138172328352371c7a
+index 0000000000000000000000000000000000000000..f3b00e9ce2e53265987dc84029cec8a025f64573
 --- /dev/null
 +++ b/src/compiler/Android.bp
 @@ -0,0 +1,133 @@
@@ -980,10 +980,10 @@ index 0000000000000000000000000000000000000000..bd8eff5137cfaa782906861381723283
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -1111,7 +1111,7 @@ index 0000000000000000000000000000000000000000..bd8eff5137cfaa782906861381723283
 +}
 diff --git a/src/compiler/glsl/Android.bp b/src/compiler/glsl/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..04f6c7faa3b26a833d1d58c52e1b36ea3651fa40
+index 0000000000000000000000000000000000000000..fb009774b3f984a8a6459809422c4738a89eeb24
 --- /dev/null
 +++ b/src/compiler/glsl/Android.bp
 @@ -0,0 +1,473 @@
@@ -1119,10 +1119,10 @@ index 0000000000000000000000000000000000000000..04f6c7faa3b26a833d1d58c52e1b36ea
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -1590,7 +1590,7 @@ index 0000000000000000000000000000000000000000..04f6c7faa3b26a833d1d58c52e1b36ea
 +}
 diff --git a/src/compiler/glsl/glcpp/Android.bp b/src/compiler/glsl/glcpp/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..f9deb058a8939b5a042d9529c141a64fc9f19a6d
+index 0000000000000000000000000000000000000000..f730e3bba1a9dc3baaefe4da4389ae10a7acc8f5
 --- /dev/null
 +++ b/src/compiler/glsl/glcpp/Android.bp
 @@ -0,0 +1,150 @@
@@ -1598,10 +1598,10 @@ index 0000000000000000000000000000000000000000..f9deb058a8939b5a042d9529c141a64f
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -1746,7 +1746,7 @@ index 0000000000000000000000000000000000000000..f9deb058a8939b5a042d9529c141a64f
 +}
 diff --git a/src/compiler/nir/Android.bp b/src/compiler/nir/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..0164e7efe6e28336cb20fe9417586316d5c50f75
+index 0000000000000000000000000000000000000000..fcafe33eb6ef96d9b6926c84c1edf3a95052c65e
 --- /dev/null
 +++ b/src/compiler/nir/Android.bp
 @@ -0,0 +1,573 @@
@@ -1754,10 +1754,10 @@ index 0000000000000000000000000000000000000000..0164e7efe6e28336cb20fe9417586316
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -2325,7 +2325,7 @@ index 0000000000000000000000000000000000000000..0164e7efe6e28336cb20fe9417586316
 +}
 diff --git a/src/compiler/spirv/Android.bp b/src/compiler/spirv/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..cf9f3e8cf615a1534fb44840954f3c17dbc6b7f7
+index 0000000000000000000000000000000000000000..3cad45cf70f641f8c58137f55e10fa9d8603a634
 --- /dev/null
 +++ b/src/compiler/spirv/Android.bp
 @@ -0,0 +1,220 @@
@@ -2333,10 +2333,10 @@ index 0000000000000000000000000000000000000000..cf9f3e8cf615a1534fb44840954f3c17
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -2551,7 +2551,7 @@ index 0000000000000000000000000000000000000000..cf9f3e8cf615a1534fb44840954f3c17
 +}
 diff --git a/src/egl/Android.bp b/src/egl/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b78b6c7d892f2b32642f29910fdd01b4853c265c
+index 0000000000000000000000000000000000000000..566749adeac0eeebb0306929c901d2d055e506b7
 --- /dev/null
 +++ b/src/egl/Android.bp
 @@ -0,0 +1,124 @@
@@ -2559,10 +2559,10 @@ index 0000000000000000000000000000000000000000..b78b6c7d892f2b32642f29910fdd01b4
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -2681,7 +2681,7 @@ index 0000000000000000000000000000000000000000..b78b6c7d892f2b32642f29910fdd01b4
 +}
 diff --git a/src/egl/drivers/dri2/Android.bp b/src/egl/drivers/dri2/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..3161077d126b48f5a5ff68d2f0bfb3502231ecf4
+index 0000000000000000000000000000000000000000..e478b437889485e8759a844a033eeb9d1469826e
 --- /dev/null
 +++ b/src/egl/drivers/dri2/Android.bp
 @@ -0,0 +1,33 @@
@@ -2689,10 +2689,10 @@ index 0000000000000000000000000000000000000000..3161077d126b48f5a5ff68d2f0bfb350
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -2720,7 +2720,7 @@ index 0000000000000000000000000000000000000000..3161077d126b48f5a5ff68d2f0bfb350
 +}
 diff --git a/src/egl/main/Android.bp b/src/egl/main/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..38afc3935cab40ed6ab2c9c4436309fb410d1fe8
+index 0000000000000000000000000000000000000000..a4ad051e6583eca12e51f8362834318275430058
 --- /dev/null
 +++ b/src/egl/main/Android.bp
 @@ -0,0 +1,42 @@
@@ -2728,10 +2728,10 @@ index 0000000000000000000000000000000000000000..38afc3935cab40ed6ab2c9c4436309fb
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -2768,7 +2768,7 @@ index 0000000000000000000000000000000000000000..38afc3935cab40ed6ab2c9c4436309fb
 +}
 diff --git a/src/gallium/Android.bp b/src/gallium/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..efa7c76e1227c7cdb312898394887d864d116067
+index 0000000000000000000000000000000000000000..917ee236d6da887fee0a7f42d97d5a5544b98f11
 --- /dev/null
 +++ b/src/gallium/Android.bp
 @@ -0,0 +1,24 @@
@@ -2776,10 +2776,10 @@ index 0000000000000000000000000000000000000000..efa7c76e1227c7cdb312898394887d86
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -2798,7 +2798,7 @@ index 0000000000000000000000000000000000000000..efa7c76e1227c7cdb312898394887d86
 +}
 diff --git a/src/gallium/auxiliary/Android.bp b/src/gallium/auxiliary/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b24096a084e21ebc4fd376a3fdf02623a336c89a
+index 0000000000000000000000000000000000000000..2afa54a6eedd43272129cc6dd64e2293f0b2eb9c
 --- /dev/null
 +++ b/src/gallium/auxiliary/Android.bp
 @@ -0,0 +1,324 @@
@@ -2806,10 +2806,10 @@ index 0000000000000000000000000000000000000000..b24096a084e21ebc4fd376a3fdf02623
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3128,7 +3128,7 @@ index 0000000000000000000000000000000000000000..b24096a084e21ebc4fd376a3fdf02623
 +}
 diff --git a/src/gallium/auxiliary/cso_cache/Android.bp b/src/gallium/auxiliary/cso_cache/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..43f308b1f866294adfa568df82ec92d0afe0d112
+index 0000000000000000000000000000000000000000..9b9f925f540979a3ac095451a39c0de7acf00ca1
 --- /dev/null
 +++ b/src/gallium/auxiliary/cso_cache/Android.bp
 @@ -0,0 +1,32 @@
@@ -3136,10 +3136,10 @@ index 0000000000000000000000000000000000000000..43f308b1f866294adfa568df82ec92d0
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3166,7 +3166,7 @@ index 0000000000000000000000000000000000000000..43f308b1f866294adfa568df82ec92d0
 +}
 diff --git a/src/gallium/auxiliary/draw/Android.bp b/src/gallium/auxiliary/draw/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..0ed27663b61488c320f19ef66f3c1e543bd07eda
+index 0000000000000000000000000000000000000000..e9739e535553e04a0ac36cedf99965bfad50743d
 --- /dev/null
 +++ b/src/gallium/auxiliary/draw/Android.bp
 @@ -0,0 +1,81 @@
@@ -3174,10 +3174,10 @@ index 0000000000000000000000000000000000000000..0ed27663b61488c320f19ef66f3c1e54
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3253,7 +3253,7 @@ index 0000000000000000000000000000000000000000..0ed27663b61488c320f19ef66f3c1e54
 +}
 diff --git a/src/gallium/auxiliary/driver_ddebug/Android.bp b/src/gallium/auxiliary/driver_ddebug/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..0dc33cf7d782fa68abc3e173b15a0f18b5c33040
+index 0000000000000000000000000000000000000000..57ed90dd60494c3efa72e43759f19751f94092df
 --- /dev/null
 +++ b/src/gallium/auxiliary/driver_ddebug/Android.bp
 @@ -0,0 +1,32 @@
@@ -3261,10 +3261,10 @@ index 0000000000000000000000000000000000000000..0dc33cf7d782fa68abc3e173b15a0f18
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3291,7 +3291,7 @@ index 0000000000000000000000000000000000000000..0dc33cf7d782fa68abc3e173b15a0f18
 +}
 diff --git a/src/gallium/auxiliary/driver_noop/Android.bp b/src/gallium/auxiliary/driver_noop/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..426c529b1dd5f79e81eac13b2e2ad5935c384fdb
+index 0000000000000000000000000000000000000000..b0e9e145ae57e76083aa0c16430a21f64e12b0fe
 --- /dev/null
 +++ b/src/gallium/auxiliary/driver_noop/Android.bp
 @@ -0,0 +1,31 @@
@@ -3299,10 +3299,10 @@ index 0000000000000000000000000000000000000000..426c529b1dd5f79e81eac13b2e2ad593
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3328,7 +3328,7 @@ index 0000000000000000000000000000000000000000..426c529b1dd5f79e81eac13b2e2ad593
 +}
 diff --git a/src/gallium/auxiliary/driver_trace/Android.bp b/src/gallium/auxiliary/driver_trace/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..be147a87e35ee4bad84634e470e554a855fb4d08
+index 0000000000000000000000000000000000000000..eff2c61de32e07431204f1bf4fbaec47b98e4f21
 --- /dev/null
 +++ b/src/gallium/auxiliary/driver_trace/Android.bp
 @@ -0,0 +1,47 @@
@@ -3336,10 +3336,10 @@ index 0000000000000000000000000000000000000000..be147a87e35ee4bad84634e470e554a8
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3381,7 +3381,7 @@ index 0000000000000000000000000000000000000000..be147a87e35ee4bad84634e470e554a8
 +}
 diff --git a/src/gallium/auxiliary/hud/Android.bp b/src/gallium/auxiliary/hud/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..3779fbff733d45593e35a9679a6bb08d5a473d0d
+index 0000000000000000000000000000000000000000..42b673ee64a1f78848753a705b6e601cdf04df32
 --- /dev/null
 +++ b/src/gallium/auxiliary/hud/Android.bp
 @@ -0,0 +1,38 @@
@@ -3389,10 +3389,10 @@ index 0000000000000000000000000000000000000000..3779fbff733d45593e35a9679a6bb08d
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3425,7 +3425,7 @@ index 0000000000000000000000000000000000000000..3779fbff733d45593e35a9679a6bb08d
 +}
 diff --git a/src/gallium/auxiliary/indices/Android.bp b/src/gallium/auxiliary/indices/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..d8cb9672b3e3d755bf8e8c9bc733c2a74e5abfd0
+index 0000000000000000000000000000000000000000..aaa52eac6a57d7aaafcf7ba6785543779ff781a0
 --- /dev/null
 +++ b/src/gallium/auxiliary/indices/Android.bp
 @@ -0,0 +1,54 @@
@@ -3433,10 +3433,10 @@ index 0000000000000000000000000000000000000000..d8cb9672b3e3d755bf8e8c9bc733c2a7
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3485,7 +3485,7 @@ index 0000000000000000000000000000000000000000..d8cb9672b3e3d755bf8e8c9bc733c2a7
 +}
 diff --git a/src/gallium/auxiliary/nir/Android.bp b/src/gallium/auxiliary/nir/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..711ac61caf09b5b0578877cc8951c01f7b5249dc
+index 0000000000000000000000000000000000000000..439357b60ca5e9830e02301c78238703e7131ccf
 --- /dev/null
 +++ b/src/gallium/auxiliary/nir/Android.bp
 @@ -0,0 +1,32 @@
@@ -3493,10 +3493,10 @@ index 0000000000000000000000000000000000000000..711ac61caf09b5b0578877cc8951c01f
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3523,7 +3523,7 @@ index 0000000000000000000000000000000000000000..711ac61caf09b5b0578877cc8951c01f
 +}
 diff --git a/src/gallium/auxiliary/pipe-loader/Android.bp b/src/gallium/auxiliary/pipe-loader/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..e77c80bbef8e8620efedbd873a19c33c8cff557d
+index 0000000000000000000000000000000000000000..e807a695bf1c4e72da6e50bf9e56e3369e1fbcf5
 --- /dev/null
 +++ b/src/gallium/auxiliary/pipe-loader/Android.bp
 @@ -0,0 +1,91 @@
@@ -3531,10 +3531,10 @@ index 0000000000000000000000000000000000000000..e77c80bbef8e8620efedbd873a19c33c
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3620,7 +3620,7 @@ index 0000000000000000000000000000000000000000..e77c80bbef8e8620efedbd873a19c33c
 +}
 diff --git a/src/gallium/auxiliary/pipebuffer/Android.bp b/src/gallium/auxiliary/pipebuffer/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..a97dde7e5e06d3ca54e90c33a42dade3dc533916
+index 0000000000000000000000000000000000000000..e4c09423a122e3706f2957453ca2787956a38f67
 --- /dev/null
 +++ b/src/gallium/auxiliary/pipebuffer/Android.bp
 @@ -0,0 +1,36 @@
@@ -3628,10 +3628,10 @@ index 0000000000000000000000000000000000000000..a97dde7e5e06d3ca54e90c33a42dade3
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3662,7 +3662,7 @@ index 0000000000000000000000000000000000000000..a97dde7e5e06d3ca54e90c33a42dade3
 +}
 diff --git a/src/gallium/auxiliary/renderonly/Android.bp b/src/gallium/auxiliary/renderonly/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..1f67093b3141afc0aefda8d268975a06c846b51b
+index 0000000000000000000000000000000000000000..90ba33092c6687544e11baebf24e4b941fe076b4
 --- /dev/null
 +++ b/src/gallium/auxiliary/renderonly/Android.bp
 @@ -0,0 +1,30 @@
@@ -3670,10 +3670,10 @@ index 0000000000000000000000000000000000000000..1f67093b3141afc0aefda8d268975a06
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3698,7 +3698,7 @@ index 0000000000000000000000000000000000000000..1f67093b3141afc0aefda8d268975a06
 +}
 diff --git a/src/gallium/auxiliary/rtasm/Android.bp b/src/gallium/auxiliary/rtasm/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..df1d858fc60dda3293a78cb06da0a60fd0680d67
+index 0000000000000000000000000000000000000000..89413022fc5d811293bccc678a4418725386ac1e
 --- /dev/null
 +++ b/src/gallium/auxiliary/rtasm/Android.bp
 @@ -0,0 +1,31 @@
@@ -3706,10 +3706,10 @@ index 0000000000000000000000000000000000000000..df1d858fc60dda3293a78cb06da0a60f
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3735,7 +3735,7 @@ index 0000000000000000000000000000000000000000..df1d858fc60dda3293a78cb06da0a60f
 +}
 diff --git a/src/gallium/auxiliary/tgsi/Android.bp b/src/gallium/auxiliary/tgsi/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..406dd482e2107107774fa366f063d5e2d26e2e46
+index 0000000000000000000000000000000000000000..f8e898cd513a388a1ee91d135849f9699f608064
 --- /dev/null
 +++ b/src/gallium/auxiliary/tgsi/Android.bp
 @@ -0,0 +1,48 @@
@@ -3743,10 +3743,10 @@ index 0000000000000000000000000000000000000000..406dd482e2107107774fa366f063d5e2
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3789,7 +3789,7 @@ index 0000000000000000000000000000000000000000..406dd482e2107107774fa366f063d5e2
 +}
 diff --git a/src/gallium/auxiliary/translate/Android.bp b/src/gallium/auxiliary/translate/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..c86bd71ac62c1d4dcde3ce3a2a1d8fe31ce5f8b0
+index 0000000000000000000000000000000000000000..aa4ee0edd4d71806a1161e13e343cbb9ae63e1e6
 --- /dev/null
 +++ b/src/gallium/auxiliary/translate/Android.bp
 @@ -0,0 +1,33 @@
@@ -3797,10 +3797,10 @@ index 0000000000000000000000000000000000000000..c86bd71ac62c1d4dcde3ce3a2a1d8fe3
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3828,7 +3828,7 @@ index 0000000000000000000000000000000000000000..c86bd71ac62c1d4dcde3ce3a2a1d8fe3
 +}
 diff --git a/src/gallium/auxiliary/util/Android.bp b/src/gallium/auxiliary/util/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..a4f36c3dd5d789defabb7233640177e78f216cff
+index 0000000000000000000000000000000000000000..341b2e6026c549f7a3032eb41864a59b822aeac9
 --- /dev/null
 +++ b/src/gallium/auxiliary/util/Android.bp
 @@ -0,0 +1,82 @@
@@ -3836,10 +3836,10 @@ index 0000000000000000000000000000000000000000..a4f36c3dd5d789defabb7233640177e7
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3916,7 +3916,7 @@ index 0000000000000000000000000000000000000000..a4f36c3dd5d789defabb7233640177e7
 +}
 diff --git a/src/gallium/auxiliary/vl/Android.bp b/src/gallium/auxiliary/vl/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..d181fcde3c6a454d64e861c0d88ee872b0f6c4ae
+index 0000000000000000000000000000000000000000..d1570376667d83bf32561e2515e35311f58595ba
 --- /dev/null
 +++ b/src/gallium/auxiliary/vl/Android.bp
 @@ -0,0 +1,41 @@
@@ -3924,10 +3924,10 @@ index 0000000000000000000000000000000000000000..d181fcde3c6a454d64e861c0d88ee872
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3963,7 +3963,7 @@ index 0000000000000000000000000000000000000000..d181fcde3c6a454d64e861c0d88ee872
 +}
 diff --git a/src/gallium/drivers/Android.bp b/src/gallium/drivers/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..8964641f13f53a50203aa15c3f32ea95aa8f9c3a
+index 0000000000000000000000000000000000000000..8dfa08ae22e8755854bcdb7e8558c5ed6bec7c2e
 --- /dev/null
 +++ b/src/gallium/drivers/Android.bp
 @@ -0,0 +1,23 @@
@@ -3971,10 +3971,10 @@ index 0000000000000000000000000000000000000000..8964641f13f53a50203aa15c3f32ea95
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -3992,7 +3992,7 @@ index 0000000000000000000000000000000000000000..8964641f13f53a50203aa15c3f32ea95
 +}
 diff --git a/src/gallium/drivers/virgl/Android.bp b/src/gallium/drivers/virgl/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b1bdc42af2ac858039b6e48228baedc5f0376fb0
+index 0000000000000000000000000000000000000000..699973d8b5faf9208d8637a22f18a4ff7d90e370
 --- /dev/null
 +++ b/src/gallium/drivers/virgl/Android.bp
 @@ -0,0 +1,117 @@
@@ -4000,10 +4000,10 @@ index 0000000000000000000000000000000000000000..b1bdc42af2ac858039b6e48228baedc5
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -4115,7 +4115,7 @@ index 0000000000000000000000000000000000000000..b1bdc42af2ac858039b6e48228baedc5
 +}
 diff --git a/src/gallium/frontends/dri/Android.bp b/src/gallium/frontends/dri/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..86be67dc0733cac81f0afc0f8e80c5c6fe5c1216
+index 0000000000000000000000000000000000000000..d066510db6fc0c626f7d810ad25009f12ff67ccd
 --- /dev/null
 +++ b/src/gallium/frontends/dri/Android.bp
 @@ -0,0 +1,113 @@
@@ -4123,10 +4123,10 @@ index 0000000000000000000000000000000000000000..86be67dc0733cac81f0afc0f8e80c5c6
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -4234,7 +4234,7 @@ index 0000000000000000000000000000000000000000..86be67dc0733cac81f0afc0f8e80c5c6
 +}
 diff --git a/src/gallium/include/Android.bp b/src/gallium/include/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..138d82bf0c7175342ef68249afd5ddacde053541
+index 0000000000000000000000000000000000000000..b04493939555a77bcebd6e68099b16b7f4e0baf4
 --- /dev/null
 +++ b/src/gallium/include/Android.bp
 @@ -0,0 +1,23 @@
@@ -4242,10 +4242,10 @@ index 0000000000000000000000000000000000000000..138d82bf0c7175342ef68249afd5ddac
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -4263,7 +4263,7 @@ index 0000000000000000000000000000000000000000..138d82bf0c7175342ef68249afd5ddac
 +}
 diff --git a/src/gallium/include/pipe/Android.bp b/src/gallium/include/pipe/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..112ec83abc6263f70e18b699ee24feab4372e3cc
+index 0000000000000000000000000000000000000000..2aeedceee13de582222b300f5063d1380c09ed2e
 --- /dev/null
 +++ b/src/gallium/include/pipe/Android.bp
 @@ -0,0 +1,29 @@
@@ -4271,10 +4271,10 @@ index 0000000000000000000000000000000000000000..112ec83abc6263f70e18b699ee24feab
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -4298,7 +4298,7 @@ index 0000000000000000000000000000000000000000..112ec83abc6263f70e18b699ee24feab
 +}
 diff --git a/src/gallium/targets/dri/Android.bp b/src/gallium/targets/dri/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..a8adb6ed417f69aa686cdbe757302386750186cb
+index 0000000000000000000000000000000000000000..2cdac5a1d17dc93d4f5199cef7bcc44716d8dbcf
 --- /dev/null
 +++ b/src/gallium/targets/dri/Android.bp
 @@ -0,0 +1,120 @@
@@ -4306,10 +4306,10 @@ index 0000000000000000000000000000000000000000..a8adb6ed417f69aa686cdbe757302386
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -4424,7 +4424,7 @@ index 0000000000000000000000000000000000000000..a8adb6ed417f69aa686cdbe757302386
 +}
 diff --git a/src/gallium/winsys/Android.bp b/src/gallium/winsys/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..7c51ca3db264ceed590c6cc093d2ecf0ad3b9ba4
+index 0000000000000000000000000000000000000000..ef96f3adcb3065294a2de9a73783ce4ff49cdb79
 --- /dev/null
 +++ b/src/gallium/winsys/Android.bp
 @@ -0,0 +1,23 @@
@@ -4432,10 +4432,10 @@ index 0000000000000000000000000000000000000000..7c51ca3db264ceed590c6cc093d2ecf0
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -4453,7 +4453,7 @@ index 0000000000000000000000000000000000000000..7c51ca3db264ceed590c6cc093d2ecf0
 +}
 diff --git a/src/gallium/winsys/sw/dri/Android.bp b/src/gallium/winsys/sw/dri/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..abc896bc574966214efbd65c779b437be2c4cadb
+index 0000000000000000000000000000000000000000..94d17a06603fded9d9df4c3d484287dc673a6f6b
 --- /dev/null
 +++ b/src/gallium/winsys/sw/dri/Android.bp
 @@ -0,0 +1,84 @@
@@ -4461,10 +4461,10 @@ index 0000000000000000000000000000000000000000..abc896bc574966214efbd65c779b437b
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -4543,7 +4543,7 @@ index 0000000000000000000000000000000000000000..abc896bc574966214efbd65c779b437b
 +}
 diff --git a/src/gallium/winsys/sw/kms-dri/Android.bp b/src/gallium/winsys/sw/kms-dri/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..dbfd470784b2b73a2f6a360cddb6081c6537ea33
+index 0000000000000000000000000000000000000000..33a82b9efb9a5da3661c3beea41ddde3844a8c2d
 --- /dev/null
 +++ b/src/gallium/winsys/sw/kms-dri/Android.bp
 @@ -0,0 +1,84 @@
@@ -4551,10 +4551,10 @@ index 0000000000000000000000000000000000000000..dbfd470784b2b73a2f6a360cddb6081c
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -4633,7 +4633,7 @@ index 0000000000000000000000000000000000000000..dbfd470784b2b73a2f6a360cddb6081c
 +}
 diff --git a/src/gallium/winsys/sw/null/Android.bp b/src/gallium/winsys/sw/null/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..f62d39aa8f12fb3df758584a477074498888990a
+index 0000000000000000000000000000000000000000..47c709d9a89b02f37e49b70025f4d12c58bfe86a
 --- /dev/null
 +++ b/src/gallium/winsys/sw/null/Android.bp
 @@ -0,0 +1,84 @@
@@ -4641,10 +4641,10 @@ index 0000000000000000000000000000000000000000..f62d39aa8f12fb3df758584a47707449
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -4723,7 +4723,7 @@ index 0000000000000000000000000000000000000000..f62d39aa8f12fb3df758584a47707449
 +}
 diff --git a/src/gallium/winsys/sw/wrapper/Android.bp b/src/gallium/winsys/sw/wrapper/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b0e49162f8ee926725f6c314d4d6aa0179b4f789
+index 0000000000000000000000000000000000000000..3cdeba9bc34ac1756083077b81e2d4f220c77dce
 --- /dev/null
 +++ b/src/gallium/winsys/sw/wrapper/Android.bp
 @@ -0,0 +1,84 @@
@@ -4731,10 +4731,10 @@ index 0000000000000000000000000000000000000000..b0e49162f8ee926725f6c314d4d6aa01
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -4813,7 +4813,7 @@ index 0000000000000000000000000000000000000000..b0e49162f8ee926725f6c314d4d6aa01
 +}
 diff --git a/src/gallium/winsys/virgl/common/Android.bp b/src/gallium/winsys/virgl/common/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..6f032a99c6ede3c751caf1b36bca176da673b59f
+index 0000000000000000000000000000000000000000..13d8d58c8e283c0645086b66c557040dc0691cc0
 --- /dev/null
 +++ b/src/gallium/winsys/virgl/common/Android.bp
 @@ -0,0 +1,93 @@
@@ -4821,10 +4821,10 @@ index 0000000000000000000000000000000000000000..6f032a99c6ede3c751caf1b36bca176d
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -4912,7 +4912,7 @@ index 0000000000000000000000000000000000000000..6f032a99c6ede3c751caf1b36bca176d
 +}
 diff --git a/src/gallium/winsys/virgl/drm/Android.bp b/src/gallium/winsys/virgl/drm/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..cae2f0215f50ed3a75a63890940b4ec59f52d378
+index 0000000000000000000000000000000000000000..38fb1efdb6e8050f59453fe868d1e6715286bce4
 --- /dev/null
 +++ b/src/gallium/winsys/virgl/drm/Android.bp
 @@ -0,0 +1,96 @@
@@ -4920,10 +4920,10 @@ index 0000000000000000000000000000000000000000..cae2f0215f50ed3a75a63890940b4ec5
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -5014,7 +5014,7 @@ index 0000000000000000000000000000000000000000..cae2f0215f50ed3a75a63890940b4ec5
 +}
 diff --git a/src/gallium/winsys/virgl/vtest/Android.bp b/src/gallium/winsys/virgl/vtest/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..3baaca0b92ef3b1a68ad9b8456e29db03c963321
+index 0000000000000000000000000000000000000000..d1342aa4739642ded474631a8532a53c99897d36
 --- /dev/null
 +++ b/src/gallium/winsys/virgl/vtest/Android.bp
 @@ -0,0 +1,89 @@
@@ -5022,10 +5022,10 @@ index 0000000000000000000000000000000000000000..3baaca0b92ef3b1a68ad9b8456e29db0
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -5109,7 +5109,7 @@ index 0000000000000000000000000000000000000000..3baaca0b92ef3b1a68ad9b8456e29db0
 +}
 diff --git a/src/glx/Android.bp b/src/glx/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..88b0600b4fd376ff07e9c5030c1612022540ecd7
+index 0000000000000000000000000000000000000000..d1f1df57fb8e0403aeb7ca9cae958be0bd48931b
 --- /dev/null
 +++ b/src/glx/Android.bp
 @@ -0,0 +1,29 @@
@@ -5117,10 +5117,10 @@ index 0000000000000000000000000000000000000000..88b0600b4fd376ff07e9c5030c161202
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -5144,7 +5144,7 @@ index 0000000000000000000000000000000000000000..88b0600b4fd376ff07e9c5030c161202
 +}
 diff --git a/src/loader/Android.bp b/src/loader/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..327901e9008893e7a69ed675ad5cc97c284430d3
+index 0000000000000000000000000000000000000000..7c9c69fbacbdbbab530d8ad2d1ad869420512c42
 --- /dev/null
 +++ b/src/loader/Android.bp
 @@ -0,0 +1,102 @@
@@ -5152,10 +5152,10 @@ index 0000000000000000000000000000000000000000..327901e9008893e7a69ed675ad5cc97c
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -5252,7 +5252,7 @@ index 0000000000000000000000000000000000000000..327901e9008893e7a69ed675ad5cc97c
 +}
 diff --git a/src/mesa/Android.bp b/src/mesa/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..eac2c9d8e945f9b920c29b331a10916eb5649dc4
+index 0000000000000000000000000000000000000000..d7c8fde1d6527af046189d163dbe460665fe993b
 --- /dev/null
 +++ b/src/mesa/Android.bp
 @@ -0,0 +1,229 @@
@@ -5260,10 +5260,10 @@ index 0000000000000000000000000000000000000000..eac2c9d8e945f9b920c29b331a10916e
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -5487,7 +5487,7 @@ index 0000000000000000000000000000000000000000..eac2c9d8e945f9b920c29b331a10916e
 +}
 diff --git a/src/mesa/glapi/Android.bp b/src/mesa/glapi/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..35efe12d1c3a7d7d966be138addb673d117b4c04
+index 0000000000000000000000000000000000000000..a49ac3d63e5870186bf6ee2c3aeb37060561c6bf
 --- /dev/null
 +++ b/src/mesa/glapi/Android.bp
 @@ -0,0 +1,29 @@
@@ -5495,10 +5495,10 @@ index 0000000000000000000000000000000000000000..35efe12d1c3a7d7d966be138addb673d
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -5522,7 +5522,7 @@ index 0000000000000000000000000000000000000000..35efe12d1c3a7d7d966be138addb673d
 +}
 diff --git a/src/mesa/glapi/es1api/Android.bp b/src/mesa/glapi/es1api/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b6cbe63d7dc7169442b76b4f117bc47e5212a58b
+index 0000000000000000000000000000000000000000..c4b8f0dcc50ff6cc44c01ac5234238c39824e475
 --- /dev/null
 +++ b/src/mesa/glapi/es1api/Android.bp
 @@ -0,0 +1,97 @@
@@ -5530,10 +5530,10 @@ index 0000000000000000000000000000000000000000..b6cbe63d7dc7169442b76b4f117bc47e
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -5625,7 +5625,7 @@ index 0000000000000000000000000000000000000000..b6cbe63d7dc7169442b76b4f117bc47e
 +}
 diff --git a/src/mesa/glapi/es2api/Android.bp b/src/mesa/glapi/es2api/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..714f04877c9190b51dfcdde3260a41e83a9a2ba5
+index 0000000000000000000000000000000000000000..7142bbe6fce2c0d04a909a6a7a92ad66e4528407
 --- /dev/null
 +++ b/src/mesa/glapi/es2api/Android.bp
 @@ -0,0 +1,97 @@
@@ -5633,10 +5633,10 @@ index 0000000000000000000000000000000000000000..714f04877c9190b51dfcdde3260a41e8
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -5728,7 +5728,7 @@ index 0000000000000000000000000000000000000000..714f04877c9190b51dfcdde3260a41e8
 +}
 diff --git a/src/mesa/glapi/glapi/gen/Android.bp b/src/mesa/glapi/glapi/gen/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..edc84e28dfa4cc0a4ed4a7a20315cacc8837d862
+index 0000000000000000000000000000000000000000..c4662116194c59a6823f5e419895fb646c5321f7
 --- /dev/null
 +++ b/src/mesa/glapi/glapi/gen/Android.bp
 @@ -0,0 +1,994 @@
@@ -5736,10 +5736,10 @@ index 0000000000000000000000000000000000000000..edc84e28dfa4cc0a4ed4a7a20315cacc
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -6728,7 +6728,7 @@ index 0000000000000000000000000000000000000000..edc84e28dfa4cc0a4ed4a7a20315cacc
 +}
 diff --git a/src/mesa/glapi/glapi/registry/Android.bp b/src/mesa/glapi/glapi/registry/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..62b7bfd18a0d7a05f45a01b25fc47b289a5d2a68
+index 0000000000000000000000000000000000000000..dac24ff9e1e494f1b3840ef8cd6ee40bd0c20c26
 --- /dev/null
 +++ b/src/mesa/glapi/glapi/registry/Android.bp
 @@ -0,0 +1,29 @@
@@ -6736,10 +6736,10 @@ index 0000000000000000000000000000000000000000..62b7bfd18a0d7a05f45a01b25fc47b28
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -6763,7 +6763,7 @@ index 0000000000000000000000000000000000000000..62b7bfd18a0d7a05f45a01b25fc47b28
 +}
 diff --git a/src/mesa/glapi/new/Android.bp b/src/mesa/glapi/new/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..27c59e28c2e448414fff6a194924df33067f3d71
+index 0000000000000000000000000000000000000000..7b90ce36482134d028aebaa97901dc7ef5369611
 --- /dev/null
 +++ b/src/mesa/glapi/new/Android.bp
 @@ -0,0 +1,34 @@
@@ -6771,10 +6771,10 @@ index 0000000000000000000000000000000000000000..27c59e28c2e448414fff6a194924df33
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -6803,7 +6803,7 @@ index 0000000000000000000000000000000000000000..27c59e28c2e448414fff6a194924df33
 +}
 diff --git a/src/mesa/glapi/shared-glapi/Android.bp b/src/mesa/glapi/shared-glapi/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..9392b8125cd413c980a0b8e365399b2d89a04444
+index 0000000000000000000000000000000000000000..c975e5ac9605eecee7e21218ec1dd94509d9e322
 --- /dev/null
 +++ b/src/mesa/glapi/shared-glapi/Android.bp
 @@ -0,0 +1,113 @@
@@ -6811,10 +6811,10 @@ index 0000000000000000000000000000000000000000..9392b8125cd413c980a0b8e365399b2d
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -6922,7 +6922,7 @@ index 0000000000000000000000000000000000000000..9392b8125cd413c980a0b8e365399b2d
 +}
 diff --git a/src/mesa/main/Android.bp b/src/mesa/main/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..a655dc5ef74312cddd32e140e7deec324b07e78d
+index 0000000000000000000000000000000000000000..c6ee0a05253ccfe23253b721c4a8d6e3b6545465
 --- /dev/null
 +++ b/src/mesa/main/Android.bp
 @@ -0,0 +1,213 @@
@@ -6930,10 +6930,10 @@ index 0000000000000000000000000000000000000000..a655dc5ef74312cddd32e140e7deec32
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -7141,7 +7141,7 @@ index 0000000000000000000000000000000000000000..a655dc5ef74312cddd32e140e7deec32
 +}
 diff --git a/src/mesa/math/Android.bp b/src/mesa/math/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..21024eb51adb37b04803edd78e798ac8e11db910
+index 0000000000000000000000000000000000000000..03c6ab239d0e71ac4934783afc844d053380adfc
 --- /dev/null
 +++ b/src/mesa/math/Android.bp
 @@ -0,0 +1,31 @@
@@ -7149,10 +7149,10 @@ index 0000000000000000000000000000000000000000..21024eb51adb37b04803edd78e798ac8
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -7178,7 +7178,7 @@ index 0000000000000000000000000000000000000000..21024eb51adb37b04803edd78e798ac8
 +}
 diff --git a/src/mesa/program/Android.bp b/src/mesa/program/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..3a0c570a2643f0e3d72477ec9dee76ae69769f14
+index 0000000000000000000000000000000000000000..007b67fd92665425ff8293c4e05e7243ac3163c9
 --- /dev/null
 +++ b/src/mesa/program/Android.bp
 @@ -0,0 +1,105 @@
@@ -7186,10 +7186,10 @@ index 0000000000000000000000000000000000000000..3a0c570a2643f0e3d72477ec9dee76ae
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -7289,7 +7289,7 @@ index 0000000000000000000000000000000000000000..3a0c570a2643f0e3d72477ec9dee76ae
 +}
 diff --git a/src/mesa/state_tracker/Android.bp b/src/mesa/state_tracker/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..0f87771c232f727030868cfa18237e7c3572534a
+index 0000000000000000000000000000000000000000..8ce38693e149f439795a27acccad6ef256459e70
 --- /dev/null
 +++ b/src/mesa/state_tracker/Android.bp
 @@ -0,0 +1,88 @@
@@ -7297,10 +7297,10 @@ index 0000000000000000000000000000000000000000..0f87771c232f727030868cfa18237e7c
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -7383,7 +7383,7 @@ index 0000000000000000000000000000000000000000..0f87771c232f727030868cfa18237e7c
 +}
 diff --git a/src/mesa/vbo/Android.bp b/src/mesa/vbo/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..7ddd338ba2c4da851806528e75d371b563f4a3fa
+index 0000000000000000000000000000000000000000..a258aaff1504077b61eb0b2d4171697f370e1d09
 --- /dev/null
 +++ b/src/mesa/vbo/Android.bp
 @@ -0,0 +1,40 @@
@@ -7391,10 +7391,10 @@ index 0000000000000000000000000000000000000000..7ddd338ba2c4da851806528e75d371b5
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -7429,7 +7429,7 @@ index 0000000000000000000000000000000000000000..7ddd338ba2c4da851806528e75d371b5
 +}
 diff --git a/src/util/Android.bp b/src/util/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..31d4ab3bd8f0aac1b87c88b279b52297cd0fa997
+index 0000000000000000000000000000000000000000..07ee6bc178bc141ec2c516504d938d30e132450e
 --- /dev/null
 +++ b/src/util/Android.bp
 @@ -0,0 +1,392 @@
@@ -7437,10 +7437,10 @@ index 0000000000000000000000000000000000000000..31d4ab3bd8f0aac1b87c88b279b52297
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -7827,7 +7827,7 @@ index 0000000000000000000000000000000000000000..31d4ab3bd8f0aac1b87c88b279b52297
 +}
 diff --git a/src/util/blake3/Android.bp b/src/util/blake3/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..22f7cdb3c9e187bb0845e445c4cb800de1c27768
+index 0000000000000000000000000000000000000000..6da1ad690e15a3c0517b1c6ac291e7535e859fc2
 --- /dev/null
 +++ b/src/util/blake3/Android.bp
 @@ -0,0 +1,46 @@
@@ -7835,10 +7835,10 @@ index 0000000000000000000000000000000000000000..22f7cdb3c9e187bb0845e445c4cb800d
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -7879,7 +7879,7 @@ index 0000000000000000000000000000000000000000..22f7cdb3c9e187bb0845e445c4cb800d
 +}
 diff --git a/src/util/format/Android.bp b/src/util/format/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..5a3e1f0aa401c81303c6cae853dfa9743f8ee460
+index 0000000000000000000000000000000000000000..a66d7bf7717ee51c95ab314e5a12e017556a11ea
 --- /dev/null
 +++ b/src/util/format/Android.bp
 @@ -0,0 +1,110 @@
@@ -7887,10 +7887,10 @@ index 0000000000000000000000000000000000000000..5a3e1f0aa401c81303c6cae853dfa974
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -7995,7 +7995,7 @@ index 0000000000000000000000000000000000000000..5a3e1f0aa401c81303c6cae853dfa974
 +}
 diff --git a/src/util/perf/Android.bp b/src/util/perf/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..3dc2a80f401cf0f8a3dc00710880b5ae1af80977
+index 0000000000000000000000000000000000000000..4d6ad7d398f27d8bb2c9fb9032aec28c5bef5c5d
 --- /dev/null
 +++ b/src/util/perf/Android.bp
 @@ -0,0 +1,37 @@
@@ -8003,10 +8003,10 @@ index 0000000000000000000000000000000000000000..3dc2a80f401cf0f8a3dc00710880b5ae
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -8038,7 +8038,7 @@ index 0000000000000000000000000000000000000000..3dc2a80f401cf0f8a3dc00710880b5ae
 +}
 diff --git a/src/util/u_gralloc/Android.bp b/src/util/u_gralloc/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..995fadecbd5afb019520da25d4ad7fb6d3d5fab7
+index 0000000000000000000000000000000000000000..aedd3ebf6b75142baed0255de15f78e2ba826be0
 --- /dev/null
 +++ b/src/util/u_gralloc/Android.bp
 @@ -0,0 +1,56 @@
@@ -8046,10 +8046,10 @@ index 0000000000000000000000000000000000000000..995fadecbd5afb019520da25d4ad7fb6
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -8100,7 +8100,7 @@ index 0000000000000000000000000000000000000000..995fadecbd5afb019520da25d4ad7fb6
 +}
 diff --git a/src/virtio/Android.bp b/src/virtio/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..3bb3eb38a4917d96404cf57b8861c7bee120ba69
+index 0000000000000000000000000000000000000000..d9fa976b4cdd780fe3581645d3ff1829eaec496a
 --- /dev/null
 +++ b/src/virtio/Android.bp
 @@ -0,0 +1,23 @@
@@ -8108,10 +8108,10 @@ index 0000000000000000000000000000000000000000..3bb3eb38a4917d96404cf57b8861c7be
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -8129,7 +8129,7 @@ index 0000000000000000000000000000000000000000..3bb3eb38a4917d96404cf57b8861c7be
 +}
 diff --git a/src/virtio/venus-protocol/Android.bp b/src/virtio/venus-protocol/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b826c56a3c0a927b09cbeab6ccd1782e625f47e1
+index 0000000000000000000000000000000000000000..062a22deb54b694565d11b0adc295e8e851f1b1a
 --- /dev/null
 +++ b/src/virtio/venus-protocol/Android.bp
 @@ -0,0 +1,23 @@
@@ -8137,10 +8137,10 @@ index 0000000000000000000000000000000000000000..b826c56a3c0a927b09cbeab6ccd1782e
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -8158,7 +8158,7 @@ index 0000000000000000000000000000000000000000..b826c56a3c0a927b09cbeab6ccd1782e
 +}
 diff --git a/src/virtio/vulkan/Android.bp b/src/virtio/vulkan/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab8f6dca2e2a41ef1b80d1da1c64ad318f1fafa3
+index 0000000000000000000000000000000000000000..d8b400a1af75cc621e52f85dc39577469037490e
 --- /dev/null
 +++ b/src/virtio/vulkan/Android.bp
 @@ -0,0 +1,259 @@
@@ -8166,10 +8166,10 @@ index 0000000000000000000000000000000000000000..ab8f6dca2e2a41ef1b80d1da1c64ad31
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -8423,7 +8423,7 @@ index 0000000000000000000000000000000000000000..ab8f6dca2e2a41ef1b80d1da1c64ad31
 +}
 diff --git a/src/vulkan/Android.bp b/src/vulkan/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..01091cc8a710e471e8ba83e2942329e9428b36af
+index 0000000000000000000000000000000000000000..20302fcc45ce8cedfe67cfa33b6d46b865d66434
 --- /dev/null
 +++ b/src/vulkan/Android.bp
 @@ -0,0 +1,23 @@
@@ -8431,10 +8431,10 @@ index 0000000000000000000000000000000000000000..01091cc8a710e471e8ba83e2942329e9
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -8452,7 +8452,7 @@ index 0000000000000000000000000000000000000000..01091cc8a710e471e8ba83e2942329e9
 +}
 diff --git a/src/vulkan/registry/Android.bp b/src/vulkan/registry/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..d9a63060b57d3d8246154cb4cd5c1fc7b7c06274
+index 0000000000000000000000000000000000000000..df3b34f4371e4315a36f3d585ae0deb1a744880a
 --- /dev/null
 +++ b/src/vulkan/registry/Android.bp
 @@ -0,0 +1,22 @@
@@ -8460,10 +8460,10 @@ index 0000000000000000000000000000000000000000..d9a63060b57d3d8246154cb4cd5c1fc7
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -8480,7 +8480,7 @@ index 0000000000000000000000000000000000000000..d9a63060b57d3d8246154cb4cd5c1fc7
 +}
 diff --git a/src/vulkan/runtime/Android.bp b/src/vulkan/runtime/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..7aab6021b7d195d4dcd831e3502de681a08506d1
+index 0000000000000000000000000000000000000000..e089b84f8e811b05b85c566c2b2b2de65b06db65
 --- /dev/null
 +++ b/src/vulkan/runtime/Android.bp
 @@ -0,0 +1,582 @@
@@ -8488,10 +8488,10 @@ index 0000000000000000000000000000000000000000..7aab6021b7d195d4dcd831e3502de681
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -9068,7 +9068,7 @@ index 0000000000000000000000000000000000000000..7aab6021b7d195d4dcd831e3502de681
 +}
 diff --git a/src/vulkan/runtime/rmv/Android.bp b/src/vulkan/runtime/rmv/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..324348345b37923f38f43ac0771983f3275de1dd
+index 0000000000000000000000000000000000000000..1a0e7341fe2e38b012e6f8b3e25b5de7cf1e5847
 --- /dev/null
 +++ b/src/vulkan/runtime/rmv/Android.bp
 @@ -0,0 +1,23 @@
@@ -9076,10 +9076,10 @@ index 0000000000000000000000000000000000000000..324348345b37923f38f43ac0771983f3
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -9097,7 +9097,7 @@ index 0000000000000000000000000000000000000000..324348345b37923f38f43ac0771983f3
 +}
 diff --git a/src/vulkan/util/Android.bp b/src/vulkan/util/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..883a4c9eb4ff53d2d638f019ae490ec3092a88d1
+index 0000000000000000000000000000000000000000..649d8058dd57e1a02bece535d4370c6522aeb381
 --- /dev/null
 +++ b/src/vulkan/util/Android.bp
 @@ -0,0 +1,393 @@
@@ -9105,10 +9105,10 @@ index 0000000000000000000000000000000000000000..883a4c9eb4ff53d2d638f019ae490ec3
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
@@ -9496,7 +9496,7 @@ index 0000000000000000000000000000000000000000..883a4c9eb4ff53d2d638f019ae490ec3
 +}
 diff --git a/src/vulkan/wsi/Android.bp b/src/vulkan/wsi/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..159e36ad61dcc30e7816d1100d711717d13b15ef
+index 0000000000000000000000000000000000000000..41d16e5744c362c502eb61636353566cf5ec6b82
 --- /dev/null
 +++ b/src/vulkan/wsi/Android.bp
 @@ -0,0 +1,150 @@
@@ -9504,10 +9504,10 @@ index 0000000000000000000000000000000000000000..159e36ad61dcc30e7816d1100d711717
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
 + *
-+ * Generated via:
-+ *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
++ * Generated via meson convert. Submit patches here:
++ *   https://github.com/mesonbuild/meson
 + *
-+ * Submit patches, do not hand-edit.
++ * Do not hand-edit.
 + *
 + */
 +
