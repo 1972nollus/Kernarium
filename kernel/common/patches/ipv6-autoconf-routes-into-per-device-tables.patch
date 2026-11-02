@@ -69,7 +69,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  4 files changed, 48 insertions(+), 6 deletions(-)
 
 diff --git a/include/linux/ipv6.h b/include/linux/ipv6.h
-index 7294e4e89b797b1c45d1920686c2553e10badb81..7e975575d19c1cd210f99b30b25a44d58ce6cf2d 100644
+index c5541096a2867c6e065622043c1f38714c91e87e..4cb7e9dfd36099fe50facebdd3e46a0f0f598c8c 100644
 --- a/include/linux/ipv6.h
 +++ b/include/linux/ipv6.h
 @@ -54,6 +54,7 @@ struct ipv6_devconf {
@@ -104,7 +104,7 @@ index b353dea9aedc8f2cd99ec1057cca0748fed71168..ded2c7bc9a75337b0b2211b703139c0b
   *	anycast prototypes (anycast.c)
   */
 diff --git a/net/ipv6/addrconf.c b/net/ipv6/addrconf.c
-index 80706368a303ccef55dcc32bb9cb319b4cb009ab..980b07c9dbd0f395844507d901460fbc024d91f0 100644
+index 81f5bda2a89fc8ee200fff450da9ea25dee64e76..e5ff92ef5a9ac7beac38a41fe23e2bf632a7d389 100644
 --- a/net/ipv6/addrconf.c
 +++ b/net/ipv6/addrconf.c
 @@ -213,6 +213,7 @@ static struct ipv6_devconf ipv6_devconf __read_mostly = {
@@ -183,10 +183,10 @@ index 80706368a303ccef55dcc32bb9cb319b4cb009ab..980b07c9dbd0f395844507d901460fbc
  		.procname	= "proxy_ndp",
  		.data		= &ipv6_devconf.proxy_ndp,
 diff --git a/net/ipv6/route.c b/net/ipv6/route.c
-index 71a38034f5ca8e8b09bc9386718f49c2e799919c..960a42503c30b8fe7b99237905794f1b5d4b7bdf 100644
+index ce60fe53b822b259d997adeaf6ee01fe3aa6ea80..9fc6a24b90b5684f4df7b6928235cea05a615136 100644
 --- a/net/ipv6/route.c
 +++ b/net/ipv6/route.c
-@@ -4373,7 +4373,7 @@ static struct fib6_info *rt6_get_route_info(struct net *net,
+@@ -4379,7 +4379,7 @@ static struct fib6_info *rt6_get_route_info(struct net *net,
  					   const struct in6_addr *gwaddr,
  					   struct net_device *dev)
  {
@@ -195,7 +195,7 @@ index 71a38034f5ca8e8b09bc9386718f49c2e799919c..960a42503c30b8fe7b99237905794f1b
  	int ifindex = dev->ifindex;
  	struct fib6_node *fn;
  	struct fib6_info *rt = NULL;
-@@ -4427,7 +4427,7 @@ static struct fib6_info *rt6_add_route_info(struct net *net,
+@@ -4433,7 +4433,7 @@ static struct fib6_info *rt6_add_route_info(struct net *net,
  		.fc_nlinfo.nl_net = net,
  	};
  
@@ -204,7 +204,7 @@ index 71a38034f5ca8e8b09bc9386718f49c2e799919c..960a42503c30b8fe7b99237905794f1b
  	cfg.fc_dst = *prefix;
  	cfg.fc_gateway = *gwaddr;
  
-@@ -4445,7 +4445,7 @@ struct fib6_info *rt6_get_dflt_router(struct net *net,
+@@ -4451,7 +4451,7 @@ struct fib6_info *rt6_get_dflt_router(struct net *net,
  				     const struct in6_addr *addr,
  				     struct net_device *dev)
  {
@@ -213,7 +213,7 @@ index 71a38034f5ca8e8b09bc9386718f49c2e799919c..960a42503c30b8fe7b99237905794f1b
  	struct fib6_info *rt;
  	struct fib6_table *table;
  
-@@ -4481,7 +4481,7 @@ struct fib6_info *rt6_add_dflt_router(struct net *net,
+@@ -4487,7 +4487,7 @@ struct fib6_info *rt6_add_dflt_router(struct net *net,
  				     int lifetime)
  {
  	struct fib6_config cfg = {

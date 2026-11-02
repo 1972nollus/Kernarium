@@ -23,7 +23,7 @@ This adds an accessor only; guest-page buffers are unaffected.
  3 files changed, 70 insertions(+)
 
 diff --git a/drivers/gpu/drm/virtio/virtgpu_prime.c b/drivers/gpu/drm/virtio/virtgpu_prime.c
-index 2fedd5d3bd62c788f7e7033ba6b22149f547576e..7334d253d36e91db16cbe97bab82d0fb7a974b0d 100644
+index ce49282198cbf6aa31751248f4b3f30c74494d1c..59114caf081352bff4703c7e6c121a668a275a74 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_prime.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_prime.c
 @@ -45,6 +45,37 @@ static int virtgpu_virtio_get_uuid(struct dma_buf *buf,

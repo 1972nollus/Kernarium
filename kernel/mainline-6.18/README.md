@@ -121,6 +121,8 @@ The Linux overlay holds only what differs from the Android product:
   use and Android forbids or has no use for (see the Android overlay below).
   SCTP creates no listener and the SLiRP network never forwards it, so it
   joins endpoints inside the guest.
+  The NFS client keeps Kerberos (`RPCSEC_GSS_KRB5`) at its default, which
+  selects the kernel Kerberos crypto library (`CRYPTO_KRB5`, about 86 KB).
 - No wakelock interface: `CONFIG_PM_WAKELOCKS` and its `/sys/power/wake_lock`
   stay off. Sxmo, which postmarketOS guests run, suspends the guest on its own
   whenever that file exists, and a desktop guest has no wakelock service to
