@@ -983,6 +983,18 @@ The routed draws of a pass overlap as vertex functions do and cost about
 and `kosmickrisp_vertex_compute_draws` cover the decision, invocations of
 50-100 ms and many routed draws in one pass.
 
+The device residency set holds every Metal heap, and Apple's residency sets
+make a heap's placed resources resident with it, so image textures need no
+entry of their own. Metal's API and shader validation check each texture a
+command buffer reaches by itself, though, and shader validation silently drops
+the image loads and stores it does not find; under it, a vertex shader copying
+a cube map array image read and wrote nothing. While a validation layer wraps
+the device, which its class shows at creation, KosmicKrisp therefore also
+registers the textures of bound images, image views and texel buffer views for
+their lifetimes. Without validation it registers none, since that costs about
+1.4 us per image view on an M1 Ultra. The Mesa test
+`kosmickrisp_validated_image_access` runs the copy under shader validation.
+
 Linked graphics pipelines share native programs and dynamic vertex-input
 variants only while a live Vulkan pipeline owns them. The lookup cache drops
 its entry and releases those resources when the last pipeline owner is
