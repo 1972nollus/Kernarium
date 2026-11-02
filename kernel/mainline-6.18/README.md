@@ -693,7 +693,10 @@ holds the suspend's sync, fires an RTC alarm during a held sync of the host's
 suspend, which must still hold, and wakes a suspend the guest entered by
 itself with a wake, with a power key typed on the VNC display and with a
 network connection, after which the host's own suspend must hold under
-traffic on its first attempt.
+traffic on its first attempt. The Virtio sound driver starts a substream afresh
+after a suspend, with no position and no pending message, whether it was
+playing or paused, because the ALSA core restarts it at offset 0;
+`guest-virtio-sound-suspend` plays across a suspend, a pause and a reopen.
 
 Loadable modules remain disabled. The required guest filesystems, networking,
 Virtio devices, cgroups, BPF interpreter, zram, zswap/zstd, and supported LSM
