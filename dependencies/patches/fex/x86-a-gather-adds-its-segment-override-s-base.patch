@@ -13,7 +13,7 @@ which the backend adds to each element's scaled index.
  2 files changed, 10 insertions(+)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp
-index cfce2569db64ab8538d13c6561647da209e1b179..cc04d380cf39dedcade929862a55f9c613d4926f 100644
+index 0079f632f103901977e51752b0acc8c910b81931..b73a6c4c233ef3828a5684ca934420480d2ac160 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp
 @@ -83,6 +83,11 @@ OpDispatchBuilder::AVX128_LoadVSIB(const X86Tables::DecodedOp& Op, const X86Tabl
@@ -29,10 +29,10 @@ index cfce2569db64ab8538d13c6561647da209e1b179..cc04d380cf39dedcade929862a55f9c6
  }
  
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-index 0f15a367fe4a13e719a33597753a8f858e2c1965..1bc61a6760d6fd23bf7e4324677acdf4729f3358 100644
+index 37de3a08704917452c640f747affc1065d824c4d..44a4b53756ee9736923f12c0b84e563e693e04fe 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-@@ -5568,6 +5568,11 @@ OpDispatchBuilder::RefVSIB OpDispatchBuilder::LoadVSIB(const X86Tables::DecodedO
+@@ -5865,6 +5865,11 @@ OpDispatchBuilder::RefVSIB OpDispatchBuilder::LoadVSIB(const X86Tables::DecodedO
      A.Displacement = static_cast<int32_t>(Operand.Data.SIB.Offset);
    }
  

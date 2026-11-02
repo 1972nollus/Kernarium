@@ -822,9 +822,11 @@ Exact x87 formats and transcendentals use bounded software-math primitives
 called by those native gadgets. The userspace ISA boundary includes scalar x86
 and x87/MMX, SSE through SSE4.2, AVX/AVX2,
 F16C/FMA, AES/PCLMUL, BMI1/2, atomic and extended-state operations in both
-long64 and compat32 modes. The pinned FEX handwritten x86-64 and i386 corpora
-are the external instruction acceptance gate. AVX-512 and later encodings,
-RTM/MPX, obsolete protected-mode bounds, 16-bit code segments, and
+long64 and compat32 modes. The AVX-VNNI dot products VPDPBUSD, VPDPBUSDS,
+VPDPWSSD and VPDPWSSDS run on both x86 engines, as the FEX corpus requires,
+although CPUID does not report them. The pinned FEX handwritten x86-64 and
+i386 corpora are the external instruction acceptance gate. AVX-512 and later
+encodings, RTM/MPX, obsolete protected-mode bounds, 16-bit code segments, and
 privileged, real-mode, virtual-machine, enclave, and system-management
 instructions are outside this Linux userspace profile, and AMD's 3DNow!, SSE4a
 and CLZERO raise #UD, as on an Intel core. That gate is not proof of an

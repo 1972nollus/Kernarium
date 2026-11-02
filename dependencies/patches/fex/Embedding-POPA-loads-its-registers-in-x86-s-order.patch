@@ -15,10 +15,10 @@ instruction again from the same frame, so the probe goes.
  1 file changed, 16 insertions(+), 11 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 645e4d8a0f5a1429f2679cda867cd1675e4d44ff..2d16de78b5fde702d76a17d26882cf59e51797d5 100644
+index 07731b85653551d1771f0b91ca25d58fe0c6fc28..dba99bf0aa7d1d3ce78759ed33cbb3553d2a1f3a 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -544,22 +544,27 @@ void OpDispatchBuilder::POPAOp(OpcodeArgs) {
+@@ -506,22 +506,27 @@ void OpDispatchBuilder::POPAOp(OpcodeArgs) {
  
    Ref SP = _RMWHandle(LoadGPRRegister(X86State::REG_RSP));
    EmbedderAlignmentCheck(SP, IR::OpSizeToSize(Size), false);

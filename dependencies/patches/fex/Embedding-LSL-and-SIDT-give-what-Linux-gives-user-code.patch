@@ -19,10 +19,10 @@ the TLS entries in Embedder.SegmentPresent.
  2 files changed, 42 insertions(+), 6 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 3652610b081dafee336ae3fc940f03a58343969a..066dbee9f0b6e09f07eb6b42970fbea78c4a3386 100644
+index 10919e0e094b61df9c804bfce9af6cbdf830de8c..a07fae1fe8d30b8cb45529cbf867327c5058a044 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -3272,8 +3272,10 @@ void OpDispatchBuilder::SGDTOp(OpcodeArgs) {
+@@ -3283,8 +3283,10 @@ void OpDispatchBuilder::SGDTOp(OpcodeArgs) {
  void OpDispatchBuilder::SIDTOp(OpcodeArgs) {
    auto DestAddress = LoadSourceGPR(Op, Op->Dest, Op->Flags, {.LoadData = false});
  
@@ -35,7 +35,7 @@ index 3652610b081dafee336ae3fc940f03a58343969a..066dbee9f0b6e09f07eb6b42970fbea7
    auto IDTStoreSize = OpSize::i64Bit;
    if (!Is64BitMode) {
      // Mask off upper bits if 32-bit result.
-@@ -3281,7 +3283,7 @@ void OpDispatchBuilder::SIDTOp(OpcodeArgs) {
+@@ -3292,7 +3294,7 @@ void OpDispatchBuilder::SIDTOp(OpcodeArgs) {
      IDTStoreSize = OpSize::i32Bit;
    }
  
@@ -44,7 +44,7 @@ index 3652610b081dafee336ae3fc940f03a58343969a..066dbee9f0b6e09f07eb6b42970fbea7
    _StoreMemGPRAutoTSO(IDTStoreSize, AddressMode {.Base = DestAddress, .Offset = 2, .AddrSize = OpSize::i64Bit}, Constant(IDTAddress));
  }
  
-@@ -5086,9 +5088,40 @@ void OpDispatchBuilder::ALUOp(OpcodeArgs, FEXCore::IR::IROps ALUIROp, FEXCore::I
+@@ -5123,9 +5125,40 @@ void OpDispatchBuilder::ALUOp(OpcodeArgs, FEXCore::IR::IROps ALUIROp, FEXCore::I
  }
  
  void OpDispatchBuilder::LSLOp(OpcodeArgs) {
@@ -89,10 +89,10 @@ index 3652610b081dafee336ae3fc940f03a58343969a..066dbee9f0b6e09f07eb6b42970fbea7
  
  void OpDispatchBuilder::INTOp(OpcodeArgs) {
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index a8f6051defcc0af442daf92eafcee98368e7cd67..79073423555ccddf35151ec9b54d52431174213b 100644
+index e4b2acca7e62d8c1325a2d892042a0ac0175687e..711e11a6487602b54ee4d4a0c7d2f2a368a86acc 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
-@@ -695,6 +695,9 @@ struct CpuStateFrame {
+@@ -698,6 +698,9 @@ struct CpuStateFrame {
      // SS or DS, gives base 0, and no selector load faults. The host fills it
      // from the descriptors its kernel installed before each dispatch.
      uint32_t SegmentBases[32] {};

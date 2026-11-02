@@ -17,11 +17,15 @@ esac
 [ ! -e "$output" ] || fail "output already exists: $output"
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-expected=$(awk -F '\t' '$1 == "nasm" && $3 == "x86-conformance" { print $5 }' \
+series=$(awk -F '\t' '$1 == "nasm" && $3 == "x86-conformance" { print $7 }' \
 	"$root/dependencies/manifest.tsv")
-[ -n "$expected" ] || fail "dependency manifest has no NASM input"
-[ "$(git -C "$source" rev-parse HEAD)" = "$expected" ] ||
-	fail "NASM source is not at the dependency-manifest commit"
+[ -n "$series" ] && [ "$series" != - ] ||
+	fail "dependency manifest has no maintained NASM series"
+# A prepared source is identified by the tree its maintained series records.
+expected=$(awk -F '\t' '$1 == "tree" { print $2 }' "$root/dependencies/$series")
+[ -n "$expected" ] || fail "NASM patch series records no tree"
+[ "$(git -C "$source" rev-parse 'HEAD^{tree}')" = "$expected" ] ||
+	fail "NASM source is not the dependency-manifest commit with its series"
 [ -z "$(git -C "$source" status --porcelain --untracked-files=all)" ] ||
 	fail "NASM source checkout is dirty"
 
@@ -51,7 +55,7 @@ mkdir -p "$stage/bin"
 install -m 0755 "$build_source/nasm" "$stage/bin/nasm"
 verify_nasm()
 {
-	"$1/bin/nasm" -v | grep -q '^NASM version 2\.16\.03'
+	"$1/bin/nasm" -v | grep -q '^NASM version 3\.02'
 }
 verify_nasm "$stage" || fail "built NASM has the wrong version"
 # The exclusive rename never replaces, or moves below, a prefix that a

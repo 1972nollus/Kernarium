@@ -849,6 +849,19 @@ UML_X86_DECLARE_AES(df, 128)
 UML_X86_DECLARE_AES(df, 256)
 #undef UML_X86_DECLARE_AES
 
+#define UML_X86_DECLARE_DOT(opcode, width) \
+	void uml_x86_64_gadget_vector_dot_##opcode##_##width##_rr(); \
+	void uml_x86_64_gadget_vector_dot_##opcode##_##width##_rm();
+UML_X86_DECLARE_DOT(50, 128)
+UML_X86_DECLARE_DOT(50, 256)
+UML_X86_DECLARE_DOT(51, 128)
+UML_X86_DECLARE_DOT(51, 256)
+UML_X86_DECLARE_DOT(52, 128)
+UML_X86_DECLARE_DOT(52, 256)
+UML_X86_DECLARE_DOT(53, 128)
+UML_X86_DECLARE_DOT(53, 256)
+#undef UML_X86_DECLARE_DOT
+
 #define UML_X86_DECLARE_SHA(opcode) \
 	void uml_x86_64_gadget_vector_sha_##opcode##_rr(); \
 	void uml_x86_64_gadget_vector_sha_##opcode##_rm();

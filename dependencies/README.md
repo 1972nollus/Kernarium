@@ -81,13 +81,16 @@ The `macos` product carries FEXCore for the macOS-only x86-64 JIT engine. The
 `fex` row applies one patch-managed series,
 [`patches/fex`](patches/fex/series.tsv), and the `fmt`, `xxhash`, and
 `unordered-dense` rows pin the three submodules FEXCore needs at the commits
-FEX-2608 records; no iOS product names any of them. The series' topics build
+FEX-2610 records; no iOS product names any of them. The series' topics build
 only FEXCore for an embedding Darwin host, make its utilities portable to
 Darwin, add an embedding mode in which a host that owns guest memory drives
 FEXCore, compat32 code included, and correct x86 semantics where FEXCore
 differs from hardware. The series touches nothing the `x86-conformance` corpus
 producers read, so one prepared FEX source serves both products and still
-yields the pinned corpus.
+yields the pinned corpus. The `nasm` row that assembles that corpus applies one
+topic, [`patches/nasm`](patches/nasm/series.tsv): `smsw` of a 16-bit register
+keeps its operand-size prefix in 32-bit and 64-bit code, which NASM 3.02 drops,
+so the SMSW test runs as FEX wrote it.
 
 The prefix installs FEXCore's static archives (`libFEXCore.a`,
 `libFEXCore_Base.a`, and `libJemallocDummy.a`, its allocator entry points over
