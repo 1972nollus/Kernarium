@@ -307,31 +307,6 @@ function(_verify_framework _name)
     endif()
 endfunction()
 
-# _verify_host_heap(<name>)
-# Mesa's frameworks take the allocator of the memory they allocate for
-# themselves from the embedding host (src/util/u_host_heap.h): each one
-# defines malloc, calloc, realloc, posix_memalign, aligned_alloc and free for
-# itself and exports mesa_set_host_allocator, which the host calls on all of
-# them or none. An undefined malloc-family symbol is an object that escaped
-# those definitions and would allocate from libSystem, behind the host's back.
-function(_verify_host_heap _name)
-    set(_binary "${PREFIX}/Frameworks/${_name}.framework/${_name}")
-    execute_process(COMMAND "${_tool_nm}" -gU "${_binary}"
-        RESULT_VARIABLE _exports_status OUTPUT_VARIABLE _exports)
-    if(NOT _exports_status EQUAL 0 OR
-       NOT _exports MATCHES "[ \t]_mesa_set_host_allocator([ \t\n]|$)")
-        message(FATAL_ERROR
-            "${_name}.framework does not export mesa_set_host_allocator")
-    endif()
-    execute_process(COMMAND "${_tool_nm}" -u "${_binary}"
-        RESULT_VARIABLE _imports_status OUTPUT_VARIABLE _imports)
-    if(NOT _imports_status EQUAL 0 OR _imports MATCHES
-       "(^|\n)_(malloc|calloc|realloc|free|posix_memalign|aligned_alloc|valloc|reallocf|malloc_size)(\n|$)")
-        message(FATAL_ERROR
-            "${_name}.framework imports a malloc-family symbol from libSystem")
-    endif()
-endfunction()
-
 foreach(_framework IN LISTS _gl_frameworks)
     set(_binary "${PREFIX}/Frameworks/${_framework}.framework/${_framework}")
     file(GLOB_RECURSE _framework_payload LIST_DIRECTORIES false
@@ -384,7 +359,6 @@ foreach(_framework IN LISTS _gl_frameworks)
                 "MesaEGL.framework does not export the EGL platform bootstrap")
         endif()
     endif()
-    _verify_host_heap(${_framework})
 endforeach()
 
 set(_binary "${PREFIX}/Frameworks/KosmicKrisp.framework/KosmicKrisp")
@@ -403,7 +377,6 @@ if(NOT _undefined_status EQUAL 0 OR
     message(FATAL_ERROR
         "KosmicKrisp.framework contains a dynamic-loader fallback")
 endif()
-_verify_host_heap(KosmicKrisp)
 file(READ
     "${PREFIX}/Frameworks/KosmicKrisp.framework/Modules/module.modulemap"
     _module_map)

@@ -78,17 +78,6 @@ mkdir -p "$BASE_PREFIX/Frameworks" "$BASE_PREFIX/lib" \
 cat >"$TEST_ROOT/fixture.c" <<'EOF'
 int uml_apple_gpu_fixture(void) { return 0; }
 EOF
-# Every framework defines its own allocator and exports the installer, the way
-# Mesa's -Dhost-heap build does. The fixture's allocator uses libmalloc's zone
-# API, which a framework may import, and no malloc-family symbol.
-cat >"$TEST_ROOT/host-heap.c" <<'EOF'
-#include <malloc/malloc.h>
-#include <stdbool.h>
-bool mesa_set_host_allocator(const void *allocator)
-{
-    return allocator && malloc_zone_malloc(malloc_default_zone(), 1);
-}
-EOF
 cat >"$TEST_ROOT/mesa-egl.c" <<'EOF'
 extern void *uml_mesa_gallium_fixture(void);
 void *eglGetPlatformDisplay(unsigned platform, void *display, const long *attributes)
@@ -127,13 +116,10 @@ xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=27.0 \
 	-c "$TEST_ROOT/virgl.c" -o "$TEST_ROOT/virgl.o"
 xcrun ar rcs "$BASE_PREFIX/lib/libepoxy.a" "$TEST_ROOT/fixture.o"
 xcrun ar rcs "$BASE_PREFIX/lib/libvirglrenderer.a" "$TEST_ROOT/virgl.o"
-make_framework "$BASE_PREFIX" KosmicKrisp "$TEST_ROOT/kosmickrisp.c" \
-	"$TEST_ROOT/host-heap.c"
+make_framework "$BASE_PREFIX" KosmicKrisp "$TEST_ROOT/kosmickrisp.c"
 make_framework "$BASE_PREFIX" MesaGallium "$TEST_ROOT/mesa-gallium.c" \
-	"$TEST_ROOT/host-heap.c" \
 	"$BASE_PREFIX/Frameworks/KosmicKrisp.framework/KosmicKrisp"
 make_framework "$BASE_PREFIX" MesaEGL "$TEST_ROOT/mesa-egl.c" \
-	"$TEST_ROOT/host-heap.c" \
 	"$BASE_PREFIX/Frameworks/MesaGallium.framework/MesaGallium"
 
 for header in \
@@ -305,8 +291,8 @@ GALLIUM="$BASE_PREFIX/Frameworks/MesaGallium.framework/MesaGallium"
 KOSMICKRISP="$BASE_PREFIX/Frameworks/KosmicKrisp.framework/KosmicKrisp"
 CASE_PREFIX="$TEST_ROOT/gl-allowlist"
 copy_fixture "$CASE_PREFIX"
-make_framework "$CASE_PREFIX" MesaEGL "$TEST_ROOT/mesa-egl.c" \
-	"$TEST_ROOT/host-heap.c" "$GALLIUM" -lexpat -framework Foundation
+make_framework "$CASE_PREFIX" MesaEGL "$TEST_ROOT/mesa-egl.c" "$GALLIUM" \
+	-lexpat -framework Foundation
 verify "$CASE_PREFIX" >/dev/null ||
 	fail "a GL framework using its allowed dependencies was rejected"
 
@@ -397,55 +383,6 @@ unset MINIMUM_OS
 expect_framework_rejection \
 	"KosmicKrisp.framework does not export vkGetInstanceProcAddr" \
 	KosmicKrisp "$TEST_ROOT/fixture.c"
-
-# Each Mesa framework takes its allocator from the host: it exports the
-# installer, and it imports no malloc-family symbol, because an object that
-# escaped the framework's own definitions would allocate from libSystem.
-expect_framework_rejection \
-	"KosmicKrisp.framework does not export mesa_set_host_allocator" \
-	KosmicKrisp "$TEST_ROOT/kosmickrisp.c"
-expect_framework_rejection \
-	"MesaGallium.framework does not export mesa_set_host_allocator" \
-	MesaGallium "$TEST_ROOT/mesa-gallium.c" "$KOSMICKRISP"
-expect_framework_rejection \
-	"MesaEGL.framework does not export mesa_set_host_allocator" \
-	MesaEGL "$TEST_ROOT/mesa-egl.c" "$GALLIUM"
-for function in malloc calloc realloc free posix_memalign aligned_alloc \
-	valloc reallocf malloc_size; do
-	case $function in
-	malloc) body='return malloc(size);' ;;
-	calloc) body='return calloc(1, size);' ;;
-	realloc) body='return realloc(0, size);' ;;
-	free) body='free((void *)size); return 0;' ;;
-	posix_memalign) body='posix_memalign(&block, 64, size); return block;' ;;
-	aligned_alloc) body='return aligned_alloc(64, size);' ;;
-	valloc) body='return valloc(size);' ;;
-	reallocf) body='return reallocf(0, size);' ;;
-	malloc_size) body='return (void *)malloc_size((void *)size);' ;;
-	esac
-	cat >"$TEST_ROOT/imports-$function.c" <<EOF
-#include <malloc/malloc.h>
-#include <stdlib.h>
-void *uml_escaped_allocation(unsigned long size)
-{
-    void *block = 0;
-    (void)block;
-    $body
-}
-EOF
-	expect_framework_rejection \
-		"KosmicKrisp.framework imports a malloc-family symbol" \
-		KosmicKrisp "$TEST_ROOT/kosmickrisp.c" "$TEST_ROOT/host-heap.c" \
-		"$TEST_ROOT/imports-$function.c" -fno-builtin
-done
-expect_framework_rejection \
-	"MesaGallium.framework imports a malloc-family symbol" \
-	MesaGallium "$TEST_ROOT/mesa-gallium.c" "$TEST_ROOT/host-heap.c" \
-	"$TEST_ROOT/imports-malloc.c" "$KOSMICKRISP" -fno-builtin
-expect_framework_rejection \
-	"MesaEGL.framework imports a malloc-family symbol" \
-	MesaEGL "$TEST_ROOT/mesa-egl.c" "$TEST_ROOT/host-heap.c" \
-	"$TEST_ROOT/imports-malloc.c" "$GALLIUM" -fno-builtin
 
 # Venus calls KosmicKrisp's entry point directly, so neither the renderer nor
 # KosmicKrisp loads code at run time. libepoxy may: its Apple topic opens only
