@@ -219,7 +219,7 @@ index 94afc8dd3b69f76dd6655b295cfc78ec9d2d1a39..586ee352b48e24b83f2817d673ff9ad5
        heap->refcount = 0;
        idle = heap;
 diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
-index d713f353ae9cc56f916ffe12d8ce8ae200bb42dd..51e9ac0cb986529e8de27430ff01d3e32ba4f6c4 100644
+index cb7f1868b1c3a4edfdadf492d0eba972a111be0d..73f8c1b6be7830faf761534d2c6277593900bc65 100644
 --- a/src/kosmickrisp/vulkan/kk_device.h
 +++ b/src/kosmickrisp/vulkan/kk_device.h
 @@ -224,6 +224,16 @@ VK_DEFINE_HANDLE_CASTS(kk_device, vk.base, VkDevice, VK_OBJECT_TYPE_DEVICE)
@@ -406,7 +406,7 @@ index d53a32784c40172e8d95777ef3e033f88f8e11b4..bc9493f65a4d4fa7cb9b90c9588036c7
  }
  #endif
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 897f40c6edb0038c4ab39a8ab5a298248a7a0d74..365f5e1ab6ea05697c5ec1ddfc2a958efc464d96 100644
+index 8fed05bdee0170c34c0a18b281bd5630df373801..5875f020e09451dad4a2cd33f259c33329c8f1f8 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -76,6 +76,8 @@ kk_files = files(
@@ -418,7 +418,7 @@ index 897f40c6edb0038c4ab39a8ab5a298248a7a0d74..365f5e1ab6ea05697c5ec1ddfc2a958e
    'kk_device.h',
    'kk_device.c',
    'kk_event.h',
-@@ -389,6 +391,7 @@ if with_tests
+@@ -405,6 +407,7 @@ if with_tests
        ['drm_plane_offset', []],
        ['undescribed_format', []],
        ['sysmem_heap_override', []],

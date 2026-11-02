@@ -51,7 +51,7 @@ index 32b83759fb3ac2ab310b3e1e489644b0c05274e2..5253055b907bf3f0de8585c118feee60
  }
  
 diff --git a/src/kosmickrisp/bridge/mtl_command_queue.m b/src/kosmickrisp/bridge/mtl_command_queue.m
-index a43bb13ca72ad8d33bdacd080742ff90c0915ce7..ac67d6da8a54cb84e486c0ae99a15272ccb5fd79 100644
+index 08008fef7e61bb41e60053e8c610ccad0b9af936..2f9d8d8f82a726ec25d750b5f10014c261dad8d8 100644
 --- a/src/kosmickrisp/bridge/mtl_command_queue.m
 +++ b/src/kosmickrisp/bridge/mtl_command_queue.m
 @@ -14,7 +14,7 @@

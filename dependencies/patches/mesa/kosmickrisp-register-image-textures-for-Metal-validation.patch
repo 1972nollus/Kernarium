@@ -145,7 +145,7 @@ index 07cae2c9116e40d40f643b4f6f53705c511964f7..d3c5e86de39bd959cec3b490a41771c5
     /* First texel of a view whose format Metal cannot express, and zero
      * otherwise. */
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index 14989cfcbdb05d1d5e744ff40f8aa1ccf8bb2c06..1a28d2c7bf073e4abf9b027e60e2e32a2cf23850 100644
+index 8e6416d1168b1776aa2fdc99bf21520911900cfe..f28456a4350ed568d9899372a38ed8bc6ba27af0 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -418,6 +418,7 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
@@ -192,7 +192,7 @@ index 14989cfcbdb05d1d5e744ff40f8aa1ccf8bb2c06..1a28d2c7bf073e4abf9b027e60e2e32a
     kk_device_remove_from_residency_set(dev, texture);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
-index 51e9ac0cb986529e8de27430ff01d3e32ba4f6c4..09b976c2704dac8cfe34b9c286820967b4bbe8a6 100644
+index 73f8c1b6be7830faf761534d2c6277593900bc65..947d9c4358629c7e462b009d4369b46da4024663 100644
 --- a/src/kosmickrisp/vulkan/kk_device.h
 +++ b/src/kosmickrisp/vulkan/kk_device.h
 @@ -33,6 +33,9 @@ struct vk_pipeline_cache;
@@ -221,8 +221,8 @@ index 51e9ac0cb986529e8de27430ff01d3e32ba4f6c4..09b976c2704dac8cfe34b9c286820967
 +void kk_device_remove_texture_for_validation(struct kk_device *dev,
 +                                             mtl_texture *texture);
  void kk_device_make_resources_resident(struct kk_device *dev);
- 
- /* Required to create a sampler */
+ /* Commits to a queue the device set is attached to, never while the set is
+  * being written. */
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
 index 185793185b46f52f3eb921e6b3fd67f645d035c0..817129a045ecb0a16e64765133f6ec182f8d6b62 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
@@ -354,7 +354,7 @@ index 3c4447d2d953a23a81ed43a7d101793763e376b3..18dd05d2d9ddb10bdc3efb218f08120d
        uint64_t cube_array_gpu_resource_id;
        uint64_t storage_gpu_resource_id;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 86bdbf3d115d56ddea810b2f4e13e3ed1d7dcca8..71db0f616194414567c14641ac7d04e3f38a6a75 100644
+index 90bdafc435572cdd6530b2a3e555f0b6276e3da0..e3cbdac7f260dde62ae07ad45d8044cabe467e6e 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -331,6 +331,22 @@ if with_tests
@@ -377,9 +377,9 @@ index 86bdbf3d115d56ddea810b2f4e13e3ed1d7dcca8..71db0f616194414567c14641ac7d04e3
 +      env : kk_test_env + ['MTL_SHADER_VALIDATION=1'],
 +      timeout : 120,
 +    )
-     # Tests that link the driver library whole to reach its internals:
-     # tests/test_<name>.c.
-     foreach kk_internal_test : [
+     # Queue commits against residency set writes on another thread, under
+     # the shader validation that walks the set's heaps in each commit.
+     test(
 diff --git a/src/kosmickrisp/vulkan/tests/test_validated_image_access.cpp b/src/kosmickrisp/vulkan/tests/test_validated_image_access.cpp
 new file mode 100644
 index 0000000000000000000000000000000000000000..aef49fc64408fdedaedf8a3fce641a557daa7e40

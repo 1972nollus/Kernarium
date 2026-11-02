@@ -110,10 +110,10 @@ index daf70afca65a50a79a9c2d214b5ad65ff29e1564..857b69aaa0bf2c3ab13afb90a457603c
        struct kk_view_layout view_layout = {
           .view_type = kk_image_view_metal_type(image, view),
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 8cefdd104d61117daf0f8ffa11936e6429ca1334..e4d7bab32bc63452d3a9de6f0c1616f373fb184d 100644
+index 76c613fa4b392c41dcef031ec3dc727e490fb127..388628cb754022a955d779cda7b11fcbd25311a5 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -387,6 +387,7 @@ if with_tests
+@@ -403,6 +403,7 @@ if with_tests
        ['texel_buffer_bounds', []],
        ['address_binding_planes', []],
        ['drm_plane_offset', []],
