@@ -87,6 +87,11 @@ The x86_64 backend's CPUID advertises ERMS: a repeated string operation moves
 whole page-bounded blocks, so the REP MOVSB that ERMS steers libc onto is this
 engine's fastest copy rather than its slowest.
 
+It advertises AVX-VNNI too: VPDPBUSD and its three relatives are one gadget
+(`engine/vector_dot.inc`), where the AVX2 sequence a program falls back to is
+three, so the VNNI kernels of ggml and similar libraries run ahead of their AVX2
+ones on this engine as well as on the JIT.
+
 The x86_64 gadget engine assembles against ARMv8.2-A with the CRC and
 cryptography extensions. The arm64 engine keeps its own, higher, ARMv8.6-A
 declaration.
