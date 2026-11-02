@@ -95,6 +95,13 @@ public:
     virtual void discard() = 0;
     virtual std::vector<DecodedVideoFrame> takeFrames() = 0;
     [[nodiscard]] virtual VideoFormat format() const noexcept = 0;
+    // How many pictures of the stream may follow a picture in decoding order
+    // and precede it in output order, from the parameter set the stream is
+    // described by: what the stream states, or what its profile and level
+    // allow. A client that must not stall the decoder keeps that many
+    // pictures, and one more, in flight. Zero until a parameter set has been
+    // read, and for a codec whose pictures leave as they decode.
+    [[nodiscard]] virtual unsigned reorderDepth() const noexcept { return 0; }
     // Requests the layout of frames decoded from this point on. A decoder that
     // cannot produce the request keeps producing its native layout, and one
     // that must restart to honor it waits for a point in the stream where

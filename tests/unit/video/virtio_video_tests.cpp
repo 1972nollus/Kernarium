@@ -96,9 +96,10 @@ void convertBt601Limited(std::uint8_t y, std::uint8_t cb, std::uint8_t cr, std::
 class Decoder final : public VideoDecoder {
 public:
     explicit Decoder(bool ten, bool packs = false, bool defers = false,
-                     std::uint32_t width = 64, std::uint32_t height = 64, bool variesChroma = false)
+                     std::uint32_t width = 64, std::uint32_t height = 64, bool variesChroma = false,
+                     unsigned reorder = 0)
         : ten_(ten), packs_(packs), defers_(defers), width_(width), height_(height),
-          variesChroma_(variesChroma) {}
+          variesChroma_(variesChroma), reorder_(reorder) {}
     /* Reads what the packet declares and decodes nothing, so a caller can
      * report the picture size before it has to choose an output layout. */
     void inspect(std::span<const std::uint8_t> packet) override
@@ -160,6 +161,7 @@ public:
     void discard() override { frames_.clear(); }
     std::vector<DecodedVideoFrame> takeFrames() override { return std::exchange(frames_, {}); }
     VideoFormat format() const noexcept override { return format_; }
+    unsigned reorderDepth() const noexcept override { return format_.width ? reorder_ : 0; }
     void requestOutputLayout(VideoPixelLayout layout) override { layout_ = layout; }
 private:
     bool ten_;
@@ -170,6 +172,7 @@ private:
     std::uint32_t width_ {64};
     std::uint32_t height_ {64};
     bool variesChroma_ {};
+    unsigned reorder_ {};
     VideoPixelLayout layout_ {VideoPixelLayout::planarYuv};
     VideoPixelLayout adopted_ {VideoPixelLayout::planarYuv};
     VideoFormat format_;
@@ -1242,6 +1245,9 @@ void inputBackpressure()
     }
     require(answered > 0 && !waiting.empty(),
             "the device did not hold an encoded buffer against a full frame queue");
+    /* Two decoded frames wait for a capture buffer and the third packet is
+     * the first one held: more would be host memory no decode uses. */
+    require(answered == 2, "the frame queue did not hold at two frames");
 
     /* Every capture buffer the client gives back releases one held packet, so
      * the stream keeps running instead of erroring out. */
@@ -1272,6 +1278,98 @@ void inputBackpressure()
     }
     require(waiting.empty(), "the device kept an encoded buffer with room to decode");
     video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 4}});
+    video.device.reset();
+}
+
+/* The capture queue's minimum buffer count is the stream's reorder depth plus
+ * one, and four at the least, from the announcement of the picture size on: a
+ * client reads it as V4L2_CID_MIN_BUFFERS_FOR_CAPTURE to size its pipeline by
+ * the stream instead of by the worst case any stream could have. Until the
+ * size is announced the decoder has read no parameter set, and the answer is
+ * the floor. */
+void captureMinimumFollowsReorder(unsigned reorder)
+{
+    const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+    VideoFixture video(12, 8 * page, [reorder](auto) {
+        return std::make_unique<Decoder>(false, true, false, 64, 64, false, reorder);
+    });
+    video.createStream();
+    require(video.device.processQueue(1, 920, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
+            "event not deferred");
+    video.attachEncodedInput();
+    const auto minimum = [&video] {
+        std::vector<std::uint8_t> request;
+        append(request, virtio_video_get_params{{VIRTIO_VIDEO_CMD_GET_PARAMS, video.stream},
+                                                VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, {}});
+        const auto params = load<virtio_video_get_params_resp>(
+            video.device.processQueue(0, video.next++, request, 16384).response).params;
+        require(params.max_buffers >= params.min_buffers, "the minimum exceeds the maximum buffer count");
+        return params.min_buffers;
+    };
+    require(minimum() == 4, "the capture minimum before the size is known is not the floor");
+
+    // The packet's headers announce the size, and with it the reorder depth.
+    const auto packet = video.queueCommand(input, 1, 5, 31);
+    require(video.command(packet).action == VhostUserQueueAction::defer, "the packet was decoded early");
+    VhostUserQueueCompletion completion;
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == 920, "missing source event");
+    const unsigned expected = std::max(4u, reorder + 1);
+    require(minimum() == expected, "the announced capture minimum does not follow the reorder depth");
+
+    // Choosing the capture format answers with the same minimum.
+    video.setOutputFormat(VIRTIO_VIDEO_FORMAT_NV12);
+    require(minimum() == expected, "choosing the capture format changed the minimum");
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 12}});
+    video.device.reset();
+}
+
+/* The coded queue's buffer size follows the picture size the client states, so
+ * a client that keeps several coded buffers queued does not hold the full packet
+ * a device takes for a picture that is a fraction of it. A stream that has
+ * stated no size keeps the full packet, and so does a JPEG one. */
+void codedBufferFollowsPicture()
+{
+    constexpr std::uint32_t mebibyte = 1u << 20;
+    VideoFixture video(13, 8 * page, [](auto) { return std::make_unique<Decoder>(false); },
+                       {{VideoCodec::h264, VideoProfile::h264High, 8192, 4320, 62, 8},
+                        {VideoCodec::jpeg, VideoProfile::jpegBaseline, 8192, 4320, 0, 8}});
+    video.createStream();
+    const auto codedSize = [&video] {
+        std::vector<std::uint8_t> request;
+        append(request, virtio_video_get_params{{VIRTIO_VIDEO_CMD_GET_PARAMS, video.stream},
+                                                VIRTIO_VIDEO_QUEUE_TYPE_INPUT, {}});
+        const auto params = load<virtio_video_get_params_resp>(
+            video.device.processQueue(0, video.next++, request, 16384).response).params;
+        require(params.num_planes == 1, "the coded queue is not one plane");
+        return params.plane_formats[0].plane_size;
+    };
+    const auto state = [&video](std::uint32_t format, std::uint32_t width, std::uint32_t height) {
+        virtio_video_set_params set {};
+        set.hdr = {VIRTIO_VIDEO_CMD_SET_PARAMS, video.stream};
+        set.params.queue_type = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+        set.params.format = format;
+        set.params.frame_width = width; set.params.frame_height = height;
+        video.ok(set);
+    };
+    require(codedSize() == 8 * mebibyte, "a stream with no stated size does not take the full packet");
+    struct Case { std::uint32_t width, height, expected; };
+    for (const auto& c : {Case {64, 64, mebibyte}, Case {1280, 720, mebibyte}, Case {720, 1280, mebibyte},
+                          Case {1920, 1080, 2 * mebibyte}, Case {1920, 1088, 2 * mebibyte},
+                          Case {1088, 1920, 2 * mebibyte}, Case {2560, 1440, 4 * mebibyte},
+                          Case {3840, 2160, 4 * mebibyte}, Case {4096, 2304, 4 * mebibyte},
+                          Case {5120, 2880, 8 * mebibyte}, Case {8192, 4320, 8 * mebibyte}}) {
+        state(VIRTIO_VIDEO_FORMAT_H264, c.width, c.height);
+        require(codedSize() == c.expected, "the coded buffer does not follow the stated picture size");
+    }
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 13}});
+
+    virtio_video_stream_create create {};
+    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, video.stream};
+    create.coded_format = VIRTIO_VIDEO_FORMAT_MJPEG;
+    video.ok(create);
+    state(VIRTIO_VIDEO_FORMAT_MJPEG, 640, 360);
+    require(codedSize() == 8 * mebibyte, "a JPEG stream does not keep the full packet");
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 13}});
     video.device.reset();
 }
 
@@ -1920,6 +2018,8 @@ int main()
         lateNegotiation();
         inputBackpressure();
         unsettledHoldIsBounded();
+        for (const unsigned reorder : {0u, 2u, 3u, 4u, 9u, 16u}) captureMinimumFollowsReorder(reorder);
+        codedBufferFollowsPicture();
         planarAfterSourceChange();
         packedDefaultThroughStreamon();
         for (const auto how : {Renegotiation::clearCapture, Renegotiation::setNewSize,

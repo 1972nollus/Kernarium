@@ -23,6 +23,9 @@ public:
         std::uint32_t maximumDimension =
             protocol::maximumDisplayDimension,
         bool autoResizeGuest = true);
+    /* A display over a state the caller made, such as the windowless one
+     * (offscreen_display.hpp). */
+    explicit NativeDisplay(std::shared_ptr<NativeDisplayStateCore> state);
     ~NativeDisplay() override;
 
     NativeDisplay(const NativeDisplay&) = delete;

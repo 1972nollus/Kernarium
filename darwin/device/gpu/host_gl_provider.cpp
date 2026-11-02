@@ -342,6 +342,24 @@ HostGlProvider::ContextProbe HostGlProvider::probeContext(
     }
 }
 
+std::uint64_t HostGlProvider::releaseCachedMemory() noexcept
+{
+    // No display, no driver screen: nothing is cached.
+    if (display_.load(std::memory_order_acquire) == nullptr)
+        return 0;
+    void* entry = releaseCachedMemory_.load(std::memory_order_acquire);
+    if (entry == nullptr) {
+        entry = reinterpret_cast<void*>(
+            eglGetProcAddress("eglReleaseCachedMemoryMESA"));
+        if (entry == nullptr)
+            return 0;
+        releaseCachedMemory_.store(entry, std::memory_order_release);
+    }
+    const EGLint released =
+        reinterpret_cast<EGLint (*)(void)>(entry)();
+    return released > 0 ? static_cast<std::uint64_t>(released) : 0;
+}
+
 void* HostGlProvider::createContext(
     const virgl_renderer_gl_ctx_param& parameters) noexcept
 {

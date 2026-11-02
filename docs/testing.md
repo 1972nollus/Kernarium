@@ -815,6 +815,26 @@ release the GPU, resume the guest, and render the display. Stopping the job from
 the app's button while in front must change nothing about the guest. For
 Android the console must also show the guest suspending itself soon after the
 power key (`PM: suspend entry`) and the screen coming back on the return.
+The screen goes off first: the console shows `guest display off after N ms`
+(or `still on` at the 1.5 s bound, which is a finding) before the hold line, and
+under a launcher that is drawing, such as a `input swipe` loop in the guest, a
+ten-minute stay must leave no task in D state, no `am_anr`, and the same
+`system_server` and `surfaceflinger` pids at the return. A guest whose screen
+was off already must stay off through the stay and the return.
+`KERNARIUM_BACKGROUND_HOLD_DELAY_MS=N` (automation runtimes only) holds a job's
+GPU N milliseconds after the edge instead, on a guest whose screen stays on and
+keeps drawing, to find when iOS stops serving Metal: the first Metal
+access-revoked error in the console is the answer, and the 1.5 s bound stays
+well inside it.
+
+A Mac runs the guest's side of this edge without a device, with no GPU
+revoked: `Kernarium/scripts/repro-android-hold-mac.py` launches the Android
+automation runtime in Designed for iPad mode, applies the real policy through
+`AndroidHoldReproTests`, and checks the guest through adb. The tests skip
+unless that script names their channel. It needs an Android bundle whose disk
+has the layout the host expects. `--expect fail` is for a build with the old
+order, which must show tasks waiting on the GPU control queue and the launcher
+not responding to the screen-off broadcast.
 
 To check the restart notice, background the
 application, terminate its process with `devicectl device process terminate`,

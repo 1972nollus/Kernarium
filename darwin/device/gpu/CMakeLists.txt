@@ -21,10 +21,17 @@ add_library(uml_gpu_device_memory_pool STATIC device_memory_pool.cpp)
 add_library(UML::GpuDeviceMemoryPool ALIAS uml_gpu_device_memory_pool)
 uml_configure_gpu_component(uml_gpu_device_memory_pool)
 
+# Finds the guest contexts that have gone quiet, for the renderer to trim.
+add_library(uml_gpu_context_idle_tracker STATIC context_idle_tracker.cpp)
+add_library(UML::GpuContextIdleTracker ALIAS uml_gpu_context_idle_tracker)
+uml_configure_gpu_component(uml_gpu_context_idle_tracker)
+
 add_library(uml_gpu_renderer STATIC
     host_gl_provider.cpp
     virgl_renderer.cpp)
 uml_configure_gpu_component(uml_gpu_renderer)
+target_link_libraries(uml_gpu_renderer PUBLIC
+    UML::GpuContextIdleTracker)
 target_compile_definitions(uml_gpu_renderer PRIVATE
     VIRGL_RENDERER_UNSTABLE_APIS)
 target_link_libraries(uml_gpu_renderer PRIVATE
@@ -51,6 +58,7 @@ if(UML_TARGET_MACOS)
     list(APPEND _uml_gpu_display_sources
         metal_readback.mm
         native_display.mm
+        offscreen_display.mm
         vnc_display.cpp)
 else()
     list(APPEND _uml_gpu_display_sources native_display_ios.mm)
@@ -58,6 +66,7 @@ endif()
 add_library(uml_gpu_display STATIC ${_uml_gpu_display_sources})
 uml_configure_gpu_component(uml_gpu_display)
 target_compile_definitions(uml_gpu_display PRIVATE
+    UML_GPU_HAS_OFFSCREEN=$<BOOL:${UML_TARGET_MACOS}>
     UML_GPU_HAS_VNC=$<BOOL:${UML_TARGET_MACOS}>
     UML_GPU_VNC_STARTUP_TESTING=0)
 target_include_directories(uml_gpu_display PRIVATE

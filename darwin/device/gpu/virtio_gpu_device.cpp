@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -427,6 +428,7 @@ void VirtioGpuDevice::clearScanout() noexcept
     std::vector<std::uint8_t>().swap(readbackStaging_);
     scanoutResource_ = protocol::invalidResourceId;
     scanoutRectangle_ = {};
+    UML_GPU_DISPLAY.setGuestScanoutActive(false);
     UML_GPU_DISPLAY.clear();
 }
 
@@ -570,6 +572,7 @@ void VirtioGpuDevice::reset() noexcept
     sharedMemoryActions_.clear();
     scanoutResource_ = protocol::invalidResourceId;
     scanoutRectangle_ = {};
+    UML_GPU_DISPLAY.setGuestScanoutActive(false);
     UML_GPU_DISPLAY.resetGuestSession();
     UML_GPU_DISPLAY.clear();
 }
@@ -903,6 +906,17 @@ bool VirtioGpuDevice::rendererHasPendingWork() noexcept
     return UML_GPU_RENDERER.hasPendingWork();
 }
 
+std::optional<std::chrono::steady_clock::duration>
+VirtioGpuDevice::nextIdleTrimDelay() const noexcept
+{
+    return UML_GPU_RENDERER.nextIdleTrimDelay();
+}
+
+void VirtioGpuDevice::trimIdleContexts() noexcept
+{
+    UML_GPU_RENDERER.trimIdleContexts();
+}
+
 int VirtioGpuDevice::contextFenceStatus(
     const DeferredFence& fence) noexcept
 {
@@ -1209,10 +1223,19 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return response(
                 *header, protocol::GpuResponse::errorOutOfMemory);
         }
-        if (UML_GPU_RENDERER.createResource3d(resource) != 0) {
+        if (const int created = UML_GPU_RENDERER.createResource3d(resource);
+            created != 0) {
             virglResources_.erase(create->resourceId);
+            /* The renderer reports a host driver with no room for the
+             * resource's storage as ENOMEM, which is the one failure the
+             * guest can tell from a resource it described wrongly: the
+             * driver gives its application GL_OUT_OF_MEMORY, and the guest
+             * kernel fails the creation ioctl with -ENOMEM. */
             return response(
-                *header, protocol::GpuResponse::errorInvalidParameter);
+                *header,
+                created == ENOMEM || created == -ENOMEM
+                    ? protocol::GpuResponse::errorOutOfMemory
+                    : protocol::GpuResponse::errorInvalidParameter);
         }
         return success;
     }
@@ -1785,6 +1808,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         releaseBlobScanout();
         scanoutResource_ = scanout->resourceId;
         scanoutRectangle_ = scanout->rectangle;
+        UML_GPU_DISPLAY.setGuestScanoutActive(true);
         displayActivityLog().record(
             "scanout set kind=%s resource=%u source=%ux%u rect=%ux%u+%u+%u",
             virglResource != nullptr ? "virgl" : "2d",
@@ -1918,6 +1942,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         scanoutOffset_ = scanout->offsets[0];
         scanoutTexture_ = texture;
         scanoutVirglBlob_ = readback;
+        UML_GPU_DISPLAY.setGuestScanoutActive(true);
         return success;
     }
 

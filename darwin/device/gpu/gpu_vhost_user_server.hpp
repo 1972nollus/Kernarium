@@ -25,7 +25,8 @@ namespace uml::gpu {
     std::uint32_t dotsPerInch = 0,
     uml::input::vnc::PointerMode pointerMode =
         uml::input::vnc::PointerMode::mouse,
-    bool autoResizeGuest = true);
+    bool autoResizeGuest = true,
+    OffscreenDisplayOptions offscreen = {});
 
 /* The Virtio-GPU backend for one guest: a vhost-user server whose device
  * renders through virglrenderer and presents on `display`. The device only
@@ -51,6 +52,7 @@ namespace uml::gpu {
     std::uint32_t dotsPerInch = 0,
     uml::input::vnc::PointerMode pointerMode =
         uml::input::vnc::PointerMode::mouse,
-    bool autoResizeGuest = true);
+    bool autoResizeGuest = true,
+    OffscreenDisplayOptions offscreen = {});
 
 } // namespace uml::gpu

@@ -201,21 +201,60 @@ public:
     // Sends rows [first, first + count) of a `stride` byte wide image.
     void write(std::uint32_t stride, std::uint32_t first, std::uint32_t count)
     {
-        const VirglRenderer::Box box {
-            .x = 0,
-            .y = first,
-            .z = 0,
-            .width = stride,
-            .height = count,
-            .depth = 1,
-        };
-        require(renderer_.transferResource(
-                    true, resourceId_, contextId, 0, stride, 0, box,
-                    static_cast<std::uint64_t>(first) * stride) == 0,
-            "the rows could not be written");
+        writeBox(stride, 0, first, stride, count);
+    }
+
+    // Sends the bytes [x, x + width) of rows [y, y + height) of an image whose
+    // guest rows are `stride` bytes apart. The transfer names that pitch
+    // unless `name` is false, which leaves the pitch to the renderer.
+    void writeBox(
+        std::uint32_t stride,
+        std::uint32_t x,
+        std::uint32_t y,
+        std::uint32_t width,
+        std::uint32_t height,
+        bool name = true)
+    {
+        require(transferBox(true, stride, x, y, width, height, name) == 0,
+            "the box could not be written");
+    }
+
+    // Fetches the same box from the host into the guest storage.
+    [[nodiscard]] int readBox(
+        std::uint32_t stride,
+        std::uint32_t x,
+        std::uint32_t y,
+        std::uint32_t width,
+        std::uint32_t height,
+        bool name = true)
+    {
+        return transferBox(false, stride, x, y, width, height, name);
     }
 
 private:
+    [[nodiscard]] int transferBox(
+        bool toHost,
+        std::uint32_t stride,
+        std::uint32_t x,
+        std::uint32_t y,
+        std::uint32_t width,
+        std::uint32_t height,
+        bool name)
+    {
+        const VirglRenderer::Box box {
+            .x = x,
+            .y = y,
+            .z = 0,
+            .width = width,
+            .height = height,
+            .depth = 1,
+        };
+        return renderer_.transferResource(
+            toHost, resourceId_, contextId, 0, name ? stride : 0, 0, box,
+            static_cast<std::uint64_t>(y) * stride + x);
+    }
+
+
     VirglRenderer& renderer_;
     std::uint32_t resourceId_;
     std::vector<std::uint8_t> storage_;

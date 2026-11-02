@@ -28,6 +28,9 @@ AQUARIUM=0
 GUEST_BUNDLE=
 JOBS=4
 SKIP_BUILD=0
+ANDROID_AUTOMATION=0
+ONLY_TESTING=KernariumTests
+TEST_ENVIRONMENT=
 
 fail()
 {
@@ -51,6 +54,12 @@ usage()
 		"  --artifact PATH  Accepted kernel artifact directory" \
 		"  --jobs NUMBER  Parallel build jobs (default: 4)" \
 		"  --no-build     Stage and launch the installed app as it stands" \
+		"  --android-automation  Build and package the automation Android" \
+		"                 runtime, whose launch may turn ADB authorization off" \
+		"  --only-testing TEST  Run TEST instead of all of KernariumTests; the" \
+		"                 launched application hosts it (default:" \
+		"                 KernariumTests)" \
+		"  --test-env NAME=VALUE  Give the application NAME=VALUE; repeatable" \
 		"  --aquarium     Build the automation runtimes and launch Chromium" \
 		"                 WebGL Aquarium verification" \
 		"  --initramfs-tool PATH  uml-initramfs, which writes the Aquarium" \
@@ -87,6 +96,25 @@ while [ "$#" -gt 0 ]; do
 	--aquarium)
 		AQUARIUM=1
 		shift
+		;;
+	--android-automation)
+		ANDROID_AUTOMATION=1
+		shift
+		;;
+	--only-testing)
+		[ "$#" -ge 2 ] || fail "--only-testing requires a test"
+		ONLY_TESTING=$2
+		shift 2
+		;;
+	--test-env)
+		[ "$#" -ge 2 ] || fail "--test-env requires NAME=VALUE"
+		case "$2" in
+		[A-Za-z_]*=*) ;;
+		*) fail "--test-env takes NAME=VALUE, not '$2'" ;;
+		esac
+		TEST_ENVIRONMENT="$TEST_ENVIRONMENT
+$2"
+		shift 2
 		;;
 	--initramfs-tool)
 		[ "$#" -ge 2 ] || fail "--initramfs-tool requires a path"
@@ -135,12 +163,21 @@ else
 	PRESET=kernarium-ios-device
 	PACKAGE_OPTION=
 fi
+ANDROID_PRESET=
+if [ "$ANDROID_AUTOMATION" -eq 1 ]; then
+	ANDROID_PRESET=kernarium-ios-device-android-automation
+	PACKAGE_OPTION="$PACKAGE_OPTION --android-automation"
+fi
 
 CDPATH= cd -- "$ROOT_DIR"
 if [ "$SKIP_BUILD" -eq 0 ]; then
 	cmake --preset "$PRESET" \
 		-DUML_MAINLINE_618_KERNEL_ARTIFACT_DIR="$ARTIFACT"
 	cmake --build --preset "$PRESET" --parallel "$JOBS"
+	if [ -n "$ANDROID_PRESET" ]; then
+		cmake --preset "$ANDROID_PRESET"
+		cmake --build --preset "$ANDROID_PRESET" --parallel "$JOBS"
+	fi
 	"$ROOT_DIR/Kernarium/scripts/package-ios-frameworks.sh" $PACKAGE_OPTION
 	xcodebuild \
 		-project "$ROOT_DIR/Kernarium/Kernarium.xcodeproj" \
@@ -238,6 +275,14 @@ fi
 # its own TEST_RUNNER_-prefixed variables to the test host with the prefix
 # removed, so these are exported to xcodebuild rather than given as arguments.
 set -- "TEST_RUNNER_KERNARIUM_ROOTFS=$LAUNCH_ROOTFS"
+# A value may contain a space, so the list is split on newlines alone.
+OLD_IFS=$IFS
+IFS='
+'
+for assignment in $TEST_ENVIRONMENT; do
+	[ -n "$assignment" ] && set -- "$@" "TEST_RUNNER_$assignment"
+done
+IFS=$OLD_IFS
 if [ "$AQUARIUM" -eq 1 ]; then
 	# The automation runtime appends this payload to its boot and boots its
 	# target; it replaces the payload an earlier run of this script left.
@@ -271,6 +316,6 @@ exec env "$@" xcodebuild \
 	-destination "$DESTINATION" \
 	-derivedDataPath "$DERIVED_DATA" \
 	-jobs "$JOBS" \
-	-only-testing:KernariumTests \
+	-only-testing:"$ONLY_TESTING" \
 	ENABLE_TESTABILITY=YES \
 	test
