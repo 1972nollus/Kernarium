@@ -455,6 +455,13 @@ public:
         return result;
     }
     VideoFormat format() const noexcept override { return format_; }
+    unsigned reorderDepth() const noexcept override
+    {
+        if (!format_.width) return 0;
+        if (codec_ == VideoCodec::hevc) return hevcActive_.maxNumReorder;
+        if (codec_ == VideoCodec::h264) return h264Active_.reorderFrames();
+        return 0;
+    }
 
     /* A client negotiates its capture layout only after the decoder has seen
      * the stream's headers, which is the middle of a group of pictures. A

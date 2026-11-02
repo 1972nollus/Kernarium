@@ -89,6 +89,24 @@ def port_number(value: str) -> int:
     return parsed
 
 
+def display_size(value: str) -> str:
+    """A WIDTHxHEIGHT pixel size, returned in the emulator's spelling."""
+    width, separator, height = value.partition("x")
+    if separator != "x" or not (width.isdecimal() and height.isdecimal()):
+        raise argparse.ArgumentTypeError("must be WIDTHxHEIGHT")
+    return f"{positive_integer(width)}x{positive_integer(height)}"
+
+
+def mirror_setting(value: str) -> str:
+    """on, off, or WIDTH@FPS, returned in the emulator's spelling."""
+    if value in ("on", "off"):
+        return value
+    width, separator, rate = value.partition("@")
+    if separator != "@" or not (width.isdecimal() and rate.isdecimal()):
+        raise argparse.ArgumentTypeError("must be on, off or WIDTH@FPS")
+    return f"{positive_integer(width)}@{positive_integer(rate)}"
+
+
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -150,11 +168,31 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     parser.add_argument(
         "--display",
-        choices=("native", "vnc"),
+        choices=("native", "offscreen", "vnc"),
         default="native",
         help=(
-            "native Metal window, or a loopback VNC server that scripted "
-            "runs can observe and drive (default: native)"
+            "native Metal window; offscreen, which presents into a Metal "
+            "layer that belongs to no window, for memory measurements; or a "
+            "loopback VNC server that scripted runs can observe and drive "
+            "(default: native)"
+        ),
+    )
+    parser.add_argument(
+        "--offscreen-size",
+        type=display_size,
+        metavar="WIDTHxHEIGHT",
+        help=(
+            "pixel size of the offscreen display's drawables, such as the "
+            "view an iPad shows the guest in (default: the guest display)"
+        ),
+    )
+    parser.add_argument(
+        "--offscreen-mirror",
+        type=mirror_setting,
+        metavar="on|off|WIDTH@FPS",
+        help=(
+            "keep the frame mirror that Picture in Picture runs on an "
+            "offscreen display; on is 800@15 (default: off)"
         ),
     )
     parser.add_argument(
@@ -218,6 +256,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     options = parser.parse_args(arguments)
     if not options.memory or any(character.isspace() for character in options.memory):
         parser.error("--memory must be one kernel argument without whitespace")
+    if options.display != "offscreen" and (
+        options.offscreen_size or options.offscreen_mirror
+    ):
+        parser.error("--offscreen-* options require --display=offscreen")
     return options
 
 
@@ -513,6 +555,10 @@ def emulator_command(
         f"--gpu-display={options.display}",
         *([f"--gpu-vnc-port={options.vnc_port}"]
           if options.display == "vnc" else []),
+        *([f"--gpu-offscreen-size={options.offscreen_size}"]
+          if options.offscreen_size else []),
+        *([f"--gpu-offscreen-mirror={options.offscreen_mirror}"]
+          if options.offscreen_mirror else []),
         f"--gpu-width={options.width}",
         f"--gpu-height={options.height}",
         "--video",
@@ -665,6 +711,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         if options.display == "vnc":
             print(f"VNC display on 127.0.0.1:{options.vnc_port}; press Ctrl-C "
                   "to stop the guest.", file=sys.stderr)
+        elif options.display == "offscreen":
+            print("Windowless display; press Ctrl-C to stop the guest.",
+                  file=sys.stderr)
         else:
             print("Native Metal display; press Ctrl-C to stop the guest.",
                   file=sys.stderr)

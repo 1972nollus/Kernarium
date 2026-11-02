@@ -277,6 +277,7 @@ def _build_vulkan(identifier: str, image_type: str) -> Campaign:
     launcher = vulkan.build_receipt_guest_launcher(
         receipt,
         selection,
+        receipt_path=vulkan.RECEIPT_PATH,
         case_list=case_list,
         **options,
     )

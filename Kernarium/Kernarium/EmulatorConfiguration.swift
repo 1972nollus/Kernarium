@@ -37,6 +37,24 @@ struct EmulatorConfiguration: Equatable {
     static let androidDiskSizeEnvironmentKey = "KERNARIUM_ANDROID_DISK_SIZE_GIB"
     static let retinaEnvironmentKey = "KERNARIUM_RETINA_MODE"
     static let autoResizeGuestEnvironmentKey = "KERNARIUM_GPU_AUTO_RESIZE"
+    // The three launch parameters of the host GPU's fixed budget
+    // B = clamp(L - A - G - E - S, 384 MiB, G / 2): A, the application's own
+    // expected ceiling; E_rest, the guest side's memory beyond the gadget
+    // cache; and S, the headroom left unused. Only the environment states
+    // them, for a measurement run.
+    static let gpuBudgetApplicationEnvironmentKey =
+        "KERNARIUM_GPU_BUDGET_APP_MIB"
+    static let gpuBudgetEngineEnvironmentKey =
+        "KERNARIUM_GPU_BUDGET_ENGINE_MIB"
+    static let gpuBudgetHeadroomEnvironmentKey =
+        "KERNARIUM_GPU_BUDGET_HEADROOM_MIB"
+    // The values are pending the user's decision, so each adds nothing to the
+    // sum: the budget is then half the guest's memory, except where the
+    // application's memory limit leaves the guest less than that.
+    static let defaultGPUBudgetApplicationMiB = 0
+    static let defaultGPUBudgetEngineMiB = 0
+    static let defaultGPUBudgetHeadroomMiB = 0
+    static let gpuBudgetParameterRangeMiB = 0...16384
     static let guestMemoryRangeMiB = 512...4096
     static let guestMemoryStepMiB = 64
     static let overlaySizeRangeGiB = 1...32
@@ -73,6 +91,9 @@ struct EmulatorConfiguration: Equatable {
     var retinaMode: Bool
     var autoResizeGuest: Bool
     var androidBootMode: AndroidBootMode
+    var gpuBudgetApplicationMiB = defaultGPUBudgetApplicationMiB
+    var gpuBudgetEngineMiB = defaultGPUBudgetEngineMiB
+    var gpuBudgetHeadroomMiB = defaultGPUBudgetHeadroomMiB
 
     static var physicalProcessorCount: Int {
         max(ProcessInfo.processInfo.processorCount, 1)
@@ -182,7 +203,19 @@ struct EmulatorConfiguration: Equatable {
             retinaMode: environmentRetinaMode ?? storedRetinaMode,
             autoResizeGuest: environmentAutoResizeGuest ??
                 storedAutoResizeGuest,
-            androidBootMode: environmentAndroidBootMode ?? storedAndroidBootMode
+            androidBootMode: environmentAndroidBootMode ?? storedAndroidBootMode,
+            gpuBudgetApplicationMiB: environmentInteger(
+                environment[gpuBudgetApplicationEnvironmentKey],
+                in: gpuBudgetParameterRangeMiB
+            ) ?? defaultGPUBudgetApplicationMiB,
+            gpuBudgetEngineMiB: environmentInteger(
+                environment[gpuBudgetEngineEnvironmentKey],
+                in: gpuBudgetParameterRangeMiB
+            ) ?? defaultGPUBudgetEngineMiB,
+            gpuBudgetHeadroomMiB: environmentInteger(
+                environment[gpuBudgetHeadroomEnvironmentKey],
+                in: gpuBudgetParameterRangeMiB
+            ) ?? defaultGPUBudgetHeadroomMiB
         )
     }
 
