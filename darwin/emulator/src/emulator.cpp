@@ -52,11 +52,6 @@ namespace {
  * fit inside the few seconds an application has when it is being put away. */
 constexpr unsigned int guest_writeback_settle_ms = 1500U;
 
-/* Block I/O already handed to the host keeps completing after the guest stops
- * issuing more, so a frozen guest still needs a moment before its disk has
- * genuinely settled. */
-constexpr unsigned int guest_suspend_settle_ms = 250U;
-
 /* A guest about to be suspended hands its cold page cache and free memory to
  * the host first, since it keeps whatever it holds until it runs again. The
  * guest reclaims for at most a second and compacts for at most another, so
@@ -528,8 +523,7 @@ public:
 			(void)::uml::device::trim_guest_page_cache(
 				guest_trim_wait_ms);
 			guest_suspension_ = ::uml::device::suspend_guest(
-				guest_writeback_settle_ms,
-				guest_suspend_settle_ms);
+				guest_writeback_settle_ms);
 		}
 		const auto result = ::uml::runtime::sync_guest_files();
 		/* Last, with the guest asleep and its files on disk. */

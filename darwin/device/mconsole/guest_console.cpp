@@ -61,9 +61,15 @@ enum class ExchangeResult {
  * absence means the request reached a console that refused to act on it. */
 constexpr std::string_view writebackAcknowledgement = "Emergency Sync";
 constexpr std::string_view suspendAcknowledgement = "suspended";
-constexpr std::string_view stopAcknowledgement = "stopped";
-/* A suspend-capable guest reports a suspend it gave up with this prefix. */
-constexpr std::string_view suspendFailure = "Suspend failed:";
+/* A guest reports a suspend it gave up with "Suspend failed: <errno>". EBUSY
+ * (16) is the one a moment later can cure: a wake source fired while the guest
+ * synced its filesystems, or another power transition held the lock. */
+constexpr std::string_view suspendBusy = "Suspend failed: -16";
+/* A busy suspend is asked for again at this interval, for this long after the
+ * first refusal, and then given up. */
+constexpr std::chrono::milliseconds suspendRetryInterval {250};
+constexpr std::chrono::milliseconds suspendRetryWindow {
+	std::chrono::seconds {2}};
 
 /* The guest answers most requests at once, so one that has no reply within
  * replyWait is left pending. It answers a suspend only once it has synced its
@@ -71,9 +77,9 @@ constexpr std::string_view suspendFailure = "Suspend failed:";
  * can take longer: a guest with much dirty data syncs for seconds, and one
  * whose own wake sources kept ending the suspend has entered it several times.
  * Waiting longer for that reply lets the host flush what the sync wrote, and
- * stop a guest whose suspend failed late instead of leaving it running. The
- * wait ends with the reply, so only such a guest spends it, and it leaves most
- * of the time iOS grants an application it backgrounds. */
+ * learn that a suspend failed late. The wait ends with the reply, so only such
+ * a guest spends it, and it leaves most of the time iOS grants an application
+ * it backgrounds. */
 constexpr std::chrono::milliseconds replyWait {std::chrono::seconds {2}};
 constexpr std::chrono::milliseconds suspendReplyWait {std::chrono::seconds {8}};
 
@@ -450,8 +456,7 @@ bool request_guest_writeback(unsigned int settleMs) noexcept
 	}
 }
 
-GuestSuspension suspend_guest(unsigned int writebackSettleMs,
-	unsigned int stopSettleMs) noexcept
+GuestSuspension suspend_guest(unsigned int writebackSettleMs) noexcept
 {
 	try {
 		std::lock_guard lock(consoleMutex);
@@ -464,8 +469,27 @@ GuestSuspension suspend_guest(unsigned int writebackSettleMs,
 		 * CPUs, interrupts, and timekeeping have reached the platform sleep
 		 * boundary. The separate wake request remains queued on the console
 		 * descriptor until the kernel has resumed it. */
-		const auto suspendResult = exchange(*location, "suspend", response,
+		auto suspendResult = exchange(*location, "suspend", response,
 			suspendReplyWait);
+		/* A guest that was busy, as when a wake source fired while it synced,
+		 * is asked again for a short while. The refusal ended the guest's
+		 * suspend, so no request of ours is still in flight. */
+		std::chrono::steady_clock::time_point retryDeadline;
+		bool retrying = false;
+		while (suspendResult == ExchangeResult::rejected &&
+		       response.starts_with(suspendBusy)) {
+			if (!retrying) {
+				retryDeadline = std::chrono::steady_clock::now() +
+					suspendRetryWindow;
+				retrying = true;
+			}
+			std::this_thread::sleep_for(suspendRetryInterval);
+			if (std::chrono::steady_clock::now() >= retryDeadline)
+				break;
+			response.clear();
+			suspendResult = exchange(*location, "suspend", response,
+				suspendReplyWait);
+		}
 		if (suspendResult == ExchangeResult::accepted) {
 			if (response.find(suspendAcknowledgement) == std::string::npos) {
 				std::fputs("Guest console returned an unexpected suspend reply\n",
@@ -475,40 +499,24 @@ GuestSuspension suspend_guest(unsigned int writebackSettleMs,
 		}
 		/* Once the request was sent, a receive timeout is ambiguous: a slow
 		 * guest may already be freezing devices and CPUs before it can reply.
-		 * Queueing legacy stop behind that suspend would make the stop run only
-		 * after wake and freeze the freshly resumed guest. Remember system mode
-		 * so foregrounding sends the matching wake instead. */
+		 * Remember system mode so foregrounding sends the matching wake
+		 * instead of leaving a guest that did enter suspend asleep. */
 		if (suspendResult == ExchangeResult::pending)
 			return GuestSuspension::system;
 		if (suspendResult == ExchangeResult::notSent)
 			return GuestSuspension::none;
-		if (response.starts_with(suspendFailure)) {
-			std::fprintf(stderr,
-				"Guest console: the guest could not suspend (%s); "
-				"stopping it instead\n",
-				response.c_str());
-		}
-		response.clear();
-		/* An explicit rejection comes from an older or suspend-disabled
-		 * kernel, or from a guest that gave the suspend up and kept running.
-		 * The stop path does not sync filesystems, so preserve the old
-		 * writeback step only on this fallback. A suspend that holds performs
-		 * the sync itself and avoids spending the iOS background budget twice. */
+		/* The guest refused, or kept refusing. It runs on and the caller does
+		 * not treat it as asleep: the console's own stop would halt only the
+		 * vCPU that takes it, since the kernel blocks signals per vCPU, so
+		 * it is no substitute for a suspend. */
+		std::fprintf(stderr,
+			"Guest console: the guest could not suspend; it keeps running "
+			"(%s)\n", response.c_str());
+		/* A suspend that holds performs the sync itself and avoids spending
+		 * the iOS background budget twice; a guest that refused it has not
+		 * synced, so write its filesystems back for the host's flush. */
 		(void)requestWriteback(*location, writebackSettleMs);
-		const auto stopResult = exchange(*location, "stop", response);
-		if (stopResult == ExchangeResult::notSent ||
-		    stopResult == ExchangeResult::rejected ||
-		    (stopResult == ExchangeResult::accepted &&
-		     response.find(stopAcknowledgement) == std::string::npos))
-			return GuestSuspension::none;
-		/* Block I/O already handed to the host keeps completing after the
-		 * guest stops issuing more. Let it drain before the caller treats
-		 * the disk as settled. */
-		if (stopSettleMs != 0U) {
-			std::this_thread::sleep_for(
-				std::chrono::milliseconds(stopSettleMs));
-		}
-		return GuestSuspension::managementStop;
+		return GuestSuspension::none;
 	} catch (...) {
 		return GuestSuspension::none;
 	}
@@ -516,7 +524,7 @@ GuestSuspension suspend_guest(unsigned int writebackSettleMs,
 
 void resume_guest(GuestSuspension suspension) noexcept
 {
-	if (suspension == GuestSuspension::none)
+	if (suspension != GuestSuspension::system)
 		return;
 	try {
 		std::lock_guard lock(consoleMutex);
@@ -524,9 +532,7 @@ void resume_guest(GuestSuspension suspension) noexcept
 		if (!location)
 			return;
 		std::string response;
-		const auto command = suspension == GuestSuspension::system ?
-			"wake" : "go";
-		(void)exchange(*location, command, response);
+		(void)exchange(*location, "wake", response);
 	} catch (...) {
 	}
 }
