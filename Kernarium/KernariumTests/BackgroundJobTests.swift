@@ -98,6 +98,19 @@ struct BackgroundJobAtStartTests {
         )
         #expect(kernarium_runtime_loader_automation_job_at_start() == 0)
     }
+
+    /// The same holds for the delay that moves the GPU hold, which only a
+    /// runtime built for automation can be given.
+    @Test
+    func aLaunchThatDoesNotDelayTheHoldIsNeverDelayed() {
+        #expect(
+            ProcessInfo.processInfo.environment[
+                "KERNARIUM_BACKGROUND_HOLD_DELAY_MS"
+            ] == nil,
+            "this test needs a launch that did not ask"
+        )
+        #expect(kernarium_runtime_loader_automation_hold_delay_ms() == 0)
+    }
 }
 
 /// A task scheduler that iOS does not answer until the test says so.
@@ -164,24 +177,34 @@ final class FakeJobTask: BackgroundJobTask {
 /// story is recorded.
 @MainActor
 final class RecordingEffects: BackgroundEffects {
-    var calls: [String] = []
+    private let log = CallLog()
+    var calls: [String] {
+        get { log.entries }
+        set { log.entries = newValue }
+    }
+    let gpuHold: GuestGPUHold
     var jobActive = false
     var guestIsAndroid = false
     var pictureInPictureCanStart = false
     var pictureInPictureActive = false
+    var guestDisplayActive: Bool?
+    var automationHoldDelay: TimeInterval = 0
 
-    func holdGuestGPU() { calls.append("hold") }
-    func releaseGuestGPU() { calls.append("release") }
-    func flushGuest(until deadline: DispatchTime?) { calls.append("flush") }
-    func quiesceGuest(reason: String, until deadline: DispatchTime?) {
-        calls.append("quiesce \(reason)")
+    init() {
+        gpuHold = GuestGPUHold(gate: RecordingGate(log))
     }
-    func resumeGuest() { calls.append("resume") }
+
+    func waitForGuestDisplayOff(until deadline: DispatchTime) -> Bool { true }
+    func flushGuest(until deadline: DispatchTime?) { log.add("flush") }
+    func quiesceGuest(reason: String, until deadline: DispatchTime?) {
+        log.add("quiesce \(reason)")
+    }
+    func resumeGuest() { log.add("resume") }
     func setPageCacheTrimming(_ enabled: Bool) {
-        calls.append("trim \(enabled ? "on" : "off")")
+        log.add("trim \(enabled ? "on" : "off")")
     }
     func setBackgroundThrottle(_ enabled: Bool) {}
-    func pressPowerKey() { calls.append("power") }
+    func pressPowerKey() { log.add("power") }
     func stopPictureInPicture() {}
     func keepScheduled(named name: String) -> any BackgroundCancellable {
         Handle()

@@ -97,6 +97,7 @@
 	gadget_slot x87_arithmetic,             36, 0x007880, 120, 0x01480
 	gadget_slot x87_transcendental,         92, 0x001c00,   0, 0x00000
 	gadget_slot system,                     16, 0x000d80, 120, 0x00580
+	gadget_slot vector_dot,                  0, 0x001200,   0, 0x00800
 
 /* The parts' offset-0 labels, which the order file names. The cold part's is
  * also what a host sample of a cold path reads, its own labels being

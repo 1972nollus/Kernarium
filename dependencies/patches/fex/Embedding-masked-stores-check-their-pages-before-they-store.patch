@@ -90,10 +90,10 @@ index e35ee124dc8ee4e55c6003c69a944372b93da5ed..c6e0d7bde3ae5626e669931a377b9355
  
  DEF_OP(EmbedderRaiseGP) {
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index f3e3deb610f42dec489c409c19d7636ff01ff9e3..5e29a085b79fe7f11ac5c823a2af3c565b84fd6c 100644
+index 9f9fcd0a08feb17fac368a9783461ec7770835dd..ee8275ffd7036f3ad9f6fd8fcb2823b020e7f1f4 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -1525,6 +1525,8 @@ private:
+@@ -1551,6 +1551,8 @@ private:
    void EmbedderCheckMXCSR(Ref MXCSR, Ref Selected = nullptr);
    // Embedded: faults as a read of the byte at Addr, as CLFLUSH, CLFLUSHOPT and CLWB do.
    void EmbedderCacheLineProbe(Ref Addr);
@@ -103,10 +103,10 @@ index f3e3deb610f42dec489c409c19d7636ff01ff9e3..5e29a085b79fe7f11ac5c823a2af3c56
    // wait in the frame until the loop sets the flags.
    static constexpr auto EmbedderStringOperands = offsetof(FEXCore::Core::CpuStateFrame, Embedder.StringOperands);
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp
-index f16bda8c97e0f95103abffc60a9ffd8c51594412..b7989c58ba07c1fe42ecbfc4ea67f2d9dac32adb 100644
+index 91e85899dff863dff27fe7c03a9b93f5853d3570..d20a25bdeed16724cc2c3272493c6339851b9bba 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp
-@@ -1658,6 +1658,11 @@ void OpDispatchBuilder::AVX128_VMASKMOVImpl(OpcodeArgs, IR::OpSize ElementSize,
+@@ -1687,6 +1687,11 @@ void OpDispatchBuilder::AVX128_VMASKMOVImpl(OpcodeArgs, IR::OpSize ElementSize,
      auto Address = MakeAddress(Op->Dest);
  
      auto Data = AVX128_LoadSource_WithOpSize(Op, DataOp, Op->Flags, !Is128Bit);
@@ -118,7 +118,7 @@ index f16bda8c97e0f95103abffc60a9ffd8c51594412..b7989c58ba07c1fe42ecbfc4ea67f2d9
      _VStoreVectorMasked(OpSize::i128Bit, ElementSize, Mask.Low, Data.Low, Address, Invalid(), MemOffsetType::SXTX, 1);
      if (!Is128Bit) {
        _VStoreVectorMasked(OpSize::i128Bit, ElementSize, Mask.High, Data.High, Address, _InlineConstant(16), MemOffsetType::SXTX, 1);
-@@ -1700,6 +1705,7 @@ void OpDispatchBuilder::AVX128_MASKMOV(OpcodeArgs) {
+@@ -1729,6 +1734,7 @@ void OpDispatchBuilder::AVX128_MASKMOV(OpcodeArgs) {
  
    // RDI source (DS prefix by default)
    auto MemDest = MakeSegmentAddress(X86State::REG_RDI, Op->Flags, X86Tables::DecodeFlags::FLAG_DS_PREFIX);
@@ -127,10 +127,10 @@ index f16bda8c97e0f95103abffc60a9ffd8c51594412..b7989c58ba07c1fe42ecbfc4ea67f2d9
    Ref XMMReg = _LoadMemFPR(Size, MemDest, OpSize::i8Bit);
  
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-index c41870e1ac1bf3fec17defe7da2fdb4921558342..2f40d58bf8e10b4fdcbaeef51f53901dc9841b52 100644
+index b6e974e3f48dab068174b40cf27c0425957545d8..d03f1c829524c824f179909a0bf85f425b042e45 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-@@ -3034,6 +3034,19 @@ void OpDispatchBuilder::XMM_To_MMX_Vector_CVT_Float_To_Int(OpcodeArgs, IR::OpSiz
+@@ -3041,6 +3041,19 @@ void OpDispatchBuilder::XMM_To_MMX_Vector_CVT_Float_To_Int(OpcodeArgs, IR::OpSiz
    StoreResultFPR_WithOpSize(Op, Op->Dest, Result, DstSize);
  }
  
@@ -150,7 +150,7 @@ index c41870e1ac1bf3fec17defe7da2fdb4921558342..2f40d58bf8e10b4fdcbaeef51f53901d
  void OpDispatchBuilder::MASKMOVOp(OpcodeArgs) {
    const auto Size = OpSizeFromSrc(Op);
  
-@@ -3046,6 +3059,7 @@ void OpDispatchBuilder::MASKMOVOp(OpcodeArgs) {
+@@ -3053,6 +3066,7 @@ void OpDispatchBuilder::MASKMOVOp(OpcodeArgs) {
  
    // RDI source (DS prefix by default)
    auto MemDest = MakeSegmentAddress(X86State::REG_RDI, Op->Flags, X86Tables::DecodeFlags::FLAG_DS_PREFIX);
@@ -159,10 +159,10 @@ index c41870e1ac1bf3fec17defe7da2fdb4921558342..2f40d58bf8e10b4fdcbaeef51f53901d
    Ref XMMReg = _LoadMemFPR(Size, MemDest, OpSize::i8Bit);
  
 diff --git a/FEXCore/Source/Interface/IR/IR.json b/FEXCore/Source/Interface/IR/IR.json
-index 634f0f4775fef3f1ab712f65d6398e5cd33dc6a3..8268ca80995af7beaf1b3d269605762545214f81 100644
+index 1b61f8c36c760cfc90c79a999b6372b0480835cc..7e8d3de42eafe63a42c7d8d1663cfef7221e7cb4 100644
 --- a/FEXCore/Source/Interface/IR/IR.json
 +++ b/FEXCore/Source/Interface/IR/IR.json
-@@ -777,10 +777,22 @@
+@@ -779,10 +779,22 @@
          "HasSideEffects": true
        },
  

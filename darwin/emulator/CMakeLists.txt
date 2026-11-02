@@ -2,6 +2,7 @@
 
 set(_uml_emulator_boundary_sources
     src/emulator.cpp
+    src/gpu_budget_plan.cpp
     src/options.cpp)
 if(UML_BUILD_KERNEL_RUNNER)
     list(APPEND _uml_emulator_boundary_sources loader/elf_loader.cpp)

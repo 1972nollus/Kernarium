@@ -42,7 +42,7 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  .../Source/Interface/Core/JIT/AtomicOps.cpp   | 363 ++++++++-------
  .../Source/Interface/Core/JIT/BranchOps.cpp   |  74 ++--
  .../Interface/Core/JIT/EmbedderMemory.cpp     | 416 ++++++++++++++++++
- FEXCore/Source/Interface/Core/JIT/JIT.cpp     | 130 +++++-
+ FEXCore/Source/Interface/Core/JIT/JIT.cpp     | 131 +++++-
  FEXCore/Source/Interface/Core/JIT/JITClass.h  | 102 +++++
  .../Source/Interface/Core/JIT/MemoryOps.cpp   | 409 ++++++++++++++++-
  FEXCore/Source/Interface/Core/JIT/MiscOps.cpp |  12 +
@@ -60,7 +60,7 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  FEXCore/include/FEXCore/Core/CoreState.h      | 114 +++++
  FEXCore/include/FEXCore/HLE/SyscallHandler.h  |   3 +
  .../include/FEXCore/Utils/AllocatorHooks.h    |  82 ++++
- 31 files changed, 1979 insertions(+), 235 deletions(-)
+ 31 files changed, 1980 insertions(+), 235 deletions(-)
  create mode 100644 FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 
 diff --git a/CodeEmitter/CodeEmitter/Buffer.h b/CodeEmitter/CodeEmitter/Buffer.h
@@ -134,10 +134,10 @@ index 602eeb67472509e0287343f6958a1bcf09b490e1..6688c9efdb1b0a2bce0a4000bedd3cce
  };
  } // namespace ARMEmitter
 diff --git a/FEXCore/Source/CMakeLists.txt b/FEXCore/Source/CMakeLists.txt
-index ad2186989742add441c53e94a511917a3656d596..e144d0fe4e8995e7df4e3e9d8637c0001d259b3e 100644
+index dd8e4aa240b1579c250b2f510bf0198244cba8e3..48c262a93ece2f77638c0db46d7eab6ca831d00e 100644
 --- a/FEXCore/Source/CMakeLists.txt
 +++ b/FEXCore/Source/CMakeLists.txt
-@@ -43,6 +43,7 @@ set(SRCS
+@@ -45,6 +45,7 @@ set(SRCS
    Interface/Core/JIT/ConversionOps.cpp
    Interface/Core/JIT/EncryptionOps.cpp
    Interface/Core/JIT/MemoryOps.cpp
@@ -146,10 +146,10 @@ index ad2186989742add441c53e94a511917a3656d596..e144d0fe4e8995e7df4e3e9d8637c000
    Interface/Core/JIT/MoveOps.cpp
    Interface/Core/JIT/VectorOps.cpp
 diff --git a/FEXCore/Source/Interface/Context/Context.h b/FEXCore/Source/Interface/Context/Context.h
-index b8b68b7c73aba9533fa58aa949aa6bb58aa4fdc4..4cb3dcc3ba2b8cf99b4c69c4db017b3b38186d60 100644
+index 9f427da200232228b49543eaf72b74b7d667dccc..01e5cb8f888b7d4d9eb81da01d654c06509c6fe1 100644
 --- a/FEXCore/Source/Interface/Context/Context.h
 +++ b/FEXCore/Source/Interface/Context/Context.h
-@@ -135,6 +135,10 @@ class ContextImpl final : public FEXCore::Context::Context, public CPU::SharedCo
+@@ -138,6 +138,10 @@ class ContextImpl final : public FEXCore::Context::Context, public CPU::SharedCo
  public:
    // Context base class implementation.
    bool InitCore() override;
@@ -160,7 +160,7 @@ index b8b68b7c73aba9533fa58aa949aa6bb58aa4fdc4..4cb3dcc3ba2b8cf99b4c69c4db017b3b
  
    void ExecuteThread(FEXCore::Core::InternalThreadState* Thread) override;
  
-@@ -366,6 +370,9 @@ public:
+@@ -380,6 +384,9 @@ public:
  
    FEXCore::Utils::WritePriorityMutex::Mutex CodeInvalidationMutex {};
  
@@ -171,7 +171,7 @@ index b8b68b7c73aba9533fa58aa949aa6bb58aa4fdc4..4cb3dcc3ba2b8cf99b4c69c4db017b3b
  
    FEXCore::HostFeatures HostFeatures;
 diff --git a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
-index 729aa63aba645b1d70650d301bbf50a4c42798dc..5467ba7beb6a8063e02fa7c164d27c8244eb3e17 100644
+index 3ebadb5aa88de9e5d1454eb88c3b041ff08bbb52..774e18e24713ca9d53c65fd4ba27e84b560ed1e2 100644
 --- a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
 +++ b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
 @@ -73,21 +73,35 @@ namespace x64 {
@@ -212,10 +212,10 @@ index 729aa63aba645b1d70650d301bbf50a4c42798dc..5467ba7beb6a8063e02fa7c164d27c82
    // All are caller saved
    constexpr std::array<ARMEmitter::VRegister, 16> SRAFPR = {
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..41a0730345621207b69276805b6926b08a5eeb03 100644
+index 63280a42a3e444682e7b7099838c25874e20ef1c..7aa2029cb3d3ef91accb92ece2adab824ae01807 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
-@@ -380,6 +380,12 @@ void ContextImpl::HandleCallback(FEXCore::Core::InternalThreadState* Thread, uin
+@@ -386,6 +386,12 @@ void ContextImpl::HandleCallback(FEXCore::Core::InternalThreadState* Thread, uin
    static_cast<ContextImpl*>(Thread->CTX)->Dispatcher->ExecuteJITCallback(Thread->CurrentFrame, RIP);
  }
  
@@ -228,7 +228,7 @@ index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..41a0730345621207b69276805b6926b0
  void ContextImpl::ExecuteThread(FEXCore::Core::InternalThreadState* Thread) {
    // Update the thread pointer for Thunk return to the latest.
    Thread->CurrentFrame->Pointers.ThunkCallbackRet = SignalDelegation->GetThunkCallbackRET();
-@@ -618,6 +624,7 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+@@ -622,6 +628,7 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
  #endif
  
          bool IsLocked = DecodedInfo->Flags & FEXCore::X86Tables::DecodeFlags::FLAG_LOCK;
@@ -236,7 +236,7 @@ index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..41a0730345621207b69276805b6926b0
  
          // Do a partial register cache flush before every instruction. This
          // prevents cross-instruction static register caching, while allowing
-@@ -631,9 +638,12 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+@@ -635,9 +642,12 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
          // It is potentially correctness bearing in that sense, but that is a
          // side effect here and (if that behaviour is required) we should handle
          // that more explicitly later.
@@ -251,7 +251,7 @@ index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..41a0730345621207b69276805b6926b0
            Thread->OpDispatcher->_GuestOpcode(InstAddress - GuestRIP);
          }
  
-@@ -681,6 +691,7 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+@@ -692,6 +702,7 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
            std::invoke(Fn, Thread->OpDispatcher, DecodedInfo);
            if (Thread->OpDispatcher->HadDecodeFailure()) {
              HadDispatchError = true;
@@ -259,7 +259,7 @@ index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..41a0730345621207b69276805b6926b0
            } else {
              if (Thread->OpDispatcher->HasHandledLock() != IsLocked) {
                HadDispatchError = true;
-@@ -717,6 +728,17 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+@@ -728,6 +739,17 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
            HadInvalidInst = true;
          }
  
@@ -277,7 +277,7 @@ index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..41a0730345621207b69276805b6926b0
          const bool NeedsBlockEnd = (HadDispatchError && TotalInstructions > 0) ||
                                     (Thread->OpDispatcher->NeedsBlockEnder() && i + 1 == InstsInBlock) || HadInvalidInst;
  
-@@ -747,6 +769,12 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+@@ -758,6 +780,12 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
      }
  #endif
  
@@ -288,10 +288,10 @@ index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..41a0730345621207b69276805b6926b0
 +    }
 +
      Thread->OpDispatcher->Finalize();
+   }
  
-     Thread->FrontendDecoder->DelayedDisownBuffer();
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
-index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..4af3408475a3d51239569a3503a3f5a11b871e54 100644
+index 2f4babd70335ccae2a82264d9bc57cf4e890fce9..a157b098daa4b19d69d30457ba384e2c0e31e7b0 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 @@ -34,11 +34,12 @@ static void SleepThread(FEXCore::Context::ContextImpl* CTX, FEXCore::Core::CpuSt
@@ -317,7 +317,7 @@ index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..4af3408475a3d51239569a3503a3f5a1
    }
  }
  
-@@ -432,6 +433,62 @@ void Dispatcher::EmitDispatcher() {
+@@ -439,6 +440,62 @@ void Dispatcher::EmitDispatcher() {
      }
    }
  
@@ -380,7 +380,7 @@ index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..4af3408475a3d51239569a3503a3f5a1
    {
      ThreadPauseHandlerAddressSpillSRA = GetCursorAddress<uint64_t>();
      SpillStaticRegs(TMP1);
-@@ -2623,6 +2680,16 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
+@@ -2690,6 +2747,16 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
      Ptrs.GuestSignal_SIGILL = GuestSignal_SIGILL;
      Ptrs.GuestSignal_SIGTRAP = GuestSignal_SIGTRAP;
      Ptrs.GuestSignal_SIGSEGV = GuestSignal_SIGSEGV;
@@ -398,7 +398,7 @@ index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..4af3408475a3d51239569a3503a3f5a1
      Ptrs.SignalReturnHandlerRT = SignalHandlerReturnAddressRT;
      Ptrs.LUDIVHandler = LUDIVHandlerAddress;
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
-index b0f3d7a4700db3bb9a59819b151d5f51dc688232..dfef9d394280abdedef7f7bedb7e69ac41d61e2e 100644
+index 9df667efb76dc739bfcd23eebe3dfd000001067e..8b97f413f9e5f9cbecbce3fe21dded4c3803e678 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
 +++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
 @@ -50,6 +50,10 @@ public:
@@ -412,7 +412,7 @@ index b0f3d7a4700db3bb9a59819b151d5f51dc688232..dfef9d394280abdedef7f7bedb7e69ac
    void ExecuteJITCallback(FEXCore::Core::CpuStateFrame* Frame, uint64_t RIP) {
      CallbackPtr(Frame, RIP);
    }
-@@ -87,6 +91,10 @@ private:
+@@ -89,6 +93,10 @@ private:
    uint64_t GuestSignal_SIGILL {};
    uint64_t GuestSignal_SIGTRAP {};
    uint64_t GuestSignal_SIGSEGV {};
@@ -424,10 +424,10 @@ index b0f3d7a4700db3bb9a59819b151d5f51dc688232..dfef9d394280abdedef7f7bedb7e69ac
    uint64_t PauseReturnInstruction {};
    std::array<uint64_t, FallbackABI::FABI_UNKNOWN> ABIPointers {};
 diff --git a/FEXCore/Source/Interface/Core/Frontend.cpp b/FEXCore/Source/Interface/Core/Frontend.cpp
-index b2e7ee1bddf41a95c17cf03b91a84d5b81f7efc8..9dc805151cbb4677b8010d73ce13f573ebc1a776 100644
+index 78d5f1a2eca17f23c5b01c03036d8960a279239f..824ae842de97933dabd03b573f37a2633394af51 100644
 --- a/FEXCore/Source/Interface/Core/Frontend.cpp
 +++ b/FEXCore/Source/Interface/Core/Frontend.cpp
-@@ -94,6 +94,7 @@ bool Decoder::CheckRangeExecutable(uint64_t Address, uint64_t Size) {
+@@ -99,6 +99,7 @@ bool Decoder::CheckRangeExecutable(uint64_t Address, uint64_t Size) {
      ExecutableRangeBase = RangeInfo.Base;
      ExecutableRangeEnd = RangeInfo.Base + RangeInfo.Size;
      ExecutableRangeWritable = RangeInfo.Writable;
@@ -435,7 +435,7 @@ index b2e7ee1bddf41a95c17cf03b91a84d5b81f7efc8..9dc805151cbb4677b8010d73ce13f573
  
      if (RangeInfo.Size == 0) {
        return false;
-@@ -123,8 +124,18 @@ uint8_t Decoder::ReadByte() {
+@@ -127,8 +128,18 @@ uint8_t Decoder::ReadByte() {
    return *Byte;
  }
  
@@ -454,10 +454,10 @@ index b2e7ee1bddf41a95c17cf03b91a84d5b81f7efc8..9dc805151cbb4677b8010d73ce13f573
    if (CheckRangeExecutable(ByteAddress, 1)) {
      return InstStream.AdjustedInstStream[InstructionSize + Offset];
    } else {
-@@ -137,7 +148,18 @@ std::pair<uint64_t, bool> Decoder::ReadData(uint8_t Size) {
- 
-   uint64_t Res = 0;
+@@ -143,7 +154,18 @@ std::pair<uint64_t, bool> Decoder::ReadData(uint8_t Size) {
    uint64_t Address = reinterpret_cast<uint64_t>(InstStream.InstStream + InstructionSize);
+   LastFieldReadOffset = (uint8_t)InstructionSize;
+   LastFieldReadSize = Size;
 -  if (CheckRangeExecutable(Address, Size)) {
 +  if (CTX->Embedded) {
 +    // The bytes may sit on two guest pages with unrelated host addresses.
@@ -475,10 +475,10 @@ index b2e7ee1bddf41a95c17cf03b91a84d5b81f7efc8..9dc805151cbb4677b8010d73ce13f573
    } else {
      HitNonExecutableRange = true;
 diff --git a/FEXCore/Source/Interface/Core/Frontend.h b/FEXCore/Source/Interface/Core/Frontend.h
-index f668d2b9c77998abccef1e6a9093894962ab828d..69f3328216e6af4c45f1bd9897ab429c525b8831 100644
+index 1fc0e6ed361753d64495a0a1ca37359d189e483b..4fa5d85756a6d50b6178bfc61574692b9b3abe47 100644
 --- a/FEXCore/Source/Interface/Core/Frontend.h
 +++ b/FEXCore/Source/Interface/Core/Frontend.h
-@@ -125,6 +125,10 @@ private:
+@@ -151,6 +151,10 @@ private:
    uint64_t ExecutableRangeBase {};
    uint64_t ExecutableRangeEnd {};
    bool ExecutableRangeWritable {};
@@ -490,10 +490,10 @@ index f668d2b9c77998abccef1e6a9093894962ab828d..69f3328216e6af4c45f1bd9897ab429c
    bool HitBadRelocation {};
  
 diff --git a/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp b/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
-index 7946ccdd2f90506ebd0ca2117aea6eb4ad022893..ae25e0c32dcdbffed2f8dc9dc7efee5f66ada212 100644
+index b65bf80fce77580ebc2cf4cd84a4968d0600ba25..7241f17996d2610ec7d2b46676769cdc996e80c0 100644
 --- a/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
-@@ -858,6 +858,12 @@ DEF_OP(Div) {
+@@ -874,6 +874,12 @@ DEF_OP(Div) {
    auto Lower = GetReg(Op->Lower);
    auto Divisor = GetReg(Op->Divisor);
  
@@ -506,7 +506,7 @@ index 7946ccdd2f90506ebd0ca2117aea6eb4ad022893..ae25e0c32dcdbffed2f8dc9dc7efee5f
    if (Op->Upper.IsInvalid()) {
      const auto EmitSize = ConvertSize(IROp);
  
-@@ -958,6 +964,12 @@ DEF_OP(UDiv) {
+@@ -974,6 +980,12 @@ DEF_OP(UDiv) {
    const auto Lower = GetReg(Op->Lower);
    const auto Divisor = GetReg(Op->Divisor);
  
@@ -969,10 +969,10 @@ index 014a8c690593e3db86d4abb59c4294a9c63e589b..46400f94ddffc4b0fa166d795d4234dd
  
  DEF_OP(TelemetrySetValue) {
 diff --git a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
-index d555e0648a8e854a412f961491049a924692955e..f63eb08d9e336ab688f5f9d568ab2819721acbd2 100644
+index c2b1d8e287859ce96ea33c426e4c0d341dd38459..8211670bf3c2e81359726c5eb69610f10891e912 100644
 --- a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
-@@ -193,7 +193,18 @@ DEF_OP(ExitFunction) {
+@@ -199,7 +199,18 @@ DEF_OP(ExitFunction) {
        // First try to pop from the call-ret stack, otherwise follow the normal path (but ending in a ret)
        ldp<ARMEmitter::IndexType::POST>(TMP1, TMP2, REG_CALLRET_SP, 0x10);
        sub(TMP1, TMP1, RipReg.X());
@@ -992,7 +992,7 @@ index d555e0648a8e854a412f961491049a924692955e..f63eb08d9e336ab688f5f9d568ab2819
      }
  
      // L1 Cache
-@@ -242,35 +253,42 @@ DEF_OP(Jump) {
+@@ -248,35 +259,42 @@ DEF_OP(Jump) {
  DEF_OP(CondJump) {
    auto Op = IROp->C<IR::IROp_CondJump>();
  
@@ -1485,7 +1485,7 @@ index 0000000000000000000000000000000000000000..853e48bcef68b7d31a0c431dd60b8026
 +
 +} // namespace FEXCore::CPU
 diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd70ac8aa9 100644
+index ef7e3329964fb92880b0142782ff6f0c3af1efdc..8b2d68653724f209013b848ff2535b52f3c74743 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 @@ -34,6 +34,7 @@ $end_info$
@@ -1495,8 +1495,8 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd
 +#include <algorithm>
  #include <cstdio>
  #include <cstring>
- #include <unistd.h>
-@@ -63,6 +64,38 @@ LDIV(uint64_t SrcHigh, uint64_t SrcLow, int64_t Divisor) {
+ #include <optional>
+@@ -70,6 +71,38 @@ LDIV(uint64_t SrcHigh, uint64_t SrcLow, int64_t Divisor) {
    };
  }
  
@@ -1532,10 +1532,10 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd
 +  };
 +}
 +
- static void
- PrintValue(uint64_t Value) {
-   LogMan::Msg::DFmt("Value: 0x{:x}", Value);
-@@ -497,7 +530,15 @@ void Arm64JITCore::Op_Unhandled(const IR::IROp_Header* IROp, IR::Ref Node) {
+ #ifndef _WIN32
+ 
+ static std::optional<uint64_t>
+@@ -532,7 +565,15 @@ void Arm64JITCore::Op_Unhandled(const IR::IROp_Header* IROp, IR::Ref Node) {
    }
  }
  
@@ -1551,7 +1551,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd
    uintptr_t JumpThunkStartAddress = reinterpret_cast<uintptr_t>(Record) - 0x10;
    uintptr_t CallerAddress = JumpThunkStartAddress + Record->CallerOffset;
    auto BranchOffset = JumpThunkStartAddress / 4 - CallerAddress / 4;
-@@ -516,6 +557,7 @@ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record,
+@@ -551,6 +592,7 @@ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record,
  }
  
  static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record) {
@@ -1559,7 +1559,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd
    uintptr_t JumpThunkStartAddress = reinterpret_cast<uintptr_t>(Record) - 0x10;
    uint32_t BranchInst = 0;
    ARMEmitter::Emitter BranchEmit(reinterpret_cast<uint8_t*>(&BranchInst), 4);
-@@ -529,6 +571,7 @@ static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record
+@@ -564,6 +606,7 @@ static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record
  }
  
  uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEXCore::Context::ExitFunctionLinkData* Record) {
@@ -1567,7 +1567,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd
    auto Thread = Frame->Thread;
    bool TFSet = Thread->CurrentFrame->State.flags[X86State::RFLAG_TF_RAW_LOC];
    uintptr_t HostCode {};
-@@ -662,8 +705,8 @@ Arm64JITCore::Arm64JITCore(FEXCore::Context::ContextImpl* ctx, FEXCore::Core::In
+@@ -697,8 +740,8 @@ Arm64JITCore::Arm64JITCore(FEXCore::Context::ContextImpl* ctx, FEXCore::Core::In
        Ptrs.SyscallHandlerFunc = PMF.GetVTableEntry(CTX->SyscallHandler);
      }
      Ptrs.ExitFunctionLink = reinterpret_cast<uintptr_t>(&Arm64JITCore::ExitFunctionLink);
@@ -1575,10 +1575,10 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd
 -    Ptrs.LDIV = reinterpret_cast<uint64_t>(LDIV);
 +    Ptrs.LUDIV = reinterpret_cast<uint64_t>(CTX->Embedded ? LUDIVChecked : LUDIV);
 +    Ptrs.LDIV = reinterpret_cast<uint64_t>(CTX->Embedded ? LDIVChecked : LDIV);
+     Ptrs.RDRANDFallback = reinterpret_cast<uint64_t>(RDRANDFallback);
    }
  
-   CurrentCodeBuffer = SharedCodeBuffers.GetLatest();
-@@ -797,10 +840,16 @@ void Arm64JITCore::EmitEntryPoint(ARMEmitter::BackwardLabel& HeaderLabel, bool C
+@@ -831,10 +874,16 @@ void Arm64JITCore::EmitEntryPoint(ARMEmitter::BackwardLabel& HeaderLabel, bool C
    adr_OrRestart(TMP1, &HeaderLabel);
    str(TMP1, STATE, offsetof(FEXCore::Core::CPUState, InlineJITBlockHeader));
  
@@ -1595,7 +1595,20 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd
    if (SpillSlots) {
      const auto TotalSpillSlotsSize = SpillSlots * MaxSpillSlotSize;
  
-@@ -825,7 +874,13 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -866,6 +915,12 @@ CodeBuffer::CodeBufferAllocation Arm64JITCore::AllocateCodeBufferInSharedCache(s
+     AllocatedInfo = CurrentCodeBuffer->AtomicAllocateBuffer(Size);
+ 
+     if (AllocatedInfo.BufferAllocationOffset == nullptr) {
++      if (Size > CurrentCodeBuffer->UsableSize()) {
++        // The code buffer's guard page may be missing (MAP_JIT memory cannot
++        // be protected), so a unit that could not fit an empty buffer must
++        // not wait for room that clearing never makes.
++        ERROR_AND_DIE_FMT("JIT unit of {} bytes does not fit an empty code buffer", Size);
++      }
+       // If it didn't fit then clear the buffer and try again.
+       // This has the possibility of migrating the SharedCodeBuffer. See above in `Arm64JITCore::ClearCache()`
+       CTX->ClearCodeCache(ThreadState);
+@@ -886,7 +941,13 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    this->DebugData = DebugData;
    this->IR = IR;
    RequiresFarARM64Jumps = false;
@@ -1609,7 +1622,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd
  
    // Prepare restart via long jump in case branch encoding fails.
    // This uses UncheckedLongJump since we don't implement std::longjmp in WoA setups
-@@ -838,15 +893,40 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -899,15 +960,40 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      // Get rid of the claimed buffer immediately, we can't fit in it at all.
      TempCodeBufferAllocator.UnclaimBuffer();
      SSANodeMultiplier *= 2;
@@ -1650,7 +1663,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd
    Relocations.resize(PrevNumAllocations, FEXCore::CPU::Relocation::Default()); // Discard any relocations generated from a previous attempt
  
    CodeData.EntryPoints.clear();
-@@ -862,6 +942,9 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -923,6 +1009,9 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    const uint32_t UsableBufferRange = TempCodeBufferInfo.Size - FEXCore::Utils::FEX_PAGE_SIZE;
  
    SetBuffer(TempCodeBuffer, UsableBufferRange);
@@ -1660,7 +1673,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd
  
    ThreadState->JITGuardPage = reinterpret_cast<uintptr_t>(TempCodeBuffer) + UsableBufferRange;
    ThreadState->JITGuardOverflowArgument = FEXCore::ToUnderlying(RestartOptions::Control::NeedsLargerJITSpace);
-@@ -917,7 +1000,11 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -979,7 +1068,11 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
          if (PendingTargetLabel->Backward.Location) {
            EmitSuspendInterruptCheck();
          }
@@ -1673,7 +1686,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd
          PendingTargetLabel = nullptr;
        }
  
-@@ -938,6 +1025,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1000,6 +1093,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
          CodeData.EntryPoints.emplace(BlockStartRIP, GetCursorAddress<uint8_t*>());
          DebugData->GuestOpcodes.push_back({BlockIROp->GuestEntryOffset, GetCursorAddress<uint8_t*>() - CodeData.BlockBegin});
  
@@ -1686,7 +1699,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd
          EmitEntryPoint(JITCodeHeaderLabel, CheckTF);
        }
  
-@@ -973,10 +1066,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1035,10 +1134,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      if (PendingTargetLabel->Backward.Location) {
        EmitSuspendInterruptCheck();
      }
@@ -1706,7 +1719,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd
    ARMEmitter::ForwardLabel l_ExitLink;
    for (auto& PendingJumpThunk : PendingJumpThunks) {
      // Align as 64-bit atomics are used on the HostCode field.
-@@ -1035,6 +1136,20 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1103,6 +1210,20 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    const auto JITRIPEntriesBegin = JITBlockTailLocation + sizeof(JITBlockTail);
    auto JITRIPEntriesLocation = JITRIPEntriesBegin;
  
@@ -1727,38 +1740,27 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd
    {
      // Store the RIP entries.
      JITBlockTail.NumberOfRIPEntries = DebugData->GuestOpcodes.size();
-@@ -1071,6 +1186,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1142,6 +1263,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+   }
  
    // Migrate the compile output from temporary storage to the actual CodeBuffer.
-   // This can block progress in other compiling threads, so the duration of the lock should be as small as possible.
 +  FEXCore::Allocator::ScopedExecutableWrite ExecutableWriteScope;
    {
-     auto CodeBufferLock = std::unique_lock {SharedCodeBuffers.CodeBufferWriteMutex};
+     LOGMAN_THROW_A_FMT(CodeData.Size % 16 == 0, "Needs to be 16B aligned!");
  
-@@ -1088,12 +1204,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
-       }
+@@ -1204,6 +1326,7 @@ CPUBackend::CompiledCode Arm64JITCore::LoadCachedCode(std::span<const uint8_t> H
+   LOGMAN_THROW_A_FMT(HostBytes.size() % 16 == 0, "Needs to be 16B aligned!");
+   auto AllocatedInfo = AllocateCodeBufferInSharedCache(HostBytes.size());
  
-       // NOTE: 16-byte alignment of the new cursor offset must be preserved for block linking records
-+      SetOverflowHandler(nullptr, nullptr);
-       SetBuffer(CurrentCodeBuffer->Ptr, CurrentCodeBuffer->AllocatedSize);
-       SetCursorOffset(SharedCodeBuffers.LatestOffset);
-       Align16B();
-       if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
-         CTX->ClearCodeCache(ThreadState);
-       }
-+      if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
-+        // The code buffer's guard page may be missing (MAP_JIT memory cannot
-+        // be protected), so never copy past its end.
-+        ERROR_AND_DIE_FMT("JIT unit of {} bytes does not fit an empty code buffer", TempSize);
-+      }
- 
-       SharedCodeBuffers.LatestOffset = GetCursorOffset();
-     }
++  FEXCore::Allocator::ScopedExecutableWrite ExecutableWriteScope;
+   uint8_t* Dest = AllocatedInfo.BufferAllocationOffset;
+   memcpy(Dest, HostBytes.data(), HostBytes.size());
+   ClearICache(Dest, HostBytes.size());
 diff --git a/FEXCore/Source/Interface/Core/JIT/JITClass.h b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..f8e8e09822b3bf99d05356c92415b5ad14b0d6f5 100644
+index 17e76910b4755efbf43de011e105d492c26b90f1..159303b7e95056bc563fc7761679a38b3c56824a 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JITClass.h
 +++ b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-@@ -78,6 +78,8 @@ private:
+@@ -81,6 +81,8 @@ private:
    // FEXCore makes assumptions in the JIT about certain conditions being true.
    // In the rare case when those assumptions are broken, FEX needs to safely restart the JIT.
    RestartOptions RestartControl {};
@@ -1767,7 +1769,7 @@ index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..f8e8e09822b3bf99d05356c92415b5ad
    bool RequiresFarARM64Jumps {};
    // Default to 6 instructions per SSA node.
    uint32_t SSANodeMultiplier {24};
-@@ -109,6 +111,106 @@ private:
+@@ -114,6 +116,106 @@ private:
  
    static uint64_t ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEXCore::Context::ExitFunctionLinkData* Record);
  
@@ -1875,7 +1877,7 @@ index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..f8e8e09822b3bf99d05356c92415b5ad
    ARMEmitter::Register GetReg(IR::PhysicalRegister Reg) const {
      const auto RegClass = Reg.AsRegClass();
 diff --git a/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp b/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
-index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3e0e43016 100644
+index d7b716cab9c269c1ef4c77edf0281b3f258970c5..2f782ab60f21f7cb3ccc4ddb49565b88302f9916 100644
 --- a/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
 @@ -706,7 +706,12 @@ DEF_OP(LoadMem) {
@@ -2065,7 +2067,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
    const uint64_t ElementSizeInBits = IR::OpSizeToSize(ElementSize) * 8;
  
    if (NeedsIncomingDestMove) {
-@@ -1149,12 +1265,16 @@ void Arm64JITCore::Emulate128BitGather(IR::OpSize Size, IR::OpSize ElementSize,
+@@ -1151,12 +1267,16 @@ void Arm64JITCore::Emulate128BitGather(IR::OpSize Size, IR::OpSize ElementSize,
      }
  
      // Now that the address is calculated. Do the load.
@@ -2087,7 +2089,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
      default: LOGMAN_MSG_A_FMT("Unhandled {} size: {}", __func__, ElementSize); FEX_UNREACHABLE;
      }
  
-@@ -1201,7 +1321,8 @@ DEF_OP(VLoadVectorGatherMasked) {
+@@ -1203,7 +1323,8 @@ DEF_OP(VLoadVectorGatherMasked) {
      !Op->VectorIndexHigh.IsInvalid() ? std::make_optional(GetVReg(Op->VectorIndexHigh)) : std::nullopt;
  
    ///< If the host supports SVE and the offset scale matches SVE limitations then it can do an SVE style load.
@@ -2097,7 +2099,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
                                 (OffsetScale == 1 || OffsetScale == IR::OpSizeToSize(VectorIndexSize)) &&
                                 VectorIndexSize == IROp->ElementSize && Op->AddrSize == IR::OpSize::i64Bit;
  
-@@ -1286,7 +1407,8 @@ DEF_OP(VLoadVectorGatherMaskedQPS) {
+@@ -1293,7 +1414,8 @@ DEF_OP(VLoadVectorGatherMaskedQPS) {
      !Op->VectorIndexHigh.IsInvalid() ? std::make_optional(GetVReg(Op->VectorIndexHigh)) : std::nullopt;
  
    ///< If the host supports SVE and the offset scale matches SVE limitations then it can do an SVE style load.
@@ -2107,7 +2109,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
  
    if (SupportsSVELoad) {
      ARMEmitter::SVEModType ModType = ARMEmitter::SVEModType::MOD_NONE;
-@@ -1355,7 +1477,10 @@ DEF_OP(VLoadVectorElement) {
+@@ -1368,7 +1490,10 @@ DEF_OP(VLoadVectorElement) {
  
    const auto Dst = GetVReg(Node);
    const auto DstSrc = GetVReg(Op->DstSrc);
@@ -2119,7 +2121,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
  
    LOGMAN_THROW_A_FMT(ElementSize == IR::OpSize::i8Bit || ElementSize == IR::OpSize::i16Bit || ElementSize == IR::OpSize::i32Bit ||
                         ElementSize == IR::OpSize::i64Bit || ElementSize == IR::OpSize::i128Bit,
-@@ -1392,7 +1517,7 @@ DEF_OP(VStoreVectorElement) {
+@@ -1405,7 +1530,7 @@ DEF_OP(VStoreVectorElement) {
    const auto ElementSize = IROp->ElementSize;
  
    const auto Value = GetVReg(Op->Value);
@@ -2128,7 +2130,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
  
    LOGMAN_THROW_A_FMT(ElementSize == IR::OpSize::i8Bit || ElementSize == IR::OpSize::i16Bit || ElementSize == IR::OpSize::i32Bit ||
                         ElementSize == IR::OpSize::i64Bit || ElementSize == IR::OpSize::i128Bit,
-@@ -1404,6 +1529,21 @@ DEF_OP(VStoreVectorElement) {
+@@ -1417,6 +1542,21 @@ DEF_OP(VStoreVectorElement) {
      dmb(ARMEmitter::BarrierScope::ISH);
    }
  
@@ -2150,7 +2152,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
    if (Is256Bit) {
      LOGMAN_MSG_A_FMT("Unsupported 256-bit {}", __func__);
    } else {
-@@ -1427,7 +1567,10 @@ DEF_OP(VBroadcastFromMem) {
+@@ -1440,7 +1580,10 @@ DEF_OP(VBroadcastFromMem) {
    const auto ElementSize = IROp->ElementSize;
  
    const auto Dst = GetVReg(Node);
@@ -2162,7 +2164,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
  
    LOGMAN_THROW_A_FMT(ElementSize == IR::OpSize::i8Bit || ElementSize == IR::OpSize::i16Bit || ElementSize == IR::OpSize::i32Bit ||
                         ElementSize == IR::OpSize::i64Bit || ElementSize == IR::OpSize::i128Bit,
-@@ -1466,6 +1609,11 @@ DEF_OP(VBroadcastFromMem) {
+@@ -1479,6 +1622,11 @@ DEF_OP(VBroadcastFromMem) {
  }
  
  DEF_OP(Push) {
@@ -2174,7 +2176,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
    const auto Op = IROp->C<IR::IROp_Push>();
    const auto ValueSize = IR::OpSizeToSize(Op->ValueSize);
    auto Src = GetReg(Op->Value);
-@@ -1551,6 +1699,11 @@ DEF_OP(Push) {
+@@ -1564,6 +1712,11 @@ DEF_OP(Push) {
  }
  
  DEF_OP(PushTwo) {
@@ -2186,7 +2188,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
    const auto Op = IROp->C<IR::IROp_PushTwo>();
    const auto ValueSize = IR::OpSizeToSize(Op->ValueSize);
    auto Src1 = GetReg(Op->Value1);
-@@ -1574,6 +1727,11 @@ DEF_OP(PushTwo) {
+@@ -1587,6 +1740,11 @@ DEF_OP(PushTwo) {
  }
  
  DEF_OP(Pop) {
@@ -2198,7 +2200,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
    const auto Op = IROp->C<IR::IROp_Pop>();
    const auto Size = IR::OpSizeToSize(Op->Size);
    const auto Addr = GetReg(Op->InoutAddr);
-@@ -1606,6 +1764,11 @@ DEF_OP(Pop) {
+@@ -1619,6 +1777,11 @@ DEF_OP(Pop) {
  }
  
  DEF_OP(PopTwo) {
@@ -2210,7 +2212,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
    const auto Op = IROp->C<IR::IROp_PopTwo>();
    const auto Size = IR::OpSizeToSize(Op->Size);
    const auto Addr = GetReg(Op->InoutAddr);
-@@ -1641,6 +1804,35 @@ DEF_OP(StoreMem) {
+@@ -1654,6 +1817,35 @@ DEF_OP(StoreMem) {
    const auto OpSize = IROp->Size;
  
    const auto MemReg = GetReg(Op->Addr);
@@ -2246,7 +2248,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
    const auto MemSrc = GenerateMemOperand(OpSize, MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale);
  
    if (Op->Class == IR::RegClass::GPR) {
-@@ -1754,6 +1946,38 @@ DEF_OP(StoreMemPair) {
+@@ -1767,6 +1959,38 @@ DEF_OP(StoreMemPair) {
    const auto OpSize = IROp->Size;
    const auto Addr = GetReg(Op->Addr);
  
@@ -2285,7 +2287,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
    if (Op->Class == IR::RegClass::GPR) {
      const auto Src1 = GetZeroableReg(Op->Value1);
      const auto Src2 = GetZeroableReg(Op->Value2);
-@@ -1781,6 +2005,43 @@ DEF_OP(StoreMemTSO) {
+@@ -1794,6 +2018,43 @@ DEF_OP(StoreMemTSO) {
  
    const auto MemReg = GetReg(Op->Addr);
  
@@ -2329,7 +2331,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
    if (Op->Class == IR::RegClass::GPR) {
      LOGMAN_THROW_A_FMT(Op->Offset.IsInvalid() || CTX->HostFeatures.SupportsTSOImm9, "unexpected offset");
      LOGMAN_THROW_A_FMT(Op->OffsetScale == 1, "unexpected offset scale");
-@@ -1848,8 +2109,74 @@ DEF_OP(StoreMemTSO) {
+@@ -1861,8 +2122,74 @@ DEF_OP(StoreMemTSO) {
    }
  }
  
@@ -2404,7 +2406,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
  
    const bool IsAtomic = CTX->IsMemcpyAtomicTSOEnabled();
    const auto Size = IR::OpSizeToSize(Op->Size);
-@@ -2085,6 +2412,11 @@ DEF_OP(MemSet) {
+@@ -2098,6 +2425,11 @@ DEF_OP(MemSet) {
  
  DEF_OP(MemCpy) {
    const auto Op = IROp->C<IR::IROp_MemCpy>();
@@ -2416,7 +2418,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
  
    const bool IsAtomic = CTX->IsMemcpyAtomicTSOEnabled();
    const auto Size = IR::OpSizeToSize(Op->Size);
-@@ -2389,7 +2721,7 @@ DEF_OP(MemCpy) {
+@@ -2402,7 +2734,7 @@ DEF_OP(MemCpy) {
  }
  
  DEF_OP(CacheLineClear) {
@@ -2425,7 +2427,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
      dmb(ARMEmitter::BarrierScope::SY);
      return;
    }
-@@ -2419,7 +2751,7 @@ DEF_OP(CacheLineClear) {
+@@ -2432,7 +2764,7 @@ DEF_OP(CacheLineClear) {
  }
  
  DEF_OP(CacheLineClean) {
@@ -2434,7 +2436,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
      dmb(ARMEmitter::BarrierScope::ST);
      return;
    }
-@@ -2447,6 +2779,15 @@ DEF_OP(CacheLineZero) {
+@@ -2460,6 +2792,15 @@ DEF_OP(CacheLineZero) {
  
    auto MemReg = GetReg(Op->Addr);
  
@@ -2450,7 +2452,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
    if (CTX->HostFeatures.SupportsCLZERO) {
      // We can use this instruction directly
      dc(ARMEmitter::DataCacheOperation::ZVA, MemReg);
-@@ -2464,6 +2805,10 @@ DEF_OP(CacheLineZero) {
+@@ -2477,6 +2818,10 @@ DEF_OP(CacheLineZero) {
  }
  
  DEF_OP(Prefetch) {
@@ -2461,7 +2463,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
    auto Op = IROp->C<IR::IROp_Prefetch>();
    const auto MemReg = GetReg(Op->Addr);
  
-@@ -2513,6 +2858,15 @@ DEF_OP(VStoreNonTemporal) {
+@@ -2526,6 +2871,15 @@ DEF_OP(VStoreNonTemporal) {
    const auto MemReg = GetReg(Op->Addr);
    const auto Offset = Op->Offset;
  
@@ -2477,7 +2479,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
    if (Is256Bit) {
      const auto GoverningPredicate = PRED_TMP_32B.Zeroing();
      const auto OffsetScaled = Offset / 32;
-@@ -2540,6 +2894,15 @@ DEF_OP(VStoreNonTemporalPair) {
+@@ -2553,6 +2907,15 @@ DEF_OP(VStoreNonTemporalPair) {
    const auto MemReg = GetReg(Op->Addr);
    const auto Offset = Op->Offset;
  
@@ -2493,7 +2495,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
    stnp(ValueLow.Q(), ValueHigh.Q(), MemReg, Offset);
  }
  
-@@ -2555,6 +2918,12 @@ DEF_OP(VLoadNonTemporal) {
+@@ -2568,6 +2931,12 @@ DEF_OP(VLoadNonTemporal) {
    const auto MemReg = GetReg(Op->Addr);
    const auto Offset = Op->Offset;
  
@@ -2507,7 +2509,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3
      const auto GoverningPredicate = PRED_TMP_32B.Zeroing();
      const auto OffsetScaled = Offset / 32;
 diff --git a/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp b/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
-index b03ed7db8b89c288c796021827d58324e3fb1981..0635b6f1143fda41f10fd2ef36551818349cc6f2 100644
+index 7d71c91799cab051698f6f8767a122b8c1f01436..b43ff26c1b32b98475135fe30260bf4664d86e05 100644
 --- a/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
 @@ -14,6 +14,7 @@ $end_info$
@@ -2564,10 +2566,10 @@ index 0b230306f038539587cf7ca1e390fa516a520829..e7af8fa1bf8ed74c72e2ccfe8b66f99e
    // TODO: Rename this member to avoid confusion with code caching
    CachedCodePages.clear();
 diff --git a/FEXCore/Source/Interface/Core/LookupCache.h b/FEXCore/Source/Interface/Core/LookupCache.h
-index bf958d80beb5beaf33e34d5cb0cf60051dab254f..eeb3eb17a450127e468b6763528e9904bae3c8e1 100644
+index 391d48560dfd7dce7ab5c92307f83c27860376c5..dd9ce8ef8c19a9f5e6b50fef8d8bb1ac78c0dc0a 100644
 --- a/FEXCore/Source/Interface/Core/LookupCache.h
 +++ b/FEXCore/Source/Interface/Core/LookupCache.h
-@@ -303,7 +303,7 @@ public:
+@@ -312,7 +312,7 @@ public:
      // Do L1
      auto& L1Entry = reinterpret_cast<LookupCacheEntry*>(L1Pointer)[Address & L1PointerMask];
      if (L1Entry.GuestCode == Address) {
@@ -2576,7 +2578,7 @@ index bf958d80beb5beaf33e34d5cb0cf60051dab254f..eeb3eb17a450127e468b6763528e9904
        // Leave L1Entry.HostCode as is, so that concurrent lookups won't read a null pointer
        // This is a soft guarantee for cross thread invalidation, as atomics are not used
        // and it hasn't been thoroughly tested
-@@ -445,6 +445,15 @@ private:
+@@ -458,6 +458,15 @@ private:
    uintptr_t L1Pointer;
    uintptr_t L1PointerMask;
  
@@ -2593,10 +2595,10 @@ index bf958d80beb5beaf33e34d5cb0cf60051dab254f..eeb3eb17a450127e468b6763528e9904
  
    // Start with 8k entries in L1 to give 128KB of L1 cache to each thread.
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 31f9eddc09274d28c74201068c0ba436f9fb069c..7f2fa97525301235e9f37524e4abae1370dec08c 100644
+index 8dc605ca7adeb46d9a78c48026b0db89594f5d56..23c3ee633c185950797b74e67bf18fa01e2e2911 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -69,6 +69,29 @@ void OpDispatchBuilder::SyscallOp(OpcodeArgs, bool IsSyscallInst) {
+@@ -40,6 +40,29 @@ void OpDispatchBuilder::SyscallOp(OpcodeArgs, bool IsSyscallInst) {
    CalculateDeferredFlags();
  
    const auto GPRSize = GetGPROpSize();
@@ -2626,7 +2628,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7f2fa97525301235e9f37524e4abae13
    auto NewRIP = GetRelocatedPC(Op, -Op->InstSize);
    _StoreContextGPR(GPRSize, NewRIP, offsetof(FEXCore::Core::CPUState, rip));
  
-@@ -109,6 +132,12 @@ void OpDispatchBuilder::SyscallOp(OpcodeArgs, bool IsSyscallInst) {
+@@ -62,6 +85,12 @@ void OpDispatchBuilder::SyscallOp(OpcodeArgs, bool IsSyscallInst) {
  }
  
  void OpDispatchBuilder::ThunkOp(OpcodeArgs) {
@@ -2639,7 +2641,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7f2fa97525301235e9f37524e4abae13
    const auto GPRSize = GetGPROpSize();
    uint8_t* sha256 = (uint8_t*)(Op->PC + 2);
  
-@@ -216,6 +245,10 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
+@@ -169,6 +198,10 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
  }
  
  void OpDispatchBuilder::CallbackReturnOp(OpcodeArgs) {
@@ -2650,7 +2652,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7f2fa97525301235e9f37524e4abae13
    const auto GPRSize = GetGPROpSize();
    // Store the new RIP
    _CallbackReturn();
-@@ -498,7 +531,7 @@ void OpDispatchBuilder::LEAVEOp(OpcodeArgs) {
+@@ -460,7 +493,7 @@ void OpDispatchBuilder::LEAVEOp(OpcodeArgs) {
    const auto OperandSize = (Op->Flags & FEXCore::X86Tables::DecodeFlags::FLAG_OPERAND_SIZE) ? OpSize::i16Bit : GPRSize;
  
    // First we move RBP in to RSP and then behave effectively like a pop
@@ -2659,7 +2661,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7f2fa97525301235e9f37524e4abae13
    auto NewGPR = Pop(OperandSize, SP);
  
    // Store the new stack pointer
-@@ -1287,6 +1320,10 @@ void OpDispatchBuilder::MOVSegOp(OpcodeArgs, bool ToSeg) {
+@@ -1274,6 +1307,10 @@ void OpDispatchBuilder::MOVSegOp(OpcodeArgs, bool ToSeg) {
        if (!Is64BitMode) {
          _StoreContextGPR(OpSize::i16Bit, Src, offsetof(FEXCore::Core::CPUState, gs_idx));
          UpdatePrefixFromSegment(Src, FEXCore::X86Tables::DecodeFlags::FLAG_GS_PREFIX);
@@ -2670,7 +2672,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7f2fa97525301235e9f37524e4abae13
        } else {
          LogMan::Msg::EFmt("We don't support modifying GS selector in 64bit mode!");
          DecodeFailure = true;
-@@ -1297,6 +1334,10 @@ void OpDispatchBuilder::MOVSegOp(OpcodeArgs, bool ToSeg) {
+@@ -1284,6 +1321,10 @@ void OpDispatchBuilder::MOVSegOp(OpcodeArgs, bool ToSeg) {
        if (!Is64BitMode) {
          _StoreContextGPR(OpSize::i16Bit, Src, offsetof(FEXCore::Core::CPUState, fs_idx));
          UpdatePrefixFromSegment(Src, FEXCore::X86Tables::DecodeFlags::FLAG_FS_PREFIX);
@@ -2681,7 +2683,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7f2fa97525301235e9f37524e4abae13
        } else {
          LogMan::Msg::EFmt("We don't support modifying FS selector in 64bit mode!");
          DecodeFailure = true;
-@@ -2992,7 +3033,7 @@ void OpDispatchBuilder::EnterOp(OpcodeArgs) {
+@@ -3003,7 +3044,7 @@ void OpDispatchBuilder::EnterOp(OpcodeArgs) {
  
    const auto PushValue = [&](IR::OpSize Size, Ref Src) -> Ref {
      auto OldSP = LoadGPRRegister(X86State::REG_RSP);
@@ -2690,7 +2692,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7f2fa97525301235e9f37524e4abae13
  
      // Store the new stack pointer
      StoreGPRRegister(X86State::REG_RSP, NewSP);
-@@ -3353,6 +3394,74 @@ void OpDispatchBuilder::CMPSOp(OpcodeArgs) {
+@@ -3364,6 +3405,74 @@ void OpDispatchBuilder::CMPSOp(OpcodeArgs) {
      } else {
        StoreGPRRegister(X86State::REG_RSI, Dest_RSI, AddrSize);
      }
@@ -2765,7 +2767,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7f2fa97525301235e9f37524e4abae13
    } else {
      // Calculate flags early.
      CalculateDeferredFlags();
-@@ -4195,6 +4304,12 @@ void OpDispatchBuilder::CheckLegacySegmentWrite(Ref NewNode, uint32_t SegmentReg
+@@ -4206,6 +4315,12 @@ void OpDispatchBuilder::CheckLegacySegmentWrite(Ref NewNode, uint32_t SegmentReg
  }
  
  void OpDispatchBuilder::UpdatePrefixFromSegment(Ref Segment, uint32_t SegmentReg) {
@@ -2778,7 +2780,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7f2fa97525301235e9f37524e4abae13
    // Use BFE to extract the selector index in bits [15,3] of the segment register.
    // In some cases the upper 16-bits of the 32-bit GPR contain garbage to ignore.
    auto GDT = _Bfe(OpSize::i32Bit, 1, 2, Segment);
-@@ -4780,7 +4895,9 @@ void OpDispatchBuilder::INTOp(OpcodeArgs) {
+@@ -4817,7 +4932,9 @@ void OpDispatchBuilder::INTOp(OpcodeArgs) {
      if (CTX->HostFeatures.HostType == FEXCore::HostFeatures::HostTypeEnum::Linux) {
        constexpr uint8_t SYSCALL_LITERAL = 0x80;
        if (Literal == SYSCALL_LITERAL) {
@@ -2789,7 +2791,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7f2fa97525301235e9f37524e4abae13
            LogMan::Msg::EFmt("[Unsupported] Trying to execute 32-bit syscall from a 64-bit process.");
            UnhandledOp(Op);
            return;
-@@ -4808,6 +4925,17 @@ void OpDispatchBuilder::INTOp(OpcodeArgs) {
+@@ -4845,6 +4962,17 @@ void OpDispatchBuilder::INTOp(OpcodeArgs) {
        }
      }
  
@@ -2808,10 +2810,10 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7f2fa97525301235e9f37524e4abae13
      Reason.Signal = Core::FAULT_SIGSEGV;
      // GP is raised when task-gate isn't setup to be valid
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index e2239ae0ed3ae550a0c2ff6cc8efc268e6d25c83..ff317b73759503d524f8db0855f22d6a8b48f239 100644
+index 71766e01005e140b7fc73732c1b26d0761c75510..67db0c3073103299404a25bca2800c6ce1126a73 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -342,6 +342,10 @@ public:
+@@ -343,6 +343,10 @@ public:
    void BeginFunction(uint64_t RIP, const fextl::vector<FEXCore::Frontend::Decoder::DecodedBlocks>* Blocks, uint32_t NumInstructions,
                       bool Is64BitMode, bool MonoBackpatcherBlock);
    void Finalize();
@@ -2822,7 +2824,7 @@ index e2239ae0ed3ae550a0c2ff6cc8efc268e6d25c83..ff317b73759503d524f8db0855f22d6a
  
    // Dispatch builder functions
  #define OpcodeArgs [[maybe_unused]] FEXCore::X86Tables::DecodedOp Op
-@@ -2566,13 +2570,47 @@ private:
+@@ -2621,13 +2625,47 @@ private:
      return _StoreMemPairAutoTSO(RegClass::FPR, Size, A, Value1, Value2, Align);
    }
  
@@ -2871,7 +2873,7 @@ index e2239ae0ed3ae550a0c2ff6cc8efc268e6d25c83..ff317b73759503d524f8db0855f22d6a
      Ref SP = _RMWHandle(LoadGPRRegister(X86State::REG_RSP));
      Ref Value = _AllocateGPR(false);
  
-@@ -2592,7 +2630,7 @@ private:
+@@ -2647,7 +2685,7 @@ private:
  
    void Push(IR::OpSize Size, Ref Value) {
      auto OldSP = LoadGPRRegister(X86State::REG_RSP);
@@ -2881,10 +2883,10 @@ index e2239ae0ed3ae550a0c2ff6cc8efc268e6d25c83..ff317b73759503d524f8db0855f22d6a
      FlushRegisterCache();
    }
 diff --git a/FEXCore/Source/Interface/Core/SharedCodeBufferManager.cpp b/FEXCore/Source/Interface/Core/SharedCodeBufferManager.cpp
-index f3171d4ebfce38ae8978f6a822f0a2966488ba75..e479e0c919f11876380ff3d2bb664b4f7967987e 100644
+index eee5023649e327b86a63dc63a7472585eac9c103..30c9814f28615902eea1035f62466d7d233c5c83 100644
 --- a/FEXCore/Source/Interface/Core/SharedCodeBufferManager.cpp
 +++ b/FEXCore/Source/Interface/Core/SharedCodeBufferManager.cpp
-@@ -37,7 +37,7 @@ CodeBuffer::CodeBuffer(size_t Size)
+@@ -42,7 +42,7 @@ CodeBuffer::CodeBuffer(size_t Size, bool ShouldBeNamed)
  }
  
  CodeBuffer::~CodeBuffer() {
@@ -2892,7 +2894,7 @@ index f3171d4ebfce38ae8978f6a822f0a2966488ba75..e479e0c919f11876380ff3d2bb664b4f
 +  FEXCore::Allocator::VirtualFreeExecutable(Ptr, AllocatedSize);
  }
  
- fextl::shared_ptr<CodeBuffer> SharedCodeBufferManager::AllocateNew(size_t Size) {
+ SharedCodeBufferManager::SharedCodeBufferManager() {
 diff --git a/FEXCore/Source/Interface/IR/PassManager.cpp b/FEXCore/Source/Interface/IR/PassManager.cpp
 index 5d3bcec8bc6427eaddf47a28dc9ee1bbff771789..0f289a2fcdd0ae7b5ea7aa828213692c78174ab5 100644
 --- a/FEXCore/Source/Interface/IR/PassManager.cpp
@@ -2992,7 +2994,7 @@ index c47998aec874f8696c71c5acb618cb1f3d0ebef0..503fe3fb933182c51c55e20e1086ddbc
  }
  } // namespace FEXCore::IR
 diff --git a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
-index a53ce14e03851bf25fd4903bf453f3ef987edea8..c50612e2e53ad259b63d27f0be537272cc65ab03 100644
+index f205097a1e0edddf9b889fc185ed2ec25571c6eb..ad03d5745507109a1ff8bfb9ffcc55a734c07f91 100644
 --- a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 +++ b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 @@ -151,6 +151,9 @@ private:
@@ -3045,7 +3047,7 @@ index a53ce14e03851bf25fd4903bf453f3ef987edea8..c50612e2e53ad259b63d27f0be537272
    }
    return TopValueCache[Offset];
  }
-@@ -614,8 +628,12 @@ void X87StackOptimization::FlushCachedRegs() {
+@@ -618,8 +632,12 @@ void X87StackOptimization::FlushCachedRegs() {
    auto Size = ReducedPrecisionMode ? OpSize::i64Bit : OpSize::i128Bit;
    for (size_t i = 0; i < FlushValuesPending.size(); i++) {
      if (FlushValuesPending[i]) {
@@ -3060,7 +3062,7 @@ index a53ce14e03851bf25fd4903bf453f3ef987edea8..c50612e2e53ad259b63d27f0be537272
        // store
        FlushValuesPending[i] = false;
      }
-@@ -1222,6 +1240,12 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -1221,6 +1239,12 @@ void X87StackOptimization::Run(IREmitter* Emit) {
  
        default: LOGMAN_THROW_A_FMT(false, "IROp was expected to be lowered");
        }
@@ -3073,7 +3075,7 @@ index a53ce14e03851bf25fd4903bf453f3ef987edea8..c50612e2e53ad259b63d27f0be537272
        IREmit->Remove(CodeNode);
      }
  
-@@ -1235,7 +1259,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -1234,7 +1258,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
    }
  }
  
@@ -3086,7 +3088,7 @@ index a53ce14e03851bf25fd4903bf453f3ef987edea8..c50612e2e53ad259b63d27f0be537272
  }
  } // namespace FEXCore::IR
 diff --git a/FEXCore/Source/Utils/Allocator.cpp b/FEXCore/Source/Utils/Allocator.cpp
-index 2060f269cf94978fcbdd7cca32e161763284aa57..fd7178d302f72851726df468d10a74ccfde3934e 100644
+index 18495ce6e0be66b9582b3ddac28bf32108143e8c..ecd27404fd9f4218fa564c1cfd800cfb36f09bff 100644
 --- a/FEXCore/Source/Utils/Allocator.cpp
 +++ b/FEXCore/Source/Utils/Allocator.cpp
 @@ -23,8 +23,10 @@
@@ -3138,7 +3140,7 @@ index 2060f269cf94978fcbdd7cca32e161763284aa57..fd7178d302f72851726df468d10a74cc
  MMAP_Hook mmap {::mmap};
  MUNMAP_Hook munmap {::munmap};
 diff --git a/FEXCore/include/FEXCore/Core/Context.h b/FEXCore/include/FEXCore/Core/Context.h
-index ec61b90bf82769e34b42bb229d7781ecb98d3853..b436d9b2d0523aa6af59ec0aa546b74a59438db7 100644
+index 8aa448e2e68de002ba7e57da6888fcd024c79e39..693374099f2da4b8883b70fa0d2f3f64288398d9 100644
 --- a/FEXCore/include/FEXCore/Core/Context.h
 +++ b/FEXCore/include/FEXCore/Core/Context.h
 @@ -68,6 +68,25 @@ public:
@@ -3168,7 +3170,7 @@ index ec61b90bf82769e34b42bb229d7781ecb98d3853..b436d9b2d0523aa6af59ec0aa546b74a
     * @brief Executes the supplied thread context on the current thread until a return is requested
     */
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..1d996d1c2a1cc94845582ebf0c4bf68eb0f3a310 100644
+index 80514bfdcddfe70b09d08b2961d68540f7e27ed6..ba14e41aaec27aa97d91f0c456272c237f091466 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
 @@ -334,6 +334,72 @@ struct FallbackABIInfo {
@@ -3244,7 +3246,7 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..1d996d1c2a1cc94845582ebf0c4bf68e
  struct JITPointers {
  
    // Process specific
-@@ -355,6 +421,18 @@ struct JITPointers {
+@@ -356,6 +422,18 @@ struct JITPointers {
    // Handles returning/calling ARM64EC code from the JIT, expects the target PC in TMP3
    uint64_t ExitFunctionEC {};
  
@@ -3263,7 +3265,7 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..1d996d1c2a1cc94845582ebf0c4bf68e
    FallbackABIInfo FallbackHandlerPointers[FallbackHandlerIndex::OPINDEX_MAX];
    uint64_t NamedVectorConstantPointers[FEXCore::IR::NamedVectorConstant::NAMED_VECTOR_CONST_POOL_MAX];
    uint64_t IndexedNamedVectorConstantPointers[FEXCore::IR::IndexNamedVectorConstant::INDEXED_NAMED_VECTOR_MAX];
-@@ -432,6 +510,42 @@ struct CpuStateFrame {
+@@ -435,6 +513,42 @@ struct CpuStateFrame {
    uint32_t SuspendDoorbell {};
  #endif
  
@@ -3307,10 +3309,10 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..1d996d1c2a1cc94845582ebf0c4bf68e
    JITPointers Pointers;
  };
 diff --git a/FEXCore/include/FEXCore/HLE/SyscallHandler.h b/FEXCore/include/FEXCore/HLE/SyscallHandler.h
-index d1f4decd75f0ae61432c7a4ae4b90386e472ea46..bc397bb363fec5cde2c6940301c0e4f097da5d79 100644
+index 0ba0218e31cc6e95cc13174fd334d0a1f8de7570..0af77a40a0a1487bd4d800818e4032b75136b573 100644
 --- a/FEXCore/include/FEXCore/HLE/SyscallHandler.h
 +++ b/FEXCore/include/FEXCore/HLE/SyscallHandler.h
-@@ -44,6 +44,9 @@ struct ExecutableRangeInfo {
+@@ -21,6 +21,9 @@ struct ExecutableRangeInfo {
    uint64_t Base;
    uint64_t Size;
    bool Writable;
@@ -3321,7 +3323,7 @@ index d1f4decd75f0ae61432c7a4ae4b90386e472ea46..bc397bb363fec5cde2c6940301c0e4f0
  
  class SyscallHandler;
 diff --git a/FEXCore/include/FEXCore/Utils/AllocatorHooks.h b/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
-index bddd53da56b81d69a3c9fdff770f6f8c03e77df2..fb202288513215a2915e33dccdfc8aa172c863d1 100644
+index 3d88d07e0fba2794b62f989a9080ed6b0c83f447..50a210e15f7a5436da6970ce786431db9a012299 100644
 --- a/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
 +++ b/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
 @@ -8,6 +8,8 @@

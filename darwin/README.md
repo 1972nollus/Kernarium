@@ -241,6 +241,10 @@ and 8 GiB the largest, x86 multi-core Geekbench, peaked at a seventh of its
 peaked at 47% of 358 MiB (G282). A census build reports the budget, the bytes
 charged and the reliefs on every `E` record.
 
+The budget in effect is also the gadget-cache term of the host GPU's budget
+([architecture](../docs/architecture.md#memory-and-executable-code)): the
+cache and the GPU's memory are planned from the same process limit.
+
 x86 gadget executors share an address space's translations the same way, and
 `DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private. A link's pair and the
 guest bounds in front of every stream let one paired store retarget a link

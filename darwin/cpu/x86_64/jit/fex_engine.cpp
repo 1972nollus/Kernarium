@@ -121,8 +121,8 @@ void initialize_fex_once()
 {
 	using ::uml::platform::ArmFeature;
 	FEXCore::HostFeatures features{};
-	features.DCacheLineSize = 64;
-	features.ICacheLineSize = 64;
+	/* The data cache line is 4 << DCacheLineLog2 bytes: 64. */
+	features.DCacheLineLog2 = 4;
 	features.SupportsAES = host.has(ArmFeature::aes);
 	features.SupportsCRC = host.has(ArmFeature::crc32);
 	features.SupportsAtomics = host.has(ArmFeature::lse);
@@ -202,13 +202,11 @@ public:
 	explicit EmbeddedSyscallHandler(Space &space) noexcept
 		: space_{space}
 	{
-		OSABI = FEXCore::HLE::SyscallOSABI::OS_GENERIC;
 	}
 
-	uint64_t HandleSyscall(Core::CpuStateFrame *, FEXCore::HLE::SyscallArguments *) override
+	void HandleSyscall(Core::CpuStateFrame *) override
 	{
 		/* Embedded SYSCALL leaves the dispatch; this is never reached. */
-		return static_cast<uint64_t>(-ENOSYS);
 	}
 
 	/* The decoder asks for each guest page before it reads its bytes. */
@@ -1470,7 +1468,7 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode, boo
 		space->context->SetEmbedderSegmented((fp_mode & space_segmented) != 0);
 		if (!space->context->InitCore())
 			return nullptr;
-		space->thread = space->context->CreateThread(0, 0, nullptr);
+		space->thread = space->context->CreateThread();
 	}
 	if (space->thread == nullptr)
 		return nullptr;

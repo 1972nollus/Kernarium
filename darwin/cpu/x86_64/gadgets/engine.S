@@ -103,4 +103,6 @@
 #include "engine/x87_transcendental.inc"
 	gadget_group system
 #include "engine/system.inc"
+	gadget_group vector_dot
+#include "engine/vector_dot.inc"
 	gadget_region_end

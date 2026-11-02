@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <new>
 #include <optional>
@@ -37,6 +38,8 @@ public:
         destroy_context,
         submit,
         create_resource,
+        /* the host driver has no room for the resource's storage */
+        create_resource_refused,
         transfer,
         read_resource,
         fence,
@@ -71,6 +74,11 @@ public:
     void resetGuestSession() noexcept override
     {
         ++guestSessionResetCount;
+    }
+
+    void setGuestScanoutActive(bool active) noexcept override
+    {
+        guestScanoutActive = active;
     }
 
     void clear() noexcept override
@@ -175,6 +183,8 @@ public:
     {
         if (reject(Operation::create_resource))
             return EIO;
+        if (reject(Operation::create_resource_refused))
+            return ENOMEM;
         try {
             resources.insert(resource.resourceId);
             nativeTextures[resource.resourceId] = VirglRenderer::NativeTexture {
@@ -435,6 +445,17 @@ public:
         return rendererPendingWork;
     }
 
+    [[nodiscard]] std::optional<std::chrono::steady_clock::duration>
+        nextIdleTrimDelay() const noexcept override
+    {
+        return idleTrimDelay;
+    }
+
+    void trimIdleContexts() noexcept override
+    {
+        ++idleTrimCount;
+    }
+
     [[nodiscard]] int contextFenceStatus(
         std::uint32_t contextId,
         std::uint32_t ringIndex,
@@ -587,6 +608,7 @@ public:
     unsigned guestScanoutChangeCount {};
     bool guestScanoutChangeAccepted {true};
     unsigned guestSessionResetCount {};
+    bool guestScanoutActive {};
     std::uint32_t lastTextureResource {};
     std::uint32_t lastUnmappedResource {};
     std::uint32_t lastBlobScanoutWidth {};
@@ -602,6 +624,8 @@ public:
     unsigned fenceCount {};
     unsigned rendererPollCount {};
     bool rendererPendingWork {};
+    std::optional<std::chrono::steady_clock::duration> idleTrimDelay;
+    unsigned idleTrimCount {};
     std::vector<std::uint64_t> contextFenceCookies;
     VirtioGpuDevice::DeferredFence lastFence {};
     unsigned unrefResourceCount {};
@@ -1338,6 +1362,17 @@ void rendererExecutionFailuresPreserveDeviceState()
         protocol::GpuResponse::errorInvalidParameter);
     require(!dependencies.resources.contains(resource.resourceId));
     requireOk(device, requestBytes(resource));
+
+    /* A host driver with no room for a resource's storage is told apart from
+     * a resource described wrongly, so the guest can fail the creation with
+     * -ENOMEM; nothing of the refused resource stays behind. */
+    auto refused = create3d(703, 4, 4);
+    dependencies.rejectNext(
+        FakeGpuDependencies::Operation::create_resource_refused);
+    requireResponse(device, requestBytes(refused),
+        protocol::GpuResponse::errorOutOfMemory);
+    require(!dependencies.resources.contains(refused.resourceId));
+    requireOk(device, requestBytes(refused));
 
     const auto attachRequest = attachBackingRequest(
         resource.resourceId, guestMemory.size());
@@ -2110,6 +2145,49 @@ void setScanoutReplyFailureDoesNotCommitAllocation()
     require(dependencies.guestSessionResetCount == 1);
 }
 
+/* The guest's display is on while it has a scanout bound: the application
+ * waits for an Android screen to go off by asking, and the guest's screen turns
+ * off by unbinding the scanout from its disabled CRTC. A bind the device
+ * refused is no scanout, and a reset takes it away with the rest. */
+void theGuestScanoutFlagFollowsTheScanout()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+    const auto create = create3d(0x77);
+    requireOk(device, requestBytes(create));
+    require(!dependencies.guestScanoutActive);
+
+    auto scanout = newRequest<protocol::GpuSetScanout>(GpuCommand::setScanout);
+    scanout.rectangle = {.x = 0, .y = 0, .width = 4, .height = 4};
+    scanout.scanoutId = protocol::primaryScanoutId;
+    scanout.resourceId = 999;
+    requireResponse(device, requestBytes(scanout),
+        protocol::GpuResponse::errorInvalidResource);
+    require(!dependencies.guestScanoutActive);
+
+    scanout.resourceId = create.resourceId;
+    requireOk(device, requestBytes(scanout));
+    require(dependencies.guestScanoutActive);
+
+    /* The screen goes off. */
+    scanout.resourceId = protocol::invalidResourceId;
+    requireOk(device, requestBytes(scanout));
+    require(!dependencies.guestScanoutActive);
+
+    /* A refused rebind leaves the display off. */
+    scanout.resourceId = 999;
+    requireResponse(device, requestBytes(scanout),
+        protocol::GpuResponse::errorInvalidResource);
+    require(!dependencies.guestScanoutActive);
+
+    /* It comes on again, and a reset ends it with the connection. */
+    scanout.resourceId = create.resourceId;
+    requireOk(device, requestBytes(scanout));
+    require(dependencies.guestScanoutActive);
+    device.reset();
+    require(!dependencies.guestScanoutActive);
+}
+
 /* A Virgl scanout allocates its readback staging at the first flush that
  * reads back, which is therefore where running out of memory is reported. The
  * staging serves every later readback of that scanout and of page flips at
@@ -2398,6 +2476,13 @@ void venusBlobsAndFencesUseStandardWireState()
     require(device.pollRenderer() == 0);
     require(dependencies.rendererPollCount == 1);
     dependencies.rendererPendingWork = false;
+    /* The service asks the renderer when a quiet context could be trimmed and
+     * calls it when that time has come; the device only forwards both. */
+    require(!device.nextIdleTrimDelay().has_value());
+    dependencies.idleTrimDelay = std::chrono::milliseconds(250);
+    require(device.nextIdleTrimDelay() == std::chrono::milliseconds(250));
+    device.trimIdleContexts();
+    require(dependencies.idleTrimCount == 1);
 
     auto invalidRingSubmit = submit;
     invalidRingSubmit.header.ringIndex =
@@ -2571,6 +2656,8 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
     require(dependencies.lastGuestScanoutWidth == scanout.rectangle.width);
     require(dependencies.lastGuestScanoutHeight == scanout.rectangle.height);
     require(dependencies.lastTextureResource == scanout.resourceId);
+    /* A blob scanout turns the guest's display on as well. */
+    require(dependencies.guestScanoutActive);
     require(dependencies.lastBlobScanoutWidth == scanout.width);
     require(dependencies.lastBlobScanoutHeight == scanout.height);
     require(dependencies.lastBlobScanoutFormat == scanout.format);
@@ -3374,6 +3461,7 @@ int main()
     backingRangesAndAttachStateAreValidated();
     failedTransferDoesNotPartiallyCommitPixels();
     setScanoutReplyFailureDoesNotCommitAllocation();
+    theGuestScanoutFlagFollowsTheScanout();
     readbackStagingIsAllocatedByTheFirstReadback();
     unanswerableCapabilityQueriesFailOnlyThemselves();
     venusBlobsAndFencesUseStandardWireState();

@@ -16,7 +16,7 @@ CF set, and OF, SF, ZF, AF and PF clear.
  3 files changed, 30 insertions(+)
 
 diff --git a/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp b/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
-index 0635b6f1143fda41f10fd2ef36551818349cc6f2..f2fcc127a65c18e66f53d4dac1d1749f9e7f7a9c 100644
+index b43ff26c1b32b98475135fe30260bf4664d86e05..94124b20f7b3ca2ffe2f86b5f8d2407db9075b85 100644
 --- a/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
 @@ -324,6 +324,24 @@ DEF_OP(ProcessorID) {
@@ -41,14 +41,14 @@ index 0635b6f1143fda41f10fd2ef36551818349cc6f2..f2fcc127a65c18e66f53d4dac1d1749f
 +    return;
 +  }
 +
-   mrs(GetReg(Node), Op->GetReseeded ? ARMEmitter::SystemRegister::RNDRRS : ARMEmitter::SystemRegister::RNDR);
- }
- 
+   if (CTX->HostFeatures.SupportsRAND) {
+     mrs(GetReg(Node), Op->GetReseeded ? ARMEmitter::SystemRegister::RNDRRS : ARMEmitter::SystemRegister::RNDR);
+     return;
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 7249b6badb67e83d4deb714762738629d433ff3f..272f638e40a8b7cbb69c91545d7c90bcb686c19f 100644
+index 727221fcd01bf5d8987c0e7065b13b48482f6115..4bb41525f5283c91c6531f9ac31634cd2edcc1b7 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -5229,6 +5229,16 @@ void OpDispatchBuilder::CRC32(OpcodeArgs) {
+@@ -5265,6 +5265,16 @@ void OpDispatchBuilder::CRC32(OpcodeArgs) {
  }
  
  void OpDispatchBuilder::RDRANDOp(OpcodeArgs, bool Reseed) {
@@ -62,14 +62,14 @@ index 7249b6badb67e83d4deb714762738629d433ff3f..272f638e40a8b7cbb69c91545d7c90bc
 +    return;
 +  }
 +
-   if (!CTX->HostFeatures.SupportsRAND) {
+   if (!CTX->HostFeatures.SupportsRAND && !CTX->SoftwareRNGEnabled()) {
      UnimplementedOp(Op);
      return;
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 1d996d1c2a1cc94845582ebf0c4bf68eb0f3a310..133c95f1ccae5d287119fd1b4741102bec6b8adb 100644
+index ba14e41aaec27aa97d91f0c456272c237f091466..f7ec970550dcfa2128a435a9c694b62e4391b1d1 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
-@@ -432,6 +432,8 @@ struct JITPointers {
+@@ -433,6 +433,8 @@ struct JITPointers {
    uint64_t EmbedderTLBMissHelper {};
    // uint64_t (*)(CpuStateFrame*, const EmbedderStringOp*): 0 on success, else the state is spilled and the fault recorded.
    uint64_t EmbedderStringHelper {};

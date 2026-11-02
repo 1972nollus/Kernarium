@@ -49,10 +49,10 @@ index ab60009bf2554263bd2ef232baf0bfbb08762e9e..84b56744f93d5d3d20e589cc658be52c
    const auto Host = EmbedderTranslate(Address, Size, Core::EMBEDDER_ACCESS_ATOMIC);
    auto* Site = EmbedderColdSites.back().get();
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index bf49b842f379e0e3e5910a25faed55ed2092e01b..10b992720787d7059f8e8bc473f0bfcf6b4bcccb 100644
+index cf5bf6d1a295874f3678263dfab08d71291635cb..bc25dd2d4c59db2429b4193c5e3a122ec09d6f06 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -1596,6 +1596,15 @@ void OpDispatchBuilder::CPUIDOp(OpcodeArgs) {
+@@ -1581,6 +1581,15 @@ void OpDispatchBuilder::CPUIDOp(OpcodeArgs) {
    StoreGPRRegister(X86State::REG_RBX, RBX);
    StoreGPRRegister(X86State::REG_RCX, RCX);
    StoreGPRRegister(X86State::REG_RDX, RDX);
@@ -69,10 +69,10 @@ index bf49b842f379e0e3e5910a25faed55ed2092e01b..10b992720787d7059f8e8bc473f0bfcf
  
  uint32_t OpDispatchBuilder::GetConstantShift(X86Tables::DecodedOp Op, bool Is1Bit) {
 diff --git a/FEXCore/Source/Interface/IR/IR.json b/FEXCore/Source/Interface/IR/IR.json
-index c966beb6ed074e681e86bfd684a32e5e021b0cf7..5f0d46c08677895dc02fa43cfbcd33478baf5bc4 100644
+index fa4f6846f8085789ce6f35ebf7ae7a9b231f5611..9c4e3d1e15cace91069c89a67bf1b53b409a69b8 100644
 --- a/FEXCore/Source/Interface/IR/IR.json
 +++ b/FEXCore/Source/Interface/IR/IR.json
-@@ -804,6 +804,14 @@
+@@ -806,6 +806,14 @@
          "HasSideEffects": true
        },
  
@@ -88,7 +88,7 @@ index c966beb6ed074e681e86bfd684a32e5e021b0cf7..5f0d46c08677895dc02fa43cfbcd3347
          "Desc": ["Does a 64 byte cacheline clear at the address specified",
                   "Only clears the data cachelines. Doesn't do any zeroing",
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index aa776c66e1739c82747287e3970a221149db752b..526055c95ffb723e2bad5593381aa188b9417492 100644
+index 617b47ffbf1f948da63ff6bff9f1cdb88f64db76..9cd4892e387e0631be032454172c31793fcf99df 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
 @@ -385,6 +385,11 @@ enum EmbedderExitReason : uint32_t {
