@@ -412,7 +412,7 @@ Simulator, plays a stream there and posts the audio-session notifications iOS
 posts when another app interrupts it (the Simulator never does), with hooks on
 the session's activation and its hint about other apps' audio and on the
 player's scheduling: playback must stop while interrupted without slowing the
-guest's clock, resume when the system lets the session resume or, with no
+guest's clock, resume when the system advises resuming or, with no advice or
 notification, when no other app plays, never take the session from an app that
 does, keep completing periods through a slow session activation, keep an
 interruption across the guest closing, resetting and reopening the stream, and

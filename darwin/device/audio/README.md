@@ -54,13 +54,16 @@ paces only the periods a sink discards. An interruption is the session
 becoming inactive with an interruption context; the app's own deactivations
 are not interruptions.
 
-The sink takes the session back when the system recommends resuming, whichever
-advice it carries, and, because iOS posts nothing when the interrupter simply
-stops or is killed, once no other app plays primary audio, asked once a second
-while the stream runs. It never takes the session from an app that still
-plays, except when the guest starts a stream at a moment nothing interrupts
-it: a stream that starts or resumes during an interruption, or a route change
-during one, joins the mute. Route changes otherwise restart the engine. The
+The sink takes the session back when the system recommends resuming, and,
+because iOS posts nothing when the interrupter simply stops or is killed, once
+no other app plays primary audio, asked once a second while the stream runs. A
+recommendation that does not advise resuming takes it back only if no other app
+plays: activating a playback session interrupts an app that plays, so that app
+keeps the session while the sink stays muted. It never takes the session from
+an app that still plays, except when the guest starts a stream at a moment
+nothing interrupts it: a stream that starts or resumes during an interruption,
+or a route change during one, joins the mute. Route changes otherwise restart
+the engine. The
 interruption belongs to the session, not to the stream: closing the stream,
 resetting the device, or the guest suspending and resuming (which tears the
 stream down and sets it up again) leaves it in place, so the new stream joins

@@ -616,13 +616,42 @@ void interruptionMutesAndResumes()
     seen = stream.window(400ms, 1000ms);
     check(seen.scheduled == 0, "a second interruption stops playback",
         seen.text());
-    postInterruptionEnded(false);
-    seen = stream.window(400ms, 1500ms);
-    check(seen.playing(),
-        "an end that does not advise resuming resumes playback too",
-        seen.text());
 
+    // The end does not advise resuming and the interrupter still plays.
+    // Activating a playback session interrupts such an app, so the sink
+    // stays muted, keeps the guest's clock, and takes no session.
+    mark = activations.load();
+    postInterruptionEnded(false);
+    seen = stream.window(400ms, 4000ms);
+    check(seen.muted(),
+        "an end that does not advise resuming leaves the sink muted while "
+        "another app plays",
+        seen.text());
+    check(activations.load() == mark,
+        "and the sink takes no session from the app that plays", seen.text());
+    check(stream.healthy(), "the muted sink refuses nothing");
+    // The app stops: the hint poll takes the session back.
     otherAudioPlaying = false;
+    const auto polled = stream.untilPlayed(recoveryLimit);
+    check(polled < recoveryLimit && activations.load() == mark + 1,
+        "the sink resumes by one activation once that app has stopped",
+        std::to_string(polled.count()) + " ms");
+    seen = stream.window(300ms, 1500ms);
+    check(seen.playing() && stream.healthy(),
+        "and plays on without failing a period", seen.text());
+
+    // With no other app playing, an end that does not advise resuming
+    // resumes at once, well before the hint poll could.
+    postInterruptionBegan();
+    postInterruptionEnded(false);
+    const auto prompt = stream.untilPlayed(600ms);
+    check(prompt < 600ms,
+        "an end that does not advise resuming resumes at once when no other "
+        "app plays",
+        std::to_string(prompt.count()) + " ms");
+    seen = stream.window(300ms, 1500ms);
+    check(seen.playing(), "the stream plays after it", seen.text());
+
     mark = activations.load();
     postInterruptionEnded(true);
     seen = stream.window(400ms, 1500ms);

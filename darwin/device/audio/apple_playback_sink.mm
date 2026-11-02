@@ -44,6 +44,8 @@ struct NotificationFlags final {
 #if TARGET_OS_IPHONE
     std::atomic_bool interruptionBegan {};
     std::atomic_bool interruptionEnded {};
+    // A recommendation since the last look said to resume.
+    std::atomic_bool resumeRecommended {};
 #endif
 };
 
@@ -197,10 +199,9 @@ public:
         /* iOS 27 replaces the interruption notification with two: the session
          * becoming inactive, which also reports the app's own deactivations,
          * and the system's resumption recommendation. An interruption is a
-         * deactivation that carries an interruption context. The sink
-         * resumes on every recommendation, whether it says to resume or not:
-         * the guest cannot see a pause, so a sink left paused would strand
-         * its queued periods until the guest restarts the stream. */
+         * deactivation that carries an interruption context. Every
+         * recommendation ends the interruption; whether the sink takes the
+         * session back at once depends on its advice (see endInterruption). */
         deactivationObserver_ = [[NSNotificationCenter defaultCenter]
             addObserverForName:AVAudioSessionDidBecomeInactiveNotification
                         object:[AVAudioSession sharedInstance]
@@ -219,9 +220,19 @@ public:
             addObserverForName:AVAudioSessionResumptionRecommendationNotification
                         object:[AVAudioSession sharedInstance]
                          queue:nil
-                    usingBlock:^(NSNotification*) {
-                      if (const auto flags = weakNotifications.lock())
-                          flags->signal(flags->interruptionEnded);
+                    usingBlock:^(NSNotification* notification) {
+                      const auto flags = weakNotifications.lock();
+                      if (!flags)
+                          return;
+                      const AVAudioSessionResumptionContext* context =
+                          notification.userInfo[
+                              AVAudioSessionResumptionContextKey];
+                      if (context.recommendation ==
+                          AVAudioSessionResumptionRecommendationShouldResume) {
+                          flags->resumeRecommended.store(
+                              true, std::memory_order_release);
+                      }
+                      flags->signal(flags->interruptionEnded);
                     }];
 #endif
     }
@@ -646,7 +657,8 @@ private:
         }
         if (notifications_->interruptionEnded.exchange(
                 false, std::memory_order_acq_rel)) {
-            endInterruption();
+            endInterruption(notifications_->resumeRecommended.exchange(
+                false, std::memory_order_acq_rel));
         }
     }
 
@@ -724,9 +736,18 @@ private:
         interrupted_ = false;
     }
 
-    // The system says the interrupter let go.
-    void endInterruption()
+    /* The system says the interrupter let go. Taking the session back
+     * activates it, and a playback session that does not mix with others
+     * interrupts an app that plays, such as a call. So the sink takes it back
+     * at once only on the system's advice to resume. Without that advice an
+     * app that still plays keeps the session: the sink stays muted, its
+     * periods keep completing on the mute clock, and the next hint poll takes
+     * the session back once that app has stopped. A stream that is not running
+     * stays interrupted, and its next start asks the same question. */
+    void endInterruption(bool resumeRecommended)
     {
+        if (!resumeRecommended && session::otherAudioPlaying())
+            return;
         if (!muted_) {
             interrupted_ = false;
             return;
