@@ -16,6 +16,7 @@ Runtime/              runtime framework target, one per kernel flavour
 KernariumTests/       hosted application and runtime tests
 KernariumUITests/     UI tests
 KernariumAutomation/  long-lived UI-automation host for a connected device
+AudioInterrupter/     test-support application that takes the audio session
 scripts/              launch, packaging, bundle assembly, and automation tools
 ```
 
@@ -473,6 +474,11 @@ Each script documents its options in `--help` or its header:
   application's side (`docs/testing.md`); `run-ios-mac.sh` takes
   `--android-automation`, `--only-testing` and `--test-env` for it;
 - `ipad-automation.py` drives UI automation on a connected iPad through the
-  `KernariumAutomation` host; and
+  `KernariumAutomation` host;
+- `audio-interrupter.py` builds, installs, and launches `AudioInterrupter`, a
+  test-support application that plays digital silence on a non-mixable audio
+  session so that a run can interrupt Kernarium's audio without UI
+  automation (`launch` starts it in the foreground, `terminate --pid` ends it,
+  and `--help` lists its modes); and
 - `verify-signed-kernel-carrier.py` checks that a kernel image is safe for the
   signed carrier.
