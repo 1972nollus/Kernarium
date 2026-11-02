@@ -167,9 +167,6 @@ EXCLUDED_FEX_FEATURES = {
 EXCLUDED_FEX_SOURCES = {
     "VEX/vldmxcsr.asm": "expects FEX's MXCSR, which drops the exception flags "
     "LDMXCSR loads and x86 keeps; upstream disables it on native hosts",
-    "X87/FXAM_Simple.asm": "expects FEX's FXAM, which classifies zero as a "
-    "normal number where x86 classifies it as zero; upstream lists it as a "
-    "known failure on native hosts",
     "X87/X87MMXInteraction.asm": "expects FEX's tag word, which FNSAVE stores "
     "as valid for every full register where x86 tags zeros and special "
     "values; upstream lists it as a known failure on native hosts",
@@ -192,6 +189,12 @@ EXCLUDED_FEX_SOURCES = {
     "does not annotate with its 3DNOW feature; an Intel core and the guest "
     "raise #UD",
 }
+
+# The programs above that cite upstream's Known_Failures_host list. A program
+# on that list is excluded, and a program is excluded for that reason only
+# while it stays on the list, so an upstream fix cannot leave a stale
+# exclusion behind.
+KNOWN_FAILURE_HOST_SOURCES = frozenset({"X87/X87MMXInteraction.asm"})
 
 # HLT is the FEX test terminator and is not part of a case's userspace form.
 # The other instructions are either privileged or belong to Intel-only
@@ -1154,6 +1157,12 @@ def collect_fex_records(
                 Exclusion("fex", source, "upstream marks this source unsupported")
             )
             continue
+        listed_failure = bool(item.get("known_failure_host", False))
+        if listed_failure != (source in KNOWN_FAILURE_HOST_SOURCES):
+            fail(
+                "upstream's Known_Failures_host and the producer's "
+                f"exclusions disagree about {source}"
+            )
         if source in EXCLUDED_FEX_SOURCES:
             exclusions.append(Exclusion("fex", source, EXCLUDED_FEX_SOURCES[source]))
             continue

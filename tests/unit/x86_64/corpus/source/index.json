@@ -432,6 +432,10 @@
       "file": "fex-FEX_bugs.jsonl"
     },
     {
+      "name": "fex/FEX_bugs/SHLD_CF.asm",
+      "file": "fex-FEX_bugs.jsonl"
+    },
+    {
       "name": "fex/FEX_bugs/SHRD_OF.asm",
       "file": "fex-FEX_bugs.jsonl"
     },
@@ -516,6 +520,10 @@
       "file": "fex-FEX_bugs.jsonl"
     },
     {
+      "name": "fex/FEX_bugs/X87ModifySTP_C1.asm",
+      "file": "fex-FEX_bugs.jsonl"
+    },
+    {
       "name": "fex/FEX_bugs/XeSS_quadratic.asm",
       "file": "fex-FEX_bugs.jsonl"
     },
@@ -560,11 +568,39 @@
       "file": "fex-FEX_bugs.jsonl"
     },
     {
+      "name": "fex/FEX_bugs/f64_to_i32_precision.asm",
+      "file": "fex-FEX_bugs.jsonl"
+    },
+    {
+      "name": "fex/FEX_bugs/fcomi_flags.asm",
+      "file": "fex-FEX_bugs.jsonl"
+    },
+    {
+      "name": "fex/FEX_bugs/fincstp_tag_word.asm",
+      "file": "fex-FEX_bugs.jsonl"
+    },
+    {
       "name": "fex/FEX_bugs/fnsave_fnrstor_size.asm",
       "file": "fex-FEX_bugs.jsonl"
     },
     {
+      "name": "fex/FEX_bugs/fpatan_PopStackTag.asm",
+      "file": "fex-FEX_bugs.jsonl"
+    },
+    {
+      "name": "fex/FEX_bugs/fst_st0_tag_word.asm",
+      "file": "fex-FEX_bugs.jsonl"
+    },
+    {
+      "name": "fex/FEX_bugs/fxch_tag_word.asm",
+      "file": "fex-FEX_bugs.jsonl"
+    },
+    {
       "name": "fex/FEX_bugs/fxrstor_bug.asm",
+      "file": "fex-FEX_bugs.jsonl"
+    },
+    {
+      "name": "fex/FEX_bugs/fyl2x_PopStackTag.asm",
       "file": "fex-FEX_bugs.jsonl"
     },
     {
@@ -680,7 +716,15 @@
       "file": "fex-FEX_bugs.jsonl"
     },
     {
+      "name": "fex/FEX_bugs/x87_IE_sticky.asm",
+      "file": "fex-FEX_bugs.jsonl"
+    },
+    {
       "name": "fex/FEX_bugs/x87_fprem.asm",
+      "file": "fex-FEX_bugs.jsonl"
+    },
+    {
+      "name": "fex/FEX_bugs/x87_fxrstor_stack.asm",
       "file": "fex-FEX_bugs.jsonl"
     },
     {
@@ -5424,7 +5468,15 @@
       "file": "fex-VEX.jsonl"
     },
     {
+      "name": "fex/VEX/blsmsk_2.asm",
+      "file": "fex-VEX.jsonl"
+    },
+    {
       "name": "fex/VEX/blsr.asm",
+      "file": "fex-VEX.jsonl"
+    },
+    {
+      "name": "fex/VEX/blsr_2.asm",
       "file": "fex-VEX.jsonl"
     },
     {
@@ -6541,6 +6593,22 @@
     },
     {
       "name": "fex/VEX/vpcmpistrm_ranges.asm",
+      "file": "fex-VEX.jsonl"
+    },
+    {
+      "name": "fex/VEX/vpdpbusd.asm",
+      "file": "fex-VEX.jsonl"
+    },
+    {
+      "name": "fex/VEX/vpdpbusds.asm",
+      "file": "fex-VEX.jsonl"
+    },
+    {
+      "name": "fex/VEX/vpdpwssd.asm",
+      "file": "fex-VEX.jsonl"
+    },
+    {
+      "name": "fex/VEX/vpdpwssds.asm",
       "file": "fex-VEX.jsonl"
     },
     {
@@ -7929,6 +7997,10 @@
     },
     {
       "name": "fex/X87/FXAM_Push_Simple_2.asm",
+      "file": "fex-X87.jsonl"
+    },
+    {
+      "name": "fex/X87/FXAM_Simple.asm",
       "file": "fex-X87.jsonl"
     },
     {
@@ -9541,6 +9613,14 @@
     },
     {
       "name": "repository/addr32-eip-relative.s",
+      "file": "repository-cases.jsonl"
+    },
+    {
+      "name": "repository/avx-vnni-byte-dot-products-wrap-or-saturate.s",
+      "file": "repository-cases.jsonl"
+    },
+    {
+      "name": "repository/avx-vnni-word-dot-products-wrap-or-saturate.s",
       "file": "repository-cases.jsonl"
     },
     {
