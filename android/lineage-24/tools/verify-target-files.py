@@ -19,6 +19,7 @@ from pathlib import Path, PurePosixPath
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import android_image  # noqa: E402
+import default_wallpaper  # noqa: E402
 from release_common import BUILD_VARIANTS, configured_build_variant, sha256_path  # noqa: E402
 
 
@@ -209,6 +210,8 @@ REQUIRED_ENTRIES = {
     "SYSTEM_EXT/priv-app/Seedvault/Seedvault.apk",
     "SYSTEM_EXT/bin/kernarium_wifi_network.sh",
     "SYSTEM_EXT/etc/init/kernarium_wifi_network.rc",
+    "SYSTEM_EXT/bin/kernarium_reclaim_boot_apps.sh",
+    "SYSTEM_EXT/etc/init/kernarium_reclaim_boot_apps.rc",
     "SYSTEM_EXT/etc/selinux/system_ext_file_contexts",
     "SYSTEM_EXT/etc/selinux/system_ext_property_contexts",
     "SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil",
@@ -247,6 +250,8 @@ REQUIRED_ENTRIES = {
     "VENDOR/lib64/cuttlefish_net.so",
     # The Wi-Fi module's overlay: virt_wifi cannot randomize its MAC.
     "VENDOR/overlay/KernariumWifiOverlay.apk",
+    # The overlay that releases PinnerService's home app pin.
+    "VENDOR/overlay/KernariumPinnerOverlay.apk",
     *ABI_LIST_PROPERTY_FILES,
     *MESA_ELF_ENTRIES,
     *MESA_HAL_ENTRIES,
@@ -618,6 +623,50 @@ WIFI_NETWORK_TRANSITION = re.compile(
     rb"kernarium_wifi_network\)$",
     re.MULTILINE,
 )
+# Once boot has settled a script kills the cached processes of a reviewed list of apps the
+# system starts at boot (overlay/tools/kernarium_reclaim_boot_apps.sh), in a core domain of its
+# own on system_ext (overlay/sepolicy/system_ext/private). Their receivers and bindings stay;
+# only `cmd activity kill` runs on them, which kills nothing the system would not have chosen,
+# and never `kill-all` or `force-stop`, which cancel alarms and jobs. Each entry is a package
+# and the names of its processes.
+RECLAIM_SERVICE = ("kernarium_reclaim_boot_apps", "/system_ext/bin/kernarium_reclaim_boot_apps.sh")
+RECLAIM_TRIGGER = "property:sys.boot_completed=1"
+RECLAIM_SETTLE = "settle=120"
+RECLAIM_APPS = (
+    ("android.ext.services", (".adservices", "android.ext.services")),
+    ("com.android.federatedcompute.services", ("com.android.federatedcompute.services",)),
+    ("com.android.ondevicepersonalization.services",
+     ("com.android.ondevicepersonalization.services",)),
+    ("com.stevesoltys.seedvault", ("com.stevesoltys.seedvault",)),
+    ("org.calyxos.backup.contacts", ("org.calyxos.backup.contacts",)),
+    ("com.android.localtransport", ("com.android.localtransport",)),
+    ("com.android.rkpdapp", ("com.android.rkpdapp",)),
+    ("com.android.statementservice", ("com.android.statementservice",)),
+    ("com.android.healthconnect.controller", ("com.android.healthconnect.controller",)),
+)
+RECLAIM_SCRIPT_REQUIRED = (
+    "dumpsys activity lru",
+    'cmd activity kill --user 0 "$pkg"',
+    RECLAIM_SETTLE,
+)
+RECLAIM_SCRIPT_FORBIDDEN = (
+    "kill-all",
+    "force-stop",
+    "kill -9",
+    "kill -KILL",
+    "kill -s",
+    "pm disable",
+    "pm clear",
+    "pm uninstall",
+    "set-inactive",
+    "stop-app",
+)
+RECLAIM_LIST = re.compile(r"^reclaim_list='\n(.*?)^'$", re.MULTILINE | re.DOTALL)
+RECLAIM_TRANSITION = re.compile(
+    rb"^\(typetransition init(?:_[0-9]+)? kernarium_reclaim_boot_apps_exec process "
+    rb"kernarium_reclaim_boot_apps\)$",
+    re.MULTILINE,
+)
 # The partition the host grew is filled on every boot, once /data is mounted
 # (init.vendor.rc says why): the kernel's online resize needs neither a fsck nor
 # a recorded check. resize2fs runs as root with the group of /data's owner, so
@@ -652,6 +701,10 @@ UML_INIT_DENSITY_COPY = "setprop ro.sf.lcd_density ${ro.boot.lcd_density}"
 # product init script then restores normal ones.
 UML_INIT_RCU_TRIGGER = "property:sys.boot_completed=1"
 UML_INIT_RCU_RESTORE = "write /sys/kernel/rcu_expedited 0"
+# Compressed swap: one zram entry in the fstab, turned on once boot completes so
+# that boot itself compresses nothing.
+UML_ZRAM_DEVICE = "/dev/block/zram0"
+UML_SWAPON_COMMAND = "swapon_all /vendor/etc/fstab.uml"
 # The inherited Cuttlefish graphics script also copied the goldfish composer
 # mode and the ANGLE feature overrides; this product has neither, and their
 # androidboot sources never exist.
@@ -803,6 +856,32 @@ def check_suspend_blocker(init_payload: str, actions: dict[str, list[str]]) -> N
         fail(f"UML init policy does not stop {name} when the last adb host leaves")
 
 
+def check_zram_swap(actions: dict[str, list[str]]) -> None:
+    """Swap goes on when boot completes and at no other point."""
+    if actions.get(UML_INIT_RCU_TRIGGER, []).count(UML_SWAPON_COMMAND) != 1:
+        fail(f"UML init policy does not run '{UML_SWAPON_COMMAND}' once at {UML_INIT_RCU_TRIGGER}")
+    for trigger, commands in actions.items():
+        for command in commands:
+            if command.startswith("swapon_all") and (
+                trigger != UML_INIT_RCU_TRIGGER or command != UML_SWAPON_COMMAND
+            ):
+                fail(f"UML init policy turns swap on under '{trigger}': {command}")
+
+
+def check_zram_fstab(fstab: bytes, label: str) -> None:
+    """The fstab names one zram swap entry that sizes itself from the RAM."""
+    entries = [
+        fields
+        for fields in (line.split() for line in fstab.decode("utf-8", errors="strict").splitlines())
+        if fields and not fields[0].startswith("#") and fields[2:3] == ["swap"]
+    ]
+    if len(entries) != 1 or entries[0][0] != UML_ZRAM_DEVICE:
+        fail(f"UML fstab must have exactly one swap entry, on {UML_ZRAM_DEVICE}: {label}")
+    flags = entries[0][4].split(",") if len(entries[0]) > 4 else []
+    if not any(flag.startswith("zramsize=") and flag.endswith("%") for flag in flags):
+        fail(f"UML fstab swap entry has no zramsize percentage: {label}")
+
+
 def check_userdata_grow(actions: dict[str, list[str]]) -> None:
     """Growing userdata works on every boot, not only the first, and happens while it is mounted."""
     if actions.get(USERDATA_GROW_TRIGGER, []).count(USERDATA_GROW_COMMAND) != 1:
@@ -917,6 +996,7 @@ def check_boot_policy(
     fstab = android_image.tracked_fstab(error)
     for entry in UML_FSTAB_ENTRIES:
         check_userdata_quota(read_small(archive, infos[entry]), entry)
+        check_zram_fstab(read_small(archive, infos[entry]), entry)
         if read_small(archive, infos[entry]) != fstab:
             fail(f"UML fstab differs from the fixed UBD contract: {entry}")
 
@@ -959,6 +1039,7 @@ def check_boot_policy(
         fail("UML init policy does not copy a host-supplied display density")
     if UML_INIT_RCU_RESTORE not in actions.get(UML_INIT_RCU_TRIGGER, []):
         fail("UML init policy does not restore normal RCU grace periods after boot")
+    check_zram_swap(actions)
     check_userdata_grow(actions)
     check_suspend_blocker(init_payload, actions)
     check_network_setup(init_payload, actions)
@@ -967,6 +1048,12 @@ def check_boot_policy(
             "utf-8", errors="strict"
         ),
         read_small(archive, infos["SYSTEM_EXT/bin/kernarium_wifi_network.sh"]),
+    )
+    check_reclaim_boot_apps(
+        read_small(archive, infos["SYSTEM_EXT/etc/init/kernarium_reclaim_boot_apps.rc"]).decode(
+            "utf-8", errors="strict"
+        ),
+        read_small(archive, infos["SYSTEM_EXT/bin/kernarium_reclaim_boot_apps.sh"]),
     )
     check_media_codecs_c2(read_small(archive, infos["VENDOR/etc/media_codecs_c2.xml"]))
 
@@ -1059,6 +1146,116 @@ def check_discrete_ops(
             f"no discrete app-op list in {DEVICE_CONFIG_OVERLAY} keeps AOSP's default ops; "
             f"the closest lacks {', '.join(map(str, missing))}"
         )
+
+
+# The framework's runtime resource overlay holds the product's replacement for LineageOS's
+# default wallpaper. Its two tablet variants are what every display of 600dp and more draws, and
+# SystemUI sizes the wallpaper surface from the bitmap, so a variant of the default 1920 pixels
+# keeps a 14 MiB buffer alive for a window that is the display's long side wide.
+FRAMEWORK_OVERLAY = (
+    "PRODUCT/overlay/framework-res__lineage_darwin__auto_generated_rro_product.apk"
+)
+FRAMEWORK_OVERLAY_LIMIT = 16 << 20
+DEFAULT_WALLPAPER_ENTRIES = tuple(
+    f"res/{directory}-v13/{default_wallpaper.FILE_NAME}"
+    for directory in default_wallpaper.VARIANT_DIRECTORIES
+)
+
+
+def check_default_wallpaper(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The tablet default wallpapers are the overlay's bounded square, not LineageOS's 1920."""
+    info = infos.get(FRAMEWORK_OVERLAY)
+    if info is None:
+        fail(f"{FRAMEWORK_OVERLAY} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, FRAMEWORK_OVERLAY_LIMIT))) as overlay:
+            for entry in DEFAULT_WALLPAPER_ENTRIES:
+                try:
+                    header = default_wallpaper.png_size(overlay.read(entry))
+                except KeyError:
+                    fail(f"{FRAMEWORK_OVERLAY} has no {entry}")
+                except default_wallpaper.WallpaperError as error:
+                    fail(f"{entry} in {FRAMEWORK_OVERLAY} is {error}")
+                width, height = header[:2]
+                if width != height or width > default_wallpaper.MAX_SIDE:
+                    fail(
+                        f"{entry} in {FRAMEWORK_OVERLAY} is {width}x{height}: the tablet default "
+                        f"wallpaper must be a square of at most {default_wallpaper.MAX_SIDE} pixels "
+                        "(LineageOS's overlay wins the resource when the product lists "
+                        f"{default_wallpaper.PRIORITY_OVERLAY} after its inherit-product calls)"
+                    )
+    except (OSError, zipfile.BadZipFile) as error:
+        fail(f"{FRAMEWORK_OVERLAY} is not a readable archive: {error}")
+
+
+# PinnerService's pin sizes are framework resources that the platform does not declare
+# overlayable. A runtime resource overlay may replace a resource its target has not declared
+# overlayable only when the overlay targets SDK 28 or lower; from Android 10 on the target's
+# overlayable policies bind it, and the overlay then applies to nothing without a message. The
+# overlay releases the home app's pin, about 54 MiB locked at idle.
+PINNER_OVERLAY = "VENDOR/overlay/KernariumPinnerOverlay.apk"
+PINNER_OVERLAY_RESOURCE = b"config_pinnerHomePinBytes"
+PINNER_OVERLAY_MAX_TARGET_SDK = 28
+# The framework attribute android:targetSdkVersion, and the types a numeric attribute has in a
+# compiled manifest (TYPE_INT_DEC and TYPE_INT_HEX).
+ATTR_TARGET_SDK_VERSION = 0x01010270
+AXML_START_ELEMENT = 0x0102
+AXML_RESOURCE_MAP = 0x0180
+AXML_INTEGER_TYPES = (0x10, 0x11)
+
+
+def manifest_target_sdk(manifest: bytes) -> int | None:
+    """The targetSdkVersion of a compiled manifest, or None when it has none or it is not a number."""
+    if len(manifest) < 8 or struct.unpack_from("<HH", manifest, 0)[0] != 0x0003:
+        raise ValueError("not a compiled XML file")
+    resource_ids: list[int] = []
+    offset = struct.unpack_from("<H", manifest, 2)[0]
+    while offset + 8 <= len(manifest):
+        kind, header, size = struct.unpack_from("<HHI", manifest, offset)
+        if size < 8 or offset + size > len(manifest):
+            raise ValueError("truncated compiled XML chunk")
+        if kind == AXML_RESOURCE_MAP:
+            resource_ids = list(struct.unpack_from(f"<{(size - header) // 4}I", manifest, offset + header))
+        elif kind == AXML_START_ELEMENT:
+            body = offset + header
+            attribute_start, attribute_size, count = struct.unpack_from("<HHH", manifest, body + 8)
+            for index in range(count):
+                position = body + attribute_start + index * attribute_size
+                name, _, _, data_type, data = struct.unpack_from("<IIHxBI", manifest, position + 4)
+                if name < len(resource_ids) and resource_ids[name] == ATTR_TARGET_SDK_VERSION:
+                    return data if data_type in AXML_INTEGER_TYPES else None
+        offset += size
+    return None
+
+
+def check_pinner_overlay(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The home pin overlay is built for SDK 28 or lower and carries the pin size it sets."""
+    info = infos.get(PINNER_OVERLAY)
+    if info is None:
+        fail(f"{PINNER_OVERLAY} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info))) as overlay:
+            manifest = overlay.read("AndroidManifest.xml")
+            table = overlay.read("resources.arsc")
+    except (KeyError, OSError, zipfile.BadZipFile) as error:
+        fail(f"{PINNER_OVERLAY} has no readable manifest and resource table: {error}")
+    try:
+        target = manifest_target_sdk(manifest)
+    except (ValueError, struct.error) as error:
+        fail(f"{PINNER_OVERLAY} has an unreadable manifest: {error}")
+    if target is None or target > PINNER_OVERLAY_MAX_TARGET_SDK:
+        fail(
+            f"{PINNER_OVERLAY} targets SDK {target}: PinnerService's pin sizes are not overlayable, so "
+            f"the overlay applies only when it targets {PINNER_OVERLAY_MAX_TARGET_SDK} or lower "
+            "(its Android.bp builds it with sdk_version \"28\")"
+        )
+    # Resource names sit in the table's key string pool as UTF-8 or UTF-16.
+    if PINNER_OVERLAY_RESOURCE not in table and PINNER_OVERLAY_RESOURCE.decode().encode("utf-16-le") not in table:
+        fail(f"{PINNER_OVERLAY} does not set {PINNER_OVERLAY_RESOURCE.decode()}")
 
 
 # The AOSP example HALs the product keeps, each packaged as the vendor APEX that Cuttlefish
@@ -1320,6 +1517,10 @@ def check_kernel_policy(
         read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_property_contexts"]).decode(
             "utf-8", errors="strict"
         ),
+    )
+    check_reclaim_boot_apps_policy(
+        system_ext_policy,
+        read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_file_contexts"]),
     )
     check_property_writers(
         platform_policy,
@@ -1584,6 +1785,85 @@ def check_wifi_network_policy(
         if line.strip() and not line.lstrip().startswith("#")
     ):
         fail(f"system_ext property contexts do not label {WIFI_NETWORK_MARKER}")
+
+
+def check_reclaim_boot_apps(rc_payload: str, script: bytes) -> None:
+    """The reclaim script runs once after boot, kills only cached processes of the reviewed list."""
+    name, executable = RECLAIM_SERVICE
+    service = init_services(rc_payload).get(name)
+    if service is None or service[0] != executable:
+        fail(f"system_ext init policy does not declare the {name} service at {executable}")
+    for option in ("oneshot", "disabled"):
+        if option not in service[1]:
+            fail(f"system_ext init policy does not declare {name} as {option}")
+    actions = init_actions(rc_payload)
+    for trigger, commands in actions.items():
+        if f"start {name}" in commands and trigger != RECLAIM_TRIGGER:
+            fail(f"system_ext init policy starts {name} under '{trigger}'")
+    if f"start {name}" not in actions.get(RECLAIM_TRIGGER, []):
+        fail(f"system_ext init policy does not start {name} when boot completes")
+    text = script.decode("utf-8", errors="strict")
+    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    for token in RECLAIM_SCRIPT_REQUIRED:
+        if token not in code:
+            fail(f"{executable} does not contain '{token}'")
+    for token in RECLAIM_SCRIPT_FORBIDDEN:
+        if token in code.replace(RECLAIM_SETTLE, ""):
+            fail(
+                f"{executable} contains '{token}': it may only kill the cached processes of "
+                "the reviewed list, which keeps alarms, jobs and bindings"
+            )
+    listed = RECLAIM_LIST.search(text)
+    if listed is None:
+        fail(f"{executable} has no reclaim_list block")
+    entries = tuple(
+        (fields[0], tuple(fields[1:]))
+        for fields in (line.split() for line in listed.group(1).splitlines())
+        if fields
+    )
+    if entries != RECLAIM_APPS:
+        fail(
+            f"{executable} lists {entries}, not the reviewed packages {RECLAIM_APPS}: "
+            "a change to the list is a reviewed change to this verifier too"
+        )
+
+
+def check_reclaim_boot_apps_policy(system_ext_policy: bytes, system_ext_file_contexts: bytes) -> None:
+    """The reclaim script runs in its own core domain and may only use the activity manager."""
+    domain = RECLAIM_SERVICE[0]
+    if file_context_label(system_ext_file_contexts, RECLAIM_SERVICE[1]) != (
+        f"u:object_r:{domain}_exec:s0"
+    ):
+        fail(f"system_ext file contexts do not label {RECLAIM_SERVICE[1]}")
+    if not RECLAIM_TRANSITION.search(system_ext_policy):
+        fail("system_ext policy does not move init into the reclaim domain")
+
+    def has(source: str, target: str, object_class: bytes, permission: bytes) -> bool:
+        return any(
+            CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()) == source
+            and CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode()) == target
+            and match.group(3) == object_class
+            and permission in match.group(4).split()
+            for match in CIL_ALLOW_RULE.finditer(system_ext_policy)
+        )
+
+    for source, target, object_class, permission, why in (
+        (domain, "activity_service", b"service_manager", b"find",
+         "dumpsys and cmd find the activity manager"),
+        (domain, "system_server", b"binder", b"transfer",
+         "cmd hands the activity manager the receiver of its result"),
+        ("system_server", domain, b"binder", b"call",
+         "cmd waits for the receiver of its result"),
+        ("system_server", domain, b"fd", b"use",
+         "the activity manager writes to the descriptors the tools pass"),
+        ("system_server", domain, b"fifo_file", b"write",
+         "dumpsys reads the process list from a pipe"),
+    ):
+        if not has(source, target, object_class, permission):
+            fail(
+                f"system_ext policy does not allow {source} {target} {object_class.decode()} "
+                f"{permission.decode()}: {why}"
+            )
 
 
 def check_policy_relaxations(policies: tuple[bytes, ...]) -> None:
@@ -2376,6 +2656,8 @@ def main() -> None:
         check_hardware_features(archive, infos)
         check_fdroid(archive, infos)
         check_discrete_ops(archive, infos)
+        check_default_wallpaper(archive, infos)
+        check_pinner_overlay(archive, infos)
         check_thermal_hal(archive, infos)
         check_cas_hal(archive, infos)
         check_wifi_hals(archive, infos)

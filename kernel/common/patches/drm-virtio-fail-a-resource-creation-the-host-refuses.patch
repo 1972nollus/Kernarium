@@ -1,0 +1,181 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 31 Oct 2026 15:33:44 +0900
+Subject: [PATCH] drm/virtio: fail a resource creation the host refuses
+
+The resource-creation ioctl queued the host command and returned, and
+the driver only logged an error response. A host that bounds the GPU
+memory it gives a guest refuses a texture or buffer past that bound, and
+userspace then used a resource the host never made: Mesa's virgl driver
+drew a texture without storage and raised no GL_OUT_OF_MEMORY.
+
+Record the response to a fenced 2D or 3D creation and wait for it before
+queueing the attach-backing. A refusal releases the object without a
+RESOURCE_UNREF or an attach-backing and returns -ENOMEM (-EINVAL for any
+other error), which Mesa turns into GL_OUT_OF_MEMORY and gralloc into a
+failed allocation. This costs one control-queue round trip per creation.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/virtio/virtgpu_drv.h    |  8 ++++
+ drivers/gpu/drm/virtio/virtgpu_object.c | 58 ++++++++++++++++++++++---
+ drivers/gpu/drm/virtio/virtgpu_vq.c     | 26 ++++++++++-
+ 3 files changed, 84 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/virtio/virtgpu_drv.h b/drivers/gpu/drm/virtio/virtgpu_drv.h
+index 1913cd2ebeeaa48b294626882917989671106905..cbb40d4937321da2ffca77849b04ec3d0ceb7eca 100644
+--- a/drivers/gpu/drm/virtio/virtgpu_drv.h
++++ b/drivers/gpu/drm/virtio/virtgpu_drv.h
+@@ -116,6 +116,14 @@ struct virtio_gpu_object {
+ 	bool host3d_blob, guest_blob;
+ 	uint32_t blob_mem, blob_flags;
+ 
++	/*
++	 * The host's answer to the command that created the resource, for a
++	 * creation that waits for it: create_answered is set, with release
++	 * ordering, once create_resp holds the response type.
++	 */
++	u32 create_resp;
++	bool create_answered;
++
+ 	/*
+ 	 * Level 0 of a classic 3D resource that a dma-buf can map: a single
+ 	 * 2D image whose guest pages hold a copy of the host's storage.
+diff --git a/drivers/gpu/drm/virtio/virtgpu_object.c b/drivers/gpu/drm/virtio/virtgpu_object.c
+index d228b5be375a3f30bdb4caaa8478222828746264..8780f860ec6a680bbf367572900b4560baabab91 100644
+--- a/drivers/gpu/drm/virtio/virtgpu_object.c
++++ b/drivers/gpu/drm/virtio/virtgpu_object.c
+@@ -200,6 +200,31 @@ static int virtio_gpu_object_shmem_init(struct virtio_gpu_device *vgdev,
+ 	return 0;
+ }
+ 
++/*
++ * Wait for the host's answer to a fenced creation and report a refusal: the
++ * host creates resources in order, so an object it refused never exists there.
++ * Returns 0 when the host made the resource or did not answer in time.
++ */
++static int virtio_gpu_object_wait_created(struct virtio_gpu_device *vgdev,
++					  struct virtio_gpu_object *bo)
++{
++	u32 resp;
++
++	/* Nothing has kicked the queue yet. */
++	virtio_gpu_notify(vgdev);
++	if (!wait_event_timeout(vgdev->ctrlq.ack_queue,
++				smp_load_acquire(&bo->create_answered),
++				15 * HZ)) {
++		DRM_ERROR_RATELIMITED("resource %u: no answer to its creation\n",
++				      bo->hw_res_handle);
++		return 0;
++	}
++	resp = READ_ONCE(bo->create_resp);
++	if (resp < VIRTIO_GPU_RESP_ERR_UNSPEC)
++		return 0;
++	return resp == VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY ? -ENOMEM : -EINVAL;
++}
++
+ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
+ 			     struct virtio_gpu_object_params *params,
+ 			     struct virtio_gpu_object **bo_ptr,
+@@ -248,19 +273,40 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
+ 
+ 		virtio_gpu_cmd_resource_create_blob(vgdev, bo, params,
+ 						    ents, nents);
+-	} else if (params->virgl) {
+-		virtio_gpu_cmd_resource_create_3d(vgdev, bo, params,
+-						  objs, fence);
+-		virtio_gpu_object_attach(vgdev, bo, ents, nents);
+ 	} else {
+-		virtio_gpu_cmd_create_resource(vgdev, bo, params,
+-					       objs, fence);
++		if (params->virgl)
++			virtio_gpu_cmd_resource_create_3d(vgdev, bo, params,
++							  objs, fence);
++		else
++			virtio_gpu_cmd_create_resource(vgdev, bo, params,
++						       objs, fence);
++		/*
++		 * Wait before the attach-backing, so a refused resource gets no
++		 * command the host would answer with an error.
++		 */
++		if (fence) {
++			ret = virtio_gpu_object_wait_created(vgdev, bo);
++			if (ret)
++				goto err_refused;
++		}
+ 		virtio_gpu_object_attach(vgdev, bo, ents, nents);
+ 	}
+ 
+ 	*bo_ptr = bo;
+ 	return 0;
+ 
++err_refused:
++	/*
++	 * The host never made the resource, so release the object without a
++	 * RESOURCE_UNREF and without an attach-backing it would answer with an
++	 * error. The command's array still holds a reference until its
++	 * response is processed.
++	 */
++	bo->created = false;
++	kvfree(ents);
++	drm_gem_object_put(&bo->base.base);
++	return ret;
++
+ err_put_objs:
+ 	virtio_gpu_array_put_free(objs);
+ err_free_entry:
+diff --git a/drivers/gpu/drm/virtio/virtgpu_vq.c b/drivers/gpu/drm/virtio/virtgpu_vq.c
+index 4a72c69fe28ec84d00d79183b93e1cbbabfa224a..da2413edc05d24b1972df7bec18de3213b47cda1 100644
+--- a/drivers/gpu/drm/virtio/virtgpu_vq.c
++++ b/drivers/gpu/drm/virtio/virtgpu_vq.c
+@@ -590,6 +590,22 @@ static void virtio_gpu_queue_cursor(struct virtio_gpu_device *vgdev,
+  */
+ 
+ /* create a basic resource */
++/*
++ * A fenced creation keeps its object referenced through the command's object
++ * array until after this callback has run, so the object outlives it.
++ */
++static void virtio_gpu_cmd_create_cb(struct virtio_gpu_device *vgdev,
++				     struct virtio_gpu_vbuffer *vbuf)
++{
++	struct virtio_gpu_object *bo = vbuf->resp_cb_data;
++	struct virtio_gpu_ctrl_hdr *resp =
++		(struct virtio_gpu_ctrl_hdr *)vbuf->resp_buf;
++
++	vbuf->resp_cb_data = NULL;
++	WRITE_ONCE(bo->create_resp, le32_to_cpu(resp->type));
++	smp_store_release(&bo->create_answered, true);
++}
++
+ void virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
+ 				    struct virtio_gpu_object *bo,
+ 				    struct virtio_gpu_object_params *params,
+@@ -599,9 +615,12 @@ void virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
+ 	struct virtio_gpu_resource_create_2d *cmd_p;
+ 	struct virtio_gpu_vbuffer *vbuf;
+ 
+-	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
++	cmd_p = virtio_gpu_alloc_cmd_cb(vgdev, &vbuf, sizeof(*cmd_p),
++					objs ? virtio_gpu_cmd_create_cb : NULL);
+ 	memset(cmd_p, 0, sizeof(*cmd_p));
+ 	vbuf->objs = objs;
++	if (objs)
++		vbuf->resp_cb_data = bo;
+ 
+ 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_RESOURCE_CREATE_2D);
+ 	cmd_p->resource_id = cpu_to_le32(bo->hw_res_handle);
+@@ -1155,9 +1174,12 @@ virtio_gpu_cmd_resource_create_3d(struct virtio_gpu_device *vgdev,
+ 	struct virtio_gpu_resource_create_3d *cmd_p;
+ 	struct virtio_gpu_vbuffer *vbuf;
+ 
+-	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
++	cmd_p = virtio_gpu_alloc_cmd_cb(vgdev, &vbuf, sizeof(*cmd_p),
++					objs ? virtio_gpu_cmd_create_cb : NULL);
+ 	memset(cmd_p, 0, sizeof(*cmd_p));
+ 	vbuf->objs = objs;
++	if (objs)
++		vbuf->resp_cb_data = bo;
+ 
+ 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_RESOURCE_CREATE_3D);
+ 	cmd_p->resource_id = cpu_to_le32(bo->hw_res_handle);

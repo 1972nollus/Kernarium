@@ -84,6 +84,14 @@ LTP_METADATA_CHECK = "/usr/local/libexec/uml-ltp-check-metadata"
 LTP_MODULES_PAYLOAD_ROOT = "/usr/lib/modules"
 LTP_MODULES_ROOT = "/lib/modules"
 LTP_TIMEOUT_MUL = 4
+# The manifest's case bounds and LTP_TIMEOUT_MUL are sized on the gadget
+# engine. A JIT compiles each exec'd process's code from scratch, which costs
+# the arm64 JIT about four times and the x86-64 JIT about 2.7 times what the
+# gadget engine pays per process (darwin/cpu/arm64/jit/README.md#cold-code,
+# darwin/cpu/x86_64/jit/README.md#tiered-execution), so a case run on a JIT
+# gets its guest's factor on its bound and on LTP's own timers alike: the
+# measured ratio and at least a quarter more, rounded up.
+JIT_CASE_BOUND_FACTORS = {"arm64": 5, "x86_64": 4}
 MODULES_BUILTIN_ENTRY = re.compile(
     r"^kernel/(?:[A-Za-z0-9._+-]+/)*[A-Za-z0-9._+-]+\.ko$"
 )
@@ -295,10 +303,29 @@ class Case:
     serial: bool = False
     kernel_arguments: tuple[str, ...] = ()
     engine: str = "jit"
+    ltp_timeout_mul: int = LTP_TIMEOUT_MUL
 
     @property
     def key(self) -> str:
         return f"{self.scenario}/{self.test_id}"
+
+
+def case_bound_factor(guest_arch: str, engine: str) -> int:
+    """How many times its gadget-sized bound a case gets on ``engine``."""
+    if engine != "jit":
+        return 1
+    return JIT_CASE_BOUND_FACTORS.get(guest_arch, 1)
+
+
+def bound_for_engine(case: Case, guest_arch: str, engine: str) -> Case:
+    """``case`` as ``engine`` runs it, its bound and LTP's timers scaled."""
+    factor = case_bound_factor(guest_arch, engine)
+    return dataclasses.replace(
+        case,
+        engine=engine,
+        timeout_seconds=case.timeout_seconds * factor,
+        ltp_timeout_mul=LTP_TIMEOUT_MUL * factor,
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -343,7 +370,11 @@ def kernel_failure(output: str) -> str | None:
     return f"guest kernel reported a fatal diagnostic: {line}"
 
 
-def ltp_guest_command(command: str, tmpdir: str = "/tmp/uml-ltp-case") -> str:
+def ltp_guest_command(
+    command: str,
+    tmpdir: str = "/tmp/uml-ltp-case",
+    timeout_mul: int = LTP_TIMEOUT_MUL,
+) -> str:
     """Build the command environment used by LTP's scenario executor."""
     return (
         f"mkdir -p {tmpdir} {LTP_OUTPUT} && "
@@ -352,7 +383,7 @@ def ltp_guest_command(command: str, tmpdir: str = "/tmp/uml-ltp-case") -> str:
         f"PATH={LTP_TOOLS}:{LTP_BIN}:$PATH "
         f"LTPROOT={LTP_ROOT} "
         f"TMPDIR={tmpdir} "
-        f"LTP_TIMEOUT_MUL={LTP_TIMEOUT_MUL} "
+        f"LTP_TIMEOUT_MUL={timeout_mul} "
         f"sh -c {shlex.quote(command)}"
     )
 
@@ -373,7 +404,10 @@ class Guest(GuestHarness):
     def run(self, case: Case) -> Result:
         try:
             result = self.run_command(
-                ltp_guest_command(case.command), case.timeout_seconds
+                ltp_guest_command(
+                    case.command, timeout_mul=case.ltp_timeout_mul
+                ),
+                case.timeout_seconds,
             )
         except CommandTimeout as error:
             return Result(case, None, {}, error.output, str(error))
@@ -779,7 +813,15 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         "--engine",
         choices=("gadgets", "jit"),
         default="jit",
-        help="userspace execution engine for every guest (default: jit)",
+        help=(
+            "userspace execution engine for every guest; the JIT multiplies "
+            "every case bound and LTP_TIMEOUT_MUL by the guest's factor ("
+            + ", ".join(
+                f"{guest_arch} {factor}"
+                for guest_arch, factor in JIT_CASE_BOUND_FACTORS.items()
+            )
+            + ") (default: jit)"
+        ),
     )
     parser.add_argument(
         "--guest-arch",
@@ -866,7 +908,15 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         default="pass",
         help="expected outcome for --candidate (default: pass)",
     )
-    parser.add_argument("--candidate-timeout", type=int, default=300)
+    parser.add_argument(
+        "--candidate-timeout",
+        type=int,
+        default=300,
+        help=(
+            "the candidate's bound in seconds on the gadget engine "
+            "(default: 300)"
+        ),
+    )
     parser.add_argument(
         "--candidate-memory",
         help="override guest RAM for the single --candidate case",
@@ -1035,7 +1085,17 @@ def main() -> int:
     cases, skipped_pressure_count = select_host_pressure_cases(
         cases, arguments.run_host_pressure
     )
-    cases = [dataclasses.replace(case, engine=arguments.engine) for case in cases]
+    cases = [
+        bound_for_engine(case, arguments.guest_arch, arguments.engine)
+        for case in cases
+    ]
+    bound_factor = case_bound_factor(arguments.guest_arch, arguments.engine)
+    if bound_factor != 1:
+        print(
+            f"Case bounds and LTP_TIMEOUT_MUL are {bound_factor} times the "
+            f"manifest's for the {arguments.guest_arch} {arguments.engine}",
+            flush=True,
+        )
     if skipped_pressure_count:
         print(
             f"Skipping {skipped_pressure_count} host-pressure cases by default; "
@@ -1150,6 +1210,7 @@ def main() -> int:
         campaign_summary = {
             "schema_version": 1,
             "engine": arguments.engine,
+            "case_bound_factor": bound_factor,
             "elapsed_seconds": time.monotonic() - run_started,
             "completed": completed,
             "failures": failures,

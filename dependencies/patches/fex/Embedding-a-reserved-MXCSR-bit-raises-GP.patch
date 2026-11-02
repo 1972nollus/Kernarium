@@ -50,10 +50,10 @@ index 8fa607a4c13b9ffcbcc855f712664bb10e7e710b..e35ee124dc8ee4e55c6003c69a944372
    const auto Host = EmbedderTranslate(Address, Size, Core::EMBEDDER_ACCESS_ATOMIC);
    auto* Site = EmbedderColdSites.back().get();
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index 5b81a1888ae4488379addd49293ac004ef42e391..98b6c7cef5d28dc2ba34c7550f29fe2bb52cbad0 100644
+index d6113ab814c36f2b7996a4c6bdd7316c2e4e9473..f671e645f184563f890ed7d28b89619e79e23abd 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -1519,6 +1519,10 @@ private:
+@@ -1545,6 +1545,10 @@ private:
    // Alignment, as FXSAVE, FXRSTOR, XSAVE and XRSTOR do for their image. It
    // ends the block, so the caller computes its values after it.
    void EmbedderRequireAlignment(OpcodeArgs, Ref Addr, uint32_t Alignment);
@@ -65,10 +65,10 @@ index 5b81a1888ae4488379addd49293ac004ef42e391..98b6c7cef5d28dc2ba34c7550f29fe2b
    void EmbedderCacheLineProbe(Ref Addr);
    // Embedded, while the x87 control word unmasks an exception: x87 checks.
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-index b63368a043cbef172b9dfc9f440236d71453b419..6f3c5763ae1e791cf0e9e6d09f235a16f1f6c847 100644
+index 642d51856b85527db8d53a64269fc9da3cf07dbe..3b609f25fe324633371aa58f9ea447285bf5840d 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-@@ -837,6 +837,17 @@ void OpDispatchBuilder::EmbedderRequireAlignment(OpcodeArgs, Ref Addr, uint32_t
+@@ -844,6 +844,17 @@ void OpDispatchBuilder::EmbedderRequireAlignment(OpcodeArgs, Ref Addr, uint32_t
    StartNewBlock();
  }
  
@@ -86,7 +86,7 @@ index b63368a043cbef172b9dfc9f440236d71453b419..6f3c5763ae1e791cf0e9e6d09f235a16
  Ref OpDispatchBuilder::EmbedderFPResult(Ref Result, uint32_t Descriptor, Ref Source1, Ref Source2, Ref Source3) {
    if (!EmbedderFPChecks(static_cast<Core::EmbedderFPKind>(Descriptor & 0xFF))) {
      return Result;
-@@ -3509,10 +3520,11 @@ void OpDispatchBuilder::FXRStoreOp(OpcodeArgs) {
+@@ -3516,10 +3527,11 @@ void OpDispatchBuilder::FXRStoreOp(OpcodeArgs) {
      _EmbedderProbe(Mem, 512);
    }
  
@@ -100,7 +100,7 @@ index b63368a043cbef172b9dfc9f440236d71453b419..6f3c5763ae1e791cf0e9e6d09f235a16
    RestoreMXCSRState(MXCSR);
    EmbedderFPModeCheck(Op);
  }
-@@ -3741,6 +3753,7 @@ void OpDispatchBuilder::UCOMISxOp(OpcodeArgs, IR::OpSize ElementSize) {
+@@ -3760,6 +3772,7 @@ void OpDispatchBuilder::UCOMISxOp(OpcodeArgs, IR::OpSize ElementSize) {
  
  void OpDispatchBuilder::LDMXCSR(OpcodeArgs) {
    Ref Dest = LoadSourceGPR_WithOpSize(Op, Op->Dest, OpSize::i32Bit, Op->Flags);
@@ -109,10 +109,10 @@ index b63368a043cbef172b9dfc9f440236d71453b419..6f3c5763ae1e791cf0e9e6d09f235a16
    EmbedderFPModeCheck(Op);
  }
 diff --git a/FEXCore/Source/Interface/IR/IR.json b/FEXCore/Source/Interface/IR/IR.json
-index 63ce47782205232dc767bce8012b8c1675eb9344..634f0f4775fef3f1ab712f65d6398e5cd33dc6a3 100644
+index 5c664b079685f49230ce48b4250542cb21b0e840..1b61f8c36c760cfc90c79a999b6372b0480835cc 100644
 --- a/FEXCore/Source/Interface/IR/IR.json
 +++ b/FEXCore/Source/Interface/IR/IR.json
-@@ -785,6 +785,13 @@
+@@ -787,6 +787,13 @@
          "HasSideEffects": true
        },
  

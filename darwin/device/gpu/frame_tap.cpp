@@ -8,8 +8,11 @@ namespace uml::gpu {
 
 FrameTapRegistry& FrameTapRegistry::instance() noexcept
 {
-    static FrameTapRegistry registry;
-    return registry;
+    /* Never destroyed. The mirror's Metal completion handler delivers into
+     * the registry from a framework thread, and the last one can run after
+     * main returns, while the process's static destructors do. */
+    static FrameTapRegistry* const registry = new FrameTapRegistry;
+    return *registry;
 }
 
 void FrameTapRegistry::set(

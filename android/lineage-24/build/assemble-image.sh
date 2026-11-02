@@ -37,8 +37,9 @@ staging directory must remain beside its .zip archive. The generic and UML
 first-stage ramdisks are composed into one raw newc ramdisk, wrapped in a
 kernelless boot-image v4 init_boot partition. The target files' own LineageOS
 recovery image, verified here, is the recovery partition. Those two boot
-partitions and the five read-only EROFS images are packed, each exactly its
-image rounded up to 4 KiB, into one raw GPT disk, system.img, and described by
+partitions and the five read-only EROFS images (sparse in the signed target
+files, expanded here) are packed, each exactly its raw image rounded up to
+4 KiB, into one raw GPT disk, system.img, and described by
 partition-layout.json beside it, with a SHA-256 for every partition and the
 data disk template the host turns into each guest's writable disk. Neither the
 seed userdata and metadata images nor a misc partition are assembled: the app

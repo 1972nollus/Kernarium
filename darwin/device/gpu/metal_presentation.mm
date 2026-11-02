@@ -138,6 +138,19 @@ struct MetalPresentationState final :
             return;
         FrameTapRegistry::instance().wake();
         tapThread.join();
+        /* A frame still on the GPU releases its texture into the cache and
+         * its buffer into the pool from its completion handler, so neither
+         * may go while one is in flight. A GPU that does not finish in five
+         * seconds keeps them: leaking a cache is better than a handler that
+         * releases into a freed one. */
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (tapInFlight.load(std::memory_order_acquire) > 0 &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        if (tapInFlight.load(std::memory_order_acquire) > 0)
+            return;
         if (tapPool != nullptr) {
             CVPixelBufferPoolRelease(tapPool);
             tapPool = nullptr;
@@ -550,7 +563,9 @@ struct MetalPresentationState final :
         return fallbackTexture;
     }
 
-    void draw(void* nativeView) noexcept
+    /* Draws the newest frame into the next drawable of a view, or, with no
+     * view, of a layer that belongs to no window. */
+    void draw(MTKView* view, CAMetalLayer* layer) noexcept
     {
         @autoreleasepool {
             std::uint64_t contentGeneration = 0;
@@ -562,8 +577,7 @@ struct MetalPresentationState final :
             std::uint32_t cpuHeight = 0;
             id<MTLTexture> sourceTexture;
             try {
-                MTKView* view = (__bridge MTKView*)nativeView;
-                if (view == nil)
+                if (view == nil && layer == nil)
                     return;
                 {
                     std::lock_guard lock(presentationMutex);
@@ -592,9 +606,22 @@ struct MetalPresentationState final :
                  * one, and this runs on the thread that owns the user
                  * interface. Claim the frame first so a redraw with nothing
                  * new to show never pays for it. */
-                MTLRenderPassDescriptor* pass =
-                    view.currentRenderPassDescriptor;
-                id<CAMetalDrawable> drawable = view.currentDrawable;
+                MTLRenderPassDescriptor* pass = nil;
+                id<CAMetalDrawable> drawable = nil;
+                MTLClearColor clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
+                if (view != nil) {
+                    pass = view.currentRenderPassDescriptor;
+                    drawable = view.currentDrawable;
+                    clearColor = view.clearColor;
+                } else {
+                    drawable = [layer nextDrawable];
+                    if (drawable != nil) {
+                        pass = [MTLRenderPassDescriptor renderPassDescriptor];
+                        pass.colorAttachments[0].texture = drawable.texture;
+                        pass.colorAttachments[0].storeAction =
+                            MTLStoreActionStore;
+                    }
+                }
                 if (pass == nil || drawable == nil) {
                     /* Release the claim without retiring the generation: the
                      * frame was not shown, and the next guest frame asks for
@@ -654,7 +681,7 @@ struct MetalPresentationState final :
                     return;
                 }
                 pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-                pass.colorAttachments[0].clearColor = view.clearColor;
+                pass.colorAttachments[0].clearColor = clearColor;
                 id<MTLRenderCommandEncoder> encoder =
                     [buffer renderCommandEncoderWithDescriptor:pass];
                 if (encoder == nil) {
@@ -882,7 +909,12 @@ PresentOutcome MetalPresentation::present(
 
 void MetalPresentation::draw(void* nativeView) noexcept
 {
-    state_->draw(nativeView);
+    state_->draw((__bridge MTKView*)nativeView, nil);
+}
+
+void MetalPresentation::drawLayer(void* metalLayer) noexcept
+{
+    state_->draw(nil, (__bridge CAMetalLayer*)metalLayer);
 }
 
 DisplayStatistics MetalPresentation::statistics() const noexcept

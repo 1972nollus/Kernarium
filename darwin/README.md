@@ -241,6 +241,10 @@ and 8 GiB the largest, x86 multi-core Geekbench, peaked at a seventh of its
 peaked at 47% of 358 MiB (G282). A census build reports the budget, the bytes
 charged and the reliefs on every `E` record.
 
+The budget in effect is also the gadget-cache term of the host GPU's budget
+([architecture](../docs/architecture.md#memory-and-executable-code)): the
+cache and the GPU's memory are planned from the same process limit.
+
 x86 gadget executors share an address space's translations the same way, and
 `DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private. A link's pair and the
 guest bounds in front of every stream let one paired store retarget a link
@@ -382,6 +386,20 @@ a connect to port 0: Darwin refuses it before sending anything, where Linux
 sends the SYN, so SLiRP leaves it unanswered and the guest connect times out,
 or resets it when the destination is the host's gateway address, as the host's
 own stack would (`slirp-network-connect-failure`).
+
+SLiRP forwards a guest's ICMP echo the way a router would
+(`slirp-network-icmp`). An echo answered by SLiRP itself, to the gateway
+address, carries a TTL of 255. An echo whose TTL expires at the SLiRP hop is
+answered with ICMP time exceeded from the gateway and sends nothing to the
+host. Any other leaves on a host ICMP socket with the guest's TTL less one
+(a raw socket when the process may open one, the datagram socket otherwise),
+and its reply reaches the guest with the TTL it arrived with. SLiRP drops a
+packet whose source or destination no network carries: loopback, class E
+other than the limited broadcast, the unspecified address as a destination,
+a multicast source. A DHCP DISCOVER from the unspecified address to the
+limited broadcast is none of these and is answered. A guest that sends DNS
+to the gateway address on port 53 reaches the host's resolver, as one that
+sends it to the name server address does.
 
 The guest network driver has no transmit flow control, so a frame the provider
 refuses is lost and TCP must retransmit it. A guest transmit into a full

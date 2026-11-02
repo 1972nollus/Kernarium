@@ -13,6 +13,11 @@
 // sampler view carries, and keeps doing so after the guest rewrites some of its
 // rows; a resource created without the layout is the plain texture it always
 // was; and a layout that does not describe a picture is refused.
+//
+// A biplanar picture keeps its pixels only in its plane textures. A transfer
+// of any box of it, from any byte, writes or reads the planes and none of the
+// padding of the rows, and every other use of the image (a copy, a surface)
+// first gives it the R8 storage of a plain image back, with the planes' pixels.
 
 #include "host_gl_stream_support.hpp"
 #include "host_gl_test_support.hpp"
@@ -46,10 +51,20 @@ struct Picture {
     bool biplanar;
     std::uint32_t width;
     std::uint32_t height;
+    // The bytes of a luma row when the allocator's alignment is not the one in
+    // use, which a guest may choose.
+    std::uint32_t pitch {};
 
     [[nodiscard]] std::uint32_t stride() const
     {
-        return alignUp(width, biplanar ? 16U : 32U);
+        return pitch ? pitch : alignUp(width, biplanar ? 16U : 32U);
+    }
+    // Whether the byte at column x of image row y is one a biplanar picture
+    // keeps no texel for: past its width in a luma row, past its last
+    // interleaved pair in a chroma row.
+    [[nodiscard]] bool padding(std::uint32_t x, std::uint32_t y) const
+    {
+        return y < height ? x >= width : x >= 2U * chromaWidth();
     }
     [[nodiscard]] std::uint32_t chromaRows() const { return (height + 1) / 2; }
     [[nodiscard]] std::uint32_t chromaWidth() const { return (width + 1) / 2; }
@@ -153,8 +168,9 @@ void checkPicture(VirglRenderer& renderer, Pipeline& pipeline, Picture picture)
     fill(image.bytes(), 11);
     image.write(picture.stride(), 0, picture.rows());
 
-    // The views are made after the first write: the planes are made with the
-    // first of them, from the image as it is then.
+    // The views are made after the first write: a triplanar image makes its
+    // planes with the first of them, from the image as it is then, and a
+    // biplanar one wrote them directly.
     std::array<std::uint32_t, 3> views {};
     for (std::uint32_t plane = 0; plane < picture.planes(); ++plane) {
         views[plane] = pipeline.createView(
@@ -174,6 +190,235 @@ void checkPicture(VirglRenderer& renderer, Pipeline& pipeline, Picture picture)
     }
     image.write(picture.stride(), first, count);
     checkPlanes(pipeline, picture, image.bytes(), views, "partial rewrite");
+}
+
+// A rectangle of an image, in bytes.
+struct Rectangle {
+    std::uint32_t x;
+    std::uint32_t y;
+    std::uint32_t width;
+    std::uint32_t height;
+};
+
+// Gives every byte of the rectangle a value the rest of the image lacks.
+void fillRectangle(
+    std::vector<std::uint8_t>& image,
+    std::uint32_t stride,
+    const Rectangle& box,
+    std::uint32_t seed)
+{
+    for (std::uint32_t row = 0; row < box.height; ++row) {
+        for (std::uint32_t column = 0; column < box.width; ++column) {
+            image[static_cast<std::size_t>(box.y + row) * stride + box.x +
+                column] =
+                static_cast<std::uint8_t>((row * 131U + column * 17U + seed) ^
+                    0x5aU);
+        }
+    }
+}
+
+// Reads `box` of the image back into poisoned guest storage and compares it
+// with `model`: the bytes the picture keeps come back as written, and every
+// other byte, the padding of a row and whatever lies outside the box, is left
+// as the poison it was. A plain image returns its padding too.
+void checkRead(
+    Image& image,
+    const Picture& picture,
+    const std::vector<std::uint8_t>& model,
+    const Rectangle& box,
+    bool nameStride,
+    bool keepsPadding,
+    const char* what)
+{
+    constexpr std::uint8_t poison = 0xa5;
+    const std::uint32_t stride = picture.stride();
+    std::fill(image.bytes().begin(), image.bytes().end(), poison);
+    require(image.readBox(
+                stride, box.x, box.y, box.width, box.height, nameStride) == 0,
+        "the box could not be read");
+    std::uint32_t wrong = 0;
+    for (std::uint32_t y = 0; y < picture.rows(); ++y) {
+        for (std::uint32_t x = 0; x < stride; ++x) {
+            const bool inside = x >= box.x && x < box.x + box.width &&
+                y >= box.y && y < box.y + box.height;
+            const std::size_t at = static_cast<std::size_t>(y) * stride + x;
+            const bool kept = !picture.padding(x, y);
+            std::uint8_t expected = poison;
+            if (inside && kept)
+                expected = model[at];
+            else if (inside && keepsPadding)
+                expected = model[at];
+            if (image.bytes()[at] != expected && wrong++ < 4) {
+                std::fprintf(stderr,
+                    "%s %ux%u byte (%u,%u): got %u wanted %u\n", what,
+                    picture.width, picture.height, x, y, image.bytes()[at],
+                    expected);
+            }
+        }
+    }
+    require(wrong == 0, "a read did not return the bytes the picture keeps");
+}
+
+// A biplanar picture's boxes: a transfer of any rectangle of the image,
+// starting at any byte and ending at any byte, writes the pixels it carries
+// and no others, and a read returns them.
+void checkBoxes(VirglRenderer& renderer, Pipeline& pipeline, Picture picture)
+{
+    constexpr std::uint32_t imageId = 3;
+    const std::uint32_t stride = picture.stride();
+    const std::uint32_t height = picture.height;
+    const std::uint32_t rows = picture.rows();
+    Image image(renderer, imageId, pipeTexture2d, virglFormatR8Unorm,
+        virglBindSamplerView, stride, rows, picture.flags(),
+        static_cast<std::size_t>(stride) * rows);
+    fill(image.bytes(), 21);
+    image.write(stride, 0, rows);
+    std::array<std::uint32_t, 3> views {};
+    for (std::uint32_t plane = 0; plane < picture.planes(); ++plane) {
+        views[plane] = pipeline.createView(
+            imageId, picture.planeFormat(plane), plane);
+    }
+    checkPlanes(pipeline, picture, image.bytes(), views, "whole image");
+
+    struct Write {
+        Rectangle box;
+        bool nameStride;
+        const char* what;
+    };
+    const std::array<Write, 9> writes {{
+        {{1, 0, 7, 2}, true, "luma interior"},
+        {{3, height - 1, 5, 2}, true, "luma and chroma from an odd byte"},
+        {{2, height, 4, 1}, true, "whole pairs"},
+        {{2, height, 3, 1}, true, "a cut last pair"},
+        {{3, height, 4, 1}, true, "a cut first pair"},
+        {{5, height + 1, 1, 1}, true, "one byte of a pair"},
+        {{picture.width - 1, 0, stride - picture.width + 1, rows}, true,
+            "the right edge with its padding"},
+        {{picture.width, 0, stride - picture.width, height}, true,
+            "padding only"},
+        {{0, 1, stride, 3}, false, "rows with the pitch left to the renderer"},
+    }};
+    std::uint32_t seed = 40;
+    for (const Write& write : writes) {
+        fillRectangle(image.bytes(), stride, write.box, seed++);
+        image.writeBox(stride, write.box.x, write.box.y, write.box.width,
+            write.box.height, write.nameStride);
+        checkPlanes(pipeline, picture, image.bytes(), views, write.what);
+    }
+
+    // What the host holds comes back through a read of any box.
+    const std::vector<std::uint8_t> model = image.bytes();
+    const std::array<Write, 6> reads {{
+        {{0, 0, stride, rows}, true, "read of the whole image"},
+        {{3, height - 1, 5, 2}, true, "read from an odd byte"},
+        {{2, height, 3, 2}, true, "read of a cut last pair"},
+        {{5, height + 1, 1, 1}, true, "read of one byte"},
+        {{picture.width - 1, 0, stride - picture.width + 1, rows}, true,
+            "read of the right edge"},
+        {{0, 0, stride, rows}, false, "read with the pitch left to the renderer"},
+    }};
+    for (const Write& read : reads)
+        checkRead(image, picture, model, read.box, read.nameStride, false,
+            read.what);
+}
+
+// The commands that use an image whole: a copy of it and a surface on it.
+constexpr std::uint32_t commandResourceCopyRegion = 17;
+
+enum class Use { copy, surface };
+
+// A use of the image other than a transfer gives a planes-only picture the R8
+// storage of a plain image back, filled from the planes: the use sees the
+// picture, the views keep sampling it, and from then on the image is a plain
+// one that keeps every byte it is sent and refreshes its planes from them.
+void checkMaterialized(
+    VirglRenderer& renderer,
+    Pipeline& pipeline,
+    Picture picture,
+    Use use)
+{
+    constexpr std::uint32_t imageId = 3;
+    constexpr std::uint32_t copyId = 4;
+    const std::uint32_t stride = picture.stride();
+    const std::uint32_t rows = picture.rows();
+    const std::size_t size = static_cast<std::size_t>(stride) * rows;
+    Image image(renderer, imageId, pipeTexture2d, virglFormatR8Unorm,
+        virglBindSamplerView, stride, rows, picture.flags(), size);
+    fill(image.bytes(), 77);
+    image.write(stride, 0, rows);
+    std::array<std::uint32_t, 3> views {};
+    for (std::uint32_t plane = 0; plane < picture.planes(); ++plane) {
+        views[plane] = pipeline.createView(
+            imageId, picture.planeFormat(plane), plane);
+    }
+    // Half of the rows are rewritten, so the host's pixels differ from the
+    // bytes the image was created with.
+    fillRectangle(image.bytes(), stride, {2, 1, stride - 3, rows - 2}, 9);
+    image.writeBox(stride, 2, 1, stride - 3, rows - 2);
+    std::vector<std::uint8_t> model = image.bytes();
+
+    Commands commands;
+    if (use == Use::copy) {
+        Image copy(renderer, copyId, pipeTexture2d, virglFormatR8Unorm,
+            virglBindSamplerView, stride, rows, 0, size);
+        commands.add(commandResourceCopyRegion, 0,
+            {copyId, 0, 0, 0, 0, imageId, 0, 0, 0, 0, stride, rows, 1});
+        require(commands.submit(renderer) == 0, "the copy failed");
+        // The copy has every byte the planes hold, and zeros for the padding
+        // the planes cannot return.
+        const std::uint32_t bad = [&] {
+            require(copy.readBox(stride, 0, 0, stride, rows) == 0,
+                "the copy could not be read");
+            std::uint32_t count = 0;
+            for (std::uint32_t y = 0; y < rows; ++y) {
+                for (std::uint32_t x = 0; x < stride; ++x) {
+                    const std::size_t at = static_cast<std::size_t>(y) * stride + x;
+                    const std::uint8_t expected =
+                        picture.padding(x, y) ? 0 : model[at];
+                    if (copy.bytes()[at] != expected && count++ < 4) {
+                        std::fprintf(stderr,
+                            "copy %ux%u byte (%u,%u): got %u wanted %u\n",
+                            picture.width, picture.height, x, y,
+                            copy.bytes()[at], expected);
+                    }
+                }
+            }
+            return count;
+        }();
+        require(bad == 0, "a copy of a packed image did not hold its pixels");
+    } else {
+        commands.add(commandCreateObject, objectSurface,
+            {pipeline.newHandle(), imageId, virglFormatR8Unorm, 0, 0});
+        require(commands.submit(renderer) == 0, "the surface failed");
+    }
+
+    // Sampled through the views that were made before.
+    checkPlanes(pipeline, picture, model, views, "after the use");
+    // The image is the plain one now: a read returns the padding it holds, and
+    // so does a read of a box that starts at an odd byte.
+    std::vector<std::uint8_t> plain = model;
+    for (std::uint32_t y = 0; y < rows; ++y) {
+        for (std::uint32_t x = 0; x < stride; ++x) {
+            if (picture.padding(x, y))
+                plain[static_cast<std::size_t>(y) * stride + x] = 0;
+        }
+    }
+    checkRead(image, picture, plain, {0, 0, stride, rows}, true, true,
+        "plain read of the whole image");
+    checkRead(image, picture, plain, {3, picture.height, 4, 1}, true, true,
+        "plain read of a box");
+
+    // A write now lands in the image and follows into the planes, padding and
+    // all.
+    image.bytes() = plain;
+    fillRectangle(image.bytes(), stride, {picture.width - 1, 0,
+                      stride - picture.width + 1, rows}, 123);
+    image.writeBox(stride, picture.width - 1, 0, stride - picture.width + 1,
+        rows);
+    checkPlanes(pipeline, picture, image.bytes(), views, "write after the use");
+    model = image.bytes();
+    checkRead(image, picture, model, {0, 0, stride, rows}, true, true,
+        "plain read after a write");
 }
 
 // A resource created without a layout is the plain texture it always was, and
@@ -275,6 +520,16 @@ int main()
         checkPicture(*renderer, pipeline, Picture {biplanar, 10, 6});
         checkPicture(*renderer, pipeline, Picture {biplanar, 9, 5});
         checkPicture(*renderer, pipeline, Picture {biplanar, 33, 17});
+    }
+
+    // The pixels of a biplanar picture live in its planes, and any box of it,
+    // at any byte and at any pitch, goes to them. A pitch of 19 bytes for a
+    // picture 9 wide leaves the interleaved rows an odd number of bytes apart.
+    for (const Picture& picture : {Picture {true, 10, 6}, Picture {true, 9, 5},
+             Picture {true, 33, 17}, Picture {true, 9, 5, 19}}) {
+        checkBoxes(*renderer, pipeline, picture);
+        checkMaterialized(*renderer, pipeline, picture, Use::copy);
+        checkMaterialized(*renderer, pipeline, picture, Use::surface);
     }
 
     std::fputs("Packed YUV planes: ok\n", stderr);

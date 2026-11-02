@@ -394,7 +394,10 @@ the executable segments of the ELF files given, which places it in a library
 and function regardless of where the guest loaded it. For an Android
 application, pass its APK's `lib/arm64-v8a` and the guest's `/system/lib64`,
 `/apex/*/lib64` and `/system/bin` (all readable through `adb pull` on user
-builds). A block is attributed at its first instruction, so time in a block
+builds). Those libraries are stripped; their local functions, Skia's inside
+`libhwui.so` among them, are named from the MiniDebugInfo ELF in each file's
+`.gnu_debugdata` section. A block is attributed at its first instruction, so
+time in a block
 that falls through a function boundary counts against the first function. The
 report ranks guest threads; `--thread TPIDR` restricts it to one of them. The
 profile is cumulative, so copy it at a phase boundary and pass that copy as

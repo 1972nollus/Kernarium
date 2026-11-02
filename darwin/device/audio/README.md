@@ -141,7 +141,10 @@ over fakes; it never opens the microphone or shows a permission prompt.
 `UML_TEST_APPLE_AUDIO=ON` adds `apple-audio-playback`, which plays a brief tone
 through the real output, and `apple-audio-interruption`, which runs the sink in
 the iOS Simulator against posted interruption notifications (see
-[`../../../docs/testing.md`](../../../docs/testing.md)).
+[`../../../docs/testing.md`](../../../docs/testing.md)). A real interruption on
+a device comes from Kernarium's `AudioInterrupter` test application, which
+`devicectl` launches and ends (see
+[`../../../Kernarium/README.md`](../../../Kernarium/README.md)).
 
 The real microphone is checked by hand, because granting access is the user's
 act: start a guest with `--audio-input=host`, answer the prompt, and record in

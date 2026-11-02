@@ -190,8 +190,8 @@ The Virtio balloon (`device/balloon`) takes the memory the host GPU uses out of
 the guest. Its target is the larger of the process's Metal allocation
 (`MTLDevice.currentAllocatedSize`) and its graphics footprint (the graphics
 ledger of `TASK_VM_INFO`), which also charges the command storage the GPU
-driver has written and the allocation omits. The target is capped at the Venus
-device-memory limit of half the guest's RAM and followed in 16 MiB steps. A
+driver has written and the allocation omits. The target is capped at the GPU
+budget (below) and followed in 16 MiB steps. A
 host page leaves the footprint once the guest has ballooned all of its 4 KiB
 frames. Under `VIRTIO_BALLOON_F_MUST_TELL_HOST`, a deflate commits the page
 before the guest may use it.
@@ -211,8 +211,39 @@ above it or the peak shows that it did between two samples
 (`runtime/virtual_jetsam.hpp`). Nothing is killed: the line marks where iOS
 would have ended the process.
 
+The host GPU's budget, B, is computed once at launch and fixed for the run
+(`platform/gpu_budget.hpp`, planned by `emulator/src/gpu_budget_plan.*` for both
+hosts):
+
+```text
+B = clamp(L - A - G - E - S, 384 MiB, G / 2)
+```
+
+G is the guest's RAM. E is the gadget-cache budget in effect plus the rest of
+the guest side's host memory. A is the application's own expected ceiling and S
+the headroom left unused. Half the guest's RAM is the most the GPU may take, so
+where that is under the floor the maximum wins and B is G / 2; with no limit B
+is G / 2 as well. A, the rest of E and S are launch parameters, all in MiB:
+`--gpu-budget-app=`, `--gpu-budget-engine=` and `--gpu-budget-headroom=` on the
+macOS command line (an optional `K`, `M` or `G` suffix), the fields of the
+runtime's boot request on iOS, which `KERNARIUM_GPU_BUDGET_APP_MIB`,
+`KERNARIUM_GPU_BUDGET_ENGINE_MIB` and `KERNARIUM_GPU_BUDGET_HEADROOM_MIB` set for
+a measurement run. Their defaults are zero until the product owner chooses
+values, so B is G / 2 except where L - G leaves the GPU less than that. A launch
+whose L - A - G - E - S is under the floor is never refused: B is the floor,
+and the launch says the process is likely to be ended, as one `uml-darwin:`
+line on stderr and as a dismissible notice in Kernarium
+(`kernarium_runtime_plan_gpu_budget_function` evaluates the plan before the run
+so the application can show it). The device memory budget section of
+[graphics](graphics.md) owns what B bounds.
+
 Every iOS memory control carries its macOS path, or records here why none can
-exist, so that a Mac run stays an accurate ground for measuring the device.
+exist, so that a Mac run stays an accurate ground for measuring the device. The
+host graphics stack's paths are switches of a measurement run, described in
+[`graphics.md`](graphics.md): `VIRGL_ANON_FILE_UNLINKED=1` for the
+container-file segments iOS gets, `MESA_KK_SYSMEM_HEAP_MIB=4096` for the heap
+size an iPad reports, and `--gpu-display=offscreen` with the device view's
+drawable size and the frame mirror for its presentation memory.
 
 A host mapping call that fails says so. The kernel distinguishes an exhausted
 host only by `ENOMEM`, so Mach's resource-shortage and address-space-exhaustion
@@ -822,9 +853,11 @@ Exact x87 formats and transcendentals use bounded software-math primitives
 called by those native gadgets. The userspace ISA boundary includes scalar x86
 and x87/MMX, SSE through SSE4.2, AVX/AVX2,
 F16C/FMA, AES/PCLMUL, BMI1/2, atomic and extended-state operations in both
-long64 and compat32 modes. The pinned FEX handwritten x86-64 and i386 corpora
-are the external instruction acceptance gate. AVX-512 and later encodings,
-RTM/MPX, obsolete protected-mode bounds, 16-bit code segments, and
+long64 and compat32 modes. The AVX-VNNI dot products VPDPBUSD, VPDPBUSDS,
+VPDPWSSD and VPDPWSSDS run on both x86 engines, as the FEX corpus requires,
+although CPUID does not report them. The pinned FEX handwritten x86-64 and
+i386 corpora are the external instruction acceptance gate. AVX-512 and later
+encodings, RTM/MPX, obsolete protected-mode bounds, 16-bit code segments, and
 privileged, real-mode, virtual-machine, enclave, and system-management
 instructions are outside this Linux userspace profile, and AMD's 3DNow!, SSE4a
 and CLZERO raise #UD, as on an Intel core. That gate is not proof of an
@@ -989,6 +1022,19 @@ host GPU within seconds and a request that reached Metal after that would make
 the renderer's Vulkan device lost for good, and opens it as the application
 returns.
 
+A hold also stops whatever the guest is drawing, and an app that is drawing
+when it lands has its render and upload threads waiting, uninterruptibly, for
+ring space the host will not give: its main thread then cannot answer the
+framework, and Android kills it as not responding. So an Android guest whose
+screen is to be off for the stay is put to sleep first, while the GPU still
+answers, and the hold waits, for a bounded time, for the guest's display to go
+off. The service reports the display from the device's own state
+(`InProcessGpuService::guestScanoutActive()`, the shared display's flag): the
+device sets it when the guest binds a resource to its scanout and clears it
+when the guest unbinds it, which a disabled CRTC does as a screen goes off,
+and when the guest resets or a new guest connects. The answer needs no request
+to run, so it is the same as the hold lands.
+
 A hold promises the guest's requests wait, and a guest that is ending cannot
 wait: its shutdown drains the GPU's rings (`virtio_gpu_shutdown`, and every
 sender blocked for ring space) before the machine can go, and an Android guest
@@ -1084,7 +1130,11 @@ or a kick's acknowledgement alike. Serving a request inside a wait records its
 interrupt and replies on the request stream without touching the control
 socket. Darwin drops a read edge whose data is gone before it is collected, so
 a request read there leaves no edge for the request IRQ; the interrupts it
-recorded are delivered through `irq_work` instead.
+recorded are delivered through `irq_work` instead. A suspend disables each ring
+with such a wait, so that `irq_work` can run inside the suspend, where it reads
+the request stream once more and must find it nonblocking.
+`guest-vhost-user-suspend-drain` has a console take a backend request between
+the ring disables of a suspend and requires the suspend to end at its alarm.
 
 A backend request that needs an acknowledgement (an in-band completion, a
 config change, or a shared-memory map or unmap) waits for it while still

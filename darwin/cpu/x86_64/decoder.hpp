@@ -197,6 +197,7 @@ enum class Operation : std::uint8_t {
 	vector_integer_map2,
 	vector_integer_map3,
 	vector_fma,
+	vector_dot,
 	vector_map2_misc,
 	vector_gather,
 	vector_test,

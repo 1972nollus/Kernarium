@@ -108,6 +108,21 @@ modelled: each leaves at once after everything waiting, in decode order, which
 is a continuing limitation for interlaced field-coded streams. VP9 and JPEG
 pictures are returned as decoded, which is their display order.
 
+**Capture minimum.** From the announcement of the picture size on, the capture
+queue's `min_buffers` is the stream's reorder depth plus one, and four at the
+least (`V4L2_CID_MIN_BUFFERS_FOR_CAPTURE` in the guest). A client that keeps
+every picture it has queued until it is displayed, as Codec2's pipeline does,
+stalls the decoder when it keeps fewer pictures than that in flight, because
+the decoder releases a picture only once more than the reorder depth have
+followed it. The minimum lets such a client size its pipeline for the stream
+instead of for the worst case any stream could have (16). The depth is read
+from the parameter set in force: HEVC `sps_max_num_reorder_pics`; H.264
+`max_num_reorder_frames`, or the level's frame count when the stream states
+none, and zero where nothing is reordered. It is announced with the picture
+size, so a later parameter set that raises the depth at the same size is not
+announced again, and a client that sized its pipeline from the first one keeps
+it.
+
 **Seek.** `QUEUE_CLEAR` on the coded queue drops every picture in flight, every
 reference and the picture order state, and keeps the stream's parameter sets
 and the capture format the client settled on, because a client that seeks
@@ -216,6 +231,27 @@ Streams retain timestamps, signal format changes, drain delayed output, and
 complete cancellation and EOS through the command and event queues. Pending
 event buffers are bounded by the transport's maximum virtqueue size; full
 queues apply backpressure instead of completing empty events.
+
+A decoder in hardware cannot decode without a free capture buffer, so the device
+holds an encoded packet back, and its input buffer with it, while two decoded
+frames wait for a capture buffer. Two are enough because a frame is a full copy
+of the picture (11.9 MiB at 3840 x 2160): one is being copied into a buffer
+while the next waits. Held packets queue up to 128 deep, a burst released at a
+sequence boundary or a drain is delivered whole, and the pictures a stream's
+reorder depth keeps inside the decoder are not counted.
+
+The coded queue's buffer size, which the guest reads as the plane size, follows
+the picture size the client states with its coded format: 1 MiB up to
+1280 x 720, 2 MiB up to 1920 x 1088, 4 MiB up to 4096 x 2304 and 8 MiB, the
+largest packet the device takes, above that. A stream that has stated no size
+and every JPEG stream keep the 8 MiB. A client keeps several coded buffers
+queued for a stream's lifetime and a compressed picture is a fraction of that
+size, so eight buffers of the largest packet were 64 MiB of guest memory at any
+resolution. A packet that does not fit the buffer a client allocated for the
+size it stated is the client's to split or refuse, which is what a hardware
+decoder's own limit asks of it. A client may still allocate larger buffers: the
+stated size is the least the guest accepts, and the device takes any packet up
+to 8 MiB that fits the buffer.
 
 Whether an application decoded in hardware cannot be settled from inside the
 guest: a player that falls back to software shows the same correct picture, and

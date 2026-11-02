@@ -12,10 +12,10 @@ gets the fault through EmbedderRequireAlignment.
  1 file changed, 6 insertions(+)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 1b18e4b26e458de570a3bcad25f8cca1bcc37f13..56c024fdc19507f412f2b8b3072023adf4133230 100644
+index d08371117aa8ee33ea1277c0094d64231a8598c2..b8437997fd7993649bd371ac178d48ab108525d7 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -4261,6 +4261,12 @@ void OpDispatchBuilder::CMPXCHGPairOp(OpcodeArgs) {
+@@ -4272,6 +4272,12 @@ void OpDispatchBuilder::CMPXCHGPairOp(OpcodeArgs) {
  
    HandledLock = (Op->Flags & FEXCore::X86Tables::DecodeFlags::FLAG_LOCK) != 0;
  
