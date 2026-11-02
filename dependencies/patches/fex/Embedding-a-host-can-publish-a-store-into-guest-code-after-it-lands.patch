@@ -77,10 +77,10 @@ index c6e0d7bde3ae5626e669931a377b93550beeb491..ab60009bf2554263bd2ef232baf0bfbb
        LoadConstant(ARMEmitter::Size::i64Bit, TMP2, Site->Info | Core::EMBEDDER_ACCESS_COMMIT);
        adr_OrRestart(TMP3, &Site->Done);
 diff --git a/FEXCore/Source/Interface/Core/JIT/JITClass.h b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-index 92b97a260aa1efa5b1d1a7c2ff59b8f1431bbee9..5673c38ea540d2332b34b86a640b2e34a7a780a7 100644
+index 870b4966bd518a275cf2de05c6687915a90b2d2a..b60cd56b6694e16a5fe315296f672b3a531ae51b 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JITClass.h
 +++ b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-@@ -122,11 +122,14 @@ private:
+@@ -127,11 +127,14 @@ private:
      uint64_t Info {};
      uint64_t GuestRIP {};
      // Emits the op's store with the given base register, so a store that
@@ -98,7 +98,7 @@ index 92b97a260aa1efa5b1d1a7c2ff59b8f1431bbee9..5673c38ea540d2332b34b86a640b2e34
      ARMEmitter::BackwardLabel Done;
    };
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 59cab9f7f54cbf49000433b1f86c558fd4b13103..aa776c66e1739c82747287e3970a221149db752b 100644
+index 91041396df5a925b4ca6c8cd2ccb60cad6190c66..617b47ffbf1f948da63ff6bff9f1cdb88f64db76 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
 @@ -408,6 +408,12 @@ constexpr uint64_t EMBEDDER_ACCESS_GATHER = 1ULL << 13;
@@ -114,7 +114,7 @@ index 59cab9f7f54cbf49000433b1f86c558fd4b13103..aa776c66e1739c82747287e3970a2211
  // Bits 32 and up: the instructions a fault at this access leaves unretired
  // of those its unit charged the budget for.
  constexpr uint32_t EMBEDDER_ACCESS_UNRETIRED_SHIFT = 32;
-@@ -715,6 +721,11 @@ struct CpuStateFrame {
+@@ -718,6 +724,11 @@ struct CpuStateFrame {
      // itself: the checks pass it, and so does the guard of an access they do
      // not cover.
      uint32_t SegmentBypass {};

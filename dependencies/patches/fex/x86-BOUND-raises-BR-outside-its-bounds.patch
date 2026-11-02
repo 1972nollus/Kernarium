@@ -16,10 +16,10 @@ index lies outside them. A register operand is still undefined, and
  3 files changed, 44 insertions(+), 1 deletion(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index fe1fc28c79c9eabb58a8c40630f4f6630dedf8f6..e97d2fff5b3c00851d6b80656845ec0dcdffa590 100644
+index 1277c674bbabfef573dcd5ddc47254e8f2448a22..bc90217605c6ac37a30f05a8730330e9939aecee 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -1178,6 +1178,42 @@ void OpDispatchBuilder::ARPLOp(OpcodeArgs) {
+@@ -1145,6 +1145,42 @@ void OpDispatchBuilder::ARPLOp(OpcodeArgs) {
    StoreResultGPR_WithOpSize(Op, Op->Dest, FinalDest, Size);
  }
  
@@ -63,19 +63,19 @@ index fe1fc28c79c9eabb58a8c40630f4f6630dedf8f6..e97d2fff5b3c00851d6b80656845ec0d
    // This instruction is a bit special
    // if SrcSize == 2
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index b917619848e0bd4f8b8638cdd641dc74072215ad..2cea184df873f132cbdb19523d9a51814f2d0155 100644
+index 37b159f31dabe734528636c6aad61464a9fcad2b..1e4a22f1cbab383f80d3a644cea90a0a0717b15f 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -400,6 +400,7 @@ public:
+@@ -403,6 +403,7 @@ public:
    void RETFARIndirectOp(OpcodeArgs);
-   void TESTOp(OpcodeArgs, uint32_t SrcIndex);
+   void TESTOp(OpcodeArgs, uint32_t SrcIndex, bool DestRAX);
    void ARPLOp(OpcodeArgs);
 +  void BOUNDOp(OpcodeArgs);
    void MOVSXDOp(OpcodeArgs);
    void MOVSXOp(OpcodeArgs);
    void MOVZXOp(OpcodeArgs);
 diff --git a/FEXCore/Source/Interface/Core/X86Tables/BaseTables.cpp b/FEXCore/Source/Interface/Core/X86Tables/BaseTables.cpp
-index 53ae7e273a16f76980df4ee192de7b6db0b68d7c..9866670fa34d3f9f6f1d443bcc5ed1c21719de69 100644
+index 265b575d53868d8f2429dc642abfa017dff19f13..e7bc3a7a737bd68c5ac011739f5159b7ebbca697 100644
 --- a/FEXCore/Source/Interface/Core/X86Tables/BaseTables.cpp
 +++ b/FEXCore/Source/Interface/Core/X86Tables/BaseTables.cpp
 @@ -31,6 +31,7 @@ enum Primary_LUT {

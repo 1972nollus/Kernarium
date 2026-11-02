@@ -46,6 +46,11 @@ dispatches that begin meanwhile wait, which costs one gadget dispatch's length
 at most, once in the life of an address space ([`x86_tier.hpp`](../../../runtime/x86_tier.hpp)).
 The JIT never hands a space back.
 
+Without a tier, every exec'd process compiles its startup path from scratch:
+a dynamically linked `/bin/true` costs the JIT about 2.6 times what it costs
+the gadget engine (16.7 ms against 6.5 ms on one vCPU), and the LTP runner
+scales its case bounds for that ([testing](../../../../docs/testing.md#ltp)).
+
 `x86-64-tier-switch-corpus` and `x86-64-tier-switch-retirement` hold the
 handover to the engines' own results: the corpus and the retirement cases run
 on the gadgets for the first K retired instructions and then on the JIT, for

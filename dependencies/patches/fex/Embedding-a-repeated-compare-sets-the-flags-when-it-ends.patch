@@ -20,10 +20,10 @@ ends.
  3 files changed, 151 insertions(+), 47 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 2d16de78b5fde702d76a17d26882cf59e51797d5..bf49b842f379e0e3e5910a25faed55ed2092e01b 100644
+index dba99bf0aa7d1d3ce78759ed33cbb3553d2a1f3a..cf5bf6d1a295874f3678263dfab08d71291635cb 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -3569,6 +3569,16 @@ IR::OpSize OpDispatchBuilder::GetStringOpSize(X86Tables::DecodedOp Op) const {
+@@ -3580,6 +3580,16 @@ IR::OpSize OpDispatchBuilder::GetStringOpSize(X86Tables::DecodedOp Op) const {
    return !Is64BitMode || (Op->Flags & FEXCore::X86Tables::DecodeFlags::FLAG_ADDRESS_SIZE) ? OpSize::i32Bit : OpSize::i64Bit;
  }
  
@@ -40,7 +40,7 @@ index 2d16de78b5fde702d76a17d26882cf59e51797d5..bf49b842f379e0e3e5910a25faed55ed
  void OpDispatchBuilder::CMPSOp(OpcodeArgs) {
    if (!Is64BitMode && (Op->Flags & FEXCore::X86Tables::DecodeFlags::FLAG_ADDRESS_SIZE)) {
      LogMan::Msg::EFmt("CMPSOp: Address size override (0x67) not supported in 32-bit mode (OP: 0x{:04X}).", Op->OP);
-@@ -3608,73 +3618,89 @@ void OpDispatchBuilder::CMPSOp(OpcodeArgs) {
+@@ -3619,73 +3629,89 @@ void OpDispatchBuilder::CMPSOp(OpcodeArgs) {
        StoreGPRRegister(X86State::REG_RSI, Dest_RSI, AddrSize);
      }
    } else if (CTX->Embedded) {
@@ -177,7 +177,7 @@ index 2d16de78b5fde702d76a17d26882cf59e51797d5..bf49b842f379e0e3e5910a25faed55ed
    } else {
      // Calculate flags early.
      CalculateDeferredFlags();
-@@ -3898,6 +3924,76 @@ void OpDispatchBuilder::SCASOp(OpcodeArgs) {
+@@ -3909,6 +3935,76 @@ void OpDispatchBuilder::SCASOp(OpcodeArgs) {
      } else {
        StoreGPRRegister(X86State::REG_RDI, TailDest_RDI, AddrSize);
      }
@@ -209,7 +209,7 @@ index 2d16de78b5fde702d76a17d26882cf59e51797d5..bf49b842f379e0e3e5910a25faed55ed
 +      Ref Src_RDI = LoadGPRRegister(X86State::REG_RDI, AddrSize);
 +      Ref Dest_RDI = AppendSegmentOffset(Src_RDI, 0, X86Tables::DecodeFlags::FLAG_ES_PREFIX, true);
 +
-+      auto Src1 = LoadSourceGPR(Op, Op->Src[0], Op->Flags);
++      auto Src1 = LoadGPRRegister(X86State::REG_RAX, Size);
 +      auto Src2 = _LoadMemGPRAutoTSO(Size, Dest_RDI, Size);
 +
 +      _StoreContextGPR(OpSize::i64Bit, Src2, EmbedderStringOperands);
@@ -239,7 +239,7 @@ index 2d16de78b5fde702d76a17d26882cf59e51797d5..bf49b842f379e0e3e5910a25faed55ed
 +    });
 +
 +    {
-+      Ref Src1 = LoadSourceGPR(Op, Op->Src[0], Op->Flags);
++      Ref Src1 = LoadGPRRegister(X86State::REG_RAX, Size);
 +      Ref Src2 = _LoadContextGPR(OpSize::i64Bit, EmbedderStringOperands);
 +      CalculateFlags_SUB(OpSizeFromSrc(Op), Src1, Src2);
 +      CalculateDeferredFlags();
@@ -255,10 +255,10 @@ index 2d16de78b5fde702d76a17d26882cf59e51797d5..bf49b842f379e0e3e5910a25faed55ed
      // Calculate flags early. because end of block
      CalculateDeferredFlags();
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index 98b6c7cef5d28dc2ba34c7550f29fe2bb52cbad0..f3e3deb610f42dec489c409c19d7636ff01ff9e3 100644
+index f671e645f184563f890ed7d28b89619e79e23abd..9f9fcd0a08feb17fac368a9783461ec7770835dd 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -1525,6 +1525,11 @@ private:
+@@ -1551,6 +1551,11 @@ private:
    void EmbedderCheckMXCSR(Ref MXCSR, Ref Selected = nullptr);
    // Embedded: faults as a read of the byte at Addr, as CLFLUSH, CLFLUSHOPT and CLWB do.
    void EmbedderCacheLineProbe(Ref Addr);
@@ -271,10 +271,10 @@ index 98b6c7cef5d28dc2ba34c7550f29fe2bb52cbad0..f3e3deb610f42dec489c409c19d7636f
    bool EmbedderX87Checks() const;
    // With x87 checks, EmbedderX87Commit(Mask).
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index ccf887d281e473a3d5ce7e9bb2e6ccc0c4989cdc..0f081faa5bf01a57b093b0972a40ee12edbfdf37 100644
+index 30f2d7a9e92247f75d766ff20d5108dcb9ac2029..c12f83da21c56932bbf3c2d688f1ac30ca0fa287 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
-@@ -734,6 +734,9 @@ struct CpuStateFrame {
+@@ -737,6 +737,9 @@ struct CpuStateFrame {
      // replace (EmbedderSaveFPFlags).
      uint32_t FPSRBefore {};
      uint32_t FPSRPart {};

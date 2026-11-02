@@ -815,6 +815,26 @@ release the GPU, resume the guest, and render the display. Stopping the job from
 the app's button while in front must change nothing about the guest. For
 Android the console must also show the guest suspending itself soon after the
 power key (`PM: suspend entry`) and the screen coming back on the return.
+The screen goes off first: the console shows `guest display off after N ms`
+(or `still on` at the 1.5 s bound, which is a finding) before the hold line, and
+under a launcher that is drawing, such as a `input swipe` loop in the guest, a
+ten-minute stay must leave no task in D state, no `am_anr`, and the same
+`system_server` and `surfaceflinger` pids at the return. A guest whose screen
+was off already must stay off through the stay and the return.
+`KERNARIUM_BACKGROUND_HOLD_DELAY_MS=N` (automation runtimes only) holds a job's
+GPU N milliseconds after the edge instead, on a guest whose screen stays on and
+keeps drawing, to find when iOS stops serving Metal: the first Metal
+access-revoked error in the console is the answer, and the 1.5 s bound stays
+well inside it.
+
+A Mac runs the guest's side of this edge without a device, with no GPU
+revoked: `Kernarium/scripts/repro-android-hold-mac.py` launches the Android
+automation runtime in Designed for iPad mode, applies the real policy through
+`AndroidHoldReproTests`, and checks the guest through adb. The tests skip
+unless that script names their channel. It needs an Android bundle whose disk
+has the layout the host expects. `--expect fail` is for a build with the old
+order, which must show tasks waiting on the GPU control queue and the launcher
+not responding to the screen-off broadcast.
 
 To check the restart notice, background the
 application, terminate its process with `devicectl device process terminate`,
@@ -838,6 +858,17 @@ The runner uses `/opt/ltp` from `rootfs.erofs` and the selected kernel bundle's
 `modules.builtin`. The shipped kernels have `CONFIG_MODULES=n`; disposable
 guest helpers may recognize exact built-ins but must reject unknown module
 operations.
+
+A case's bound in the manifest, and the `--candidate-timeout` of a candidate,
+is sized on the gadget engine, as is the `LTP_TIMEOUT_MUL` of 4 the runner
+gives LTP's own timers. Under `--engine jit` the runner multiplies both by the
+guest's factor in `JIT_CASE_BOUND_FACTORS`, 5 for arm64 and 4 for x86_64,
+because a JIT compiles every exec'd process's code from scratch: the measured
+cost per exec is about four times the gadget engine's on the arm64 JIT
+([Cold code](../darwin/cpu/arm64/jit/README.md#cold-code)) and about 2.7 times
+on the x86-64 JIT, and a case such as `zram01`, which runs one `dd` per KiB it
+writes, is bound by it. The factor is the same for every case, and the
+results summary records it as `case_bound_factor`.
 
 `--guest-arch x86_64` runs the same manifests on the x86_64-userspace slice
 with the [x86-64 LTP rootfs](../tools/rootfs/ltp-x86_64/README.md), applying
@@ -1143,7 +1174,8 @@ HAL and supplicant with their manifest fragments and services, the Wi-Fi feature
 declaration and the absent Ethernet, Aware, RTT, Direct and Passpoint ones, the built-in macvlan, cfg80211 and virt_wifi
 options of the packaged kernel configuration, the absent wificond, the ClearKey HAL's access to the memfd files of applications, the
 policy without the LineageOS grants that Android's neverallow tests refuse, and the
-discrete app-op list that keeps AOSP's default ops, the example thermal HAL
+discrete app-op list that keeps AOSP's default ops, the 1024 pixel tablet
+default wallpaper in the framework overlay with the checks of the overlay's copy, the example thermal HAL
 with its manifest fragment and service, the default CAS HAL with its ClearKey
 plugin, the vendor `build.prop` without the unreliable-present-fence property
 and with `ro.incremental.enable=1`, the software decoders' 3840x2160 limits, the
@@ -1188,9 +1220,11 @@ runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
 - **Cost.** Boot to `sys.boot_completed` (dmesg), cold and warm, in an
   ABBA order against the previous release on the same host build; `MemAvailable`
   after a settle and `dumpsys meminfo` for the zygotes and the WebView zygote;
-  and the image and compressed sizes. The stock secondary zygote stays unless
-  it costs more than 3 s of iPad cold boot or 100 MiB of guest `MemAvailable`;
-  then one started on demand is designed.
+  and the image and compressed sizes. The secondary zygote stays, preloaded only
+  while a 32-bit package is installed; it is replaced if it costs more than 3 s
+  of iPad cold boot or 100 MiB of guest `MemAvailable`. A 32-bit application
+  installed on a device that had none starts the preload, so the first launch
+  after that install is the one to time.
 
 ## Android guest storage
 
@@ -1258,6 +1292,20 @@ enabled (`--video`).
   the performance classes run on a quiet one.
 - **Host.** The host's video activity log shows hardware encodes and decodes
   for those runs; a pass that never reached the host codec does not qualify.
+
+## Android UI rendering CTS
+
+`CtsUiRenderingTestCases` qualifies on the iPad's gadget engine in the
+automation application, not on the shared Mac. Its
+`ColorSpaceTests#testMultiAtlasGlyphsWithColorSpace` paints a thousand glyphs
+of the COLRv1 emoji font at 13 sizes on the CPU in each of two renders, and
+each render must finish within the test's 60 s wait. On the iPad mini 6 the
+slowest render took 37.74 s, about 1.6 times inside the wait. A quiet Mac
+renders about as fast, but on the shared Mac the test fails when other guests
+load the host, so a Mac failure of that test is recorded as caused by load. The
+product keeps the COLRv1 font: no change in view shortens the render by more
+than a few percent
+([G289](optimization-history.md#ios-graphics-and-later-gadget-work)).
 
 ## x86 instruction conformance
 

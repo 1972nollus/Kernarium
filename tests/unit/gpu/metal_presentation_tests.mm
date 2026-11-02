@@ -8,7 +8,8 @@
  * presenter drew into. The CPU path's framebuffer and texture exist only once
  * it is written, so its frames before that present the clear alone. The
  * frame mirror for Picture in Picture is checked the same way, from the
- * pixels it delivers. */
+ * pixels it delivers, and so is a layer that belongs to no window, which the
+ * offscreen display draws into. */
 
 #include "frame_tap.hpp"
 #include "gpu_metal_test_support.hpp"
@@ -19,6 +20,7 @@
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -37,6 +39,21 @@ using uml::gpu::DisplayRotation;
 using uml::gpu::MetalPresentation;
 using uml::gpu::MetalScanout;
 using uml::gpu::PresentOutcome;
+
+/* A layer that belongs to no window, which keeps the drawable it hands out so
+ * that a test can read back what was drawn into it. */
+@interface CapturingMetalLayer : CAMetalLayer
+@property(nonatomic, strong) id<CAMetalDrawable> lastDrawable;
+@end
+
+@implementation CapturingMetalLayer
+- (id<CAMetalDrawable>)nextDrawable
+{
+    id<CAMetalDrawable> drawable = [super nextDrawable];
+    self.lastDrawable = drawable;
+    return drawable;
+}
+@end
 
 @interface PresentationTestDelegate : NSObject <MTKViewDelegate>
 @property(nonatomic) MetalPresentation* presentation;
@@ -458,6 +475,69 @@ void checkFrameTap(MetalPresentation& presentation, Harness& harness)
         "the mirror delivered a frame after it was stopped");
 }
 
+/* The windowless display draws into a layer of its own instead of an
+ * MTKView: the drawable's pixels must be the view path's, and the layer must
+ * keep recycling its three drawables, because a layer outside any window that
+ * stopped handing them out would stall each draw for the drawable timeout. */
+void checkLayerDraw(MetalPresentation& presentation, Harness& harness)
+{
+    id<MTLDevice> device = (__bridge id<MTLDevice>)presentation.device();
+    id<MTLCommandQueue> queue = [device newCommandQueue];
+    CapturingMetalLayer* layer = [CapturingMetalLayer layer];
+    layer.device = device;
+    layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+    layer.framebufferOnly = NO;
+    layer.maximumDrawableCount = 3;
+    layer.drawableSize = CGSizeMake(framebufferWidth, framebufferHeight);
+
+    /* One draw, with the previous frame still retiring retried, as the
+     * view's draw is. Returns the time it took. */
+    const auto drawOnce = [&]() -> std::chrono::steady_clock::duration {
+        const auto begin = std::chrono::steady_clock::now();
+        const auto target = presentation.statistics().presentedFrames + 1;
+        const auto deadline = begin + std::chrono::seconds(10);
+        while (std::chrono::steady_clock::now() < deadline) {
+            layer.lastDrawable = nil;
+            presentation.drawLayer((__bridge void*)layer);
+            if (uml::testing::waitUntil(
+                    [&] {
+                        return presentation.statistics().presentedFrames >=
+                            target;
+                    },
+                    std::chrono::seconds(1))) {
+                return std::chrono::steady_clock::now() - begin;
+            }
+        }
+        require(false, "the layer never completed a frame");
+        return {};
+    };
+
+    require(accepted(harness.present({
+                .width = sourceWidth, .height = sourceHeight})),
+        "a scanout larger than the framebuffer was refused");
+    drawOnce();
+    require(layer.lastDrawable != nil, "the layer handed out no drawable");
+    const auto pixels = uml::gpu::testing::readTexture(
+        queue, layer.lastDrawable.texture, framebufferWidth, framebufferHeight,
+        framebufferWidth * 4U);
+    require(pixelIs(pixels, 16, 9, red) && pixelIs(pixels, 48, 9, green) &&
+            pixelIs(pixels, 16, 27, blue) && pixelIs(pixels, 48, 27, white),
+        "a scanout drawn into a windowless layer was not scaled into it");
+
+    /* Many more frames than the layer has drawables, each shown before the
+     * next is offered, as a guest at the display's pace does. */
+    constexpr int frames = 300;
+    std::chrono::steady_clock::duration slowest {};
+    for (int frame = 0; frame < frames; ++frame) {
+        require(accepted(harness.present({
+                    .width = sourceWidth, .height = sourceHeight})),
+            "a scanout was refused while the layer recycled its drawables");
+        slowest = std::max(slowest, drawOnce());
+    }
+    require(slowest < std::chrono::milliseconds(500),
+        "a windowless layer stopped recycling its drawables");
+}
+
 /* A CPU-rendered display, which is what a guest without a direct scanout
  * shows, is mirrored too. */
 void checkFrameTapCpu(MetalPresentation& presentation)
@@ -525,6 +605,7 @@ int run()
     require(pixelIs(pixels, 16, 9, red) && pixelIs(pixels, 48, 9, green) &&
             pixelIs(pixels, 16, 27, blue) && pixelIs(pixels, 48, 27, white),
         "a scanout larger than the framebuffer was not scaled into it");
+    checkLayerDraw(*presentation, harness);
 
     /* Columns 16-79 of the top half: the red-green boundary at column 64
      * lands three quarters of the way across. */

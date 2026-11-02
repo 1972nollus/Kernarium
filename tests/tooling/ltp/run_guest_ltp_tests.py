@@ -779,6 +779,43 @@ WARNINGS 0
             runner.ltp_guest_command("slow01"), 5
         )
 
+    def test_a_jit_scales_case_bounds_and_the_gadgets_keep_them(self) -> None:
+        case = runner.Case("kernel_misc", "zram01", "zram01.sh", "pass", 600, "")
+        # At least the measured exec-heavy ratio and a quarter more.
+        for guest_arch, minimum in (("arm64", 5), ("x86_64", 4)):
+            with self.subTest(guest_arch=guest_arch, engine="jit"):
+                factor = runner.JIT_CASE_BOUND_FACTORS[guest_arch]
+                self.assertGreaterEqual(factor, minimum)
+                jit = runner.bound_for_engine(case, guest_arch, "jit")
+                self.assertEqual(jit.engine, "jit")
+                self.assertEqual(jit.timeout_seconds, 600 * factor)
+                self.assertEqual(
+                    jit.ltp_timeout_mul, runner.LTP_TIMEOUT_MUL * factor
+                )
+            with self.subTest(guest_arch=guest_arch, engine="gadgets"):
+                gadgets = runner.bound_for_engine(case, guest_arch, "gadgets")
+                self.assertEqual(
+                    gadgets, runner.dataclasses.replace(case, engine="gadgets")
+                )
+        self.assertEqual(
+            set(runner.JIT_CASE_BOUND_FACTORS), set(runner.GUEST_ARCHITECTURES)
+        )
+
+    def test_a_case_runs_under_its_own_bound_and_ltp_timers(self) -> None:
+        guest = object.__new__(runner.Guest)
+        guest.run_command = mock.Mock(
+            side_effect=runner.CommandTimeout("exceeded", "")
+        )
+        case = runner.bound_for_engine(
+            runner.Case("kernel_misc", "zram01", "zram01.sh", "pass", 600, ""),
+            "arm64", "jit",
+        )
+        guest.run(case)
+        command, bound = guest.run_command.call_args.args
+        self.assertEqual(bound, case.timeout_seconds)
+        self.assertIn(f"LTP_TIMEOUT_MUL={case.ltp_timeout_mul} ", command)
+        self.assertNotIn(f"LTP_TIMEOUT_MUL={runner.LTP_TIMEOUT_MUL} ", command)
+
     def test_a_finished_case_reports_counts_and_guest_health(self) -> None:
         output = "SUMMARY:\nPASSED   1\nFAILED   0\n"
         case = runner.Case("syscalls", "quick01", "quick01", "pass", 5, "")

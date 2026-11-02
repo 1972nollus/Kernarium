@@ -16,6 +16,7 @@
 #include "gpu/native_display_application.hpp"
 #include "gpu/protocol.hpp"
 #include "launcher.hpp"
+#include "gpu_budget_plan.hpp"
 #include "guest_memory_argument.hpp"
 #include "platform/microphone_authorization.hpp"
 #include "restart_loop_guard.hpp"
@@ -298,6 +299,8 @@ struct HostGpuOptions {
 	std::uint32_t width {1280};
 	std::uint32_t height {720};
 	std::uint32_t dots_per_inch {};
+	uml::gpu::OffscreenDisplayOptions offscreen;
+	bool offscreen_option_specified {};
 
 	[[nodiscard]] bool operator==(const HostGpuOptions &) const = default;
 };
@@ -310,6 +313,10 @@ struct PreparedArguments {
 	bool battery {};
 	bool video {};
 	bool video_encoder {};
+	/* --gpu-budget-app=, --gpu-budget-engine= and --gpu-budget-headroom=:
+	 * A, E_rest and S of the host GPU's fixed budget
+	 * (platform/gpu_budget.hpp). */
+	uml::emulator::GpuBudgetParameters gpu_budget;
 	std::string console_socket;
 	std::string serial_socket;
 	std::vector<std::string> net_forwards;
@@ -343,13 +350,14 @@ struct PreparedArguments {
 	[[nodiscard]] bool same_host_devices(
 		const PreparedArguments &other) const
 	{
-		return std::tie(gpu, audio, audio_output, audio_input_host, battery,
-				video, video_encoder, console_socket, serial_socket,
-				net_forwards) ==
-			std::tie(other.gpu, other.audio, other.audio_output,
-				 other.audio_input_host, other.battery, other.video,
-				 other.video_encoder, other.console_socket,
-				 other.serial_socket, other.net_forwards);
+		return std::tie(gpu, gpu_budget, audio, audio_output,
+				audio_input_host, battery, video, video_encoder,
+				console_socket, serial_socket, net_forwards) ==
+			std::tie(other.gpu, other.gpu_budget, other.audio,
+				 other.audio_output, other.audio_input_host,
+				 other.battery, other.video, other.video_encoder,
+				 other.console_socket, other.serial_socket,
+				 other.net_forwards);
 	}
 };
 
@@ -379,6 +387,46 @@ bool parse_host_integer(std::string_view argument, std::string_view prefix,
 					    std::string(argument));
 	destination = parsed;
 	return true;
+}
+
+/* Two positive whole numbers around `separator`, "2266x1374" or "800@15",
+ * in the value of `argument`. */
+void parse_host_pair(std::string_view argument, std::string_view value,
+		     char separator, std::uint32_t &first,
+		     std::uint32_t &second)
+{
+	const auto invalid = [&] {
+		return std::invalid_argument("invalid host option: " +
+					     std::string(argument));
+	};
+	const auto cut = value.find(separator);
+	if (cut == std::string_view::npos)
+		throw invalid();
+	std::uint32_t parsed[2] {};
+	const std::string_view parts[2] {value.substr(0, cut),
+					 value.substr(cut + 1)};
+	for (int i = 0; i < 2; ++i) {
+		const auto [end, error] = std::from_chars(
+			parts[i].data(), parts[i].data() + parts[i].size(),
+			parsed[i]);
+		if (error != std::errc {} || parts[i].empty() ||
+		    end != parts[i].data() + parts[i].size() || parsed[i] == 0)
+			throw invalid();
+	}
+	first = parsed[0];
+	second = parsed[1];
+}
+
+/* The bytes a --gpu-budget-*= option states: a whole number with an optional
+ * K, M or G suffix. */
+std::uint64_t parse_gpu_budget_option(std::string_view argument,
+				      std::string_view value)
+{
+	std::uint64_t bytes = 0;
+	if (!uml::emulator::parse_gpu_budget_bytes(value, bytes))
+		throw std::invalid_argument("invalid host option: " +
+					    std::string(argument));
+	return bytes;
 }
 
 /* Records the path of a socket option, which may be given once. */
@@ -448,11 +496,38 @@ PreparedArguments prepare_host_arguments(
 		} else if (valued("--gpu-display=")) {
 			if (value == "native")
 				prepared.gpu.display_mode = uml::gpu::DisplayMode::native;
+			else if (value == "offscreen")
+				prepared.gpu.display_mode =
+					uml::gpu::DisplayMode::offscreen;
 			else if (value == "vnc")
 				prepared.gpu.display_mode = uml::gpu::DisplayMode::vnc;
 			else
 				throw std::invalid_argument(
-					"--gpu-display must be native or vnc");
+					"--gpu-display must be native, offscreen "
+					"or vnc");
+			prepared.gpu.enabled = true;
+		} else if (valued("--gpu-offscreen-size=")) {
+			parse_host_pair(argument, value, 'x',
+					prepared.gpu.offscreen.drawableWidth,
+					prepared.gpu.offscreen.drawableHeight);
+			prepared.gpu.offscreen_option_specified = true;
+			prepared.gpu.enabled = true;
+		} else if (valued("--gpu-offscreen-mirror=")) {
+			/* The mirror Picture in Picture runs while it shows the guest:
+			 * 800 pixels wide at 15 frames a second. */
+			if (value == "on") {
+				prepared.gpu.offscreen.mirrorWidth = 800;
+				prepared.gpu.offscreen.mirrorFramesPerSecond = 15;
+			} else if (value == "off") {
+				prepared.gpu.offscreen.mirrorWidth = 0;
+				prepared.gpu.offscreen.mirrorFramesPerSecond = 0;
+			} else {
+				parse_host_pair(
+					argument, value, '@',
+					prepared.gpu.offscreen.mirrorWidth,
+					prepared.gpu.offscreen.mirrorFramesPerSecond);
+			}
+			prepared.gpu.offscreen_option_specified = true;
 			prepared.gpu.enabled = true;
 		} else if (valued("--gpu-vnc-bind=")) {
 			prepared.gpu.vnc_option_specified = true;
@@ -484,6 +559,15 @@ PreparedArguments prepare_host_arguments(
 					"--gpu-auto-resize must be on or off");
 			prepared.gpu.auto_resize_guest_specified = true;
 			prepared.gpu.enabled = true;
+		} else if (valued("--gpu-budget-app=")) {
+			prepared.gpu_budget.application =
+				parse_gpu_budget_option(argument, value);
+		} else if (valued("--gpu-budget-engine=")) {
+			prepared.gpu_budget.engine_rest =
+				parse_gpu_budget_option(argument, value);
+		} else if (valued("--gpu-budget-headroom=")) {
+			prepared.gpu_budget.headroom =
+				parse_gpu_budget_option(argument, value);
 		} else if (valued("--net-forward=")) {
 			if (value.empty())
 				throw std::invalid_argument(
@@ -504,10 +588,15 @@ PreparedArguments prepare_host_arguments(
 			prepared.kernel.push_back(text);
 		}
 	}
-	if (prepared.gpu.display_mode == uml::gpu::DisplayMode::native &&
+	if (prepared.gpu.display_mode != uml::gpu::DisplayMode::vnc &&
 	    prepared.gpu.vnc_option_specified)
 		throw std::invalid_argument(
 			"--gpu-vnc-* options require --gpu-display=vnc");
+	if (prepared.gpu.display_mode != uml::gpu::DisplayMode::offscreen &&
+	    prepared.gpu.offscreen_option_specified)
+		throw std::invalid_argument(
+			"--gpu-offscreen-* options require "
+			"--gpu-display=offscreen");
 	if (prepared.gpu.display_mode != uml::gpu::DisplayMode::native &&
 	    prepared.gpu.auto_resize_guest_specified)
 		throw std::invalid_argument(
@@ -678,12 +767,30 @@ public:
 			return false;
 		}
 		emulator_.reset(created);
-		/* GPU memory is charged to the process like guest RAM, so the GPU may
-		 * use at most half of the guest's allocation and the balloon takes
-		 * what it uses out of the guest. */
-		guest_memory_ =
-			uml::emulator::configured_guest_memory_bytes(prepared_.kernel);
-		device_memory_limit_ = guest_memory_ / 2;
+		/* GPU memory is charged to the process like guest RAM: the GPU's
+		 * budget is what the process limit leaves after the guest, the
+		 * gadget cache and the launch's own allowances, at least 384 MiB and
+		 * at most half of the guest's allocation, and the balloon takes what
+		 * the GPU uses out of the guest. */
+		const auto plan = uml::emulator::plan_gpu_budget(
+			prepared_.kernel, prepared_.gpu_budget);
+		guest_memory_ = plan.guest_memory;
+		device_memory_limit_ = plan.budget.bytes;
+		if (prepared_.gpu.enabled && !information_only_) {
+			if (plan.budget.short_of_floor)
+				std::fprintf(stderr, "uml-darwin: %s\n",
+					uml::emulator::describe_gpu_budget_shortfall(
+						plan)
+						.c_str());
+			else if (plan.process_limit != 0)
+				std::fprintf(stderr,
+					"uml-darwin: GPU budget %llu MiB of a "
+					"%llu MiB process limit\n",
+					static_cast<unsigned long long>(
+						plan.budget.bytes >> 20),
+					static_cast<unsigned long long>(
+						plan.process_limit >> 20));
+		}
 		if (prepared_.gpu.enabled && !information_only_) {
 			if (has_virtio_device_argument(
 				prepared_.kernel, uml::gpu::protocol::virtioGpuDeviceId)) {
@@ -712,6 +819,7 @@ public:
 								uml::input::vnc::PointerMode::mouse,
 							.autoResizeGuest =
 								prepared_.gpu.auto_resize_guest,
+							.offscreen = prepared_.gpu.offscreen,
 							.sharedMemoryRegions =
 								shared_memory_regions_,
 							.deviceMemoryLimit =

@@ -13,10 +13,10 @@ image loads only the low half of the flags.
  1 file changed, 9 insertions(+), 9 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 0553d64745452cae5240bf51a49c59e371b0ebfc..17adca77f49c7b9b9828bf038694a622dd411a38 100644
+index cec1bb54a6080874b1491e01bad5cdca83f9adb8..ceb293cdf6eb01c967be78bed28f5e25ea9bfaec 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -205,14 +205,14 @@ RSP
+@@ -158,14 +158,14 @@ RSP
  SS
  */
  void OpDispatchBuilder::IRETOp(OpcodeArgs) {
@@ -39,7 +39,7 @@ index 0553d64745452cae5240bf51a49c59e371b0ebfc..17adca77f49c7b9b9828bf038694a622
  
    Ref SP = _RMWHandle(LoadGPRRegister(X86State::REG_RSP));
  
-@@ -225,7 +225,7 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
+@@ -178,7 +178,7 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
  
    // At CPL 3 IRET loads what POPF loads, plus RF: IF, IOPL, VM, VIF and
    // VIP keep their values.

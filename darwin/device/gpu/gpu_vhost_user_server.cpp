@@ -9,8 +9,10 @@
 #include "vhost_user_device.hpp"
 #include "virtio_gpu_device.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstring>
 #include <optional>
@@ -23,6 +25,10 @@
 
 namespace uml::gpu {
 namespace {
+
+/* The kqueue's identifier for the timer that trims idle guest contexts. The
+ * fence timer's is deferred_fences.hpp's. */
+constexpr std::uintptr_t idleTrimTimerIdentifier = 2;
 
 template<typename Value>
 Value loadUnaligned(const void* address)
@@ -201,10 +207,12 @@ public:
                 std::move(result.response),
                 *result.fence,
                 DeferredFences::Clock::now());
+            armIdleTrimTimer();
             return {.action = uml::virtio::VhostUserQueueAction::defer};
         }
         if (fences_.empty() && gpu_.rendererHasPendingWork())
             armFenceTimer(eventQueue_.get());
+        armIdleTrimTimer();
         return {
             .action = uml::virtio::VhostUserQueueAction::complete,
             .response = std::move(result.response),
@@ -239,7 +247,7 @@ public:
 
     void drainEventSource() override
     {
-        std::array<struct kevent, 2> events {};
+        std::array<struct kevent, 3> events {};
         const timespec timeout {};
         int eventCount;
         do {
@@ -256,6 +264,7 @@ public:
 
         bool resizeReady = false;
         bool fenceTimerReady = false;
+        bool idleTrimTimerReady = false;
         const int resizeDescriptor = display_.resizeEventDescriptor();
         for (int index = 0; index < eventCount; ++index) {
             const auto& event = events[static_cast<std::size_t>(index)];
@@ -264,6 +273,11 @@ public:
             if (event.filter == EVFILT_TIMER &&
                 event.ident == fenceTimerIdentifier) {
                 fenceTimerReady = true;
+                continue;
+            }
+            if (event.filter == EVFILT_TIMER &&
+                event.ident == idleTrimTimerIdentifier) {
+                idleTrimTimerReady = true;
                 continue;
             }
             if (resizeDescriptor >= 0 && event.filter == EVFILT_READ &&
@@ -278,6 +292,12 @@ public:
         if (resizeReady && display_.drainResizeEvent()) {
             gpu_.notifyDisplayChanged();
             configChangePending_ = true;
+        }
+        if (idleTrimTimerReady) {
+            /* A one-shot timer is gone once it has fired. */
+            idleTrimTimerArmed_ = false;
+            gpu_.trimIdleContexts();
+            armIdleTrimTimer();
         }
         if (!fenceTimerReady)
             return;
@@ -412,6 +432,41 @@ public:
     }
 
 private:
+    /* Arms the timer that trims the guest contexts that have gone quiet, for
+     * the earliest moment one could be, unless it is armed already: a timer
+     * that fires early only finds nothing due and arms the next. Trimming is a
+     * courtesy to the host's memory, so a queue that cannot take the timer
+     * costs the trim and nothing else. */
+    void armIdleTrimTimer() noexcept
+    {
+        if (idleTrimTimerArmed_)
+            return;
+        const auto delay = gpu_.nextIdleTrimDelay();
+        if (!delay)
+            return;
+        constexpr std::int64_t shortest = 1000;
+        const auto microseconds = std::max<std::int64_t>(
+            shortest,
+            std::chrono::duration_cast<std::chrono::microseconds>(*delay)
+                    .count() +
+                shortest);
+        struct kevent change {};
+        EV_SET(
+            &change,
+            idleTrimTimerIdentifier,
+            EVFILT_TIMER,
+            EV_ADD | EV_ENABLE | EV_ONESHOT,
+            NOTE_USECONDS,
+            static_cast<std::intptr_t>(microseconds),
+            nullptr);
+        int result;
+        do {
+            result = ::kevent(
+                eventQueue_.get(), &change, 1, nullptr, 0, nullptr);
+        } while (result < 0 && errno == EINTR);
+        idleTrimTimerArmed_ = result == 0;
+    }
+
     /* The transport's own translation: a range that one mapped region holds
      * whole, copied out. */
     [[nodiscard]] bool readGuest(
@@ -455,6 +510,7 @@ private:
     VirtioGpuDevice gpu_;
     bool hasEdid_;
     bool configChangePending_ {};
+    bool idleTrimTimerArmed_ {};
     UniqueDescriptor eventQueue_;
     DeferredFences fences_;
 };
@@ -490,7 +546,8 @@ std::unique_ptr<VhostUserServer> makeGpuVhostUserServer(
     void* nativeView,
     std::uint32_t dotsPerInch,
     uml::input::vnc::PointerMode pointerMode,
-    bool autoResizeGuest)
+    bool autoResizeGuest,
+    OffscreenDisplayOptions offscreen)
 {
     std::shared_ptr<Display> display = makeGpuDisplay(
         vncBindAddress,
@@ -503,7 +560,8 @@ std::unique_ptr<VhostUserServer> makeGpuVhostUserServer(
         nativeView,
         dotsPerInch,
         pointerMode,
-        autoResizeGuest);
+        autoResizeGuest,
+        offscreen);
     return makeGpuVhostUserServer(
         std::move(display),
         std::move(vncBindAddress),
@@ -522,7 +580,8 @@ std::unique_ptr<Display> makeGpuDisplay(
     void* nativeView,
     std::uint32_t dotsPerInch,
     uml::input::vnc::PointerMode pointerMode,
-    bool autoResizeGuest)
+    bool autoResizeGuest,
+    OffscreenDisplayOptions offscreen)
 {
     return makeDisplay(
         displayMode,
@@ -537,7 +596,8 @@ std::unique_ptr<Display> makeGpuDisplay(
         dotsPerInch == 0 ?
             protocol::maximumDisplayDimension :
             protocol::maximumEdidDimension,
-        autoResizeGuest);
+        autoResizeGuest,
+        offscreen);
 }
 
 } // namespace uml::gpu

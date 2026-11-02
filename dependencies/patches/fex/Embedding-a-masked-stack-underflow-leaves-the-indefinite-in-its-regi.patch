@@ -26,31 +26,33 @@ register saw it empty again.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- .../Interface/Core/OpcodeDispatcher/X87.cpp   |  8 +++--
- .../IR/Passes/x87StackOptimizationPass.cpp    | 31 ++++++++++++++++++-
- 2 files changed, 36 insertions(+), 3 deletions(-)
+ .../Interface/Core/OpcodeDispatcher/X87.cpp   |  8 +++---
+ .../IR/Passes/x87StackOptimizationPass.cpp    | 27 ++++++++++++++++++-
+ 2 files changed, 31 insertions(+), 4 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-index 50436fccfb7a2a12de4790a4dba12b31f9924425..004d3a437319c841a3bd03f47f1b27b20fa756cd 100644
+index 7f719b367702cabfe4652f7f16df3a2f8059543f..e495f8726de9b40724cd7493bfae831af45251cd 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-@@ -155,8 +155,12 @@ void OpDispatchBuilder::FSTToStack(OpcodeArgs) {
-     _StoreStackToStack(Offset);
-   } else if (CTX->Embedded) {
-     // FST ST(0) and FSTP ST(0) store nothing, but read ST(0): an empty
+@@ -151,11 +151,13 @@ void OpDispatchBuilder::FST(OpcodeArgs, IR::OpSize Width) {
+ void OpDispatchBuilder::FSTToStack(OpcodeArgs) {
+   SetRFLAG<FEXCore::X86State::X87FLAG_C1_LOC>(Constant(0));
+   const uint8_t Offset = Op->OP & 7;
+-  if (Offset == 0 && CTX->Embedded) {
+-    // FST ST(0) and FSTP ST(0) store nothing, but read ST(0): an empty
 -    // register is a stack underflow.
--    _ReadStackValue(0);
-+    // register is a stack underflow, and FST leaves the indefinite in it.
-+    if (Op->TableInfo->Flags & X86Tables::InstFlags::FLAGS_POP) {
-+      _ReadStackValue(0);
-+    } else {
-+      _StoreStackToStack(0);
-+    }
++  if (Offset == 0 && CTX->Embedded && (Op->TableInfo->Flags & X86Tables::InstFlags::FLAGS_POP)) {
++    // FSTP ST(0) stores nothing, but reads ST(0): an empty register is a
++    // stack underflow.
+     _ReadStackValue(0);
+   } else {
++    // FST ST(0) stores ST(0) onto itself, so an empty register ends up
++    // holding the indefinite.
+     _StoreStackToStack(Offset);
    }
  
-   if (Op->TableInfo->Flags & X86Tables::InstFlags::FLAGS_POP) {
 diff --git a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
-index 5a96f9767da51d9f80514f2fae852e5c29fc9972..605deb4205ec262495030b62cdc8405201421855 100644
+index f53310936de149a81190b15d25c7af71b428ac7b..1a92a68251036c4288e32f14bf16d99f721682f3 100644
 --- a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 +++ b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 @@ -291,6 +291,8 @@ private:
@@ -96,7 +98,7 @@ index 5a96f9767da51d9f80514f2fae852e5c29fc9972..605deb4205ec262495030b62cdc84052
      StoreStackValueAtOffset_Slow(Value, Offset, SetValid);
    } else {
      StackData.setTop(StackMemberInfo {Value}, Offset);
-@@ -1061,7 +1076,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -1065,7 +1080,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
  
          // Push values
          if (SlowPath) {
@@ -107,18 +109,7 @@ index 5a96f9767da51d9f80514f2fae852e5c29fc9972..605deb4205ec262495030b62cdc84052
            UpdateTopForPush_Slow();
            StoreStackValueAtOffset_Slow(CosValue, 0, true);
          } else {
-@@ -1221,6 +1238,10 @@ void X87StackOptimization::Run(IREmitter* Emit) {
-           } else {
-             StackData.setTop(*Value, Offset);
-           }
-+        } else if (Embedded && !ReducedPrecisionMode && SlowPath && TopValidCache[0] != StackSlot::VALID) {
-+          // An empty ST(0) is a stack underflow, and the store leaves the
-+          // QNaN indefinite in it.
-+          StoreStackValue(LoadStackValueAtOffset_Slow());
-         }
-         break;
-       }
-@@ -1393,6 +1414,14 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -1392,6 +1409,14 @@ void X87StackOptimization::Run(IREmitter* Emit) {
          Ref Value2 = LoadStackValue(StackOffset2);
  
          Ref StackNode = IREmit->_VBSL(OpSize::i128Bit, CurrentIR.GetNode(Op->VectorMask), Value1, Value2);

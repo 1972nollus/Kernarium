@@ -52,10 +52,10 @@ instructions changed state before their last access could fault:
  create mode 100644 FEXCore/Source/Interface/IR/Passes/EmbedderReadsForWritePass.h
 
 diff --git a/FEXCore/Source/CMakeLists.txt b/FEXCore/Source/CMakeLists.txt
-index e144d0fe4e8995e7df4e3e9d8637c0001d259b3e..b2760ec61dd3318ac402ddd16cdc730737c3d5fc 100644
+index 48c262a93ece2f77638c0db46d7eab6ca831d00e..95d8a0376bc0cbc013a6f4802471939320dad1ff 100644
 --- a/FEXCore/Source/CMakeLists.txt
 +++ b/FEXCore/Source/CMakeLists.txt
-@@ -62,6 +62,7 @@ set(SRCS
+@@ -64,6 +64,7 @@ set(SRCS
    Interface/IR/IRDumper.cpp
    Interface/IR/IREmitter.cpp
    Interface/IR/PassManager.cpp
@@ -88,10 +88,10 @@ index 853e48bcef68b7d31a0c431dd60b8026e5c3d2f9..21cfb9810212da76b15258068d55891e
    const auto Host = EmbedderTranslate(Address, Size, Core::EMBEDDER_ACCESS_ATOMIC);
    auto* Site = EmbedderColdSites.back().get();
 diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-index d852df4c9c57d094de71d041c15d01fd70ac8aa9..dac3598a92868fe815ba53991658f76e8ef255f0 100644
+index 8b2d68653724f209013b848ff2535b52f3c74743..78fd67c232e8849d9d3cec278f6e2b009702ef3d 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-@@ -668,6 +668,7 @@ Arm64JITCore::Arm64JITCore(FEXCore::Context::ContextImpl* ctx, FEXCore::Core::In
+@@ -703,6 +703,7 @@ Arm64JITCore::Arm64JITCore(FEXCore::Context::ContextImpl* ctx, FEXCore::Core::In
    , TempCodeBufferAllocator(ctx->CPUBackendAllocator, 0) {
  
    RAPass = Thread->PassManager->GetPass<IR::RegisterAllocationPass>("RA");
@@ -100,7 +100,7 @@ index d852df4c9c57d094de71d041c15d01fd70ac8aa9..dac3598a92868fe815ba53991658f76e
    RAPass->AddRegisters(IR::RegClass::GPR, GeneralRegisters.size());
    RAPass->AddRegisters(IR::RegClass::GPRFixed, StaticRegisters.size());
 diff --git a/FEXCore/Source/Interface/Core/JIT/JITClass.h b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-index f8e8e09822b3bf99d05356c92415b5ad14b0d6f5..44e4a3680e0f88da8602bc4aeaf30b80efc4b26a 100644
+index 159303b7e95056bc563fc7761679a38b3c56824a..f9e540613574e5490f57d761a8674eb91aae91b6 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JITClass.h
 +++ b/FEXCore/Source/Interface/Core/JIT/JITClass.h
 @@ -13,6 +13,7 @@ $end_info$
@@ -111,7 +111,7 @@ index f8e8e09822b3bf99d05356c92415b5ad14b0d6f5..44e4a3680e0f88da8602bc4aeaf30b80
  #include "Interface/IR/RegisterAllocationData.h"
  
  #include <FEXCore/Config/Config.h>
-@@ -167,6 +168,12 @@ private:
+@@ -172,6 +173,12 @@ private:
    // charges the budget for, and their offsets from the entry in order.
    uint32_t EmbedderBlockInstructions {};
    fextl::vector<uint32_t> EmbedderInstructionOffsets;
@@ -125,7 +125,7 @@ index f8e8e09822b3bf99d05356c92415b5ad14b0d6f5..44e4a3680e0f88da8602bc4aeaf30b80
    // unretired: that one and those after it, less that one when it retired, as
    // a trap's instruction has.
 diff --git a/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp b/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
-index f4f029a1fdff5e5da6f2e416bd068fc3e0e43016..fd15aa6db5245409e0673a1a71d868b8142647d9 100644
+index 2f782ab60f21f7cb3ccc4ddb49565b88302f9916..82560621dc675f1280d874b82e7f5b3da4a6f8b8 100644
 --- a/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
 @@ -709,7 +709,7 @@ DEF_OP(LoadMem) {
@@ -147,10 +147,10 @@ index f4f029a1fdff5e5da6f2e416bd068fc3e0e43016..fd15aa6db5245409e0673a1a71d868b8
        const auto Dst = GetReg(Node);
        switch (OpSize) {
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 272f638e40a8b7cbb69c91545d7c90bcb686c19f..76959bbeb676af0d6536f1e1e45d496f6918fcef 100644
+index 4bb41525f5283c91c6531f9ac31634cd2edcc1b7..566cd9c0725a5589762035a84014ed5eb07adbd5 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -215,6 +215,10 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
+@@ -168,6 +168,10 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
    const uint32_t Loaded = (UserLoadableFlags | (1U << X86State::RFLAG_RF_LOC)) & (GPRSize == OpSize::i16Bit ? 0xffffU : ~0U);
  
    Ref SP = _RMWHandle(LoadGPRRegister(X86State::REG_RSP));
@@ -161,7 +161,7 @@ index 272f638e40a8b7cbb69c91545d7c90bcb686c19f..76959bbeb676af0d6536f1e1e45d496f
  
    // RIP (64/32/16 bits)
    auto NewRIP = Pop(GPRSize, SP);
-@@ -394,6 +398,26 @@ void OpDispatchBuilder::PUSHAOp(OpcodeArgs) {
+@@ -356,6 +360,26 @@ void OpDispatchBuilder::PUSHAOp(OpcodeArgs) {
  
    Ref OldSP = _Copy(LoadGPRRegister(X86State::REG_RSP));
  
@@ -188,7 +188,7 @@ index 272f638e40a8b7cbb69c91545d7c90bcb686c19f..76959bbeb676af0d6536f1e1e45d496f
    Push(Size, LoadGPRRegister(X86State::REG_RAX));
    Push(Size, LoadGPRRegister(X86State::REG_RCX));
    Push(Size, LoadGPRRegister(X86State::REG_RDX));
-@@ -468,6 +492,20 @@ void OpDispatchBuilder::PUSHSegmentOp(OpcodeArgs, uint32_t SegmentReg) {
+@@ -430,6 +454,20 @@ void OpDispatchBuilder::PUSHSegmentOp(OpcodeArgs, uint32_t SegmentReg) {
  }
  
  void OpDispatchBuilder::POPOp(OpcodeArgs) {
@@ -209,7 +209,7 @@ index 272f638e40a8b7cbb69c91545d7c90bcb686c19f..76959bbeb676af0d6536f1e1e45d496f
    Ref Value = Pop(OpSizeFromSrc(Op));
    StoreResultGPR(Op, Value);
  }
-@@ -477,6 +515,10 @@ void OpDispatchBuilder::POPAOp(OpcodeArgs) {
+@@ -439,6 +477,10 @@ void OpDispatchBuilder::POPAOp(OpcodeArgs) {
    const auto Size = OpSizeFromSrc(Op);
  
    Ref SP = _RMWHandle(LoadGPRRegister(X86State::REG_RSP));
@@ -220,7 +220,7 @@ index 272f638e40a8b7cbb69c91545d7c90bcb686c19f..76959bbeb676af0d6536f1e1e45d496f
  
    StoreGPRRegister(X86State::REG_RDI, Pop(Size, SP), Size);
    StoreGPRRegister(X86State::REG_RSI, Pop(Size, SP), Size);
-@@ -998,11 +1040,23 @@ void OpDispatchBuilder::CALLFARIndirectOp(OpcodeArgs) {
+@@ -960,11 +1002,23 @@ void OpDispatchBuilder::CALLFARIndirectOp(OpcodeArgs) {
  
    auto NewRIP = GetRelocatedPC(Op);
  
@@ -248,7 +248,7 @@ index 272f638e40a8b7cbb69c91545d7c90bcb686c19f..76959bbeb676af0d6536f1e1e45d496f
  
    // Set up the new CSSegment.
    _StoreContextGPR(OpSize::i16Bit, NewSegmentCS, offsetof(FEXCore::Core::CPUState, cs_idx));
-@@ -3050,6 +3104,30 @@ void OpDispatchBuilder::EnterOp(OpcodeArgs) {
+@@ -3061,6 +3115,30 @@ void OpDispatchBuilder::EnterOp(OpcodeArgs) {
    const uint16_t AllocSpace = Value & 0xFFFF;
    const uint8_t Level = (Value >> 16) & 0x1F;
  
@@ -280,10 +280,10 @@ index 272f638e40a8b7cbb69c91545d7c90bcb686c19f..76959bbeb676af0d6536f1e1e45d496f
      auto OldSP = LoadGPRRegister(X86State::REG_RSP);
      auto NewSP = CTX->Embedded ? EmbeddedPush(GPRSize, Size, Src, OldSP) : _Push(GPRSize, Size, Src, OldSP);
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-index 1bc61a6760d6fd23bf7e4324677acdf4729f3358..2034a1f3b6e759d565d1cadea6e0cff80bed1f44 100644
+index 44a4b53756ee9736923f12c0b84e563e693e04fe..10620b34bd72b72de4c432e4e0087bd96b31802c 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-@@ -3165,6 +3165,10 @@ Ref OpDispatchBuilder::GetMXCSR() {
+@@ -3172,6 +3172,10 @@ Ref OpDispatchBuilder::GetMXCSR() {
  
  void OpDispatchBuilder::FXRStoreOp(OpcodeArgs) {
    Ref Mem = MakeSegmentAddress(Op, Op->Src[0]);
@@ -294,7 +294,7 @@ index 1bc61a6760d6fd23bf7e4324677acdf4729f3358..2034a1f3b6e759d565d1cadea6e0cff8
  
    RestoreX87State(Mem);
    RestoreSSEState(Mem);
-@@ -3175,6 +3179,11 @@ void OpDispatchBuilder::FXRStoreOp(OpcodeArgs) {
+@@ -3182,6 +3186,11 @@ void OpDispatchBuilder::FXRStoreOp(OpcodeArgs) {
  
  void OpDispatchBuilder::XRstorOpImpl(OpcodeArgs) {
    const auto OpSize = GetGPROpSize();
@@ -307,10 +307,10 @@ index 1bc61a6760d6fd23bf7e4324677acdf4729f3358..2034a1f3b6e759d565d1cadea6e0cff8
    // If a bit in our XSTATE_BV is set, then we restore from that region of the XSAVE area,
    // otherwise, if not set, then we need to set the relevant data the bit corresponds to
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-index cef9aa22a3990e19cff3c9493c85a7554f13bbca..981639fd5815eea7a5369235721dc8c84557d622 100644
+index fda043a90a2fbd3ca8f702bd6ae4502be5fdb4e6..a68446d68e2d0d6c8515d09f30b54d5d6fc32076 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-@@ -424,6 +424,10 @@ void OpDispatchBuilder::X87LDENV(OpcodeArgs) {
+@@ -422,6 +422,10 @@ void OpDispatchBuilder::X87LDENV(OpcodeArgs) {
    const auto Size = OpSizeFromSrc(Op);
    Ref Mem = LoadSourceGPR(Op, Op->Src[0], Op->Flags, {.LoadData = false});
    Mem = AppendSegmentOffset(Mem, Op->Flags);
@@ -321,7 +321,7 @@ index cef9aa22a3990e19cff3c9493c85a7554f13bbca..981639fd5815eea7a5369235721dc8c8
  
    auto NewFCW = _LoadMemGPR(OpSize::i16Bit, Mem, OpSize::i16Bit);
    _StoreContextGPR(OpSize::i16Bit, NewFCW, offsetof(FEXCore::Core::CPUState, FCW));
-@@ -528,6 +532,10 @@ void OpDispatchBuilder::X87FRSTOR(OpcodeArgs) {
+@@ -526,6 +530,10 @@ void OpDispatchBuilder::X87FRSTOR(OpcodeArgs) {
    _StackForceSlow();
    const auto Size = OpSizeFromSrc(Op);
    Ref Mem = MakeSegmentAddress(Op, Op->Src[0]);
@@ -333,10 +333,10 @@ index cef9aa22a3990e19cff3c9493c85a7554f13bbca..981639fd5815eea7a5369235721dc8c8
    auto NewFCW = _LoadMemGPR(OpSize::i16Bit, Mem, OpSize::i16Bit);
    _StoreContextGPR(OpSize::i16Bit, NewFCW, offsetof(FEXCore::Core::CPUState, FCW));
 diff --git a/FEXCore/Source/Interface/IR/IR.json b/FEXCore/Source/Interface/IR/IR.json
-index 5d46bdf5724292922fce2d9dd15f98fe9f13292e..41d3ef24184df15817f813b9ed8c5addef024ed9 100644
+index 8805200771f835d1d78895543405f16236cefc92..3085e1da123515bdc131011f2d96b8c555585864 100644
 --- a/FEXCore/Source/Interface/IR/IR.json
 +++ b/FEXCore/Source/Interface/IR/IR.json
-@@ -709,6 +709,14 @@
+@@ -711,6 +711,14 @@
          "HasSideEffects": true,
          "DestSize": "OpSize::i64Bit"
        },
@@ -682,7 +682,7 @@ index 503fe3fb933182c51c55e20e1086ddbc406091ce..399ed02fadbcce0010d8ba878c2a573f
    SpillSlots.clear();
    NextUses.clear();
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 133c95f1ccae5d287119fd1b4741102bec6b8adb..2a174b9052d61895ba12586c4b4c2a60a542e407 100644
+index f7ec970550dcfa2128a435a9c694b62e4391b1d1..ffd341b6cb4bc3ee8c00ced92676052693cf00c1 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
 @@ -365,6 +365,9 @@ enum EmbedderExitReason : uint32_t {

@@ -51,6 +51,11 @@ struct ContentView: View {
                 if case let .ended(result) = launcher.phase {
                     GuestEndedNotice(end: GuestRunEnd(result: result))
                         .padding()
+                } else if let warning = launcher.gpuBudgetWarning {
+                    GPUBudgetWarningNotice(warning: warning) {
+                        launcher.dismissGPUBudgetWarning()
+                    }
+                    .padding()
                 } else if launcher.restarting {
                     GuestRestartingBadge()
                         .padding()
@@ -455,6 +460,66 @@ private struct GuestRestartingBadge: View {
         .allowsHitTesting(false)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("guestRestartingBadge")
+    }
+}
+
+/// The warning shown at launch when the application's memory limit leaves the
+/// host GPU less than its 384 MiB floor once the guest, the gadget cache and
+/// the launch's allowances are counted. The guest boots anyway, with the
+/// floor, and the system is likely to end the application.
+struct GPUBudgetWarning: Equatable {
+    let limitMiB: Int
+    let guestMemoryMiB: Int
+    let availableMiB: Int
+    let floorMiB: Int
+
+    /// Nil unless the runtime found the budget short of its floor.
+    init?(plan: kernarium_runtime_gpu_budget) {
+        guard plan.short_of_floor != 0 else { return nil }
+        func mebibytes(_ bytes: UInt64) -> Int {
+            Int(clamping: bytes / (1 << 20))
+        }
+        limitMiB = mebibytes(plan.process_limit_bytes)
+        guestMemoryMiB = mebibytes(plan.guest_memory_bytes)
+        availableMiB = mebibytes(plan.available_bytes)
+        // The runtime clamps to the floor unless half the guest is less.
+        floorMiB = mebibytes(plan.budget_bytes)
+    }
+
+    var title: String { "Memory May Run Short" }
+
+    var message: String {
+        "The system lets Kernarium use \(limitMiB) MB. After the guest's " +
+            "\(guestMemoryMiB) MB and what the emulator keeps beside it, " +
+            "\(availableMiB) MB are left for graphics, and graphics are " +
+            "given \(floorMiB) MB at least. The guest starts anyway, and " +
+            "the system is likely to end Kernarium. Giving the guest less " +
+            "memory in Settings avoids it."
+    }
+
+    var systemName: String { "exclamationmark.triangle" }
+}
+
+/// Shown over the guest views from the launch until dismissed. The guest boots
+/// behind it.
+private struct GPUBudgetWarningNotice: View {
+    let warning: GPUBudgetWarning
+    let dismiss: () -> Void
+
+    var body: some View {
+        Button(action: dismiss) {
+            GuestNoticeCard(
+                systemName: warning.systemName,
+                title: warning.title,
+                message: warning.message,
+                messageStyle: .primary,
+                footer: "Tap to dismiss"
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("gpuBudgetWarningNotice")
     }
 }
 
@@ -1576,6 +1641,19 @@ private struct PreparedBoot: Sendable {
     }
 }
 
+/// A, E_rest and S of the host GPU's budget, in MiB, as a launch states them.
+struct GPUBudgetParameters: Equatable {
+    var applicationMiB: UInt32 = 0
+    var engineMiB: UInt32 = 0
+    var headroomMiB: UInt32 = 0
+
+    init(configuration: EmulatorConfiguration) {
+        applicationMiB = UInt32(clamping: configuration.gpuBudgetApplicationMiB)
+        engineMiB = UInt32(clamping: configuration.gpuBudgetEngineMiB)
+        headroomMiB = UInt32(clamping: configuration.gpuBudgetHeadroomMiB)
+    }
+}
+
 private func runGuest(
     view: GuestMetalView,
     boot: PreparedBoot,
@@ -1584,7 +1662,8 @@ private func runGuest(
     dotsPerInch: UInt32,
     guestMemoryMiB: UInt32,
     vCPUCount: UInt32,
-    autoResizeGuest: Bool
+    autoResizeGuest: Bool,
+    gpuBudget: GPUBudgetParameters
 ) -> Int32 {
     boot.withCPaths { paths in
         var request = kernarium_runtime_boot()
@@ -1596,6 +1675,9 @@ private func runGuest(
         request.guest_processor_count = vCPUCount
         request.android_boot_mode = boot.androidBootMode.rawValue
         request.auto_resize_guest = autoResizeGuest ? 1 : 0
+        request.gpu_budget_application_mib = gpuBudget.applicationMiB
+        request.gpu_budget_engine_mib = gpuBudget.engineMiB
+        request.gpu_budget_headroom_mib = gpuBudget.headroomMiB
         request.rootfs_path = paths[0]
         request.overlay_path = paths[1]
         request.android_data_disk_path = paths[2]
@@ -1632,6 +1714,9 @@ final class EmulatorLauncher: ObservableObject {
     @Published private(set) var phase = GuestRunPhase.idle
     /// Whether the guest is between two boots.
     @Published private(set) var restarting = false
+    /// Set at launch when the application's memory limit leaves the host GPU
+    /// less than its floor; the guest boots regardless.
+    @Published private(set) var gpuBudgetWarning: GPUBudgetWarning?
     private var restartIndicator = GuestRestartIndicator()
     /// The name the running guest's own settings are stored under.
     private(set) var runningGuestName: String?
@@ -1694,6 +1779,23 @@ final class EmulatorLauncher: ObservableObject {
             guard let prepared = prepareBundleBoot(bundle: bundle) else { return }
             boot = prepared
         }
+        // The budget the runtime will give the host GPU is evaluated before
+        // the guest boots, so a launch that cannot afford it says so while it
+        // starts; it is not refused.
+        let gpuBudget = GPUBudgetParameters(configuration: configuration)
+        var plan = kernarium_runtime_gpu_budget()
+        plan.struct_size = UInt32(
+            MemoryLayout<kernarium_runtime_gpu_budget>.size
+        )
+        if kernarium_runtime_loader_plan_gpu_budget(
+            UInt32(configuration.guestMemoryMiB),
+            gpuBudget.applicationMiB,
+            gpuBudget.engineMiB,
+            gpuBudget.headroomMiB,
+            &plan
+        ) == 0 {
+            gpuBudgetWarning = GPUBudgetWarning(plan: plan)
+        }
         phase = .running
         startThermalObservation()
         let size = GuestInputCoordinateSpace.boundedDisplaySize(
@@ -1722,7 +1824,8 @@ final class EmulatorLauncher: ObservableObject {
                 dotsPerInch: dotsPerInch,
                 guestMemoryMiB: guestMemoryMiB,
                 vCPUCount: vCPUCount,
-                autoResizeGuest: autoResizeGuest
+                autoResizeGuest: autoResizeGuest,
+                gpuBudget: gpuBudget
             )
             Task { @MainActor in
                 EmulatorLauncher.shared.finished(result: result)
@@ -1801,6 +1904,10 @@ final class EmulatorLauncher: ObservableObject {
 
     func stop() {
         kernarium_runtime_loader_request_stop()
+    }
+
+    func dismissGPUBudgetWarning() {
+        gpuBudgetWarning = nil
     }
 
     private func reportThermalState(phase: ThermalSamplePhase) {

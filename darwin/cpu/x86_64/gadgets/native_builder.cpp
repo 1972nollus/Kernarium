@@ -2977,6 +2977,61 @@ enum class VectorFloatKind {
 	return true;
 }
 
+[[nodiscard]] NativeEntry vector_dot_entry(std::uint8_t opcode,
+	OperandWidth width, bool memory) noexcept
+{
+#define UML_X86_DOT_ENTRY(symbol, bits) \
+	return memory ? native::uml_x86_64_gadget_vector_dot_##symbol##_##bits##_rm : \
+		native::uml_x86_64_gadget_vector_dot_##symbol##_##bits##_rr
+#define UML_X86_DOT_CASE(value, symbol) \
+	case value: \
+		if (width == OperandWidth::xmm) \
+			UML_X86_DOT_ENTRY(symbol, 128); \
+		if (width == OperandWidth::ymm) \
+			UML_X86_DOT_ENTRY(symbol, 256); \
+		break
+	switch (opcode) {
+	UML_X86_DOT_CASE(0x50, 50);
+	UML_X86_DOT_CASE(0x51, 51);
+	UML_X86_DOT_CASE(0x52, 52);
+	UML_X86_DOT_CASE(0x53, 53);
+	default: break;
+	}
+#undef UML_X86_DOT_CASE
+#undef UML_X86_DOT_ENTRY
+	return nullptr;
+}
+
+/* VPDPBUSD and its relatives accumulate into the destination, which is also
+ * the first stream operand, like the FMA forms: destination, vvvv, r/m. */
+[[nodiscard]] bool append_vector_dot(
+	StreamWords &stream, const Gadget &gadget) noexcept
+{
+	const auto &instruction = gadget.instruction;
+	const auto destination = vector_offset(instruction.destination);
+	const auto vvvv = vector_offset(instruction.source);
+	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
+	const auto entry = vector_dot_entry(instruction.vector_opcode,
+		instruction.destination.width, memory);
+	if (!destination || !vvvv || entry == nullptr)
+		return false;
+	if (!memory) {
+		const auto rm = vector_offset(instruction.auxiliary);
+		if (!rm)
+			return false;
+		stream.push_back(entry_address(entry));
+		stream.push_back(pack_offsets(*destination, *vvvv, *rm));
+		return true;
+	}
+	const auto encoded = encode_memory(
+		gadget, instruction.auxiliary, *destination);
+	if (!encoded)
+		return false;
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
+	stream.push_back(*vvvv);
+	return true;
+}
+
 [[nodiscard]] NativeEntry vector_aes_entry(std::uint8_t opcode,
 	OperandWidth width, bool memory) noexcept
 {
@@ -6934,6 +6989,8 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		return append_vector_scalar_convert(stream, gadget);
 	case Operation::vector_fma:
 		return append_vector_fma(stream, gadget);
+	case Operation::vector_dot:
+		return append_vector_dot(stream, gadget);
 	case Operation::vector_aes:
 		return append_vector_aes(stream, gadget);
 	case Operation::vector_sha:

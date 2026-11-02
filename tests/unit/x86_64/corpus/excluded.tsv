@@ -30,6 +30,10 @@ fex	DAZTest.asm	AMD floating-point extension outside v3
 fex	FEX_bugs/3DNow_ModRMSIBDecode.asm	obsolete AMD-only 3DNow extension
 fex	FEX_bugs/FXTRACT_nan_f64.asm	exact duplicate normalized case
 fex	FEX_bugs/H0F3AREXBug.asm	post-AVX2 SHA extension
+fex	FEX_bugs/PF2ID_Saturate.asm	obsolete AMD-only 3DNow extension
+fex	FEX_bugs/PF2IW_Saturate.asm	obsolete AMD-only 3DNow extension
+fex	FEX_bugs/PFACC_MMXWidth.asm	obsolete AMD-only 3DNow extension
+fex	FEX_bugs/PFRCPIT1_MM0_selfmove.asm	obsolete AMD-only 3DNow extension
 fex	FEX_bugs/REX/DDDNow.asm	obsolete AMD-only 3DNow extension
 fex	FEX_bugs/fxsave_bug.asm	exact duplicate normalized case
 fex	FEX_bugs/nzcv_spill_enderlilies.asm	post-AVX2 SHA extension
@@ -82,7 +86,6 @@ fex	VEX/vldmxcsr.asm	expects FEX's MXCSR, which drops the exception flags LDMXCS
 fex	X87/D9_F2.asm	upstream marks this source unsupported
 fex	X87/D9_F8.asm	upstream marks this source unsupported
 fex	X87/D9_F9.asm	upstream marks this source unsupported
-fex	X87/FXAM_Simple.asm	expects FEX's FXAM, which classifies zero as a normal number where x86 classifies it as zero; upstream lists it as a known failure on native hosts
 fex	X87/X87MMXInteraction.asm	expects FEX's tag word, which FNSAVE stores as valid for every full register where x86 tags zeros and special values; upstream lists it as a known failure on native hosts
 fex	X87/invalid_simple_test.asm	exact duplicate normalized case
 fex	X87_F64/D8_F0_2_F64.asm	exact duplicate normalized case

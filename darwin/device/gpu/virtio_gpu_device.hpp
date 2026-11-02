@@ -8,6 +8,7 @@
 #include "display.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -116,6 +117,12 @@ public:
         std::uint32_t contextId) noexcept;
     [[nodiscard]] int pollRenderer() noexcept;
     [[nodiscard]] bool rendererHasPendingWork() noexcept;
+    /* Idle guest contexts release what the host GL driver keeps for them
+     * (VirglRenderer::trimIdleContexts): how long until the next could be
+     * idle, and the call to make when that time has passed. */
+    [[nodiscard]] std::optional<std::chrono::steady_clock::duration>
+        nextIdleTrimDelay() const noexcept;
+    void trimIdleContexts() noexcept;
     [[nodiscard]] int contextFenceStatus(
         const DeferredFence& fence) noexcept;
     [[nodiscard]] std::optional<SharedMemoryAction>

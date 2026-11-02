@@ -16,6 +16,7 @@ Runtime/              runtime framework target, one per kernel flavour
 KernariumTests/       hosted application and runtime tests
 KernariumUITests/     UI tests
 KernariumAutomation/  long-lived UI-automation host for a connected device
+AudioInterrupter/     test-support application that takes the audio session
 scripts/              launch, packaging, bundle assembly, and automation tools
 ```
 
@@ -84,6 +85,26 @@ and for a restart `ended` and `booted`): the footprint, the lifetime peak iOS
 acts on, the wired bytes, the address space, and the default malloc zone's
 bytes in use and held: the figures a restart must return to the first boot's
 level.
+
+## GPU memory budget
+
+The host GPU's budget is fixed at launch from the guest's memory, the process's
+memory limit and three launch parameters
+([architecture](../docs/architecture.md#memory-and-executable-code) owns the
+formula; [graphics](../docs/graphics.md#device-memory-budget) what it bounds).
+The application states the parameters in the boot request (runtime API 16:
+`gpu_budget_application_mib`, `gpu_budget_engine_mib`,
+`gpu_budget_headroom_mib`) and, before it starts the run, asks the runtime for
+the plan (`plan_gpu_budget`), which evaluates exactly what the run will. When
+the limit leaves the GPU less than its 384 MiB floor, the application shows a
+Memory May Run Short notice in the style of the ended and restarting notices:
+a tap dismisses it, it holds nothing back, and the guest boots with the floor.
+Nothing refuses a launch for lack of memory.
+
+`KERNARIUM_GPU_BUDGET_APP_MIB`, `KERNARIUM_GPU_BUDGET_ENGINE_MIB` and
+`KERNARIUM_GPU_BUDGET_HEADROOM_MIB` (each 0 to 16384) state the parameters for
+one launch, for a measurement run. They come from the environment only and are
+never stored. All three default to zero until the product owner chooses values.
 
 ## Guest storage
 
@@ -200,6 +221,16 @@ submitted still needs the UI automation host. The application learns of the
 setting from `kernarium_runtime_automation_job_at_start`, an export outside the
 versioned table that only an automation runtime has, and the packaging script
 refuses a release runtime that contains the setting's name.
+
+`KERNARIUM_BACKGROUND_HOLD_DELAY_MS`, read by the same runtimes and refused in
+release the same way, holds the guest's GPU that many milliseconds (a whole
+number up to 30000) after the application enters the background instead of at
+the edge, on the same off-main timer the production bound uses, so a driver can
+measure how long iOS leaves the host GPU usable there. It moves only the hold of a job, which keeps its guest drawing for the
+measurement, and an Android guest's screen is still turned off without waiting
+for it, so measure on a guest whose screen stays on. A return before the delay
+ends cancels the hold. The application learns it from
+`kernarium_runtime_automation_hold_delay_ms`, another export outside the table.
 
 ## Devices and display
 
@@ -391,10 +422,35 @@ choosing another mode ends it. `KERNARIUM_BACKGROUND_LIMIT_MINUTES` sets the tim
 
 An Android guest that is kept running this way has its screen turned off with
 its power key as the application leaves, and on again, after the GPU is back and
-the guest is running, as it returns. A screen that stays on keeps Android busy;
-with it off the guest suspends itself and only its wakelock holders and alarms
-run, as on a phone, so a job that should make progress has to hold a wakelock,
-as Android's own downloads and jobs do. A guest in the Picture in Picture mode
+the guest is running, as it returns. The screen goes off before the GPU is held,
+because a visible app that is drawing when the hold lands has its render and
+upload threads waiting on a GPU that does not answer, so it cannot handle the
+framework's pause or the screen-off broadcast, and Android kills it as not
+responding. The edge therefore presses the key, waits up to 1.5 seconds
+(`gpuHoldBound`, within the four-second budget) for the guest's display to go
+off, then holds the GPU and writes the guest back. The display is off when the
+guest has no primary scanout, which the guest's disabled CRTC unbinds
+(`kernarium_runtime_guest_display_active`, answered without a request reaching
+the device, so it works as the hold lands). A display that is still on at the
+bound is held anyway, because iOS revoking the GPU matters more than the
+screen. A screen that is off already is neither woken nor turned on at the
+return. Every other mode holds first.
+
+The hold does not wait behind anything else. `GuestGPUHold` arms the bound as
+a timer of its own, off the main thread, before the edge handler can wait, and
+the screen going off or the bound, whichever comes first, takes the hold: a
+main thread that is waiting for the screen, or for the guest's storage to
+settle, cannot hold the hold back. iOS has denied the app the GPU 2.73 to
+3.26 s after the edge in every measured edge (five, on an iPad; 4.1 to
+4.7 s after the app resigned active), and a request that reaches the GPU then
+is rejected. A bound of 1.5 s lands the hold 1.2 s ahead of the earliest of
+those. The hold is not taken when the app resigns active, which is 0.8 to
+1.7 s before the edge: the app resigns active for a pulled-down shade or a
+call banner too, and freezing the guest's graphics for a user who stays would
+be wrong. A screen that stays on keeps Android
+busy; with it off the guest suspends itself and only its wakelock holders and
+alarms run, as on a phone, so a job that should make progress has to hold a
+wakelock, as Android's own downloads and jobs do. A guest in the Picture in Picture mode
 keeps its screen, because its display is on show.
 
 The Picture in Picture mode needs the `audio` background mode in `Info.plist`,
@@ -416,7 +472,16 @@ Each script documents its options in `--help` or its header:
   archives only `KernariumTests` links;
 - `make-guest-bundle.py` assembles an Android `.kern` bundle (system disk,
   layout, kernel command line) from an installed release;
+- `repro-android-hold-mac.py` sends an Android guest through the background
+  edge on a Mac and checks it through adb, with `AndroidHoldReproTests` as the
+  application's side (`docs/testing.md`); `run-ios-mac.sh` takes
+  `--android-automation`, `--only-testing` and `--test-env` for it;
 - `ipad-automation.py` drives UI automation on a connected iPad through the
-  `KernariumAutomation` host; and
+  `KernariumAutomation` host;
+- `audio-interrupter.py` builds, installs, and launches `AudioInterrupter`, a
+  test-support application that plays digital silence on a non-mixable audio
+  session so that a run can interrupt Kernarium's audio without UI
+  automation (`launch` starts it in the foreground, `terminate --pid` ends it,
+  and `--help` lists its modes); and
 - `verify-signed-kernel-carrier.py` checks that a kernel image is safe for the
   signed carrier.

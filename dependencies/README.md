@@ -54,8 +54,11 @@ The kernel host tools are patch-managed ports of elfutils, musl-obstack,
 libbpf, and dwarves to Darwin, built with argp-standalone. elfutils' Git
 source carries only the generators of its DWARF name and x86 decoder tables,
 so the build first builds the pinned gawk as a build-only tool. The libbpf
-that pahole embeds needs Linux UAPI headers, which come from a pinned Debian
-`linux-libc-dev` package, and the Linux host APIs Darwin lacks, which come from
+that pahole embeds is the v1.8.0 release, not the earlier commit that opened
+the 1.8 cycle, which dwarves 1.32 records for its `lib/bpf` submodule; the
+build ignores that submodule. It needs Linux UAPI headers, which come from a
+pinned Debian `linux-libc-dev` package, and the Linux host APIs Darwin lacks,
+which come from
 [`kernel/mainline-6.18/build/toolchain/darwin-host`](../kernel/mainline-6.18/build/toolchain/darwin-host/)
 shared with Kbuild's host tools. The prefix publishes only `bin/pahole` and
 libelf; the tools target macOS 15.4, the first release with the `strchrnul`
@@ -70,21 +73,24 @@ advertised edge (an LP64 widening bug), drop a connection whose peer stops
 answering window probes, and answer a guest connect to port 0, which a BSD host
 stack refuses before it sends anything, as a network would instead of with ICMP
 net-unreachable: unanswered, or with a reset when the destination is the host.
-Upstream master at 62b29862 has none of them; drop a topic when a libslirp
-update absorbs it. The user-network contract they provide is in
+libslirp 4.9.7 has none of them; drop a topic when a libslirp update absorbs
+it. The user-network contract they provide is in
 [`../darwin/README.md`](../darwin/README.md).
 
 The `macos` product carries FEXCore for the macOS-only x86-64 JIT engine. The
 `fex` row applies one patch-managed series,
 [`patches/fex`](patches/fex/series.tsv), and the `fmt`, `xxhash`, and
 `unordered-dense` rows pin the three submodules FEXCore needs at the commits
-FEX-2608 records; no iOS product names any of them. The series' topics build
+FEX-2610 records; no iOS product names any of them. The series' topics build
 only FEXCore for an embedding Darwin host, make its utilities portable to
 Darwin, add an embedding mode in which a host that owns guest memory drives
 FEXCore, compat32 code included, and correct x86 semantics where FEXCore
 differs from hardware. The series touches nothing the `x86-conformance` corpus
 producers read, so one prepared FEX source serves both products and still
-yields the pinned corpus.
+yields the pinned corpus. The `nasm` row that assembles that corpus applies one
+topic, [`patches/nasm`](patches/nasm/series.tsv): `smsw` of a 16-bit register
+keeps its operand-size prefix in 32-bit and 64-bit code, which NASM 3.02 drops,
+so the SMSW test runs as FEX wrote it.
 
 The prefix installs FEXCore's static archives (`libFEXCore.a`,
 `libFEXCore_Base.a`, and `libJemallocDummy.a`, its allocator entry points over
@@ -136,7 +142,8 @@ dependencies/prepare.sh --archive-manifest dependencies/kernel-host-tools/archiv
 dependencies/build-kernel-host-tools.sh
 dependencies/build-kernel-host-tools.sh --verify-only
 
-dependencies/prepare.sh --product x86-conformance
+dependencies/prepare.sh --product x86-conformance \
+  --root "$CASE_SENSITIVE_DEPENDENCY_ROOT"
 ```
 
 Use `--no-fetch` for offline preparation and `--verify` or `--verify-only` for
@@ -149,6 +156,14 @@ directory.
 A cache entry holds every object of its pinned commit. Preparation refuses one
 that does not, such as a blob-filtered clone, with a diagnostic and does not
 repair it; remove the entry and prepare again.
+
+A source whose pinned tree has paths that differ only by case needs a
+case-sensitive `--root`: `x86-k-semantics` tracks 169 such pairs, and on a
+case-insensitive volume Git writes one file over the other, so the checkout
+reads as modified. Preparation checks this after fetching and before any
+checkout, and refuses that source, naming the cause, on a case-insensitive
+root; every other source still prepares there. `--verify` of a checkout already
+made on such a root names the same cause.
 
 Series replay commits as whoever Git resolves for the caller, and export
 refuses a topic whose author is a placeholder. See
@@ -245,7 +260,32 @@ KosmicKrisp's Mesa regressions are enabled with `-Dbuild-tests=true` and
 `meson test -C BUILD --suite kosmickrisp`; the common Vulkan command-lowering
 regressions use `--suite vulkan`. Assertions must stay active in those builds.
 Apple's emulated `util_barrier` has `util_tests --gtest_filter='util_barrier.*'`
-in `--suite util`, which runs in any `-Dbuild-tests=true` tree.
+in `--suite util`, which runs in any `-Dbuild-tests=true` tree. Zink's
+buffer-cache reaper is `gallium-pb-cache` in `--suite gallium`, which also needs
+active assertions and takes `-Db_sanitize=thread` for a ThreadSanitizer pass over
+the reaper and the add path; Apple's assembler rejects the CFI directives of
+`src/util/streaming-load-memcpy.c` in that tree, so that one object is built
+without the sanitizer.
+
+The idle trim of a context (`EGL_MESA_context_trim`, `pipe_context::trim`) is
+exercised by `gpu-host-context-trim` and `gpu-host-context-trim-concurrent` in
+`check-gpu`; `gpu-host-context0-trim` makes the renderer's own context release
+the textures a guest made and deleted without naming a context. The second has four contexts of one Zink screen draw, flush and
+trim at once, and is the program for a ThreadSanitizer pass over the trim, the
+flush queue's reset of the screen's batch-state lists and their lock order: build
+the Zink and EGL stack with `-Db_sanitize=thread` (the same object stays without
+the sanitizer) and compile the test and `host_gl_provider.cpp` with
+`-fsanitize=thread`. Zink reports its unsynchronized scalars there, with or
+without a trim: the screen's last finished batch, a state's submit count and the
+context's state count. No report involves a state list or a state's link.
+
+`eglReleaseCachedMemoryMESA` (the same extension), which frees what every screen
+of the process caches from any thread, is exercised by
+`gpu-host-cached-memory-release`: it fills Zink's buffer cache, releases it from
+a thread with no context and checks that the allocation drops and refills.
+`gpu-device-memory-pool` covers the pool's retry, and
+`gpu-host-gl-device-memory-budget` the refused reservation that frees the cache
+first.
 
 KosmicKrisp's runtime behaviour is specified in
 [`../docs/graphics.md`](../docs/graphics.md#kosmickrisp-driver-contracts).

@@ -3,6 +3,9 @@
 #include "display.hpp"
 
 #include "native_display.hpp"
+#if UML_GPU_HAS_OFFSCREEN
+#include "offscreen_display.hpp"
+#endif
 #if UML_GPU_HAS_VNC
 #include "vnc_display.hpp"
 #endif
@@ -23,8 +26,12 @@ std::unique_ptr<Display> makeDisplay(
     void* nativeView,
     uml::input::vnc::PointerMode pointerMode,
     std::uint32_t maximumDimension,
-    bool autoResizeGuest)
+    bool autoResizeGuest,
+    OffscreenDisplayOptions offscreen)
 {
+#if !UML_GPU_HAS_OFFSCREEN
+    (void)offscreen;
+#endif
 #if !UML_GPU_HAS_VNC
     (void)vncBindAddress;
     (void)vncPort;
@@ -54,6 +61,14 @@ std::unique_ptr<Display> makeDisplay(
             pointerMode,
             maximumDimension,
             autoResizeGuest);
+    case DisplayMode::offscreen:
+#if UML_GPU_HAS_OFFSCREEN
+        return std::make_unique<NativeDisplay>(makeOffscreenDisplayState(
+            width, height, maximumDimension, offscreen));
+#else
+        throw std::invalid_argument(
+            "The windowless display is unavailable on this Apple platform");
+#endif
     }
     throw std::invalid_argument("unsupported Virtio-GPU display mode");
 }

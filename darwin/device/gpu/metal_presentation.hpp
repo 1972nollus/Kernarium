@@ -43,6 +43,10 @@ public:
     [[nodiscard]] PresentOutcome present(
         const MetalScanout& scanout) noexcept;
     void draw(void* nativeView) noexcept;
+    /* The same into the next drawable of a CAMetalLayer, which need belong to
+     * no window and then has no display link to ask for a frame: whoever owns
+     * the layer calls this from the redraw callback. */
+    void drawLayer(void* metalLayer) noexcept;
     [[nodiscard]] DisplayStatistics statistics() const noexcept;
     void recordCpuFallbackFrame() noexcept;
     void shutdown() noexcept;
