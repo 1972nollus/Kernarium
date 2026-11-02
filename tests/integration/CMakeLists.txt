@@ -430,6 +430,15 @@ uml_add_guest_integration_test(
     TIMEOUT 180
     CPUS 1)
 
+# Two-vCPU guest: a Virtio console or UML line write allocates nothing, and
+# a full line ring holds its writer back instead of losing output.
+uml_add_guest_integration_test(
+    NAME guest-console-write-memory
+    SCRIPT console/run_guest_console_write_memory.py
+    LABELS guest;console;smoke
+    TIMEOUT 300
+    CPUS 2)
+
 # The interpreter runs BPF callbacks through its fixed entry-point pool.
 uml_add_guest_integration_test(
     NAME guest-bpf-callbacks

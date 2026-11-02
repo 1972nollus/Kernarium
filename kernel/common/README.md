@@ -54,7 +54,8 @@ A console write runs with interrupts off and allocates no memory. A serial or
 console line allocates its output ring when it first opens, so the room it
 reports to the line discipline is room the ring has, and a full ring holds the
 writer back rather than losing its output. The Virtio console copies hvc output
-into a buffer it allocated with its port.
+into a buffer it allocated with its port. `guest-console-write-memory` traces
+every allocation while it writes to both and checks that every byte arrives.
 
 Darwin's `sigprocmask()` sets the mask of every thread in the process, vCPU
 carriers included, so host-side kernel code changes a signal mask only with
