@@ -141,6 +141,10 @@ void initialize_fex_once()
 	features.SupportsFlagM2 = host.has(ArmFeature::flag_m2);
 	features.SupportsRPRES = host.has(ArmFeature::rpres);
 	features.SupportsFRINTTS = host.has(ArmFeature::frintts);
+	/* VPDPBUSD and VPDPBUSDS lower to one USDOT with I8MM, three SDOTs with
+	 * DotProd, and a long NEON sequence without either. */
+	features.SupportsDotProd = host.has(ArmFeature::dotprod);
+	features.SupportsI8MM = host.has(ArmFeature::i8mm);
 	features.SupportsECV = host.has(ArmFeature::ecv);
 	features.SupportsWFXT = host.has(ArmFeature::wfxt);
 	features.SupportsMOPS = host.has(ArmFeature::mops);

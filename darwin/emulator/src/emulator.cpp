@@ -413,7 +413,7 @@ public:
 				prepared.memory_limit_bytes);
 			gadget_cache_budget = ::uml::runtime::set_gadget_cache_budget(
 				prepared.guest_memory_bytes,
-				prepared.gadget_cache_budget);
+				prepared.gadget_cache_budget, prepared.guest_cpus);
 		}
 		/* A JIT run activates the managed multi-vCPU executor pool. */
 		if (!translation_cache_run.enter(jit_run))

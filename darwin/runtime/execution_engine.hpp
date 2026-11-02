@@ -42,15 +42,18 @@ void release_translation_cache_run_session() noexcept;
  */
 void set_process_memory_limit(std::size_t bytes) noexcept;
 
-/* The gadget-cache budget a run of `guest_memory_bytes` of guest memory takes
- * when `bytes` is what a launch states (zero for none): `bytes` when nonzero,
- * otherwise a quarter of the guest's memory, at least 128 MiB and at most an
- * eighth of the memory the host lets the process reach. It publishes nothing,
- * so a composition root can add the budget to the other memory the guest side
- * of the process uses before the run sets it.
+/* The gadget-cache budget a run of `guest_memory_bytes` of guest memory and
+ * `executors` vCPUs takes when `bytes` is what a launch states (zero for none):
+ * `bytes` when nonzero, otherwise a quarter of the guest's memory, at least 128
+ * MiB, at most an eighth of the memory the host lets the process reach and,
+ * where the host sets a limit, at most the cap of that many vCPUs
+ * (runtime/guest_memory_budget.hpp, which also holds the rest of the memory the
+ * guest side of the process uses). It publishes nothing, so a composition root
+ * can add the budget to that memory before the run sets it.
  */
 [[nodiscard]] std::size_t gadget_cache_budget_for(
-	std::size_t guest_memory_bytes, std::size_t bytes) noexcept;
+	std::size_t guest_memory_bytes, std::size_t bytes,
+	unsigned executors) noexcept;
 
 /* Sets the process's byte budget for what the gadget engines' caches keep per
  * address space (cpu/gadget_cache_budget.hpp) and returns it: the figure
@@ -58,7 +61,7 @@ void set_process_memory_limit(std::size_t bytes) noexcept;
  * sets it too, since an x86-64 address space starts on the gadget engine.
  */
 std::size_t set_gadget_cache_budget(std::size_t guest_memory_bytes,
-	std::size_t bytes) noexcept;
+	std::size_t bytes, unsigned executors) noexcept;
 
 /* Parses a byte count with an optional K/M/G suffix. Zero if unparsable. */
 [[nodiscard]] std::size_t parse_translation_cache_quantity(

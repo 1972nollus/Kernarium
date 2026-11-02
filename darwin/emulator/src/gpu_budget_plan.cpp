@@ -3,6 +3,7 @@
 
 #include "execution_engine.hpp"
 #include "guest_memory_argument.hpp"
+#include "options.hpp"
 #include "platform/host_environment.hpp"
 
 #include <cstdio>
@@ -60,7 +61,7 @@ bool parse_gpu_budget_bytes(
 
 GpuBudgetPlan plan_gpu_budget(std::uint64_t guest_memory,
 	std::size_t memory_limit_option, std::size_t gadget_cache_option,
-	const GpuBudgetParameters &parameters)
+	unsigned guest_cpus, const GpuBudgetParameters &parameters)
 {
 	/* The run publishes the option the same way before it derives the cache
 	 * budget; an option left out leaves the variable, then the host's own
@@ -70,12 +71,13 @@ GpuBudgetPlan plan_gpu_budget(std::uint64_t guest_memory,
 	GpuBudgetPlan plan;
 	plan.process_limit = ::uml::platform::process_memory_limit_bytes();
 	plan.guest_memory = guest_memory;
+	plan.guest_cpus = guest_cpus;
 	plan.parameters = parameters;
-	plan.engine = static_cast<std::uint64_t>(
-			::uml::runtime::gadget_cache_budget_for(
-				static_cast<std::size_t>(guest_memory),
-				gadget_cache_option)) +
-		parameters.engine_rest;
+	plan.engine = ::uml::runtime::guest_memory::engine_memory(
+		::uml::runtime::gadget_cache_budget_for(
+			static_cast<std::size_t>(guest_memory),
+			gadget_cache_option, guest_cpus),
+		guest_cpus, parameters.engine_rest);
 	plan.budget = ::uml::platform::compute_gpu_budget({
 		.process_limit = plan.process_limit,
 		.guest_memory = plan.guest_memory,
@@ -92,7 +94,7 @@ GpuBudgetPlan plan_gpu_budget(const std::vector<std::string> &arguments,
 	return plan_gpu_budget(configured_guest_memory_bytes(arguments),
 		configured_option_bytes(arguments, "--memory-limit="),
 		configured_option_bytes(arguments, "--gadget-cache-budget="),
-		parameters);
+		configured_guest_cpu_count(arguments), parameters);
 }
 
 std::string describe_gpu_budget_shortfall(const GpuBudgetPlan &plan)

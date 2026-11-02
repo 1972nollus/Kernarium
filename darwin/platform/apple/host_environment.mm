@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "host_environment.hpp"
 
+#include "os_memory_limit.hpp"
+
 #import <Foundation/Foundation.h>
-#include <mach/mach.h>
 
 #include <atomic>
 #include <cstdio>
@@ -30,19 +31,6 @@ constexpr std::uint64_t maximum_limit_mib = 1024ULL * 1024ULL;
 
 /* The launch option's value; zero until one is given. */
 std::atomic<std::uint64_t> option_limit_bytes{0};
-
-/* What the system holds the process to, zero when it holds it to nothing. */
-[[nodiscard]] std::uint64_t os_memory_limit_bytes() noexcept
-{
-	task_vm_info_data_t info{};
-	mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
-	if (task_info(mach_task_self(), TASK_VM_INFO,
-		    reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS ||
-	    count < TASK_VM_INFO_COUNT || info.limit_bytes_remaining == 0)
-		return 0;
-	/* What the footprint may still grow by, on top of what it is. */
-	return info.phys_footprint + info.limit_bytes_remaining;
-}
 
 } // namespace
 
