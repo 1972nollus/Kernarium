@@ -129,6 +129,13 @@ final class AppModel {
     var sheet: SheetKind?
     var startMenu = false
     var startBlocked = false
+    /// What a start would be, from the guest's files: Home words Start and
+    /// shows the update notices by it.
+    var plan: StartPlan = .normal
+    /// The choice for an update that did not complete is open.
+    var updateChoice = false
+    /// The release the running boot updates from, where it is known.
+    var bootFrom: String?
 
     // App-wide display options, set on the home screen.
     var retina = false
@@ -194,13 +201,18 @@ final class AppModel {
     /// a start would fail.
     var lowSpace: Bool { !host.hasRoom(for: Limits.firstStartReserveBytes) }
 
-    /// The release a guest is compared with, where this build can move a
-    /// guest to a newer system.
-    private var updateTarget: String? { capabilities.systemUpdate ? system.release : nil }
-
     /// What a start of the guest would be, for the words on Start.
     func bootKind(_ mode: StartMode) -> BootKind {
-        guest?.bootKind(mode, currentRelease: updateTarget) ?? .normal
+        guest == nil ? .normal : plan.bootKind(mode)
+    }
+
+    /// Reads the plan from the guest's files again: after the guest is made,
+    /// erased or has run, which change what a start is.
+    func refreshPlan() {
+        guard let driver else { return }
+        // A record that cannot be read has no plan; the start then fails
+        // with the reason.
+        plan = driver.startPlan() ?? .normal
     }
 
     /// Records the guest's choices a moment after the last change, so a
@@ -228,32 +240,36 @@ final class AppModel {
     func create(_ guest: Guest) {
         guard let driver else {
             lifecycle.create(guest)
+            plan = .firstStart
             return
         }
         runBusy(
             BusyState(
                 title: "Creating Android",
-                detail: "Preparing \(guest.effectiveCapacityGiB) GB for \(system.distribution).", progress: 0
+                detail: "Setting up \(system.distribution) with \(guest.effectiveCapacityGiB) GB.", progress: 0
             ),
             failure: "Android Could Not Be Created"
         ) { progress in
             let made = try await driver.create(guest, progress: progress)
             self.lifecycle.create(made)
+            self.refreshPlan()
         }
     }
 
     func erase() {
         guard let driver, let current = guest else {
             lifecycle.erase()
+            plan = .firstStart
             return
         }
         runBusy(
-            BusyState(title: "Erasing Android", detail: "Writing a fresh copy of the system.", progress: 0),
+            BusyState(title: "Erasing Android", detail: "Deleting everything Android stored.", progress: 0),
             failure: "Android Could Not Be Erased"
         ) { progress in
             _ = try await driver.erase(current, progress: progress)
             self.lifecycle.erase()
             self.persistNow()
+            self.refreshPlan()
         }
     }
 
@@ -277,31 +293,44 @@ final class AppModel {
         }
     }
 
-    func start(_ mode: StartMode) {
+    /// Starts the guest in `mode`. `resolution` is the way out the user
+    /// chose for an update that did not complete; without one, such a start
+    /// opens the choice instead.
+    func start(_ mode: StartMode, resolution: UpdateResolution? = nil) {
         startMenu = false
-        switch lifecycle.start(mode, host: host, currentRelease: updateTarget) {
+        updateChoice = false
+        switch lifecycle.start(mode, host: host, plan: plan, resolution: resolution) {
         case let .allowed(kind):
             frozenBootStage = nil
             bootTracker = BootTracker()
             preparingDisk = false
             diskProgress = nil
+            if case let .update(from, _) = plan { bootFrom = from } else { bootFrom = nil }
             if let driver, let guest {
                 persistNow()
-                driver.begin(guest: guest, mode: mode, kind: kind)
+                driver.begin(guest: guest, mode: mode, kind: kind, resolution: resolution)
             }
         case .lowSpace: startBlocked = true
+        case .unfinishedUpdate: updateChoice = true
+        case let .blocked(reason):
+            alert = AppAlert(title: reason.title, message: reason.explanation)
         case .noGuest: break
         }
     }
 
     func finishBoot(_ kind: BootKind) {
-        let firstStart = guest?.neverStarted ?? false
-        lifecycle.finishBoot(kind, release: system.release)
+        let firstStart = plan == .firstStart
+        lifecycle.finishBoot(kind)
         if driver != nil {
             persistNow()
-        } else if firstStart, kind != .recovery {
-            sessionPreset.guestScreen = .setup
-            guest?.usedBytes = 2_100_000_000
+        } else if kind != .recovery {
+            // The preview plays the instance too: the first start sets
+            // Android up, and an update or a retry ends.
+            plan = .normal
+            if firstStart {
+                sessionPreset.guestScreen = .setup
+                guest?.usedBytes = 2_100_000_000
+            }
         }
     }
 
@@ -323,6 +352,7 @@ final class AppModel {
         runUptimeSeconds = uptimeSeconds
         lifecycle.phase = end.phase
         persistNow()
+        refreshPlan()
     }
 
     /// Android's own Restart boots the guest again in place. ADB and the
@@ -339,6 +369,9 @@ final class AppModel {
 
     func factoryReset() {
         lifecycle.factoryReset()
+        // Only the preview knows the data is empty; on a device the data
+        // disk stays and Android sets itself up again by itself.
+        if driver == nil { plan = .firstStart }
         persistNow()
     }
 

@@ -18,8 +18,14 @@ public protocol GuestStorage: Sendable {
     func create(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest
     /// Everything in the guest is replaced by a fresh one.
     func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest
-    /// Applies the update rules before a start; a refusal throws.
-    func prepareStart(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws
+    /// What a start would be, from the instance on disk; nil when its record
+    /// cannot be read.
+    func startPlan() -> StartPlan?
+    /// Applies the update rules before a start, with the way out the user
+    /// chose for an unfinished update; a refusal throws.
+    func prepareStart(
+        _ guest: Guest, resolution: UpdateResolution?, progress: @escaping @Sendable (Double) -> Void
+    ) async throws
     /// Records the guest's choices.
     func save(_ guest: Guest) throws
 }
@@ -33,8 +39,8 @@ extension GuestStorage {
         try await erase(guest, progress: { _ in })
     }
 
-    public func prepareStart(_ guest: Guest) async throws {
-        try await prepareStart(guest, progress: { _ in })
+    public func prepareStart(_ guest: Guest, resolution: UpdateResolution? = nil) async throws {
+        try await prepareStart(guest, resolution: resolution, progress: { _ in })
     }
 }
 
@@ -157,9 +163,15 @@ public struct TwoDiskStorage: GuestStorage {
         return try await create(guest, progress: progress)
     }
 
-    public func prepareStart(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws {
+    public func startPlan() -> StartPlan? {
+        files.startPlan(for: release)
+    }
+
+    public func prepareStart(
+        _ guest: Guest, resolution: UpdateResolution?, progress: @escaping @Sendable (Double) -> Void
+    ) async throws {
         try requireUsablePaths()
-        let decision = try files.decide(for: release)
+        let decision = try files.decide(for: release, flags: resolution?.flags ?? InstanceFlags())
         try files.apply(decision, release: release)
         progress(1)
     }

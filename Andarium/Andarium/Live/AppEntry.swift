@@ -71,7 +71,7 @@ struct AppEntry {
         guest = guest.map { launch.applied(to: $0, processorCount: host.processorCount) }
 
         let model = AppModel(
-            guest: guest, host: host, system: system, capabilities: .firstRelease,
+            guest: guest, host: host, system: system, capabilities: .device,
             createRequirementBytes: storage.createRequirementBytes,
             systemBytes: carried?.systemDiskBytes ?? 0
         )
@@ -87,6 +87,7 @@ struct AppEntry {
         if carried != nil {
             let runtime = LiveRuntime(model: model, storage: storage, marker: marker)
             model.driver = runtime
+            model.refreshPlan()
         }
         model.alert = problem.map { AppAlert(title: "Android Is Not Available", message: $0) }
         return model

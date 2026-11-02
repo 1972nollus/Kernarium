@@ -40,10 +40,11 @@ public struct Capabilities: Equatable, Sendable {
         liveDisplayOptions: true
     )
 
-    /// The first release: a guest keeps the system it was created with, and
-    /// the session offers Android's own screen, keys and the options.
-    public static let firstRelease = Capabilities(
-        systemUpdate: false, adbOverNetwork: false, apkInstall: false, statistics: false, appCount: false,
+    /// The device application: a guest moves to a newer system with its
+    /// data (`StartPlan`), and the session offers Android's own screen, keys
+    /// and the options.
+    public static let device = Capabilities(
+        systemUpdate: true, adbOverNetwork: false, apkInstall: false, statistics: false, appCount: false,
         liveDisplayOptions: false
     )
 }

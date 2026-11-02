@@ -63,6 +63,7 @@ struct AppEntry {
         switch screen {
         case "home-new":
             model.guest = Guest.fresh(on: host)
+            model.plan = .firstStart
         case "home-grow":
             model.guest?.pendingCapacityGiB = 24
         case "resize":
@@ -70,8 +71,16 @@ struct AppEntry {
         case "home-max":
             model.guest?.capacityGiB = Limits.capacityRangeGiB.upperBound
         case "home-update":
-            model.guest?.systemRelease = PreviewData.previousRelease
-            model.notice = .systemUpdated
+            model.plan = .update(from: PreviewData.previousRelease, to: PreviewData.release)
+        case "home-update-failed":
+            model.plan = .unfinishedUpdate(to: PreviewData.release, canRetry: true, canRestore: true)
+        case "home-update-failed-restore":
+            model.plan = .unfinishedUpdate(to: PreviewData.release, canRetry: false, canRestore: true)
+        case "home-update-choice":
+            model.plan = .unfinishedUpdate(to: PreviewData.release, canRetry: true, canRestore: true)
+            model.updateChoice = true
+        case "home-blocked":
+            model.plan = .blocked(.olderAndroid)
         case "home-closed":
             model.notice = .closedInBackground
         case "home-options":
@@ -85,7 +94,7 @@ struct AppEntry {
             model.erase()
             boot(.firstStart, stage: 3, seconds: 74)
         case "boot-upgrade":
-            model.guest?.systemRelease = PreviewData.previousRelease
+            model.bootFrom = PreviewData.previousRelease
             boot(.upgrade, stage: 3, seconds: 51)
         case "boot-recovery":
             boot(.recovery, stage: 3, seconds: 7)

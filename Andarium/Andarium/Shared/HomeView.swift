@@ -60,6 +60,13 @@ struct HomeView: View {
             case .info: InfoSheet(acknowledgements: hints.acknowledgements)
             }
         }
+        .confirmationDialog(
+            "Android's Update Didn't Finish", isPresented: $model.updateChoice, titleVisibility: .visible
+        ) {
+            UpdateChoiceButtons()
+        } message: {
+            Text("The start that updates Android did not reach its end. Choose how to go on; Erase Guest starts over instead.")
+        }
         .alert("Not Enough Free Space", isPresented: $model.startBlocked) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -141,6 +148,23 @@ struct HomeView: View {
                 text: "Android needs \(Formats.hostGB(bytes: Limits.startReserveBytes)) free to start. Free up space in Settings › General › \(model.host.name) Storage."
             )
         }
+        switch model.plan {
+        case .update(_, let release):
+            NoticeCard(
+                symbol: "arrow.down.circle.fill", color: .accentColor,
+                title: "Android updated to \(release)",
+                text: "The next start finishes the update and takes a little longer. Your data is saved first, so a start that does not finish can be undone."
+            )
+        case .unfinishedUpdate(let release, let canRetry, let canRestore):
+            UnfinishedUpdateCard(release: release, canRetry: canRetry, canRestore: canRestore)
+        case .blocked(let reason):
+            NoticeCard(
+                symbol: "exclamationmark.triangle.fill", color: .orange,
+                title: reason.title, text: reason.explanation
+            )
+        case .firstStart, .normal:
+            EmptyView()
+        }
         if let notice = model.notice {
             switch notice {
             case .erased:
@@ -148,13 +172,6 @@ struct HomeView: View {
                     symbol: "sparkles", color: .accentColor,
                     title: "Guest erased",
                     text: "The next start runs Android's setup.",
-                    onClose: { withAnimation { model.notice = nil } }
-                )
-            case .systemUpdated:
-                NoticeCard(
-                    symbol: "arrow.down.circle.fill", color: .accentColor,
-                    title: "Android updated to \(model.system.release)",
-                    text: "The next start finishes the update and takes a little longer.",
                     onClose: { withAnimation { model.notice = nil } }
                 )
             case .closedInBackground:
@@ -237,10 +254,20 @@ struct StartButton: View {
         .foregroundStyle(.white)
         .background(Capsule().fill(Color.accentColor))
         .glassEffect(.regular.tint(Color.accentColor).interactive(), in: .capsule)
+        // A guest that cannot start with this Android starts again only after
+        // it is erased.
+        .opacity(blocked ? 0.4 : 1)
+        .disabled(blocked)
+    }
+
+    private var blocked: Bool {
+        if case .blocked = model.plan { return true }
+        return false
     }
 
     private var title: String {
         guard model.guest != nil else { return "Start" }
+        if case .unfinishedUpdate = model.plan { return "Start" }
         switch model.bootKind(.normal) {
         case .firstStart: return "Start and Set Up"
         case .upgrade: return "Update and Start"
@@ -269,6 +296,7 @@ struct StartMenu: View {
 
     private var detail: String {
         guard model.guest != nil else { return "" }
+        if case .unfinishedUpdate = model.plan { return "Choose how to finish the update" }
         switch model.bootKind(.normal) {
         case .firstStart: return "First start: Android sets up"
         case .upgrade: return "Android finishes its update"
@@ -461,6 +489,77 @@ struct BackupNote: View {
             .font(.footnote)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 18)
+    }
+}
+
+/// An update that did not reach its end: the ways on, beside the notice.
+struct UnfinishedUpdateCard: View {
+    @Environment(AppModel.self) private var model
+    let release: String
+    let canRetry: Bool
+    let canRestore: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                    .font(.title3)
+                    .foregroundStyle(Color.orange)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Android's update didn't finish").font(.subheadline.weight(.semibold))
+                    Text(text)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if canRetry || canRestore {
+                HStack(spacing: 10) {
+                    if canRetry {
+                        Button("Try Again") { model.start(.normal, resolution: .retry) }
+                    }
+                    if canRestore {
+                        Button("Restore and Update") { model.start(.normal, resolution: .restoreSnapshot) }
+                    }
+                }
+                .buttonStyle(.glass)
+                .controlSize(.regular)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+    }
+
+    private var text: String {
+        switch (canRetry, canRestore) {
+        case (true, true):
+            "The start that updates to \(release) did not reach its end. Try it again, or put back your data from before the update and update afresh."
+        case (true, false):
+            "The start that updates to \(release) did not reach its end. Try it again, or erase the guest to start over."
+        case (false, true):
+            "This Andarium carries a different Android than the update that did not finish. Put back your data from before it and update afresh, or erase the guest to start over."
+        case (false, false):
+            "The start that updates to \(release) did not reach its end, and nothing from before it is left to put back. Erase the guest to start over."
+        }
+    }
+}
+
+/// The choices of the dialog Start opens for an update that did not finish.
+struct UpdateChoiceButtons: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if case .unfinishedUpdate(_, let canRetry, let canRestore) = model.plan {
+            if canRetry {
+                Button("Try Again") { model.start(.normal, resolution: .retry) }
+            }
+            if canRestore {
+                Button("Restore and Update") { model.start(.normal, resolution: .restoreSnapshot) }
+            }
+        }
+        Button("Cancel", role: .cancel) {}
     }
 }
 

@@ -32,6 +32,9 @@ public struct ConsoleScanner: Sendable {
 
     private var pending = ""
     private var discarding = false
+    /// How many times Android has reported `sys.boot_completed=1`. Recovery
+    /// never does, so only a count past zero says Android itself booted.
+    public private(set) var bootCompletedCount = 0
 
     public init() {}
 
@@ -41,7 +44,10 @@ public struct ConsoleScanner: Sendable {
         // Scalars, not characters: "\r\n" is one character.
         for scalar in text.unicodeScalars {
             if scalar == "\n" || scalar == "\r" {
-                if !discarding, let milestone = Self.milestone(in: pending) { found.append(milestone) }
+                if !discarding {
+                    if let milestone = Self.milestone(in: pending) { found.append(milestone) }
+                    if pending.contains(Self.bootCompletedLine) { bootCompletedCount += 1 }
+                }
                 pending.removeAll(keepingCapacity: true)
                 discarding = false
             } else if !discarding {
@@ -59,8 +65,10 @@ public struct ConsoleScanner: Sendable {
         feed(String(decoding: data, as: UTF8.self))
     }
 
+    static let bootCompletedLine = "processing action (sys.boot_completed=1)"
+
     static func milestone(in line: String) -> BootMilestone? {
-        if line.contains("processing action (sys.boot_completed=1)") { return .ready }
+        if line.contains(bootCompletedLine) { return .ready }
         if line.contains("init: starting service 'recovery'") { return .ready }
         if line.contains("init: starting service 'surfaceflinger'") { return .screenStarting }
         if line.contains("init: init first stage started!") { return .androidStarting }

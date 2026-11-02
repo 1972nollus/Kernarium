@@ -12,7 +12,8 @@ public struct SystemInfo: Equatable, Sendable {
     public var release: String
     /// Android's own build identifier.
     public var buildID: String?
-    /// Not in the release manifest; shown only where known.
+    /// The security patch level as the Info screen words it ("1 October
+    /// 2026"); shown only where the manifest has one.
     public var securityPatch: String?
     public var kernel: String
     public var architecture: String
@@ -30,6 +31,17 @@ public struct SystemInfo: Equatable, Sendable {
         self.kernel = kernel
         self.architecture = architecture
         self.appVersion = appVersion
+    }
+
+    /// "2026-10-01" as "1 October 2026"; nil for anything else.
+    static func patchLevel(_ text: String) -> String? {
+        let parts = text.split(separator: "-", omittingEmptySubsequences: false).map { Int($0) }
+        guard parts.count == 3, let year = parts[0], let month = parts[1], let day = parts[2],
+              (1...12).contains(month), (1...31).contains(day), year >= 2000
+        else { return nil }
+        let names = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
+                     "October", "November", "December"]
+        return "\(day) \(names[month - 1]) \(year)"
     }
 
     public enum ManifestError: Error, Equatable {
@@ -66,7 +78,8 @@ public struct SystemInfo: Equatable, Sendable {
 
         self.init(
             distribution: "LineageOS \(parts[1])", android: String(major), release: release,
-            buildID: android?["build_id"] as? String, securityPatch: nil,
+            buildID: android?["build_id"] as? String,
+            securityPatch: (android?["security_patch"] as? String).flatMap(Self.patchLevel),
             kernel: "Linux \(version)", architecture: "arm64, \(pageSize / 1024) KB pages",
             appVersion: appVersion
         )

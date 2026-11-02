@@ -28,6 +28,16 @@ struct ConsoleScannerTests {
         #expect(scanner.feed(text) == [.kernelRunning, .androidStarting, .ready])
     }
 
+    @Test func onlyAndroidItselfCompletesABoot() {
+        var scanner = ConsoleScanner()
+        _ = scanner.feed("[    0.8] init: starting service 'recovery'...\n")
+        #expect(scanner.bootCompletedCount == 0)
+        _ = scanner.feed("[   22.9] init: processing action (sys.boot_completed=1) from (/x:1)\n")
+        #expect(scanner.bootCompletedCount == 1)
+        _ = scanner.feed("[   99.9] init: processing action (sys.boot_completed=1) from (/x:1)\n")
+        #expect(scanner.bootCompletedCount == 2)
+    }
+
     @Test func aLineSplitAcrossChunksIsStillFound() {
         var scanner = ConsoleScanner()
         #expect(scanner.feed("Linux ver").isEmpty)
@@ -77,9 +87,12 @@ struct SystemInfoTests {
     private let manifest = """
         {
           "acceptance": "accepted",
-          "android": { "build_id": "CP2A.260605.016", "major": 17, "sdk": 37 },
+          "android": {
+            "build_id": "CP2A.260605.016", "build_number": 1793463711, "major": 17, "sdk": 37,
+            "security_patch": "2026-10-01"
+          },
           "inventory": [
-            { "path": "guest/android-17-uml-arm64.img.zst", "role": "guest-disk-archive", "size": 873361166 },
+            { "path": "guest/system.img", "role": "system-disk", "size": 1070096384 },
             { "path": "boot/kernel-command-line.txt", "role": "kernel-command-line", "size": 1332 }
           ],
           "kernel": { "page_size": 4096, "release": "6.18.54-g4bcc3653b86a" },
@@ -96,8 +109,15 @@ struct SystemInfoTests {
         #expect(info.buildID == "CP2A.260605.016")
         #expect(info.kernel == "Linux 6.18.54")
         #expect(info.architecture == "arm64, 4 KB pages")
-        #expect(info.securityPatch == nil)
+        #expect(info.securityPatch == "1 October 2026")
         #expect(info.appVersion == "1.0 (1)")
+    }
+
+    @Test func theSecurityPatchIsWordedOrLeftOut() throws {
+        let odd = manifest.replacingOccurrences(of: "2026-10-01", with: "October")
+        #expect(try SystemInfo(manifest: Data(odd.utf8), appVersion: "1").securityPatch == nil)
+        let december = manifest.replacingOccurrences(of: "2026-10-01", with: "2026-12-05")
+        #expect(try SystemInfo(manifest: Data(december.utf8), appVersion: "1").securityPatch == "5 December 2026")
     }
 
     @Test func aMissingFieldNamesItself() {

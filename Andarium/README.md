@@ -118,12 +118,22 @@ write no disk and take no time.
 
 `InstanceRules.decide` (`Instance.swift`, the rules and vectors of the
 [Android README](../android/lineage-24/README.md#guest-instance-storage))
-chooses what a start does with the carried release: first boot, ordinary boot,
-update, or a refusal. An update first clones `data.img` to
-`data.img.pre-<release id>` (an APFS clone), and an instance counts as
-completed only after Android reported `sys.boot_completed` and the run ended
-cleanly. A guest the first release created as one `guest.img` has no instance
-record the rules can use; it can only be erased.
+chooses what a start does with the carried release, and `StartPlan` is what
+Home shows of it before Start (`GuestStorage.startPlan`, which changes
+nothing): first start, ordinary start, update, an update that did not finish,
+or a start that is blocked. An update first clones `data.img` to
+`data.img.pre-<release id>` (an APFS clone), and an update counts as finished
+only after Android itself reported `sys.boot_completed` in that run and the
+run ended cleanly; Recovery never does.
+
+An update that did not finish is not retried by itself. Home offers Try
+Again (the same start, the snapshot kept) and Restore and Update (the data the
+update started from is put back, then the update is made afresh), each only
+when it can work, and Erase Guest, which deletes the snapshot too. A guest
+the Android in this build is older than, or whose files do not match it, is
+blocked: Start is dimmed and erasing is the way out. A guest of the first
+release (one `guest.img`, an `instance.json` of schema 0) is not read: its
+start fails with the reason, and Erase makes it a guest of this layout.
 
 The runtime passes the data disk's and the release's paths to Linux in a
 kernel argument that cannot carry a space, a tab, a newline, a comma, a colon

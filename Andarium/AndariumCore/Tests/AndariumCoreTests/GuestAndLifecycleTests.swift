@@ -17,7 +17,6 @@ struct GuestTests {
         #expect(guest.cores == 6)
         #expect(guest.memoryMiB == 1536)
         #expect(guest.capacityGiB == 8)
-        #expect(guest.neverStarted)
         #expect(!guest.includeInBackups)
         #expect(!guest.microphone)
     }
@@ -45,24 +44,12 @@ struct GuestTests {
         #expect(guest.pendingCapacityGiB == nil)
     }
 
-    @Test func bootKindFollowsTheGuestsHistory() {
-        var guest = Guest.fresh(on: ipad)
-        #expect(guest.bootKind(.normal) == .firstStart)
-        #expect(guest.bootKind(.recovery) == .recovery)
-        guest.didBoot(release: "r1")
-        #expect(guest.bootKind(.normal) == .normal)
-        #expect(guest.bootKind(.normal, currentRelease: "r1") == .normal)
-        #expect(guest.bootKind(.normal, currentRelease: "r2") == .upgrade)
-        #expect(guest.bootKind(.recovery, currentRelease: "r2") == .recovery)
-    }
-
     @Test func aFinishedBootAppliesAPendingGrowth() {
         var guest = Guest.fresh(on: ipad)
         guest.setCapacity(24)
-        guest.didBoot(release: "r1")
+        guest.didBoot()
         #expect(guest.capacityGiB == 24)
         #expect(guest.pendingCapacityGiB == nil)
-        #expect(guest.systemRelease == "r1")
     }
 
     @Test func eraseKeepsTheChoicesAndTheCapacityTheNextStartRunsWith() {
@@ -71,7 +58,7 @@ struct GuestTests {
         guest.includeInBackups = true
         guest.memoryMiB = 2048
         guest.setCapacity(24)
-        guest.didBoot(release: "r1")
+        guest.didBoot()
         guest.usedBytes = 5_000_000_000
         guest.apps = 12
         guest.setCapacity(32)
@@ -79,7 +66,6 @@ struct GuestTests {
         let erased = guest.erased
         #expect(erased.capacityGiB == 32)
         #expect(erased.pendingCapacityGiB == nil)
-        #expect(erased.neverStarted)
         #expect(erased.usedBytes == 0)
         #expect(erased.apps == nil)
         #expect(erased.microphone)
@@ -89,7 +75,6 @@ struct GuestTests {
 
     @Test func onlyTheChoicesAreStored() throws {
         var guest = Guest.fresh(on: ipad)
-        guest.didBoot(release: "r1")
         guest.usedBytes = 123
         guest.apps = 9
         let data = try JSONEncoder().encode(guest)
@@ -100,7 +85,6 @@ struct GuestTests {
         let decoded = try JSONDecoder().decode(Guest.self, from: data)
         #expect(decoded.usedBytes == 0)
         #expect(decoded.apps == nil)
-        #expect(decoded.systemRelease == "r1")
         #expect(decoded.cores == guest.cores)
     }
 }
@@ -119,51 +103,42 @@ struct LifecycleTests {
         #expect(life.phase == .home)
     }
 
-    @Test func aFirstStartBootsThenRunsAndRecordsTheSystem() {
+    @Test func aFirstStartBootsThenRuns() {
         var life = Lifecycle(guest: Guest.fresh(on: ipad))
-        #expect(life.start(.normal, host: ipad) == .allowed(.firstStart))
+        #expect(life.start(.normal, host: ipad, plan: .firstStart) == .allowed(.firstStart))
         #expect(life.phase == .booting(.firstStart))
-        life.finishBoot(.firstStart, release: "r1")
+        life.finishBoot(.firstStart)
         #expect(life.phase == .running(.normal))
-        #expect(life.guest?.systemRelease == "r1")
     }
 
     @Test func aRecoveryBootChangesNothingInTheGuest() {
         var guest = Guest.fresh(on: ipad)
-        guest.didBoot(release: "r1")
         guest.setCapacity(24)
         var life = Lifecycle(guest: guest)
         #expect(life.start(.recovery, host: ipad) == .allowed(.recovery))
-        life.finishBoot(.recovery, release: "r2")
+        life.finishBoot(.recovery)
         #expect(life.phase == .running(.recovery))
-        #expect(life.guest?.systemRelease == "r1")
         #expect(life.guest?.pendingCapacityGiB == 24)
     }
 
     @Test func eraseLeavesAFreshGuestAndANotice() {
-        var guest = Guest.fresh(on: ipad)
-        guest.didBoot(release: "r1")
-        var life = Lifecycle(guest: guest)
+        var life = Lifecycle(guest: Guest.fresh(on: ipad))
         life.erase()
         #expect(life.notice == .erased)
-        #expect(life.guest?.neverStarted == true)
         life.create(Guest.fresh(on: ipad))
         #expect(life.notice == nil)
     }
 
     @Test func aFactoryResetFromRecoveryErasesWithoutANotice() {
-        var guest = Guest.fresh(on: ipad)
-        guest.didBoot(release: "r1")
-        var life = Lifecycle(guest: guest)
+        var life = Lifecycle(guest: Guest.fresh(on: ipad))
         life.factoryReset()
-        #expect(life.guest?.neverStarted == true)
         #expect(life.notice == nil)
     }
 
     @Test func theRunEndsInOneOfThreeWays() {
         var life = Lifecycle(guest: Guest.fresh(on: ipad))
         _ = life.start(.normal, host: ipad)
-        life.finishBoot(.firstStart, release: "r1")
+        life.finishBoot(.normal)
         life.restart()
         #expect(life.phase == .booting(.restart))
         life.powerOff()

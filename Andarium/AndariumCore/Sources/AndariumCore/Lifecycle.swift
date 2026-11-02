@@ -13,8 +13,6 @@ public enum Phase: Equatable, Sendable {
 public enum HomeNotice: Equatable, Sendable {
     /// The guest was just erased.
     case erased
-    /// This version of Andarium carries a new system.
-    case systemUpdated
     /// iOS ended Andarium while the guest was paused out of the foreground.
     case closedInBackground
 }
@@ -25,6 +23,10 @@ public enum StartVerdict: Equatable, Sendable {
     case noGuest
     /// The host has less free space than Android's own writes need.
     case lowSpace(neededBytes: UInt64, freeBytes: UInt64)
+    /// An update did not complete: the user chooses how to go on first.
+    case unfinishedUpdate
+    /// The guest cannot start with this Android; erasing it is the way out.
+    case blocked(StartBlock)
 }
 
 /// Where Andarium's one guest is in its life. A launch moves forward only:
@@ -62,22 +64,36 @@ public struct Lifecycle: Equatable, Sendable {
         self.guest = guest.erased
     }
 
+    /// `plan` is what the instance on disk says a start would be. A way out
+    /// the user chose for an unfinished update lets the start go ahead.
     public func startVerdict(
-        _ mode: StartMode, host: HostDevice, currentRelease: String? = nil
+        _ mode: StartMode, host: HostDevice, plan: StartPlan = .normal, resolution: UpdateResolution? = nil
     ) -> StartVerdict {
-        guard let guest else { return .noGuest }
+        guard guest != nil else { return .noGuest }
         guard host.hasRoom(for: Limits.startReserveBytes) else {
             return .lowSpace(neededBytes: Limits.startReserveBytes, freeBytes: host.freeStorageBytes)
         }
-        return .allowed(guest.bootKind(mode, currentRelease: currentRelease))
+        switch plan {
+        case .blocked(let reason):
+            return .blocked(reason)
+        case .unfinishedUpdate(_, let canRetry, let canRestore):
+            switch resolution {
+            case .retry? where canRetry, .restoreSnapshot? where canRestore:
+                return .allowed(.upgrade)
+            default:
+                return .unfinishedUpdate
+            }
+        case .firstStart, .normal, .update:
+            return .allowed(plan.bootKind(mode))
+        }
     }
 
     /// Starts the guest if the host allows it; the verdict says why not.
     @discardableResult
     public mutating func start(
-        _ mode: StartMode, host: HostDevice, currentRelease: String? = nil
+        _ mode: StartMode, host: HostDevice, plan: StartPlan = .normal, resolution: UpdateResolution? = nil
     ) -> StartVerdict {
-        let verdict = startVerdict(mode, host: host, currentRelease: currentRelease)
+        let verdict = startVerdict(mode, host: host, plan: plan, resolution: resolution)
         if case let .allowed(kind) = verdict {
             phase = .booting(kind)
         }
@@ -85,11 +101,10 @@ public struct Lifecycle: Equatable, Sendable {
     }
 
     /// The boot reached Android (or Recovery). A recovery boot changes
-    /// nothing in the guest; any other applies a pending growth and records
-    /// the system the guest ran.
-    public mutating func finishBoot(_ kind: BootKind, release: String) {
+    /// nothing in the guest; any other applies a pending growth.
+    public mutating func finishBoot(_ kind: BootKind) {
         if kind != .recovery {
-            guest?.didBoot(release: release)
+            guest?.didBoot()
         }
         phase = .running(kind == .recovery ? .recovery : .normal)
     }

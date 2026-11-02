@@ -108,6 +108,9 @@ struct EraseSheet: View {
                     item("person.crop.circle", "Accounts and settings", nil)
                     item("photo.on.rectangle", "Photos, downloads and other files", nil)
                     item("internaldrive", "Data on this \(model.host.name)", Formats.gb(guest.usedGB))
+                    if case .unfinishedUpdate(_, _, true) = model.plan {
+                        item("clock.arrow.circlepath", "The data saved before the update", nil)
+                    }
                 }
                 Section("Kept") {
                     item("checkmark.seal", "\(model.system.distribution), built in", nil, kept: true)

@@ -40,7 +40,7 @@ struct StorageTests {
         defer { try? FileManager.default.removeItem(at: root) }
 
         let created = try await storage.create(Guest.fresh(on: host))
-        #expect(created.usedBytes == 0 && created.neverStarted)
+        #expect(created.usedBytes == 0)
         // The runtime creates the data disk at the first start.
         #expect(!FileManager.default.fileExists(atPath: storage.locations.data.path))
         let state = try #require(try InstanceFiles(directory: storage.locations.directory).readState())
@@ -66,7 +66,7 @@ struct StorageTests {
         let created = try await storage.create(guest)
         try Data(repeating: 1, count: 4096).write(to: storage.locations.data)
         let erased = try await storage.erase(created)
-        #expect(erased.cores == 3 && erased.usedBytes == 0 && erased.neverStarted)
+        #expect(erased.cores == 3 && erased.usedBytes == 0)
         #expect(!FileManager.default.fileExists(atPath: storage.locations.data.path))
     }
 
@@ -109,6 +109,60 @@ struct StorageTests {
         await #expect(throws: InstanceError.self) { try await newer.prepareStart(guest) }
         try newer.completeRun()
         await #expect(throws: InstanceError.self) { try await first.prepareStart(guest) }
+    }
+
+    @Test func anUnfinishedUpdateIsRetriedOrRestoredOnRequestOnly() async throws {
+        let (first, root) = try makeStorage()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let guest = try await first.create(Guest.fresh(on: host))
+        try await first.prepareStart(guest)
+        try Data("android data".utf8).write(to: first.locations.data)
+        try first.completeRun()
+
+        let newer = TwoDiskStorage(
+            locations: first.locations, release: releaseIdentity("20261102-los24-r5", build: 200, sha: String(repeating: "b", count: 64)),
+            releaseDirectory: first.releaseDirectory
+        )
+        #expect(newer.startPlan() == .update(from: "20261031-los24-r4", to: "20261102-los24-r5"))
+        try await newer.prepareStart(guest)
+        // The update's start never completed; Android wrote to the data.
+        try Data("android data, upgraded".utf8).write(to: first.locations.data)
+        #expect(newer.startPlan() == .unfinishedUpdate(to: "20261102-los24-r5", canRetry: true, canRestore: true))
+        await #expect(throws: InstanceError.self) { try await newer.prepareStart(guest) }
+
+        // Retry keeps the snapshot and the data as they are.
+        try await newer.prepareStart(guest, resolution: .retry)
+        #expect(try String(contentsOf: first.locations.data, encoding: .utf8) == "android data, upgraded")
+        #expect(newer.startPlan() == .unfinishedUpdate(to: "20261102-los24-r5", canRetry: true, canRestore: true))
+
+        // Restore puts back the data the update started from and updates
+        // afresh: a new snapshot, the update pending again.
+        try await newer.prepareStart(guest, resolution: .restoreSnapshot)
+        #expect(try String(contentsOf: first.locations.data, encoding: .utf8) == "android data")
+        #expect(newer.startPlan() == .unfinishedUpdate(to: "20261102-los24-r5", canRetry: true, canRestore: true))
+
+        // Completing ends it.
+        try newer.completeRun()
+        #expect(newer.startPlan() == .normal)
+    }
+
+    @Test func erasingIsTheWayOutOfARefusal() async throws {
+        let (first, root) = try makeStorage(release: releaseIdentity("20261102-los24-r5", build: 200))
+        defer { try? FileManager.default.removeItem(at: root) }
+        let guest = try await first.create(Guest.fresh(on: host))
+        try await first.prepareStart(guest)
+        try Data("android data".utf8).write(to: first.locations.data)
+        try first.completeRun()
+
+        let older = TwoDiskStorage(
+            locations: first.locations, release: releaseIdentity("20261031-los24-r4", build: 100),
+            releaseDirectory: first.releaseDirectory
+        )
+        #expect(older.startPlan() == .blocked(.olderAndroid))
+        await #expect(throws: InstanceError.self) { try await older.prepareStart(guest) }
+        _ = try await older.erase(guest)
+        #expect(older.startPlan() == .firstStart)
+        try await older.prepareStart(guest)
     }
 
     @Test func theGuestIsExcludedFromBackupsUnlessTheUserAsks() async throws {

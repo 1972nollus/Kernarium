@@ -7,15 +7,21 @@ import UIKit
 nonisolated final class ConsoleSink: @unchecked Sendable {
     private let lock = NSLock()
     private var scanner = ConsoleScanner()
-    private let report: @Sendable ([BootMilestone]) -> Void
+    private let report: @Sendable ([BootMilestone], Bool) -> Void
 
-    init(report: @escaping @Sendable ([BootMilestone]) -> Void) {
+    /// `report` gets the milestones a chunk completes and whether Android
+    /// reported `sys.boot_completed` in it.
+    init(report: @escaping @Sendable ([BootMilestone], Bool) -> Void) {
         self.report = report
     }
 
     func feed(_ data: Data) {
-        let found = lock.withLock { scanner.feed(data) }
-        if !found.isEmpty { report(found) }
+        let (found, completed) = lock.withLock { () -> ([BootMilestone], Bool) in
+            let before = scanner.bootCompletedCount
+            let found = scanner.feed(data)
+            return (found, scanner.bootCompletedCount > before)
+        }
+        if !found.isEmpty || completed { report(found, completed) }
     }
 }
 
@@ -24,6 +30,7 @@ private struct PendingRun {
     var guest: Guest
     var mode: StartMode
     var kind: BootKind
+    var resolution: UpdateResolution?
 }
 
 /// The device application behind the screens: the guest's storage, and the
@@ -38,8 +45,9 @@ final class LiveRuntime: RuntimeDriver {
 
     private weak var model: AppModel?
     private let storage: TwoDiskStorage
-    /// The guest reached `sys.boot_completed`, which a clean end records.
-    private var reachedReady = false
+    /// Android reached `sys.boot_completed` in the boot under way, which a
+    /// clean end records. Recovery never does.
+    private var reachedBootCompleted = false
     private let pause: PauseController
     private let microphone = SystemMicrophonePermission()
     private var observers: [NSObjectProtocol] = []
@@ -81,8 +89,12 @@ final class LiveRuntime: RuntimeDriver {
 
     // MARK: Starting
 
-    func begin(guest: Guest, mode: StartMode, kind: BootKind) {
-        pending = PendingRun(guest: guest, mode: mode, kind: kind)
+    func startPlan() -> StartPlan? {
+        storage.startPlan()
+    }
+
+    func begin(guest: Guest, mode: StartMode, kind: BootKind, resolution: UpdateResolution?) {
+        pending = PendingRun(guest: guest, mode: mode, kind: kind, resolution: resolution)
         launching = false
         startIfReady()
     }
@@ -105,7 +117,7 @@ final class LiveRuntime: RuntimeDriver {
     private func prepareAndLaunch(_ run: PendingRun) async {
         preparing = true
         do {
-            try await storage.prepareStart(run.guest) { fraction in
+            try await storage.prepareStart(run.guest, resolution: run.resolution) { fraction in
                 Task { @MainActor in self.preparingDisk(fraction) }
             }
         } catch {
@@ -145,8 +157,8 @@ final class LiveRuntime: RuntimeDriver {
             guard let restart = GuestRestartEvent(event: event, restartCount: restartCount) else { return }
             MainActor.assumeIsolated { self?.guestRestarted(restart) }
         }
-        let sink = ConsoleSink { milestones in
-            Task { @MainActor in self.reached(milestones) }
+        let sink = ConsoleSink { milestones, bootCompleted in
+            Task { @MainActor in self.reached(milestones, bootCompleted: bootCompleted) }
         }
         console = sink
         kernarium_runtime_loader_set_console_output_handler { data in sink.feed(data) }
@@ -167,7 +179,7 @@ final class LiveRuntime: RuntimeDriver {
         let dataDiskPath = storage.dataDiskPath
         let releasePath = storage.releaseDirectory.path
         let dataGiB = storage.dataGiB(for: run.guest)
-        reachedReady = false
+        reachedBootCompleted = false
         let bootMode: UInt32 = run.mode == .recovery ? 2 : 1
         let memoryMiB = UInt32(run.guest.memoryMiB)
         let processorCount = UInt32(run.guest.cores)
@@ -215,10 +227,10 @@ final class LiveRuntime: RuntimeDriver {
 
     // MARK: Events
 
-    private func reached(_ milestones: [BootMilestone]) {
+    private func reached(_ milestones: [BootMilestone], bootCompleted: Bool) {
         guard let model else { return }
         let seconds = Int(Date().timeIntervalSince(bootStartedAt))
-        if milestones.contains(.ready) { reachedReady = true }
+        if bootCompleted { reachedBootCompleted = true }
         for milestone in milestones where model.bootTracker.reach(milestone, atSeconds: seconds) {
             print("Andarium: boot reached \(milestone) at \(seconds) s")
         }
@@ -227,6 +239,9 @@ final class LiveRuntime: RuntimeDriver {
     private func guestRestarted(_ event: GuestRestartEvent) {
         print("Andarium: \(event)")
         guard case .began = event, let model else { return }
+        // The boot that follows is another one: it ends an update only by
+        // reaching sys.boot_completed itself.
+        reachedBootCompleted = false
         switch model.phase {
         case .running, .booting:
             bootStartedAt = Date()
@@ -245,7 +260,7 @@ final class LiveRuntime: RuntimeDriver {
         print(ConsoleReport.runtimeReturned(result))
         // A start that reached sys.boot_completed and ended with Android's own
         // power-off is the one that ends a pending update.
-        if result == 0, reachedReady {
+        if result == 0, reachedBootCompleted {
             do { try storage.completeRun() } catch { print("Andarium: the guest's record was not updated: \(error.localizedDescription)") }
         }
         let uptime = runStartedAt.map { Int(Date().timeIntervalSince($0)) }

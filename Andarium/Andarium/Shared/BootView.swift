@@ -129,7 +129,7 @@ struct BootView: View {
             .padding(.vertical, 4)
             .glassEffect(.regular, in: .rect(cornerRadius: 26))
 
-            if let note = Self.note(kind, guest: guest, system: system) {
+            if let note = Self.note(kind, from: model.bootFrom, system: system) {
                 Label {
                     Text(note)
                         .font(.subheadline)
@@ -205,12 +205,12 @@ struct BootView: View {
         }
     }
 
-    static func note(_ kind: BootKind, guest: Guest, system: SystemInfo) -> String? {
+    static func note(_ kind: BootKind, from: String?, system: SystemInfo) -> String? {
         switch kind {
         case .firstStart:
             "Android\u{2019}s first-run setup takes a few minutes."
         case .upgrade:
-            "Updating from \(guest.systemRelease ?? "the previous release") to \(system.release). Apps and files are kept."
+            "Updating \(from.map { "from \($0) " } ?? "")to \(system.release). Apps and files are kept."
         case .recovery:
             "Recovery appears on Android\u{2019}s screen. Use touch, or the side keys: volume moves, Power chooses."
         case .normal, .restart:

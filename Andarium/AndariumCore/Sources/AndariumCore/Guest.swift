@@ -6,7 +6,9 @@ public enum StartMode: String, Hashable, Codable, Sendable {
     case normal, recovery
 }
 
-/// Why a start takes as long as it does.
+/// Why a start takes as long as it does. An update is a normal start of a
+/// newer Android; the instance on disk decides which a start is
+/// (`StartPlan`).
 public enum BootKind: Hashable, Sendable {
     case normal, firstStart, upgrade, recovery, restart
 }
@@ -23,9 +25,6 @@ public struct Guest: Equatable, Codable, Sendable {
     /// Whether iCloud and computer backups include the guest's files. Off by
     /// default: the guest is several gigabytes that Android can set up again.
     public var includeInBackups: Bool
-    /// The system release this guest last started with; nil until its first
-    /// start.
-    public var systemRelease: String?
 
     // Measured when the guest is loaded; never stored.
 
@@ -36,12 +35,12 @@ public struct Guest: Equatable, Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case cores, memoryMiB, capacityGiB, pendingCapacityGiB, microphone
-        case includeInBackups, systemRelease
+        case includeInBackups
     }
 
     public init(
         cores: Int, memoryMiB: Int, capacityGiB: Int, pendingCapacityGiB: Int? = nil,
-        microphone: Bool = false, includeInBackups: Bool = false, systemRelease: String? = nil,
+        microphone: Bool = false, includeInBackups: Bool = false,
         usedBytes: UInt64 = 0, apps: Int? = nil
     ) {
         self.cores = cores
@@ -50,12 +49,9 @@ public struct Guest: Equatable, Codable, Sendable {
         self.pendingCapacityGiB = pendingCapacityGiB
         self.microphone = microphone
         self.includeInBackups = includeInBackups
-        self.systemRelease = systemRelease
         self.usedBytes = usedBytes
         self.apps = apps
     }
-
-    public var neverStarted: Bool { systemRelease == nil }
 
     public var usedGB: Double { Double(usedBytes) / Double(Limits.bytesPerGiB) }
 
@@ -65,16 +61,6 @@ public struct Guest: Equatable, Codable, Sendable {
     /// Storage only grows, up to the largest capacity there is.
     public var canGrow: Bool { effectiveCapacityGiB < Limits.capacityRangeGiB.upperBound }
 
-    /// What a start of this guest is, given the system release the app
-    /// carries (nil where the app has no way to move a guest to another
-    /// release, so a guest keeps the system it was created with).
-    public func bootKind(_ mode: StartMode, currentRelease: String? = nil) -> BootKind {
-        if mode == .recovery { return .recovery }
-        if neverStarted { return .firstStart }
-        if let currentRelease, systemRelease != currentRelease { return .upgrade }
-        return .normal
-    }
-
     /// Resize: storage only grows, and the growth waits for the next start.
     /// Choosing the current capacity again cancels a growth not yet applied.
     public mutating func setCapacity(_ value: Int) {
@@ -82,14 +68,12 @@ public struct Guest: Equatable, Codable, Sendable {
         pendingCapacityGiB = value > capacityGiB ? value : nil
     }
 
-    /// A start has finished booting: a pending growth now applies, and the
-    /// guest has run its system.
-    public mutating func didBoot(release: String) {
+    /// A start has finished booting: a pending growth now applies.
+    public mutating func didBoot() {
         if let pending = pendingCapacityGiB {
             capacityGiB = pending
             pendingCapacityGiB = nil
         }
-        systemRelease = release
     }
 
     /// The same choices with nothing in it: what Erase leaves behind.
@@ -97,7 +81,6 @@ public struct Guest: Equatable, Codable, Sendable {
         var guest = self
         guest.capacityGiB = effectiveCapacityGiB
         guest.pendingCapacityGiB = nil
-        guest.systemRelease = nil
         guest.usedBytes = 0
         guest.apps = nil
         return guest
