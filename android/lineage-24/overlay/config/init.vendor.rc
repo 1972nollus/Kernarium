@@ -84,8 +84,14 @@ on property:sys.kernarium.adb.host_connected=0
 # The boot command line expedites RCU grace periods, which shortens boot.
 # Normal grace periods return once boot completes, so a running guest does not
 # interrupt every vCPU for each one.
+#
+# Swap goes on at the same point, so boot compresses nothing: the cached apps
+# that started around boot completion keep their anonymous memory in zram, a
+# swap of half the RAM that zswap fronts, instead of in guest RAM that nothing
+# can reclaim.
 on property:sys.boot_completed=1
     write /sys/kernel/rcu_expedited 0
+    swapon_all /vendor/etc/fstab.uml
 
 service bugreport /system/bin/dumpstate -d -p -z
     class main

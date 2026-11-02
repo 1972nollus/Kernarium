@@ -116,7 +116,13 @@ primary and every renderer a 32-bit process. A `frameworks/base` topic (route
 `p0007`) lets a product disregard that attribute for system packages, and the
 product sets `ro.config.ignore_use32bitabi`: renderers stay 64-bit, and a
 32-bit application loads the 32-bit WebView library in its own process and
-talks to a 64-bit renderer. The same project's route also carries a LineageOS
+talks to a 64-bit renderer. The same route makes system_server preload the
+secondary zygote only while an installed package has a 32-bit primary ABI, and
+when the first one is installed later; without such a package the zygote keeps
+about 13 MiB less, and it still forks the WebView RELRO process at boot, which
+does not need the preload. system_server waits for that task, so the task never
+throws: a failed package lookup, at boot or for an added package, preloads as
+stock Android does, and an added or changed package is looked up by itself. The same project's route also carries a LineageOS
 correction: its WebView service drops the configured providers that are not
 installed, asking the package manager for every user, and does so under the
 identity of the calling application, which the package manager refuses without
@@ -152,8 +158,18 @@ or microG services. The LineageOS updater and setup
 wizard, Canvas, Aperture, Profiles, Recorder, QuickAccessWallet, the charger
 animation,
 fastbootd and AudioFX are excluded, as are DeskClock and EmergencyInfo; the
-build and verifier assert both lists. QuickSearchBox and its home-screen
-search surface are deliberately omitted. Bluetooth
+build and verifier assert both lists. SecureElement, the OMAPI service for
+readers the machine does not have (no eSE, no UICC), is kept but is not
+persistent (a `packages/apps/SecureElement` topic, route `p0024`, drops
+`android:persistent`): nothing starts it at boot, so it costs no memory at idle.
+The first `SEService` client that binds it starts the process, and the bind
+creates the service, which registers itself (the topic also drops the
+application's own `startService`: the system refuses it in a process it started
+for a bound service, and the application crashed on every bind). The service
+lives while a client is bound and is destroyed with the last unbind, the
+process stays until the system reclaims it, and nothing restarts it; a client
+still connects, which CTS's OMAPI version test needs. The OMAPI features are not declared. QuickSearchBox and its
+home-screen search surface are deliberately omitted. Bluetooth
 device implementations and feature declarations are also omitted. Settings is
 the stock application apart from its Bluetooth parts (a `packages/apps/Settings`
 topic, route `p0009`): the Connected devices entry, which holds only Bluetooth,
@@ -415,6 +431,41 @@ target-files verifier requires the generated overlay to cover the defaults; a
 list that drops one of them also fails the `lineage24-target-files-fixtures`
 test.
 
+LineageOS's default wallpaper is a nearly detail-free square, and its `sw600dp`
+and `sw720dp` variants, which every display of 600dp and more draws, are 1920 by
+1920 pixels. SystemUI's `ImageWallpaper` fixes its surface to the bitmap, so a
+1133 by 687 display held a 14 MiB wallpaper buffer that SurfaceFlinger scales
+into a wallpaper window as wide as the display's long side, 1133 pixels. The
+window, and with it the home screen's parallax range, comes from the display and
+the launcher's page offsets, not from the bitmap, so the overlay
+(`overlay/overlay-priority/frameworks/base/core/res/res`) replaces those two
+variants with a 1024 by 1024 copy of the same image, 4 MiB. Against the original,
+both resampled to a window of 687 to 2560 pixels, no pixel differs by more than
+three of 255 levels (PSNR above 56 dB). The platform's own
+`config_optimizeDefaultWallpaper` is no substitute: it crops to the display's long
+side and scales up, 19.6 MiB at 2266 by 1374.
+
+The wallpaper also sets the Monet palette. SystemUI quantizes a 112 by 112 mini
+bitmap that `Bitmap.createScaledBitmap(bitmap, 112, 112, false)` takes with one
+nearest-neighbour texel per sample, and a plain resize of the 1920 pixel image
+moves the accent colour from LineageOS's #589EA8 to #78ACB9 although no pixel
+differs visibly. `tools/default_wallpaper.py generate` therefore writes the
+original's own sample into each texel the copy is sampled at (the positions were
+read on a guest), 0.4% of the texels by at most five levels, so both images give
+the quantizer the same pixels and the palette stays LineageOS's.
+
+LineageOS's overlay names the same resource, and where two overlay directories do
+that the one listed earlier in `PRODUCT_PACKAGE_OVERLAYS` wins (Soong gives the
+earlier directory the higher priority). `inherit-product` expands the inherited
+list where its call stands, so `overlay/lineage_darwin.mk` lists
+`overlay/overlay-priority` before its calls and `overlay/overlay` after them,
+where it ranks under LineageOS's and Cuttlefish's: a resource that both define is
+theirs. That is why the wallpaper has a directory of its own.
+`tools/default_wallpaper.py` checks the committed files and that order, and
+regenerates the files from LineageOS's pinned file (`generate --source`); the
+target-files verifier requires the built framework overlay's two variants to be
+squares of at most 1024 pixels, which is where the order shows.
+
 When applications update together while their tasks are in a desk (LineageOS
 enables desktop windowing on tablets), WM Shell's `PackageUpdateController`
 starts a `PackageUpdateActivity` placeholder in the task of each, once per
@@ -491,7 +542,58 @@ command line), which shortens it by a few seconds. Once `sys.boot_completed`
 is set, the vendor init script writes 0 to `/sys/kernel/rcu_expedited`, so a
 running guest returns to normal grace periods and does not interrupt every
 vCPU for each one. The target-files verifier requires that action. Recovery
-loads no vendor init script and stays expedited for its short run.
+loads no vendor init script and stays expedited for its short run. The command
+line also sets `nbd.nbds_max=0`: Android uses no network block device, and the
+kernel's built-in driver would otherwise create 16, each with a receiver thread
+and its stack, about 7 MiB of guest memory. The Mac launcher and Kernarium both
+read this one file from the release, so the setting reaches both.
+
+The guest has a compressed swap of half its RAM. `fstab.uml` names one zram
+entry (`zramsize=50%`) and the same init action that restores the RCU grace
+periods runs `swapon_all` on it once `sys.boot_completed` is set, so boot
+itself compresses nothing. The apps the system starts around boot completion
+keep their anonymous memory in zram, which zswap fronts, rather than in guest
+RAM that nothing but killing the app could reclaim: it compresses about 4:1 and
+frees about 80 MiB of a 1536 MiB guest at idle, and the launcher workload
+refaults about a quarter of the file pages it did. The verifier requires the one
+fstab entry and the one `swapon_all`, at boot completion and nowhere else.
+
+PinnerService does not lock the home app's files. It would otherwise keep the
+launcher's APK, odex and vdex, about 54 MiB, resident whatever the memory
+pressure; without the pin those pages are reclaimed like any app's, and the
+time back to the home screen after a run of other apps did not grow.
+`KernariumPinnerOverlay` (`overlay/rro`) sets `config_pinnerHomePinBytes` to
+zero and leaves the WebView pin alone. That pin locks the first 20 MiB of
+`webview.apk` (the ICU data, the dex and the start of the native library). A
+cold start of a WebView app touches about 77 MiB of the 160 MiB library, spread
+over its code, and only 9.5 MiB of what it touches lies inside the locked 20, so
+a `pinlist.meta` of hot ranges would need either the whole touched set or a pin
+half this size that does the same; dropping the pin outright costs about 5% more
+major faults and disk reads on a cold WebView start. The pin sizes are not
+overlayable, so the
+overlay is built for SDK 28, the last level whose overlays are not held to the
+target's overlayable declarations, and the target-files verifier reads the
+built manifest for that: an overlay that targeted a later level would apply to
+nothing and say nothing.
+
+Several apps start at every boot and then sit cached, holding memory until the
+low memory killer wants it: the privacy sandbox services (the ExtServices
+`.adservices` process, FederatedCompute, OnDevicePersonalization), the backup
+apps (Seedvault, LocalContactsBackup and the local transport), key provisioning
+(`rkpdapp`), domain verification (`statementservice`) and the Health Connect
+controller. Their boot receivers and the system's bindings stay, because each
+schedules work or serves a feature; disabling them would lose it. Instead
+`kernarium_reclaim_boot_apps.sh` (`overlay/tools`, system_ext, its own core
+domain) waits 120 s after `sys.boot_completed`, reads `dumpsys activity lru` and
+runs `cmd activity kill --user 0` for each listed package whose processes are
+cached. That kills only what the system could have killed itself: alarms, jobs
+and bindings stay, and the next use starts the app again. A package with a
+process the system holds as a started service, the previous app or the home app
+is logged to logcat (tag `kernarium_reclaim_boot_apps`) and left alone, as is a
+package with no cached process; `kill-all` and `force-stop`, which cancel alarms
+and jobs, are never used. The list is a reviewed table in the script and in
+`tools/verify-target-files.py`, which require each other, and the script runs once
+per boot.
 
 ## Graphics
 
@@ -564,8 +666,17 @@ as the promise of a half-float window config, and the Android visuals are all
 fixed-point: RGBA8888, RGBX8888, BGRA8888 and RGB565, and gralloc offers no
 10-bit or half-float colour-output buffer either, so a 10-bit render target is
 unavailable and the CTS cases that use one skip on their own support query. The
-port also leaves out `VK_KHR_device_address_commands`, which the CTS refuses on
-a device whose declared dEQP level does not list it. A guest replay assigns new
+port also offers a window config whose only depth-stencil plane is eight bits of
+stencil, when the host renderer advertises that format
+([`../../docs/graphics.md`](../../docs/graphics.md#guest-capability-boundary)):
+HWUI asks for stencil and no depth for every window, `eglChooseConfig` sorts a
+config without a depth plane first for such a request, and the window then holds
+one byte per pixel where the smallest config with a depth plane held four. The
+window's stencil plane is the drawable's depth-stencil attachment, shared by
+every context that draws to the window, as a depth-stencil plane is. An
+application that asks for no depth and uses one anyway no longer gets it, as the
+EGL specification allows. The port also leaves out `VK_KHR_device_address_commands`,
+which the CTS refuses on a device whose declared dEQP level does not list it. A guest replay assigns new
 commit identities each time it is recreated, so the guest half is pinned by
 tree. Moving to a newer guest epoch is a metadata bump, a replay, and a
 regeneration; the verifier refuses a guest series that changed underneath the
@@ -676,6 +787,11 @@ read differently. `kernarium_ahb_rgba_lock` checks the lock of tall RGBA buffers
 whose rows gralloc pads (widths 340 to 350 at 604 rows): a buffer the GPU wrote
 and a buffer the CPU wrote are each compared at the stride, and a padded lock
 that takes more than four times an unpadded one fails the run.
+`kernarium_egl_configs` lists the EGL configs and picks the one HWUI's request
+chooses (RGBA8888, no depth, eight bits of stencil); `--expect-stencil-only` fails
+unless that config has no depth plane, and a pbuffer of it must stencil: a draw
+that writes only stencil and a draw that passes only where the stencil matches
+colour the two halves of the picture apart.
 
 The product declares `android.hardware.vulkan.version` 1.4, `level` 1 and
 `compute` 0, and deliberately declares no `android.software.vulkan.deqp.level`:
