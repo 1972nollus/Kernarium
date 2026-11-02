@@ -60,7 +60,12 @@ stops or is killed, once no other app plays primary audio, asked once a second
 while the stream runs. It never takes the session from an app that still
 plays, except when the guest starts a stream at a moment nothing interrupts
 it: a stream that starts or resumes during an interruption, or a route change
-during one, joins the mute. Route changes otherwise restart the engine.
+during one, joins the mute. Route changes otherwise restart the engine. The
+interruption belongs to the session, not to the stream: closing the stream,
+resetting the device, or the guest suspending and resuming (which tears the
+stream down and sets it up again) leaves it in place, so the new stream joins
+the mute until the system says the interrupter let go, the sink takes the
+session back, or no other app plays.
 
 Taking the session back, starting the engine and the audio hardware's first
 cycle (about 70, 75 and 210 ms on an iPad mini 6) run on another thread while
@@ -69,6 +74,13 @@ clock still holds go to the player only once it has consumed a buffer of
 silence, so that no guest write waits longer than its stream's buffer lasts
 (100 ms with four periods, about 330 ms with a 300 ms buffer): a longer wait
 ends in an I/O error.
+
+The sink says what it cannot do on stderr, each line rate limited: `Audio muted` and `Audio resumed after` for an interruption, `Audio
+output unavailable` when the output will not start and the device paces the
+guest alone, and `Audio pace`, which a guest whose periods arrive more than a
+quarter faster than audio for two seconds draws, with who completed them (the
+output, the mute clock or the device's pacing), the period size, and the state
+of the engine, the player and the sample rates.
 
 ## Capture
 

@@ -41,6 +41,9 @@ int mach_failure_errno(int result) noexcept
 
 namespace {
 std::atomic<unsigned> mapping_failure_reports{0};
+
+/* wire_host_range() calls mlock() at most this often. */
+constexpr unsigned wire_attempts = 2;
 } // namespace
 
 void report_mapping_failure(const char *what, const void *address,
@@ -70,8 +73,30 @@ int wire_host_range(void *address, std::size_t length) noexcept
 		sigdelset(&held, synchronous);
 	sigset_t previous;
 	const bool masked = pthread_sigmask(SIG_BLOCK, &held, &previous) == 0;
-	const int result = mlock(address, length);
-	const int error = errno;
+	/* A signal can still abort the first attempt. XNU's psignal reads this
+	 * thread's mask under the process lock and, if the signal is not held,
+	 * sets the thread's abort flag a moment later; pthread_sigmask() changes
+	 * the mask without that lock. A post that read the old mask can so set
+	 * the flag after the hold took effect, inside the wire, whose next
+	 * abortable wait then fails. Posts are serialized by that lock, so one
+	 * is in flight at most. The aborted mlock unwires what it had wired and
+	 * fails with ENOMEM. The flag can outlive it, and an mlock that starts
+	 * with the flag set fails at once; any abortable wait takes the flag,
+	 * and a sleep of the shortest length is one. So the second attempt
+	 * follows one, and starts clean and finds the pages the first read in.
+	 * Only ENOMEM is tried again, and once: a shortage, which mlock reports
+	 * as EAGAIN, any other failure and a persistent ENOMEM fail as they
+	 * did. */
+	int result = -1;
+	int error = 0;
+	for (unsigned attempt = 0; attempt < wire_attempts; ++attempt) {
+		if (attempt != 0)
+			(void)usleep(1);
+		result = mlock(address, length);
+		error = errno;
+		if (result == 0 || error != ENOMEM)
+			break;
+	}
 	if (masked)
 		(void)pthread_sigmask(SIG_SETMASK, &previous, nullptr);
 	errno = error;
