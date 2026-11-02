@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
+#include <utility>
 
 namespace uml::gpu {
 
@@ -45,6 +47,13 @@ std::optional<std::uint32_t> displayDimension(
         return std::nullopt;
     return static_cast<std::uint32_t>(std::min<double>(
         std::floor(dimension), maximum));
+}
+
+NativeDisplay::NativeDisplay(std::shared_ptr<NativeDisplayStateCore> state)
+    : state_(std::move(state))
+{
+    if (!state_)
+        throw std::invalid_argument("a native display needs a state");
 }
 
 NativeDisplay::~NativeDisplay()

@@ -34,6 +34,7 @@
 #include "block/android_boot.hpp"
 #include "block/boot_initramfs.hpp"
 #include "block/ubd_path.hpp"
+#include "gpu_budget_plan.hpp"
 #include "uml/emulator.h"
 #include "uml_slirp_net.h"
 
@@ -1352,6 +1353,57 @@ private:
     std::unique_ptr<Boot> boot_;
 };
 
+constexpr std::uint64_t mebibyte = 1024ULL * 1024ULL;
+
+/* The host GPU's budget for a guest of `guestMemoryMiB` with the launch
+ * parameters `boot` states, which is what both the application's warning and
+ * the run use. */
+uml::emulator::GpuBudgetPlan planGpuBudget(
+    const kernarium_runtime_boot* boot,
+    std::uint32_t guestMemoryMiB)
+{
+    return uml::emulator::plan_gpu_budget(
+        static_cast<std::uint64_t>(guestMemoryMiB) * mebibyte,
+        /* The host sets the limit; a launch states neither it nor the
+         * gadget cache. */
+        0,
+        0,
+        {
+            .application = boot->gpu_budget_application_mib * mebibyte,
+            .engine_rest = boot->gpu_budget_engine_mib * mebibyte,
+            .headroom = boot->gpu_budget_headroom_mib * mebibyte,
+        });
+}
+
+int runtimePlanGpuBudget(
+    std::uint32_t guestMemoryMiB,
+    std::uint32_t applicationMiB,
+    std::uint32_t engineMiB,
+    std::uint32_t headroomMiB,
+    kernarium_runtime_gpu_budget* plan)
+{
+    if (plan == nullptr || plan->struct_size < sizeof(*plan) ||
+        guestMemoryMiB == 0)
+        return -UML_EMULATOR_INVALID_ARGUMENT;
+    kernarium_runtime_boot parameters {};
+    parameters.gpu_budget_application_mib = applicationMiB;
+    parameters.gpu_budget_engine_mib = engineMiB;
+    parameters.gpu_budget_headroom_mib = headroomMiB;
+    const auto planned = planGpuBudget(&parameters, guestMemoryMiB);
+    const std::uint32_t size = plan->struct_size;
+    *plan = {};
+    plan->struct_size = size;
+    plan->short_of_floor = planned.budget.short_of_floor ? 1U : 0U;
+    plan->budget_bytes = planned.budget.bytes;
+    plan->process_limit_bytes = planned.process_limit;
+    plan->available_bytes = planned.budget.available;
+    plan->guest_memory_bytes = planned.guest_memory;
+    plan->engine_bytes = planned.engine;
+    plan->application_bytes = planned.parameters.application;
+    plan->headroom_bytes = planned.parameters.headroom;
+    return 0;
+}
+
 int runtimeRun(
     KernariumMetalView view,
     const kernarium_runtime_boot* boot)
@@ -1457,12 +1509,27 @@ int runtimeRun(
          * both backends share one index of the ranges published there. */
         auto sharedMemoryRegions =
             std::make_shared<uml::virtio::SharedMemoryRegions>();
-        /* GPU memory is charged to the application like guest RAM, so the
-         * GPU may use at most half of the guest's allocation and the balloon
-         * takes what it uses out of the guest. */
-        const std::uint64_t guestMemoryBytes =
-            static_cast<std::uint64_t>(guestMemoryMiB) << 20;
-        const std::uint64_t deviceMemoryLimit = guestMemoryBytes / 2;
+        /* GPU memory is charged to the application like guest RAM: the GPU's
+         * budget is what the application's memory limit leaves after the
+         * guest, the gadget cache and the launch's allowances, at least 384 MiB
+         * and at most half of the guest's allocation, and the balloon takes
+         * what the GPU uses out of the guest. The application has already
+         * warned the user when the limit leaves less than the floor
+         * (runtimePlanGpuBudget); the guest boots with the floor. */
+        const auto gpuBudget = planGpuBudget(boot, guestMemoryMiB);
+        const std::uint64_t guestMemoryBytes = gpuBudget.guest_memory;
+        const std::uint64_t deviceMemoryLimit = gpuBudget.budget.bytes;
+        if (gpuBudget.budget.short_of_floor) {
+            std::fprintf(
+                stderr,
+                "Kernarium: %s\n",
+                uml::emulator::describe_gpu_budget_shortfall(gpuBudget)
+                    .c_str());
+        }
+        std::printf(
+            "Kernarium: GPU budget %llu MiB of a %llu MiB limit\n",
+            static_cast<unsigned long long>(deviceMemoryLimit >> 20),
+            static_cast<unsigned long long>(gpuBudget.process_limit >> 20));
         request.guestMemoryBytes = guestMemoryBytes;
         request.deviceMemoryLimit = deviceMemoryLimit;
         /* The display outlives the guest: the GPU service keeps the view and
@@ -1748,6 +1815,15 @@ int runtimeSetGpuHold(int held)
     return activeGpu->holdRequests(gpuHoldBudget) ? 1 : 0;
 }
 
+int runtimeGuestDisplayActive()
+{
+    std::lock_guard lock(activeGpuMutex);
+    if (activeGpu == nullptr)
+        return -1;
+    const auto active = activeGpu->guestScanoutActive();
+    return active.has_value() ? (*active ? 1 : 0) : -1;
+}
+
 int runtimeSetBackgroundThrottle(int enabled)
 {
     thread_act_array_t threads = nullptr;
@@ -1849,6 +1925,8 @@ const kernarium_runtime_api runtimeApi {
     .set_page_cache_trimming = runtimeSetPageCacheTrimming,
     .set_microphone = runtimeSetMicrophone,
     .set_restart_callback = runtimeSetRestartCallback,
+    .guest_display_active = runtimeGuestDisplayActive,
+    .plan_gpu_budget = runtimePlanGpuBudget,
 };
 
 } // namespace
@@ -1878,9 +1956,30 @@ kernarium_runtime_automation_job_at_start(void)
     }
     return 0;
 }
+
+/* The delay an automation launch asked for before the guest's GPU is held in
+ * the background (see KernariumRuntime.h). */
+extern "C" KERNARIUM_RUNTIME_EXPORT int
+kernarium_runtime_automation_hold_delay_ms(void)
+{
+    const char* value =
+        std::getenv(kernarium::automation::holdDelayVariable);
+    const auto delay = kernarium::automation::parseHoldDelayMs(value);
+    if (!delay.valid) {
+        std::fprintf(
+            stderr,
+            "Kernarium: %s must be a whole number of milliseconds from 0 to "
+            "%d, not '%s'; the GPU is held at once\n",
+            kernarium::automation::holdDelayVariable,
+            kernarium::automation::holdDelayMaximumMs,
+            value);
+        return 0;
+    }
+    return delay.milliseconds;
+}
 #endif
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v14(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v16(void)
 {
     return &runtimeApi;
 }

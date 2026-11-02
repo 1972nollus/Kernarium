@@ -24,6 +24,8 @@ struct InProcessGpuOptions {
         uml::input::vnc::PointerMode::mouse};
     void* nativeView {};
     bool autoResizeGuest {true};
+    /* What the windowless display (DisplayMode::offscreen) presents into. */
+    OffscreenDisplayOptions offscreen {};
     /* Shared with the other backends of the same guest. This service
      * publishes every host-visible blob range it maps there, so a device
      * whose guest names a buffer inside the region can resolve it. */
@@ -99,6 +101,13 @@ public:
         std::chrono::milliseconds budget) noexcept;
     void releaseRequests() noexcept;
     [[nodiscard]] bool requestsHeld() const noexcept;
+
+    /* Whether the guest has its primary scanout on: an Android guest whose
+     * screen is off has none (Display::guestScanoutActive). Any thread; it
+     * does not depend on the request gate, so it answers while requests are
+     * held, but only a guest whose requests ran has set or cleared it. Nothing
+     * before the display exists, which the first connection makes. */
+    [[nodiscard]] std::optional<bool> guestScanoutActive() const noexcept;
 
     /* The port a VNC display listens on, or nothing for any other display. */
     [[nodiscard]] std::optional<std::uint16_t> vncPort() const noexcept;

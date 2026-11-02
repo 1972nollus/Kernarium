@@ -73,7 +73,9 @@ so a case can also hold the engine to its code-publication contract. Upstream
 FEX programs keep building each block afresh. Run one case with
 `uml_x86_64_fex_asm_runner --repository BINARY CONFIG`.
 
-Regenerate only from verified producer inputs:
+Regenerate only from verified producer inputs. The K semantics source tracks
+paths that differ only by case, so its root must be case-sensitive, and
+`prepare.sh` refuses any other:
 
 ```sh
 dependencies/prepare.sh --product x86-conformance \

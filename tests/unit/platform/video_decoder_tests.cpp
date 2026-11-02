@@ -405,6 +405,34 @@ void h264DisplayOrder()
     }
 }
 
+/* The reorder depth a client keeps its pipeline deep enough for: what the
+ * stream states, the level's limit when it states none, and nothing for a
+ * stream whose pictures leave as they are decoded. It is known from the
+ * parameter sets, before any picture is decoded. */
+void reorderDepth(const char* name, uml::platform::VideoCodec codec, unsigned expected)
+{
+    using namespace uml::platform;
+    auto decoder = makeVideoDecoder(codec);
+    require(decoder->reorderDepth() == 0, "a decoder that has read nothing reports no reorder depth");
+    const auto units = codec == VideoCodec::hevc ? accessUnits(read(name)) : h264AccessUnits(read(name));
+    decoder->inspect(units.front());
+    require(decoder->takeFrames().empty(), "inspecting decodes nothing");
+    if (decoder->reorderDepth() != expected)
+        std::fprintf(stderr, "%s: reorder depth %u, expected %u\n", name, decoder->reorderDepth(), expected);
+    require(decoder->reorderDepth() == expected, "the reorder depth is not the stream's");
+}
+
+void reorderDepths(bool hevc, bool h264)
+{
+    using namespace uml::platform;
+    if (hevc) reorderDepth("hevc-bframes.bin", VideoCodec::hevc, 2);
+    if (h264) {
+        reorderDepth("h264-bframes.bin", VideoCodec::h264, 2);
+        reorderDepth("h264-no-restriction.bin", VideoCodec::h264, 16);
+        reorderDepth("h264-poc2.bin", VideoCodec::h264, 0);
+    }
+}
+
 void h264Window()
 {
     using namespace uml::platform;
@@ -697,6 +725,7 @@ int main(int argc, char** argv)
         if (std::any_of(capabilities.begin(), capabilities.end(),
                         [](const auto& c) { return c.codec == VideoCodec::hevc; })) {
             hevcDisplayOrder();
+            reorderDepths(true, false);
             hevcWindow();
             hevcRawFormats();
             hevcLimits(capabilities);
@@ -707,6 +736,7 @@ int main(int argc, char** argv)
         };
         if (has(VideoProfile::h264Main) && has(VideoProfile::h264High)) {
             h264DisplayOrder();
+            reorderDepths(false, true);
             h264Window();
         }
         h264Limits(capabilities);

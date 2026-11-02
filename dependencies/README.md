@@ -142,7 +142,8 @@ dependencies/prepare.sh --archive-manifest dependencies/kernel-host-tools/archiv
 dependencies/build-kernel-host-tools.sh
 dependencies/build-kernel-host-tools.sh --verify-only
 
-dependencies/prepare.sh --product x86-conformance
+dependencies/prepare.sh --product x86-conformance \
+  --root "$CASE_SENSITIVE_DEPENDENCY_ROOT"
 ```
 
 Use `--no-fetch` for offline preparation and `--verify` or `--verify-only` for
@@ -155,6 +156,14 @@ directory.
 A cache entry holds every object of its pinned commit. Preparation refuses one
 that does not, such as a blob-filtered clone, with a diagnostic and does not
 repair it; remove the entry and prepare again.
+
+A source whose pinned tree has paths that differ only by case needs a
+case-sensitive `--root`: `x86-k-semantics` tracks 169 such pairs, and on a
+case-insensitive volume Git writes one file over the other, so the checkout
+reads as modified. Preparation checks this after fetching and before any
+checkout, and refuses that source, naming the cause, on a case-insensitive
+root; every other source still prepares there. `--verify` of a checkout already
+made on such a root names the same cause.
 
 Series replay commits as whoever Git resolves for the caller, and export
 refuses a topic whose author is a placeholder. See
@@ -251,7 +260,32 @@ KosmicKrisp's Mesa regressions are enabled with `-Dbuild-tests=true` and
 `meson test -C BUILD --suite kosmickrisp`; the common Vulkan command-lowering
 regressions use `--suite vulkan`. Assertions must stay active in those builds.
 Apple's emulated `util_barrier` has `util_tests --gtest_filter='util_barrier.*'`
-in `--suite util`, which runs in any `-Dbuild-tests=true` tree.
+in `--suite util`, which runs in any `-Dbuild-tests=true` tree. Zink's
+buffer-cache reaper is `gallium-pb-cache` in `--suite gallium`, which also needs
+active assertions and takes `-Db_sanitize=thread` for a ThreadSanitizer pass over
+the reaper and the add path; Apple's assembler rejects the CFI directives of
+`src/util/streaming-load-memcpy.c` in that tree, so that one object is built
+without the sanitizer.
+
+The idle trim of a context (`EGL_MESA_context_trim`, `pipe_context::trim`) is
+exercised by `gpu-host-context-trim` and `gpu-host-context-trim-concurrent` in
+`check-gpu`; `gpu-host-context0-trim` makes the renderer's own context release
+the textures a guest made and deleted without naming a context. The second has four contexts of one Zink screen draw, flush and
+trim at once, and is the program for a ThreadSanitizer pass over the trim, the
+flush queue's reset of the screen's batch-state lists and their lock order: build
+the Zink and EGL stack with `-Db_sanitize=thread` (the same object stays without
+the sanitizer) and compile the test and `host_gl_provider.cpp` with
+`-fsanitize=thread`. Zink reports its unsynchronized scalars there, with or
+without a trim: the screen's last finished batch, a state's submit count and the
+context's state count. No report involves a state list or a state's link.
+
+`eglReleaseCachedMemoryMESA` (the same extension), which frees what every screen
+of the process caches from any thread, is exercised by
+`gpu-host-cached-memory-release`: it fills Zink's buffer cache, releases it from
+a thread with no context and checks that the allocation drops and refills.
+`gpu-device-memory-pool` covers the pool's retry, and
+`gpu-host-gl-device-memory-budget` the refused reservation that frees the cache
+first.
 
 KosmicKrisp's runtime behaviour is specified in
 [`../docs/graphics.md`](../docs/graphics.md#kosmickrisp-driver-contracts).

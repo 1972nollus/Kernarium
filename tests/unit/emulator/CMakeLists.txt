@@ -67,6 +67,20 @@ uml_add_unit_test(
     NAME emulator-memory-limit
     COMMAND uml_emulator_memory_limit_tests)
 
+# The host GPU's budget as a launch plans it, from the arguments, the gadget
+# cache the run will set and the limit the launch states.
+add_executable(uml_emulator_gpu_budget_plan_tests gpu_budget_plan_tests.cpp)
+target_link_libraries(uml_emulator_gpu_budget_plan_tests PRIVATE
+    UML::BridgeAbi
+    UML::MemorySharedBacking
+    uml_emulator_test_variant)
+target_include_directories(uml_emulator_gpu_budget_plan_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin
+    ${PROJECT_SOURCE_DIR}/darwin/emulator/src)
+uml_add_unit_test(
+    NAME emulator-gpu-budget-plan
+    COMMAND uml_emulator_gpu_budget_plan_tests)
+
 # The guard that ends a loop of restarts the guest never boots past.
 add_executable(uml_restart_loop_guard_tests restart_loop_guard_tests.cpp)
 target_include_directories(uml_restart_loop_guard_tests PRIVATE

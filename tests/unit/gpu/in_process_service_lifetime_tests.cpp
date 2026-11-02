@@ -205,6 +205,10 @@ void holdRequestsHoldsTheServicesRequests()
     UniqueDescriptor transport {descriptorFromName(service.takeConnectionName())};
     UniqueDescriptor input {descriptorFromName(service.takeInputConnectionName())};
     require(service.holdRequests(std::chrono::milliseconds {100}));
+    /* The guest's display is a question the service answers whether or not its
+     * requests are held. Nothing has bound a scanout, so it is not on, whether
+     * or not the service has made its display yet. */
+    require(!service.guestScanoutActive().value_or(false));
 
     heldRequestRunsAfterRelease(service, transport.get());
 
