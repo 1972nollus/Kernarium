@@ -16,7 +16,7 @@ Listen with SOMAXCONN, the host's own limit for a listening queue
  1 file changed, 6 insertions(+), 1 deletion(-)
 
 diff --git a/src/socket.c b/src/socket.c
-index 8ca61d74404b8a8b13b9bcbb51f0edcfa1572856..6187554db662eb7a1dc75d7be28d12cb4061cea5 100644
+index fa48cdaa8f0803fc099a536ba85a486f3165f196..6b65be197eea31e8bcb4ce22b1c29327a11198de 100644
 --- a/src/socket.c
 +++ b/src/socket.c
 @@ -876,7 +876,12 @@ struct socket *tcpx_listen(Slirp *slirp,

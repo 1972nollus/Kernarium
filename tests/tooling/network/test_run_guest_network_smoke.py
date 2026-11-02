@@ -53,7 +53,10 @@ class NetworkSmokeTaxonomyTests(unittest.TestCase):
 
         def run_node(_guest: FakeGuest, script: str, _timeout: int) -> str:
             scripts.append(script)
-            if script == run_guest_network_smoke.SLIRP_DNS_PROBE:
+            if script in (
+                run_guest_network_smoke.SLIRP_DNS_PROBE,
+                run_guest_network_smoke.SLIRP_GATEWAY_DNS_PROBE,
+            ):
                 return "slirp-dns-ok"
             return "external-ok"
 
@@ -96,9 +99,16 @@ class NetworkSmokeTaxonomyTests(unittest.TestCase):
 
     def test_external_campaign_issues_dns_before_https(self) -> None:
         scripts = self.run_campaign(external=True)
-        self.assertEqual(scripts[0], run_guest_network_smoke.SLIRP_DNS_PROBE)
-        self.assertEqual(len(scripts), 2)
-        self.assertIn("example.test", scripts[1])
+        self.assertEqual(
+            scripts[:2],
+            [
+                run_guest_network_smoke.SLIRP_DNS_PROBE,
+                run_guest_network_smoke.SLIRP_GATEWAY_DNS_PROBE,
+            ],
+        )
+        self.assertIn('"10.0.2.2"', scripts[1])
+        self.assertEqual(len(scripts), 3)
+        self.assertIn("example.test", scripts[2])
 
 
 if __name__ == "__main__":

@@ -16,14 +16,14 @@ JOBS=${UML_DEPENDENCY_JOBS:-8}
 DEPLOYMENT_TARGET=27.0
 CHECK_MANIFEST_ONLY=0
 BUILD_RECIPES='zlib|1.3.2
-pcre2|10.48
-libffi|3.7.1
-gnulib|2024-12-12
-libiconv|1.18
+pcre2|10.49
+libffi|3.8.0
+gnulib|2026-10-31
+libiconv|1.19.1
 proxy-libintl|0.5
-glib|2.88.3
+glib|2.90.1
 gvdb|2b42fc7
-libslirp|4.9.5
+libslirp|4.9.7
 libvncserver|0.9.15
 fex|FEX-2610
 fmt|12.2.1
@@ -333,7 +333,7 @@ cmake_setup "$SOURCES/zlib" "$BUILDS/zlib" \
 	-DZLIB_BUILD_TESTING=OFF
 cmake_build_install "$BUILDS/zlib"
 
-printf '%s\n' "building PCRE2 10.48"
+printf '%s\n' "building PCRE2 10.49"
 cmake_setup "$SOURCES/pcre2" "$BUILDS/pcre2" \
 	-DBUILD_SHARED_LIBS=OFF \
 	-DBUILD_STATIC_LIBS=ON \
@@ -352,7 +352,7 @@ cmake_setup "$SOURCES/pcre2" "$BUILDS/pcre2" \
 	-DPCRE2_SUPPORT_LIBEDIT=OFF
 cmake_build_install "$BUILDS/pcre2"
 
-printf '%s\n' "building libffi 3.7.1"
+printf '%s\n' "building libffi 3.8.0"
 (
 	CDPATH= cd -- "$SOURCES/libffi"
 	private_env ./autogen.sh
@@ -368,16 +368,15 @@ mkdir -p -- "$BUILDS/libffi"
 	private_env "$MAKE" DESTDIR="$IMAGE_ROOT" install
 )
 
-printf '%s\n' "building GNU libiconv 1.18"
-# The pinned developer Makefile names automake-1.17/aclocal-1.17 explicitly.
+printf '%s\n' "building GNU libiconv 1.19.1"
+# The pinned developer Makefiles name automake-1.18/aclocal-1.18 explicitly.
 # Current Homebrew exposes its backward-compatible Automake only through the
 # unversioned commands. Supply those names inside this disposable build tree;
 # they are build tools and never enter the published prefix.
 AUTOMAKE_COMPAT="$BUILDS/automake-compat"
 mkdir -p -- "$AUTOMAKE_COMPAT"
-ln -s "$AUTOMAKE" "$AUTOMAKE_COMPAT/automake-1.17"
-ln -s "$ACLOCAL" "$AUTOMAKE_COMPAT/aclocal-1.17"
-ln -s "$ACLOCAL" "$AUTOMAKE_COMPAT/aclocal-1.16"
+ln -s "$AUTOMAKE" "$AUTOMAKE_COMPAT/automake-1.18"
+ln -s "$ACLOCAL" "$AUTOMAKE_COMPAT/aclocal-1.18"
 (
 	CDPATH= cd -- "$SOURCES/libiconv"
 	private_env env PATH="$AUTOMAKE_COMPAT:$PATH" \
@@ -394,7 +393,7 @@ mkdir -p -- "$BUILDS/libiconv"
 	private_env "$MAKE" DESTDIR="$IMAGE_ROOT" install
 )
 
-printf '%s\n' "building GLib 2.88.3"
+printf '%s\n' "building GLib 2.90.1"
 require_private_pkg_config libpcre2-8
 require_private_pkg_config libffi
 mkdir -p -- "$SOURCES/glib/subprojects/proxy-libintl-0.5"
@@ -414,7 +413,7 @@ meson_env setup "$BUILDS/glib" "$SOURCES/glib" \
 meson_env compile -C "$BUILDS/glib"
 meson_install_env install -C "$BUILDS/glib"
 
-printf '%s\n' "building libslirp 4.9.5"
+printf '%s\n' "building libslirp 4.9.7"
 # libslirp's project-level static option selects a non-installed helper target.
 # Let Meson's default-library setting make the installable library target static.
 require_private_pkg_config glib-2.0
