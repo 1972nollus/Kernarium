@@ -1248,6 +1248,20 @@ enabled (`--video`).
 - **Host.** The host's video activity log shows hardware encodes and decodes
   for those runs; a pass that never reached the host codec does not qualify.
 
+## Android UI rendering CTS
+
+`CtsUiRenderingTestCases` qualifies on the iPad's gadget engine, in the
+automation application or in Andarium, not on the shared Mac. Its
+`ColorSpaceTests#testMultiAtlasGlyphsWithColorSpace` paints a thousand glyphs
+of the COLRv1 emoji font at 13 sizes on the CPU in each of two renders, and
+each render must finish within the test's 60 s wait. On the iPad mini 6 the
+slowest render took 37.74 s, about 1.6 times inside the wait. A quiet Mac
+renders about as fast, but on the shared Mac the test fails when other guests
+load the host, so a Mac failure of that test is recorded as caused by load. The
+product keeps the COLRv1 font: no change in view shortens the render by more
+than a few percent
+([G289](optimization-history.md#ios-graphics-and-later-gadget-work)).
+
 ## x86 instruction conformance
 
 The x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
