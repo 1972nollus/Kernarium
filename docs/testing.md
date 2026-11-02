@@ -418,11 +418,15 @@ does, keep completing periods through a slow session activation, keep an
 interruption across the guest closing, resetting and reopening the stream, and
 never wedge. It also drives the Virtio Sound device the way the Linux driver
 does and checks that the guest's periods complete at the rate of audio in every
-state the sink can be in. It skips when no iOS Simulator device at the
+state the sink can be in. It also starts the Apple microphone over hooked
+AVFAudio, with no real input and no permission prompt, and checks that an
+interruption stops it and releases the session, that the system's advice to
+resume starts it again, and that a recommendation not to resume starts it only
+when no other app plays. It skips when no iOS Simulator device at the
 deployment target exists.
-The microphone has no opt-in test: `virtio-sound-microphone` runs over fakes,
-and the real input is checked by hand (see the Microphone section of the audio
-README) because granting microphone access is the user's act.
+`virtio-sound-microphone` runs the rest of the microphone over fakes, and the
+real input is checked by hand (see the Microphone section of the audio README)
+because granting microphone access is the user's act.
 
 The full sanitizer suites remain separate because of their runtime cost:
 

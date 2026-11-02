@@ -358,7 +358,7 @@ public:
         running_ = true;
         bool sessionReady = false;
         if (interrupted_) {
-            if (otherAudioPlaying() || !activateSession()) {
+            if (session::otherAudioPlaying() || !activateSession()) {
                 faulted_ = false;
                 enterMute();
                 return true;
@@ -633,15 +633,6 @@ private:
      * clock keeps running, and the sink takes the session back as soon as the
      * system's resumption recommendation arrives or no other app is playing
      * primary audio. */
-    [[nodiscard]] bool otherAudioPlaying() const noexcept
-    {
-        @try {
-            return [AVAudioSession sharedInstance]
-                .secondaryAudioShouldBeSilencedHint;
-        } @catch (NSException*) {
-            return false;
-        }
-    }
 
     // Acts on the notifications that arrived since the last look, so a
     // request that follows them sees the interruption they report.
@@ -933,7 +924,7 @@ private:
             }
         } else if (now >= nextHintPoll_) {
             nextHintPoll_ = now + hintPollInterval;
-            if (!otherAudioPlaying())
+            if (!session::otherAudioPlaying())
                 beginResume();
         }
         armMute();

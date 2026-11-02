@@ -121,8 +121,13 @@ reads or opens the microphone, and no permission prompt can appear.
   the transport worker, which decides on its own thread.
 - `AppleMicrophoneInput` taps the engine's input node and converts to 48 kHz
   signed 16-bit in the guest's channel count. A route change restarts the
-  engine; on iOS an interruption stops the microphone and its end starts it
-  again.
+  engine. On iOS an interruption stops the microphone, and the system's
+  recommendation to resume starts it again if the guest still records. A
+  recommendation not to resume starts it only when no other app plays
+  (`session::otherAudioPlaying`), because starting takes the session and the
+  microphone must never take it from an app that plays or records, such as a
+  call; it then stays stopped until the next recommendation or the guest's
+  next recording.
 - The audio session is shared with the output (`audio_session.hpp`): playback
   alone uses the playback category, and while the microphone is captured the
   category is play-and-record, still mixing with other audio. macOS has no
@@ -151,8 +156,9 @@ pacing and capture delivery under an injected clock, and the production clock.
 over fakes; it never opens the microphone or shows a permission prompt.
 `audio-mute-clock` covers the schedule a muted sink completes periods on.
 `UML_TEST_APPLE_AUDIO=ON` adds `apple-audio-playback`, which plays a brief tone
-through the real output, and `apple-audio-interruption`, which runs the sink in
-the iOS Simulator against posted interruption notifications (see
+through the real output, and `apple-audio-interruption`, which runs the sink
+and the microphone, with no real input, in the iOS Simulator against posted
+interruption notifications (see
 [`../../../docs/testing.md`](../../../docs/testing.md)). A real interruption on
 a device comes from Kernarium's `AudioInterrupter` test application, which
 `devicectl` launches and ends (see

@@ -13,6 +13,7 @@
 // scheduling are observed and driven through hooks on AVFAudio's methods.
 
 #include "capture_source.hpp"
+#include "ios_session_notifications.hpp"
 #include "period_clock.hpp"
 #include "playback_sink.hpp"
 #include "protocol.hpp"
@@ -570,94 +571,6 @@ private:
     std::uint64_t errors_ {};
     bool running_ {};
 };
-
-} // namespace
-
-// iOS creates the contexts its notifications carry and offers no initializer,
-// so each is a subclass that answers the reads the sink makes.
-@interface InterruptionContextDouble : AVAudioSessionInterruptionContext
-@end
-
-@implementation InterruptionContextDouble
-- (AVAudioSessionInterruptionReason)reason
-{
-    return AVAudioSessionInterruptionReasonDefault;
-}
-@end
-
-@interface DeactivationContextDouble : AVAudioSessionDeactivationContext
-@property(nonatomic) AVAudioSessionDeactivationSource sourceDouble;
-@property(nonatomic, strong) AVAudioSessionInterruptionContext* interruptionDouble;
-@end
-
-@implementation DeactivationContextDouble
-- (AVAudioSessionDeactivationSource)source
-{
-    return self.sourceDouble;
-}
-
-- (AVAudioSessionInterruptionContext*)interruptionContext
-{
-    return self.interruptionDouble;
-}
-@end
-
-@interface ResumptionContextDouble : AVAudioSessionResumptionContext
-@property(nonatomic) AVAudioSessionResumptionRecommendation recommendationDouble;
-@end
-
-@implementation ResumptionContextDouble
-- (AVAudioSessionResumptionRecommendation)recommendation
-{
-    return self.recommendationDouble;
-}
-@end
-
-namespace {
-
-template <class Context> Context* make()
-{
-    return static_cast<Context*>(class_createInstance([Context class], 0));
-}
-
-// What iOS 27 posts when the session becomes inactive: for the app's own
-// deactivation, or for the system's, which carries an interruption context
-// when another app caused it.
-void postDeactivation(
-    AVAudioSessionDeactivationSource source, bool interrupted)
-{
-    auto* context = make<DeactivationContextDouble>();
-    context.sourceDouble = source;
-    context.interruptionDouble =
-        interrupted ? make<InterruptionContextDouble>() : nil;
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:AVAudioSessionDidBecomeInactiveNotification
-                      object:[AVAudioSession sharedInstance]
-                    userInfo:@{
-                        AVAudioSessionDeactivationContextKey : context
-                    }];
-}
-
-void postInterruptionBegan()
-{
-    postDeactivation(AVAudioSessionDeactivationSourceSystem, true);
-}
-
-// What iOS 27 posts when the interrupter lets go, with the system's advice on
-// resuming.
-void postInterruptionEnded(bool shouldResume)
-{
-    auto* context = make<ResumptionContextDouble>();
-    context.recommendationDouble = shouldResume ?
-        AVAudioSessionResumptionRecommendationShouldResume :
-        AVAudioSessionResumptionRecommendationShouldNotResume;
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:AVAudioSessionResumptionRecommendationNotification
-                      object:[AVAudioSession sharedInstance]
-                    userInfo:@{
-                        AVAudioSessionResumptionContextKey : context
-                    }];
-}
 
 void interruptionMutesAndResumes()
 {
