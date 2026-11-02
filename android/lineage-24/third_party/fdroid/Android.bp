@@ -17,7 +17,7 @@ license {
 
 android_app_import {
     name: "F-Droid",
-    apk: "org.fdroid.fdroid_2000051.apk",
+    apk: "org.fdroid.fdroid_2000052.apk",
     presigned: true,
     preprocessed: true,
     product_specific: true,
