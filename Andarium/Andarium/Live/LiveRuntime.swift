@@ -30,7 +30,6 @@ private struct PendingRun {
     var guest: Guest
     var mode: StartMode
     var kind: BootKind
-    var resolution: UpdateResolution?
 }
 
 /// The device application behind the screens: the guest's storage, and the
@@ -93,8 +92,13 @@ final class LiveRuntime: RuntimeDriver {
         storage.startPlan()
     }
 
-    func begin(guest: Guest, mode: StartMode, kind: BootKind, resolution: UpdateResolution?) {
-        pending = PendingRun(guest: guest, mode: mode, kind: kind, resolution: resolution)
+    func restoreUpdate() throws {
+        defer { model?.host.freeStorageBytes = AppEntry.freeStorageBytes() }
+        try storage.restoreUpdate()
+    }
+
+    func begin(guest: Guest, mode: StartMode, kind: BootKind) {
+        pending = PendingRun(guest: guest, mode: mode, kind: kind)
         launching = false
         startIfReady()
     }
@@ -117,7 +121,7 @@ final class LiveRuntime: RuntimeDriver {
     private func prepareAndLaunch(_ run: PendingRun) async {
         preparing = true
         do {
-            try await storage.prepareStart(run.guest, resolution: run.resolution) { fraction in
+            try await storage.prepareStart(run.guest) { fraction in
                 Task { @MainActor in self.preparingDisk(fraction) }
             }
         } catch {

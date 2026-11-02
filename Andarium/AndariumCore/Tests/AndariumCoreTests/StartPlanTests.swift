@@ -114,20 +114,26 @@ struct StartVerdictTests {
         #expect(life.startVerdict(.recovery, host: host, plan: .blocked(.mismatch)) == .blocked(.mismatch))
     }
 
-    @Test func anUnfinishedUpdateWaitsForTheUsersChoice() {
+    @Test func startTriesAnUnfinishedUpdateAgain() {
         let life = Lifecycle(guest: Guest.fresh(on: host))
-        #expect(life.startVerdict(.normal, host: host, plan: unfinished) == .unfinishedUpdate)
+        #expect(life.startVerdict(.normal, host: host, plan: unfinished) == .allowed(.upgrade))
+        // Recovery does not finish the update, and another Android cannot
+        // try it again: Restore or Erase is the way on.
         #expect(life.startVerdict(.recovery, host: host, plan: unfinished) == .unfinishedUpdate)
-        #expect(life.startVerdict(.normal, host: host, plan: unfinished, resolution: .retry) == .allowed(.upgrade))
-        // A choice that cannot work does not let the start through.
-        #expect(life.startVerdict(.normal, host: host, plan: unfinished, resolution: .restoreSnapshot) == .unfinishedUpdate)
+        let other = StartPlan.unfinishedUpdate(to: "r2", canRetry: false, canRestore: true)
+        #expect(life.startVerdict(.normal, host: host, plan: other) == .unfinishedUpdate)
+        #expect(!other.allowsStart && unfinished.allowsStart)
+        #expect(!StartPlan.blocked(.mismatch).allowsStart)
+        #expect(StartPlan.update(from: "r1", to: "r2").allowsStart && StartPlan.firstStart.allowsStart)
     }
 
     @Test func aBlockedStartLeavesTheLifeAtHome() {
         var life = Lifecycle(guest: Guest.fresh(on: host))
         #expect(life.start(.normal, host: host, plan: .blocked(.olderAndroid)) == .blocked(.olderAndroid))
         #expect(life.phase == .home)
-        #expect(life.start(.normal, host: host, plan: unfinished, resolution: .retry) == .allowed(.upgrade))
+        #expect(life.start(.recovery, host: host, plan: unfinished) == .unfinishedUpdate)
+        #expect(life.phase == .home)
+        #expect(life.start(.normal, host: host, plan: unfinished) == .allowed(.upgrade))
         #expect(life.phase == .booting(.upgrade))
     }
 }

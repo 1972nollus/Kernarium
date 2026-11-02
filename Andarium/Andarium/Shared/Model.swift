@@ -132,10 +132,10 @@ final class AppModel {
     /// What a start would be, from the guest's files: Home words Start and
     /// shows the update notices by it.
     var plan: StartPlan = .normal
-    /// The choice for an update that did not complete is open.
-    var updateChoice = false
     /// The release the running boot updates from, where it is known.
     var bootFrom: String?
+    /// The preview's plan after Restore; a device reads it from the files.
+    var planAfterRestore: StartPlan?
 
     // App-wide display options, set on the home screen.
     var retina = false
@@ -256,6 +256,22 @@ final class AppModel {
         }
     }
 
+    /// Restore: the data goes back to what the update that did not finish
+    /// started from, and the guest does not start. Home then shows the
+    /// ordinary pending update.
+    func restoreUpdate() {
+        guard let driver else {
+            if let planAfterRestore { plan = planAfterRestore }
+            return
+        }
+        do {
+            try driver.restoreUpdate()
+        } catch {
+            alert = AppAlert(title: "Android Could Not Be Restored", message: error.localizedDescription)
+        }
+        refreshPlan()
+    }
+
     func erase() {
         guard let driver, let current = guest else {
             lifecycle.erase()
@@ -293,13 +309,11 @@ final class AppModel {
         }
     }
 
-    /// Starts the guest in `mode`. `resolution` is the way out the user
-    /// chose for an update that did not complete; without one, such a start
-    /// opens the choice instead.
-    func start(_ mode: StartMode, resolution: UpdateResolution? = nil) {
+    /// Starts the guest in `mode`. Start on an update that did not finish
+    /// tries the update again.
+    func start(_ mode: StartMode) {
         startMenu = false
-        updateChoice = false
-        switch lifecycle.start(mode, host: host, plan: plan, resolution: resolution) {
+        switch lifecycle.start(mode, host: host, plan: plan) {
         case let .allowed(kind):
             frozenBootStage = nil
             bootTracker = BootTracker()
@@ -308,10 +322,16 @@ final class AppModel {
             if case let .update(from, _) = plan { bootFrom = from } else { bootFrom = nil }
             if let driver, let guest {
                 persistNow()
-                driver.begin(guest: guest, mode: mode, kind: kind, resolution: resolution)
+                driver.begin(guest: guest, mode: mode, kind: kind)
             }
         case .lowSpace: startBlocked = true
-        case .unfinishedUpdate: updateChoice = true
+        case .unfinishedUpdate:
+            alert = AppAlert(
+                title: "Android's Update Didn't Finish",
+                message: plan.allowsStart
+                    ? "Recovery starts only once the update has finished. Start tries the update again; Restore or Erase Guest goes back."
+                    : "The guest starts only after its data is restored or the guest is erased."
+            )
         case let .blocked(reason):
             alert = AppAlert(title: reason.title, message: reason.explanation)
         case .noGuest: break

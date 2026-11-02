@@ -41,13 +41,25 @@ public enum StartPlan: Equatable, Sendable {
     /// A newer Android on the same data layout: the data is snapshotted, then
     /// Android upgrades it on its first start.
     case update(from: String, to: String)
-    /// An update started and did not reach a clean end. The user chooses how
-    /// to go on: start it again, put back the data it started from and
-    /// update afresh, or erase the guest. Each of the first two is offered
-    /// only when it can work.
+    /// An update started and did not reach a clean end. Start tries the
+    /// update again when this Android is the one that was updating
+    /// (`canRetry`); Restore puts back the data the update started from
+    /// (`canRestore`, only while that copy exists); erasing the guest starts
+    /// over.
     case unfinishedUpdate(to: String, canRetry: Bool, canRestore: Bool)
     /// Nothing but erasing the guest helps.
     case blocked(StartBlock)
+
+    /// Whether the large Start button can start the guest. A blocked guest,
+    /// and an update that cannot be tried again with this Android, wait for
+    /// Restore or Erase.
+    public var allowsStart: Bool {
+        switch self {
+        case .blocked: false
+        case .unfinishedUpdate(_, let canRetry, _): canRetry
+        case .firstStart, .normal, .update: true
+        }
+    }
 
     /// What a start in `mode` is, for the words and steps of the boot.
     public func bootKind(_ mode: StartMode) -> BootKind {
@@ -60,25 +72,9 @@ public enum StartPlan: Equatable, Sendable {
     }
 }
 
-/// How the user goes on after an update that did not complete. Erasing the
-/// guest, the third way out, is Erase.
-public enum UpdateResolution: Equatable, Sendable {
-    /// Start the update again, keeping its snapshot.
-    case retry
-    /// Put back the data the update started from, then update afresh.
-    case restoreSnapshot
-
-    var flags: InstanceFlags {
-        switch self {
-        case .retry: InstanceFlags(retry: true)
-        case .restoreSnapshot: InstanceFlags(restoreSnapshot: true)
-        }
-    }
-}
-
 extension InstanceRules {
     /// What a start would do, in the terms of Home. It follows `decide` and
-    /// adds what the choice among the ways out needs.
+    /// adds what Home needs to offer the ways out of an unfinished update.
     public static func plan(
         state: InstanceState?, dataDiskExists: Bool, snapshotExists: Bool, release: ReleaseIdentity
     ) -> StartPlan {

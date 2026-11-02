@@ -126,14 +126,18 @@ or a start that is blocked. An update first clones `data.img` to
 only after Android itself reported `sys.boot_completed` in that run and the
 run ended cleanly; Recovery never does.
 
-An update that did not finish is not retried by itself. Home offers Try
-Again (the same start, the snapshot kept) and Restore and Update (the data the
-update started from is put back, then the update is made afresh), each only
-when it can work, and Erase Guest, which deletes the snapshot too. A guest
-the Android in this build is older than, or whose files do not match it, is
-blocked: Start is dimmed and erasing is the way out. A guest of the first
-release (one `guest.img`, an `instance.json` of schema 0) is not read: its
-start fails with the reason, and Erase makes it a guest of this layout.
+Start on an update that did not finish tries it again: the same update, the
+snapshot kept. Home's one other way back is Restore, shown only while the
+snapshot exists: it puts the data back to what the update started from and
+does nothing more, so Home then shows the ordinary pending update and the next
+Start updates afresh from that data. Restore ends in the same state as the
+rules' restore followed by a normal start. When the Android in this build is not
+the one that was updating, Start is dimmed until Restore or Erase Guest. Erase
+Guest deletes the snapshot too. A guest the Android in this build is older
+than, or whose files do not match it, is blocked: Start is dimmed and erasing
+is the way out. A guest of the first release (one `guest.img`, an
+`instance.json` of schema 0) is not read: its start fails with the reason, and
+Erase makes it a guest of this layout.
 
 The runtime passes the data disk's and the release's paths to Linux in a
 kernel argument that cannot carry a space, a tab, a newline, a comma, a colon

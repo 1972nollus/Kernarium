@@ -23,7 +23,9 @@ public enum StartVerdict: Equatable, Sendable {
     case noGuest
     /// The host has less free space than Android's own writes need.
     case lowSpace(neededBytes: UInt64, freeBytes: UInt64)
-    /// An update did not complete: the user chooses how to go on first.
+    /// An update did not complete and this start cannot try it again (it is
+    /// Recovery, or this Android is not the one updating): Restore or Erase
+    /// is the way on.
     case unfinishedUpdate
     /// The guest cannot start with this Android; erasing it is the way out.
     case blocked(StartBlock)
@@ -64,10 +66,11 @@ public struct Lifecycle: Equatable, Sendable {
         self.guest = guest.erased
     }
 
-    /// `plan` is what the instance on disk says a start would be. A way out
-    /// the user chose for an unfinished update lets the start go ahead.
+    /// `plan` is what the instance on disk says a start would be. Start
+    /// tries an unfinished update again when it can; Recovery and a start
+    /// that cannot wait for Restore or Erase.
     public func startVerdict(
-        _ mode: StartMode, host: HostDevice, plan: StartPlan = .normal, resolution: UpdateResolution? = nil
+        _ mode: StartMode, host: HostDevice, plan: StartPlan = .normal
     ) -> StartVerdict {
         guard guest != nil else { return .noGuest }
         guard host.hasRoom(for: Limits.startReserveBytes) else {
@@ -76,13 +79,8 @@ public struct Lifecycle: Equatable, Sendable {
         switch plan {
         case .blocked(let reason):
             return .blocked(reason)
-        case .unfinishedUpdate(_, let canRetry, let canRestore):
-            switch resolution {
-            case .retry? where canRetry, .restoreSnapshot? where canRestore:
-                return .allowed(.upgrade)
-            default:
-                return .unfinishedUpdate
-            }
+        case .unfinishedUpdate(_, let canRetry, _):
+            return mode == .normal && canRetry ? .allowed(.upgrade) : .unfinishedUpdate
         case .firstStart, .normal, .update:
             return .allowed(plan.bootKind(mode))
         }
@@ -91,9 +89,9 @@ public struct Lifecycle: Equatable, Sendable {
     /// Starts the guest if the host allows it; the verdict says why not.
     @discardableResult
     public mutating func start(
-        _ mode: StartMode, host: HostDevice, plan: StartPlan = .normal, resolution: UpdateResolution? = nil
+        _ mode: StartMode, host: HostDevice, plan: StartPlan = .normal
     ) -> StartVerdict {
-        let verdict = startVerdict(mode, host: host, plan: plan, resolution: resolution)
+        let verdict = startVerdict(mode, host: host, plan: plan)
         if case let .allowed(kind) = verdict {
             phase = .booting(kind)
         }

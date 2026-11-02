@@ -450,11 +450,10 @@ public struct InstanceFiles: Sendable {
             restored.lastCompleted = current.lastCompleted
             try write(restored)
             try? manager.removeItem(at: snapshot)
-            // The data is back; the release now decides afresh.
-            return try apply(
-                InstanceRules.decide(state: restored, dataDiskExists: true, snapshotExists: false, release: release),
-                release: release, now: now
-            )
+            // The data is back and nothing else happens: the next start
+            // decides afresh from the restored record, which for the release
+            // that was updating is the update again.
+            return restored
         }
         if action == .create {
             try manager.createDirectory(at: directory, withIntermediateDirectories: true)

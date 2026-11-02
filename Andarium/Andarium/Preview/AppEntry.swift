@@ -74,11 +74,10 @@ struct AppEntry {
             model.plan = .update(from: PreviewData.previousRelease, to: PreviewData.release)
         case "home-update-failed":
             model.plan = .unfinishedUpdate(to: PreviewData.release, canRetry: true, canRestore: true)
+            model.planAfterRestore = .update(from: PreviewData.previousRelease, to: PreviewData.release)
         case "home-update-failed-restore":
             model.plan = .unfinishedUpdate(to: PreviewData.release, canRetry: false, canRestore: true)
-        case "home-update-choice":
-            model.plan = .unfinishedUpdate(to: PreviewData.release, canRetry: true, canRestore: true)
-            model.updateChoice = true
+            model.planAfterRestore = .update(from: PreviewData.previousRelease, to: PreviewData.release)
         case "home-blocked":
             model.plan = .blocked(.olderAndroid)
         case "home-closed":

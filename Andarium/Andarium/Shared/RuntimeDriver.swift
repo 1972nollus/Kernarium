@@ -33,9 +33,11 @@ protocol RuntimeDriver: AnyObject {
     /// read, which a start then reports.
     func startPlan() -> StartPlan?
     /// A run is wanted. The runtime starts once the guest's display has its
-    /// size, after the disk is ready. `resolution` is the way out the user
-    /// chose for an update that did not complete.
-    func begin(guest: Guest, mode: StartMode, kind: BootKind, resolution: UpdateResolution?)
+    /// size, after the disk is ready.
+    func begin(guest: Guest, mode: StartMode, kind: BootKind)
+    /// Puts the data back to what the update that did not finish started
+    /// from; the guest does not start.
+    func restoreUpdate() throws
     /// Turns the guest's microphone on or off, asking the system for access
     /// when the person turns it on for the first time.
     func setMicrophone(_ on: Bool)

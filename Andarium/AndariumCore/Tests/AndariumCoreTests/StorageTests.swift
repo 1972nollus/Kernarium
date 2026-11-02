@@ -105,13 +105,15 @@ struct StorageTests {
         )
         try await newer.prepareStart(guest)
         #expect(FileManager.default.fileExists(atPath: InstanceFiles(directory: first.locations.directory).snapshot(for: "20261102-los24-r5").path))
-        // Until it completes, a start is refused, and so is the older release.
-        await #expect(throws: InstanceError.self) { try await newer.prepareStart(guest) }
+        // Until it completes, a start tries the update again, and the older
+        // release is refused.
+        try await newer.prepareStart(guest)
+        #expect(newer.startPlan() == .unfinishedUpdate(to: "20261102-los24-r5", canRetry: true, canRestore: true))
         try newer.completeRun()
         await #expect(throws: InstanceError.self) { try await first.prepareStart(guest) }
     }
 
-    @Test func anUnfinishedUpdateIsRetriedOrRestoredOnRequestOnly() async throws {
+    @Test func startTriesAnUnfinishedUpdateAgainAndRestoreOnlyPutsTheDataBack() async throws {
         let (first, root) = try makeStorage()
         defer { try? FileManager.default.removeItem(at: root) }
         let guest = try await first.create(Guest.fresh(on: host))
@@ -128,17 +130,21 @@ struct StorageTests {
         // The update's start never completed; Android wrote to the data.
         try Data("android data, upgraded".utf8).write(to: first.locations.data)
         #expect(newer.startPlan() == .unfinishedUpdate(to: "20261102-los24-r5", canRetry: true, canRestore: true))
-        await #expect(throws: InstanceError.self) { try await newer.prepareStart(guest) }
 
-        // Retry keeps the snapshot and the data as they are.
-        try await newer.prepareStart(guest, resolution: .retry)
+        // Start tries it again, keeping the snapshot and the data as they are.
+        try await newer.prepareStart(guest)
         #expect(try String(contentsOf: first.locations.data, encoding: .utf8) == "android data, upgraded")
         #expect(newer.startPlan() == .unfinishedUpdate(to: "20261102-los24-r5", canRetry: true, canRestore: true))
 
-        // Restore puts back the data the update started from and updates
-        // afresh: a new snapshot, the update pending again.
-        try await newer.prepareStart(guest, resolution: .restoreSnapshot)
+        // Restore puts back the data the update started from and nothing
+        // more: no snapshot, no pending update, the update waiting to start.
+        try newer.restoreUpdate()
         #expect(try String(contentsOf: first.locations.data, encoding: .utf8) == "android data")
+        #expect(newer.startPlan() == .update(from: "20261031-los24-r4", to: "20261102-los24-r5"))
+        #expect(!FileManager.default.fileExists(atPath: InstanceFiles(directory: first.locations.directory).snapshot(for: "20261102-los24-r5").path))
+        // Nothing is left to restore, and the next start updates afresh.
+        #expect(throws: InstanceError.self) { try newer.restoreUpdate() }
+        try await newer.prepareStart(guest)
         #expect(newer.startPlan() == .unfinishedUpdate(to: "20261102-los24-r5", canRetry: true, canRestore: true))
 
         // Completing ends it.

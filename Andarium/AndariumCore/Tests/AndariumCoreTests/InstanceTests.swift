@@ -171,8 +171,15 @@ struct InstanceFileTests {
 
         let restore = try files.decide(for: second, flags: InstanceFlags(restoreSnapshot: true))
         #expect(restore.action == .restore)
-        // The data goes back, and the release decides afresh: the update again.
-        let again = try files.apply(restore, release: second)
+        // The data goes back and nothing else happens.
+        let restored = try files.apply(restore, release: second)
+        #expect(try Data(contentsOf: files.data) == Data("android data".utf8))
+        #expect(restored.releaseID == "rel-a" && restored.pendingUpdate == nil)
+        // A normal start then decides afresh: the update again, which is what
+        // a restore that went straight on to update would have reached.
+        let next = try files.decide(for: second)
+        #expect(next.action == .update)
+        let again = try files.apply(next, release: second)
         #expect(try Data(contentsOf: files.data) == Data("android data".utf8))
         #expect(again.pendingUpdate?.toReleaseID == "rel-b")
     }

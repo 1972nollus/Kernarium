@@ -8,7 +8,9 @@ import Testing
 @MainActor
 private final class StubDriver: RuntimeDriver {
     var plan: StartPlan?
-    var begun: [(mode: StartMode, kind: BootKind, resolution: UpdateResolution?)] = []
+    var begun: [(mode: StartMode, kind: BootKind)] = []
+    var restored = 0
+    var restoreFails = false
 
     init(plan: StartPlan?) { self.plan = plan }
 
@@ -16,8 +18,14 @@ private final class StubDriver: RuntimeDriver {
     func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest { guest }
     func save(_ guest: Guest) throws {}
     func startPlan() -> StartPlan? { plan }
-    func begin(guest: Guest, mode: StartMode, kind: BootKind, resolution: UpdateResolution?) {
-        begun.append((mode, kind, resolution))
+    func begin(guest: Guest, mode: StartMode, kind: BootKind) {
+        begun.append((mode, kind))
+    }
+    func restoreUpdate() throws {
+        if restoreFails { throw InstanceError.refused("No update is pending.") }
+        restored += 1
+        // The files now say the update waits for the next start.
+        plan = .update(from: "r1", to: "r2")
     }
     func setMicrophone(_ on: Bool) {}
 }
@@ -50,27 +58,55 @@ struct UpdateFlowTests {
         #expect(model.phase == .booting(.upgrade))
         #expect(model.bootFrom == "r1")
         #expect(driver.begun.map(\.kind) == [.upgrade])
-        #expect(driver.begun.first?.resolution == nil)
     }
 
-    @Test func anUnfinishedUpdateOpensTheChoiceAndStartsOnlyWithOne() {
+    @Test func startOnAnUnfinishedUpdateTriesItAgain() {
         let (model, driver) = model(plan: .unfinishedUpdate(to: "r2", canRetry: true, canRestore: true))
+        #expect(model.bootKind(.normal) == .upgrade)
         model.start(.normal)
-        #expect(model.updateChoice)
-        #expect(model.phase == .home)
-        #expect(driver.begun.isEmpty)
-
-        model.start(.normal, resolution: .restoreSnapshot)
-        #expect(!model.updateChoice)
         #expect(model.phase == .booting(.upgrade))
-        #expect(driver.begun.first?.resolution == .restoreSnapshot)
+        #expect(driver.begun.map(\.kind) == [.upgrade])
+        #expect(driver.restored == 0)
     }
 
-    @Test func aWayThatCannotWorkDoesNotStart() {
-        let (model, driver) = model(plan: .unfinishedUpdate(to: "r2", canRetry: false, canRestore: true))
-        model.start(.normal, resolution: .retry)
+    @Test func restoreOnlyPutsTheDataBackAndHomeShowsThePendingUpdate() {
+        let (model, driver) = model(plan: .unfinishedUpdate(to: "r2", canRetry: true, canRestore: true))
+        model.restoreUpdate()
+        #expect(driver.restored == 1)
         #expect(model.phase == .home)
         #expect(driver.begun.isEmpty)
+        #expect(model.plan == .update(from: "r1", to: "r2"))
+        #expect(model.alert == nil)
+        // The next start runs the update again.
+        model.start(.normal)
+        #expect(model.phase == .booting(.upgrade))
+        #expect(model.bootFrom == "r1")
+    }
+
+    @Test func aRestoreThatFailsSaysSoAndStaysAtHome() {
+        let (model, driver) = model(plan: .unfinishedUpdate(to: "r2", canRetry: true, canRestore: true))
+        driver.restoreFails = true
+        model.restoreUpdate()
+        #expect(model.alert?.title == "Android Could Not Be Restored")
+        #expect(model.phase == .home)
+        #expect(model.plan == .unfinishedUpdate(to: "r2", canRetry: true, canRestore: true))
+    }
+
+    @Test func anAndroidThatCannotRetryWaitsForRestoreOrErase() {
+        let (model, driver) = model(plan: .unfinishedUpdate(to: "r2", canRetry: false, canRestore: true))
+        #expect(!model.plan.allowsStart)
+        model.start(.normal)
+        #expect(model.phase == .home)
+        #expect(driver.begun.isEmpty)
+        #expect(model.alert?.title == "Android's Update Didn't Finish")
+    }
+
+    @Test func recoveryWaitsForTheUpdateToFinish() {
+        let (model, driver) = model(plan: .unfinishedUpdate(to: "r2", canRetry: true, canRestore: true))
+        model.start(.recovery)
+        #expect(model.phase == .home)
+        #expect(driver.begun.isEmpty)
+        #expect(model.alert?.title == "Android's Update Didn't Finish")
     }
 
     @Test func aBlockedGuestSaysWhyAndStaysAtHome() {

@@ -21,11 +21,12 @@ public protocol GuestStorage: Sendable {
     /// What a start would be, from the instance on disk; nil when its record
     /// cannot be read.
     func startPlan() -> StartPlan?
-    /// Applies the update rules before a start, with the way out the user
-    /// chose for an unfinished update; a refusal throws.
-    func prepareStart(
-        _ guest: Guest, resolution: UpdateResolution?, progress: @escaping @Sendable (Double) -> Void
-    ) async throws
+    /// Applies the update rules before a start; a refusal throws. A start
+    /// whose update did not finish tries it again.
+    func prepareStart(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws
+    /// Puts the data back to what the update that did not finish started
+    /// from, and does nothing more: the next start updates again from it.
+    func restoreUpdate() throws
     /// Records the guest's choices.
     func save(_ guest: Guest) throws
 }
@@ -39,8 +40,8 @@ extension GuestStorage {
         try await erase(guest, progress: { _ in })
     }
 
-    public func prepareStart(_ guest: Guest, resolution: UpdateResolution? = nil) async throws {
-        try await prepareStart(guest, resolution: resolution, progress: { _ in })
+    public func prepareStart(_ guest: Guest) async throws {
+        try await prepareStart(guest, progress: { _ in })
     }
 }
 
@@ -167,13 +168,20 @@ public struct TwoDiskStorage: GuestStorage {
         files.startPlan(for: release)
     }
 
-    public func prepareStart(
-        _ guest: Guest, resolution: UpdateResolution?, progress: @escaping @Sendable (Double) -> Void
-    ) async throws {
+    public func prepareStart(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws {
         try requireUsablePaths()
-        let decision = try files.decide(for: release, flags: resolution?.flags ?? InstanceFlags())
+        var decision = try files.decide(for: release)
+        if decision.action == .refusePending {
+            // Start is Try Again; a release other than the one updating
+            // refuses the retry with the reason.
+            decision = try files.decide(for: release, flags: InstanceFlags(retry: true))
+        }
         try files.apply(decision, release: release)
         progress(1)
+    }
+
+    public func restoreUpdate() throws {
+        try files.apply(files.decide(for: release, flags: InstanceFlags(restoreSnapshot: true)), release: release)
     }
 
     /// Records that the guest reached `sys.boot_completed` and shut down

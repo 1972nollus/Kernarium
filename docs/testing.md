@@ -750,7 +750,7 @@ with mock data, and `Andarium` is the device application
 ([`Andarium/README.md`](../Andarium/README.md#targets)). `AndariumTests` is
 hosted in `Andarium` and runs on an iPad and, as an iPad app, on an Apple
 silicon Mac (`xcodebuild test -scheme Andarium`); its `UpdateFlowTests` drive
-the update, interrupted-update (retry, restore, reset) and blocked-start flows
+the update, interrupted-update (Start retries, Restore, Erase) and blocked-start flows
 against a stub runtime. A Mac launch of the guest
 itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
 `TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
