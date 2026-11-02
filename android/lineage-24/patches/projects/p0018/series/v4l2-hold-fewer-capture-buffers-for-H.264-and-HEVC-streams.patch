@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 31 Oct 2026 21:40:18 +0000
+Subject: [PATCH] v4l2: hold fewer capture buffers for H.264 and HEVC streams
+
+The decoder told the framework to keep 16 frames in flight for an H.264 or
+HEVC stream, which the framework turns into 20 capture buffers. At 4K a
+capture buffer is 11.87 MiB in the guest and again on the host, so a stream
+held 237 MiB on each side. 16 is the deepest reordering a stream can have,
+and suits a decoder that keeps the pictures it reorders in its capture
+buffers. This device reorders on the host, and its capture buffers hold no
+pictures that wait for their display order.
+
+The framework stops queuing work at the pipeline delay plus the output delay
+plus 4, and the host releases a picture once more than the stream's reorder
+depth R of them wait, so a stream stalls only when R exceeds the delay by more
+than 6. R is at most 16, so a delay of 10 stalls no stream, and it gives 14
+capture buffers: 71 MiB less in the guest and 72 MiB less on the host at 4K.
+---
+ README.md                      | 10 ++++++++++
+ components/DecodeInterface.cpp | 18 ++++++++++++++++--
+ 2 files changed, 26 insertions(+), 2 deletions(-)
+
+diff --git a/README.md b/README.md
+index a06c201418358dfed79db2ae77907e178352aecb..21f95188bce0eb64bf93323628891f78960ef509 100644
+--- a/README.md
++++ b/README.md
+@@ -479,6 +479,16 @@ are still in use against the number of V4L2 buffers, and the decoder lets a free
+ V4L2 buffer stand for a block it has not met, since the picture buffer is passed
+ again with every queue operation.
+ 
++The output delay of an H.264 or HEVC stream is 10 frames. The framework adds 4
++of its own and sizes the capture buffer queue from the sum, so a 4K stream holds
++14 buffers of 11.87 MiB in the guest and again on the host, where the stock
++decoder's 16 would hold 20. The device reorders pictures on the host and its
++capture buffers hold none that wait for their display order, so the delay only
++keeps the framework feeding the decoder until the host releases a picture: a
++stream does not stall while its reorder depth is at most the delay plus 6, and
++no H.264 or HEVC stream is deeper than 16. A device that keeps the pictures it
++reorders in its capture buffers needs a delay of 16.
++
+ ### Input Blocks
+ 
+ The device takes a coded buffer in a dma-buf at least as large as the buffer
+diff --git a/components/DecodeInterface.cpp b/components/DecodeInterface.cpp
+index 270505bc3ca0b8713a5fef10fe6be5d01d13b51f..4a07b15656321e921ed3529313c42429bafd9f96 100644
+--- a/components/DecodeInterface.cpp
++++ b/components/DecodeInterface.cpp
+@@ -70,6 +70,20 @@ size_t inputBufferSizeFor(uint32_t codedBufferSize) {
+     if (codedBufferSize == 0) return kMaxInputBufferSize;
+     return std::clamp<size_t>(codedBufferSize, kMinInputBufferSize, kMaxInputBufferSize);
+ }
++
++// The output delay of H.264 and HEVC, in frames. The framework also sizes the capture buffer queue
++// from it: this many buffers plus 4 of its own for smooth playback. A 4K picture is 11.87 MiB, in
++// the guest and again on the host, so 20 buffers hold 237 MiB on each side and 14 hold 166 MiB.
++//
++// 16, the deepest reordering a stream can have, suits a decoder that keeps the pictures it reorders
++// in its capture buffers. This device reorders on the host, and its capture buffers hold no
++// pictures that wait for their display order, so the delay only has to keep the framework feeding
++// the decoder until the host releases a picture. The framework stops queuing work at the pipeline
++// delay (3, with no input delay) plus this delay plus 4, and the host releases a picture once more
++// than the stream's reorder depth R of them wait, so it needs R + 1 works queued: no stream stalls
++// while R <= this delay + 6. R is at most 16 (the HEVC limit, sps_max_num_reorder_pics, is 15; an
++// H.264 stream without a bitstream restriction can reach 16), which 10 covers.
++constexpr uint32_t kReorderingOutputDelay = 10;
+ }  // namespace
+ 
+ // static
+@@ -606,9 +620,9 @@ uint32_t DecodeInterface::getOutputDelay(VideoCodec codec) {
+         // queued before being able to output the associated decoded buffers. We need to tell the
+         // codec2 framework that it should not stop queuing new work items until the maximum number
+         // of frame reordering is reached, to avoid stalling the decoder.
+-        return 16;
++        return kReorderingOutputDelay;
+     case VideoCodec::HEVC:
+-        return 16;
++        return kReorderingOutputDelay;
+     case VideoCodec::VP8:
+         // The decoder might held a few frames as a reference for decoding. Since Android T
+         // the Codec2 is more prone to timeout the component if one is not producing frames. This

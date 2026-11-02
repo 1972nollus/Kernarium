@@ -14,3 +14,7 @@
 /dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,discard,errors=panic latemount,wait,check,quota,formattable
 /dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,discard,errors=panic latemount,reservedsize=128M,wait,check,quota
 /dev/block/by-name/misc /misc emmc defaults defaults
+# Compressed swap, half of RAM, turned on by init.kernarium.rc once boot completes
+# (swapon_all): the cached apps' anonymous memory compresses about 4:1 there, and
+# the guest keeps the pages the launcher workload refaults.
+/dev/block/zram0 none swap defaults zramsize=50%

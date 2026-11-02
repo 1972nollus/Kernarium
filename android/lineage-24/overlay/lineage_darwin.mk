@@ -82,6 +82,13 @@ ifneq ($(TARGET_BUILD_VARIANT),user)
 WITH_SU := true
 endif
 
+# Where an overlay directory stands in PRODUCT_PACKAGE_OVERLAYS decides who wins a resource that two of
+# them define: Soong gives the earlier directory the higher priority, and inherit-product expands the
+# inherited list where the call stands, so a directory added after the calls below ranks under LineageOS's
+# and Cuttlefish's. The directory with the default wallpaper, which LineageOS also ships, is therefore
+# listed here and no other. The target-files verifier reads the built framework overlay for the result.
+PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay-priority
+
 $(call inherit-product, device/google/cuttlefish/vsoc_arm64_pgagnostic/phone/aosp_cf.mk)
 $(call inherit-product, hardware/interfaces/audio/aidl/default/audio_effects.mk)
 $(call inherit-product, vendor/lineage/config/common_full_tablet_wifionly.mk)
@@ -421,10 +428,22 @@ PRODUCT_PACKAGES += kernarium_net_setup
 # framework must not randomize it.
 PRODUCT_PACKAGES += KernariumWifiOverlay
 
+# PinnerService locks the home app's APK and its compiled code into memory,
+# about 54 MiB at idle. KernariumPinnerOverlay (rro/KernariumPinnerOverlay)
+# sets the home pin size to zero and leaves the WebView pin as it was.
+PRODUCT_PACKAGES += KernariumPinnerOverlay
+
 # Once boot completes, a script saves the virtual Wi-Fi network (VirtWifi, open)
 # the first time only. It does not turn Wi-Fi on, and a network the user forgets
 # stays forgotten. It runs from system_ext in a core domain of its own.
 PRODUCT_PACKAGES += kernarium_wifi_network_script
+
+# Cached apps the system starts at boot (privacy sandbox, backup, key
+# provisioning, domain verification, Health Connect) keep memory until the low
+# memory killer wants it. Once boot has settled this script kills the cached
+# processes of a reviewed list of packages and nothing else; the apps start again
+# when something uses them.
+PRODUCT_PACKAGES += kernarium_reclaim_boot_apps_script
 
 # A Vulkan hardware-buffer import check: it fills gralloc buffers of several
 # formats and widths through the CPU, imports each into Vulkan and reads it
@@ -447,6 +466,14 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_ahb_yuv_r
 # for each row fails the run.
 PRODUCT_PACKAGES += kernarium_ahb_rgba_lock
 PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_ahb_rgba_lock
+
+# An EGL config check: it lists the configs, picks the one the hardware renderer
+# asks eglChooseConfig for (RGBA8888, no depth, eight bits of stencil) and
+# stencils in a pbuffer of it, so a guest that stores a window's stencil beside
+# a depth plane it never reads, or a stencil that does not stencil, fails the
+# run.
+PRODUCT_PACKAGES += kernarium_egl_configs
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_egl_configs
 
 # Hardware video encoding and decoding. The host's VideoToolbox encoders and
 # decoders reach the guest as V4L2 stateful devices, and external/v4l2_codec2
