@@ -50,10 +50,10 @@ precision.
  13 files changed, 288 insertions(+), 20 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Context/Context.h b/FEXCore/Source/Interface/Context/Context.h
-index ce6f5219621ac9871ba63ed61b8268bef7798fa1..324f6c07af7bb42cf32f417d27cadeb268c7d0e2 100644
+index e536fb6aae987fc222fe792f6f0da71255ca7017..b12c41017663c752b7881707405c7ba5121d03b0 100644
 --- a/FEXCore/Source/Interface/Context/Context.h
 +++ b/FEXCore/Source/Interface/Context/Context.h
-@@ -36,6 +36,11 @@ namespace Core {
+@@ -37,6 +37,11 @@ namespace Core {
    struct InternalThreadState;
  } // namespace Core
  
@@ -65,7 +65,7 @@ index ce6f5219621ac9871ba63ed61b8268bef7798fa1..324f6c07af7bb42cf32f417d27cadeb2
  namespace CPU {
    class Dispatcher;
  } // namespace CPU
-@@ -153,6 +158,8 @@ public:
+@@ -156,6 +161,8 @@ public:
  
    bool IsAddressInCurrentBlock(FEXCore::Core::InternalThreadState* Thread, uint64_t Address, uint64_t Size) override;
    bool IsCurrentBlockSingleInst(FEXCore::Core::InternalThreadState* Thread) override;
@@ -75,10 +75,10 @@ index ce6f5219621ac9871ba63ed61b8268bef7798fa1..324f6c07af7bb42cf32f417d27cadeb2
  
    uint64_t RestoreRIPFromHostPC(FEXCore::Core::InternalThreadState* Thread, uint64_t HostPC) override;
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index fff16279709f885e3f84e545b80633f3386fb0f0..55ffac2af9f477d01b475ebb36fd0f3829e0982e 100644
+index 0833ed57f6685475d527e7e6e81e061cb494a8da..5ec8123ba8e8b284fe3d4664d94f8f89a5e6a3a5 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
-@@ -677,6 +677,9 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+@@ -688,6 +688,9 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
  
          if (TableInfo && TableInfo->OpcodeDispatcher.OpDispatch) {
            auto Fn = TableInfo->OpcodeDispatcher.OpDispatch;
@@ -88,7 +88,7 @@ index fff16279709f885e3f84e545b80633f3386fb0f0..55ffac2af9f477d01b475ebb36fd0f38
            Thread->OpDispatcher->ResetHandledLock();
            Thread->OpDispatcher->ResetDecodeFailure();
            IR::ForceTSOMode ForceTSO = IR::ForceTSOMode::NoOverride;
-@@ -979,6 +982,34 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
+@@ -1057,6 +1060,34 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
    return (uintptr_t)CodePtr;
  }
  
@@ -124,10 +124,10 @@ index fff16279709f885e3f84e545b80633f3386fb0f0..55ffac2af9f477d01b475ebb36fd0f38
    FEXCORE_PROFILE_SCOPED("CompileSingleStep");
    auto Thread = Frame->Thread;
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
-index 8a01366b4514ffdc38448c85b220a227b9c06c57..e78a19143d0c8f9751084d947628d95e38d7574f 100644
+index f4915a2230e289521f98ae09598d0ac5d53ce871..fbaa9f42ca4ae891c4e6def9222a466558f495a7 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
-@@ -803,6 +803,10 @@ void Dispatcher::EmitX87Exception(uint32_t Bit) {
+@@ -868,6 +868,10 @@ void Dispatcher::EmitX87Exception(uint32_t Bit) {
    mov(ARMEmitter::Size::i32Bit, TMP1, 1);
    strb(TMP1.W(), STATE, offsetof(FEXCore::Core::CPUState, flags) + FEXCore::X86State::X87FLAG_ES_LOC);
    strb(TMP1.W(), STATE, offsetof(FEXCore::Core::CPUState, flags) + FEXCore::X86State::X87FLAG_B_LOC);
@@ -277,10 +277,10 @@ index 113312b3b1d500755ae370dbcb04cd81603f024f..3ee847f4e46d1d111ae0a0748496a731
    const auto Scratch = offsetof(FEXCore::Core::CpuStateFrame, Embedder.FPScratch);
    for (auto& Site : EmbedderFPSites) {
 diff --git a/FEXCore/Source/Interface/Core/JIT/JITClass.h b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-index 0ae6f62942afb963100d0323419919d04226d463..f7820b0e4545384e3e20b9b241fcf4cc57b6c9e6 100644
+index 18c1bf602fd4cc0a93cddaf20616dcc20fd5eafa..e25ba3bbec86673de076de92d38f0c41ac052b4d 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JITClass.h
 +++ b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-@@ -192,6 +192,9 @@ private:
+@@ -197,6 +197,9 @@ private:
    void EmbedderFPInputTest(const EmbedderFPSite& Site, uint32_t Kind, uint32_t ElementBytes, uint32_t Bytes, uint32_t Flags, bool Above,
                             ARMEmitter::ForwardLabel* Target);
    uint64_t EmbedderCurrentRIP {};
@@ -291,10 +291,10 @@ index 0ae6f62942afb963100d0323419919d04226d463..f7820b0e4545384e3e20b9b241fcf4cc
    // charges the budget for, and their offsets from the entry in order.
    uint32_t EmbedderBlockInstructions {};
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index 006d7e77a7178f3c4e11d9d748cf18bb8067f0f5..e4afdfeb95effa1334fdd57069d896051cac4be3 100644
+index 631cc1a4ab1f686cab37907918615345db203b66..ab6c86226698aef204e4a1d3d2cea450c8bbc5d1 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -1491,6 +1491,16 @@ private:
+@@ -1517,6 +1517,16 @@ private:
    // reads them.
    void EmbedderFPExceptions(Core::EmbedderFPKind Kind, IR::OpSize ElementSize, uint32_t Lanes, Ref Source1, Ref Source2 = nullptr,
                              uint32_t Imm = 0, uint32_t Flags = 0);
@@ -312,7 +312,7 @@ index 006d7e77a7178f3c4e11d9d748cf18bb8067f0f5..e4afdfeb95effa1334fdd57069d89605
    bool EmbedderFPChecksExceptions() const;
    fextl::vector<IR::IROp_EmbedderFPCheck*> EmbedderFPInstructionChecks;
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-index c695ca757993cf65911a2a6fb5ff7a6b41c996a5..494f7fb021eeefbb58cdc92c63820fa35c3d85bb 100644
+index 762280e820b311846888525902e1c620f3449ee6..41a7d584103898432fd2019f3f7cf63e585acac9 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 @@ -83,6 +83,7 @@ void OpDispatchBuilder::FBLD(OpcodeArgs) {
@@ -323,7 +323,7 @@ index c695ca757993cf65911a2a6fb5ff7a6b41c996a5..494f7fb021eeefbb58cdc92c63820fa3
    StoreResultFPR_WithOpSize(Op, Op->Dest, converted, OpSize::f80Bit, OpSize::i8Bit);
    _PopStackDestroy();
  }
-@@ -156,6 +157,7 @@ void OpDispatchBuilder::FIST(OpcodeArgs, bool Truncate) {
+@@ -154,6 +155,7 @@ void OpDispatchBuilder::FIST(OpcodeArgs, bool Truncate) {
    // The conversion helper raises IE for a NaN, an infinity or a value out
    // of the destination's range, the 16-bit one included.
    Data = _F80CVTInt(Size, Data, Truncate);
@@ -331,7 +331,7 @@ index c695ca757993cf65911a2a6fb5ff7a6b41c996a5..494f7fb021eeefbb58cdc92c63820fa3
  
    StoreResultGPR_WithOpSize(Op, Op->Dest, Data, Size, OpSize::i8Bit,
                              CTX->IsVectorAtomicTSOEnabled() ? MemoryAccessType::DEFAULT : MemoryAccessType::NONTSO);
-@@ -438,6 +440,10 @@ Ref OpDispatchBuilder::ReconstructX87StateFromFSW_Helper(Ref FSW) {
+@@ -436,6 +438,10 @@ Ref OpDispatchBuilder::ReconstructX87StateFromFSW_Helper(Ref FSW) {
      SetRFLAG(_Bfe(OpSize::i32Bit, 1, Bit, FSW), FEXCore::X86State::X87FLAG_IE_LOC + Bit);
    }
    SetRFLAG<FEXCore::X86State::X87FLAG_B_LOC>(_Bfe(OpSize::i32Bit, 1, 15, FSW));
@@ -342,7 +342,7 @@ index c695ca757993cf65911a2a6fb5ff7a6b41c996a5..494f7fb021eeefbb58cdc92c63820fa3
    return Top;
  }
  
-@@ -464,6 +470,7 @@ void OpDispatchBuilder::X87LDENV(OpcodeArgs) {
+@@ -462,6 +468,7 @@ void OpDispatchBuilder::X87LDENV(OpcodeArgs) {
      Ref MemLocation = Add(OpSize::i64Bit, Mem, IR::OpSizeToSize(Size) * 2);
      SetX87FTW(_LoadMemGPR(Size, MemLocation, Size));
    }
@@ -350,7 +350,7 @@ index c695ca757993cf65911a2a6fb5ff7a6b41c996a5..494f7fb021eeefbb58cdc92c63820fa3
  }
  
  void OpDispatchBuilder::X87FNSAVE(OpcodeArgs) {
-@@ -609,6 +616,7 @@ void OpDispatchBuilder::X87FRSTOR(OpcodeArgs) {
+@@ -607,6 +614,7 @@ void OpDispatchBuilder::X87FRSTOR(OpcodeArgs) {
      Reg = _F80CVT(OpSize::i64Bit, Reg); // Convert to double precision
    }
    _StoreContextFPRIndexed(Reg, Top, StoreSize, MMBaseOffset(), IR::OpSizeToSize(OpSize::i128Bit));
@@ -358,7 +358,7 @@ index c695ca757993cf65911a2a6fb5ff7a6b41c996a5..494f7fb021eeefbb58cdc92c63820fa3
  }
  
  // Load / Store Control Word
-@@ -624,6 +632,16 @@ void OpDispatchBuilder::X87FLDCW(OpcodeArgs) {
+@@ -622,6 +630,16 @@ void OpDispatchBuilder::X87FLDCW(OpcodeArgs) {
    _StackForceSlow();
    Ref NewFCW = LoadSourceGPR(Op, Op->Src[0], Op->Flags);
    _StoreContextGPR(OpSize::i16Bit, NewFCW, offsetof(FEXCore::Core::CPUState, FCW));
@@ -375,7 +375,7 @@ index c695ca757993cf65911a2a6fb5ff7a6b41c996a5..494f7fb021eeefbb58cdc92c63820fa3
  }
  
  void OpDispatchBuilder::FXCH(OpcodeArgs) {
-@@ -674,6 +692,16 @@ void OpDispatchBuilder::FCOMI(OpcodeArgs, IR::OpSize Width, bool Integer, OpDisp
+@@ -672,6 +690,16 @@ void OpDispatchBuilder::FCOMI(OpcodeArgs, IR::OpSize Width, bool Integer, OpDisp
    HostFlag_CF = _Or(OpSize::i32Bit, HostFlag_CF, HostFlag_Unordered);
    HostFlag_ZF = _Or(OpSize::i32Bit, HostFlag_ZF, HostFlag_Unordered);
  
@@ -392,8 +392,8 @@ index c695ca757993cf65911a2a6fb5ff7a6b41c996a5..494f7fb021eeefbb58cdc92c63820fa3
    if (WhichFlags == FCOMIFlags::FLAGS_X87) {
      SetRFLAG<FEXCore::X86State::X87FLAG_C0_LOC>(HostFlag_CF);
      SetRFLAG<FEXCore::X86State::X87FLAG_C1_LOC>(Constant(0));
-@@ -690,15 +718,9 @@ void OpDispatchBuilder::FCOMI(OpcodeArgs, IR::OpSize Width, bool Integer, OpDisp
-     SetRFLAG<FEXCore::X86State::RFLAG_PF_RAW_LOC>(PF);
+@@ -693,15 +721,9 @@ void OpDispatchBuilder::FCOMI(OpcodeArgs, IR::OpSize Width, bool Integer, OpDisp
+     SetRFLAG<FEXCore::X86State::RFLAG_AF_RAW_LOC>(Constant(0));
    }
  
 -  // The compare helper raises IE for a signaling NaN. FCOM, FCOMI and
@@ -410,7 +410,7 @@ index c695ca757993cf65911a2a6fb5ff7a6b41c996a5..494f7fb021eeefbb58cdc92c63820fa3
    if (PopTwice) {
      _PopStackDestroy();
      _PopStackDestroy();
-@@ -716,13 +738,48 @@ void OpDispatchBuilder::FTST(OpcodeArgs) {
+@@ -719,13 +741,48 @@ void OpDispatchBuilder::FTST(OpcodeArgs) {
    HostFlag_CF = _Or(OpSize::i32Bit, HostFlag_CF, HostFlag_Unordered);
    HostFlag_ZF = _Or(OpSize::i32Bit, HostFlag_ZF, HostFlag_Unordered);
  
@@ -461,7 +461,7 @@ index c695ca757993cf65911a2a6fb5ff7a6b41c996a5..494f7fb021eeefbb58cdc92c63820fa3
  }
  
  void OpDispatchBuilder::X87OpHelper(OpcodeArgs, FEXCore::IR::IROps IROp, bool ZeroC2) {
-@@ -826,6 +883,8 @@ void OpDispatchBuilder::FNINIT(OpcodeArgs) {
+@@ -836,6 +893,8 @@ void OpDispatchBuilder::FNINIT(OpcodeArgs) {
      SetRFLAG(Zero, FEXCore::X86State::X87FLAG_IE_LOC + Bit);
    }
    SetRFLAG<FEXCore::X86State::X87FLAG_B_LOC>(Zero);
@@ -471,10 +471,10 @@ index c695ca757993cf65911a2a6fb5ff7a6b41c996a5..494f7fb021eeefbb58cdc92c63820fa3
  
  void OpDispatchBuilder::X87FFREE(OpcodeArgs) {
 diff --git a/FEXCore/Source/Interface/IR/IR.json b/FEXCore/Source/Interface/IR/IR.json
-index 32d3c08affd7922d63c5c1fb234dcfbd0bcfc9cb..80dc627d5d770f321499ab1c48e12dc0f3a1e83f 100644
+index e6f3c6b01d473d73a16b3db1d44d271e9554b80c..a3bcbff046f35edc41c388259c5df37afef5803e 100644
 --- a/FEXCore/Source/Interface/IR/IR.json
 +++ b/FEXCore/Source/Interface/IR/IR.json
-@@ -717,6 +717,23 @@
+@@ -719,6 +719,23 @@
          "HasSideEffects": true
        },
  
@@ -528,7 +528,7 @@ index 51a9b26490bd1768e047e23131626557ff21a204..b8624c0c8bb7a64e12d3a0daec7e16e6
  namespace Validation {
    fextl::unique_ptr<Pass> CreateIRValidation();
 diff --git a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
-index 03b4d967d84e1ebcdae02b288fe8f0b5763406cd..0c6af7f7d742aea6974b2efe1802e96dc94ac3ff 100644
+index 88d575a98cbadcefbc03f63f4325805001c2230a..86ea92c7c3b846e96560bb7875e568d16373b496 100644
 --- a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 +++ b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 @@ -151,8 +151,9 @@ private:
@@ -628,7 +628,7 @@ index 03b4d967d84e1ebcdae02b288fe8f0b5763406cd..0c6af7f7d742aea6974b2efe1802e96d
  
    Ref Indefinite = IREmit->_VCastFromGPR(OpSize::i128Bit, OpSize::i64Bit, IREmit->_Constant(0xC000'0000'0000'0000ULL));
    Indefinite = IREmit->_VInsGPR(OpSize::i128Bit, OpSize::i64Bit, 1, Indefinite, IREmit->_Constant(0xFFFF));
-@@ -1328,6 +1382,12 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -1327,6 +1381,12 @@ void X87StackOptimization::Run(IREmitter* Emit) {
        default: LOGMAN_THROW_A_FMT(false, "IROp was expected to be lowered");
        }
        if (Embedded) {
@@ -641,7 +641,7 @@ index 03b4d967d84e1ebcdae02b288fe8f0b5763406cd..0c6af7f7d742aea6974b2efe1802e96d
          // The embedding host leaves a block in the middle, at a system call,
          // a fault or a TLB miss it cannot satisfy, so commit every pending
          // stack write before the next operation can exit.
-@@ -1346,9 +1406,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -1345,9 +1405,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
    }
  }
  
@@ -654,7 +654,7 @@ index 03b4d967d84e1ebcdae02b288fe8f0b5763406cd..0c6af7f7d742aea6974b2efe1802e96d
  }
  } // namespace FEXCore::IR
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 867ac06e7744ebbad9da98d2a69d86d14df00c80..77bc64099efed28f7195d85a7f3373b93d834773 100644
+index bc937cb33f766a8a14e82c8e54ddbe9679cd5463..10d3172eb0226b5021dc1b4530e20578c1bd0d29 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
 @@ -372,6 +372,15 @@ enum EmbedderExitReason : uint32_t {
@@ -684,7 +684,7 @@ index 867ac06e7744ebbad9da98d2a69d86d14df00c80..77bc64099efed28f7195d85a7f3373b9
  // The x86 operation an EmbedderFPCheck op checks, of the instruction (or
  // 128-bit part of one) whose result it takes.
  enum EmbedderFPKind : uint8_t {
-@@ -681,6 +694,9 @@ struct CpuStateFrame {
+@@ -684,6 +697,9 @@ struct CpuStateFrame {
      // instruction's low part for its high part to settle, which then goes
      // to the helper whatever its values.
      uint32_t FPPending {};

@@ -22,10 +22,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  1 file changed, 36 insertions(+), 3 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-index 2f3c9ab9e6751ecea6685840073f9e3db36b8026..c2ce751b6586d4cdd9eba89c1227b0ca27fbe70c 100644
+index abc3e4ddf518078153deda6117e8b9a264b754f2..3a8b6ee32f68c8b1b2fb956adde02f131092dd5b 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-@@ -1064,13 +1064,40 @@ void OpDispatchBuilder::X87FXAM(OpcodeArgs) {
+@@ -1129,13 +1129,40 @@ void OpDispatchBuilder::X87FXAM(OpcodeArgs) {
  }
  
  void OpDispatchBuilder::X87FXTRACT(OpcodeArgs) {
@@ -69,7 +69,7 @@ index 2f3c9ab9e6751ecea6685840073f9e3db36b8026..c2ce751b6586d4cdd9eba89c1227b0ca
      Full = _StackValidTag(7);
      Mask = _VDupFromGPR(OpSize::i128Bit, OpSize::i64Bit, _Sub(OpSize::i64Bit, Constant(0), Full));
      Top = _VBSL(OpSize::i128Bit, Mask, LoadAndCacheNamedVectorConstant(OpSize::i128Bit, NamedVectorConstant::NAMED_VECTOR_X87_ONE), Top);
-@@ -1086,6 +1113,12 @@ void OpDispatchBuilder::X87FXTRACT(OpcodeArgs) {
+@@ -1151,6 +1178,12 @@ void OpDispatchBuilder::X87FXTRACT(OpcodeArgs) {
    }
    _PushStack(Exp, Invalid(), OpSize::iInvalid);
    _PushStack(Sig, Invalid(), OpSize::iInvalid);

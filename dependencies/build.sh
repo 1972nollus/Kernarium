@@ -25,8 +25,8 @@ glib|2.90.1
 gvdb|2b42fc7
 libslirp|4.9.7
 libvncserver|0.9.15
-fex|FEX-2608
-fmt|12.2.0
+fex|FEX-2610
+fmt|12.2.1
 xxhash|0.8.3
 unordered-dense|4.8.1'
 
@@ -441,12 +441,12 @@ cmake_setup "$SOURCES/libvncserver" "$BUILDS/libvncserver" \
 	-DWITH_SASL=OFF -DWITH_XCB=OFF -DWITH_QT=OFF
 cmake_build_install "$BUILDS/libvncserver"
 
-printf '%s\n' "building Berkeley SoftFloat 3e and 128-bit Cephes from FEX FEX-2608"
+printf '%s\n' "building Berkeley SoftFloat 3e and 128-bit Cephes from FEX FEX-2610"
 cmake_setup "$ROOT_DIR/dependencies/softfloat" "$BUILDS/softfloat" \
 	-DUML_FEX_SOURCE_DIR="$SOURCES/fex"
 cmake_build_install "$BUILDS/softfloat"
 
-printf '%s\n' "building FEXCore FEX-2608 with fmt 12.2.0 and xxHash 0.8.3"
+printf '%s\n' "building FEXCore FEX-2610 with fmt 12.2.1 and xxHash 0.8.3"
 # FEX builds fmt, xxHash, and unordered_dense as its own submodules, which the
 # verified rows fill in. Only FEXCore and those libraries are built: the
 # shared library, frontends, and install rules stay out of the prefix.
@@ -459,7 +459,7 @@ for submodule in fmt:fmt xxhash:xxhash unordered-dense:unordered_dense; do
 done
 cmake_setup "$SOURCES/fex" "$BUILDS/fex" \
 	-DFEXCORE_EMBEDDED=ON \
-	-DOVERRIDE_VERSION=FEX-2608 \
+	-DOVERRIDE_VERSION=FEX-2610 \
 	-DOVERRIDE_HASH="$FEX_COMMIT" \
 	-DPython_EXECUTABLE="$PYTHON" \
 	-DTUNE_CPU=none -DTUNE_ARCH=generic \
