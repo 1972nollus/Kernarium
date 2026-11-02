@@ -32,7 +32,6 @@ from release_common import (  # noqa: E402
     fail,
     parse_env,
     read_routes,
-    resolve_zstd,
     tracked_identity,
     verify_disk_boot_payloads,
     verify_kernel_config,
@@ -191,16 +190,19 @@ def main() -> None:
     )
     parser.add_argument("--target-files", type=Path, required=True)
     parser.add_argument(
-        "--disk",
+        "--disk-dir",
         type=Path,
         required=True,
-        help="the raw GPT disk; with --signing-keys, the new signed disk to create",
+        help=(
+            "the directory assemble-image.sh filled with system.img and "
+            "partition-layout.json; with --signing-keys, the new directory the "
+            "signed system disk is assembled into"
+        ),
     )
     parser.add_argument("--darwin-sdk", type=Path, required=True)
     parser.add_argument("--clang", type=Path, required=True)
     parser.add_argument("--linker", type=Path, required=True)
     parser.add_argument("--vintf-checker", type=Path, required=True)
-    parser.add_argument("--zstd", type=Path, required=True)
     parser.add_argument("--release-root", type=Path, required=True)
     parser.add_argument("--release-id", required=True)
     parser.add_argument(
@@ -209,7 +211,7 @@ def main() -> None:
         help=(
             "private key directory (mode 0700) to sign the target files with; "
             "--target-files is then the unsigned archive and the signed disk "
-            "is assembled at --disk. The directory is copied to a private "
+            "is assembled into --disk-dir. The directory is copied to a private "
             "temporary directory that is deleted, and checked deleted, "
             "afterwards"
         ),
@@ -241,14 +243,14 @@ def main() -> None:
     target_files = regular_file(args.target_files, "target-files archive")
     signing_result: tuple[int, list[str], dict[str, str]] | None = None
     if args.signing_keys is None:
-        disk = regular_file(args.disk, "raw GPT disk")
+        disk_dir = regular_directory(args.disk_dir, "system disk directory")
         for option in ("mkbootfs", "mkbootimg", "first_boot_artifacts"):
             if getattr(args, option) is not None:
                 fail(f"--{option.replace('_', '-')} is only used with --signing-keys")
     else:
-        disk = absolute_path(args.disk, "signed disk output")
-        if disk.exists() or disk.is_symlink():
-            fail("the signed disk output already exists")
+        disk_dir = absolute_path(args.disk_dir, "signed system disk directory")
+        if disk_dir.exists() or disk_dir.is_symlink():
+            fail("the signed system disk directory already exists")
         signing_keys = absolute_path(args.signing_keys, "signing key directory")
         for private_area, label in ((outer_root, "outer project"), (release_root, "release root"), (aosp_source, "AOSP source")):
             if signing_keys == private_area or private_area in signing_keys.parents:
@@ -268,7 +270,6 @@ def main() -> None:
     clang = executable_tool(args.clang, "pinned Clang")
     linker = executable_tool(args.linker, "pinned linker")
     vintf_checker = regular_file(args.vintf_checker, "VINTF checker", executable=True)
-    zstd = resolve_zstd(args.zstd)
 
     directory_name = DIRECTORY_PREFIX + args.release_id
     destination = release_root / directory_name
@@ -342,7 +343,7 @@ def main() -> None:
             "--kernel-artifact", str(kernel_artifact),
             "--mkbootfs", str(mkbootfs),
             "--mkbootimg", str(mkbootimg),
-            "--output", str(disk),
+            "--output-dir", str(disk_dir),
         ])
         target_files = signed_archive
     run([
@@ -359,20 +360,22 @@ def main() -> None:
     vintf_env = os.environ.copy()
     vintf_env["PATH"] = f"{vintf_checker.parent}:/usr/bin:/bin"
     run([str(vintf_checker), str(target_files)], env=vintf_env)
+    disk = regular_file(disk_dir / "system.img", "system disk")
+    disk_layout = regular_file(
+        disk_dir / "partition-layout.json", "system disk partition layout"
+    )
     run([
         str(android_root / "tools/ubd-disk.py"),
         "verify",
         "--layout",
-        str(android_root / "support/image/partition-layout.json"),
+        str(disk_layout),
         "--disk",
         str(disk),
+        "--hash",
+        "--policy",
+        str(android_root / "support/image/disk-policy.json"),
     ])
-    verify_disk_boot_payloads(
-        disk,
-        android_root / "support/image/partition-layout.json",
-        android_root,
-        structural=False,
-    )
+    verify_disk_boot_payloads(disk, disk_layout, android_root, structural=False)
 
     java_candidates = (
         aosp_source / "prebuilts/jdk/jdk21/linux-x86/bin/java",
@@ -407,6 +410,26 @@ def main() -> None:
             ("ro.board.api_level", "ro.vendor.api_level"),
             "vendor API level",
         ))
+        # The build number is the release's monotonic position: the host
+        # compares it to refuse a downgrade of a writable disk, so a release
+        # needs a numeric one (build-aosp.sh --build-number), not the eng
+        # fallback the build system uses when none is given.
+        build_number_text = property_value(
+            system_properties,
+            ("ro.build.version.incremental", "ro.system.build.version.incremental"),
+            "build number",
+        )
+        if re.fullmatch(r"[1-9][0-9]{0,9}", build_number_text) is None:
+            fail(
+                "the build's ro.build.version.incremental is not a release "
+                f"build number: {build_number_text}"
+            )
+        build_number = int(build_number_text)
+        security_patch = property_value(
+            system_properties,
+            ("ro.build.version.security_patch", "ro.system.build.version.security_patch"),
+            "security patch level",
+        )
 
         temporary_parent = Path(tempfile.mkdtemp(
             prefix=f".{directory_name}.", dir=release_root
@@ -426,10 +449,7 @@ def main() -> None:
                 android_root / "support/boot/kernel-command-line.txt",
                 staging / "boot/kernel-command-line.txt",
             )
-            copy_regular(
-                android_root / "support/image/partition-layout.json",
-                staging / "guest/partition-layout.json",
-            )
+            copy_regular(disk_layout, staging / "guest/partition-layout.json")
             extract_small(archive, "VENDOR/etc/fstab.uml", staging / "support/fstab.uml")
             extract_small(
                 archive,
@@ -442,17 +462,7 @@ def main() -> None:
                 staging / "support/compatibility-matrix.xml",
             )
 
-            disk_archive = staging / "guest/android-17-uml-arm64.img.zst"
-            run([
-                str(zstd),
-                "-T0",
-                "-19",
-                "--check",
-                "--no-progress",
-                str(disk),
-                "-o",
-                str(disk_archive),
-            ])
+            copy_regular(disk, staging / "guest/system.img")
 
             resolved_manifest = run(
                 ["repo", "manifest", "-r"], cwd=aosp_source, capture=True
@@ -485,10 +495,11 @@ def main() -> None:
                 ("abi_fingerprint", kernel["abi_fingerprint"]),
                 ("android_product", aosp_metadata["LINEAGE24_PRODUCT"]),
                 ("android_build_id", build_id),
+                ("android_build_number", build_number),
                 ("source_role_android", "pinned Repo workspace"),
                 ("source_role_kernel", "replayed mainline 6.18 worktree"),
                 ("input_role_kernel", "verified standalone Android UML build"),
-                ("input_role_disk", "verified fixed-layout UBD image"),
+                ("input_role_disk", "verified read-only system disk"),
             ]
             if signing_result is not None:
                 signed_count, left_presigned, certificate_digests = signing_result
@@ -504,7 +515,7 @@ def main() -> None:
             write_receipt(staging / "provenance/build-receipt.tsv", receipt_rows)
 
             manifest = {
-                "schema_version": 5,
+                "schema_version": 6,
                 "release_id": args.release_id,
                 "directory_name": directory_name,
                 "product_family": PRODUCT_FAMILY,
@@ -516,6 +527,8 @@ def main() -> None:
                     "major": int(aosp_metadata["LINEAGE24_ANDROID_MAJOR"]),
                     "sdk": sdk,
                     "build_id": build_id,
+                    "build_number": build_number,
+                    "security_patch": security_patch,
                     "build_variant": aosp_metadata["LINEAGE24_BUILD_VARIANT"],
                     "fingerprint": fingerprint,
                     "vendor_api_level": vendor_api_level,
@@ -539,12 +552,11 @@ def main() -> None:
                         "verified AOSP target files",
                         "verified partition-backed UML initramfs",
                         "verified kernel-less LineageOS recovery partition",
-                        "verified fixed-layout UBD disk",
+                        "verified exact-fit read-only system disk",
                         "explicit Darwin SDK",
                         "explicit pinned Clang",
                         "explicit pinned linker",
                         "explicit AOSP VINTF checker",
-                        "explicit AOSP zstd",
                         *(
                             ["signed with a private release key set"]
                             if signing_result is not None
@@ -578,7 +590,7 @@ def main() -> None:
                 json.dumps(manifest, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-            verify_release(staging, android_root, zstd=zstd)
+            verify_release(staging, android_root)
             os.replace(staging, destination)
             temporary_parent.rmdir()
         except BaseException:

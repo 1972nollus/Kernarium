@@ -121,6 +121,8 @@ def main() -> None:
             "major": 17,
             "sdk": 37,
             "build_id": "FIXTURE",
+            "build_number": 7,
+            "security_patch": "2026-10-05",
             "build_variant": aosp["LINEAGE24_BUILD_VARIANT"],
             "fingerprint": "fixture/fingerprint",
             "vendor_api_level": 202704,
@@ -321,6 +323,30 @@ def main() -> None:
             expect_failure(
                 lambda: verify_release(release_root, android_root, semantic=False),
                 label,
+            )
+        for key, value, label in (
+            ("build_number", 0, "a zero build number"),
+            ("build_number", "7", "a textual build number"),
+            ("build_number", True, "a boolean build number"),
+            ("build_number", 10_000_000_000, "an oversized build number"),
+            ("security_patch", "2026-13-01", "an impossible security patch date"),
+            ("security_patch", "20261005", "a security patch without separators"),
+            ("security_patch", "", "an empty security patch"),
+        ):
+            manifest = copy.deepcopy(original)
+            manifest["android"][key] = value
+            manifest_path.write_text(json.dumps(manifest))
+            expect_failure(
+                lambda: verify_release(release_root, android_root, semantic=False),
+                label,
+            )
+        for key in ("build_number", "security_patch"):
+            manifest = copy.deepcopy(original)
+            del manifest["android"][key]
+            manifest_path.write_text(json.dumps(manifest))
+            expect_failure(
+                lambda: verify_release(release_root, android_root, semantic=False),
+                f"a release without {key}",
             )
         manifest = copy.deepcopy(original)
         manifest["source"]["aosp_tag"] = "android-0.0.0_r0"

@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Time cold application launches in one Android guest boot.
 
-The guest boots from a copy-on-write clone of a source disk, so every run
-starts from the same installed and optimized state and the source is never
-written. Each round launches every selected application from cold (force
+The guest boots from a copy-on-write clone of a source instance's data disk,
+so every run starts from the same installed and optimized state and the source
+is never written. Each round launches every selected application from cold (force
 stopped, after an idle interval) and times it from the activity manager's
 START line to the first logcat line matching the application's completion
 pattern, both by the guest's own logcat timestamps. The patterns live in android_launch_apps.tsv; pick one
@@ -211,7 +211,7 @@ class Guest:
                    "--vnc-port", str(arguments.vnc_port),
                    "--emulator", str(arguments.emulator),
                    "--release", str(arguments.release),
-                   "--disk", str(arguments.work_disk),
+                   "--instance", str(arguments.work_instance),
                    "--adb-port", str(arguments.adb_port),
                    "--adb-timeout", "900",
                    "--cpus", str(arguments.cpus),
@@ -407,26 +407,30 @@ def run(arguments: argparse.Namespace) -> int:
         environment[key] = value
     if arguments.guest_samples:
         environment["DARWIN_UML_GUEST_SAMPLES"] = arguments.guest_samples
-    # The launcher re-creates a disk whose release identity differs, which
-    # would silently measure a fresh install.
+    # The launcher updates an instance whose recorded release differs, which
+    # would silently measure an updated install.
     identity = json.loads((arguments.release / "release-manifest.json")
                           .read_text())["release_id"]
-    release_id = arguments.source_disk.with_name(
-        arguments.source_disk.name + ".release-id")
-    if not release_id.exists() or release_id.read_text().strip() != identity:
-        print(f"{release_id} does not name release {identity}",
-              file=sys.stderr)
+    recorded = json.loads(
+        (arguments.source_instance / "instance.json").read_text())
+    if recorded["release_id"] != identity or recorded["pending_update"]:
+        print(f"{arguments.source_instance} does not name release {identity} "
+              "as a settled start", file=sys.stderr)
         return 1
     # A clone shares the source's blocks until the guest writes, so each run
     # starts from the source's state without copying it.
-    work = arguments.work_disk
-    staging = work.with_name(work.name + ".new")
-    subprocess.run(["cp", "-c", str(arguments.source_disk), str(staging)],
-                   check=True, stdin=subprocess.DEVNULL)
+    work = arguments.work_instance
+    work.mkdir(parents=True, exist_ok=True)
+    for stale in [*work.glob("data.img*"), work / "instance.json"]:
+        stale.unlink(missing_ok=True)
+    staging = work / "data.img.new"
+    subprocess.run(["cp", "-c", str(arguments.source_instance / "data.img"),
+                    str(staging)], check=True, stdin=subprocess.DEVNULL)
     # The source may be read-only to stay unchanged; the guest writes its clone.
     staging.chmod(staging.stat().st_mode | 0o200)
-    staging.replace(work)
-    shutil.copyfile(release_id, work.with_name(work.name + ".release-id"))
+    staging.replace(work / "data.img")
+    shutil.copyfile(arguments.source_instance / "instance.json",
+                    work / "instance.json")
 
     guest = Guest(arguments, environment)
     boot_started = time.monotonic()
@@ -475,8 +479,12 @@ def main() -> int:
                         help="print the medians of these record files and exit")
     parser.add_argument("--emulator", type=pathlib.Path)
     parser.add_argument("--release", type=pathlib.Path)
-    parser.add_argument("--source-disk", type=pathlib.Path)
-    parser.add_argument("--work-disk", type=pathlib.Path)
+    parser.add_argument("--source-instance", type=pathlib.Path,
+                        help="a prepared instance directory (data.img and "
+                             "instance.json) that is never written")
+    parser.add_argument("--work-instance", type=pathlib.Path,
+                        help="the instance directory this run boots, "
+                             "recreated from the source")
     parser.add_argument("--adb-port", type=int, default=5601)
     parser.add_argument("--apps", default="settings,3dmark,ab2")
     parser.add_argument("--launches", type=int, default=2)
@@ -502,12 +510,12 @@ def main() -> int:
                    for line in path.read_text().splitlines() if line]
         print(json.dumps(summarize(records), indent=2))
         return 0
-    for required in ("emulator", "release", "source_disk", "work_disk",
+    for required in ("emulator", "release", "source_instance", "work_instance",
                      "output"):
         if getattr(arguments, required) is None:
             parser.error(f"--{required.replace('_', '-')} is required")
-    if arguments.work_disk.resolve() == arguments.source_disk.resolve():
-        parser.error("--work-disk must differ from --source-disk")
+    if arguments.work_instance.resolve() == arguments.source_instance.resolve():
+        parser.error("--work-instance must differ from --source-instance")
     if arguments.console is None:
         arguments.console = arguments.output.with_suffix(".console.log")
     return run(arguments)

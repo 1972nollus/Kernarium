@@ -181,7 +181,7 @@ def test_default_cpus(suite) -> None:
     with tempfile.TemporaryDirectory() as directory:
         output = pathlib.Path(directory) / "launches.jsonl"
         arguments = [str(SUITE), "--emulator", "emulator", "--release",
-                     "release", "--source-disk", "source", "--work-disk",
+                     "release", "--source-instance", "source", "--work-instance",
                      "work", "--output", str(output)]
         seen = []
         with mock.patch.object(sys, "argv", arguments), \

@@ -13,7 +13,6 @@ MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
 FDROID_SOURCE_TOOL="$ANDROID_ROOT/tools/fdroid_source.py"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 FIRST_BOOT_TOOL="$ANDROID_ROOT/tools/precompile-first-boot-apps.py"
-PARTITION_LAYOUT="$ANDROID_ROOT/support/image/partition-layout.json"
 OUTER_ROOT=$(CDPATH= cd -- "$ANDROID_ROOT/../.." && pwd)
 KERNEL_COMMON_ROOT="$OUTER_ROOT/kernel/common"
 KERNEL_ARTIFACT_VERIFIER="$KERNEL_COMMON_ROOT/artifacts/verify-kernel-artifact.py"
@@ -22,6 +21,7 @@ AOSP_SOURCE=
 OUT_DIR=
 KERNEL_ARTIFACT=
 JOBS=
+BUILD_NUMBER_VALUE=
 
 # shellcheck disable=SC1090
 source "$SCRIPT_DIR/common.sh"
@@ -32,7 +32,7 @@ usage()
 Usage: android/lineage-24/build/build-aosp.sh \
        --aosp-source ABSOLUTE_PATH \
        --out ABSOLUTE_PATH \
-       --kernel-artifact ABSOLUTE_PATH [--jobs N]
+       --kernel-artifact ABSOLUTE_PATH [--jobs N] [--build-number N]
 
 Run locally on the x86_64 Linux builder after applying the routed AOSP patch
 series. The kernel is a published Android kernel artifact of the tracked
@@ -42,26 +42,13 @@ workspace; the pinned Android 17 Soong tree rejects generated host-tool paths
 from an external absolute OUT_DIR. Reusing the same output path lets the
 Android build system select and preserve its compatible incremental state; a
 missing output path is initialized automatically.
+
+--build-number sets Android's BUILD_NUMBER, which becomes the build's
+ro.build.version.incremental and the number of its fingerprint. A release
+carries its own number: it is how a data partition tells a newer system from
+an older one, so numbers rise from release to release. A build without one
+keeps AOSP's eng.<user> and cannot be published.
 EOF
-}
-
-partition_size_from_layout()
-{
-	python3 -B - "$PARTITION_LAYOUT" "$1" <<'PY'
-import json
-import sys
-
-layout_path, partition_name = sys.argv[1:]
-with open(layout_path, encoding="utf-8") as source:
-    layout = json.load(source)
-matches = [
-    partition for partition in layout.get("partitions", [])
-    if partition.get("name") == partition_name
-]
-if len(matches) != 1 or not isinstance(matches[0].get("size_bytes"), int):
-    raise SystemExit(f"invalid partition size in {layout_path}: {partition_name}")
-print(matches[0]["size_bytes"])
-PY
 }
 
 verify_dexpreopt_config()
@@ -116,6 +103,11 @@ while [[ $# -gt 0 ]]; do
 		JOBS=$2
 		shift 2
 		;;
+	--build-number)
+		[[ $# -ge 2 ]] || fail "--build-number requires a positive integer"
+		BUILD_NUMBER_VALUE=$2
+		shift 2
+		;;
 	-h|--help)
 		usage
 		exit 0
@@ -140,7 +132,10 @@ command -v python3 >/dev/null 2>&1 || fail "python3 is not available on PATH"
 KERNEL_ELF="$KERNEL_ARTIFACT/kernel/vmlinux"
 KERNEL_CONFIG="$KERNEL_ARTIFACT/kernel/config"
 KERNEL_RELEASE_FILE="$KERNEL_ARTIFACT/kernel/kernel.release"
-[[ -f "$PARTITION_LAYOUT" ]] || fail "fixed UBD partition layout is missing"
+if [[ -n "$BUILD_NUMBER_VALUE" ]]; then
+	[[ "$BUILD_NUMBER_VALUE" =~ ^[1-9][0-9]{0,9}$ ]] ||
+		fail "the build number must be a positive integer of at most ten digits"
+fi
 case "$OUT_DIR" in
 "$AOSP_SOURCE"/*) ;;
 *) fail "output directory must be inside the AOSP workspace for this source tag" ;;
@@ -183,6 +178,9 @@ OUT_DIR_ABSOLUTE=$OUT_DIR
 OUT_DIR=${OUT_DIR#"$AOSP_SOURCE"/}
 export OUT_DIR
 export SOONG_NINJA=ninja
+if [[ -n "$BUILD_NUMBER_VALUE" ]]; then
+	export BUILD_NUMBER=$BUILD_NUMBER_VALUE
+fi
 # Do not force a Soong analysis mode here. The pinned build environment owns
 # that choice, and changing modes on a populated OUT_DIR invalidates otherwise
 # reusable intermediates.
@@ -297,21 +295,22 @@ for variable in \
 done
 [[ "$(get_build_var TARGET_SKIP_OTA_PACKAGE)" == true ]] ||
 	fail "TARGET_SKIP_OTA_PACKAGE must be true for the fixed UBD product"
-while read -r variable partition; do
-	expected_size=$(partition_size_from_layout "$partition")
-	[[ "$(get_build_var "$variable")" == "$expected_size" ]] ||
-		fail "$variable does not match the fixed UBD layout"
-done <<'EOF'
-BOARD_SYSTEMIMAGE_PARTITION_SIZE system
-BOARD_SYSTEM_EXTIMAGE_PARTITION_SIZE system_ext
-BOARD_PRODUCTIMAGE_PARTITION_SIZE product
-BOARD_VENDORIMAGE_PARTITION_SIZE vendor
-BOARD_ODMIMAGE_PARTITION_SIZE odm
-BOARD_METADATAIMAGE_PARTITION_SIZE metadata
-BOARD_USERDATAIMAGE_PARTITION_SIZE userdata
-BOARD_INIT_BOOT_IMAGE_PARTITION_SIZE init_boot
-BOARD_RECOVERYIMAGE_PARTITION_SIZE recovery
-EOF
+# The board file's partition sizes are the image builder's limits: it refuses a
+# larger image. The release packs each image at its own size, so they are
+# ceilings and not a layout.
+for variable in \
+	BOARD_SYSTEMIMAGE_PARTITION_SIZE \
+	BOARD_SYSTEM_EXTIMAGE_PARTITION_SIZE \
+	BOARD_PRODUCTIMAGE_PARTITION_SIZE \
+	BOARD_VENDORIMAGE_PARTITION_SIZE \
+	BOARD_ODMIMAGE_PARTITION_SIZE \
+	BOARD_METADATAIMAGE_PARTITION_SIZE \
+	BOARD_USERDATAIMAGE_PARTITION_SIZE \
+	BOARD_INIT_BOOT_IMAGE_PARTITION_SIZE \
+	BOARD_RECOVERYIMAGE_PARTITION_SIZE; do
+	[[ "$(get_build_var "$variable")" =~ ^[1-9][0-9]*$ ]] ||
+		fail "$variable must state the image builder's size limit"
+done
 [[ "$(get_build_var TARGET_NO_RECOVERY)" == false ]] ||
 	fail "TARGET_NO_RECOVERY must be false for the recovery partition"
 [[ "$(get_build_var PRODUCT_BUILD_RECOVERY_IMAGE)" == true ]] ||
@@ -581,9 +580,9 @@ if ! cmp -s -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"; then
 	install -m 0755 -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"
 fi
 
-# publish-release.py consumes the packaged VINTF checker and the AOSP zstd from
-# this output, and signs with sign_target_files_apks and the tools it runs, so
-# a fresh output builds those host tools.
+# publish-release.py consumes the packaged VINTF checker from this output, and
+# signs with sign_target_files_apks and the tools it runs, so a fresh output
+# builds those host tools.
 # First boot compiles nothing. Soong preopts the applications it installs but
 # never one inside an APEX, and the presigned F-Droid prebuilts opt out, so
 # ART Service would compile them on every fresh /data. After a first pass, the
@@ -595,7 +594,7 @@ FIRST_BOOT_OAT=$OUT_DIR/first-boot-oat
 if [[ -f "$FIRST_BOOT_OAT/first-boot-oat.mk" ]]; then
 	export LINEAGE24_FIRST_BOOT_OAT_MK=$FIRST_BOOT_OAT/first-boot-oat.mk
 fi
-m -j"$JOBS" target-files-package check_target_files_vintf zstd \
+m -j"$JOBS" target-files-package check_target_files_vintf \
 	sign_target_files_apks otatools
 rm -rf -- "$FIRST_BOOT_OAT.new"
 python3 -B "$FIRST_BOOT_TOOL" build --aosp-source "$AOSP_SOURCE" --out-dir "$OUT_DIR" \
@@ -623,8 +622,6 @@ HOST_BIN="$OUT_DIR_ABSOLUTE/host/linux-x86/bin"
 VINTF_CHECKER="$HOST_BIN/check_target_files_vintf"
 [[ -x "$VINTF_CHECKER" ]] || fail "packaged VINTF checker is missing: $VINTF_CHECKER"
 PATH="$HOST_BIN:/usr/bin:/bin" "$VINTF_CHECKER" "$TARGET_FILES"
-[[ -f "$HOST_BIN/zstd" && -x "$HOST_BIN/zstd" ]] ||
-	fail "AOSP zstd is missing: $HOST_BIN/zstd"
 [[ -e "$HOST_BIN/sign_target_files_apks" ]] ||
 	fail "AOSP release signing tool is missing: $HOST_BIN/sign_target_files_apks"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
