@@ -14,10 +14,10 @@ stack slot now follow the operand size.
  1 file changed, 16 insertions(+), 6 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index b404eaa73ebf5f4c1cae28ca0cd9e16f52cc272b..fe1fc28c79c9eabb58a8c40630f4f6630dedf8f6 100644
+index 1b7012d3512636513bb0d52844000bc64ffb251b..1277c674bbabfef573dcd5ddc47254e8f2448a22 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -1016,7 +1016,17 @@ void OpDispatchBuilder::JUMPAbsoluteOp(OpcodeArgs) {
+@@ -978,7 +978,17 @@ void OpDispatchBuilder::JUMPAbsoluteOp(OpcodeArgs) {
    ExitFunction(RIPOffset);
  }
  
@@ -35,7 +35,7 @@ index b404eaa73ebf5f4c1cae28ca0cd9e16f52cc272b..fe1fc28c79c9eabb58a8c40630f4f663
    // Calculate flags early.
    CalculateDeferredFlags();
  
-@@ -1025,8 +1035,8 @@ void OpDispatchBuilder::JUMPFARIndirectOp(OpcodeArgs) {
+@@ -987,8 +997,8 @@ void OpDispatchBuilder::JUMPFARIndirectOp(OpcodeArgs) {
    // This uses ModRM to determine its location
    // No way to use this effectively in multiblock
    Ref Src = MakeSegmentAddress(Op, Op->Dest);
@@ -46,7 +46,7 @@ index b404eaa73ebf5f4c1cae28ca0cd9e16f52cc272b..fe1fc28c79c9eabb58a8c40630f4f663
    auto NewSegmentCS = _LoadMemGPRAutoTSO(OpSize::i16Bit, SrcCS, OpSize::i8Bit);
  
    // Set up the new CSSegment.
-@@ -1038,7 +1048,7 @@ void OpDispatchBuilder::JUMPFARIndirectOp(OpcodeArgs) {
+@@ -1000,7 +1010,7 @@ void OpDispatchBuilder::JUMPFARIndirectOp(OpcodeArgs) {
  }
  
  void OpDispatchBuilder::CALLFARIndirectOp(OpcodeArgs) {
@@ -55,7 +55,7 @@ index b404eaa73ebf5f4c1cae28ca0cd9e16f52cc272b..fe1fc28c79c9eabb58a8c40630f4f663
  
    // Calculate flags early.
    CalculateDeferredFlags();
-@@ -1046,8 +1056,8 @@ void OpDispatchBuilder::CALLFARIndirectOp(OpcodeArgs) {
+@@ -1008,8 +1018,8 @@ void OpDispatchBuilder::CALLFARIndirectOp(OpcodeArgs) {
    BlockSetRIP = true;
  
    Ref Src = MakeSegmentAddress(Op, Op->Dest);
@@ -66,7 +66,7 @@ index b404eaa73ebf5f4c1cae28ca0cd9e16f52cc272b..fe1fc28c79c9eabb58a8c40630f4f663
    auto NewSegmentCS = _LoadMemGPRAutoTSO(OpSize::i16Bit, SrcCS, OpSize::i8Bit);
    auto CurrentCS = _LoadContextGPR(OpSize::i16Bit, offsetof(FEXCore::Core::CPUState, cs_idx));
  
-@@ -1081,7 +1091,7 @@ void OpDispatchBuilder::CALLFARIndirectOp(OpcodeArgs) {
+@@ -1043,7 +1053,7 @@ void OpDispatchBuilder::CALLFARIndirectOp(OpcodeArgs) {
  
  void OpDispatchBuilder::RETFARIndirectOp(OpcodeArgs) {
    const auto GPRSize = GetGPROpSize();

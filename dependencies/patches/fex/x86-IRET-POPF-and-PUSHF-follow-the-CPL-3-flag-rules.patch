@@ -15,10 +15,10 @@ SetPackedRFLAG takes the mask of the flags it writes.
  3 files changed, 23 insertions(+), 12 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 7f2fa97525301235e9f37524e4abae1370dec08c..0553d64745452cae5240bf51a49c59e371b0ebfc 100644
+index 23c3ee633c185950797b74e67bf18fa01e2e2911..cec1bb54a6080874b1491e01bad5cdca83f9adb8 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -223,8 +223,9 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
+@@ -176,8 +176,9 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
    _StoreContextGPR(OpSize::i16Bit, NewSegmentCS, offsetof(FEXCore::Core::CPUState, cs_idx));
    UpdatePrefixFromSegment(NewSegmentCS, FEXCore::X86Tables::DecodeFlags::FLAG_CS_PREFIX);
  
@@ -30,7 +30,7 @@ index 7f2fa97525301235e9f37524e4abae1370dec08c..0553d64745452cae5240bf51a49c59e3
  
    if (Is64BitMode) {
      // RSP and SS only happen in 64-bit mode or if this is a CPL mode jump!
-@@ -3775,20 +3776,19 @@ void OpDispatchBuilder::BSWAPOp(OpcodeArgs) {
+@@ -3786,20 +3787,19 @@ void OpDispatchBuilder::BSWAPOp(OpcodeArgs) {
  void OpDispatchBuilder::PUSHFOp(OpcodeArgs) {
    const auto Size = OpSizeFromSrc(Op);
  
@@ -59,10 +59,10 @@ index 7f2fa97525301235e9f37524e4abae1370dec08c..0553d64745452cae5240bf51a49c59e3
    auto NewRIP = GetRelocatedPC(Op);
    ExitFunction(NewRIP, BranchHint::CheckTF);
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index ff317b73759503d524f8db0855f22d6a8b48f239..a047fe92dd6fd2eb8bf6822f7f85be24ad4a8e99 100644
+index 67db0c3073103299404a25bca2800c6ce1126a73..bc93b3c63a260e9e39c6addebbf07a4ed1535b8c 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -1123,7 +1123,14 @@ public:
+@@ -1135,7 +1135,14 @@ public:
    void InvalidOp(OpcodeArgs);
    void NoExecOp(OpcodeArgs);
  
@@ -79,7 +79,7 @@ index ff317b73759503d524f8db0855f22d6a8b48f239..a047fe92dd6fd2eb8bf6822f7f85be24
  
    void SetMultiblock(bool _Multiblock) {
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Flags.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Flags.cpp
-index 82c1a1a6c6360c0b923070f2b994848a3b5660ec..810cd97e90eceaa8d4eabca25a5bf76d200fa298 100644
+index 858e7a4aea2527137a2812f6f41a50bab001d1c9..27f9b667da8c1a582a7e0614ed02cc629e76a4cb 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Flags.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Flags.cpp
 @@ -32,7 +32,8 @@ void OpDispatchBuilder::ZeroPF_AF() {

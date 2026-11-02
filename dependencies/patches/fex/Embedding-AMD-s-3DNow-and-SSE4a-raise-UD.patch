@@ -21,10 +21,10 @@ go with it.
  8 files changed, 52 insertions(+), 40 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index 87cf6ef9f4f83c7a2aec840e0397d38c053e738c..3b4437b8a1197d3871f7db5357c5fa6280f1a8cd 100644
+index 82f17d6c63b73942d3585daba01016c8c9e50f40..f2504e15ee8d30db655a750f39a8870f9ff2b91e 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
-@@ -702,22 +702,7 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+@@ -713,22 +713,7 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
            if (Embedded && !BlockInfo->Is64BitMode) {
              Thread->OpDispatcher->EmbedderSegmentCheck(DecodedInfo);
            }
@@ -48,10 +48,10 @@ index 87cf6ef9f4f83c7a2aec840e0397d38c053e738c..3b4437b8a1197d3871f7db5357c5fa62
              Thread->OpDispatcher->EmbedderFPEndInstruction();
            }
 diff --git a/FEXCore/Source/Interface/Core/Frontend.cpp b/FEXCore/Source/Interface/Core/Frontend.cpp
-index 9b836702582497a1dfcf067d48c933fb18a1100f..b9517213b1e05e4df01cccd17cf6808b83e76687 100644
+index 08d8b838461d4344ba81a92ced6d4c9ad72a0b73..dc86d37df559b785e4c089d4989e662a49427a74 100644
 --- a/FEXCore/Source/Interface/Core/Frontend.cpp
 +++ b/FEXCore/Source/Interface/Core/Frontend.cpp
-@@ -908,6 +908,10 @@ Decoder::DecodedBlockStatus Decoder::DecodeInstructionImpl(uint64_t PC) {
+@@ -900,6 +900,10 @@ Decoder::DecodedBlockStatus Decoder::DecodeInstructionImpl(uint64_t PC) {
        switch (EscapeOp) {
        case 0x0F:
          [[unlikely]] { // 3DNow!
@@ -85,18 +85,18 @@ index b82c6f9136eb66ad761fced628506878028c5040..1b0b6a24cbffeaf0f3f1df5283daf693
    const auto Op = IROp->C<IR::IROp_EmbedderRaiseInexact>();
    LOGMAN_THROW_A_FMT(Embedded(), "EmbedderRaiseInexact outside embedding");
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index c07ed771b1ec32bfc0dcd98f36ef831107db84fa..fd0efbcaa495530a3e71356354ad08bcb5506555 100644
+index 48a59d31f8115a77e2bae8806b6085cf1f812dc9..325e0f10d96a5029e8551761845b7af5b1591de3 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -385,6 +385,7 @@ public:
-   void MOVVectorAlignedOp(OpcodeArgs);
+@@ -387,6 +387,7 @@ public:
    void MOVVectorUnalignedOp(OpcodeArgs);
+   void MOVVectorUnalignedNoNopOp(OpcodeArgs);
    void MOVVectorNTOp(OpcodeArgs, bool IsAVX);
 +  void MOVNTScalarOp(OpcodeArgs);
-   void ALUOp(OpcodeArgs, FEXCore::IR::IROps ALUIROp, FEXCore::IR::IROps AtomicFetchOp, unsigned SrcIdx);
+   void ALURAXOp(OpcodeArgs, FEXCore::IR::IROps ALUIROp);
+   void ALUOp(OpcodeArgs, FEXCore::IR::IROps ALUIROp, FEXCore::IR::IROps AtomicFetchOp, unsigned SrcIdx, bool DestRAX);
    void LSLOp(OpcodeArgs);
-   void INTOp(OpcodeArgs);
-@@ -764,6 +765,7 @@ public:
+@@ -771,6 +772,7 @@ public:
    void FTST(OpcodeArgs);
    void FXCH(OpcodeArgs);
    void X87EMMS(OpcodeArgs);
@@ -136,10 +136,10 @@ index e62278bb5c01ae97de1a10113c955514e570f61e..80c4433cadd2bee0b439d0b33635d6ff
    {0x2D, 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::CVTFPR_To_GPR, OpSize::i64Bit, true>},
    {0x51, 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VectorScalarUnaryInsertALUOp, IR::OP_VFSQRTSCALARINSERT, OpSize::i64Bit>},
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-index e5815c20e052f78ff689f11947d9a293449167d7..b63368a043cbef172b9dfc9f440236d71453b419 100644
+index 2bedab1c85f76025a79d1dd6f90fa9492106e5e6..642d51856b85527db8d53a64269fc9da3cf07dbe 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-@@ -42,6 +42,16 @@ void OpDispatchBuilder::MOVVectorUnalignedOp(OpcodeArgs) {
+@@ -49,6 +49,16 @@ void OpDispatchBuilder::MOVVectorUnalignedNoNopOp(OpcodeArgs) {
    StoreResult_WithAVXInsert(VectorOpType::SSE, RegClass::FPR, Op, Src);
  }
  
@@ -156,7 +156,7 @@ index e5815c20e052f78ff689f11947d9a293449167d7..b63368a043cbef172b9dfc9f440236d7
  void OpDispatchBuilder::MOVVectorNTOp(OpcodeArgs, bool IsAVX) {
    const auto Size = OpSizeFromDst(Op);
  
-@@ -6082,6 +6092,12 @@ void OpDispatchBuilder::VPGATHER(OpcodeArgs, OpSize AddrElementSize) {
+@@ -6379,6 +6389,12 @@ void OpDispatchBuilder::VPGATHER(OpcodeArgs, OpSize AddrElementSize) {
  }
  
  void OpDispatchBuilder::Extrq_imm(OpcodeArgs) {
@@ -169,7 +169,7 @@ index e5815c20e052f78ff689f11947d9a293449167d7..b63368a043cbef172b9dfc9f440236d7
    const uint8_t MaskWidth = Op->Src[1].Literal() & 0x3F;
    const uint8_t Shift = (Op->Src[1].Literal() >> 8) & 0x3F;
  
-@@ -6099,6 +6115,12 @@ void OpDispatchBuilder::Extrq_imm(OpcodeArgs) {
+@@ -6396,6 +6412,12 @@ void OpDispatchBuilder::Extrq_imm(OpcodeArgs) {
  }
  
  void OpDispatchBuilder::Insertq_imm(OpcodeArgs) {
@@ -182,7 +182,7 @@ index e5815c20e052f78ff689f11947d9a293449167d7..b63368a043cbef172b9dfc9f440236d7
    const uint8_t MaskWidth = Op->Src[1].Literal() & 0x3F;
    const uint8_t Shift = (Op->Src[1].Literal() >> 8) & 0x3F;
  
-@@ -6124,6 +6146,12 @@ void OpDispatchBuilder::Insertq_imm(OpcodeArgs) {
+@@ -6421,6 +6443,12 @@ void OpDispatchBuilder::Insertq_imm(OpcodeArgs) {
  }
  
  void OpDispatchBuilder::Extrq(OpcodeArgs) {
@@ -195,7 +195,7 @@ index e5815c20e052f78ff689f11947d9a293449167d7..b63368a043cbef172b9dfc9f440236d7
    Ref Dest = LoadSourceFPR(Op, Op->Dest, Op->Flags);
    Ref Src = LoadSourceFPR(Op, Op->Src[0], Op->Flags);
  
-@@ -6149,6 +6177,12 @@ void OpDispatchBuilder::Extrq(OpcodeArgs) {
+@@ -6446,6 +6474,12 @@ void OpDispatchBuilder::Extrq(OpcodeArgs) {
  }
  
  void OpDispatchBuilder::Insertq(OpcodeArgs) {
@@ -209,10 +209,10 @@ index e5815c20e052f78ff689f11947d9a293449167d7..b63368a043cbef172b9dfc9f440236d7
    Ref Src = LoadSourceFPR(Op, Op->Src[0], Op->Flags);
  
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-index 0dac4a09da280dc274585b4ab84e22a2867471e9..2f3c9ab9e6751ecea6685840073f9e3db36b8026 100644
+index b390921783d25292e80ef454861e104037c769d3..abc3e4ddf518078153deda6117e8b9a264b754f2 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-@@ -966,6 +966,15 @@ void OpDispatchBuilder::X87EMMS(OpcodeArgs) {
+@@ -976,6 +976,15 @@ void OpDispatchBuilder::X87EMMS(OpcodeArgs) {
    _InvalidateStack(0xff);
  }
  
@@ -229,10 +229,10 @@ index 0dac4a09da280dc274585b4ab84e22a2867471e9..2f3c9ab9e6751ecea6685840073f9e3d
    CalculateDeferredFlags();
  
 diff --git a/FEXCore/Source/Interface/IR/IR.json b/FEXCore/Source/Interface/IR/IR.json
-index dce87cf41ef7c61c8cd7b7d386d870c23fe0415b..63ce47782205232dc767bce8012b8c1675eb9344 100644
+index 6e938a737a41feca6f25d6e44eb80bb22b14a840..5c664b079685f49230ce48b4250542cb21b0e840 100644
 --- a/FEXCore/Source/Interface/IR/IR.json
 +++ b/FEXCore/Source/Interface/IR/IR.json
-@@ -729,17 +729,6 @@
+@@ -731,17 +731,6 @@
                  ],
          "HasSideEffects": true
        },

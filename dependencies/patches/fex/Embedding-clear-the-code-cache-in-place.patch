@@ -27,17 +27,35 @@ it dies, and it cannot be copied, which would free them twice.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- FEXCore/Source/Interface/Core/Core.cpp          | 13 +++++++++++++
+ FEXCore/Source/Interface/Core/CPUBackend.h      |  6 ++++++
+ FEXCore/Source/Interface/Core/Core.cpp          | 10 ++++++++++
  FEXCore/Source/Interface/Core/LookupCache.cpp   |  7 +++++--
  FEXCore/include/FEXCore/Core/Context.h          |  3 +++
  FEXCore/include/FEXCore/fextl/memory_resource.h |  9 +++++++++
- 4 files changed, 30 insertions(+), 2 deletions(-)
+ 5 files changed, 33 insertions(+), 2 deletions(-)
 
+diff --git a/FEXCore/Source/Interface/Core/CPUBackend.h b/FEXCore/Source/Interface/Core/CPUBackend.h
+index 0183694cdf13a78f18e3a4e74f36bc760d31468d..5b6540b4140b36c6e5947ad4781810fd783106d1 100644
+--- a/FEXCore/Source/Interface/Core/CPUBackend.h
++++ b/FEXCore/Source/Interface/Core/CPUBackend.h
+@@ -133,6 +133,12 @@ namespace CPU {
+ 
+     bool IsAddressInCodeBuffer(uintptr_t Address) const;
+ 
++    // Rewinds the code buffer so the next block overwrites the code in it. Only correct once nothing
++    // refers to that code, and only for a buffer that no other thread uses.
++    void ResetCodeBuffer() {
++      CurrentCodeBuffer->Reset();
++    }
++
+     // Updates the CodeBuffer if needed and returns a reference to the old one.
+     // The returned reference should be kept alive carefully to avoid early deletion of resources.
+     [[nodiscard]]
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index 3b4437b8a1197d3871f7db5357c5fa6280f1a8cd..e18bac36fab7752f1b78b4c9603e1f370a5c3113 100644
+index f2504e15ee8d30db655a750f39a8870f9ff2b91e..90c386b5a7d19c7e82396aa8b20fb654aedb7670 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
-@@ -509,6 +509,19 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
+@@ -511,6 +511,16 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo
      // Clear L1+L2 cache of this thread, and clear L3 cache across any threads using it
      auto lk = Thread->LookupCache->AcquireWriteLock();
      Thread->LookupCache->ClearCache(lk);
@@ -46,10 +64,7 @@ index 3b4437b8a1197d3871f7db5357c5fa6280f1a8cd..e18bac36fab7752f1b78b4c9603e1f37
 +    // overwrites the old ones instead of leaving them behind until the buffer fills
 +    // and a larger one replaces it. Only this thread may use the buffer, because another
 +    // thread's lookup caches and call stack would still name the code being overwritten.
-+    {
-+      std::scoped_lock CodeLock {CodeBufferWriteMutex};
-+      LatestOffset = 0;
-+    }
++    Thread->CPUBackend->ResetCodeBuffer();
 +
 +    // The decoder remembers the executable range it last asked the host for, and a host
 +    // that tracks which pages hold code has dropped that page with the code.
@@ -78,10 +93,10 @@ index e7af8fa1bf8ed74c72e2ccfe8b66f99e31292c7b..17bbcc9f34297694da0c78825ce54987
  
  } // namespace FEXCore
 diff --git a/FEXCore/include/FEXCore/Core/Context.h b/FEXCore/include/FEXCore/Core/Context.h
-index cad519d27b8f2ee450637072c94e4290d443687a..2e58a206a89b449700152bb1fabe4747b2537a71 100644
+index 56f8dc14af2360c375a806ca7aa5571d0c1b682c..4926d177802683fbaa9189e0382dba6c4f07a291 100644
 --- a/FEXCore/include/FEXCore/Core/Context.h
 +++ b/FEXCore/include/FEXCore/Core/Context.h
-@@ -182,6 +182,9 @@ public:
+@@ -181,6 +181,9 @@ public:
    virtual void SetCodeMapWriter(fextl::unique_ptr<CodeMapWriter>) = 0;
    virtual void FlushAndCloseCodeMap() = 0;
  

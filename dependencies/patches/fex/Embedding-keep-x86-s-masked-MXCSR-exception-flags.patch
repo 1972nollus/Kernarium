@@ -115,11 +115,11 @@ index 504ad81ab1d6f303bccfa53fd01bae0e792a34be..07d29e538d4119f389427305d6871be8
    void fcmp(SRegister rn, SRegister rm) {
      FloatCompare(0, 0, 0b00, 0b00, 0b00000, rn.V(), rm.V());
 diff --git a/FEXCore/Source/Interface/Context/Context.h b/FEXCore/Source/Interface/Context/Context.h
-index 7aecfea40642aa1d5d848fbe6e2401cabf3d8de3..6272c4acdcf99052bc6951e12c0c62394b7e0419 100644
+index 4ee4a22605e3bd17211b13b2d0d789e22dea918c..62b3fc1f168e6549775d267b8c39f9d6e12805a6 100644
 --- a/FEXCore/Source/Interface/Context/Context.h
 +++ b/FEXCore/Source/Interface/Context/Context.h
-@@ -136,6 +136,41 @@ public:
-                             uint32_t RelocationOffset, bool ForStorage);
+@@ -139,6 +139,41 @@ public:
+                                   std::span<const DiskCache::BlobThunkRelocation> ThunkRelocs);
  };
  
 +// Embedded: while a dispatch runs, the host's FPSR holds the guest's MXCSR
@@ -161,10 +161,10 @@ index 7aecfea40642aa1d5d848fbe6e2401cabf3d8de3..6272c4acdcf99052bc6951e12c0c6239
  public:
    // Context base class implementation.
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index 55ffac2af9f477d01b475ebb36fd0f3829e0982e..0c8d792cac0fbe87d8c2e20673302a0c6c97dced 100644
+index 5ec8123ba8e8b284fe3d4664d94f8f89a5e6a3a5..0bf876cff72f1e48073ccb505b44379d5728abe7 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
-@@ -647,7 +647,10 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+@@ -651,7 +651,10 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
          Thread->OpDispatcher->FlushRegisterCache(!Embedded);
  
          if (ExtendedDebugInfo || Embedded || Thread->OpDispatcher->CanHaveSideEffects(TableInfo, DecodedInfo)) {
@@ -176,7 +176,7 @@ index 55ffac2af9f477d01b475ebb36fd0f3829e0982e..0c8d792cac0fbe87d8c2e20673302a0c
          }
  
          if (Config.SMCChecks == FEXCore::Config::CONFIG_SMC_FULL || Block.ForceFullSMCDetection) {
-@@ -694,7 +697,22 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+@@ -705,7 +708,22 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
            }
  
            Thread->OpDispatcher->SetForceTSO(ForceTSO);
@@ -199,7 +199,7 @@ index 55ffac2af9f477d01b475ebb36fd0f3829e0982e..0c8d792cac0fbe87d8c2e20673302a0c
            if (Embedded) {
              Thread->OpDispatcher->EmbedderFPEndInstruction();
            }
-@@ -881,6 +899,7 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
+@@ -898,6 +916,7 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
    }
  
    auto Thread = Frame->Thread;
@@ -207,7 +207,7 @@ index 55ffac2af9f477d01b475ebb36fd0f3829e0982e..0c8d792cac0fbe87d8c2e20673302a0c
    FEXCORE_PROFILE_SCOPED("CompileBlock");
    FEXCORE_PROFILE_ACCUMULATION(Thread, AccumulatedJITTime);
  
-@@ -1013,6 +1032,7 @@ bool ContextImpl::WaitsForX87(const FEXCore::X86Tables::X86InstInfo* TableInfo,
+@@ -1091,6 +1110,7 @@ bool ContextImpl::WaitsForX87(const FEXCore::X86Tables::X86InstInfo* TableInfo,
  uintptr_t ContextImpl::CompileSingleStep(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP) {
    FEXCORE_PROFILE_SCOPED("CompileSingleStep");
    auto Thread = Frame->Thread;
@@ -216,10 +216,10 @@ index 55ffac2af9f477d01b475ebb36fd0f3829e0982e..0c8d792cac0fbe87d8c2e20673302a0c
    static_cast<ContextImpl*>(Thread->CTX)->SyscallHandler->PreCompile();
  
 diff --git a/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp b/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
-index ae25e0c32dcdbffed2f8dc9dc7efee5f66ada212..6db86bdb5eb8442e697b169ab607279a881e29eb 100644
+index 7241f17996d2610ec7d2b46676769cdc996e80c0..b9020c8e59eb2c30bfd50813ee893f76300f0957 100644
 --- a/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
-@@ -1497,7 +1497,11 @@ DEF_OP(FCmp) {
+@@ -1513,7 +1513,11 @@ DEF_OP(FCmp) {
    ARMEmitter::VRegister Scalar1 = GetVReg(Op->Scalar1);
    ARMEmitter::VRegister Scalar2 = GetVReg(Op->Scalar2);
  
@@ -580,10 +580,10 @@ index 2ea8f895a1ec2865e51be398196fa849b380520d..b82c6f9136eb66ad761fced628506878
        EmbedderFPBranchIfAny(VTMP1, Desc.Bytes(), &Site->Entry);
        if (Site->Dst != Site->Result) {
 diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-index 2ce65f5494e90218db816adde6140775bfac1683..b78927c521cd6155528567e9e440a104ebbb2b7c 100644
+index 862cfbf4af6a8c116d6aa083fa94ba00b0724704..bd3480dbb29073c9152ae2e8e549efe1c124f37c 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-@@ -573,6 +573,7 @@ static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record
+@@ -608,6 +608,7 @@ static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record
  uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEXCore::Context::ExitFunctionLinkData* Record) {
    FEXCore::Allocator::ScopedExecutableWrite ExecutableWriteScope;
    auto Thread = Frame->Thread;
@@ -592,10 +592,10 @@ index 2ce65f5494e90218db816adde6140775bfac1683..b78927c521cd6155528567e9e440a104
    uintptr_t HostCode {};
    auto GuestRip = Record->GuestRIP;
 diff --git a/FEXCore/Source/Interface/Core/JIT/JITClass.h b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-index ea9f5c8149cf14b871dfc1bae689fd9e401fa8d0..92b97a260aa1efa5b1d1a7c2ff59b8f1431bbee9 100644
+index 56d14de3b1cf44cac3a2282e403e40dcf0077042..870b4966bd518a275cf2de05c6687915a90b2d2a 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JITClass.h
 +++ b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-@@ -187,9 +187,11 @@ private:
+@@ -192,9 +192,11 @@ private:
    void EmbedderFPEstimate(bool Reciprocal, uint32_t Bytes, ARMEmitter::VRegister Dst, ARMEmitter::VRegister Source,
                            ARMEmitter::VRegister Result, ARMEmitter::ForwardLabel* Cold);
    void EmbedderFPMagnitudeBelow(ARMEmitter::VRegister Mask, ARMEmitter::VRegister Value, uint32_t ElementBytes, uint64_t Threshold);
@@ -610,7 +610,7 @@ index ea9f5c8149cf14b871dfc1bae689fd9e401fa8d0..92b97a260aa1efa5b1d1a7c2ff59b8f1
    void EmbedderFPInputTest(const EmbedderFPSite& Site, uint32_t Kind, uint32_t ElementBytes, uint32_t Bytes, uint32_t Flags, bool Above,
                             ARMEmitter::ForwardLabel* Target);
 diff --git a/FEXCore/Source/Interface/Core/JIT/VectorOps.cpp b/FEXCore/Source/Interface/Core/JIT/VectorOps.cpp
-index d9ad4294c12c51cebacf595f45e17e6a715d5b5f..f310a8de0b085457a25fe3e6fbb4a4de591d3bdb 100644
+index 43e38d8dd7bd1637491dab2e13cdab37f9ddedc3..3054e8d24519f6a415f2f8882219755a5d03c14a 100644
 --- a/FEXCore/Source/Interface/Core/JIT/VectorOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/VectorOps.cpp
 @@ -451,8 +451,9 @@ DEF_OP(VFMinScalarInsert) {
@@ -635,10 +635,10 @@ index d9ad4294c12c51cebacf595f45e17e6a715d5b5f..f310a8de0b085457a25fe3e6fbb4a4de
      }
    };
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index 22e636a64dd4a42cf8295a2787ece0de31e5b316..e9b7ee8be0c18b36ae23e39b4cc9b541262fb9b4 100644
+index 67c6ecd1d41bc76e59acbaf11f854c27506594c6..8dc8dd076a081fbae55afaffaa92a4e00a0e6c1e 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -320,8 +320,15 @@ public:
+@@ -321,8 +321,15 @@ public:
      return NeedsBlockEnd;
    }
  
@@ -655,7 +655,7 @@ index 22e636a64dd4a42cf8295a2787ece0de31e5b316..e9b7ee8be0c18b36ae23e39b4cc9b541
    void EmbedderFPEndInstruction();
  
    void ResetHandledLock() {
-@@ -1453,6 +1460,11 @@ private:
+@@ -1479,6 +1486,11 @@ private:
    void VMOVScalarOpImpl(OpcodeArgs, IR::OpSize ElementSize);
  
    Ref VFCMPOpImpl(OpSize Size, IR::OpSize ElementSize, Ref Src1, Ref Src2, uint8_t CompType);
@@ -667,7 +667,7 @@ index 22e636a64dd4a42cf8295a2787ece0de31e5b316..e9b7ee8be0c18b36ae23e39b4cc9b541
  
    void VTESTOpImpl(OpSize SrcSize, IR::OpSize ElementSize, Ref Src1, Ref Src2);
  
-@@ -1508,9 +1520,12 @@ private:
+@@ -1534,9 +1546,12 @@ private:
    void X87InvalidForNaN(Ref Unordered);
    // Sets ES and B to whether FSW holds a flag FCW unmasks.
    void X87UpdatePending(Ref FSW, Ref FCW);
@@ -683,25 +683,25 @@ index 22e636a64dd4a42cf8295a2787ece0de31e5b316..e9b7ee8be0c18b36ae23e39b4cc9b541
    // Ends an instruction that loads MXCSR: a change of the floating-point
    // mode the context translates for leaves the dispatch.
    void EmbedderFPModeCheck(OpcodeArgs);
-@@ -2204,11 +2219,13 @@ private:
+@@ -2256,11 +2271,13 @@ private:
      return _NZCVSelect(OpSize, Cond, TrueV, FalseV);
    }
  
 -  // Compares two floats and sets flags for a COMISS instruction
--  void Comiss(IR::OpSize ElementSize, Ref Src1, Ref Src2, bool InvalidateAF = false) {
+-  void Comiss(IR::OpSize ElementSize, Ref Src1, Ref Src2) {
 +  // Compares two floats and sets flags for a COMISS instruction, or with
 +  // Quiet for a UCOMISS, which raises invalid operation only for a
 +  // signalling NaN.
-+  void Comiss(IR::OpSize ElementSize, Ref Src1, Ref Src2, bool Quiet, bool InvalidateAF = false) {
++  void Comiss(IR::OpSize ElementSize, Ref Src1, Ref Src2, bool Quiet) {
      // First, set flags according to Arm FCMP.
      HandleNZCVWrite();
 -    _FCmp(ElementSize, Src1, Src2);
 +    _FCmp(ElementSize, Src1, Src2, !Quiet);
      CFInverted = false;
-     ComissFlags(InvalidateAF);
+     ComissFlags();
    }
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp
-index 061e897fbf7cb8be276e9f967212cb21e57a3b2e..f16bda8c97e0f95103abffc60a9ffd8c51594412 100644
+index 93eea423cba31076b59b68c44ae2056d0935a7a9..91e85899dff863dff27fe7c03a9b93f5853d3570 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp
 @@ -676,8 +676,9 @@ void OpDispatchBuilder::AVX128_UCOMISx(OpcodeArgs, IR::OpSize ElementSize) {
@@ -750,10 +750,10 @@ index 061e897fbf7cb8be276e9f967212cb21e57a3b2e..f16bda8c97e0f95103abffc60a9ffd8c
  
    Ref Result = _VFToIScalarInsert(OpSize::i128Bit, ElementSize, Src1.Low, Src2.Low, SourceMode, false);
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293449167d7 100644
+index bb8e1a2083764756e7ddeae72f09c3d920355a40..2bedab1c85f76025a79d1dd6f90fa9492106e5e6 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-@@ -510,6 +510,7 @@ Ref OpDispatchBuilder::InsertScalarRoundImpl(OpcodeArgs, IR::OpSize DstSize, IR:
+@@ -517,6 +517,7 @@ Ref OpDispatchBuilder::InsertScalarRoundImpl(OpcodeArgs, IR::OpSize DstSize, IR:
    Ref Src2 = LoadSourceFPR_WithOpSize(Op, Src2Op, SrcSize, Op->Flags, {.AllowUpperGarbage = true});
  
    EmbedderFPExceptions(Core::EMBEDDER_FP_ROUND, ElementSize, 1, Src2, nullptr, Mode & 0xFF);
@@ -761,7 +761,7 @@ index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293
    const auto SourceMode = TranslateRoundType(Mode);
    auto ALUOp = _VFToIScalarInsert(DstSize, ElementSize, Src1, Src2, SourceMode, ZeroUpperBits);
  
-@@ -631,6 +632,12 @@ void OpDispatchBuilder::InsertScalarFCMPOp(OpcodeArgs, IR::OpSize ElementSize) {
+@@ -638,6 +639,12 @@ void OpDispatchBuilder::InsertScalarFCMPOp(OpcodeArgs, IR::OpSize ElementSize) {
    Ref Src2 = LoadSourceFPR_WithOpSize(Op, Op->Src[0], SrcSize, Op->Flags, {.AllowUpperGarbage = true});
  
    EmbedderFPExceptions(Core::EMBEDDER_FP_CMP, ElementSize, 1, Src1, Src2, CompType);
@@ -774,7 +774,7 @@ index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293
    Ref Result = InsertScalarFCMPOpImpl(DstSize, OpSizeFromDst(Op), ElementSize, Src1, Src2, CompType, false);
  
    // ARM doesn't have any instructions that handle the semantics of NLT and NLE directly.
-@@ -735,10 +742,6 @@ bool OpDispatchBuilder::EmbedderFPChecks(Core::EmbedderFPKind Kind) const {
+@@ -742,10 +749,6 @@ bool OpDispatchBuilder::EmbedderFPChecks(Core::EmbedderFPKind Kind) const {
    }
  }
  
@@ -785,7 +785,7 @@ index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293
  void OpDispatchBuilder::EmbedderFPExceptions(Core::EmbedderFPKind Kind, IR::OpSize ElementSize, uint32_t Lanes, Ref Source1, Ref Source2,
                                               uint32_t Imm, uint32_t Flags) {
    (void)EmbedderFPResult(Source1, Core::EmbedderFPDescriptor(Kind, IR::OpSizeToSize(ElementSize), Lanes, Imm, Flags), Source1, Source2);
-@@ -746,21 +749,46 @@ void OpDispatchBuilder::EmbedderFPExceptions(Core::EmbedderFPKind Kind, IR::OpSi
+@@ -753,21 +756,46 @@ void OpDispatchBuilder::EmbedderFPExceptions(Core::EmbedderFPKind Kind, IR::OpSi
  
  void OpDispatchBuilder::EmbedderFPEndInstruction() {
    // RCP and RSQRT raise nothing.
@@ -838,7 +838,7 @@ index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293
  }
  
  void OpDispatchBuilder::EmbedderFPModeCheck(OpcodeArgs) {
-@@ -804,7 +832,7 @@ Ref OpDispatchBuilder::EmbedderFPResult(Ref Result, uint32_t Descriptor, Ref Sou
+@@ -811,7 +839,7 @@ Ref OpDispatchBuilder::EmbedderFPResult(Ref Result, uint32_t Descriptor, Ref Sou
      return Result;
    }
    auto Check = _EmbedderFPCheck(Result, Source1, Source2 ? Source2 : Source1, Source3 ? Source3 : Source1, Descriptor);
@@ -847,7 +847,7 @@ index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293
    return Check;
  }
  
-@@ -3144,6 +3172,82 @@ Ref OpDispatchBuilder::VFCMPOpImpl(OpSize Size, IR::OpSize ElementSize, Ref Src1
+@@ -3151,6 +3179,82 @@ Ref OpDispatchBuilder::VFCMPOpImpl(OpSize Size, IR::OpSize ElementSize, Ref Src1
    FEX_UNREACHABLE;
  }
  
@@ -930,7 +930,7 @@ index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293
  void OpDispatchBuilder::VFCMPOp(OpcodeArgs, IR::OpSize ElementSize) {
    // No need for zero-extending in the scalar case, since
    // all we need is an insert at the end of the operation.
-@@ -3156,7 +3260,8 @@ void OpDispatchBuilder::VFCMPOp(OpcodeArgs, IR::OpSize ElementSize) {
+@@ -3163,7 +3267,8 @@ void OpDispatchBuilder::VFCMPOp(OpcodeArgs, IR::OpSize ElementSize) {
  
    EmbedderFPExceptions(Core::EMBEDDER_FP_CMP, ElementSize, IR::OpSizeToSize(SrcSize) / IR::OpSizeToSize(ElementSize), Dest, Src,
                         CompType & 0b111);
@@ -940,7 +940,7 @@ index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293
  
    StoreResult_WithAVXInsert(VectorOpType::SSE, RegClass::FPR, Op, Result);
  }
-@@ -3377,6 +3482,11 @@ Ref OpDispatchBuilder::GetMXCSR() {
+@@ -3384,6 +3489,11 @@ Ref OpDispatchBuilder::GetMXCSR() {
    Ref MXCSR = _LoadContextGPR(OpSize::i32Bit, offsetof(FEXCore::Core::CPUState, mxcsr));
    // Mask out unsupported bits
    MXCSR = _And(OpSize::i32Bit, MXCSR, Constant(MXCSRMask()));
@@ -952,7 +952,7 @@ index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293
    return MXCSR;
  }
  
-@@ -3509,6 +3619,10 @@ void OpDispatchBuilder::RestoreMXCSRState(Ref MXCSR) {
+@@ -3528,6 +3638,10 @@ void OpDispatchBuilder::RestoreMXCSRState(Ref MXCSR) {
    MXCSR = _And(OpSize::i32Bit, MXCSR, Constant(MXCSRMask()));
  
    _StoreContextGPR(OpSize::i32Bit, MXCSR, offsetof(FEXCore::Core::CPUState, mxcsr));
@@ -963,7 +963,7 @@ index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293
    // We only support the rounding mode and FTZ bit being set
    Ref RoundingMode = _Bfe(OpSize::i32Bit, 3, 13, MXCSR);
    _SetRoundingMode(RoundingMode, true, MXCSR);
-@@ -3610,8 +3724,9 @@ void OpDispatchBuilder::UCOMISxOp(OpcodeArgs, IR::OpSize ElementSize) {
+@@ -3629,8 +3743,9 @@ void OpDispatchBuilder::UCOMISxOp(OpcodeArgs, IR::OpSize ElementSize) {
    Ref Src2 = LoadSourceFPR_WithOpSize(Op, Op->Src[0], SrcSize, Op->Flags);
  
    // 0F 2E is UCOMIS and 0F 2F COMIS.
@@ -975,7 +975,7 @@ index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293
  }
  
  void OpDispatchBuilder::LDMXCSR(OpcodeArgs) {
-@@ -4297,9 +4412,18 @@ void OpDispatchBuilder::ExtendVectorElements(OpcodeArgs, IR::OpSize ElementSize,
+@@ -4386,9 +4501,18 @@ void OpDispatchBuilder::ExtendVectorElements(OpcodeArgs, IR::OpSize ElementSize,
  }
  
  Ref OpDispatchBuilder::VectorRoundImpl(OpSize Size, IR::OpSize ElementSize, Ref Src, uint64_t Mode) {
@@ -994,7 +994,7 @@ index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293
  void OpDispatchBuilder::VectorRound(OpcodeArgs, IR::OpSize ElementSize) {
    // No need to zero extend the vector in the event we have a
    // scalar source, especially since it's only inserted into another vector.
-@@ -4724,9 +4848,10 @@ Ref OpDispatchBuilder::DPPOpImpl(IR::OpSize DstSize, Ref Src1, Ref Src2, uint8_t
+@@ -4813,9 +4937,10 @@ Ref OpDispatchBuilder::DPPOpImpl(IR::OpSize DstSize, Ref Src1, Ref Src2, uint8_t
    Ref Result = DPPOpImplHost(DstSize, Src1, Src2, Mask, ElementSize);
    // The host broadcasts one sum where x86 sums each lane in its own order,
    // which picks among NaNs differently. With no product or no lane selected,
@@ -1007,7 +1007,7 @@ index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293
      return Result;
    }
    return EmbedderFPResult(Result,
-@@ -4755,7 +4880,7 @@ Ref OpDispatchBuilder::DPPOpImplHost(IR::OpSize DstSize, Ref Src1, Ref Src2, uin
+@@ -4844,7 +4969,7 @@ Ref OpDispatchBuilder::DPPOpImplHost(IR::OpSize DstSize, Ref Src1, Ref Src2, uin
    }();
  
    Ref ZeroVec = LoadZeroVector(DstSize);
@@ -1016,7 +1016,7 @@ index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293
      // What are you even doing here? Go away.
      return ZeroVec;
    }
-@@ -4792,6 +4917,11 @@ Ref OpDispatchBuilder::DPPOpImplHost(IR::OpSize DstSize, Ref Src1, Ref Src2, uin
+@@ -4881,6 +5006,11 @@ Ref OpDispatchBuilder::DPPOpImplHost(IR::OpSize DstSize, Ref Src1, Ref Src2, uin
  
    // Now due a float reduction
    Temp = _VFAddV(DstSize, ElementSize, Temp);
@@ -1029,10 +1029,10 @@ index d100bbb137019fea7ceba485cd9d0cd0a78e0a12..e5815c20e052f78ff689f11947d9a293
    // Now using the destination mask we choose where the result ends up
    // It can duplicate and zero results
 diff --git a/FEXCore/Source/Interface/IR/IR.json b/FEXCore/Source/Interface/IR/IR.json
-index a737ca0fc1b3ed461e253ffd48ec241e1d2e1f5f..dce87cf41ef7c61c8cd7b7d386d870c23fe0415b 100644
+index 21cb0906b534decc97240ab1dd0cb99fd7dcd6e0..6e938a737a41feca6f25d6e44eb80bb22b14a840 100644
 --- a/FEXCore/Source/Interface/IR/IR.json
 +++ b/FEXCore/Source/Interface/IR/IR.json
-@@ -709,6 +709,50 @@
+@@ -711,6 +711,50 @@
          "HasSideEffects": true,
          "DestSize": "OpSize::i64Bit"
        },
@@ -1083,7 +1083,7 @@ index a737ca0fc1b3ed461e253ffd48ec241e1d2e1f5f..dce87cf41ef7c61c8cd7b7d386d870c2
        "EmbedderFPModeCheck u64:$NextRIP": {
          "Desc": ["Embedded only: leaves the dispatch at NextRIP with EMBEDDER_EXIT_MODE when the",
                   "floating-point mode the state's MXCSR, x87 control word and RFLAGS.AC imply is not the",
-@@ -1666,10 +1710,11 @@
+@@ -1689,10 +1733,11 @@
          "DestSize": "DestElementSize"
        },
  
@@ -1114,10 +1114,10 @@ index 873ad68233d1201bb5c0e4437feea6f17120edfb..7da1cd8a79a5b49343360b5ef5cbac8a
    if (!Info.Special()) {
      return Info;
 diff --git a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
-index 0c6af7f7d742aea6974b2efe1802e96dc94ac3ff..6af7c1496400e13ce0c86004d4046ef5a459eadf 100644
+index 86ea92c7c3b846e96560bb7875e568d16373b496..93a0cc48533db709792bb475847710a59970ac25 100644
 --- a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 +++ b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
-@@ -1281,7 +1281,7 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -1280,7 +1280,7 @@ void X87StackOptimization::Run(IREmitter* Emit) {
  
          Ref CmpNode {};
          if (ReducedPrecisionMode) {
@@ -1126,7 +1126,7 @@ index 0c6af7f7d742aea6974b2efe1802e96dc94ac3ff..6af7c1496400e13ce0c86004d4046ef5
          } else {
            CmpNode = IREmit->_F80Cmp(StackValue1, StackValue2);
          }
-@@ -1297,7 +1297,7 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -1296,7 +1296,7 @@ void X87StackOptimization::Run(IREmitter* Emit) {
  
          Ref CmpNode {};
          if (ReducedPrecisionMode) {
@@ -1135,7 +1135,7 @@ index 0c6af7f7d742aea6974b2efe1802e96dc94ac3ff..6af7c1496400e13ce0c86004d4046ef5
          } else {
            CmpNode = IREmit->_F80Cmp(StackNode, ZeroConst);
          }
-@@ -1313,7 +1313,7 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -1312,7 +1312,7 @@ void X87StackOptimization::Run(IREmitter* Emit) {
  
          Ref CmpNode {};
          if (ReducedPrecisionMode) {
@@ -1145,10 +1145,10 @@ index 0c6af7f7d742aea6974b2efe1802e96dc94ac3ff..6af7c1496400e13ce0c86004d4046ef5
            CmpNode = IREmit->_F80Cmp(StackNode, Value);
          }
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 79073423555ccddf35151ec9b54d52431174213b..b5fbe2dfbbe20f03df4bce589a023e7767785cde 100644
+index 711e11a6487602b54ee4d4a0c7d2f2a368a86acc..d1a9b88c4dbaa37dd56c684d5c1485f27c6f6f52 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
-@@ -711,6 +711,13 @@ struct CpuStateFrame {
+@@ -714,6 +714,13 @@ struct CpuStateFrame {
      // The x87 exceptions the running instruction raised that the control
      // word unmasks: bits 0 to 5 as in the status word.
      uint32_t X87Raised {};

@@ -839,6 +839,17 @@ The runner uses `/opt/ltp` from `rootfs.erofs` and the selected kernel bundle's
 guest helpers may recognize exact built-ins but must reject unknown module
 operations.
 
+A case's bound in the manifest, and the `--candidate-timeout` of a candidate,
+is sized on the gadget engine, as is the `LTP_TIMEOUT_MUL` of 4 the runner
+gives LTP's own timers. Under `--engine jit` the runner multiplies both by the
+guest's factor in `JIT_CASE_BOUND_FACTORS`, 5 for arm64 and 4 for x86_64,
+because a JIT compiles every exec'd process's code from scratch: the measured
+cost per exec is about four times the gadget engine's on the arm64 JIT
+([Cold code](../darwin/cpu/arm64/jit/README.md#cold-code)) and about 2.7 times
+on the x86-64 JIT, and a case such as `zram01`, which runs one `dd` per KiB it
+writes, is bound by it. The factor is the same for every case, and the
+results summary records it as `case_bound_factor`.
+
 `--guest-arch x86_64` runs the same manifests on the x86_64-userspace slice
 with the [x86-64 LTP rootfs](../tools/rootfs/ltp-x86_64/README.md), applying
 the expectation overrides and additional exclusions in

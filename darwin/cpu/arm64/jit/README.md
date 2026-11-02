@@ -11,6 +11,23 @@ slow path's role are cross-engine contracts in
 the lowering contracts that are not obvious from the code; the
 [gadget engine](../gadgets/README.md) states the rules both engines share.
 
+## Cold code
+
+The JIT compiles a block the first time an address space runs it, and no
+translation serves another process: the private cache is keyed by the address
+space, the shared tier opens only while two executors live and is keyed by
+guest PC, and the guest's ASLR moves every image anyway. Each exec'd process
+therefore compiles its whole startup path again. A dynamically linked
+`/bin/true` takes about 1,760 blocks of ld.so, libc and its own code, five
+guest instructions and 162 host words each, at about 4.4 us a block: 2.6 to
+compile, 1.3 to store (`sys_icache_invalidate` 0.9 of it) and 0.2 to install.
+An exec costs about four times what it costs the gadget engine (8.6 ms against
+2.1 ms on one vCPU), so process-heavy work runs that much slower on the JIT,
+and the LTP runner scales its case bounds for it
+([testing](../../../../docs/testing.md#ltp)). The JIT runs only on macOS, so
+the cold path is not optimized
+([history](../../../../docs/optimization-history.md#jit-cold-code-per-process)).
+
 ## Top-byte ignore
 
 When the guest ignores the top byte of data addresses (`CpuState::tbi_enabled`,

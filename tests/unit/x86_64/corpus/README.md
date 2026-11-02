@@ -14,12 +14,13 @@ tiered engine as `x86-64-tier-switch-corpus`, against
 `../tier_switch_exclusions.tsv`.
 
 The profile is portable x86-64-v3 userspace plus the AES, PCLMUL, XSAVE,
-FSGSBASE, and ADX extensions already owned by the product contract. Intel-only
-facilities, privileged instructions, obsolete vendor extensions, and
-post-AVX2 extensions are outside this corpus. `excluded.tsv` records every
-producer input omitted by the profile, rejected by upstream, expecting FEX's
-own emulation where x86 differs, invalid as x86-64, or removed as an exact
-duplicate. An included illegal instruction is always a test failure.
+FSGSBASE, ADX, and AVX-VNNI extensions already owned by the product
+contract. Intel-only facilities, privileged instructions, obsolete vendor
+extensions, and other post-AVX2 extensions are outside this corpus.
+`excluded.tsv` records every producer input omitted by the profile, rejected by
+upstream, expecting FEX's own emulation where x86 differs, invalid as x86-64,
+or removed as an exact duplicate. An included illegal instruction is always a
+test failure.
 
 `manifest.tsv` binds every packed record to its origin, input hashes, semantic
 forms, and case count. `coverage.tsv` is the merged form inventory and
@@ -72,7 +73,9 @@ so a case can also hold the engine to its code-publication contract. Upstream
 FEX programs keep building each block afresh. Run one case with
 `uml_x86_64_fex_asm_runner --repository BINARY CONFIG`.
 
-Regenerate only from verified producer inputs:
+Regenerate only from verified producer inputs. The K semantics source tracks
+paths that differ only by case, so its root must be case-sensitive, and
+`prepare.sh` refuses any other:
 
 ```sh
 dependencies/prepare.sh --product x86-conformance \

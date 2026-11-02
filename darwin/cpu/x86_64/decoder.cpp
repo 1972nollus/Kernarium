@@ -1977,6 +1977,26 @@ private:
 			instruction.vector_control = adox ? 1U : 0U;
 			return true;
 		}
+		if (prefixes_.vex && prefix == 1 &&
+			opcode >= 0x50 && opcode <= 0x53) {
+			/* AVX-VNNI VPDPBUSD, VPDPBUSDS, VPDPWSSD and VPDPWSSDS. */
+			std::uint8_t modrm{};
+			if (!read(modrm))
+				return false;
+			const auto width = prefixes_.vex_long ?
+				OperandWidth::ymm : OperandWidth::xmm;
+			instruction.operation = Operation::vector_dot;
+			instruction.destination = vector_reg_field(modrm, width);
+			instruction.source = vector_register_operand(
+				prefixes_.vex_vvvv, width);
+			if (!vector_rm_operand(modrm, width, instruction.auxiliary))
+				return false;
+			instruction.vex = true;
+			instruction.vector_opcode = opcode;
+			instruction.vector_map = 2;
+			instruction.vector_prefix = static_cast<std::uint8_t>(prefix);
+			return true;
+		}
 		if (opcode >= 0xdb && opcode <= 0xdf) {
 			if (prefix != 1 || (opcode == 0xdb &&
 				prefixes_.vex && prefixes_.vex_long))

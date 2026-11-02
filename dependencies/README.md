@@ -81,13 +81,16 @@ The `macos` product carries FEXCore for the macOS-only x86-64 JIT engine. The
 `fex` row applies one patch-managed series,
 [`patches/fex`](patches/fex/series.tsv), and the `fmt`, `xxhash`, and
 `unordered-dense` rows pin the three submodules FEXCore needs at the commits
-FEX-2608 records; no iOS product names any of them. The series' topics build
+FEX-2610 records; no iOS product names any of them. The series' topics build
 only FEXCore for an embedding Darwin host, make its utilities portable to
 Darwin, add an embedding mode in which a host that owns guest memory drives
 FEXCore, compat32 code included, and correct x86 semantics where FEXCore
 differs from hardware. The series touches nothing the `x86-conformance` corpus
 producers read, so one prepared FEX source serves both products and still
-yields the pinned corpus.
+yields the pinned corpus. The `nasm` row that assembles that corpus applies one
+topic, [`patches/nasm`](patches/nasm/series.tsv): `smsw` of a 16-bit register
+keeps its operand-size prefix in 32-bit and 64-bit code, which NASM 3.02 drops,
+so the SMSW test runs as FEX wrote it.
 
 The prefix installs FEXCore's static archives (`libFEXCore.a`,
 `libFEXCore_Base.a`, and `libJemallocDummy.a`, its allocator entry points over
@@ -139,7 +142,8 @@ dependencies/prepare.sh --archive-manifest dependencies/kernel-host-tools/archiv
 dependencies/build-kernel-host-tools.sh
 dependencies/build-kernel-host-tools.sh --verify-only
 
-dependencies/prepare.sh --product x86-conformance
+dependencies/prepare.sh --product x86-conformance \
+  --root "$CASE_SENSITIVE_DEPENDENCY_ROOT"
 ```
 
 Use `--no-fetch` for offline preparation and `--verify` or `--verify-only` for
@@ -152,6 +156,14 @@ directory.
 A cache entry holds every object of its pinned commit. Preparation refuses one
 that does not, such as a blob-filtered clone, with a diagnostic and does not
 repair it; remove the entry and prepare again.
+
+A source whose pinned tree has paths that differ only by case needs a
+case-sensitive `--root`: `x86-k-semantics` tracks 169 such pairs, and on a
+case-insensitive volume Git writes one file over the other, so the checkout
+reads as modified. Preparation checks this after fetching and before any
+checkout, and refuses that source, naming the cause, on a case-insensitive
+root; every other source still prepares there. `--verify` of a checkout already
+made on such a root names the same cause.
 
 Series replay commits as whoever Git resolves for the caller, and export
 refuses a topic whose author is a placeholder. See

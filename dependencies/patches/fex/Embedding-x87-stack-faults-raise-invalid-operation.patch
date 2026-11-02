@@ -20,20 +20,20 @@ register.
  3 files changed, 117 insertions(+), 13 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-index ac93d5757847fcd5ca696bcece79186466297fad..41d2f4fdf5a20ba996104f306eb49e931311807f 100644
+index 9d1ecbe81a6d8bd061e031dad410722fde62b274..7952bf8f8ca595acd55b3bdfa197718283f79fed 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-@@ -859,7 +859,8 @@ void OpDispatchBuilder::X87FCMOV(OpcodeArgs) {
+@@ -869,7 +869,8 @@ void OpDispatchBuilder::X87FCMOV(OpcodeArgs) {
  }
  
  void OpDispatchBuilder::X87FXAM(OpcodeArgs) {
 -  auto a = _ReadStackValue(0);
 +  // FXAM classifies an empty register too, so its read is no stack underflow.
 +  auto a = _ReadStackValue(0, true);
-   Ref Result =
-     ReducedPrecisionMode ? _VExtractToGPR(OpSize::i64Bit, OpSize::i64Bit, a, 0) : _VExtractToGPR(OpSize::i128Bit, OpSize::i64Bit, a, 1);
+   Ref Value = ReducedPrecisionMode ? _VExtractToGPR(OpSize::i64Bit, OpSize::i64Bit, a, 0) : _VExtractToGPR(OpSize::i128Bit, OpSize::i64Bit, a, 1);
  
-@@ -908,11 +909,26 @@ void OpDispatchBuilder::X87FXAM(OpcodeArgs) {
+   // Extract the sign bit, which goes in C1
+@@ -973,11 +974,26 @@ void OpDispatchBuilder::X87FXAM(OpcodeArgs) {
  }
  
  void OpDispatchBuilder::X87FXTRACT(OpcodeArgs) {
@@ -64,10 +64,10 @@ index ac93d5757847fcd5ca696bcece79186466297fad..41d2f4fdf5a20ba996104f306eb49e93
    _PushStack(Sig, Invalid(), OpSize::iInvalid);
  }
 diff --git a/FEXCore/Source/Interface/IR/IR.json b/FEXCore/Source/Interface/IR/IR.json
-index 7e0935ae124a17a6e2261559ddd82848fe414b13..32d3c08affd7922d63c5c1fb234dcfbd0bcfc9cb 100644
+index ccbb2fd36e0bd4cf31a93a40b076aed54c74959f..e6f3c6b01d473d73a16b3db1d44d271e9554b80c 100644
 --- a/FEXCore/Source/Interface/IR/IR.json
 +++ b/FEXCore/Source/Interface/IR/IR.json
-@@ -2937,9 +2937,10 @@
+@@ -3031,9 +3031,10 @@
          "HasSideEffects": true,
          "X87": true
        },
@@ -81,7 +81,7 @@ index 7e0935ae124a17a6e2261559ddd82848fe414b13..32d3c08affd7922d63c5c1fb234dcfbd
          "DestSize": "OpSize::i128Bit",
          "X87": true
 diff --git a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
-index c50612e2e53ad259b63d27f0be537272cc65ab03..03b4d967d84e1ebcdae02b288fe8f0b5763406cd 100644
+index ad03d5745507109a1ff8bfb9ffcc55a734c07f91..88d575a98cbadcefbc03f63f4325805001c2230a 100644
 --- a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 +++ b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 @@ -272,8 +272,22 @@ private:
@@ -106,7 +106,7 @@ index c50612e2e53ad259b63d27f0be537272cc65ab03..03b4d967d84e1ebcdae02b288fe8f0b5
 +  Ref TwoResultOperand(Ref Operand, Ref Full);
 +  Ref X87FlagOr(uint32_t Flag, Ref Bit);
    // Update Top value in slow path for a pop
-   void UpdateTopForPop_Slow();
+   void UpdateTopForPop_Slow(bool InvalidateTag = true);
    void UpdateTopForPush_Slow();
 @@ -327,7 +341,7 @@ private:
  
@@ -202,7 +202,7 @@ index c50612e2e53ad259b63d27f0be537272cc65ab03..03b4d967d84e1ebcdae02b288fe8f0b5
      UpdateTopForPop_Slow();
    } else {
      StackData.pop();
-@@ -870,6 +929,17 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -874,6 +933,17 @@ void X87StackOptimization::Run(IREmitter* Emit) {
  
  
        case OP_F80PTANSTACK: {
@@ -220,7 +220,7 @@ index c50612e2e53ad259b63d27f0be537272cc65ab03..03b4d967d84e1ebcdae02b288fe8f0b5
          HandleUnop(OP_F64TAN, false, OP_F80TAN);
          Ref OneConst {};
          if (ReducedPrecisionMode) {
-@@ -889,6 +959,11 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -893,6 +963,11 @@ void X87StackOptimization::Run(IREmitter* Emit) {
  
        case OP_F80SINCOSSTACK: {
          Ref St0 = LoadStackValue();
@@ -232,7 +232,7 @@ index c50612e2e53ad259b63d27f0be537272cc65ab03..03b4d967d84e1ebcdae02b288fe8f0b5
  
          Ref SinValue {};
          Ref CosValue {};
-@@ -909,6 +984,11 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -913,6 +988,11 @@ void X87StackOptimization::Run(IREmitter* Emit) {
            IREmit->_F80SINCOS(St0, SinValue, CosValue);
          }
  
@@ -244,7 +244,7 @@ index c50612e2e53ad259b63d27f0be537272cc65ab03..03b4d967d84e1ebcdae02b288fe8f0b5
          // Push values
          if (SlowPath) {
            StoreStackValueAtOffset_Slow(SinValue, 0, false);
-@@ -956,6 +1036,10 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -960,6 +1040,10 @@ void X87StackOptimization::Run(IREmitter* Emit) {
  
          if (SlowPath) {
            UpdateTopForPush_Slow();
@@ -255,7 +255,7 @@ index c50612e2e53ad259b63d27f0be537272cc65ab03..03b4d967d84e1ebcdae02b288fe8f0b5
            StoreStackValueAtOffset_Slow(SourceNode);
          } else {
            if (Op->OriginalValue.IsInvalid()) {
-@@ -977,6 +1061,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -981,6 +1065,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
          if (SlowPath) {
            Ref St0 = LoadStackValueAtOffset_Slow(Offset);
            UpdateTopForPush_Slow();
@@ -265,7 +265,7 @@ index c50612e2e53ad259b63d27f0be537272cc65ab03..03b4d967d84e1ebcdae02b288fe8f0b5
            StoreStackValueAtOffset_Slow(St0);
          } else {
            StackData.push(*Value);
-@@ -987,7 +1074,7 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -991,7 +1078,7 @@ void X87StackOptimization::Run(IREmitter* Emit) {
        case OP_READSTACKVALUE: {
          const auto* Op = IROp->C<IROp_ReadStackValue>();
          auto Offset = Op->StackLocation;

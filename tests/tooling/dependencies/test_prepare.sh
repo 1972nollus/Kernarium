@@ -331,6 +331,74 @@ mv "$CACHE/git/clean" "$CACHE/git/clean.absent"
 expect_failure "missing offline Git cache" prepare "$TEST_ROOT/missing-cache"
 mv "$CACHE/git/clean.absent" "$CACHE/git/clean"
 
+# A pinned tree with two paths that differ only by case has no faithful
+# checkout on a case-insensitive file system, where Git writes one over the
+# other and the repository reads as modified. Preparation names that cause and
+# refuses before any checkout, but only for such a tree: the fixtures above
+# prepare on the same root. A case-sensitive root holds the tree, so a host
+# that offers one runs the complete case; the other kind of host can only
+# exercise the refusal, as the kernel source-location test does.
+CASE_UPSTREAM="$TEST_ROOT/case-upstream"
+CASE_METADATA="$TEST_ROOT/case-metadata"
+CASE_MANIFEST="$CASE_METADATA/manifest.tsv"
+git init --quiet -b main "$CASE_UPSTREAM"
+CASE_UPPER=$(printf 'upper\n' | git -C "$CASE_UPSTREAM" hash-object -w --stdin)
+CASE_LOWER=$(printf 'lower\n' | git -C "$CASE_UPSTREAM" hash-object -w --stdin)
+# The tree is written without an index or a work tree, which would fold case.
+CASE_DOC=$(printf '100644 blob %s\tTest.S\n100644 blob %s\ttest.s\n' \
+	"$CASE_UPPER" "$CASE_LOWER" | git -C "$CASE_UPSTREAM" mktree)
+CASE_ROOT_TREE=$(printf '040000 tree %s\tDoc\n' "$CASE_DOC" |
+	git -C "$CASE_UPSTREAM" mktree)
+CASE_COMMIT=$(git -C "$CASE_UPSTREAM" commit-tree -m 'fixture: case-only paths' \
+	"$CASE_ROOT_TREE")
+git -C "$CASE_UPSTREAM" update-ref refs/heads/main "$CASE_COMMIT"
+git clone --quiet --no-checkout "$CASE_UPSTREAM" "$CACHE/git/collide"
+git -C "$CACHE/git/collide" remote set-url origin https://example.invalid/collide.git
+git -C "$CACHE/git/collide" update-ref refs/heads/uml-pin "$CASE_COMMIT"
+mkdir -p "$CASE_METADATA/patches"
+printf 'name\tversion\tproducts\trepository\tcommit\tsource_paths\tpatch_series\n' \
+	>"$CASE_MANIFEST"
+printf 'collide\t1.0\tcase-fixture\thttps://example.invalid/collide.git\t%s\t.\t-\n' \
+	"$CASE_COMMIT" >>"$CASE_MANIFEST"
+prepare_case()
+{
+	prepared_root=$1
+	shift
+	UML_DEPENDENCY_MANIFEST="$CASE_MANIFEST" \
+	UML_DEPENDENCY_PATCH_ROOT="$CASE_METADATA" \
+		"$PREPARE" --product case-fixture --root "$prepared_root" \
+		--cache "$CACHE" --no-fetch "$@"
+}
+mkdir "$TEST_ROOT/case-probe"
+if [ -e "$TEST_ROOT/CASE-PROBE" ]; then
+	expect_diagnostic "differ only by case" prepare_case "$TEST_ROOT/case-refused"
+	for phrase in 'case-insensitive file system' 'case-sensitive file system'; do
+		grep -F -- "$phrase" "$TEST_ROOT/rejected-$FAILURE_NUMBER.err" >/dev/null ||
+			fail "the case refusal does not say: $phrase"
+	done
+	[ ! -e "$TEST_ROOT/case-refused/collide" ] &&
+		[ -z "$(find "$TEST_ROOT/case-refused" -mindepth 1 -maxdepth 1 -name '.prepare.*' -print)" ] ||
+		fail "a refused case-only tree left a checkout or a staging root"
+	# A checkout made some other way reads as modified; verification says why.
+	mkdir "$TEST_ROOT/case-modified"
+	git clone --quiet --no-checkout "$CASE_UPSTREAM" "$TEST_ROOT/case-modified/collide"
+	git -C "$TEST_ROOT/case-modified/collide" remote remove origin
+	git -C "$TEST_ROOT/case-modified/collide" switch --detach --quiet "$CASE_COMMIT"
+	git -C "$TEST_ROOT/case-modified/collide" config uml.source.repository \
+		https://example.invalid/collide.git
+	git -C "$TEST_ROOT/case-modified/collide" config uml.source.commit "$CASE_COMMIT"
+	git -C "$TEST_ROOT/case-modified/collide" config uml.source.paths .
+	git -C "$TEST_ROOT/case-modified/collide" config uml.source.patchSeries -
+	expect_diagnostic "reads as modified on this case-insensitive file system" \
+		prepare_case "$TEST_ROOT/case-modified" --verify
+else
+	prepare_case "$TEST_ROOT/case-held" >/dev/null
+	prepare_case "$TEST_ROOT/case-held" --verify >/dev/null
+	[ "$(cat "$TEST_ROOT/case-held/collide/Doc/Test.S")" = upper ] &&
+		[ "$(cat "$TEST_ROOT/case-held/collide/Doc/test.s")" = lower ] ||
+		fail "a case-sensitive root did not hold both case-only paths"
+fi
+
 # Foreign-owned protocol metadata is authenticated in place, never copied
 # into the dependency patch inventory or resolved through arbitrary '..'.
 ROOTFS_METADATA="$TEST_ROOT/tools/rootfs/vulkan"

@@ -696,6 +696,24 @@ one vCPU.
 | Test the setting inline and strip with one branch or a branchless mask | Rejected. Both removed the exit but cost what the old test cost a guest with the setting off, 5 to 12 percent on memory-dense probes, because the test is on every access's path. Only a decision made at compile time takes it off that path. |
 | What remains of the Android gap | Not chased. Two host samples of the JIT guest's first Settings launches put 28 to 31 percent of its active vCPU time in translated code, 19 percent in publishing blocks (`sys_icache_invalidate` alone is 12 to 13), 12 to 13 percent in finding an identical block in the shared translation cache, 12 percent in the link and dispatch tables, and 4 percent in compiling. What is left is the cost of translating cold code once, not memory exits: the JIT guest spends about twice the gadget guest's CPU in boot and in a cold launch. |
 
+## JIT cold code per process
+
+LTP's `zram01`, which runs one `dd` per KiB it writes, exceeded its 600 s bound
+on the arm64 JIT and took about 200 s on the gadget engine. An exec costs the
+JIT about four times what it costs the gadgets, steadily and with or without
+ASLR: each exec'd process compiles about 1,760 blocks of ld.so, libc and the
+program at about 4.4 us a block, 82 percent of the vCPU in a spawn loop, with
+no storm, fallback or retry loop behind it
+([Cold code](../darwin/cpu/arm64/jit/README.md#cold-code)). The x86-64 JIT
+pays about 2.7 times. The LTP runner scales its bounds by engine instead
+([testing](testing.md#ltp)).
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Cheapen the arm64 JIT's cold path: reuse compiler buffers, shrink blocks, keep the literal pool out of the invalidated range | Not pursued: the arm64 JIT runs only on macOS, and an optimization that helps only macOS does not stay. Estimated at 1.3 to 1.6 times, it could not close a fourfold gap: code generation and instruction-cache maintenance bound a block's cost from below. |
+| Share position-independent translations across processes, keyed by the code's backing page | Not pursued, for the same reason. It is the only reuse that survives exec and ASLR, since the private cache is keyed by the address space and the shared tier by guest PC. |
+| Start each arm64 address space on the gadget engine, as x86's `--jit-tier` does | Not pursued, for the same reason. Exclusives on memory that a gadget process and a JIT process share would need a monitor both engines honour. |
+
 ## AArch32 JIT: floating-point environment
 
 The JIT lowers AArch32 in `cpu/arm64/jit/a32`. Geekbench 5 armv7 on it scored
