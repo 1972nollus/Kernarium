@@ -13,6 +13,7 @@
 // scheduling are observed and driven through hooks on AVFAudio's methods.
 
 #include "capture_source.hpp"
+#include "ios_session_notifications.hpp"
 #include "period_clock.hpp"
 #include "playback_sink.hpp"
 #include "protocol.hpp"
@@ -184,10 +185,14 @@ struct Observed final {
     double expected {nominalRate};
 
     [[nodiscard]] double rate() const { return completed / seconds; }
-    // The guest's frame position advances at the rate of real audio.
+    // The guest's frame position advances at the rate of real audio. Periods
+    // complete one at a time and a window starts and ends between them, so
+    // the count may be a period or two off however long the window is: a
+    // second holds 46 or 47 of them, a difference of more than two percent.
     [[nodiscard]] bool nominal(double tolerance = 0.02) const
     {
-        return std::abs(rate() / expected - 1.0) <= tolerance;
+        const double ideal = expected * seconds;
+        return std::abs(completed - ideal) <= std::max(tolerance * ideal, 2.0);
     }
     [[nodiscard]] bool playing() const
     {
@@ -571,94 +576,6 @@ private:
     bool running_ {};
 };
 
-} // namespace
-
-// iOS creates the contexts its notifications carry and offers no initializer,
-// so each is a subclass that answers the reads the sink makes.
-@interface InterruptionContextDouble : AVAudioSessionInterruptionContext
-@end
-
-@implementation InterruptionContextDouble
-- (AVAudioSessionInterruptionReason)reason
-{
-    return AVAudioSessionInterruptionReasonDefault;
-}
-@end
-
-@interface DeactivationContextDouble : AVAudioSessionDeactivationContext
-@property(nonatomic) AVAudioSessionDeactivationSource sourceDouble;
-@property(nonatomic, strong) AVAudioSessionInterruptionContext* interruptionDouble;
-@end
-
-@implementation DeactivationContextDouble
-- (AVAudioSessionDeactivationSource)source
-{
-    return self.sourceDouble;
-}
-
-- (AVAudioSessionInterruptionContext*)interruptionContext
-{
-    return self.interruptionDouble;
-}
-@end
-
-@interface ResumptionContextDouble : AVAudioSessionResumptionContext
-@property(nonatomic) AVAudioSessionResumptionRecommendation recommendationDouble;
-@end
-
-@implementation ResumptionContextDouble
-- (AVAudioSessionResumptionRecommendation)recommendation
-{
-    return self.recommendationDouble;
-}
-@end
-
-namespace {
-
-template <class Context> Context* make()
-{
-    return static_cast<Context*>(class_createInstance([Context class], 0));
-}
-
-// What iOS 27 posts when the session becomes inactive: for the app's own
-// deactivation, or for the system's, which carries an interruption context
-// when another app caused it.
-void postDeactivation(
-    AVAudioSessionDeactivationSource source, bool interrupted)
-{
-    auto* context = make<DeactivationContextDouble>();
-    context.sourceDouble = source;
-    context.interruptionDouble =
-        interrupted ? make<InterruptionContextDouble>() : nil;
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:AVAudioSessionDidBecomeInactiveNotification
-                      object:[AVAudioSession sharedInstance]
-                    userInfo:@{
-                        AVAudioSessionDeactivationContextKey : context
-                    }];
-}
-
-void postInterruptionBegan()
-{
-    postDeactivation(AVAudioSessionDeactivationSourceSystem, true);
-}
-
-// What iOS 27 posts when the interrupter lets go, with the system's advice on
-// resuming.
-void postInterruptionEnded(bool shouldResume)
-{
-    auto* context = make<ResumptionContextDouble>();
-    context.recommendationDouble = shouldResume ?
-        AVAudioSessionResumptionRecommendationShouldResume :
-        AVAudioSessionResumptionRecommendationShouldNotResume;
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:AVAudioSessionResumptionRecommendationNotification
-                      object:[AVAudioSession sharedInstance]
-                    userInfo:@{
-                        AVAudioSessionResumptionContextKey : context
-                    }];
-}
-
 void interruptionMutesAndResumes()
 {
     Stream stream;
@@ -703,13 +620,42 @@ void interruptionMutesAndResumes()
     seen = stream.window(400ms, 1000ms);
     check(seen.scheduled == 0, "a second interruption stops playback",
         seen.text());
-    postInterruptionEnded(false);
-    seen = stream.window(400ms, 1500ms);
-    check(seen.playing(),
-        "an end that does not advise resuming resumes playback too",
-        seen.text());
 
+    // The end does not advise resuming and the interrupter still plays.
+    // Activating a playback session interrupts such an app, so the sink
+    // stays muted, keeps the guest's clock, and takes no session.
+    mark = activations.load();
+    postInterruptionEnded(false);
+    seen = stream.window(400ms, 4000ms);
+    check(seen.muted(),
+        "an end that does not advise resuming leaves the sink muted while "
+        "another app plays",
+        seen.text());
+    check(activations.load() == mark,
+        "and the sink takes no session from the app that plays", seen.text());
+    check(stream.healthy(), "the muted sink refuses nothing");
+    // The app stops: the hint poll takes the session back.
     otherAudioPlaying = false;
+    const auto polled = stream.untilPlayed(recoveryLimit);
+    check(polled < recoveryLimit && activations.load() == mark + 1,
+        "the sink resumes by one activation once that app has stopped",
+        std::to_string(polled.count()) + " ms");
+    seen = stream.window(300ms, 1500ms);
+    check(seen.playing() && stream.healthy(),
+        "and plays on without failing a period", seen.text());
+
+    // With no other app playing, an end that does not advise resuming
+    // resumes at once, well before the hint poll could.
+    postInterruptionBegan();
+    postInterruptionEnded(false);
+    const auto prompt = stream.untilPlayed(600ms);
+    check(prompt < 600ms,
+        "an end that does not advise resuming resumes at once when no other "
+        "app plays",
+        std::to_string(prompt.count()) + " ms");
+    seen = stream.window(300ms, 1500ms);
+    check(seen.playing(), "the stream plays after it", seen.text());
+
     mark = activations.load();
     postInterruptionEnded(true);
     seen = stream.window(400ms, 1500ms);
