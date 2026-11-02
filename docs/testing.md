@@ -749,7 +749,9 @@ application itself builds with Xcode: `AndariumPreview` is its Simulator build
 with mock data, and `Andarium` is the device application
 ([`Andarium/README.md`](../Andarium/README.md#targets)). `AndariumTests` is
 hosted in `Andarium` and runs on an iPad and, as an iPad app, on an Apple
-silicon Mac (`xcodebuild test -scheme Andarium`). A Mac launch of the guest
+silicon Mac (`xcodebuild test -scheme Andarium`); its `UpdateFlowTests` drive
+the update, interrupted-update (retry, restore, reset) and blocked-start flows
+against a stub runtime. A Mac launch of the guest
 itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
 `TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
 ([`Andarium/README.md`](../Andarium/README.md#automation)). macOS asks once, per
@@ -1325,7 +1327,9 @@ enabled (`--video`).
 ## Android UI rendering CTS
 
 `CtsUiRenderingTestCases` qualifies on the iPad's gadget engine in the
-automation application, not on the shared Mac. Its
+automation application or in Andarium (`run_ios_device_android.py --push
+Cts.apk:/data/local/tmp/Cts.apk --script`, whose script installs and
+instruments the APK), not on the shared Mac. Its
 `ColorSpaceTests#testMultiAtlasGlyphsWithColorSpace` paints a thousand glyphs
 of the COLRv1 emoji font at 13 sizes on the CPU in each of two renders, and
 each render must finish within the test's 60 s wait. On the iPad mini 6 the

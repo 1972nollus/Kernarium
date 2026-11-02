@@ -116,6 +116,8 @@ class Scratch:
         self.bin = bin_dir
         self.script = root / "workload.sh"
         self.script.write_text("#!/bin/sh\necho hello\n")
+        self.package = root / "Cts.apk"
+        self.package.write_bytes(b"PK apk bytes")
         self.scenario = root / "scenario.json"
         self.scenario.write_text(json.dumps(SCENARIO))
         self.runs = 0
@@ -182,6 +184,7 @@ class AndroidRunnerTests(unittest.TestCase):
         outcome = self.run_android(
             "--app", str(app),
             "--script", str(scratch.script),
+            "--push", f"{scratch.package}:/data/local/tmp/Cts.apk",
             "--launch-app", "settings", "--scenario", str(scratch.scenario),
             "--memory-mib", "1536", "--cpus", "2",
             environment=leaked,
@@ -237,6 +240,10 @@ class AndroidRunnerTests(unittest.TestCase):
         self.assertEqual(summary["thermal"]["finish"]["state"], "fair")
         self.assertTrue(summary["thermal"]["complete"])
         self.assertEqual(summary["workload"]["script"]["exit_status"], 0)
+        (pushed,) = summary["workload"]["pushes"]
+        self.assertEqual(pushed["file"], "Cts.apk")
+        self.assertEqual(pushed["guest"], "/data/local/tmp/Cts.apk")
+        self.assertEqual(pushed["bytes"], len(b"PK apk bytes"))
         (launched,) = summary["workload"]["launches"]
         self.assertEqual(launched["total_time_ms"], 321)
         self.assertEqual(launched["seconds"], 0.8)
@@ -247,8 +254,31 @@ class AndroidRunnerTests(unittest.TestCase):
         console = (artifact / "console.log").read_text()
         self.assertIn("Andarium: runtime returned 0", console)
         self.assertIn("workload ran", (artifact / "script.out").read_text())
-        self.assertEqual((scratch.state / "pushed.sh").read_text(),
-                         scratch.script.read_text())
+        pushed_files = scratch.state / "pushed"
+        self.assertEqual(
+            (pushed_files / "andarium-harness-script.sh").read_text(),
+            scratch.script.read_text())
+        self.assertEqual((pushed_files / "Cts.apk").read_bytes(),
+                         scratch.package.read_bytes())
+        calls = [c["args"] for c in adb_calls if "push" in c["args"]]
+        self.assertLess(
+            next(i for i, c in enumerate(calls) if c[-1].endswith("Cts.apk")),
+            next(i for i, c in enumerate(calls) if c[-1].endswith(".sh")))
+
+    def test_a_push_that_fails_ends_the_workload_not_the_poweroff(
+            self) -> None:
+        outcome = self.run_android(
+            "--script", str(self.scratch.script),
+            "--push", f"{self.scratch.package}:/data/local/tmp/Cts.apk",
+            environment={"FAKE_ADB_PUSH": "fail"},
+        )
+        self.assertEqual(outcome.status, 1)
+        self.assertIn("could not push", outcome.err + outcome.out)
+        self.assertEqual(outcome.summary["runtime_result"], 0)
+        self.assertNotIn(
+            "andarium-harness-script.sh",
+            "".join(c["args"][-1] for c in outcome.tool("adb")
+                    if "shell" in c["args"]))
 
     def test_adb_that_never_gets_ready_records_no_run(self) -> None:
         outcome = self.run_android(
@@ -356,6 +386,11 @@ class AndroidRunnerTests(unittest.TestCase):
             (("--scenario", str(self.scratch.scenario)),
              "not a --launch-app"),
             (("--adb", "/nonexistent/adb"), "adb is unavailable"),
+            (("--push", "/nonexistent/Cts.apk:/data/local/tmp/Cts.apk"),
+             "no file to push"),
+            (("--push", f"{self.scratch.package}:relative/Cts.apk"),
+             "absolute guest path"),
+            (("--push", str(self.scratch.package)), "absolute guest path"),
         ):
             outcome = self.run_android(*arguments)
             self.assertEqual(outcome.status, 1, arguments)

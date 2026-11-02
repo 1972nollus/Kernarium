@@ -9,7 +9,8 @@ Andarium, launches the guest (the system the application carries) with
 reaches the guest's adbd over USB with ``iproxy`` and a private adb server,
 waits for ``sys.boot_completed``, runs the workload (a guest shell script
 and/or cold launches and scenarios from ``android_launch_suite.py``'s
-formats), powers the guest off over adb and waits for the runtime to return.
+formats, after any ``--push`` files such as a CTS APK reach the guest),
+powers the guest off over adb and waits for the runtime to return.
 The console, the thermal state at the start and the end, and a summary are
 kept in the artifact directory. Nothing is typed on the device.
 
@@ -60,6 +61,7 @@ class Plan:
     """Everything the options name, checked before the device is touched."""
 
     script: Path | None = None
+    pushes: list[tuple[Path, str]] = field(default_factory=list)
     apps: list[launch_suite.App] = field(default_factory=list)
     rounds: int = 0
     scenarios: dict[str, list[launch_suite.Scenario]] = field(
@@ -103,6 +105,11 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--script", type=Path,
                         help="run this POSIX shell script in the guest")
     parser.add_argument(
+        "--push", action="append", default=[], metavar="FILE:GUEST_PATH",
+        help="adb push this file to the guest before the workload, for "
+        "example a CTS APK the --script installs and instruments",
+    )
+    parser.add_argument(
         "--launch-app", action="append", default=[], metavar="NAME",
         help="cold-launch this application of the manifest",
     )
@@ -133,6 +140,7 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         "network access waits for a person); the run fails when it is not",
     )
     parser.add_argument("--script-timeout", type=int, default=1800)
+    parser.add_argument("--push-timeout", type=int, default=600)
     parser.add_argument("--poweroff-timeout", type=int, default=150)
     parser.add_argument("--install-timeout", type=int, default=600)
     parser.add_argument("--poll-interval", type=float, default=2.0)
@@ -140,8 +148,8 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
                         default=DEFAULT_ARTIFACT_ROOT)
     options = parser.parse_args(argv)
     if min(options.timeout, options.boot_timeout, options.launch_timeout,
-           options.script_timeout, options.poweroff_timeout,
-           options.install_timeout) < 1 or options.poll_interval <= 0:
+           options.script_timeout, options.push_timeout,
+           options.poweroff_timeout, options.install_timeout) < 1 or options.poll_interval <= 0:
         parser.error("timeouts and the poll interval must be positive")
     if min(options.settle, options.launch_settle) < 0:
         parser.error("settle times cannot be negative")
@@ -167,6 +175,17 @@ def prepare(options: argparse.Namespace) -> Plan:
         plan.script = options.script.resolve()
         if not plan.script.is_file():
             raise andarium.AndariumError(f"no script: {plan.script}")
+    for value in options.push:
+        local, separator, guest = value.rpartition(":")
+        if not separator or not local or not guest.startswith("/"):
+            raise andarium.AndariumError(
+                f"expected FILE:GUEST_PATH with an absolute guest path, "
+                f"not {value!r}"
+            )
+        source = Path(local).resolve()
+        if not source.is_file():
+            raise andarium.AndariumError(f"no file to push: {source}")
+        plan.pushes.append((source, guest))
     manifest = launch_suite.read_manifest(options.apps_manifest)
     for name in options.launch_app:
         if name not in manifest:
@@ -389,6 +408,22 @@ def require_adb_ready(adb: Adb) -> None:
         )
 
 
+def push_file(adb: Adb, source: Path, guest: str, timeout: int) -> dict:
+    started = time.monotonic()
+    pushed = adb.run("push", str(source), guest, timeout=timeout)
+    if pushed.returncode != 0:
+        raise andarium.AndariumError(
+            f"adb could not push {source.name} to {guest}: "
+            + (pushed.stderr or pushed.stdout).strip()
+        )
+    return {
+        "file": source.name,
+        "guest": guest,
+        "bytes": source.stat().st_size,
+        "seconds": round(time.monotonic() - started, 1),
+    }
+
+
 def run_script(adb: Adb, source: Path, timeout: int, output: Path) -> dict:
     pushed = adb.run("push", str(source), SCRIPT_GUEST_PATH, timeout=120)
     if pushed.returncode != 0:
@@ -465,7 +500,11 @@ def run_workload(adb: Adb, plan: Plan, options: argparse.Namespace,
                  artifact: Path, deadline: float,
                  problems: list[str]) -> dict:
     require_adb_ready(adb)
-    record: dict = {"script": None, "launches": [], "scenarios": []}
+    record: dict = {"pushes": [], "script": None, "launches": [],
+                    "scenarios": []}
+    for source, guest in plan.pushes:
+        record["pushes"].append(
+            push_file(adb, source, guest, options.push_timeout))
     if plan.script is not None:
         record["script"] = run_script(
             adb, plan.script, options.script_timeout,

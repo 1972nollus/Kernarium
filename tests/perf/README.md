@@ -106,7 +106,9 @@ report ADB authorization off and for `sys.boot_completed`; checks adb is ready
 again before the workload and stops, recording nothing, when it is not; runs
 the workload; powers the guest off with `adb shell reboot -p`; and waits for
 `Andarium: runtime returned`. The workload is a guest shell script
-(`--script`, whose `ANDARIUM_SCRIPT_EXIT:<status>` the runner reads) and/or
+(`--script`, whose `ANDARIUM_SCRIPT_EXIT:<status>` the runner reads, after
+each `--push FILE:GUEST_PATH` file, such as a CTS APK the script installs and
+instruments, has reached the guest; the script's output is `script.out`) and/or
 `--cold-launches N` rounds of force-stopped launches of the `--launch-app`
 applications of `android_launch_apps.tsv`, each timed by `am start -W`'s
 `TotalTime` and by the manifest's logcat marker, and `--scenario` files in the

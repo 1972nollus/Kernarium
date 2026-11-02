@@ -121,7 +121,13 @@ def adb(arguments: list[str]) -> int:
         print("device")
     elif command == "push":
         source = pathlib.Path(arguments[1])
-        (STATE / "pushed.sh").write_bytes(source.read_bytes())
+        if os.environ.get("FAKE_ADB_PUSH") == "fail":
+            print("adb: error: failed to copy " + source.name,
+                  file=sys.stderr)
+            return 1
+        (STATE / "pushed").mkdir(exist_ok=True)
+        (STATE / "pushed" / pathlib.PurePosixPath(arguments[2]).name
+         ).write_bytes(source.read_bytes())
     elif command == "logcat":
         if "-d" in arguments:
             components = (STATE / "launched").read_text().split() \
