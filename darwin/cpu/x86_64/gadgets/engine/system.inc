@@ -93,7 +93,16 @@ Lx86_cpuid_one:
 	movk w9, #0x0788, lsl #16
 	b Lx86_cpuid_done
 Lx86_cpuid_seven:
-	cbnz w10, Lx86_cpuid_done
+	cbz w10, Lx86_cpuid_seven_zero
+	cmp w10, #1
+	b.ne Lx86_cpuid_done
+	/* Subleaf 1: AVX-VNNI, the VEX VPDPBUSD, VPDPBUSDS, VPDPWSSD and
+	 * VPDPWSSDS. */
+	mov w6, #0x0010
+	b Lx86_cpuid_done
+Lx86_cpuid_seven_zero:
+	/* The highest subleaf, 1 for AVX-VNNI's. */
+	mov w6, #1
 	/* FSGSBASE, BMI1, AVX2, BMI2, ERMS, RDSEED, ADX, CLFLUSHOPT,
 	 * CLWB, and SHA. RTM/HLE and MPX remain deliberately absent.
 	 * ERMS claims REP MOVSB is the fastest way to copy, which holds here:

@@ -190,6 +190,12 @@ namespace {
 
 } // namespace
 
+unsigned configured_guest_cpu_count(
+	const std::vector<std::string> &arguments) noexcept
+{
+	return guest_cpu_count(arguments);
+}
+
 std::size_t configured_guest_memory_bytes(
 	const std::vector<std::string> &arguments)
 {

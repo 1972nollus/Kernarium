@@ -11,7 +11,6 @@ namespace uml::device {
 
 enum class GuestSuspension {
 	none,
-	managementStop,
 	system,
 };
 
@@ -86,19 +85,23 @@ guest_console_location();
 /*
  * Enters Linux system suspend, so devices, secondary CPUs, interrupts, and
  * timekeeping stop at a kernel-owned boundary, and sends the explicit wake
- * edge. Older kernels fall back to management-console stop/go.
+ * edge. Every maintained kernel has system suspend; the management console's
+ * own stop halts only the vCPU that takes it, so nothing replaces a suspend
+ * that fails.
  *
- * The returned mode records which resume command is required. The guest
+ * The returned mode records whether the wake request is required. The guest
  * replies to a suspend request once it has synced its filesystems, so the
- * request waits up to eight seconds for that reply, and a guest that reports
- * within them that it could not suspend is stopped instead. A request that has
- * not replied by then still selects system wake: timeout cannot prove that the
- * kernel did not already enter suspend. None means no request reached the
- * console. Resuming is best effort and reports nothing.
+ * request waits up to eight seconds for that reply. A guest that reports
+ * itself busy (EBUSY) within them is asked again every 250 ms for two seconds.
+ * Any other refusal, or a busy guest that stays busy, logs that the guest
+ * keeps running, writes its filesystems back, and returns none. A request that
+ * has not replied by the wait still selects system wake: timeout cannot prove
+ * that the kernel did not already enter suspend. None also means no request
+ * reached the console. Resuming is best effort and reports nothing, and sends
+ * nothing for none.
  */
 [[nodiscard]] GuestSuspension suspend_guest(
-	unsigned int writeback_settle_ms,
-	unsigned int stop_settle_ms) noexcept;
+	unsigned int writeback_settle_ms) noexcept;
 void resume_guest(GuestSuspension suspension) noexcept;
 
 /*

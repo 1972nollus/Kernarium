@@ -1004,6 +1004,12 @@ the set holds, so a write waits for at most the commit in flight and a freed
 allocation still stops counting against the device when `vkFreeMemory`
 returns. The Mesa test `kosmickrisp_residency_commit_race` frees memory on one
 thread while another submits under shader validation.
+A cube or cube map array storage image is a 2D array view of its image, so
+every shader access to one, its size query and the bounds check in front of an
+image atomic included, reads the descriptor through the 2D array type. Metal
+answers a query through another texture type only by chance, and under shader
+validation it answers zero. The Mesa test `kosmickrisp_validated_cube_storage`
+runs atomics and size queries on cube images under shader validation.
 
 Linked graphics pipelines share native programs and dynamic vertex-input
 variants only while a live Vulkan pipeline owns them. The lookup cache drops

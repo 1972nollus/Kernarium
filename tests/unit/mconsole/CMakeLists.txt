@@ -5,8 +5,8 @@ target_link_libraries(uml_guest_console_tests PRIVATE UML::DeviceGuestConsole)
 uml_add_unit_test(NAME guest-console-suspend-timeout
     COMMAND uml_guest_console_tests suspend-timeout
     LABELS console)
-# A guest that reports a suspend it gave up, even seconds after the request,
-# is stopped instead.
+# A guest that reports itself busy is asked again for two seconds; any other
+# refusal, or one that stays busy, leaves it running with no stop.
 uml_add_unit_test(NAME guest-console-suspend-failure
     COMMAND uml_guest_console_tests suspend-failure
     LABELS console)

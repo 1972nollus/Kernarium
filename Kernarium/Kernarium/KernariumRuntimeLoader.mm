@@ -2,6 +2,9 @@
 
 #import "KernariumRuntimeLoader.h"
 
+#include "../../darwin/platform/apple/os_memory_limit.hpp"
+#include "../../darwin/runtime/guest_memory_budget.hpp"
+
 #import <Foundation/Foundation.h>
 #include <atomic>
 #include <cstddef>
@@ -252,12 +255,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v17");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v18");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v17: %s\n",
+            "Kernarium: selected runtime lacks API v18: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;
@@ -384,6 +387,7 @@ extern "C" int kernarium_runtime_loader_set_page_cache_trimming(int enabled)
 
 extern "C" int kernarium_runtime_loader_plan_gpu_budget(
     uint32_t guestMemoryMiB,
+    uint32_t guestProcessorCount,
     uint32_t applicationMiB,
     uint32_t engineMiB,
     uint32_t headroomMiB,
@@ -393,7 +397,56 @@ extern "C" int kernarium_runtime_loader_plan_gpu_budget(
     return runtime == nullptr ?
         -1 :
         runtime->plan_gpu_budget(
-            guestMemoryMiB, applicationMiB, engineMiB, headroomMiB, plan);
+            guestMemoryMiB,
+            guestProcessorCount,
+            applicationMiB,
+            engineMiB,
+            headroomMiB,
+            plan);
+}
+
+extern "C" kernarium_launch_memory_set
+kernarium_runtime_loader_launch_memory_set(void)
+{
+    namespace budget = uml::runtime::guest_memory;
+    static_assert(
+        budget::launch_memory_set.application % budget::mebibyte == 0 &&
+            budget::launch_memory_set.engine_rest % budget::mebibyte == 0 &&
+            budget::launch_memory_set.headroom % budget::mebibyte == 0,
+        "the launch set is whole mebibytes");
+    return {
+        .application_mib = static_cast<uint32_t>(
+            budget::launch_memory_set.application / budget::mebibyte),
+        .engine_mib = static_cast<uint32_t>(
+            budget::launch_memory_set.engine_rest / budget::mebibyte),
+        .headroom_mib = static_cast<uint32_t>(
+            budget::launch_memory_set.headroom / budget::mebibyte),
+    };
+}
+
+extern "C" uint32_t kernarium_runtime_loader_maximum_guest_memory_mib_for_limit(
+    uint64_t limitBytes,
+    uint32_t guestProcessorCount,
+    kernarium_launch_memory_set parameters)
+{
+    namespace budget = uml::runtime::guest_memory;
+    return budget::maximum_guest_memory_mib(
+        limitBytes,
+        guestProcessorCount,
+        budget::launch_memory_mib(
+            parameters.application_mib,
+            parameters.engine_mib,
+            parameters.headroom_mib));
+}
+
+extern "C" uint32_t kernarium_runtime_loader_maximum_guest_memory_mib(
+    uint32_t guestProcessorCount,
+    kernarium_launch_memory_set parameters)
+{
+    return kernarium_runtime_loader_maximum_guest_memory_mib_for_limit(
+        uml::platform::os_memory_limit_bytes(),
+        guestProcessorCount,
+        parameters);
 }
 
 extern "C" int kernarium_runtime_loader_set_microphone(int enabled)

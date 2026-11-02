@@ -35,8 +35,9 @@ struct EmulatorOptions final {
 	std::size_t jit_executor_cache_budget{
 		default_jit_executor_cache_budget};
 	/* --gadget-cache-budget=: the process's byte budget for what the gadget
-	 * engines keep per address space. Zero derives it from guest memory and
-	 * the host's limit on the process (runtime::set_gadget_cache_budget). */
+	 * engines keep per address space. Zero derives it from guest memory, the
+	 * host's limit on the process and the vCPU count
+	 * (runtime::set_gadget_cache_budget). */
 	std::size_t gadget_cache_budget{};
 	/* --memory-limit=: the footprint this launch states as the process's
 	 * limit on a host that sets none (platform/host_environment.hpp), so a Mac
@@ -66,6 +67,12 @@ struct EmulatorOptions final {
 	bool host_console_directory{};
 	bool valid{true};
 };
+
+/* The vCPU count the last valid ncpus= argument states, clamped to the guest
+ * maximum, or the host's default when there is none: what prepare_emulator_options
+ * puts in EmulatorOptions::guest_cpus. Launchers size host resources from it. */
+[[nodiscard]] unsigned configured_guest_cpu_count(
+	const std::vector<std::string> &arguments) noexcept;
 
 [[nodiscard]] EmulatorOptions prepare_emulator_options(
 	int argc, const char *const argv[], std::string_view rootfs);

@@ -4,6 +4,7 @@
 #include "cpu/engine_factory.hpp"
 #include "cpu/gadget_cache_budget.hpp"
 #include "execution_state.hpp"
+#include "guest_memory_budget.hpp"
 #include "memory/domain_contract.hpp"
 #include "platform/apple/host_features.hpp"
 #include "platform/descriptor.hpp"
@@ -545,19 +546,20 @@ void set_process_memory_limit(std::size_t bytes) noexcept
 }
 
 std::size_t gadget_cache_budget_for(std::size_t guest_memory_bytes,
-	std::size_t bytes) noexcept
+	std::size_t bytes, unsigned executors) noexcept
 {
 	if (bytes != 0)
 		return bytes;
-	return ::uml::cpu::gadget_cache::derive_budget(guest_memory_bytes,
+	return guest_memory::gadget_cache_budget(guest_memory_bytes,
 		static_cast<std::size_t>(
-			::uml::platform::process_memory_limit_bytes()));
+			::uml::platform::process_memory_limit_bytes()),
+		executors);
 }
 
 std::size_t set_gadget_cache_budget(std::size_t guest_memory_bytes,
-	std::size_t bytes) noexcept
+	std::size_t bytes, unsigned executors) noexcept
 {
-	bytes = gadget_cache_budget_for(guest_memory_bytes, bytes);
+	bytes = gadget_cache_budget_for(guest_memory_bytes, bytes, executors);
 	::uml::cpu::gadget_cache::set_budget(bytes);
 	return bytes;
 }

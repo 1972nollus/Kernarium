@@ -62,8 +62,8 @@ public:
 
 	/* Called on the console's thread with each request, before its reply. */
 	std::function<void(const std::string &)> onRequest;
-	/* A guest without suspend support: it refuses "suspend" and takes the
-	 * management stop instead. */
+	/* A guest that cannot suspend: it refuses "suspend" for a reason that
+	 * waiting does not cure (not busy), and keeps running. */
 	bool refuseSuspend {false};
 
 	/* Answers `count` requests in another thread while `operation` runs,
@@ -104,8 +104,6 @@ private:
 			error = 1U;
 		} else if (command == "suspend") {
 			text = "suspended";
-		} else if (command == "stop") {
-			text = "stopped";
 		}
 		if (command == "trim once")
 			text = "trimmed 0 KiB in 0 ms, compacted in 40 ms, "
@@ -331,16 +329,16 @@ void aGuestThatCouldNotSuspendIsNotHibernated()
 	console.refuseSuspend = true;
 	(void)installSteps(emulator.get());
 	(void)hibernationLog.take();
-	const auto requests = console.requests(4U, [&] {
+	const auto requests = console.requests(3U, [&] {
 		require(uml_emulator_quiesce(emulator.get()) == 0);
 	});
-	require(requests == Requests {"trim once", "suspend", "sysrq s", "stop"},
-		"a refused suspend falls back to the management stop");
+	require(requests == Requests {"trim once", "suspend", "sysrq s"},
+		"a refused suspend is written back and left running, never stopped");
 	require(hibernationLog.take().empty(),
 		"only a system suspension is hibernated");
-	require(console.requests(1U, [&] { uml_emulator_resume(emulator.get()); }) ==
-			Requests {"go"},
-		"a stopped guest is resumed with go");
+	require(console.requests(0U, [&] { uml_emulator_resume(emulator.get()); })
+			.empty(),
+		"a guest that kept running has nothing to be woken from");
 }
 
 void aGuestWithoutAConsoleIsNotHibernated()
