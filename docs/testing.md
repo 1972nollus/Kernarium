@@ -289,7 +289,11 @@ queued buffers for it) before the size is known, the parameter sets and the
 picture as two coded buffers, and the capture format chosen only after the
 source change: the buffer that declared the size is held until then, nothing
 lands in the provisional buffers, and the picture arrives whole before the LAST
-buffer. The large buffers are also created with the guest's free memory in
+buffer. The coded queue's buffer size is read back for every coded format as
+a client sees it (S_FMT and G_FMT, then the plane length REQBUFS allocates): the
+tier of each picture size stated, and for a size beyond the format's range, as a
+client that states none passes it, the tier of the largest picture it takes.
+The large buffers are also created with the guest's free memory in
 blocks of 32 KiB, none larger, the state a guest that has run for days is in:
 a 124 MiB coded buffer, the most the device attaches, is created, exported and
 imported again, and the 4096 x 4096 and 4320 x 8192 flat pictures are decoded
