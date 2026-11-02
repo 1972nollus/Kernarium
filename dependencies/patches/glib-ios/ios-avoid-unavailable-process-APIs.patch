@@ -12,10 +12,10 @@ keeps its existing behavior.
  1 file changed, 7 insertions(+), 2 deletions(-)
 
 diff --git a/meson.build b/meson.build
-index 22ed1814e40648ec42de6a13106297e5a842b445..a1735a29d32a8c84d79889babad964e1218d4cee 100644
+index efa7e89354ae45a1279068f1934efb8b38486d64..0836fe2214298527e550773b0eb851cc635ddab6 100644
 --- a/meson.build
 +++ b/meson.build
-@@ -751,7 +751,6 @@ functions = [
+@@ -748,7 +748,6 @@ functions = [
    'memmem',
    'mmap',
    'newlocale',
@@ -23,7 +23,7 @@ index 22ed1814e40648ec42de6a13106297e5a842b445..a1735a29d32a8c84d79889babad964e1
    'poll',
    'prlimit',
    'readlink',
-@@ -780,9 +779,15 @@ functions = [
+@@ -777,9 +776,15 @@ functions = [
    'sysctlbyname',
  ]
  

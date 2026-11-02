@@ -27,3 +27,4 @@ patch	README-document-the-decoder.patch
 patch	v4l2-take-the-device-s-smallest-picture-and-lowest-bitrate.patch
 patch	v4l2-size-the-decoder-s-input-blocks-from-the-device-s-coded-buffer-.patch
 patch	v4l2-refuse-a-picture-buffer-whose-rows-are-not-where-the-device-put.patch
+patch	v4l2-hold-fewer-capture-buffers-for-H.264-and-HEVC-streams.patch

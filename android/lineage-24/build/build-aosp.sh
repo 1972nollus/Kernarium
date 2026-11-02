@@ -437,12 +437,18 @@ fi
 	fail "the network setup tool that configures eth0 and the virtual Wi-Fi is absent"
 [[ "$PRODUCT_PACKAGES" == *" kernarium_wifi_network_script "* ]] ||
 	fail "the script that saves the virtual Wi-Fi network is absent"
+[[ "$PRODUCT_PACKAGES" == *" kernarium_reclaim_boot_apps_script "* ]] ||
+	fail "the script that reclaims the cached boot-started apps is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.android.hardware.wifi "* ]] ||
 	fail "the Wi-Fi HAL that the virtual Wi-Fi needs is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.google.cf.wpa_supplicant "* ]] ||
 	fail "the Wi-Fi supplicant that the virtual Wi-Fi needs is absent"
 [[ "$PRODUCT_PACKAGES" == *" KernariumWifiOverlay "* ]] ||
 	fail "the Wi-Fi overlay that turns MAC randomization off is absent"
+[[ "$PRODUCT_PACKAGES" == *" KernariumPinnerOverlay "* ]] ||
+	fail "the overlay that releases the home app's memory pin is absent"
+[[ "$PRODUCT_PACKAGES" == *" SecureElement "* ]] ||
+	fail "the OMAPI service that SEService clients bind on demand is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.android.hardware.thermal "* ]] ||
 	fail "the example thermal HAL that the thermal manager needs is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.android.hardware.cas "* ]] ||

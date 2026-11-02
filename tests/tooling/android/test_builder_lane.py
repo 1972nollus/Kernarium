@@ -11,6 +11,7 @@ import gzip
 import importlib.util
 import io
 import json
+import random
 import re
 import shutil
 import struct
@@ -19,6 +20,7 @@ import sys
 import tempfile
 import traceback
 import zipfile
+import zlib
 from pathlib import Path
 
 from erofs_fixture import synthetic_erofs_image
@@ -220,6 +222,35 @@ def synthetic_arm_elf(
     return with_imports(bytes(payload), False, imports) if imports is not None else bytes(payload)
 
 
+def synthetic_compiled_manifest(target_sdk: int | None, *, string_value: bool = False) -> bytes:
+    """A compiled manifest with one element, <uses-sdk>, that carries targetSdkVersion when given.
+
+    It has the chunks the verifier reads and no more: a string pool, the resource map that gives
+    the attribute name its framework ID, and the element."""
+    strings = ["targetSdkVersion", "uses-sdk", "28"]
+    pool_strings = b""
+    offsets = []
+    for text in strings:
+        offsets.append(len(pool_strings))
+        pool_strings += struct.pack("<H", len(text)) + text.encode("utf-16-le") + b"\0\0"
+    pool_strings += b"\0" * (-len(pool_strings) % 4)
+    strings_start = 28 + 4 * len(strings)
+    pool = struct.pack(
+        "<HHIIIIII", 0x0001, 28, strings_start + len(pool_strings), len(strings), 0, 0, strings_start, 0
+    ) + b"".join(struct.pack("<I", offset) for offset in offsets) + pool_strings
+    resource_map = struct.pack("<HHII", 0x0180, 8, 12, 0x01010270)
+    attributes = b""
+    if target_sdk is not None:
+        attributes = struct.pack(
+            "<IIIHBBI", 0xFFFFFFFF, 0, 2 if string_value else 0xFFFFFFFF, 8, 0,
+            0x03 if string_value else 0x10, 2 if string_value else target_sdk,
+        )
+    body = struct.pack("<IIHHHHHH", 0xFFFFFFFF, 1, 20, 20, 1 if attributes else 0, 0, 0, 0) + attributes
+    element = struct.pack("<HHIII", 0x0102, 16, 16 + len(body), 1, 0xFFFFFFFF) + body
+    payload = pool + resource_map + element
+    return struct.pack("<HHI", 0x0003, 8, 8 + len(payload)) + payload
+
+
 def run_in_process(module, *arguments: object) -> subprocess.CompletedProcess[str]:
     """Run a loaded tool's main() as `run_tool` would run its script.
 
@@ -403,10 +434,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
     from release_common import BUILD_VARIANTS, configured_build_variant
 
     tool = load_tool(verifier)
+    pinner_overlay_entry = tool.PINNER_OVERLAY
     preopt_apks = sorted(tool.REQUIRED_PREOPT_APKS)
     plain_apks = sorted(
         entry for entry in tool.REQUIRED_ENTRIES
         if entry.endswith(".apk") and entry not in tool.REQUIRED_PREOPT_APKS
+        and entry != pinner_overlay_entry
     )
     arm_preopt_apks = sorted(tool.REQUIRED_ARM_PREOPT_APKS)
     permission_files = [
@@ -641,6 +674,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           userdata_grow_variant: str | None = None,
                           userdata_grow_policy_variant: str | None = None,
                           discrete_ops_variant: str | None = None,
+                          pinner_overlay_variant: str | None = None,
+                          reclaim_variant: str | None = None,
+                          wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
                           cas_hal_variant: str | None = None,
                           vendor_property_variant: str | None = None,
@@ -836,11 +872,26 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 ) + "    setprop ro.sf.lcd_density ${ro.boot.lcd_density}\n"
                 # The restore of normal RCU grace periods, which belongs to
                 # boot completion, follows the boot action's commands.
+                # Swap goes on at the same point.
+                swapon = "    swapon_all /vendor/etc/fstab.uml\n"
                 rcu_restore = "    write /sys/kernel/rcu_expedited 0\n"
+                if init_variant == "missing-swapon":
+                    swapon = ""
                 if init_variant == "missing-rcu-restore":
                     rcu_restore = ""
-                elif init_variant != "rcu-restore-at-boot":
-                    rcu_restore = "on property:sys.boot_completed=1\n" + rcu_restore
+                if init_variant == "swapon-also-at-boot":
+                    rcu_restore = (
+                        "    swapon_all /vendor/etc/fstab.uml\n"
+                        "on property:sys.boot_completed=1\n" + rcu_restore + swapon
+                    )
+                elif init_variant == "swapon-twice":
+                    rcu_restore = (
+                        "on property:sys.boot_completed=1\n" + rcu_restore + swapon + swapon
+                    )
+                elif init_variant == "rcu-restore-at-boot":
+                    rcu_restore = rcu_restore + swapon
+                else:
+                    rcu_restore = "on property:sys.boot_completed=1\n" + rcu_restore + swapon
                 # The directories the Wi-Fi HAL and the supplicant use.
                 wifi_dirs = (
                     ""
@@ -1055,6 +1106,47 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             else wifi_trigger + "    start kernarium_wifi_network\n"
                         ),
                     )
+                # The script that kills the cached processes of the reviewed boot-started apps, with its
+                # init file: the tracked ones, and the ways each can go wrong.
+                reclaim_script = (
+                    verifier.parents[1] / "overlay/tools/kernarium_reclaim_boot_apps.sh"
+                ).read_text()
+                reclaim_rc = (
+                    verifier.parents[1] / "overlay/tools/kernarium_reclaim_boot_apps.rc"
+                ).read_text()
+                for variant, (old, new) in {
+                    "no-kill": ('cmd activity kill --user 0 "$pkg"', "true"),
+                    "kill-all": ("exit 0\n", "cmd activity kill-all\nexit 0\n"),
+                    "force-stop": ("exit 0\n", 'cmd activity force-stop "$pkg"\nexit 0\n'),
+                    "kill-9": ("exit 0\n", "kill -9 1234\nexit 0\n"),
+                    "extra-package": ("com.android.rkpdapp com.android.rkpdapp\n",
+                                      "com.android.rkpdapp com.android.rkpdapp\ncom.example.app com.example.app\n"),
+                    "missing-package": ("com.stevesoltys.seedvault com.stevesoltys.seedvault\n", ""),
+                    "missing-process": ("android.ext.services .adservices android.ext.services",
+                                        "android.ext.services android.ext.services"),
+                    "no-settle": ("settle=120", "settle=0"),
+                    "no-lru": ("dumpsys activity lru", "dumpsys activity processes"),
+                    "no-list": ("reclaim_list='", "reclaim_apps='"),
+                }.items():
+                    if reclaim_variant == variant:
+                        if old not in reclaim_script:
+                            fail(f"the reclaim script lacks '{old}' for the {variant} variant")
+                        reclaim_script = reclaim_script.replace(old, new)
+                if reclaim_variant != "missing-script":
+                    archive.writestr("SYSTEM_EXT/bin/kernarium_reclaim_boot_apps.sh", reclaim_script)
+                for variant, (old, new) in {
+                    "missing-service": ("service kernarium_reclaim_boot_apps ", "service other_service "),
+                    "not-oneshot": ("    oneshot\n", ""),
+                    "not-disabled": ("    disabled\n", ""),
+                    "started-at-boot": ("on property:sys.boot_completed=1", "on boot"),
+                    "no-start": ("    start kernarium_reclaim_boot_apps\n", ""),
+                }.items():
+                    if reclaim_variant == variant:
+                        if old not in reclaim_rc:
+                            fail(f"the reclaim init file lacks '{old}' for the {variant} variant")
+                        reclaim_rc = reclaim_rc.replace(old, new)
+                if reclaim_variant != "missing-rc":
+                    archive.writestr("SYSTEM_EXT/etc/init/kernarium_reclaim_boot_apps.rc", reclaim_rc)
                 archive.writestr(
                     "SYSTEM_EXT/etc/selinux/system_ext_file_contexts",
                     "/(system_ext|system/system_ext)/bin/other\\.sh  u:object_r:system_file:s0\n"
@@ -1063,6 +1155,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         if wifi_network_variant == "missing-label"
                         else "/(system_ext|system/system_ext)/bin/kernarium_wifi_network\\.sh  "
                         "u:object_r:kernarium_wifi_network_exec:s0\n"
+                    )
+                    + (
+                        ""
+                        if reclaim_variant == "missing-label"
+                        else "/(system_ext|system/system_ext)/bin/kernarium_reclaim_boot_apps\\.sh  "
+                        "u:object_r:kernarium_reclaim_boot_apps_exec:s0\n"
                     ),
                 )
                 # Platform, vendor and system_ext policy as the builder emits them: the
@@ -1165,6 +1263,27 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         ""
                         if wifi_network_variant == "missing-binder-call"
                         else "(allow system_server kernarium_wifi_network (binder (call)))\n"
+                    )
+                    + "".join(
+                        rule
+                        for variant, rule in (
+                            ("missing-transition",
+                             "(typetransition init kernarium_reclaim_boot_apps_exec process "
+                             "kernarium_reclaim_boot_apps)\n"),
+                            ("missing-find",
+                             "(allow kernarium_reclaim_boot_apps activity_service "
+                             "(service_manager (find)))\n"),
+                            ("missing-transfer",
+                             "(allow kernarium_reclaim_boot_apps system_server (binder (transfer)))\n"),
+                            ("missing-call",
+                             "(allow system_server kernarium_reclaim_boot_apps (binder (call)))\n"),
+                            ("missing-fd",
+                             "(allow system_server kernarium_reclaim_boot_apps (fd (use)))\n"),
+                            ("missing-fifo",
+                             "(allow system_server kernarium_reclaim_boot_apps "
+                             "(fifo_file (read write getattr)))\n"),
+                        )
+                        if reclaim_variant != variant
                     )
                     + (
                         ""
@@ -1317,6 +1436,28 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             archive.writestr(f"{artifact}.vdex", b"vdex")
                 for apk in plain_apks:
                     archive.writestr(apk, b"apk")
+                # The overlay that releases the home app's pin: built for SDK 28, with the
+                # resource it sets in its table.
+                pinner_overlay = io.BytesIO()
+                with zipfile.ZipFile(pinner_overlay, "w") as overlay:
+                    overlay.writestr(
+                        "AndroidManifest.xml",
+                        b"not a compiled manifest" if pinner_overlay_variant == "not-compiled"
+                        else synthetic_compiled_manifest(
+                            None if pinner_overlay_variant == "no-target-sdk"
+                            else 29 if pinner_overlay_variant == "target-sdk-29"
+                            else 37 if pinner_overlay_variant == "target-sdk-current"
+                            else 28,
+                            string_value=pinner_overlay_variant == "named-target-sdk",
+                        ),
+                    )
+                    if pinner_overlay_variant != "no-table":
+                        overlay.writestr(
+                            "resources.arsc",
+                            b"\x00" if pinner_overlay_variant == "no-resource"
+                            else b"\x00config_pinnerHomePinBytes\x00",
+                        )
+                archive.writestr(pinner_overlay_entry, pinner_overlay.getvalue())
                 # The runtime resource overlay Soong generates from the product's
                 # SimpleDeviceConfig overlays. Its string pool holds each DeviceConfig list:
                 # LineageOS's, then the product's, which adds the ops of AOSP's default.
@@ -1343,6 +1484,37 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "PRODUCT/overlay/"
                         "SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk",
                         overlay_apk.getvalue(),
+                    )
+                if wallpaper_variant != "missing-overlay":
+                    # The framework's runtime resource overlay: Soong lists the tablet default
+                    # wallpapers with the version qualifier aapt2 adds to a smallest-width one.
+                    def png_header(width: int, height: int) -> bytes:
+                        header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+                        return (b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + header
+                                + struct.pack(">I", zlib.crc32(b"IHDR" + header)))
+
+                    wallpapers = {
+                        "res/drawable-sw600dp-nodpi-v13/default_wallpaper.png": png_header(1024, 1024),
+                        "res/drawable-sw720dp-nodpi-v13/default_wallpaper.png": png_header(1024, 1024),
+                        "res/drawable-xxxhdpi-v4/default_wallpaper.png": png_header(2560, 2560),
+                    }
+                    if wallpaper_variant == "missing-variant":
+                        del wallpapers["res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"]
+                    elif wallpaper_variant == "lineage-size":
+                        wallpapers["res/drawable-sw600dp-nodpi-v13/default_wallpaper.png"] = png_header(1920, 1920)
+                    elif wallpaper_variant == "not-square":
+                        wallpapers["res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"] = png_header(1024, 768)
+                    elif wallpaper_variant == "not-png":
+                        wallpapers["res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"] = b"not a png at all, just bytes"
+                    framework_apk = io.BytesIO()
+                    with zipfile.ZipFile(framework_apk, "w") as overlay:
+                        overlay.writestr("resources.arsc", b"\x00")
+                        for name, payload in wallpapers.items():
+                            overlay.writestr(name, payload)
+                    archive.writestr(
+                        "PRODUCT/overlay/"
+                        "framework-res__lineage_darwin__auto_generated_rro_product.apk",
+                        framework_apk.getvalue(),
                     )
                 for apk in arm_preopt_apks:
                     apk_path = Path(apk)
@@ -1908,6 +2080,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("userdata-grow-policy-no-ioctl", {"userdata_grow_policy_variant": "no-ioctl"}),
             ("userdata-grow-policy-more-ioctls", {"userdata_grow_policy_variant": "more-ioctls"}),
             ("missing-discrete-ops-overlay", {"discrete_ops_variant": "missing-overlay"}),
+            ("missing-framework-overlay", {"wallpaper_variant": "missing-overlay"}),
+            ("missing-default-wallpaper-variant", {"wallpaper_variant": "missing-variant"}),
+            ("lineage-size-default-wallpaper", {"wallpaper_variant": "lineage-size"}),
+            ("non-square-default-wallpaper", {"wallpaper_variant": "not-square"}),
+            ("default-wallpaper-not-png", {"wallpaper_variant": "not-png"}),
             ("unreliable-present-fence", {"vendor_property_variant": "present-fence-unreliable"}),
             ("missing-incremental-property", {"vendor_property_variant": "no-incremental"}),
             ("disabled-incremental-property", {"vendor_property_variant": "incremental-off"}),
@@ -1923,12 +2100,45 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-cas-plugin-32", {"cas_hal_variant": "no-plugin32"}),
             ("lineage-discrete-ops-list-only", {"discrete_ops_variant": "lineage-list-only"}),
             ("short-discrete-ops-list", {"discrete_ops_variant": "short-device-list"}),
+            ("missing-pinner-overlay", {"entries": {"VENDOR/overlay/KernariumPinnerOverlay.apk": None}}),
+            ("pinner-overlay-target-sdk-29", {"pinner_overlay_variant": "target-sdk-29"}),
+            ("pinner-overlay-target-sdk-current", {"pinner_overlay_variant": "target-sdk-current"}),
+            ("pinner-overlay-no-target-sdk", {"pinner_overlay_variant": "no-target-sdk"}),
+            ("pinner-overlay-named-target-sdk", {"pinner_overlay_variant": "named-target-sdk"}),
+            ("pinner-overlay-no-resource", {"pinner_overlay_variant": "no-resource"}),
+            ("missing-reclaim-script", {"reclaim_variant": "missing-script"}),
+            ("missing-reclaim-rc", {"reclaim_variant": "missing-rc"}),
+            ("reclaim-missing-service", {"reclaim_variant": "missing-service"}),
+            ("reclaim-not-oneshot", {"reclaim_variant": "not-oneshot"}),
+            ("reclaim-not-disabled", {"reclaim_variant": "not-disabled"}),
+            ("reclaim-started-at-boot", {"reclaim_variant": "started-at-boot"}),
+            ("reclaim-no-start", {"reclaim_variant": "no-start"}),
+            ("reclaim-no-kill", {"reclaim_variant": "no-kill"}),
+            ("reclaim-kill-all", {"reclaim_variant": "kill-all"}),
+            ("reclaim-force-stop", {"reclaim_variant": "force-stop"}),
+            ("reclaim-kill-9", {"reclaim_variant": "kill-9"}),
+            ("reclaim-extra-package", {"reclaim_variant": "extra-package"}),
+            ("reclaim-missing-package", {"reclaim_variant": "missing-package"}),
+            ("reclaim-missing-process", {"reclaim_variant": "missing-process"}),
+            ("reclaim-no-settle", {"reclaim_variant": "no-settle"}),
+            ("reclaim-no-lru", {"reclaim_variant": "no-lru"}),
+            ("reclaim-no-list", {"reclaim_variant": "no-list"}),
+            ("reclaim-missing-label", {"reclaim_variant": "missing-label"}),
+            ("reclaim-missing-transition", {"reclaim_variant": "missing-transition"}),
+            ("reclaim-missing-find", {"reclaim_variant": "missing-find"}),
+            ("reclaim-missing-transfer", {"reclaim_variant": "missing-transfer"}),
+            ("reclaim-missing-call", {"reclaim_variant": "missing-call"}),
+            ("reclaim-missing-fd", {"reclaim_variant": "missing-fd"}),
+            ("reclaim-missing-fifo", {"reclaim_variant": "missing-fifo"}),
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
             ("ungated-density", {"init_variant": "ungated-density"}),
             ("missing-rcu-restore", {"init_variant": "missing-rcu-restore"}),
             ("rcu-restore-at-boot", {"init_variant": "rcu-restore-at-boot"}),
+            ("missing-swapon", {"init_variant": "missing-swapon"}),
+            ("swapon-also-at-boot", {"init_variant": "swapon-also-at-boot"}),
+            ("swapon-twice", {"init_variant": "swapon-twice"}),
             ("cuttlefish-graphics-rc",
              {"extra_entry": "VENDOR/etc/init/init_graphics.vendor.rc"}),
             ("product-init-rc", {"extra_entry": "PRODUCT/etc/init/init.rc"}),
@@ -2237,6 +2447,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "unexpected product property apexd.config.use_fiemap: \\[\\]"),
             ("use-fiemap-true-cause", {"use_fiemap_variant": "true"},
              "unexpected product property apexd.config.use_fiemap: \\['true'\\]"),
+            ("missing-swapon-cause", {"init_variant": "missing-swapon"},
+             "does not run 'swapon_all /vendor/etc/fstab.uml' once at property:sys.boot_completed=1"),
+            ("swapon-twice-cause", {"init_variant": "swapon-twice"},
+             "does not run 'swapon_all /vendor/etc/fstab.uml' once at property:sys.boot_completed=1"),
+            ("swapon-also-at-boot-cause", {"init_variant": "swapon-also-at-boot"},
+             "turns swap on under 'boot': swapon_all /vendor/etc/fstab.uml"),
             ("userdata-grow-missing-cause", {"userdata_grow_variant": "missing"},
              "does not run 'exec - root system -- /system/bin/resize2fs [^']*' once at "
              "post-fs-data"),
@@ -2295,11 +2511,87 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "the ClearKey CAS plugin is missing: VENDOR/lib/mediacas/libclearkeycasplugin.so"),
             ("missing-discrete-ops-overlay-cause", {"discrete_ops_variant": "missing-overlay"},
              "SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk is missing"),
+            ("missing-framework-overlay-cause", {"wallpaper_variant": "missing-overlay"},
+             "framework-res__lineage_darwin__auto_generated_rro_product.apk is missing"),
+            ("missing-default-wallpaper-variant-cause", {"wallpaper_variant": "missing-variant"},
+             "has no res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"),
+            ("lineage-size-default-wallpaper-cause", {"wallpaper_variant": "lineage-size"},
+             "res/drawable-sw600dp-nodpi-v13/default_wallpaper.png in .* is 1920x1920: the tablet "
+             "default wallpaper must be a square of at most 1024 pixels"),
+            ("non-square-default-wallpaper-cause", {"wallpaper_variant": "not-square"},
+             "is 1024x768: the tablet default wallpaper must be a square"),
+            ("default-wallpaper-not-png-cause", {"wallpaper_variant": "not-png"},
+             "default_wallpaper.png in .* is not a PNG with a leading IHDR chunk"),
             ("lineage-discrete-ops-list-only-cause", {"discrete_ops_variant": "lineage-list-only"},
              "keeps AOSP's default ops; the closest lacks 2, 25, 41, 42, 63, 73, 88, 89, 120, "
              "136, 141, 147, 149, 150, 152, 170, 171, 172, 173"),
             ("short-discrete-ops-list-cause", {"discrete_ops_variant": "short-device-list"},
              "the closest lacks 141$"),
+            ("missing-pinner-overlay-cause",
+             {"entries": {"VENDOR/overlay/KernariumPinnerOverlay.apk": None}},
+             "VENDOR/overlay/KernariumPinnerOverlay.apk"),
+            ("pinner-overlay-target-sdk-29-cause", {"pinner_overlay_variant": "target-sdk-29"},
+             "KernariumPinnerOverlay.apk targets SDK 29: .* 28 or lower"),
+            ("pinner-overlay-target-sdk-current-cause", {"pinner_overlay_variant": "target-sdk-current"},
+             "KernariumPinnerOverlay.apk targets SDK 37: .* 28 or lower"),
+            ("pinner-overlay-no-target-sdk-cause", {"pinner_overlay_variant": "no-target-sdk"},
+             "KernariumPinnerOverlay.apk targets SDK None: .* 28 or lower"),
+            ("pinner-overlay-named-target-sdk-cause", {"pinner_overlay_variant": "named-target-sdk"},
+             "KernariumPinnerOverlay.apk targets SDK None: .* 28 or lower"),
+            ("pinner-overlay-no-resource-cause", {"pinner_overlay_variant": "no-resource"},
+             "KernariumPinnerOverlay.apk does not set config_pinnerHomePinBytes"),
+            ("pinner-overlay-no-table-cause", {"pinner_overlay_variant": "no-table"},
+             "KernariumPinnerOverlay.apk has no readable manifest and resource table"),
+            ("pinner-overlay-not-compiled-cause", {"pinner_overlay_variant": "not-compiled"},
+             "KernariumPinnerOverlay.apk has an unreadable manifest: not a compiled XML file"),
+            ("missing-reclaim-script-cause", {"reclaim_variant": "missing-script"},
+             "required entries are missing: .*SYSTEM_EXT/bin/kernarium_reclaim_boot_apps.sh"),
+            ("missing-reclaim-rc-cause", {"reclaim_variant": "missing-rc"},
+             "required entries are missing: .*SYSTEM_EXT/etc/init/kernarium_reclaim_boot_apps.rc"),
+            ("reclaim-missing-service-cause", {"reclaim_variant": "missing-service"},
+             "does not declare the kernarium_reclaim_boot_apps service"),
+            ("reclaim-not-oneshot-cause", {"reclaim_variant": "not-oneshot"},
+             "does not declare kernarium_reclaim_boot_apps as oneshot"),
+            ("reclaim-not-disabled-cause", {"reclaim_variant": "not-disabled"},
+             "does not declare kernarium_reclaim_boot_apps as disabled"),
+            ("reclaim-started-at-boot-cause", {"reclaim_variant": "started-at-boot"},
+             "starts kernarium_reclaim_boot_apps under 'boot'"),
+            ("reclaim-no-start-cause", {"reclaim_variant": "no-start"},
+             "does not start kernarium_reclaim_boot_apps when boot completes"),
+            ("reclaim-no-kill-cause", {"reclaim_variant": "no-kill"},
+             "does not contain 'cmd activity kill --user 0 \"\\$pkg\"'"),
+            ("reclaim-kill-all-cause", {"reclaim_variant": "kill-all"},
+             "contains 'kill-all': it may only kill the cached processes"),
+            ("reclaim-force-stop-cause", {"reclaim_variant": "force-stop"},
+             "contains 'force-stop': it may only kill the cached processes"),
+            ("reclaim-kill-9-cause", {"reclaim_variant": "kill-9"},
+             "contains 'kill -9': it may only kill the cached processes"),
+            ("reclaim-extra-package-cause", {"reclaim_variant": "extra-package"},
+             "lists .*com.example.app.*not the reviewed packages"),
+            ("reclaim-missing-package-cause", {"reclaim_variant": "missing-package"},
+             "not the reviewed packages"),
+            ("reclaim-missing-process-cause", {"reclaim_variant": "missing-process"},
+             "not the reviewed packages"),
+            ("reclaim-no-settle-cause", {"reclaim_variant": "no-settle"},
+             "does not contain 'settle=120'"),
+            ("reclaim-no-lru-cause", {"reclaim_variant": "no-lru"},
+             "does not contain 'dumpsys activity lru'"),
+            ("reclaim-no-list-cause", {"reclaim_variant": "no-list"},
+             "has no reclaim_list block"),
+            ("reclaim-missing-label-cause", {"reclaim_variant": "missing-label"},
+             "system_ext file contexts do not label /system_ext/bin/kernarium_reclaim_boot_apps.sh"),
+            ("reclaim-missing-transition-cause", {"reclaim_variant": "missing-transition"},
+             "does not move init into the reclaim domain"),
+            ("reclaim-missing-find-cause", {"reclaim_variant": "missing-find"},
+             "does not allow kernarium_reclaim_boot_apps activity_service service_manager find"),
+            ("reclaim-missing-transfer-cause", {"reclaim_variant": "missing-transfer"},
+             "does not allow kernarium_reclaim_boot_apps system_server binder transfer"),
+            ("reclaim-missing-call-cause", {"reclaim_variant": "missing-call"},
+             "does not allow system_server kernarium_reclaim_boot_apps binder call"),
+            ("reclaim-missing-fd-cause", {"reclaim_variant": "missing-fd"},
+             "does not allow system_server kernarium_reclaim_boot_apps fd use"),
+            ("reclaim-missing-fifo-cause", {"reclaim_variant": "missing-fifo"},
+             "does not allow system_server kernarium_reclaim_boot_apps fifo_file write"),
             ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
              "userdata entry lacks the fs_mgr quota flag"),
             ("wrong-apex-filesystem-cause", {"wrong_apex_filesystem": True},
@@ -2706,6 +2998,533 @@ def verify_userdata_grow(android_root: Path) -> None:
     verifier.check_userdata_grow_policy(policy)
 
 
+def verify_zram_fstab(android_root: Path) -> None:
+    """The fstab names one zram swap entry that sizes itself from the RAM; init turns it on at boot completion."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    fstab = (android_root / "overlay/config/fstab.uml").read_bytes()
+    verifier.check_zram_fstab(fstab, "tracked")
+    entry = b"/dev/block/zram0 none swap defaults zramsize=50%\n"
+    if entry not in fstab:
+        fail("overlay/config/fstab.uml does not contain the zram swap entry this guard looks for")
+    for label, edited in (
+        ("no swap entry", fstab.replace(entry, b"")),
+        ("wrong device", fstab.replace(b"/dev/block/zram0", b"/dev/block/zram1")),
+        ("no size", fstab.replace(b"zramsize=50%", b"max_comp_streams=4")),
+        ("absolute size", fstab.replace(b"zramsize=50%", b"zramsize=768M")),
+        ("two entries", fstab + entry),
+    ):
+        try:
+            verifier.check_zram_fstab(edited, label)
+        except SystemExit:
+            continue
+        fail(f"a fstab with {label} passes the zram swap check")
+
+
+def verify_pinner_overlay(android_root: Path) -> None:
+    """The product releases the home app's memory pin with an overlay built for SDK 28.
+
+    The pin sizes are not overlayable, so the overlay applies only while it targets 28 or lower;
+    the verifier reads the built manifest, and these checks keep its reader and the module's
+    sources in step."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    module = android_root / "overlay/rro/KernariumPinnerOverlay"
+    values = re.findall(
+        r'<integer name="([a-zA-Z_]+)">([^<]*)</integer>',
+        (module / "res/values/config.xml").read_text(),
+    )
+    if values != [("config_pinnerHomePinBytes", "0")]:
+        fail(f"the pinner overlay sets {values}, not the home pin size alone and to zero")
+    if verifier.PINNER_OVERLAY_RESOURCE.decode() != values[0][0]:
+        fail("the verifier looks for a different pin resource than the overlay sets")
+    manifest = (module / "AndroidManifest.xml").read_text()
+    target = re.search(r'android:targetSdkVersion="(\d+)"', manifest)
+    if target is None or int(target.group(1)) > verifier.PINNER_OVERLAY_MAX_TARGET_SDK:
+        fail("the pinner overlay manifest does not target SDK 28 or lower")
+    for needle in ('android:targetPackage="android"', 'android:isStatic="true"'):
+        if needle not in manifest:
+            fail(f"the pinner overlay manifest lacks {needle}")
+    blueprint = (module / "Android.bp").read_text()
+    for needle in ('name: "KernariumPinnerOverlay"', "vendor: true,", 'sdk_version: "28",'):
+        if needle not in blueprint:
+            fail(f"the pinner overlay module lacks {needle}")
+    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    if len(re.findall(r"^PRODUCT_PACKAGES \+= KernariumPinnerOverlay$", product, re.M)) != 1:
+        fail("lineage_darwin.mk does not add KernariumPinnerOverlay to PRODUCT_PACKAGES exactly once")
+    if verifier.PINNER_OVERLAY != "VENDOR/overlay/KernariumPinnerOverlay.apk":
+        fail("the verifier expects the pinner overlay somewhere other than the vendor overlay directory")
+
+    for label, blob, expected in (
+        ("SDK 28", synthetic_compiled_manifest(28), 28),
+        ("SDK 37", synthetic_compiled_manifest(37), 37),
+        ("no attribute", synthetic_compiled_manifest(None), None),
+        ("a name", synthetic_compiled_manifest(28, string_value=True), None),
+    ):
+        if verifier.manifest_target_sdk(blob) != expected:
+            fail(f"the manifest reader does not read {label} as {expected}")
+    good = synthetic_compiled_manifest(28)
+    for label, blob in (
+        ("empty", b""),
+        ("not compiled XML", b"<manifest/>" + bytes(8)),
+        ("truncated", good[:-6]),
+    ):
+        try:
+            verifier.manifest_target_sdk(blob)
+        except (ValueError, struct.error):
+            continue
+        fail(f"the manifest reader accepts a {label} manifest")
+
+
+def secondary_zygote_preloader_problems(added: str) -> list[str]:
+    """What is wrong with the added text of the topic that preloads the secondary zygote on demand.
+
+    system_server waits for the preload task, and the stock task catches everything, so a failure
+    of the package lookup must fall back to the preload instead of reaching the task's future:
+    that rethrows into startOtherServices and restarts system_server."""
+
+    def body(signature: str) -> str:
+        start = added.find(signature)
+        if start < 0:
+            return ""
+        depth = 0
+        for end in range(added.index("{", start), len(added)):
+            depth += added[end] == "{"
+            depth -= added[end] == "}"
+            if depth == 0:
+                return added[start : end + 1]
+        return ""
+
+    problems = []
+    run, check, preload = body("void run()"), body("private void check("), body("private void preload()")
+    for name, text in (("run", run), ("check", check), ("preload", preload)):
+        if not text:
+            problems.append(f"the topic has no {name}()")
+    if run and not re.search(r"catch \(Exception \w+\) \{[^}]*\bpreload\(\);", run):
+        problems.append("run() does not fall back to the preload when the package lookup throws")
+    if check:
+        if not re.search(r"catch \(Exception \w+\) \{[^}]*\bneeded = true;", check):
+            problems.append("check() does not fall back to the preload when the lookup throws")
+        if "getPackageStateInternal(" not in check or "getPackageStates(" in check:
+            problems.append("check() must read the one package's state, not copy every state")
+    if preload and not re.search(r"try \{\s*mPackageManager\.removePackageListObserver\(this\);\s*\} catch \(Exception", preload):
+        problems.append("preload() lets a failure to remove the package observer skip the preload")
+    return problems
+
+
+def verify_secondary_zygote_topic(android_root: Path) -> None:
+    """The frameworks/base topic that preloads the secondary zygote on demand cannot fail system_server."""
+    patches = sorted((android_root / "patches/projects/p0007/series").glob("zygote-preload-the-secondary-zygote-*.patch"))
+    if len(patches) != 1:
+        fail(f"p0007 has {len(patches)} secondary zygote preload patches, not one")
+    text = patches[0].read_text()
+    added = "\n".join(line[1:] for line in text.splitlines() if line.startswith("+") and not line.startswith("+++"))
+    problems = secondary_zygote_preloader_problems(added)
+    if problems:
+        fail("the secondary zygote preload topic: " + "; ".join(problems))
+    for label, edited in (
+        ("run() without its catch", re.sub(r"\} catch \(Exception ex\) \{\n\s*Slog\.e\(TAG, \"Unable to tell whether a package", "} finally { Slog.e(TAG, \"Unable to tell whether a package", added, count=1)),
+        ("check() that copies every state", added.replace("getPackageStateInternal(packageName)", "getPackageStates().get(packageName)")),
+        ("check() without its fallback", added.replace("needed = true;", "needed = false;")),
+        ("preload() that skips on a failed removal", added.replace("try {\n                mPackageManager.removePackageListObserver(this);\n            } catch (Exception ex) {", "{\n                mPackageManager.removePackageListObserver(this);\n            } if (false) {")),
+    ):
+        if edited == added or not secondary_zygote_preloader_problems(edited):
+            fail(f"the secondary zygote preload check accepts {label}")
+
+
+def decoder_output_delay_problems(added: str, removed: str) -> list[str]:
+    """What is wrong with the added text of the topic that lowers the H.264 and HEVC output delay.
+
+    The framework stops feeding the decoder at the pipeline delay (3) plus the output delay plus 4 works,
+    and this device releases a picture once more than the stream's reorder depth R of them wait, so a
+    stream stalls only when R exceeds the delay by more than 6. R is at most 16, which needs a delay of
+    at least 10; the delay is a constant, not a property."""
+    problems = []
+    constant = re.search(r"constexpr uint32_t kReorderingOutputDelay = (\d+);", added)
+    if not constant:
+        problems.append("the topic defines no kReorderingOutputDelay")
+    elif int(constant.group(1)) + 6 < 16:
+        problems.append(f"a delay of {constant.group(1)} stalls a stream of reorder depth 16")
+    if added.count("return kReorderingOutputDelay;") != 2 or removed.count("return 16;") != 2:
+        problems.append("H.264 and HEVC do not both return the constant in place of 16")
+    if "property_get" in added or "getprop" in added.lower():
+        problems.append("the delay is a constant, not a property")
+    if "reorders on the host" not in added or "hold no" not in added:
+        problems.append("the comment does not give the reason: the device reorders on the host and its capture buffers hold no reorder pictures")
+    return problems
+
+
+def verify_decoder_output_delay_topic(android_root: Path) -> None:
+    """The v4l2_codec2 topic that lowers the H.264 and HEVC output delay keeps every stream decodable."""
+    patches = sorted((android_root / "patches/projects/p0018/series").glob("v4l2-hold-fewer-capture-buffers-*.patch"))
+    if len(patches) != 1:
+        fail(f"p0018 has {len(patches)} output delay patches, not one")
+    lines = patches[0].read_text().splitlines()
+    added = "\n".join(line[1:] for line in lines if line.startswith("+") and not line.startswith("+++"))
+    removed = "\n".join(line[1:] for line in lines if line.startswith("-") and not line.startswith("---"))
+    problems = decoder_output_delay_problems(added, removed)
+    if problems:
+        fail("the decoder output delay topic: " + "; ".join(problems))
+    for label, edited_added, edited_removed in (
+        ("a delay of 9", added.replace("kReorderingOutputDelay = 10;", "kReorderingOutputDelay = 9;"), removed),
+        ("an HEVC case that keeps 16", added.replace("return kReorderingOutputDelay;", "return 16;", 1), removed.replace("return 16;", "", 1)),
+        ("a delay read from a property", added + '\nproperty_get_int32("ro.vendor.v4l2_codec2.output_delay", 10);', removed),
+        ("a delay without its reason", added.replace("reorders on the host", "reorders"), removed),
+    ):
+        if (edited_added, edited_removed) == (added, removed) or not decoder_output_delay_problems(edited_added, edited_removed):
+            fail(f"the decoder output delay check accepts {label}")
+
+
+SECURE_ELEMENT_MANIFEST = "AndroidManifest.xml"
+SECURE_ELEMENT_APPLICATION = "src/com/android/se/SEApplication.java"
+
+
+def secure_element_topic_problems(files: dict[str, tuple[str, str]], message: str) -> list[str]:
+    """What is wrong with the SecureElement topic (its lines per file, and its commit message).
+
+    The topic makes the OMAPI service start when a client binds it. It removes the one attribute that
+    starts the process at boot, and the application's own startService call: the system starts the
+    process of a bound service in the background and refuses a background startService, so with the
+    call the application crashed in onCreate on every bind and no client ever connected (cand15). The
+    bind creates the service, which registers itself in its own onCreate. The topic changes nothing else
+    of the manifest: the service, its exported intent filter and its shared uid stay, so a client that
+    binds the intent still connects. Nothing else may start, bind or pin the service from the application:
+    a started service is sticky, and the system would restart the process after reclaiming it."""
+    problems = []
+    if set(files) != {SECURE_ELEMENT_MANIFEST, SECURE_ELEMENT_APPLICATION}:
+        return [f"the topic touches {sorted(files)}, not the manifest and SEApplication.java"]
+    added, removed = files[SECURE_ELEMENT_MANIFEST]
+    if added.strip():
+        problems.append("the topic adds manifest lines")
+    if removed.strip() != 'android:persistent="true"':
+        problems.append("the topic removes something other than the persistent attribute")
+    added, removed = files[SECURE_ELEMENT_APPLICATION]
+    if "startService(serviceIntent);" not in removed:
+        problems.append("the topic leaves the application's startService call")
+    for call in ("startService", "startForegroundService", "bindService"):
+        if call + "(" in added:
+            problems.append(f"the topic adds a {call} call to the application")
+    if "try" in added.split() or "catch" in added:
+        problems.append("the topic keeps the start and catches its refusal instead of removing it")
+    if "exactly as before" in message:
+        problems.append("the message claims that onCreate starts the service as before")
+    for needed in ("startService", "BackgroundServiceStartNotAllowedException"):
+        if needed not in message:
+            problems.append(f"the message does not mention {needed}")
+    return problems
+
+
+def secure_element_topic_files(text: str) -> tuple[dict[str, tuple[str, str]], str]:
+    """The added and removed lines per file of a one-commit patch, and its commit message."""
+    head, _, body = text.partition("\n---\n")
+    message = head.split("\n\n", 1)[1] if "\n\n" in head else ""
+    files: dict[str, tuple[str, str]] = {}
+    for chunk in re.split(r"^diff --git a/", body, flags=re.MULTILINE)[1:]:
+        path = chunk.split(" b/", 1)[0]
+        lines = chunk.splitlines()
+        added = "\n".join(line[1:] for line in lines if line.startswith("+") and not line.startswith("+++"))
+        removed = "\n".join(line[1:] for line in lines if line.startswith("-") and not line.startswith("---"))
+        files[path] = (added, removed)
+    return files, message
+
+
+def verify_secure_element_topic(android_root: Path) -> None:
+    """SecureElement stays in the product, not persistent: it costs nothing at idle and still answers a bind.
+
+    CTS's OmapiTest#testGetOmapiVersion fails when the SEService intent finds no package, so the package
+    is kept; the memory it cost at idle (about 5.7 MiB) is saved by starting it on a bind."""
+    patches = sorted((android_root / "patches/projects/p0024/series").glob("SecureElement-*.patch"))
+    if len(patches) != 1:
+        fail(f"p0024 has {len(patches)} SecureElement patches, not one")
+    files, message = secure_element_topic_files(patches[0].read_text())
+    problems = secure_element_topic_problems(files, message)
+    if problems:
+        fail("the SecureElement topic: " + "; ".join(problems))
+    manifest_added, manifest_removed = files[SECURE_ELEMENT_MANIFEST]
+    app_added, app_removed = files[SECURE_ELEMENT_APPLICATION]
+
+    def variant(manifest=None, application=None, message_edit=None, extra_file=None, drop_file=None):
+        edited = dict(files)
+        if manifest is not None:
+            edited[SECURE_ELEMENT_MANIFEST] = manifest
+        if application is not None:
+            edited[SECURE_ELEMENT_APPLICATION] = application
+        if extra_file:
+            edited["src/com/android/se/SecureElementService.java"] = ("", "x")
+        if drop_file:
+            edited.pop(drop_file)
+        return secure_element_topic_problems(edited, message_edit if message_edit is not None else message)
+
+    for label, found in (
+        ("a topic that adds the attribute back", variant(manifest=(manifest_added + 'android:persistent="true"', manifest_removed))),
+        ("a topic that also drops the exported service",
+         variant(manifest=(manifest_added, manifest_removed + '\n<service android:name=".SecureElementService"'))),
+        ("a topic that removes another attribute",
+         variant(manifest=(manifest_added, manifest_removed.replace("persistent", "directBootAware")))),
+        ("a topic that removes nothing from the manifest", variant(manifest=(manifest_added, ""))),
+        ("a topic that keeps the application's startService", variant(application=(app_added, ""))),
+        ("a topic that adds a catch around the start",
+         variant(application=(app_added + "\ntry { startService(serviceIntent); } catch (IllegalStateException e) { }", app_removed))),
+        ("a topic that starts the service in a foreground service",
+         variant(application=(app_added + "\nstartForegroundService(serviceIntent);", app_removed))),
+        ("a topic that binds the service from the application",
+         variant(application=(app_added + "\nbindService(serviceIntent, c, 1);", app_removed))),
+        ("a topic that touches the service as well", variant(extra_file=True)),
+        ("a topic without the application change", variant(drop_file=SECURE_ELEMENT_APPLICATION)),
+        ("a message that claims the start works as before",
+         variant(message_edit=message + "\nonCreate starts and registers the service exactly as before.")),
+        ("a message that does not give the crash", variant(message_edit=message.replace("BackgroundServiceStartNotAllowedException", "an exception"))),
+    ):
+        if not found:
+            fail(f"the SecureElement topic check accepts {label}")
+    # The product keeps the package (the package assertions are verified in verify_package_assertions) and
+    # the image verifier does not forbid its directory.
+    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    removed_block = re.search(
+        r"^KERNARIUM_REMOVED_PACKAGES := \\\n((?:    \S+ \\\n)+    \S+)$", product, re.MULTILINE
+    )
+    if removed_block is None or "SecureElement" in removed_block.group(1).replace("\\", " ").split():
+        fail("the product removes SecureElement")
+    if "SecureElement" in load_tool(android_root / "tools/verify-target-files.py").FORBIDDEN_APP_DIRECTORIES:
+        fail("the target-files verifier forbids the SecureElement directory")
+    if "route `p0024`" not in (android_root / "README.md").read_text():
+        fail("the README does not describe the SecureElement topic (route p0024)")
+
+
+def verify_reclaim_boot_apps(android_root: Path) -> None:
+    """The reclaim script kills only the cached processes of the listed packages.
+
+    The script runs with stub tools: dumpsys prints a process list, cmd records the kill it is asked
+    for and log records what the script says. The list covers a cached process, one that is not
+    cached and is not touched by `kill` either, one that `kill` would take though it is not cached,
+    a package that is not running and a package that is not listed."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    tools = android_root / "overlay/tools"
+    script = tools / "kernarium_reclaim_boot_apps.sh"
+    # The sepolicy sources hold what the built-policy check looks for.
+    policy = (android_root / "overlay/sepolicy/system_ext/private/kernarium_reclaim_boot_apps.te").read_text()
+    for needle in (
+        "init_daemon_domain(kernarium_reclaim_boot_apps)",
+        "allow kernarium_reclaim_boot_apps activity_service:service_manager find;",
+        "allow kernarium_reclaim_boot_apps system_server:binder transfer;",
+        "allow system_server kernarium_reclaim_boot_apps:binder call;",
+        "allow system_server kernarium_reclaim_boot_apps:fd use;",
+        "allow system_server kernarium_reclaim_boot_apps:fifo_file { getattr read write };",
+        "allow kernarium_reclaim_boot_apps system_file:file execute_no_trans;",
+    ):
+        if needle not in policy:
+            fail(f"the reclaim domain lacks '{needle}'")
+    contexts = (android_root / "overlay/sepolicy/system_ext/private/file_contexts").read_text()
+    if (
+        r"/(system_ext|system/system_ext)/bin/kernarium_reclaim_boot_apps\.sh  "
+        "u:object_r:kernarium_reclaim_boot_apps_exec:s0"
+    ) not in contexts:
+        fail("the system_ext file contexts do not label the reclaim script")
+    blueprint = (tools / "Android.bp").read_text()
+    for needle in (
+        'name: "kernarium_reclaim_boot_apps_script"',
+        'src: "kernarium_reclaim_boot_apps.sh"',
+        'init_rc: ["kernarium_reclaim_boot_apps.rc"]',
+    ):
+        if needle not in blueprint:
+            fail(f"overlay/tools/Android.bp lacks {needle}")
+    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    if len(re.findall(r"^PRODUCT_PACKAGES \+= kernarium_reclaim_boot_apps_script$", product, re.M)) != 1:
+        fail("lineage_darwin.mk does not add the reclaim script to PRODUCT_PACKAGES exactly once")
+    verifier.check_reclaim_boot_apps((tools / "kernarium_reclaim_boot_apps.rc").read_text(), script.read_bytes())
+
+    lru = "\n".join((
+        "ACTIVITY MANAGER LRU PROCESSES (dumpsys activity lru)",
+        "  Activities:",
+        "  #30: fg       TOP  LCMNFUATI 1155:com.android.launcher3/u0a86 act:activities|recents",
+        "  Other:",
+        # cached, with a process of the same package that the system keeps visible
+        "  #29: cch  + 5 CEM  --------- 1587:.adservices/u0a104",
+        "  #28: vis      BFGS LCMNFUATI 1321:android.ext.services/u0a104",
+        # cached, one digit index
+        "  # 9: cch  +15 CEM  --------- 1583:com.android.localtransport/1000",
+        # a started service: `kill` would take it, so the package is left alone
+        "  #20: svc      SVC  --------- 1800:com.android.rkpdapp/u0a121",
+        "  #21: cch  + 5 CEM  --------- 1840:com.android.statementservice/u0a89",
+        # not cached and `kill` leaves it: nothing to reclaim
+        "  #22: prcp + 1 IMPB -------TI 1632:com.stevesoltys.seedvault/u0a85",
+        # not listed
+        "  #23: cch  + 5 CEM  --------- 1999:com.example.unlisted/u0a200",
+        "  #24: cch  + 5 CEM  --------- 1744:com.android.ondevicepersonalization.services.extra/u0a113",
+    ))
+    with tempfile.TemporaryDirectory(prefix="reclaim-script-") as temporary:
+        stubs = Path(temporary)
+        calls = stubs / "calls"
+        for name, body in {
+            "dumpsys": f'[ "$*" = "activity lru" ] || exit 2\ncat {stubs}/lru\n',
+            "cmd": f'echo "cmd $*" >> {calls}\necho Killed\n',
+            "log": f'echo "log $*" >> {calls}\n',
+            "sleep": f'echo "sleep $*" >> {calls}\n',
+        }.items():
+            (stubs / name).write_text("#!/bin/sh\n" + body)
+            (stubs / name).chmod(0o755)
+        (stubs / "lru").write_text(lru + "\n")
+        env = {"PATH": f"{stubs}:/usr/bin:/bin"}
+        result = subprocess.run(["/bin/sh", str(script)], env=env, capture_output=True, text=True)
+        if result.returncode != 0:
+            fail(f"the reclaim script exited {result.returncode}: {result.stderr}")
+        recorded = calls.read_text().splitlines()
+        if recorded[0] != "sleep 120":
+            fail(f"the reclaim script does not wait 120 s first: {recorded[:1]}")
+        kills = [line for line in recorded if line.startswith("cmd ")]
+        expected = [
+            "cmd activity kill --user 0 android.ext.services",
+            "cmd activity kill --user 0 com.android.localtransport",
+            "cmd activity kill --user 0 com.android.statementservice",
+        ]
+        if kills != expected:
+            fail(f"the reclaim script killed {kills}, not {expected}")
+        text = "\n".join(recorded)
+        for needle in (
+            "com.android.rkpdapp left alone, not cached: com.android.rkpdapp:svc",
+            "com.stevesoltys.seedvault has no cached process (kept: com.stevesoltys.seedvault:prcp)",
+            "android.ext.services killed cached .adservices (kept: android.ext.services:vis)",
+            "com.android.federatedcompute.services has no cached process (kept: none)",
+        ):
+            if needle not in text:
+                fail(f"the reclaim script did not log '{needle}': {text}")
+        # No process list, no kills.
+        (stubs / "lru").write_text("")
+        calls.unlink()
+        result = subprocess.run(["/bin/sh", str(script)], env=env, capture_output=True, text=True)
+        if result.returncode == 0 or any(line.startswith("cmd ") for line in calls.read_text().splitlines()):
+            fail("the reclaim script acts without a process list")
+
+
+def verify_default_wallpaper(android_root: Path) -> None:
+    """The overlay replaces LineageOS's 1920 pixel tablet wallpaper with a bounded square.
+
+    SystemUI fixes the wallpaper surface to the bitmap, so the 1920 pixel default kept a 14 MiB
+    buffer alive behind a window the display's long side wide; the overlay's copy is 1024 pixels
+    and carries the same image (the checked source and output digests pin that). The copies live in
+    the priority overlay directory, which the product makefile lists before LineageOS's."""
+    tool = load_tool(android_root / "tools/default_wallpaper.py")
+    tool.check_files(android_root)
+    resources = Path(tool.OVERLAY_RESOURCES)
+    with tempfile.TemporaryDirectory(prefix="default-wallpaper-") as temporary:
+        copy = Path(temporary)
+        shutil.copytree(android_root / resources, copy / resources)
+
+        def refuses(label: str, pattern: str, mutate) -> None:
+            for directory in tool.VARIANT_DIRECTORIES:
+                shutil.copyfile(
+                    android_root / resources / directory / tool.FILE_NAME,
+                    copy / resources / directory / tool.FILE_NAME,
+                )
+            mutate()
+            try:
+                tool.check_files(copy)
+            except tool.WallpaperError as error:
+                if not re.search(pattern, str(error)):
+                    fail(f"{label}: the refusal does not name its cause: {error}")
+            else:
+                fail(f"{label}: the default wallpaper check accepts it")
+
+        def png(width: int, height: int, depth: int = 8, color: int = 2) -> bytes:
+            header = struct.pack(">IIBBBBB", width, height, depth, color, 0, 0, 0)
+            return (b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + header
+                    + struct.pack(">I", zlib.crc32(b"IHDR" + header)))
+
+        sw600 = copy / resources / tool.VARIANT_DIRECTORIES[0] / tool.FILE_NAME
+        sw720 = copy / resources / tool.VARIANT_DIRECTORIES[1] / tool.FILE_NAME
+        refuses("lineage-size", r"is 1920x1920: .*square of at most 1024",
+                lambda: sw600.write_bytes(png(1920, 1920)))
+        refuses("not-square", r"is 1024x768", lambda: sw720.write_bytes(png(1024, 768)))
+        refuses("alpha", r"8-bit RGB without alpha", lambda: sw720.write_bytes(png(1024, 1024, 8, 6)))
+        refuses("not-png", r"not a PNG", lambda: sw720.write_bytes(b"bytes"))
+        refuses("variants-differ", r"differ", lambda: sw720.write_bytes(png(1024, 1024)))
+        refuses("missing-variant", r"has no drawable-sw720dp-nodpi/default_wallpaper.png", sw720.unlink)
+        refuses("changed-bytes", r"digest is .*: regenerate it",
+                lambda: [path.write_bytes(path.read_bytes() + b"\0") for path in (sw600, sw720)])
+    # Where the makefile lists the overlay decides who wins: LineageOS's overlay names the same
+    # resource, Soong ranks the earlier directory higher, and inherit-product expands the inherited
+    # list where its call stands: a directory listed after the calls ranks under LineageOS's.
+    tool.check_precedence(android_root)
+    makefile_text = (android_root / tool.PRODUCT_MAKEFILE).read_text(encoding="utf-8")
+    priority_line = f"PRODUCT_PACKAGE_OVERLAYS += {tool.PRIORITY_OVERLAY}\n"
+    ordinary_line = f"PRODUCT_PACKAGE_OVERLAYS += {tool.ORDINARY_OVERLAY}\n"
+    first_inherit = "$(call inherit-product, device/google/cuttlefish/vsoc_arm64_pgagnostic/phone/aosp_cf.mk)\n"
+    if makefile_text.count(priority_line) != 1 or makefile_text.count(ordinary_line) != 1 \
+            or makefile_text.count(first_inherit) != 1:
+        fail("the product makefile no longer has the lines the precedence cases rewrite")
+    if makefile_text.index(priority_line) > makefile_text.index(first_inherit):
+        fail("the product makefile lists the priority overlay after its inherit-product calls")
+    if makefile_text.index(ordinary_line) < makefile_text.index(first_inherit):
+        fail("the product makefile lists the ordinary overlay before its inherit-product calls")
+    with tempfile.TemporaryDirectory(prefix="default-wallpaper-order-") as temporary:
+        copy = Path(temporary)
+        (copy / "overlay").mkdir()
+
+        def orders(label: str, pattern: str, text: str, ordinary_wallpaper: bool = False) -> None:
+            (copy / tool.PRODUCT_MAKEFILE).write_text(text, encoding="utf-8")
+            stray = copy / tool.ORDINARY_RESOURCES / tool.VARIANT_DIRECTORIES[0] / tool.FILE_NAME
+            if ordinary_wallpaper:
+                stray.parent.mkdir(parents=True, exist_ok=True)
+                stray.write_bytes(b"x")
+            try:
+                tool.check_precedence(copy)
+            except tool.WallpaperError as error:
+                if not re.search(pattern, str(error)):
+                    fail(f"{label}: the refusal does not name its cause: {error}")
+            else:
+                fail(f"{label}: the overlay order check accepts it")
+            if stray.exists():
+                stray.unlink()
+
+        without = makefile_text.replace(priority_line, "")
+        orders("priority-after-inherit", r"after its first inherit-product call",
+               without.replace(first_inherit, first_inherit + priority_line))
+        orders("priority-missing", r"exactly once", without)
+        orders("priority-twice", r"exactly once", makefile_text.replace(priority_line, priority_line * 2))
+        orders("priority-commented-out", r"exactly once",
+               makefile_text.replace(priority_line, "# " + priority_line))
+        orders("ordinary-before-inherit", r"after its inherit-product calls",
+               makefile_text.replace(ordinary_line, "").replace(first_inherit, ordinary_line + first_inherit))
+        orders("wallpaper-also-in-ordinary", r"also in the ordinary overlay", makefile_text,
+               ordinary_wallpaper=True)
+        orders("no-inherit-call", r"no inherit-product call",
+               makefile_text.replace("$(call inherit-product,", "$(call not-inherit,"))
+    # The copy is pinned to the source's mini bitmap: the texels SystemUI's 112 x 112 nearest-neighbour
+    # reduction reads from the 1024 pixel image hold what the 1920 pixel image's own samples read, so the
+    # Monet palette is the one LineageOS's wallpaper gives. The positions are the ones read on a guest.
+    source_side, output_side = tool.SOURCE_SIDE, tool.MAX_SIDE
+    if [tool.sample_texels(source_side, k)[0] for k in range(5)] != [8, 25, 42, 59, 77] \
+            or tool.sample_texels(source_side, tool.MINI_SIDE - 1) != (1911, 1911) \
+            or [tool.sample_texels(output_side, k) for k in range(5)] \
+            != [(4, 4), (13, 13), (22, 22), (31, 32), (41, 41)] \
+            or tool.sample_texels(output_side, tool.MINI_SIDE - 1) != (1019, 1019):
+        fail("the mini bitmap sample positions differ from the ones read on a guest")
+    pattern = random.Random(20261031).randbytes(source_side * source_side * 3)
+    pinned = bytearray(output_side * output_side * 3)
+    changed = tool.pin_samples(pinned, output_side, pattern, source_side)
+    columns = [x for k in range(tool.MINI_SIDE) for x in range(tool.sample_texels(output_side, k)[0],
+                                                              tool.sample_texels(output_side, k)[1] + 1)]
+    if changed != len(columns) ** 2 or sum(1 for i in range(0, len(pinned), 3) if pinned[i:i + 3] != b"\0\0\0") != changed:
+        fail(f"the pinned copy changed {changed} texel values, not exactly the {len(columns) ** 2} sample texels")
+    for row in range(tool.MINI_SIDE):
+        for column in range(tool.MINI_SIDE):
+            start = (tool.sample_texels(source_side, row)[0] * source_side
+                     + tool.sample_texels(source_side, column)[0]) * 3
+            for y in range(tool.sample_texels(output_side, row)[0], tool.sample_texels(output_side, row)[1] + 1):
+                for x in range(tool.sample_texels(output_side, column)[0], tool.sample_texels(output_side, column)[1] + 1):
+                    if pinned[(y * output_side + x) * 3:(y * output_side + x) * 3 + 3] != pattern[start:start + 3]:
+                        fail(f"sample ({row}, {column}) of the pinned copy does not hold the source's sample")
+    # A source that is not LineageOS's own file cannot regenerate the committed copy.
+    with tempfile.TemporaryDirectory(prefix="default-wallpaper-") as temporary:
+        source = Path(temporary) / "source.png"
+        source.write_bytes(png(tool.SOURCE_SIDE, tool.SOURCE_SIDE))
+        try:
+            tool.generate(android_root, source, "magick")
+        except tool.WallpaperError as error:
+            if "is not LineageOS's default wallpaper" not in str(error):
+                fail(f"the regeneration refusal does not name its cause: {error}")
+        else:
+            fail("a wallpaper that is not LineageOS's regenerates the committed copy")
+
+
 def verify_overlay_sepolicy(android_root: Path) -> None:
     """The overlay's sepolicy sources keep core domains off vendor-owned properties."""
     tool = android_root / "tools/check-overlay-sepolicy.py"
@@ -2796,8 +3615,11 @@ def verify_package_assertions(android_root: Path) -> None:
         "com.android.hardware.wifi",
         "com.google.cf.wpa_supplicant",
         "KernariumWifiOverlay",
+        "KernariumPinnerOverlay",
+        "SecureElement",
         "kernarium_net_setup",
         "kernarium_wifi_network_script",
+        "kernarium_reclaim_boot_apps_script",
     ):
         if package not in present:
             fail(f"build-aosp.sh does not assert that {package} is present")
@@ -2855,6 +3677,12 @@ def verify_hal_selections(android_root: Path) -> None:
     actions = verifier.init_actions(script)
     if verifier.UML_INIT_RCU_RESTORE not in actions.get(verifier.UML_INIT_RCU_TRIGGER, []):
         fail("product init script does not restore normal RCU grace periods after boot")
+
+    # Android uses no network block device, and the desktop kernels' built-in
+    # driver otherwise creates 16 devices with a stack-holding receiver thread
+    # each.
+    if command_line.count("nbd.nbds_max=0") != 1:
+        fail("boot command line does not turn the network block devices off once")
 
 
 def newc_entry(name: str, mode: int, payload: bytes, inode: int) -> bytes:
@@ -3405,6 +4233,13 @@ def main() -> None:
     verify_net_setup_tool(android_root)
     verify_erofs_board(android_root)
     verify_userdata_grow(android_root)
+    verify_zram_fstab(android_root)
+    verify_pinner_overlay(android_root)
+    verify_secondary_zygote_topic(android_root)
+    verify_decoder_output_delay_topic(android_root)
+    verify_secure_element_topic(android_root)
+    verify_reclaim_boot_apps(android_root)
+    verify_default_wallpaper(android_root)
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)
     verify_package_assertions(android_root)
