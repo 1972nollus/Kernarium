@@ -80,13 +80,18 @@ int wire_host_range(void *address, std::size_t length) noexcept
 	 * the flag after the hold took effect, inside the wire, whose next
 	 * abortable wait then fails. Posts are serialized by that lock, so one
 	 * is in flight at most. The aborted mlock unwires what it had wired and
-	 * fails with ENOMEM, and the flag ends with the call, so the second
-	 * attempt starts clean and finds the pages the first read in. Only
-	 * ENOMEM is tried again, and once: a shortage, which mlock reports as
-	 * EAGAIN, any other failure and a persistent ENOMEM fail as they did. */
+	 * fails with ENOMEM. The flag can outlive it, and an mlock that starts
+	 * with the flag set fails at once; any abortable wait takes the flag,
+	 * and a sleep of the shortest length is one. So the second attempt
+	 * follows one, and starts clean and finds the pages the first read in.
+	 * Only ENOMEM is tried again, and once: a shortage, which mlock reports
+	 * as EAGAIN, any other failure and a persistent ENOMEM fail as they
+	 * did. */
 	int result = -1;
 	int error = 0;
 	for (unsigned attempt = 0; attempt < wire_attempts; ++attempt) {
+		if (attempt != 0)
+			(void)usleep(1);
 		result = mlock(address, length);
 		error = errno;
 		if (result == 0 || error != ENOMEM)
