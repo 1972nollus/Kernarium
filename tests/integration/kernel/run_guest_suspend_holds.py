@@ -168,6 +168,10 @@ body = struct.pack("<IIIIHHIIHHIIH11H", 7, min(minor, 31), 0, 0, 0, 0,
                    4096, 0, 0, 0, 0, 0, 0, *([0] * 11))
 os.write(fd, struct.pack("<IiQ", 16 + len(body), 0, unique) + body)
 if os.fork() == 0:
+    # The child keeps no descriptor, so that ending the holder is what closes
+    # /dev/fuse: a request already read by the daemon is waited for without a
+    # way out, and a child that held the descriptor would hold the connection.
+    os.close(fd)
     try:
         os.stat("/run/freeze-hold/x")
         os._exit(0)
@@ -1217,7 +1221,7 @@ def run_freezer_hold(arguments, private: pathlib.Path) -> None:
         request = len(guest.output())
         guest.check_command(
             f"(python3 -B {FREEZER_HOLDER} </dev/null >{FREEZER_HOLDER_LOG} "
-            "2>&1 & echo $! >/run/freeze-hold.pid)",
+            "2>&1 &)",
             30,
         )
         deadline = time.monotonic() + 30
@@ -1291,8 +1295,10 @@ def run_freezer_hold(arguments, private: pathlib.Path) -> None:
         guest.check_command("echo freezer-hold-running", 60)
 
         # Released, the freezer finishes: the next suspend holds and wakes.
+        # Ending the holder closes /dev/fuse, which aborts the connection and
+        # lets the stat child, stuck in an uninterruptible wait, finish.
         guest.check_command(
-            "kill $(cat /run/freeze-hold.pid); sleep 1; "
+            f"pkill -9 -f {FREEZER_HOLDER}; sleep 1; "
             "umount -l /run/freeze-hold; true",
             60,
         )
