@@ -963,6 +963,26 @@ kernel within about 2% of its unordered time. The Mesa tests
 `kosmickrisp_image_atomic_order` and `kosmickrisp_msl_image_atomic_order`
 cover the order and the placement.
 
+A vertex or tessellation evaluation shader that writes memory and contains a
+loop runs as compute, and a generated vertex function rasterizes what it
+wrote. Apple GPUs kill a Metal vertex function invocation that runs for longer
+than about 10 ms and report a timeout, losing what the invocation had not yet
+done; a compute thread runs for far longer. On Apple7,
+`texture_cube_map_array.image_op_vertex_sh` and its tessellation evaluation
+twin copy a whole image from one invocation and land just past the limit,
+failing under Metal validation or on a busy GPU. That is KosmicKrisp's
+`KK_WORKAROUND_21`. Each kill is a GPU lockup that the system recovers from by
+discarding the in-flight work of every process on the GPU, WindowServer and
+other guests included, and Metal 4 reports those discards with the same
+timeout code. A store-free shader is left alone: killed, it would lose its
+draw's rasterized output and set off that recovery, but no realistic one comes
+near the limit.
+The routed draws of a pass overlap as vertex functions do and cost about
+0.12 ms per pass segment and 0.3 us per draw on an M1 Ultra. The Mesa tests
+`kosmickrisp_vertex_compute_routing`, `kosmickrisp_long_vertex_invocation`
+and `kosmickrisp_vertex_compute_draws` cover the decision, invocations of
+50-100 ms and many routed draws in one pass.
+
 Linked graphics pipelines share native programs and dynamic vertex-input
 variants only while a live Vulkan pipeline owns them. The lookup cache drops
 its entry and releases those resources when the last pipeline owner is
