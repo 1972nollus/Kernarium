@@ -995,7 +995,7 @@ index 8fc2974ed990740df90e8dfdc5ecebc60cb19526..175767459fda9ac776b9395ff5fc3a29
  	iomem_size = (iomem_size + PAGE_SIZE - 1) & PAGE_MASK;
  
 diff --git a/drivers/gpu/drm/virtio/virtgpu_vram.c b/drivers/gpu/drm/virtio/virtgpu_vram.c
-index 5ad3b7c6f73c360b32f23560393d03283b1ab4f8..a52bede0178e0f703909f02a49b57f16e40da5de 100644
+index f955779d5ea0ea115ed0c5b9d06072fc006aa521..e8a9d6d62e4c245897b72ce1fc3b251db2b1cc19 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_vram.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_vram.c
 @@ -2,6 +2,9 @@

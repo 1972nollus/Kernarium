@@ -21,7 +21,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  1 file changed, 9 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/gpu/drm/virtio/virtgpu_prime.c b/drivers/gpu/drm/virtio/virtgpu_prime.c
-index 7334d253d36e91db16cbe97bab82d0fb7a974b0d..947892f8c8919600759811777ce95877dae64bc1 100644
+index 59114caf081352bff4703c7e6c121a668a275a74..0a99e656b6667c146f953a171c8bbe01823f7f20 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_prime.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_prime.c
 @@ -161,7 +161,15 @@ struct dma_buf *virtgpu_gem_prime_export(struct drm_gem_object *obj,
