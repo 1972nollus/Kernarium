@@ -92,14 +92,14 @@ offsets above 4 GiB.
  src/util/u_gralloc/Android.bp                 |  56 +
  src/virtio/Android.bp                         |  23 +
  src/virtio/venus-protocol/Android.bp          |  23 +
- src/virtio/vulkan/Android.bp                  | 257 +++++
+ src/virtio/vulkan/Android.bp                  | 259 +++++
  src/vulkan/Android.bp                         |  23 +
  src/vulkan/registry/Android.bp                |  22 +
  src/vulkan/runtime/Android.bp                 | 582 ++++++++++
  src/vulkan/runtime/rmv/Android.bp             |  23 +
  src/vulkan/util/Android.bp                    | 393 +++++++
- src/vulkan/wsi/Android.bp                     | 148 +++
- 75 files changed, 8806 insertions(+), 214 deletions(-)
+ src/vulkan/wsi/Android.bp                     | 150 +++
+ 75 files changed, 8810 insertions(+), 214 deletions(-)
  create mode 100644 Android.bp
  delete mode 100644 android/Android.mk
  create mode 100644 bin/Android.bp
@@ -178,7 +178,7 @@ offsets above 4 GiB.
 
 diff --git a/Android.bp b/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..4e24f98a7307a01ec44d212242181cb6bf567c07
+index 0000000000000000000000000000000000000000..fc20157199ab406a37ec7d257f80cf17c8407b1b
 --- /dev/null
 +++ b/Android.bp
 @@ -0,0 +1,399 @@
@@ -336,7 +336,7 @@ index 0000000000000000000000000000000000000000..4e24f98a7307a01ec44d212242181cb6
 +        "-DMESA_DEBUG=0",
 +        "-DMESA_SYSTEM_HAS_KMS_DRM=1",
 +        "-DPACKAGE_BUGREPORT=\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\"",
-+        "-DPACKAGE_VERSION=\"26.2.3\"",
++        "-DPACKAGE_VERSION=\"26.2.6\"",
 +        "-DTHREAD_SANITIZER=0",
 +        "-DUSE_GCC_ATOMIC_BUILTINS",
 +        "-DUSE_LIBGLVND=0",
@@ -481,7 +481,7 @@ index 0000000000000000000000000000000000000000..4e24f98a7307a01ec44d212242181cb6
 +        "-DMESA_DEBUG=0",
 +        "-DMESA_SYSTEM_HAS_KMS_DRM=1",
 +        "-DPACKAGE_BUGREPORT=\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\"",
-+        "-DPACKAGE_VERSION=\"26.2.3\"",
++        "-DPACKAGE_VERSION=\"26.2.6\"",
 +        "-DTHREAD_SANITIZER=0",
 +        "-DUSE_GCC_ATOMIC_BUILTINS",
 +        "-DUSE_LIBGLVND=0",
@@ -8158,10 +8158,10 @@ index 0000000000000000000000000000000000000000..b826c56a3c0a927b09cbeab6ccd1782e
 +}
 diff --git a/src/virtio/vulkan/Android.bp b/src/virtio/vulkan/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..c6c4032d912d39f6a467415ccf201e19b75ad0bb
+index 0000000000000000000000000000000000000000..ab8f6dca2e2a41ef1b80d1da1c64ad318f1fafa3
 --- /dev/null
 +++ b/src/virtio/vulkan/Android.bp
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,259 @@
 +/*
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
@@ -8346,8 +8346,10 @@ index 0000000000000000000000000000000000000000..c6c4032d912d39f6a467415ccf201e19
 +        "venus_vk_cmd_queue_headers",
 +        "venus_vk_common_entrypoints_headers",
 +        "venus_vk_dispatch_table_headers",
++        "venus_vk_dispatch_trampolines_headers",
 +        "venus_vk_enum_to_str_headers",
 +        "venus_vk_extensions_headers",
++        "venus_vk_format_info_headers",
 +        "venus_vk_physical_device_features_headers",
 +        "venus_vk_physical_device_properties_headers",
 +        "venus_vk_struct_type_cast",
@@ -9494,10 +9496,10 @@ index 0000000000000000000000000000000000000000..883a4c9eb4ff53d2d638f019ae490ec3
 +}
 diff --git a/src/vulkan/wsi/Android.bp b/src/vulkan/wsi/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..d369770d524495798ecf52d688dde21b8154e980
+index 0000000000000000000000000000000000000000..159e36ad61dcc30e7816d1100d711717d13b15ef
 --- /dev/null
 +++ b/src/vulkan/wsi/Android.bp
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,150 @@
 +/*
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
@@ -9615,8 +9617,10 @@ index 0000000000000000000000000000000000000000..d369770d524495798ecf52d688dde21b
 +        "venus_vk_cmd_queue_headers",
 +        "venus_vk_common_entrypoints_headers",
 +        "venus_vk_dispatch_table_headers",
++        "venus_vk_dispatch_trampolines_headers",
 +        "venus_vk_enum_to_str_headers",
 +        "venus_vk_extensions_headers",
++        "venus_vk_format_info_headers",
 +        "venus_vk_physical_device_features_headers",
 +        "venus_vk_physical_device_properties_headers",
 +        "venus_vk_struct_type_cast",

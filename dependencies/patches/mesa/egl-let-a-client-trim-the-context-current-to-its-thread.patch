@@ -52,7 +52,7 @@ index 00a8515f932df4ec5f7a13a37bf20440244f3085..1cf02885425e08b7f0adae34f2a1061e
  #define EGL_MESA_drm_image_formats 1
  #define EGL_DRM_BUFFER_FORMAT_ARGB2101010_MESA  0x3290
 diff --git a/src/egl/drivers/dri2/egl_dri2.c b/src/egl/drivers/dri2/egl_dri2.c
-index 76524be535d89505c6ad5ee0d788a9fbecf03198..e4e00b15a98e64ed0082973fab3bd44bcb7b5a34 100644
+index 6521513c73fc78ac86da74ea9636de4bcc92b8c0..934b66507a5a7810bf8a5dd0ac9660cde9033349 100644
 --- a/src/egl/drivers/dri2/egl_dri2.c
 +++ b/src/egl/drivers/dri2/egl_dri2.c
 @@ -662,6 +662,7 @@ dri2_setup_screen(_EGLDisplay *disp)
@@ -63,7 +63,7 @@ index 76524be535d89505c6ad5ee0d788a9fbecf03198..e4e00b15a98e64ed0082973fab3bd44b
     disp->Extensions.MESA_gl_interop = EGL_TRUE;
  
     disp->Extensions.MESA_query_driver = EGL_TRUE;
-@@ -1761,6 +1762,15 @@ dri2_wait_client(_EGLDisplay *disp, _EGLContext *ctx)
+@@ -1762,6 +1763,15 @@ dri2_wait_client(_EGLDisplay *disp, _EGLContext *ctx)
     return EGL_TRUE;
  }
  
@@ -79,7 +79,7 @@ index 76524be535d89505c6ad5ee0d788a9fbecf03198..e4e00b15a98e64ed0082973fab3bd44b
  static EGLBoolean
  dri2_wait_native(EGLint engine)
  {
-@@ -3229,6 +3239,7 @@ const _EGLDriver _eglDriver = {
+@@ -3230,6 +3240,7 @@ const _EGLDriver _eglDriver = {
     .CreatePbufferSurface = dri2_create_pbuffer_surface,
     .DestroySurface = dri2_destroy_surface,
     .WaitClient = dri2_wait_client,
@@ -118,7 +118,7 @@ index 3c3588dbe9d36574898e38c890a2a8ab58b04aec..b4c4747fe09fd41f9b273fce9759e6bd
          <command>
              <proto><ptype>EGLint</ptype> <name>eglGLInteropQueryDeviceInfoMESA</name></proto>
 diff --git a/src/egl/main/eglapi.c b/src/egl/main/eglapi.c
-index 15bc27f0c944133c8067e44f669789812bc020f9..91989e283a76dc035c17631397023ab4d4f1cd25 100644
+index 1557dbeb9326a7273eb72db59ec7af81d6892205..71d763caded442d31164d3dd30f12c17bae193c7 100644
 --- a/src/egl/main/eglapi.c
 +++ b/src/egl/main/eglapi.c
 @@ -591,6 +591,7 @@ _eglCreateExtensionsString(_EGLDisplay *disp)
@@ -207,10 +207,10 @@ index a6def87dead9112a02cdefee7aeb648a428d6141..d691fefc8f395cc53f0bcc03e10f81e7
  EGL_ENTRYPOINT(eglUnbindWaylandDisplayWL)
  #endif
 diff --git a/src/gallium/frontends/dri/dri2.c b/src/gallium/frontends/dri/dri2.c
-index af9a5e1091e748361d2317df42584bdb0f1318f0..9b2e83914f44f58f5f33fb1e1dbb0299e1642073 100644
+index d22162f8a45e9de47e558a5eca725b1c08404970..f8e004556fe3ba61a0e8044dc029bc044d737b4d 100644
 --- a/src/gallium/frontends/dri/dri2.c
 +++ b/src/gallium/frontends/dri/dri2.c
-@@ -1777,6 +1777,12 @@ dri2_unmap_image(struct dri_context *ctx, struct dri_image *image, void *data)
+@@ -1729,6 +1729,12 @@ dri2_unmap_image(struct dri_context *ctx, struct dri_image *image, void *data)
     pipe_texture_unmap(pipe, (struct pipe_transfer *)data);
  }
  

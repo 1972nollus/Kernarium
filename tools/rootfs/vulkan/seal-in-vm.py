@@ -49,7 +49,7 @@ GUEST_RECEIPT = "/usr/share/uml-vulkan/rootfs-build-receipt.json"
 GUEST_ORACLE = "/usr/share/uml-vulkan/status-oracle.json"
 ICD_MANIFEST = "/usr/share/vulkan/icd.d/virtio_icd.json"
 EXPECTED_ICD_MANIFEST = {
-    "ICD": {"api_version": "1.4.354", "library_path": "libvulkan_virtio.so"},
+    "ICD": {"api_version": "1.4.363", "library_path": "libvulkan_virtio.so"},
     "file_format_version": "1.0.1",
 }
 MULTIARCH_TRIPLETS = {
@@ -130,7 +130,7 @@ def architecture_profile(debian_architecture: str) -> dict[str, Any]:
         f"{libraries}/gbm/dri_gbm.so",
         f"{libraries}/libEGL_mesa.so.0.0.0",
         f"{libraries}/libGLX_mesa.so.0.0.0",
-        f"{libraries}/libgallium-26.2.3.so",
+        f"{libraries}/libgallium-26.2.6.so",
         f"{libraries}/libgbm.so.1.0.0",
         f"{libraries}/libvulkan_virtio.so",
         "usr/share/drirc.d/00-mesa-defaults.conf",
@@ -227,13 +227,13 @@ def architecture_profile(debian_architecture: str) -> dict[str, Any]:
             f"{libraries}/cmake/VulkanLoader/VulkanLoaderConfigVersion.cmake",
             f"{libraries}/libvulkan.so",
             f"{libraries}/libvulkan.so.1",
-            f"{libraries}/libvulkan.so.1.4.357",
+            f"{libraries}/libvulkan.so.1.4.363",
             f"{libraries}/pkgconfig/vulkan.pc",
         },
-        "loader_runtime": f"/{libraries}/libvulkan.so.1.4.357",
+        "loader_runtime": f"/{libraries}/libvulkan.so.1.4.363",
         "loader_symlinks": {
             f"/{libraries}/libvulkan.so": "libvulkan.so.1",
-            f"/{libraries}/libvulkan.so.1": "libvulkan.so.1.4.357",
+            f"/{libraries}/libvulkan.so.1": "libvulkan.so.1.4.363",
         },
         "loader_options": (
             "-G",
@@ -250,9 +250,9 @@ def architecture_profile(debian_architecture: str) -> dict[str, Any]:
             f"/{libraries}/gbm/dri_gbm.so",
             f"/{libraries}/libEGL_mesa.so.0.0.0",
             f"/{libraries}/libGLX_mesa.so.0.0.0",
-            f"/{libraries}/libgallium-26.2.3.so",
+            f"/{libraries}/libgallium-26.2.6.so",
             f"/{libraries}/libgbm.so.1.0.0",
-            f"/{libraries}/libvulkan.so.1.4.357",
+            f"/{libraries}/libvulkan.so.1.4.363",
         ),
     }
 
@@ -467,6 +467,27 @@ def verify_source(
 
     record.update({"patched_tree": final_tree})
     return record, repository
+
+
+def verify_bundled_vulkan(mesa_tree: Path, headers_tree: Path) -> None:
+    """Refuse a guest Mesa that bundles another Vulkan release than the SDK pin.
+
+    The Venus codec is generated from the pinned SDK's registry and compiled
+    against the Vulkan headers Mesa bundles, so a codec can name a type the
+    bundled headers lack. The registry and every SDK header Mesa also carries
+    must therefore be the pinned SDK's own bytes.
+    """
+    pairs = [("src/vulkan/registry/vk.xml", "registry/vk.xml")]
+    for directory in ("include/vulkan", "include/vk_video"):
+        pairs.extend(
+            (f"{directory}/{path.name}", f"{directory}/{path.name}")
+            for path in sorted((headers_tree / directory).glob("*.h"))
+        )
+    for bundled, pinned in pairs:
+        if not (mesa_tree / bundled).is_file() or not (headers_tree / pinned).is_file():
+            fail(f"guest Mesa does not bundle the pinned Vulkan file: {bundled}")
+        if sha256(mesa_tree / bundled) != sha256(headers_tree / pinned):
+            fail(f"guest Mesa bundles a different Vulkan release than the pinned SDK: {bundled}")
 
 
 def verify_protocol_headers(protocol_build: Path, canonical_build: Path) -> None:
@@ -1160,6 +1181,7 @@ def seal(options: argparse.Namespace) -> None:
         work_root, metadata_root, source_rows["vk-gl-cts"]
     )
 
+    verify_bundled_vulkan(mesa_tree, headers_tree)
     protocol_build = work_root / "build/venus-protocol"
     protocol["generation"] = verify_protocol_build(work_root, protocol_tree, headers_tree, protocol_build)
 
@@ -1257,7 +1279,7 @@ def seal(options: argparse.Namespace) -> None:
     old_loader_link.unlink()
     old_loader.unlink()
     copy_file(loader_library, stage, LOADER_RUNTIME_GUEST_PATH)
-    os.symlink("libvulkan.so.1.4.357", old_loader_link)
+    os.symlink("libvulkan.so.1.4.363", old_loader_link)
     os.symlink("libvulkan.so.1", development_link)
 
     install = guest_path(stage, INSTALL_ROOT)
@@ -1317,12 +1339,12 @@ def seal(options: argparse.Namespace) -> None:
         ],
         "install_prefix": "/usr",
         "files": mesa_files,
-        "reported_api_version": "1.4.354",
+        "reported_api_version": "1.4.363",
         "portability_driver": False,
     }
     vulkan_headers = {
         **headers_source,
-        "release": "vulkan-sdk-1.4.357.0",
+        "release": "vulkan-sdk-1.4.363.0",
         "patched": False,
         "configure_argv": [
             "cmake",
@@ -1344,7 +1366,7 @@ def seal(options: argparse.Namespace) -> None:
     }
     vulkan_loader = {
         **loader_source,
-        "release": "vulkan-sdk-1.4.357.0",
+        "release": "vulkan-sdk-1.4.363.0",
         "patched": False,
         "configure_argv": [
             "cmake",
@@ -1368,7 +1390,7 @@ def seal(options: argparse.Namespace) -> None:
         "build_id": loader_build_id,
         "soname": "libvulkan.so.1",
         "symlinks": dict(ARCHITECTURE["loader_symlinks"]),
-        "reported_api_version": "1.4.357",
+        "reported_api_version": "1.4.363",
     }
     resources = [
         directory_record(stage, f"{INSTALL_ROOT}/amber", "CTS build amber runtime archive"),

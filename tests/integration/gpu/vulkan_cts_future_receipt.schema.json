@@ -105,8 +105,8 @@
           "type": "object",
           "required": ["release", "release_ref", "release_object", "patched", "configure_argv", "build_targets", "installed_in_guest"],
           "properties": {
-            "release": { "const": "vulkan-sdk-1.4.357.0" },
-            "release_ref": { "const": "vulkan-sdk-1.4.357.0" },
+            "release": { "const": "vulkan-sdk-1.4.363.0" },
+            "release_ref": { "const": "vulkan-sdk-1.4.363.0" },
             "release_object": { "$ref": "#/$defs/gitObject" },
             "patched": { "const": false },
             "configure_argv": { "$ref": "#/$defs/argv" },
@@ -123,8 +123,8 @@
           "type": "object",
           "required": ["release", "release_ref", "release_object", "patched", "configure_argv", "build_targets", "install_argv", "install_prefix", "runtime", "build_id", "soname", "symlinks", "reported_api_version"],
           "properties": {
-            "release": { "const": "vulkan-sdk-1.4.357.0" },
-            "release_ref": { "const": "vulkan-sdk-1.4.357.0" },
+            "release": { "const": "vulkan-sdk-1.4.363.0" },
+            "release_ref": { "const": "vulkan-sdk-1.4.363.0" },
             "release_object": { "$ref": "#/$defs/gitObject" },
             "patched": { "const": false },
             "configure_argv": { "$ref": "#/$defs/argv" },
@@ -140,7 +140,7 @@
               "maxProperties": 2,
               "additionalProperties": { "type": "string", "minLength": 1 }
             },
-            "reported_api_version": { "const": "1.4.357" }
+            "reported_api_version": { "const": "1.4.363" }
           }
         }
       ]

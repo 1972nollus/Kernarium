@@ -17,7 +17,7 @@ is answered instead of refused and a swapchain can reach the driver.
  1 file changed, 5 insertions(+)
 
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index fb990e89a705fa79bfb96f94e4e5a212ede3764c..e0d42dbe63e3dbcd013f4093d0b4b439f5f2bd7f 100644
+index cad47760ad53f58501c18c07871b1d3a5ee703c5..a9d6c71142e913edd8e8d9d3e772a8813ee56b97 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -1090,9 +1090,14 @@ vn_physical_device_init_external_memory(

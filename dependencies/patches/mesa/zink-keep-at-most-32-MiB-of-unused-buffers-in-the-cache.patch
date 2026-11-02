@@ -31,10 +31,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  1 file changed, 25 insertions(+), 1 deletion(-)
 
 diff --git a/src/gallium/drivers/zink/zink_bo.c b/src/gallium/drivers/zink/zink_bo.c
-index 90efa8f98fc4fd96afc4407ac0c1781cd7a86dc6..01a88c4b822d269fd14340ea32b3ad5075d1ad80 100644
+index 77dda0f4f862f8252cb2b7a5f557af34e6fb5875..959b93471324b155517c28db036056c61fdb501e 100644
 --- a/src/gallium/drivers/zink/zink_bo.c
 +++ b/src/gallium/drivers/zink/zink_bo.c
-@@ -1354,6 +1354,28 @@ bo_slab_alloc_normal(void *priv, unsigned mem_type_idx, unsigned entry_size, uns
+@@ -1364,6 +1364,28 @@ bo_slab_alloc_normal(void *priv, unsigned mem_type_idx, unsigned entry_size, uns
     return bo_slab_alloc(priv, mem_type_idx, entry_size, group_index, false);
  }
  
@@ -63,7 +63,7 @@ index 90efa8f98fc4fd96afc4407ac0c1781cd7a86dc6..01a88c4b822d269fd14340ea32b3ad50
  bool
  zink_bo_init(struct zink_screen *screen)
  {
-@@ -1363,8 +1385,10 @@ zink_bo_init(struct zink_screen *screen)
+@@ -1373,8 +1395,10 @@ zink_bo_init(struct zink_screen *screen)
     /* Create managers. */
     pb_cache_init(&screen->pb.bo_cache, screen->info.mem_props.memoryTypeCount,
                   500000, 1.5f, 0,

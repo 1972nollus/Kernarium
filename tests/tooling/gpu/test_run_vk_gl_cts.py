@@ -538,7 +538,7 @@ class VkGlCtsToolingTests(unittest.TestCase):
         self.assertEqual(contract.size, 8 * 1024 * 1024 * 1024)
         self.assertEqual(
             contract.sha256,
-            "a2ec7e3388306bbb1109be939055698a053ef19dc4a0eb61cbe7e1b30945d33a",
+            "c2030ed1d0d356a0440653ea590d6ffcefebedf14929b477e1e4892b9442b5b0",
         )
         self.assertEqual(
             contract.glcts_sha256,
@@ -2240,7 +2240,7 @@ native_display_cleanup
             )
         smoke = launcher("vulkan-info-receipt-smoke-v1", "ext4")
         self.assertIn(cts.sha256_file(vulkan_receipt), smoke)
-        self.assertIn("/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.357", smoke)
+        self.assertIn("/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.363", smoke)
         self.assertIn("formal_conformance=false", smoke)
         with self.assertRaisesRegex(cts.CampaignError, "ext4 derivative"):
             kernarium_campaigns.build(

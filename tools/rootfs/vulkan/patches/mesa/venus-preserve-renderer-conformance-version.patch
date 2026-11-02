@@ -11,7 +11,7 @@ The renderer properties already carry the backend conformance version. Keep that
  1 file changed, 5 deletions(-)
 
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index f3581aacacd7f1dae88bcdc3de885c6bdac4d326..77898b72db2bdad5b382fa35d9a00574fdcd56bc 100644
+index 2255dc44101cc05b407bf8f9819a85583a564ef5..b6ee45ed4c9705a9ac57e3092d6621686f4e8f02 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -569,11 +569,6 @@ vn_physical_device_sanitize_properties(struct vn_physical_device *physical_dev)

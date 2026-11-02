@@ -48,7 +48,7 @@ index b11f0c4cc1c764afd06148996480919623ad3cdf..03b45b41fc089e120e4464d82e444230
      'tests/u_debug_stack_test.cpp',
 diff --git a/src/util/tests/u_barrier_test.cpp b/src/util/tests/u_barrier_test.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..1848ddc560700b90151eaf1980482a9bc2a8fc26
+index 0000000000000000000000000000000000000000..706249ded1cc547201e9a2e89e1fe99190dcbdda
 --- /dev/null
 +++ b/src/util/tests/u_barrier_test.cpp
 @@ -0,0 +1,119 @@
@@ -136,7 +136,7 @@ index 0000000000000000000000000000000000000000..1848ddc560700b90151eaf1980482a9b
 +   struct util_queue queue;
 +   if (!util_queue_init(&queue, "finish", 8, num_threads, 0, NULL))
 +      _exit(2);
-+   util_queue_adjust_num_threads(&queue, num_threads, false);
++   util_queue_adjust_num_threads(&queue, num_threads);
 +   if (queue.num_threads != num_threads)
 +      _exit(2);
 +

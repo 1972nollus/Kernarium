@@ -72,7 +72,7 @@ index f0395a8a58c605b41dab90825ea903da49eff840..00a8515f932df4ec5f7a13a37bf20440
  #define EGL_MESA_drm_image_formats 1
  #define EGL_DRM_BUFFER_FORMAT_ARGB2101010_MESA  0x3290
 diff --git a/src/egl/drivers/dri2/egl_dri2.c b/src/egl/drivers/dri2/egl_dri2.c
-index edee4ffc3ff5518a4be238f16353ac9b1051e970..76524be535d89505c6ad5ee0d788a9fbecf03198 100644
+index 484050768c53c11c64e5a718cb4103dce38ac4d4..6521513c73fc78ac86da74ea9636de4bcc92b8c0 100644
 --- a/src/egl/drivers/dri2/egl_dri2.c
 +++ b/src/egl/drivers/dri2/egl_dri2.c
 @@ -721,6 +721,10 @@ dri2_setup_screen(_EGLDisplay *disp)
@@ -86,7 +86,7 @@ index edee4ffc3ff5518a4be238f16353ac9b1051e970..76524be535d89505c6ad5ee0d788a9fb
     disp->Extensions.MESA_x11_native_visual_id = EGL_TRUE;
     disp->Extensions.EXT_surface_compression = EGL_TRUE;
     disp->Extensions.KHR_image_base = EGL_TRUE;
-@@ -2630,6 +2634,46 @@ dri2_export_dma_buf_image_mesa(_EGLDisplay *disp, _EGLImage *img, int *fds,
+@@ -2631,6 +2635,46 @@ dri2_export_dma_buf_image_mesa(_EGLDisplay *disp, _EGLImage *img, int *fds,
  
  #endif
  
@@ -133,7 +133,7 @@ index edee4ffc3ff5518a4be238f16353ac9b1051e970..76524be535d89505c6ad5ee0d788a9fb
  _EGLImage *
  dri2_create_image_khr(_EGLDisplay *disp, _EGLContext *ctx, EGLenum target,
                        EGLClientBuffer buffer, const EGLint *attr_list)
-@@ -2647,6 +2691,12 @@ dri2_create_image_khr(_EGLDisplay *disp, _EGLContext *ctx, EGLenum target,
+@@ -2648,6 +2692,12 @@ dri2_create_image_khr(_EGLDisplay *disp, _EGLContext *ctx, EGLenum target,
                                             attr_list);
     case EGL_GL_RENDERBUFFER_KHR:
        return dri2_create_image_khr_renderbuffer(disp, ctx, buffer, attr_list);
@@ -147,7 +147,7 @@ index edee4ffc3ff5518a4be238f16353ac9b1051e970..76524be535d89505c6ad5ee0d788a9fb
     case EGL_LINUX_DMA_BUF_EXT:
        return dri2_create_image_dma_buf(disp, ctx, buffer, attr_list);
 diff --git a/src/egl/main/eglapi.c b/src/egl/main/eglapi.c
-index fb5a8b6f7c19d7f7ade2bcd463e7dfff79db05ea..15bc27f0c944133c8067e44f669789812bc020f9 100644
+index a6c6f95f1d53e8289fcc0c420d330bdc431dc0d6..1557dbeb9326a7273eb72db59ec7af81d6892205 100644
 --- a/src/egl/main/eglapi.c
 +++ b/src/egl/main/eglapi.c
 @@ -593,6 +593,7 @@ _eglCreateExtensionsString(_EGLDisplay *disp)
@@ -263,10 +263,10 @@ index 9eae218fd402b162eb1229b626e494568bd6dced..4ba4a97d71c6efad13d4f98dfda842b5
     EGLBoolean ProtectedContent;
  };
 diff --git a/src/gallium/frontends/dri/dri2.c b/src/gallium/frontends/dri/dri2.c
-index f3ff7e5f9b39cbe310f54ec1a01ac68f8e2c6490..af9a5e1091e748361d2317df42584bdb0f1318f0 100644
+index 0e06f8c5346d004be9f1165e78465dec8bfc32aa..d22162f8a45e9de47e558a5eca725b1c08404970 100644
 --- a/src/gallium/frontends/dri/dri2.c
 +++ b/src/gallium/frontends/dri/dri2.c
-@@ -1061,6 +1061,98 @@ dri_create_image(struct dri_screen *screen,
+@@ -1013,6 +1013,98 @@ dri_create_image(struct dri_screen *screen,
     return img;
  }
  

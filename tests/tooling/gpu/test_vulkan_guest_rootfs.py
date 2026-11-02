@@ -449,6 +449,40 @@ class VulkanGuestRootfsTests(unittest.TestCase):
             with self.assertRaisesRegex(sealer.SealError, "inventory differs"):
                 sealer.verify_protocol_headers(generated, canonical)
 
+    def test_bundled_vulkan_must_be_the_pinned_sdk_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            mesa = root / "mesa"
+            sdk = root / "sdk"
+            files = {
+                "registry/vk.xml": "registry",
+                "include/vulkan/vulkan_core.h": "core",
+                "include/vulkan/vulkan.h": "umbrella",
+                "include/vk_video/vulkan_video_codec_h264std.h": "video",
+            }
+            for relative, text in files.items():
+                (sdk / relative).parent.mkdir(parents=True, exist_ok=True)
+                (sdk / relative).write_text(text)
+            # Mesa keeps the registry elsewhere and carries one header of its own.
+            for relative, text in files.items():
+                target = relative.replace("registry/vk.xml", "src/vulkan/registry/vk.xml")
+                (mesa / target).parent.mkdir(parents=True, exist_ok=True)
+                (mesa / target).write_text(text)
+            (mesa / "include/vulkan/vk_android_native_buffer.h").write_text("mesa only")
+            (sdk / "include/vulkan/vulkan_core.hpp").write_text("not a C header")
+            sealer.verify_bundled_vulkan(mesa, sdk)
+            (mesa / "include/vulkan/vulkan_core.h").write_text("older release")
+            with self.assertRaisesRegex(sealer.SealError, "different Vulkan release"):
+                sealer.verify_bundled_vulkan(mesa, sdk)
+            (mesa / "include/vulkan/vulkan_core.h").write_text("core")
+            (mesa / "src/vulkan/registry/vk.xml").write_text("older registry")
+            with self.assertRaisesRegex(sealer.SealError, "different Vulkan release"):
+                sealer.verify_bundled_vulkan(mesa, sdk)
+            (mesa / "src/vulkan/registry/vk.xml").write_text("registry")
+            (mesa / "include/vk_video/vulkan_video_codec_h264std.h").unlink()
+            with self.assertRaisesRegex(sealer.SealError, "does not bundle"):
+                sealer.verify_bundled_vulkan(mesa, sdk)
+
     def test_protocol_header_check_rejects_symlinks_and_empty_sets(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

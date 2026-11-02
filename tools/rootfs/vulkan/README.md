@@ -29,7 +29,7 @@ requires the applicable submission, review, and trademark process.
 
 `sources.tsv` pins every upstream commit, tree, annotated release object where
 one exists, and generated Mesa, Venus-protocol, and CTS mail-patch series.
-Vulkan-Headers and Vulkan-Loader use the matching 1.4.357 SDK tag. The CTS source
+Vulkan-Headers and Vulkan-Loader use the matching 1.4.363 SDK tag. The CTS source
 remains based on Vulkan CTS 1.4.6.2 and carries two authenticated correctness
 patches: memory/image-copy address ranges stay within their buffer in both
 directions, and compute-only cases are skipped when no exclusive compute queue
@@ -40,6 +40,11 @@ regenerated with:
 tools/rootfs/vulkan/rebase-patches.sh \
   --component mesa --source /path/to/mesa-topic
 ```
+
+The series' first topic makes the Vulkan headers and registry Mesa bundles the
+pinned SDK's own, because the generated Venus codec names types of that
+registry and Mesa compiles it against the headers it bundles; the sealer
+refuses a Mesa whose bundled copies differ from the pinned SDK's.
 
 The Mesa series is also the lower segment of the host's Mesa series in
 [`../../../dependencies/patches/mesa`](../../../dependencies/README.md): one
@@ -81,7 +86,7 @@ symlinks, and build options before copying the real runtime files.
 
 `exclusions.txt` is the exact removal set applied to a fresh extraction of the
 base image. The derivative retains the base libdrm, replaces the base Vulkan
-loader with the pinned source-built 1.4.357 runtime, replaces the Virtio ICD in
+loader with the pinned source-built 1.4.363 runtime, replaces the Virtio ICD in
 place, and installs only the release-built Vulkan CTS runtime and its
 manifest-referenced data. With `--include-opengl-cts`, the same source build
 also installs `glcts` and its generated runtime-data closure. The GL46 scope is
