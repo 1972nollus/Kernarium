@@ -33,6 +33,8 @@ enum class VhostRequest : std::uint32_t {
     setSlaveRequestFd = 21,
     getConfig = 24,
     setConfig = 25,
+    // Resets the device and disables its rings; PROTOCOL_F_RESET_DEVICE.
+    resetDevice = 34,
     // In-band queue notification enabled by PROTOCOL_F_INBAND_NOTIFICATIONS.
     vringKick = 35,
     getSharedMemoryConfig = 44,
@@ -51,6 +53,7 @@ constexpr std::uint64_t protocolFeatureMultipleQueues = 1ULL << 0U;
 constexpr std::uint64_t protocolFeatureReplyAck = 1ULL << 3U;
 constexpr std::uint64_t protocolFeatureSlaveRequest = 1ULL << 5U;
 constexpr std::uint64_t protocolFeatureConfig = 1ULL << 9U;
+constexpr std::uint64_t protocolFeatureResetDevice = 1ULL << 13U;
 constexpr std::uint64_t protocolFeatureInbandNotifications = 1ULL << 14U;
 constexpr std::uint64_t protocolFeatureSharedMemoryMap = 1ULL << 22U;
 
