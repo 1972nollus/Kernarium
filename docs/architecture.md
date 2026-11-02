@@ -1315,12 +1315,17 @@ suspended guest itself: at every Power press and at most once a second for any
 other key, so a held key does not repeat it, and never for a touch. The macOS
 VNC display maps XF86PowerOff to the guest's power key, and VNC input is itself
 a wake source. The guest replies to a suspend only after syncing its file
-systems, so the host waits up to eight seconds for that reply. A kernel without
-the suspend command, or a guest that reports within that wait that it could
-not suspend, falls back to the stop/go pair. Guests that need writeback
-requests boot with magic SysRq enabled; if the physical iOS sandbox cannot bind
-the console, host-file flushing still runs but guest writeback and freeze are
-unavailable.
+systems, so the host waits up to eight seconds for that reply. A guest that
+reports itself busy (EBUSY) within that wait is asked again every 250 ms for two
+seconds. Any other refusal, or a guest that stays busy, is not frozen: the host
+logs that it keeps running, asks it to write back, and treats it as not
+suspended (it is not hibernated, and a resume sends nothing). The management
+console's own stop is no fallback, since the kernel blocks signals per vCPU and
+the stop halts only the vCPU that takes it, so every other vCPU and guest time
+run on. A process freeze, as on iOS, halts every vCPU regardless. Guests that
+need writeback requests boot with magic SysRq enabled; if the physical iOS
+sandbox cannot bind the console, host-file flushing still runs but guest
+writeback and freeze are unavailable.
 
 The kernel says how the guest ends before it shuts its drivers down or runs
 its exitcalls, with the bridge import `darwin_uml_guest_shutdown()`: power-off,
@@ -1469,8 +1474,8 @@ run reach the same code. The order is the contract:
   Memory a guest ran on while part of it was missing would be corrupt, which is
   worse than the restart.
 
-A quiesce that falls back to the management stop, a guest without a console,
-and a guest kept running (Picture in Picture, the job) never hibernate.
+A quiesce whose guest did not suspend, a guest without a console, and a guest
+kept running (Picture in Picture, the job) never hibernate.
 
 ## Tests and structural audit
 
