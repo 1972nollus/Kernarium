@@ -242,11 +242,13 @@ void fill()
 
 /* ---- the two forms of each kernel ---------------------------------- */
 
-/* The x86-64 JIT runs a tight loop at a speed that depends on where the loop
- * sits in the guest's code, by up to a factor of two in either direction and
- * unrelated to the instructions in it. Building with -DVNNI_PROBE_PAD=N moves
- * every kernel by N bytes (a multiple of 16), so a comparison can be made at
- * several placements. */
+/* The x86-64 JIT runs a 256-bit loop at a speed that depends on how the
+ * addresses of the loop's operand arrays are aligned, by up to a factor of two
+ * in either direction and for either instruction form; the same loop in
+ * 128-bit instructions, and the gadget engine, do not show it. Building with
+ * -DVNNI_PROBE_PAD=N moves every kernel and, behind the code, the data by N
+ * bytes (a multiple of 16), so a comparison can be made at several
+ * placements. */
 #ifndef VNNI_PROBE_PAD
 #define VNNI_PROBE_PAD 0
 #endif
