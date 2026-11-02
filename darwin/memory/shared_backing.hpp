@@ -167,7 +167,10 @@ void report_mapping_failure(const char *what, const void *address,
  * signal while they run kernel code, which is where they commit guest RAM, so
  * a commit that waited for memory, as commits do right after a resume, lost
  * its wiring to an IPI. A signal posted during the call is delivered when it
- * returns. 0 on success, -1 with errno set. */
+ * returns. A signal posted just before the hold took effect can still abort
+ * the first mlock, which unwires what it had wired and fails with ENOMEM; the
+ * call then tries once more, and no other failure is tried again. 0 on
+ * success, -1 with errno set. */
 [[nodiscard]] int wire_host_range(void *address, std::size_t length) noexcept;
 
 } // namespace uml::memory

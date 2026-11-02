@@ -22,6 +22,7 @@
 #include <fcntl.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <mach/thread_act.h>
 #include <memory>
 #include <pthread.h>
 #include <stdexcept>
@@ -400,6 +401,106 @@ void a_signal_does_not_cost_a_commit_its_wiring()
 		"the committing thread must have taken signals");
 }
 
+/* Issues thread_abort_safely() on one thread, `delay` after fire(): the call
+ * XNU's psignal makes on a thread that has a signal pending and not held. */
+class AbortRequest final {
+public:
+	explicit AbortRequest(mach_port_t target)
+		: target_(target), issuer_([this] { issue(); })
+	{
+	}
+	~AbortRequest()
+	{
+		stopping_.store(true, std::memory_order_release);
+		issuer_.join();
+	}
+	AbortRequest(const AbortRequest &) = delete;
+	AbortRequest &operator=(const AbortRequest &) = delete;
+
+	void fire(std::chrono::microseconds delay)
+	{
+		delay_ = delay;
+		phase_.store(armed, std::memory_order_release);
+	}
+	/* Returns once the request has been issued. */
+	void issued()
+	{
+		const auto done = [this] {
+			return phase_.load(std::memory_order_acquire) == issued_phase;
+		};
+		require(uml::testing::waitUntil(done, std::chrono::seconds{10},
+				std::chrono::milliseconds{0}),
+			"the abort request was never issued");
+		phase_.store(idle, std::memory_order_release);
+	}
+
+private:
+	static constexpr int idle = 0;
+	static constexpr int armed = 1;
+	static constexpr int issued_phase = 2;
+
+	void issue()
+	{
+		const auto wanted = [this] {
+			return phase_.load(std::memory_order_acquire) == armed ||
+				stopping_.load(std::memory_order_acquire);
+		};
+		while (!stopping_.load(std::memory_order_acquire)) {
+			if (!uml::testing::waitUntil(wanted, std::chrono::seconds{1},
+				    std::chrono::milliseconds{0}) ||
+			    stopping_.load(std::memory_order_acquire))
+				continue;
+			const auto begin = std::chrono::steady_clock::now();
+			while (std::chrono::steady_clock::now() - begin < delay_) {
+			}
+			(void)thread_abort_safely(target_);
+			phase_.store(issued_phase, std::memory_order_release);
+		}
+	}
+
+	const mach_port_t target_;
+	std::chrono::microseconds delay_{};
+	std::atomic<int> phase_{idle};
+	std::atomic<bool> stopping_{false};
+	std::thread issuer_;
+};
+
+/* The hold is not a complete guard. psignal sets a thread's abort flag when a
+ * signal is not held, and a post that read the thread's mask just before the
+ * hold took effect sets it after, inside the wire, whose next abortable wait
+ * then fails. This lands that call on the committing thread at delays through
+ * each commit, from before its mlock starts to after the pages are read in, as
+ * a post delayed on a loaded host does. The flag fails the wire it lands in
+ * and ends with the call, so the commit must wire all the same. */
+void an_abort_after_the_hold_does_not_cost_a_commit_its_wiring()
+{
+	const std::size_t page = host_page();
+	constexpr std::size_t chunk = 256 * 1024;
+	constexpr unsigned rounds = 64;
+	/* Every round wires a chunk nothing has read yet. */
+	const ColdFile file{rounds * chunk};
+	GuestRamCommitment commitment{file.data(), rounds * chunk, 0, 0, true,
+		page};
+	const mach_port_t committer = mach_thread_self();
+	{
+		AbortRequest abort{committer};
+		for (unsigned round = 0; round < rounds; ++round) {
+			abort.fire(std::chrono::microseconds{round % 8 * 25});
+			const int result = commitment.commit(round * chunk, chunk);
+			const int error = errno;
+			abort.issued();
+			errno = error;
+			requireSyscall(result == 0,
+				"a commit lost its wiring to an abort after the hold");
+			require(commitment.wire_failures() == 0,
+				"a commit must wire");
+			require(wired_count(file.data() + round * chunk) > 0,
+				"a commit must leave its range wired");
+		}
+	}
+	(void)mach_port_deallocate(mach_task_self(), committer);
+}
+
 } // namespace
 
 int main()
@@ -421,6 +522,9 @@ int main()
 			wiring_unsupported},
 		{"a signal does not cost a commit its wiring",
 			a_signal_does_not_cost_a_commit_its_wiring,
+			wiring_unsupported},
+		{"an abort after the hold does not cost a commit its wiring",
+			an_abort_after_the_hold_does_not_cost_a_commit_its_wiring,
 			wiring_unsupported},
 	};
 	return uml::testing::runNamedTests(tests);
