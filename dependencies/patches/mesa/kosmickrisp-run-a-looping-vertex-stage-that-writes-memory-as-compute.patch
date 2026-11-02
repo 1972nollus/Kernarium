@@ -394,7 +394,7 @@ index 55d6a74acf65665013826704d1c4a31c0b8d46f5..836a4df4345af0418e1612f264f0a4ff
  
  bool kk_nir_lower_custom_border(nir_shader *nir);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 3809392a74528fbff7fa027a3a3cb32f85537b50..86bdbf3d115d56ddea810b2f4e13e3ed1d7dcca8 100644
+index f89a18924cf57552bc2e490cf68363c3251ee207..90bdafc435572cdd6530b2a3e555f0b6276e3da0 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -303,6 +303,14 @@ if with_tests
@@ -412,7 +412,7 @@ index 3809392a74528fbff7fa027a3a3cb32f85537b50..86bdbf3d115d56ddea810b2f4e13e3ed
      ]
        kk_case_test_executable = executable(
          'test_kosmickrisp_' + kk_case_test[0],
-@@ -332,6 +340,7 @@ if with_tests
+@@ -348,6 +356,7 @@ if with_tests
        ['maintenance10_resolve', 120],
        ['image_compression_chain', 60],
        ['integer_point_target', 120],
