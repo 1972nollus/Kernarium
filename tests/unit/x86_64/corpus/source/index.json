@@ -9652,6 +9652,10 @@
       "file": "repository-cases.jsonl"
     },
     {
+      "name": "repository/legacy-prefixes-in-every-order-and-redundant-rex-w.s",
+      "file": "repository-cases.jsonl"
+    },
+    {
       "name": "repository/masked-store-publishes-its-pages.s",
       "file": "repository-cases.jsonl"
     },
