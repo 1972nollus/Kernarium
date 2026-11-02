@@ -147,7 +147,10 @@ BOARD_GOOGLE_VENDOR_DYNAMIC_PARTITIONS_PARTITION_LIST := \
 AB_OTA_PARTITIONS := $(filter-out vendor_dlkm system_dlkm odm_dlkm \
     vbmeta_vendor_dlkm vbmeta_system_dlkm,$(AB_OTA_PARTITIONS))
 
-# Exact capacities in support/image/partition-layout.json.
+# The image builder's size limits. The release packs each image at its own
+# size into the system disk (tools/ubd-disk.py), so a limit only has to stay
+# above its image. The metadata and userdata images are built into the
+# target files but not shipped: the app creates those partitions.
 BOARD_SYSTEMIMAGE_PARTITION_SIZE := 1677721600
 BOARD_SYSTEM_EXTIMAGE_PARTITION_SIZE := 536870912
 BOARD_PRODUCTIMAGE_PARTITION_SIZE := 603979776

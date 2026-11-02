@@ -341,15 +341,18 @@ def parse_boot_image(
 def partition_range(
     layout_path: Path, disk_path: Path, name: str, error: Error
 ) -> tuple[int, int]:
-    """Return a partition's byte offset and size from the checked layout."""
+    """Return a system disk partition's byte offset and size from the checked layout."""
     try:
         document = json.loads(layout_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as failure:
         raise error(f"cannot read partition layout: {failure}") from failure
-    if not isinstance(document, dict) or document.get("schema_version") != 1:
+    if not isinstance(document, dict) or document.get("schema_version") != 2:
         raise error("partition layout schema is invalid")
-    disk_size = document.get("disk_size_bytes")
-    partitions = document.get("partitions")
+    system = document.get("system_disk")
+    if not isinstance(system, dict):
+        raise error("partition layout has no system disk")
+    disk_size = system.get("size_bytes")
+    partitions = system.get("partitions")
     if isinstance(disk_size, bool) or not isinstance(disk_size, int):
         raise error("partition layout disk size is invalid")
     if not isinstance(partitions, list):

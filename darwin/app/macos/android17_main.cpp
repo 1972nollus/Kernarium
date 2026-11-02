@@ -4,10 +4,12 @@
 #include "block/android_boot.hpp"
 
 #include <array>
+#include <charconv>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -22,7 +24,9 @@ namespace {
 constexpr std::string_view android_default_guest_memory{"mem=4G"};
 constexpr std::string_view android_default_guest_cpus{"ncpus=10"};
 constexpr std::string_view release_option{"--android-release="};
-constexpr std::string_view disk_option{"--android-disk="};
+constexpr std::string_view data_disk_option{"--android-data-disk="};
+constexpr std::string_view data_gib_option{"--android-data-gib="};
+constexpr std::string_view renamed_disk_option{"--android-disk="};
 constexpr std::string_view boot_mode_option{"--android-boot-mode="};
 constexpr std::string_view dpi_option{"--gpu-dpi="};
 constexpr std::string_view adb_authorization_prefix{
@@ -30,7 +34,10 @@ constexpr std::string_view adb_authorization_prefix{
 
 struct AndroidOptions {
 	std::filesystem::path release;
-	std::filesystem::path disk;
+	std::filesystem::path data_disk;
+	/* 0 keeps an existing data disk's capacity and gives a new one the
+	 * release's default. */
+	std::uint32_t data_gib = 0;
 	uml::android::BootMode boot_mode = uml::android::BootMode::automatic;
 	bool boot_mode_set = false;
 	/* The EDID density the GPU device advertises; 0 advertises none. */
@@ -47,6 +54,17 @@ uml::android::BootMode parse_boot_mode(std::string_view value)
 	if (value == "recovery")
 		return uml::android::BootMode::recovery;
 	throw std::invalid_argument("Android boot mode must be auto, normal, or recovery");
+}
+
+std::uint32_t parse_data_gib(std::string_view text)
+{
+	std::uint32_t gib = 0;
+	const auto [end, error] =
+		std::from_chars(text.data(), text.data() + text.size(), gib);
+	if (error != std::errc{} || end != text.data() + text.size() || gib == 0)
+		throw std::invalid_argument(
+			"--android-data-gib must be a positive number of GiB");
+	return gib;
 }
 
 std::string environment_value(const char *name)
@@ -89,14 +107,26 @@ AndroidOptions parse_options(int argc, char *const argv[])
 					"--android-release requires a path");
 			continue;
 		}
-		if (argument.starts_with(disk_option)) {
-			if (!options.disk.empty())
+		if (argument.starts_with(renamed_disk_option))
+			throw std::invalid_argument(
+				"--android-disk is now --android-data-disk, the instance's "
+				"writable disk; the release carries the read-only system disk");
+		if (argument.starts_with(data_disk_option)) {
+			if (!options.data_disk.empty())
 				throw std::invalid_argument(
-					"--android-disk may be specified only once");
-			options.disk = argument.substr(disk_option.size());
-			if (options.disk.empty())
+					"--android-data-disk may be specified only once");
+			options.data_disk = argument.substr(data_disk_option.size());
+			if (options.data_disk.empty())
 				throw std::invalid_argument(
-					"--android-disk requires a path");
+					"--android-data-disk requires a path");
+			continue;
+		}
+		if (argument.starts_with(data_gib_option)) {
+			if (options.data_gib != 0)
+				throw std::invalid_argument(
+					"--android-data-gib may be specified only once");
+			options.data_gib = parse_data_gib(
+				argument.substr(data_gib_option.size()));
 			continue;
 		}
 		if (argument.starts_with(boot_mode_option)) {
@@ -120,8 +150,12 @@ AndroidOptions parse_options(int argc, char *const argv[])
 	}
 	if (options.release.empty())
 		options.release = environment_value("UML_ANDROID17_RELEASE");
-	if (options.disk.empty())
-		options.disk = environment_value("UML_ANDROID17_DISK");
+	if (options.data_disk.empty())
+		options.data_disk = environment_value("UML_ANDROID17_DATA_DISK");
+	if (!environment_value("UML_ANDROID17_DISK").empty())
+		throw std::invalid_argument(
+			"UML_ANDROID17_DISK is now UML_ANDROID17_DATA_DISK, the "
+			"instance's writable disk");
 	if (!options.boot_mode_set) {
 		const auto environment_mode = environment_value("UML_ANDROID17_BOOT_MODE");
 		if (!environment_mode.empty())
@@ -142,12 +176,11 @@ AndroidOptions parse_options(int argc, char *const argv[])
 	return options;
 }
 
-std::filesystem::path validated_disk(
+std::filesystem::path validated_data_disk(
 	const std::filesystem::path &candidate)
 {
 	if (!candidate.is_absolute())
-		throw std::invalid_argument("--android-disk must be absolute");
-	uml::android::validateWritableDisk(candidate);
+		throw std::invalid_argument("--android-data-disk must be absolute");
 	return candidate;
 }
 
@@ -172,41 +205,41 @@ void print_usage()
 {
 	std::fputs(
 		"Android 17 options:\n"
-			"  --android-release=/absolute/release\n"
-			"  --android-disk=/absolute/writable-disk.img\n"
+			"  --android-release=/absolute/release (system disk, layout, command line)\n"
+			"  --android-data-disk=/absolute/data.img (the instance's writable disk;\n"
+			"      created when absent)\n"
+			"  --android-data-gib=N (capacity of a new data disk, or growth of an\n"
+			"      existing one; a disk never shrinks)\n"
 			"  --android-boot-mode=auto|normal|recovery\n"
 			"  --gpu-dpi=N (also the guest density; 213 without it)\n"
 			"  --virtio-console-socket=/absolute/console.sock\n"
 			"The same values may be supplied through UML_ANDROID17_RELEASE, "
-			"UML_ANDROID17_DISK, "
+			"UML_ANDROID17_DATA_DISK, "
 			"and UML_ANDROID17_BOOT_MODE.\n"
+			"The guest has exactly the release's system disk and this data disk; "
+			"ubd, initrd, root and boot-device arguments are refused.\n"
 			"The boot mode picks the first boot's ramdisk. A guest that "
 			"restarts itself boots again in the same process, and each "
 			"restart picks the ramdisk in auto mode.\n",
 		stderr);
 }
 
-/* The kernel arguments that give a guest `boot`'s ramdisk, appended to the
- * host's arguments. */
+/* The kernel arguments that attach the guest's two disks and give it `boot`'s
+ * ramdisk, appended to the host's arguments. */
 std::vector<std::string> boot_command_line(
 	const std::vector<std::string> &host_arguments,
-	const std::filesystem::path &release,
-	const std::filesystem::path &disk, const uml::android::BootSelection &boot,
+	const uml::android::Storage &storage, const uml::android::BootSelection &boot,
 	std::uint32_t dots_per_inch)
 {
 	auto forwarded = host_arguments;
-	forwarded.emplace_back("ubd0=" + disk.string());
-	forwarded.emplace_back("initrd=" + disk.string());
-	forwarded.emplace_back(
-		"initrd_offset=" + std::to_string(boot.ramdisk.offset));
-	forwarded.emplace_back("initrd_size=" + std::to_string(boot.ramdisk.size));
-	forwarded.emplace_back("root=/dev/ram0");
-	forwarded.emplace_back("rootfstype=ramfs");
+	for (auto &argument : storage.kernelArguments(boot))
+		forwarded.push_back(std::move(argument));
 	constexpr std::array launcher_prefixes{
 		adb_authorization_prefix,
 		uml::android::lcdDensityPrefix};
 	for (auto &argument : uml::android::readKernelCommandLine(
-		     release / "boot/kernel-command-line.txt", launcher_prefixes))
+		     storage.release() / uml::android::releaseCommandLine,
+		     launcher_prefixes))
 		forwarded.push_back(std::move(argument));
 	/* Android init imports this as ro.boot.lcd_density, which the vendor
 	 * init script publishes as ro.sf.lcd_density: a guest without it has an
@@ -215,12 +248,28 @@ std::vector<std::string> boot_command_line(
 	forwarded.emplace_back(std::string{adb_authorization_prefix} + "0");
 	std::fprintf(
 		stderr,
-			"Android rootfs %s, %s boot, writable disk %s\n",
-			release.c_str(),
+			"Android rootfs %s, %s boot, system disk %s, data disk %s\n",
+			storage.release().c_str(),
 			boot.mode == uml::android::BootMode::recovery
 				? "recovery" : "normal",
-			disk.c_str());
+			storage.systemDisk().c_str(), storage.dataDisk().c_str());
 	return forwarded;
+}
+
+void announce_data_disk(const uml::android::PreparedDataDisk &prepared)
+{
+	switch (prepared.change) {
+	case uml::android::DataDiskChange::created:
+		std::fprintf(stderr, "Android: created a %u GiB data disk\n",
+			     prepared.capacityGiB);
+		break;
+	case uml::android::DataDiskChange::grown:
+		std::fprintf(stderr, "Android: grew the data disk to %u GiB\n",
+			     prepared.capacityGiB);
+		break;
+	case uml::android::DataDiskChange::none:
+		break;
+	}
 }
 
 /* There is no bootloader to take the request `reboot bootloader` leaves, and
@@ -249,31 +298,38 @@ int main(int argc, char *argv[], char *envp[])
 			.input_mode = uml::app::DisplayInput::touchscreen,
 		};
 		if (!information_only) {
-			if (options.release.empty() || options.disk.empty())
+			if (options.release.empty() || options.data_disk.empty())
 				throw std::invalid_argument(
-					"Android launch requires release and disk paths");
+					"Android launch requires release and data disk paths");
 			const auto release = validated_release_root(options.release);
-			const auto disk = validated_disk(options.disk);
-			if (uml::android::consumeBootloaderCommand(disk))
+			const auto data_disk = validated_data_disk(options.data_disk);
+			/* The host's own arguments follow argv[0]; none may attach a
+			 * disk. */
+			uml::android::rejectStorageArguments(
+				std::span{options.forwarded}.subspan(1));
+			announce_data_disk(uml::android::prepareDataDisk(
+				uml::android::readLayout(
+					release / uml::android::releaseLayout),
+				data_disk, options.data_gib));
+			const uml::android::Storage storage{release, data_disk};
+			if (storage.consumeBootloaderCommand())
 				say_bootloader_consumed();
-			const auto boot = uml::android::selectBoot(
-				disk, options.boot_mode);
+			const auto boot = storage.selectBoot(options.boot_mode);
 			const auto host_arguments = options.forwarded;
 			options.forwarded =
 				boot_command_line(
-					host_arguments, release, disk, boot, options.dots_per_inch);
+					host_arguments, storage, boot, options.dots_per_inch);
 			/* The mode the user gave picks the first boot's ramdisk only: a
 			 * guest that restarts has said what it wants in the disk's
 			 * bootloader message. */
 			configuration.restart_command_line =
-				[host_arguments, release, disk,
+				[host_arguments, storage,
 				 dots_per_inch = options.dots_per_inch] {
-					const auto next = uml::android::selectRestartBoot(disk);
+					const auto next = storage.selectRestartBoot();
 					if (next.bootloaderConsumed)
 						say_bootloader_consumed();
 					return boot_command_line(
-						host_arguments, release, disk, next.boot,
-						dots_per_inch);
+						host_arguments, storage, next.boot, dots_per_inch);
 				};
 		}
 		return uml::app::runEmbeddedKernel(

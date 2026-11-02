@@ -8,7 +8,6 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -18,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from release_common import (  # noqa: E402
     PAYLOAD_SPECS,
     fail,
-    resolve_zstd,
     verify_release,
 )
 
@@ -43,7 +41,6 @@ def main() -> None:
     parser.add_argument("--source", required=True)
     parser.add_argument("--destination-root", type=Path)
     parser.add_argument("--acceptance", type=Path)
-    parser.add_argument("--zstd", type=Path)
     args = parser.parse_args()
 
     reject_nonlocal_syntax(args.source)
@@ -59,14 +56,8 @@ def main() -> None:
         fail("destination root must be an absolute local path")
     if not acceptance.is_absolute():
         acceptance = (Path.cwd() / acceptance).resolve()
-    zstd = resolve_zstd(args.zstd)
 
-    manifest = verify_release(
-        source,
-        android_root,
-        acceptance_path=acceptance,
-        zstd=zstd,
-    )
+    manifest = verify_release(source, android_root, acceptance_path=acceptance)
     destination_root.mkdir(parents=True, exist_ok=True)
     if destination_root.is_symlink():
         fail("destination root must not be a symlink")
@@ -81,31 +72,7 @@ def main() -> None:
     staging_path.mkdir()
     try:
         copy_declared(source, staging_path)
-        expanded_disk = staging_path / "guest/android-17-uml-arm64.img"
-        archive = staging_path / "guest/android-17-uml-arm64.img.zst"
-        result = subprocess.run(
-            [
-                str(zstd),
-                "-q",
-                "-d",
-                "--sparse",
-                "--no-progress",
-                str(archive),
-                "-o",
-                str(expanded_disk),
-            ],
-            check=False,
-        )
-        if result.returncode != 0:
-            fail("cannot expand the Android guest disk archive")
-        verify_release(
-            staging_path,
-            android_root,
-            acceptance_path=acceptance,
-            zstd=zstd,
-            expanded_disk=expanded_disk,
-            allow_expanded_disk=True,
-        )
+        verify_release(staging_path, android_root, acceptance_path=acceptance)
         os.replace(staging_path, destination)
         staging_parent.rmdir()
     except BaseException:

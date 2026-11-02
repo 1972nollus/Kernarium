@@ -1188,7 +1188,7 @@ ISA set of a package and the per-ISA artifacts and manifest;
 `lineage24-mesa-venus-port-generator` covers the per-ISA generators of the
 Mesa port and that every arm module is built with Meson's large-file define;
 and `lineage24-mesa-venus-source-contract` pins the regenerated series.
-`KernariumTests` covers the disk range the larger seed GPT needs.
+`KernariumTests` covers the bundle layout and the data disk capacity range.
 
 A release candidate is qualified on its image, opt-in, on every engine that
 runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
@@ -1225,6 +1225,48 @@ runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
   of iPad cold boot or 100 MiB of guest `MemAvailable`. A 32-bit application
   installed on a device that had none starts the preload, so the first launch
   after that install is the one to time.
+
+## Android guest storage
+
+An Android guest has a read-only system disk and the instance's writable data
+disk
+([`../android/lineage-24/README.md`](../android/lineage-24/README.md#static-disk-and-boot-contract),
+[`../darwin/device/block/README.md`](../darwin/device/block/README.md)). These
+tests cover them without an Android build:
+
+- `lineage24-builder-lane` and `lineage24-release-contract` cover the producer:
+  the disk policy, the exact-fit system disk and its layout file, the data
+  disk template, and the manifest fields.
+- `android-partition-boot-selection` (unit) covers the host library over a
+  small release that `tests/support/android/android_release_fixture.py`
+  assembles with the producer's tools: the strict layout parser, the partition
+  tables byte for byte against the producer's, creating, validating and
+  growing the data disk, the refusal of any third disk or storage argument,
+  and the bootloader message.
+- `android17-instance-rules` and `android17-macos-launcher-options` cover the
+  instance rules (create, update with a snapshot, refused downgrade, an
+  unfinished update) over the shared vectors in
+  `android/lineage-24/support/instance/update-decisions.json`, and the macOS
+  launcher built on them.
+- `guest-android-disks` (integration) boots the Linux test guest on that
+  release and a data disk the library created. The guest sees the layout's
+  partitions at its offsets, a read-only system disk whose partition images
+  hash to the layout's digests, and a blank data disk that it formats and
+  writes. The library still accepts both disks afterwards, the data disk is
+  still sparse, a grown disk shows the larger table with the file intact and
+  its filesystem grows into it, and shrinking is refused.
+
+A release candidate is qualified on the Mac, opt-in, with the macOS launcher and
+a blank instance:
+
+- the md5 of every read-only partition in the guest equals its target file;
+- the guest reaches `sys.boot_completed` on the blank data disk, which it
+  formats itself;
+- `adb reboot recovery` boots recovery, and its "wipe data" resets `userdata`
+  on the data disk;
+- starting a newer release on an instance of an older one keeps its apps and
+  data and records the update, and starting the older release on the newer
+  instance is refused.
 
 ## Android hardware video encoding and decoding
 
