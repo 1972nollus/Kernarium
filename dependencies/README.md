@@ -142,7 +142,8 @@ dependencies/prepare.sh --archive-manifest dependencies/kernel-host-tools/archiv
 dependencies/build-kernel-host-tools.sh
 dependencies/build-kernel-host-tools.sh --verify-only
 
-dependencies/prepare.sh --product x86-conformance
+dependencies/prepare.sh --product x86-conformance \
+  --root "$CASE_SENSITIVE_DEPENDENCY_ROOT"
 ```
 
 Use `--no-fetch` for offline preparation and `--verify` or `--verify-only` for
@@ -155,6 +156,14 @@ directory.
 A cache entry holds every object of its pinned commit. Preparation refuses one
 that does not, such as a blob-filtered clone, with a diagnostic and does not
 repair it; remove the entry and prepare again.
+
+A source whose pinned tree has paths that differ only by case needs a
+case-sensitive `--root`: `x86-k-semantics` tracks 169 such pairs, and on a
+case-insensitive volume Git writes one file over the other, so the checkout
+reads as modified. Preparation checks this after fetching and before any
+checkout, and refuses that source, naming the cause, on a case-insensitive
+root; every other source still prepares there. `--verify` of a checkout already
+made on such a root names the same cause.
 
 Series replay commits as whoever Git resolves for the caller, and export
 refuses a topic whose author is a placeholder. See

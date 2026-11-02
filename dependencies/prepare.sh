@@ -42,7 +42,9 @@ Options:
   --product NAME  macos (default), ios-network, ios-storage, ios-compression,
                   apple-gpu-vulkan-experiment, kernel-host-tools,
                   x86-conformance, or all
-  --root PATH     Prepared source root (default: external/sources)
+  --root PATH     Prepared source root (default: external/sources); a source
+                  with paths that differ only by case needs a case-sensitive
+                  file system, and is refused on any other
   --cache PATH    Git cache (default: .build/dependency-cache)
   --verify        Verify prepared repositories without changing or fetching
   --no-fetch      Prepare only from commits already present in the Git cache
@@ -641,6 +643,58 @@ git_value()
 	git -C "$1" config --get "$2" 2>/dev/null || true
 }
 
+# Succeeds when the file system holding the existing path $1 ignores case: the
+# path still resolves with its last component upper-cased. It writes nothing,
+# so it also serves read-only verification.
+path_ignores_case()
+{
+	probe_leaf=${1##*/}
+	probe_upper=$(printf '%s' "$probe_leaf" | tr '[:lower:]' '[:upper:]')
+	[ "$probe_upper" != "$probe_leaf" ] && [ -e "${1%/*}/$probe_upper" ]
+}
+
+# Prints a description of the paths in the tree of commit $2 of repository $1
+# that differ only by case, and nothing when there are none. Such a tree has
+# no faithful checkout on a case-insensitive file system.
+tree_case_collisions()
+{
+	python3 -B - "$1" "$2" <<'PY_CASE_COLLISIONS'
+import subprocess
+import sys
+import unicodedata
+
+listing = subprocess.run(
+    ["git", "-C", sys.argv[1], "ls-tree", "-r", "-z", "--name-only", sys.argv[2]],
+    check=True,
+    stdout=subprocess.PIPE,
+).stdout
+folded = {}
+for raw in listing.split(b"\0"):
+    if raw:
+        name = raw.decode("utf-8", "surrogateescape")
+        key = unicodedata.normalize("NFD", name).casefold()
+        folded.setdefault(key, []).append(name)
+clashes = sorted(names for names in folded.values() if len(names) > 1)
+if clashes:
+    print(
+        f"{len(clashes)} groups of paths, for example "
+        f"{clashes[0][0]} and {clashes[0][1]}"
+    )
+PY_CASE_COLLISIONS
+}
+
+# Refuses, before anything is checked out, a pinned tree that the staging root's
+# file system cannot hold: two paths that differ only by case collapse into one
+# file there, and the repository would read as modified.
+refuse_case_collisions()
+{
+	path_ignores_case "$STAGING_ROOT" || return 0
+	case_collisions=$(tree_case_collisions "$cache_repository" "$commit") ||
+		fail "$name could not be examined for case-only path differences"
+	[ -z "$case_collisions" ] ||
+		fail "$name tracks paths that differ only by case ($case_collisions), but $DEPENDENCY_ROOT is on a case-insensitive file system and cannot hold them; prepare it with --root on a case-sensitive file system"
+}
+
 # Sets the SOURCE_* variables to the uml.source.* settings of repository $1,
 # which one Git run reads; Git lists variable names in lower case.
 read_source_settings()
@@ -704,6 +758,14 @@ check_repository()
 	[ -z "$(git --no-optional-locks -C "$repository_directory" status \
 		--porcelain --untracked-files=all)" ] || {
 		REPOSITORY_PROBLEM="$name prepared repository is dirty"
+		# On a case-insensitive file system a tree with case-only path
+		# differences always reads as modified; say so.
+		if path_ignores_case "$repository_directory/.git"; then
+			case_collisions=$(tree_case_collisions "$repository_directory" \
+				HEAD 2>/dev/null) || case_collisions=
+			[ -z "$case_collisions" ] ||
+				REPOSITORY_PROBLEM="$name tracks paths that differ only by case ($case_collisions), so it reads as modified on this case-insensitive file system; prepare it below a case-sensitive --root"
+		fi
 		return 1
 	}
 	actual_base=$(git -C "$repository_directory" rev-parse "$commit^{commit}" 2>/dev/null || true)
@@ -802,6 +864,7 @@ prepare_repository()
 	if [ -z "$STAGING_ROOT" ]; then
 		STAGING_ROOT=$(mktemp -d "$DEPENDENCY_ROOT/.prepare.XXXXXX")
 	fi
+	refuse_case_collisions
 	staged_repository="$STAGING_ROOT/$name"
 	git clone --quiet --no-checkout \
 		"file://$cache_repository" "$staged_repository"
