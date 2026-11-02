@@ -30,6 +30,16 @@ uml_add_unit_test(
     NAME emulator-lifecycle
     COMMAND uml_emulator_lifecycle_tests
     LABELS console)
+# A suspend that outlasts its deadline is aborted, never hibernated; each
+# waits out the ten-second deadline.
+uml_add_unit_test(
+    NAME emulator-lifecycle-suspend-timeout
+    COMMAND uml_emulator_lifecycle_tests suspend-timeout
+    LABELS console)
+uml_add_unit_test(
+    NAME emulator-lifecycle-suspend-silent
+    COMMAND uml_emulator_lifecycle_tests suspend-silent
+    LABELS console)
 
 # How a run says its guest ended: the kernel's report, the host's stop, and
 # the runs that ran no guest.
