@@ -8,6 +8,7 @@
 #include "wire_bytes.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -151,6 +152,24 @@ void runNamedTestsReportsEveryCaseAndFailsOnAThrow()
 	require(uml::testing::runNamedTests(clean) == 0, "clean cases return 0");
 }
 
+void requireSyscallNamesTheErrnoOfTheFailedCall()
+{
+	errno = EINTR;
+	uml::testing::requireSyscall(true, "a call that succeeded");
+
+	const auto failed = inChild([] {
+		errno = ENOENT;
+		uml::testing::requireSyscall(false, "cannot open the file");
+		return 0;
+	});
+	require(failed.status == aborted, "a failed call ends the process");
+	require(mentions(failed,
+			"cannot open the file: No such file or directory (errno 2)"),
+		"a failed call is reported with its errno");
+	require(mentions(failed, "require_helper_tests.cpp:"),
+		"a failed call is reported at its caller");
+}
+
 struct Header final {
 	std::uint16_t kind;
 	std::uint32_t length;
@@ -197,6 +216,7 @@ int main()
 	waitUntilReturnsWhatTheDeadlineLeavesTrue();
 	aWatchdogOnlyFiresWhenTheGuardedCodeIsLate();
 	runNamedTestsReportsEveryCaseAndFailsOnAThrow();
+	requireSyscallNamesTheErrnoOfTheFailedCall();
 	wireBytesRoundTripAndRefuseTheWrongSize();
 	return 0;
 }
