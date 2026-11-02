@@ -22,6 +22,7 @@
 #include <fcntl.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <memory>
 #include <pthread.h>
 #include <stdexcept>
 #include <string>
@@ -53,6 +54,7 @@ constexpr std::size_t mib = 1024U * 1024U;
 
 using uml::testing::host_page;
 using uml::testing::require;
+using uml::testing::requireSyscall;
 using uml::testing::task_footprint;
 using uml::testing::wired_count;
 
@@ -227,21 +229,22 @@ public:
 		std::string path =
 			uml::testing::scratch_template("cold-wire-XXXXXX");
 		descriptor_ = mkstemp(path.data());
-		require(descriptor_ >= 0, "cannot create the file to wire");
+		requireSyscall(descriptor_ >= 0, "cannot create the file to wire");
 		(void)unlink(path.c_str());
-		require(fcntl(descriptor_, F_NOCACHE, 1) == 0,
+		requireSyscall(fcntl(descriptor_, F_NOCACHE, 1) == 0,
 			"cannot keep the file out of the host cache");
 		const std::vector<std::byte> block(mib, std::byte{0x5a});
 		for (std::size_t offset = 0; offset < size; offset += mib)
-			require(pwrite(descriptor_, block.data(), mib,
-					static_cast<off_t>(offset)) ==
-					static_cast<ssize_t>(mib),
+			requireSyscall(pwrite(descriptor_, block.data(), mib,
+						static_cast<off_t>(offset)) ==
+						static_cast<ssize_t>(mib),
 				"cannot fill the file to wire");
-		require(fsync(descriptor_) == 0,
+		requireSyscall(fsync(descriptor_) == 0,
 			"cannot flush the file to wire");
 		void *mapping = mmap(nullptr, size, PROT_READ | PROT_WRITE,
 			MAP_SHARED, descriptor_, 0);
-		require(mapping != MAP_FAILED, "cannot map the file to wire");
+		requireSyscall(mapping != MAP_FAILED,
+			"cannot map the file to wire");
 		data_ = static_cast<std::byte *>(mapping);
 	}
 	~ColdFile()
@@ -314,20 +317,44 @@ private:
 constexpr std::size_t cold_size = 8 * mib;
 constexpr unsigned cold_attempts = 4;
 
+/* The cold files a case wires, all built before its SignalStorm starts. A
+ * signal that reaches a thread inside a setup call can end the call with
+ * EINTR (creating the file did, on a loaded host), so the storm disturbs the
+ * wire under test and nothing the case builds. */
+class ColdFiles final {
+public:
+	explicit ColdFiles(std::size_t count)
+	{
+		for (std::size_t file = 0; file < count; ++file)
+			files_.push_back(std::make_unique<ColdFile>(cold_size));
+	}
+
+	[[nodiscard]] const ColdFile &operator[](std::size_t index) const
+	{
+		return *files_[index];
+	}
+
+	/* Unwires and unmaps a file once the attempt that used it is over. */
+	void retire(std::size_t index) { files_[index].reset(); }
+
+private:
+	std::vector<std::unique_ptr<ColdFile>> files_;
+};
+
 /* XNU ends a wire whose faults wait when a signal reaches the thread, and
  * mlock then fails with ENOMEM. This is the hazard the commitment guards
  * against; if a host stops showing it, the guard and this case need a new
  * look rather than a quiet pass. */
 void a_signalled_wire_of_cold_pages_fails_with_enomem()
 {
+	const ColdFiles files{cold_attempts};
 	bool ended = false;
 	int error = 0;
 	SignalStorm storm{pthread_self()};
 	for (unsigned attempt = 0; attempt < cold_attempts && !ended;
 	     ++attempt) {
-		const ColdFile file{cold_size};
 		errno = 0;
-		ended = mlock(file.data(), cold_size) != 0;
+		ended = mlock(files[attempt].data(), cold_size) != 0;
 		error = errno;
 	}
 	require(ended && error == ENOMEM,
@@ -339,30 +366,35 @@ void a_signalled_wire_of_cold_pages_fails_with_enomem()
 void a_signal_does_not_cost_a_commit_its_wiring()
 {
 	const std::size_t page = host_page();
+	/* Each attempt wires two files nothing has read yet. */
+	ColdFiles files{2 * cold_attempts};
 	const unsigned long before =
 		signals_taken.load(std::memory_order_relaxed);
 	SignalStorm storm{pthread_self()};
 	for (unsigned attempt = 0; attempt < cold_attempts; ++attempt) {
-		const ColdFile committed{cold_size};
+		const ColdFile &committed = files[2 * attempt];
 		GuestRamCommitment commitment{committed.data(), cold_size, 0, 0,
 			true, page};
-		require(commitment.commit(0, cold_size) == 0,
+		requireSyscall(commitment.commit(0, cold_size) == 0,
 			"a signalled commit must succeed");
 		require(commitment.wire_failures() == 0,
 			"a signalled commit must wire");
 		require(wired_count(committed.data()) > 0,
 			"a signalled commit must leave its range wired");
 
-		const ColdFile readmitted{cold_size};
+		const ColdFile &readmitted = files[2 * attempt + 1];
 		GuestRamCommitment held{readmitted.data(), cold_size, 0,
 			cold_size, true, page};
-		require(held.evict(0, cold_size / page) == 0, "evict failed");
-		require(held.readmit(0, cold_size / page) == 0,
+		requireSyscall(held.evict(0, cold_size / page) == 0,
+			"evict failed");
+		requireSyscall(held.readmit(0, cold_size / page) == 0,
 			"readmit failed");
 		require(held.wire_failures() == 0,
 			"a signalled readmission must wire");
 		require(wired_count(readmitted.data()) > 0,
 			"a signalled readmission must leave its range wired");
+		files.retire(2 * attempt);
+		files.retire(2 * attempt + 1);
 	}
 	require(signals_taken.load(std::memory_order_relaxed) > before,
 		"the committing thread must have taken signals");
