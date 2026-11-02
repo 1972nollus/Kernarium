@@ -53,14 +53,16 @@ final class ZstdUtil {
 
     typealias ProgressHandler = (DecompressionProgress) -> Void
 
-    private static let streamBufferSize = 1024 * 1024
-    private static let sparseBlockSize = 64 * 1024
+    nonisolated private static let streamBufferSize = 1024 * 1024
+    nonisolated private static let sparseBlockSize = 64 * 1024
 
     private struct OutputState {
         var logicalOffset: off_t = 0
         var pendingHoleOffset: off_t?
         var pendingHoleLength: off_t = 0
         var sparseBytesSkipped: UInt64 = 0
+
+        nonisolated init() {}
     }
 
     private init() {}

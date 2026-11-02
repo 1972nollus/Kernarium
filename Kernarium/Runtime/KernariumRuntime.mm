@@ -1353,12 +1353,13 @@ private:
 
 constexpr std::uint64_t mebibyte = 1024ULL * 1024ULL;
 
-/* The host GPU's budget for a guest of `guestMemoryMiB` with the launch
- * parameters `boot` states, which is what both the application's warning and
- * the run use. */
+/* The host GPU's budget for a guest of `guestMemoryMiB` and
+ * `guestProcessorCount` vCPUs with the launch parameters `boot` states, which
+ * is what both the application's warning and the run use. */
 uml::emulator::GpuBudgetPlan planGpuBudget(
     const kernarium_runtime_boot* boot,
-    std::uint32_t guestMemoryMiB)
+    std::uint32_t guestMemoryMiB,
+    std::uint32_t guestProcessorCount)
 {
     return uml::emulator::plan_gpu_budget(
         static_cast<std::uint64_t>(guestMemoryMiB) * mebibyte,
@@ -1366,6 +1367,7 @@ uml::emulator::GpuBudgetPlan planGpuBudget(
          * gadget cache. */
         0,
         0,
+        guestProcessorCount,
         {
             .application = boot->gpu_budget_application_mib * mebibyte,
             .engine_rest = boot->gpu_budget_engine_mib * mebibyte,
@@ -1375,19 +1377,21 @@ uml::emulator::GpuBudgetPlan planGpuBudget(
 
 int runtimePlanGpuBudget(
     std::uint32_t guestMemoryMiB,
+    std::uint32_t guestProcessorCount,
     std::uint32_t applicationMiB,
     std::uint32_t engineMiB,
     std::uint32_t headroomMiB,
     kernarium_runtime_gpu_budget* plan)
 {
     if (plan == nullptr || plan->struct_size < sizeof(*plan) ||
-        guestMemoryMiB == 0)
+        guestMemoryMiB == 0 || guestProcessorCount == 0)
         return -UML_EMULATOR_INVALID_ARGUMENT;
     kernarium_runtime_boot parameters {};
     parameters.gpu_budget_application_mib = applicationMiB;
     parameters.gpu_budget_engine_mib = engineMiB;
     parameters.gpu_budget_headroom_mib = headroomMiB;
-    const auto planned = planGpuBudget(&parameters, guestMemoryMiB);
+    const auto planned = planGpuBudget(
+        &parameters, guestMemoryMiB, guestProcessorCount);
     const std::uint32_t size = plan->struct_size;
     *plan = {};
     plan->struct_size = size;
@@ -1531,7 +1535,8 @@ int runtimeRun(
          * what the GPU uses out of the guest. The application has already
          * warned the user when the limit leaves less than the floor
          * (runtimePlanGpuBudget); the guest boots with the floor. */
-        const auto gpuBudget = planGpuBudget(boot, guestMemoryMiB);
+        const auto gpuBudget = planGpuBudget(
+            boot, guestMemoryMiB, guestProcessorCount);
         const std::uint64_t guestMemoryBytes = gpuBudget.guest_memory;
         const std::uint64_t deviceMemoryLimit = gpuBudget.budget.bytes;
         if (gpuBudget.budget.short_of_floor) {
@@ -1994,7 +1999,7 @@ kernarium_runtime_automation_hold_delay_ms(void)
 }
 #endif
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v17(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v18(void)
 {
     return &runtimeApi;
 }
