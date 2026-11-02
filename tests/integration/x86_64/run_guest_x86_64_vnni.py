@@ -11,6 +11,8 @@ subleaf and subleaf 1 EAX bit 4. The guest must report AVX-VNNI, the probe
 must take the VNNI path, and both forms of every kernel must give the exact
 integer results. The AVX2 form is VPMADDUBSW, VPMADDWD and VPADDD, so the
 agreement between the two forms checks VPDPBUSD against them on real data.
+The kernel describes the CPU in /proc/cpuinfo from a table of its own, which
+must list avx_vnni as CPUID does.
 """
 
 from __future__ import annotations
@@ -62,7 +64,11 @@ def main() -> int:
         result = guest.run_command(
             f"{GUEST_DIRECTORY}/vnni-probe check vnni", PROBE_TIMEOUT_SECONDS
         )
+        cpuinfo = guest.run_command("grep -m1 '^flags' /proc/cpuinfo", 30)
     print(result.output.strip())
+    print(cpuinfo.output.strip())
+    if "avx_vnni" not in cpuinfo.output.split(":", 1)[-1].split():
+        raise RuntimeError("/proc/cpuinfo does not list avx_vnni")
     if result.return_code != 0:
         raise RuntimeError(f"the probe reported {result.return_code} failure(s)")
     lines = result.output.splitlines()
