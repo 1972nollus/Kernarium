@@ -7,7 +7,9 @@ from. Those words are found in the executable segments of the ELF files given
 here, which places the block in a library and function without knowing where
 the guest loaded it, and without any help from the guest. Pass the program's
 executable and its shared libraries (for Android, the APK's lib/ directory and
-/system/lib64); directories are searched recursively.
+/system/lib64); directories are searched recursively. Symbols come from each
+file's symbol tables and, for Android's stripped libraries, from the
+MiniDebugInfo ELF in its .gnu_debugdata section.
 
 Blocks carry the guest thread pointer (TPIDR_EL0) they ran under, which
 separates one busy thread from a pool. Profiles are cumulative: --baseline
@@ -26,6 +28,7 @@ import array
 import bisect
 import collections
 import dataclasses
+import lzma
 import pathlib
 import struct
 import sys
@@ -94,23 +97,34 @@ class Elf:
     symbols: list[tuple[int, int, str]]  # (address, size, name), sorted
 
 
-def read_elf(path: pathlib.Path) -> Elf | None:
-    data = path.read_bytes()
-    if len(data) < 64 or data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
+def is_elf64(data: bytes) -> bool:
+    return (len(data) >= 64 and data[:4] == b"\x7fELF" and data[4] == 2 and
+            data[5] == 1)
+
+
+def elf_sections(data: bytes) -> list[tuple]:
+    shoff, = struct.unpack_from("<Q", data, 0x28)
+    shentsize, shnum = struct.unpack_from("<HH", data, 0x3A)
+    return [struct.unpack_from("<IIQQQQIIQQ", data, shoff + i * shentsize)
+            for i in range(shnum)] if shoff else []
+
+
+def elf_section(data: bytes, wanted: str) -> bytes | None:
+    sections = elf_sections(data)
+    shstrndx, = struct.unpack_from("<H", data, 0x3E)
+    if shstrndx >= len(sections):
         return None
-    (phoff, shoff) = struct.unpack_from("<QQ", data, 0x20)
-    (phentsize, phnum, shentsize, shnum) = struct.unpack_from("<HHHH", data, 0x36)
-    segments = []
-    for index in range(phnum):
-        kind, flags, offset, vaddr, _, filesz = struct.unpack_from(
-            "<IIQQQQ", data, phoff + index * phentsize)
-        if kind == 1 and flags & 1 and filesz >= 4:  # PT_LOAD, PF_X
-            words = array.array("I")
-            words.frombytes(data[offset:offset + filesz - filesz % 4])
-            segments.append((vaddr, words))
+    names = sections[shstrndx][4]
+    for section in sections:
+        start = names + section[0]
+        if data[start:data.find(b"\0", start)].decode(errors="replace") == wanted:
+            return data[section[4]:section[4] + section[5]]
+    return None
+
+
+def elf_symbols(data: bytes) -> list[tuple[int, int, str]]:
     symbols = []
-    sections = [struct.unpack_from("<IIQQQQIIQQ", data, shoff + i * shentsize)
-                for i in range(shnum)] if shoff else []
+    sections = elf_sections(data)
     for kind, link, entsize, offset, size in (
             (s[1], s[6], s[9], s[4], s[5]) for s in sections):
         if kind not in (2, 11) or entsize == 0:  # SHT_SYMTAB, SHT_DYNSYM
@@ -127,6 +141,35 @@ def read_elf(path: pathlib.Path) -> Elf | None:
             name = data[base + name_offset:end].decode(errors="replace")
             if name and not name.startswith("$"):  # not a mapping symbol
                 symbols.append((value, symbol_size, name))
+    return symbols
+
+
+def read_elf(path: pathlib.Path) -> Elf | None:
+    data = path.read_bytes()
+    if not is_elf64(data):
+        return None
+    phoff, = struct.unpack_from("<Q", data, 0x20)
+    phentsize, phnum = struct.unpack_from("<HH", data, 0x36)
+    segments = []
+    for index in range(phnum):
+        kind, flags, offset, vaddr, _, filesz = struct.unpack_from(
+            "<IIQQQQ", data, phoff + index * phentsize)
+        if kind == 1 and flags & 1 and filesz >= 4:  # PT_LOAD, PF_X
+            words = array.array("I")
+            words.frombytes(data[offset:offset + filesz - filesz % 4])
+            segments.append((vaddr, words))
+    symbols = elf_symbols(data)
+    # Android strips its libraries but keeps the local function symbols in an
+    # xz-compressed ELF in .gnu_debugdata (MiniDebugInfo); without them every
+    # hidden function reads as a bare address.
+    packed = elf_section(data, ".gnu_debugdata")
+    if packed:
+        try:
+            inner = lzma.decompress(packed)
+        except lzma.LZMAError:
+            inner = b""
+        if is_elf64(inner):
+            symbols += elf_symbols(inner)
     symbols = sorted(set(symbols))
     return Elf(path, segments, [s[0] for s in symbols], symbols)
 

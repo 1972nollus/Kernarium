@@ -98,6 +98,14 @@ def check_native_authority(producer, scratch: pathlib.Path) -> None:
     require(False, "the producer accepted a truncated response")
 
 
+def check_vex_pseudo_prefix(producer) -> None:
+    """LLVM prints {vex} before an instruction that also has an EVEX form."""
+    mnemonic, form = producer.canonical_form(
+        "{vex}\tvpdpbusd\t%ymm2, %ymm1, %ymm4")
+    require((mnemonic, form) == ("vpdpbusd", "vpdpbusd:ymm,ymm,ymm"),
+            f"the {{vex}} pseudo-prefix became part of a form: {form}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runner", required=True, type=pathlib.Path)
@@ -117,6 +125,7 @@ def main() -> int:
         require(status == 1 and "RAX expected=0x2b actual=0x2a" in output,
                 f"a mismatching repository case was not reported: {output}")
         check_native_authority(producer, scratch)
+    check_vex_pseudo_prefix(producer)
     print("repository cases reach the runner as declared and need a native "
           "run that ends in their declared state")
     return 0

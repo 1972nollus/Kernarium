@@ -9,6 +9,15 @@ import Testing
 /// alive.
 @MainActor
 struct BackgroundControllerTests {
+    /// Waits, for at most two seconds, for something that reaches the main
+    /// actor after the test yields to it.
+    private func settle(_ condition: () -> Bool) async {
+        let deadline = DispatchTime.now() + .seconds(2)
+        while !condition() && DispatchTime.now() < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
     private final class Deadline: BackgroundCancellable {
         let action: @MainActor () -> Void
         var cancelled = false
@@ -29,37 +38,67 @@ struct BackgroundControllerTests {
             self.effects = effects
         }
 
-        func cancel() { effects?.calls.append("end \(name)") }
+        func cancel() { effects?.log.add("end \(name)") }
     }
 
     /// Records every request and lets a test fire the policy's timer.
     private final class Effects: BackgroundEffects {
-        var calls: [String] = []
+        let log = CallLog()
+        var calls: [String] {
+            get { log.entries }
+            set { log.entries = newValue }
+        }
+        /// The bound of the GPU hold, which fires when a test says so.
+        let timer = ManualHoldTimer()
+        let gpuHold: GuestGPUHold
         var pictureInPictureCanStart = false
         var pictureInPictureActive = false
         var jobActive = false
         var guestIsAndroid = false
         var deadlines: [Deadline] = []
+        /// What the guest's display is doing when the policy first asks, and
+        /// whether it goes off within the wait it is given.
+        var guestDisplayActive: Bool? = true
+        var displayGoesOff = true
+        var automationHoldDelay: TimeInterval = 0
+        /// The deadline of each wait for the display, and the time it was asked.
+        var displayWaits: [(asked: DispatchTime, until: DispatchTime)] = []
+        /// What the main thread is doing while it waits: a test runs the
+        /// bound's firing here, from another thread, as the real one would.
+        var whileFlushing: (() -> Void)?
+        var whileWaitingForDisplay: (() -> Void)?
 
-        func holdGuestGPU() { calls.append("hold") }
-        func releaseGuestGPU() { calls.append("release") }
+        init() {
+            gpuHold = GuestGPUHold(
+                gate: RecordingGate(log),
+                timer: timer.timer
+            )
+        }
+
         func flushGuest(until deadline: DispatchTime?) {
-            calls.append("flush")
+            log.add("flush")
+            whileFlushing?()
         }
         func quiesceGuest(reason: String, until deadline: DispatchTime?) {
-            calls.append("quiesce \(reason)")
+            log.add("quiesce \(reason)")
         }
-        func resumeGuest() { calls.append("resume") }
+        func resumeGuest() { log.add("resume") }
         func setPageCacheTrimming(_ enabled: Bool) {
-            calls.append("trim \(enabled ? "on" : "off")")
+            log.add("trim \(enabled ? "on" : "off")")
         }
         func setBackgroundThrottle(_ enabled: Bool) {
-            calls.append("throttle \(enabled ? "on" : "off")")
+            log.add("throttle \(enabled ? "on" : "off")")
         }
-        func pressPowerKey() { calls.append("power") }
-        func stopPictureInPicture() { calls.append("stop pip") }
+        func pressPowerKey() { log.add("power") }
+        func waitForGuestDisplayOff(until deadline: DispatchTime) -> Bool {
+            log.add("wait display off")
+            displayWaits.append((DispatchTime.now(), deadline))
+            whileWaitingForDisplay?()
+            return displayGoesOff
+        }
+        func stopPictureInPicture() { log.add("stop pip") }
         func keepScheduled(named name: String) -> any BackgroundCancellable {
-            calls.append("begin \(name)")
+            log.add("begin \(name)")
             return Grace(name, self)
         }
         func schedule(
@@ -104,11 +143,266 @@ struct BackgroundControllerTests {
         let policy = controller(.keepRunning, effects)
 
         policy.didEnterBackground()
-        #expect(effects.calls == ["hold", "flush", "trim on", "power"])
+        // The screen goes off while the GPU still answers, and the GPU is held
+        // once it has: a screen that draws behind a held GPU leaves the apps it
+        // shows waiting on it.
+        #expect(effects.calls == [
+            "power", "wait display off", "hold", "flush", "trim on",
+        ])
 
         // The screen comes on after the GPU is back, so it can be drawn.
         policy.willEnterForeground()
         #expect(effects.calls.suffix(3) == ["trim off", "release", "power"])
+    }
+
+    @Test
+    func aScreenThatNeverGoesOffIsHeldAtTheGraceAndNotLater() throws {
+        let effects = Effects()
+        effects.jobActive = true
+        effects.guestIsAndroid = true
+        effects.displayGoesOff = false
+        let policy = controller(.keepRunning, effects)
+
+        let before = DispatchTime.now()
+        policy.didEnterBackground()
+        let after = DispatchTime.now()
+
+        // The hold follows the wait that gave up, and the flush follows the hold.
+        #expect(effects.calls == [
+            "power", "wait display off", "hold", "flush", "trim on",
+        ])
+        #expect(policy.phase == .jobRunning)
+
+        // The wait ends at the grace, counted from the edge, and never past the
+        // edge handler's budget.
+        let wait = try #require(effects.displayWaits.first)
+        let grace = UInt64(1_500_000_000)
+        let budget = UInt64(4_000_000_000)
+        #expect(wait.until.uptimeNanoseconds >= before.uptimeNanoseconds + grace)
+        #expect(wait.until.uptimeNanoseconds <= after.uptimeNanoseconds + grace)
+        #expect(wait.until.uptimeNanoseconds < before.uptimeNanoseconds + budget)
+    }
+
+    @Test
+    func aScreenThatIsOffAlreadyIsNotWokenAndNotWaitedFor() {
+        let effects = Effects()
+        effects.jobActive = true
+        effects.guestIsAndroid = true
+        effects.guestDisplayActive = false
+        let policy = controller(.keepRunning, effects)
+
+        policy.didEnterBackground()
+        #expect(effects.calls == ["hold", "flush", "trim on"])
+
+        // The user left it off, and the return leaves it off.
+        policy.willEnterForeground()
+        #expect(!effects.calls.contains("power"))
+    }
+
+    @Test
+    func aScreenWhoseStateIsUnknownIsTurnedOffAndWaitedFor() {
+        let effects = Effects()
+        effects.jobActive = true
+        effects.guestIsAndroid = true
+        effects.guestDisplayActive = nil
+        let policy = controller(.keepRunning, effects)
+
+        policy.didEnterBackground()
+        #expect(effects.calls == [
+            "power", "wait display off", "hold", "flush", "trim on",
+        ])
+    }
+
+    @Test
+    func theOtherModesHoldBeforeAnythingElse() {
+        // Only a job on an Android guest turns the screen off first.
+        let pausing = Effects()
+        pausing.guestIsAndroid = true
+        let pausePolicy = controller(.off, pausing)
+        pausePolicy.didEnterBackground()
+        #expect(pausing.calls.first == "hold")
+        #expect(!pausing.calls.contains("wait display off"))
+
+        let window = Effects()
+        window.guestIsAndroid = true
+        window.pictureInPictureCanStart = true
+        let windowPolicy = controller(.pictureInPicture, window)
+        windowPolicy.didEnterBackground()
+        #expect(window.calls.first == "hold")
+        #expect(!window.calls.contains("wait display off"))
+        #expect(!window.calls.contains("power"))
+    }
+
+    /// A launch that asks for the hold after a delay gets it then, and the
+    /// edge waits for no screen.
+    @Test
+    func anAutomationHoldDelayMovesTheHoldOffTheEdge() async {
+        let effects = Effects()
+        effects.jobActive = true
+        effects.automationHoldDelay = 2.5
+        let policy = controller(.keepRunning, effects)
+
+        policy.didEnterBackground()
+        #expect(effects.calls == [
+            "begin gpu-hold-delay", "flush", "trim on",
+        ])
+        #expect(effects.timer.delays == [2.5])
+        #expect(policy.phase == .jobRunning)
+
+        effects.timer.fire()
+        await settle { effects.calls.contains("end gpu-hold-delay") }
+        #expect(Array(effects.calls.dropFirst(3)) == ["hold", "end gpu-hold-delay"])
+
+        policy.willEnterForeground()
+        #expect(effects.calls.suffix(2) == ["trim off", "release"])
+    }
+
+    /// The bound is a timer off the main thread. The guest's storage settles
+    /// on a thread of its own while the main thread waits for it, and a hold
+    /// queued behind that wait landed 2.5 s after the edge, 0.2 s before iOS
+    /// denied the GPU.
+    @Test
+    func theHoldLandsWhileTheMainThreadWaitsForTheStorage() async {
+        let effects = Effects()
+        effects.jobActive = true
+        effects.automationHoldDelay = 2.5
+        effects.whileFlushing = {
+            // The bound fires from another thread, as a dispatch timer does,
+            // and the main thread stays in the flush until it has.
+            DispatchQueue.global().sync { effects.timer.fire() }
+            effects.log.add("flush ends")
+        }
+        let policy = controller(.keepRunning, effects)
+
+        policy.didEnterBackground()
+        #expect(effects.calls == [
+            "begin gpu-hold-delay", "flush", "hold", "flush ends", "trim on",
+        ])
+        await settle { effects.calls.contains("end gpu-hold-delay") }
+        #expect(effects.calls.contains("end gpu-hold-delay"))
+    }
+
+    /// Without a delay the bound is armed before the main thread can wait for
+    /// anything, and the hold lands at it when the screen has not gone off.
+    @Test
+    func theHoldIsBoundedBeforeTheScreenIsWaitedFor() async {
+        let effects = Effects()
+        effects.jobActive = true
+        effects.guestIsAndroid = true
+        effects.displayGoesOff = false
+        var armedWhenWaiting: [TimeInterval] = []
+        effects.whileWaitingForDisplay = {
+            armedWhenWaiting = effects.timer.delays
+            // The main thread is stuck in the wait past the bound.
+            DispatchQueue.global().sync { effects.timer.fire() }
+        }
+        let policy = controller(.keepRunning, effects)
+
+        policy.didEnterBackground()
+        #expect(armedWhenWaiting == [1.5])
+        // The bound took the hold during the wait; the main thread finds it
+        // taken and holds nothing a second time.
+        #expect(effects.calls == [
+            "power", "wait display off", "hold", "flush", "trim on",
+        ])
+        #expect(effects.timer.pending == 0)
+    }
+
+    /// An Android job that sees its screen go off holds then, and the bound
+    /// has nothing left to do.
+    @Test
+    func aScreenThatGoesOffWithdrawsTheBound() {
+        let effects = Effects()
+        effects.jobActive = true
+        effects.guestIsAndroid = true
+        let policy = controller(.keepRunning, effects)
+
+        policy.didEnterBackground()
+        #expect(effects.timer.delays == [1.5])
+        #expect(effects.timer.pending == 0)
+        effects.timer.fire()
+        #expect(effects.calls == [
+            "power", "wait display off", "hold", "flush", "trim on",
+        ])
+    }
+
+    @Test
+    func aReturnBeforeTheDelayedHoldCancelsItAndReleasesNothing() {
+        let effects = Effects()
+        effects.jobActive = true
+        effects.guestIsAndroid = true
+        effects.automationHoldDelay = 4
+        let policy = controller(.keepRunning, effects)
+
+        policy.didEnterBackground()
+        // The delay is armed first, and the screen is still turned off,
+        // without a wait that would move the hold.
+        #expect(effects.calls == [
+            "begin gpu-hold-delay", "power", "flush", "trim on",
+        ])
+
+        policy.willEnterForeground()
+        effects.timer.fire()
+        #expect(!effects.calls.contains("hold"))
+        #expect(!effects.calls.contains("release"))
+        #expect(effects.calls.contains("end gpu-hold-delay"))
+        #expect(effects.calls.suffix(2) == ["trim off", "power"])
+    }
+
+    /// The application's effects wait for the runtime's answer and stop at the
+    /// deadline, and a runtime that cannot say is not taken for a screen that
+    /// went off.
+    @Test
+    func theDisplayWaitEndsWhenTheRuntimeSaysOffOrAtTheDeadline() {
+        let answers = DisplayAnswers([1, 1, 1, 0, 1])
+        let effects = SystemBackgroundEffects(
+            persistence: .shared,
+            pictureInPicture: nil,
+            displayActive: { answers.next() }
+        )
+        #expect(effects.waitForGuestDisplayOff(until: .now() + .seconds(5)))
+        #expect(answers.asked == 4)
+
+        let never = SystemBackgroundEffects(
+            persistence: .shared,
+            pictureInPicture: nil,
+            displayActive: { -1 }
+        )
+        let started = DispatchTime.now()
+        #expect(!never.waitForGuestDisplayOff(until: started + .milliseconds(100)))
+        #expect(DispatchTime.now() >= started + .milliseconds(100))
+        #expect(never.guestDisplayActive == nil)
+
+        let on = SystemBackgroundEffects(
+            persistence: .shared,
+            pictureInPicture: nil,
+            displayActive: { 1 }
+        )
+        #expect(on.guestDisplayActive == true)
+        let off = SystemBackgroundEffects(
+            persistence: .shared,
+            pictureInPicture: nil,
+            displayActive: { 0 }
+        )
+        #expect(off.guestDisplayActive == false)
+        // Already off: the wait does not look twice.
+        #expect(off.waitForGuestDisplayOff(until: .now()))
+    }
+
+    @Test
+    func theHoldDelayIsTheRuntimesMillisecondsAsSeconds() {
+        let delayed = SystemBackgroundEffects(
+            persistence: .shared,
+            pictureInPicture: nil,
+            holdDelayMilliseconds: { 2500 }
+        )
+        #expect(delayed.automationHoldDelay == 2.5)
+        let none = SystemBackgroundEffects(
+            persistence: .shared,
+            pictureInPicture: nil,
+            holdDelayMilliseconds: { 0 }
+        )
+        #expect(none.automationHoldDelay == 0)
     }
 
     @Test
@@ -193,6 +487,25 @@ struct BackgroundControllerTests {
 
         policy.didEnterBackground()
         #expect(effects.calls == ["hold", "quiesce background"])
+    }
+
+    /// The runtime's answers for the guest's display, one per question, from
+    /// any thread; the last one repeats.
+    private nonisolated final class DisplayAnswers: @unchecked Sendable {
+        private let lock = NSLock()
+        private var answers: [Int32]
+        private(set) var asked = 0
+
+        init(_ answers: [Int32]) {
+            self.answers = answers
+        }
+
+        func next() -> Int32 {
+            lock.lock()
+            defer { lock.unlock() }
+            asked += 1
+            return answers.count > 1 ? answers.removeFirst() : answers[0]
+        }
     }
 
     /// What reached the runtime's page-cache trimming switch, from any thread.

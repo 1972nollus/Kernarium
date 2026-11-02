@@ -16,7 +16,7 @@ WORK_ROOT=${UML_KERNEL_HOST_TOOLS_BUILD_ROOT:-"$ROOT_DIR/.build/dependency-build
 ARCHIVE_MANIFEST="$ROOT_DIR/dependencies/kernel-host-tools/archives.tsv"
 VERIFY_SCRIPT="$ROOT_DIR/dependencies/cmake/VerifyKernelHostToolsPrefix.cmake"
 DARWIN_HOST="$ROOT_DIR/kernel/mainline-6.18/build/toolchain/darwin-host"
-UAPI_ARCHIVE_NAME=linux-libc-dev_6.12.107-1_all.deb
+UAPI_ARCHIVE_NAME=linux-libc-dev_6.12.113-1_all.deb
 JOBS=${UML_KERNEL_HOST_TOOLS_JOBS:-8}
 # The tools run only on the kernel build host. elfutils calls strchrnul, which
 # Darwin provides from macOS 15.4.
@@ -221,8 +221,13 @@ copy_source()
 	"$RSYNC" -a --exclude=.git "$1/" "$2/"
 }
 
-# gawk generates elfutils' DWARF name tables. It is a build-only tool.
+# gawk generates elfutils' DWARF name tables. It is a build-only tool. Its
+# generated autotools files are committed, but a checkout that crosses a second
+# boundary leaves aclocal.m4 older than the m4 files it was generated from, and
+# make then runs the aclocal-1.16 this host does not have. Give the copy one
+# mtime so that checkout order never reads as staleness.
 copy_source "$SOURCE_ROOT/gawk" "$TEMP_ROOT/src/gawk"
+find "$TEMP_ROOT/src/gawk" -exec touch -r "$TEMP_ROOT/src/gawk/configure" {} +
 (
 	CDPATH= cd -- "$TEMP_ROOT/src/gawk"
 	logged gawk private_env ./configure --prefix="$BOOTSTRAP" --disable-nls \

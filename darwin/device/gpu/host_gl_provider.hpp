@@ -45,6 +45,13 @@ public:
         std::uint32_t major,
         std::uint32_t minor) noexcept;
 
+    /* Frees what the provider's GL driver keeps for reuse and nothing uses,
+     * and returns how many cached allocations that released. The device
+     * memory pool calls it, when it is about to refuse a reservation, on the
+     * refused thread: that thread may be inside a call of this provider and
+     * hold the provider's lock or EGL's, so this takes no lock of either. */
+    [[nodiscard]] std::uint64_t releaseCachedMemory() noexcept;
+
 private:
     // EGL display creation and context topology changes are serialized.
     // makeCurrent remains per-thread and lock-free after display publication;
@@ -52,6 +59,9 @@ private:
     // that immutable display.
     std::mutex mutex_;
     std::atomic<void*> display_ {};
+    // eglReleaseCachedMemoryMESA, found on first use. A pointer found twice
+    // is the same pointer.
+    std::atomic<void*> releaseCachedMemory_ {};
     void* config_ {};
     void* sharedContext_ {};
 };

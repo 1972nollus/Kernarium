@@ -20,10 +20,10 @@ the native host's known failures.
  1 file changed, 24 insertions(+), 1 deletion(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-index 41d2f4fdf5a20ba996104f306eb49e931311807f..c695ca757993cf65911a2a6fb5ff7a6b41c996a5 100644
+index 7952bf8f8ca595acd55b3bdfa197718283f79fed..762280e820b311846888525902e1c620f3449ee6 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-@@ -330,7 +330,30 @@ Ref OpDispatchBuilder::GetX87FTW_Helper() {
+@@ -328,7 +328,30 @@ Ref OpDispatchBuilder::GetX87FTW_Helper() {
    // The above sequence sets valid to 11 and empty to 00, so invert to finalize.
    static_assert(static_cast<uint8_t>(FPState::X87Tag::Valid) == 0b00);
    static_assert(static_cast<uint8_t>(FPState::X87Tag::Empty) == 0b11);

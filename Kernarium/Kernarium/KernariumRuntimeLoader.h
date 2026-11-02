@@ -43,6 +43,10 @@ void kernarium_runtime_loader_resume(void);
  * kernarium_runtime_set_gpu_hold_function. Returns the runtime's answer, or -1
  * when no runtime is loaded. */
 int kernarium_runtime_loader_set_gpu_hold(int held);
+/* Whether the guest's display is on; see
+ * kernarium_runtime_guest_display_active_function. Returns the runtime's
+ * answer, or -1 when no runtime is loaded. */
+int kernarium_runtime_loader_guest_display_active(void);
 /* Moves the guest's vCPU threads to (nonzero) or from (zero) the system's
  * background policy; see kernarium_runtime_set_background_throttle_function.
  * Returns the number of threads changed, or -1 when no runtime is loaded. */
@@ -61,6 +65,16 @@ int kernarium_runtime_loader_set_frame_sink(
  * otherwise, -1 when no runtime is loaded. Call it away from the main thread:
  * it may wait for the guest's console. */
 int kernarium_runtime_loader_set_page_cache_trimming(int enabled);
+/* Evaluates the host GPU's budget for a launch with these parameters, as the
+ * selected runtime's run will, and fills `plan`; see
+ * kernarium_runtime_plan_gpu_budget_function. Returns the runtime's answer, or
+ * -1 when no runtime is loaded. */
+int kernarium_runtime_loader_plan_gpu_budget(
+    uint32_t guest_memory_mib,
+    uint32_t application_mib,
+    uint32_t engine_mib,
+    uint32_t headroom_mib,
+    kernarium_runtime_gpu_budget* plan);
 /* Turns the guest's microphone on (nonzero) or off (zero), as
  * kernarium_runtime_set_microphone_function does, and returns the resulting
  * KERNARIUM_RUNTIME_MICROPHONE_ value, or -1 when no runtime is loaded. It
@@ -82,6 +96,11 @@ void kernarium_runtime_loader_set_restart_handler(
  * through the environment, to start the background job with the guest. Always
  * zero for a release runtime, which cannot be asked, and when none is loaded. */
 int kernarium_runtime_loader_automation_job_at_start(void);
+/* The milliseconds after the application enters the background at which an
+ * automation launch asked for the guest's GPU to be held, or zero for the
+ * edge itself. Always zero for a release runtime, which cannot be asked, and
+ * when none is loaded. */
+int kernarium_runtime_loader_automation_hold_delay_ms(void);
 int kernarium_runtime_loader_send_console_input(
     const void* buffer,
     size_t length);

@@ -76,6 +76,57 @@ class BootAndroidTests(unittest.TestCase):
         )
         self.assertFalse(any("vnc" in argument for argument in native))
 
+    def test_offscreen_display_names_its_options(self) -> None:
+        plain = boot_android.emulator_command(
+            boot_android.parse_arguments(["--display", "offscreen"]),
+            Path("/r"),
+            Path("/i"),
+            Path("/e"),
+        )
+        self.assertIn("--gpu-display=offscreen", plain)
+        self.assertFalse(any("vnc" in argument for argument in plain))
+        self.assertFalse(any("--gpu-offscreen" in argument for argument in plain))
+        options = boot_android.parse_arguments(
+            [
+                "--display",
+                "offscreen",
+                "--offscreen-size",
+                "2266x1374",
+                "--offscreen-mirror",
+                "800@15",
+            ]
+        )
+        command = boot_android.emulator_command(
+            options, Path("/r"), Path("/i"), Path("/e")
+        )
+        self.assertIn("--gpu-offscreen-size=2266x1374", command)
+        self.assertIn("--gpu-offscreen-mirror=800@15", command)
+        on = boot_android.parse_arguments(
+            ["--display", "offscreen", "--offscreen-mirror", "on"]
+        )
+        self.assertIn(
+            "--gpu-offscreen-mirror=on",
+            boot_android.emulator_command(on, Path("/r"), Path("/i"), Path("/e")),
+        )
+
+    def test_offscreen_options_need_the_offscreen_display(self) -> None:
+        for arguments in (
+            ["--offscreen-size", "800x600"],
+            ["--display", "vnc", "--offscreen-mirror", "on"],
+        ):
+            with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
+                boot_android.parse_arguments(arguments)
+        for arguments in (
+            ["--display", "offscreen", "--offscreen-size", "800"],
+            ["--display", "offscreen", "--offscreen-size", "0x600"],
+            ["--display", "offscreen", "--offscreen-size", "800x"],
+            ["--display", "offscreen", "--offscreen-mirror", "800"],
+            ["--display", "offscreen", "--offscreen-mirror", "@15"],
+            ["--display", "offscreen", "--offscreen-mirror", "maybe"],
+        ):
+            with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
+                boot_android.parse_arguments(arguments)
+
     def test_audio_output_defaults_to_the_host_and_can_be_null(self) -> None:
         default = boot_android.emulator_command(
             boot_android.parse_arguments([]), Path("/r"), Path("/i"), Path("/e")

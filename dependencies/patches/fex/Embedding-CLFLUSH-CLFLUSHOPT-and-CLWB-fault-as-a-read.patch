@@ -14,10 +14,10 @@ first.
  2 files changed, 13 insertions(+)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 56c024fdc19507f412f2b8b3072023adf4133230..645e4d8a0f5a1429f2679cda867cd1675e4d44ff 100644
+index b8437997fd7993649bd371ac178d48ab108525d7..07731b85653551d1771f0b91ca25d58fe0c6fc28 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -5285,6 +5285,7 @@ void OpDispatchBuilder::MOVBEOp(OpcodeArgs) {
+@@ -5322,6 +5322,7 @@ void OpDispatchBuilder::MOVBEOp(OpcodeArgs) {
  void OpDispatchBuilder::CLWBOrTPause(OpcodeArgs) {
    if (DestIsMem(Op)) {
      Ref DestMem = MakeSegmentAddress(Op, Op->Dest);
@@ -25,7 +25,7 @@ index 56c024fdc19507f412f2b8b3072023adf4133230..645e4d8a0f5a1429f2679cda867cd167
      _CacheLineClean(DestMem);
    } else {
      if (!CTX->HostFeatures.SupportsWFXT) {
-@@ -5304,8 +5305,17 @@ void OpDispatchBuilder::CLWBOrTPause(OpcodeArgs) {
+@@ -5341,8 +5342,17 @@ void OpDispatchBuilder::CLWBOrTPause(OpcodeArgs) {
    }
  }
  
@@ -43,7 +43,7 @@ index 56c024fdc19507f412f2b8b3072023adf4133230..645e4d8a0f5a1429f2679cda867cd167
    _CacheLineClear(DestMem, false);
  }
  
-@@ -5334,6 +5344,7 @@ void OpDispatchBuilder::StoreFenceOrCLFlush(OpcodeArgs) {
+@@ -5371,6 +5381,7 @@ void OpDispatchBuilder::StoreFenceOrCLFlush(OpcodeArgs) {
    } else {
      // This is a CLFlush
      Ref DestMem = MakeSegmentAddress(Op, Op->Dest);
@@ -52,10 +52,10 @@ index 56c024fdc19507f412f2b8b3072023adf4133230..645e4d8a0f5a1429f2679cda867cd167
    }
  }
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index fd0efbcaa495530a3e71356354ad08bcb5506555..5b81a1888ae4488379addd49293ac004ef42e391 100644
+index 325e0f10d96a5029e8551761845b7af5b1591de3..d6113ab814c36f2b7996a4c6bdd7316c2e4e9473 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -1519,6 +1519,8 @@ private:
+@@ -1545,6 +1545,8 @@ private:
    // Alignment, as FXSAVE, FXRSTOR, XSAVE and XRSTOR do for their image. It
    // ends the block, so the caller computes its values after it.
    void EmbedderRequireAlignment(OpcodeArgs, Ref Addr, uint32_t Alignment);

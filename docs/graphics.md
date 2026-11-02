@@ -107,6 +107,28 @@ needs no drawable, and it renders nothing while no sink is set. Clearing the
 sink returns only once no delivery is running, so the receiver may be released
 at once.
 
+`--gpu-display=offscreen` is the macOS mode for memory measurements. An iPad
+allocates presentation memory that a VNC run never does -- the view's three
+drawables, the presentation's textures and, in Picture in Picture, the frame
+mirror's pool -- and a native window on a Mac opens on a shared screen. The
+offscreen display drives the same presentation into a `CAMetalLayer` that
+belongs to no window (BGRA8, `framebufferOnly`, three drawables) and presents
+each guest frame as it arrives, on a serial queue of its own, because no display
+link paces it; a frame that arrives while one is drawing replaces the one
+waiting, as in a window. It clears and presents each of the three drawables once
+at start, because a view that presents has rendered into all of them within a
+few frames and a layer asked for a drawable only when the guest draws would show
+two at idle. `--gpu-offscreen-size=WIDTHxHEIGHT` sets the drawables' pixel size
+(default: the guest mode; a run states the size of the view it imitates), and
+`--gpu-offscreen-mirror=on|off|WIDTH@FPS` keeps the frame mirror running into a
+receiver that holds the last two frames, as Picture in Picture's display layer
+does, so the mirror's pool is three buffers (`on` is 800 pixels at 15 frames a
+second, off by default). Nothing reaches the guest from the host: there
+is no input, no host resize and no VNC server, and the guest keeps its own mode.
+Like the VNC display, it does not make the process an AppKit application. A
+layer outside any window keeps handing out its drawables without the one-second
+wait for a free one, which `gpu-native-metal-presentation` checks.
+
 The macOS native display turns the emulator into an AppKit application, which
 makes the whole process eligible for App Nap whenever its window is occluded or
 minimized or the screen is locked. A napped process runs every thread,
@@ -207,9 +229,7 @@ renderbuffer and texture lands on it too. An image with one plane detaches the
 other plane from the framebuffer it joins: a stencil-only image that follows a
 depth-stencil one must not inherit that image's depth plane, a pair Zink cannot
 draw to, so the switch from a window's depth-stencil buffer to a stencil-only
-renderbuffer keeps drawing. The guest's Mesa treats that stencil plane as the
-window's depth-stencil attachment, so the contexts that draw to one window share
-it as they share a depth-stencil buffer.
+renderbuffer keeps drawing.
 
 The scanout mask is held to the same standard. Only the 8-bit RGB layouts the
 display presents carry a scanout bit, and no YUV format does. The guest's
@@ -237,20 +257,39 @@ pixels in the high half of the flags is checked to be one picture, and keeps a
 texture for each plane: R8 for luma, RG8 for interleaved chroma, and R8 for each
 planar chroma plane. A sampler view of the image sends the plane it selects where
 a view carries its layers, plane 0 as the ordinary layer range and a later plane
-as its number, and reads that plane's texture. The textures are made when the
-first view is, from the image as it then is, and every write the guest transfers
-into the image redraws the plane rows its bytes feed in the blitter's own
-context; an image that only a codec or the CPU touches never gets them. Writes
-the GPU makes into such an image are not followed, because nothing allocates it
-as a render target. The capability `VIRGL_CAP_V2_PACKED_YUV` says the renderer
-knows the flags. minigbm sends them for the 8-bit YUV buffers it emulates (NV12,
-NV21 and YV12), only when the capability is present, so an older renderer is
-never sent a flag it refuses and an older minigbm sends none, which leaves the
-image the single R8 texture it always was. A P010 buffer is not tagged: its
-two-byte samples do not fit the R8 plane textures, and nothing samples it. A guest that imports each plane of a picture as its own
-resource sends the plane number as well, and the renderer reads it as the whole
-texture of that resource unless the resource has the plane's image, so a planar
-picture whose planes are separate buffers samples correctly too.
+as its number, and reads that plane's texture. A triplanar image makes the
+textures when the first view is, from the image as it then is, and every write
+the guest transfers into the image redraws the plane rows its bytes feed in the
+blitter's own context; an image that only a codec or the CPU touches never gets
+them. Writes the GPU makes into such an image are not followed, because nothing
+allocates it as a render target.
+
+A biplanar image (NV12 and NV21, which is what the hardware decoders produce)
+keeps its pixels only in its plane textures, which exist from its creation: its
+R8 texture is 1x1 and only names it. A transfer of any box writes or reads the
+plane textures that the box's luma rows and chroma rows fall in, and nothing is
+drawn from an image, so a decoded frame costs its planes and no R8 image, plane
+draw or upload staging beside them. A chroma box that cuts an interleaved pair
+in two, or whose guest rows are an odd number of bytes apart, goes through the
+whole pairs it touches, so the half the box does not carry is kept. The bytes
+of a row past the picture's width, or past its last chroma pair, are padding
+that no plane keeps: a write drops them and a read leaves the guest's bytes
+there alone. A use of the image other than a transfer (a surface, a copy
+region, a blit, a shader image, a clear, a view of a plane it does not have, or
+a presenter) first gives it the R8 storage of a plain image, read back from the
+planes, with a warning, and the image is a plain one from then on; playback and
+the CTS reach none of them. An image imported from an EGL image keeps its
+storage, and triplanar images keep the path above. The capability
+`VIRGL_CAP_V2_PACKED_YUV` says the renderer knows the flags. minigbm sends them
+for the 8-bit YUV buffers it emulates (NV12, NV21 and YV12), only when the
+capability is present, so an older renderer is never sent a flag it refuses and
+an older minigbm sends none, which leaves the image the single R8 texture it
+always was. A P010 buffer is not tagged: its two-byte samples do not fit the R8
+plane textures, and nothing samples it. A guest that imports each plane of a
+picture as its own resource sends the plane number as well, and the renderer
+reads it as the whole texture of that resource unless the resource has the
+plane's image, so a planar picture whose planes are separate buffers samples
+correctly too.
 
 A single-plane buffer's rows are padded to the first whole number of pixels
 that makes them a multiple of 16 bytes (a 642-pixel RGBA row is 2576 bytes and
@@ -583,44 +622,117 @@ resource is gone be exported again, so a later `vkMapMemory` succeeds once the
 aperture has room. A host-visible heap of one aperture therefore leaves a
 mapping of a quarter of it usable with room to spare.
 
+### Device memory budget
+
 Device memory is charged to the application like guest RAM, so the host gives
-Venus a share of the guest's allocation: half of `mem=`. The share is one pool
-(`device/gpu/device_memory_pool.*`) for everything the host GPU holds for the
-process. Its usage is the process's Metal allocation
+the GPU a fixed budget, B, computed once at launch from the process's memory
+limit and the guest's memory (the formula, its launch parameters and the
+warning below the floor are in [memory
+architecture](architecture.md#memory-and-executable-code)). The budget is one
+pool (`device/gpu/device_memory_pool.*`) for everything the host GPU holds for
+the process. Its usage is the larger of the process's Metal allocation
 (`MTLDevice.currentAllocatedSize`, which also counts presentation, host GL
-memory and the host driver's own memory) plus the reservations of allocations
-under way. The renderer shrinks every advertised heap to the share and bounds
-every heap budget it reports by the heap's usage plus what the pool has left,
-so a guest sizes its allocations from the share, less what the host already
-holds, instead of from the host's memory. The guest driver passes budgets on
-only under `VN_DEBUG=mem_budget`. The Virtio balloon then takes the same amount
-out of the guest's RAM (see [memory
-architecture](architecture.md#memory-and-executable-code)).
+memory and the host driver's own memory) and its graphics footprint (the
+graphics ledger of `TASK_VM_INFO`, which also charges the command storage the
+driver has written), the figure the Virtio balloon follows, plus the
+reservations of allocations under way. The renderer shrinks every advertised
+heap to B and bounds every heap budget it reports by the heap's usage plus what
+the pool has left, so a guest sizes its allocations from B, less what the host
+already holds, instead of from the host's memory. The guest driver passes
+budgets on only under `VN_DEBUG=mem_budget`. The balloon takes the same amount
+out of the guest's RAM.
 
-Every consumer of the pool reserves an allocation's size, in whole host pages,
-before it allocates, and releases the reservation once Metal counts the
-allocation or it has failed. One lock decides every reservation, so
-allocations that each fit alone never together take the process past the
-share, whichever threads make them. The renderer reserves each new, non-import
-guest allocation. KosmicKrisp reserves its geometry heap (see [memory
-budget](#memory-budget)) through a driver-private structure that the renderer
-chains to every device it creates for a guest (`kk_device_memory_pool.h`,
-staged for the renderer's build and absent from the published prefix). A guest
-cannot chain that structure itself: the protocol decoder rejects a chain member
-it does not know. The driver's other internal allocations, such as upload
-buffers, are small; the pool counts them once Metal does and does not reserve
-them.
+KosmicKrisp is the one place every allocation passes. Whoever owns the host
+(`uml-darwin`, the Kernarium runtime) hands the renderer the pool, and the
+renderer states it to the driver for the whole process
+(`kk_set_device_memory_pool`, exported by the driver library beside the
+per-device structure of `kk_device_memory_pool.h`, in this project's Mesa
+series). Every device the process creates then charges it, the Venus devices of
+guests and the device Zink creates for host GL alike, without either chaining
+anything: a guest cannot chain the structure itself, because the protocol
+decoder rejects a chain member it does not know. A pooled device reserves a
+heap's size, in whole host pages, before Metal makes it, and releases the
+reservation once Metal counts the heap or has refused it; one lock decides
+every reservation, so allocations that each fit alone never together take the
+process past B, whichever threads make them. A reservation that does not fit
+first frees what the host GL driver caches, and is decided once more: the pool
+takes one reclaim hook, which the host GL provider fills with
+`eglReleaseCachedMemoryMESA` (`EGL_MESA_context_trim` of this project's Mesa
+series, callable from any thread, with no display lock because the refused
+allocation may hold one) and which releases every Zink screen's buffer cache and
+slabs. Zink frees only for a refusal of its own, so without the hook a Venus
+guest's allocation could be refused by memory that Zink's idle cache held. The
+pool counts the reservations that fit only after the release and those still
+refused although it freed something; the first refusal's stderr line says
+whether a release came before it.
 
-The renderer refuses a guest allocation the pool cannot reserve. The
-application does not see that refusal as `VK_ERROR_OUT_OF_DEVICE_MEMORY`. Venus allocates
-asynchronously, so `vkAllocateMemory` has already succeeded in the guest; the
-first later command that names the missing memory fails in the renderer, which
-marks the Venus ring fatal, and the guest driver aborts the process. The
-counter also includes memory the guest has already freed while its blob
+What the driver refuses and what it only counts:
+
+- `vkAllocateMemory` of any memory type is refused with
+  `VK_ERROR_OUT_OF_DEVICE_MEMORY` when the pool cannot hold it, and nothing is
+  allocated. That covers every buffer and texture of the OpenGL path, which Zink
+  places in memory it allocates this way, its pb_cache slabs included: Zink
+  answers the failure as it answers any, by dropping its cached buffers and
+  trying once more before the resource fails.
+- The geometry heap charges itself through the same pool and follows the
+  pool-aware heap rules (see [memory budget](#memory-budget)), except that a
+  device's first heap, at its 1 MiB floor, is made when the pool refuses it.
+- Host-visible memory the renderer makes for the guest and the driver imports
+  is not a driver allocation, so the renderer reserves its size before it makes
+  the pages and releases the reservation once the driver has made its Metal
+  buffer over them.
+- Memory a device imports names memory that exists already and is not charged.
+- The device's other storage (command pools, descriptor pools, query pools,
+  events and upload buffers), presentation, the VNC surface and decoder surfaces
+  are counted once Metal does and never refused: what needs them cannot fail
+  the way an allocation can.
+
+What a guest sees of a refusal depends on the path:
+
+- OpenGL. vrend reads the GL error queue after the storage calls of a texture
+  or buffer, and `GL_OUT_OF_MEMORY` fails the creation with `ENOMEM`; the device
+  answers `VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY` and releases nothing of the
+  resource but its half-made object. The guest kernel's creation ioctl does not
+  read that answer, so the guest still gets a texture that has no storage and no
+  error: the host's Zink logs `couldn't allocate memory`, and what the guest
+  draws to or reads from the texture is lost. The context, the renderer and
+  every resource made within the budget stay as they were. While the budget is
+  full even a transfer is refused, since it needs a staging buffer, and the
+  host's GL context records `GL_OUT_OF_MEMORY` for the guest's `glReadPixels`.
+  Once the guest releases memory new textures store again, although the driver
+  keeps released memory for reuse: a refused reservation first frees what the
+  driver caches. `gpu-host-gl-device-memory-budget` drives this without a guest.
+- Vulkan on Venus. The guest driver submits `vkAllocateMemory` asynchronously
+  and waits for its result only when it maps, exports or frees the memory, so
+  the host's refusal reaches the guest as a context that fails at the next
+  command naming the allocation, and the guest process aborts. The render worker
+  retires the fences of a failed context at once, so the process ends when its
+  next fence wait returns instead of after the host's 30 s overdue-fence
+  escape. The host, the budget and every other guest process are untouched, and
+  a new process allocates at once. With `VN_PERF=no_async_mem_alloc` in the
+  process's environment the call waits and returns
+  `VK_ERROR_OUT_OF_DEVICE_MEMORY`, and the device, the allocations already made
+  and later allocations stay usable. The advertised heap is B, but the pool
+  counts everything the host holds, so a guest cannot tell from the heap size
+  whether an asynchronous allocation will fit.
+- A draw whose geometry heap the pool refused. A device with no geometry heap
+  fails the recording of a command buffer, `vkEndCommandBuffer` is the call that
+  reports it, and Venus sends that call without a reply, so the guest would see
+  `VK_SUCCESS` and the host silently drop the whole command buffer. A device's
+  first heap, at the 1 MiB floor, is therefore made although the pool refused
+  its reservation: the pool counts it once Metal does and never refuses it, so
+  a full pool can leave the process one floor per device past B. A draw that
+  needs more than the floor loses its output and the loss is logged once, as on
+  any heap too small for its draw, and the command buffer is whole. Growth past
+  the floor stays within the pool.
+
+The counter also includes memory the guest has already freed while its blob
 resource is still referenced: a freed swapchain image stays allocated until the
 guest's resource release arrives on the control queue, a few milliseconds after
 `vkFreeMemory`. A loop that frees and reallocates large images can therefore be
-refused while its live memory is below the share.
+refused while its live memory is below B. The pool writes one `uml: the GPU
+budget is full` line to stderr the first time it refuses an allocation, with
+the usage and the limit at that moment.
 
 ### Android guest requirements
 
@@ -948,6 +1060,40 @@ fence at fifteen seconds per stage, releasing queue ordering first and retiring
 the fence without the renderer second, so a loss no layer explains cannot
 wedge a guest for longer than that.
 
+#### A rejecting queue drops a bare signal in silence
+
+Metal reports a failure through the feedback of a commit, and a signal enqueued
+without a command buffer behind it has none. A queue that rejects every
+submission, as the queue of an app iOS has denied the GPU does, therefore
+drops such a signal and reports nothing: the failure count the recovery above
+keys on stays zero, and the queue holds nothing it has not answered for, which
+is how a queue that has stopped looks. The driver lost the device for it after
+thirty seconds, for good, with the guest's GL client waiting in
+`vkQueueWaitIdle`.
+
+A waiter on a signal that has been overdue for a second on a queue that has
+reported no failure and holds no unanswered work therefore gives the queue
+something to report: an empty command buffer committed behind everything it
+holds, once a second at most (`kk_queue_probe`). A queue that rejects it
+reports a failure, which completes what the queue owes as any other failure
+does and retires the queue at the next submission; the wait ends about a second
+after it began. A queue that runs the probe says nothing, and one held up
+behind a wait only the host can release answers when the host does, so the
+probe never completes a signal and a stopped queue is still lost at thirty
+seconds. The test `kosmickrisp_queue_denied` reproduces the denial on a Mac by
+rejecting commits and dropping signals in the Metal queue's methods.
+
+A query a rejected submission was to make available stays unavailable, since
+its availability write died with the commit, and `vkGetQueryPoolResults` with
+`VK_QUERY_RESULT_WAIT_BIT` ends the wait for it after ten seconds with
+`VK_ERROR_DEVICE_LOST` for that call. The Zink GL clients the iOS hold
+protects cannot reach that bound: Zink never passes the bit to
+`vkGetQueryPoolResults`, its blocking waits are on the batch's timeline
+semaphore, which the recovery above completes, and its
+`vkCmdCopyQueryPoolResults` with the bit set is a GPU copy that reads
+availability without waiting. Only a Vulkan client that waits on such a query
+sees the loss.
+
 #### Fragment-stage store work faults the GPU
 
 A render pass whose fragment shader performs enough `device` store work faults.
@@ -1079,14 +1225,88 @@ levels: past about a thousand quad patches it reaches the cap. Constant levels
 bound it by the level written instead, and 65,536 triangle patches at level 1
 fit the starting 16 MiB.
 
-A Venus device charges its heap to the renderer's device-memory pool (see [the
-Venus share](#host-visible-memory-is-bounded-by-the-blob-aperture)), so the
-heap and the guest's allocations share one bound. A heap the device creates or
-grows takes at most half of the pool's headroom, except that a device's first
-heap may take 1 MiB, and a heap the pool cannot hold is not created. A heap
+Zink keeps freed buffers in a cache for 500 ms so that a new allocation reuses
+one, and Mesa freed an expired buffer only when another was added or reclaimed,
+so a client that stopped allocating left the cache's contents held: 25 to
+30 MiB at idle and about 75 MiB right after apps closed. Each Zink screen runs a
+reaper thread (`pb_cache_reaper.c`) that sleeps while the cache is empty,
+otherwise until the oldest entry expires, and then frees what has expired; adding
+a buffer wakes it. The cache keeps at most 32 MiB of unused buffers, or an eighth
+of the heap when that is smaller, so its bound is the same on every host rather
+than following the heap size KosmicKrisp reports. `ZINK_BO_CACHE_MAX_MIB`
+changes the cap, and assertions check that the cache stays within it.
+
+A guest GL context that stops submitting keeps what its last batches used. Zink
+holds a flushed context's completed batch states, and every resource object they
+reference, until that context's next batch asks for a state, and the states a
+context has handed to the screen wait for the next submission of any context;
+glthread and the threaded context keep the last reference to a texture the guest
+deleted until the context's next fence. At Retina idle that was three to five
+full-screen heaps for as long as the guest stayed still. The renderer therefore
+records each Virgl context's last command, transfer, fence and fence retirement.
+A context with no fence outstanding and no activity for one second is trimmed
+with `virgl_renderer_context_trim`, and trimmed once more a second later, and
+any new activity arms it again. The second trim is the one that matters to a
+context that only uploads: the flush inside the first trim submits its last
+batch, which has not completed when that trim looks at it, and the idle context
+would not submit again to reset it. The renderer's own context, context 0, is
+tracked the same way. A texture or buffer made and written when a command names
+no guest context (a gralloc allocation, an upload before the guest's first
+command) is made and written there, and its GL context kept the storage of what
+the guest had since deleted until the renderer next submitted on it, which
+for a guest that had stopped allocating was never: 48 textures of 4 MiB stayed
+allocated, 384 MiB, for as long as the renderer was quiet, and counted against
+the budget. A resource's creation, a transfer and a readback on it count as the
+activity of context 0, and `virgl_renderer_context_trim(0)` trims vrend's own
+context. The GPU service thread sleeps on a timer for
+the earliest moment a context could be due, so an idle guest costs no wakeups. A
+texture one context deletes may still have a sampler view that another made, and
+Mesa destroys a context's own views when that context next flushes. A resource
+the guest releases, a resource a context detaches and a context the guest
+destroys therefore mark every context, without moving its own idle period. A
+marked context is trimmed an interval after the first mark, which frees the
+views, and an interval after that, which releases what they held; drops that
+second trim finds bring a third two intervals later, and so on until one finds
+none. Resource churn costs an idle context one trim per two intervals
+and never keeps it from its own trim. `UML_GPU_IDLE_TRIM_MS` replaces the
+interval and zero turns the trim off. The trim visits each of the context's GL
+contexts, runs what glthread and the threaded context still have queued behind a
+`glFlush`, and calls `eglTrimContextMESA`, which Mesa advertises as
+`EGL_MESA_context_trim`. That reaches `pipe_context::trim`, which Zink answers by
+handing the context's completed batch states to the screen and resetting every
+state the screen holds, without waiting for the device and keeping the states for
+reuse. A context that has not finished its last batch keeps it, and a render
+target that is still the context's bound framebuffer stays referenced until the
+context binds another. So does the sampler view of a texture that is already
+deleted while an idle context still has it bound: that context frees it at its
+next flush, not at the trim, so a closed app can leave one full-screen heap for
+the seconds until then.
+
+KosmicKrisp reports physical memory as its one host heap, 64 GiB on a large Mac
+and 4 GiB on an iPad mini 6, and the memory budget it reports follows. Apps and
+drivers that size their caches from either see that difference.
+`MESA_KK_SYSMEM_HEAP_MIB` replaces the figure, up to physical memory, and every
+heap's budget is held to the heap size; a measurement run states 4096 to see what
+the device reports. Unset, the heap is physical memory.
+
+The shared-memory segments that virglrenderer maps with the host stack (a texture
+export, a Venus shared-memory blob) are unlinked container files on iOS, where
+`shm_open` is denied, and POSIX shared memory on macOS. A file's pages are
+outside an iOS application's footprint and POSIX shared memory is inside it, so a
+macOS run reads high by the size of the segments: 25 MiB at a 1133x687 display
+and 58 MiB at 2266x1374 for the Android UI drawn by Venus. `VIRGL_ANON_FILE_UNLINKED=1`
+makes a macOS run take the file, so a measurement reads what the device would;
+unset, empty or `0`, macOS keeps POSIX shared memory, because the pages of a file
+can be written back to the volume of the temporary directory.
+
+A pooled device charges its heap to the host's device-memory pool (see [the
+budget](#device-memory-budget)), so the heap and the guest's allocations share
+one bound. A heap the device creates or
+grows takes at most half of the pool's headroom, a heap the pool cannot hold is
+not created, and a device's first heap is made at 1 MiB even then. A heap
 grown past its start is freed once nothing holds it and the headroom has fallen
-below half its size. A device created without a pool, as host GL through Zink
-creates, keeps the fixed cap. The rules are the comment above
+below half its size. A device created without a pool keeps the fixed cap. The
+rules are the comment above
 `KK_HEAP_START_MIB` in `src/kosmickrisp/vulkan/kk_cmd_draw.c` and
 `kk_device_memory_pool.h`, in this project's Mesa series.
 

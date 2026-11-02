@@ -125,10 +125,10 @@ index b4f282dd4a99c2856a18936217a4be0e708d86ff..8fa607a4c13b9ffcbcc855f712664bb1
        LoadConstant(ARMEmitter::Size::i64Bit, TMP1, Site->FaultData);
        str(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, SynchronousFaultData));
 diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-index 7d47a97de5c0b63e868aa34229e3771d4058be47..2ce65f5494e90218db816adde6140775bfac1683 100644
+index cd3c256a7eb74aaefe88d89fe8106edc2a994f7a..862cfbf4af6a8c116d6aa083fa94ba00b0724704 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-@@ -908,6 +908,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -975,6 +975,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    EmbedderLoopSites.clear();
    EmbedderFPSites.clear();
    EmbedderCurrentRIP = Entry;
@@ -137,10 +137,10 @@ index 7d47a97de5c0b63e868aa34229e3771d4058be47..2ce65f5494e90218db816adde6140775
    // ends; 4095 bounds the cost to an immediate, above any unit's length.
    EmbedderBlockInstructions = std::clamp<uint32_t>(IR->GetHeader()->NumHostInstructions, 1, 4095);
 diff --git a/FEXCore/Source/Interface/Core/JIT/JITClass.h b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-index f7820b0e4545384e3e20b9b241fcf4cc57b6c9e6..ea9f5c8149cf14b871dfc1bae689fd9e401fa8d0 100644
+index e25ba3bbec86673de076de92d38f0c41ac052b4d..56d14de3b1cf44cac3a2282e403e40dcf0077042 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JITClass.h
 +++ b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-@@ -140,6 +140,8 @@ private:
+@@ -145,6 +145,8 @@ private:
      uint64_t FaultData {};
      // Instructions of the unit the exit leaves unretired.
      uint32_t Unretired {};
@@ -149,7 +149,7 @@ index f7820b0e4545384e3e20b9b241fcf4cc57b6c9e6..ea9f5c8149cf14b871dfc1bae689fd9e
    };
    fextl::vector<fextl::unique_ptr<EmbedderBudgetSite>> EmbedderBudgetSites;
    // A backward branch spends budget and leaves the dispatch when the budget is
-@@ -195,6 +197,13 @@ private:
+@@ -200,6 +202,13 @@ private:
    // The next instruction's RIP, from the running instruction's
    // EmbedderX87Wait, where its EmbedderX87Commit ops leave.
    uint64_t EmbedderX87NextRIP {};
@@ -164,7 +164,7 @@ index f7820b0e4545384e3e20b9b241fcf4cc57b6c9e6..ea9f5c8149cf14b871dfc1bae689fd9e
    // charges the budget for, and their offsets from the entry in order.
    uint32_t EmbedderBlockInstructions {};
 diff --git a/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp b/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
-index fd15aa6db5245409e0673a1a71d868b8142647d9..7c3d78ae8d5bf8b921326c749eb6ce123c5ce495 100644
+index 82560621dc675f1280d874b82e7f5b3da4a6f8b8..ebc570f5fc630aabbc6ab298ce05f3a2314cdd8b 100644
 --- a/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
 @@ -754,7 +754,9 @@ DEF_OP(LoadMemPair) {
@@ -197,7 +197,7 @@ index fd15aa6db5245409e0673a1a71d868b8142647d9..7c3d78ae8d5bf8b921326c749eb6ce12
        (void)Bind(&Skip);
        if (i + 1 != NumElements) {
          add(ARMEmitter::Size::i64Bit, TMP4, TMP4, ElementBytes);
-@@ -1974,7 +1977,8 @@ DEF_OP(StoreMemPair) {
+@@ -1987,7 +1990,8 @@ DEF_OP(StoreMemPair) {
        add(ARMEmitter::Size::i64Bit, TMP4, Addr, TMP4);
        EA = TMP4;
      }
@@ -208,10 +208,10 @@ index fd15aa6db5245409e0673a1a71d868b8142647d9..7c3d78ae8d5bf8b921326c749eb6ce12
    }
  
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 6360bcac962b08962f7e1b17bc98a45861cb0ce9..3652610b081dafee336ae3fc940f03a58343969a 100644
+index 6ab0ab8d0546a92bc80fce6cc50652f541d492e4..10919e0e094b61df9c804bfce9af6cbdf830de8c 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -223,6 +223,8 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
+@@ -176,6 +176,8 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
    const uint32_t Loaded = (UserLoadableFlags | (1U << X86State::RFLAG_RF_LOC)) & (GPRSize == OpSize::i16Bit ? 0xffffU : ~0U);
  
    Ref SP = _RMWHandle(LoadGPRRegister(X86State::REG_RSP));
@@ -220,7 +220,7 @@ index 6360bcac962b08962f7e1b17bc98a45861cb0ce9..3652610b081dafee336ae3fc940f03a5
    if (CTX->Embedded) {
      // The whole frame is read before CS or the flags are loaded from it.
      _EmbedderProbe(SP, IR::OpSizeToSize(GPRSize) * (Is64BitMode ? 5 : 3));
-@@ -253,6 +255,14 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
+@@ -206,6 +208,14 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
      StoreGPRRegister(X86State::REG_RSP, SP);
    }
  
@@ -235,7 +235,7 @@ index 6360bcac962b08962f7e1b17bc98a45861cb0ce9..3652610b081dafee336ae3fc940f03a5
    ExitFunction(NewRIP);
    BlockSetRIP = true;
  }
-@@ -528,6 +538,7 @@ void OpDispatchBuilder::POPAOp(OpcodeArgs) {
+@@ -490,6 +500,7 @@ void OpDispatchBuilder::POPAOp(OpcodeArgs) {
    const auto Size = OpSizeFromSrc(Op);
  
    Ref SP = _RMWHandle(LoadGPRRegister(X86State::REG_RSP));
@@ -243,7 +243,7 @@ index 6360bcac962b08962f7e1b17bc98a45861cb0ce9..3652610b081dafee336ae3fc940f03a5
    if (CTX->Embedded) {
      // The whole frame is read before any register is loaded from it.
      _EmbedderProbe(SP, 8 * IR::OpSizeToSize(Size));
-@@ -1035,6 +1046,8 @@ void OpDispatchBuilder::JUMPFARIndirectOp(OpcodeArgs) {
+@@ -997,6 +1008,8 @@ void OpDispatchBuilder::JUMPFARIndirectOp(OpcodeArgs) {
    // This uses ModRM to determine its location
    // No way to use this effectively in multiblock
    Ref Src = MakeSegmentAddress(Op, Op->Dest);
@@ -252,7 +252,7 @@ index 6360bcac962b08962f7e1b17bc98a45861cb0ce9..3652610b081dafee336ae3fc940f03a5
    AddressMode SrcCS = {.Base = Src, .Offset = static_cast<int64_t>(IR::OpSizeToSize(SrcSize)), .AddrSize = OpSize::i64Bit};
    auto RIPOffset = _LoadMemGPRAutoTSO(SrcSize, Src, OpSize::i8Bit);
    auto NewSegmentCS = _LoadMemGPRAutoTSO(OpSize::i16Bit, SrcCS, OpSize::i8Bit);
-@@ -1056,6 +1069,7 @@ void OpDispatchBuilder::CALLFARIndirectOp(OpcodeArgs) {
+@@ -1018,6 +1031,7 @@ void OpDispatchBuilder::CALLFARIndirectOp(OpcodeArgs) {
    BlockSetRIP = true;
  
    Ref Src = MakeSegmentAddress(Op, Op->Dest);
@@ -260,7 +260,7 @@ index 6360bcac962b08962f7e1b17bc98a45861cb0ce9..3652610b081dafee336ae3fc940f03a5
    AddressMode SrcCS = {.Base = Src, .Offset = static_cast<int64_t>(IR::OpSizeToSize(SrcSize)), .AddrSize = OpSize::i64Bit};
    auto RIPOffset = _LoadMemGPRAutoTSO(SrcSize, Src, OpSize::i8Bit);
    auto NewSegmentCS = _LoadMemGPRAutoTSO(OpSize::i16Bit, SrcCS, OpSize::i8Bit);
-@@ -2669,6 +2683,9 @@ void OpDispatchBuilder::BTOp(OpcodeArgs, uint32_t SrcIndex, BTAction Action) {
+@@ -2680,6 +2694,9 @@ void OpDispatchBuilder::BTOp(OpcodeArgs, uint32_t SrcIndex, BTAction Action) {
    } else {
      // Load the address to the memory location
      Ref Dest = MakeSegmentAddress(Op, Op->Dest);
@@ -270,7 +270,7 @@ index 6360bcac962b08962f7e1b17bc98a45861cb0ce9..3652610b081dafee336ae3fc940f03a5
      // Get the bit selection from the src
      auto BitSelect = Src.Bfe(0, 3);
  
-@@ -3958,6 +3975,12 @@ void OpDispatchBuilder::POPFOp(OpcodeArgs) {
+@@ -3969,6 +3986,12 @@ void OpDispatchBuilder::POPFOp(OpcodeArgs) {
    // loads only the low half.
    const uint32_t Loaded = Size == OpSize::i16Bit ? (UserLoadableFlags & 0xffffU) : UserLoadableFlags;
    SetPackedRFLAG(false, Src, Loaded);
@@ -284,10 +284,10 @@ index 6360bcac962b08962f7e1b17bc98a45861cb0ce9..3652610b081dafee336ae3fc940f03a5
    auto NewRIP = GetRelocatedPC(Op);
    ExitFunction(NewRIP, BranchHint::CheckTF);
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index e4afdfeb95effa1334fdd57069d896051cac4be3..0aa6a20c8c4de08feca8c8a633eeb279aebdf352 100644
+index ab6c86226698aef204e4a1d3d2cea450c8bbc5d1..a76b20a3c5215eddba5268fe0dc859dbd0510dce 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -1491,6 +1491,8 @@ private:
+@@ -1517,6 +1517,8 @@ private:
    // reads them.
    void EmbedderFPExceptions(Core::EmbedderFPKind Kind, IR::OpSize ElementSize, uint32_t Lanes, Ref Source1, Ref Source2 = nullptr,
                              uint32_t Imm = 0, uint32_t Flags = 0);
@@ -297,10 +297,10 @@ index e4afdfeb95effa1334fdd57069d896051cac4be3..0aa6a20c8c4de08feca8c8a633eeb279
    bool EmbedderX87Checks() const;
    // With x87 checks, EmbedderX87Commit(Mask).
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-index 43dd18ef4beeac25e1a79099504cf6b66fc340ce..8403bd88d1054d5673ec70724fae536e889ca133 100644
+index d5739f308148154e35992cb40f65b849daa1e3e0..023010280b29c70b089579a9f1f12ff888f0de9c 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-@@ -769,6 +769,12 @@ void OpDispatchBuilder::EmbedderFPModeCheck(OpcodeArgs) {
+@@ -776,6 +776,12 @@ void OpDispatchBuilder::EmbedderFPModeCheck(OpcodeArgs) {
    }
  }
  
@@ -313,7 +313,7 @@ index 43dd18ef4beeac25e1a79099504cf6b66fc340ce..8403bd88d1054d5673ec70724fae536e
  Ref OpDispatchBuilder::EmbedderFPResult(Ref Result, uint32_t Descriptor, Ref Source1, Ref Source2, Ref Source3) {
    if (!EmbedderFPChecks(static_cast<Core::EmbedderFPKind>(Descriptor & 0xFF))) {
      return Result;
-@@ -3147,6 +3153,8 @@ void OpDispatchBuilder::AVXVFCMPOp(OpcodeArgs, IR::OpSize ElementSize) {
+@@ -3154,6 +3160,8 @@ void OpDispatchBuilder::AVXVFCMPOp(OpcodeArgs, IR::OpSize ElementSize) {
  
  void OpDispatchBuilder::FXSaveOp(OpcodeArgs) {
    Ref Mem = MakeSegmentAddress(Op, Op->Dest);
@@ -322,7 +322,7 @@ index 43dd18ef4beeac25e1a79099504cf6b66fc340ce..8403bd88d1054d5673ec70724fae536e
  
    SaveX87State(Op, Mem);
    SaveSSEState(Mem);
-@@ -3165,6 +3173,7 @@ void OpDispatchBuilder::XSaveOpImpl(OpcodeArgs) {
+@@ -3172,6 +3180,7 @@ void OpDispatchBuilder::XSaveOpImpl(OpcodeArgs) {
    // NOTE: Mask should be EAX and EDX concatenated, but we only need to test
    //       for features that are in the lower 32 bits, so EAX only is sufficient.
    const auto OpSize = GetGPROpSize();
@@ -330,7 +330,7 @@ index 43dd18ef4beeac25e1a79099504cf6b66fc340ce..8403bd88d1054d5673ec70724fae536e
  
    const auto StoreIfFlagSet = [this, OpSize](uint32_t BitIndex, auto fn, uint32_t FieldSize = 1) {
      Ref Mask = LoadGPRRegister(X86State::REG_RAX);
-@@ -3346,6 +3355,7 @@ Ref OpDispatchBuilder::GetMXCSR() {
+@@ -3353,6 +3362,7 @@ Ref OpDispatchBuilder::GetMXCSR() {
  
  void OpDispatchBuilder::FXRStoreOp(OpcodeArgs) {
    Ref Mem = MakeSegmentAddress(Op, Op->Src[0]);
@@ -338,7 +338,7 @@ index 43dd18ef4beeac25e1a79099504cf6b66fc340ce..8403bd88d1054d5673ec70724fae536e
    if (CTX->Embedded) {
      // The whole area is read before any of it is loaded.
      _EmbedderProbe(Mem, 512);
-@@ -3361,6 +3371,7 @@ void OpDispatchBuilder::FXRStoreOp(OpcodeArgs) {
+@@ -3368,6 +3378,7 @@ void OpDispatchBuilder::FXRStoreOp(OpcodeArgs) {
  
  void OpDispatchBuilder::XRstorOpImpl(OpcodeArgs) {
    const auto OpSize = GetGPROpSize();
@@ -347,10 +347,10 @@ index 43dd18ef4beeac25e1a79099504cf6b66fc340ce..8403bd88d1054d5673ec70724fae536e
      // The whole area, through the AVX state, is read before any of it is
      // loaded.
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-index 494f7fb021eeefbb58cdc92c63820fa35c3d85bb..386555c8c741dc4053bee43092b20406e46ab0f7 100644
+index 41a7d584103898432fd2019f3f7cf63e585acac9..455541df9e09a14081834ff081e00ee8c5bac61e 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-@@ -386,6 +386,8 @@ void OpDispatchBuilder::X87FNSTENV(OpcodeArgs) {
+@@ -384,6 +384,8 @@ void OpDispatchBuilder::X87FNSTENV(OpcodeArgs) {
    const auto Size = OpSizeFromSrc(Op);
    Ref Mem = LoadSourceGPR(Op, Op->Dest, Op->Flags, {.LoadData = false});
    Mem = AppendSegmentOffset(Mem, Op->Flags);
@@ -359,7 +359,7 @@ index 494f7fb021eeefbb58cdc92c63820fa35c3d85bb..386555c8c741dc4053bee43092b20406
  
    {
      auto FCW = _LoadContextGPR(OpSize::i16Bit, offsetof(FEXCore::Core::CPUState, FCW));
-@@ -453,6 +455,7 @@ void OpDispatchBuilder::X87LDENV(OpcodeArgs) {
+@@ -451,6 +453,7 @@ void OpDispatchBuilder::X87LDENV(OpcodeArgs) {
    const auto Size = OpSizeFromSrc(Op);
    Ref Mem = LoadSourceGPR(Op, Op->Src[0], Op->Flags, {.LoadData = false});
    Mem = AppendSegmentOffset(Mem, Op->Flags);
@@ -367,7 +367,7 @@ index 494f7fb021eeefbb58cdc92c63820fa35c3d85bb..386555c8c741dc4053bee43092b20406
    if (CTX->Embedded) {
      // The whole environment is read before any of it is loaded.
      _EmbedderProbe(Mem, Size == OpSize::i16Bit ? 14 : 28);
-@@ -496,6 +499,9 @@ void OpDispatchBuilder::X87FNSAVE(OpcodeArgs) {
+@@ -494,6 +497,9 @@ void OpDispatchBuilder::X87FNSAVE(OpcodeArgs) {
    // 4 bytes : data pointer selector
    const auto Size = OpSizeFromDst(Op);
    Ref Mem = MakeSegmentAddress(Op, Op->Dest);
@@ -377,7 +377,7 @@ index 494f7fb021eeefbb58cdc92c63820fa35c3d85bb..386555c8c741dc4053bee43092b20406
    Ref Top = GetX87Top();
    {
      auto FCW = _LoadContextGPR(OpSize::i16Bit, offsetof(FEXCore::Core::CPUState, FCW));
-@@ -562,6 +568,7 @@ void OpDispatchBuilder::X87FRSTOR(OpcodeArgs) {
+@@ -560,6 +566,7 @@ void OpDispatchBuilder::X87FRSTOR(OpcodeArgs) {
    _StackForceSlow();
    const auto Size = OpSizeFromSrc(Op);
    Ref Mem = MakeSegmentAddress(Op, Op->Src[0]);
@@ -386,10 +386,10 @@ index 494f7fb021eeefbb58cdc92c63820fa35c3d85bb..386555c8c741dc4053bee43092b20406
      // The whole image is read before any of it is loaded.
      _EmbedderProbe(Mem, Size == OpSize::i16Bit ? 94 : 108);
 diff --git a/FEXCore/Source/Interface/IR/IR.json b/FEXCore/Source/Interface/IR/IR.json
-index 80dc627d5d770f321499ab1c48e12dc0f3a1e83f..a737ca0fc1b3ed461e253ffd48ec241e1d2e1f5f 100644
+index a3bcbff046f35edc41c388259c5df37afef5803e..21cb0906b534decc97240ab1dd0cb99fd7dcd6e0 100644
 --- a/FEXCore/Source/Interface/IR/IR.json
 +++ b/FEXCore/Source/Interface/IR/IR.json
-@@ -711,8 +711,9 @@
+@@ -713,8 +713,9 @@
        },
        "EmbedderFPModeCheck u64:$NextRIP": {
          "Desc": ["Embedded only: leaves the dispatch at NextRIP with EMBEDDER_EXIT_MODE when the",
@@ -401,7 +401,7 @@ index 80dc627d5d770f321499ab1c48e12dc0f3a1e83f..a737ca0fc1b3ed461e253ffd48ec241e
                  ],
          "HasSideEffects": true
        },
-@@ -734,6 +735,15 @@
+@@ -736,6 +737,15 @@
          "HasSideEffects": true
        },
  
@@ -418,7 +418,7 @@ index 80dc627d5d770f321499ab1c48e12dc0f3a1e83f..a737ca0fc1b3ed461e253ffd48ec241e
          "Desc": ["Embedded only: faults as a load of the Size bytes at Addr would, without loading.",
                   "An instruction that loads its operand in parts, such as FXRSTOR, probes the whole",
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 77bc64099efed28f7195d85a7f3373b93d834773..a8f6051defcc0af442daf92eafcee98368e7cd67 100644
+index 10d3172eb0226b5021dc1b4530e20578c1bd0d29..e4b2acca7e62d8c1325a2d892042a0ac0175687e 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
 @@ -381,6 +381,9 @@ enum EmbedderExitReason : uint32_t {

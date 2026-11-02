@@ -194,14 +194,21 @@ else
 	[ "$AUTOMATION" -eq 0 ] ||
 		fail "$RUNTIME_4K is a release runtime; build the kernarium-ios-device-automation preset"
 fi
-# The setting that starts the background job with the guest is in the
-# automation runtimes alone.
+# The settings that start the background job with the guest and delay the
+# GPU hold are in the automation runtimes alone.
 if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_JOB_AT_START "$binary"; then
 	[ "$AUTOMATION" -eq 1 ] ||
 		fail "$RUNTIME_4K carries the background job setting; only an automation runtime may"
 else
 	[ "$AUTOMATION" -eq 0 ] ||
 		fail "$RUNTIME_4K is an automation runtime without the background job setting; rebuild it"
+fi
+if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_HOLD_DELAY_MS "$binary"; then
+	[ "$AUTOMATION" -eq 1 ] ||
+		fail "$RUNTIME_4K carries the GPU hold delay setting; only an automation runtime may"
+else
+	[ "$AUTOMATION" -eq 0 ] ||
+		fail "$RUNTIME_4K is an automation runtime without the GPU hold delay setting; rebuild it"
 fi
 
 binary="$STAGE/$RUNTIME_ANDROID_4K.xcframework/ios-arm64/$RUNTIME_ANDROID_4K.framework/$RUNTIME_ANDROID_4K"
@@ -218,6 +225,13 @@ if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_JOB_AT_START "$binary"; then
 else
 	[ "$ANDROID_AUTOMATION" -eq 0 ] ||
 		fail "$RUNTIME_ANDROID_4K is an automation runtime without the background job setting; rebuild it"
+fi
+if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_HOLD_DELAY_MS "$binary"; then
+	[ "$ANDROID_AUTOMATION" -eq 1 ] ||
+		fail "$RUNTIME_ANDROID_4K carries the GPU hold delay setting; only an automation runtime may"
+else
+	[ "$ANDROID_AUTOMATION" -eq 0 ] ||
+		fail "$RUNTIME_ANDROID_4K is an automation runtime without the GPU hold delay setting; rebuild it"
 fi
 
 # The storage and compression cores carry no Metal dependency, so their

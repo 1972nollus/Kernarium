@@ -9,7 +9,9 @@ provenanced native-Intel trace, and adds every profile-valid FEX contract that i
 not an exact duplicate, without FEX's reduced-precision x87 request. It
 assembles the repository cases the same way and accepts each only when its
 declared final state is the native one. It rejects unclassified FEX feature
-requirements and never converts an illegal instruction into an exclusion.
+requirements and never converts an illegal instruction into an exclusion. It
+also rejects a disagreement between upstream's `Known_Failures_host` list and
+its own exclusions, so an upstream fix cannot leave a stale one behind.
 
 The freestanding `native-k-trace.cpp` helper runs generated requests on an
 Intel Linux host and records GPR, flag, and XSAVE state without libc. It

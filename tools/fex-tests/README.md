@@ -9,15 +9,20 @@ row for the macOS-only x86-64 JIT; see
 Prepare the exact upstream source with:
 
 ```sh
-dependencies/prepare.sh --product x86-conformance
+dependencies/prepare.sh --product x86-conformance \
+  --root "$CASE_SENSITIVE_DEPENDENCY_ROOT"
 ```
+
+The root must be on a case-sensitive file system: the pinned K semantics source
+tracks files whose names differ only by case, and `prepare.sh` refuses a
+case-insensitive root before checking them out.
 
 If NASM is not already available, build the pinned producer locally without
 installing it system-wide:
 
 ```sh
 tools/fex-tests/build-nasm.sh \
-  "$PWD/external/sources/nasm" \
+  "$CASE_SENSITIVE_DEPENDENCY_ROOT/nasm" \
   "$PWD/.build/fex-tests/nasm"
 ```
 
@@ -26,9 +31,9 @@ configuration records with:
 
 ```sh
 python3 tools/fex-tests/build-asm-corpus.py \
-  external/sources/fex OUTPUT_X86_64_DIRECTORY --mode x86-64
+  "$CASE_SENSITIVE_DEPENDENCY_ROOT/fex" OUTPUT_X86_64_DIRECTORY --mode x86-64
 python3 tools/fex-tests/build-asm-corpus.py \
-  external/sources/fex OUTPUT_I386_DIRECTORY --mode i386
+  "$CASE_SENSITIVE_DEPENDENCY_ROOT/fex" OUTPUT_I386_DIRECTORY --mode i386
 ```
 
 Set `UML_FEX_NASM` to the absolute producer path when it is not on `PATH`.
@@ -38,7 +43,7 @@ required files and their hashes first:
 
 ```sh
 python3 tools/fex-tests/export-asm-source.py \
-  external/sources/fex EXPORTED_SOURCE_DIRECTORY
+  "$CASE_SENSITIVE_DEPENDENCY_ROOT/fex" EXPORTED_SOURCE_DIRECTORY
 ```
 
 The corpus producer accepts either the verified prepared Git checkout or this
