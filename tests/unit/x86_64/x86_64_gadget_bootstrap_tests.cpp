@@ -4301,6 +4301,22 @@ void expose_consistent_xsave_cpuid_state()
 				through_avx2_leaf_seven_ebx &&
 			(cpu.gpr(Register::rcx) & (1ULL << 22)) != 0,
 		"CPUID leaf 7 omitted a qualified AVX2-era extension");
+	/* Leaf 7 EAX is the highest subleaf, which software reads before it
+	 * asks for subleaf 1; subleaf 1 EAX bit 4 is AVX-VNNI and the rest of
+	 * that subleaf, and every subleaf above it, reads as zero. */
+	require(cpu.gpr(Register::rax) == 1,
+		"CPUID leaf 7 did not report subleaf 1 as its highest");
+	result = run_cpuid(7, 1, cpu);
+	require(result.event == uml::cpu::EngineEvent::continued &&
+			cpu.gpr(Register::rax) == (1ULL << 4) &&
+			cpu.gpr(Register::rbx) == 0 && cpu.gpr(Register::rcx) == 0 &&
+			cpu.gpr(Register::rdx) == 0,
+		"CPUID leaf 7 subleaf 1 did not report exactly AVX-VNNI");
+	result = run_cpuid(7, 2, cpu);
+	require(result.event == uml::cpu::EngineEvent::continued &&
+			cpu.gpr(Register::rax) == 0 && cpu.gpr(Register::rbx) == 0 &&
+			cpu.gpr(Register::rcx) == 0 && cpu.gpr(Register::rdx) == 0,
+		"CPUID leaf 7 answered a subleaf above its highest");
 	result = run_cpuid(13, 0, cpu);
 	require(result.event == uml::cpu::EngineEvent::continued &&
 			cpu.gpr(Register::rax) == 7 &&
@@ -5589,9 +5605,9 @@ void cpuid_table_matches_the_gadget()
 
 	/* Every leaf the table answers, the leaf above each maximum, and a
 	 * subleaf of each enumerating leaf that must read as zero. */
-	static constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 15>
+	static constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 16>
 		probed{{
-			{0U, 0U}, {1U, 0U}, {7U, 0U}, {7U, 1U},
+			{0U, 0U}, {1U, 0U}, {7U, 0U}, {7U, 1U}, {7U, 2U},
 			{13U, 0U}, {13U, 1U}, {13U, 2U}, {13U, 3U},
 			{2U, 0U}, {14U, 0U},
 			{0x8000'0000U, 0U}, {0x8000'0001U, 0U},

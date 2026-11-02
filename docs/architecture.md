@@ -854,8 +854,11 @@ called by those native gadgets. The userspace ISA boundary includes scalar x86
 and x87/MMX, SSE through SSE4.2, AVX/AVX2,
 F16C/FMA, AES/PCLMUL, BMI1/2, atomic and extended-state operations in both
 long64 and compat32 modes. The AVX-VNNI dot products VPDPBUSD, VPDPBUSDS,
-VPDPWSSD and VPDPWSSDS run on both x86 engines, as the FEX corpus requires,
-although CPUID does not report them. The pinned FEX handwritten x86-64 and
+VPDPWSSD and VPDPWSSDS run on both x86 engines, and CPUID reports them in leaf
+7 subleaf 1 EAX bit 4, with leaf 7 subleaf 0 EAX naming subleaf 1 as its
+highest. Each is one gadget, or one short FEXCore sequence, where the AVX2
+fallback is three instructions, so a program that dispatches on the bit runs
+faster on either engine. The pinned FEX handwritten x86-64 and
 i386 corpora are the external instruction acceptance gate. AVX-512 and later
 encodings, RTM/MPX, obsolete protected-mode bounds, 16-bit code segments, and
 privileged, real-mode, virtual-machine, enclave, and system-management
