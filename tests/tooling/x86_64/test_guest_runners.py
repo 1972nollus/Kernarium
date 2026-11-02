@@ -82,6 +82,9 @@ RUNNERS = {
         # No -mno-red-zone: the probe has always been built without it.
         ("mm_shared_probe.cpp",
          (("mm-shared-probe", X86_64[:1]),))),
+    "vnni": (
+        options(compiler(ONE), TIMEOUT), "timeout must be positive",
+        ("vnni_probe.cpp", (("vnni-probe", X86_64),))),
     "tso_litmus": (
         options(compiler(BOTH),
                 "  --rounds ROUNDS       rounds of each test in each case and ABI",

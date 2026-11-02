@@ -127,7 +127,8 @@ FLAG_NAMES = ("CF", "PF", "AF", "ZF", "SF", "DF", "OF")
 # The ordinary unit profile is the portable userspace ISA through AVX2.  AES,
 # PCLMUL, XSAVE, FSGSBASE, and ADX remain because they are already part of the
 # product's documented userspace profile and are useful to desktop software.
-# So are the AVX-VNNI dot products, which both x86 engines run.
+# So are the AVX-VNNI dot products, which both x86 engines run and CPUID
+# reports.
 # ADX is what guest OpenSSL dispatches its Montgomery multiply on, so its two
 # carry chains and their flags belong in the pinned corpus.
 ALLOWED_FEX_FEATURES = frozenset(
