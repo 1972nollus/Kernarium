@@ -4,9 +4,9 @@ include_guard(GLOBAL)
 
 # The Apple GPU product renders OpenGL with Mesa's Zink Gallium driver on the
 # KosmicKrisp Vulkan driver. The iOS Simulator has no Metal 4 device for
-# KosmicKrisp, so its prefix is the software variant: Mesa's softpipe
-# rasterizer on the CPU, no Vulkan driver and no Venus. The platform alone
-# selects it; no cache option does.
+# KosmicKrisp, so its prefix is the software variant: Mesa's llvmpipe
+# rasterizer (and softpipe) on the CPU, no Vulkan driver and no Venus. The
+# platform alone selects it; no cache option does.
 set(_uml_apple_gpu_software FALSE)
 if(UML_APPLE_PLATFORM STREQUAL "macos")
     set(_uml_apple_gpu_default_prefix

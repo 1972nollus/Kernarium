@@ -45,8 +45,11 @@ The Apple GPU prefixes contain static renderer libraries plus authenticated
 flat framework payloads for exactly one host GL provider. The prefix carries
 `MesaEGL.framework` and `MesaGallium.framework`, whose Zink Gallium driver
 renders desktop OpenGL 4.6 core on the packaged `KosmicKrisp.framework`; the
-Simulator prefix's Gallium library holds the softpipe software rasterizer
-instead, with no `KosmicKrisp.framework`. Each prefix's `gl_provider` contract
+Simulator prefix's Gallium library holds the llvmpipe and softpipe software
+rasterizers instead, with no `KosmicKrisp.framework`. llvmpipe's LLVM is built by
+[`build-apple-gpu-llvm.sh`](build-apple-gpu-llvm.sh) from the archive pinned in
+[`llvm/archives.tsv`](llvm/archives.tsv) for the Simulator build alone, and Mesa
+links it statically, so no prefix ships an LLVM file. Each prefix's `gl_provider` contract
 field names the one it carries. Under Apple's
 Bison 2, the OpenGL build generates Mesa's GLSL parsers through
 [`bison2-grammar-shim.sh`](bison2-grammar-shim.sh). Platform-specific patches
@@ -359,6 +362,9 @@ production archive manifest: the kernel host tools build extracts headers from
 its Debian package into a private build directory. Its URL names a fixed
 snapshot.debian.org timestamp because Debian's pool drops a package version on
 the next stable update, so a pool URL would stop resolving on a fresh machine.
+[`llvm/archives.tsv`](llvm/archives.tsv) is the second: the pinned LLVM source
+release that the iOS Simulator GPU build compiles for llvmpipe. The GPU builder
+verifies it with `--verify` and installs the manifest into that prefix.
 
 To discover a release tag's immutable source identity, use
 `dependencies/prepare.sh --resolve-ref REPOSITORY refs/tags/TAG`. The result

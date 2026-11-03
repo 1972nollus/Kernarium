@@ -463,6 +463,21 @@ EOF
 expect_framework_rejection \
 	"MesaGallium.framework carries a software Gallium screen" \
 	MesaGallium "$TEST_ROOT/mesa-gallium-software.c" "$KOSMICKRISP"
+# Nor does it carry LLVM, which llvmpipe JITs through.
+cat >"$TEST_ROOT/mesa-gallium-llvm.c" <<'EOF'
+extern void *vkGetInstanceProcAddr(void *, const char *);
+void *LLVMLinkInMCJIT(void)
+{
+    return vkGetInstanceProcAddr(0, "vkCreateInstance");
+}
+void *uml_mesa_gallium_fixture(void)
+{
+    return LLVMLinkInMCJIT();
+}
+EOF
+expect_framework_rejection \
+	"MesaGallium.framework carries LLVM" \
+	MesaGallium "$TEST_ROOT/mesa-gallium-llvm.c" "$KOSMICKRISP"
 
 CASE_PREFIX="$TEST_ROOT/gl-payload"
 copy_fixture "$CASE_PREFIX"

@@ -22,8 +22,8 @@ elseif(PLATFORM STREQUAL "ios")
     set(_minimum_os_key MinimumOSVersion)
 elseif(PLATFORM STREQUAL "ios-simulator")
     # KosmicKrisp is a Metal 4 driver and the iOS Simulator exposes no Metal 4
-    # device, so the Simulator prefix is the software variant: Mesa's softpipe
-    # rasterizer on the CPU, with no Vulkan driver and no Venus.
+    # device, so the Simulator prefix is the software variant: Mesa's llvmpipe
+    # and softpipe rasterizers on the CPU, with no Vulkan driver and no Venus.
     set(_platform_contract ios-simulator-gpu-software-arm64.tsv)
     set(_mach_platform 7)
     set(_minimum_os_key MinimumOSVersion)
@@ -57,6 +57,13 @@ uml_verify_provenance_copy(
     LABEL "Apple GPU"
     SOURCE "${SOURCE_ROOT}/dependencies/platforms/${_platform_contract}"
     INSTALLED "${PREFIX}/share/uml-dependencies/${_platform_contract}")
+if(_software)
+    # llvmpipe is built against the LLVM release this archive manifest pins.
+    uml_verify_provenance_copy(
+        LABEL "Apple GPU LLVM"
+        SOURCE "${SOURCE_ROOT}/dependencies/llvm/archives.tsv"
+        INSTALLED "${PREFIX}/share/uml-dependencies/llvm-archives.tsv")
+endif()
 
 uml_verify_dependency_manifest_product(
     SOURCE "${SOURCE_ROOT}/dependencies/manifest.tsv"
@@ -122,6 +129,9 @@ file(GLOB_RECURSE _installed_provenance LIST_DIRECTORIES false
 list(SORT _installed_provenance)
 set(_expected_provenance
     manifest.tsv "${_platform_contract}" source-trees.tsv build-receipt.tsv)
+if(_software)
+    list(APPEND _expected_provenance llvm-archives.tsv)
+endif()
 list(SORT _expected_provenance)
 if(NOT _installed_provenance STREQUAL _expected_provenance)
     message(FATAL_ERROR
@@ -379,8 +389,9 @@ foreach(_framework IN LISTS _gl_frameworks)
             "${_framework}.framework contains a forbidden provider symbol")
     endif()
     if(_framework STREQUAL "MesaGallium")
-        # The software rasterizer is the Simulator's alone: a Zink build has
-        # no software Gallium screen to fall back to, and the Simulator's has
+        # The software rasterizers, and the LLVM that llvmpipe JITs through,
+        # are the Simulator's alone: a Zink build has no software Gallium
+        # screen to fall back to and carries no LLVM, and the Simulator has
         # nothing else to render with.
         execute_process(COMMAND "${_tool_nm}" -a "${_binary}"
             RESULT_VARIABLE _all_status OUTPUT_VARIABLE _all_symbols)
@@ -388,14 +399,30 @@ foreach(_framework IN LISTS _gl_frameworks)
             message(FATAL_ERROR "MesaGallium.framework could not be listed")
         endif()
         if(_software)
-            if(NOT _all_symbols MATCHES
-               "(^|\n)[0-9a-f]+ [tT] _(softpipe|llvmpipe)_create_screen\n")
+            # The contract's gl_provider lists the drivers the prefix carries.
+            file(STRINGS
+                "${SOURCE_ROOT}/dependencies/platforms/${_platform_contract}"
+                _provider_rows REGEX "^gl_provider\t")
+            string(REGEX REPLACE "^gl_provider\t" "" _providers
+                "${_provider_rows}")
+            string(REPLACE "," ";" _providers "${_providers}")
+            if(NOT _providers)
                 message(FATAL_ERROR
-                    "MesaGallium.framework carries no software Gallium screen")
+                    "the platform contract names no gl_provider")
             endif()
+            foreach(_provider IN LISTS _providers)
+                if(NOT _all_symbols MATCHES
+                   "(^|\n)[0-9a-f]+ [tT] _${_provider}_create_screen\n")
+                    message(FATAL_ERROR
+                        "MesaGallium.framework carries no ${_provider} "
+                        "Gallium screen")
+                endif()
+            endforeach()
         elseif(_all_symbols MATCHES "_(softpipe|llvmpipe)_create_screen")
             message(FATAL_ERROR
                 "MesaGallium.framework carries a software Gallium screen")
+        elseif(_all_symbols MATCHES "(^|\n)[0-9a-f]+ [a-zA-Z] _(LLVM[A-Za-z]|_ZN4llvm)")
+            message(FATAL_ERROR "MesaGallium.framework carries LLVM")
         endif()
     endif()
     if(_framework STREQUAL "MesaEGL")

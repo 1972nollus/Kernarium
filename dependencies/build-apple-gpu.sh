@@ -6,14 +6,19 @@
 #
 # The ios-simulator platform is the product's software variant: the iOS
 # Simulator has no Metal 4 device, so KosmicKrisp cannot run there. It builds
-# the same pinned Mesa, libepoxy and virglrenderer as a CPU rasterizer
-# (MESA_SOFTWARE_DRIVERS) with no Vulkan driver and no Venus.
+# the same pinned Mesa, libepoxy and virglrenderer as CPU rasterizers
+# (MESA_SOFTWARE_DRIVERS) with no Vulkan driver and no Venus. llvmpipe, the
+# fast one, JITs through LLVM, which dependencies/build-apple-gpu-llvm.sh
+# builds from its authenticated source archive and Mesa links statically; the
+# macOS and iOS device builds neither build nor link it.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 MANIFEST="$ROOT_DIR/dependencies/manifest.tsv"
 SOURCE_ROOT=${UML_DEPENDENCY_SOURCE_ROOT:-"$ROOT_DIR/external/sources"}
 VERIFY_SCRIPT="$ROOT_DIR/dependencies/cmake/VerifyAppleGpuPrefix.cmake"
+CACHE_ROOT=${UML_DEPENDENCY_CACHE:-"$ROOT_DIR/.build/dependency-cache"}
+LLVM_ARCHIVE_MANIFEST="$ROOT_DIR/dependencies/llvm/archives.tsv"
 PREFIX=${UML_APPLE_GPU_DEPENDENCY_PREFIX:-}
 WORK_ROOT=${UML_APPLE_GPU_DEPENDENCY_BUILD_ROOT:-}
 JOBS=${UML_APPLE_GPU_DEPENDENCY_JOBS:-8}
@@ -131,9 +136,10 @@ ios-simulator)
 	MINIMUM_OS_KEY=MinimumOSVersion
 	PREFIX_PLATFORM=ios-simulator-arm64
 	SOFTWARE=1
-	# The one Gallium driver the Simulator's host GL provider renders with: a
-	# CPU rasterizer. Its name is also the contract's gl_provider.
-	MESA_SOFTWARE_DRIVERS=softpipe
+	# The Gallium drivers the Simulator's host GL provider renders with: Mesa
+	# prefers llvmpipe, and GALLIUM_DRIVER=softpipe selects the interpreter
+	# that needs no JIT. The list is also the contract's gl_provider.
+	MESA_SOFTWARE_DRIVERS=llvmpipe,softpipe
 	;;
 *) fail "platform must be macos, ios or ios-simulator" ;;
 esac
@@ -193,6 +199,16 @@ fi
 
 "$ROOT_DIR/dependencies/prepare.sh" --product "$PRODUCT" \
 	--root "$SOURCE_ROOT" --verify
+LLVM_ARCHIVE=
+if [ "$SOFTWARE" -eq 1 ]; then
+	"$ROOT_DIR/dependencies/prepare.sh" --archive-manifest \
+		"$LLVM_ARCHIVE_MANIFEST" --cache "$CACHE_ROOT" --verify
+	CACHE_ROOT=$(CDPATH= cd -- "$CACHE_ROOT" && pwd -P)
+	LLVM_ARCHIVE=$(awk -F '\t' '$1 != "name" && $0 !~ /^#/ \
+		{ print $3 "-" $1 }' "$LLVM_ARCHIVE_MANIFEST")
+	[ -n "$LLVM_ARCHIVE" ] || fail "no LLVM archive in $LLVM_ARCHIVE_MANIFEST"
+	LLVM_ARCHIVE="$CACHE_ROOT/archives/$LLVM_ARCHIVE"
+fi
 SOURCE_ROOT=$(CDPATH= cd -- "$SOURCE_ROOT" && pwd -P)
 EPOXY_SOURCE="$SOURCE_ROOT/libepoxy"
 VIRGL_SOURCE="$SOURCE_ROOT/virglrenderer"
@@ -529,11 +545,29 @@ fi
 # Mesa's OpenGL stack is a second configuration of the same authenticated
 # source: Zink renders desktop OpenGL 4.6 core on the packaged Vulkan
 # driver, and libEGL exposes it through the surfaceless platform. The
-# software variant renders with softpipe on the CPU instead.
+# software variant renders on the CPU instead: llvmpipe JITs through LLVM,
+# which Mesa links statically, so the prefix carries no LLVM file, and softpipe
+# interprets without one.
 if [ "$SOFTWARE" -eq 0 ]; then
 	MESA_GL_DRIVER_ARGS="-Dgallium-drivers=zink -Dzink-vulkan-library-file=$STAGE/Frameworks/KosmicKrisp.framework/KosmicKrisp"
+	MESA_LLVM_ARGS="-Dllvm=disabled"
 else
+	LLVM_PREFIX="$TEMP_ROOT/llvm"
+	"$ROOT_DIR/dependencies/build-apple-gpu-llvm.sh" \
+		--archive "$LLVM_ARCHIVE" --prefix "$LLVM_PREFIX" \
+		--work-root "$TEMP_ROOT/llvm-work" --jobs "$JOBS"
+	# The cross file names the llvm-config that describes the Simulator
+	# libraries; the helper installed the one built for this machine.
+	awk -v llvm_config="$LLVM_PREFIX/bin/llvm-config" '
+		BEGIN { quote = sprintf("%c", 39) }
+		{ print }
+		/^python = / {
+			print "llvm-config = [" quote llvm_config quote "]"
+		}
+	' "$VIRGL_CROSS" > "$VIRGL_CROSS.llvm"
+	mv -- "$VIRGL_CROSS.llvm" "$VIRGL_CROSS"
 	MESA_GL_DRIVER_ARGS="-Dgallium-drivers=$MESA_SOFTWARE_DRIVERS"
+	MESA_LLVM_ARGS="-Dllvm=enabled -Dshared-llvm=disabled -Ddraw-use-llvm=true"
 fi
 MESA_GL_BUILD="$BUILDS/Mesa-gl"
 MESA_GL_STAGE="$BUILDS/Mesa-gl-stage"
@@ -563,7 +597,7 @@ mesa_setup "$MESA_GL_TOOL_PATH" \
 		-Dplatforms=macos -Dvulkan-drivers= \
 		$MESA_GL_DRIVER_ARGS -Dopengl=true -Degl=enabled \
 		-Dglx=disabled -Dgles1=disabled -Dgles2=disabled \
-		-Dzstd=disabled -Dllvm=disabled -Dspirv-tools=disabled
+		-Dzstd=disabled $MESA_LLVM_ARGS -Dspirv-tools=disabled
 mesa_run "$MESA_GL_TOOL_PATH" "$MESON" compile -C "$MESA_GL_BUILD" -j "$JOBS"
 mesa_run "$MESA_GL_TOOL_PATH" \
 	"$MESON" install --no-rebuild -C "$MESA_GL_BUILD" > /dev/null
@@ -690,5 +724,11 @@ BUILD_TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 } > "$STAGE/share/uml-dependencies/build-receipt.tsv"
 cp "$PLATFORM_CONTRACT" \
 	"$STAGE/share/uml-dependencies/$CONTRACT_NAME"
+if [ "$SOFTWARE" -eq 1 ]; then
+	# The JIT's source identity: the prefix carries no LLVM file, only code
+	# built from this archive.
+	cp "$LLVM_ARCHIVE_MANIFEST" \
+		"$STAGE/share/uml-dependencies/llvm-archives.tsv"
+fi
 publish_verified "$STAGE" "$PREFIX" verify_prefix \
 	"$PLATFORM Apple GPU dependency prefix"

@@ -7,7 +7,7 @@ architecture	arm64
 deployment_target	27.0
 linkage	static-and-framework
 payload	static-libepoxy,static-libvirglrenderer,dynamic-MesaEGL-framework,dynamic-MesaGallium-framework
-gl_provider	softpipe
+gl_provider	llvmpipe,softpipe
 vk_provider	none
 graphics_api	OpenGL
 presentation_api	Metal

@@ -1,10 +1,10 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# The iOS Simulator's GPU prefix renders on the CPU: Mesa's software Gallium
-# screen, no KosmicKrisp, no Vulkan headers and no Venus. Check that the
-# verifier accepts that prefix and rejects each way it could carry the device
-# stack, or lose its rasterizer.
+# The iOS Simulator's GPU prefix renders on the CPU: Mesa's llvmpipe and
+# softpipe Gallium screens, the contract's gl_provider, with no KosmicKrisp, no
+# Vulkan headers and no Venus. Check that the verifier accepts that prefix and
+# rejects each way it could carry the device stack, or lose a rasterizer.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
@@ -69,8 +69,13 @@ cat >"$TEST_ROOT/fixture.c" <<'EOF'
 int uml_apple_gpu_fixture(void) { return 0; }
 EOF
 cat >"$TEST_ROOT/gallium.c" <<'EOF'
+void *llvmpipe_create_screen(void) { return 0; }
 void *softpipe_create_screen(void) { return 0; }
-void *uml_mesa_gallium_fixture(void) { return softpipe_create_screen(); }
+void *uml_mesa_gallium_fixture(void)
+{
+    return softpipe_create_screen() ? softpipe_create_screen()
+                                    : llvmpipe_create_screen();
+}
 EOF
 cat >"$TEST_ROOT/egl.c" <<'EOF'
 extern void *uml_mesa_gallium_fixture(void);
@@ -96,6 +101,8 @@ cp "$ROOT_DIR/dependencies/manifest.tsv" \
 	"$BASE_PREFIX/share/uml-dependencies/manifest.tsv"
 cp "$ROOT_DIR/dependencies/platforms/$CONTRACT" \
 	"$BASE_PREFIX/share/uml-dependencies/$CONTRACT"
+cp "$ROOT_DIR/dependencies/llvm/archives.tsv" \
+	"$BASE_PREFIX/share/uml-dependencies/llvm-archives.tsv"
 series_tree()
 {
 	awk -F '\t' '$1 == "tree" { print $2 }' "$1/series.tsv"
@@ -134,40 +141,56 @@ expect_failure "software prefix as the macOS prefix" \
 	cmake -DPREFIX="$BASE_PREFIX" -DSOURCE_ROOT="$ROOT_DIR" -DPLATFORM=macos \
 	-P "$VERIFIER"
 
-# A Gallium library without the software screen has nothing to render with.
-CASE_PREFIX="$TEST_ROOT/no-screen"
-copy_fixture "$CASE_PREFIX"
-cat >"$TEST_ROOT/gallium-bare.c" <<'EOF'
-void *uml_mesa_gallium_fixture(void) { return 0; }
+# Each driver the contract lists must be defined: a Gallium library without
+# one has nothing to render with, or silently falls back to the slow driver.
+for missing in llvmpipe softpipe; do
+	case $missing in
+	llvmpipe) present=softpipe ;;
+	softpipe) present=llvmpipe ;;
+	esac
+	CASE_PREFIX="$TEST_ROOT/no-$missing"
+	copy_fixture "$CASE_PREFIX"
+	cat >"$TEST_ROOT/gallium-$missing.c" <<EOF
+void *${present}_create_screen(void) { return 0; }
+void *uml_mesa_gallium_fixture(void) { return ${present}_create_screen(); }
 EOF
-make_framework "$CASE_PREFIX" MesaGallium "$TEST_ROOT/gallium-bare.c"
-expect_cmake_diagnostic \
-	"MesaGallium.framework carries no software Gallium screen" \
-	verify "$CASE_PREFIX"
+	make_framework "$CASE_PREFIX" MesaGallium "$TEST_ROOT/gallium-$missing.c"
+	expect_cmake_diagnostic \
+		"MesaGallium.framework carries no $missing Gallium screen" \
+		verify "$CASE_PREFIX"
+done
 
-# A reference to the creator is not a definition.
+# A reference to a creator is not a definition.
 CASE_PREFIX="$TEST_ROOT/referenced-screen"
 copy_fixture "$CASE_PREFIX"
 cat >"$TEST_ROOT/gallium-reference.c" <<'EOF'
-extern void *softpipe_create_screen(void);
-void *uml_mesa_gallium_fixture(void) { return softpipe_create_screen(); }
+extern void *llvmpipe_create_screen(void);
+void *softpipe_create_screen(void) { return 0; }
+void *uml_mesa_gallium_fixture(void)
+{
+    return softpipe_create_screen() ? softpipe_create_screen()
+                                    : llvmpipe_create_screen();
+}
 EOF
 make_framework "$CASE_PREFIX" MesaGallium "$TEST_ROOT/gallium-reference.c" \
-	-Wl,-U,_softpipe_create_screen
+	-Wl,-U,_llvmpipe_create_screen
 expect_cmake_diagnostic \
-	"MesaGallium.framework carries no software Gallium screen" \
+	"MesaGallium.framework carries no llvmpipe Gallium screen" \
 	verify "$CASE_PREFIX"
 
-# llvmpipe is the other software screen the stack can be built with.
-CASE_PREFIX="$TEST_ROOT/llvmpipe-screen"
+# The JIT's source identity travels with the prefix, unedited.
+CASE_PREFIX="$TEST_ROOT/no-llvm-archives"
 copy_fixture "$CASE_PREFIX"
-cat >"$TEST_ROOT/gallium-llvmpipe.c" <<'EOF'
-void *llvmpipe_create_screen(void) { return 0; }
-void *uml_mesa_gallium_fixture(void) { return llvmpipe_create_screen(); }
-EOF
-make_framework "$CASE_PREFIX" MesaGallium "$TEST_ROOT/gallium-llvmpipe.c"
-verify "$CASE_PREFIX" >/dev/null ||
-	fail "a Simulator prefix with an llvmpipe screen was rejected"
+rm "$CASE_PREFIX/share/uml-dependencies/llvm-archives.tsv"
+expect_failure "software prefix without its LLVM archive manifest" \
+	verify "$CASE_PREFIX"
+CASE_PREFIX="$TEST_ROOT/edited-llvm-archives"
+copy_fixture "$CASE_PREFIX"
+sed 's/22\.1\.8/22.1.9/g' "$ROOT_DIR/dependencies/llvm/archives.tsv" \
+	>"$CASE_PREFIX/share/uml-dependencies/llvm-archives.tsv"
+expect_failure "edited LLVM archive manifest" verify "$CASE_PREFIX"
+grep -q 'provenance does not match' "$TEST_ROOT/rejected-$FAILURE_NUMBER.err" ||
+	fail "an edited LLVM archive manifest was not reported as a provenance mismatch"
 
 # The Simulator has no Vulkan driver: neither its framework nor the headers
 # may appear, and the Gallium library may not link it.
@@ -196,6 +219,7 @@ CASE_PREFIX="$TEST_ROOT/gallium-vulkan"
 copy_fixture "$CASE_PREFIX"
 cat >"$TEST_ROOT/gallium-vulkan.c" <<'EOF'
 extern void *vkGetInstanceProcAddr(void *, const char *);
+void *llvmpipe_create_screen(void) { return 0; }
 void *softpipe_create_screen(void)
 {
     return vkGetInstanceProcAddr(0, "vkCreateInstance");
