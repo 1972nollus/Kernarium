@@ -28,6 +28,13 @@
 # conflicts with it). The output directory is shared: Kernarium needs the
 # default full set, so package that again before building Kernarium.
 #
+# --app-store packages the App Store Android runtime, built from the
+# kernarium-ios-device-android-app-store preset, for the device alone and for
+# Andarium's App Store configuration: it reads no environment variable that
+# tunes, observes or drives a run, and the packaging fails if the runtime
+# carries the name of one. It conflicts with both automation options, with the
+# Simulator and with --runtimes all.
+#
 # Every embedded framework carries a PrivacyInfo.xcprivacy
 # (Kernarium/PrivacyManifests) in each slice, and the device slices are checked
 # with scripts/check-privacy-manifests.py, which fails a binary that uses a
@@ -52,9 +59,10 @@ fail()
 
 AUTOMATION=0
 ANDROID_AUTOMATION=0
+APP_STORE=0
 RUNTIMES=all
 SDKS=
-USAGE="usage: package-ios-frameworks.sh [--sdk device|simulator]... [--automation] [--android-automation] [--runtimes all|android]"
+USAGE="usage: package-ios-frameworks.sh [--sdk device|simulator]... [--automation] [--android-automation] [--app-store] [--runtimes all|android]"
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--sdk)
@@ -71,6 +79,7 @@ while [ "$#" -gt 0 ]; do
 		;;
 	--automation) AUTOMATION=1 ;;
 	--android-automation) ANDROID_AUTOMATION=1 ;;
+	--app-store) APP_STORE=1 ;;
 	--runtimes)
 		[ "$#" -ge 2 ] || fail "$USAGE"
 		RUNTIMES=$2
@@ -88,6 +97,15 @@ android)
 	;;
 *) fail "--runtimes takes all or android: $RUNTIMES" ;;
 esac
+if [ "$APP_STORE" -eq 1 ]; then
+	[ "$RUNTIMES" = android ] ||
+		fail "--app-store packages the Android runtime alone; add --runtimes android"
+	[ "$AUTOMATION" -eq 0 ] && [ "$ANDROID_AUTOMATION" -eq 0 ] ||
+		fail "--app-store conflicts with the automation options"
+	case " $SDKS " in
+	*" simulator "*) fail "--app-store packages the device alone" ;;
+	esac
+fi
 
 find_tool()
 {
@@ -129,6 +147,8 @@ RUNTIME_TREE=kernarium-runtime-ios-device
 ANDROID_TREE=kernarium-runtime-ios-device-android-4k
 [ "$ANDROID_AUTOMATION" -eq 0 ] ||
 	ANDROID_TREE=kernarium-runtime-ios-device-android-4k-automation
+[ "$APP_STORE" -eq 0 ] ||
+	ANDROID_TREE=kernarium-runtime-ios-device-android-4k-app-store
 DEVICE_RUNTIME_4K="$ROOT_DIR/.build/$RUNTIME_TREE/Kernarium/Runtime/$RUNTIME_4K.framework"
 DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/$ANDROID_TREE/Kernarium/Runtime/$RUNTIME_ANDROID_4K.framework"
 # KERNARIUM_DEVICE_GPU_PREFIX and KERNARIUM_SIMULATOR_GPU_PREFIX name a GPU
@@ -435,6 +455,13 @@ for slice_platform in $PACKAGED_SLICES; do
 	fi
 done
 
+# An App Store runtime carries the name of no environment knob.
+if [ "$APP_STORE" -eq 1 ]; then
+	"$PYTHON" -B "$ROOT_DIR/Andarium/scripts/check-app-store-bundle.py" --runtime \
+		"$STAGE/$RUNTIME_ANDROID_4K.xcframework/ios-arm64/$RUNTIME_ANDROID_4K.framework" ||
+		fail "$RUNTIME_ANDROID_4K carries an environment knob; build the kernarium-ios-device-android-app-store preset"
+fi
+
 # The storage and compression cores carry no Metal dependency, so their
 # XCFrameworks keep both published slices.
 for platform in ios-arm64 ios-arm64-simulator; do
@@ -480,7 +507,9 @@ case $publish in
 	;;
 *) fail "could not publish the XCFrameworks: $OUTPUT" ;;
 esac
-if [ "$RUNTIMES" = android ]; then
+if [ "$APP_STORE" -eq 1 ]; then
+	printf '%s\n' "published App Store Android runtime XCFrameworks: $OUTPUT"
+elif [ "$RUNTIMES" = android ]; then
 	printf '%s\n' "published Android runtime XCFrameworks: $OUTPUT"
 elif [ "$AUTOMATION" -eq 1 ] || [ "$ANDROID_AUTOMATION" -eq 1 ]; then
 	printf '%s\n' "published Kernarium automation XCFrameworks: $OUTPUT"
