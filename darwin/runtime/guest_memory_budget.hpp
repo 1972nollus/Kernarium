@@ -16,9 +16,10 @@
  *                L - G - A - E(v, G) - S >= 384 MiB
  *
  * L is the process's memory limit (platform::process_memory_limit_bytes), zero
- * for none. cap(v) is the cache's measured worst ceiling at v vCPUs, rounded up
- * to 16 MiB, plus 32 MiB. t is the slot tags each executor keeps outside the
- * cache's ledger. A, E_rest and S are the launch parameters (launch_memory_set).
+ * for none. cap(v) is seven eighths of the cache's measured worst ceiling at v
+ * vCPUs, rounded up to 16 MiB. t is the slot tags each executor keeps outside
+ * the cache's ledger. A, E_rest and S are the launch parameters
+ * (launch_memory_set).
  *
  * Header-only and standard library only, so the application's loader includes
  * it too and answers the settings without the runtime, which is loaded once
@@ -44,13 +45,15 @@ inline constexpr std::uint32_t guest_memory_minimum_mib = 512;
 inline constexpr std::uint32_t guest_memory_maximum_mib = 4096;
 inline constexpr std::uint32_t guest_memory_step_mib = 64;
 
-/* The most the arm64 gadget cache held at 1 through 8 vCPUs in the Android and
- * KDE loads that were measured on the Mac and the iPad (the worst ceiling of
- * any session, rounded up to 16 MiB), plus a 32 MiB margin. The cap sits above
- * every measured ceiling, so it sheds nothing in those loads: the budget's own
- * shedding (cpu/gadget_cache_budget.hpp) stays what bounds the cache below it. */
+/* The most the arm64 gadget cache may hold at 1 through 8 vCPUs: seven eighths
+ * of the worst ceiling any session reached in the Android and KDE loads that
+ * were measured on the Mac and the iPad, rounded up to 16 MiB. The cap sits
+ * under those loads' worst ceilings, so the budget's own shedding
+ * (cpu/gadget_cache_budget.hpp) bounds the cache there. Geekbench's multi-core
+ * peaks at 8 vCPUs, 71 to 94 MiB, stay far below it, and forcing the budget to
+ * 64 MiB there cost no measurable score. */
 inline constexpr std::array<std::uint32_t, 8> gadget_cache_cap_mib{
-	176, 208, 240, 288, 304, 304, 336, 336};
+	128, 160, 192, 224, 240, 240, 272, 272};
 /* Each vCPU above the last measured one adds this to the cap. */
 inline constexpr std::uint32_t gadget_cache_cap_further_executor_mib = 16;
 

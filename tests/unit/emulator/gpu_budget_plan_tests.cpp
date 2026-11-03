@@ -112,16 +112,16 @@ void theDerivedGadgetCacheCountsAsEngineMemory()
 			{});
 	};
 	/* A quarter of 1536 MiB is 384, and an eighth of the limit is 358: one
-	 * vCPU's cap is under both, and twelve vCPUs' above both. */
+	 * vCPU's cap is under both, and sixteen vCPUs' above both. */
 	const auto one = planned("--memory-limit=2867M", "ncpus=1");
-	require(one.engine == (176 + 4) * mib, "one vCPU's cap and slot tags");
-	const auto twelve = planned("--memory-limit=2867M", "ncpus=12");
-	require(twelve.engine == 2867 * mib / 8 + 48 * mib,
-		"an eighth of the limit and twelve vCPUs' slot tags");
-	const auto roomy = planned("--memory-limit=8192M", "ncpus=12");
-	require(roomy.engine == (384 + 48) * mib, "a quarter of the guest");
+	require(one.engine == (128 + 4) * mib, "one vCPU's cap and slot tags");
+	const auto sixteen = planned("--memory-limit=2867M", "ncpus=16");
+	require(sixteen.engine == 2867 * mib / 8 + 64 * mib,
+		"an eighth of the limit and sixteen vCPUs' slot tags");
+	const auto roomy = planned("--memory-limit=8192M", "ncpus=16");
+	require(roomy.engine == (384 + 64) * mib, "a quarter of the guest");
 	const auto roomy_one = planned("--memory-limit=8192M", "ncpus=1");
-	require(roomy_one.engine == (176 + 4) * mib, "one vCPU's cap");
+	require(roomy_one.engine == (128 + 4) * mib, "one vCPU's cap");
 }
 
 /* The safe RAM of the application's settings is the largest guest for which
@@ -156,13 +156,13 @@ void theVCPUCountMovesTheBudget()
 		return emulator::plan_gpu_budget(2240 * mib, 2867 * mib, 0, cpus,
 			{});
 	};
-	/* Two vCPUs: a 208 MiB cache and 8 MiB of tags leave 411 MiB. */
-	require(plan(2).engine == 216 * mib);
-	require(plan(2).budget.available == 411 * mib);
+	/* Two vCPUs: a 160 MiB cache and 8 MiB of tags leave 459 MiB. */
+	require(plan(2).engine == 168 * mib);
+	require(plan(2).budget.available == 459 * mib);
 	require(!plan(2).budget.short_of_floor);
-	/* Eight: 336 MiB and 32 MiB leave 259, under the floor. */
-	require(plan(8).engine == 368 * mib);
-	require(plan(8).budget.available == 259 * mib);
+	/* Eight: 272 MiB and 32 MiB leave 323, under the floor. */
+	require(plan(8).engine == 304 * mib);
+	require(plan(8).budget.available == 323 * mib);
 	require(plan(8).budget.short_of_floor);
 	require(plan(8).budget.bytes == 384 * mib);
 }
