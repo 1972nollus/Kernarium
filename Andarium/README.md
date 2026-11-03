@@ -63,6 +63,8 @@ Without it Home shows "Needs an A14 Chip or Later" and dims Start (and Set Up
 Guest, when there is no guest yet); `Lifecycle` answers `needsNewerChip` to any
 start. The Simulator draws on the CPU and always passes.
 
+`ITSAppUsesNonExemptEncryption` is NO in `Config/Info.plist`.
+
 ## Build
 
 Packaging the Android runtime alone, and staging the system from the accepted
