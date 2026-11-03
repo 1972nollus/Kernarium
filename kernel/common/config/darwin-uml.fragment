@@ -434,10 +434,6 @@ CONFIG_UML_VNC_INPUT=y
 CONFIG_VIRTIO_MENU=y
 CONFIG_VIRTIO_UML=y
 CONFIG_VIRTIO_INPUT=y
-# The host carves the memory its GPU uses out of the guest's allocation
-# through a standard Virtio balloon, so guest RAM and GPU memory together stay
-# within what the user configured.
-CONFIG_VIRTIO_BALLOON=y
 # The macOS products can attach a Virtio console: an optional single console
 # or named multiport serial endpoint for Linux guests, where ttyS0 remains the
 # default host console, and one standard single-port console for Android.
