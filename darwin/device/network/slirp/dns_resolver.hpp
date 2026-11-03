@@ -104,7 +104,7 @@ public:
 	void record(Pending &pending, std::uint32_t flags, std::int32_t error,
 		    const char *fullname, std::uint16_t type,
 		    std::uint16_t klass, std::span<const std::uint8_t> data,
-		    std::uint32_t ttl);
+		    std::uint32_t ttl) noexcept;
 
 private:
 	using Clock = std::chrono::steady_clock;

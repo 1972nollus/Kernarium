@@ -49,11 +49,12 @@ namespace {
 constexpr unsigned int alias_limit = 8;
 constexpr std::size_t stream_buffer_limit = 2 * (2 + dns::tcp_limit);
 
+/* Called from DNSServiceProcessResult: nothing may unwind into its C frames. */
 void DNSSD_API query_reply(DNSServiceRef, DNSServiceFlags flags,
 			   uint32_t, DNSServiceErrorType error,
 			   const char *fullname, uint16_t type, uint16_t klass,
 			   uint16_t length, const void *data, uint32_t ttl,
-			   void *context)
+			   void *context) noexcept
 {
 	auto *pending = static_cast<HostResolver::Pending *>(context);
 	pending->owner->record(
@@ -400,7 +401,8 @@ void HostResolver::handle(std::optional<dns::Endpoints> datagram,
 void HostResolver::record(Pending &pending, std::uint32_t flags,
 			  std::int32_t error, const char *fullname,
 			  std::uint16_t type, std::uint16_t klass,
-			  std::span<const std::uint8_t> data, std::uint32_t ttl)
+			  std::span<const std::uint8_t> data,
+			  std::uint32_t ttl) noexcept
 {
 	/* MoreComing is collective on a shared connection: its absence ends
 	 * the batch for every query (dns_sd.h, kDNSServiceFlagsShareConnection). */
@@ -435,10 +437,10 @@ void HostResolver::record(Pending &pending, std::uint32_t flags,
 	}
 	if ((flags & kDNSServiceFlagsAdd) == 0 || fullname == nullptr)
 		return;
-	auto owner = dns::wire_name(fullname);
-	if (!owner || !dns::same_name(*owner, pending.tail))
-		return;
 	try {
+		auto owner = dns::wire_name(fullname);
+		if (!owner || !dns::same_name(*owner, pending.tail))
+			return;
 		const auto wanted = pending.query.type;
 		if (type == wanted || wanted == dns::type_any) {
 			pending.answers.push_back(
