@@ -994,7 +994,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "    setprop ro.hardware.audio.primary goldfish\n"
                     + wifi_dirs
                     + "    setprop service.adb.tcp.port 5555\n"
-                    "    start adbd\n" + rcu_restore + blocker_rules + net_rules,
+                    "    start adbd\n"
+                    + ("" if init_variant == "no-adbd-keep-alive"
+                       else "on property:init.svc.adbd=stopped\n    start adbd\n")
+                    + rcu_restore + blocker_rules + net_rules,
                 )
                 if extra_entry is not None:
                     archive.writestr(extra_entry, "on early-init\n")
@@ -1194,6 +1197,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     +
                     "(allow domain boot_status_prop (file (read getattr map open)))\n"
                     "(allow domain bootloader_prop (file (read getattr map open)))\n"
+                    "(allow domain system_prop (file (read getattr map open)))\n"
+                    "(allow domain system_adbd_prop (file (read getattr map open)))\n"
                     "(typeattributeset mlstrustedsubject (artd installd"
                     + (" mediaprovider_app" if lineage_policy == "mediaprovider-trusted" else "")
                     + "))\n"
@@ -1206,7 +1211,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "SYSTEM/etc/selinux/plat_property_contexts",
                     "sys.boot_completed    u:object_r:boot_status_prop:s0 exact bool\n"
-                    "ro.boot.              u:object_r:bootloader_prop:s0\n",
+                    "ro.boot.              u:object_r:bootloader_prop:s0\n"
+                    "persist.sys.usb.config  u:object_r:system_prop:s0 exact string\n"
+                    "persist.adb.tls_server.enable  u:object_r:system_adbd_prop:s0 exact bool\n",
                 )
                 archive.writestr(
                     "VENDOR/etc/selinux/vendor_property_contexts",
@@ -1730,6 +1737,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     adbd_content += b"ro.boot.kernarium.adb_key\x00"
                 if adbd_variant != "no-tcp":
                     adbd_content += b"ro.boot.kernarium.adb_tcp\x00"
+                if adbd_variant != "no-debugging-setting":
+                    adbd_content += b"persist.sys.usb.config\x00persist.adb.tls_server.enable\x00"
+                if adbd_variant != "no-key-rule":
+                    adbd_content += b"kernarium: key refused, debugging is off\x00"
                 if adbd_variant != "missing-apex":
                     archive.writestr(
                         "SYSTEM/apex/com.android.adbd.apex",
@@ -2143,6 +2154,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("adbd-apex-without-binary", {"adbd_variant": "no-binary"}),
             ("adbd-without-host-key", {"adbd_variant": "no-key"}),
             ("adbd-without-tcp-policy", {"adbd_variant": "no-tcp"}),
+            ("adbd-without-debugging-setting", {"adbd_variant": "no-debugging-setting"}),
+            ("adbd-without-key-rule", {"adbd_variant": "no-key-rule"}),
             ("services-jar-without-the-adb-topics", {"services_jar_variant": "no-marker"}),
             ("missing-services-jar", {"services_jar_variant": "missing"}),
             ("adbd-cannot-read-launch-properties", {"adbd_launch_unreadable": True}),
@@ -2187,6 +2200,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-rcu-restore", {"init_variant": "missing-rcu-restore"}),
             ("rcu-restore-at-boot", {"init_variant": "rcu-restore-at-boot"}),
             ("missing-swapon", {"init_variant": "missing-swapon"}),
+            ("no-adbd-keep-alive", {"init_variant": "no-adbd-keep-alive"}),
             ("swapon-also-at-boot", {"init_variant": "swapon-also-at-boot"}),
             ("swapon-twice", {"init_variant": "swapon-twice"}),
             ("cuttlefish-graphics-rc",
@@ -2506,6 +2520,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "unexpected product property apexd.config.use_fiemap: \\[\\]"),
             ("use-fiemap-true-cause", {"use_fiemap_variant": "true"},
              "unexpected product property apexd.config.use_fiemap: \\['true'\\]"),
+            ("no-adbd-keep-alive-cause", {"init_variant": "no-adbd-keep-alive"},
+             "does not run 'start adbd' at property:init.svc.adbd=stopped"),
             ("missing-swapon-cause", {"init_variant": "missing-swapon"},
              "does not run 'swapon_all /vendor/etc/fstab.uml' once at property:sys.boot_completed=1"),
             ("swapon-twice-cause", {"init_variant": "swapon-twice"},
@@ -2564,6 +2580,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "holds an adbd that does not read ro.boot.kernarium.adb_key"),
             ("adbd-without-tcp-policy-cause", {"adbd_variant": "no-tcp"},
              "holds an adbd that does not read ro.boot.kernarium.adb_tcp"),
+            ("adbd-without-debugging-setting-cause", {"adbd_variant": "no-debugging-setting"},
+             "holds an adbd that does not read persist.sys.usb.config"),
+            ("adbd-without-key-rule-cause", {"adbd_variant": "no-key-rule"},
+             "holds an adbd without the key rule of route p0011"),
             ("services-jar-without-the-adb-topics-cause", {"services_jar_variant": "no-marker"},
              "lacks the AdbService topics of route p0007"),
             ("missing-services-jar-cause", {"services_jar_variant": "missing"},

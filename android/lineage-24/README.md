@@ -325,22 +325,42 @@ topics), shape that:
   gives it nothing it lacks, and the value is a public key.
 
 AOSP's `neverallow` keeps untrusted applications from creating or connecting a
-vsock socket, so only the host reaches the vsock listener. Two `frameworks/base`
-topics (route `p0007`) make adbd the host's channel whatever the user's
-debugging setting. The first records the USB debugging setting in
-`persist.sys.usb.config`: this product has no `UsbDeviceManager`, the
-property's only other writer, so nothing recorded it, and AdbService, which sets
-`adb_enabled` from the property at every boot, forgot the user's choice at every
-reboot. The second makes AdbService restart adbd where stock stops it when USB
-and wireless debugging are both turned off: every session ends, as on stock,
-and adbd stays up for the host, whose own session drops once at that toggle and
-reconnects. `settings get global adb_enabled` (1 on, 0 off) is therefore
-authoritative and follows the user's toggle within the settings observer's hop.
-The target-files verifier requires the adbd APEX's `bin/adbd` to carry both
-property names (the payload hints store that binary uncompressed, so they are
-readable), the built policy to let adbd read their labels, and the dex files of
-`services.jar` (stored uncompressed) to carry the first topic's log line. Bundle
-command lines may not override any of these host-owned launch choices.
+vsock socket, so only the host reaches the vsock listener. Three topics keep
+adbd the host's channel whatever the user's debugging setting, and keep the
+user's setting meaningful:
+
+- The first `frameworks/base` topic (route `p0007`) records the USB debugging
+  setting in `persist.sys.usb.config`: this product has no `UsbDeviceManager`,
+  the property's only other writer, so nothing recorded it, and AdbService,
+  which sets `adb_enabled` from the property at every boot, forgot the user's
+  choice at every reboot. `settings get global adb_enabled` (1 on, 0 off) is
+  authoritative and follows the user's toggle within the settings observer's
+  hop.
+- The second restarts adbd (`ctl.restart`) where stock stops it when USB and
+  wireless debugging are both turned off. Every session ends, as on stock, and
+  adbd stays up for the host, whose own session drops once at that toggle and
+  reconnects. Init also starts adbd again after any other stop
+  (`on property:init.svc.adbd=stopped` in `overlay/config/init.vendor.rc`): a
+  restart or a crash never raises that trigger, so the two do not fight.
+- The adbd topic of route `p0011` is the key rule. The host's key
+  (`ro.boot.kernarium.adb_key`) is accepted whatever the setting. Any other key
+  authenticates, and may raise the stock "Allow USB debugging" prompt, only
+  while USB debugging or wireless debugging is on (`persist.sys.usb.config`
+  holds `adb`, or `persist.adb.tls_server.enable` is true). With both off, such
+  a key is refused with no prompt, nothing to accept and nothing queued for a
+  later prompt; the transport stays unauthorized. A computer on the LAN that
+  the host bridges arrives over vsock from the host as well, so the rule is by
+  key, not by origin. Authorization off (`ro.boot.kernarium.adb_auth`) skips the
+  check and so the rule. adbd listens on guest TCP only when the launch has a
+  host forward.
+
+The target-files verifier requires the adbd APEX's `bin/adbd` to carry the
+launch property names, the debugging property names and the refusal line (the
+payload hints store that binary uncompressed, so they are readable), the built
+policy to let adbd read their labels, the dex files of `services.jar` (stored
+uncompressed) to carry the first topic's log line, and the product init script
+to start adbd at the stopped trigger. Bundle command lines may not override any
+of these host-owned launch choices.
 LineageOS makes its debug variant non-debuggable and always authorized; the product undoes the first
 (`PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG` is empty) and the boot policy decides
 the second. Under `userdebug` the build is debuggable and carries `su`, and

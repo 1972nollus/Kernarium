@@ -566,6 +566,12 @@ ADB_HOST_PROPERTY_TYPE = "kernarium_adb_host_prop"
 ADBD_APEX = "SYSTEM/apex/com.android.adbd.apex"
 ADBD_BINARY = "bin/adbd"
 ADBD_LAUNCH_PROPERTIES = ("ro.boot.kernarium.adb_key", "ro.boot.kernarium.adb_tcp")
+# The key rule of p0011 reads the guest's debugging setting: AdbService records USB debugging in
+# persist.sys.usb.config (route p0007) and wireless debugging is persist.adb.tls_server.enable. adbd
+# offers any key but the host's only while one is on, and logs the refusal line otherwise; the line
+# is what only the guard topic adds, as stock adbd already holds the property names.
+ADBD_DEBUGGING_PROPERTIES = ("persist.sys.usb.config", "persist.adb.tls_server.enable")
+ADBD_REFUSAL_MARKER = b"kernarium: key refused, debugging is off"
 CIL_PLATFORM_VERSION_SUFFIX = re.compile(r"_[0-9]{6}$")
 CIL_PROPERTY_SET_RULE = re.compile(
     rb"^\(allow (\S+) (\S+) \(property_service \(([^)]*)\)\)\)$", re.MULTILINE
@@ -700,6 +706,10 @@ CIL_ALLOWX_RULE = re.compile(
 USERDATA_GROW_COMMAND = "exec - root system -- /system/bin/resize2fs /dev/block/by-name/userdata"
 USERDATA_GROW_TRIGGER = "post-fs-data"
 USERDATA_DEVICE = "/dev/block/by-name/userdata"
+# adbd keeps running for the host whatever the debugging setting: init starts it again after
+# any stop.
+ADBD_KEEP_ALIVE_TRIGGER = "property:init.svc.adbd=stopped"
+ADBD_KEEP_ALIVE_COMMAND = "start adbd"
 UML_INIT_REQUIRED = (
     "mount_all --early",
     "mount_all --late",
@@ -1096,6 +1106,11 @@ def check_boot_policy(
         fail("UML init policy does not copy a host-supplied display density")
     if UML_INIT_RCU_RESTORE not in actions.get(UML_INIT_RCU_TRIGGER, []):
         fail("UML init policy does not restore normal RCU grace periods after boot")
+    if ADBD_KEEP_ALIVE_COMMAND not in actions.get(ADBD_KEEP_ALIVE_TRIGGER, []):
+        fail(
+            f"UML init policy does not run '{ADBD_KEEP_ALIVE_COMMAND}' at "
+            f"{ADBD_KEEP_ALIVE_TRIGGER}: adbd would stay down after a stop"
+        )
     check_zram_swap(actions)
     check_userdata_grow(actions)
     check_suspend_blocker(init_payload, actions)
@@ -1421,13 +1436,19 @@ def check_adbd_launch_properties(
     """
     payload = read_apex_payload(archive, infos, ADBD_APEX, "the adb daemon")
     check_payload_regular_file(payload, ADBD_BINARY, ADBD_APEX, "the adb daemon")
-    for name in ADBD_LAUNCH_PROPERTIES:
+    for name in ADBD_LAUNCH_PROPERTIES + ADBD_DEBUGGING_PROPERTIES:
         if name.encode() not in payload:
             fail(
                 f"{ADBD_APEX} holds an adbd that does not read {name}: the p0011 topics are "
                 "missing from the build, or the payload hints no longer store bin/adbd "
                 "uncompressed"
             )
+    if ADBD_REFUSAL_MARKER not in payload:
+        fail(
+            f"{ADBD_APEX} holds an adbd without the key rule of route p0011 "
+            f"({ADBD_REFUSAL_MARKER.decode()!r} is not in bin/adbd): it would offer every "
+            "key a prompt while debugging is off"
+        )
 
 
 def check_example_hal(
@@ -2082,11 +2103,11 @@ def cil_allows_file_read(policies: tuple[bytes, ...], domain: str, label: str) -
 
 
 def check_adbd_launch_policy(contexts: list[str], policies: tuple[bytes, ...]) -> None:
-    """adbd may read the launch properties it acts on."""
-    for name in ADBD_LAUNCH_PROPERTIES:
+    """adbd may read the launch properties and the debugging setting it acts on."""
+    for name in ADBD_LAUNCH_PROPERTIES + ADBD_DEBUGGING_PROPERTIES:
         label = property_label(name, contexts) or "default_prop"
         if not cil_allows_file_read(policies, "adbd", label):
-            fail(f"adbd may not read {name}, labelled {label}: it would ignore the launch")
+            fail(f"adbd may not read {name}, labelled {label}: it would ignore it")
 
 
 def check_vendor_init_triggers(
