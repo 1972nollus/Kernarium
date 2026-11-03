@@ -147,6 +147,14 @@ if(TARGET uml_third_party_kosmickrisp)
         kosmickrisp_legacy_vertex_input_draw_tests.cpp
         LIBRARIES uml_gpu_vulkan_draw_test_support
         VULKAN)
+    # The same draws with every render pipeline of a dynamic vertex-input
+    # variant built again from the parent's NIR, the way one for a render pass
+    # with unbound colour attachments is, because the variant freed its MSL.
+    uml_add_unit_test(NAME gpu-kosmickrisp-legacy-vertex-input-regenerated-msl
+        COMMAND uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests
+        LABELS gpu vulkan)
+    set_property(TEST gpu-kosmickrisp-legacy-vertex-input-regenerated-msl
+        APPEND PROPERTY ENVIRONMENT MESA_KK_REGENERATE_MSL=1)
 endif()
 
 if(TARGET uml_gpu_vulkan_draw_test_support)

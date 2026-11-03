@@ -1069,7 +1069,12 @@ runs atomics and size queries on cube images under shader validation.
 Linked graphics pipelines share native programs and dynamic vertex-input
 variants only while a live Vulkan pipeline owns them. The lookup cache drops
 its entry and releases those resources when the last pipeline owner is
-destroyed, so obsolete programs do not accumulate until device teardown.
+destroyed, so obsolete programs do not accumulate until device teardown. A
+dynamic vertex-input variant frees its generated MSL once its Metal pipelines
+are built; the one use left for it, a render pass that binds fewer colour
+attachments than the pipeline declares, compiles the variant again from the
+parent's NIR and the variant's vertex input. `MESA_KK_REGENERATE_MSL=1` makes
+every draw take that path, so the tests can exercise it.
 Pipeline statistics use draw-time guards in the same executable, including its
 bounded raster variants; query begin and end never compile or retain a second
 shader tree. Every active statistics query counts into one shared block; a
