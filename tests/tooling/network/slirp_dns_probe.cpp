@@ -475,6 +475,16 @@ bool open_provider(uml::network::SlirpProvider &provider, Guest &guest)
 	return true;
 }
 
+/* Where the resolver bound its DNS-over-TCP socket, for the log of a run on a
+ * device or in the Simulator. */
+void report_stream(const char *label, uml::network::SlirpProvider &provider)
+{
+	auto &resolver = provider.resolver_for_testing();
+	std::printf("%s: DNS over TCP %s\n", label,
+		    resolver.streams_available() ?
+			    resolver.stream_path().c_str() : "is unavailable");
+}
+
 bool starts_with(const std::string &text, const std::string &prefix)
 {
 	return text.compare(0, prefix.size(), prefix) == 0;
@@ -492,6 +502,7 @@ void check_stream_directory(uml::network::SlirpProvider &provider, Guest &guest,
 		fail(label, "the provider did not open");
 		return;
 	}
+	report_stream(label, provider);
 	auto &resolver = provider.resolver_for_testing();
 	if (!resolver.streams_available())
 		fail(label, "the resolver has no DNS-over-TCP listener");
@@ -520,6 +531,8 @@ int main()
 	}
 	if (!provider.resolver_for_testing().streams_available())
 		fail("TCP", "the resolver has no DNS-over-TCP listener");
+	report_stream(saved_directory.empty() ? "default $TMPDIR (unset)" :
+			      "default $TMPDIR", provider);
 	check_udp(provider, guest);
 	check_tcp(provider, guest);
 
