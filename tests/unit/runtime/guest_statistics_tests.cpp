@@ -4,6 +4,7 @@
  * and the RAM the guest's commitment says the host holds. */
 #include "guest_statistics.hpp"
 #include "memory/guest_ram_commitment.hpp"
+#include "named_spinner.hpp"
 #include "named_tests.hpp"
 #include "require.hpp"
 #include "wait_until.hpp"
@@ -15,11 +16,9 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
-#include <pthread.h>
 #include <string>
 #include <sys/mman.h>
 #include <thread>
-#include <time.h>
 #include <unistd.h>
 #include <vector>
 
@@ -28,75 +27,11 @@ namespace {
 using uml::runtime::GuestCpuTime;
 using uml::runtime::GuestRamRetirementScope;
 using uml::runtime::GuestRamUsage;
+using uml::testing::NamedSpinner;
 using uml::testing::require;
 using uml::testing::waitUntil;
 
 constexpr std::chrono::seconds bound {30};
-
-std::uint64_t thread_cpu_nanoseconds()
-{
-	timespec time {};
-	require(::clock_gettime(CLOCK_THREAD_CPUTIME_ID, &time) == 0,
-		"reading the thread's CPU time");
-	return static_cast<std::uint64_t>(time.tv_sec) * 1000000000ULL +
-		static_cast<std::uint64_t>(time.tv_nsec);
-}
-
-/* A host thread under a name that spends a given CPU time and then waits,
- * without using any more, until it is let go. */
-class Spinner final {
-public:
-	Spinner(std::string name, std::chrono::milliseconds spend)
-		: thread_ {[this, name = std::move(name), spend] {
-			  if (!name.empty())
-				  (void)::pthread_setname_np(name.c_str());
-			  const auto target = thread_cpu_nanoseconds() +
-				  static_cast<std::uint64_t>(spend.count()) * 1000000ULL;
-			  while (thread_cpu_nanoseconds() < target) {
-			  }
-			  used_.store(thread_cpu_nanoseconds(),
-				  std::memory_order_release);
-			  std::unique_lock lock {mutex_};
-			  spent_ = true;
-			  changed_.notify_all();
-			  changed_.wait(lock, [this] { return released_; });
-		  }}
-	{
-	}
-
-	Spinner(const Spinner &) = delete;
-	Spinner &operator=(const Spinner &) = delete;
-
-	~Spinner() { release(); }
-
-	/* The CPU time it used once it had spent it. */
-	[[nodiscard]] std::uint64_t await_spent()
-	{
-		std::unique_lock lock {mutex_};
-		require(changed_.wait_for(lock, bound, [this] { return spent_; }),
-			"the thread never finished spending its time");
-		return used_.load(std::memory_order_acquire);
-	}
-
-	void release()
-	{
-		{
-			const std::lock_guard lock {mutex_};
-			released_ = true;
-		}
-		changed_.notify_all();
-		if (thread_.joinable())
-			thread_.join();
-	}
-
-private:
-	std::mutex mutex_;
-	std::condition_variable changed_;
-	bool spent_ {};
-	bool released_ {};
-	std::atomic<std::uint64_t> used_ {};
-	std::thread thread_;
-};
 
 void a_carrier_is_named_uml_vcpu_n_carrier()
 {
@@ -124,18 +59,18 @@ void only_carriers_count_and_their_time_is_their_own()
 {
 	constexpr std::chrono::milliseconds carrier_spend {60};
 	constexpr std::chrono::milliseconds decoy_spend {400};
-	Spinner first {"uml-vcpu-0-carrier", carrier_spend};
-	Spinner second {"uml-vcpu-1-carrier", carrier_spend};
-	Spinner notify {"uml-irq-notify", decoy_spend};
-	Spinner rtc {"uml-rtc-alarm", decoy_spend};
-	Spinner unnamed {"", decoy_spend};
-	Spinner lookalike {"uml-vcpu-0-carrier-extra", decoy_spend};
+	NamedSpinner first {"uml-vcpu-0-carrier", carrier_spend};
+	NamedSpinner second {"uml-vcpu-1-carrier", carrier_spend};
+	NamedSpinner notify {"uml-irq-notify", decoy_spend};
+	NamedSpinner rtc {"uml-rtc-alarm", decoy_spend};
+	NamedSpinner unnamed {"", decoy_spend};
+	NamedSpinner lookalike {"uml-vcpu-0-carrier-extra", decoy_spend};
 	const std::uint64_t expected =
-		first.await_spent() + second.await_spent();
-	(void)notify.await_spent();
-	(void)rtc.await_spent();
-	(void)unnamed.await_spent();
-	(void)lookalike.await_spent();
+		first.awaitSpent() + second.awaitSpent();
+	(void)notify.awaitSpent();
+	(void)rtc.awaitSpent();
+	(void)unnamed.awaitSpent();
+	(void)lookalike.awaitSpent();
 
 	const GuestCpuTime time = uml::runtime::guest_cpu_time();
 	require(time.listed, "the process's threads must be listed");
@@ -154,11 +89,11 @@ void only_carriers_count_and_their_time_is_their_own()
 
 void an_ended_carrier_takes_its_time_with_it()
 {
-	Spinner first {"uml-vcpu-0-carrier", std::chrono::milliseconds {40}};
-	auto second = std::make_unique<Spinner>("uml-vcpu-1-carrier",
+	NamedSpinner first {"uml-vcpu-0-carrier", std::chrono::milliseconds {40}};
+	auto second = std::make_unique<NamedSpinner>("uml-vcpu-1-carrier",
 		std::chrono::milliseconds {40});
-	const std::uint64_t first_used = first.await_spent();
-	const std::uint64_t second_used = second->await_spent();
+	const std::uint64_t first_used = first.awaitSpent();
+	const std::uint64_t second_used = second->awaitSpent();
 	const GuestCpuTime both = uml::runtime::guest_cpu_time();
 	require(both.carriers == 2 &&
 		both.nanoseconds + 1000000ULL >= first_used + second_used,
