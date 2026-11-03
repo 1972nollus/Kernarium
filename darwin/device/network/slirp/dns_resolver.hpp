@@ -121,6 +121,10 @@ private:
 		std::vector<std::uint8_t> output;
 		Clock::time_point active{};
 		std::size_t pending{};
+		/* The guest shut down its sending side (a FIN follows its last
+		 * query): nothing more arrives, and the answers still owed
+		 * go out before the connection closes. */
+		bool input_closed{};
 	};
 
 	void run(std::stop_token stop_token) noexcept;

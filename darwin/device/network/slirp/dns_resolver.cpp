@@ -233,10 +233,15 @@ void HostResolver::run(std::stop_token stop_token) noexcept
 			static_cast<short>(streams_.size() < dns_stream_limit ?
 				POLLIN : 0), 0});
 		for (auto &stream : streams_) {
-			short events = POLLIN;
+			short events = stream.input_closed ? 0 : POLLIN;
 			if (!stream.output.empty())
 				events |= POLLOUT;
-			descriptors.push_back({stream.descriptor.get(), events, 0});
+			/* A half-closed stream with nothing to write waits for
+			 * its answers; polling it would report its hang-up at
+			 * once, every time. */
+			descriptors.push_back(
+				{events != 0 ? stream.descriptor.get() : -1,
+				 events, 0});
 			polled.push_back(&stream);
 		}
 		const int ready = ::poll(descriptors.data(),
@@ -512,7 +517,8 @@ void HostResolver::expire(Clock::time_point now) noexcept
 	for (auto iterator = streams_.begin(); iterator != streams_.end();) {
 		if (iterator->descriptor.get() < 0 ||
 		    (iterator->pending == 0 && iterator->output.empty() &&
-		     iterator->active + dns_stream_idle <= now))
+		     (iterator->input_closed ||
+		      iterator->active + dns_stream_idle <= now)))
 			iterator = streams_.erase(iterator);
 		else
 			++iterator;
@@ -579,8 +585,13 @@ void HostResolver::read_stream(Stream &stream) noexcept
 	for (;;) {
 		const auto count = ::read(stream.descriptor.get(), buffer.data(),
 					  buffer.size());
-		if (count == 0 || (count < 0 && errno != EAGAIN &&
-				   errno != EINTR)) {
+		if (count == 0) {
+			/* The client closed its sending side; it may still be
+			 * reading the answers to what it sent. */
+			stream.input_closed = true;
+			break;
+		}
+		if (count < 0 && errno != EAGAIN && errno != EINTR) {
 			stream.descriptor.reset();
 			break;
 		}

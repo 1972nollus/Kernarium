@@ -328,10 +328,13 @@ void check_udp(uml::network::SlirpProvider &provider, Guest &guest)
 		fail(label, "a datagram SLiRP forwards was not counted");
 }
 
-/* One DNS-over-TCP exchange with `server`:53; returns the reply. */
+/* One DNS-over-TCP exchange with `server`:53; returns the reply. With
+ * `half_close` the guest sends its FIN with the query, as a client does that
+ * shuts down its sending side and then reads. */
 std::optional<Reply> tcp_exchange(Guest &guest, const Address &server,
 				  std::uint16_t port,
-				  const std::vector<std::uint8_t> &message)
+				  const std::vector<std::uint8_t> &message,
+				  bool half_close = false)
 {
 	const auto from_server = [&](const std::vector<std::uint8_t> &frame) {
 		const auto segment = parse_tcp(frame);
@@ -356,9 +359,11 @@ std::optional<Reply> tcp_exchange(Guest &guest, const Address &server,
 	framed.push_back(static_cast<std::uint8_t>(message.size()));
 	framed.insert(framed.end(), message.begin(), message.end());
 	if (!guest.send(tcp_data_frame(server, port, seq, ack,
-				       tcp_ack | tcp_psh, framed)))
+				       tcp_ack | tcp_psh |
+					       (half_close ? tcp_fin : 0),
+				       framed)))
 		return std::nullopt;
-	seq += static_cast<std::uint32_t>(framed.size());
+	seq += static_cast<std::uint32_t>(framed.size()) + (half_close ? 1 : 0);
 
 	std::vector<std::uint8_t> stream;
 	while (stream.size() < 2 ||
@@ -377,8 +382,9 @@ std::optional<Reply> tcp_exchange(Guest &guest, const Address &server,
 		(void)guest.send(tcp_frame(guest_ip, server, port, 53, seq, ack,
 					   tcp_ack, 65535));
 	}
-	(void)guest.send(tcp_frame(guest_ip, server, port, 53, seq, ack,
-				   tcp_fin | tcp_ack, 65535));
+	if (!half_close)
+		(void)guest.send(tcp_frame(guest_ip, server, port, 53, seq, ack,
+					   tcp_fin | tcp_ack, 65535));
 	return parse_reply({stream.begin() + 2, stream.end()});
 }
 
@@ -396,7 +402,15 @@ void check_tcp(uml::network::SlirpProvider &provider, Guest &guest)
 			fail(label, "localhost has no 127.0.0.1 answer");
 	}
 
-	const char *label = "DNS over TLS";
+	const char *label = "TCP half-close";
+	const auto half = tcp_exchange(guest, name_server, ++port,
+				       query_message(0x7301, "localhost", 1),
+				       true);
+	if (!half || half->id != 0x7301 || half->rcode != 0 ||
+	    !has_loopback_answer(*half))
+		fail(label, "a client that shut down its sending side got no answer");
+
+	label = "DNS over TLS";
 	if (!guest.send(tcp_frame(guest_ip, name_server, 41100, 853, 5000, 0,
 				  tcp_syn, 65535)))
 		fail(label, "the provider refused the SYN");
