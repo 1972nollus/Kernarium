@@ -27,6 +27,13 @@ SOFTPIPE = (
 LLVMPIPE = (
     'extern "C" void *llvmpipe_create_screen() { return nullptr; }\n'
 )
+# LLVM's C API and its C++ namespace, which only the Simulator's llvmpipe links.
+LLVM_C = (
+    'extern "C" void *LLVMLinkInMCJIT() { return nullptr; }\n'
+)
+LLVM_CXX = (
+    'namespace llvm { void *kernarium_fixture() { return nullptr; } }\n'
+)
 # A reference is not a definition: a build that calls the creator through a
 # table it does not define carries no rasterizer.
 REFERENCED = (
@@ -81,6 +88,8 @@ def main() -> int:
         llvmpipe = compile_object(root, "llvmpipe", LLVMPIPE)
         referenced = compile_object(root, "referenced", REFERENCED)
         marked = compile_object(root, "marked", MARKED)
+        llvm_c = compile_object(root, "llvm_c", LLVM_C)
+        llvm_cxx = compile_object(root, "llvm_cxx", LLVM_CXX)
         archive = root / "libmixed.a"
         archived = run([
             "xcrun", "libtool", "-static", "-o", str(archive),
@@ -124,6 +133,14 @@ def main() -> int:
              "no binary defines a software Gallium screen"),
             ("referenced creator present", "--present", [referenced], 1,
              "no binary defines a software Gallium screen"),
+            ("llvm c api absent", "--absent", [llvm_c], 1,
+             "defines the LLVM symbol _LLVMLinkInMCJIT"),
+            ("llvm c++ absent", "--absent", [llvm_cxx], 1,
+             "defines the LLVM symbol __ZN4llvm"),
+            ("llvm does not make a screen", "--present", [llvm_c], 1,
+             "no binary defines a software Gallium screen"),
+            ("llvmpipe with llvm present", "--present", [llvmpipe, llvm_c], 0,
+             "the software renderer is in 1 of 2 binaries"),
             ("bundle without binaries", "--absent", [empty], 1,
              "no Mach-O binary"),
         )
@@ -140,7 +157,7 @@ def main() -> int:
 
     if failures:
         raise SystemExit("\n".join(failures))
-    print("the software-renderer check separated 13 cases")
+    print("the software-renderer check separated 17 cases")
     return 0
 
 

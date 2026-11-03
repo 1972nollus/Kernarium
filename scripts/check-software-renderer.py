@@ -4,11 +4,13 @@
 
 The iOS Simulator's GPU product renders on the CPU, because the Simulator has
 no Metal 4 device for KosmicKrisp. Only its slices may carry Mesa's software
-rasterizer, and a device or macOS product must never fall back to it. Every
-Mach-O binary and static archive below each path is inspected:
+rasterizers or the LLVM that llvmpipe JITs through, and a device or macOS
+product must never fall back to either. Every Mach-O binary and static archive
+below each path is inspected:
 
-  --absent   none may define a software Gallium screen or hold the host
-             provider's marker string, so the product cannot select it;
+  --absent   none may define a software Gallium screen or an LLVM symbol, or
+             hold the host provider's marker string, so the product can
+             neither select the rasterizer nor JIT;
   --present  at least one must define a software Gallium screen, so a
              Simulator slice that lost its rasterizer is caught.
 """
@@ -18,6 +20,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -33,10 +36,13 @@ MAGICS = (
     bytes.fromhex("bebafeca"),
     b"!<arch>\n",
 )
-# The software Gallium screens Mesa can be built with: the one the Simulator
-# prefix names (dependencies/build-apple-gpu.sh) and its sibling, so a change
-# of rasterizer needs no change here. A Zink build has neither.
+# The software Gallium screens Mesa can be built with: the two the Simulator
+# prefix names (dependencies/build-apple-gpu.sh). A Zink build has neither.
 SCREEN_CREATORS = ("softpipe_create_screen", "llvmpipe_create_screen")
+# LLVM's C API and its C++ namespace, which gallivm links statically into the
+# Simulator's MesaGallium alone. The leading underscores of a Mach-O name are
+# removed before the match.
+LLVM_SYMBOL = re.compile(r"^(LLVM[A-Za-z]|ZN4llvm)")
 # The host GL provider names itself with this line when it is the software
 # one (darwin/device/gpu/host_gl_provider.cpp).
 PROVIDER_MARKER = b"Virgl software rasterizer provider"
@@ -56,8 +62,9 @@ def binaries(root: Path) -> list[Path]:
     return found
 
 
-def screens(path: Path, nm: list[str]) -> list[str] | str:
-    """The software screen creators the binary defines, or nm's failure."""
+def screens(path: Path, nm: list[str]) -> tuple[list[str], list[str]] | str:
+    """The software screen creators and LLVM symbols the binary defines (the
+    first of each is enough to report), or nm's failure."""
     listed = subprocess.run(
         [*nm, "-a", "-P", str(path)],
         check=False,
@@ -71,6 +78,7 @@ def screens(path: Path, nm: list[str]) -> list[str] | str:
     if listed.returncode != 0:
         return f"{path}: nm failed: {listed.stderr.strip()}"
     found = []
+    llvm = []
     for line in listed.stdout.splitlines():
         fields = line.split()
         # A defined symbol has a type letter other than U (undefined).
@@ -79,7 +87,9 @@ def screens(path: Path, nm: list[str]) -> list[str] | str:
         name = fields[0].lstrip("_")
         if name in SCREEN_CREATORS and name not in found:
             found.append(name)
-    return found
+        elif not llvm and LLVM_SYMBOL.match(name):
+            llvm.append(fields[0])
+    return found, llvm
 
 
 def main() -> int:
@@ -108,10 +118,11 @@ def main() -> int:
             failures.append(f"{root}: holds no Mach-O binary or archive")
         for path in found:
             checked += 1
-            defined = screens(path, nm)
-            if isinstance(defined, str):
-                failures.append(defined)
+            symbols = screens(path, nm)
+            if isinstance(symbols, str):
+                failures.append(symbols)
                 continue
+            defined, llvm = symbols
             marked = PROVIDER_MARKER in path.read_bytes()
             if defined:
                 carriers += 1
@@ -120,6 +131,8 @@ def main() -> int:
                     failures.append(
                         f"{path}: defines the software renderer's "
                         f"{defined[0]}")
+                if llvm:
+                    failures.append(f"{path}: defines the LLVM symbol {llvm[0]}")
                 if marked:
                     failures.append(
                         f"{path}: holds the software provider's marker")
