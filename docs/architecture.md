@@ -1481,6 +1481,19 @@ for a memory request and a request never waits for a quiesce
 guest has suspended itself, as an Android guest does once its display is off,
 is the caller's to know.
 
+The macOS launchers print the same figures with `--stats=<ms>` (at least
+100): a sampler thread, started only with the option, reads the running guest
+once per interval through the public calls and the display's counters, and
+prints one line on standard error,
+`uml-darwin: stats <s> s cpu <n>% of <v> vCPUs frames <p>/s presented <o>/s
+offered [memory <u> MiB in use of <t> MiB] held <h> of <r> MiB`.
+The share is of the guest's `<v>` vCPUs, the frame rates are the presented and
+the offered counters' (`emulator/src/statistics_report.hpp`), and the memory
+part appears on every second line, and not while the guest's display is off,
+when the guest's kernel answers. A restart, or a gap with no guest, starts a
+new baseline. This is measurement tooling with no UI: the Mac validates the
+sources the iOS applications use, and a memory run reads the held figure.
+
 ### Hibernation
 
 On a physical iOS device, where guest RAM is wired and so neither compressible

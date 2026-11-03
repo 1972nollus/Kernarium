@@ -63,6 +63,15 @@ uml_add_unit_test(
     NAME emulator-statistics
     COMMAND uml_emulator_statistics_tests)
 
+# The line a macOS launcher prints for each --stats interval.
+add_executable(uml_emulator_statistics_report_tests
+    statistics_report_tests.cpp)
+target_include_directories(uml_emulator_statistics_report_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/emulator/src)
+uml_add_unit_test(
+    NAME emulator-statistics-report
+    COMMAND uml_emulator_statistics_report_tests)
+
 # Creation copies the kernel image, except the __TEXT,__uml_elf section the
 # process links into itself, which is run in place.
 add_executable(uml_emulator_kernel_image_ownership_tests

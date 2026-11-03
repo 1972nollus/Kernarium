@@ -20,6 +20,7 @@
 #include "platform/microphone_authorization.hpp"
 #include "restart_loop_guard.hpp"
 #include "sockets/socket_paths.hpp"
+#include "statistics_report.hpp"
 #include "uml/emulator.h"
 #if UML_APP_HAS_SLIRP
 #include "uml_slirp_net.h"
@@ -29,6 +30,8 @@
 #include <atomic>
 #include <cerrno>
 #include <charconv>
+#include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
@@ -37,11 +40,14 @@
 #include <filesystem>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <pthread.h>
 #include <thread>
 #include <tuple>
 #include <utility>
@@ -319,6 +325,9 @@ struct PreparedArguments {
 	std::string console_socket;
 	std::string serial_socket;
 	std::vector<std::string> net_forwards;
+	/* --stats=<ms>: print one line of the running guest's statistics every
+	 * interval, from the calls the iOS applications make; 0 prints none. */
+	std::uint32_t stats_interval_ms {};
 	std::vector<std::string> kernel;
 
 	/* Whether `other` gives the emulator the same machine: the arguments it
@@ -440,6 +449,10 @@ void set_socket_path(std::string &destination, std::string_view option,
 					    " requires a path");
 	destination = value;
 }
+
+/* The shortest --stats interval: a reading of the guest costs a few
+ * microseconds, but every second one asks the guest for its memory. */
+constexpr std::uint32_t minimum_stats_interval_ms = 100;
 
 PreparedArguments prepare_host_arguments(
 	const std::vector<std::string> &command_line,
@@ -567,6 +580,13 @@ PreparedArguments prepare_host_arguments(
 		} else if (valued("--gpu-budget-headroom=")) {
 			prepared.gpu_budget.headroom =
 				parse_gpu_budget_option(argument, value);
+		} else if (parse_host_integer(
+					   argument, "--stats=", prepared.stats_interval_ms)) {
+			if (prepared.stats_interval_ms < minimum_stats_interval_ms)
+				throw std::invalid_argument(
+					"--stats requires an interval of at least " +
+					std::to_string(minimum_stats_interval_ms) +
+					" milliseconds");
 		} else if (valued("--net-forward=")) {
 			if (value.empty())
 				throw std::invalid_argument(
@@ -671,6 +691,108 @@ bool informational_option(std::string_view argument)
 }
 
 using VirtioService = std::unique_ptr<uml::gpu::InProcessVhostUserService>;
+
+/* The thread behind --stats: once an interval it reads the running guest's
+ * figures through the public calls, as the iOS applications do, and prints
+ * the line statistics_report.hpp builds. It exists only when the option does,
+ * so a launch without it has no sampler, timer or counter of its own. */
+class StatsSampler final {
+public:
+	using Clock = std::chrono::steady_clock;
+
+	StatsSampler(std::chrono::milliseconds interval, uml_emulator *emulator,
+				 uml::gpu::InProcessGpuService *gpu)
+		: interval_(interval), emulator_(emulator), gpu_(gpu),
+		  thread_([this] { run(); })
+	{
+	}
+
+	StatsSampler(const StatsSampler &) = delete;
+	StatsSampler &operator=(const StatsSampler &) = delete;
+
+	~StatsSampler() { stop(); }
+
+	void stop() noexcept
+	{
+		{
+			std::lock_guard lock(mutex_);
+			stopping_ = true;
+		}
+		changed_.notify_all();
+		if (thread_.joinable())
+			thread_.join();
+	}
+
+private:
+	void run()
+	{
+		(void)::pthread_setname_np("uml-stats");
+		uml::emulator::StatisticsReport report;
+		auto due = Clock::now() + interval_;
+		for (;;) {
+			{
+				std::unique_lock lock(mutex_);
+				if (changed_.wait_until(
+						lock, due, [this] { return stopping_; }))
+					return;
+			}
+			due += interval_;
+			/* A sampler that fell behind (a memory read can wait up to
+			 * 500 ms) does not catch up with a burst. */
+			if (const auto now = Clock::now(); due < now)
+				due = now + interval_;
+			sample(report);
+		}
+	}
+
+	void sample(uml::emulator::StatisticsReport &report)
+	{
+		uml_emulator_statistics guest {.struct_size = sizeof(guest)};
+		if (uml_emulator_get_statistics(emulator_, &guest) != UML_EMULATOR_OK) {
+			/* No guest runs: before its kernel starts, between two boots. */
+			report.guest_ended();
+			return;
+		}
+		uml::emulator::StatisticsSample reading {
+			.at = Clock::now(),
+			.processors = guest.guest_cpu_count,
+			.cpu_time_ns = guest.guest_cpu_time_ns,
+			.ram_bytes = guest.guest_ram_bytes,
+			.ram_held_bytes = guest.guest_ram_held_bytes,
+		};
+		std::optional<bool> scanout;
+		if (gpu_ != nullptr) {
+			if (const auto frames = gpu_->displayStatistics()) {
+				reading.presented_frames = frames->presentedFrames;
+				reading.offered_frames = frames->guestFrames;
+			}
+			scanout = gpu_->guestScanoutActive();
+		}
+		/* A guest whose display is off may have suspended itself, and the
+		 * request would end that: the applications do not ask either. */
+		std::optional<uml::emulator::StatisticsMemory> memory;
+		if (report.memory_due() && (!scanout || *scanout)) {
+			uml_emulator_guest_memory figures {.struct_size = sizeof(figures)};
+			if (uml_emulator_get_guest_memory(emulator_, &figures) ==
+				UML_EMULATOR_OK)
+				memory = uml::emulator::StatisticsMemory {
+					.total_bytes = figures.total_bytes,
+					.available_bytes = figures.available_bytes,
+				};
+		}
+		if (const auto line = report.add(reading, memory))
+			std::fprintf(stderr, "%s\n", line->c_str());
+	}
+
+	const std::chrono::milliseconds interval_;
+	uml_emulator *const emulator_;
+	uml::gpu::InProcessGpuService *const gpu_;
+	std::mutex mutex_;
+	std::condition_variable changed_;
+	bool stopping_ {};
+	/* Last, so everything above exists when the thread starts. */
+	std::thread thread_;
+};
 
 /* The Virtio services that belong to one boot. The guest they serve is gone
  * once its kernel returns, so a restarted guest is given fresh ones. */
@@ -827,6 +949,10 @@ public:
 				return false;
 			}
 		}
+		if (prepared_.stats_interval_ms != 0 && !information_only_)
+			stats_ = std::make_unique<StatsSampler>(
+				std::chrono::milliseconds(prepared_.stats_interval_ms),
+				emulator_.get(), gpu_service_.get());
 		return true;
 	}
 
@@ -931,6 +1057,7 @@ public:
 	/* Ends the launch: the network first, then what the boot left. */
 	void finish() noexcept
 	{
+		stats_.reset();
 		if (network_)
 			network_->shutdown();
 		services_.stop();
@@ -1094,6 +1221,8 @@ private:
 	std::shared_ptr<uml::virtio::SharedMemoryRegions> shared_memory_regions_{
 		std::make_shared<uml::virtio::SharedMemoryRegions>()};
 	std::unique_ptr<uml::gpu::InProcessGpuService> gpu_service_;
+	/* After the handle and the GPU service it reads, so it ends before them. */
+	std::unique_ptr<StatsSampler> stats_;
 	BootServices services_;
 	std::uint64_t device_memory_limit_{};
 	std::atomic<bool> stop_requested_{};
