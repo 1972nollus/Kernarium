@@ -85,3 +85,10 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_android_instance.py
     LABELS android
     TIMEOUT 30)
+
+uml_add_tooling_test(
+    NAME android17-adb-debugging-runner
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_adb_debugging_runner.py
+    LABELS android
+    TIMEOUT 30)
