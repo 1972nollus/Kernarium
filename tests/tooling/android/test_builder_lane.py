@@ -3131,20 +3131,34 @@ def verify_secondary_zygote_topic(android_root: Path) -> None:
 
 
 def decoder_output_delay_problems(added: str, removed: str) -> list[str]:
-    """What is wrong with the added text of the topic that lowers the H.264 and HEVC output delay.
+    """What is wrong with the added text of the topic that sets the H.264 and HEVC decoder delays.
 
-    The framework stops feeding the decoder at the pipeline delay (3) plus the output delay plus 4 works,
-    and this device releases a picture once more than the stream's reorder depth R of them wait, so a
-    stream stalls only when R exceeds the delay by more than 6. R is at most 16, which needs a delay of
-    at least 10; the delay is a constant, not a property."""
+    The framework stops feeding the decoder once the works that wait for an output, with their input
+    released, reach the pipeline delay plus the output delay plus 4, and this device releases a picture
+    once more than the stream's reorder depth R of them wait, so a stream stalls only when R exceeds
+    the sum of the two delays by more than 3 (the input delay is 0). R is at most 16, which needs a sum
+    of at least 13. The framework sizes the capture queue from the output delay and the input queue from
+    the pipeline delay, and a capture buffer costs six times an input block at 4K, so the sum is spent
+    on the pipeline delay. The delays are constants, not properties."""
     problems = []
-    constant = re.search(r"constexpr uint32_t kReorderingOutputDelay = (\d+);", added)
-    if not constant:
+    output = re.search(r"constexpr uint32_t kReorderingOutputDelay = (\d+);", added)
+    pipeline = re.search(r"constexpr uint32_t kReorderingPipelineDelay = (\d+);", added)
+    if not output:
         problems.append("the topic defines no kReorderingOutputDelay")
-    elif int(constant.group(1)) + 6 < 16:
-        problems.append(f"a delay of {constant.group(1)} stalls a stream of reorder depth 16")
+    if not pipeline:
+        problems.append("the topic defines no kReorderingPipelineDelay")
+    if output and pipeline and int(output.group(1)) + int(pipeline.group(1)) + 3 < 16:
+        problems.append(
+            f"delays of {output.group(1)} and {pipeline.group(1)} stall a stream of reorder depth 16"
+        )
     if added.count("return kReorderingOutputDelay;") != 2 or removed.count("return 16;") != 2:
         problems.append("H.264 and HEVC do not both return the constant in place of 16")
+    if not re.search(r"case VideoCodec::H264:\s*case VideoCodec::HEVC:\s*return kReorderingPipelineDelay;", added) or not re.search(
+        r"case VideoCodec::VP8:\s*case VideoCodec::VP9:\s*case VideoCodec::AV1:\s*return kBasePipelineDelay;", added
+    ):
+        problems.append("H.264 and HEVC do not both take the longer pipeline delay while VP8, VP9 and AV1 keep the base one")
+    if "getPipelineDelay(c) -" not in added or "kBasePipelineDelay);" not in added:
+        problems.append("the input notification interval no longer follows the output delay plus the pipeline delay beyond the base one")
     if "property_get" in added or "getprop" in added.lower():
         problems.append("the delay is a constant, not a property")
     if "reorders on the host" not in added or "hold no" not in added:
@@ -3153,7 +3167,7 @@ def decoder_output_delay_problems(added: str, removed: str) -> list[str]:
 
 
 def verify_decoder_output_delay_topic(android_root: Path) -> None:
-    """The v4l2_codec2 topic that lowers the H.264 and HEVC output delay keeps every stream decodable."""
+    """The v4l2_codec2 topic that sets the H.264 and HEVC delays keeps every stream decodable."""
     patches = sorted((android_root / "patches/projects/p0018/series").glob("v4l2-hold-fewer-capture-buffers-*.patch"))
     if len(patches) != 1:
         fail(f"p0018 has {len(patches)} output delay patches, not one")
@@ -3164,8 +3178,10 @@ def verify_decoder_output_delay_topic(android_root: Path) -> None:
     if problems:
         fail("the decoder output delay topic: " + "; ".join(problems))
     for label, edited_added, edited_removed in (
-        ("a delay of 9", added.replace("kReorderingOutputDelay = 10;", "kReorderingOutputDelay = 9;"), removed),
+        ("delays that sum to 12", added.replace("kReorderingPipelineDelay = 9;", "kReorderingPipelineDelay = 8;"), removed),
         ("an HEVC case that keeps 16", added.replace("return kReorderingOutputDelay;", "return 16;", 1), removed.replace("return 16;", "", 1)),
+        ("an HEVC pipeline delay left at the base one", added.replace("return kReorderingPipelineDelay;", "return kBasePipelineDelay;", 1), removed),
+        ("an interval that ignores the pipeline delay", added.replace("getPipelineDelay(c) -", "0 -", 1), removed),
         ("a delay read from a property", added + '\nproperty_get_int32("ro.vendor.v4l2_codec2.output_delay", 10);', removed),
         ("a delay without its reason", added.replace("reorders on the host", "reorders"), removed),
     ):
