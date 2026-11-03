@@ -58,6 +58,7 @@ def configure(
     languages: str = "NONE",
     platform: str | None = None,
     sources: dict[str, str] | None = None,
+    cache: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
     source_root = root / "source"
     build_root = root / "build"
@@ -86,6 +87,7 @@ def configure(
     command = [str(cmake), "-S", str(source_root), "-B", str(build_root)]
     if platform is not None:
         command.append(f"-DUML_APPLE_PLATFORM={platform}")
+    command.extend(f"-D{entry}" for entry in cache)
     return run(command)
 
 
@@ -119,6 +121,42 @@ JIT_LINK = (
 )
 JIT_CLEAN = "add_library(ordinary OBJECT darwin/runtime/clean.cpp)"
 JIT_PREFIX = "macOS-only x86-64 JIT in a UML_APPLE_PLATFORM="
+
+# The software GPU renderer is the iOS Simulator's. A software GPU prefix is
+# the one that carries the Simulator's platform contract.
+SOFTWARE_CONTRACT = (
+    "prefix/share/uml-dependencies/ios-simulator-gpu-software-arm64.tsv"
+)
+SOFTWARE_SOURCES = {
+    "main.cpp": "int main() { return 0; }\n",
+    SOFTWARE_CONTRACT: "field\tvalue\n",
+    "hardware/share/uml-dependencies/ios-gpu-vulkan-arm64.tsv":
+        "field\tvalue\n",
+}
+SOFTWARE_PREFIX = "Simulator-only software GPU renderer in a UML_APPLE_PLATFORM="
+SOFTWARE_DEFINE = (
+    "add_executable(product main.cpp)\n"
+    "target_compile_definitions(product PRIVATE UML_GPU_SOFTWARE_RENDERER=1)"
+)
+SOFTWARE_OFF = (
+    "add_executable(product main.cpp)\n"
+    "target_compile_definitions(product PRIVATE UML_GPU_SOFTWARE_RENDERER=0)"
+)
+SOFTWARE_LINK = (
+    "add_executable(product main.cpp)\n"
+    "target_link_libraries(product PRIVATE "
+    "${CMAKE_SOURCE_DIR}/prefix/lib/libvirglrenderer.a)"
+)
+SOFTWARE_FRAMEWORK_LINK = (
+    "add_executable(product main.cpp)\n"
+    "target_link_libraries(product PRIVATE "
+    "${CMAKE_SOURCE_DIR}/prefix/Frameworks/MesaGallium.framework/MesaGallium)"
+)
+HARDWARE_LINK = (
+    "add_executable(product main.cpp)\n"
+    "target_link_libraries(product PRIVATE "
+    "${CMAKE_SOURCE_DIR}/hardware/lib/libvirglrenderer.a)"
+)
 
 
 def main() -> int:
@@ -447,6 +485,102 @@ def main() -> int:
                     audited.returncode == 0
                     or JIT_PREFIX not in output
                     or message not in output
+                ):
+                    failures.append(f"accepted {label}:\n{audited.stdout}")
+
+        # The software GPU renderer is the iOS Simulator's: any other
+        # platform rejects selecting it in the cache, compiling with it and
+        # linking a library of the prefix that carries it.
+        software_graphs = {
+            "software-define-ios": (
+                "ios", [SOFTWARE_DEFINE], (),
+                "product compiles with UML_GPU_SOFTWARE_RENDERER=1",
+            ),
+            "software-define-macos": (
+                "macos", [SOFTWARE_DEFINE], (),
+                "product compiles with UML_GPU_SOFTWARE_RENDERER=1",
+            ),
+            "software-define-unset": (
+                None, [SOFTWARE_DEFINE], (),
+                "unset configuration: product compiles with "
+                "UML_GPU_SOFTWARE_RENDERER=1",
+            ),
+            "software-cache-ios": (
+                "ios", ["add_executable(product main.cpp)"],
+                ("UML_GPU_SOFTWARE_RENDERER:BOOL=ON",),
+                "cache UML_GPU_SOFTWARE_RENDERER is ON",
+            ),
+            "software-cache-macos": (
+                "macos", ["add_executable(product main.cpp)"],
+                ("UML_GPU_SOFTWARE_RENDERER:INTERNAL=TRUE",),
+                "cache UML_GPU_SOFTWARE_RENDERER is TRUE",
+            ),
+            "software-link-ios": (
+                "ios", [SOFTWARE_LINK], (),
+                ("product links ", "/prefix/lib/libvirglrenderer.a"),
+            ),
+            "software-link-macos": (
+                "macos", [SOFTWARE_LINK], (),
+                ("product links ", "/prefix/lib/libvirglrenderer.a"),
+            ),
+            "software-framework-ios": (
+                "ios", [SOFTWARE_FRAMEWORK_LINK], (),
+                ("product links ",
+                 "/prefix/Frameworks/MesaGallium.framework/MesaGallium"),
+            ),
+            "software-off-ios": ("ios", [SOFTWARE_OFF], (), None),
+            "software-cache-off-ios": (
+                "ios", ["add_executable(product main.cpp)"],
+                ("UML_GPU_SOFTWARE_RENDERER:INTERNAL=FALSE",), None,
+            ),
+            "software-hardware-link-ios": (
+                "ios", [HARDWARE_LINK], (), None,
+            ),
+            "software-all-simulator": (
+                "ios-simulator",
+                [SOFTWARE_DEFINE, SOFTWARE_LINK.split("\n", 1)[1],
+                 SOFTWARE_FRAMEWORK_LINK.split("\n", 1)[1]],
+                ("UML_GPU_SOFTWARE_RENDERER:INTERNAL=TRUE",),
+                None,
+            ),
+        }
+        for label, (platform, body, cache, message) in software_graphs.items():
+            fixture = root / label
+            configured = configure(
+                options.cmake,
+                module,
+                fixture,
+                [*body, "uml_write_architecture_manifest()"],
+                languages="CXX",
+                platform=platform,
+                sources=SOFTWARE_SOURCES,
+                cache=cache,
+            )
+            if configured.returncode != 0:
+                failures.append(
+                    f"could not configure {label}:\n{configured.stdout}"
+                )
+                continue
+            audited = run(
+                [
+                    str(options.cmake),
+                    f"-DBUILD_ROOT={fixture / 'build'}",
+                    "-P",
+                    str(options.audit),
+                ]
+            )
+            output = normalized(audited.stdout)
+            if message is None:
+                accepted += 1
+                if audited.returncode != 0:
+                    failures.append(f"rejected {label}:\n{audited.stdout}")
+            else:
+                rejected += 1
+                parts = (message,) if isinstance(message, str) else message
+                if (
+                    audited.returncode == 0
+                    or SOFTWARE_PREFIX not in output
+                    or any(part not in output for part in parts)
                 ):
                     failures.append(f"accepted {label}:\n{audited.stdout}")
 
