@@ -997,9 +997,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     + wifi_dirs
                     + "    setprop service.adb.tcp.port 5555\n"
                     "    start adbd\n"
+                    + rcu_restore + blocker_rules + net_rules
                     + ("" if init_variant == "no-adbd-keep-alive"
-                       else "on property:init.svc.adbd=stopped\n    start adbd\n")
-                    + rcu_restore + blocker_rules + net_rules,
+                       else "on property:init.svc.adbd=stopped\n    start adbd\n"),
                 )
                 if extra_entry is not None:
                     archive.writestr(extra_entry, "on early-init\n")
@@ -1201,6 +1201,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "(allow domain bootloader_prop (file (read getattr map open)))\n"
                     "(allow domain system_prop (file (read getattr map open)))\n"
                     "(allow domain system_adbd_prop (file (read getattr map open)))\n"
+                    "(allow domain init_service_status_prop (file (read getattr map open)))\n"
                     "(typeattributeset mlstrustedsubject (artd installd"
                     + (" mediaprovider_app" if lineage_policy == "mediaprovider-trusted" else "")
                     + "))\n"
@@ -1215,7 +1216,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "sys.boot_completed    u:object_r:boot_status_prop:s0 exact bool\n"
                     "ro.boot.              u:object_r:bootloader_prop:s0\n"
                     "persist.sys.usb.config  u:object_r:system_prop:s0 exact string\n"
-                    "persist.adb.tls_server.enable  u:object_r:system_adbd_prop:s0 exact bool\n",
+                    "persist.adb.tls_server.enable  u:object_r:system_adbd_prop:s0 exact bool\n"
+                    "init.svc.  u:object_r:init_service_status_prop:s0\n",
                 )
                 archive.writestr(
                     "VENDOR/etc/selinux/vendor_property_contexts",
