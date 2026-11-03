@@ -1126,8 +1126,9 @@ device keeps a transmit buffer on a ring the guest disabled, because the
 buffer is stream data that nothing waits on, and it never defers a request,
 because a deferral pending at a disable resets the device and with it every
 connection, at each guest suspend. It is appended after every other Virtio
-device, so no existing index moves. The macOS launchers attach loopback TCP ports to it with
-`--vsock-forward` for tests.
+device, so no existing index moves. Kernarium opens streams through the
+runtime's `connect_vsock` call, and the macOS launchers attach loopback TCP
+ports to it with `--vsock-forward` for tests.
 
 The transport also owns this process's open-descriptor ceiling, and raises it
 to whatever the host permits before the first connection serves a request. A

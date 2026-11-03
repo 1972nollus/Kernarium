@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "KernariumRuntime.h"
+#include "KernariumAdbChannel.hpp"
 #include "KernariumConsoleInput.hpp"
 #include "KernariumKeyWake.hpp"
 #include "KernariumRestartLoop.hpp"
@@ -20,6 +21,8 @@
 #include "video/in_process_service.hpp"
 #include "video/virtio_video_device.hpp"
 #include "video/virtio_video_encoder_device.hpp"
+#include "vsock/in_process_service.hpp"
+#include "vsock/protocol.hpp"
 #include "audio/protocol.hpp"
 #include "battery/in_process_service.hpp"
 #include "battery/protocol.hpp"
@@ -33,6 +36,7 @@
 #include "block/boot_initramfs.hpp"
 #include "block/ubd_path.hpp"
 #include "gpu_budget_plan.hpp"
+#include "options.hpp"
 #include "uml/emulator.h"
 #include "uml_slirp_net.h"
 
@@ -150,6 +154,10 @@ uml_emulator* activeEmulator;
 std::mutex activeInputMutex;
 uml::input::virtio::InProcessInputService* activeTouchscreen;
 uml::input::virtio::InProcessInputService* activeKeyboard;
+/* The way into the running guest's vsock device. Callers copy the pointer and
+ * open their stream without the mutex, which an open can hold for seconds. */
+std::mutex activeVsockMutex;
+std::shared_ptr<uml::vsock::Endpoint> activeVsock;
 /* The GPU hold the application last asked for, and the GPU service it applies
  * to while a guest runs. A hold asked for before the guest's GPU exists takes
  * effect when it does. */
@@ -586,6 +594,24 @@ public:
     ActiveInputRegistration& operator=(const ActiveInputRegistration&) = delete;
 };
 
+class ActiveVsockRegistration final {
+public:
+    explicit ActiveVsockRegistration(std::shared_ptr<uml::vsock::Endpoint> endpoint)
+    {
+        std::lock_guard lock(activeVsockMutex);
+        activeVsock = std::move(endpoint);
+    }
+
+    ~ActiveVsockRegistration()
+    {
+        std::lock_guard lock(activeVsockMutex);
+        activeVsock.reset();
+    }
+
+    ActiveVsockRegistration(const ActiveVsockRegistration&) = delete;
+    ActiveVsockRegistration& operator=(const ActiveVsockRegistration&) = delete;
+};
+
 class ActiveGpuRegistration final {
 public:
     explicit ActiveGpuRegistration(uml::gpu::InProcessGpuService& gpu)
@@ -830,7 +856,8 @@ const char* selectedGuestHibernation()
 void appendKernelCommandLine(
     std::vector<std::string>& arguments,
     const uml::android::Storage& storage,
-    uint32_t dotsPerInch)
+    uint32_t dotsPerInch,
+    std::string_view adbPublicKey)
 {
     const auto path = storage.release() / uml::android::releaseCommandLine;
     constexpr std::string_view densityPrefix {
@@ -838,7 +865,10 @@ void appendKernelCommandLine(
     constexpr std::string_view adbAuthorizationPrefix {
         "androidboot.kernarium.adb_auth="};
     constexpr std::array launcherPrefixes {
-        densityPrefix, adbAuthorizationPrefix};
+        densityPrefix,
+        adbAuthorizationPrefix,
+        kernarium::adb::keyPrefix,
+        kernarium::adb::tcpPrefix};
     for (auto& argument :
          uml::android::readKernelCommandLine(path, launcherPrefixes))
         arguments.push_back(std::move(argument));
@@ -867,6 +897,17 @@ void appendKernelCommandLine(
 #else
     arguments.emplace_back(std::string {adbAuthorizationPrefix} + "1");
 #endif
+    /* How the app reaches adbd: the key it asks the guest to authorize this
+     * boot, and, for a launch with no host forward, which has no use for a TCP
+     * listener, the request that adbd not listen on TCP. adbd reads both as
+     * ro.boot properties itself. */
+    if (!adbPublicKey.empty()) {
+        arguments.emplace_back(
+            std::string {kernarium::adb::keyPrefix} + std::string {adbPublicKey});
+    }
+    if (kernarium::adb::tcpDisabled(std::getenv("KERNARIUM_HOST_FORWARD"))) {
+        arguments.emplace_back(std::string {kernarium::adb::tcpPrefix} + "0");
+    }
 }
 
 #endif
@@ -981,6 +1022,9 @@ struct GuestRequest final {
     std::uint32_t dotsPerInch {};
     std::uint32_t guestMemoryMiB {};
     std::uint32_t guestProcessorCount {};
+    /* The adb host key an Android guest authorizes for the launch, empty for
+     * none; a Linux guest ignores it. */
+    std::string adbPublicKey;
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
     /* The guest's two disks: the release's system disk and the instance's
      * data disk. */
@@ -1184,11 +1228,14 @@ private:
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         std::unique_ptr<uml::gpu::InProcessVhostUserService> battery;
 #endif
+        /* The vsock device, the last Virtio device of the boot. */
+        std::optional<uml::vsock::InProcessService> vsock;
         std::optional<ConsoleBridge> console;
         std::vector<std::string> arguments;
         std::vector<const char*> pointers;
         std::optional<ActiveConsoleRegistration> consoleRegistration;
         std::optional<ActiveInputRegistration> inputRegistration;
+        std::optional<ActiveVsockRegistration> vsockRegistration;
     };
 
     [[nodiscard]] std::unique_ptr<Boot> buildBoot()
@@ -1279,6 +1326,11 @@ private:
                 arguments.emplace_back(std::move(relay));
         }
 #endif
+        /* The last Virtio device, so that no other device's index moves. */
+        boot->vsock.emplace(uml::vsock::makeInProcessService());
+        arguments.emplace_back(uml::gpu::virtioDeviceArgument(
+            boot->vsock->service->takeConnectionName(),
+            uml::vsock::protocol::deviceId));
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         /* The release's read-only system disk and the instance's data disk are
          * the guest's only block devices. The selected ramdisk is exposed from
@@ -1287,7 +1339,10 @@ private:
              request_.androidStorage->kernelArguments(androidBoot_))
             arguments.push_back(std::move(argument));
         appendKernelCommandLine(
-            arguments, *request_.androidStorage, request_.dotsPerInch);
+            arguments,
+            *request_.androidStorage,
+            request_.dotsPerInch,
+            request_.adbPublicKey);
 #else
         /* A sealed ext4 derivative is attached read-only; the per-run /init
          * mounts either kind of image beneath the overlay. */
@@ -1299,9 +1354,33 @@ private:
         boot->pointers.reserve(arguments.size());
         for (const auto& argument : arguments)
             boot->pointers.push_back(argument.c_str());
+        requireKernelCommandLineFits(boot->pointers);
         boot->consoleRegistration.emplace(*boot->console);
         boot->inputRegistration.emplace(*boot->touchscreen, *boot->keyboard);
+        boot->vsockRegistration.emplace(boot->vsock->endpoint);
         return boot;
+    }
+
+    /* The kernel exits the process when its arguments do not fit its command
+     * line, so a launch whose arguments, as the emulator completes them, do
+     * not is refused here, with the reason. */
+    void requireKernelCommandLineFits(
+        const std::vector<const char*>& pointers) const
+    {
+#if KERNARIUM_RUNTIME_ANDROID_GUEST
+        const std::string_view rootfs;
+#else
+        const std::string_view rootfs = request_.rootfsPath;
+#endif
+        const auto prepared = uml::emulator::prepare_emulator_options(
+            static_cast<int>(pointers.size()), pointers.data(), rootfs);
+        /* The run reports why it is invalid itself. */
+        if (!prepared.valid)
+            return;
+        const auto length =
+            kernarium::adb::kernelCommandLineLength(prepared.arguments);
+        if (!kernarium::adb::fitsKernelCommandLine(length))
+            throw std::runtime_error(kernarium::adb::commandLineTooLong(length));
     }
 
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
@@ -1402,6 +1481,11 @@ int runtimePlanGpuBudget(
     return 0;
 }
 
+/* What a request states before the adb key was added to it. A request this
+ * large states everything but the key. */
+constexpr std::size_t bootSizeBeforeAdbKey =
+    offsetof(kernarium_runtime_boot, android_adb_public_key);
+
 int runtimeRun(
     KernariumMetalView view,
     const kernarium_runtime_boot* boot)
@@ -1414,9 +1498,24 @@ int runtimeRun(
         ScopedGuestTimerBlock guestTimerBlock;
         ActiveRuntime active;
         if (view == nullptr || boot == nullptr ||
-            boot->struct_size < sizeof(kernarium_runtime_boot)) {
+            boot->struct_size < bootSizeBeforeAdbKey) {
             std::fputs("Kernarium: invalid boot request\n", stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
+        /* Read only from a request large enough to hold it, and no further
+         * than the longest key: the string is the caller's. */
+        std::string adbPublicKey;
+        if (boot->struct_size >= sizeof(kernarium_runtime_boot) &&
+            boot->android_adb_public_key != nullptr) {
+            const std::size_t length = ::strnlen(
+                boot->android_adb_public_key,
+                kernarium::adb::maximumKeyLength + 1U);
+            if (!kernarium::adb::validPublicKey(
+                    {boot->android_adb_public_key, length})) {
+                std::fputs("Kernarium: invalid adb public key\n", stderr);
+                return -UML_EMULATOR_INVALID_ARGUMENT;
+            }
+            adbPublicKey.assign(boot->android_adb_public_key, length);
         }
         const uint32_t width = boot->width;
         const uint32_t height = boot->height;
@@ -1448,6 +1547,7 @@ int runtimeRun(
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
         GuestRequest request;
+        request.adbPublicKey = std::move(adbPublicKey);
         request.dotsPerInch = dotsPerInch;
         request.guestMemoryMiB = guestMemoryMiB;
         request.guestProcessorCount = guestProcessorCount;
@@ -1914,6 +2014,29 @@ int runtimeSendConsoleInput(const void* buffer, std::size_t length)
     return error == 0 ? 0 : -error;
 }
 
+int runtimeConnectVsock(uint32_t port, uint32_t timeoutMilliseconds)
+{
+    std::shared_ptr<uml::vsock::Endpoint> endpoint;
+    {
+        std::lock_guard lock(activeVsockMutex);
+        endpoint = activeVsock;
+    }
+    if (endpoint == nullptr)
+        return -ENODEV;
+    /* A guest that suspended itself, as Android does once its display is off,
+     * answers nothing until something wakes it, as network traffic does. The
+     * wake does nothing to a guest the host quiesced, which then does not
+     * answer either, and the open times out. It can wait on the guest's
+     * console, which is why this call leaves the main thread. */
+    {
+        std::lock_guard lifecycle(emulatorLifecycleMutex);
+        if (activeEmulator != nullptr)
+            uml_emulator_wake(activeEmulator);
+    }
+    return endpoint->connect(
+        port, std::chrono::milliseconds(timeoutMilliseconds));
+}
+
 void runtimeSetRestartCallback(
     kernarium_runtime_restart_callback callback,
     void* context)
@@ -1945,6 +2068,7 @@ const kernarium_runtime_api runtimeApi {
     .set_restart_callback = runtimeSetRestartCallback,
     .guest_display_active = runtimeGuestDisplayActive,
     .plan_gpu_budget = runtimePlanGpuBudget,
+    .connect_vsock = runtimeConnectVsock,
 };
 
 } // namespace
@@ -1997,7 +2121,7 @@ kernarium_runtime_automation_hold_delay_ms(void)
 }
 #endif
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v18(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v19(void)
 {
     return &runtimeApi;
 }

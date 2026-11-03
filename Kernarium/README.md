@@ -245,6 +245,23 @@ whatever reaches the forward. A host on USB reaches a loopback forward through
 `iproxy`; a forward on every interface or on a network address is refused.
 The packaging script refuses a release runtime that carries the switch.
 
+How an Android guest's adbd is reached is told to the guest on its kernel
+command line, by the launcher alone: a release's command-line file cannot set
+either argument. The boot request can carry the adb host key the guest
+authorizes for that boot without asking its user (`android_adb_public_key`,
+runtime API 19): the base64 of adb's `RSAPublicKey` record, 1 to 1024
+characters of `A-Za-z0-9+/=`, or null. A request that carries anything else
+fails with `-UML_EMULATOR_INVALID_ARGUMENT`. The runtime passes it as
+`androidboot.kernarium.adb_key=<key>`. A launch with no
+`KERNARIUM_HOST_FORWARD` has no use for a TCP listener, so the runtime also
+passes `androidboot.kernarium.adb_tcp=0` and adbd listens on vsock alone; a
+launch with a forward passes no `adb_tcp` argument, and adbd keeps listening on
+TCP for the host that reaches it through the forward. adbd reads both as
+`ro.boot` properties itself. The kernel's command line holds 4095 bytes in all,
+counting what the emulator adds, and the runtime refuses a launch whose
+arguments exceed it with a line that says so, because the kernel would end the
+process.
+
 Every automation runtime also reads `KERNARIUM_BACKGROUND_JOB_AT_START=1`
 (`0` or unset asks for nothing; anything else is reported and ignored). A guest
 in the keep-running mode (`KERNARIUM_BACKGROUND_MODE=keepRunning`) then gets
@@ -282,6 +299,11 @@ Kernarium attaches:
   charging state, with a 100-percent charging fallback when the host has no
   readable battery;
 - SLiRP networking from the verified iOS prefix;
+- a Virtio vsock device, the last Virtio device, through which the application
+  opens streams to guest ports (`connect_vsock`, runtime API 19; Andarium opens
+  adbd's port 5555). It is
+  [the device](../darwin/device/vsock/README.md), one per boot, and the guest
+  cannot open a connection to the application;
 - a Virtio-GPU Metal framebuffer; and
 - the guest's `ttyS0` stream mirrored to a terminal view.
 

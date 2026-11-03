@@ -550,7 +550,9 @@ echo run of several threads opening and closing at once), and
 `virtio-vsock-connection-table` holds the credit arithmetic, its 32-bit wrap
 and the host port allocator. `vsock-forwarder` covers the `--vsock-forward`
 grammar, which accepts a loopback address only, and the listeners that attach
-each accepted connection to a guest port.
+each accepted connection to a guest port. `kernarium-adb-channel` covers the
+kernel arguments that carry an Android guest's adb key and the request that adbd
+not listen on TCP, and the limit on the whole kernel command line.
 
 `guest-restart` runs the macOS launcher through a guest that restarts itself.
 Under each of the gadgets and the JIT engine, one `uml-darwin` process boots,

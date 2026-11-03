@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 18U
+#define KERNARIUM_RUNTIME_API_VERSION 19U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -55,7 +55,17 @@ enum {
  * the three launch parameters: A, the application's own expected ceiling;
  * E_rest, the guest side's memory beyond the gadget cache; and S, the headroom
  * left unused. Zero, which is what the application states until their values
- * are chosen, adds nothing to the sum. */
+ * are chosen, adds nothing to the sum.
+ *
+ * An Android guest authorizes one adb host key for this boot without asking
+ * its user: android_adb_public_key is the key as adb writes it, base64 of the
+ * RSAPublicKey record without the trailing comment, 1 through 1024 characters
+ * of A-Z a-z 0-9 + / =, or null for none. The runtime reads it only from a
+ * request whose struct_size covers it and fails the run with
+ * -UML_EMULATOR_INVALID_ARGUMENT when it is anything else. The guest's
+ * kernel command line, which also carries the release's own and the launch's
+ * arguments, holds 4096 bytes; a run whose command line is longer fails
+ * with a message that says so. A Linux guest ignores the key. */
 typedef struct kernarium_runtime_boot {
     uint32_t struct_size;
     uint32_t width;
@@ -73,6 +83,7 @@ typedef struct kernarium_runtime_boot {
     uint32_t gpu_budget_application_mib;
     uint32_t gpu_budget_engine_mib;
     uint32_t gpu_budget_headroom_mib;
+    const char* android_adb_public_key;
 } kernarium_runtime_boot;
 
 /* What a launch's host GPU budget comes to, as the runtime evaluates it for
@@ -262,6 +273,21 @@ typedef void (*kernarium_runtime_set_restart_callback_function)(
     kernarium_runtime_restart_callback callback,
     void* context);
 
+/* Opens a stream to the guest's vsock port `port` (an Android guest's adbd
+ * listens on 5555) and returns a connected SOCK_STREAM descriptor that the
+ * caller owns and closes, or a negated errno: -ENODEV when no guest runs,
+ * -ECONNREFUSED when nothing listens on the port (yet), -ETIMEDOUT when the
+ * guest did not answer within timeout_ms (a guest without the vsock driver, or
+ * one the host quiesced), -EMFILE when 32 connections are open, -ECONNRESET
+ * when the guest stops or restarts first, and -EINVAL for a port that cannot
+ * be named. A guest that suspended itself is woken first, as network traffic
+ * wakes it. The stream ends when the guest closes it, stops or restarts, and
+ * no other process or guest application can reach it. It blocks: call it
+ * away from the main thread. */
+typedef int (*kernarium_runtime_connect_vsock_function)(
+    uint32_t port,
+    uint32_t timeout_ms);
+
 /* The application resolves only this versioned getter after loading exactly
  * one runtime framework. The table is immutable and remains valid until
  * process exit. The selected framework owns one host runtime and its
@@ -290,6 +316,7 @@ typedef struct kernarium_runtime_api {
     kernarium_runtime_set_restart_callback_function set_restart_callback;
     kernarium_runtime_guest_display_active_function guest_display_active;
     kernarium_runtime_plan_gpu_budget_function plan_gpu_budget;
+    kernarium_runtime_connect_vsock_function connect_vsock;
 } kernarium_runtime_api;
 
 #if defined(__GNUC__)
@@ -299,7 +326,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v18(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v19(void);
 
 /* An automation-only extension, outside the versioned table: only a runtime
  * built for automation exports this symbol, and the application looks it up
