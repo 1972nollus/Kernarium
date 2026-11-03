@@ -54,9 +54,16 @@ nonisolated struct AdbKeyStore {
         }
     }
 
+    /// Finding the key and making it are one step: two callers that find none
+    /// would each make one, and the guest would be given a key the client
+    /// does not sign with.
+    private static let creation = NSLock()
+
     /// The key, made first when there is none. It blocks for the key's
     /// generation, so call it away from the main thread.
     func loadOrCreate() throws -> Identity {
+        Self.creation.lock()
+        defer { Self.creation.unlock() }
         let key = try find() ?? create()
         return try Identity(privateKey: key, publicKeyLine: Self.line(for: key))
     }

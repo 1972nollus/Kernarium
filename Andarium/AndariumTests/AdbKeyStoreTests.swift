@@ -27,6 +27,27 @@ struct AdbKeyStoreTests {
         #expect(store.delete() && store.delete())
     }
 
+    /// The start that prepares and anything else that asks for the key at the
+    /// same time must end up with the one key, or the guest would be given a
+    /// key the client does not sign with.
+    @Test func callersAtTheSameTimeGetTheSameKey() throws {
+        let store = store()
+        defer { store.delete() }
+        let lines = LineBox()
+        let group = DispatchGroup()
+        for _ in 0..<8 {
+            group.enter()
+            Thread.detachNewThread {
+                lines.add((try? store.loadOrCreate().publicKeyLine) ?? "failed")
+                group.leave()
+            }
+        }
+        group.wait()
+        #expect(lines.all.count == 8)
+        #expect(Set(lines.all).count == 1)
+        #expect(!lines.all.contains("failed"))
+    }
+
     @Test func theKeyIsRSA2048ThisDeviceOnlyAndNotSynchronized() throws {
         let store = store()
         defer { store.delete() }
@@ -71,4 +92,11 @@ struct AdbKeyStoreTests {
         #expect((1...1024).contains(line.count))
         #expect(line.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "+/=".contains($0)) })
     }
+}
+
+private nonisolated final class LineBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+    var all: [String] { lock.withLock { lines } }
+    func add(_ line: String) { lock.withLock { lines.append(line) } }
 }
