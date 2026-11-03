@@ -14,7 +14,6 @@ enum class DisplayInput { mouse, touchscreen };
 struct LaunchConfiguration {
 	const char *rootfs_path {};
 	std::string_view default_guest_memory;
-	std::string_view default_guest_cpus;
 	bool top_byte_ignore{};
 	DisplayInput input_mode{DisplayInput::mouse};
 	/* A file or directory the launcher created for this run only, removed

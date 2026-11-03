@@ -54,6 +54,7 @@ def boot(
                 rootfs,
                 "512M",
                 kernel_arguments=(
+                    "ncpus=10",
                     "console=tty0",
                     "console=ttyS0",
                     "panic=1",

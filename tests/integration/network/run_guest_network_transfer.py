@@ -275,7 +275,7 @@ def main() -> int:
         arguments.rootfs.resolve(),
         "1024M",
         "tmpfs",
-        (),
+        ("ncpus=10",),
         init_shell=True,
         payloads={
             GUEST_SCRIPT_PATH: GuestFile(

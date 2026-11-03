@@ -56,6 +56,7 @@ def main() -> int:
         arguments.rootfs,
         "512M",
         "tmpfs",
+        kernel_arguments=("ncpus=10",),
         init_shell=True,
         engine=arguments.engine,
         payloads=payloads,

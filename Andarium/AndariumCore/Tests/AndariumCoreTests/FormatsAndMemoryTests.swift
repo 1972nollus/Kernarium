@@ -46,6 +46,58 @@ struct MemoryPolicyTests {
         )
     }
 
+    /// A ten-core device offers the eight vCPUs the memory budget is measured
+    /// for: a new guest takes eight, the memory policy has eight rows and the
+    /// ruler eight positions, while Info still states the ten cores.
+    @Test func aHostWithMoreCoresThanTheLimitOffersTheLimit() {
+        var asked: [Int] = []
+        let memory = MemoryPolicy(processorCount: 8) { count in
+            asked.append(count)
+            return 4096
+        }
+        let device = HostDevice(
+            name: "iPad", processorCount: 8, memory: memory, freeStorageBytes: 40_000_000_000,
+            physicalProcessorCount: 10
+        )
+        #expect(asked == Array(1...8))
+        #expect(device.processorCount == 8)
+        #expect(device.physicalProcessorCount == 10)
+        #expect(Guest.fresh(on: device).cores == 8)
+        // The overrides the application builds from the same limit reach
+        // eight and no further.
+        var overrides = LaunchOverrides(
+            environment: ["KERNARIUM_VCPU_COUNT": "8"], processorCount: device.processorCount)
+        #expect(overrides.applied(to: Guest.fresh(on: device), on: device).cores == 8)
+        overrides.vCPUCount = 10
+        #expect(overrides.applied(to: Guest.fresh(on: device), on: device).cores == 8)
+    }
+
+    /// A guest stored with more vCPUs than the host now offers (it was made
+    /// when the limit was higher, or on a larger device) comes down to the
+    /// limit on load, and its memory to the bound of that count.
+    @Test func aStoredCountAboveTheLimitComesDownOnLoad() {
+        let device = HostDevice(
+            name: "Mac", processorCount: 8,
+            memory: MemoryPolicy(maximumsMiB: [4096, 4096, 4096, 4096, 4096, 4096, 3840, 3584]),
+            freeStorageBytes: 40_000_000_000, isMac: true, physicalProcessorCount: 20
+        )
+        let stored = Guest(cores: 10, memoryMiB: 4096, capacityGiB: 8)
+        let loaded = LaunchOverrides().applied(to: stored, on: device)
+        #expect(loaded.cores == 8 && loaded.memoryMiB == 3584)
+        // A count within the limit is kept, and so is a stored zero's floor of one.
+        #expect(LaunchOverrides().applied(to: Guest(cores: 4, memoryMiB: 2048, capacityGiB: 8), on: device).cores == 4)
+        #expect(LaunchOverrides().applied(to: Guest(cores: 0, memoryMiB: 2048, capacityGiB: 8), on: device).cores == 1)
+    }
+
+    @Test func aHostsOwnProcessorsDefaultToTheLimitAndNeverFallBelowIt() {
+        let six = host(roomy, processors: 6)
+        #expect(six.processorCount == 6 && six.physicalProcessorCount == 6)
+        let odd = HostDevice(
+            name: "iPad", processorCount: 6, memory: roomy, freeStorageBytes: 0, physicalProcessorCount: 2)
+        #expect(odd.physicalProcessorCount == 6)
+        #expect(Guest.fresh(on: six).cores == 6)
+    }
+
     @Test func thePickerRunsFrom512ToTheBoundOfTheVCPUCountInSteps64() {
         let four = limited.stops(vCPUs: 4)
         #expect(four.first == 512 && four.last == 1536)

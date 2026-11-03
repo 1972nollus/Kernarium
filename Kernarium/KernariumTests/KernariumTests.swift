@@ -568,6 +568,60 @@ struct KernariumTests {
         #expect(configuration.androidBootMode == .automatic)
     }
 
+    /// Every physical core is the default and the most the settings, a stored
+    /// count and `KERNARIUM_VCPU_COUNT` allow, at most the eight the memory
+    /// budget is measured for. The loader answers the rule.
+    @Test
+    func theVCPULimitIsThePhysicalCoresAtMostEight() {
+        #expect(kernarium_runtime_loader_application_vcpu_limit(0) == 1)
+        #expect(kernarium_runtime_loader_application_vcpu_limit(UInt32.max) == 8)
+
+        for (physical, limit) in [
+            (1, 1), (4, 4), (6, 6), (8, 8), (10, 8), (12, 8), (20, 8),
+        ] {
+            let (defaults, suiteName) = isolatedDefaults()
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            func load(
+                _ environment: [String: String] = [:]
+            ) -> EmulatorConfiguration {
+                EmulatorConfiguration.load(
+                    defaults: defaults,
+                    physicalProcessorCount: physical,
+                    environment: environment,
+                    guestMemoryBound: Self.unboundedGuestMemory
+                )
+            }
+
+            #expect(
+                EmulatorConfiguration.maximumVCPUCount(
+                    physicalProcessorCount: physical
+                ) == limit
+            )
+            // Nothing stored: every core, at most eight.
+            #expect(load().vCPUCount == limit)
+
+            // A stored count above the limit comes down to it; one within
+            // it is kept.
+            defaults.set(10, forKey: "emulator.vCPUCount")
+            #expect(load().vCPUCount == limit)
+            defaults.set(limit, forKey: "emulator.vCPUCount")
+            #expect(load().vCPUCount == limit)
+            defaults.set(1, forKey: "emulator.vCPUCount")
+            #expect(load().vCPUCount == 1)
+
+            // The environment states a count from one through the limit
+            // and nothing outside it.
+            let key = EmulatorConfiguration.vCPUEnvironmentKey
+            #expect(load([key: String(limit)]).vCPUCount == limit)
+            #expect(load([key: "1"]).vCPUCount == 1)
+            #expect(load([key: String(limit + 1)]).vCPUCount == 1)
+            // Ten is no longer offered, whatever the device has.
+            #expect(load([key: "10"]).vCPUCount == 1)
+            #expect(load([key: "0"]).vCPUCount == 1)
+            #expect(load([key: "many"]).vCPUCount == 1)
+        }
+    }
+
     @Test
     func aDeviceDefaultsToLessGuestMemoryThanAMac() {
         let device = EmulatorConfiguration.defaultGuestMemoryMiB(

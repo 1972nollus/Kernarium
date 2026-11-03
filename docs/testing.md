@@ -114,7 +114,10 @@ Every workflow needs the tools in
 [Host prerequisites](../dependencies/README.md#host-prerequisites), among them
 Python 3.11 or newer, which configure requires, and a Git identity. A test
 that boots ten vCPUs, such as `guest-mmu-stress`, needs ten host CPUs and
-skips on a smaller host. The LTP campaigns default to half the host's physical
+skips on a smaller host. A guest test states its vCPU count with `ncpus=`: the
+launchers' default follows the
+[applications' vCPU limit](architecture.md#memory-and-executable-code), which
+depends on the host. The LTP campaigns default to half the host's physical
 cores, at most 16.
 
 The ordinary host check is:

@@ -74,6 +74,12 @@ struct EmulatorOptions final {
 [[nodiscard]] unsigned configured_guest_cpu_count(
 	const std::vector<std::string> &arguments) noexcept;
 
+/* The vCPU count a standalone launcher states when its command line states
+ * none: the host's physical cores, at most the count the memory budget is
+ * measured for (runtime::guest_memory::application_vcpu_limit, the one rule
+ * the applications share). An explicit ncpus= keeps the guest maximum. */
+[[nodiscard]] unsigned default_application_guest_cpu_count() noexcept;
+
 [[nodiscard]] EmulatorOptions prepare_emulator_options(
 	int argc, const char *const argv[], std::string_view rootfs);
 

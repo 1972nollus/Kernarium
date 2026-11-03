@@ -120,6 +120,7 @@ def main() -> int:
         arguments.rootfs,
         "1G",
         "tmpfs",
+        kernel_arguments=("ncpus=10",),
         init_shell=True,
         engine=arguments.engine,
         payloads={GUEST_SOURCE: GuestFile(PROBE.read_bytes(), 0o644)},

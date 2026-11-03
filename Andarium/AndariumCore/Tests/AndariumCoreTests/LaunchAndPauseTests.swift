@@ -44,6 +44,24 @@ struct LaunchOverridesTests {
         #expect(overrides.isEmpty)
     }
 
+    /// The application passes the host's vCPU limit as `processorCount`, so
+    /// `KERNARIUM_VCPU_COUNT` states 1 through the limit and nothing above it.
+    @Test func theVCPUCountIsBoundedByTheHostsLimit() {
+        func stated(_ value: String, limit: Int) -> Int? {
+            LaunchOverrides(environment: ["KERNARIUM_VCPU_COUNT": value], processorCount: limit).vCPUCount
+        }
+        for limit in [6, 8] {
+            #expect(stated("1", limit: limit) == 1)
+            #expect(stated(String(limit), limit: limit) == limit)
+            #expect(stated(String(limit + 1), limit: limit) == nil)
+            #expect(stated("0", limit: limit) == nil)
+            #expect(stated("many", limit: limit) == nil)
+        }
+        // Ten is no longer offered, whatever the device has.
+        #expect(stated("10", limit: 8) == nil)
+        #expect(stated("20", limit: 8) == nil)
+    }
+
     @Test func startModes() {
         #expect(LaunchOverrides(environment: ["ANDARIUM_START": "normal"], processorCount: 4).start == .normal)
         #expect(LaunchOverrides(environment: ["ANDARIUM_START": "recovery"], processorCount: 4).start == .recovery)

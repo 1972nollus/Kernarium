@@ -424,6 +424,13 @@ kernarium_runtime_loader_launch_memory_set(void)
     };
 }
 
+extern "C" uint32_t kernarium_runtime_loader_application_vcpu_limit(
+    uint32_t physicalProcessorCount)
+{
+    return uml::runtime::guest_memory::application_vcpu_limit(
+        physicalProcessorCount);
+}
+
 extern "C" uint32_t kernarium_runtime_loader_maximum_guest_memory_mib_for_limit(
     uint64_t limitBytes,
     uint32_t guestProcessorCount,

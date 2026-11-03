@@ -16,12 +16,15 @@ enum PreviewData {
 
     /// An iPad Pro or an iPhone, by idiom. The memory bounds are made-up ones
     /// of a wide iPad ruler and a short iPhone one that falls with the vCPU
-    /// count; a device reads them from the runtime's budget formula.
+    /// count; a device reads them from the runtime's budget formula. The iPad
+    /// has ten cores and offers eight vCPUs, the most the budget is measured
+    /// for.
     static func host(lowSpace: Bool) -> HostDevice {
         if UIDevice.current.userInterfaceIdiom == .pad {
             return HostDevice(
-                name: "iPad", processorCount: 10, memory: MemoryPolicy(maximumsMiB: Array(repeating: 4096, count: 10)),
-                freeStorageBytes: lowSpace ? 1_200_000_000 : 118_300_000_000
+                name: "iPad", processorCount: 8, memory: MemoryPolicy(maximumsMiB: Array(repeating: 4096, count: 8)),
+                freeStorageBytes: lowSpace ? 1_200_000_000 : 118_300_000_000,
+                physicalProcessorCount: 10
             )
         }
         return HostDevice(
