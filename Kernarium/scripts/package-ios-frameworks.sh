@@ -125,9 +125,12 @@ ANDROID_TREE=kernarium-runtime-ios-device-android-4k
 	ANDROID_TREE=kernarium-runtime-ios-device-android-4k-automation
 DEVICE_RUNTIME_4K="$ROOT_DIR/.build/$RUNTIME_TREE/Kernarium/Runtime/$RUNTIME_4K.framework"
 DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/$ANDROID_TREE/Kernarium/Runtime/$RUNTIME_ANDROID_4K.framework"
-DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64/Frameworks"
+# KERNARIUM_DEVICE_GPU_PREFIX and KERNARIUM_SIMULATOR_GPU_PREFIX name a GPU
+# prefix other than the default one, for a build that holds its own.
+DEVICE_GPU_PREFIX=${KERNARIUM_DEVICE_GPU_PREFIX:-"$ROOT_DIR/.build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64"}
+DEVICE_GPU="$DEVICE_GPU_PREFIX/Frameworks"
 # The Simulator's runtimes are the same presets for its SDK, and its GPU prefix
-# is the software variant; KERNARIUM_SIMULATOR_GPU_PREFIX names another one.
+# is the software variant.
 SIMULATOR_RUNTIME_TREE=kernarium-runtime-ios-simulator
 [ "$AUTOMATION" -eq 0 ] ||
 	SIMULATOR_RUNTIME_TREE=kernarium-runtime-ios-simulator-automation
@@ -156,7 +159,8 @@ GPU_FRAMEWORKS="$GL_FRAMEWORKS KosmicKrisp"
 # contract, provenance, binary-platform, and provider-negative policy before
 # consuming a GPU prefix.
 if has_sdk device; then
-	"$ROOT_DIR/dependencies/build-apple-gpu.sh" --platform ios --verify-only
+	"$ROOT_DIR/dependencies/build-apple-gpu.sh" --platform ios \
+		--prefix "$DEVICE_GPU_PREFIX" --verify-only
 fi
 "$ROOT_DIR/dependencies/build-ios-storage.sh"
 "$ROOT_DIR/dependencies/build-ios-zstd.sh"

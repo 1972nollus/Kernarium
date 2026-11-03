@@ -504,9 +504,10 @@ Configure and build a `kernarium-ios-simulator*` runtime preset, package it with
 gives XCFrameworks that both SDKs build against) and build the scheme for
 `generic/platform=iOS Simulator`. The GPU prefix is the software one, at
 `.build/dependencies/apple-gpu-vulkan-experiment/ios-simulator-arm64` unless
-`KERNARIUM_SIMULATOR_GPU_PREFIX` names another. The application selects Mesa's
-software device (`LIBGL_ALWAYS_SOFTWARE`) and embeds no KosmicKrisp; the guest
-has no Vulkan and the runtime holds no GPU budget.
+`KERNARIUM_SIMULATOR_GPU_PREFIX` names another (`KERNARIUM_DEVICE_GPU_PREFIX`
+does the same for the device's). The application selects Mesa's software device
+(`LIBGL_ALWAYS_SOFTWARE`), which Mesa answers with llvmpipe, and embeds no
+KosmicKrisp; the guest has no Vulkan and the runtime holds no GPU budget.
 
 ## Scripts
 
