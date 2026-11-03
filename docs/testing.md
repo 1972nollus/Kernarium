@@ -777,7 +777,15 @@ up to four tests fail because of how the Mac hosts an iPad app:
 ### Andarium
 
 `andarium-core` (unit, macOS hosts) runs the tests of the Swift package
-`Andarium/AndariumCore`, the application's model, with `swift test`.
+`Andarium/AndariumCore`, the application's model and its adb client, with
+`swift test`: the adb client runs against a scripted adbd on a socket pair
+(authorization off, on and rejected, streams, shell v2, sync, a bug report,
+timeouts on a clock the test moves, a cancel from another thread, the end of
+a stream announced right after its last bytes), its key
+encoder against moduli with the text `adb keygen` wrote for them, and the
+listener of ADB over Network on loopback against a fake guest (bytes both
+ways, backpressure each way, half close, a failed stream, the limit of
+computers, stopping, a port in use).
 `andarium-stage-system-image` (tooling) covers the system-image staging script
 and the option checks of `package-ios-frameworks.sh --runtimes android`. The
 application itself builds with Xcode: `AndariumPreview` is its Simulator build
@@ -786,7 +794,14 @@ with mock data, and `Andarium` is the device application
 hosted in `Andarium` and runs on an iPad and, as an iPad app, on an Apple
 silicon Mac (`xcodebuild test -scheme Andarium`); its `UpdateFlowTests` drive
 the update, interrupted-update (Start retries, Restore, Erase) and blocked-start flows
-against a stub runtime. A Mac launch of the guest
+against a stub runtime, and its `AndroidOperationTests` and
+`AdbOverNetworkModelTests` play Create Bug Report, Install App and ADB over
+Network the same way. `AdbOverVsockTests` drive a real Android guest with the
+application's own client and authorization on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1`
+with `TEST_RUNNER_ANDARIUM_START=normal`): a shell command, the USB debugging
+setting, a computer's connection through the bridge, a bug report (a zip above
+1 MB, and its time), a cancel, a system APK pulled from the image and installed
+as an update, and the key after Erase Guest. A Mac launch of the guest
 itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
 `TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
 ([`Andarium/README.md`](../Andarium/README.md#automation)). macOS asks once, per
