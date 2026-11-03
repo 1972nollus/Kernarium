@@ -231,7 +231,7 @@ void *kernel_body(void *argument)
 		for (std::size_t word = 0; word < ram->page / 8; word += 97)
 			if (words[word] != word_of(page, word))
 				ram->pattern_errors.fetch_add(1);
-		/* The spare pages come and go, as a balloon would have them. */
+		/* The spare pages come and go, as the guest's page reporting has them. */
 		const std::uint64_t offset = (held_pages + round % spare_pages) *
 			ram->page;
 		if ((round & 1) != 0)

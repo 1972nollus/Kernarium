@@ -84,10 +84,11 @@ if(TARGET uml_gpu_device_memory_pool)
         TIMEOUT 60)
 endif()
 
-# The balloon follows host GPU memory that Metal's allocated size omits.
+# The graphics footprint counts host GPU memory that Metal's allocated size
+# omits.
 uml_add_gpu_unit_test(gpu-host-graphics-footprint
     uml_gpu_host_graphics_footprint_tests host_graphics_footprint_tests.mm
-    LIBRARIES UML::BalloonDevice UML::HostGpuMemory "-framework Metal"
+    LIBRARIES UML::HostGpuMemory "-framework Metal"
     TIMEOUT 60)
 set_tests_properties(gpu-host-graphics-footprint PROPERTIES
     SKIP_RETURN_CODE 77)

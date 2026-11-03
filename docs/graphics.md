@@ -516,10 +516,10 @@ direct frame leaves any copies an earlier CPU frame made, because a later
 partial CPU update writes into them. Failing to allocate the framebuffer or the
 staging is reported to the flush that needed it, as an out-of-memory response,
 rather than to the mode set. The view's drawables, three on iOS, stay sized to
-the view. The balloon target follows the process's Metal and graphics memory,
-so growth there, including the guest's own scanout buffers and the CPU path's
-texture, comes out of guest RAM, while the framebuffer and the staging add to
-the footprint.
+the view. The device memory pool counts the process's Metal and graphics
+memory, so growth there, including the guest's own scanout buffers and the CPU
+path's texture, uses the GPU budget, while the framebuffer and the staging add
+to the footprint.
 
 Kernarium's EDID lists only the host's preferred mode, so a guest reaches a
 larger one, such as 4096x2160, by setting a user-defined mode. The renderer can
@@ -634,13 +634,12 @@ the process. Its usage is the larger of the process's Metal allocation
 (`MTLDevice.currentAllocatedSize`, which also counts presentation, host GL
 memory and the host driver's own memory) and its graphics footprint (the
 graphics ledger of `TASK_VM_INFO`, which also charges the command storage the
-driver has written), the figure the Virtio balloon follows, plus the
-reservations of allocations under way. The renderer shrinks every advertised
-heap to B and bounds every heap budget it reports by the heap's usage plus what
-the pool has left, so a guest sizes its allocations from B, less what the host
-already holds, instead of from the host's memory. The guest driver passes
-budgets on only under `VN_DEBUG=mem_budget`. The balloon takes the same amount
-out of the guest's RAM.
+driver has written), plus the reservations of allocations under way. The
+renderer shrinks every advertised heap to B and bounds every heap budget it
+reports by the heap's usage plus what the pool has left, so a guest sizes its
+allocations from B, less what the host already holds, instead of from the
+host's memory. The guest driver passes budgets on only under
+`VN_DEBUG=mem_budget`.
 
 KosmicKrisp is the one place every allocation passes. Whoever owns the host
 (`uml-darwin`, the Kernarium runtime) hands the renderer the pool, and the

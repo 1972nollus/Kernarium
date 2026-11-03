@@ -2252,7 +2252,7 @@ native_display_cleanup
             "huge.width_height_layers.r8g8b8a8_unorm",
             mustpass,
         )
-        self.assertIn("settle_limit=$((settle_start + 60))", mustpass)
+        self.assertIn("pause_limit=$((pause_start + 20))", mustpass)
         with self.assertRaisesRegex(cts.CampaignError, "no Kernarium campaign"):
             kernarium_campaigns.build(
                 "no-such-campaign", image_type="erofs"

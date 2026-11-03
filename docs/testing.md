@@ -141,7 +141,7 @@ cmake --workflow --preset check-loader-asan-ubsan
 The `unit-gpu` test preset's name filter is the one selection of GPU workflow
 tests, and the other `unit-gpu*` test presets inherit it. It selects every
 registered test named `gpu-*` (the two `gpu-guest-*` tooling tests among them),
-and the Virtio balloon, battery, console, input, sound, video and video encoder
+and the Virtio battery, console, input, sound, video and video encoder
 protocol tests, `video-encoder-capabilities`, `platform-video-decoder`, and the
 hardware `platform-video-encoder`, `-recovery` and `-cache` tests that the GPU
 configuration also builds. A
