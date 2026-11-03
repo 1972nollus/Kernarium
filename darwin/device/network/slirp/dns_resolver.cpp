@@ -77,15 +77,19 @@ bool create_pipe(std::array<UniqueDescriptor, 2> &result) noexcept
 				    {.closeOnExec = true, .nonblocking = true});
 }
 
+/* How long to poll until `next`, the earliest deadline; none waits for a
+ * descriptor alone, so an idle resolver wakes for nothing. */
 int poll_timeout(std::chrono::steady_clock::time_point now,
 		 std::chrono::steady_clock::time_point next) noexcept
 {
+	if (next == std::chrono::steady_clock::time_point::max())
+		return -1;
 	if (next <= now)
 		return 0;
 	const auto wait =
 		std::chrono::duration_cast<std::chrono::milliseconds>(next - now)
 			.count() + 1;
-	return static_cast<int>(std::min<long long>(wait, 1000));
+	return static_cast<int>(std::min<long long>(wait, 60'000));
 }
 
 } // namespace
@@ -217,7 +221,7 @@ void HostResolver::run(std::stop_token stop_token) noexcept
 	std::vector<Stream *> polled;
 	while (!stop_token.stop_requested()) {
 		auto now = Clock::now();
-		auto next = now + std::chrono::seconds{1};
+		auto next = Clock::time_point::max();
 		for (const auto &pending : pending_)
 			next = std::min(next, pending->deadline);
 		for (const auto &stream : streams_)
@@ -517,9 +521,12 @@ void HostResolver::expire(Clock::time_point now) noexcept
 		batch_ended_ = batch_ended;
 	}
 	for (auto iterator = streams_.begin(); iterator != streams_.end();) {
+		/* A stream that made no progress for the idle time goes, even
+		 * with output a reader never takes: poll() would otherwise
+		 * return at once for its deadline, again and again. */
 		if (iterator->descriptor.get() < 0 ||
-		    (iterator->pending == 0 && iterator->output.empty() &&
-		     (iterator->input_closed ||
+		    (iterator->pending == 0 &&
+		     ((iterator->input_closed && iterator->output.empty()) ||
 		      iterator->active + dns_stream_idle <= now)))
 			iterator = streams_.erase(iterator);
 		else
