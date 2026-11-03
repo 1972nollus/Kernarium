@@ -17,7 +17,7 @@ final class LoopbackGuest: GuestStreamOpener, @unchecked Sendable {
     private let failure: Int32?
 
     /// `failure` is the error a stream that cannot be opened throws.
-    init(failure: Int32? = nil, handler: @escaping Handler = { _ = Darwin.close($0) }) {
+    init(failure: Int32? = nil, handler: @escaping Handler = { _ in }) {
         self.handler = handler
         self.failure = failure
     }
@@ -43,11 +43,20 @@ final class LoopbackGuest: GuestStreamOpener, @unchecked Sendable {
         return pair[0]
     }
 
+    /// Waits until `fd` can be read or has ended. A blocking `read` on a
+    /// socket pair can miss the end its peer announces with
+    /// `shutdown(SHUT_WR)` on Darwin, which would hang a test now and then.
+    static func waitReadable(_ fd: Int32) {
+        var entry = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        while poll(&entry, 1, -1) < 0 && errno == EINTR {}
+    }
+
     /// Reads until the stream ends and returns what arrived.
     static func readAll(_ fd: Int32) -> Data {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         while true {
+            waitReadable(fd)
             let got = Darwin.read(fd, &buffer, buffer.count)
             if got > 0 {
                 data.append(buffer, count: got)
@@ -76,6 +85,7 @@ final class LoopbackGuest: GuestStreamOpener, @unchecked Sendable {
     static let echo: Handler = { fd in
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         while true {
+            waitReadable(fd)
             let got = Darwin.read(fd, &buffer, buffer.count)
             if got > 0 {
                 if !writeAll(fd, Data(buffer[0..<got])) { return }
