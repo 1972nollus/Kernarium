@@ -38,10 +38,10 @@ public struct Capabilities: Equatable, Sendable {
     )
 
     /// The device application: a guest moves to a newer system with its
-    /// data (`StartPlan`), and the session offers Android's own screen, keys
-    /// and the options.
+    /// data (`StartPlan`), and the session offers Android's own screen, keys,
+    /// the statistics from the runtime's readings and the options.
     public static let device = Capabilities(
-        systemUpdate: true, adbOverNetwork: false, apkInstall: false, statistics: false,
+        systemUpdate: true, adbOverNetwork: false, apkInstall: false, statistics: true,
         liveDisplayOptions: false
     )
 }
