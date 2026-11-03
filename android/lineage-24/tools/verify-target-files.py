@@ -2117,6 +2117,11 @@ def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None
                 fail(f"unexpected ABI in {info.filename}: {key}={value!r}, not {expected!r}")
         if key == "ro.zygote" and value != VENDOR_MULTILIB_PROPERTIES["ro.zygote"]:
             fail(f"unexpected zygote in {info.filename}: {value}")
+        if key == "persist.sys.usb.config":
+            fail(
+                f"{info.filename} sets {key}={value}: USB debugging is off on a fresh data "
+                "partition, and AdbService records the user's choice there"
+            )
         if key == PRESENT_FENCE_PROPERTY and value.lower() not in FALSE_PROPERTY_VALUES:
             fail(
                 f"{info.filename} marks the present fences unreliable: {key}={value}; "
@@ -2502,7 +2507,6 @@ def check_audio_policy(
         "ro.config.system_vol_default": "7",
         "ro.config.assistant_vol_default": "15",
         "ro.product.product.model": PRODUCT_IDENTITY["model"],
-        "persist.sys.usb.config": "adb",
         # The guest boots without a lock screen, and `locksettings set-disabled` can turn
         # it on: LockSettingsService stores this default when it creates its database.
         "ro.lockscreen.disable.default": "true",

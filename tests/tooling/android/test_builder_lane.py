@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import traceback
+import xml.etree.ElementTree as ET
 import zipfile
 import zlib
 from pathlib import Path
@@ -664,6 +665,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_product_model: bool = False,
                           old_product_identity: bool = False,
                           user_permissive_su: bool = False,
+                          usb_debugging_default: bool = False,
                           missing_lockscreen_default: bool = False,
                           use_fiemap_variant: str | None = None,
                           userdata_grow_variant: str | None = None,
@@ -798,7 +800,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "ro.config.alarm_vol_default=7\n"
                     "ro.config.system_vol_default=7\n"
                     "ro.config.assistant_vol_default=15\n"
-                    "persist.sys.usb.config=adb\n"
+                    + ("persist.sys.usb.config=adb\n" if usb_debugging_default else "")
                     + ("" if missing_lockscreen_default else "ro.lockscreen.disable.default=true\n")
                     + {
                         None: "apexd.config.use_fiemap=false\n",
@@ -2089,6 +2091,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("product-model", {"wrong_product_model": True}),
             ("old-product-identity", {"old_product_identity": True}),
             ("user-permissive-su", {"user_permissive_su": True}),
+            ("usb-debugging-on-by-default", {"usb_debugging_default": True}),
             ("user-carries-su", {"extra_entry": "SYSTEM/xbin/su"}),
             ("user-carries-remount", {"extra_entry": "SYSTEM/bin/remount"}),
             ("user-carries-procmem", {"extra_entry": "SYSTEM/bin/procmem"}),
@@ -3702,6 +3705,25 @@ def verify_package_assertions(android_root: Path) -> None:
             fail(f"build-aosp.sh does not assert that {package} is present")
 
 
+def verify_debugging_defaults(android_root: Path) -> None:
+    """Developer options and USB debugging are off on a fresh data partition."""
+    defaults = ET.fromstring(
+        (android_root / "overlay/overlay/frameworks/base/packages/SettingsProvider/"
+         "res/values/defaults.xml").read_text()
+    )
+    values = [
+        element.text for element in defaults.findall("bool")
+        if element.get("name") == "def_development_settings_enabled"
+    ]
+    if values != ["false"]:
+        fail(f"the SettingsProvider overlay must default Developer options off: {values}")
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
+    for line in product.splitlines():
+        stripped = line.strip().rstrip("\\").strip()
+        if stripped.startswith("persist.sys.usb.config=") and not stripped.endswith(",$(PRODUCT_PRODUCT_PROPERTIES))"):
+            fail(f"lineage_andarium.mk must not set USB debugging on: {stripped}")
+
+
 def verify_hal_selections(android_root: Path) -> None:
     # The boot command line is the one writer of each graphics HAL selection,
     # so it must name the modules the target-files verifier expects.
@@ -4541,6 +4563,7 @@ def main() -> None:
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)
     verify_package_assertions(android_root)
+    verify_debugging_defaults(android_root)
     verify_pin_manifest(android_root / "tools/render-pin-manifest.py")
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_boot_image_fixtures(android_root / "tools/boot-image.py")

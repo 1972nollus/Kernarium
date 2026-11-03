@@ -293,10 +293,14 @@ every user-facing audio stream at its maximum and disable UI, lock, dial-pad,
 charging, and power sounds; subsequent volume and sound settings remain owned
 by the user.
 
-Fresh settings databases also enable Developer options and ADB. The radio-free
-product starts adbd on TCP port 5555 and on vsock port 5555, and retains the
-stock authorization prompt for a newly connected host. Three immutable launch
-properties, which adbd reads itself (the p0011 topics), shape that:
+Fresh settings databases keep Developer options and USB debugging off: the
+overlay defaults Developer options off and the product sets no
+`persist.sys.usb.config`, which AdbService reads at every boot to set
+`adb_enabled`; the target-files verifier rejects the property in any build
+property file. The radio-free product starts adbd on TCP port 5555 and on vsock
+port 5555, and retains the stock authorization prompt for a newly connected
+host. Three immutable launch properties, which adbd reads itself (the p0011
+topics), shape that:
 
 - `ro.boot.kernarium.adb_auth` can disable the authorization check for
   host-side diagnostics: iOS fixes it to one (only the automation runtime lets a

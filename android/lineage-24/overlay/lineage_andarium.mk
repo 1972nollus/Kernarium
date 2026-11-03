@@ -523,17 +523,20 @@ PRODUCT_PACKAGE_OVERLAYS += device/kernarium/andarium/overlay
 # rejects it when it is true.
 PRODUCT_VENDOR_PROPERTY_BLACKLIST += ro.vendor.hwc.drm.present_fence_not_reliable
 
-# ADB is available over the inherited TCP port even though this machine has no
-# USB controller. A user build retains the stock shell privilege boundary; a
-# userdebug build also lets `adb root` restart adbd as root, so whoever can
-# reach the port without authorization is root in the guest. Apple hosts select
-# authorization through the immutable ro.boot.kernarium.adb_auth property on
-# each boot, and that boot policy overrides the build type's ro.adb.secure
-# default inside adbd.
+# ADB reaches the guest over vsock (and over TCP when the launch has a host
+# forward) even though this machine has no USB controller. A user build retains
+# the stock shell privilege boundary; a userdebug build also lets `adb root`
+# restart adbd as root, so whoever can reach the port without authorization is
+# root in the guest. Apple hosts select authorization through the immutable
+# ro.boot.kernarium.adb_auth property on each boot, and that boot policy
+# overrides the build type's ro.adb.secure default inside adbd.
+#
+# USB debugging is off on a fresh data partition: persist.sys.usb.config, which
+# AdbService reads at every boot to set adb_enabled, has no product default.
+# The filter removes the value an inherited product would set. adbd serves the
+# host application's key whatever the setting; any other key needs debugging on.
 PRODUCT_PRODUCT_PROPERTIES := $(filter-out \
     persist.sys.usb.config=%,$(PRODUCT_PRODUCT_PROPERTIES))
-PRODUCT_PRODUCT_PROPERTIES += \
-    persist.sys.usb.config=adb
 
 # The WebView provider declares use32bitAbi. Left alone, that makes its 32-bit
 # libraries primary, and every WebView renderer, including those of 64-bit
