@@ -66,6 +66,101 @@ nonisolated enum AdbOperationRunner {
     }
 }
 
+/// What a bug report has left in the guest, shared between the operation's
+/// thread and the cleanup that follows a cancel.
+nonisolated final class BugReportTrail: @unchecked Sendable {
+    private let lock = NSLock()
+    private var remote: String?
+
+    /// The report's path in the guest, once Android has said it.
+    var remotePath: String? {
+        get { lock.withLock { remote } }
+        set { lock.withLock { remote = newValue } }
+    }
+}
+
+nonisolated enum BugReportOperation {
+    /// Android's own collecting is nine tenths of the bar, the copy the rest.
+    static let generatingShare = 0.9
+    /// Silence from `bugreportz` for this long, in the guest's running time,
+    /// ends the report; so does the whole taking this long.
+    static let idleLimit = Duration.seconds(5 * 60)
+    static let overallLimit = Duration.seconds(45 * 60)
+    static let pullIdleLimit = Duration.seconds(60)
+    static let cleanupLimit = Duration.seconds(15)
+
+    /// Makes the report and returns the staged file. The staged partial file
+    /// goes on any failure; the guest's copy goes after a good pull.
+    static func run(
+        session: AdbSession, device: String, trail: BugReportTrail,
+        update: @escaping @Sendable (BusyUpdate) -> Void
+    ) throws -> URL {
+        let watchdog = session.watchdog
+        var sink: StagedFileSink?
+        do {
+            return try session.run { connection in
+                watchdog.arm(idle: idleLimit, overall: overallLimit)
+                let path = try BugReport.generate(
+                    on: connection,
+                    progress: { update(BusyUpdate(progress: $0 * generatingShare)) },
+                    alive: { watchdog.touch() }
+                )
+                trail.remotePath = path
+                update(BusyUpdate(progress: generatingShare, detail: "Copying the report\u{2026}"))
+                watchdog.arm(idle: pullIdleLimit)
+                var hooks = BugReport.Hooks()
+                hooks.alive = { watchdog.touch() }
+                hooks.stage = { remote, size in
+                    let made = try BugReportStaging.makeSink(remotePath: remote, size: size, device: device)
+                    sink = made
+                    return made
+                }
+                hooks.pulling = { received, total in
+                    let fraction = total == 0 ? 1 : Double(received) / Double(total)
+                    update(BusyUpdate(progress: generatingShare + (1 - generatingShare) * fraction))
+                }
+                let pulled = try BugReport.pull(on: connection, remotePath: path, hooks: hooks)
+                sink?.close()
+                // The guest's copy and any an earlier run left: best effort.
+                watchdog.arm(idle: cleanupLimit)
+                _ = try? connection.runShell(BugReport.cleanupCommand(afterPulling: pulled.remotePath))
+                trail.remotePath = nil
+                guard let url = sink?.url else { throw AdbError.protocolViolation("no report was staged") }
+                return url
+            }
+        } catch {
+            sink?.close()
+            if let url = sink?.url { try? FileManager.default.removeItem(at: url) }
+            throw error
+        }
+    }
+
+    /// Whether the guest's dump may still run when the operation ended with
+    /// `error`: it does when only the stream ended (a cancel, a limit, the
+    /// service restarting), and a second report would be refused meanwhile.
+    static func dumpMayGoOn(after error: Error) -> Bool {
+        if error is CancellationError { return true }
+        switch error as? AdbError {
+        case .cancelled, .timedOut, .guestGone, .streamClosed: return true
+        default: return false
+        }
+    }
+
+    /// After a cancel or a failure: ends a dump still running and removes
+    /// what it left, on a connection of its own, within a bound. The report's
+    /// stream is already closed, which is the fallback if this cannot run.
+    static func stopInGuest(session: AdbSession, trail: BugReportTrail) {
+        _ = try? session.run { connection in
+            session.watchdog.arm(idle: cleanupLimit, overall: cleanupLimit)
+            if let path = trail.remotePath {
+                _ = try? connection.runShell(BugReport.cleanupCommand(afterPulling: path))
+            } else {
+                _ = try? connection.runShell(BugReport.stopCommand)
+            }
+        }
+    }
+}
+
 /// The operations the screens ask of Android over adb, with the key this boot
 /// carries and the clock of the guest's running time. The application builds
 /// one for each call; the hosted tests build their own and drive a real guest
@@ -76,6 +171,42 @@ nonisolated struct AdbGuestOperations: Sendable {
     /// "iPad", "iPhone" or "Mac", for the words of a failure.
     var device: String
     var connector: any AdbConnector = VsockConnector()
+
+    /// Asks Android for a bug report and stages it for the share sheet.
+    /// Cancelling the task stops the dump in the guest and removes what it
+    /// left, then throws `CancellationError`.
+    func createBugReport(update: @escaping @Sendable (BusyUpdate) -> Void) async throws -> URL {
+        guard let identity else { throw AdbFailure(.keyRejected, activity: .bugReport) }
+        let trail = BugReportTrail()
+        let device = device
+        do {
+            let file = try await AdbOperationRunner.run(identity: identity, clock: clock, connector: connector) { session in
+                try BugReportOperation.run(session: session, device: device, trail: trail, update: update)
+            }
+            if Task.isCancelled {
+                try? FileManager.default.removeItem(at: file)
+                throw CancellationError()
+            }
+            return file
+        } catch {
+            let shown = AdbOperationRunner.presented(error, activity: .bugReport)
+            // The guest's dump goes on by itself when only the stream ended.
+            if BugReportOperation.dumpMayGoOn(after: error) {
+                await stopBugReport(identity: identity, trail: trail)
+            }
+            throw shown
+        }
+    }
+
+    /// Stops a dump the guest may still run and removes what it left, on a
+    /// connection of its own that a cancelled task cannot end.
+    private func stopBugReport(identity: AdbKeyStore.Identity, trail: BugReportTrail) async {
+        _ = try? await AdbOperationRunner.run(
+            identity: identity, clock: clock, cancellable: false, connector: connector
+        ) { session in
+            BugReportOperation.stopInGuest(session: session, trail: trail)
+        }
+    }
 
     /// Runs a command in the guest's shell and returns what it printed.
     func shell(_ command: String, limit: Duration = .seconds(60)) async throws -> ShellResult {

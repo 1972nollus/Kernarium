@@ -1,12 +1,39 @@
 import AndariumCore
 import Foundation
 
-/// A long task the screens wait for: creating or erasing a guest.
+/// What the Cancel button of a long task does. Two are equal when they are the
+/// same button, so a state that only changes its words stays equal to itself.
+struct BusyCancel: Equatable {
+    let id = UUID()
+    let action: @MainActor () -> Void
+
+    static func == (lhs: BusyCancel, rhs: BusyCancel) -> Bool { lhs.id == rhs.id }
+}
+
+/// A long task the screens wait for: creating or erasing a guest, or one of
+/// the guest's own operations.
 struct BusyState: Equatable {
     var title: String
     var detail: String
     /// 0 to 1, or nil while the length of the task is not known.
     var progress: Double?
+    /// Shows a Cancel button that does this; nil for a task that cannot stop.
+    var cancel: BusyCancel?
+}
+
+/// What a running operation tells the overlay: any part may be left out.
+nonisolated struct BusyUpdate: Sendable {
+    var progress: Double?
+    var detail: String?
+    /// False once the task is past the point where it can stop; true again is
+    /// never sent.
+    var cancellable: Bool?
+
+    init(progress: Double? = nil, detail: String? = nil, cancellable: Bool? = nil) {
+        self.progress = progress
+        self.detail = detail
+        self.cancellable = cancellable
+    }
 }
 
 /// Something the person should know and acknowledge.
@@ -41,6 +68,9 @@ protocol RuntimeDriver: AnyObject {
     /// Turns the guest's microphone on or off, asking the system for access
     /// when the person turns it on for the first time.
     func setMicrophone(_ on: Bool)
+    /// Asks the guest for a bug report and copies it into `BugReportStaging`.
+    /// Returns the staged file; cancelling the task stops the report.
+    func createBugReport(update: @escaping @Sendable (BusyUpdate) -> Void) async throws -> URL
 }
 
 /// What a screen needs from its launch arguments to open a state directly.

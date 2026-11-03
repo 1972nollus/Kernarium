@@ -75,6 +75,8 @@ struct AppEntry {
         // it; a size the launch states stays as stated.
         guest = guest.map { launch.applied(to: $0, on: host) }
 
+        // A report staged for sharing by a process that ended is of no use.
+        BugReportStaging.sweep()
         let model = AppModel(
             guest: guest, host: host, system: system, capabilities: .device,
             createRequirementBytes: storage.createRequirementBytes,

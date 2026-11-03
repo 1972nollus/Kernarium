@@ -25,6 +25,7 @@ struct SessionSettingsSheet: View {
             List {
                 if model.capabilities.apkInstall { apps(session) }
                 if model.capabilities.adbOverNetwork { adb(session) }
+                if normalSession, model.capabilities.bugReport { bugReport }
                 if model.capabilities.statistics { stats(session) }
                 options
             }
@@ -48,6 +49,36 @@ struct SessionSettingsSheet: View {
             model.session.install(fileName: url.lastPathComponent, sizeMB: Double(bytes) / 1_000_000)
         }
     }
+
+    /// Recovery runs no adb: its operations are for a normal session.
+    private var normalSession: Bool {
+        if case .running(.normal) = model.phase { return true }
+        return false
+    }
+
+    // MARK: Bug report
+
+    /// Tapping the row starts at once; the footer says what a report holds.
+    private var bugReport: some View {
+        Section {
+            Button {
+                dismiss()
+                model.createBugReport()
+            } label: {
+                HStack(spacing: 12) {
+                    IconTile(symbol: "ladybug.fill")
+                    Text("Create Bug Report\u{2026}")
+                        .foregroundStyle(Color.accentColor)
+                    Spacer()
+                }
+            }
+        } footer: {
+            Text(Self.bugReportNotice)
+        }
+    }
+
+    /// What the report holds, said before it is made.
+    static let bugReportNotice = "A bug report holds the guest\u{2019}s logs, installed apps, accounts and Wi-Fi names."
 
     // MARK: Apps
 

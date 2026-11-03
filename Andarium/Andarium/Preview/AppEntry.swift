@@ -37,7 +37,8 @@ struct AppEntry {
         if resetTips { try? Tips.resetDatastore() }
         if screen == "session-tip" {
             Tips.showAllTipsForTesting()
-        } else if screen.hasPrefix("session") || screen.hasPrefix("settings") || screen.hasPrefix("recovery") || screen.hasPrefix("boot") {
+        } else if screen.hasPrefix("session") || screen.hasPrefix("settings") || screen.hasPrefix("recovery") || screen.hasPrefix("boot")
+            || screen == "bug-report" || screen == "install-apk" {
             Tips.hideAllTipsForTesting()
         }
         try? Tips.configure([.displayFrequency(.immediate)])
@@ -118,6 +119,7 @@ struct AppEntry {
             )
             model.phase = .running(.normal)
         case "settings", "settings-installing", "settings-installed", "settings-not-apk",
+             "bug-report",
              "settings-install-failed", "settings-adb":
             let session = model.session
             let file = ApkInstall.sampleFile
@@ -143,7 +145,10 @@ struct AppEntry {
             default:
                 break
             }
-            model.sessionPreset = SessionPreset(settings: true, settingsLarge: screen == "settings")
+            // The two guest operations play on the full-screen overlay with
+            // Settings already gone.
+            let operation = screen == "bug-report" || screen == "install-apk"
+            model.sessionPreset = SessionPreset(settings: !operation, settingsLarge: screen == "settings")
             model.phase = .running(.normal)
         case "recovery", "recovery-open":
             model.sessionPreset = SessionPreset(keysOpen: screen == "recovery-open")
@@ -177,6 +182,9 @@ struct AppEntry {
             model.startMenu = true
         case "start-low-space":
             model.start(.normal)
+        case "bug-report":
+            try? await Task.sleep(for: .milliseconds(450))
+            model.createBugReport()
         default:
             break
         }

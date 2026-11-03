@@ -1,0 +1,218 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+import AndariumCore
+import Foundation
+import Testing
+@testable import Andarium
+
+/// Create Bug Report and Install App as the model plays them: Settings has
+/// dismissed, the overlay covers the screens, a Cancel stops the work, and the
+/// result is a share sheet, a row or an alert. A stub stands for the runtime.
+/// The tests share the staging folder, which one of them sweeps, so they run
+/// one at a time.
+@Suite(.serialized)
+@MainActor
+struct AndroidOperationTests {
+    private let host = HostDevice(
+        name: "iPad", processorCount: 6, memory: MemoryPolicy(maximumsMiB: [4096]), freeStorageBytes: 40_000_000_000
+    )
+
+    private func running(_ mode: StartMode = .normal) -> (AppModel, StubDriver) {
+        let system = SystemInfo(
+            distribution: "LineageOS 24", android: "17", release: "r2", kernel: "Linux 6.18",
+            architecture: "arm64, 4 KB pages", appVersion: "1"
+        )
+        let model = AppModel(
+            guest: Guest.fresh(on: host), host: host, system: system, capabilities: .device,
+            createRequirementBytes: 1, systemBytes: 1
+        )
+        let driver = StubDriver(plan: .normal)
+        model.driver = driver
+        model.phase = .running(mode)
+        return (model, driver)
+    }
+
+    /// Waits, up to a bound, for `condition` on the main actor.
+    private func eventually(_ condition: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+
+    private func stagedFile() throws -> URL {
+        try FileManager.default.createDirectory(at: BugReportStaging.directory, withIntermediateDirectories: true)
+        let url = BugReportStaging.directory.appendingPathComponent("test-\(UUID().uuidString).zip")
+        try Data([0x50, 0x4B, 5, 6]).write(to: url)
+        return url
+    }
+
+    /// A gate the stub waits on until the test opens it.
+    private nonisolated final class Gate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var open = false
+        func release() { lock.withLock { open = true } }
+        var isOpen: Bool { lock.withLock { open } }
+    }
+
+    // MARK: Bug report
+
+    @Test func aBugReportCoversTheScreensThenOffersTheFile() async throws {
+        let (model, driver) = running()
+        let file = try stagedFile()
+        driver.bugReport = { update in
+            update(BusyUpdate(progress: 0.45))
+            update(BusyUpdate(progress: 0.3))  // never moves back
+            update(BusyUpdate(progress: 0.9, detail: "Copying the report\u{2026}"))
+            return file
+        }
+        var offered: URL?
+        var finishedSharing: (@MainActor () -> Void)?
+        model.presentShare = { url, done in
+            offered = url
+            finishedSharing = done
+            return true
+        }
+        model.createBugReport()
+        #expect(model.busy?.title == "Creating Bug Report")
+        #expect(model.busy?.cancel != nil)
+        #expect(await eventually { offered != nil })
+        #expect(offered == file)
+        #expect(model.busy == nil && model.alert == nil)
+        // The file stays for the sheet, and goes on any outcome of it.
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        finishedSharing?()
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @Test func progressOnlyMovesForward() async throws {
+        let (model, driver) = running()
+        let gate = Gate()
+        driver.bugReport = { update in
+            update(BusyUpdate(progress: 0.5))
+            update(BusyUpdate(progress: 0.2))
+            while !gate.isOpen { try await Task.sleep(for: .milliseconds(5)) }
+            throw CancellationError()
+        }
+        model.createBugReport()
+        #expect(await eventually { model.busy?.progress == 0.5 })
+        gate.release()
+        #expect(await eventually { model.busy == nil })
+    }
+
+    @Test func cancellingStopsTheReportAndReturnsToTheSession() async throws {
+        let (model, driver) = running()
+        let stopped = Gate()
+        driver.bugReport = { _ in
+            do {
+                while true { try await Task.sleep(for: .milliseconds(5)) }
+            } catch {
+                stopped.release()
+                throw error
+            }
+        }
+        model.createBugReport()
+        let cancel = try #require(model.busy?.cancel)
+        cancel.action()
+        // The overlay stays while the guest is cleaned up, with no way to cancel again.
+        #expect(model.busy?.cancel == nil)
+        #expect(model.busy?.detail == "Cancelling\u{2026}")
+        #expect(await eventually { model.busy == nil })
+        #expect(stopped.isOpen)
+        #expect(model.alert == nil)
+    }
+
+    @Test func aFailureIsAnAlertAndTheOverlayGoes() async throws {
+        let (model, driver) = running()
+        driver.bugReport = { _ in throw AdbFailure(.remote("There is an existing bugreport in progress"), activity: .bugReport) }
+        model.createBugReport()
+        #expect(await eventually { model.alert != nil })
+        #expect(model.alert?.title == "Bug Report Not Created")
+        #expect(model.alert?.message == "The guest is already making a bug report.")
+        #expect(model.busy == nil)
+    }
+
+    @Test func recoveryOffersNoBugReport() {
+        let (model, _) = running(.recovery)
+        model.createBugReport()
+        #expect(model.busy == nil)
+    }
+
+    @Test func aSecondOperationWaitsForTheFirst() async throws {
+        let (model, driver) = running()
+        let gate = Gate()
+        driver.bugReport = { _ in
+            while !gate.isOpen { try await Task.sleep(for: .milliseconds(5)) }
+            throw CancellationError()
+        }
+        model.createBugReport()
+        let first = model.busy
+        model.createBugReport()
+        #expect(model.busy == first)
+        gate.release()
+        #expect(await eventually { model.busy == nil })
+    }
+
+    @Test func theEndOfTheRunTakesTheOperationWithoutAnAlert() async throws {
+        let (model, driver) = running()
+        let gate = Gate()
+        driver.bugReport = { _ in
+            while !gate.isOpen { try await Task.sleep(for: .milliseconds(5)) }
+            throw AdbFailure(.guestGone, activity: .bugReport)
+        }
+        model.createBugReport()
+        #expect(model.busy != nil)
+        model.runEnded(RunEnd(result: 0), uptimeSeconds: 1)
+        #expect(model.busy == nil)
+        gate.release()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(model.alert == nil && model.busy == nil)
+    }
+
+    @Test func aDumpThatMayGoOnIsStoppedAfterAnyEndOfTheStreamButNotAfterALocalFailure() {
+        #expect(BugReportOperation.dumpMayGoOn(after: CancellationError()))
+        for error in [AdbError.cancelled, .timedOut, .guestGone, .streamClosed] {
+            #expect(BugReportOperation.dumpMayGoOn(after: error), "\(error)")
+        }
+        for error in [AdbError.refused, .keyRejected, .io(ENOSPC), .remote("no")] {
+            #expect(!BugReportOperation.dumpMayGoOn(after: error), "\(error)")
+        }
+        #expect(!BugReportOperation.dumpMayGoOn(after: BugReportStaging.NoRoom(megabytes: 1, device: "iPad")))
+    }
+
+    @Test func theNoticeIsOneLineAndTheFailuresHaveTheirWords() {
+        #expect(SessionSettingsSheet.bugReportNotice.contains("logs"))
+        #expect(!SessionSettingsSheet.bugReportNotice.contains("\n"))
+        #expect(AdbFailure(.refused, activity: .bugReport).message
+            == "The guest isn\u{2019}t ready to make a bug report. Try again in a moment.")
+        #expect(AdbFailure(.keyRejected, activity: .bugReport).message
+            == "The guest didn\u{2019}t accept Andarium\u{2019}s key. Restart the guest and try again.")
+        #expect(AdbFailure(.guestGone, activity: .installApp).message
+            == "The guest\u{2019}s debugging service restarted before the app was installed. Try again.")
+        #expect(AdbFailure(.streamClosed, activity: .bugReport).message
+            == "The guest\u{2019}s debugging service restarted before the bug report was finished. Try again.")
+        #expect(BugReportStaging.NoRoom(megabytes: 1300, device: "iPad").errorDescription
+            == "There isn\u{2019}t enough free space on this iPad for the report (1300 MB).")
+    }
+
+    // MARK: Staging
+
+    @Test func theStagedReportNeedsRoomBeyondItsOwnSize() throws {
+        #expect(throws: BugReportStaging.NoRoom(megabytes: 2000, device: "iPad")) {
+            try BugReportStaging.makeSink(
+                remotePath: "/data/b/bugreport-x.zip", size: 2_000_000_000, device: "iPad",
+                available: 2_000_000_000 + BugReportStaging.reserveBytes - 1)
+        }
+        let sink = try BugReportStaging.makeSink(
+            remotePath: "/data/b/bugreport-x.zip", size: 10, device: "iPad", available: 1 << 30)
+        defer { BugReportStaging.sweep() }
+        try sink.write(Data("PK".utf8))
+        sink.close()
+        #expect(sink.url.deletingLastPathComponent() == BugReportStaging.directory)
+        #expect(sink.url.lastPathComponent == "bugreport-x.zip")
+        BugReportStaging.sweep()
+        #expect(!FileManager.default.fileExists(atPath: sink.url.path))
+    }
+
+}

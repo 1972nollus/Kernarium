@@ -268,6 +268,17 @@ final class LiveRuntime: RuntimeDriver {
         return text.withCString(body)
     }
 
+    // MARK: Android operations
+
+    /// What adb does for the screens, with the key this boot carries.
+    private var operations: AdbGuestOperations {
+        AdbGuestOperations(identity: adbIdentity, clock: clock, device: model?.host.name ?? "device")
+    }
+
+    func createBugReport(update: @escaping @Sendable (BusyUpdate) -> Void) async throws -> URL {
+        try await operations.createBugReport(update: update)
+    }
+
     // MARK: Events
 
     private func reached(_ milestones: [BootMilestone], bootCompleted: Bool) {

@@ -166,6 +166,11 @@ final class AppModel {
     var diskProgress: Double?
     var microphoneState = MicrophoneState.notAsked
     private var persistTask: Task<Void, Never>?
+    /// The Android operation under way (a bug report, an install), which the
+    /// overlay's Cancel stops, and the run it belongs to.
+    private var operation: Task<Void, Never>?
+    private var operationEpoch = 0
+    private var operationCancelled = false
 
     init(
         guest: Guest?, host: HostDevice, system: SystemInfo, capabilities: Capabilities,
@@ -310,6 +315,128 @@ final class AppModel {
         }
     }
 
+    // MARK: Android operations
+
+    /// Runs one of Android's operations behind the busy overlay: Settings
+    /// has dismissed, the overlay covers the screens, and a Cancel button
+    /// stops it. `work` reports through the update closure and throws
+    /// `CancellationError` when the person cancelled; any other error is an
+    /// alert. `finished` runs once the overlay has gone.
+    private func runOperation<Output: Sendable>(
+        _ state: BusyState, failure: String,
+        _ work: @escaping @MainActor (@escaping @Sendable (BusyUpdate) -> Void) async throws -> Output,
+        finished: @escaping @MainActor (Output) -> Void = { _ in }
+    ) {
+        guard busy == nil else { return }
+        operationEpoch += 1
+        let epoch = operationEpoch
+        operationCancelled = false
+        var state = state
+        state.cancel = BusyCancel { [weak self] in self?.cancelOperation() }
+        busy = state
+        operation = Task { [weak self] in
+            guard let self else { return }
+            var result: Output?
+            do {
+                result = try await work { update in
+                    Task { @MainActor in self.apply(update, epoch: epoch) }
+                }
+            } catch is CancellationError {
+            } catch {
+                if operationEpoch == epoch {
+                    alert = AppAlert(title: failure, message: error.localizedDescription)
+                }
+            }
+            // The run ending, or a restart, took the operation over already.
+            guard operationEpoch == epoch else { return }
+            busy = nil
+            operation = nil
+            if let result { finished(result) }
+        }
+    }
+
+    private func apply(_ update: BusyUpdate, epoch: Int) {
+        guard epoch == operationEpoch, !operationCancelled, busy != nil else { return }
+        // The new value is worked out before the write: reading `busy` while
+        // writing through it is an overlapping access.
+        if let progress = update.progress, let current = busy {
+            busy?.progress = max(current.progress ?? 0, progress)
+        }
+        if let detail = update.detail { busy?.detail = detail }
+        if update.cancellable == false { busy?.cancel = nil }
+    }
+
+    /// The overlay's Cancel: the operation stops and cleans up while the
+    /// overlay stays, so the session returns with nothing left behind.
+    private func cancelOperation() {
+        guard operation != nil, !operationCancelled else { return }
+        operationCancelled = true
+        busy?.cancel = nil
+        busy?.detail = "Cancelling\u{2026}"
+        operation?.cancel()
+    }
+
+    /// The guest ended or restarted under an operation: its stream is gone
+    /// with the boot, so the overlay goes and no alert is raised over the
+    /// screen that says the guest stopped.
+    private func abandonOperation() {
+        guard operation != nil else { return }
+        operationEpoch += 1
+        operation?.cancel()
+        operation = nil
+        busy = nil
+    }
+
+    /// Create Bug Report: Settings has dismissed. Android collects its report
+    /// (minutes, under emulation) and the finished zip goes to the share
+    /// sheet, where Save to Files is one of the actions.
+    func createBugReport() {
+        guard capabilities.bugReport, case .running(.normal) = phase else { return }
+        runOperation(
+            BusyState(
+                title: "Creating Bug Report",
+                detail: "The guest is collecting its logs and state. This can take several minutes.", progress: 0
+            ),
+            failure: "Bug Report Not Created",
+            { [driver] update in
+                if let driver { return try await driver.createBugReport(update: update) }
+                return try await Self.playBugReport(update)
+            },
+            finished: { [weak self] file in self?.share(file) }
+        )
+    }
+
+    /// Opens the share sheet on a finished report; false when there is no
+    /// window to show it. A test puts its own here.
+    var presentShare: (URL, @escaping @MainActor () -> Void) -> Bool = { file, finished in
+        BugReportSharing.present(file, finished: finished)
+    }
+
+    /// The report is deleted on every outcome of the sheet.
+    private func share(_ file: URL) {
+        let shown = presentShare(file) { try? FileManager.default.removeItem(at: file) }
+        if !shown { try? FileManager.default.removeItem(at: file) }
+    }
+
+    /// The preview's report: the same steps on the same overlay, ending in
+    /// the share sheet with a small file.
+    private static func playBugReport(_ update: @Sendable (BusyUpdate) -> Void) async throws -> URL {
+        for step in 1...36 {
+            try await Task.sleep(for: .milliseconds(100))
+            update(BusyUpdate(progress: Double(step) / 36 * 0.9))
+        }
+        update(BusyUpdate(progress: 0.9, detail: "Copying the report\u{2026}"))
+        for step in 1...8 {
+            try await Task.sleep(for: .milliseconds(100))
+            update(BusyUpdate(progress: 0.9 + 0.1 * Double(step) / 8))
+        }
+        try FileManager.default.createDirectory(at: BugReportStaging.directory, withIntermediateDirectories: true)
+        let file = BugReportStaging.directory.appendingPathComponent("bugreport-preview.zip")
+        // An empty zip: its end-of-central-directory record.
+        try Data([0x50, 0x4B, 0x05, 0x06] + [UInt8](repeating: 0, count: 18)).write(to: file)
+        return file
+    }
+
     /// Starts the guest in `mode`. Start on an update that did not finish
     /// tries the update again.
     func start(_ mode: StartMode) {
@@ -369,6 +496,7 @@ final class AppModel {
     /// The runtime's run returned: the guest powered off, or stopped for a
     /// reason the failure screen reports.
     func runEnded(_ end: RunEnd, uptimeSeconds: Int?) {
+        abandonOperation()
         runEnd = end
         runUptimeSeconds = uptimeSeconds
         lifecycle.phase = end.phase
@@ -379,6 +507,7 @@ final class AppModel {
     /// Android's own Restart boots the guest again in place. ADB and the
     /// install list belong to the run that ended.
     func restart() {
+        abandonOperation()
         frozenBootStage = nil
         sessionPreset = SessionPreset()
         let showStats = session.showStats

@@ -51,7 +51,7 @@ public struct Capabilities: Equatable, Sendable {
         systemUpdate: true,
         adbOverNetwork: false,
         apkInstall: false,
-        bugReport: false,
+        bugReport: true,
         statistics: false, appCount: false, liveDisplayOptions: false
     )
 }

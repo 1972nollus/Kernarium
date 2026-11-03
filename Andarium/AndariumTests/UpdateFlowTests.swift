@@ -29,6 +29,13 @@ final class StubDriver: RuntimeDriver {
     }
     func setMicrophone(_ on: Bool) {}
 
+    /// What a bug report or an install does when the model asks.
+    var bugReport: (@Sendable (@Sendable (BusyUpdate) -> Void) async throws -> URL) = { _ in
+        throw CancellationError()
+    }
+    func createBugReport(update: @escaping @Sendable (BusyUpdate) -> Void) async throws -> URL {
+        try await bugReport(update)
+    }
 }
 
 @MainActor
