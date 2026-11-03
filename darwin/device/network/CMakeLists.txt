@@ -14,7 +14,10 @@ function(_uml_add_network_provider TARGET TESTING)
     add_library(${TARGET} STATIC
         slirp/provider.cpp
         slirp/event_loop.cpp
-        slirp/frame_queue.cpp)
+        slirp/frame_queue.cpp
+        slirp/dns_frames.cpp
+        slirp/dns_message.cpp
+        slirp/dns_resolver.cpp)
     uml_declare_architecture_target(${TARGET} device)
     if(TESTING)
         target_include_directories(${TARGET} PUBLIC
@@ -29,7 +32,8 @@ function(_uml_add_network_provider TARGET TESTING)
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/slirp)
-    target_link_libraries(${TARGET} PUBLIC UML::BridgeAbi UML::Descriptor)
+    target_link_libraries(${TARGET} PUBLIC
+        UML::BridgeAbi UML::Descriptor UML::DeviceSocketPaths)
     target_link_libraries(${TARGET} PRIVATE
         UML::GuestTimerMask
         UML::ThirdPartySlirp)

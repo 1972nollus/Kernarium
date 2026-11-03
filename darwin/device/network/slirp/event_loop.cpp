@@ -115,7 +115,21 @@ void SlirpProvider::timer_modify_callback(
 void SlirpProvider::register_poll_socket(
 	slirp_os_socket descriptor, void *opaque) noexcept
 {
+#if UML_SLIRP_TESTING
+	if (auto *emulator = from_opaque(opaque); emulator != nullptr) {
+		sockaddr_storage address{};
+		socklen_t length = sizeof(address);
+		if (::getsockname(descriptor,
+				  reinterpret_cast<sockaddr *>(&address),
+				  &length) == 0 &&
+		    (address.ss_family == AF_INET ||
+		     address.ss_family == AF_INET6))
+			emulator->internet_sockets_for_testing_.fetch_add(
+				1, std::memory_order_relaxed);
+	}
+#else
 	(void)opaque;
+#endif
 	/* libslirp writes the host sockets it makes or accepts with plain send(),
 	 * which raises SIGPIPE when the peer has already reset the connection: an
 	 * adb server dropping its transport while the guest restarts is enough to

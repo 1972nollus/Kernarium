@@ -11,7 +11,8 @@ if(UML_BUILD_NETWORK_PROVIDER)
         uml_slirp_tcp_liveness_tests
         uml_slirp_connect_failure_tests
         uml_slirp_icmp_tests
-        uml_slirp_transmit_backpressure_tests)
+        uml_slirp_transmit_backpressure_tests
+        uml_slirp_dns_tests)
     set(_uml_slirp_probe_sources
         slirp_arp_probe.cpp
         slirp_forward_probe.cpp
@@ -21,7 +22,8 @@ if(UML_BUILD_NETWORK_PROVIDER)
         slirp_tcp_liveness_probe.cpp
         slirp_connect_failure_probe.cpp
         slirp_icmp_probe.cpp
-        slirp_transmit_backpressure_probe.cpp)
+        slirp_transmit_backpressure_probe.cpp
+        slirp_dns_probe.cpp)
     set(_uml_slirp_probe_tests
         slirp-network-arp
         slirp-network-forward-specification
@@ -31,7 +33,8 @@ if(UML_BUILD_NETWORK_PROVIDER)
         slirp-network-tcp-liveness
         slirp-network-connect-failure
         slirp-network-icmp
-        slirp-network-transmit-backpressure)
+        slirp-network-transmit-backpressure
+        slirp-network-dns)
     foreach(_uml_slirp_target _uml_slirp_source _uml_slirp_test IN ZIP_LISTS
             _uml_slirp_probe_targets
             _uml_slirp_probe_sources

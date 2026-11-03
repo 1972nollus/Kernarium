@@ -2,6 +2,7 @@
 #include "provider.hpp"
 #include "uml_slirp_net.h"
 #include "platform/guest_timer_mask.hpp"
+#include "socket_paths.hpp"
 
 #include <arpa/inet.h>
 #include <cerrno>
@@ -12,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <chrono>
 #include <cstdio>
@@ -59,6 +61,28 @@ bool ensure_pipe(std::array<UniqueDescriptor, 2> &result) noexcept
 	return create_pipe(result);
 }
 
+/* Where SLiRP's guest forward reaches the resolver for DNS over TCP: the
+ * application's temporary directory, as $TMPDIR names it on iOS and macOS. A
+ * Unix socket path must fit sun_path (104 bytes with its terminator). */
+std::string dns_stream_path()
+{
+	static std::atomic_uint sequence{0};
+	std::string directory;
+	if (const char *temporary = std::getenv("TMPDIR");
+	    temporary != nullptr && temporary[0] == '/')
+		directory = temporary;
+	else
+		directory = uml::device::user_temporary_directory();
+	if (directory.empty())
+		return {};
+	if (directory.back() != '/')
+		directory.push_back('/');
+	/* An iOS container's tmp/ is 89 bytes long; "dns-<pid>-<n>" keeps the
+	 * whole path within sun_path's 103. */
+	return directory + "dns-" + std::to_string(::getpid()) + "-" +
+		std::to_string(sequence.fetch_add(1));
+}
+
 void drain_pipe(UniqueDescriptor &descriptor) noexcept
 {
 	std::array<std::byte, 64> buffer{};
@@ -98,6 +122,11 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 		config.version = 6;
 		config.in_enabled = true;
 		config.restricted = 0;
+		/* SLiRP's DNS proxy sends a guest's queries to the host's first
+		 * configured server, usually a local-network router. The
+		 * provider answers the name server itself (answer_locally and
+		 * HostResolver), so SLiRP never addresses that server. */
+		config.disable_dns = true;
 		(void)inet_pton(AF_INET, network_address, &config.vnetwork);
 		(void)inet_pton(AF_INET, network_mask, &config.vnetmask);
 		(void)inet_pton(AF_INET, host_alias_address, &config.vhost);
@@ -130,15 +159,50 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 			/*
 			 * ITIMER_REAL is UML's guest clock and must run only on its
 			 * designated CPU pthread. Darwin otherwise may select this
-			 * SLiRP worker for SIGALRM and enter Linux scheduler code on a
-			 * foreign host stack.
+			 * SLiRP worker, or the resolver's thread, for SIGALRM and
+			 * enter Linux scheduler code on a foreign host stack.
 			 */
 			const uml::platform::ScopedGuestTimerBlock timer_block(
 				"blocking the UML timer around the SLiRP worker");
+#if UML_SLIRP_TESTING
+			resolver_.set_interface_for_testing(
+				dns_interface_for_testing_);
+#endif
+			const std::string stream_path = dns_stream_path();
+			if (resolver_.start(
+				    [this](std::span<const std::uint8_t> frame) {
+					    try {
+						    (void)enqueue_received(
+							    std::as_bytes(frame));
+					    } catch (...) {
+					    }
+				    },
+				    stream_path) != 0) {
+				slirp_.reset();
+				return -EIO;
+			}
+			/* DNS over TCP to the name server, and to the gateway as
+			 * SLiRP's own proxy allowed, reaches the resolver through a
+			 * per-connection Unix socket. disable_dns is what lets a
+			 * guest forward claim the name server's port. */
+			if (resolver_.streams_available()) {
+				for (const char *server :
+				     {nameserver_address, host_alias_address}) {
+					in_addr address{};
+					(void)inet_pton(AF_INET, server, &address);
+					if (slirp_add_unix(slirp_.get(),
+							   stream_path.c_str(),
+							   &address, 53) != 0)
+						std::fprintf(stderr,
+							"Darwin user network: no DNS "
+							"over TCP at %s\n", server);
+				}
+			}
 			worker_ = std::jthread{[this](std::stop_token stop_token) {
 				event_loop(stop_token);
 			}};
 		} catch (const std::system_error &) {
+			resolver_.stop();
 			slirp_.reset();
 			return -EIO;
 		}
@@ -218,6 +282,9 @@ void SlirpProvider::stop() noexcept
 	transmit_space_.notify_all();
 	if (worker_.joinable())
 		worker_.join();
+	/* The resolver delivers into the receive ring from its own thread;
+	 * once it is joined nothing can refill the ring cleared below. */
+	resolver_.stop();
 #if UML_SLIRP_TESTING
 	notify_receive_cleanup_for_testing();
 #endif

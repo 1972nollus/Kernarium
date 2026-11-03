@@ -404,9 +404,20 @@ and its reply reaches the guest with the TTL it arrived with. SLiRP drops a
 packet whose source or destination no network carries: loopback, class E
 other than the limited broadcast, the unspecified address as a destination,
 a multicast source. A DHCP DISCOVER from the unspecified address to the
-limited broadcast is none of these and is answered. A guest that sends DNS
-to the gateway address on port 53 reaches the host's resolver, as one that
-sends it to the name server address does.
+limited broadcast is none of these and is answered.
+
+The provider answers the guest's name server itself, through the host's system
+resolver (mDNSResponder, `dns_sd`), over UDP and TCP, at the name server
+address and at the gateway address on port 53. SLiRP's own DNS proxy is off:
+it would send each query from the application to the host's first configured
+server, usually a local-network router, which on iOS and macOS needs the user's
+Local Network permission; the system resolver's traffic does not. The name
+server serves nothing but DNS: a TCP connect to another of its ports is reset
+and any other datagram dropped, so nothing addressed to it leaves the host. A
+query unanswered after 10 s gets SERVFAIL, a UDP answer longer than the
+guest's EDNS size (512 bytes without EDNS, at most one 1500-byte frame) is
+truncated so the guest retries over TCP, and stopping the link ends every
+query in flight (`slirp-network-dns`).
 
 The guest network driver has no transmit flow control, so a frame the provider
 refuses is lost and TCP must retransmit it. A guest transmit into a full
