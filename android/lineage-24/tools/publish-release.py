@@ -332,6 +332,7 @@ def main() -> None:
     run([
         str(android_root / "build/assemble-image.sh"),
         "--target-files", str(signed_archive),
+        "--signed",
         "--kernel-artifact", str(kernel_artifact),
         "--mkbootfs", str(mkbootfs),
         "--mkbootimg", str(mkbootimg),

@@ -1325,7 +1325,10 @@ after the path it is given, so it runs in the work directory with `keys` as its
 default key directory: the member is `keys/releasekey.x509.pem` in every
 release, with no build-host path or temporary name, and the tool refuses any
 other member, and `verify-target-files.py --signed` makes the same check on
-the signed archive (`release_common.OTA_CERTIFICATE_MEMBERS`). `--disk-dir` then names
+the signed archive. An unsigned build of either variant holds the AOSP test
+certificate's file name, `testkey.x509.pem`, in both archives, and the verifier
+requires exactly that of every archive not marked `--signed`
+(`release_common.OTA_CERTIFICATE_MEMBERS`). `--disk-dir` then names
 the new directory the signed `system.img` and `partition-layout.json` are
 written to, and `--mkbootfs`, `--mkbootimg` and `--first-boot-artifacts` are
 required; the last names the first-boot output of

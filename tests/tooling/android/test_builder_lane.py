@@ -679,6 +679,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           adbd_variant: str | None = None,
                           services_jar_variant: str | None = None,
                           ota_certificates: str | None = None,
+                          signed: bool = False,
                           adbd_launch_unreadable: bool = False,
                           vendor_property_variant: str | None = None,
                           video_properties: dict[str, str] | None = None,
@@ -1762,25 +1763,27 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                                else b"kernarium: USB debugging is now \x00"),
                         )
                     archive.writestr("SYSTEM/framework/services.jar", services_jar.getvalue())
-                # The OTA certificates of signed target files: the signer names the member after the
-                # release key's path. The unsigned build's own member is another name.
-                if ota_certificates is not None:
-                    for ota_name in ("SYSTEM/etc/security/otacerts.zip",
-                                     "RECOVERY/RAMDISK/system/etc/security/otacerts.zip"):
-                        if ota_certificates == "missing-recovery" and ota_name.startswith("RECOVERY"):
-                            continue
-                        members = {
-                            "release": ["keys/releasekey.x509.pem"],
-                            "test-key": ["build/make/target/product/security/testkey.x509.pem"],
-                            "extra": ["keys/releasekey.x509.pem",
-                                      "build/make/target/product/security/testkey.x509.pem"],
-                            "missing-recovery": ["keys/releasekey.x509.pem"],
-                        }[ota_certificates]
-                        certificates = io.BytesIO()
-                        with zipfile.ZipFile(certificates, "w") as bundle:
-                            for member in members:
-                                bundle.writestr(member, "certificate\n")
-                        archive.writestr(ota_name, certificates.getvalue())
+                # The OTA certificates, the system's and the recovery's: an unsigned build of either variant holds
+                # the AOSP test certificate under its file name, and the signer names the release certificate after
+                # the release key's path.
+                ota_state = ota_certificates or ("release" if signed else "build")
+                state_member = "keys/releasekey.x509.pem" if signed else "testkey.x509.pem"
+                for ota_name in ("SYSTEM/etc/security/otacerts.zip",
+                                 "RECOVERY/RAMDISK/system/etc/security/otacerts.zip"):
+                    if ota_state == "missing-recovery" and ota_name.startswith("RECOVERY"):
+                        continue
+                    members = {
+                        "build": ["testkey.x509.pem"],
+                        "release": ["keys/releasekey.x509.pem"],
+                        "test-key-path": ["build/make/target/product/security/testkey.x509.pem"],
+                        "extra": [state_member, "build/make/target/product/security/testkey.x509.pem"],
+                        "missing-recovery": [state_member],
+                    }[ota_state]
+                    certificates = io.BytesIO()
+                    with zipfile.ZipFile(certificates, "w") as bundle:
+                        for member in members:
+                            bundle.writestr(member, "certificate\n")
+                    archive.writestr(ota_name, certificates.getvalue())
                 # The Wi-Fi HAL and the supplicant (with hostapd), packaged the same way.
                 def hal_apex(apex, binary, name, fqname, service, variant):
                     content = b"\x00" * 8
@@ -1858,23 +1861,24 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         write_fixture(good)
         run_tool(verifier, "--target-files", good, *kernel_options, check=True)
         # Signed target files are checked with --signed: the release certificate alone is trusted,
-        # and only a user build is signed.
+        # and only a user build is signed. The unsigned fixtures above hold the test certificate's
+        # member, which each variant's unsigned build writes.
         signed_good = root / "signed-good.zip"
-        write_fixture(signed_good, ota_certificates="release")
+        write_fixture(signed_good, signed=True)
         run_tool(verifier, "--target-files", signed_good, "--signed", *kernel_options, check=True)
         for variant in BUILD_VARIANTS:
-            unsigned = root / f"{variant}-unsigned-check.zip"
-            write_fixture(unsigned, build_variant=variant, ota_certificates="release")
-            result = run_tool(verifier, "--target-files", unsigned, "--build-variant", variant,
-                              *kernel_options)
-            if result.returncode != 0:
-                fail(f"a {variant} build with OTA certificates failed without --signed: {result.stdout}")
-            result = run_tool(verifier, "--target-files", unsigned, "--build-variant", variant,
+            signed_fixture = root / f"{variant}-signed-check.zip"
+            write_fixture(signed_fixture, build_variant=variant, signed=True)
+            result = run_tool(verifier, "--target-files", signed_fixture, "--build-variant", variant,
                               "--signed", *kernel_options)
             if (result.returncode == 0) != (variant == "user") or (
                 variant != "user" and "is not signed with the release keys" not in result.stdout
             ):
                 fail(f"a {variant} build verified as signed wrongly: {result.returncode} {result.stdout}")
+            result = run_tool(verifier, "--target-files", signed_fixture, "--build-variant", variant,
+                              *kernel_options)
+            if result.returncode == 0 or "not an unsigned build" not in result.stdout:
+                fail(f"a signed {variant} archive verified as an unsigned build: {result.returncode} {result.stdout}")
         # Every supported variant verifies as itself and is rejected as any
         # other: the build-type properties follow the requested variant. These
         # run as processes, like the good archive: they state the command line.
@@ -2195,9 +2199,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("adbd-without-debugging-setting", {"adbd_variant": "no-debugging-setting"}),
             ("adbd-without-key-rule", {"adbd_variant": "no-key-rule"}),
             ("services-jar-without-the-adb-topics", {"services_jar_variant": "no-marker"}),
-            ("signed-with-the-test-key", {"ota_certificates": "test-key"}),
-            ("signed-with-an-extra-certificate", {"ota_certificates": "extra"}),
-            ("signed-without-recovery-certificates", {"ota_certificates": "missing-recovery"}),
+            ("signed-with-the-test-key", {"signed": True, "ota_certificates": "build"}),
+            ("signed-with-the-test-key-path", {"signed": True, "ota_certificates": "test-key-path"}),
+            ("signed-with-an-extra-certificate", {"signed": True, "ota_certificates": "extra"}),
+            ("signed-without-recovery-certificates", {"signed": True, "ota_certificates": "missing-recovery"}),
+            ("unsigned-with-the-release-member", {"ota_certificates": "release"}),
+            ("unsigned-with-an-extra-certificate", {"ota_certificates": "extra"}),
+            ("unsigned-without-recovery-certificates", {"ota_certificates": "missing-recovery"}),
             ("missing-services-jar", {"services_jar_variant": "missing"}),
             ("adbd-cannot-read-launch-properties", {"adbd_launch_unreadable": True}),
             ("missing-cas-plugin-64", {"cas_hal_variant": "no-plugin64"}),
@@ -2625,13 +2633,21 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "holds an adbd that does not read persist.sys.usb.config"),
             ("adbd-without-key-rule-cause", {"adbd_variant": "no-key-rule"},
              "holds an adbd without the key rule of route p0011"),
-            ("signed-with-the-test-key-cause", {"ota_certificates": "test-key"},
+            ("signed-with-the-test-key-cause", {"signed": True, "ota_certificates": "build"},
              "holds the members .* not only keys/releasekey.x509.pem: the target files are not "
              "signed with the release keys"),
-            ("signed-with-an-extra-certificate-cause", {"ota_certificates": "extra"},
+            ("signed-with-the-test-key-path-cause", {"signed": True, "ota_certificates": "test-key-path"},
              "not signed with the release keys"),
-            ("signed-without-recovery-certificates-cause", {"ota_certificates": "missing-recovery"},
+            ("signed-with-an-extra-certificate-cause", {"signed": True, "ota_certificates": "extra"},
+             "not signed with the release keys"),
+            ("signed-without-recovery-certificates-cause", {"signed": True, "ota_certificates": "missing-recovery"},
              "RECOVERY/RAMDISK/system/etc/security/otacerts.zip is missing from the signed"),
+            ("unsigned-with-the-release-member-cause", {"ota_certificates": "release"},
+             "holds the members .* not only testkey.x509.pem: the target files are not an unsigned build"),
+            ("unsigned-with-an-extra-certificate-cause", {"ota_certificates": "extra"},
+             "not an unsigned build"),
+            ("unsigned-without-recovery-certificates-cause", {"ota_certificates": "missing-recovery"},
+             "RECOVERY/RAMDISK/system/etc/security/otacerts.zip is missing from the unsigned"),
             ("services-jar-without-the-adb-topics-cause", {"services_jar_variant": "no-marker"},
              "lacks the AdbService topics of route p0007"),
             ("missing-services-jar-cause", {"services_jar_variant": "missing"},
@@ -3019,7 +3035,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             label = "/".join(case["labels"])
             fixture = root / f"bad-{case['labels'][0]}.zip"
             write_fixture(fixture, **case["options"])
-            signed_option = ("--signed",) if "ota_certificates" in case["options"] else ()
+            signed_option = ("--signed",) if case["options"].get("signed") else ()
             result = run_in_process(tool, "--target-files", fixture, *signed_option, *kernel_options)
             if index == 0:
                 # The harness answers as the script does: the first case also
