@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 23:05:52 +0900
+Subject: [PATCH] um: virtio_uml: reset the vhost-user back-end with its device
+
+A virtio reset only cleared the status that virtio_uml keeps for the
+device and, on Darwin, revoked its shared-memory mappings. Nothing told
+the back-end, which kept the device state and any request it held. A
+back-end that resets a device when its rings are disabled while it holds
+requests resets it on a freeze only when something happened to be
+pending; otherwise the restored driver met a device in the state it had
+before. A virtio-snd substream paused after its queue had drained is
+held stopped by such a device, which then refuses the parameters and the
+prepare of the restored driver for good.
+
+Negotiate VHOST_USER_PROTOCOL_F_RESET_DEVICE and send
+VHOST_USER_RESET_DEVICE from the reset, waiting for its acknowledgement
+when the back-end acknowledges requests. A back-end without the feature
+is treated as before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/um/drivers/vhost_user.h |  3 +++
+ arch/um/drivers/virtio_uml.c | 14 ++++++++++++++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/arch/um/drivers/vhost_user.h b/arch/um/drivers/vhost_user.h
+index 841ae6d730c2c35c815462d3a6c251f5ef140bf8..9ddaf14b4471e1fa4310abffb24317277a845526 100644
+--- a/arch/um/drivers/vhost_user.h
++++ b/arch/um/drivers/vhost_user.h
+@@ -14,6 +14,7 @@
+ #define VHOST_USER_PROTOCOL_F_REPLY_ACK			3
+ #define VHOST_USER_PROTOCOL_F_SLAVE_REQ			5
+ #define VHOST_USER_PROTOCOL_F_CONFIG			9
++#define VHOST_USER_PROTOCOL_F_RESET_DEVICE		13
+ #define VHOST_USER_PROTOCOL_F_INBAND_NOTIFICATIONS	14
+ #define VHOST_USER_PROTOCOL_F_SHMEM_MAP			22
+ /* Vring state index masks */
+@@ -35,6 +36,7 @@
+ 					 BIT_ULL(VHOST_USER_PROTOCOL_F_REPLY_ACK) | \
+ 					 BIT_ULL(VHOST_USER_PROTOCOL_F_SLAVE_REQ) | \
+ 					 BIT_ULL(VHOST_USER_PROTOCOL_F_CONFIG) | \
++					 BIT_ULL(VHOST_USER_PROTOCOL_F_RESET_DEVICE) | \
+ 					 BIT_ULL(VHOST_USER_PROTOCOL_F_INBAND_NOTIFICATIONS) | \
+ 					 VHOST_USER_SUPPORTED_SHMEM_F)
+ 
+@@ -64,6 +66,7 @@ enum vhost_user_request {
+ 	VHOST_USER_SET_VRING_ENDIAN = 23,
+ 	VHOST_USER_GET_CONFIG = 24,
+ 	VHOST_USER_SET_CONFIG = 25,
++	VHOST_USER_RESET_DEVICE = 34,
+ 	VHOST_USER_VRING_KICK = 35,
+ 	VHOST_USER_GET_SHMEM_CONFIG = 44,
+ };
+diff --git a/arch/um/drivers/virtio_uml.c b/arch/um/drivers/virtio_uml.c
+index 61c5ef5b7f2f9b8a2c30a45235331818c74ed613..43b1a21eca42e8687ffaade4ceb7df646f39ff4f 100644
+--- a/arch/um/drivers/virtio_uml.c
++++ b/arch/um/drivers/virtio_uml.c
+@@ -1244,10 +1244,24 @@ static void vu_set_status(struct virtio_device *vdev, u8 status)
+ static void vu_reset(struct virtio_device *vdev)
+ {
+ 	struct virtio_uml_device *vu_dev = to_virtio_uml_device(vdev);
++	int rc;
+ 
+ #ifdef UML_HOST_DARWIN
+ 	uml_vhost_user_shmem_reset(vu_dev);
+ #endif
++	/*
++	 * A reset device has dropped every request and the rest of its
++	 * state, and its driver reuses or frees what it had queued as soon as
++	 * this returns. Only the back-end holds that state, so ask it to drop
++	 * it, and, when it acknowledges requests, wait until it has.
++	 */
++	if ((vu_dev->protocol_features &
++	     BIT_ULL(VHOST_USER_PROTOCOL_F_RESET_DEVICE)) &&
++	    !READ_ONCE(vu_dev->backend_gone)) {
++		rc = vhost_user_send_no_payload(vu_dev,
++						VHOST_USER_RESET_DEVICE);
++		WARN_ON(rc && !READ_ONCE(vu_dev->backend_gone));
++	}
+ 	vu_dev->status = 0;
+ }
+ 
