@@ -2,16 +2,19 @@
 #include "provider.hpp"
 #include "uml_slirp_net.h"
 #include "platform/guest_timer_mask.hpp"
+#include "socket_paths.hpp"
 
 #include <arpa/inet.h>
 #include <cerrno>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/un.h>
 #include <system_error>
 #include <unistd.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <chrono>
 #include <cstdio>
@@ -20,6 +23,7 @@
 #include <new>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace uml::network {
@@ -57,6 +61,34 @@ bool ensure_pipe(std::array<UniqueDescriptor, 2> &result) noexcept
 	result[0].reset();
 	result[1].reset();
 	return create_pipe(result);
+}
+
+/* Where SLiRP's guest forward may reach the resolver for DNS over TCP, in
+ * order: the application's temporary directory as $TMPDIR names it, Darwin's
+ * per-user one, then /tmp. A Unix socket path must fit sun_path (103 bytes
+ * and a terminator). An iOS device container's tmp/ is 89 bytes, which the
+ * short name fits; an iOS Simulator container's is about 164, so there the
+ * resolver binds in /tmp, which the Simulator's processes share with the Mac. */
+std::vector<std::string> dns_stream_paths()
+{
+	const auto name = std::string{dns_stream_prefix} +
+		std::to_string(::getpid());
+	std::vector<std::string> paths;
+	const auto add = [&](std::string directory) {
+		if (directory.empty() || directory.front() != '/')
+			return;
+		if (directory.back() != '/')
+			directory.push_back('/');
+		auto path = directory + name;
+		if (path.size() < sizeof(sockaddr_un::sun_path) &&
+		    std::ranges::find(paths, path) == paths.end())
+			paths.push_back(std::move(path));
+	};
+	if (const char *temporary = std::getenv("TMPDIR"); temporary != nullptr)
+		add(temporary);
+	add(uml::device::user_temporary_directory());
+	add("/tmp");
+	return paths;
 }
 
 void drain_pipe(UniqueDescriptor &descriptor) noexcept
@@ -98,6 +130,11 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 		config.version = 6;
 		config.in_enabled = true;
 		config.restricted = 0;
+		/* SLiRP's DNS proxy sends a guest's queries to the host's first
+		 * configured server, usually a local-network router. The
+		 * provider answers the name server itself (answer_locally and
+		 * HostResolver), so SLiRP never addresses that server. */
+		config.disable_dns = true;
 		(void)inet_pton(AF_INET, network_address, &config.vnetwork);
 		(void)inet_pton(AF_INET, network_mask, &config.vnetmask);
 		(void)inet_pton(AF_INET, host_alias_address, &config.vhost);
@@ -130,15 +167,61 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 			/*
 			 * ITIMER_REAL is UML's guest clock and must run only on its
 			 * designated CPU pthread. Darwin otherwise may select this
-			 * SLiRP worker for SIGALRM and enter Linux scheduler code on a
-			 * foreign host stack.
+			 * SLiRP worker, or the resolver's thread, for SIGALRM and
+			 * enter Linux scheduler code on a foreign host stack.
 			 */
 			const uml::platform::ScopedGuestTimerBlock timer_block(
 				"blocking the UML timer around the SLiRP worker");
+#if UML_SLIRP_TESTING
+			resolver_.set_interface_for_testing(
+				dns_interface_for_testing_);
+			const auto stream_paths = dns_streams_unavailable_for_testing_ ?
+				std::vector<std::string>{} : dns_stream_paths();
+#else
+			const auto stream_paths = dns_stream_paths();
+#endif
+			if (resolver_.start(
+				    [this](std::span<const std::uint8_t> frame) {
+					    try {
+						    (void)enqueue_received(
+							    std::as_bytes(frame));
+					    } catch (...) {
+					    }
+				    },
+				    stream_paths) != 0) {
+				slirp_.reset();
+				return -EIO;
+			}
+			/* DNS over TCP to the name server, and to the gateway as
+			 * SLiRP's own proxy allowed, reaches the resolver through a
+			 * per-connection Unix socket. disable_dns is what lets a
+			 * guest forward claim the name server's port. */
+			name_server_stream_ = false;
+			gateway_stream_ = false;
+			if (resolver_.streams_available()) {
+				const std::array<std::pair<const char *, bool *>, 2>
+					servers{{{nameserver_address,
+						  &name_server_stream_},
+						 {host_alias_address,
+						  &gateway_stream_}}};
+				for (const auto &[server, installed] : servers) {
+					in_addr address{};
+					(void)inet_pton(AF_INET, server, &address);
+					*installed = slirp_add_unix(
+						slirp_.get(),
+						resolver_.stream_path().c_str(),
+						&address, 53) == 0;
+					if (!*installed)
+						std::fprintf(stderr,
+							"Darwin user network: no DNS "
+							"over TCP at %s\n", server);
+				}
+			}
 			worker_ = std::jthread{[this](std::stop_token stop_token) {
 				event_loop(stop_token);
 			}};
 		} catch (const std::system_error &) {
+			resolver_.stop();
 			slirp_.reset();
 			return -EIO;
 		}
@@ -218,6 +301,9 @@ void SlirpProvider::stop() noexcept
 	transmit_space_.notify_all();
 	if (worker_.joinable())
 		worker_.join();
+	/* The resolver delivers into the receive ring from its own thread;
+	 * once it is joined nothing can refill the ring cleared below. */
+	resolver_.stop();
 #if UML_SLIRP_TESTING
 	notify_receive_cleanup_for_testing();
 #endif

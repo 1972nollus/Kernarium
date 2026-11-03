@@ -2,6 +2,7 @@
 #pragma once
 
 #include "uml_darwin_network.h"
+#include "dns_resolver.hpp"
 #include "platform/descriptor.hpp"
 
 #include <libslirp.h>
@@ -43,6 +44,8 @@ inline constexpr const char *network_mask = "255.255.255.0";
 inline constexpr const char *host_alias_address = "10.0.2.2";
 inline constexpr const char *guest_address = "10.0.2.15";
 inline constexpr const char *nameserver_address = "10.0.2.3";
+inline constexpr dns::Ipv4Address nameserver_ipv4{10, 0, 2, 3};
+inline constexpr dns::Ipv4Address host_alias_ipv4{10, 0, 2, 2};
 
 /* One host listening socket forwarded into the guest. Registrations are
  * accepted while the provider is not open; the provider owns replaying them
@@ -135,6 +138,27 @@ public:
 		return forwards_installed_while_running_for_testing_.load(
 			std::memory_order_relaxed);
 	}
+	/* Internet-family host sockets SLiRP has made: a guest's DNS must
+	 * never add one. */
+	[[nodiscard]] std::size_t internet_sockets_for_testing() const noexcept
+	{
+		return internet_sockets_for_testing_.load(
+			std::memory_order_relaxed);
+	}
+	/* Applies to the next open(). */
+	void set_dns_interface_for_testing(std::uint32_t index) noexcept
+	{
+		dns_interface_for_testing_ = index;
+	}
+	/* The next open() finds no socket path for DNS over TCP. */
+	void set_dns_streams_unavailable_for_testing(bool unavailable) noexcept
+	{
+		dns_streams_unavailable_for_testing_ = unavailable;
+	}
+	[[nodiscard]] HostResolver &resolver_for_testing() noexcept
+	{
+		return resolver_;
+	}
 #endif
 
 private:
@@ -163,6 +187,9 @@ private:
 	int install_forward(const HostForward &forward) noexcept;
 
     slirp_ssize_t enqueue_received(std::span<const std::byte> frame);
+	/* Answers a guest frame meant for the name server; false passes it to
+	 * SLiRP. */
+	bool answer_locally(std::span<const std::byte> frame) noexcept;
 	void process_transmit_queue() noexcept;
 	[[nodiscard]] bool transmit_permitted() noexcept;
 	void wake() noexcept;
@@ -200,6 +227,12 @@ private:
 	std::unique_ptr<Slirp, SlirpDeleter> slirp_;
 	std::array<uml::platform::UniqueDescriptor, 2> wake_pipe_;
 	std::array<uml::platform::UniqueDescriptor, 2> receive_pipe_;
+	HostResolver resolver_;
+	std::uint16_t next_identification_{1};
+	/* Where SLiRP's guest forward carries DNS over TCP to the resolver;
+	 * set by open() before the worker exists. */
+	bool name_server_stream_{};
+	bool gateway_stream_{};
 	std::jthread worker_;
 	std::atomic_bool started_{false};
 	std::atomic_bool stopping_{true};
@@ -208,6 +241,9 @@ private:
 	bool transmit_pause_reached_for_testing_{};
 	std::atomic_uint64_t processed_transmits_for_testing_{};
 	std::atomic_size_t forwards_installed_while_running_for_testing_{};
+	std::atomic_size_t internet_sockets_for_testing_{};
+	std::uint32_t dns_interface_for_testing_{};
+	bool dns_streams_unavailable_for_testing_{};
 	bool write_pause_requested_for_testing_{};
 	bool write_pause_reached_for_testing_{};
 	bool release_write_for_testing_{};

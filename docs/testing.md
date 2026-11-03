@@ -586,6 +586,16 @@ the guest has data to send, which must not end the process.
 `android-partition-boot-selection` covers the consumption of a
 `bootonce-bootloader` command and the boot a restart selects.
 
+`slirp-network-dns` covers the guest's DNS through the system resolver and the
+dropped guest multicast, with no network: the resolver is confined to local
+answers (`localhost`), and the test fails if SLiRP opens any host Internet
+socket for a guest's DNS or multicast. `network-dns-rules` is the unit test of
+the wire rules. The probe also runs in the iOS Simulator, where the container's
+tmp is too long for a Unix socket path: configure `ios-simulator` with
+`-DUML_BUILD_NETWORK_PROVIDER=ON -DUML_BUILD_TOOLING_TESTS=ON`, build
+`uml_slirp_dns_tests`, and start its `.app` executable with
+`xcrun simctl spawn <booted device>`.
+
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
 `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; do not override individual files.
