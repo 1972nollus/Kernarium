@@ -43,7 +43,11 @@ namespace {
 [[nodiscard]] double frameStatisticsInterval() noexcept
 {
     static const double interval = [] {
+#ifdef UML_APP_STORE_RUNTIME
+        const char* value = nullptr;
+#else
         const char* value = std::getenv("UML_GPU_FRAME_STATS");
+#endif
         if (value == nullptr) {
             /* The display activity log wants the same counters, and asking
              * for it is an explicit opt-in already. */

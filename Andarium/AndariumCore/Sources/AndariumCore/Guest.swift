@@ -23,15 +23,13 @@ public struct Guest: Equatable, Codable, Sendable {
     public var pendingCapacityGiB: Int?
     public var microphone: Bool
     /// Whether iCloud and computer backups include the guest's files. Off by
-    /// default: the guest is several gigabytes that Android can set up again.
+    /// default: the guest is several GiB that Android can set up again.
     public var includeInBackups: Bool
 
     // Measured when the guest is loaded; never stored.
 
     /// Data the guest has written: the space its storage occupies.
     public var usedBytes: UInt64 = 0
-    /// How many apps Android has installed, where the runtime can tell.
-    public var apps: Int?
 
     private enum CodingKeys: String, CodingKey {
         case cores, memoryMiB, capacityGiB, pendingCapacityGiB, microphone
@@ -41,7 +39,7 @@ public struct Guest: Equatable, Codable, Sendable {
     public init(
         cores: Int, memoryMiB: Int, capacityGiB: Int, pendingCapacityGiB: Int? = nil,
         microphone: Bool = false, includeInBackups: Bool = false,
-        usedBytes: UInt64 = 0, apps: Int? = nil
+        usedBytes: UInt64 = 0
     ) {
         self.cores = cores
         self.memoryMiB = memoryMiB
@@ -50,13 +48,22 @@ public struct Guest: Equatable, Codable, Sendable {
         self.microphone = microphone
         self.includeInBackups = includeInBackups
         self.usedBytes = usedBytes
-        self.apps = apps
     }
 
-    public var usedGB: Double { Double(usedBytes) / Double(Limits.bytesPerGiB) }
+    public var usedGiB: Double { Double(usedBytes) / Double(Limits.bytesPerGiB) }
 
     /// The capacity the next start runs with.
     public var effectiveCapacityGiB: Int { pendingCapacityGiB ?? capacityGiB }
+
+    /// That capacity in bytes, for screens that state sizes beside the host's
+    /// own figures.
+    public var effectiveCapacityBytes: UInt64 { UInt64(max(effectiveCapacityGiB, 0)) * Limits.bytesPerGiB }
+
+    /// What is left of the current capacity, never below zero.
+    public var freeBytes: UInt64 {
+        let capacity = UInt64(max(capacityGiB, 0)) * Limits.bytesPerGiB
+        return capacity > usedBytes ? capacity - usedBytes : 0
+    }
 
     /// Storage only grows, up to the largest capacity there is.
     public var canGrow: Bool { effectiveCapacityGiB < Limits.capacityRangeGiB.upperBound }
@@ -82,7 +89,6 @@ public struct Guest: Equatable, Codable, Sendable {
         guest.capacityGiB = effectiveCapacityGiB
         guest.pendingCapacityGiB = nil
         guest.usedBytes = 0
-        guest.apps = nil
         return guest
     }
 

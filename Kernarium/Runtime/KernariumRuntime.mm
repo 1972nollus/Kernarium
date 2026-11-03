@@ -243,7 +243,12 @@ public:
     {
         if (context_ == nullptr)
             throw std::bad_alloc {};
+#ifndef UML_APP_STORE_RUNTIME
         const char* forwarding = std::getenv("KERNARIUM_HOST_FORWARD");
+#else
+        /* An App Store runtime reads no environment knob. */
+        const char* forwarding = nullptr;
+#endif
         if (forwarding != nullptr && forwarding[0] != '\0') {
             const int error = uml_slirp_net_add_forward(context_, forwarding);
             if (error != 0) {
@@ -421,8 +426,12 @@ class FootprintReporter final {
 public:
     static long intervalMilliseconds() noexcept
     {
+#ifdef UML_APP_STORE_RUNTIME
+        return 0;
+#else
         const char* value = std::getenv("KERNARIUM_FOOTPRINT_LOG_MS");
         return value == nullptr ? 0 : std::strtol(value, nullptr, 10);
+#endif
     }
 
     static bool enabled() noexcept { return intervalMilliseconds() > 0; }
@@ -822,6 +831,9 @@ bool immutableExt4Rootfs(const char* path)
  */
 const char* selectedExecutionEngine()
 {
+#ifdef UML_APP_STORE_RUNTIME
+    return "auto";
+#else
     const char* requested = std::getenv("KERNARIUM_EXECUTION_ENGINE");
     if (requested == nullptr)
         return "auto";
@@ -832,6 +844,7 @@ const char* selectedExecutionEngine()
     std::fputs(
         "Kernarium: ignoring unknown KERNARIUM_EXECUTION_ENGINE\n", stderr);
     return "auto";
+#endif
 }
 
 /* Whether quiescing also hibernates the guest's RAM. "auto" is what the
@@ -840,6 +853,9 @@ const char* selectedExecutionEngine()
  * the Simulator, for diagnosis. */
 const char* selectedGuestHibernation()
 {
+#ifdef UML_APP_STORE_RUNTIME
+    return "auto";
+#else
     const char* requested = std::getenv("KERNARIUM_GUEST_HIBERNATION");
     if (requested == nullptr)
         return "auto";
@@ -850,6 +866,7 @@ const char* selectedGuestHibernation()
     std::fputs(
         "Kernarium: ignoring unknown KERNARIUM_GUEST_HIBERNATION\n", stderr);
     return "auto";
+#endif
 }
 
 #if KERNARIUM_RUNTIME_ANDROID_GUEST

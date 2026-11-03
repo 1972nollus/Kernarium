@@ -12,5 +12,8 @@
     <bool name="def_dtmf_tones_enabled">false</bool>
     <bool name="def_sound_effects_enabled">false</bool>
     <bool name="def_charging_sounds_enabled">false</bool>
-    <bool name="def_development_settings_enabled">true</bool>
+    <!-- Developer options are off on a fresh data partition; the user turns them on, and USB
+         debugging with them. adb_enabled has no default here: AdbService writes it at every boot
+         from persist.sys.usb.config, which no product property sets. -->
+    <bool name="def_development_settings_enabled">false</bool>
 </resources>

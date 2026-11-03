@@ -291,7 +291,7 @@ struct AndroidKeyboard: View {
         .frame(height: 270)
         .background(base)
         .accessibilityElement()
-        .accessibilityLabel("Android keyboard")
+        .accessibilityLabel("Keyboard")
     }
 
     private var divider: some View {
@@ -391,7 +391,7 @@ struct GuestVolumePanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
         .allowsHitTesting(false)
         .accessibilityElement()
-        .accessibilityLabel("Android volume")
+        .accessibilityLabel("Volume")
         .accessibilityValue("\(level) of \(maximum)")
     }
 }

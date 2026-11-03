@@ -107,7 +107,7 @@ struct BootView: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(kind == .recovery ? "Recovery" : "Android")
+                    Text(kind == .recovery ? "Recovery" : "System")
                         .font(.largeTitle.weight(.bold))
                     Spacer()
                     Text("\(Int((progress * 100).rounded()))%")
@@ -208,42 +208,42 @@ struct BootView: View {
     static func note(_ kind: BootKind, from: String?, system: SystemInfo) -> String? {
         switch kind {
         case .firstStart:
-            "Android\u{2019}s first-run setup takes a few minutes."
+            "The first-run setup takes a few minutes."
         case .upgrade:
             "Updating \(from.map { "from \($0) " } ?? "")to \(system.release). Apps and files are kept."
         case .recovery:
-            "Recovery appears on Android\u{2019}s screen. Use touch, or the side keys: volume moves, Power chooses."
+            "Recovery appears on the guest\u{2019}s screen. Use touch, or the side keys: volume moves, Power chooses."
         case .normal, .restart:
             nil
         }
     }
 
     static func steps(_ kind: BootKind, guest: Guest, system info: SystemInfo) -> [Step] {
-        let system = Step(title: "System", detail: "\(info.distribution) · \(info.release) · read-only", seconds: 0.7)
-        let kernel = Step(title: "Linux Kernel", detail: "\(info.kernel.replacingOccurrences(of: "Linux ", with: "")) · \(guest.cores) vCPUs · \(Formats.memory(guest.memoryMiB)) RAM", seconds: 0.9)
-        let screen = Step(title: "Screen", detail: "Waiting for Android\u{2019}s first frame", seconds: 0.7)
-        let used = "\(Formats.gb(guest.usedGB)) of \(guest.capacityGiB) GB"
+        let system = Step(title: "System", detail: "\(info.release) · read-only", seconds: 0.7)
+        let kernel = Step(title: "Linux Kernel", detail: "\(info.kernel.replacingOccurrences(of: "Linux ", with: "")) · \(guest.cores) vCPUs · \(Formats.size(mib: guest.memoryMiB)) RAM", seconds: 0.9)
+        let screen = Step(title: "Screen", detail: "Waiting for the first frame", seconds: 0.7)
+        let used = "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(gib: guest.capacityGiB))"
         switch kind {
         case .recovery:
             return [system, kernel,
                     Step(title: "Storage", detail: "\(used) · unchanged", seconds: 0.6),
-                    Step(title: "Recovery", detail: "Loading \(info.distribution) Recovery", seconds: 1.4),
+                    Step(title: "Recovery", detail: "Loading Recovery", seconds: 1.4),
                     screen]
         case .firstStart:
             return [system, kernel,
-                    Step(title: "Storage", detail: "Preparing \(guest.effectiveCapacityGiB) GB for first use", seconds: 0.9),
-                    Step(title: "Android", detail: "Setting up for the first time", seconds: 4.0),
+                    Step(title: "Storage", detail: "Preparing \(Formats.size(gib: guest.effectiveCapacityGiB)) for first use", seconds: 0.9),
+                    Step(title: "Startup", detail: "Setting up for the first time", seconds: 4.0),
                     screen]
         case .upgrade:
             return [system, kernel,
                     Step(title: "Storage", detail: used, seconds: 0.7),
-                    Step(title: "Android", detail: "Updating apps for \(info.release)", seconds: 3.6),
+                    Step(title: "Startup", detail: "Updating apps for \(info.release)", seconds: 3.6),
                     screen]
         case .normal, .restart:
-            let storage = guest.pendingCapacityGiB.map { "Growing from \(guest.capacityGiB) GB to \($0) GB" } ?? used
+            let storage = guest.pendingCapacityGiB.map { "Growing from \(Formats.size(gib: guest.capacityGiB)) to \(Formats.size(gib: $0))" } ?? used
             return [system, kernel,
                     Step(title: "Storage", detail: storage, seconds: guest.pendingCapacityGiB == nil ? 0.6 : 1.2),
-                    Step(title: "Android", detail: kind == .restart ? "Starting again" : "Starting services", seconds: 1.8),
+                    Step(title: "Startup", detail: kind == .restart ? "Starting again" : "Starting services", seconds: 1.8),
                     screen]
         }
     }

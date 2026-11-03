@@ -214,7 +214,7 @@ def build_fixture(root: Path) -> Path:
                 "--no-inline-from=core-oj.jar",
             ]
             invocation.write_text("\n".join(tokens) + "\n", encoding="utf-8")
-    product = aosp / "out/target/product/darwin"
+    product = aosp / "out/target/product/andarium"
     make_apk(product / "product/app/Foo/Foo.apk", XMLTREE, b"dex-foo")
     make_apk(product / "product/app/Own/Own.apk", XMLTREE, b"dex-own")
     own_oat = product / "product/app/Own/oat/arm64"
@@ -254,7 +254,7 @@ def build_fixture(root: Path) -> Path:
 
 def target_files_tree(aosp: Path, artifacts: Path, destination: Path) -> None:
     """Stage what the second pass packages: the build output plus the artifacts, upper-cased."""
-    product = aosp / "out/target/product/darwin"
+    product = aosp / "out/target/product/andarium"
     for partition in ("system", "product"):
         shutil.copytree(product / partition, destination / partition.upper(), dirs_exist_ok=True)
         if (artifacts / partition).is_dir():
@@ -304,7 +304,7 @@ def check_build_and_verify(tool, scratch: Path) -> None:
     def refuse() -> str:
         nonlocal attempts
         attempts += 1
-        return run_tool(tool, "build", *common, "--product", "darwin",
+        return run_tool(tool, "build", *common, "--product", "andarium",
                         "--output", str(scratch / f"refused-{attempts}"), expect_fail=True)
 
     def refused(change, wanted: str, why: str) -> None:
@@ -343,7 +343,7 @@ def check_build_and_verify(tool, scratch: Path) -> None:
     exact.write_text(arm_library_text.replace("javalib", "package").replace(
         "cortex-a7", "recorded-variant").replace("Lib.jar", "Exact.apk").replace(
         "/system/framework/Lib", "/system/app/Exact/Exact").replace("/Lib/", "/Exact/"))
-    run_tool(tool, "build", *common, "--product", "darwin", "--output", str(scratch / "exact"))
+    run_tool(tool, "build", *common, "--product", "andarium", "--output", str(scratch / "exact"))
     arm_runs = [a for (_, isa), a in invocations(log).items() if isa == "arm"]
     if not arm_runs or any("--instruction-set-variant=recorded-variant" not in a for a in arm_runs):
         fail(f"a recorded arm application invocation must be the arm template: {arm_runs}")
@@ -351,7 +351,7 @@ def check_build_and_verify(tool, scratch: Path) -> None:
     log.unlink()
 
     first = scratch / "first"
-    run_tool(tool, "build", *common, "--product", "darwin", "--output", str(first), "--jobs", "2")
+    run_tool(tool, "build", *common, "--product", "andarium", "--output", str(first), "--jobs", "2")
     manifest = json.loads((first / "manifest.json").read_text())
     if "isa" in manifest:
         fail("the ISA belongs to each entry, not to the manifest")
@@ -412,21 +412,21 @@ def check_build_and_verify(tool, scratch: Path) -> None:
     run_tool(tool, *verify)
 
     # Output that already exists is never overwritten.
-    run_tool(tool, "build", *common, "--product", "darwin", "--output", str(first), expect_fail=True)
+    run_tool(tool, "build", *common, "--product", "andarium", "--output", str(first), expect_fail=True)
 
     # Installing the artifacts into the build output makes a rebuild with --previous
     # recognise them as its own and reproduce the same output.
-    product = aosp / "out/target/product/darwin"
+    product = aosp / "out/target/product/andarium"
     shutil.copytree(first / "product", product / "product", dirs_exist_ok=True)
     second = scratch / "second"
-    run_tool(tool, "build", *common, "--product", "darwin", "--output", str(second),
+    run_tool(tool, "build", *common, "--product", "andarium", "--output", str(second),
              "--previous", str(first), "--jobs", "2")
     if (first / "manifest.json").read_bytes() != (second / "manifest.json").read_bytes() or \
             (first / "first-boot-oat.mk").read_bytes() != (second / "first-boot-oat.mk").read_bytes():
         fail("a rebuild over its own installed output must be identical")
     # Without --previous, installed artifacts look like Soong's and nothing is left to do.
     third = scratch / "third"
-    message = run_tool(tool, "build", *common, "--product", "darwin", "--output", str(third),
+    message = run_tool(tool, "build", *common, "--product", "andarium", "--output", str(third),
                        expect_fail=True)
     if "nothing to precompile" not in message:
         fail(f"unexpected failure without --previous: {message}")

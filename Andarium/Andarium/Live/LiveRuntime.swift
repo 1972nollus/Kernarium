@@ -324,28 +324,38 @@ final class LiveRuntime: RuntimeDriver {
 
     // MARK: Thermal state
 
+    // The thermal state and uptime go to the console for the iPad harness
+    // (`Andarium/README.md#automation`); an App Store build prints neither and
+    // reads neither the system uptime nor the thermal state.
+
     private func reportThermalState(_ phase: ConsoleReport.ThermalPhase) {
+        #if !APP_STORE
         print(ConsoleReport.thermal(
             phase: phase, state: ProcessInfo.processInfo.thermalState,
             uptime: ProcessInfo.processInfo.systemUptime
         ))
+        #endif
     }
 
     private func startThermalObservation() {
+        #if !APP_STORE
         reportThermalState(.start)
         thermalObserver = NotificationCenter.default.addObserver(
             forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.reportThermalState(.change) }
         }
+        #endif
     }
 
     private func stopThermalObservation() {
+        #if !APP_STORE
         reportThermalState(.finish)
         if let thermalObserver {
             NotificationCenter.default.removeObserver(thermalObserver)
             self.thermalObserver = nil
         }
+        #endif
     }
 
     // MARK: Lifecycle

@@ -19,7 +19,7 @@ package {
 }
 
 cc_library {
-    name: "librecovery_ui_darwin",
+    name: "librecovery_ui_andarium",
     srcs: ["recovery_ui.cpp"],
     shared_libs: [
         "libbase",

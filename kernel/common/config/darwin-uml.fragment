@@ -284,6 +284,11 @@ CONFIG_DUMMY=y
 CONFIG_MACVLAN=y
 CONFIG_VSOCKETS=y
 CONFIG_VSOCKETS_LOOPBACK=y
+# The guest side of a Virtio vsock device: byte streams between the guest and
+# the host that need no network, such as the adb channel an Android guest
+# offers its app. The driver is built in because UML ships without loadable
+# modules, and it only registers until the host offers a device.
+CONFIG_VIRTIO_VSOCKETS=y
 CONFIG_TLS=y
 CONFIG_NET_SCHED=y
 CONFIG_NET_SCH_HTB=y
@@ -429,10 +434,6 @@ CONFIG_UML_VNC_INPUT=y
 CONFIG_VIRTIO_MENU=y
 CONFIG_VIRTIO_UML=y
 CONFIG_VIRTIO_INPUT=y
-# The host carves the memory its GPU uses out of the guest's allocation
-# through a standard Virtio balloon, so guest RAM and GPU memory together stay
-# within what the user configured.
-CONFIG_VIRTIO_BALLOON=y
 # The macOS products can attach a Virtio console: an optional single console
 # or named multiport serial endpoint for Linux guests, where ttyS0 remains the
 # default host console, and one standard single-port console for Android.

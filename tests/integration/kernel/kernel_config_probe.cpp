@@ -9,7 +9,9 @@
 //            check, a macvlan link that rtnetlink creates over a dummy link, the
 //            accept_ra_rt_table sysctl (0 until written; a prefix route
 //            lands in the device's own table once it is -1000, where the
-//            kernel has IPv6 multiple tables), and an XFRM SPI allocated twice
+//            kernel has IPv6 multiple tables), an XFRM SPI allocated twice,
+//            the Virtio vsock driver registered and no Virtio balloon driver,
+//            and a vsock stream on the loopback CID that carries a byte
 //   linux:   SysV IPC works, the NFS and SMB clients, XFS, Btrfs and SCTP are
 //            present, a piped
 //            core_pattern runs its helper, /sys/power has no wake_lock,
@@ -40,6 +42,7 @@
 #include <linux/if_link.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/vm_sockets.h>
 #include <linux/xfrm.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -1376,6 +1379,78 @@ void check_ra_rt_table()
 	delete_link(probe_lower);
 }
 
+// The Virtio vsock transport is built in, so its driver is registered
+// although the guest has no device, and no balloon driver exists. A stream on
+// the loopback CID still connects, is accepted and carries a byte: with the
+// transport registered, only the host's CID 2 moved to it. An Android guest
+// may refuse the socket by policy; that is skipped.
+void check_virtio_drivers()
+{
+	std::string config = kernel_config();
+	if (config.empty()) {
+		report("virtio-drivers", false, "/proc/config.gz is unreadable");
+		return;
+	}
+	bool vsock_config = config_has(config, "CONFIG_VIRTIO_VSOCKETS=y");
+	bool balloon_config = config.find("CONFIG_VIRTIO_BALLOON=") != std::string::npos;
+	bool bus = access("/sys/bus/virtio/drivers", F_OK) == 0;
+	bool vsock_driver = access("/sys/bus/virtio/drivers/vmw_vsock_virtio_transport", F_OK) == 0;
+	bool balloon_driver = access("/sys/bus/virtio/drivers/virtio_balloon", F_OK) == 0;
+	report("virtio-drivers", vsock_config && !balloon_config && bus && vsock_driver && !balloon_driver,
+	       std::string("vsock config ") + (vsock_config ? "y" : "no") + ", vsock driver " +
+		       (vsock_driver ? "registered" : "absent") + ", balloon config " +
+		       (balloon_config ? "set" : "unset") + ", balloon driver " +
+		       (balloon_driver ? "registered" : "absent") +
+		       (bus ? "" : " (no /sys/bus/virtio/drivers)"));
+}
+
+void check_vsock_loopback()
+{
+	int server = socket(AF_VSOCK, SOCK_STREAM, 0);
+	if (server < 0) {
+		int error = errno;
+		bool refused = error == EACCES || error == EPERM;
+		report("vsock-loopback", refused, errno_text(error) + (refused ? " (refused by policy, skipped)" : ""));
+		return;
+	}
+	sockaddr_vm address{};
+	address.svm_family = AF_VSOCK;
+	address.svm_cid = VMADDR_CID_LOCAL;
+	address.svm_port = VMADDR_PORT_ANY;
+	socklen_t length = sizeof address;
+	bool listening = bind(server, reinterpret_cast<sockaddr *>(&address), sizeof address) == 0 &&
+			 getsockname(server, reinterpret_cast<sockaddr *>(&address), &length) == 0 &&
+			 listen(server, 1) == 0;
+	int client = listening ? socket(AF_VSOCK, SOCK_STREAM, 0) : -1;
+	timeval timeout{5, 0};
+	if (client >= 0)
+		setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+	setsockopt(server, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+	int error = listening ? 0 : errno;
+	if (client >= 0 && connect(client, reinterpret_cast<sockaddr *>(&address), sizeof address) != 0) {
+		error = errno;
+		close(client);
+		client = -1;
+	}
+	int peer = client >= 0 ? accept(server, nullptr, nullptr) : -1;
+	if (client >= 0 && peer < 0)
+		error = errno;
+	if (peer >= 0)
+		setsockopt(peer, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+	char sent = 'k';
+	char received = 0;
+	bool carried = peer >= 0 && write(client, &sent, 1) == 1 && read(peer, &received, 1) == 1 &&
+		       received == sent;
+	report("vsock-loopback", carried,
+	       carried ? "one byte through CID 1 port " + std::to_string(address.svm_port)
+		       : "no stream through CID 1: " + errno_text(error));
+	if (peer >= 0)
+		close(peer);
+	if (client >= 0)
+		close(client);
+	close(server);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -1405,6 +1480,8 @@ int main(int argc, char **argv)
 	check_wake_lock(android);
 	check_hardening_config(android);
 	check_stack_config();
+	check_virtio_drivers();
+	check_vsock_loopback();
 	check_usermode_helper(android);
 	check_incfs(android);
 	check_macvlan();

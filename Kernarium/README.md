@@ -240,9 +240,10 @@ runtime reads `KERNARIUM_ANDROID_ADB_AUTH`: `0` starts one launch with
 authorization off, as the macOS launcher does, and `1` or unset keeps the
 prompt. It prints `Kernarium: ADB authorization is off for this launch`, and
 it refuses the setting unless `KERNARIUM_HOST_FORWARD` is unset or listens on
-loopback, because authorization off also makes `adb root` available to
-whatever reaches the forward. A host on USB reaches a loopback forward through
-`iproxy`; a forward on every interface or on a network address is refused.
+loopback, because authorization off gives whatever reaches the forward an
+unauthenticated shell (and `adb root` on a userdebug image). A host on USB
+reaches a loopback forward through `iproxy`; a forward on every interface or on
+a network address is refused.
 The packaging script refuses a release runtime that carries the switch.
 
 How an Android guest's adbd is reached is told to the guest on its kernel
@@ -284,6 +285,20 @@ measurement, and an Android guest's screen is still turned off without waiting
 for it, so measure on a guest whose screen stays on. A return before the delay
 ends cancels the hold. The application learns it from
 `kernarium_runtime_automation_hold_delay_ms`, another export outside the table.
+
+The App Store Android runtime is a third variant, the
+`kernarium-ios-device-android-app-store` preset (`UML_APP_STORE_RUNTIME`)
+packaged with `scripts/package-ios-frameworks.sh --app-store --runtimes android`
+for Andarium's App Store configuration. It conflicts with the automation
+harness. The option defines `UML_APP_STORE_RUNTIME` for the whole tree, and every
+environment variable that tunes, observes or drives a run is read as unset:
+`KERNARIUM_HOST_FORWARD`, `KERNARIUM_FOOTPRINT_LOG_MS`,
+`KERNARIUM_EXECUTION_ENGINE`, `KERNARIUM_GUEST_HIBERNATION`, and the `UML_` and
+`DARWIN_UML_` diagnostics and switches of the CPU, GPU, video, network and
+platform layers (`TMPDIR` stays). The packaging script refuses an App Store
+runtime whose host code carries the name of one of them
+(`Andarium/scripts/check-app-store-bundle.py --runtime`). The release and
+automation runtimes read them as they did.
 
 ## Devices and display
 
@@ -526,7 +541,10 @@ The Simulator build is for UI tests of the application and its Android guest.
 Configure and build a `kernarium-ios-simulator*` runtime preset, package it with
 `scripts/package-ios-frameworks.sh --sdk simulator` (`--sdk device` beside it
 gives XCFrameworks that both SDKs build against) and build the scheme for
-`generic/platform=iOS Simulator`. The GPU prefix is the software one, at
+`generic/platform=iOS Simulator`. The Simulator product is arm64 alone, like
+its packaged slices, so the project excludes x86_64 for the Simulator SDK
+(`EXCLUDED_ARCHS[sdk=iphonesimulator*]`) and the build needs no `ARCHS`. The
+GPU prefix is the software one, at
 `.build/dependencies/apple-gpu-vulkan-experiment/ios-simulator-arm64` unless
 `KERNARIUM_SIMULATOR_GPU_PREFIX` names another (`KERNARIUM_DEVICE_GPU_PREFIX`
 does the same for the device's). The application selects Mesa's software device

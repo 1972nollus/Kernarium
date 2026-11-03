@@ -83,7 +83,7 @@ public struct ReleaseIdentity: Equatable, Sendable {
             let standard = integer(capacity["default"]),
             let maximum = integer(capacity["maximum"])
         else {
-            throw InstanceError.release("This copy of Andarium carries an Android release without a usable identity.")
+            throw InstanceError.release("This copy of Andarium carries a system release without a usable identity.")
         }
         self.init(
             releaseID: id, buildFingerprint: fingerprint, buildNumber: buildNumber, securityPatch: patch,
@@ -293,7 +293,7 @@ public enum InstanceRules {
         }
         guard let state else {
             if dataDiskExists {
-                return InstanceDecision(.refuseConflict, "The guest's data has no record of which Android wrote it.")
+                return InstanceDecision(.refuseConflict, "The guest's data has no record of which system wrote it.")
             }
             return InstanceDecision(.create, "A new guest.")
         }
@@ -306,7 +306,7 @@ public enum InstanceRules {
             }
             if flags.retry {
                 guard release.releaseID == pending.toReleaseID, dataDiskExists else {
-                    return InstanceDecision(.refuseConflict, "A retry starts the Android whose update did not complete.")
+                    return InstanceDecision(.refuseConflict, "A retry starts the system whose update did not complete.")
                 }
                 return InstanceDecision(.retry, "The update starts again, its snapshot kept.")
             }
@@ -323,24 +323,24 @@ public enum InstanceRules {
         }
         if release.releaseID == state.releaseID {
             if release.systemDiskSHA256 != state.systemDiskSHA256 {
-                return InstanceDecision(.refuseConflict, "One Android release names two system disks.")
+                return InstanceDecision(.refuseConflict, "One system release names two system disks.")
             }
-            return InstanceDecision(.boot, "The Android the data was last started with.")
+            return InstanceDecision(.boot, "The system the data was last started with.")
         }
         if release.buildNumber < state.buildNumber {
             return InstanceDecision(
                 .refuseDowngrade,
-                "Build \(release.buildNumber) is older than build \(state.buildNumber), which the data was started with: update Android, or erase the guest."
+                "Build \(release.buildNumber) is older than build \(state.buildNumber), which the data was started with: update the system, or erase the guest."
             )
         }
         if release.buildNumber == state.buildNumber {
-            return InstanceDecision(.refuseConflict, "Two Android releases share one build number.")
+            return InstanceDecision(.refuseConflict, "Two system releases share one build number.")
         }
         if release.dataLayout == state.dataLayout {
-            return InstanceDecision(.update, "A newer Android on the same data layout.")
+            return InstanceDecision(.update, "A newer system on the same data layout.")
         }
         if release.dataLayout > state.dataLayout {
-            return InstanceDecision(.migrate, "A newer Android on a newer data layout.")
+            return InstanceDecision(.migrate, "A newer system on a newer data layout.")
         }
         return InstanceDecision(.refuseDowngrade, "The release's data layout is older than the data's.")
     }
@@ -471,7 +471,7 @@ public struct InstanceFiles: Sendable {
         precondition(action == .update || action == .migrate)
         if action == .migrate {
             // No data layout other than 1 exists, so there is no migration.
-            throw InstanceError.refused("This Android needs a newer data layout than Andarium can migrate to; erase the guest.")
+            throw InstanceError.refused("This system needs a newer data layout than Andarium can migrate to; erase the guest.")
         }
         let name = Self.snapshotPrefix + release.releaseID
         try clone(data, to: directory.appendingPathComponent(name))
@@ -498,7 +498,7 @@ public struct InstanceFiles: Sendable {
     @discardableResult
     public func complete(release: ReleaseIdentity, now: Date = Date()) throws -> InstanceState {
         guard var current = try readState(), current.releaseID == release.releaseID else {
-            throw InstanceError.state("The guest was not started with this Android.")
+            throw InstanceError.state("The guest was not started with this system.")
         }
         let snapshot = current.pendingUpdate?.snapshot
         current.lastCompleted = InstanceState.Completed(

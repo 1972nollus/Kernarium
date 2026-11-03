@@ -22,7 +22,7 @@ struct NewGuestSheet: View {
                         NoticeCard(
                             symbol: "externaldrive.badge.exclamationmark", color: .orange,
                             title: "Not enough free space",
-                            text: "Setting up needs \(Formats.hostGB(bytes: model.createRequirementBytes)) free for Android's setup. This \(model.host.name) has \(Formats.gb(model.host.freeStorageGB)). Free up space in Settings › General › \(model.host.name) Storage."
+                            text: "Setting up needs \(Formats.size(bytes: model.createRequirementBytes)) free for the guest's setup. This \(model.host.name) has \(Formats.size(bytes: model.host.freeStorageBytes)). Free up space in Settings › General › \(model.host.name) Storage."
                         )
                     }
                     ControlsPanel(guest: draftBinding, host: model.host, isNew: true)
@@ -92,7 +92,7 @@ struct EraseSheet: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Erase Guest")
                                 .font(.title2.weight(.bold))
-                            Text("Deletes everything Android has stored. The next start runs Android's setup.")
+                            Text("Deletes everything the guest has stored. The next start runs the system's setup.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -102,18 +102,15 @@ struct EraseSheet: View {
                     .listRowBackground(Color.clear)
                 }
                 Section("Erased") {
-                    if let apps = guest.apps {
-                        item("square.grid.2x2", "Apps", "\(apps)")
-                    }
                     item("person.crop.circle", "Accounts and settings", nil)
                     item("photo.on.rectangle", "Photos, downloads and other files", nil)
-                    item("internaldrive", "Data on this \(model.host.name)", Formats.gb(guest.usedGB))
+                    item("internaldrive", "Data on this \(model.host.name)", Formats.size(bytes: guest.usedBytes))
                     if case .unfinishedUpdate(_, _, true) = model.plan {
                         item("clock.arrow.circlepath", "The data saved before the update", nil)
                     }
                 }
                 Section("Kept") {
-                    item("checkmark.seal", "\(model.system.distribution), built in", nil, kept: true)
+                    item("checkmark.seal", "System \(model.system.version), built in", nil, kept: true)
                     item("slider.horizontal.3", "vCPUs, memory, storage size and options", nil, kept: true)
                 }
             }
@@ -227,8 +224,7 @@ struct InfoSheet: View {
                     .padding(.vertical, 6)
                 }
                 Section {
-                    LabeledContent("System", value: model.system.distribution)
-                    LabeledContent("Android", value: model.system.android)
+                    LabeledContent("Version", value: model.system.version)
                     LabeledContent("Build", value: model.system.release)
                     if let patch = model.system.securityPatch {
                         LabeledContent("Security Patch", value: patch)
@@ -246,16 +242,19 @@ struct InfoSheet: View {
                 }
                 Section("Storage") {
                     StorageBar(
-                        guestGB: model.guest?.usedGB ?? 0,
-                        systemGB: Double(model.systemBytes) / 1e9,
-                        freeGB: model.host.freeStorageGB
+                        guestBytes: model.guest?.usedBytes ?? 0,
+                        systemBytes: model.systemBytes,
+                        freeBytes: model.host.freeStorageBytes
                     )
                     .padding(.vertical, 6)
                     if let guest = model.guest {
-                        LabeledContent("Guest Data", value: "\(Formats.gb(guest.usedGB)) of \(guest.effectiveCapacityGiB) GB")
+                        LabeledContent(
+                            "Guest Data",
+                            value: "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(bytes: guest.effectiveCapacityBytes))"
+                        )
                     }
-                    LabeledContent("System", value: Formats.hostGB(bytes: model.systemBytes))
-                    LabeledContent("Free on This \(model.host.name)", value: Formats.gb(model.host.freeStorageGB))
+                    LabeledContent("System", value: Formats.size(bytes: model.systemBytes))
+                    LabeledContent("Free on This \(model.host.name)", value: Formats.size(bytes: model.host.freeStorageBytes))
                 }
                 Section("This \(model.host.name)") {
                     LabeledContent("Processor", value: "\(model.host.physicalProcessorCount) cores")
@@ -264,7 +263,7 @@ struct InfoSheet: View {
                 Section {
                     NavigationLink("Acknowledgements", value: "ack")
                 } footer: {
-                    Text("Android hears the microphone only while Microphone is on.")
+                    Text("The guest hears the microphone only while Microphone is on.")
                 }
             }
             .navigationTitle("Info")
@@ -280,19 +279,20 @@ struct InfoSheet: View {
 }
 
 struct StorageBar: View {
-    let guestGB: Double
-    let systemGB: Double
-    let freeGB: Double
+    let guestBytes: UInt64
+    let systemBytes: UInt64
+    let freeBytes: UInt64
 
     var body: some View {
-        let total = guestGB + systemGB + freeGB
+        let guest = Double(guestBytes), system = Double(systemBytes)
+        let total = max(guest + system + Double(freeBytes), 1)
         VStack(alignment: .leading, spacing: 8) {
             GeometryReader { geo in
                 HStack(spacing: 2) {
                     Rectangle().fill(Color.accentColor)
-                        .frame(width: max(4, geo.size.width * guestGB / total))
+                        .frame(width: max(4, geo.size.width * guest / total))
                     Rectangle().fill(Color.accentColor.opacity(0.45))
-                        .frame(width: max(4, geo.size.width * systemGB / total))
+                        .frame(width: max(4, geo.size.width * system / total))
                     Rectangle().fill(Color(.systemFill))
                 }
                 .clipShape(.capsule)
@@ -337,7 +337,7 @@ struct AcknowledgementsView: View {
                     .padding(.vertical, 2)
                 }
             } footer: {
-                Text("Source code for the built-in system is available as its licences require.")
+                Text("Source code for the built-in system is available as its licences require.\n\nAndroid, LineageOS, Linux and the other names and marks here belong to their owners. They identify the software built into Andarium and imply no endorsement.")
             }
         }
         .navigationTitle("Acknowledgements")

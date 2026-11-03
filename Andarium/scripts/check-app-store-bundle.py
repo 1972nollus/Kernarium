@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Check a built Andarium application against the AppStore configuration.
+
+The App Store configuration (Andarium/README.md#configurations) builds an
+application that must:
+
+  - declare no non-exempt encryption, require arm64 and Metal, target iPhone
+    and iPad, and have no background mode;
+  - carry no automation knob: no ANDARIUM_, KERNARIUM_, UML_ or DARWIN_UML_
+    environment name in the host code of the application or of any embedded
+    framework (the guest kernel image inside a runtime is not host code); and
+  - pass scripts/check-privacy-manifests.py.
+
+The knob scan reads bytes, so it does not see a Swift string of up to 15 bytes
+(ANDARIUM_START is one): the compiler keeps those in instruction immediates.
+The launch names stay out of the application because the configuration
+compiles Live/LaunchEnvironment.swift out, and the scan covers the longer names.
+
+The Xcode project runs it as the last build phase of the App Store
+configuration, so a build that breaks one of these rules fails.
+"""
+
+from __future__ import annotations
+
+__import__("sys").dont_write_bytecode = True
+
+import argparse
+import plistlib
+import re
+import struct
+import subprocess
+import sys
+from pathlib import Path
+
+KNOB = re.compile(rb"\b(?:ANDARIUM|KERNARIUM|DARWIN_UML|UML)_[A-Z][A-Z0-9_]{2,}\b")
+# Sections that hold the guest, not the host: the Linux kernel image a runtime
+# carries, and the boot files of a Linux runtime.
+GUEST_SECTIONS = {("__TEXT", "__uml_elf"), ("__TEXT", "__uml_boot_base"), ("__TEXT", "__uml_boot_init")}
+
+MACHO_64 = 0xFEEDFACF
+FAT_MAGIC = 0xCAFEBABE
+CPU_TYPE_ARM64 = 0x0100000C
+LC_SEGMENT_64 = 0x19
+CHECKER = Path(__file__).resolve().parents[2] / "scripts" / "check-privacy-manifests.py"
+
+
+def thin_offset(data: bytes) -> int | None:
+    if len(data) < 8:
+        return None
+    if struct.unpack_from(">I", data, 0)[0] == FAT_MAGIC:
+        count = struct.unpack_from(">I", data, 4)[0]
+        for index in range(min(count, 16)):
+            cpu, _sub, offset, _size, _align = struct.unpack_from(
+                ">IIIII", data, 8 + 20 * index)
+            if cpu == CPU_TYPE_ARM64:
+                return offset
+        return None
+    return 0 if struct.unpack_from("<I", data, 0)[0] == MACHO_64 else None
+
+
+def guest_ranges(data: bytes, base: int) -> list[tuple[int, int]]:
+    """File ranges of the sections that hold the guest."""
+    found = []
+    count = struct.unpack_from("<I", data, base + 16)[0]
+    position = base + 32
+    for _ in range(count):
+        command, size = struct.unpack_from("<II", data, position)
+        if command == LC_SEGMENT_64:
+            sections = struct.unpack_from("<I", data, position + 64)[0]
+            entry = position + 72
+            for _ in range(sections):
+                name = data[entry:entry + 16].rstrip(b"\0").decode()
+                segment = data[entry + 16:entry + 32].rstrip(b"\0").decode()
+                length, offset = struct.unpack_from("<QI", data, entry + 40)
+                if (segment, name) in GUEST_SECTIONS:
+                    found.append((base + offset, base + offset + length))
+                entry += 80
+        position += size
+    return found
+
+
+def knobs(path: Path) -> list[str]:
+    """The automation knob names in the host code of one Mach-O file."""
+    data = path.read_bytes()
+    base = thin_offset(data[:4096])
+    if base is None:
+        return []
+    buffer = bytearray(data)
+    for start, end in guest_ranges(data, base):
+        buffer[start:end] = bytes(end - start)
+    return sorted({match.decode() for match in KNOB.findall(bytes(buffer))})
+
+
+def info_problems(info: dict) -> list[str]:
+    found = []
+    if info.get("ITSAppUsesNonExemptEncryption") is not False:
+        found.append("Info.plist: ITSAppUsesNonExemptEncryption must be false")
+    capabilities = info.get("UIRequiredDeviceCapabilities")
+    for capability in ("arm64", "metal"):
+        if not isinstance(capabilities, list) or capability not in capabilities:
+            found.append(f"Info.plist: UIRequiredDeviceCapabilities lacks {capability}")
+    if info.get("UIDeviceFamily") != [1, 2]:
+        found.append("Info.plist: UIDeviceFamily must be [1, 2], iPhone and iPad")
+    if "UIBackgroundModes" in info:
+        found.append("Info.plist: the application has no background mode")
+    return found
+
+
+def executables_of(bundle: Path) -> list[Path]:
+    """The executable of one bundle, if its Info.plist names one."""
+    try:
+        with (bundle / "Info.plist").open("rb") as handle:
+            name = plistlib.load(handle).get("CFBundleExecutable")
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return []
+    return [bundle / name] if isinstance(name, str) and (bundle / name).is_file() else []
+
+
+def executables(app: Path) -> list[Path]:
+    """The executables of the application and of its embedded frameworks."""
+    return [
+        binary
+        for bundle in [app, *sorted((app / "Frameworks").glob("*.framework"))]
+        for binary in executables_of(bundle)
+    ]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("app", type=Path)
+    parser.add_argument("--privacy-checker", type=Path, default=CHECKER)
+    parser.add_argument(
+        "--runtime", action="store_true",
+        help="the path is one runtime framework: check its automation knobs alone")
+    options = parser.parse_args()
+
+    app = options.app
+    if options.runtime:
+        found = []
+        for binary in executables_of(app):
+            found.extend(f"{binary.name}: carries automation knob {name}" for name in knobs(binary))
+        for line in found:
+            print(line, file=sys.stderr)
+        return 1 if found else 0
+    problems: list[str] = []
+    try:
+        with (app / "Info.plist").open("rb") as handle:
+            info = plistlib.load(handle)
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        print(f"{app}: has no readable Info.plist", file=sys.stderr)
+        return 1
+    problems.extend(f"{app.name}: {problem}" for problem in info_problems(info))
+
+    for binary in executables(app):
+        names = knobs(binary)
+        if names:
+            problems.append(
+                f"{binary.relative_to(app)}: carries automation knob(s) "
+                f"{', '.join(names[:6])}{' ...' if len(names) > 6 else ''}")
+
+    privacy = subprocess.run(
+        [sys.executable, "-B", str(options.privacy_checker), str(app)],
+        check=False, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, timeout=600)
+    if privacy.returncode != 0:
+        problems.extend(line for line in privacy.stderr.splitlines() if line)
+
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    if problems:
+        return 1
+    print(f"{app.name}: ready for the App Store")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
