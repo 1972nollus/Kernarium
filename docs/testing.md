@@ -681,7 +681,8 @@ renderer](graphics.md#ios-simulator-software-renderer).
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
 Xcode. `--sdk device` (the default) and `--sdk simulator` choose the slices, and
 both together give XCFrameworks with an `ios-arm64` and an `ios-arm64-simulator`
-slice. KosmicKrisp has a device slice alone, so the app targets embed it with a
+slice; no Simulator product is built for x86_64, and both Xcode projects exclude
+that architecture for the Simulator SDK. KosmicKrisp has a device slice alone, so the app targets embed it with a
 Run Script phase, `Kernarium/scripts/embed-device-framework.sh`, which embeds it
 for an `iphoneos` build and nothing for the Simulator. For the device it also
 packages the Apple battery provider's archive and the hardware video encoder's,
@@ -783,8 +784,9 @@ and the option checks of `package-ios-frameworks.sh --runtimes android`. The
 application itself builds with Xcode: `AndariumPreview` is its Simulator build
 with mock data, and `Andarium` is the device application
 ([`Andarium/README.md`](../Andarium/README.md#targets)). `AndariumTests` is
-hosted in `Andarium` and runs on an iPad and, as an iPad app, on an Apple
-silicon Mac (`xcodebuild test -scheme Andarium`); its `UpdateFlowTests` drive
+hosted in `Andarium` and runs on an iPad, in the iOS Simulator and, as an iPad
+app, on an Apple silicon Mac (`xcodebuild test -scheme Andarium`); its
+`UpdateFlowTests` drive
 the update, interrupted-update (Start retries, Restore, Erase) and blocked-start flows
 against a stub runtime. A Mac launch of the guest
 itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
@@ -793,6 +795,25 @@ itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTes
 bundle ID, to let the application read a removable volume when its derived data
 is on one, and the launch hangs ("the test runner hung before establishing
 connection") until a person answers; build to the internal disk instead.
+
+`ios-privacy-manifests` (tooling) covers `scripts/check-privacy-manifests.py`,
+which fails when a built application or framework uses a required-reason API
+(found in its undefined symbols and Objective-C selectors) that its
+`PrivacyInfo.xcprivacy` does not declare, or declares tracking, collected data
+or a reason code Apple does not define, or has an Info.plist with an empty
+version or no `MinimumOSVersion`. `package-ios-frameworks.sh` runs it on the
+device slice of every framework it packages (the manifests are
+`Kernarium/PrivacyManifests`), and it runs on any built bundle:
+`python3 scripts/check-privacy-manifests.py Andarium.app`. Its fixtures are
+small libraries compiled with the iOS SDK.
+
+`andarium-app-store-bundle` (tooling) covers
+`Andarium/scripts/check-app-store-bundle.py`, the last build phase of the
+AppStore configuration (`Andarium/README.md#configurations`) and the check of
+`package-ios-frameworks.sh --app-store`: Info.plist keys,
+no environment knob in host code, and the privacy check. Its
+fixtures are compiled with the iOS SDK too. The configuration itself is
+validated by building it unsigned (`CODE_SIGNING_ALLOWED=NO`).
 
 ### UI automation on a device
 

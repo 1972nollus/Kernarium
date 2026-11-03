@@ -9,7 +9,7 @@ enum PreviewData {
     static let previousRelease = "20261002"
 
     static let system = SystemInfo(
-        distribution: "LineageOS 24", android: "17", release: release,
+        version: "17", release: release,
         securityPatch: "5 October 2026", kernel: "Linux 6.18.54",
         architecture: "arm64, 4 KB pages", appVersion: "1.0 (1)"
     )
@@ -23,19 +23,22 @@ enum PreviewData {
         if UIDevice.current.userInterfaceIdiom == .pad {
             return HostDevice(
                 name: "iPad", processorCount: 8, memory: MemoryPolicy(maximumsMiB: Array(repeating: 4096, count: 8)),
-                freeStorageBytes: lowSpace ? 1_200_000_000 : 118_300_000_000,
+                freeStorageBytes: gibibytes(lowSpace ? 1.2 : 118.3),
                 physicalProcessorCount: 10
             )
         }
         return HostDevice(
             name: "iPhone", processorCount: 6,
             memory: MemoryPolicy(maximumsMiB: [3136, 3072, 3008, 2944, 2880, 2816]),
-            freeStorageBytes: lowSpace ? 1_200_000_000 : 41_600_000_000
+            freeStorageBytes: gibibytes(lowSpace ? 1.2 : 41.6)
         )
     }
 
+    /// A mock size, in gibibytes.
+    private static func gibibytes(_ count: Double) -> UInt64 { UInt64(count * Double(Limits.bytesPerGiB)) }
+
     /// What the mock system takes on the device.
-    static let systemBytes: UInt64 = 2_800_000_000
+    static let systemBytes = gibibytes(2.6)
 
     /// The seed the mock storage would write: about as large as the real one.
     static let createRequirementBytes: UInt64 = 3_274_702_848 + Limits.firstStartReserveBytes
@@ -44,7 +47,7 @@ enum PreviewData {
     static func sampleGuest(on host: HostDevice) -> Guest {
         Guest(
             cores: host.processorCount, memoryMiB: min(3072, host.memory.maximumMiB(vCPUs: host.processorCount)), capacityGiB: 16,
-            usedBytes: UInt64(5.4 * Double(Limits.bytesPerGiB)), apps: 23
+            usedBytes: gibibytes(5.4)
         )
     }
 }

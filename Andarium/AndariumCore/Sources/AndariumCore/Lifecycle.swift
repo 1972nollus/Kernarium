@@ -21,6 +21,8 @@ public enum HomeNotice: Equatable, Sendable {
 public enum StartVerdict: Equatable, Sendable {
     case allowed(BootKind)
     case noGuest
+    /// The device's GPU cannot draw the guest (`HostDevice.runsGuestGraphics`).
+    case needsNewerChip
     /// The host has less free space than Android's own writes need.
     case lowSpace(neededBytes: UInt64, freeBytes: UInt64)
     /// An update did not complete and this start cannot try it again (it is
@@ -72,6 +74,7 @@ public struct Lifecycle: Equatable, Sendable {
     public func startVerdict(
         _ mode: StartMode, host: HostDevice, plan: StartPlan = .normal
     ) -> StartVerdict {
+        guard host.runsGuestGraphics else { return .needsNewerChip }
         guard guest != nil else { return .noGuest }
         guard host.hasRoom(for: Limits.startReserveBytes) else {
             return .lowSpace(neededBytes: Limits.startReserveBytes, freeBytes: host.freeStorageBytes)
@@ -139,8 +142,8 @@ public struct RunEnd: Equatable, Sendable {
         appVersion: String, system: SystemInfo, guest: Guest?, uptimeSeconds: Int?
     ) -> String {
         var lines = [
-            "Andarium \(appVersion) · \(system.distribution) \(system.release)",
-            "\(system.kernel) · \(guest?.cores ?? 0) vCPUs · \(Formats.memory(guest?.memoryMiB ?? 0))",
+            "Andarium \(appVersion) · \(system.release)",
+            "\(system.kernel) · \(guest?.cores ?? 0) vCPUs · \(Formats.size(mib: guest?.memoryMiB ?? 0))",
         ]
         let reason = if let startFailure {
             "it could not start (\(startFailure))"

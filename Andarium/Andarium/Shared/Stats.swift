@@ -33,7 +33,7 @@ struct StatsPill: View {
                     .frame(width: 30, height: 16)
                 metric("CPU", "\(readout.cpu)%")
             }
-            metric("Memory", String(format: "%.1f of %@", Double(readout.memoryMiB) / 1024, Formats.memory(memoryMiB)))
+            metric("Memory", "\(Formats.size(mib: readout.memoryMiB)) of \(Formats.size(mib: memoryMiB))")
             if !recovery {
                 metric("Frame rate", "\(readout.fps) fps")
             }

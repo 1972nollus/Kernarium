@@ -6,11 +6,11 @@ import Foundation
 /// it. The live app reads it from the release manifest the packaging step
 /// stages beside the system image.
 public struct SystemInfo: Equatable, Sendable {
-    public var distribution: String
-    public var android: String
+    /// The system's version number as the screens say it ("17").
+    public var version: String
     /// The release identifier, which names this build everywhere.
     public var release: String
-    /// Android's own build identifier.
+    /// The system's own build identifier.
     public var buildID: String?
     /// The security patch level as the Info screen words it ("1 October
     /// 2026"); shown only where the manifest has one.
@@ -20,11 +20,10 @@ public struct SystemInfo: Equatable, Sendable {
     public var appVersion: String
 
     public init(
-        distribution: String, android: String, release: String, buildID: String? = nil,
+        version: String, release: String, buildID: String? = nil,
         securityPatch: String? = nil, kernel: String, architecture: String, appVersion: String
     ) {
-        self.distribution = distribution
-        self.android = android
+        self.version = version
         self.release = release
         self.buildID = buildID
         self.securityPatch = securityPatch
@@ -68,7 +67,7 @@ public struct SystemInfo: Equatable, Sendable {
             throw ManifestError.missing("kernel.page_size")
         }
 
-        // "lineage-24-mainline-6.18-4k" names LineageOS 24.
+        // The family "lineage-24-mainline-6.18-4k" is the one release line the app carries.
         let parts = family.split(separator: "-")
         guard parts.count >= 2, parts[0] == "lineage", Int(parts[1]) != nil else {
             throw ManifestError.missing("product_family")
@@ -77,7 +76,7 @@ public struct SystemInfo: Equatable, Sendable {
         let version = kernelRelease.split(separator: "-", maxSplits: 1).first.map(String.init) ?? kernelRelease
 
         self.init(
-            distribution: "LineageOS \(parts[1])", android: String(major), release: release,
+            version: String(major), release: release,
             buildID: android?["build_id"] as? String,
             securityPatch: (android?["security_patch"] as? String).flatMap(Self.patchLevel),
             kernel: "Linux \(version)", architecture: "arm64, \(pageSize / 1024) KB pages",

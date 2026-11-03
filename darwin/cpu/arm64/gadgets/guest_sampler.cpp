@@ -431,7 +431,11 @@ private:
 Sampler *sampler() noexcept
 {
 	static Sampler *const instance = []() -> Sampler * {
+#ifdef UML_APP_STORE_RUNTIME
+		const char *setting = nullptr;
+#else
 		const char *setting = std::getenv("DARWIN_UML_GUEST_SAMPLES");
+#endif
 		if (setting == nullptr || *setting == '\0')
 			return nullptr;
 		std::string path = setting;

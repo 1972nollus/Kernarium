@@ -45,7 +45,7 @@ struct ApkInstall: Identifiable, Equatable {
 
     let id = UUID()
     var fileName: String
-    var sizeMB: Double
+    var sizeBytes: UInt64
     var state: State
 
     /// "Signal-7.21.4.apk" installs as Signal, version 7.21.4.
@@ -62,7 +62,7 @@ struct ApkInstall: Identifiable, Equatable {
     }
 
     static let sampleFile = "Signal-7.21.4.apk"
-    static let sampleSizeMB = 38.2
+    static let sampleSizeBytes = UInt64(38.2 * Double(Limits.bytesPerMiB))
 }
 
 /// What the running guest offers through Settings: installs, ADB and the
@@ -79,14 +79,14 @@ final class SessionState {
 
     /// Mock install: anything that is not an .apk is refused at once;
     /// an .apk installs over about three seconds.
-    func install(fileName: String, sizeMB: Double, play: Bool = true) {
+    func install(fileName: String, sizeBytes: UInt64, play: Bool = true) {
         guard fileName.lowercased().hasSuffix(".apk") else {
             withAnimation(.snappy) {
-                installs.insert(ApkInstall(fileName: fileName, sizeMB: sizeMB, state: .notApk), at: 0)
+                installs.insert(ApkInstall(fileName: fileName, sizeBytes: sizeBytes, state: .notApk), at: 0)
             }
             return
         }
-        let item = ApkInstall(fileName: fileName, sizeMB: sizeMB, state: .installing(0))
+        let item = ApkInstall(fileName: fileName, sizeBytes: sizeBytes, state: .installing(0))
         withAnimation(.snappy) { installs.insert(item, at: 0) }
         guard play else { return }
         Task {
@@ -245,10 +245,10 @@ final class AppModel {
         }
         runBusy(
             BusyState(
-                title: "Creating Android",
-                detail: "Setting up \(system.distribution) with \(guest.effectiveCapacityGiB) GB.", progress: 0
+                title: "Creating Guest",
+                detail: "Setting up the system with \(Formats.size(gib: guest.effectiveCapacityGiB)).", progress: 0
             ),
-            failure: "Android Could Not Be Created"
+            failure: "The Guest Could Not Be Created"
         ) { progress in
             let made = try await driver.create(guest, progress: progress)
             self.lifecycle.create(made)
@@ -267,7 +267,7 @@ final class AppModel {
         do {
             try driver.restoreUpdate()
         } catch {
-            alert = AppAlert(title: "Android Could Not Be Restored", message: error.localizedDescription)
+            alert = AppAlert(title: "The Guest Could Not Be Restored", message: error.localizedDescription)
         }
         refreshPlan()
     }
@@ -279,8 +279,8 @@ final class AppModel {
             return
         }
         runBusy(
-            BusyState(title: "Erasing Android", detail: "Deleting everything Android stored.", progress: 0),
-            failure: "Android Could Not Be Erased"
+            BusyState(title: "Erasing Guest", detail: "Deleting everything the guest stored.", progress: 0),
+            failure: "The Guest Could Not Be Erased"
         ) { progress in
             _ = try await driver.erase(current, progress: progress)
             self.lifecycle.erase()
@@ -327,13 +327,15 @@ final class AppModel {
         case .lowSpace: startBlocked = true
         case .unfinishedUpdate:
             alert = AppAlert(
-                title: "Android's Update Didn't Finish",
+                title: "The System's Update Didn't Finish",
                 message: plan.allowsStart
                     ? "Recovery starts only once the update has finished. Start tries the update again; Restore or Erase Guest goes back."
                     : "The guest starts only after its data is restored or the guest is erased."
             )
         case let .blocked(reason):
             alert = AppAlert(title: reason.title, message: reason.explanation)
+        case .needsNewerChip:
+            alert = AppAlert(title: DeviceRequirement.title, message: DeviceRequirement.explanation(deviceName: host.name))
         case .noGuest: break
         }
     }
@@ -349,7 +351,7 @@ final class AppModel {
             plan = .normal
             if firstStart {
                 sessionPreset.guestScreen = .setup
-                guest?.usedBytes = 2_100_000_000
+                guest?.usedBytes = UInt64(2.1 * Double(Limits.bytesPerGiB))
             }
         }
     }

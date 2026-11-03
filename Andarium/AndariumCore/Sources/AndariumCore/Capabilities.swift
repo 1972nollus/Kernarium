@@ -15,8 +15,6 @@ public struct Capabilities: Equatable, Sendable {
     public var apkInstall: Bool
     /// The session can show the guest's own statistics.
     public var statistics: Bool
-    /// The number of installed apps can be read.
-    public var appCount: Bool
     /// Resolution and Follow Window Size can change while the guest runs;
     /// otherwise they apply at the next start and the session leaves them
     /// out.
@@ -24,19 +22,18 @@ public struct Capabilities: Equatable, Sendable {
 
     public init(
         systemUpdate: Bool, adbOverNetwork: Bool, apkInstall: Bool,
-        statistics: Bool, appCount: Bool, liveDisplayOptions: Bool
+        statistics: Bool, liveDisplayOptions: Bool
     ) {
         self.systemUpdate = systemUpdate
         self.adbOverNetwork = adbOverNetwork
         self.apkInstall = apkInstall
         self.statistics = statistics
-        self.appCount = appCount
         self.liveDisplayOptions = liveDisplayOptions
     }
 
     /// Everything the mock runtime pretends to do.
     public static let preview = Capabilities(
-        systemUpdate: true, adbOverNetwork: true, apkInstall: true, statistics: true, appCount: true,
+        systemUpdate: true, adbOverNetwork: true, apkInstall: true, statistics: true,
         liveDisplayOptions: true
     )
 
@@ -44,7 +41,7 @@ public struct Capabilities: Equatable, Sendable {
     /// data (`StartPlan`), and the session offers Android's own screen, keys
     /// and the options.
     public static let device = Capabilities(
-        systemUpdate: true, adbOverNetwork: false, apkInstall: false, statistics: false, appCount: false,
+        systemUpdate: true, adbOverNetwork: false, apkInstall: false, statistics: false,
         liveDisplayOptions: false
     )
 }
