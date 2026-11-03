@@ -665,6 +665,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_audio_defaults: bool = False,
                           wrong_product_model: bool = False,
                           old_product_identity: bool = False,
+                          wrong_vendor_identity: bool = False,
+                          fingerprint_variant: str | None = None,
                           user_permissive_su: bool = False,
                           usb_debugging_default: bool = False,
                           missing_lockscreen_default: bool = False,
@@ -758,17 +760,45 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr("ROOT/system_dlkm/", b"")
                 archive.writestr("SYSTEM/system_dlkm/etc/build.prop", "")
                 virtual_ab_property = "ro.virtual_ab.enabled=true\n" if virtual_ab else ""
+                # The system partition is AOSP's generic system and says so; the product's
+                # identity is in the product and vendor partitions and the public fingerprint.
                 system_identity = {
+                    "brand": "Android",
+                    "manufacturer": "Android",
+                    "device": "generic",
+                    "name": "generic_system",
+                    "model": "Generic System",
+                }
+                system_fingerprint = (
+                    f"Android/generic_system/generic:17/FIXTURE/7:{build_variant}/release-keys"
+                )
+                product_identity = {
                     "brand": "Android" if old_product_identity else "Andarium",
                     "manufacturer": "Kernarium",
                     "device": "darwin" if old_product_identity else "andarium",
                     "name": "lineage_darwin" if old_product_identity else "lineage_andarium",
                     "model": "Darwin UML" if old_product_identity else "Andarium Virtual Device",
                 }
-                system_fingerprint = (
-                    f"{system_identity['brand']}/{system_identity['name']}/"
-                    f"{system_identity['device']}:17/FIXTURE/7:{build_variant}/release-keys"
+                vendor_identity = dict(
+                    product_identity,
+                    **({"model": "Android 17 on Andarium"} if wrong_vendor_identity else {}),
                 )
+                public_fingerprint = (
+                    f"{product_identity['brand']}/{product_identity['name']}/"
+                    f"{product_identity['device']}:17/FIXTURE/7:{build_variant}/release-keys"
+                )
+                public_fingerprint_property = {
+                    None: f"ro.build.fingerprint={public_fingerprint}\n",
+                    "missing": "",
+                    # The system partition's own fingerprint is not the public one.
+                    "generic-system": f"ro.build.fingerprint={system_fingerprint}\n",
+                    "wrong-type": "ro.build.fingerprint="
+                    + public_fingerprint.replace(
+                        f":{build_variant}/",
+                        f":{'userdebug' if build_variant == 'user' else 'user'}/",
+                    )
+                    + "\n",
+                }[fingerprint_variant]
 
                 def abi_properties(partition: str, thirty_two: str) -> str:
                     abilist = "arm64-v8a" + ("," + thirty_two if thirty_two else "")
@@ -791,6 +821,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         for key, value in system_identity.items()
                     )
                     + f"ro.system.build.fingerprint={system_fingerprint}\n"
+                    + public_fingerprint_property
                     + f"{virtual_ab_property}",
                 )
                 archive.writestr(
@@ -811,8 +842,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "missing": "",
                         "true": "apexd.config.use_fiemap=true\n",
                     }[use_fiemap_variant]
-                    + f"ro.product.product.model="
-                    f"{'Android 17 on Andarium' if wrong_product_model else 'Andarium Virtual Device'}\n",
+                    + "".join(
+                        f"ro.product.product.{key}={value}\n"
+                        for key, value in dict(
+                            product_identity,
+                            **({"model": "Android 17 on Andarium"} if wrong_product_model else {}),
+                        ).items()
+                    ),
                 )
                 archive.writestr(
                     "SYSTEM/bin/android-fixture",
@@ -1654,6 +1690,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "VENDOR/build.prop",
                     "ro.vendor.build.fingerprint=kernarium\n"
+                    + "".join(
+                        f"ro.product.vendor.{key}={value}\n"
+                        for key, value in vendor_identity.items()
+                    )
                     + abi_properties("vendor", vendor_abilist32)
                     + f"ro.zygote={zygote}\n"
                     "# Removed by post_process_props.py because overridden by "
@@ -2159,6 +2199,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("audio-defaults", {"wrong_audio_defaults": True}),
             ("product-model", {"wrong_product_model": True}),
             ("old-product-identity", {"old_product_identity": True}),
+            ("wrong-vendor-identity", {"wrong_vendor_identity": True}),
+            ("missing-public-fingerprint", {"fingerprint_variant": "missing"}),
+            ("generic-system-fingerprint", {"fingerprint_variant": "generic-system"}),
+            ("wrong-type-fingerprint", {"fingerprint_variant": "wrong-type"}),
             ("user-permissive-su", {"user_permissive_su": True}),
             ("usb-debugging-on-by-default", {"usb_debugging_default": True}),
             ("user-carries-su", {"extra_entry": "SYSTEM/xbin/su"}),
@@ -2390,6 +2434,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("elf-program-header-size", {"elf_edit": ("<H", 54, 32)}, "program.header"),
             ("armeabi", {"abilist32": "armeabi-v7a,armeabi"}, "armeabi is forbidden|legacy armeabi"),
             ("no-32-bit-abi-cause", {"abilist32": ""}, "unexpected ABI"),
+            ("product-model-cause", {"wrong_product_model": True},
+             "unexpected product identity ro.product.product.model: 'Android 17 on Andarium'"),
+            ("old-product-identity-cause", {"old_product_identity": True},
+             "unexpected product identity ro.product.product.brand: 'Android'"),
+            ("wrong-vendor-identity-cause", {"wrong_vendor_identity": True},
+             "unexpected product identity ro.product.vendor.model: 'Android 17 on Andarium'"),
+            ("missing-public-fingerprint-cause", {"fingerprint_variant": "missing"},
+             "unexpected build fingerprint for a .* build: ''"),
+            ("generic-system-fingerprint-cause", {"fingerprint_variant": "generic-system"},
+             "unexpected build fingerprint for a .* build: 'Android/generic_system/generic:"),
+            ("wrong-type-fingerprint-cause", {"fingerprint_variant": "wrong-type"},
+             "unexpected build fingerprint for a .* build: 'Andarium/lineage_andarium/andarium:"),
             ("single-zygote-cause", {"zygote": "zygote64"}, "zygote"),
             ("blocker-missing-service-cause", {"blocker_variant": "missing-service"},
              "does not declare the suspend_blocker service"),
@@ -3189,6 +3245,61 @@ def verify_zram_fstab(android_root: Path) -> None:
         except SystemExit:
             continue
         fail(f"a fstab with {label} passes the zram swap check")
+
+
+def verify_product_identity(android_root: Path) -> None:
+    """The identity is checked where the product keeps it, not in the generic system partition.
+
+    The system partition is AOSP's generic system (generic_system.mk) and reports Android /
+    generic / Generic System; the product and vendor partitions and the public fingerprint
+    carry the Andarium identity, which is what Build.* reports."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    identity = verifier.PRODUCT_IDENTITY
+    if identity["brand"] != "Andarium" or identity["model"] != "Andarium Virtual Device":
+        fail(f"the product identity is {identity}")
+    generic = {
+        "ro.product.system.brand": "Android",
+        "ro.product.system.device": "generic",
+        "ro.product.system.manufacturer": "Android",
+        "ro.product.system.model": "Generic System",
+        "ro.product.system.name": "generic_system",
+        "ro.system.build.fingerprint":
+            "Android/generic_system/generic:17/CP2A.260605.016/eng.build:user/test-keys",
+        "ro.build.fingerprint":
+            "Andarium/lineage_andarium/andarium:17/CP2A.260605.016/eng.build:user/test-keys",
+    }
+    product = {f"ro.product.product.{key}": value for key, value in identity.items()}
+    vendor = {f"ro.product.vendor.{key}": value for key, value in identity.items()}
+    verifier.check_product_identity(generic, product, vendor, "user")
+    # The generic system's own identity is not constrained: it may also carry the product's.
+    verifier.check_product_identity(
+        dict(generic, **{f"ro.product.system.{key}": value for key, value in identity.items()}),
+        product,
+        vendor,
+        "user",
+    )
+    for label, system, product_map, vendor_map, variant in (
+        ("a wrong product model", generic,
+         dict(product, **{"ro.product.product.model": "Generic System"}), vendor, "user"),
+        ("a wrong product brand", generic,
+         dict(product, **{"ro.product.product.brand": "Android"}), vendor, "user"),
+        ("no product identity", generic, {}, vendor, "user"),
+        ("a wrong vendor device", generic, product,
+         dict(vendor, **{"ro.product.vendor.device": "generic"}), "user"),
+        ("no vendor identity", generic, product, {}, "user"),
+        ("the generic system's fingerprint", dict(generic, **{
+            "ro.build.fingerprint": generic["ro.system.build.fingerprint"]}),
+         product, vendor, "user"),
+        ("no public fingerprint", {key: value for key, value in generic.items()
+                                   if key != "ro.build.fingerprint"},
+         product, vendor, "user"),
+        ("a fingerprint of the other build type", generic, product, vendor, "userdebug"),
+    ):
+        try:
+            verifier.check_product_identity(system, product_map, vendor_map, variant)
+        except SystemExit:
+            continue
+        fail(f"a build with {label} passes the product identity check")
 
 
 def verify_pinner_overlay(android_root: Path) -> None:
@@ -4798,6 +4909,7 @@ def main() -> None:
     verify_erofs_board(android_root)
     verify_userdata_grow(android_root)
     verify_zram_fstab(android_root)
+    verify_product_identity(android_root)
     verify_pinner_overlay(android_root)
     verify_secondary_zygote_topic(android_root)
     verify_decoder_output_delay_topic(android_root)
