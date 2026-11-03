@@ -49,6 +49,8 @@ nonisolated struct AdbFailure: LocalizedError, Equatable {
         switch error {
         case .refused:
             message = "The guest isn\u{2019}t ready to \(activity.notReady). Try again in a moment."
+        case .notAnswering:
+            message = "The guest isn\u{2019}t answering yet. Try again once it has started."
         case .keyRejected:
             message = "The guest didn\u{2019}t accept Andarium\u{2019}s key. Restart the guest and try again."
         case .guestGone, .streamClosed:

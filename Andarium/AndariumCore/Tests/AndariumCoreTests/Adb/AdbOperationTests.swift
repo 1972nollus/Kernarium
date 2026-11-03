@@ -172,6 +172,47 @@ struct AdbSessionTests {
         }
     }
 
+    @Test func aGuestThatNeverAnswersTheConnectionIsNotUpAtTheConnectLimit() {
+        let connector = ScriptedConnector(failures: Array(repeating: .notAnswering, count: 100_000)) {
+            CountingTransport()
+        }
+        #expect(throws: AdbError.notAnswering) {
+            try session(connector, connectLimit: .milliseconds(150)).run { _ in 1 }
+        }
+        #expect(connector.attemptCount > 1)
+    }
+
+    @Test func aGuestThatAnswersAfterSilenceIsRetriedLikeARefusal() throws {
+        let adbd = FakeAdbd(services: ["shell,v2,raw:true": { stream in
+            try stream.send(ShellPacket(id: ShellPacket.exit, data: Data([0])).encoded())
+        }])
+        defer { adbd.shutdown() }
+        let connector = ScriptedConnector(failures: [.notAnswering, .refused, .notAnswering]) { adbd.client }
+        let exit = try session(connector).run { connection in
+            try connection.runShell("true").exitCode
+        }
+        #expect(exit == 0)
+        #expect(connector.attemptCount == 4)
+    }
+
+    @Test func silenceFollowedByAConnectionThatStallsIsNotReadyNotUnanswered() {
+        // The guest answered the last attempt, so it is up; the handshake
+        // that went nowhere is the refusal.
+        final class Mute: AdbTransport, @unchecked Sendable {
+            private let gate = DispatchSemaphore(value: 0)
+            func readExactly(_ count: Int) throws -> Data {
+                gate.wait()
+                throw AdbError.guestGone
+            }
+            func writeAll(_ data: Data) throws {}
+            func shutdown() { gate.signal() }
+        }
+        let connector = ScriptedConnector(failures: [.notAnswering]) { Mute() }
+        #expect(throws: AdbError.refused) {
+            try session(connector, connectLimit: .milliseconds(150)).run { _ in 1 }
+        }
+    }
+
     @Test func aGuestThatAnswersTheConnectButNotTheHandshakeIsNotReady() {
         let quiet = FakeAdbd(auth: .on { _, _ in true }, services: [:])
         defer { quiet.shutdown() }

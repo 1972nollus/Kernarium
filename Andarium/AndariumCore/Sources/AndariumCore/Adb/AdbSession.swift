@@ -159,10 +159,12 @@ public final class AdbSession: @unchecked Sendable {
         var transport: (any AdbTransport)?
         defer { transport?.shutdown() }
         var connected: AdbConnection?
+        // What the last connect attempt that opened nothing was told.
+        var unanswered: AdbError?
         do {
             watchdog.arm(idle: nil, overall: connectLimit)
             while connected == nil {
-                let opened = try openTransport()
+                let opened = try openTransport(unanswered: &unanswered)
                 transport = opened
                 watchdog.attach(opened)
                 let candidate = AdbConnection(transport: opened)
@@ -183,9 +185,12 @@ public final class AdbSession: @unchecked Sendable {
             watchdog.disarm()
         } catch {
             // A guest that never completed the handshake within the connect
-            // limit is one that is not ready, not one that stopped talking.
+            // limit is one that is not ready, not one that stopped talking;
+            // one that never answered the connection is not up yet.
             let ended = translated(error)
-            if let ended = ended as? AdbError, ended == .timedOut { throw AdbError.refused }
+            if let ended = ended as? AdbError, ended == .timedOut {
+                throw unanswered == .notAnswering ? AdbError.notAnswering : AdbError.refused
+            }
             throw ended
         }
         guard let connection = connected else { throw AdbError.guestGone }
@@ -196,13 +201,16 @@ public final class AdbSession: @unchecked Sendable {
         }
     }
 
-    private func openTransport() throws -> any AdbTransport {
+    private func openTransport(unanswered: inout AdbError?) throws -> any AdbTransport {
         while true {
             if let ended = ended() { throw ended }
             do {
-                return try connector.connect()
-            } catch AdbError.refused {
+                let opened = try connector.connect()
+                unanswered = nil
+                return opened
+            } catch let failure as AdbError where failure == .refused || failure == .notAnswering {
                 // adbd may still be starting, or the guest waking: ask again.
+                unanswered = failure
                 if let ended = ended() { throw ended }
                 watchdog.sleep(retryInterval)
             }

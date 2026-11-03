@@ -175,7 +175,7 @@ struct AndroidOperationTests {
         for error in [AdbError.cancelled, .timedOut, .guestGone, .streamClosed] {
             #expect(BugReportOperation.dumpMayGoOn(after: error), "\(error)")
         }
-        for error in [AdbError.refused, .keyRejected, .io(ENOSPC), .remote("no")] {
+        for error in [AdbError.refused, .notAnswering, .keyRejected, .io(ENOSPC), .remote("no")] {
             #expect(!BugReportOperation.dumpMayGoOn(after: error), "\(error)")
         }
         #expect(!BugReportOperation.dumpMayGoOn(after: BugReportStaging.NoRoom(bytes: 1 << 20, device: "iPad")))
@@ -186,6 +186,8 @@ struct AndroidOperationTests {
         #expect(!SessionSettingsSheet.bugReportNotice.contains("\n"))
         #expect(AdbFailure(.refused, activity: .bugReport).message
             == "The guest isn\u{2019}t ready to make a bug report. Try again in a moment.")
+        #expect(AdbFailure(.notAnswering, activity: .installApp).message
+            == "The guest isn\u{2019}t answering yet. Try again once it has started.")
         #expect(AdbFailure(.keyRejected, activity: .bugReport).message
             == "The guest didn\u{2019}t accept Andarium\u{2019}s key. Restart the guest and try again.")
         #expect(AdbFailure(.guestGone, activity: .installApp).message

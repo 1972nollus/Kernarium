@@ -25,7 +25,8 @@ nonisolated struct VsockConnector: AdbConnector, GuestStreamOpener {
         let result = kernarium_runtime_loader_connect_vsock(adbPort, timeout)
         if result >= 0 { return result }
         switch -result {
-        case ECONNREFUSED, ETIMEDOUT: throw AdbError.refused
+        case ECONNREFUSED: throw AdbError.refused
+        case ETIMEDOUT: throw AdbError.notAnswering
         case ENODEV, ECONNRESET: throw AdbError.guestGone
         default: throw AdbError.io(-result)
         }

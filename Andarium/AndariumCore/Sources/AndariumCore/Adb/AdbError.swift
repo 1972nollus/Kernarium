@@ -9,6 +9,10 @@ public enum AdbError: Error, Equatable, Sendable {
     /// adbd is not running (USB debugging is off in Android, or Android is
     /// still starting).
     case refused
+    /// The guest did not answer the connection at all within the connect
+    /// limit: it is still starting, or not running yet. Retried like
+    /// `refused` until then.
+    case notAnswering
     /// adbd closed or reset the connection, or the guest stopped.
     case guestGone
     /// The guest gave no sign of life for the phase's whole allowance, counted
