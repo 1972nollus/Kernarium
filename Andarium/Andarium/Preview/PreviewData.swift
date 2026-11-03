@@ -44,7 +44,7 @@ enum PreviewData {
     static func sampleGuest(on host: HostDevice) -> Guest {
         Guest(
             cores: host.processorCount, memoryMiB: min(3072, host.memory.maximumMiB(vCPUs: host.processorCount)), capacityGiB: 16,
-            usedBytes: UInt64(5.4 * Double(Limits.bytesPerGiB)), apps: 23
+            usedBytes: UInt64(5.4 * Double(Limits.bytesPerGiB))
         )
     }
 }

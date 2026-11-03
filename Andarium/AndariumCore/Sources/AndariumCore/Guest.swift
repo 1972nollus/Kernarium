@@ -30,8 +30,6 @@ public struct Guest: Equatable, Codable, Sendable {
 
     /// Data the guest has written: the space its storage occupies.
     public var usedBytes: UInt64 = 0
-    /// How many apps Android has installed, where the runtime can tell.
-    public var apps: Int?
 
     private enum CodingKeys: String, CodingKey {
         case cores, memoryMiB, capacityGiB, pendingCapacityGiB, microphone
@@ -41,7 +39,7 @@ public struct Guest: Equatable, Codable, Sendable {
     public init(
         cores: Int, memoryMiB: Int, capacityGiB: Int, pendingCapacityGiB: Int? = nil,
         microphone: Bool = false, includeInBackups: Bool = false,
-        usedBytes: UInt64 = 0, apps: Int? = nil
+        usedBytes: UInt64 = 0
     ) {
         self.cores = cores
         self.memoryMiB = memoryMiB
@@ -50,7 +48,6 @@ public struct Guest: Equatable, Codable, Sendable {
         self.microphone = microphone
         self.includeInBackups = includeInBackups
         self.usedBytes = usedBytes
-        self.apps = apps
     }
 
     public var usedGB: Double { Double(usedBytes) / Double(Limits.bytesPerGiB) }
@@ -82,7 +79,6 @@ public struct Guest: Equatable, Codable, Sendable {
         guest.capacityGiB = effectiveCapacityGiB
         guest.pendingCapacityGiB = nil
         guest.usedBytes = 0
-        guest.apps = nil
         return guest
     }
 

@@ -102,9 +102,6 @@ struct EraseSheet: View {
                     .listRowBackground(Color.clear)
                 }
                 Section("Erased") {
-                    if let apps = guest.apps {
-                        item("square.grid.2x2", "Apps", "\(apps)")
-                    }
                     item("person.crop.circle", "Accounts and settings", nil)
                     item("photo.on.rectangle", "Photos, downloads and other files", nil)
                     item("internaldrive", "Data on this \(model.host.name)", Formats.gb(guest.usedGB))

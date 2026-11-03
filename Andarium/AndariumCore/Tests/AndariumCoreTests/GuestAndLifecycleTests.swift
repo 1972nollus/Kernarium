@@ -60,14 +60,12 @@ struct GuestTests {
         guest.setCapacity(24)
         guest.didBoot()
         guest.usedBytes = 5_000_000_000
-        guest.apps = 12
         guest.setCapacity(32)
 
         let erased = guest.erased
         #expect(erased.capacityGiB == 32)
         #expect(erased.pendingCapacityGiB == nil)
         #expect(erased.usedBytes == 0)
-        #expect(erased.apps == nil)
         #expect(erased.microphone)
         #expect(erased.includeInBackups)
         #expect(erased.memoryMiB == 2048)
@@ -76,15 +74,12 @@ struct GuestTests {
     @Test func onlyTheChoicesAreStored() throws {
         var guest = Guest.fresh(on: ipad)
         guest.usedBytes = 123
-        guest.apps = 9
         let data = try JSONEncoder().encode(guest)
         let text = String(decoding: data, as: UTF8.self)
         #expect(!text.contains("usedBytes"))
-        #expect(!text.contains("apps"))
 
         let decoded = try JSONDecoder().decode(Guest.self, from: data)
         #expect(decoded.usedBytes == 0)
-        #expect(decoded.apps == nil)
         #expect(decoded.cores == guest.cores)
     }
 }
