@@ -685,6 +685,10 @@ packages the Apple battery provider's archive and the hardware video encoder's,
 as the Android runtime links them, as `HostBattery.xcframework` and
 `HostVideoEncoder.xcframework`; only `KernariumTests` links them, so the test
 process reaches each without loading a second runtime.
+
+The Simulator renders with llvmpipe, which runs one rasterizer thread per host
+core; `LP_NUM_THREADS` caps them for a launch (`SIMCTL_CHILD_LP_NUM_THREADS=2`
+with `xcrun simctl launch`) on a loaded host, at the cost of frame rate.
 `dependencies/build-ios-storage.sh --verify-only` and
 `dependencies/build-ios-zstd.sh --verify-only` check both arm64 Apple slices,
 their provenance and deployment targets, required APIs, and the absence of

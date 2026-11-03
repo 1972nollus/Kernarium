@@ -194,37 +194,52 @@ second graphics backend, and no other product can carry it:
 
 ```text
 guest Mesa -> Virtio-GPU/Virgl -> vhost-user -> virglrenderer
-    -> Mesa software rasterizer over surfaceless EGL -> readback -> UIKit
+    -> Mesa llvmpipe over surfaceless EGL -> readback -> UIKit
 ```
 
 - Its `apple-gpu-vulkan-experiment` prefix (`ios-simulator-arm64`, contract
   `ios-simulator-gpu-software-arm64.tsv`) holds libepoxy, virglrenderer built
   without Venus, and `MesaEGL.framework` and `MesaGallium.framework` with
-  Mesa's softpipe Gallium driver. It has no KosmicKrisp, Vulkan header or Venus
-  protocol, so its receipt names no protocol. `dependencies/build-apple-gpu.sh
-  --platform ios-simulator` builds it, and the driver is named once, in that
-  script's `ios-simulator` branch, which is also the contract's `gl_provider`.
-- The host GL provider selects the software device (`LIBGL_ALWAYS_SOFTWARE`)
-  and renders a desktop OpenGL 4.5 core context, the newest the rasterizer
-  offers. The guest sees a Virgl GPU with OpenGL ES 3.1 and no Vulkan:
-  the device offers no Venus capset, refuses a Venus context, and runs the
-  renderer with no Venus flag and no device-memory pool, so SurfaceFlinger
-  falls back to GL.
+  Mesa's llvmpipe and softpipe Gallium drivers. It has no KosmicKrisp, Vulkan
+  header or Venus protocol, so its receipt names no protocol.
+  `dependencies/build-apple-gpu.sh --platform ios-simulator` builds it, and the
+  drivers are named once, in that script's `ios-simulator` branch, which is also
+  the contract's `gl_provider`.
+- llvmpipe JITs through LLVM. `dependencies/build-apple-gpu-llvm.sh` builds
+  LLVM's AArch64 libraries for the Simulator from the source archive that
+  `dependencies/llvm/archives.tsv` pins (prepared with
+  `dependencies/prepare.sh --archive-manifest`), and Mesa links them statically
+  into `MesaGallium`, so the prefix ships no LLVM file and records the archive
+  manifest as provenance. softpipe, an interpreter that needs no JIT, stays as
+  the `GALLIUM_DRIVER=softpipe` fallback.
+- The JIT is Mesa's own: gallivm maps its code with `mmap`, makes it executable
+  with `mprotect` and publishes it with `sys_icache_invalidate`, and neither
+  uses `MAP_JIT` nor goes through `darwin/cpu/jit_memory`. It is the one
+  exception to the [executable-memory rule](architecture.md), granted for this
+  test-only product.
+- The host GL provider selects the software device (`LIBGL_ALWAYS_SOFTWARE`),
+  which Mesa answers with llvmpipe, and renders a desktop OpenGL 4.6 core
+  context as the other products do. The guest sees a Virgl GPU with OpenGL ES
+  3.2 and no Vulkan: the device offers no Venus capset, refuses a Venus
+  context, and runs the renderer with no Venus flag and no device-memory pool,
+  so SurfaceFlinger falls back to GL.
 - Every flush is a readback; there is no native Metal texture to look up, and
   the log says `renderer=software`. The runtime plans no GPU budget, because the
   budget only sizes the Venus pool, and says so at launch.
-- The rasterizer is a build-time property of the product:
+- The rasterizers are a build-time property of the product:
   `UML_GPU_SOFTWARE_RENDERER` derives from the `ios-simulator` platform alone
   (`dependencies/cmake/AppleGpuDependencies.cmake`) and excludes the Venus and
   native-lookup code from every other build as a preprocessor condition on a
   constant. The architecture audit rejects it, and a link of a software prefix,
-  outside an `ios-simulator` tree; the prefix verifier requires a software
-  Gallium screen in the Simulator's `MesaGallium` and forbids one in the macOS
-  and iOS device prefixes; and `Kernarium/scripts/package-ios-frameworks.sh`
-  checks every device slice for the rasterizer and the provider's marker.
-- It is slow by construction. A cold app launch takes up to about 15 s to
-  draw, a tap shows within about a second and a scroll presents about two
-  frames per second, so a UI test allows about 20 s for a cold launch.
+  outside an `ios-simulator` tree; the prefix verifier requires every driver of
+  the contract's `gl_provider` in the Simulator's `MesaGallium` and forbids a
+  software screen and LLVM in the macOS and iOS device prefixes; and
+  `Kernarium/scripts/package-ios-frameworks.sh` checks every device slice for
+  either and for the provider's marker.
+- llvmpipe rasterizes on one thread per host core, so a scroll keeps about three
+  cores busy; it presents about 20 frames per second and a cold app launch
+  draws within about 7 s. A UI test allows about 20 s for a cold launch.
+  softpipe, on one thread, is an order of magnitude slower.
 
 ## Guest capability boundary
 

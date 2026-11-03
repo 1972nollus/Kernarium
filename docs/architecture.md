@@ -399,7 +399,10 @@ from linking or including it. FEXCore, which the macOS-only x86-64 JIT embeds,
 has no executable-memory path of its own: its maintained series routes
 allocation, release, and the write window through hooks the embedder installs,
 and prefix verification rejects a FEXCore archive that toggles JIT write
-protection.
+protection. The one exception is Mesa llvmpipe's own LLVM JIT in the iOS
+Simulator product, which maps and publishes its own code; the Simulator's GPU
+prefix alone carries LLVM, and prefix verification and the framework packaging
+reject LLVM in the macOS and iOS device slices.
 
 On macOS the owner serves JIT memory from one window in the host image's
 4 GiB block, claimed when the process first asks whether it can run JIT code,
