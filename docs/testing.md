@@ -940,8 +940,9 @@ and the RAM held), `guest-console-memory` (the `mem` reply parser and request
 against a fake console), `gpu-display-statistics` (the display counters through
 the service), `emulator-statistics` and `emulator-lifecycle` (the public calls
 and their gating: not while quiesced, not beside another lifecycle call, the
-wait outside the mutex) and the package consumers, which call both functions on
-an idle handle.
+wait outside the mutex), `kernarium-statistics` (the runtime's composition and
+its refusals: quiesced, display off, lifecycle busy) and the package consumers,
+which call both functions on an idle handle.
 
 ## LTP
 

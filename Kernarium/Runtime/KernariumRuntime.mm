@@ -4,6 +4,7 @@
 #include "KernariumConsoleInput.hpp"
 #include "KernariumKeyWake.hpp"
 #include "KernariumRestartLoop.hpp"
+#include "KernariumStatistics.hpp"
 #if KERNARIUM_AUTOMATION_HARNESS
 #include "KernariumHarness.hpp"
 #endif
@@ -179,6 +180,9 @@ std::mutex restartCallbackMutex;
 kernarium_runtime_restart_callback restartCallback;
 void* restartContext;
 std::atomic_bool pageCacheTrimmingRequested;
+/* How many times this launch's guest has restarted, for the statistics
+ * readings: stored when a boot starts, with no guest running. */
+std::atomic<std::uint32_t> bootIndex;
 
 /* Runs with the receiver's mutex held, which is what makes clearing the
  * receiver wait for a call in progress. */
@@ -1062,6 +1066,7 @@ public:
     bool startBoot(unsigned restarts) override
     {
         boot_.reset();
+        bootIndex.store(restarts, std::memory_order_release);
         try {
             ignoreBrokenPipes();
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
@@ -1859,6 +1864,75 @@ int runtimeGuestDisplayActive()
     return active.has_value() ? (*active ? 1 : 0) : -1;
 }
 
+int runtimeReadStatistics(kernarium_runtime_statistics* statistics)
+{
+    if (statistics == nullptr || statistics->struct_size < sizeof(*statistics))
+        return -EINVAL;
+    uml_emulator_statistics guest {.struct_size = sizeof(guest)};
+    int result;
+    {
+        std::lock_guard lock(activeEmulatorMutex);
+        if (activeEmulator == nullptr)
+            return -ENODEV;
+        result = uml_emulator_get_statistics(activeEmulator, &guest);
+    }
+    if (const int error = kernarium::statistics::statisticsResult(result))
+        return error;
+    const auto timestamp = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    std::optional<kernarium::statistics::DisplayFigures> display;
+    std::optional<bool> scanout;
+    {
+        std::lock_guard lock(activeGpuMutex);
+        if (activeGpu != nullptr) {
+            if (const auto frames = activeGpu->displayStatistics())
+                display = kernarium::statistics::DisplayFigures {
+                    .presentedFrames = frames->presentedFrames,
+                    .offeredFrames = frames->guestFrames,
+                };
+            scanout = activeGpu->guestScanoutActive();
+        }
+    }
+    *statistics = kernarium::statistics::reading(
+        guest,
+        display,
+        scanout,
+        bootIndex.load(std::memory_order_acquire),
+        timestamp);
+    return 0;
+}
+
+int runtimeReadGuestMemory(kernarium_runtime_guest_memory* memory)
+{
+    if (memory == nullptr || memory->struct_size < sizeof(*memory))
+        return -EINVAL;
+    std::optional<bool> scanout;
+    {
+        std::lock_guard lock(activeGpuMutex);
+        if (activeGpu != nullptr)
+            scanout = activeGpu->guestScanoutActive();
+    }
+    /* A quiesce holds the lifecycle mutex for seconds, and a request would
+     * end the suspend it makes, so a busy mutex is not waited for. */
+    std::unique_lock lock(emulatorLifecycleMutex, std::try_to_lock);
+    const bool free = lock.owns_lock();
+    if (const int refusal = kernarium::statistics::memoryRefusal(
+            free,
+            free && activeEmulator != nullptr,
+            lifecycle.quiesced(),
+            scanout))
+        return refusal;
+    uml_emulator_guest_memory figures {.struct_size = sizeof(figures)};
+    const int result = uml_emulator_get_guest_memory(activeEmulator, &figures);
+    lock.unlock();
+    if (const int error = kernarium::statistics::guestMemoryResult(result))
+        return error;
+    memory->total_bytes = figures.total_bytes;
+    memory->available_bytes = figures.available_bytes;
+    return 0;
+}
+
 int runtimeSetBackgroundThrottle(int enabled)
 {
     thread_act_array_t threads = nullptr;
@@ -1962,6 +2036,8 @@ const kernarium_runtime_api runtimeApi {
     .set_restart_callback = runtimeSetRestartCallback,
     .guest_display_active = runtimeGuestDisplayActive,
     .plan_gpu_budget = runtimePlanGpuBudget,
+    .read_statistics = runtimeReadStatistics,
+    .read_guest_memory = runtimeReadGuestMemory,
 };
 
 } // namespace
@@ -2014,7 +2090,7 @@ kernarium_runtime_automation_hold_delay_ms(void)
 }
 #endif
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v18(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v19(void)
 {
     return &runtimeApi;
 }

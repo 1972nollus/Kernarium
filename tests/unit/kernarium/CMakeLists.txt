@@ -52,3 +52,13 @@ target_include_directories(uml_kernarium_adb_authorization_tests PRIVATE
 uml_add_unit_test(NAME kernarium-adb-authorization
     COMMAND uml_kernarium_adb_authorization_tests
     LABELS kernarium)
+
+# How a statistics reading is composed from the emulator's and the display's
+# figures, and when the guest's memory may be asked for.
+add_executable(uml_kernarium_statistics_tests statistics_tests.cpp)
+target_include_directories(uml_kernarium_statistics_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/Kernarium/Runtime
+    ${PROJECT_SOURCE_DIR}/darwin/api/include)
+uml_add_unit_test(NAME kernarium-statistics
+    COMMAND uml_kernarium_statistics_tests
+    LABELS kernarium)

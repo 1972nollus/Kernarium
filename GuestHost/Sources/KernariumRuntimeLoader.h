@@ -47,6 +47,17 @@ int kernarium_runtime_loader_set_gpu_hold(int held);
  * kernarium_runtime_guest_display_active_function. Returns the runtime's
  * answer, or -1 when no runtime is loaded. */
 int kernarium_runtime_loader_guest_display_active(void);
+/* The running guest's host-side figures; see
+ * kernarium_runtime_read_statistics_function. Returns the runtime's answer, or
+ * -ENODEV when no runtime is loaded. */
+int kernarium_runtime_loader_read_statistics(
+    kernarium_runtime_statistics* statistics);
+/* The guest kernel's own memory figures; see
+ * kernarium_runtime_read_guest_memory_function. Returns the runtime's answer,
+ * or -ENODEV when no runtime is loaded. Call it away from the main thread: it
+ * may wait up to 500 ms. */
+int kernarium_runtime_loader_read_guest_memory(
+    kernarium_runtime_guest_memory* memory);
 /* Moves the guest's vCPU threads to (nonzero) or from (zero) the system's
  * background policy; see kernarium_runtime_set_background_throttle_function.
  * Returns the number of threads changed, or -1 when no runtime is loaded. */

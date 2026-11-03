@@ -513,6 +513,36 @@ that mixes with other audio; the window sets the session as the application
 resigns active, because guest audio claims and drops it on its own terms. The
 application plays no sound of its own.
 
+## Statistics
+
+An application that shows how hard the guest works asks the runtime, which
+measures nothing between calls: no thread, timer or counter of its own runs
+while nobody reads (runtime API 19, `read_statistics` and `read_guest_memory`).
+`read_statistics` returns one reading of the host's figures: the CPU time the
+guest's `uml-vcpu-N-carrier` threads have used, the frames its display
+presented and was offered, and the guest RAM the host holds. It reads counters
+the system and the display keep anyway, in about 0.1 ms, and never waits for
+the guest. Two readings of one boot give the share of the guest's processors
+that computed (the difference of `processor_time_ns` over the difference of
+`timestamp_ns` and `processor_count`) and the rate of presented frames; the
+`boot_index` of a reading is the restart count, and a pair that spans two boots
+is not a rate, because the CPU time starts again at a restart. The share
+includes the engine's own translation work, which runs on the carriers, and
+leaves out the host's device threads.
+
+`read_guest_memory` asks the guest kernel for its own `MemTotal` and
+`MemAvailable` through the management console, which the application shows as
+the memory in use (total less available). Because a console request ends a
+suspend, it is never sent where it could wake a guest that sleeps: it returns
+`-EAGAIN` with nothing sent while the application has quiesced the guest, while
+a lifecycle call (quiesce, resume, sync, trimming) is in progress, and while the
+guest's display is known to be off, which is when an Android guest suspends
+itself. `-ENOTSUP` is a kernel without the request and `-ETIMEDOUT` a guest that
+did not answer in 500 ms; the application keeps the last figure in all three.
+It waits up to 500 ms, and a quiesce, resume or sync made meanwhile waits for
+it, so it is called away from the main thread. `KernariumStatistics.hpp` holds
+the rules, with `kernarium-statistics` as their test.
+
 ## Simulator
 
 The Simulator build is for UI tests of the application and its Android guest.
