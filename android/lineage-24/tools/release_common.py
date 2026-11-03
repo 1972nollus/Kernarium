@@ -63,6 +63,28 @@ def require_release_build_variant(variant: str) -> None:
         )
 
 
+# The member of the otacerts.zip of a signed release, per variant. sign_target_files_apks names it after
+# the path it is given for the release key, which sign_release.py makes keys/releasekey.x509.pem. Only a
+# user build is signed: every user build, a release or a candidate, carries the one release key set. A
+# userdebug build keeps the AOSP test keys the build itself used, is never re-signed, and so has no
+# signed member to name.
+OTA_CERTIFICATE_MEMBERS = {"user": "keys/releasekey.x509.pem"}
+OTA_CERTIFICATE_ARCHIVES = (
+    "SYSTEM/etc/security/otacerts.zip",
+    "RECOVERY/RAMDISK/system/etc/security/otacerts.zip",
+)
+
+
+def signed_ota_certificate_member(variant: str) -> str:
+    member = OTA_CERTIFICATE_MEMBERS.get(variant)
+    if member is None:
+        fail(
+            f"a {variant} build is not signed with the release keys: it keeps the AOSP test keys "
+            "of the build and is never re-signed"
+        )
+    return member
+
+
 def configured_build_variant(android_root: Path) -> str:
     variant = parse_env(android_root / "metadata/lineage.env")["LINEAGE24_BUILD_VARIANT"]
     if variant not in BUILD_VARIANTS:

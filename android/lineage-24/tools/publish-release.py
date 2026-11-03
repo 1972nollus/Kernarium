@@ -196,8 +196,8 @@ def main() -> None:
         required=True,
         help=(
             "the directory assemble-image.sh filled with system.img and "
-            "partition-layout.json; with --signing-keys, the new directory the "
-            "signed system disk is assembled into"
+            "partition-layout.json; the new directory the signed system disk is "
+            "assembled into"
         ),
     )
     parser.add_argument("--darwin-sdk", type=Path, required=True)
@@ -211,23 +211,25 @@ def main() -> None:
         type=Path,
         help=(
             "private key directory (mode 0700) to sign the target files with; "
-            "--target-files is then the unsigned archive and the signed disk "
-            "is assembled into --disk-dir. The directory is copied to a private "
-            "temporary directory that is deleted, and checked deleted, "
+            "--target-files is the unsigned archive and the signed disk "
+            "is assembled into --disk-dir. The directory is linked from a "
+            "private temporary directory that is deleted, and checked deleted, "
             "afterwards"
         ),
+        required=True,
     )
     parser.add_argument(
         "--first-boot-artifacts",
         type=Path,
+        required=True,
         help=(
             "first-boot artifact directory of precompile-first-boot-apps.py; "
-            "needed with --signing-keys, which then verifies that the signed "
-            "tree still matches it, so first boot compiles nothing"
+            "the signed tree is verified against it, so first boot compiles "
+            "nothing"
         ),
     )
-    parser.add_argument("--mkbootfs", type=Path, help="needed with --signing-keys")
-    parser.add_argument("--mkbootimg", type=Path, help="needed with --signing-keys")
+    parser.add_argument("--mkbootfs", type=Path, required=True)
+    parser.add_argument("--mkbootimg", type=Path, required=True)
     args = parser.parse_args()
 
     if RELEASE_ID_RE.fullmatch(args.release_id) is None:
@@ -242,32 +244,20 @@ def main() -> None:
     darwin_sdk = regular_directory(args.darwin_sdk, "Darwin SDK")
     release_root = regular_directory(args.release_root, "release root")
     target_files = regular_file(args.target_files, "target-files archive")
-    signing_result: tuple[int, list[str], dict[str, str]] | None = None
-    if args.signing_keys is None:
-        disk_dir = regular_directory(args.disk_dir, "system disk directory")
-        for option in ("mkbootfs", "mkbootimg", "first_boot_artifacts"):
-            if getattr(args, option) is not None:
-                fail(f"--{option.replace('_', '-')} is only used with --signing-keys")
-    else:
-        disk_dir = absolute_path(args.disk_dir, "signed system disk directory")
-        if disk_dir.exists() or disk_dir.is_symlink():
-            fail("the signed system disk directory already exists")
-        signing_keys = absolute_path(args.signing_keys, "signing key directory")
-        for private_area, label in ((outer_root, "outer project"), (release_root, "release root"), (aosp_source, "AOSP source")):
-            if signing_keys == private_area or private_area in signing_keys.parents:
-                fail(f"the signing key directory must not live inside the {label}")
-        for option, value in (
-            ("--mkbootfs", args.mkbootfs),
-            ("--mkbootimg", args.mkbootimg),
-            ("--first-boot-artifacts", args.first_boot_artifacts),
-        ):
-            if value is None:
-                fail(f"--signing-keys needs {option}")
-        mkbootfs = regular_file(args.mkbootfs, "mkbootfs", executable=True)
-        mkbootimg = regular_file(args.mkbootimg, "mkbootimg", executable=True)
-        first_boot_artifacts = regular_directory(
-            args.first_boot_artifacts, "first-boot artifact directory"
-        )
+    # Every release is a user build, signed with the release keys: there is no unsigned
+    # publication.
+    disk_dir = absolute_path(args.disk_dir, "signed system disk directory")
+    if disk_dir.exists() or disk_dir.is_symlink():
+        fail("the signed system disk directory already exists")
+    signing_keys = absolute_path(args.signing_keys, "signing key directory")
+    for private_area, label in ((outer_root, "outer project"), (release_root, "release root"), (aosp_source, "AOSP source")):
+        if signing_keys == private_area or private_area in signing_keys.parents:
+            fail(f"the signing key directory must not live inside the {label}")
+    mkbootfs = regular_file(args.mkbootfs, "mkbootfs", executable=True)
+    mkbootimg = regular_file(args.mkbootimg, "mkbootimg", executable=True)
+    first_boot_artifacts = regular_directory(
+        args.first_boot_artifacts, "first-boot artifact directory"
+    )
     clang = executable_tool(args.clang, "pinned Clang")
     linker = executable_tool(args.linker, "pinned linker")
     vintf_checker = regular_file(args.vintf_checker, "VINTF checker", executable=True)
@@ -314,42 +304,43 @@ def main() -> None:
     kernel_config = kernel_payload / "config"
     kernel_release_file = kernel_payload / "kernel.release"
     verify_kernel_config(kernel_artifact, android_root, enforce_tracked_policy=True)
-    if args.signing_keys is not None:
-        # The unsigned build is the input. Signing rebuilds its images, and the
-        # disk is assembled from the signed archive, so everything below
-        # verifies and publishes the signed artifacts.
-        signing_work = Path(tempfile.mkdtemp(prefix=".signing-work.", dir=release_root))
-        atexit.register(shutil.rmtree, signing_work, ignore_errors=True)
-        signed_archive = signing_work / "signed-target-files.zip"
-        signing_result = sign_release.sign_target_files(
-            target_files=target_files,
-            signed_output=signed_archive,
-            keys=signing_keys,
-            host_bin=vintf_checker.parent,
-            aosp_source=aosp_source,
-            jdk_bin=aosp_source / "prebuilts/jdk/jdk21/linux-x86/bin",
-            temporary_parent=signing_work,
-        )
-        run(["unzip", "-q", str(signed_archive), "-d", str(signing_work / "signed-target-files")])
-        # Re-signing must keep the precompiled first-boot artifacts valid.
-        run([
-            sys.executable, "-B", str(android_root / "tools/precompile-first-boot-apps.py"),
-            "verify",
-            "--host-bin", str(vintf_checker.parent),
-            "--target-files-dir", str(signing_work / "signed-target-files"),
-            "--artifacts", str(first_boot_artifacts),
-        ])
-        run([
-            str(android_root / "build/assemble-image.sh"),
-            "--target-files", str(signed_archive),
-            "--kernel-artifact", str(kernel_artifact),
-            "--mkbootfs", str(mkbootfs),
-            "--mkbootimg", str(mkbootimg),
-            "--output-dir", str(disk_dir),
-        ])
-        target_files = signed_archive
+    # The unsigned build is the input. Signing rebuilds its images, and the
+    # disk is assembled from the signed archive, so everything below
+    # verifies and publishes the signed artifacts.
+    signing_work = Path(tempfile.mkdtemp(prefix=".signing-work.", dir=release_root))
+    atexit.register(shutil.rmtree, signing_work, ignore_errors=True)
+    signed_archive = signing_work / "signed-target-files.zip"
+    signing_result = sign_release.sign_target_files(
+        target_files=target_files,
+        signed_output=signed_archive,
+        keys=signing_keys,
+        build_variant=aosp_metadata["LINEAGE24_BUILD_VARIANT"],
+        host_bin=vintf_checker.parent,
+        aosp_source=aosp_source,
+        jdk_bin=aosp_source / "prebuilts/jdk/jdk21/linux-x86/bin",
+        temporary_parent=signing_work,
+    )
+    run(["unzip", "-q", str(signed_archive), "-d", str(signing_work / "signed-target-files")])
+    # Re-signing must keep the precompiled first-boot artifacts valid.
+    run([
+        sys.executable, "-B", str(android_root / "tools/precompile-first-boot-apps.py"),
+        "verify",
+        "--host-bin", str(vintf_checker.parent),
+        "--target-files-dir", str(signing_work / "signed-target-files"),
+        "--artifacts", str(first_boot_artifacts),
+    ])
+    run([
+        str(android_root / "build/assemble-image.sh"),
+        "--target-files", str(signed_archive),
+        "--kernel-artifact", str(kernel_artifact),
+        "--mkbootfs", str(mkbootfs),
+        "--mkbootimg", str(mkbootimg),
+        "--output-dir", str(disk_dir),
+    ])
+    target_files = signed_archive
     run([
         str(android_root / "tools/verify-target-files.py"),
+        "--signed",
         "--target-files",
         str(target_files),
         "--kernel-elf",
@@ -503,17 +494,16 @@ def main() -> None:
                 ("input_role_kernel", "verified standalone Android UML build"),
                 ("input_role_disk", "verified read-only system disk"),
             ]
-            if signing_result is not None:
-                signed_count, left_presigned, certificate_digests = signing_result
-                receipt_rows += [
-                    ("signing", "private release key set"),
-                    ("signed_files", signed_count),
-                    ("presigned_files", ", ".join(sorted(left_presigned)) or "none"),
-                    *(
-                        (f"signing_certificate_sha256_{name}", digest)
-                        for name, digest in sorted(certificate_digests.items())
-                    ),
-                ]
+            signed_count, left_presigned, certificate_digests = signing_result
+            receipt_rows += [
+                ("signing", "private release key set"),
+                ("signed_files", signed_count),
+                ("presigned_files", ", ".join(sorted(left_presigned)) or "none"),
+                *(
+                    (f"signing_certificate_sha256_{name}", digest)
+                    for name, digest in sorted(certificate_digests.items())
+                ),
+            ]
             write_receipt(staging / "provenance/build-receipt.tsv", receipt_rows)
 
             manifest = {
@@ -559,11 +549,7 @@ def main() -> None:
                         "explicit pinned Clang",
                         "explicit pinned linker",
                         "explicit AOSP VINTF checker",
-                        *(
-                            ["signed with a private release key set"]
-                            if signing_result is not None
-                            else []
-                        ),
+                        "signed with a private release key set",
                     ],
                     "builder": {
                         "os": platform.platform(),

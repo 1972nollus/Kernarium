@@ -135,7 +135,11 @@ carries `su`, is debuggable and may have the permissive `su` domain, and the
 verifier requires exactly that. Each variant builds in its own output directory
 (on the builder `out-andarium-user` and `out-andarium-userdebug`), so switching
 between them is incremental; `build-aosp.sh` records the variant in its output
-directory and refuses the other one.
+directory and refuses the other one. The variant also decides the keys: every
+`user` build, a release or a CTS candidate, is signed with the one release key
+set, and a `userdebug` build keeps the AOSP test keys of the build itself and
+is never re-signed
+([Release signing](#release-signing)).
 
 The product identity is Andarium's, not a Cuttlefish or "Darwin" one:
 `PRODUCT_BRAND` Andarium, `PRODUCT_MANUFACTURER` Kernarium, `PRODUCT_MODEL`
@@ -1306,10 +1310,13 @@ records.
 
 ### Release signing
 
-A release is signed with a private key set that never enters the repository, a
-log or a release. `tools/publish-release.py --signing-keys DIR` takes the
-unsigned target files and `DIR`, a directory owner-only (no group or other
-access) that the caller deletes; the tool copies no key. It links `DIR` as
+Every `user` build is signed with one private key set that never enters the
+repository, a log or a release; there is no unsigned publication and no key
+generated per build. A `userdebug` build keeps the AOSP test keys the build
+uses, is not re-signed and is never published. `tools/publish-release.py
+--signing-keys DIR` takes the unsigned target files and `DIR`, a directory
+owner-only (no group or other access) that the caller deletes; the tool copies
+no key, and it refuses to sign any other variant. It links `DIR` as
 `keys/` in a private work directory, signs with the AOSP
 `sign_target_files_apks` from there, assembles the system disk from the signed
 archive, and deletes the work directory and checks the deletion whether or not
@@ -1317,7 +1324,8 @@ signing succeeded. The signer names the certificate in each `otacerts.zip`
 after the path it is given, so it runs in the work directory with `keys` as its
 default key directory: the member is `keys/releasekey.x509.pem` in every
 release, with no build-host path or temporary name, and the tool refuses any
-other member. `--disk-dir` then names
+other member, and `verify-target-files.py --signed` makes the same check on
+the signed archive (`release_common.OTA_CERTIFICATE_MEMBERS`). `--disk-dir` then names
 the new directory the signed `system.img` and `partition-layout.json` are
 written to, and `--mkbootfs`, `--mkbootimg` and `--first-boot-artifacts` are
 required; the last names the first-boot output of

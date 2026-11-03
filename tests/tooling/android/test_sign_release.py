@@ -168,7 +168,7 @@ def entries(path: Path) -> list[str]:
 
 def run_case(
     sign_release, work: Path, name: str, mode: str, *, skip: str | None = None, loose: bool = False,
-    key_mode: int = 0o700, ota: str = "ok", collide: bool = False,
+    key_mode: int = 0o700, ota: str = "ok", collide: bool = False, build_variant: str = "user",
 ):
     case = work / name
     case.mkdir()
@@ -201,6 +201,7 @@ def run_case(
             target_files=target_files,
             signed_output=case / "signed.zip",
             keys=keys,
+            build_variant=build_variant,
             host_bin=host_bin,
             aosp_source=case,
             jdk_bin=case / "jdk",
@@ -304,6 +305,10 @@ def main() -> None:
                 "ota-missing", {"mode": "ok", "ota": "ota-missing"},
                 "RECOVERY/RAMDISK/system/etc/security/otacerts.zip omits the release",
             ),
+            (
+                "userdebug", {"mode": "ok", "build_variant": "userdebug"},
+                "a userdebug build is not signed with the release keys",
+            ),
             ("missing", {"mode": "ok", "skip": "com.android.adbd.pem"}, "lacks: com.android.adbd.pem"),
             ("loose", {"mode": "ok", "loose": True}, "accessible to group or others"),
             ("open-dir", {"mode": "ok", "key_mode": 0o755}, "must not be accessible"),
@@ -313,7 +318,7 @@ def main() -> None:
                 fail(f"{label}: expected a refusal containing {text!r}, got {outcome.get('error')!r}")
             if entries(outcome["scratch"]):
                 fail(f"{label}: a private work directory survived the refusal")
-            if label in ("loose", "open-dir", "missing", "collide") and Path(outcome["record"]).exists():
+            if label in ("loose", "open-dir", "missing", "collide", "userdebug") and Path(outcome["record"]).exists():
                 fail(f"{label}: the signer ran despite the refusal")
         mode = stat.S_IMODE(os.stat(work / "ok" / "source-keys").st_mode)
         if mode != 0o700 or entries(work / "ok" / "source-keys") != entries(ok["keys"]):

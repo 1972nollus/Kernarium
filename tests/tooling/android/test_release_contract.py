@@ -62,8 +62,10 @@ def main() -> None:
     sys.path.insert(0, str(android_root / "tools"))
     from release_common import (  # noqa: PLC0415
         BUILD_VARIANTS,
+        OTA_CERTIFICATE_MEMBERS,
         RELEASE_BUILD_VARIANTS,
         require_release_build_variant,
+        signed_ota_certificate_member,
         DIRECTORY_PREFIX,
         KERNEL_FAMILY,
         PAYLOAD_SPECS,
@@ -319,6 +321,16 @@ def main() -> None:
         expect_failure(
             lambda: require_release_build_variant("userdebug"),
             "a diagnostics build published as a release",
+        )
+        # Only a user build is signed, with the release keys: its otacerts.zip member is the
+        # release certificate's, and a userdebug build keeps the AOSP test keys.
+        if set(OTA_CERTIFICATE_MEMBERS) != set(RELEASE_BUILD_VARIANTS):
+            fail("the variants that are signed are not the variants that are released")
+        if signed_ota_certificate_member("user") != "keys/releasekey.x509.pem":
+            fail("a user build's otacerts.zip member is not the release certificate's")
+        expect_failure(
+            lambda: signed_ota_certificate_member("userdebug"),
+            "a diagnostics build signed with the release keys",
         )
         for variant, label in (
             (next(name for name in BUILD_VARIANTS if name != tracked_variant),

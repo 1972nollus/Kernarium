@@ -20,7 +20,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import android_image  # noqa: E402
 import default_wallpaper  # noqa: E402
-from release_common import BUILD_VARIANTS, configured_build_variant, sha256_path  # noqa: E402
+from release_common import (  # noqa: E402
+    BUILD_VARIANTS,
+    OTA_CERTIFICATE_ARCHIVES,
+    configured_build_variant,
+    sha256_path,
+    signed_ota_certificate_member,
+)
 
 
 ET_EXEC = 2
@@ -1425,6 +1431,32 @@ def check_services_jar(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInf
         fail(f"cannot inspect {SERVICES_JAR}: {problem}")
 
 
+def check_signed_ota_certificates(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo], build_variant: str
+) -> None:
+    """The signed target files of a release trust the release certificate alone.
+
+    sign_target_files_apks names the certificate in each otacerts.zip after the path it is given
+    for the release key, so a signed archive holds that one member and an archive still carrying
+    the build's AOSP test certificate holds another. Only a user build is signed, with the one
+    release key set; the signer checks the certificate's digest, which needs the keys.
+    """
+    member = signed_ota_certificate_member(build_variant)
+    for name in OTA_CERTIFICATE_ARCHIVES:
+        if name not in infos:
+            fail(f"{name} is missing from the signed target files")
+        try:
+            with zipfile.ZipFile(io.BytesIO(read_small(archive, infos[name]))) as certificates:
+                members = sorted(certificates.namelist())
+        except zipfile.BadZipFile as problem:
+            fail(f"{name} is not a zip archive: {problem}")
+        if members != [member]:
+            fail(
+                f"{name} holds the members {members}, not only {member}: the target files are "
+                "not signed with the release keys"
+            )
+
+
 def check_adbd_launch_properties(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
 ) -> None:
@@ -2727,6 +2759,12 @@ def main() -> None:
         choices=sorted(BUILD_VARIANTS),
         help="build variant the target files must carry (default: tracked metadata)",
     )
+    parser.add_argument(
+        "--signed",
+        action="store_true",
+        help="the target files are the signed archive of a release: check that they trust the "
+        "release certificate alone",
+    )
     args = parser.parse_args()
     build_variant = args.build_variant or configured_build_variant(
         Path(__file__).resolve().parents[1]
@@ -2803,6 +2841,8 @@ def main() -> None:
         check_kernel_policy(
             archive, infos, kernel_config, kernel_release_file, build_variant
         )
+        if args.signed:
+            check_signed_ota_certificates(archive, infos, build_variant)
         if sha256_member(archive, infos["BOOT/kernel"]) != sha256_path(args.kernel_elf):
             fail("BOOT/kernel does not match the verified UML ELF")
 
