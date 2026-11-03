@@ -445,10 +445,10 @@ struct GPUBudgetWarning: Equatable {
     var title: String { "Memory May Run Short" }
 
     var message: String {
-        "The system lets Kernarium use \(limitMiB) MB. After the guest's " +
-            "\(guestMemoryMiB) MB and what the emulator keeps beside it, " +
-            "\(availableMiB) MB are left for graphics, and graphics are " +
-            "given \(floorMiB) MB at least. The guest starts anyway, and " +
+        "The system lets Kernarium use \(limitMiB) MiB. After the guest's " +
+            "\(guestMemoryMiB) MiB and what the emulator keeps beside it, " +
+            "\(availableMiB) MiB are left for graphics, and graphics are " +
+            "given \(floorMiB) MiB at least. The guest starts anyway, and " +
             "the system is likely to end Kernarium. Giving the guest less " +
             "memory in Settings avoids it."
     }

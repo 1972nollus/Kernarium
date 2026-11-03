@@ -138,6 +138,14 @@ int kernarium_runtime_loader_automation_hold_delay_ms(void);
 int kernarium_runtime_loader_send_console_input(
     const void* buffer,
     size_t length);
+/* Opens a stream to the guest's vsock port; see
+ * kernarium_runtime_connect_vsock_function. Returns a connected descriptor
+ * the caller owns, or a negated errno: -ENODEV when no runtime is loaded or no
+ * guest runs. It blocks for up to `timeout_ms`, so call it away from the main
+ * thread. */
+int kernarium_runtime_loader_connect_vsock(
+    uint32_t port,
+    uint32_t timeout_ms);
 
 #ifdef __cplusplus
 }

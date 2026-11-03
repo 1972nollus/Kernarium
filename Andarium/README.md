@@ -283,7 +283,7 @@ Android runtime (`package-ios-frameworks.sh --runtimes android
 ```text
 KERNARIUM_VCPU_COUNT, KERNARIUM_GUEST_MEMORY_MIB, KERNARIUM_RETINA_MODE,
 KERNARIUM_GPU_AUTO_RESIZE, KERNARIUM_ANDROID_BOOT_MODE (recovery starts
-Recovery), KERNARIUM_ANDROID_DISK_SIZE_GIB (the guest's storage in GB),
+Recovery), KERNARIUM_ANDROID_DISK_SIZE_GIB (the guest's storage in GiB),
 KERNARIUM_HOST_FORWARD, KERNARIUM_FOOTPRINT_LOG_MS, KERNARIUM_EXECUTION_ENGINE,
 KERNARIUM_GUEST_HIBERNATION, KERNARIUM_ANDROID_ADB_AUTH
 ANDARIUM_START=normal|recovery   create the guest if there is none, then start
@@ -300,9 +300,12 @@ The console carries the runtime's own `Kernarium:` lines and these of
 Andarium's: `Andarium: runtime returned <n>` when the run ends (0 is a power
 off), `Andarium thermal state: phase=start|change|finish state=<state>
 uptime=<seconds>`, and `Andarium: application inactive|active` when a system
-alert takes the focus and gives it back. The first launch of a bundle makes iOS
-ask once to allow local network access, which only a person answers; the guest
-keeps running meanwhile, and the harness waits for the focus
+alert takes the focus and gives it back. iOS asks to allow local network access
+only when the guest itself reaches the local network, such as a connection to a
+host on the same network or a `.local` name; a boot and ordinary Internet use,
+guest DNS included, raise no alert. The question is asked once per installation
+and only a person answers it; the guest keeps running meanwhile, and a harness
+run that provokes it waits for the focus
 (`run_ios_device_android.py --wait-active`).
 
 The container's `Documents` is the harness's; Andarium never deletes a file

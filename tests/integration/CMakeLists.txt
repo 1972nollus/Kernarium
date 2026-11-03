@@ -398,6 +398,17 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# The Virtio vsock device carries 64 MiB each way, concurrent streams, a stalled
+# reader at either end, half-closes, a refused port, a suspend in the middle of
+# a stream and a guest restart, all checked by SHA-256 through the launcher's
+# loopback forward.
+uml_add_guest_integration_test(
+    NAME guest-vsock-stream
+    SCRIPT vsock/run_guest_vsock_stream.py
+    LABELS guest;vsock;network
+    TIMEOUT 600
+    CPUS 2)
+
 add_subdirectory(aarch32)
 add_subdirectory(android)
 add_subdirectory(exclusive)

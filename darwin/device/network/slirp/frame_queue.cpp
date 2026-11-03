@@ -85,10 +85,45 @@ void SlirpProvider::process_transmit_queue() noexcept
 		processed_transmits_for_testing_.fetch_add(
 			1, std::memory_order_release);
 #endif
+		if (answer_locally({frame.data(), length}))
+			continue;
 		slirp_input(slirp_.get(),
 			reinterpret_cast<const std::uint8_t *>(frame.data()),
 			static_cast<int>(length));
 	}
+}
+
+bool SlirpProvider::answer_locally(std::span<const std::byte> frame) noexcept
+{
+	const auto bytes = std::span<const std::uint8_t>{
+		reinterpret_cast<const std::uint8_t *>(frame.data()),
+		frame.size()};
+	const auto classified = dns::classify_guest_frame(
+		bytes, {nameserver_ipv4, host_alias_ipv4, name_server_stream_,
+			gateway_stream_});
+	switch (classified.action) {
+	case dns::FrameAction::pass:
+		return false;
+	case dns::FrameAction::query:
+		try {
+			resolver_.submit(classified.endpoints, classified.payload);
+		} catch (...) {
+		}
+		return true;
+	case dns::FrameAction::reset:
+		try {
+			const auto reset = dns::tcp_reset_frame(
+				classified, next_identification_++);
+			if (!reset.empty())
+				(void)enqueue_received(std::as_bytes(
+					std::span<const std::uint8_t>{reset}));
+		} catch (...) {
+		}
+		return true;
+	case dns::FrameAction::drop:
+		return true;
+	}
+	return false;
 }
 
 bool SlirpProvider::transmit_permitted() noexcept

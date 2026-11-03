@@ -1116,6 +1116,20 @@ interfaces `darwin/platform/video_decoder.hpp` and
 [private wire header](../kernel/common/video/README.md) is separate from both
 the public API and the host/kernel bridge ABI.
 
+The [Virtio vsock device](../darwin/device/vsock/README.md) (device 19) carries
+a byte stream from the host application to a service in the guest, adbd on port
+5555, with no listening socket on the host: `Endpoint::connect` makes a
+socketpair, the device runs the guest's side of the connection over the host's
+end with credit-based flow control, and the application keeps the other end. The
+guest cannot open a connection to the host, and every attempt gets an RST. The
+device keeps a transmit buffer on a ring the guest disabled, because the
+buffer is stream data that nothing waits on, and it never defers a request,
+because a deferral pending at a disable resets the device and with it every
+connection, at each guest suspend. It is appended after every other Virtio
+device, so no existing index moves. Kernarium opens streams through the
+runtime's `connect_vsock` call, and the macOS launchers attach loopback TCP
+ports to it with `--vsock-forward` for tests.
+
 The transport also owns this process's open-descriptor ceiling, and raises it
 to whatever the host permits before the first connection serves a request. A
 backend that publishes a shared-memory region hands the guest one descriptor
@@ -1366,7 +1380,7 @@ nothing.
 The macOS launchers (`darwin/app/macos`) restart a guest in the same process.
 The machine is made once: the emulator handle, the SLiRP provider with its
 `--net-forward` list, and the GPU service with its display. Each boot makes its
-own services (battery, video, video encoder, audio, console) and its
+own services (battery, video, video encoder, audio, console, vsock) and its
 command line, runs, and stops them again. After a restart the launcher resets
 the SLiRP link (stop, then open at once, which replays the forwards) so that no
 connection of the old guest survives, asks the GPU service for its next
@@ -1450,8 +1464,12 @@ runs that have exited. An iOS device uses its application temporary directory
 itself and removes a socket left there before booting. Every such path must
 fit Darwin's 104-byte `sun_path`; one that does not is refused on both sides
 rather than truncated or moved. The guest prints the console's path when it
-binds it. `guest-host-residue` ends guests by poweroff, SIGTERM, SIGHUP, a
-panic and SIGKILL and finds nothing left in `/tmp` or `$TMPDIR`.
+binds it. The SLiRP provider's DNS-over-TCP socket, `dns-<pid>`, is bound in
+the first of `$TMPDIR`, the user's temporary directory and `/tmp` where its path
+fits, goes with the run the same way, and the next run in that directory
+removes one a killed run left. `guest-host-residue` ends guests by poweroff,
+SIGTERM, SIGHUP, a panic and SIGKILL and finds nothing left in `/tmp` or
+`$TMPDIR`.
 
 ### Hibernation
 

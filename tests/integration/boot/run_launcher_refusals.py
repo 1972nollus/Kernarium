@@ -27,7 +27,8 @@ TIMEOUT_SECONDS = 30
 # Skips the rootfs lookup; no case boots far enough to open it.
 NO_ROOTFS = "ubd0=/dev/null"
 # The Virtio device identifiers of the explicit transport arguments.
-BATTERY, CONSOLE, AUDIO, VIDEO, VIDEO_ENCODER, GPU = 65535, 3, 25, 31, 30, 16
+BATTERY, CONSOLE, AUDIO, VIDEO, VIDEO_ENCODER, GPU, VSOCK = (
+    65535, 3, 25, 31, 30, 16, 19)
 
 
 def explicit(device_id: int) -> str:
@@ -48,6 +49,23 @@ REFUSALS: list[tuple[list[str], str]] = [
      COLLISION.format("--video-encoder", "Virtio video encoder")),
     (["--audio", explicit(AUDIO)], COLLISION.format("--audio", "Virtio Sound")),
     (["--gpu", explicit(GPU)], COLLISION.format("--gpu", "Virtio-GPU")),
+    (["--vsock-forward=0-5555", explicit(VSOCK)],
+     COLLISION.format("--vsock-forward", "Virtio vsock")),
+    (["--vsock-forward="],
+     CONFIGURE + "invalid vsock forward '': expected "
+     "[127.0.0.1:]HOSTPORT-GUESTPORT"),
+    (["--vsock-forward=0.0.0.0:0-5555"],
+     CONFIGURE + "invalid vsock forward '0.0.0.0:0-5555': only a loopback "
+     "address is accepted"),
+    (["--vsock-forward=198.51.100.7:0-5555"],
+     CONFIGURE + "invalid vsock forward '198.51.100.7:0-5555': only a "
+     "loopback address is accepted"),
+    (["--vsock-forward=0-0"],
+     CONFIGURE + "invalid vsock forward '0-0': the guest port must be a "
+     "positive port number"),
+    (["--vsock-forward=99999-5555"],
+     CONFIGURE + "invalid vsock forward '99999-5555': the host port must be "
+     "0 to 65535"),
     (["--virtio-console-socket={tmp}/console.sock", explicit(CONSOLE)],
      CONSOLE_COLLISION),
     (["--virtio-serial-socket={tmp}/serial.sock", explicit(CONSOLE)],
@@ -139,6 +157,7 @@ ACCEPTED: list[list[str]] = [
     ["--audio-output=null"],
     ["--audio", "--audio-output=host"],
     ["--audio-input=silent"],
+    ["--vsock-forward=127.0.0.1:0-5555", "--vsock-forward=6000-7"],
 ]
 
 
