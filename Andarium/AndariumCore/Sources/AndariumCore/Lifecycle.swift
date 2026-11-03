@@ -139,7 +139,7 @@ public struct RunEnd: Equatable, Sendable {
         appVersion: String, system: SystemInfo, guest: Guest?, uptimeSeconds: Int?
     ) -> String {
         var lines = [
-            "Andarium \(appVersion) · \(system.distribution) \(system.release)",
+            "Andarium \(appVersion) · \(system.release)",
             "\(system.kernel) · \(guest?.cores ?? 0) vCPUs · \(Formats.memory(guest?.memoryMiB ?? 0))",
         ]
         let reason = if let startFailure {

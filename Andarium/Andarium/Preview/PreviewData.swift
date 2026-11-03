@@ -9,7 +9,7 @@ enum PreviewData {
     static let previousRelease = "20261002"
 
     static let system = SystemInfo(
-        distribution: "LineageOS 24", android: "17", release: release,
+        version: "17", release: release,
         securityPatch: "5 October 2026", kernel: "Linux 6.18.54",
         architecture: "arm64, 4 KB pages", appVersion: "1.0 (1)"
     )

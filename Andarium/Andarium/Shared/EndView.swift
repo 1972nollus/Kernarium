@@ -13,7 +13,7 @@ struct EndView: View {
             Spacer(minLength: 24)
             StackMark(lit: false, width: 140, fault: failure)
                 .padding(.bottom, 36)
-            Text(failure ? "The Guest Stopped Unexpectedly" : "Android Is Off")
+            Text(failure ? "The Guest Stopped Unexpectedly" : "The Guest Is Off")
                 .font(.title2.weight(.bold))
                 .multilineTextAlignment(.center)
             Text(failure

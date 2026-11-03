@@ -39,7 +39,7 @@ struct AppEntry {
 
         var problem: String?
         var system = SystemInfo(
-            distribution: "LineageOS", android: "", release: "unknown", securityPatch: nil,
+            version: "", release: "unknown", securityPatch: nil,
             kernel: "", architecture: "", appVersion: version
         )
         var carried: SystemFolder.Release?
@@ -69,7 +69,7 @@ struct AppEntry {
         do {
             guest = try storage.load()
         } catch {
-            problem = problem ?? "Android\u{2019}s settings could not be read: \(error.localizedDescription)"
+            problem = problem ?? "The guest\u{2019}s settings could not be read: \(error.localizedDescription)"
         }
         // A stored memory size above the bound of its vCPU count comes down to
         // it; a size the launch states stays as stated.
@@ -94,7 +94,7 @@ struct AppEntry {
             model.driver = runtime
             model.refreshPlan()
         }
-        model.alert = problem.map { AppAlert(title: "Android Is Not Available", message: $0) }
+        model.alert = problem.map { AppAlert(title: "The System Is Not Available", message: $0) }
         return model
     }
 

@@ -237,7 +237,7 @@ struct OpenKeys: View {
             .onLongPressGesture(minimumDuration: 0.6, perform: powerHold)
             .accessibilityElement()
             .accessibilityLabel("Power")
-            .accessibilityHint(recovery ? "Chooses the highlighted item" : "Hold for Android's power menu")
+            .accessibilityHint(recovery ? "Chooses the highlighted item" : "Hold for the power menu")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction(named: "Power menu", powerHold)
 
@@ -316,7 +316,7 @@ struct KeyPair: View {
 /// keys have been opened or the tip closed, and appears at most three times.
 nonisolated struct SideKeysTip: Tip {
     var title: Text { Text("Side Keys") }
-    var message: Text? { Text("Tap for Back, Home and Settings. Hold Power for Android's power menu. Drag to move.") }
+    var message: Text? { Text("Tap for Back, Home and Settings. Hold Power for the power menu. Drag to move.") }
     var image: Image? { Image(systemName: "hand.tap") }
     var options: [any TipOption] { [MaxDisplayCount(3)] }
 }

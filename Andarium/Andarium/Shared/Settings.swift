@@ -197,7 +197,7 @@ struct SessionSettingsSheet: View {
                 Text("Options")
             } footer: {
                 if guest.microphone && model.microphoneState == .denied {
-                    Text("iOS has not allowed Andarium to use the microphone, so Android records silence. Allow it for Andarium in Settings.")
+                    Text("iOS has not allowed Andarium to use the microphone, so the guest records silence. Allow it for Andarium in Settings.")
                 }
             }
         }
