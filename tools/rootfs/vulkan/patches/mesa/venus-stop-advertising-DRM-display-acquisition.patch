@@ -8,7 +8,7 @@ Subject: [PATCH] venus: stop advertising DRM display acquisition
  1 file changed, 1 deletion(-)
 
 diff --git a/src/virtio/vulkan/vn_instance.c b/src/virtio/vulkan/vn_instance.c
-index b05edbfd1aa8a5db61b8ce7ec47939c690e3783e..7fcee07b0d1666f537930efec223f5b87b76efb4 100644
+index 948c59b270986239a3e7dafe5283ff551509b1e7..21b1a5835d0136e5005fe16f6a11f530487e5542 100644
 --- a/src/virtio/vulkan/vn_instance.c
 +++ b/src/virtio/vulkan/vn_instance.c
 @@ -64,7 +64,6 @@ static const struct vk_instance_extension_table

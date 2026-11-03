@@ -10,10 +10,10 @@ Subject: [PATCH] venus: require an explicit Darwin Vulkan provider
  3 files changed, 31 insertions(+), 3 deletions(-)
 
 diff --git a/meson.build b/meson.build
-index 18e8b7a2c184e3cec160cfaf7a92d02cf7f3b517..ced2650e49382de395bd5db90b04c66b59daf803 100644
+index 755fa0fa2e846669da2f8fae51d49267c72c39bc..5f8c9e66d49b2275acb2ab8ccaa78bba39ab51ba 100644
 --- a/meson.build
 +++ b/meson.build
-@@ -383,6 +383,16 @@ if with_venus
+@@ -396,6 +396,16 @@ if with_venus
     venus_dep = [dep_venus_protocol]
     if get_option('vulkan-dload')
        conf_data.set('ENABLE_VULKAN_DLOAD', 1)
@@ -31,10 +31,10 @@ index 18e8b7a2c184e3cec160cfaf7a92d02cf7f3b517..ced2650e49382de395bd5db90b04c66b
        venus_dep += dependency('vulkan')
     endif
 diff --git a/meson_options.txt b/meson_options.txt
-index 9d2955deb1c47c0e75e58c0af9f69ff44f7c1257..c594cb5132d506f179a6ef7eca5fa0fd5c85b611 100644
+index da6e12a5ead5fb3943ee7d0b2fac8f89392f1d2f..977c3a3f90aea8ada11c3dbac151636f5c92366b 100644
 --- a/meson_options.txt
 +++ b/meson_options.txt
-@@ -52,6 +52,20 @@ option(
+@@ -59,6 +59,20 @@ option(
    description : 'enable loading libvulkan dynamically at runtime instead of linking to it at build-time'
  )
  

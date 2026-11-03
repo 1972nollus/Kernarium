@@ -23,7 +23,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  1 file changed, 5 deletions(-)
 
 diff --git a/src/venus/vkr_common.c b/src/venus/vkr_common.c
-index d156682bf26689a8764611473e983e72c8fb5cf1..f55935c0c8f871a2afd461764b1a2bcf17564b0a 100644
+index 4548cb1bb524f8c1d8d525be548c28378c77c634..16c26c7083d41616d00669372cd44c52ea520f39 100644
 --- a/src/venus/vkr_common.c
 +++ b/src/venus/vkr_common.c
 @@ -135,7 +135,6 @@ static const struct vn_info_extension_table vkr_extension_table = {

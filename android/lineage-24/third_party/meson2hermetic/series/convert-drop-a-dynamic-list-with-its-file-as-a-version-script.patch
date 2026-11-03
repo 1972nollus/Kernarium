@@ -14,10 +14,10 @@ linker argument as its file. Drop the dynamic list the same way.
  1 file changed, 4 insertions(+), 1 deletion(-)
 
 diff --git a/mesonbuild/convert/instance/convert_instance_build_target.py b/mesonbuild/convert/instance/convert_instance_build_target.py
-index 9753fce9b63610a60225e9917a8a96e6089a3ba1..13f3a27be1e0b9047f50a5f7132f4feff3762377 100644
+index ac544c34d5ff2b6aa7b40ae0fd882e889656b1ae..dd7d3b9e42d01a9a9626826e8a67e956dd6d1414 100644
 --- a/mesonbuild/convert/instance/convert_instance_build_target.py
 +++ b/mesonbuild/convert/instance/convert_instance_build_target.py
-@@ -325,7 +325,10 @@ class ConvertInstanceBuildTarget:
+@@ -351,7 +351,10 @@ class ConvertInstanceBuildTarget:
              for arg in build_target.link_args:
                  # Meson should really support version scripts to avoid special cases, such as here.
                  # https://github.com/mesonbuild/meson/issues/3047

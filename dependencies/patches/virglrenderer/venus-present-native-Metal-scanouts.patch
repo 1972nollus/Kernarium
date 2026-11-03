@@ -732,10 +732,10 @@ index 5d90e60f4429e2f31094141c2850334ea893391b..e0339eff62b0db4742b973adc63e68db
  virgl_resource_native_release(uint64_t id);
  
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index c927c0d5062ecfa7d0790e3aeb018ecae7d66072..6ab8aa7dd30791b11eef67e3b86fed6c12844bc8 100644
+index 80d848d46beb6b0f3ec4be3e7437cb51fa762adf..14cd3de9da7180ef5229a799249234325687f671 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
-@@ -50,6 +50,7 @@
+@@ -54,6 +54,7 @@
  #include "util/libsync.h"
  #endif
  
@@ -743,7 +743,7 @@ index c927c0d5062ecfa7d0790e3aeb018ecae7d66072..6ab8aa7dd30791b11eef67e3b86fed6c
  #include "virglrenderer.h"
  #include "virtgpu_drm.h"
  
-@@ -1481,6 +1482,62 @@ virgl_renderer_resource_import_blob(const struct virgl_renderer_resource_import_
+@@ -1596,6 +1597,62 @@ virgl_renderer_resource_import_blob(const struct virgl_renderer_resource_import_
     return 0;
  }
  

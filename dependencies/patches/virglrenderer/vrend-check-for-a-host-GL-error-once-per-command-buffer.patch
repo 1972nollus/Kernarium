@@ -25,7 +25,7 @@ lost, in a build that was never going to act on it.
  1 file changed, 22 insertions(+)
 
 diff --git a/src/vrend/vrend_decode.c b/src/vrend/vrend_decode.c
-index 9c5e85dddc44696e96d6cc022e5ca9566c6afba4..46d1eb19e3df38d53eb33496f28bd5e3f9a4302e 100644
+index 71cf1aff031ba8711616e288f718bc67dc3c11cb..eafbab0aa0ffec8b34d15482b6553e863ba733e5 100644
 --- a/src/vrend/vrend_decode.c
 +++ b/src/vrend/vrend_decode.c
 @@ -21,6 +21,10 @@

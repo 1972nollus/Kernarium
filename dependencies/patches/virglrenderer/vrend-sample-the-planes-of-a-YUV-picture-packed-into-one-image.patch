@@ -341,7 +341,7 @@ index 91e24352f6d569f84c92ebe11e87de187f3731a3..67939c7dd35b8410ec418045e248e56b
 +
  #endif
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index f5d6b21ccfb146a5175245e27fc857b49eb47575..224d99df8d68dd777752cfb653b3d5793110d1bc 100644
+index b916058323493421ebcf5521cd4c11cf98c3835a..a22fb7507c554bfeffd5575a0f8ff2815749fb32 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -923,6 +923,14 @@ static void vrend_apply_sampler_state(struct vrend_sub_context *sub_ctx,
@@ -519,7 +519,7 @@ index f5d6b21ccfb146a5175245e27fc857b49eb47575..224d99df8d68dd777752cfb653b3d579
     }
  
     if (args->flags & VIRGL_RESOURCE_Y_0_TOP) {
-@@ -9444,8 +9560,31 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
+@@ -9450,8 +9566,31 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
     if (!gr)
        return NULL;
  
@@ -551,7 +551,7 @@ index f5d6b21ccfb146a5175245e27fc857b49eb47575..224d99df8d68dd777752cfb653b3d579
     } else {
        const enum virgl_formats format = gr->base.format;
        ret = vrend_resource_alloc_texture(gr, format, image_oes);
-@@ -9454,6 +9593,7 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
+@@ -9460,6 +9599,7 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
     }
  
     if (ret) {
@@ -559,7 +559,7 @@ index f5d6b21ccfb146a5175245e27fc857b49eb47575..224d99df8d68dd777752cfb653b3d579
        FREE(gr);
        return NULL;
     }
-@@ -9461,6 +9601,124 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
+@@ -9467,6 +9607,124 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
     return &gr->base;
  }
  
@@ -684,7 +684,7 @@ index f5d6b21ccfb146a5175245e27fc857b49eb47575..224d99df8d68dd777752cfb653b3d579
  /* Whether an image of width x height texels, blocksize bytes each, whose rows
   * start stride bytes apart at offset, lies wholly inside a mapping of size
   * bytes. The alias and the refresh both read every row in full - a driver
-@@ -9761,6 +10019,11 @@ void vrend_resource_sync_shm_import(struct vrend_resource *res)
+@@ -9767,6 +10025,11 @@ void vrend_resource_sync_shm_import(struct vrend_resource *res)
  
  void vrend_renderer_resource_destroy(struct vrend_resource *res)
  {
@@ -696,7 +696,7 @@ index f5d6b21ccfb146a5175245e27fc857b49eb47575..224d99df8d68dd777752cfb653b3d579
     if (res->shm_import_pbo)
        glDeleteBuffers(1, &res->shm_import_pbo);
  #ifdef ENABLE_METAL
-@@ -10198,10 +10461,10 @@ static void vrend_collapse_data_r16g16b16x16(uint64_t size, void *data) {
+@@ -10207,10 +10470,10 @@ static void vrend_collapse_data_r16g16b16x16(uint64_t size, void *data) {
     }
  }
  
@@ -711,7 +711,7 @@ index f5d6b21ccfb146a5175245e27fc857b49eb47575..224d99df8d68dd777752cfb653b3d579
  {
     void *data;
  
-@@ -10501,6 +10764,227 @@ static int vrend_renderer_transfer_write_iov(struct vrend_context *ctx,
+@@ -10510,6 +10773,227 @@ static int vrend_renderer_transfer_write_iov(struct vrend_context *ctx,
     return 0;
  }
  
@@ -784,9 +784,9 @@ index f5d6b21ccfb146a5175245e27fc857b49eb47575..224d99df8d68dd777752cfb653b3d579
 +      char *bytes = (char *)temp.iov_base + row * row_bytes + head;
 +
 +      if (write)
-+         vrend_read_from_iovec(iov, num_iovs, guest, bytes, count);
++         virgl_read_from_iovec(iov, num_iovs, guest, bytes, count);
 +      else
-+         vrend_write_to_iovec(iov, num_iovs, guest, bytes, count);
++         virgl_write_to_iovec(iov, num_iovs, guest, bytes, count);
 +   }
 +
 +   if (write && !ret)
@@ -939,7 +939,7 @@ index f5d6b21ccfb146a5175245e27fc857b49eb47575..224d99df8d68dd777752cfb653b3d579
  static uint32_t vrend_get_texture_depth(struct vrend_resource *res, uint32_t level)
  {
     uint32_t depth = 1;
-@@ -10905,6 +11389,9 @@ static int vrend_renderer_transfer_send_iov(struct vrend_context *ctx,
+@@ -10914,6 +11398,9 @@ static int vrend_renderer_transfer_send_iov(struct vrend_context *ctx,
                                              const struct iovec *iov, int num_iovs,
                                              const struct vrend_transfer_info *info)
  {
@@ -948,8 +948,8 @@ index f5d6b21ccfb146a5175245e27fc857b49eb47575..224d99df8d68dd777752cfb653b3d579
 +
     if ((is_only_bit(res->storage_bits, VREND_STORAGE_GUEST_MEMORY) ||
         has_bit(res->storage_bits, VREND_STORAGE_HOST_SYSTEM_MEMORY)) && res->iov) {
-       return vrend_copy_iovec(res->iov, res->num_iovs, info->box->x,
-@@ -11666,6 +12153,15 @@ void vrend_renderer_resource_copy_region(struct vrend_context *ctx,
+       return virgl_copy_iovec(res->iov, res->num_iovs, info->box->x,
+@@ -11675,6 +12162,15 @@ void vrend_renderer_resource_copy_region(struct vrend_context *ctx,
        return;
     }
  
@@ -965,7 +965,7 @@ index f5d6b21ccfb146a5175245e27fc857b49eb47575..224d99df8d68dd777752cfb653b3d579
     VREND_DEBUG(dbg_copy_resource, ctx, "COPY_REGION: From %s ms:%d [%d, %d, %d]+[%d, %d, %d] lvl:%d "
                                     "To %s ms:%d [%d, %d, %d]\n",
                                     util_format_name(src_res->base.format), src_res->base.nr_samples,
-@@ -12193,6 +12689,15 @@ void vrend_renderer_blit(struct vrend_context *ctx,
+@@ -12202,6 +12698,15 @@ void vrend_renderer_blit(struct vrend_context *ctx,
     if (ctx->in_error)
        return;
  
@@ -981,7 +981,7 @@ index f5d6b21ccfb146a5175245e27fc857b49eb47575..224d99df8d68dd777752cfb653b3d579
     if (unlikely(info->src.format >= VIRGL_FORMAT_MAX ||
                  tex_conv_table[info->src.format].format == VIRGL_FORMAT_NONE)) {
        vrend_report_context_error(ctx, VIRGL_ERROR_CTX_ILLEGAL_FORMAT, info->src.format);
-@@ -13849,6 +14354,13 @@ static void vrend_renderer_fill_caps_v2(int gl_ver, int gles_ver,  union virgl_c
+@@ -13861,6 +14366,13 @@ static void vrend_renderer_fill_caps_v2(int gl_ver, int gles_ver,  union virgl_c
  #endif
     if (vrend_has_venus_interop())
        caps->v2.capability_bits_v2 |= VIRGL_CAP_V2_QUERY_FORMAT_MODIFIER;
@@ -995,7 +995,7 @@ index f5d6b21ccfb146a5175245e27fc857b49eb47575..224d99df8d68dd777752cfb653b3d579
  }
  
  void vrend_renderer_fill_caps(uint32_t set, uint32_t version,
-@@ -14142,6 +14654,9 @@ vrend_renderer_resource_metal_texture(struct pipe_resource *pres, void **texture
+@@ -14154,6 +14666,9 @@ vrend_renderer_resource_metal_texture(struct pipe_resource *pres, void **texture
     if (!vrend_hw_switch_context(vrend_state.ctx0, true))
        return EINVAL;
  
@@ -1006,7 +1006,7 @@ index f5d6b21ccfb146a5175245e27fc857b49eb47575..224d99df8d68dd777752cfb653b3d579
      * segment before every GL read, because another context may have written
      * the segment since (see vrend_resource_sync_shm_import()); a presenter
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index 8ceede88cd29a2534454b2acaeca42767752995c..a2440259de2f14a96f7bb58de2e6af14ffe99a7c 100644
+index 227e3ee83bdc9d2a27c894d3d97767923d43e0b4..2889d4b18cf5729efb495b7daf937e603c0d7b95 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
 @@ -151,6 +151,32 @@ struct vrend_resource {

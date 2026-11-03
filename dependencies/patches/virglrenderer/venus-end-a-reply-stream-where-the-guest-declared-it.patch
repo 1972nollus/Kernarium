@@ -19,7 +19,7 @@ it used to overrun.
  1 file changed, 6 insertions(+), 1 deletion(-)
 
 diff --git a/src/venus/vkr_cs.c b/src/venus/vkr_cs.c
-index a9e3f0982f6189b8d039cbc17fe802a08ae5a810..94c56e430873a81c034fd0b29217939a9ad549da 100644
+index 4e4f9b08f1f2b29c05ad892ee9bd713322774d52..6d48bfb35448197650a542fcd7dd0baa3648acb7 100644
 --- a/src/venus/vkr_cs.c
 +++ b/src/venus/vkr_cs.c
 @@ -32,7 +32,12 @@ vkr_cs_encoder_set_stream_locked(struct vkr_cs_encoder *enc,

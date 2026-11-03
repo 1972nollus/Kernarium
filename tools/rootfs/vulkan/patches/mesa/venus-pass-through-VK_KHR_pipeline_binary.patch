@@ -29,7 +29,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  3 files changed, 176 insertions(+)
 
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index a77bf4e132950f3d56b9a06ac484f4007e3cad7b..fb990e89a705fa79bfb96f94e4e5a212ede3764c 100644
+index b5be4de93f825391dfd457f5d5e94843fbb4fc49..cad47760ad53f58501c18c07871b1d3a5ee703c5 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -188,6 +188,7 @@ vn_physical_device_init_features(struct vn_physical_device *physical_dev)
@@ -81,10 +81,10 @@ index a77bf4e132950f3d56b9a06ac484f4007e3cad7b..fb990e89a705fa79bfb96f94e4e5a212
        .KHR_ray_query = physical_dev->ray_tracing,
        .KHR_ray_tracing_maintenance1 = physical_dev->ray_tracing,
 diff --git a/src/virtio/vulkan/vn_pipeline.c b/src/virtio/vulkan/vn_pipeline.c
-index bd9f88c96bc98701dced7b0d31961c80a650c9ee..f7b5aba3b3bff714752eea2400b44c807c2cd143 100644
+index e4204caf371aba50b9029a12333c6290dfce3337..b07fe5ecde323cbf818470fedffbef076b2772d9 100644
 --- a/src/virtio/vulkan/vn_pipeline.c
 +++ b/src/virtio/vulkan/vn_pipeline.c
-@@ -541,6 +541,168 @@ vn_MergePipelineCaches(VkDevice device,
+@@ -543,6 +543,168 @@ vn_MergePipelineCaches(VkDevice device,
     return VK_SUCCESS;
  }
  

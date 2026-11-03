@@ -15,10 +15,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  2 files changed, 12 insertions(+)
 
 diff --git a/src/virtio/vulkan/vn_command_buffer.c b/src/virtio/vulkan/vn_command_buffer.c
-index 3bf042520c19ae2ea241e34fa5d17fbebddcccc4..5cad536c17323fd267d241f30606aaac9f9cab23 100644
+index 67ed99e83ceca84477a1832df27b1c90e7b65bb4..65e661ee99116ae5fd2fc8c77e6c534ab986ac0f 100644
 --- a/src/virtio/vulkan/vn_command_buffer.c
 +++ b/src/virtio/vulkan/vn_command_buffer.c
-@@ -2951,6 +2951,14 @@ vn_CmdSetDepthClampRangeEXT(VkCommandBuffer commandBuffer,
+@@ -2952,6 +2952,14 @@ vn_CmdSetDepthClampRangeEXT(VkCommandBuffer commandBuffer,
                    pDepthClampRange);
  }
  
@@ -34,7 +34,7 @@ index 3bf042520c19ae2ea241e34fa5d17fbebddcccc4..5cad536c17323fd267d241f30606aaac
  vn_CmdSetAttachmentFeedbackLoopEnableEXT(VkCommandBuffer commandBuffer,
                                           VkImageAspectFlags aspectMask)
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index 6f2efc72e05b37a41b81c70ce318b9cc98e9fd87..63226f618a6d53a0ef670c210d10819cd59598a7 100644
+index c61034c6d66d4b9a044299aef952ea0369001c51..034b59b4dfb026e9f17de4704bdc26f9b3501ce1 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -250,6 +250,8 @@ vn_physical_device_init_features(struct vn_physical_device *physical_dev)

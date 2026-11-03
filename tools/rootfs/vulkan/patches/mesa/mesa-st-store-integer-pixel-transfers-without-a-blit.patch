@@ -442,7 +442,7 @@ index 99249aa91ab6b2ecbe0c0a9a90ac0c059b7b3243..75ba80e31497368929fc5a1f71a26ad7
        if (try_pbo_download(st, texImage,
                             src_format, dst_format,
 diff --git a/src/mesa/state_tracker/st_pbo_compute.c b/src/mesa/state_tracker/st_pbo_compute.c
-index 95a031e95fb91d9efc0dd5aa00d9e45164cff68e..25108299cbf47e61db5e675e0ac39d842841e9ab 100644
+index 7409515ff1dc699e0757bfb4e9f3d1a425ba506e..cfd14f0c010eae4977c1153097d4c7b0f4bcdb0f 100644
 --- a/src/mesa/state_tracker/st_pbo_compute.c
 +++ b/src/mesa/state_tracker/st_pbo_compute.c
 @@ -1315,6 +1315,13 @@ st_GetTexSubImage_shader(struct gl_context * ctx,

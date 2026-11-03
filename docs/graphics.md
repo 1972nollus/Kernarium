@@ -747,7 +747,7 @@ hardware-buffer path needs and why no dEQP level is declared, lives in
 Khronos publishes Android's mandatory Vulkan functionality as the
 `VP_ANDROID_17_requirements` profile, which chains the
 `VP_ANDROID_vulkan_profile_2025` baseline. The Linux Venus guest meets its API
-version (the guest reports 1.4.354 against a required 1.4.335), its limits, its
+version (the guest reports 1.4.363 against a required 1.4.335), its limits, its
 formats, and both of its either-or capability groups, but three requirements are
 standing limits of this stack rather than work that is merely outstanding:
 

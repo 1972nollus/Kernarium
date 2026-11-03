@@ -25,7 +25,7 @@ and the last input edit builds kernels whose source it does not have yet.
  create mode 100644 src/poly/cl/libpoly.spv
 
 diff --git a/meson.build b/meson.build
-index a864ed0b23cdb0c4853e68432cdfdb6fcdd519c2..b2b81422b2c0ef07e4c05cd1e714ee49b1754870 100644
+index 37f2fd47925d6d16b65acc314359ee7512d4a84f..32c620b997d8ec9d4392ffadc8bd1b685491f44a 100644
 --- a/meson.build
 +++ b/meson.build
 @@ -959,7 +959,6 @@ with_driver_using_cl = [

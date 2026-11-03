@@ -35,7 +35,7 @@ index f42b9f91d126687007f3671f6ea6bbd8add40be2..e938ebc1c88f5856f71b274bd746c07a
     }
  
 diff --git a/src/virtio/vulkan/vn_device_memory.c b/src/virtio/vulkan/vn_device_memory.c
-index 8b6eb4cce1831f06733e2b9c9a3a15e5d22c7026..c38713be710cad18f8131f34b385a2fb921d2937 100644
+index 8e8b2641f39d722792000942b39d945e4c8fdef3..35ab14f51dc379bc9e9a21b343ebc5540f6a2bf0 100644
 --- a/src/virtio/vulkan/vn_device_memory.c
 +++ b/src/virtio/vulkan/vn_device_memory.c
 @@ -150,7 +150,16 @@ vn_device_memory_import_dma_buf(struct vn_device *dev,
@@ -92,7 +92,7 @@ index 5d4f9168e47e54b071194c347c50b87a171f2cc1..931cf79e691c0727eb5e67a6dd082a7c
     VkResult result;
  
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index 77898b72db2bdad5b382fa35d9a00574fdcd56bc..cdc44a58711855c88a93ee261b248331fb78f5ce 100644
+index b6ee45ed4c9705a9ac57e3092d6621686f4e8f02..b00c56e456f8bfc49f74248bfe2a7989c537786b 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -1046,6 +1046,22 @@ vn_physical_device_init_external_memory(
@@ -136,7 +136,7 @@ index 77898b72db2bdad5b382fa35d9a00574fdcd56bc..cdc44a58711855c88a93ee261b248331
     for (uint32_t i = 0; i < VK_DEVICE_EXTENSION_COUNT; i++) {
        const VkExtensionProperties *props = &vk_device_extensions[i];
        for (uint32_t j = 0; j < count; j++) {
-@@ -2572,6 +2599,43 @@ vn_image_store_format_in_cache(
+@@ -2583,6 +2610,43 @@ vn_image_store_format_in_cache(
     simple_mtx_unlock(&cache->mutex);
  }
  
@@ -180,7 +180,7 @@ index 77898b72db2bdad5b382fa35d9a00574fdcd56bc..cdc44a58711855c88a93ee261b248331
  static inline void
  vn_sanitize_image_format_properties(
     struct vn_physical_device *physical_dev,
-@@ -2580,10 +2644,8 @@ vn_sanitize_image_format_properties(
+@@ -2591,10 +2655,8 @@ vn_sanitize_image_format_properties(
     VkImageFormatProperties2 *props)
  {
     const VkExternalMemoryHandleTypeFlagBits renderer_handle_type =
@@ -193,7 +193,7 @@ index 77898b72db2bdad5b382fa35d9a00574fdcd56bc..cdc44a58711855c88a93ee261b248331
     /* TODO drop this after supporting VK_EXT_rgba10x6_formats */
     if (info->format == VK_FORMAT_R10X6G10X6B10X6A10X6_UNORM_4PACK16) {
        props->imageFormatProperties.sampleCounts = VK_SAMPLE_COUNT_1_BIT;
-@@ -2593,19 +2655,9 @@ vn_sanitize_image_format_properties(
+@@ -2604,19 +2666,9 @@ vn_sanitize_image_format_properties(
     VkExternalImageFormatProperties *external_props =
        vk_find_struct(props->pNext, EXTERNAL_IMAGE_FORMAT_PROPERTIES);
     if (external_props) {
@@ -216,7 +216,7 @@ index 77898b72db2bdad5b382fa35d9a00574fdcd56bc..cdc44a58711855c88a93ee261b248331
     }
  }
  
-@@ -2688,7 +2740,8 @@ vn_GetPhysicalDeviceImageFormatProperties2(
+@@ -2699,7 +2751,8 @@ vn_GetPhysicalDeviceImageFormatProperties2(
        vn_physical_device_from_handle(physicalDevice);
     struct vn_ring *ring = physical_dev->instance->ring.ring;
     const VkExternalMemoryHandleTypeFlagBits renderer_handle_type =
@@ -226,7 +226,7 @@ index 77898b72db2bdad5b382fa35d9a00574fdcd56bc..cdc44a58711855c88a93ee261b248331
     const VkExternalMemoryHandleTypeFlags supported_handle_types =
        physical_dev->external_memory.supported_handle_types;
  
-@@ -2856,18 +2909,8 @@ vn_GetPhysicalDeviceExternalBufferProperties(
+@@ -2868,18 +2921,8 @@ vn_GetPhysicalDeviceExternalBufferProperties(
     vn_call_vkGetPhysicalDeviceExternalBufferProperties(
        ring, physicalDevice, pExternalBufferInfo, pExternalBufferProperties);
  
@@ -248,7 +248,7 @@ index 77898b72db2bdad5b382fa35d9a00574fdcd56bc..cdc44a58711855c88a93ee261b248331
  
  VKAPI_ATTR void VKAPI_CALL
 diff --git a/src/virtio/vulkan/vn_physical_device.h b/src/virtio/vulkan/vn_physical_device.h
-index 2c2f4a9197c35cda21062c923227af6169976082..553535f29f3ce25d4bc0bf362c23bb3992f08355 100644
+index d812f4d54d50d6eb6523e2f11cf4a12ef026ce79..e6102d2355182166f556f7435f06bf38a7440a56 100644
 --- a/src/virtio/vulkan/vn_physical_device.h
 +++ b/src/virtio/vulkan/vn_physical_device.h
 @@ -115,7 +115,10 @@ struct vn_physical_device {

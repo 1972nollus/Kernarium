@@ -31,7 +31,7 @@ poll counter had reached the threshold before the batch completed.
  1 file changed, 29 insertions(+), 3 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_query.c b/src/gallium/drivers/zink/zink_query.c
-index e02eb56c8a4ea947fb4b6e34364196858ad7d9a3..14db030d8e96f5c506b75eee2d7ba91db4a5fe21 100644
+index 15629a176668932fb44efd098ed4c982dc89e709..5469eed32a2b0a54b8745d010508cd4bc8458b48 100644
 --- a/src/gallium/drivers/zink/zink_query.c
 +++ b/src/gallium/drivers/zink/zink_query.c
 @@ -104,6 +104,23 @@ get_num_starts(struct zink_query *q)

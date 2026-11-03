@@ -33,7 +33,7 @@ heaps, so they are mapped onto the guest's heaps and bounded by them.
  6 files changed, 126 insertions(+)
 
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index 5208a671d0c4389320fa59cbd6b5db05aa6767bd..2f06b6c40508de401931c15fd82120a807fd7b5c 100644
+index 06136a73e756b584d2f3963e0b974e51fd06233b..f449011fc7037b8dcc12394128f7b5b8ddf5f19a 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -177,6 +177,8 @@ vkr_physical_device_init_memory_properties(struct vkr_physical_device *physical_
@@ -81,7 +81,7 @@ index 5208a671d0c4389320fa59cbd6b5db05aa6767bd..2f06b6c40508de401931c15fd82120a8
        }
     }
  
-@@ -794,6 +825,42 @@ vkr_dispatch_vkGetPhysicalDeviceQueueFamilyProperties2(
+@@ -814,6 +845,42 @@ vkr_dispatch_vkGetPhysicalDeviceQueueFamilyProperties2(
                                                 args->pQueueFamilyProperties);
  }
  
@@ -124,7 +124,7 @@ index 5208a671d0c4389320fa59cbd6b5db05aa6767bd..2f06b6c40508de401931c15fd82120a8
  static void
  vkr_dispatch_vkGetPhysicalDeviceMemoryProperties2(
     UNUSED struct vn_dispatch_context *dispatch,
-@@ -807,6 +874,8 @@ vkr_dispatch_vkGetPhysicalDeviceMemoryProperties2(
+@@ -827,6 +894,8 @@ vkr_dispatch_vkGetPhysicalDeviceMemoryProperties2(
        vn_replace_vkGetPhysicalDeviceMemoryProperties2_args_handle(args);
        vk->GetPhysicalDeviceMemoryProperties2(args->physicalDevice,
                                               args->pMemoryProperties);
@@ -202,20 +202,20 @@ index be3ae04605efc75cddf2bde5b8254cd8160d312d..71fa65494fef44c0d66e1f5d9116e6e4
  vkr_renderer_init(uint32_t flags, const struct vkr_renderer_callbacks *cbs);
  
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index 5bae538fdcc67401888b083b85532e288991a06f..085f6c0d298f9350625ba7bd0604c7441b88e958 100644
+index adacb9a0e19775b56ba0a4a3ab7d44759f866ef2..ca3112d47446e92822fe248dac57e3741aac4a42 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
-@@ -41,6 +41,9 @@
- #include "util/u_format.h"
- #include "util/u_math.h"
+@@ -46,6 +46,9 @@
+ #endif
+ 
  #include "vkr_allocator.h"
 +#ifdef ENABLE_VENUS
 +#include "vkr_renderer.h"
 +#endif
  #include "drm_renderer.h"
  #include "proxy/proxy_renderer.h"
- #include "vrend/vrend_renderer.h"
-@@ -1543,6 +1546,17 @@ virgl_renderer_release_handle_for_scanout(enum virgl_renderer_native_handle_type
+ #include "virgl_protocol.h"
+@@ -1658,6 +1661,17 @@ virgl_renderer_release_handle_for_scanout(enum virgl_renderer_native_handle_type
  #endif
  }
  
