@@ -7,6 +7,9 @@
 #include "video/in_process_service.hpp"
 #include "video/virtio_video_device.hpp"
 #include "video/virtio_video_encoder_device.hpp"
+#include "vsock/forwarder.hpp"
+#include "vsock/in_process_service.hpp"
+#include "vsock/protocol.hpp"
 #include "console/in_process_service.hpp"
 #include "console/protocol.hpp"
 #include "gpu/in_process_service.hpp"
@@ -319,6 +322,9 @@ struct PreparedArguments {
 	std::string console_socket;
 	std::string serial_socket;
 	std::vector<std::string> net_forwards;
+	/* --vsock-forward=: loopback ports that reach guest vsock ports. Any
+	 * forward adds the Virtio vsock device, last among the devices. */
+	std::vector<uml::vsock::ForwardSpecification> vsock_forwards;
 	std::vector<std::string> kernel;
 
 	/* Whether `other` gives the emulator the same machine: the arguments it
@@ -351,12 +357,13 @@ struct PreparedArguments {
 	{
 		return std::tie(gpu, gpu_budget, audio, audio_output,
 				audio_input_host, battery, video, video_encoder,
-				console_socket, serial_socket, net_forwards) ==
+				console_socket, serial_socket, net_forwards,
+				vsock_forwards) ==
 			std::tie(other.gpu, other.gpu_budget, other.audio,
 				 other.audio_output, other.audio_input_host,
 				 other.battery, other.video, other.video_encoder,
 				 other.console_socket, other.serial_socket,
-				 other.net_forwards);
+				 other.net_forwards, other.vsock_forwards);
 	}
 };
 
@@ -574,6 +581,12 @@ PreparedArguments prepare_host_arguments(
 					"[PROTO:][HOSTADDR:]HOSTPORT-"
 					"[GUESTADDR:]GUESTPORT");
 			prepared.net_forwards.emplace_back(value);
+		} else if (valued("--vsock-forward=")) {
+			std::string error;
+			auto forward = uml::vsock::parseForward(value, error);
+			if (!forward)
+				throw std::invalid_argument(error);
+			prepared.vsock_forwards.push_back(std::move(*forward));
 		} else if (
 			   parse_host_integer(
 				   argument, "--gpu-width=", prepared.gpu.width) ||
@@ -683,9 +696,16 @@ struct BootServices final {
 	 * microphone; the switch ends with the boot's audio service. */
 	std::shared_ptr<uml::audio::MicrophoneSwitch> microphone;
 	VirtioService console;
+	/* The vsock device and the loopback listeners that open connections
+	 * through it; the listeners stop first. */
+	VirtioService vsock;
+	std::unique_ptr<uml::vsock::Forwarder> vsock_forwarder;
 
 	void stop() noexcept
 	{
+		vsock_forwarder.reset();
+		if (vsock)
+			vsock->stop();
 		if (audio)
 			audio->stop();
 		if (battery)
@@ -1080,6 +1100,45 @@ private:
 			    named_serial ? "Virtio serial" : "Virtio console",
 			    "Virtio console"))
 			return false;
+		/* Last, so that no other device's index moves. */
+		if (!prepared_.vsock_forwards.empty() && !information_only_ &&
+		    !start_vsock(kernel))
+			return false;
+		return true;
+	}
+
+	/* Starts the Virtio vsock device and the listeners that reach it, and
+	 * says which port each one listens on. */
+	[[nodiscard]] bool start_vsock(std::vector<std::string> &kernel)
+	{
+		std::shared_ptr<uml::vsock::Endpoint> endpoint;
+		if (!start_virtio_device(
+			    kernel, services_.vsock, uml::vsock::protocol::deviceId,
+			    [&] {
+				    auto started = uml::vsock::makeInProcessService();
+				    endpoint = std::move(started.endpoint);
+				    return std::move(started.service);
+			    },
+			    "--vsock-forward", "Virtio vsock"))
+			return false;
+		try {
+			services_.vsock_forwarder =
+				std::make_unique<uml::vsock::Forwarder>(
+					endpoint, prepared_.vsock_forwards);
+		} catch (const std::exception &error) {
+			std::fprintf(stderr, "Unable to start the vsock forward: %s\n",
+				error.what());
+			return false;
+		}
+		for (std::size_t index = 0; index < prepared_.vsock_forwards.size();
+		     ++index) {
+			const auto &forward = prepared_.vsock_forwards[index];
+			std::fprintf(stderr,
+				"vsock forward %s:%u -> guest port %u\n",
+				forward.hostAddress.c_str(),
+				static_cast<unsigned>(services_.vsock_forwarder->port(index)),
+				static_cast<unsigned>(forward.guestPort));
+		}
 		return true;
 	}
 
