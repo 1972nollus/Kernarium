@@ -8,6 +8,16 @@ target_include_directories(uml_network_device PUBLIC
 target_link_libraries(uml_network_device PUBLIC UML::BridgeAbi)
 target_link_libraries(uml_network_device PRIVATE UML::RunRouting)
 
+# The wire rules of the guest's DNS: pure functions of bytes, so a unit test
+# links the objects the provider does, without a socket or the system resolver.
+if(UML_BUILD_NETWORK_PROVIDER OR UML_BUILD_UNIT_TESTS)
+    add_library(uml_network_dns_rules STATIC
+        slirp/dns_message.cpp
+        slirp/dns_frames.cpp)
+    add_library(UML::NetworkDnsRules ALIAS uml_network_dns_rules)
+    uml_declare_architecture_target(uml_network_dns_rules device)
+endif()
+
 # The product provider builds without its test hooks. The SLiRP probes drive
 # a test variant that publishes the hooks and the provider's own headers.
 function(_uml_add_network_provider TARGET TESTING)
@@ -15,8 +25,6 @@ function(_uml_add_network_provider TARGET TESTING)
         slirp/provider.cpp
         slirp/event_loop.cpp
         slirp/frame_queue.cpp
-        slirp/dns_frames.cpp
-        slirp/dns_message.cpp
         slirp/dns_resolver.cpp)
     uml_declare_architecture_target(${TARGET} device)
     if(TESTING)
@@ -33,7 +41,8 @@ function(_uml_add_network_provider TARGET TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/slirp)
     target_link_libraries(${TARGET} PUBLIC
-        UML::BridgeAbi UML::Descriptor UML::DeviceSocketPaths)
+        UML::BridgeAbi UML::Descriptor UML::DeviceSocketPaths
+        UML::NetworkDnsRules)
     target_link_libraries(${TARGET} PRIVATE
         UML::GuestTimerMask
         UML::ThirdPartySlirp)

@@ -10,7 +10,8 @@
  * an immediate negative answer for any other name, so it needs no network.
  * It checks UDP and TCP, the name server and the gateway address, a missing
  * name, the refusals (a non-DNS TCP port is reset, a non-DNS datagram is
- * dropped), the DNS message rules, and a stop and reopen.
+ * dropped), guest multicast, and a stop and reopen. The wire rules themselves
+ * are the unit test network-dns-rules.
  */
 #include "dns_message.hpp"
 #include "provider.hpp"
@@ -237,61 +238,6 @@ bool has_loopback_answer(const Reply &reply)
 	return false;
 }
 
-void check_messages()
-{
-	const char *label = "message rules";
-	auto parsed = dns::parse_query(query_message(7, "Example.COM", 1, true));
-	if (parsed.disposition != dns::Disposition::resolve ||
-	    !parsed.query.edns || parsed.query.edns_payload != 1232 ||
-	    dns::presentation_name(parsed.query.name) != "Example.COM.")
-		fail(label, "a plain EDNS query is not resolved as sent");
-	if (dns::udp_limit(parsed.query) != 1232)
-		fail(label, "the EDNS payload size is not the UDP limit");
-
-	auto two = query_message(8, "a.example", 1);
-	put16(two, 4, 2);
-	if (dns::parse_query(two).rcode != dns::rcode_formerr)
-		fail(label, "two questions are not FORMERR");
-	auto update = query_message(9, "a.example", 1);
-	update[2] |= 0x28; /* opcode 5, UPDATE */
-	if (dns::parse_query(update).rcode != dns::rcode_notimp)
-		fail(label, "an UPDATE is not NOTIMP");
-	auto response = query_message(10, "a.example", 1);
-	response[2] |= 0x80;
-	if (dns::parse_query(response).disposition != dns::Disposition::drop)
-		fail(label, "a response is answered");
-	auto version = query_message(11, "a.example", 1, true);
-	version[version.size() - 5] = 1; /* EDNS version 1 */
-	if (dns::parse_query(version).rcode != dns::rcode_badvers)
-		fail(label, "EDNS version 1 is not BADVERS");
-	if (dns::parse_query(query_message(12, "a.example", 252)).rcode !=
-	    dns::rcode_notimp)
-		fail(label, "AXFR is not NOTIMP");
-
-	const auto escaped = dns::wire_name("a\\.b.c\\032d\\\\.");
-	if (!escaped || escaped->size() != 10 || (*escaped)[0] != 3 ||
-	    (*escaped)[2] != '.' ||
-	    dns::presentation_name(*escaped) != "a\\.b.c\\032d\\\\.")
-		fail(label, "escapes do not round-trip");
-	if (!dns::same_name(wire("WWW.Example."), wire("www.example")))
-		fail(label, "names do not compare without case");
-
-	/* An answer too long for the guest's limit keeps only its question. */
-	std::vector<dns::Record> records;
-	for (int index = 0; index < 40; ++index)
-		records.push_back({wire("example.com"), 16, 1, 60,
-				   std::vector<std::uint8_t>(40, 'x')});
-	const auto plain = dns::parse_query(query_message(13, "example.com", 16));
-	const auto truncated = parse_reply(dns::build_response(
-		plain.query, 0, records, dns::udp_limit(plain.query)));
-	if (!truncated || !truncated->truncated || truncated->answers != 0)
-		fail(label, "an oversized UDP answer is not truncated");
-	const auto whole = parse_reply(dns::build_response(
-		plain.query, 0, records, dns::tcp_limit));
-	if (!whole || whole->truncated || whole->answers != 40)
-		fail(label, "a TCP answer is truncated");
-}
-
 void check_udp(uml::network::SlirpProvider &provider, Guest &guest)
 {
 	const auto internet = provider.internet_sockets_for_testing();
@@ -475,8 +421,6 @@ bool open_provider(uml::network::SlirpProvider &provider)
 
 int main()
 {
-	check_messages();
-
 	uml::network::SlirpProvider provider;
 	if (!open_provider(provider)) {
 		std::fprintf(stderr, "the provider did not open\n");
