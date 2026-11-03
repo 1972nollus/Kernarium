@@ -569,6 +569,18 @@ target_link_libraries(uml-vhost-user-churn-server PRIVATE
     UML::VhostUserTransport)
 add_dependencies(integration-test-binaries uml-vhost-user-churn-server)
 
+# On one vCPU, a device's config changes and the config reads they make the
+# driver's worker send cross thousands of times, and neither side of the
+# connection may wait on its channel alone. The device has the ID and the
+# shape of a Virtio console, whose driver reads its size on every change.
+uml_add_guest_integration_test(
+    NAME guest-vhost-user-config-crossing
+    SCRIPT kernel/run_guest_vhost_user_config_crossing.py
+    ARGS --server $<TARGET_FILE:uml-vhost-user-churn-server>
+    LABELS guest;kernel;smoke
+    TIMEOUT 300
+    CPUS 1)
+
 # A system suspend holds through network, console and vhost-user traffic
 # until a wake request, and a wake sent while it is still being entered
 # ends it, even while it still syncs file systems. A suspend the host asked
