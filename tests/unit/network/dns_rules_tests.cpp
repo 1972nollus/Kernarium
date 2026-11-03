@@ -574,7 +574,7 @@ void multicastNeverLeavesTheVirtualLink()
 					Ipv4Address{224, 0, 0, 22}}) {
 		require(classify(ip_frame(group, protocol_udp,
 					  udp_datagram(group, 5353, 5353,
-						       query(0, "Android.local", 255))))
+						       query(0, "adb.example", 255))))
 				.action == FrameAction::drop);
 		require(classify(ip_frame(group, protocol_igmp, Bytes(8, 0))).action ==
 			FrameAction::drop);

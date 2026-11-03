@@ -295,7 +295,7 @@ void check_udp(uml::network::SlirpProvider &provider, Guest &guest)
 	label = "guest multicast";
 	const Address mdns{224, 0, 0, 251};
 	const auto before_multicast = provider.internet_sockets_for_testing();
-	if (!guest.send(udp_frame(mdns, 5353, 5353, query_message(0, "Android.local", 255))))
+	if (!guest.send(udp_frame(mdns, 5353, 5353, query_message(0, "adb.example", 255))))
 		fail(label, "the provider refused the datagram");
 	std::this_thread::sleep_for(std::chrono::milliseconds{200});
 	if (provider.internet_sockets_for_testing() != before_multicast)
