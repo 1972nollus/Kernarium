@@ -1,12 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 """Sign a target-files archive with a private key directory.
 
-`publish-release.py --signing-keys DIR` uses this module. The key directory
-is copied into a private (0700) directory, the AOSP releasetools sign the
-archive with those keys, the signing log is checked so no APK or APEX stays
-signed with a key outside the copy, the OTA certificates are replaced and
-checked so no public AOSP or LineageOS certificate stays trusted, and the copy is
-deleted again, with the deletion verified, whether or not signing succeeded.
+`publish-release.py --signing-keys DIR` uses this module. DIR must be a private
+(0700) directory of the invoking user, which the caller deletes; nothing here
+copies its keys. A private (0700) work directory links it as `keys/`, the AOSP
+releasetools sign the archive with those keys from that directory, the signing
+log is checked so no APK or APEX stays signed with a key outside it, the OTA
+certificates are replaced and checked so no public AOSP or LineageOS
+certificate stays trusted, and the work directory is deleted again, with the
+deletion verified, whether or not signing succeeded.
+
+The signer names the certificate in each `otacerts.zip` after the path it was
+given for the release key. It runs in the work directory, which also links the
+top level of the source tree so its own relative reads still resolve, and it is
+given `keys` as the default key directory, so the member is
+`keys/releasekey.x509.pem` in every release and the image holds neither the
+build host's directories nor a temporary name.
 
 The key directory holds the Android platform set (`releasekey`, `platform`,
 `media`, `shared`, `networkstack`, ... as `<name>.pk8` and `<name>.x509.pem`)
@@ -38,6 +47,13 @@ SECURITY_DIR = "build/make/target/product/security/"
 # release certificate) that no signed release may trust.
 PUBLIC_CERTIFICATE_DIRS = (SECURITY_DIR, "vendor/lineage/build/target/product/security/")
 PLATFORM_KEYS = ("releasekey", "platform", "media", "shared")
+# The link to the key directory, as the signer is given it for the default key
+# mappings (the platform keys and the OTA certificate): relative to the work
+# directory it runs in. The other keys keep the link's absolute path.
+KEYS_DIRECTORY = "keys"
+# The one member every signed otacerts.zip holds: the release certificate, named
+# after that relative path.
+OTA_CERTIFICATE_MEMBER = f"{KEYS_DIRECTORY}/releasekey.x509.pem"
 # `signing: NAME [container] (KEY)` and the continuation `: NAME payload (KEY)`;
 # the tool may print the next record on the same line, so search the text.
 SIGNING_RECORD = re.compile(
@@ -117,12 +133,13 @@ def key_arguments(target_files: Path, keys: Path) -> list[str]:
     return flags
 
 
-def check_signing_log(log: str, keys: Path) -> tuple[int, list[str]]:
-    """Every signed file must use a key from the private copy."""
+def check_signing_log(log: str, prefixes: tuple[str, ...]) -> tuple[int, list[str]]:
+    """Every signed file must use a key from the key directory, named by
+    either of the paths the signer is given for it."""
     signed = 0
     for name, key in SIGNING_RECORD.findall(log):
         signed += 1
-        if not key.startswith(f"{keys}/"):
+        if not key.startswith(tuple(f"{prefix}/" for prefix in prefixes)):
             fail(f"{name} stayed signed with a key outside the release key set")
     unsigned = [
         line.strip().removeprefix("NOT signing:").split()[0]
@@ -176,15 +193,21 @@ def check_ota_certificates(signed_output: Path, keys: Path, aosp_source: Path) -
                 fail(f"the signed target files omit {required}")
         for name in names:
             with zipfile.ZipFile(io.BytesIO(archive.read(name))) as certificates:
+                members = sorted(certificates.namelist())
                 digests = {
                     pem_digest(certificates.read(member))
-                    for member in certificates.namelist()
+                    for member in members
                     if member.endswith(".pem")
                 }
             if release not in digests:
                 fail(f"{name} omits the release certificate")
             if digests & public:
                 fail(f"{name} still trusts a public AOSP or LineageOS certificate")
+            if members != [OTA_CERTIFICATE_MEMBER]:
+                fail(
+                    f"{name} holds the members {members}, not only {OTA_CERTIFICATE_MEMBER}: "
+                    "the signer named them after a path of the build host"
+                )
 
 
 def run_logged(arguments: list[str], *, cwd: Path, env: dict[str, str]) -> str:
@@ -197,28 +220,41 @@ def run_logged(arguments: list[str], *, cwd: Path, env: dict[str, str]) -> str:
     return result.stdout
 
 
-def copy_private(keys: Path, parent: Path | None) -> Path:
+def private_work(keys: Path, aosp_source: Path, parent: Path | None) -> Path:
+    """The private work directory: `keys/`, a link to the key directory, and a
+    link to each top-level entry of the source tree, so the signer, which reads
+    old certificates and key mappings by their source-relative paths, runs
+    here. No key is copied."""
     check_private_directory(keys)
+    if not aosp_source.is_dir():
+        fail("the source tree is not a directory")
+    if (aosp_source / KEYS_DIRECTORY).exists() or (aosp_source / KEYS_DIRECTORY).is_symlink():
+        fail(f"the source tree has a top-level {KEYS_DIRECTORY}, the name of the key link")
     old_umask = os.umask(0o077)
+    work = Path(tempfile.mkdtemp(prefix="uml-signing-", dir=parent))
     try:
-        copy = Path(tempfile.mkdtemp(prefix="uml-signing-", dir=parent))
-        os.chmod(copy, 0o700)
-        for entry in sorted(keys.iterdir()):
-            destination = copy / entry.name
-            if entry.is_symlink():
-                os.symlink(os.readlink(entry), destination)
-            else:
-                shutil.copyfile(entry, destination)
-                os.chmod(destination, 0o600)
+        os.chmod(work, 0o700)
+        os.symlink(os.path.abspath(keys), work / KEYS_DIRECTORY)
+        for entry in sorted(aosp_source.iterdir()):
+            os.symlink(os.path.abspath(entry), work / entry.name)
+    except BaseException:
+        delete_private(work)
+        raise
     finally:
         os.umask(old_umask)
-    return copy
+    return work
 
 
-def delete_private(copy: Path) -> None:
-    shutil.rmtree(copy, ignore_errors=True)
-    if copy.exists() or copy.is_symlink():
-        fail("the private signing key copy could not be deleted")
+def delete_private(work: Path) -> None:
+    # The links are removed first, by name, so that no deletion can reach into the source tree
+    # or the key directory.
+    if work.is_dir() and not work.is_symlink():
+        for entry in work.iterdir():
+            if entry.is_symlink():
+                entry.unlink()
+    shutil.rmtree(work, ignore_errors=True)
+    if work.exists() or work.is_symlink():
+        fail("the private signing work directory could not be deleted")
 
 
 def sign_target_files(
@@ -240,20 +276,21 @@ def sign_target_files(
     tool = host_bin / "sign_target_files_apks"
     if not tool.exists():
         fail("sign_target_files_apks is missing from the host tools (build the otatools)")
-    copy = copy_private(keys, temporary_parent)
+    work = private_work(keys, aosp_source, temporary_parent)
+    copy = work / KEYS_DIRECTORY      # the link; the signer reads the keys through it
     try:
         arguments = [
             str(tool),
             "-o",
-            "-d", str(copy),
+            "-d", KEYS_DIRECTORY,
             *key_arguments(target_files, copy),
             str(target_files),
             str(signed_output),
         ]
         env = os.environ.copy()
         env["PATH"] = f"{host_bin}:{jdk_bin}:{env.get('PATH', '/usr/bin:/bin')}"
-        log = run_logged(arguments, cwd=aosp_source, env=env)
-        signed, unsigned = check_signing_log(log, copy)
+        log = run_logged(arguments, cwd=work, env=env)
+        signed, unsigned = check_signing_log(log, (KEYS_DIRECTORY, str(copy)))
         check_ota_certificates(signed_output, copy, aosp_source)
         # Signing rebuilds the partition images but not the data seed.
         with zipfile.ZipFile(target_files) as original, zipfile.ZipFile(
@@ -265,4 +302,4 @@ def sign_target_files(
                 )
         return signed, unsigned, certificate_digests(copy)
     finally:
-        delete_private(copy)
+        delete_private(work)

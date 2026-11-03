@@ -1230,10 +1230,16 @@ records.
 
 A release is signed with a private key set that never enters the repository, a
 log or a release. `tools/publish-release.py --signing-keys DIR` takes the
-unsigned target files, copies `DIR` (owner-only, no group or other access) to a
-private temporary directory, signs with the AOSP `sign_target_files_apks`,
-assembles the system disk from the signed archive, and deletes the copy and
-checks the deletion whether or not signing succeeded. `--disk-dir` then names
+unsigned target files and `DIR`, a directory owner-only (no group or other
+access) that the caller deletes; the tool copies no key. It links `DIR` as
+`keys/` in a private work directory, signs with the AOSP
+`sign_target_files_apks` from there, assembles the system disk from the signed
+archive, and deletes the work directory and checks the deletion whether or not
+signing succeeded. The signer names the certificate in each `otacerts.zip`
+after the path it is given, so it runs in the work directory with `keys` as its
+default key directory: the member is `keys/releasekey.x509.pem` in every
+release, with no build-host path or temporary name, and the tool refuses any
+other member. `--disk-dir` then names
 the new directory the signed `system.img` and `partition-layout.json` are
 written to, and `--mkbootfs`, `--mkbootimg` and `--first-boot-artifacts` are
 required; the last names the first-boot output of
@@ -1242,7 +1248,7 @@ on the signed tree, so re-signing cannot leave first boot compiling. The set
 holds the platform keys (`releasekey`, `platform`, `media`, `shared`,
 `networkstack` and the others the tree names) as `.pk8` and `.x509.pem`, and
 one 4096-bit key per APEX container with its `.pem` payload key. Signing fails
-when any file stays signed with a key outside the copy, so no AOSP public test
+when any file stays signed with a key outside `DIR`, so no AOSP public test
 key survives. Signing also replaces the OTA certificates, and the tool then
 requires the system's and the recovery's `otacerts.zip` to trust the release
 certificate and no public AOSP or LineageOS certificate; the product clears
