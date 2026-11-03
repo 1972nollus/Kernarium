@@ -239,6 +239,7 @@
     "ENABLE_STRICT_OBJC_MSGSEND": "YES",
     "ENABLE_TESTABILITY[config=Debug]": "YES",
     "ENABLE_USER_SCRIPT_SANDBOXING": "YES",
+    "EXCLUDED_ARCHS[sdk=iphonesimulator*]": "x86_64",
     "GCC_OPTIMIZATION_LEVEL[config=Debug]": "0",
     "IPHONEOS_DEPLOYMENT_TARGET": "27.0",
     "ONLY_ACTIVE_ARCH[config=Debug]": "YES",

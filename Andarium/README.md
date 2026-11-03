@@ -149,7 +149,10 @@ The `Andarium` scheme builds for the Simulator too, with the software renderer:
 build the Simulator runtime, package its slices (add `--sdk device`, with its
 own runtime preset built, for XCFrameworks that both SDKs build against), and
 build for `generic/platform=iOS Simulator`. The device-only KosmicKrisp is left
-out by `Kernarium/scripts/embed-device-framework.sh`.
+out by `Kernarium/scripts/embed-device-framework.sh`. The Simulator product is
+arm64 alone, as its packaged slices are, so the project excludes x86_64 for the
+Simulator SDK (`EXCLUDED_ARCHS[sdk=iphonesimulator*]`) and the command needs no
+`ARCHS`.
 
 ```sh
 cmake --preset kernarium-ios-simulator-android
