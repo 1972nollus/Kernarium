@@ -39,6 +39,7 @@ import run_vk_cts as vulkan  # noqa: E402
 import run_vk_gl_cts as cts  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "support"))
+import ios_device  # noqa: E402
 import kernarium  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -91,7 +92,7 @@ def apply_campaign_profile(
 
 
 def device_command(*arguments: str) -> list[str]:
-    return kernarium.device_command(*arguments)
+    return ios_device.device_command(*arguments)
 
 
 def stage_payload(options: argparse.Namespace) -> str:
@@ -104,8 +105,9 @@ def stage_payload(options: argparse.Namespace) -> str:
         options.artifact_root / "payload.cpio", options.initramfs_tool
     )
     name = kernarium.payload_name(written)
-    kernarium.copy_to_device(
-        options.device, written, name, options.install_timeout
+    ios_device.copy_to_device(
+        options.device, kernarium.APPLICATION, written, name,
+        options.install_timeout,
     )
     options.systemd_unit = campaign.unit
     return name
@@ -118,7 +120,8 @@ def launch_environment(options: argparse.Namespace) -> dict[str, str]:
     sets. Every other Kernarium setting is cleared, because an inherited one
     would select a different guest.
     """
-    return kernarium.device_launch_environment(
+    return ios_device.device_launch_environment(
+        kernarium.APPLICATION,
         kernarium.settings_for(
             rootfs=options.rootfs_filename,
             payload=options.payload,
@@ -138,7 +141,7 @@ def launch_environment(options: argparse.Namespace) -> dict[str, str]:
 
 
 def stop_console(process: subprocess.Popen[bytes]) -> None:
-    kernarium.stop_console(process)
+    ios_device.stop_console(process)
 
 
 def device_mustpass_selection(
@@ -532,10 +535,10 @@ def main(argv: list[str] | None = None) -> int:
     if options.app is not None:
         app = options.app.resolve()
         kernarium.require_automation_app(app)
-        kernarium.install_app(options.device, app, options.install_timeout)
+        ios_device.install_app(options.device, app, options.install_timeout)
     if options.rootfs is not None:
-        kernarium.copy_to_device(
-            options.device, options.rootfs.resolve(),
+        ios_device.copy_to_device(
+            options.device, kernarium.APPLICATION, options.rootfs.resolve(),
             options.rootfs_filename, options.install_timeout,
         )
     options.payload = stage_payload(options)
@@ -565,6 +568,8 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (cts.CampaignError, kernarium.KernariumError) as error:
+    except (
+        cts.CampaignError, kernarium.KernariumError, ios_device.DeviceError
+    ) as error:
         print(f"run_ios_device_vk_cts.py: {error}", file=sys.stderr)
         raise SystemExit(1) from error

@@ -23,6 +23,7 @@ import time
 REPOSITORY = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 import guest  # noqa: E402
+import ios_device  # noqa: E402
 import kernarium  # noqa: E402
 
 WORKLOAD = Path(__file__).resolve().parent / "guest" / "ubd-discard.sh"
@@ -77,10 +78,13 @@ def launch(
         directory / f"{mode}.cpio", arguments.initramfs_tool
     )
     name = kernarium.payload_name(written)
-    kernarium.copy_to_device(arguments.device, written, name, 300)
+    ios_device.copy_to_device(
+        arguments.device, kernarium.APPLICATION, written, name, 300
+    )
     log = directory / f"{mode}.log"
-    transcript = kernarium.run_device_console(
+    transcript = ios_device.run_device_console(
         arguments.device,
+        kernarium.APPLICATION,
         kernarium.settings_for(
             rootfs=arguments.rootfs_filename,
             payload=name,
@@ -142,7 +146,7 @@ def main() -> int:
     if not app.is_dir():
         raise ValueError(f"Kernarium app is unavailable: {app}")
     kernarium.require_automation_app(app)
-    kernarium.install_app(arguments.device, app, 300)
+    ios_device.install_app(arguments.device, app, 300)
 
     artifact = arguments.artifact_root.resolve() / time.strftime(
         "%Y%m%d-%H%M%S"

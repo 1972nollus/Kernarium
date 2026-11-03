@@ -25,6 +25,7 @@ import time
 REPOSITORY = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 import guest  # noqa: E402
+import ios_device  # noqa: E402
 import kernarium  # noqa: E402
 
 DEFAULT_ARTIFACT_ROOT = REPOSITORY / ".build" / "ios-device-workload"
@@ -119,9 +120,10 @@ def main(argv: list[str] | None = None) -> int:
     if options.app is not None:
         app = options.app.resolve()
         kernarium.require_automation_app(app)
-        kernarium.install_app(options.device, app, options.install_timeout)
-    kernarium.copy_to_device(
-        options.device, written, name, options.install_timeout
+        ios_device.install_app(options.device, app, options.install_timeout)
+    ios_device.copy_to_device(
+        options.device, kernarium.APPLICATION, written, name,
+        options.install_timeout,
     )
     settings = kernarium.settings_for(
         rootfs=options.rootfs_filename,
@@ -134,8 +136,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     log = artifact / "console.log"
     started = time.monotonic()
-    transcript = kernarium.run_device_console(
+    transcript = ios_device.run_device_console(
         options.device,
+        kernarium.APPLICATION,
         settings,
         log,
         timeout=options.timeout,
@@ -174,6 +177,6 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except kernarium.KernariumError as error:
+    except (kernarium.KernariumError, ios_device.DeviceError) as error:
         print(f"run_ios_device_workload.py: {error}", file=sys.stderr)
         raise SystemExit(1) from error

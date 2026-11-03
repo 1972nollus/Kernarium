@@ -10,8 +10,9 @@ mode. Build, launch, and test commands are in
 ## Ownership
 
 ```text
-Kernarium/            SwiftUI application: settings, guest selection, disk
-                      capacity, decompression, console, shader cache
+Kernarium/            SwiftUI application: settings, guest selection, console,
+                      microphone setting, background running and picture in
+                      picture
 Runtime/              runtime framework target, one per kernel flavour
 KernariumTests/       hosted application and runtime tests
 KernariumUITests/     UI tests
@@ -19,6 +20,11 @@ KernariumAutomation/  long-lived UI-automation host for a connected device
 AudioInterrupter/     test-support application that takes the audio session
 scripts/              launch, packaging, bundle assembly, and automation tools
 ```
+
+The runtime loader, the guest display and its input, the zstd utility, the
+microphone permission and the shader-cache bound are not in this directory:
+[`GuestHost/`](../GuestHost/README.md) holds them, compiled into this
+application and into Andarium. `ZstdUtil` below is that utility.
 
 ## Runtimes and runs
 
@@ -263,7 +269,9 @@ ends cancels the hold. The application learns it from
 
 Kernarium attaches:
 
-- an absolute touchscreen and evdev keyboard;
+- an absolute touchscreen and evdev keyboard, which advertises Linux key codes
+  1 through 127 and, above them, Back (158) and Home (172) for Android's
+  navigation keys; the guest ignores any other code;
 - a signed-16-bit 48 kHz playback stream (stereo) and capture stream
   (mono or stereo) through Virtio-Sound, whose capture records silence unless
   the user turns on Microphone;
@@ -496,8 +504,10 @@ Each script documents its options in `--help` or its header:
 - `package-ios-frameworks.sh` packages the selected runtime and graphics slices
   and the static GPT fdisk and zstd XCFrameworks for Xcode, with
   `--automation` the automation Linux runtime, with `--android-automation`
-  the automation Android runtime, and the host battery and video encoder
-  archives only `KernariumTests` links;
+  the automation Android runtime, with `--runtimes android` the Android
+  runtime alone (for Andarium; the output directory is shared, so package the
+  full set again before building Kernarium), and the host battery and video
+  encoder archives only `KernariumTests` links;
 - `make-guest-bundle.py` assembles an Android `.kern` bundle (system disk,
   layout, kernel command line) from an installed release;
 - `repro-android-hold-mac.py` sends an Android guest through the background
