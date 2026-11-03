@@ -137,6 +137,10 @@ Classified classify_guest_frame(std::span<const std::uint8_t> frame,
 	const std::size_t total = read16(ip, 2);
 	if (header < 20 || total < header || total > ip.size())
 		return refuse();
+	/* As SLiRP's ip_input would drop it: a packet the name server then
+	 * answers must be one SLiRP would have accepted. */
+	if (fold(sum16(ip.first(header), 0)) != 0)
+		return refuse();
 	const std::uint16_t fragment = read16(ip, 6);
 	const bool fragmented = (fragment & 0x3fff) != 0;
 	const std::uint8_t protocol = ip[9];

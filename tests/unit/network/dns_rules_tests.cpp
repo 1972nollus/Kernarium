@@ -623,6 +623,26 @@ void aMalformedPacketIsDroppedAtTheNameServerAndPassedAtTheGateway()
 	require(classify(gateway_overrun).action == FrameAction::pass);
 }
 
+void aBadHeaderChecksumIsDroppedAtTheNameServer()
+{
+	const auto payload = query(5, "a.example", 1);
+	for (const auto &server : {name_server, gateway}) {
+		auto frame = ip_frame(server, protocol_udp,
+				      udp_datagram(server, 40000, 53, payload));
+		require(classify(frame).action == FrameAction::query);
+		frame[24] ^= 0x01;
+		/* SLiRP drops what the gateway is sent; it must not see the
+		 * name server's. */
+		require(classify(frame).action ==
+			(server == name_server ? FrameAction::drop :
+						 FrameAction::pass));
+	}
+	auto reset = ip_frame(name_server, protocol_tcp,
+			      tcp_segment(name_server, 41000, 853, 1, 0, tcp_syn));
+	reset[25] ^= 0x80;
+	require(classify(reset).action == FrameAction::drop);
+}
+
 void ipOptionsAreSkippedToFindTheDatagram()
 {
 	const Bytes payload = query(5, "a.example", 1);
@@ -787,6 +807,7 @@ int main()
 	multicastNeverLeavesTheVirtualLink();
 	framesThatAreNotIpv4AreLeftToSlirp();
 	aMalformedPacketIsDroppedAtTheNameServerAndPassedAtTheGateway();
+	aBadHeaderChecksumIsDroppedAtTheNameServer();
 	ipOptionsAreSkippedToFindTheDatagram();
 	aConnectionToAnotherPortOfTheNameServerIsReset();
 	aResetAnswersASegmentThatAcknowledgesWithItsAcknowledgement();
