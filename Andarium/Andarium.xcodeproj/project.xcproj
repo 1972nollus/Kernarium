@@ -29,6 +29,7 @@
         { "path": "Andarium.entitlements" },
         { "path": "Andarium-Bridging-Header.h" },
         { "path": "Info.plist" },
+        { "path": "PrivacyInfo.xcprivacy", "target-membership": [ "Andarium/resources" ] },
       ],
     }, {
       "kind": "group",

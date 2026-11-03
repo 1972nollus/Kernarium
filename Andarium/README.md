@@ -18,7 +18,7 @@ Andarium/Preview/     mock screens, data and launch arguments (Simulator)
 Andarium/Live/        the runtime, storage and session of the device app
 AndariumCore/         Swift package: the application's model, no UIKit
 AndariumTests/        hosted tests of the device app
-Config/               entitlements, Info.plist, bridging header
+Config/               entitlements, Info.plist, privacy manifest, bridging header
 Andarium.xcodeproj/   JSON project (project.xcproj) and its shared schemes
 ```
 
