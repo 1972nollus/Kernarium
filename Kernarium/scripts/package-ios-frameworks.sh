@@ -1,12 +1,17 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Package the verified iOS device framework slices used by the Kernarium
-# Xcode project. All output is generated below .build by default.
+# Package the verified iOS framework slices used by the Kernarium and Andarium
+# Xcode projects. All output is generated below .build by default.
 #
-# The packaged stack is device-only. Mesa Zink renders on KosmicKrisp, which
-# requires Metal 4, and the iOS Simulator exposes no Metal 4 device, so there
-# is no Simulator slice to combine. An iOS device build runs on an Apple
+# --sdk device (the default) and --sdk simulator select the slices; both may
+# be named, and the XCFrameworks then carry both, so Xcode picks the slice for
+# its destination. The device stack renders with Mesa Zink on KosmicKrisp,
+# which requires Metal 4. The iOS Simulator exposes no Metal 4 device, so its
+# GPU stack is Mesa's CPU rasterizer with no Vulkan driver: the Simulator
+# slices carry no KosmicKrisp, and KosmicKrisp.xcframework has a device slice
+# alone. Only the Simulator's slices may carry the software renderer; the
+# device slices are checked for it. An iOS device build also runs on an Apple
 # silicon Mac in Designed for iPad mode when no device is attached.
 #
 # --automation packages the automation Linux runtimes, which boot host
@@ -42,9 +47,22 @@ fail()
 AUTOMATION=0
 ANDROID_AUTOMATION=0
 RUNTIMES=all
-USAGE="usage: package-ios-frameworks.sh [--automation] [--android-automation] [--runtimes all|android]"
+SDKS=
+USAGE="usage: package-ios-frameworks.sh [--sdk device|simulator]... [--automation] [--android-automation] [--runtimes all|android]"
 while [ "$#" -gt 0 ]; do
 	case "$1" in
+	--sdk)
+		[ "$#" -ge 2 ] || fail "$USAGE"
+		case "$2" in
+		device | simulator) ;;
+		*) fail "--sdk takes device or simulator: $2" ;;
+		esac
+		case " $SDKS " in
+		*" $2 "*) fail "--sdk $2 is named twice" ;;
+		esac
+		SDKS="$SDKS $2"
+		shift
+		;;
 	--automation) AUTOMATION=1 ;;
 	--android-automation) ANDROID_AUTOMATION=1 ;;
 	--runtimes)
@@ -79,6 +97,15 @@ find_tool()
 	fail "required packaging tool is unavailable: $*"
 }
 
+[ -n "$SDKS" ] || SDKS=device
+has_sdk()
+{
+	case " $SDKS " in
+	*" $1 "*) return 0 ;;
+	esac
+	return 1
+}
+
 find_tool XCODEBUILD xcodebuild
 find_tool CMAKE cmake
 find_tool OTOOL otool
@@ -99,6 +126,18 @@ ANDROID_TREE=kernarium-runtime-ios-device-android-4k
 DEVICE_RUNTIME_4K="$ROOT_DIR/.build/$RUNTIME_TREE/Kernarium/Runtime/$RUNTIME_4K.framework"
 DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/$ANDROID_TREE/Kernarium/Runtime/$RUNTIME_ANDROID_4K.framework"
 DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64/Frameworks"
+# The Simulator's runtimes are the same presets for its SDK, and its GPU prefix
+# is the software variant; KERNARIUM_SIMULATOR_GPU_PREFIX names another one.
+SIMULATOR_RUNTIME_TREE=kernarium-runtime-ios-simulator
+[ "$AUTOMATION" -eq 0 ] ||
+	SIMULATOR_RUNTIME_TREE=kernarium-runtime-ios-simulator-automation
+SIMULATOR_ANDROID_TREE=kernarium-runtime-ios-simulator-android-4k
+[ "$ANDROID_AUTOMATION" -eq 0 ] ||
+	SIMULATOR_ANDROID_TREE=kernarium-runtime-ios-simulator-android-4k-automation
+SIMULATOR_RUNTIME_4K="$ROOT_DIR/.build/$SIMULATOR_RUNTIME_TREE/Kernarium/Runtime/$RUNTIME_4K.framework"
+SIMULATOR_RUNTIME_ANDROID="$ROOT_DIR/.build/$SIMULATOR_ANDROID_TREE/Kernarium/Runtime/$RUNTIME_ANDROID_4K.framework"
+SIMULATOR_GPU_PREFIX=${KERNARIUM_SIMULATOR_GPU_PREFIX:-"$ROOT_DIR/.build/dependencies/apple-gpu-vulkan-experiment/ios-simulator-arm64"}
+SIMULATOR_GPU="$SIMULATOR_GPU_PREFIX/Frameworks"
 STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/GPTFDisk.xcframework"
 ZSTD="$ROOT_DIR/.build/dependencies/ios-zstd/LibZstd.xcframework"
 HOST_BATTERY="$ROOT_DIR/.build/$ANDROID_TREE/darwin/platform/libuml_host_battery.a"
@@ -107,35 +146,56 @@ ANDROID_RUNTIME_TREE="$ROOT_DIR/.build/$ANDROID_TREE"
 HOST_VIDEO_ENCODER="$ANDROID_RUNTIME_TREE/darwin/platform/libuml_video_encoder.a"
 HOST_VIDEO_ENCODER_HEADERS="$ROOT_DIR/darwin/platform/video_encoder.hpp $ROOT_DIR/darwin/platform/video_decoder.hpp"
 
-# Mesa supplies the host GL provider as MesaEGL and MesaGallium, and the
-# Vulkan driver they render on as KosmicKrisp.
-GPU_FRAMEWORKS="MesaEGL MesaGallium KosmicKrisp"
+# Mesa supplies the host GL provider as MesaEGL and MesaGallium. The device
+# stack also has the Vulkan driver they render on, KosmicKrisp; the Simulator's
+# has none.
+GL_FRAMEWORKS="MesaEGL MesaGallium"
+GPU_FRAMEWORKS="$GL_FRAMEWORKS KosmicKrisp"
 
 # Packaging is an independent trust boundary: revalidate the complete source,
 # contract, provenance, binary-platform, and provider-negative policy before
-# consuming the device prefix.
-"$ROOT_DIR/dependencies/build-apple-gpu.sh" --platform ios --verify-only
+# consuming a GPU prefix.
+if has_sdk device; then
+	"$ROOT_DIR/dependencies/build-apple-gpu.sh" --platform ios --verify-only
+fi
 "$ROOT_DIR/dependencies/build-ios-storage.sh"
 "$ROOT_DIR/dependencies/build-ios-zstd.sh"
+if has_sdk simulator; then
+	"$ROOT_DIR/dependencies/build-apple-gpu.sh" --platform ios-simulator \
+		--prefix "$SIMULATOR_GPU_PREFIX" --verify-only
+fi
 
 for framework in \
-	"$DEVICE_RUNTIME_ANDROID" \
 	"$STORAGE" \
 	"$ZSTD"; do
 	[ -d "$framework" ] || fail "missing framework slice: $framework"
 done
-[ "$RUNTIMES" = android ] || [ -d "$DEVICE_RUNTIME_4K" ] ||
-	fail "missing framework slice: $DEVICE_RUNTIME_4K"
-[ -f "$HOST_BATTERY" ] || fail "missing host battery archive: $HOST_BATTERY"
-# The encoder archive is a static library of the runtime tree; it is built here
-# when the runtime itself has not linked it yet.
-"$CMAKE" --build "$ANDROID_RUNTIME_TREE" --target uml_video_encoder ||
-	fail "could not build the host video encoder archive"
-[ -f "$HOST_VIDEO_ENCODER" ] || fail "missing host video encoder archive: $HOST_VIDEO_ENCODER"
-for framework in $GPU_FRAMEWORKS; do
-	[ -d "$DEVICE_GPU/$framework.framework" ] ||
-		fail "missing framework slice: $DEVICE_GPU/$framework.framework"
-done
+if has_sdk device; then
+	[ -d "$DEVICE_RUNTIME_ANDROID" ] ||
+		fail "missing framework slice: $DEVICE_RUNTIME_ANDROID"
+	[ "$RUNTIMES" = android ] || [ -d "$DEVICE_RUNTIME_4K" ] ||
+		fail "missing framework slice: $DEVICE_RUNTIME_4K"
+	[ -f "$HOST_BATTERY" ] || fail "missing host battery archive: $HOST_BATTERY"
+	# The encoder archive is a static library of the runtime tree; it is built
+	# here when the runtime itself has not linked it yet.
+	"$CMAKE" --build "$ANDROID_RUNTIME_TREE" --target uml_video_encoder ||
+		fail "could not build the host video encoder archive"
+	[ -f "$HOST_VIDEO_ENCODER" ] || fail "missing host video encoder archive: $HOST_VIDEO_ENCODER"
+	for framework in $GPU_FRAMEWORKS; do
+		[ -d "$DEVICE_GPU/$framework.framework" ] ||
+			fail "missing framework slice: $DEVICE_GPU/$framework.framework"
+	done
+fi
+if has_sdk simulator; then
+	[ -d "$SIMULATOR_RUNTIME_ANDROID" ] ||
+		fail "missing framework slice: $SIMULATOR_RUNTIME_ANDROID"
+	[ "$RUNTIMES" = android ] || [ -d "$SIMULATOR_RUNTIME_4K" ] ||
+		fail "missing framework slice: $SIMULATOR_RUNTIME_4K"
+	for framework in $GL_FRAMEWORKS; do
+		[ -d "$SIMULATOR_GPU/$framework.framework" ] ||
+			fail "missing framework slice: $SIMULATOR_GPU/$framework.framework"
+	done
+fi
 
 OUTPUT_PARENT=$(dirname -- "$OUTPUT")
 mkdir -p -- "$OUTPUT_PARENT"
@@ -150,117 +210,201 @@ cleanup()
 }
 trap cleanup EXIT HUP INT TERM
 
+# create_xcframework NAME DEVICE-FRAMEWORK SIMULATOR-FRAMEWORK: each slice is
+# named only for an SDK that is packaged, and the framework is created from the
+# slices named; an empty name leaves its SDK out.
 create_xcframework()
 {
 	name=$1
-	device_framework=$2
-	"$XCODEBUILD" -create-xcframework \
-		-framework "$device_framework" \
+	slices=
+	for slice_framework in "$2" "$3"; do
+		[ -z "$slice_framework" ] || slices="$slices -framework $slice_framework"
+	done
+	# shellcheck disable=SC2086
+	"$XCODEBUILD" -create-xcframework $slices \
 		-output "$STAGE/$name.xcframework"
 	[ -f "$STAGE/$name.xcframework/Info.plist" ] ||
 		fail "$name XCFramework was not created"
 }
 
+# A framework's slice of an SDK, empty for an SDK that is not packaged.
+device_slice()
+{
+	if has_sdk device; then printf '%s' "$1"; fi
+}
+simulator_slice()
+{
+	if has_sdk simulator; then printf '%s' "$1"; fi
+}
+
 RUNTIME_FRAMEWORKS="$RUNTIME_ANDROID_4K"
 if [ "$RUNTIMES" = all ]; then
 	RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_ANDROID_4K"
-	create_xcframework "$RUNTIME_4K" "$DEVICE_RUNTIME_4K"
+	create_xcframework "$RUNTIME_4K" \
+		"$(device_slice "$DEVICE_RUNTIME_4K")" \
+		"$(simulator_slice "$SIMULATOR_RUNTIME_4K")"
 fi
-create_xcframework "$RUNTIME_ANDROID_4K" "$DEVICE_RUNTIME_ANDROID"
-for framework in $GPU_FRAMEWORKS; do
-	create_xcframework "$framework" "$DEVICE_GPU/$framework.framework"
+create_xcframework "$RUNTIME_ANDROID_4K" \
+	"$(device_slice "$DEVICE_RUNTIME_ANDROID")" \
+	"$(simulator_slice "$SIMULATOR_RUNTIME_ANDROID")"
+for framework in $GL_FRAMEWORKS; do
+	create_xcframework "$framework" \
+		"$(device_slice "$DEVICE_GPU/$framework.framework")" \
+		"$(simulator_slice "$SIMULATOR_GPU/$framework.framework")"
 done
+# KosmicKrisp needs Metal 4, so it has a device slice alone.
+if has_sdk device; then
+	create_xcframework KosmicKrisp "$DEVICE_GPU/KosmicKrisp.framework" ""
+fi
 "$CMAKE" -E copy_directory "$STORAGE" \
 	"$STAGE/GPTFDisk.xcframework"
 "$CMAKE" -E copy_directory "$ZSTD" \
 	"$STAGE/LibZstd.xcframework"
-HOST_BATTERY_HEADERS="$STAGE/host-battery-headers"
-mkdir -p -- "$HOST_BATTERY_HEADERS"
-cp -- "$HOST_BATTERY_HEADER" "$HOST_BATTERY_HEADERS/"
-"$XCODEBUILD" -create-xcframework \
-	-library "$HOST_BATTERY" -headers "$HOST_BATTERY_HEADERS" \
-	-output "$STAGE/HostBattery.xcframework"
-"$CMAKE" -E remove_directory "$HOST_BATTERY_HEADERS"
-[ -f "$STAGE/HostBattery.xcframework/ios-arm64/libuml_host_battery.a" ] ||
-	fail "HostBattery XCFramework was not created"
-HOST_VIDEO_ENCODER_STAGE="$STAGE/host-video-encoder-headers"
-mkdir -p -- "$HOST_VIDEO_ENCODER_STAGE"
-for header in $HOST_VIDEO_ENCODER_HEADERS; do
-	cp -- "$header" "$HOST_VIDEO_ENCODER_STAGE/"
-done
-"$XCODEBUILD" -create-xcframework \
-	-library "$HOST_VIDEO_ENCODER" -headers "$HOST_VIDEO_ENCODER_STAGE" \
-	-output "$STAGE/HostVideoEncoder.xcframework"
-"$CMAKE" -E remove_directory "$HOST_VIDEO_ENCODER_STAGE"
-[ -f "$STAGE/HostVideoEncoder.xcframework/ios-arm64/libuml_video_encoder.a" ] ||
-	fail "HostVideoEncoder XCFramework was not created"
+# The two archives serve KernariumTests, which runs on a device: they have no
+# Simulator slice.
+if has_sdk device; then
+	HOST_BATTERY_HEADERS="$STAGE/host-battery-headers"
+	mkdir -p -- "$HOST_BATTERY_HEADERS"
+	cp -- "$HOST_BATTERY_HEADER" "$HOST_BATTERY_HEADERS/"
+	"$XCODEBUILD" -create-xcframework \
+		-library "$HOST_BATTERY" -headers "$HOST_BATTERY_HEADERS" \
+		-output "$STAGE/HostBattery.xcframework"
+	"$CMAKE" -E remove_directory "$HOST_BATTERY_HEADERS"
+	[ -f "$STAGE/HostBattery.xcframework/ios-arm64/libuml_host_battery.a" ] ||
+		fail "HostBattery XCFramework was not created"
+	HOST_VIDEO_ENCODER_STAGE="$STAGE/host-video-encoder-headers"
+	mkdir -p -- "$HOST_VIDEO_ENCODER_STAGE"
+	for header in $HOST_VIDEO_ENCODER_HEADERS; do
+		cp -- "$header" "$HOST_VIDEO_ENCODER_STAGE/"
+	done
+	"$XCODEBUILD" -create-xcframework \
+		-library "$HOST_VIDEO_ENCODER" -headers "$HOST_VIDEO_ENCODER_STAGE" \
+		-output "$STAGE/HostVideoEncoder.xcframework"
+	"$CMAKE" -E remove_directory "$HOST_VIDEO_ENCODER_STAGE"
+	[ -f "$STAGE/HostVideoEncoder.xcframework/ios-arm64/libuml_video_encoder.a" ] ||
+		fail "HostVideoEncoder XCFramework was not created"
+fi
 
-for framework in $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS; do
-	binary="$STAGE/$framework.xcframework/ios-arm64/$framework.framework/$framework"
-	[ -f "$binary" ] || fail "missing packaged framework binary: $binary"
+# Every slice of every packaged SDK: the framework slices of the runtimes and
+# the GPU stack, each built for its own platform (Mach-O platform 2 for the
+# device, 7 for the Simulator).
+PACKAGED_SLICES=
+has_sdk device && PACKAGED_SLICES="$PACKAGED_SLICES ios-arm64:2"
+has_sdk simulator && PACKAGED_SLICES="$PACKAGED_SLICES ios-arm64-simulator:7"
+packaged_frameworks()
+{
+	slice=$1
+	case "$slice" in
+	ios-arm64) printf '%s ' $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS ;;
+	*) printf '%s ' $RUNTIME_FRAMEWORKS $GL_FRAMEWORKS ;;
+	esac
+}
+for slice_platform in $PACKAGED_SLICES; do
+	slice=${slice_platform%%:*}
+	platform=${slice_platform##*:}
+	for framework in $(packaged_frameworks "$slice"); do
+		binary="$STAGE/$framework.xcframework/$slice/$framework.framework/$framework"
+		[ -f "$binary" ] || fail "missing packaged framework binary: $binary"
+		binary_platform=$("$OTOOL" -l "$binary" | awk '
+			$1 == "cmd" { command = $2; next }
+			command == "LC_BUILD_VERSION" && $1 == "platform" {
+				print $2
+				exit
+			}
+		')
+		[ "$binary_platform" = "$platform" ] ||
+			fail "$framework is built for platform $binary_platform, not the $slice slice's $platform"
+	done
+	for framework in $RUNTIME_FRAMEWORKS; do
+		binary="$STAGE/$framework.xcframework/$slice/$framework.framework/$framework"
+		rpaths=$("$OTOOL" -l "$binary" | awk '
+			$1 == "cmd" { command = $2; next }
+			command == "LC_RPATH" && $1 == "path" {
+				print $2
+				command = ""
+			}
+		')
+		[ "$rpaths" = '@loader_path/..' ] ||
+			fail "$framework has an invalid runtime search path: $rpaths"
+	done
 done
-for framework in $RUNTIME_FRAMEWORKS; do
-	binary="$STAGE/$framework.xcframework/ios-arm64/$framework.framework/$framework"
-	rpaths=$("$OTOOL" -l "$binary" | awk '
-		$1 == "cmd" { command = $2; next }
-		command == "LC_RPATH" && $1 == "path" {
-			print $2
-			command = ""
-		}
-	')
-	[ "$rpaths" = '@loader_path/..' ] ||
-		fail "$framework has an invalid runtime search path: $rpaths"
-done
-if [ "$RUNTIMES" = all ]; then
-	binary="$STAGE/$RUNTIME_4K.xcframework/ios-arm64/$RUNTIME_4K.framework/$RUNTIME_4K"
-	if LC_ALL=C grep -a -q KERNARIUM_BOOT_PAYLOAD "$binary"; then
-		[ "$AUTOMATION" -eq 1 ] ||
-			fail "$RUNTIME_4K is an automation runtime; package it with --automation"
-	else
-		[ "$AUTOMATION" -eq 0 ] ||
-			fail "$RUNTIME_4K is a release runtime; build the kernarium-ios-device-automation preset"
+# KosmicKrisp has no Simulator slice, so an SDK set holds none for it.
+if has_sdk simulator; then
+	[ ! -e "$STAGE/KosmicKrisp.xcframework/ios-arm64-simulator" ] ||
+		fail "KosmicKrisp has a Simulator slice, which needs Metal 4"
+fi
+# The software renderer is the Simulator's alone: no device slice carries it,
+# and the Simulator's GL provider does.
+if has_sdk device; then
+	for framework in $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS; do
+		"$PYTHON" -B "$ROOT_DIR/scripts/check-software-renderer.py" --absent \
+			"$STAGE/$framework.xcframework/ios-arm64" ||
+			fail "a device slice of $framework carries the software renderer"
+	done
+fi
+if has_sdk simulator; then
+	"$PYTHON" -B "$ROOT_DIR/scripts/check-software-renderer.py" --present \
+		"$STAGE/MesaGallium.xcframework/ios-arm64-simulator" ||
+		fail "the Simulator's MesaGallium does not carry the software renderer"
+fi
+# Each packaged slice's runtimes are the release or the automation build the
+# options name.
+for slice_platform in $PACKAGED_SLICES; do
+	slice=${slice_platform%%:*}
+	case "$slice" in
+	ios-arm64) preset=kernarium-ios-device ;;
+	*) preset=kernarium-ios-simulator ;;
+	esac
+	if [ "$RUNTIMES" = all ]; then
+		binary="$STAGE/$RUNTIME_4K.xcframework/$slice/$RUNTIME_4K.framework/$RUNTIME_4K"
+		if LC_ALL=C grep -a -q KERNARIUM_BOOT_PAYLOAD "$binary"; then
+			[ "$AUTOMATION" -eq 1 ] ||
+				fail "$RUNTIME_4K is an automation runtime; package it with --automation"
+		else
+			[ "$AUTOMATION" -eq 0 ] ||
+				fail "$RUNTIME_4K is a release runtime; build the $preset-automation preset"
+		fi
+		# The settings that start the background job with the guest and delay
+		# the GPU hold are in the automation runtimes alone.
+		if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_JOB_AT_START "$binary"; then
+			[ "$AUTOMATION" -eq 1 ] ||
+				fail "$RUNTIME_4K carries the background job setting; only an automation runtime may"
+		else
+			[ "$AUTOMATION" -eq 0 ] ||
+				fail "$RUNTIME_4K is an automation runtime without the background job setting; rebuild it"
+		fi
+		if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_HOLD_DELAY_MS "$binary"; then
+			[ "$AUTOMATION" -eq 1 ] ||
+				fail "$RUNTIME_4K carries the GPU hold delay setting; only an automation runtime may"
+		else
+			[ "$AUTOMATION" -eq 0 ] ||
+				fail "$RUNTIME_4K is an automation runtime without the GPU hold delay setting; rebuild it"
+		fi
 	fi
-	# The settings that start the background job with the guest and delay the
-	# GPU hold are in the automation runtimes alone.
-	if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_JOB_AT_START "$binary"; then
-		[ "$AUTOMATION" -eq 1 ] ||
-			fail "$RUNTIME_4K carries the background job setting; only an automation runtime may"
+
+	binary="$STAGE/$RUNTIME_ANDROID_4K.xcframework/$slice/$RUNTIME_ANDROID_4K.framework/$RUNTIME_ANDROID_4K"
+	if LC_ALL=C grep -a -q KERNARIUM_ANDROID_ADB_AUTH "$binary"; then
+		[ "$ANDROID_AUTOMATION" -eq 1 ] ||
+			fail "$RUNTIME_ANDROID_4K is an automation runtime; package it with --android-automation"
 	else
-		[ "$AUTOMATION" -eq 0 ] ||
-			fail "$RUNTIME_4K is an automation runtime without the background job setting; rebuild it"
+		[ "$ANDROID_AUTOMATION" -eq 0 ] ||
+			fail "$RUNTIME_ANDROID_4K is a release runtime; build the $preset-android-automation preset"
+	fi
+	if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_JOB_AT_START "$binary"; then
+		[ "$ANDROID_AUTOMATION" -eq 1 ] ||
+			fail "$RUNTIME_ANDROID_4K carries the background job setting; only an automation runtime may"
+	else
+		[ "$ANDROID_AUTOMATION" -eq 0 ] ||
+			fail "$RUNTIME_ANDROID_4K is an automation runtime without the background job setting; rebuild it"
 	fi
 	if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_HOLD_DELAY_MS "$binary"; then
-		[ "$AUTOMATION" -eq 1 ] ||
-			fail "$RUNTIME_4K carries the GPU hold delay setting; only an automation runtime may"
+		[ "$ANDROID_AUTOMATION" -eq 1 ] ||
+			fail "$RUNTIME_ANDROID_4K carries the GPU hold delay setting; only an automation runtime may"
 	else
-		[ "$AUTOMATION" -eq 0 ] ||
-			fail "$RUNTIME_4K is an automation runtime without the GPU hold delay setting; rebuild it"
+		[ "$ANDROID_AUTOMATION" -eq 0 ] ||
+			fail "$RUNTIME_ANDROID_4K is an automation runtime without the GPU hold delay setting; rebuild it"
 	fi
-fi
-
-
-binary="$STAGE/$RUNTIME_ANDROID_4K.xcframework/ios-arm64/$RUNTIME_ANDROID_4K.framework/$RUNTIME_ANDROID_4K"
-if LC_ALL=C grep -a -q KERNARIUM_ANDROID_ADB_AUTH "$binary"; then
-	[ "$ANDROID_AUTOMATION" -eq 1 ] ||
-		fail "$RUNTIME_ANDROID_4K is an automation runtime; package it with --android-automation"
-else
-	[ "$ANDROID_AUTOMATION" -eq 0 ] ||
-		fail "$RUNTIME_ANDROID_4K is a release runtime; build the kernarium-ios-device-android-automation preset"
-fi
-if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_JOB_AT_START "$binary"; then
-	[ "$ANDROID_AUTOMATION" -eq 1 ] ||
-		fail "$RUNTIME_ANDROID_4K carries the background job setting; only an automation runtime may"
-else
-	[ "$ANDROID_AUTOMATION" -eq 0 ] ||
-		fail "$RUNTIME_ANDROID_4K is an automation runtime without the background job setting; rebuild it"
-fi
-if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_HOLD_DELAY_MS "$binary"; then
-	[ "$ANDROID_AUTOMATION" -eq 1 ] ||
-		fail "$RUNTIME_ANDROID_4K carries the GPU hold delay setting; only an automation runtime may"
-else
-	[ "$ANDROID_AUTOMATION" -eq 0 ] ||
-		fail "$RUNTIME_ANDROID_4K is an automation runtime without the GPU hold delay setting; rebuild it"
-fi
+done
 
 # The storage and compression cores carry no Metal dependency, so their
 # XCFrameworks keep both published slices.
