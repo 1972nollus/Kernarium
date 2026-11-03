@@ -10,7 +10,6 @@ ANDROID_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 METADATA="$ANDROID_ROOT/metadata/lineage.env"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
 MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
-FDROID_SOURCE_TOOL="$ANDROID_ROOT/tools/fdroid_source.py"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 FIRST_BOOT_TOOL="$ANDROID_ROOT/tools/precompile-first-boot-apps.py"
 OUTER_ROOT=$(CDPATH= cd -- "$ANDROID_ROOT/../.." && pwd)
@@ -147,7 +146,6 @@ fi
 [[ -f "$METADATA" ]] || fail "AOSP metadata is missing"
 [[ -x "$VERIFIER" ]] || fail "AOSP patch verifier is missing"
 [[ -x "$MESA_VENUS_VERIFIER" ]] || fail "Mesa Venus source verifier is missing"
-[[ -x "$FDROID_SOURCE_TOOL" ]] || fail "F-Droid source tool is missing"
 [[ -x "$TARGET_FILES_VERIFIER" ]] || fail "target-files verifier is missing"
 [[ -f "$FIRST_BOOT_TOOL" ]] || fail "first-boot precompile tool is missing"
 [[ -f "$KERNEL_ARTIFACT_VERIFIER" ]] || fail "kernel artifact verifier is missing"
@@ -155,8 +153,6 @@ fi
 source "$METADATA"
 
 "$MESA_VENUS_VERIFIER" --android-root "$ANDROID_ROOT" \
-	--aosp-source "$AOSP_SOURCE"
-python3 -B "$FDROID_SOURCE_TOOL" verify --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
@@ -166,6 +162,16 @@ python3 -B "$KERNEL_ARTIFACT_VERIFIER" --artifact "$KERNEL_ARTIFACT" \
 	--abi-metadata "$KERNEL_COMMON_ROOT/abi/identity.env"
 SOONG_BUILD_GRAPH="$OUT_DIR/soong/build.${LINEAGE24_PRODUCT}.ninja"
 mkdir -p -- "$OUT_DIR"
+# One output directory per build variant: a switch between user and userdebug is
+# then incremental, where reusing one directory would rebuild everything. The
+# directory records the variant it was first used for and refuses the other.
+VARIANT_MARK=$OUT_DIR/.lineage24-build-variant
+if [[ -f "$VARIANT_MARK" ]]; then
+	[[ "$(<"$VARIANT_MARK")" == "$LINEAGE24_BUILD_VARIANT" ]] ||
+		fail "output directory holds a $(<"$VARIANT_MARK") build: use one directory per build variant"
+else
+	printf '%s\n' "$LINEAGE24_BUILD_VARIANT" >"$VARIANT_MARK"
+fi
 if [[ -f "$SOONG_BUILD_GRAPH" ]]; then
 	printf '%s\n' "reusing incremental AOSP output: $OUT_DIR"
 else
@@ -230,7 +236,7 @@ for variable in \
 	[[ "$(get_build_var "$variable")" == erofs ]] ||
 		fail "$variable must select erofs for the immutable GPT"
 done
-# The compressor and the cluster size are the two parameters of lineage_darwin.mk
+# The compressor and the cluster size are the two parameters of lineage_andarium.mk
 # and reach every image alike: nothing per partition, no extended option, and
 # the default 4 KiB block that the guest's 4 KiB pages require.
 [[ "$(get_build_var BOARD_EROFS_COMPRESSOR)" == "$(get_build_var UML_ANDROID_EROFS_COMPRESSOR)" &&
@@ -239,7 +245,7 @@ done
 [[ "$(get_build_var BOARD_EROFS_PCLUSTER_SIZE)" == "$(get_build_var UML_ANDROID_EROFS_PCLUSTER_SIZE)" &&
 	"$(get_build_var BOARD_EROFS_PCLUSTER_SIZE)" =~ ^[0-9]+$ ]] ||
 	fail "BOARD_EROFS_PCLUSTER_SIZE must be the product's cluster size"
-[[ "$(get_build_var BOARD_EROFS_COMPRESS_HINTS)" == device/kernarium/darwin/config/erofs_compress_hints.txt ]] ||
+[[ "$(get_build_var BOARD_EROFS_COMPRESS_HINTS)" == device/kernarium/andarium/config/erofs_compress_hints.txt ]] ||
 	fail "BOARD_EROFS_COMPRESS_HINTS must be the product's hints file"
 for variable in \
 	BOARD_EROFS_BLOCKSIZE \
@@ -263,7 +269,7 @@ done
 	fail "the APEX payload compressor must be the product's"
 [[ "$(get_build_var PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_PCLUSTER_SIZE)" == "$(get_build_var UML_ANDROID_EROFS_PCLUSTER_SIZE)" ]] ||
 	fail "the APEX payload cluster size must be the product's"
-[[ "$(get_build_var PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_COMPRESS_HINTS)" == device/kernarium/darwin/config/erofs_apex_payload_hints.txt ]] ||
+[[ "$(get_build_var PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_COMPRESS_HINTS)" == device/kernarium/andarium/config/erofs_apex_payload_hints.txt ]] ||
 	fail "the APEX payload compress hints must be the product's"
 [[ "$(get_build_var PRODUCT_COMPRESSED_APEX)" == false ]] ||
 	fail "PRODUCT_COMPRESSED_APEX must be false: the payloads are compressed, not the files"
@@ -384,11 +390,8 @@ for package in \
 	Camelot \
 	Etar \
 	ExactCalculator \
-	F-Droid \
-	F-DroidPrivilegedExtension \
 	Glimpse \
 	init.zygote64_32.rc \
-	Jelly \
 	LatinIME \
 	Launcher3QuickStep \
 	LineageParts \
@@ -408,7 +411,10 @@ for package in \
 	Aperture \
 	AudioFX \
 	Canvas \
+	F-Droid \
+	F-DroidPrivilegedExtension \
 	fastbootd \
+	Jelly \
 	lineage_charger_animation \
 	lineage_charger_animation_vendor \
 	LineageSetupWizard \
@@ -584,12 +590,11 @@ fi
 # signs with sign_target_files_apks and the tools it runs, so a fresh output
 # builds those host tools.
 # First boot compiles nothing. Soong preopts the applications it installs but
-# never one inside an APEX, and the presigned F-Droid prebuilts opt out, so
-# ART Service would compile them on every fresh /data. After a first pass, the
-# host dex2oat compiles them with the flags and class loader context ART
-# Service uses on the device; a second pass installs the artifacts through the
-# product's PRODUCT_COPY_FILES fragment. An unchanged output skips the second
-# pass.
+# never one inside an APEX, so ART Service would compile them on every fresh
+# /data. After a first pass, the host dex2oat compiles them with the flags and
+# class loader context ART Service uses on the device; a second pass installs
+# the artifacts through the product's PRODUCT_COPY_FILES fragment. An unchanged
+# output skips the second pass.
 FIRST_BOOT_OAT=$OUT_DIR/first-boot-oat
 if [[ -f "$FIRST_BOOT_OAT/first-boot-oat.mk" ]]; then
 	export LINEAGE24_FIRST_BOOT_OAT_MK=$FIRST_BOOT_OAT/first-boot-oat.mk

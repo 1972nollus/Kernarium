@@ -130,7 +130,7 @@ def write_manifest(
 
 
 def copy_device_tree(source: Path, workspace: Path) -> None:
-    destination = workspace / "device/kernarium/darwin"
+    destination = workspace / "device/kernarium/andarium"
     if destination.exists():
         shutil.rmtree(destination)
     shutil.copytree(source, destination, copy_function=shutil.copy2)
@@ -315,7 +315,7 @@ def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> No
     )
     write_projects(workspace, projects, "aosp")
 
-    (workspace / "device/kernarium/darwin/device.mk").unlink()
+    (workspace / "device/kernarium/andarium/device.mk").unlink()
     verifier.refuses(
         "an unsynchronized AOSP device overlay", "destination inventory differs", "final"
     )
@@ -467,7 +467,7 @@ def check_device_sync(source_root: Path, root: Path) -> None:
     (overlay / "device.mk").write_text("# fixture overlay\n")
     (overlay / "config/fstab").write_text("fixture\n")
     (overlay / "config/fstab").chmod(0o640)
-    destination = workspace / "device/kernarium/darwin"
+    destination = workspace / "device/kernarium/andarium"
 
     def sync(case: str, expected: str, *extra: str, accepted: bool = True,
              target: Path = workspace) -> None:
@@ -482,7 +482,14 @@ def check_device_sync(source_root: Path, root: Path) -> None:
         if (result.returncode == 0) != accepted or expected not in result.stdout:
             fail(f"{tool.name} {case}: {result.returncode} {result.stdout.strip()}")
 
+    retired = workspace / "device/kernarium/darwin"
+    retired.mkdir(parents=True)
+    (retired / "AndroidProducts.mk").write_text("# the retired product\n")
+    sync("accepted the retired device directory", "retired device directory is still present",
+         "--verify", accepted=False)
     sync("did not create the device tree", "synchronized exact device overlay")
+    if retired.exists():
+        fail("sync-device-tree.py kept the retired device directory")
     if tree_entries(destination) != tree_entries(overlay):
         fail("sync-device-tree.py did not copy the overlay exactly")
     sync("rejected the synchronized tree", "verified exact device overlay", "--verify")

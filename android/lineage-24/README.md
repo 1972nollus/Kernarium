@@ -20,7 +20,7 @@ builds, verification, image assembly, and publication are offline.
 
 The producer has three independent outputs:
 
-1. the `lineage_darwin` target files of the configured build variant, which
+1. the `lineage_andarium` target files of the configured build variant, which
    carry the kernel-less `init_boot` and LineageOS recovery images;
 2. one static GPT guest disk containing both boot ramdisks; and
 3. a compact rootfs release installed by Apple consumers.
@@ -55,7 +55,7 @@ remote that serves it, from its exact base to final tree. Generated patch
 series under `patches/projects/` are the only maintained modifications to
 upstream projects.
 
-`overlay/` owns the complete `device/kernarium/darwin` product tree and is
+`overlay/` owns the complete `device/kernarium/andarium` product tree and is
 synchronized as one verified unit. The synchronization stamps a file whose
 bytes or mode differ from what the workspace held with the current time, and
 restores the time of every file that did not change: Make treats an output newer
@@ -65,17 +65,6 @@ leave the installed copy of the newer content in place, while untouched files
 keep the build from redoing work that depends only on them. The Vulkan HAL's
 Mesa source has its own pinned source and generated series under
 `third_party/mesa-venus/`.
-
-`third_party/fdroid/` pins the F-Droid client and its Privileged Extension by
-size and SHA-256. Both are upstream-presigned APKs the build installs
-unchanged: the client as an ordinary product app and the extension in
-`priv-app` with a permission allowlist of only `INSTALL_PACKAGES` and
-`DELETE_PACKAGES`. `tools/fdroid_source.py` materializes them into the
-workspace during source preparation (the only networked step, refusing any
-size or digest difference) and the build verifies the result. Their detached
-`.asc` signatures verify only against the 2018 F-Droid release key, which a
-current keyring may list as expired, so the pinned digests and the APK
-signing-certificate pin in `metadata.env` are the checked identity.
 
 Every series here uses the shared
 [`scripts/patch_series.py`](../../scripts/patch_series.py) format and is
@@ -105,7 +94,7 @@ is valid on a kernel of either size, and `ro.product.page_size` reports 4096.
 
 A `device/google/cuttlefish` topic (route `p0001`) adds the
 `UML_ANDROID_MULTILIB` switch, which makes the page-agnostic phone inherit
-`core_64_bit.mk` instead of `core_64_bit_only.mk`; `overlay/lineage_darwin.mk`
+`core_64_bit.mk` instead of `core_64_bit_only.mk`; `overlay/lineage_andarium.mk`
 sets it and `overlay/BoardConfig.mk` defines the second architecture. The
 builder asserts that configuration, and the target-files verifier checks the
 image: the ABI lists, the 32-bit runtime, the placement of every ELF (32-bit
@@ -135,33 +124,65 @@ volume as the system.
 
 The build variant is the single `LINEAGE24_BUILD_VARIANT` setting in
 `metadata/lineage.env`, `user` or `userdebug`. Lunch, the target-files verifier,
-the release manifest and the accepted-release descriptor all follow it, so a
-release is accepted only as the variant the tracked tree builds. A `user` build
-keeps the stock shell privilege boundary; a `userdebug` build is the
-development variant (see the ADB paragraph below).
+the release manifest and the accepted-release descriptor all follow it. `user`
+is the default and the only variant that is released, signed with release keys,
+published or accepted: `publish-release.py` and the release verifier refuse any
+other (`require_release_build_variant`). A `user` build keeps the stock shell
+privilege boundary: no `su`, no `adb root`, `ro.debuggable=0`, no permissive
+SELinux domain, and the verifier rejects the debug-only payload (`su`,
+`remount`, `procmem`). `userdebug` is the on-demand diagnostics variant: it
+carries `su`, is debuggable and may have the permissive `su` domain, and the
+verifier requires exactly that. Each variant builds in its own output directory
+(on the builder `out-andarium-user` and `out-andarium-userdebug`), so switching
+between them is incremental; `build-aosp.sh` records the variant in its output
+directory and refuses the other one. The variant also decides the keys: every
+`user` build, a release or a CTS candidate, is signed with the one release key
+set, and a `userdebug` build keeps the AOSP test keys of the build itself and
+is never re-signed
+([Release signing](#release-signing)).
+
+The product identity is Andarium's, not a Cuttlefish or "Darwin" one:
+`PRODUCT_BRAND` Andarium, `PRODUCT_MANUFACTURER` Kernarium, `PRODUCT_MODEL`
+"Andarium Virtual Device", `PRODUCT_DEVICE` andarium and `PRODUCT_NAME`
+`lineage_andarium` (the makefile, `AndroidProducts.mk` and the device directory
+follow LineageOS's `lineage_<device>` convention), so the lunch target is
+`lineage_andarium-cp2a-user` and the product output directory is
+`target/product/andarium`. The verifier checks the identity and that the
+fingerprint starts `Andarium/lineage_andarium/andarium:` and names the variant.
+`darwin` stays the name of the host platform.
+
+Diagnostics on a `user` image start on the host and need no guest root: the
+guest console the host captures for kernel logs, UML's mconsole (`sysrq`,
+`proc`, `stack`) for the kernel's state, and tracefs from the shell (the image
+mounts it at `/sys/kernel/tracing`, readable and writable by `shell`). The
+shell can also set `perf.drop_caches` (init writes `drop_caches`), the `debug.*`
+properties and `powerctl`. Only what these cannot reach (`dmesg`, `setenforce`,
+`ctl.*` service control, other uids' `/proc/<pid>/smaps`) needs a `userdebug`
+build with `su`; build one on demand in its own output directory.
 
 The product removes Cuttlefish virtual hardware and services that have no
 Darwin UML implementation while preserving Android framework APIs required by
 ordinary applications.
 
-The product is `lineage_darwin`: the Cuttlefish base with LineageOS's
+The product is `lineage_andarium`: the Cuttlefish base with LineageOS's
 `common_full_tablet_wifionly` product chain on top, so the tablet configuration
 and the LineageOS platform services (LineageParts, LineageSettingsProvider and
 the hardware, live-display, trust and global-actions services) are present.
-`overlay/lineage_darwin.mk` sets the LineageOS switches before inheriting it
+`overlay/lineage_andarium.mk` sets the LineageOS switches before inheriting it
 and names what the product leaves out. The image provides Settings, Trebuchet,
-Files, Package Installer, the LineageOS WebView, LatinIME, ThemePicker, the
-patched Jelly browser and a curated application set: Glimpse (gallery), Twelve
-(music), Etar (calendar), ExactCalculator, Camelot (PDF viewer) and Seedvault
-(backup), plus the F-Droid client and Privileged Extension. It has no Google
-or microG services. The LineageOS updater and setup
-wizard, Canvas, Aperture, Profiles, Recorder, QuickAccessWallet, the charger
-animation,
-fastbootd and AudioFX are excluded, as are DeskClock and EmergencyInfo; the
-build and verifier assert both lists. SecureElement, the OMAPI service for
-readers the machine does not have (no eSE, no UICC), is kept but is not
-persistent (a `packages/apps/SecureElement` topic, route `p0024`, drops
-`android:persistent`): nothing starts it at boot, so it costs no memory at idle.
+Files, Package Installer, the LineageOS WebView, LatinIME, ThemePicker and a
+curated application set: Glimpse (gallery), Twelve (music), Etar (calendar),
+ExactCalculator, Camelot (PDF viewer) and Seedvault (backup). It has no browser
+app (the WebView stays, so that a user can install one), no app store of its
+own and no install restriction: Package Installer and every install path work.
+It has no Google or microG services. The LineageOS updater and setup wizard,
+Canvas, Aperture, Profiles, Recorder, QuickAccessWallet, the charger animation,
+fastbootd, AudioFX and the Jelly browser are excluded, as are DeskClock and
+EmergencyInfo; the build and verifier assert both lists. SecureElement, the
+OMAPI service for readers the machine does not have (no eSE, no UICC), is kept
+but is not persistent (a `packages/apps/SecureElement` topic, route `p0024`,
+drops `android:persistent`): nothing starts it at boot, so it costs no memory
+at idle.
 The first `SEService` client that binds it starts the process, and the bind
 creates the service, which registers itself (the topic also drops the
 application's own `startService`: the system refuses it in a process it started
@@ -276,22 +297,84 @@ every user-facing audio stream at its maximum and disable UI, lock, dial-pad,
 charging, and power sounds; subsequent volume and sound settings remain owned
 by the user.
 
-Fresh settings databases also enable Developer options and ADB. The radio-free
-product starts adbd on TCP port 5555 and retains the stock authorization prompt
-for a newly connected host. The immutable `ro.boot.kernarium.adb_auth` launch
-property can disable that check for host-side diagnostics: iOS fixes it to one
-(only the automation runtime lets a test launch turn it off, on a loopback
-forward, [`../../Kernarium/README.md`](../../Kernarium/README.md#automation-runs)),
-while the standalone macOS product fixes it to zero. Bundle command lines may
-not override this host security choice. LineageOS makes its debug variant
-non-debuggable and always authorized; the product undoes the first
+Fresh settings databases keep Developer options and USB debugging off: the
+overlay defaults Developer options off and the product sets no
+`persist.sys.usb.config`, which AdbService reads at every boot to set
+`adb_enabled`; the target-files verifier rejects the property in any build
+property file. The radio-free product starts adbd on TCP port 5555 and on vsock
+port 5555, and retains the stock authorization prompt for a newly connected
+host. Three immutable launch properties, which adbd reads itself (the p0011
+topics), shape that:
+
+- `ro.boot.kernarium.adb_auth` can disable the authorization check for
+  host-side diagnostics: iOS fixes it to one (only the automation runtime lets a
+  test launch turn it off, on a loopback forward,
+  [`../../Kernarium/README.md`](../../Kernarium/README.md#automation-runs)),
+  while the standalone macOS product fixes it to zero.
+- `ro.boot.kernarium.adb_tcp` is 0 when the launch has no host forward, as in
+  the iOS release: adbd then listens on `vsock:5555` alone, so no application
+  of the guest finds a TCP listener. Without the property, or with any other
+  value, adbd listens on both, which the standalone macOS launcher and the test
+  tooling rely on through their forwards. A `service.adb.listen_addrs` value
+  still wins. adbd reads the launch property and not that one because
+  `service.adb.listen_addrs` is a `system_prop`, which `vendor_init` may not
+  set, whereas the `ro.boot` properties are `bootloader_prop`, which every
+  domain reads: nothing in SELinux or init changes.
+- `ro.boot.kernarium.adb_key` is the base64 adb public key that the host
+  application, as the adb host of its guest, authorizes for the boot. adbd
+  offers it first to every key check (the AUTH signature, the TLS client list
+  and the TLS certificate check), so that host needs no prompt and no write to
+  the framework's `adb_keys`, which the framework expires and empties. The
+  guest's user cannot revoke it. The host owns the guest's disk, so the key
+  gives it nothing it lacks, and the value is a public key.
+
+AOSP's `neverallow` keeps untrusted applications from creating or connecting a
+vsock socket, so only the host reaches the vsock listener. Three topics keep
+adbd the host's channel whatever the user's debugging setting, and keep the
+user's setting meaningful:
+
+- The first `frameworks/base` topic (route `p0007`) records the USB debugging
+  setting in `persist.sys.usb.config`: this product has no `UsbDeviceManager`,
+  the property's only other writer, so nothing recorded it, and AdbService,
+  which sets `adb_enabled` from the property at every boot, forgot the user's
+  choice at every reboot. `settings get global adb_enabled` (1 on, 0 off) is
+  authoritative and follows the user's toggle within the settings observer's
+  hop.
+- The second restarts adbd (`ctl.restart`) where stock stops it when USB and
+  wireless debugging are both turned off. Every session ends, as on stock, and
+  adbd stays up for the host, whose own session drops once at that toggle and
+  reconnects. Init also starts adbd again after any other stop
+  (`on property:init.svc.adbd=stopped` in `overlay/config/init.vendor.rc`): a
+  restart or a crash never raises that trigger, so the two do not fight.
+- The adbd topic of route `p0011` is the key rule. The host's key
+  (`ro.boot.kernarium.adb_key`) is accepted whatever the setting. Any other key
+  authenticates, and may raise the stock "Allow USB debugging" prompt, only
+  while USB debugging or wireless debugging is on (`persist.sys.usb.config`
+  holds `adb`, or `persist.adb.tls_server.enable` is true). With both off, such
+  a key is refused with no prompt, nothing to accept and nothing queued for a
+  later prompt; the transport stays unauthorized. A computer on the LAN that
+  the host bridges arrives over vsock from the host as well, so the rule is by
+  key, not by origin. Authorization off (`ro.boot.kernarium.adb_auth`) skips the
+  check and so the rule. adbd listens on guest TCP only when the launch has a
+  host forward.
+
+The target-files verifier requires the adbd APEX's `bin/adbd` to carry the
+launch property names, the debugging property names and the refusal line (the
+payload hints store that binary uncompressed, so they are readable), the built
+policy to let adbd read their labels, the dex files of `services.jar` (stored
+uncompressed) to carry the first topic's log line, and the product init script
+to start adbd at the stopped trigger. Bundle command lines may not override any
+of these host-owned launch choices.
+LineageOS makes its debug variant non-debuggable and always authorized; the product undoes the first
 (`PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG` is empty) and the boot policy decides
 the second. Under `userdebug` the build is debuggable and carries `su`, and
 `adb root` goes through LineageOS's `adb_root` service, whose "Rooted
 debugging" switch is off on a fresh data partition. A boot with authorization
 off starts that service with the switch on, so on macOS, which authorizes
 nothing, any local process that reaches the loopback ADB port can become root
-in the guest, an accepted property of a development host. iOS keeps
+in a userdebug guest, an accepted property of a diagnostics host. On a `user`
+build the service is installed but built non-debuggable, so authorization off
+still gives an unauthenticated shell and `pm install`, never root. iOS keeps
 authorization and the default-off switch.
 SELinux stays enforcing in both variants; only the host-owned kernel command
 line could change that. Android's wireless-debugging setting
@@ -382,8 +465,8 @@ removable card and no addon.d, so two topics undo them: `system/sepolicy`
 neverallows, and `device/lineage/sepolicy` (route `p0021`) drops the `vold` and
 `fsck_untrusted` grants and the permissive `backuptool`. With the neverallows
 back, a later such grant fails the policy build, and the target-files verifier
-repeats the checks on the built policy (only the userdebug `su` may be
-permissive).
+repeats the checks on the built policy (a user build has no permissive
+domain; a userdebug build may have only `su`).
 
 The guest boots straight to the home screen, and its swipe lock screen can be
 turned on. `LockPatternUtils.isLockScreenDisabled` ORs
@@ -457,7 +540,7 @@ the quantizer the same pixels and the palette stays LineageOS's.
 LineageOS's overlay names the same resource, and where two overlay directories do
 that the one listed earlier in `PRODUCT_PACKAGE_OVERLAYS` wins (Soong gives the
 earlier directory the higher priority). `inherit-product` expands the inherited
-list where its call stands, so `overlay/lineage_darwin.mk` lists
+list where its call stands, so `overlay/lineage_andarium.mk` lists
 `overlay/overlay-priority` before its calls and `overlay/overlay` after them,
 where it ranks under LineageOS's and Cuttlefish's: a resource that both define is
 theirs. That is why the wallpaper has a directory of its own.
@@ -500,11 +583,10 @@ cannot drop it unnoticed.
 A first boot compiles nothing. ART Service would otherwise compile every
 package without a usable artifact, for each instruction set the package runs
 in, on a fresh `/data` (reason `first-boot`, filter `verify`), and Soong leaves
-three groups without one: the applications
-packaged inside updatable APEXes, which it never dexpreopts, the presigned
-F-Droid client and Privileged Extension, whose prebuilt modules opt out, and
-the second instruction set of any package, since Soong dexpreopts an
-application for the first only.
+two groups without one: the applications packaged inside updatable APEXes,
+which it never dexpreopts, and the second instruction set of any package,
+since Soong dexpreopts an application for the first only. A presigned prebuilt
+can opt out as well; the image carries none.
 `tools/precompile-first-boot-apps.py` compiles exactly those after a first
 `target-files-package` pass, with the host `dex2oat`, Soong's own application
 flags, filter `verify` and the class loader context ART Service derives on the
@@ -524,7 +606,7 @@ manifest. It writes the artifacts where ART looks first:
 `/system/framework/oat/<isa>/apex@<apex>@<path>@classes.{odex,vdex}` for an APK
 under `/apex`, and `oat/<isa>` beside every other APK. A second pass
 installs them through a generated `PRODUCT_COPY_FILES` fragment named by
-`LINEAGE24_FIRST_BOOT_OAT_MK`, which `overlay/lineage_darwin.mk` includes, and
+`LINEAGE24_FIRST_BOOT_OAT_MK`, which `overlay/lineage_andarium.mk` includes, and
 `build-aosp.sh` then runs the tool's `verify` against the packaged tree: every
 APK with dex code must carry artifacts for its whole ISA set, and the tool's
 own must match its manifest and the packaged APK's dex checksums. An unchanged result skips the
@@ -1076,7 +1158,7 @@ cannot read a Zstandard image.
 The five read-only partitions are compressed EROFS: Zstandard level 15 with
 16 KiB physical clusters on 4 KiB blocks. The two parameters are written once,
 as `UML_ANDROID_EROFS_COMPRESSOR` and `UML_ANDROID_EROFS_PCLUSTER_SIZE` in
-`overlay/lineage_darwin.mk`. `BoardConfig.mk` hands them to the image builder,
+`overlay/lineage_andarium.mk`. `BoardConfig.mk` hands them to the image builder,
 which otherwise uses `mkfs.erofs`'s defaults (no per-partition setting, no
 extended option, no block size beyond the default), and `build/build-aosp.sh`
 asserts that. The compress hints (`overlay/config/erofs_compress_hints.txt`)
@@ -1100,14 +1182,14 @@ cluster at a time; that is why the clusters are 16 KiB and not 64 KiB.
 
 Every APEX payload is compressed EROFS as well, with the same two parameters:
 `PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := erofs` and the three
-`PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_*` settings in `overlay/lineage_darwin.mk`
+`PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_*` settings in `overlay/lineage_andarium.mk`
 reach apexer through Soong, not its lz4hc and 4 KiB defaults, and
 `build/build-aosp.sh` asserts them. The `p0008` series no longer pins
 `com.android.virt` to a payload of its own. The payload hints
 (`overlay/config/erofs_apex_payload_hints.txt`) keep `.rc` and `.xml` files
-uncompressed, so the verifier still reads the example HALs' service
-definitions from the payload's bytes; it finds each service binary through the
-payload's directories. The presigned CTS shim APEX is a prebuilt that keeps its
+and the adb daemon uncompressed, so the verifier still reads the example HALs'
+service definitions and adbd's launch property names from the payload's bytes;
+it finds each service binary through the payload's directories. The presigned CTS shim APEX is a prebuilt that keeps its
 ext4 payload: the verifier allows exactly that one and rejects ext4 in any
 other APEX. `tools/precompile-first-boot-apps.py` reads APKs out of an EROFS
 payload with the host `fsck.erofs` (part of `otatools`), and out of an ext4 one
@@ -1134,7 +1216,7 @@ discard path.
 `init_boot` and `recovery` contain kernelless boot-image-v4 ramdisks. The
 kernel ELF remains outside the disk in the selected runtime artifact. Both images come
 from the signed AOSP target files; `recovery` is the stock LineageOS recovery
-that `lineage_darwin` builds, with no separate recovery source or build.
+that `lineage_andarium` builds, with no separate recovery source or build.
 Neither ramdisk is duplicated as a standalone release file. Boot mode `auto`
 follows the standard command in the directly writable `misc` partition and is
 the launcher default; explicit normal/recovery selection is a diagnostic
@@ -1157,7 +1239,7 @@ The recovery ramdisk is an LZ4 legacy frame of the product's page-agnostic
 AArch64 ELFs, so it runs on the 4 KiB kernel unchanged. Two product changes
 adapt the stock recovery to the virtual hardware:
 
-- `overlay/recovery/` builds `librecovery_ui_darwin`, selected by
+- `overlay/recovery/` builds `librecovery_ui_andarium`, selected by
   `TARGET_RECOVERY_UI_LIB`. The stock Cuttlefish UI library addresses `eth1`;
   this one addresses the Virtio-net `eth0`, assigns the SLiRP address
   `10.0.2.15/24` itself (init cannot run `ifconfig` from recovery's SELinux
@@ -1228,10 +1310,13 @@ records.
 
 ### Release signing
 
-A release is signed with a private key set that never enters the repository, a
-log or a release. `tools/publish-release.py --signing-keys DIR` takes the
-unsigned target files and `DIR`, a directory owner-only (no group or other
-access) that the caller deletes; the tool copies no key. It links `DIR` as
+Every `user` build is signed with one private key set that never enters the
+repository, a log or a release; there is no unsigned publication and no key
+generated per build. A `userdebug` build keeps the AOSP test keys the build
+uses, is not re-signed and is never published. `tools/publish-release.py
+--signing-keys DIR` takes the unsigned target files and `DIR`, a directory
+owner-only (no group or other access) that the caller deletes; the tool copies
+no key, and it refuses to sign any other variant. It links `DIR` as
 `keys/` in a private work directory, signs with the AOSP
 `sign_target_files_apks` from there, assembles the system disk from the signed
 archive, and deletes the work directory and checks the deletion whether or not
@@ -1239,7 +1324,11 @@ signing succeeded. The signer names the certificate in each `otacerts.zip`
 after the path it is given, so it runs in the work directory with `keys` as its
 default key directory: the member is `keys/releasekey.x509.pem` in every
 release, with no build-host path or temporary name, and the tool refuses any
-other member. `--disk-dir` then names
+other member, and `verify-target-files.py --signed` makes the same check on
+the signed archive. An unsigned build of either variant holds the AOSP test
+certificate's file name, `testkey.x509.pem`, in both archives, and the verifier
+requires exactly that of every archive not marked `--signed`
+(`release_common.OTA_CERTIFICATE_MEMBERS`). `--disk-dir` then names
 the new directory the signed `system.img` and `partition-layout.json` are
 written to, and `--mkbootfs`, `--mkbootimg` and `--first-boot-artifacts` are
 required; the last names the first-boot output of
@@ -1253,11 +1342,11 @@ key survives. Signing also replaces the OTA certificates, and the tool then
 requires the system's and the recovery's `otacerts.zip` to trust the release
 certificate and no public AOSP or LineageOS certificate; the product clears
 `PRODUCT_EXTRA_RECOVERY_KEYS`, which would add LineageOS's release certificate
-to the recovery. The presigned F-Droid APKs keep their upstream signature and
-are named in the build receipt, which also records the SHA-256 of each platform
-certificate. The AOSP host tools need `sign_target_files_apks` (built with
-`otatools`). The key directory, its backup and the transfer to the builder are
-the maintainer's responsibility.
+to the recovery. A presigned file keeps its upstream signature and is named in
+the build receipt (`none` when there is none), which also records the SHA-256
+of each platform certificate. The AOSP host tools need `sign_target_files_apks`
+(built with `otatools`). The key directory, its backup and the transfer to the
+builder are the maintainer's responsibility.
 
 ### Superseded releases
 
@@ -1363,8 +1452,8 @@ Kernarium represents one Android guest as a `.kern` directory containing:
 The kernel is supplied by the runtime framework and is not bundle payload. The
 manifest is provenance rather than a runtime compatibility token. Missing files
 and malformed disk images fail when opened or parsed. Android appends the
-host-owned display density, ADB authorization policy, and tagged-pointer option
-at launch. Launches write persistent guest changes only to `guest/data.img`.
+host-owned display density, ADB authorization policy, ADB host key, ADB TCP
+policy, and tagged-pointer option at launch. Launches write persistent guest changes only to `guest/data.img`.
 
 How Kernarium keeps, relaunches, and copies a bundle is in
 [`../../Kernarium/README.md`](../../Kernarium/README.md#guest-storage).

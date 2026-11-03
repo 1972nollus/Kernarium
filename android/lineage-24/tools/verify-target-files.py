@@ -20,7 +20,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import android_image  # noqa: E402
 import default_wallpaper  # noqa: E402
-from release_common import BUILD_VARIANTS, configured_build_variant, sha256_path  # noqa: E402
+from release_common import (  # noqa: E402
+    BUILD_VARIANTS,
+    OTA_CERTIFICATE_ARCHIVES,
+    configured_build_variant,
+    ota_certificate_member,
+    sha256_path,
+)
 
 
 ET_EXEC = 2
@@ -190,14 +196,10 @@ REQUIRED_ENTRIES = {
     "PRODUCT/app/Camelot/Camelot.apk",
     "PRODUCT/app/Etar/Etar.apk",
     "PRODUCT/app/ExactCalculator/ExactCalculator.apk",
-    "PRODUCT/app/F-Droid/F-Droid.apk",
     "PRODUCT/app/Glimpse/Glimpse.apk",
-    "PRODUCT/app/Jelly/Jelly.apk",
     "PRODUCT/app/LatinIME/LatinIME.apk",
     "PRODUCT/app/Twelve/Twelve.apk",
     "PRODUCT/app/webview/webview.apk",
-    "PRODUCT/etc/permissions/privapp-permissions-org.fdroid.fdroid.privileged.xml",
-    "PRODUCT/priv-app/F-DroidPrivilegedExtension/F-DroidPrivilegedExtension.apk",
     "PRODUCT/etc/build.prop",
     "SYSTEM/build.prop",
     "RECOVERY/RAMDISK/system/bin/hw/android.hardware.health-service.example_recovery",
@@ -270,7 +272,6 @@ REQUIRED_ENTRIES = {
     "SYSTEM/etc/init/hw/init.zygote64_32.rc",
 }
 REQUIRED_PREOPT_APKS = {
-    "PRODUCT/app/Jelly/Jelly.apk",
     "PRODUCT/app/LatinIME/LatinIME.apk",
     "SYSTEM/app/CaptivePortalLogin/CaptivePortalLogin.apk",
     "SYSTEM/app/PartnerBookmarksProvider/PartnerBookmarksProvider.apk",
@@ -346,6 +347,7 @@ FORBIDDEN_STATIC_ENTRIES = {
     "META/ab_partitions.txt",
     "PRODUCT/app/QuickSearchBox/QuickSearchBox.apk",
     "PRODUCT/etc/init/init.rc",
+    "PRODUCT/etc/permissions/privapp-permissions-org.fdroid.fdroid.privileged.xml",
     "PRODUCT/overlay/cuttlefish_overlay_uwb.apk",
     "SYSTEM_EXT/etc/permissions/privapp-permissions-com.android.threadnetwork.demoapp.xml",
     "SYSTEM_EXT/priv-app/ThreadNetworkDemoApp/ThreadNetworkDemoApp.apk",
@@ -429,7 +431,10 @@ FORBIDDEN_APP_DIRECTORIES = {
     "Dialer",
     "DynamicSystemInstallationService",
     "EmergencyInfo",
+    "F-Droid",
+    "F-DroidPrivilegedExtension",
     "Gallery2",
+    "Jelly",
     "LineageSetupWizard",
     "Profiles",
     "QuickAccessWallet",
@@ -557,6 +562,22 @@ AUDIO_HAL_SELF_BINDER = re.compile(
 # domain, which the platform neverallow keeps from setting a vendor-owned property.
 ADB_HOST_PROPERTY = "sys.kernarium.adb.host_connected"
 ADB_HOST_PROPERTY_TYPE = "kernarium_adb_host_prop"
+# The host application is the adb host of its guest and reaches adbd over virtio-vsock. adbd's p0011
+# topics read two launch properties themselves: ro.boot.kernarium.adb_key, the public key the
+# application authorizes for the boot, and ro.boot.kernarium.adb_tcp, 0 when the launch has no
+# host forward, which keeps adbd off guest TCP. The launch properties are bootloader_prop, which
+# every domain may read; service.adb.listen_addrs would not do, as it is a system_prop that
+# vendor_init may not set. The adbd binary sits in its APEX, whose payload hints keep it
+# uncompressed so that the verifier reads these names in the payload's bytes.
+ADBD_APEX = "SYSTEM/apex/com.android.adbd.apex"
+ADBD_BINARY = "bin/adbd"
+ADBD_LAUNCH_PROPERTIES = ("ro.boot.kernarium.adb_key", "ro.boot.kernarium.adb_tcp")
+# The key rule of p0011 reads the guest's debugging setting: AdbService records USB debugging in
+# persist.sys.usb.config (route p0007) and wireless debugging is persist.adb.tls_server.enable. adbd
+# offers any key but the host's only while one is on, and logs the refusal line otherwise; the line
+# is what only the guard topic adds, as stock adbd already holds the property names.
+ADBD_DEBUGGING_PROPERTIES = ("persist.sys.usb.config", "persist.adb.tls_server.enable")
+ADBD_REFUSAL_MARKER = b"kernarium: key refused, debugging is off"
 CIL_PLATFORM_VERSION_SUFFIX = re.compile(r"_[0-9]{6}$")
 CIL_PROPERTY_SET_RULE = re.compile(
     rb"^\(allow (\S+) (\S+) \(property_service \(([^)]*)\)\)\)$", re.MULTILINE
@@ -577,8 +598,14 @@ PROPERTY_CONTEXT_FILES = (
 CIL_DONTAUDIT_RULE = re.compile(rb"^\(dontaudit (\S+) (\S+) \((\w+) \(([^)]*)\)\)\)$", re.MULTILINE)
 CIL_ALLOW_RULE = re.compile(rb"^\(allow (\S+) (\S+) \((\w+) \(([^)]*)\)\)\)$", re.MULTILINE)
 CIL_PERMISSIVE_TYPE = re.compile(rb"^\(typepermissive (\S+)\)$", re.MULTILINE)
-# The only domain that may be permissive: the userdebug root shell.
-PERMISSIVE_DOMAINS = frozenset({"su"})
+# The only domain that may be permissive, and only in the diagnostics build: the userdebug
+# root shell. A user build has none.
+PERMISSIVE_DOMAINS = {"user": frozenset(), "userdebug": frozenset({"su"})}
+# What only a debuggable build installs (PRODUCT_PACKAGES_DEBUG, adbd's debuggable block): the
+# root shell, `remount` and `procmem`. A user build must carry none of them; a userdebug build
+# must carry the root shell the diagnostics need.
+DEBUG_ONLY_ENTRIES = ("SYSTEM/xbin/su", "SYSTEM/bin/remount", "SYSTEM/bin/procmem")
+DEBUG_REQUIRED_ENTRIES = ("SYSTEM/xbin/su",)
 SUSPEND_BLOCKER_SERVICE = ("suspend_blocker", "/vendor/bin/suspend_blocker")
 # eth0 is the management NIC adb is reached on and the framework sees only the
 # virtual Wi-Fi built on it. The tool that sets this up runs at post-fs-data, after
@@ -685,6 +712,10 @@ CIL_ALLOWX_RULE = re.compile(
 USERDATA_GROW_COMMAND = "exec - root system -- /system/bin/resize2fs /dev/block/by-name/userdata"
 USERDATA_GROW_TRIGGER = "post-fs-data"
 USERDATA_DEVICE = "/dev/block/by-name/userdata"
+# adbd keeps running for the host whatever the debugging setting: init starts it again after
+# any stop.
+ADBD_KEEP_ALIVE_TRIGGER = "property:init.svc.adbd=stopped"
+ADBD_KEEP_ALIVE_COMMAND = "start adbd"
 UML_INIT_REQUIRED = (
     "mount_all --early",
     "mount_all --late",
@@ -973,6 +1004,46 @@ def init_actions(payload: str) -> dict[str, list[str]]:
     return actions
 
 
+# The Android product's identity: what the guest reports as its brand, maker, device,
+# product name and model, and so the prefix of its fingerprint. The product is Andarium's
+# virtual device, not a Cuttlefish or "Darwin" one; the host platform keeps the name darwin.
+PRODUCT_IDENTITY = {
+    "brand": "Andarium",
+    "manufacturer": "Kernarium",
+    "device": "andarium",
+    "name": "lineage_andarium",
+    "model": "Andarium Virtual Device",
+}
+
+
+def check_product_identity(properties: dict[str, str], build_variant: str) -> None:
+    for key, expected in PRODUCT_IDENTITY.items():
+        name = f"ro.product.system.{key}"
+        if properties.get(name) != expected:
+            fail(f"unexpected product identity {name}: {properties.get(name)!r}")
+    fingerprint = properties.get("ro.system.build.fingerprint") or properties.get(
+        "ro.build.fingerprint", ""
+    )
+    prefix = (
+        f"{PRODUCT_IDENTITY['brand']}/{PRODUCT_IDENTITY['name']}/"
+        f"{PRODUCT_IDENTITY['device']}:"
+    )
+    if not fingerprint.startswith(prefix) or f":{build_variant}/" not in fingerprint:
+        fail(f"unexpected build fingerprint for a {build_variant} build: {fingerprint!r}")
+
+
+def check_debuggable_payload(infos: dict[str, zipfile.ZipInfo], build_variant: str) -> None:
+    """A user build carries nothing a debuggable build adds; a userdebug build carries su."""
+    if build_variant == "user":
+        for entry in DEBUG_ONLY_ENTRIES:
+            if entry in infos:
+                fail(f"a user build must not carry {entry}")
+    else:
+        for entry in DEBUG_REQUIRED_ENTRIES:
+            if entry not in infos:
+                fail(f"a {build_variant} build lacks {entry}")
+
+
 def check_boot_policy(
     archive: zipfile.ZipFile,
     infos: dict[str, zipfile.ZipInfo],
@@ -992,6 +1063,8 @@ def check_boot_policy(
                 f"unexpected {build_variant}-build property {property_name}: "
                 f"{system_property_map.get(property_name)!r}"
             )
+    check_product_identity(system_property_map, build_variant)
+    check_debuggable_payload(infos, build_variant)
 
     fstab = android_image.tracked_fstab(error)
     for entry in UML_FSTAB_ENTRIES:
@@ -1039,6 +1112,11 @@ def check_boot_policy(
         fail("UML init policy does not copy a host-supplied display density")
     if UML_INIT_RCU_RESTORE not in actions.get(UML_INIT_RCU_TRIGGER, []):
         fail("UML init policy does not restore normal RCU grace periods after boot")
+    if ADBD_KEEP_ALIVE_COMMAND not in actions.get(ADBD_KEEP_ALIVE_TRIGGER, []):
+        fail(
+            f"UML init policy does not run '{ADBD_KEEP_ALIVE_COMMAND}' at "
+            f"{ADBD_KEEP_ALIVE_TRIGGER}: adbd would stay down after a stop"
+        )
     check_zram_swap(actions)
     check_userdata_grow(actions)
     check_suspend_blocker(init_payload, actions)
@@ -1080,40 +1158,12 @@ def check_boot_policy(
                 fail(f"UML ueventd policy retains unsupported device: {device}")
 
 
-FDROID_PRIVILEGED_PERMISSIONS = [
-    "android.permission.DELETE_PACKAGES",
-    "android.permission.INSTALL_PACKAGES",
-]
-
-
-def check_fdroid(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
-    """The F-Droid Privileged Extension may install and delete packages only."""
-    permissions = ET.fromstring(
-        read_small(
-            archive,
-            infos[
-                "PRODUCT/etc/permissions/"
-                "privapp-permissions-org.fdroid.fdroid.privileged.xml"
-            ],
-        )
-    )
-    grants = {
-        element.get("package"): sorted(
-            permission.get("name") for permission in element.findall("permission")
-        )
-        for element in permissions.findall("privapp-permissions")
-    }
-    if grants != {"org.fdroid.fdroid.privileged": FDROID_PRIVILEGED_PERMISSIONS}:
-        fail("the F-Droid Privileged Extension allowlist must be exactly "
-             "INSTALL_PACKAGES and DELETE_PACKAGES")
-
-
 # The runtime resource overlay Soong generates from the product's SimpleDeviceConfig
 # overlays, and the DeviceConfig key whose value lists the app ops recorded into the discrete
 # history. The default ops are DiscreteOpsRegistry's LEGACY_OPS and IMPORTANT_OPS_FOR_SECURITY:
 # LineageOS's list predates most of them, and an op that is not listed never reaches the history.
 DEVICE_CONFIG_OVERLAY = (
-    "PRODUCT/overlay/SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk"
+    "PRODUCT/overlay/SimpleDeviceConfig__lineage_andarium__auto_generated_rro_product.apk"
 )
 DISCRETE_OPS_KEY = b"privacy/discrete_history_ops_cslist="
 DISCRETE_OPS_DEFAULT = frozenset({
@@ -1153,7 +1203,7 @@ def check_discrete_ops(
 # SystemUI sizes the wallpaper surface from the bitmap, so a variant of the default 1920 pixels
 # keeps a 14 MiB buffer alive for a window that is the display's long side wide.
 FRAMEWORK_OVERLAY = (
-    "PRODUCT/overlay/framework-res__lineage_darwin__auto_generated_rro_product.apk"
+    "PRODUCT/overlay/framework-res__lineage_andarium__auto_generated_rro_product.apk"
 )
 FRAMEWORK_OVERLAY_LIMIT = 16 << 20
 DEFAULT_WALLPAPER_ENTRIES = tuple(
@@ -1321,15 +1371,13 @@ CAS_PLUGINS = (
 )
 
 
-def check_example_hal(
-    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo], hal: dict
-) -> None:
-    """The vendor APEX must hold the example service, its VINTF fragment and its init script."""
-    apex_name = hal["apex"]
-    binary = hal["binary"]
+def read_apex_payload(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo], apex_name: str, need: str
+) -> bytes:
+    """The EROFS payload of a required APEX."""
     info = infos.get(apex_name)
     if info is None:
-        fail(f"{apex_name} is missing: the product needs {hal['need']}")
+        fail(f"{apex_name} is missing: the product needs {need}")
     try:
         with zipfile.ZipFile(io.BytesIO(read_small(archive, info, 16 << 20))) as apex:
             payload_info = apex.getinfo("apex_payload.img")
@@ -1340,14 +1388,111 @@ def check_example_hal(
         fail(f"cannot inspect {apex_name}: {problem}")
     if payload[android_image.EROFS_SUPERBLOCK_OFFSET :][:4] != android_image.EROFS_MAGIC:
         fail(f"cannot inspect {apex_name}: the payload is not EROFS")
+    return payload
+
+
+def check_payload_regular_file(payload: bytes, path: str, apex_name: str, what: str) -> None:
+    """The payload's directories hold a regular file at this path."""
     try:
-        file_type = android_image.erofs_file_type(
-            payload, f"bin/hw/{binary.decode()}", apex_name, error
-        )
+        file_type = android_image.erofs_file_type(payload, path, apex_name, error)
     except (struct.error, ValueError) as parse_error:
         fail(f"cannot read the directories of {apex_name}: {parse_error}")
     if file_type != android_image.EROFS_FILE_TYPE_REGULAR:
-        fail(f"{apex_name} does not hold the service binary bin/hw/{binary.decode()}")
+        fail(f"{apex_name} does not hold {what} {path}")
+
+
+# The framework's AdbService carries the p0007 topics that record the USB debugging setting in
+# persist.sys.usb.config and restart adbd, where stock stops it, when debugging is turned off.
+# The jar stores its dex files uncompressed, so the topic's log line is in the bytes. A build
+# without it would forget the user's choice at every boot and stop the host's channel.
+SERVICES_JAR = "SYSTEM/framework/services.jar"
+SERVICES_JAR_MARKERS = (b"kernarium: USB debugging is now ",)
+SERVICES_JAR_LIMIT = 48 << 20
+
+
+def check_services_jar(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    info = infos.get(SERVICES_JAR)
+    if info is None:
+        fail(f"{SERVICES_JAR} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, SERVICES_JAR_LIMIT))) as jar:
+            dex = [
+                name for name in jar.namelist() if re.fullmatch(r"classes[0-9]*\.dex", name)
+            ]
+            if not dex:
+                fail(f"{SERVICES_JAR} holds no dex file")
+            for marker in SERVICES_JAR_MARKERS:
+                if not any(marker in jar.read(name) for name in dex):
+                    fail(
+                        f"{SERVICES_JAR} lacks the AdbService topics of route p0007 "
+                        f"({marker.decode()!r} is not in its dex files)"
+                    )
+    except (OSError, zipfile.BadZipFile) as problem:
+        fail(f"cannot inspect {SERVICES_JAR}: {problem}")
+
+
+def check_ota_certificates(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo], build_variant: str, signed: bool
+) -> None:
+    """The system's and the recovery's otacerts.zip each hold the one member the build state names.
+
+    An unsigned build of either variant holds the AOSP test certificate's file name. The signed
+    target files of a release trust the release certificate alone: sign_target_files_apks names it
+    after the path it is given for the release key, so a signed archive holds that one member and
+    an archive still carrying the test certificate holds another. Only a user build is signed, with
+    the one release key set; the signer checks the certificate's digest, which needs the keys.
+    """
+    member = ota_certificate_member(build_variant, signed)
+    state = "signed" if signed else "unsigned"
+    for name in OTA_CERTIFICATE_ARCHIVES:
+        if name not in infos:
+            fail(f"{name} is missing from the {state} target files")
+        try:
+            with zipfile.ZipFile(io.BytesIO(read_small(archive, infos[name]))) as certificates:
+                members = sorted(certificates.namelist())
+        except zipfile.BadZipFile as problem:
+            fail(f"{name} is not a zip archive: {problem}")
+        if members != [member]:
+            fail(
+                f"{name} holds the members {members}, not only {member}: the target files are "
+                + ("not signed with the release keys" if signed else "not an unsigned build")
+            )
+
+
+def check_adbd_launch_properties(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The APEX's adbd reads the host application's key and the launch's TCP policy.
+
+    The payload hints store bin/adbd uncompressed, so the names that the p0011 topics add are
+    in the payload's bytes. A build whose adbd lacks them would ignore the key and keep
+    listening on guest TCP, which no other check would notice.
+    """
+    payload = read_apex_payload(archive, infos, ADBD_APEX, "the adb daemon")
+    check_payload_regular_file(payload, ADBD_BINARY, ADBD_APEX, "the adb daemon")
+    for name in ADBD_LAUNCH_PROPERTIES + ADBD_DEBUGGING_PROPERTIES:
+        if name.encode() not in payload:
+            fail(
+                f"{ADBD_APEX} holds an adbd that does not read {name}: the p0011 topics are "
+                "missing from the build, or the payload hints no longer store bin/adbd "
+                "uncompressed"
+            )
+    if ADBD_REFUSAL_MARKER not in payload:
+        fail(
+            f"{ADBD_APEX} holds an adbd without the key rule of route p0011 "
+            f"({ADBD_REFUSAL_MARKER.decode()!r} is not in bin/adbd): it would offer every "
+            "key a prompt while debugging is off"
+        )
+
+
+def check_example_hal(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo], hal: dict
+) -> None:
+    """The vendor APEX must hold the example service, its VINTF fragment and its init script."""
+    apex_name = hal["apex"]
+    binary = hal["binary"]
+    payload = read_apex_payload(archive, infos, apex_name, hal["need"])
+    check_payload_regular_file(payload, f"bin/hw/{binary.decode()}", apex_name, "the service binary")
     if not all(marker in payload for marker in hal["fragment"]):
         fail(f"{apex_name} does not declare {hal['interface']} in a VINTF fragment")
     apex_dir = PurePosixPath(apex_name).stem
@@ -1462,6 +1607,7 @@ def check_kernel_policy(
     infos: dict[str, zipfile.ZipInfo],
     kernel_config: Path,
     kernel_release_file: Path,
+    build_variant: str,
 ) -> None:
     packaged_config = read_small(archive, infos["META/kernel_configs.txt"])
     if packaged_config != kernel_config.read_bytes():
@@ -1530,7 +1676,7 @@ def check_kernel_policy(
             "utf-8", errors="strict"
         ),
     )
-    check_policy_relaxations((platform_policy, vendor_policy, system_ext_policy))
+    check_policy_relaxations((platform_policy, vendor_policy, system_ext_policy), build_variant)
     check_mediaserver_property_audit((platform_policy, vendor_policy, system_ext_policy))
     contexts = [
         line
@@ -1549,6 +1695,7 @@ def check_kernel_policy(
         contexts,
         (platform_policy, vendor_policy, system_ext_policy),
     )
+    check_adbd_launch_policy(contexts, (platform_policy, vendor_policy, system_ext_policy))
 
 
 def media_codec_limit(codec: ET.Element, name: str) -> ET.Element:
@@ -1866,7 +2013,7 @@ def check_reclaim_boot_apps_policy(system_ext_policy: bytes, system_ext_file_con
             )
 
 
-def check_policy_relaxations(policies: tuple[bytes, ...]) -> None:
+def check_policy_relaxations(policies: tuple[bytes, ...], build_variant: str) -> None:
     """The policy holds none of the LineageOS grants that Android's neverallow tests refuse.
 
     LineageOS serves an ext4 SD card and addon.d updates with rules that the
@@ -1909,8 +2056,11 @@ def check_policy_relaxations(policies: tuple[bytes, ...]) -> None:
                     )
         for match in CIL_PERMISSIVE_TYPE.finditer(policy):
             domain = CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode())
-            if domain not in PERMISSIVE_DOMAINS:
-                fail(f"policy makes the domain {domain} permissive; only the userdebug su may be")
+            if domain not in PERMISSIVE_DOMAINS[build_variant]:
+                fail(
+                    f"policy makes the domain {domain} permissive; in a {build_variant} build "
+                    f"only {sorted(PERMISSIVE_DOMAINS[build_variant]) or 'no domain'} may be"
+                )
 
 
 def check_mediaserver_property_audit(policies: tuple[bytes, ...]) -> None:
@@ -1973,6 +2123,27 @@ def cil_types_and_attributes(policies: tuple[bytes, ...], type_name: str) -> set
     return names
 
 
+def cil_allows_file_read(policies: tuple[bytes, ...], domain: str, label: str) -> bool:
+    """Whether a domain may read the properties of a label, directly or through attributes."""
+    readers = cil_types_and_attributes(policies, domain)
+    readable = cil_types_and_attributes(policies, label)
+    return any(
+        CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()) in readers
+        and CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode()) in readable
+        and b"read" in match.group(3).split()
+        for policy in policies
+        for match in CIL_FILE_ALLOW_RULE.finditer(policy)
+    )
+
+
+def check_adbd_launch_policy(contexts: list[str], policies: tuple[bytes, ...]) -> None:
+    """adbd may read the launch properties and the debugging setting it acts on."""
+    for name in ADBD_LAUNCH_PROPERTIES + ADBD_DEBUGGING_PROPERTIES:
+        label = property_label(name, contexts) or "default_prop"
+        if not cil_allows_file_read(policies, "adbd", label):
+            fail(f"adbd may not read {name}, labelled {label}: it would ignore it")
+
+
 def check_vendor_init_triggers(
     actions: dict[str, list[str]], contexts: list[str], policies: tuple[bytes, ...]
 ) -> None:
@@ -1983,18 +2154,10 @@ def check_vendor_init_triggers(
     service that only such a trigger starts never runs. The platform's
     neverallow keeps vendor_init off system_internal_prop types.
     """
-    readers_of = cil_types_and_attributes(policies, "vendor_init")
     for trigger in actions:
         for name in INIT_PROPERTY_TRIGGER.findall(trigger):
             label = property_label(name, contexts) or "default_prop"
-            readable = cil_types_and_attributes(policies, label)
-            if not any(
-                CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()) in readers_of
-                and CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode()) in readable
-                and b"read" in match.group(3).split()
-                for policy in policies
-                for match in CIL_FILE_ALLOW_RULE.finditer(policy)
-            ):
+            if not cil_allows_file_read(policies, "vendor_init", label):
                 fail(
                     f"the trigger 'on {trigger}' names {name}, labelled {label}, which "
                     "vendor_init may not read; init drops the trigger"
@@ -2039,6 +2202,11 @@ def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None
                 fail(f"unexpected ABI in {info.filename}: {key}={value!r}, not {expected!r}")
         if key == "ro.zygote" and value != VENDOR_MULTILIB_PROPERTIES["ro.zygote"]:
             fail(f"unexpected zygote in {info.filename}: {value}")
+        if key == "persist.sys.usb.config":
+            fail(
+                f"{info.filename} sets {key}={value}: USB debugging is off on a fresh data "
+                "partition, and AdbService records the user's choice there"
+            )
         if key == PRESENT_FENCE_PROPERTY and value.lower() not in FALSE_PROPERTY_VALUES:
             fail(
                 f"{info.filename} marks the present fences unreliable: {key}={value}; "
@@ -2423,8 +2591,7 @@ def check_audio_policy(
         "ro.config.alarm_vol_default": "7",
         "ro.config.system_vol_default": "7",
         "ro.config.assistant_vol_default": "15",
-        "ro.product.product.model": "Darwin UML",
-        "persist.sys.usb.config": "adb",
+        "ro.product.product.model": PRODUCT_IDENTITY["model"],
         # The guest boots without a lock screen, and `locksettings set-disabled` can turn
         # it on: LockSettingsService stores this default when it creates its database.
         "ro.lockscreen.disable.default": "true",
@@ -2594,6 +2761,12 @@ def main() -> None:
         choices=sorted(BUILD_VARIANTS),
         help="build variant the target files must carry (default: tracked metadata)",
     )
+    parser.add_argument(
+        "--signed",
+        action="store_true",
+        help="the target files are the signed archive of a release: check that they trust the "
+        "release certificate alone",
+    )
     args = parser.parse_args()
     build_variant = args.build_variant or configured_build_variant(
         Path(__file__).resolve().parents[1]
@@ -2654,21 +2827,23 @@ def main() -> None:
             fail("target files do not contain an APEX payload")
         check_app_dexpreopt(seen)
         check_hardware_features(archive, infos)
-        check_fdroid(archive, infos)
         check_discrete_ops(archive, infos)
         check_default_wallpaper(archive, infos)
         check_pinner_overlay(archive, infos)
         check_thermal_hal(archive, infos)
         check_cas_hal(archive, infos)
         check_wifi_hals(archive, infos)
+        check_adbd_launch_properties(archive, infos)
+        check_services_jar(archive, infos)
         check_audio_policy(archive, infos)
         check_multilib_properties(archive, infos)
         check_video_encoders(archive, infos)
         check_mesa_gles_stack(archive, infos)
         check_boot_policy(archive, infos, build_variant)
         check_kernel_policy(
-            archive, infos, kernel_config, kernel_release_file
+            archive, infos, kernel_config, kernel_release_file, build_variant
         )
+        check_ota_certificates(archive, infos, build_variant, args.signed)
         if sha256_member(archive, infos["BOOT/kernel"]) != sha256_path(args.kernel_elf):
             fail("BOOT/kernel does not match the verified UML ELF")
 
