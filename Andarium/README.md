@@ -96,8 +96,15 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme Andarium \
     -destination 'generic/platform=iOS' build
 ```
 
-The `AndariumTests` bundle runs hosted in the application on an iPad or, as an
-iPad app, on an Apple silicon Mac (`xcodebuild test`).
+The `AndariumTests` bundle runs hosted in the application on an iPad, in the
+iOS Simulator or, as an iPad app, on an Apple silicon Mac (`xcodebuild test`).
+For the Simulator, package its slices first (below), then:
+
+```sh
+xcodebuild test -project Andarium/Andarium.xcodeproj -scheme Andarium \
+    -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' \
+    -only-testing:AndariumTests
+```
 
 ### Configurations
 
