@@ -36,10 +36,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 62 insertions(+), 2 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 5426fcc219b1c563ef57d35a2301ea4a41499625..4c1c6e16eef41e2b4390b0037984d3f327fc0c83 100644
+index 5516a0772377ad111e720d53462b71b714cf0a51..5226fe81aafc114a4e9f1b2c45ad13df1b4418aa 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -9783,6 +9783,33 @@ static inline bool resource_contains_box(struct vrend_resource *res,
+@@ -9789,6 +9789,33 @@ static inline bool resource_contains_box(struct vrend_resource *res,
     return true;
  }
  
@@ -73,7 +73,7 @@ index 5426fcc219b1c563ef57d35a2301ea4a41499625..4c1c6e16eef41e2b4390b0037984d3f3
  /* Calculate the size of the memory needed to hold all the data of a
   * transfer for particular stride values.
   */
-@@ -10344,6 +10371,37 @@ static int vrend_transfer_send_getteximage(struct vrend_resource *res,
+@@ -10353,6 +10380,37 @@ static int vrend_transfer_send_getteximage(struct vrend_resource *res,
  
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
  
@@ -111,7 +111,7 @@ index 5426fcc219b1c563ef57d35a2301ea4a41499625..4c1c6e16eef41e2b4390b0037984d3f3
     write_transfer_data(&res->base, iov, num_iovs, data + send_offset,
                         info->stride, info->box, info->level, info->offset,
                         false);
-@@ -10709,7 +10767,8 @@ static int vrend_renderer_transfer_internal(struct vrend_context *ctx,
+@@ -10718,7 +10776,8 @@ static int vrend_renderer_transfer_internal(struct vrend_context *ctx,
     }
  #endif
  
@@ -121,7 +121,7 @@ index 5426fcc219b1c563ef57d35a2301ea4a41499625..4c1c6e16eef41e2b4390b0037984d3f3
        vrend_report_context_error(ctx, VIRGL_ERROR_CTX_TRANSFER_IOV_BOUNDS, res->gl_id);
        return EINVAL;
     }
-@@ -10781,7 +10840,8 @@ int vrend_transfer_inline_write(struct vrend_context *ctx,
+@@ -10790,7 +10849,8 @@ int vrend_transfer_inline_write(struct vrend_context *ctx,
        return EINVAL;
     }
  

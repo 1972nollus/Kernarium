@@ -6,7 +6,9 @@
  * The gadget-cache budget a run sets, the E of the host GPU's budget
  * (platform/gpu_budget.hpp), and the bound the application's settings put on
  * the guest's RAM all come from here, so none of them states the formula
- * itself.
+ * itself. The vCPU count the applications default to and offer comes from here
+ * too (application_vcpu_limit), since this header holds the count the budget is
+ * measured for.
  *
  *     E(v, G) = c(v, G) + t * v + E_rest
  *     c(v, G) = min(derive_budget(G, L), cap(v))      (the cap only where L != 0)
@@ -52,10 +54,25 @@ inline constexpr std::array<std::uint32_t, 8> gadget_cache_cap_mib{
 /* Each vCPU above the last measured one adds this to the cap. */
 inline constexpr std::uint32_t gadget_cache_cap_further_executor_mib = 16;
 
+/* The most vCPUs the table above, and with it G_max(v), is measured for. */
+inline constexpr unsigned measured_vcpu_maximum =
+	static_cast<unsigned>(gadget_cache_cap_mib.size());
+
+/* The vCPU count the applications (Kernarium, Andarium and the macOS
+ * launchers) default to and offer at most, on a host with `physical_processors`
+ * physical cores: every core, and never more than the count the memory budget
+ * is measured for. An explicit ncpus= on a launcher keeps the runtime's own
+ * range; a test states its own count. A count of zero is one. */
+[[nodiscard]] constexpr unsigned application_vcpu_limit(
+	unsigned physical_processors) noexcept
+{
+	return std::clamp(physical_processors, 1U, measured_vcpu_maximum);
+}
+
 /* cap(v), in bytes; a count of zero is one. */
 [[nodiscard]] constexpr std::size_t gadget_cache_cap(unsigned executors) noexcept
 {
-	const std::size_t measured = gadget_cache_cap_mib.size();
+	const std::size_t measured = measured_vcpu_maximum;
 	const std::size_t count = std::max<std::size_t>(executors, 1U);
 	const std::size_t mib = count <= measured ?
 		gadget_cache_cap_mib[count - 1U] :

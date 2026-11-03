@@ -11,11 +11,11 @@ on a Linux host: data that arrives on it waits for the resume.
 Each arm suspends a two-vCPU guest and keeps one kind of descriptor busy
 for HOLD_SECONDS: a host client writing a byte every 250 ms through a
 network forward into a guest echo server, a line of console input every
-250 ms, or a vhost-user backend (the balloon churn server) raising a config
-change on its backend channel every 50 ms. The guest must not leave suspend
-until the runner sends ``wake``, then must resume promptly and handle what
-arrived while it slept: every forwarded byte is echoed, the console input
-runs, and the balloon keeps taking config changes.
+250 ms, or a vhost-user backend (the churn server) raising a config change on
+its backend channel every 50 ms. The guest must not leave suspend until the
+runner sends ``wake``, then must resume promptly and handle what arrived while
+it slept: every forwarded byte is echoed, the console input runs, and the
+backend's config changes are acknowledged again.
 
 A ``wake`` that arrives while the suspend is still being entered, before
 it has stopped interrupts, is answered at once instead of waiting on the
@@ -71,6 +71,7 @@ import os
 import pathlib
 import re
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -91,8 +92,16 @@ POKE_SECONDS = 0.25
 REQUEST_SECONDS = 60.0
 RESUME_SECONDS = 30.0
 GUEST_PORT = 7000
-BALLOON_DEVICE = 5
-BALLOON_PERIOD_MS = 50
+# An experimental Virtio device ID (65535 is the battery's) that no guest
+# driver binds: the guest acknowledges each config change and does no more.
+CHURN_DEVICE = 65534
+CHURN_PERIOD_MS = 50
+# The backend raises one change at a time and waits for the guest to
+# acknowledge it, so the suspend holds one back. The runner asks the backend
+# for its count when the guest has resumed, and the guest runs for a second
+# after that, which allows about 20 more. Half of that shows that the guest
+# acknowledged them again.
+CHURN_MINIMUM_CHANGES = 10
 SERVER_EXIT_SECONDS = 20
 MCONSOLE_MAGIC = 0xCAFEBABE
 MCONSOLE_VERSION = 2
@@ -270,9 +279,8 @@ FAILURE = re.compile(
     r"WARNING:|\bBUG\b|Oops|Call Trace:|Kernel panic|Darwin UML panic|"
     r"Darwin POSIX|Kernel mode fault|rcu: INFO"
 )
-BALLOON_SUMMARY = re.compile(
-    rb"balloon churn: (\d+) config changes raised, (\d+) config reads answered"
-)
+CHURN_MARK = re.compile(rb"vhost-user churn mark: (\d+)")
+CHURN_SUMMARY = re.compile(rb"vhost-user churn: (\d+) config changes raised")
 
 
 class Request:
@@ -704,7 +712,7 @@ def run_vhost_user(arguments, private: pathlib.Path) -> None:
         [
             str(arguments.server.resolve()),
             "--fd", str(backend_end.fileno()),
-            "--period-ms", str(BALLOON_PERIOD_MS),
+            "--period-ms", str(CHURN_PERIOD_MS),
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -721,7 +729,7 @@ def run_vhost_user(arguments, private: pathlib.Path) -> None:
                 "tmpfs",
                 (
                     f"ncpus={VCPUS}",
-                    f"virtio_uml.device=fd={guest_end.fileno()}:{BALLOON_DEVICE}",
+                    f"virtio_uml.device=fd={guest_end.fileno()}:{CHURN_DEVICE}",
                 ),
                 init_shell=True,
                 engine=arguments.engine,
@@ -734,18 +742,25 @@ def run_vhost_user(arguments, private: pathlib.Path) -> None:
             console = ManagementConsole(guest, private)
             request = len(guest.output())
             hold(guest, console, "vhost-user", lambda: None)
-            guest.check_command("sleep 1; echo balloon-after-resume", 60)
+            server.send_signal(signal.SIGUSR1)
+            guest.check_command("sleep 1; echo churn-after-resume", 60)
             require_clean(guest, "vhost-user", request)
             if not guest.shutdown(60):
                 raise RuntimeError("the guest did not power off")
         output, _ = server.communicate(timeout=SERVER_EXIT_SECONDS)
-        summary = BALLOON_SUMMARY.search(output)
-        if server.returncode != 0 or summary is None:
-            raise RuntimeError("the balloon backend failed")
-        changes, reads = (int(value) for value in summary.groups())
+        summary = CHURN_SUMMARY.search(output)
+        mark = CHURN_MARK.search(output)
+        if server.returncode != 0 or summary is None or mark is None:
+            raise RuntimeError("the churn backend failed")
+        at_resume, changes = int(mark.group(1)), int(summary.group(1))
+        if changes - at_resume < CHURN_MINIMUM_CHANGES:
+            raise RuntimeError(
+                f"vhost-user: only {changes - at_resume} config changes were "
+                "raised after the resume; the guest stopped acknowledging them"
+            )
         print(
-            f"vhost-user: {changes} balloon config changes raised and {reads} "
-            "config reads answered across the suspend"
+            f"vhost-user: {at_resume} config changes raised by the resume and "
+            f"{changes - at_resume} after it"
         )
     except BaseException:
         if not output:

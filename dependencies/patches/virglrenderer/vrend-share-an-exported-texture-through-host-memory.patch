@@ -58,7 +58,7 @@ export untouched.
  4 files changed, 224 insertions(+), 29 deletions(-)
 
 diff --git a/src/proxy/proxy_context.c b/src/proxy/proxy_context.c
-index 2780a540f7994bce0cf13deb5128761485b1c937..0caf74e955ac1aa19a35c126fc8dc19ab67fbfdf 100644
+index 4f87d5accabf1929a5b174d4a5f95419aa699e61..64f318d741670840cddc388cb88d257723323687 100644
 --- a/src/proxy/proxy_context.c
 +++ b/src/proxy/proxy_context.c
 @@ -471,9 +471,11 @@ proxy_context_attach_resource(struct virgl_context *base, struct virgl_resource
@@ -103,7 +103,7 @@ index 2780a540f7994bce0cf13deb5128761485b1c937..0caf74e955ac1aa19a35c126fc8dc19a
        close_res_fd = true;
     }
 diff --git a/src/vrend/vrend_decode.c b/src/vrend/vrend_decode.c
-index 46d1eb19e3df38d53eb33496f28bd5e3f9a4302e..f70eda6f737e2fab568d98813ebed5182f304e32 100644
+index eafbab0aa0ffec8b34d15482b6553e863ba733e5..62a94beba98078dc9659ab3b9d96129e2bd3cab2 100644
 --- a/src/vrend/vrend_decode.c
 +++ b/src/vrend/vrend_decode.c
 @@ -2151,6 +2151,10 @@ static int vrend_decode_ctx_submit_cmd(struct virgl_context *ctx,
@@ -118,7 +118,7 @@ index 46d1eb19e3df38d53eb33496f28bd5e3f9a4302e..f70eda6f737e2fab568d98813ebed518
     /* One drain per command buffer still reports a host GL error and still
      * keeps the driver's error queue bounded; only the name of the command
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index bf5b812beb2e37da5d89e1d554a39abd46e0c0ae..d91414f02ed63529d57d57a1ff3d5aba3d3ae0cc 100644
+index d37273d63b85e55c0615f1ea787faee596053fa6..a5702f80e11648c5d804dc75d477e51fc67841fd 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -3120,6 +3120,8 @@ static void vrend_hw_set_zsurf_texture(struct vrend_context *ctx)
@@ -328,7 +328,7 @@ index bf5b812beb2e37da5d89e1d554a39abd46e0c0ae..d91414f02ed63529d57d57a1ff3d5aba
        *fd = os_dupfd_cloexec(shm_res->host_shm->fd);
        return *fd >= 0 ? VIRGL_RESOURCE_FD_SHM : VIRGL_RESOURCE_FD_INVALID;
     }
-@@ -9303,28 +9481,10 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
+@@ -9309,28 +9487,10 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
                   offset);
     }
  
@@ -361,7 +361,7 @@ index bf5b812beb2e37da5d89e1d554a39abd46e0c0ae..d91414f02ed63529d57d57a1ff3d5aba
  
     gr->shm_import_map = map;
     gr->shm_import_size = res->map_size;
-@@ -9377,7 +9537,11 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+@@ -9383,7 +9543,11 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
     if (res->shm_import_image)
        virgl_egl_host_pointer_image_destroy(egl, res->shm_import_image);
  #endif
@@ -375,7 +375,7 @@ index bf5b812beb2e37da5d89e1d554a39abd46e0c0ae..d91414f02ed63529d57d57a1ff3d5aba
  
     if (has_bit(res->storage_bits, VREND_STORAGE_GL_TEXTURE)) {
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index 0290460cb0d212ae8d6ab55d2948b6007e3447a3..85ae6022da13af4ab24809de8b68fe75a949a36c 100644
+index 7c6034957c31b903c90ab18625e2d42c30deced0..81b09b32b19124d16a504edfad97d1eb115e24ba 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
 @@ -132,6 +132,14 @@ struct vrend_resource {

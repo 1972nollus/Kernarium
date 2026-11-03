@@ -186,15 +186,10 @@ hands free memory to the host at once. Kernarium trims only while it keeps the
 guest running in the background. `uml-darwin` has no background state, so its
 guests trim only when started with `page_cache_trim.enabled=1`.
 
-The Virtio balloon (`device/balloon`) takes the memory the host GPU uses out of
-the guest. Its target is the larger of the process's Metal allocation
-(`MTLDevice.currentAllocatedSize`) and its graphics footprint (the graphics
-ledger of `TASK_VM_INFO`), which also charges the command storage the GPU
-driver has written and the allocation omits. The target is capped at the GPU
-budget (below) and followed in 16 MiB steps. A
-host page leaves the footprint once the guest has ballooned all of its 4 KiB
-frames. Under `VIRTIO_BALLOON_F_MUST_TELL_HOST`, a deflate commits the page
-before the guest may use it.
+The host GPU's memory is not carved out of the guest's RAM, and the host
+provides no Virtio balloon device: the guest keeps the `mem=` it was given,
+less what it releases through page reporting above, and the GPU's share of the
+process's memory is the fixed budget below.
 
 The process's memory limit, L, is the figure the memory budgets derive from;
 the gadget-cache budget takes at most an eighth of it, and where a limit is set
@@ -271,6 +266,16 @@ its loader, because the runtime framework is loaded once per process, for the
 flavour chosen at launch, and cannot be asked before that
 ([Kernarium](../Kernarium/README.md)). The launch does not
 refuse a larger value that automation states.
+
+The applications' vCPU limit is the one rule `application_vcpu_limit` in the
+same header: the host's physical cores, at most 8, the count `cap(v)` and
+`G_max(v)` are measured for. It is the default vCPU count of Kernarium,
+Andarium and the macOS launchers, and the most their settings, a stored count
+and `KERNARIUM_VCPU_COUNT` select; a stored count above it comes down to it on
+load. The loader answers it for the Swift applications, and the launchers take
+it from `emulator/src/options.hpp` (`default_application_guest_cpu_count`).
+An explicit `ncpus=` on a launcher keeps the runtime's own range
+(`maximum_guest_cpu_count`, 64), and a test states the count it needs.
 
 Every iOS memory control carries its macOS path, or records here why none can
 exist, so that a Mac run stays an accurate ground for measuring the device. The
@@ -1173,6 +1178,11 @@ with such a wait, so that `irq_work` can run inside the suspend, where it reads
 the request stream once more and must find it nonblocking.
 `guest-vhost-user-suspend-drain` has a console take a backend request between
 the ring disables of a suspend and requires the suspend to end at its alarm.
+`guest-vhost-user-config-crossing` has an external backend raise a config
+change every 2 ms for a one-vCPU guest whose console driver reads its size on
+each, so that the guest's reads cross the changes thousands of times, and
+requires the guest to keep running. A guest that does not serve the backend
+channel while it waits on the main socket stops during its boot.
 
 A backend request that needs an acknowledgement (an in-band completion, a
 config change, or a shared-memory map or unmap) waits for it while still
@@ -1349,7 +1359,7 @@ nothing.
 The macOS launchers (`darwin/app/macos`) restart a guest in the same process.
 The machine is made once: the emulator handle, the SLiRP provider with its
 `--net-forward` list, and the GPU service with its display. Each boot makes its
-own services (battery, balloon, video, video encoder, audio, console) and its
+own services (battery, video, video encoder, audio, console) and its
 command line, runs, and stops them again. After a restart the launcher resets
 the SLiRP link (stop, then open at once, which replays the forwards) so that no
 connection of the old guest survives, asks the GPU service for its next
@@ -1493,15 +1503,20 @@ Every first-party CTest has one primary suite: `unit`, `tooling`, or
 `architecture-audit` checks the CMake File API graph, dependency cycles,
 implementation includes, source ownership, and test registration. Ownership
 includes that only a darwin/ source's owner compiles it: no other CMake file
-and no Xcode project names one. A first-party shell script writes each `cd`
-as `CDPATH= cd --` unless it names a literal absolute directory, so an
-exported `CDPATH` can neither redirect it nor print into captured output.
-No compile definition names a source or build directory, so no binary needs
-the checkout it was built from at run time. No host source under darwin/ or
-Kernarium/ names x18 outside a comment, whether assembly, an assembly
-contract, inline assembly or a generator: Darwin clears that platform register
-when it interrupts a thread, so a value kept there is lost at a random
-preemption. `arm64-emitted-registers` and `x86-64-jit-emitted-registers`
+and no Xcode project, whether Kernarium's `project.pbxproj` or a JSON
+`project.xcproj`, names one. Xcode, not CMake, compiles the sources of
+Andarium/ and the GuestHost/ folder the apps share, so no CMake file owns
+them; the C-source, implementation-include, test-registration,
+compile-definition, `cd` and x18 rules cover them as they cover Kernarium/. A
+first-party shell script writes each `cd` as `CDPATH= cd --` unless it names a
+literal absolute directory, so an exported `CDPATH` can neither redirect it
+nor print into captured output. No compile definition names a source or build
+directory, so no binary needs the checkout it was built from at run time. No
+host source under darwin/, Kernarium/, Andarium/ or GuestHost/ names x18
+outside a comment, whether assembly, an assembly contract, inline assembly or
+a generator: Darwin clears that platform register when it interrupts a
+thread, so a value kept there is lost at a random preemption.
+`arm64-emitted-registers` and `x86-64-jit-emitted-registers`
 hold the emitted code to the same rule, as [`testing.md`](testing.md)
 describes. Outside macOS the configured graph holds none of the macOS-only
 x86-64 JIT, as the x86 section above describes. The audit does not prove

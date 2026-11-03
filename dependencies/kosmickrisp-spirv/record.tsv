@@ -7,10 +7,10 @@
 # library with no kernels, so its inputs and bytes are its whole check.
 kind	output	name	value
 toolchain	-	toolchain.tsv	d8f4c2ba48349707cff69a815fd6895a019f8be69fcbe7a48f6e1d2cf205522e
-base	-	mesa	31e9a6b2e95e30d84bf3177d1f497d063e59b6b2
+base	-	mesa	8e87a503ebd91408c88596d1b9eeb5f4c0b2088d
 blob	libkk	src/kosmickrisp/libkk/libkk.spv	e2abdc24e8a82952ba8b6a7e4ee3bd6b81aa11c7
 sha256	libkk	src/kosmickrisp/libkk/libkk.spv	1816610acea440012eba65d69f46402735b8f7c8703c02a3d14294c01ec90129
-source	libkk	inputs	94c1a487f6a8b0f197733a9c19c5f0194b21d73e396ac6a1dbb5d4fe76760b5a
+source	libkk	inputs	9abc18c0450e97b0f5fc490384a2d365deeb8a6f3d3f2883cce1df76032b43ff
 kernel	libkk	libkk_copy_queries	-
 kernel	libkk	libkk_copy_xfb_counters	-
 kernel	libkk	libkk_gs_setup_indirect	-
@@ -76,7 +76,7 @@ input	libkk	src/util/u_endian.h	fd786423d1f09c494c1f8c53e350885c72da5742
 input	libkk	src/util/u_math.h	fbcf263c05ff4c894021b647271abfde511d2930
 blob	libpoly	src/poly/cl/libpoly.spv	cd59a8865fc251405275989dbe4e457d6c7a8fe5
 sha256	libpoly	src/poly/cl/libpoly.spv	7b9aaaa34ad51a04de2db861367f6577b3f453763745624ef9fa642bdb3f5de3
-source	libpoly	inputs	8b29d47ebca39350b6acdd423ec9c5ad0139bd963b150bd4e13846d9324918f4
+source	libpoly	inputs	09840e8e74e957a574bc1880861f810f630abd12c3f375c0085606fe89bb5a1d
 input	libpoly	include/c99_compat.h	83895422226f11ec3922e58bac44ea21292177ed
 input	libpoly	include/no_extern_c.h	f2f14aafab5d3559fa5d7902f9666926447c2d4c
 input	libpoly	src/compiler/libcl/assert.h	fcbfb3fb9d3f80246c6d60daeca68a7b49947144

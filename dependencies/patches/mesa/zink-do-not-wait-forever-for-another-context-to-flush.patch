@@ -39,7 +39,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 44 insertions(+), 2 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index 058e80dccf2126a194a1ad7dc0708a749bcc8f93..c7aed21c0f917a79bdea36e5ff9a7f1a231ae2d8 100644
+index 846ae0a748f5981974093ae599f44e87d4cfe06a..81e9a063ae3e0922ad2f7a898980997d8c6dd788 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
 @@ -8,6 +8,8 @@
@@ -51,7 +51,7 @@ index 058e80dccf2126a194a1ad7dc0708a749bcc8f93..c7aed21c0f917a79bdea36e5ff9a7f1a
  #ifdef VK_USE_PLATFORM_METAL_EXT
  #include "QuartzCore/CAMetalLayer.h"
  #endif
-@@ -1194,6 +1196,33 @@ zink_batch_usage_check_completion(struct zink_context *ctx, const struct zink_ba
+@@ -1213,6 +1215,33 @@ zink_batch_usage_check_completion(struct zink_context *ctx, const struct zink_ba
     return zink_check_batch_completion(ctx, u->usage);
  }
  
@@ -85,11 +85,11 @@ index 058e80dccf2126a194a1ad7dc0708a749bcc8f93..c7aed21c0f917a79bdea36e5ff9a7f1a
  bool
  zink_batch_usage_unflushed_wait(struct zink_context *ctx, struct zink_batch_usage *u, unsigned submit_count, bool trywait)
  {
-@@ -1212,8 +1241,21 @@ zink_batch_usage_unflushed_wait(struct zink_context *ctx, struct zink_batch_usag
+@@ -1231,8 +1260,21 @@ zink_batch_usage_unflushed_wait(struct zink_context *ctx, struct zink_batch_usag
           if (trywait) {
              struct timespec ts = {0, 10000};
              cnd_timedwait(&u->flush, &u->mtx, &ts);
--         } else
+-         } else if (u->unflushed)
 -            cnd_wait(&u->flush, &u->mtx);
 +         } else {
 +            struct timespec now, deadline;

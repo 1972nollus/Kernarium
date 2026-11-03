@@ -16,6 +16,7 @@ from unittest import mock
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 import guest  # noqa: E402
+import ios_device  # noqa: E402
 import kernarium  # noqa: E402
 
 TOOL: pathlib.Path | None = None
@@ -171,7 +172,9 @@ class AutomationPayloadTests(unittest.TestCase):
             kernarium.os.environ,
             {"DEVICECTL_CHILD_KERNARIUM_GEEKBENCH": "1"},
         ):
-            environment = kernarium.device_launch_environment(settings)
+            environment = ios_device.device_launch_environment(
+                kernarium.APPLICATION, settings
+            )
         self.assertNotIn("DEVICECTL_CHILD_KERNARIUM_GEEKBENCH", environment)
         self.assertEqual(
             environment["DEVICECTL_CHILD_KERNARIUM_BOOT_PAYLOAD"],

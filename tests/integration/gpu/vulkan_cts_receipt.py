@@ -30,7 +30,7 @@ METADATA_ROOT = REPO_ROOT / "tools/rootfs/vulkan"
 MANDATORY_CASES_PATH = Path(__file__).resolve().with_name(
     "vulkan_cts_mandatory_1_4_6_2.txt"
 )
-EXPECTED_IMAGE_SHA256 = "03b53ff57318dfa0eb05be6613f4ee5df08f3ddf83134c2714b37d4ccaaf77f8"
+EXPECTED_IMAGE_SHA256 = "757c0222fea1bea9426213f446f8cc7e6ae5d220dcfb93be8fb82ca7ce7be8fc"
 EXPECTED_IMAGE_SIZE = 8_589_934_592
 EXPECTED_IMAGE_UUID = "2240061a-2b64-4626-b8bf-dd0f9993a4a9"
 EXPECTED_BASE_SHA256 = "73e36c063e8374b68bdaca992f789d41dda59e159fd4b426dbbb5515dcf84c91"
@@ -38,14 +38,14 @@ EXPECTED_CTS_BUILD_ID = "bd277a83570fdcb78b7ca517aff035291e5a5190"
 EXPECTED_CTS_RELEASE = (
     "vulkan-cts-1.4.6.2-2-gfd3b1e6a27189ae5bdc6b2f8cce38b0d130222ca"
 )
-EXPECTED_LOADER_BUILD_ID = "bbd14af1bc9b54509831cbb1a156d1a089a0be72"
-EXPECTED_LOADER_RUNTIME = "/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.357"
+EXPECTED_LOADER_BUILD_ID = "99f7dbb91bffb92392b22ad3ff624c6bb7d9fa0d"
+EXPECTED_LOADER_RUNTIME = "/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.363"
 EXPECTED_MESA_FILES = {
     "/usr/lib/aarch64-linux-gnu/dri/libdril_dri.so",
     "/usr/lib/aarch64-linux-gnu/gbm/dri_gbm.so",
     "/usr/lib/aarch64-linux-gnu/libEGL_mesa.so.0.0.0",
     "/usr/lib/aarch64-linux-gnu/libGLX_mesa.so.0.0.0",
-    "/usr/lib/aarch64-linux-gnu/libgallium-26.2.3.so",
+    "/usr/lib/aarch64-linux-gnu/libgallium-26.2.6.so",
     "/usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0",
     "/usr/lib/aarch64-linux-gnu/libvulkan_virtio.so",
     "/usr/share/drirc.d/00-mesa-defaults.conf",
@@ -61,9 +61,9 @@ EXPECTED_CLOSURE_CONSUMERS = {
     "/usr/lib/aarch64-linux-gnu/gbm/dri_gbm.so",
     "/usr/lib/aarch64-linux-gnu/libEGL_mesa.so.0.0.0",
     "/usr/lib/aarch64-linux-gnu/libGLX_mesa.so.0.0.0",
-    "/usr/lib/aarch64-linux-gnu/libgallium-26.2.3.so",
+    "/usr/lib/aarch64-linux-gnu/libgallium-26.2.6.so",
     "/usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0",
-    "/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.357",
+    "/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.363",
     "/usr/lib/aarch64-linux-gnu/libvulkan_virtio.so",
 }
 TOP_LEVEL_KEYS = {
@@ -255,7 +255,7 @@ def verify_source_epoch(receipt: dict[str, Any]) -> None:
     if not isinstance(generation, dict) or set(generation) != {
             "configure_argv", "registry_sha256", "driver_headers"}:
         fail("protocol generation identity is absent or malformed")
-    if generation["registry_sha256"] != "264d0d7350e37d70c82407fb430d085040fc01a9a961d43dec8c2d6ed1dfd183":
+    if generation["registry_sha256"] != "55ec60950cfb18c3575dcf5fd52741b2bb70eb1e466408f803a91049973ee6fb":
         fail("protocol generation registry differs from the pinned SDK")
     argv = generation["configure_argv"]
     headers = generation["driver_headers"]
@@ -331,9 +331,9 @@ def validate_receipt(path: Path = RECEIPT_PATH) -> dict[str, Any]:
 
     mesa = receipt["mesa"]
     if (
-        mesa.get("release") != "mesa-26.2.3"
+        mesa.get("release") != "mesa-26.2.6"
         or mesa.get("install_prefix") != "/usr"
-        or mesa.get("reported_api_version") != "1.4.354"
+        or mesa.get("reported_api_version") != "1.4.363"
         or mesa.get("portability_driver") is not False
         or not isinstance(mesa.get("configure_argv"), list)
         or not isinstance(mesa.get("build_targets"), list)
@@ -348,7 +348,7 @@ def validate_receipt(path: Path = RECEIPT_PATH) -> dict[str, Any]:
 
     headers = receipt["vulkan_headers"]
     if (
-        headers.get("release") != "vulkan-sdk-1.4.357.0"
+        headers.get("release") != "vulkan-sdk-1.4.363.0"
         or headers.get("installed_in_guest") is not False
         or not isinstance(headers.get("configure_argv"), list)
         or not isinstance(headers.get("build_targets"), list)
@@ -357,15 +357,15 @@ def validate_receipt(path: Path = RECEIPT_PATH) -> dict[str, Any]:
 
     loader = receipt["vulkan_loader"]
     if (
-        loader.get("release") != "vulkan-sdk-1.4.357.0"
+        loader.get("release") != "vulkan-sdk-1.4.363.0"
         or loader.get("install_prefix") != "/usr"
-        or loader.get("reported_api_version") != "1.4.357"
+        or loader.get("reported_api_version") != "1.4.363"
         or loader.get("build_id") != EXPECTED_LOADER_BUILD_ID
         or loader.get("soname") != "libvulkan.so.1"
         or loader.get("symlinks")
         != {
             "/usr/lib/aarch64-linux-gnu/libvulkan.so": "libvulkan.so.1",
-            "/usr/lib/aarch64-linux-gnu/libvulkan.so.1": "libvulkan.so.1.4.357",
+            "/usr/lib/aarch64-linux-gnu/libvulkan.so.1": "libvulkan.so.1.4.363",
         }
         or not isinstance(loader.get("configure_argv"), list)
         or not isinstance(loader.get("build_targets"), list)

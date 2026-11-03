@@ -2,8 +2,6 @@
 #include "audio/in_process_service.hpp"
 #include "audio/microphone_switch.hpp"
 #include "audio/protocol.hpp"
-#include "balloon/in_process_service.hpp"
-#include "balloon/protocol.hpp"
 #include "battery/in_process_service.hpp"
 #include "battery/protocol.hpp"
 #include "video/in_process_service.hpp"
@@ -18,6 +16,7 @@
 #include "launcher.hpp"
 #include "gpu_budget_plan.hpp"
 #include "guest_memory_argument.hpp"
+#include "options.hpp"
 #include "platform/microphone_authorization.hpp"
 #include "restart_loop_guard.hpp"
 #include "sockets/socket_paths.hpp"
@@ -612,8 +611,9 @@ PreparedArguments prepare_host_arguments(
 			"mutually exclusive");
 	append_default_kernel_argument(
 		prepared.kernel, "mem=", configuration.default_guest_memory);
-	append_default_kernel_argument(
-		prepared.kernel, "ncpus=", configuration.default_guest_cpus);
+	append_default_kernel_argument(prepared.kernel, "ncpus=",
+		"ncpus=" + std::to_string(
+			uml::emulator::default_application_guest_cpu_count()));
 	if (configuration.top_byte_ignore)
 		prepared.kernel.emplace_back("--guest-top-byte-ignore");
 	return prepared;
@@ -676,7 +676,6 @@ using VirtioService = std::unique_ptr<uml::gpu::InProcessVhostUserService>;
  * once its kernel returns, so a restarted guest is given fresh ones. */
 struct BootServices final {
 	VirtioService battery;
-	VirtioService balloon;
 	VirtioService video;
 	VirtioService video_encoder;
 	VirtioService audio;
@@ -697,8 +696,6 @@ struct BootServices final {
 			video_encoder->stop();
 		if (console)
 			console->stop();
-		if (balloon)
-			balloon->stop();
 	}
 };
 
@@ -770,11 +767,9 @@ public:
 		/* GPU memory is charged to the process like guest RAM: the GPU's
 		 * budget is what the process limit leaves after the guest, the
 		 * gadget cache and the launch's own allowances, at least 384 MiB and
-		 * at most half of the guest's allocation, and the balloon takes what
-		 * the GPU uses out of the guest. */
+		 * at most half of the guest's allocation. */
 		const auto plan = uml::emulator::plan_gpu_budget(
 			prepared_.kernel, prepared_.gpu_budget);
-		guest_memory_ = plan.guest_memory;
 		device_memory_limit_ = plan.budget.bytes;
 		if (prepared_.gpu.enabled && !information_only_) {
 			if (plan.budget.short_of_floor)
@@ -1018,29 +1013,6 @@ private:
 			    [] { return uml::battery::makeInProcessService(); },
 			    "--battery", "Virtio battery"))
 			return false;
-		if (gpu_service_ && device_memory_limit_ != 0 &&
-		    !has_virtio_device_argument(
-			    kernel, uml::balloon::protocol::deviceId)) {
-			try {
-				services_.balloon = uml::balloon::makeInProcessService(
-					uml::balloon::BalloonOptions{
-						.guestMemoryBytes = guest_memory_,
-						.target = uml::balloon::hostGpuMemoryTarget(
-							device_memory_limit_),
-						.hostPageSize = static_cast<std::size_t>(
-							getpagesize()),
-					});
-				kernel.emplace_back(
-					uml::gpu::virtioDeviceArgument(
-						services_.balloon->takeConnectionName(),
-						uml::balloon::protocol::deviceId));
-			} catch (const std::exception &error) {
-				std::fprintf(stderr,
-					"Unable to start in-process Virtio balloon: %s\n",
-					error.what());
-				return false;
-			}
-		}
 		/* The guest's host-visible shared-memory region belongs to the GPU
 		 * backend, and the video decoder fills capture buffers that live in
 		 * it, so both backends share one index of the ranges published
@@ -1123,7 +1095,6 @@ private:
 		std::make_shared<uml::virtio::SharedMemoryRegions>()};
 	std::unique_ptr<uml::gpu::InProcessGpuService> gpu_service_;
 	BootServices services_;
-	std::uint64_t guest_memory_{};
 	std::uint64_t device_memory_limit_{};
 	std::atomic<bool> stop_requested_{};
 };

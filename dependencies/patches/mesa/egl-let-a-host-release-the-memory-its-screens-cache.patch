@@ -56,10 +56,10 @@ index 1cf02885425e08b7f0adae34f2a1061ee1e0e831..e37276ffb92cb91e7648b597037a903f
  
  #ifndef EGL_MESA_drm_image_formats
 diff --git a/src/egl/drivers/dri2/egl_dri2.c b/src/egl/drivers/dri2/egl_dri2.c
-index e4e00b15a98e64ed0082973fab3bd44bcb7b5a34..41bba1d8ab3f31e2d5947192cb5c0b33bb18af6d 100644
+index 934b66507a5a7810bf8a5dd0ac9660cde9033349..da0691dc166e9fdfdd25c49d3c7b69e50398f941 100644
 --- a/src/egl/drivers/dri2/egl_dri2.c
 +++ b/src/egl/drivers/dri2/egl_dri2.c
-@@ -1771,6 +1771,14 @@ dri2_trim_context(_EGLDisplay *disp, _EGLContext *ctx)
+@@ -1772,6 +1772,14 @@ dri2_trim_context(_EGLDisplay *disp, _EGLContext *ctx)
     return EGL_TRUE;
  }
  
@@ -74,7 +74,7 @@ index e4e00b15a98e64ed0082973fab3bd44bcb7b5a34..41bba1d8ab3f31e2d5947192cb5c0b33
  static EGLBoolean
  dri2_wait_native(EGLint engine)
  {
-@@ -3240,6 +3248,7 @@ const _EGLDriver _eglDriver = {
+@@ -3241,6 +3249,7 @@ const _EGLDriver _eglDriver = {
     .DestroySurface = dri2_destroy_surface,
     .WaitClient = dri2_wait_client,
     .TrimContextMESA = dri2_trim_context,
@@ -109,7 +109,7 @@ index b4c4747fe09fd41f9b273fce9759e6bd45310da3..31d40c1f28c9535050fff90bdcd08873
          <!-- EGL_MESA_gl_interop -->
          <command>
 diff --git a/src/egl/main/eglapi.c b/src/egl/main/eglapi.c
-index 91989e283a76dc035c17631397023ab4d4f1cd25..5f8fb1e98bbd059aa2fd79ba85f5de9de827e67b 100644
+index 71d763caded442d31164d3dd30f12c17bae193c7..e7caae051a8351a59fc40b4bc311807da0df2730 100644
 --- a/src/egl/main/eglapi.c
 +++ b/src/egl/main/eglapi.c
 @@ -1665,6 +1665,25 @@ eglTrimContextMESA(void)
@@ -163,10 +163,10 @@ index d691fefc8f395cc53f0bcc03e10f81e7f43bd1bd..fa1bc62774b6ec30336639075e3bd20e
  EGL_ENTRYPOINT(eglReleaseThread)
  EGL_ENTRYPOINT(eglSetBlobCacheFuncsANDROID)
 diff --git a/src/gallium/drivers/zink/zink_bo.c b/src/gallium/drivers/zink/zink_bo.c
-index 01a88c4b822d269fd14340ea32b3ad5075d1ad80..cfd9bfbe38c84ca164e9835800c102132e303b13 100644
+index 959b93471324b155517c28db036056c61fdb501e..fa06199bb212150b1cb64015907bc882929a6a04 100644
 --- a/src/gallium/drivers/zink/zink_bo.c
 +++ b/src/gallium/drivers/zink/zink_bo.c
-@@ -173,12 +173,27 @@ bo_slab_destroy(struct zink_screen *screen, struct zink_bo *bo)
+@@ -183,12 +183,27 @@ bo_slab_destroy(struct zink_screen *screen, struct zink_bo *bo)
     pb_slab_free(&screen->pb.bo_slabs, &bo->u.slab.entry);
  }
  
@@ -212,7 +212,7 @@ index 56dd057be2bc3a3acbc4cb8767f2214ecff20c73..6ead2080570120c334ab8f0099cc1675
  zink_bo_destroy(struct zink_screen *screen, struct zink_bo *bo);
  
 diff --git a/src/gallium/drivers/zink/zink_screen.c b/src/gallium/drivers/zink/zink_screen.c
-index 041903c8de1a3eb490a81db6fe28324edd8fce21..21394f33b27643b1aa7f0bc940885742524c47c2 100644
+index c7d4283fd13a4fe387bf2d50796fcd9ded1056a4..baeaade195538fb3cd26d0766707c7032dfbaf59 100644
 --- a/src/gallium/drivers/zink/zink_screen.c
 +++ b/src/gallium/drivers/zink/zink_screen.c
 @@ -1516,6 +1516,12 @@ zink_is_format_supported(struct pipe_screen *pscreen,
@@ -228,7 +228,7 @@ index 041903c8de1a3eb490a81db6fe28324edd8fce21..21394f33b27643b1aa7f0bc940885742
  static void
  zink_set_damage_region(struct pipe_screen *pscreen, struct pipe_resource *pres, unsigned int nrects, const struct pipe_box *rects)
  {
-@@ -3704,6 +3710,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
+@@ -3724,6 +3730,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
     screen->base.get_driver_query_group_info = zink_get_driver_query_group_info;
     screen->base.get_driver_query_info = zink_get_driver_query_info;
     screen->base.set_damage_region = zink_set_damage_region;

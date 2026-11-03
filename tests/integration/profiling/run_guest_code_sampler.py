@@ -62,7 +62,7 @@ def main() -> int:
             arguments.rootfs.resolve(),
             "512M",
             "tmpfs",
-            (),
+            ("ncpus=10",),
             overlay_shell=True,
             # Only the gadgets engine carries the sampler.
             engine="gadgets",

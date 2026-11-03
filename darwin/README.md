@@ -24,8 +24,10 @@ Targets and source lists belong to these directories. See
 
 The standalone macOS application supports the normal arm64-userspace Linux
 kernel and the separate x86_64-userspace kernel, both with 4 KiB guest pages.
-When omitted, `mem=` defaults to 8 GiB and `ncpus=`
-to 10; explicit kernel arguments override either value independently.
+When omitted, `mem=` defaults to 8 GiB and `ncpus=` to the
+[applications' vCPU limit](../docs/architecture.md#memory-and-executable-code), the
+host's physical cores at most 8; explicit kernel arguments override either
+value independently, `ncpus=` up to the runtime's 64.
 `cmake --preset macos-x86_64` selects the dedicated x86_64 artifact and host
 gadget backend; the other presets select arm64 userspace. The
 x86_64 product defaults to `cgroup.memory=nokmem`: userspace memory-controller
@@ -64,9 +66,9 @@ it does not search for the Linux desktop image.
 ## Runtime, memory, and kernel loading
 
 Handle and run ownership, the vCPU carriers and host signal ownership, the
-native kernel window, guest RAM commitment and the balloon, accepted-artifact
-sharing, and the signed kernel loader are cross-module contracts owned by the
-architecture: see its
+native kernel window, guest RAM commitment, accepted-artifact sharing, and the
+signed kernel loader are cross-module contracts owned by the architecture: see
+its
 [runtime ownership](../docs/architecture.md#runtime-ownership),
 [memory and executable code](../docs/architecture.md#memory-and-executable-code),
 and [CPU execution and scheduling](../docs/architecture.md#cpu-execution-and-scheduling)

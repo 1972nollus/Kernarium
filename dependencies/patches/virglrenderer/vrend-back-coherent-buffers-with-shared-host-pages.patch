@@ -26,7 +26,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  2 files changed, 174 insertions(+), 2 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..4869b94ccf7ebe8f8b7bc395b1fe6b34f2f474ed 100644
+index 74129d804475167b34cbd98f7da5aa772b38b99c..85917e0d826f4cef991ff8ec0c2c74cf17da7fcb 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -41,6 +41,7 @@
@@ -265,7 +265,7 @@ index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..4869b94ccf7ebe8f8b7bc395b1fe6b34
        gr->buffer_storage_flags = buffer_storage_flags;
        gr->size = width;
     } else
-@@ -8935,6 +9090,9 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+@@ -8941,6 +9096,9 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
        glDeleteMemoryObjectsEXT(1, &res->memobj);
     }
  
@@ -275,7 +275,7 @@ index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..4869b94ccf7ebe8f8b7bc395b1fe6b34
  #ifdef ENABLE_GBM
     if (res->egl_image) {
        virgl_egl_image_destroy(egl, res->egl_image);
-@@ -13551,6 +13709,12 @@ uint32_t vrend_renderer_resource_get_map_info(struct pipe_resource *pres)
+@@ -13563,6 +13721,12 @@ uint32_t vrend_renderer_resource_get_map_info(struct pipe_resource *pres)
  int vrend_renderer_resource_map(struct pipe_resource *pres, void **map, uint64_t *out_size)
  {
     struct vrend_resource *res = (struct vrend_resource *)pres;
@@ -288,7 +288,7 @@ index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..4869b94ccf7ebe8f8b7bc395b1fe6b34
     if (!has_bits(res->storage_bits, VREND_STORAGE_GL_BUFFER | VREND_STORAGE_GL_IMMUTABLE))
        return -EINVAL;
  
-@@ -13567,6 +13731,9 @@ int vrend_renderer_resource_map(struct pipe_resource *pres, void **map, uint64_t
+@@ -13579,6 +13743,9 @@ int vrend_renderer_resource_map(struct pipe_resource *pres, void **map, uint64_t
  int vrend_renderer_resource_unmap(struct pipe_resource *pres)
  {
     struct vrend_resource *res = (struct vrend_resource *)pres;
@@ -299,7 +299,7 @@ index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..4869b94ccf7ebe8f8b7bc395b1fe6b34
        return -EINVAL;
  
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index cb773c0a48e2f94ecb85fea5d6c885e1bae5b4da..7f086c3fa5bd099cd67d43a475418fe46607a054 100644
+index 8b59c2f7cdd5954fbaaf8e703213e93a6f4a7495..ba4a0a054d84657f67aa351318e3bfe0055d1e71 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
 @@ -61,6 +61,7 @@ struct virgl_gl_ctx_param {

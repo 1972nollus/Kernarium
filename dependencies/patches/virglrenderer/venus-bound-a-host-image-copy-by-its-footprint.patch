@@ -809,7 +809,7 @@ index 95c4ee7ec47973f219d103bf09e6ee47a978a276..003a94a38b107bbca81b0b2b7cfc4679
  }
  
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index 5634aa74b67ba0ffed00b04210de22eb5755c1f1..97c0ec0d934c17ab9710c283e91ded4d91878bd1 100644
+index 4248c95b9cf2cf6c04f46d1533d45d636b33ae53..bc236db0aebbc9a9fdcd1a6036a2e721f36757d5 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
 @@ -31,7 +31,13 @@ vkr_dispatch_vkCreateImage(struct vn_dispatch_context *dispatch,

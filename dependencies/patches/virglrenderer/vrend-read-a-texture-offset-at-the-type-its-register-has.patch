@@ -27,10 +27,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 46 insertions(+), 17 deletions(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index 40938fa395a9a2250fd87d8b7fccbf23b7f1de8c..eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b 100644
+index 3f9b14eae5a6d9cb58fe37f9e0a8d0c4982382a9..2fbdbd125aebbe22e820e60415d81df5c43e4fb8 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
-@@ -3060,6 +3060,33 @@ get_temp(const struct dump_ctx *ctx,
+@@ -3075,6 +3075,33 @@ get_temp(const struct dump_ctx *ctx,
     }
  }
  
@@ -64,7 +64,7 @@ index 40938fa395a9a2250fd87d8b7fccbf23b7f1de8c..eaeaa7b9c5e7418c6ee4e5410680881f
  static bool fill_offset_buffer(const struct dump_ctx *ctx,
                                 const struct tgsi_full_instruction *inst,
                                 struct vrend_strbuf *offset_buf,
-@@ -3123,7 +3150,7 @@ static bool fill_offset_buffer(const struct dump_ctx *ctx,
+@@ -3138,7 +3165,7 @@ static bool fill_offset_buffer(const struct dump_ctx *ctx,
                    get_swiz_char(inst->TexOffsets[0].SwizzleY));
              break;
        case TGSI_TEXTURE_3D:
@@ -73,7 +73,7 @@ index 40938fa395a9a2250fd87d8b7fccbf23b7f1de8c..eaeaa7b9c5e7418c6ee4e5410680881f
                    temp_buf,
                    get_swiz_char(inst->TexOffsets[0].SwizzleX),
                    temp_buf,
-@@ -3138,16 +3165,18 @@ static bool fill_offset_buffer(const struct dump_ctx *ctx,
+@@ -3153,16 +3180,18 @@ static bool fill_offset_buffer(const struct dump_ctx *ctx,
        }
     } else if (inst->TexOffsets[0].File == TGSI_FILE_INPUT) {
        for (uint32_t j = 0; j < ctx->num_inputs; j++) {
@@ -96,7 +96,7 @@ index 40938fa395a9a2250fd87d8b7fccbf23b7f1de8c..eaeaa7b9c5e7418c6ee4e5410680881f
              break;
           case TGSI_TEXTURE_RECT:
           case TGSI_TEXTURE_SHADOWRECT:
-@@ -3155,20 +3184,20 @@ static bool fill_offset_buffer(const struct dump_ctx *ctx,
+@@ -3170,20 +3199,20 @@ static bool fill_offset_buffer(const struct dump_ctx *ctx,
           case TGSI_TEXTURE_2D_ARRAY:
           case TGSI_TEXTURE_SHADOW2D:
           case TGSI_TEXTURE_SHADOW2D_ARRAY:

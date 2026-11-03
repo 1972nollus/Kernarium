@@ -244,9 +244,13 @@ The coded queue's buffer size, which the guest reads as the plane size, follows
 the picture size the client states with its coded format: 1 MiB up to
 1280 x 720, 2 MiB up to 1920 x 1088, 4 MiB up to 4096 x 2304 and 8 MiB, the
 largest packet the device takes, above that. A stream that has stated no size
-and every JPEG stream keep the 8 MiB. A client keeps several coded buffers
-queued for a stream's lifetime and a compressed picture is a fraction of that
-size, so eight buffers of the largest packet were 64 MiB of guest memory at any
+and every JPEG stream keep the 8 MiB. The driver states a picture beyond the
+format's range as the largest picture the format takes, so a client that states
+none (the Android V4L2 HAL's `ui::Size()` is -1 x -1) is sized for that
+picture: 8 MiB for H.264 and HEVC, 4 MiB for VP9. A client that wants smaller
+buffers states the picture size. A client keeps several coded buffers queued for
+a stream's lifetime and a compressed picture is a fraction of that size, so
+eight buffers of the largest packet were 64 MiB of guest memory at any
 resolution. A packet that does not fit the buffer a client allocated for the
 size it stated is the client's to split or refuse, which is what a hardware
 decoder's own limit asks of it. A client may still allocate larger buffers: the

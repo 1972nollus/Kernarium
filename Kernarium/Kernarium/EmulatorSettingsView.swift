@@ -31,16 +31,17 @@ struct EmulatorSettingsView: View {
 
     init(
         defaults: UserDefaults = .standard,
-        maximumVCPUCount: Int = EmulatorConfiguration.physicalProcessorCount,
+        physicalProcessorCount: Int = EmulatorConfiguration.physicalProcessorCount,
         documentsDirectory: URL = RootfsImage.documentsDirectory
     ) {
-        let maximum = max(maximumVCPUCount, 1)
         let loaded = EmulatorConfiguration.load(
             defaults: defaults,
-            physicalProcessorCount: maximum,
+            physicalProcessorCount: physicalProcessorCount,
             documentsDirectory: documentsDirectory
         )
-        self.maximumVCPUCount = maximum
+        self.maximumVCPUCount = EmulatorConfiguration.maximumVCPUCount(
+            physicalProcessorCount: physicalProcessorCount
+        )
         self.defaults = defaults
         self.documentsDirectory = documentsDirectory
         let availableRootfsFilenames = RootfsImage.availableFilenames(

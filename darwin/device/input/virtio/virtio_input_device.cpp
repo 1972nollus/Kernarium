@@ -271,9 +271,10 @@ protocol::InputConfig VirtioInputDevice::selectedConfiguration() const
             }
         } else if (subselect_ == protocol::eventKey) {
             for (std::uint16_t code = 1;
-                 code <= protocol::keyboardKeyMaximum;
+                 code <= protocol::keyboardKeyLast;
                  ++code) {
-                setBit(config.value.bitmap, code);
+                if (protocol::keyboardAdvertisesKey(code))
+                    setBit(config.value.bitmap, code);
             }
         } else if (subselect_ == protocol::eventLed) {
             setBit(config.value.bitmap, 0);

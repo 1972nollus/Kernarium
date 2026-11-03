@@ -568,6 +568,60 @@ struct KernariumTests {
         #expect(configuration.androidBootMode == .automatic)
     }
 
+    /// Every physical core is the default and the most the settings, a stored
+    /// count and `KERNARIUM_VCPU_COUNT` allow, at most the eight the memory
+    /// budget is measured for. The loader answers the rule.
+    @Test
+    func theVCPULimitIsThePhysicalCoresAtMostEight() {
+        #expect(kernarium_runtime_loader_application_vcpu_limit(0) == 1)
+        #expect(kernarium_runtime_loader_application_vcpu_limit(UInt32.max) == 8)
+
+        for (physical, limit) in [
+            (1, 1), (4, 4), (6, 6), (8, 8), (10, 8), (12, 8), (20, 8),
+        ] {
+            let (defaults, suiteName) = isolatedDefaults()
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            func load(
+                _ environment: [String: String] = [:]
+            ) -> EmulatorConfiguration {
+                EmulatorConfiguration.load(
+                    defaults: defaults,
+                    physicalProcessorCount: physical,
+                    environment: environment,
+                    guestMemoryBound: Self.unboundedGuestMemory
+                )
+            }
+
+            #expect(
+                EmulatorConfiguration.maximumVCPUCount(
+                    physicalProcessorCount: physical
+                ) == limit
+            )
+            // Nothing stored: every core, at most eight.
+            #expect(load().vCPUCount == limit)
+
+            // A stored count above the limit comes down to it; one within
+            // it is kept.
+            defaults.set(10, forKey: "emulator.vCPUCount")
+            #expect(load().vCPUCount == limit)
+            defaults.set(limit, forKey: "emulator.vCPUCount")
+            #expect(load().vCPUCount == limit)
+            defaults.set(1, forKey: "emulator.vCPUCount")
+            #expect(load().vCPUCount == 1)
+
+            // The environment states a count from one through the limit
+            // and nothing outside it.
+            let key = EmulatorConfiguration.vCPUEnvironmentKey
+            #expect(load([key: String(limit)]).vCPUCount == limit)
+            #expect(load([key: "1"]).vCPUCount == 1)
+            #expect(load([key: String(limit + 1)]).vCPUCount == 1)
+            // Ten is no longer offered, whatever the device has.
+            #expect(load([key: "10"]).vCPUCount == 1)
+            #expect(load([key: "0"]).vCPUCount == 1)
+            #expect(load([key: "many"]).vCPUCount == 1)
+        }
+    }
+
     @Test
     func aDeviceDefaultsToLessGuestMemoryThanAMac() {
         let device = EmulatorConfiguration.defaultGuestMemoryMiB(
@@ -1264,6 +1318,35 @@ struct KernariumTests {
                 UInt64(Self.zstdOutputSize)
         )
         #expect(reports.last?.fractionCompleted == 1)
+    }
+
+    /// Two frames: 1000 bytes of 0xAB, then 200000 zeros and "END\n". The
+    /// hole starts and ends inside filesystem blocks, which F_PUNCHHOLE
+    /// refuses unless the range is rounded to whole blocks.
+    @Test
+    func zstdUtilPunchesHolesThatAreNotBlockAligned() throws {
+        let manager = FileManager.default
+        let directory = try makeScratchDirectory("zstd-unaligned")
+        defer { try? manager.removeItem(at: directory) }
+
+        let source = directory.appendingPathComponent("unaligned.zst")
+        let destination = directory.appendingPathComponent("unaligned.img")
+        try Data([
+            0x28, 0xB5, 0x2F, 0xFD, 0x60, 0xE8, 0x02, 0x4D, 0x00, 0x00,
+            0x10, 0xAB, 0xAB, 0x01, 0x00, 0xE3, 0x2B, 0x80, 0x05, 0x28,
+            0xB5, 0x2F, 0xFD, 0xA0, 0x44, 0x0D, 0x03, 0x00, 0x54, 0x00,
+            0x00, 0x10, 0x00, 0x00, 0x01, 0x00, 0xFB, 0xFF, 0x39, 0xC0,
+            0x02, 0x6D, 0x00, 0x00, 0x28, 0x00, 0x45, 0x4E, 0x44, 0x0A,
+            0x01, 0x00, 0x3C, 0x0D, 0x39, 0x10, 0x02,
+        ]).write(to: source)
+
+        try ZstdUtil.decompress(from: source, to: destination, sparse: true)
+
+        let output = try Data(contentsOf: destination)
+        #expect(output.count == 201_004)
+        #expect(output.prefix(1000).allSatisfy { $0 == 0xAB })
+        #expect(output[1000..<201_000].allSatisfy { $0 == 0 })
+        #expect(output.suffix(4) == Data("END\n".utf8))
     }
 
     @Test

@@ -41,7 +41,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 77 insertions(+), 27 deletions(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..83c89e065519eb8ced7e71fe0b97dacb9e4f5f4c 100644
+index 2fbdbd125aebbe22e820e60415d81df5c43e4fb8..d57aa56633949cf68a824cf78d8350a669339aa3 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
 @@ -234,12 +234,15 @@ struct dump_ctx {
@@ -93,7 +93,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..83c89e065519eb8ced7e71fe0b97dacb
        } else {
           if (decl->Range.First < ctx->ssbo_array_base)
              ctx->ssbo_array_base = decl->Range.First;
-@@ -3894,7 +3906,7 @@ static bool is_integer_memory(const struct dump_ctx *ctx, enum tgsi_file_type fi
+@@ -3909,7 +3921,7 @@ static bool is_integer_memory(const struct dump_ctx *ctx, enum tgsi_file_type fi
  {
     switch(file_type) {
     case TGSI_FILE_BUFFER:
@@ -102,7 +102,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..83c89e065519eb8ced7e71fe0b97dacb
     case TGSI_FILE_MEMORY:
        return ctx->integer_memory;
     default:
-@@ -3922,15 +3934,15 @@ static bool set_image_qualifier(struct vrend_shader_image images[],
+@@ -3937,15 +3949,15 @@ static bool set_image_qualifier(struct vrend_shader_image images[],
  }
  
  static bool set_memory_qualifier(uint8_t ssbo_memory_qualifier[],
@@ -121,7 +121,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..83c89e065519eb8ced7e71fe0b97dacb
           ssbo_memory_qualifier[reg_index] = TGSI_MEMORY_COHERENT;
        } else
           return false;
-@@ -3954,7 +3966,7 @@ static void make_ssbo_varstring(const struct dump_ctx *ctx, char result[128],
+@@ -3969,7 +3981,7 @@ static void make_ssbo_varstring(const struct dump_ctx *ctx, char result[128],
                                  unsigned register_index, bool indirect, int indirect_register)
  {
     const char *cname = tgsi_proc_to_prefix(ctx->prog_type);
@@ -130,7 +130,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..83c89e065519eb8ced7e71fe0b97dacb
     const char *atomic_str = atomic_ssbo ? "atomic" : "";
     unsigned base = atomic_ssbo ? ctx->ssbo_atomic_array_base : ctx->ssbo_array_base;
  
-@@ -4067,11 +4079,11 @@ translate_store(const struct dump_ctx *ctx,
+@@ -4082,11 +4094,11 @@ translate_store(const struct dump_ctx *ctx,
           emit_store_mem(glsl_strbufs, dst, dst_reg->Register.WriteMask, srcs,
                          conversion);
        } else {
@@ -145,7 +145,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..83c89e065519eb8ced7e71fe0b97dacb
  
           emit_buff(glsl_strbufs, "switch (addr%d + %d) {\n", dst_reg->Indirect.Index,
                     dst_reg->Register.Index - base);
-@@ -4211,7 +4223,7 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4226,7 +4238,7 @@ translate_load(const struct dump_ctx *ctx,
        emit_buff(glsl_strbufs, "ssbo_addr_temp = uint(floatBitsToUint(%s)) >> 2;\n", srcs[1]);
  
        atomic_op[0] = atomic_src[0] = '\0';
@@ -154,7 +154,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..83c89e065519eb8ced7e71fe0b97dacb
           /* Emulate atomicCounter with atomicOr. */
           strcpy(atomic_op, "atomicOr");
           strcpy(atomic_src, ", uint(0)");
-@@ -4225,11 +4237,11 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4240,11 +4252,11 @@ translate_load(const struct dump_ctx *ctx,
        } else {
           char src[128] = "";
  
@@ -169,7 +169,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..83c89e065519eb8ced7e71fe0b97dacb
  
           emit_buff(glsl_strbufs, "switch (addr%d + %d) {\n", inst->Src[0].Indirect.Index, inst->Src[0].Register.Index - base);
           for (int i = 0; i < array_count; ++i) {
-@@ -6967,20 +6979,20 @@ static int emit_ios_common(const struct dump_ctx *ctx,
+@@ -6982,20 +6994,20 @@ static int emit_ios_common(const struct dump_ctx *ctx,
     }
  
     if (ctx->info.indirect_files & (1 << TGSI_FILE_BUFFER)) {
@@ -196,7 +196,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..83c89e065519eb8ced7e71fe0b97dacb
           char *coherent = ctx->ssbo_memory_qualifier[id] == TGSI_MEMORY_COHERENT ? "coherent" : "";
           emit_hdrf(glsl_strbufs, "layout (binding = %d, std430) %s buffer %sssbo%d { %s %sssbocontents%d[]; };\n", binding, coherent, sname, id,
                    get_string(type), sname, id);
-@@ -8017,15 +8029,44 @@ static bool fill_interpolants(const struct dump_ctx *ctx, struct vrend_variable_
+@@ -8032,15 +8044,44 @@ static bool fill_interpolants(const struct dump_ctx *ctx, struct vrend_variable_
     return fill_fragment_interpolants(ctx, &sinfo->fs_info);
  }
  
@@ -242,7 +242,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..83c89e065519eb8ced7e71fe0b97dacb
         if (src->Register.File == TGSI_FILE_MEMORY)
           ctx->integer_memory = true;
     }
-@@ -8077,7 +8118,10 @@ static void fill_sinfo(const struct dump_ctx *ctx, struct vrend_shader_info *sin
+@@ -8092,7 +8133,10 @@ static void fill_sinfo(const struct dump_ctx *ctx, struct vrend_shader_info *sin
     sinfo->fog_input_mask = ctx->fog_input_mask;
     sinfo->fog_output_mask = ctx->fog_output_mask;
  

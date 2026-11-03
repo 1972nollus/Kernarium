@@ -28,7 +28,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 11 insertions(+)
 
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index 63226f618a6d53a0ef670c210d10819cd59598a7..a77bf4e132950f3d56b9a06ac484f4007e3cad7b 100644
+index 034b59b4dfb026e9f17de4704bdc26f9b3501ce1..b5be4de93f825391dfd457f5d5e94843fbb4fc49 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -211,6 +211,7 @@ vn_physical_device_init_features(struct vn_physical_device *physical_dev)

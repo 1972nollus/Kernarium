@@ -146,6 +146,7 @@ def stage(options: argparse.Namespace) -> dict[str, Any]:
             work_root, metadata_root, rows[component]
         )
 
+    sealer.verify_bundled_vulkan(trees["mesa"], trees["vulkan-headers"])
     protocol = {**sources["venus-protocol"], "patched": True}
     protocol_build = work_root / "build/venus-protocol"
     protocol["generation"] = sealer.verify_protocol_build(
@@ -259,7 +260,7 @@ def stage(options: argparse.Namespace) -> dict[str, Any]:
             "build_id": loader_build_id,
             "soname": "libvulkan.so.1",
             "symlinks": dict(profile["loader_symlinks"]),
-            "reported_api_version": "1.4.357",
+            "reported_api_version": "1.4.363",
         },
         "symlinks": symlinks,
         "selected_icd_manifest": sealer.ICD_MANIFEST,

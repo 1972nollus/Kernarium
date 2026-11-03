@@ -35,10 +35,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  26 files changed, 336 insertions(+), 37 deletions(-)
 
 diff --git a/meson.build b/meson.build
-index ced2650e49382de395bd5db90b04c66b59daf803..d1ccc1876d45c674f574d1486a30e07f0088cfca 100644
+index 5f8c9e66d49b2275acb2ab8ccaa78bba39ab51ba..a3a7e0a8727916b2cb34e195584c193ea2a5573a 100644
 --- a/meson.build
 +++ b/meson.build
-@@ -374,23 +374,73 @@ if with_venus and with_host_darwin
+@@ -387,23 +387,73 @@ if with_venus and with_host_darwin
  endif
  
  if with_venus
@@ -123,7 +123,7 @@ index ced2650e49382de395bd5db90b04c66b59daf803..d1ccc1876d45c674f574d1486a30e07f
           link_args : [vulkan_library_file],
        )
     else
-@@ -480,7 +530,14 @@ if with_venus and with_host_darwin
+@@ -499,7 +549,14 @@ if with_venus and with_host_darwin
     add_project_arguments('-DHAVE_CONFIG_H=1', language : 'objc')
  endif
  
@@ -140,10 +140,10 @@ index ced2650e49382de395bd5db90b04c66b59daf803..d1ccc1876d45c674f574d1486a30e07f
  with_fuzzer = get_option('fuzzer')
  with_valgrind = get_option('valgrind')
 diff --git a/meson_options.txt b/meson_options.txt
-index c594cb5132d506f179a6ef7eca5fa0fd5c85b611..31937a0a3000870f5feda9852bbed7349c93bf3b 100644
+index 977c3a3f90aea8ada11c3dbac151636f5c92366b..f38cfcb135c3c884466911af612c3b7a68752a64 100644
 --- a/meson_options.txt
 +++ b/meson_options.txt
-@@ -45,6 +45,13 @@ option(
+@@ -52,6 +52,13 @@ option(
    description : 'enable support for venus'
  )
  
@@ -448,7 +448,7 @@ index 766c5c7184f3221770fcbd83bf4dbad322e73612..d47214b1b2873683764124e3d871e1ec
     dispatch->dispatch_vkCmdBindSamplerHeapEXT = vkr_dispatch_vkCmdBindSamplerHeapEXT;
     dispatch->dispatch_vkCmdBindResourceHeapEXT = vkr_dispatch_vkCmdBindResourceHeapEXT;
 diff --git a/src/venus/vkr_common.c b/src/venus/vkr_common.c
-index 0a5c9e8cdb1625216b8d48a3e591df2fa339e8c0..d156682bf26689a8764611473e983e72c8fb5cf1 100644
+index 3fcc3f17c2c24a8e890a7f42123f56997de739c5..4548cb1bb524f8c1d8d525be548c28378c77c634 100644
 --- a/src/venus/vkr_common.c
 +++ b/src/venus/vkr_common.c
 @@ -9,7 +9,7 @@
@@ -469,7 +469,7 @@ index 0a5c9e8cdb1625216b8d48a3e591df2fa339e8c0..d156682bf26689a8764611473e983e72
     .KHR_external_memory_fd = true,
     .KHR_external_semaphore_fd = true,
 diff --git a/src/venus/vkr_common.h b/src/venus/vkr_common.h
-index 00a42529070517976d00235ed48d3e8a6143258b..439b36d32e4989b25ee87ec3bf523a76b9f7f122 100644
+index 28ded7fd9fa1a0ebe1bf7606d4134eaf7ae3d979..fd23df9d0eba15d3ab57ffd3ab77f4b3191da1d3 100644
 --- a/src/venus/vkr_common.h
 +++ b/src/venus/vkr_common.h
 @@ -28,6 +28,8 @@
@@ -482,7 +482,7 @@ index 00a42529070517976d00235ed48d3e8a6143258b..439b36d32e4989b25ee87ec3bf523a76
  #include "virgl_util.h"
  #include "virglrenderer.h"
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
-index a0271aa7abd50e941ad52e2ce0c43953d3642ffa..8594ac308bea36ba0e5b37b3a8fb24d5ac86227b 100644
+index 14302e1c0d44a6f2972b7f8d297a27cb1c33bcaf..479199d9d10120eeef9868b3934763beab1a7785 100644
 --- a/src/venus/vkr_context.c
 +++ b/src/venus/vkr_context.c
 @@ -10,7 +10,7 @@
@@ -646,7 +646,7 @@ index 12aebf9657c0050a85c929fdfd178125bf6c28dd..d279891933bae72725b435b25a69fcc0
  struct vulkan_library {
     void *handle;
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index 6581f97ba214b3b73fac503f19f1685e7959b740..5208a671d0c4389320fa59cbd6b5db05aa6767bd 100644
+index 204473cb224c9a82b1841884607689ac106eb39d..06136a73e756b584d2f3963e0b974e51fd06233b 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -5,7 +5,7 @@

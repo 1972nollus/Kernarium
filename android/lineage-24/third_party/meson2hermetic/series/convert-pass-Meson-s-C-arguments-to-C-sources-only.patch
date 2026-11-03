@@ -20,7 +20,7 @@ conlyflags.
  3 files changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/mesonbuild/convert/build_systems/soong/emitter.py b/mesonbuild/convert/build_systems/soong/emitter.py
-index 75c792031315c91dd608f8cf17a041e715d2ccc6..9d5479f8904c12bad8996eb48a8e90e330ff4f3f 100644
+index 70aac7983ad0dd73f4c80a225d82bcf4de4cfef0..94723c49d86f424d1d4e0b9c65ddbe7ce6249496 100644
 --- a/mesonbuild/convert/build_systems/soong/emitter.py
 +++ b/mesonbuild/convert/build_systems/soong/emitter.py
 @@ -97,7 +97,7 @@ SOONG_ATTR_MAP: T.Dict[ConvertAttr, str] = {
@@ -33,7 +33,7 @@ index 75c792031315c91dd608f8cf17a041e715d2ccc6..9d5479f8904c12bad8996eb48a8e90e3
      ConvertAttr.SOONG_CPP_STD: 'cpp_std',
      ConvertAttr.SOONG_C_STD: 'c_std',
 diff --git a/mesonbuild/convert/build_systems/soong/state.py b/mesonbuild/convert/build_systems/soong/state.py
-index a4b8c1b08cfb6bae05207be330de4332b6e3b5b8..a4c0f20dc0ea43a5a50cdccb01bb202b4f262b01 100644
+index ae85fb4471916bea08b908659fb96180b0310c59..cbd413b41ddc6dd01327d6f37c137f75e37e35ac 100644
 --- a/mesonbuild/convert/build_systems/soong/state.py
 +++ b/mesonbuild/convert/build_systems/soong/state.py
 @@ -164,7 +164,7 @@ class SoongBackend(ConvertBackend):
@@ -46,7 +46,7 @@ index a4b8c1b08cfb6bae05207be330de4332b6e3b5b8..a4c0f20dc0ea43a5a50cdccb01bb202b
              )
          elif instance.language == 'cpp':
 diff --git a/mesonbuild/convert/build_systems/target.py b/mesonbuild/convert/build_systems/target.py
-index c50e571b94c36e4e31a3d6e635e05b75e564f5b3..81bbb67c3c5eb6235e658aaf229f4d021b0cff5c 100644
+index e826f74582418e611fbb5f392e037402101b7345..8fc2e489b3e349f2714fd742ef0bb1c4f58cd91a 100644
 --- a/mesonbuild/convert/build_systems/target.py
 +++ b/mesonbuild/convert/build_systems/target.py
 @@ -31,7 +31,7 @@ class ConvertAttr(Enum):

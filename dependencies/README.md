@@ -242,6 +242,15 @@ topic in the host segment, so a KosmicKrisp change never alters the guest
 tree its CTS receipts name. Every guest segment change also changes the host
 tree and needs new host prefixes.
 
+The Vulkan headers and registry that Mesa bundles (`include/vulkan`,
+`include/vk_video`, `src/vulkan/registry/vk.xml`) are the pinned SDK's own
+files, carried by the guest segment's first topic. The Venus codec is generated
+from the SDK registry and compiled against Mesa's bundled headers, in the guest
+driver and in the Android port alike, so the two must be one release; moving
+the `vulkan-headers` pin therefore also refreshes that topic, and the Vulkan
+sealer refuses a Mesa that bundles anything else. The drivers advertise the
+bundled release's patch level as their API version.
+
 That series is patch-managed like every other dependency, and its editable
 source is a replay clone of the pinned generator repository whose history is
 the pinned commit followed by the maintained topic commits.

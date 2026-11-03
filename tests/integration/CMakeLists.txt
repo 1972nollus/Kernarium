@@ -363,6 +363,7 @@ done'"
         --command "test -x /usr/bin/quota"
         --command "test -x /usr/sbin/quotacheck"
         --command "test -x /usr/sbin/e4crypt"
+        -- ncpus=10
     LABELS guest;overlay;systemd;smoke
     TIMEOUT 300
     CPUS 2)
@@ -399,7 +400,6 @@ uml_add_guest_integration_test(
 
 add_subdirectory(aarch32)
 add_subdirectory(android)
-add_subdirectory(balloon)
 add_subdirectory(exclusive)
 add_subdirectory(no_sve)
 add_subdirectory(restart)
@@ -563,6 +563,25 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# Test support only: an external vhost-user backend that raises a config
+# change every few milliseconds.
+add_executable(uml-vhost-user-churn-server kernel/vhost_user_churn_server.cpp)
+target_link_libraries(uml-vhost-user-churn-server PRIVATE
+    UML::VhostUserTransport)
+add_dependencies(integration-test-binaries uml-vhost-user-churn-server)
+
+# On one vCPU, a device's config changes and the config reads they make the
+# driver's worker send cross thousands of times, and neither side of the
+# connection may wait on its channel alone. The device has the ID and the
+# shape of a Virtio console, whose driver reads its size on every change.
+uml_add_guest_integration_test(
+    NAME guest-vhost-user-config-crossing
+    SCRIPT kernel/run_guest_vhost_user_config_crossing.py
+    ARGS --server $<TARGET_FILE:uml-vhost-user-churn-server>
+    LABELS guest;kernel;smoke
+    TIMEOUT 300
+    CPUS 1)
+
 # A system suspend holds through network, console and vhost-user traffic
 # until a wake request, and a wake sent while it is still being entered
 # ends it, even while it still syncs file systems. A suspend the host asked
@@ -575,8 +594,19 @@ uml_add_guest_integration_test(
 uml_add_guest_integration_test(
     NAME guest-suspend-holds
     SCRIPT kernel/run_guest_suspend_holds.py
-    ARGS --server $<TARGET_FILE:uml-balloon-churn-server>
+    ARGS --server $<TARGET_FILE:uml-vhost-user-churn-server>
     LABELS guest;kernel;smoke
+    TIMEOUT 300
+    CPUS 2)
+
+# A Virtio sound stream starts afresh after a system suspend the guest enters
+# by itself: the position of a stream suspended while playing, a prepare after
+# a half-filled period, and a stream paused across a suspend, which recovers
+# and opens again. The guest has the null audio output.
+uml_add_guest_integration_test(
+    NAME guest-virtio-sound-suspend
+    SCRIPT kernel/run_guest_virtio_sound_suspend.py
+    LABELS guest;kernel;audio
     TIMEOUT 300
     CPUS 2)
 
@@ -1069,6 +1099,7 @@ do
 done'"
             --command "docker run --rm hello-world | grep -Fxq 'Hello from Docker!'"
             --command "docker image rm -f hello-world >/dev/null"
+            -- ncpus=10
         LABELS guest;docker;network;external;full
         TIMEOUT 900
         CPUS 4)

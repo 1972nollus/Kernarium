@@ -19,10 +19,10 @@ Apply every pending clear before either kind of texture barrier.
  1 file changed, 7 insertions(+), 2 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
-index 26f9e29caeddce689fd4a6fadd975dc563727ec7..cf3d9c95b1169713a8d9a86e45d3848177466f43 100644
+index 86fd508be22e6b69cd1070b3154fa1413b9716c2..1cf085015d81247e626341e2f10f30e606c3b7c5 100644
 --- a/src/gallium/drivers/zink/zink_context.c
 +++ b/src/gallium/drivers/zink/zink_context.c
-@@ -4717,8 +4717,13 @@ zink_texture_barrier(struct pipe_context *pctx, unsigned flags)
+@@ -4792,8 +4792,13 @@ zink_texture_barrier(struct pipe_context *pctx, unsigned flags)
                         VK_ACCESS_INPUT_ATTACHMENT_READ_BIT :
                         VK_ACCESS_SHADER_READ_BIT;
  

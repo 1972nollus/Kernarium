@@ -22,7 +22,7 @@ inputs are cast the same way and get the same requirement.
  2 files changed, 22 insertions(+), 8 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index a219a38de63a2f2cfdddb3cec4492f93cc8e872e..3d0dea467fc147e4e55d2b028e599211c7fe0ec5 100644
+index 15aa830d39dcff2d6c71e7cdb22509e4ae5602a2..1916c2fc77038d0f31675de0cf39bb8223d9b3e4 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -7611,6 +7611,14 @@ static bool use_integer(void) {
@@ -41,7 +41,7 @@ index a219a38de63a2f2cfdddb3cec4492f93cc8e872e..3d0dea467fc147e4e55d2b028e599211
     if (!a)
         return false;
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index be7fdcec780a8d397afed020a703e6f59a8b9fc0..08ff457512c7a3e9e23e2201af776800e2aef873 100644
+index a834d298c568b189ee4ca18c1556bacce5171b47..e6ff41abf9b8c66e91719ee3cae9daa39726193f 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
 @@ -1218,15 +1218,21 @@ static bool logiop_require_inout(const struct vrend_shader_key *key)

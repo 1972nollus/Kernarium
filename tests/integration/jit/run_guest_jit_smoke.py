@@ -432,6 +432,7 @@ def main() -> int:
         arguments.rootfs.resolve(),
         arguments.memory,
         "tmpfs",
+        kernel_arguments=("ncpus=10",),
         init_shell=True,
         engine=arguments.engine,
         payloads={

@@ -54,9 +54,10 @@ Python tooling tests keep the host `$TMPDIR` for `sun_path`.
 `repository-environment-portability` is the one tooling test that scans
 tracked source, and it looks for forbidden values rather than expected ones:
 host paths and account names, private addresses, ssh endpoints and Apple
-signing identifiers outside the project's own. It also scans new unignored
-files, so a leak fails before it is committed. A site adds its private tokens
-to a local denylist, found at
+signing identifiers outside the project's own (read from `project.pbxproj` and
+JSON `project.xcproj` projects, xcconfig files, plists and CMake). It also
+scans new unignored files, so a leak fails before it is committed. A site adds
+its private tokens to a local denylist, found at
 `${XDG_CONFIG_HOME:-$HOME/.config}/linux-um-darwin/portability-denylist` or
 through `UML_PORTABILITY_DENYLIST`; the test runs with and without it. A
 reviewed exception goes in
@@ -113,7 +114,10 @@ Every workflow needs the tools in
 [Host prerequisites](../dependencies/README.md#host-prerequisites), among them
 Python 3.11 or newer, which configure requires, and a Git identity. A test
 that boots ten vCPUs, such as `guest-mmu-stress`, needs ten host CPUs and
-skips on a smaller host. The LTP campaigns default to half the host's physical
+skips on a smaller host. A guest test states its vCPU count with `ncpus=`: the
+launchers' default follows the
+[applications' vCPU limit](architecture.md#memory-and-executable-code), which
+depends on the host. The LTP campaigns default to half the host's physical
 cores, at most 16.
 
 The ordinary host check is:
@@ -140,7 +144,7 @@ cmake --workflow --preset check-loader-asan-ubsan
 The `unit-gpu` test preset's name filter is the one selection of GPU workflow
 tests, and the other `unit-gpu*` test presets inherit it. It selects every
 registered test named `gpu-*` (the two `gpu-guest-*` tooling tests among them),
-and the Virtio balloon, battery, console, input, sound, video and video encoder
+and the Virtio battery, console, input, sound, video and video encoder
 protocol tests, `video-encoder-capabilities`, `platform-video-decoder`, and the
 hardware `platform-video-encoder`, `-recovery` and `-cache` tests that the GPU
 configuration also builds. A
@@ -293,7 +297,11 @@ queued buffers for it) before the size is known, the parameter sets and the
 picture as two coded buffers, and the capture format chosen only after the
 source change: the buffer that declared the size is held until then, nothing
 lands in the provisional buffers, and the picture arrives whole before the LAST
-buffer. The large buffers are also created with the guest's free memory in
+buffer. The coded queue's buffer size is read back for every coded format as
+a client sees it (S_FMT and G_FMT, then the plane length REQBUFS allocates): the
+tier of each picture size stated, and for a size beyond the format's range, as a
+client that states none passes it, the tier of the largest picture it takes.
+The large buffers are also created with the guest's free memory in
 blocks of 32 KiB, none larger, the state a guest that has run for days is in:
 a 124 MiB coded buffer, the most the device attaches, is created, exported and
 imported again, and the 4096 x 4096 and 4320 x 8192 flat pictures are decoded
@@ -717,6 +725,16 @@ the automation Android runtime
 `KERNARIUM_ANDROID_ADB_AUTH=0` and a loopback forward, and reaches the forward
 over USB with `iproxy`.
 
+On a connected iOS device that driver is
+[`tests/perf/run_ios_device_android.py`](../tests/perf/README.md): Android runs
+on a device go through Andarium
+([`Andarium/README.md`](../Andarium/README.md#automation)), and Kernarium's
+device runners (`run_ios_device_workload.py`, `run_ios_device_discard_bench.py`
+and the device CTS lane) keep Linux. Both share
+`tests/integration/support/ios_device.py`, and its tooling tests
+(`andarium-android-runner`, `andarium-device-support`) run the runner against a
+fake `devicectl`, `iproxy`, `adb` and `afcclient`, so no device is needed.
+
 Android recovery qualification uses a fresh disposable bundle and sets
 `TEST_RUNNER_KERNARIUM_ANDROID_BOOT_MODE=recovery`. Verify the LineageOS
 recovery UI, touch input, ADB, `adb sideload` of a signed package, fixed-GPT
@@ -743,6 +761,26 @@ up to four tests fail because of how the Mac hosts an iPad app:
 - `anEndedRunIsNeverStartedAgain` also stops the guest the application boots
   as it launches, so it fails when the launch has no image to boot, as a run
   whose `TEST_RUNNER_KERNARIUM_ROOTFS` names a missing file does.
+
+### Andarium
+
+`andarium-core` (unit, macOS hosts) runs the tests of the Swift package
+`Andarium/AndariumCore`, the application's model, with `swift test`.
+`andarium-stage-system-image` (tooling) covers the system-image staging script
+and the option checks of `package-ios-frameworks.sh --runtimes android`. The
+application itself builds with Xcode: `AndariumPreview` is its Simulator build
+with mock data, and `Andarium` is the device application
+([`Andarium/README.md`](../Andarium/README.md#targets)). `AndariumTests` is
+hosted in `Andarium` and runs on an iPad and, as an iPad app, on an Apple
+silicon Mac (`xcodebuild test -scheme Andarium`); its `UpdateFlowTests` drive
+the update, interrupted-update (Start retries, Restore, Erase) and blocked-start flows
+against a stub runtime. A Mac launch of the guest
+itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
+`TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
+([`Andarium/README.md`](../Andarium/README.md#automation)). macOS asks once, per
+bundle ID, to let the application read a removable volume when its derived data
+is on one, and the launch hangs ("the test runner hung before establishing
+connection") until a person answers; build to the internal disk instead.
 
 ### UI automation on a device
 
@@ -1312,7 +1350,9 @@ enabled (`--video`).
 ## Android UI rendering CTS
 
 `CtsUiRenderingTestCases` qualifies on the iPad's gadget engine in the
-automation application, not on the shared Mac. Its
+automation application or in Andarium (`run_ios_device_android.py --push
+Cts.apk:/data/local/tmp/Cts.apk --script`, whose script installs and
+instruments the APK), not on the shared Mac. Its
 `ColorSpaceTests#testMultiAtlasGlyphsWithColorSpace` paints a thousand glyphs
 of the COLRv1 emoji font at 13 sizes on the CPU in each of two renders, and
 each render must finish within the test's 60 s wait. On the iPad mini 6 the

@@ -15,10 +15,10 @@ Add a dispatch-level regression test linked to the production command-buffer obj
  create mode 100644 src/vulkan/runtime/tests/test_vk_cmd_fill_buffer.c
 
 diff --git a/src/vulkan/runtime/meson.build b/src/vulkan/runtime/meson.build
-index 7da99c886ea4dce01ff5c74cb820101009d031f3..84b2d80516c99c143064208c3f08092ea2f8ffab 100644
+index e5d720d165e519fd851d4a96f903aa43539a76e0..ce7b910591d66c7ec377b57eec1b799eaaff4250 100644
 --- a/src/vulkan/runtime/meson.build
 +++ b/src/vulkan/runtime/meson.build
-@@ -339,3 +339,19 @@ idep_vulkan_runtime = declare_dependency(
+@@ -332,3 +332,19 @@ idep_vulkan_runtime = declare_dependency(
      idep_vulkan_runtime_body,
    ]
  )

@@ -43,7 +43,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  2 files changed, 45 insertions(+), 8 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_resource.c b/src/gallium/drivers/zink/zink_resource.c
-index 55b66443579072f002f72cb00718c844b53311c2..04a447a76a3a9c1d005f858a881f02689e6953ee 100644
+index 08e71cf6034ce6fe806e4aebe2bbd25f94e3fe57..fc273bf1fb3773fd2b38ce2dbb1a7281a7665492 100644
 --- a/src/gallium/drivers/zink/zink_resource.c
 +++ b/src/gallium/drivers/zink/zink_resource.c
 @@ -410,7 +410,7 @@ check_ici(struct zink_screen *screen, VkImageCreateInfo *ici, uint64_t modifier)
@@ -105,7 +105,7 @@ index 55b66443579072f002f72cb00718c844b53311c2..04a447a76a3a9c1d005f858a881f0268
           assert(!need_extended);
           if (try_usage_mutable(screen, ici, usage, DRM_FORMAT_MOD_LINEAR)) {
              mod = DRM_FORMAT_MOD_LINEAR;
-@@ -1646,6 +1655,20 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
+@@ -1652,6 +1661,20 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
                            alloc_info->whandle->modifier != DRM_FORMAT_MOD_INVALID;
     uint64_t *ici_modifiers = winsys_modifier ? &alloc_info->whandle->modifier : modifiers;
     unsigned ici_modifier_count = winsys_modifier ? 1 : modifiers_count;
@@ -126,7 +126,7 @@ index 55b66443579072f002f72cb00718c844b53311c2..04a447a76a3a9c1d005f858a881f0268
     unsigned num_planes = util_format_get_num_planes(templ->format);
     VkImageCreateInfo ici;
     VkFormat formats[4] = {VK_FORMAT_UNDEFINED};
-@@ -1662,7 +1685,7 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
+@@ -1668,7 +1691,7 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
        mod = negotiate_image_config(screen, &ici, templ, templ->bind, ici_modifier_count, ici_modifiers, fmtlist, &success);
     }
     /* images with modifiers MUST have a format list if they are mutable */
@@ -135,7 +135,7 @@ index 55b66443579072f002f72cb00718c844b53311c2..04a447a76a3a9c1d005f858a881f0268
        assert(ici.pNext != NULL);
        if (!ici.pNext)
           return roc_fail_and_free_object;
-@@ -1678,7 +1701,7 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
+@@ -1684,7 +1707,7 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
     }
     struct image_pnext_state pnext_state;
     setup_image_pnext(screen, templ, obj, alloc_info, &ici, mod, winsys_modifier,
@@ -145,7 +145,7 @@ index 55b66443579072f002f72cb00718c844b53311c2..04a447a76a3a9c1d005f858a881f0268
     if (linear)
        *linear = ici.tiling == VK_IMAGE_TILING_LINEAR;
 diff --git a/src/gallium/drivers/zink/zink_screen.h b/src/gallium/drivers/zink/zink_screen.h
-index 070b5428b7114ac6b588154df58a70f52c10c7be..cdedc89a42d08434903675bc9d6ff67351cff4bf 100644
+index 83662746a7cf5b50e2eefb339a7baa388461d292..9173930bbfce5100b45b68147ca278355aa84094 100644
 --- a/src/gallium/drivers/zink/zink_screen.h
 +++ b/src/gallium/drivers/zink/zink_screen.h
 @@ -165,6 +165,20 @@ zink_use_venus_implicit_dmabuf(const struct zink_screen *screen)

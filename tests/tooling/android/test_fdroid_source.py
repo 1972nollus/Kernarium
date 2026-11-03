@@ -17,9 +17,10 @@ import tempfile
 import threading
 from pathlib import Path
 
-CLIENT = "org.fdroid.fdroid_2000051.apk"
+# The fixture's Android.bp is the tracked one, so the client's file name is the tracked pin's; main() reads it.
+CLIENT = ""
 EXTENSION = "org.fdroid.fdroid.privileged_2140.apk"
-PAYLOADS = {CLIENT: b"client payload", EXTENSION: b"extension payload"}
+PAYLOADS: dict[str, bytes] = {}
 
 
 def fail(message: str) -> None:
@@ -72,6 +73,13 @@ def main() -> None:
     args = parser.parse_args()
     real_root = args.source_root.resolve() / "android/lineage-24"
     tool = real_root / "tools/fdroid_source.py"
+    global CLIENT
+    for line in (real_root / "third_party/fdroid/metadata.env").read_text(encoding="utf-8").splitlines():
+        if line.startswith("FDROID_CLIENT_FILE="):
+            CLIENT = line.split("=", 1)[1].strip("'")
+    if not CLIENT:
+        fail("the tracked metadata names no client file")
+    PAYLOADS.update({CLIENT: b"client payload", EXTENSION: b"extension payload"})
 
     # The tracked pins describe the real files and pass their own checks.
     expect_ok(run(tool, "verify", "--android-root", str(real_root)), "tracked pins")
