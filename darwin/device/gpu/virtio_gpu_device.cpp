@@ -56,12 +56,16 @@ namespace {
         headerPaddingIsZero(header);
 }
 
+/* The software renderer of the iOS Simulator has no Vulkan driver, so the
+ * device offers no Venus capset there and refuses a guest that asks for one. */
 #if UML_GPU_DEVICE_TESTING
 #define UML_GPU_RENDERER dependencies_
 #define UML_GPU_DISPLAY dependencies_
+#define UML_GPU_VENUS_OFFERED dependencies_.offersVenus()
 #else
 #define UML_GPU_RENDERER renderer_
 #define UML_GPU_DISPLAY display_
+#define UML_GPU_VENUS_OFFERED (UML_GPU_SOFTWARE_RENDERER == 0)
 #endif
 
 /* A blob scanout the renderer answered with a native Metal texture is backed
@@ -120,8 +124,10 @@ const Structure* readStructure(std::span<const std::uint8_t> bytes)
     }
 }
 
+#if !UML_GPU_SOFTWARE_RENDERER
 /* Two formats that differ only in whether the fourth byte is alpha or
- * padding store their colour channels identically. */
+ * padding store their colour channels identically. The native texture lookup
+ * that compares them has no software-renderer counterpart. */
 [[nodiscard]] std::uint32_t formatLayout(std::uint32_t format) noexcept
 {
     switch (static_cast<protocol::GpuFormat>(format)) {
@@ -137,6 +143,7 @@ const Structure* readStructure(std::span<const std::uint8_t> bytes)
         return format;
     }
 }
+#endif
 
 bool supportedFormat(std::uint32_t format)
 {
@@ -495,7 +502,8 @@ protocol::GpuConfig VirtioGpuDevice::config() const noexcept
         .eventsRead = events,
         .eventsClear = 0,
         .scanoutCount = protocol::primaryScanoutId + 1U,
-        .capsetCount = protocol::venusCapsetIndex + 1U,
+        .capsetCount = protocol::venusCapsetIndex +
+            (UML_GPU_VENUS_OFFERED ? 1U : 0U),
     };
 }
 
@@ -760,7 +768,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::capsetInfo(
         protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
     if (request.capsetIndex == protocol::virglCapsetIndex ||
         request.capsetIndex == protocol::virgl2CapsetIndex ||
-        request.capsetIndex == protocol::venusCapsetIndex) {
+        (UML_GPU_VENUS_OFFERED &&
+         request.capsetIndex == protocol::venusCapsetIndex)) {
         information.capsetId =
             request.capsetIndex == protocol::virglCapsetIndex
             ? protocol::virglCapsetId
@@ -785,7 +794,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::capset(
 {
     if (request.capsetId != protocol::virglCapsetId &&
         request.capsetId != protocol::virgl2CapsetId &&
-        request.capsetId != protocol::venusCapsetId) {
+        !(UML_GPU_VENUS_OFFERED &&
+          request.capsetId == protocol::venusCapsetId)) {
         return response(
             request.header, protocol::GpuResponse::errorInvalidParameter);
     }
@@ -1030,7 +1040,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             (requestedCapset != 0 &&
              requestedCapset != protocol::virglCapsetId &&
              requestedCapset != protocol::virgl2CapsetId &&
-             requestedCapset != protocol::venusCapsetId) ||
+             !(UML_GPU_VENUS_OFFERED &&
+               requestedCapset == protocol::venusCapsetId)) ||
             (create->contextInit & ~protocol::contextInitCapsetMask) != 0 ||
             contexts_.contains(create->header.contextId)) {
             return response(
@@ -2020,6 +2031,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
              * rendering it shows has retired, and a Virgl context fence
              * retires only when the host GPU has finished that work, so the
              * texture is complete whenever the display samples it. */
+#if !UML_GPU_SOFTWARE_RENDERER
             VirglRenderer::NativeTexture nativeTexture;
             int textureResult = UML_GPU_RENDERER.resourceMetalTexture(
                 flush->resourceId, nativeTexture);
@@ -2062,6 +2074,19 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                  * own timeline and the host presents the newest frame it can. */
                 return success;
             }
+#else
+            /* The software renderer draws on the CPU and owns no Metal
+             * texture, so no lookup is made: every flush reads the resource
+             * back, which is its one presentation path. */
+            displayActivityLog().record(
+                "flush kind=virgl resource=%u damage=%ux%u+%u+%u "
+                "path=readback renderer=software",
+                flush->resourceId,
+                damage->width,
+                damage->height,
+                damage->x,
+                damage->y);
+#endif
             const auto result = presentReadback(
                 flush->resourceId, resource.format, *damage);
             if (result != protocol::GpuResponse::okNoData)
@@ -2090,6 +2115,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                  * texture that stores it when it holds exactly this scanout,
                  * under the same fence guarantee as a classic resource, and
                  * read it back otherwise. */
+#if !UML_GPU_SOFTWARE_RENDERER
                 VirglRenderer::NativeTexture nativeTexture;
                 int textureResult = UML_GPU_RENDERER.resourceMetalTexture(
                     flush->resourceId, nativeTexture);
@@ -2133,6 +2159,18 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                     presentOutcomeName(outcome));
                 if (presentAccepted(outcome))
                     return success;
+#else
+                /* As for a classic Virgl resource: the software renderer owns
+                 * no Metal texture, so each flush reads the blob back. */
+                displayActivityLog().record(
+                    "flush kind=blob resource=%u damage=%ux%u+%u+%u "
+                    "path=readback renderer=software",
+                    flush->resourceId,
+                    damage->width,
+                    damage->height,
+                    damage->x,
+                    damage->y);
+#endif
                 const auto result = presentReadback(
                     flush->resourceId, scanoutFormat_, *damage);
                 if (result != protocol::GpuResponse::okNoData)

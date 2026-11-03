@@ -5,6 +5,11 @@ function(uml_configure_gpu_component target)
     target_include_directories(${target} PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
+    # Whether the host GL provider is a CPU rasterizer without Vulkan: the
+    # iOS Simulator's. The product's prefix decides it, so every component of
+    # one configuration, test variants included, agrees.
+    target_compile_definitions(${target} PRIVATE
+        UML_GPU_SOFTWARE_RENDERER=$<BOOL:${UML_GPU_SOFTWARE_RENDERER}>)
 endfunction()
 
 # Keep the renderer, display, protocol device, transport, and in-process

@@ -2,11 +2,13 @@
 
 Andarium is the iOS application that runs one Android (LineageOS 24, Android
 17) guest on the Darwin runtime. Android ships inside the app; what the user
-creates, sizes and erases is the guest. It is an iOS device product like
+creates, sizes and erases is the guest. It is an iOS product like
 [Kernarium](../Kernarium/README.md) and runs on an Apple silicon Mac in
-Designed for iPad mode for the same reason
-([`graphics.md`](../docs/graphics.md#current-path)). Kernarium stays the
-developer application for Linux guests and for Android bundles.
+Designed for iPad mode. It also builds for the iOS Simulator, where the guest
+renders on the CPU for UI tests
+([`graphics.md`](../docs/graphics.md#ios-simulator-software-renderer)).
+Kernarium stays the developer application for Linux guests and for Android
+bundles.
 
 ## Ownership
 
@@ -41,11 +43,10 @@ one guest per process, and needs the increased memory limit and extended
 virtual addressing entitlements.
 
 `AndariumPreview` is a Simulator-only target built from `Shared` and
-`Preview` with mock data. It embeds no runtime and boots nothing; the iOS
-Simulator has no Metal 4 device for the guest's graphics. Its launch arguments
-(`-screen <name>`, `-play YES`, `-lowSpace YES`, `-resetTips YES`) open any
-screen or state directly so a Simulator driven only by `simctl` reaches every
-flow:
+`Preview` with mock data. It embeds no runtime and boots nothing. Its launch
+arguments (`-screen <name>`, `-play YES`, `-lowSpace YES`, `-resetTips YES`)
+open any screen or state directly so a Simulator driven only by `simctl` reaches
+every flow:
 
 ```sh
 xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
@@ -80,6 +81,20 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme Andarium \
 
 The `AndariumTests` bundle runs hosted in the application on an iPad or, as an
 iPad app, on an Apple silicon Mac (`xcodebuild test`).
+
+The `Andarium` scheme builds for the Simulator too, with the software renderer:
+build the Simulator runtime, package its slices (add `--sdk device`, with its
+own runtime preset built, for XCFrameworks that both SDKs build against), and
+build for `generic/platform=iOS Simulator`. The device-only KosmicKrisp is left
+out by `Kernarium/scripts/embed-device-framework.sh`.
+
+```sh
+cmake --preset kernarium-ios-simulator-android
+cmake --build --preset kernarium-ios-simulator-android
+Kernarium/scripts/package-ios-frameworks.sh --sdk simulator --runtimes android
+xcodebuild -project Andarium/Andarium.xcodeproj -scheme Andarium \
+    -destination 'generic/platform=iOS Simulator' build
+```
 
 ## Model
 
