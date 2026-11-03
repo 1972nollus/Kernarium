@@ -18,6 +18,7 @@ add_subdirectory(device/vhost_user)
 add_subdirectory(device/console)
 add_subdirectory(device/input/virtio)
 add_subdirectory(device/battery)
+add_subdirectory(device/vsock)
 add_subdirectory(device/video)
 
 if(UML_BUILD_GPU)

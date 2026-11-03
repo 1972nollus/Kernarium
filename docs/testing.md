@@ -542,6 +542,14 @@ fences when the guest-end registry reports the guest's end, runs none of them,
 and holds the next guest plainly; `runtime-guest-shutdown` covers the report
 that reaches the registry once per new report.
 
+The Virtio vsock device has its unit tests without a guest: `virtio-vsock-device`
+drives it through its queues with synthetic packets and real socketpairs (the
+open, refusal and timeout paths, stalls in both directions, half-closes, resets,
+the 32-connection limit, the never-defer and keep-on-disabled-ring rules, and an
+echo run of several threads opening and closing at once), and
+`virtio-vsock-connection-table` holds the credit arithmetic, its 32-bit wrap
+and the host port allocator.
+
 `guest-restart` runs the macOS launcher through a guest that restarts itself.
 Under each of the gadgets and the JIT engine, one `uml-darwin` process boots,
 restarts twice and powers off, with the same pid throughout. The test loads a
