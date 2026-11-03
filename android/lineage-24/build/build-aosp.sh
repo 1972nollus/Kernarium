@@ -382,7 +382,6 @@ for package in \
 	ExactCalculator \
 	Glimpse \
 	init.zygote64_32.rc \
-	Jelly \
 	LatinIME \
 	Launcher3QuickStep \
 	LineageParts \
@@ -405,6 +404,7 @@ for package in \
 	F-Droid \
 	F-DroidPrivilegedExtension \
 	fastbootd \
+	Jelly \
 	lineage_charger_animation \
 	lineage_charger_animation_vendor \
 	LineageSetupWizard \

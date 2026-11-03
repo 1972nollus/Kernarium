@@ -238,6 +238,7 @@ KERNARIUM_REMOVED_PACKAGES := \
     EyesFreeVidService \
     Gallery2 \
     ImsServiceEntitlement \
+    Jelly \
     MmsService \
     Music \
     MusicFX \
@@ -311,8 +312,8 @@ PRODUCT_PACKAGES_EXCLUDE += \
     metrics_helper \
     sleep
 
-# The browser (Jelly), the keyboard (LatinIME) and ThemePicker come from the
-# LineageOS product chain. resize2fs grows the compact userdata filesystem
+# The keyboard (LatinIME) and ThemePicker come from the LineageOS product
+# chain. resize2fs grows the compact userdata filesystem
 # online after the host expands its partition, once /data is mounted
 # (init.vendor.rc, post-fs-data).
 PRODUCT_PACKAGES += \

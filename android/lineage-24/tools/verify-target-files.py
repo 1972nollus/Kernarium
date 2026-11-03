@@ -191,7 +191,6 @@ REQUIRED_ENTRIES = {
     "PRODUCT/app/Etar/Etar.apk",
     "PRODUCT/app/ExactCalculator/ExactCalculator.apk",
     "PRODUCT/app/Glimpse/Glimpse.apk",
-    "PRODUCT/app/Jelly/Jelly.apk",
     "PRODUCT/app/LatinIME/LatinIME.apk",
     "PRODUCT/app/Twelve/Twelve.apk",
     "PRODUCT/app/webview/webview.apk",
@@ -267,7 +266,6 @@ REQUIRED_ENTRIES = {
     "SYSTEM/etc/init/hw/init.zygote64_32.rc",
 }
 REQUIRED_PREOPT_APKS = {
-    "PRODUCT/app/Jelly/Jelly.apk",
     "PRODUCT/app/LatinIME/LatinIME.apk",
     "SYSTEM/app/CaptivePortalLogin/CaptivePortalLogin.apk",
     "SYSTEM/app/PartnerBookmarksProvider/PartnerBookmarksProvider.apk",
@@ -430,6 +428,7 @@ FORBIDDEN_APP_DIRECTORIES = {
     "F-Droid",
     "F-DroidPrivilegedExtension",
     "Gallery2",
+    "Jelly",
     "LineageSetupWizard",
     "Profiles",
     "QuickAccessWallet",

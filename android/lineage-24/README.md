@@ -139,18 +139,19 @@ and the LineageOS platform services (LineageParts, LineageSettingsProvider and
 the hardware, live-display, trust and global-actions services) are present.
 `overlay/lineage_darwin.mk` sets the LineageOS switches before inheriting it
 and names what the product leaves out. The image provides Settings, Trebuchet,
-Files, Package Installer, the LineageOS WebView, LatinIME, ThemePicker, the
-patched Jelly browser and a curated application set: Glimpse (gallery), Twelve
-(music), Etar (calendar), ExactCalculator, Camelot (PDF viewer) and Seedvault
-(backup). It has no app store of its own and no install restriction: Package
-Installer and every install path work. It has no Google or microG services. The
-LineageOS updater and setup wizard, Canvas, Aperture, Profiles, Recorder,
-QuickAccessWallet, the charger animation, fastbootd and AudioFX are excluded,
-as are DeskClock and EmergencyInfo; the
-build and verifier assert both lists. SecureElement, the OMAPI service for
-readers the machine does not have (no eSE, no UICC), is kept but is not
-persistent (a `packages/apps/SecureElement` topic, route `p0024`, drops
-`android:persistent`): nothing starts it at boot, so it costs no memory at idle.
+Files, Package Installer, the LineageOS WebView, LatinIME, ThemePicker and a
+curated application set: Glimpse (gallery), Twelve (music), Etar (calendar),
+ExactCalculator, Camelot (PDF viewer) and Seedvault (backup). It has no browser
+app (the WebView stays, so that a user can install one), no app store of its
+own and no install restriction: Package Installer and every install path work.
+It has no Google or microG services. The LineageOS updater and setup wizard,
+Canvas, Aperture, Profiles, Recorder, QuickAccessWallet, the charger animation,
+fastbootd, AudioFX and the Jelly browser are excluded, as are DeskClock and
+EmergencyInfo; the build and verifier assert both lists. SecureElement, the
+OMAPI service for readers the machine does not have (no eSE, no UICC), is kept
+but is not persistent (a `packages/apps/SecureElement` topic, route `p0024`,
+drops `android:persistent`): nothing starts it at boot, so it costs no memory
+at idle.
 The first `SEService` client that binds it starts the process, and the bind
 creates the service, which registers itself (the topic also drops the
 application's own `startService`: the system refuses it in a process it started

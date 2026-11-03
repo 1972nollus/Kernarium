@@ -1428,7 +1428,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     ):
                         archive.writestr(f"{artifact}.odex", b"odex")
                         if not (
-                            half_preopt_pair and apk.endswith("/Jelly.apk")
+                            half_preopt_pair and apk.endswith("/LatinIME.apk")
                         ):
                             archive.writestr(f"{artifact}.vdex", b"vdex")
                 for apk in plain_apks:
@@ -1870,7 +1870,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"PRODUCT/app/Orphan/oat/arm/Orphan.odex": b"odex",
                           "PRODUCT/app/Orphan/oat/arm/Orphan.vdex": b"vdex"}}),
             ("unknown-isa",
-             {"entries": {"PRODUCT/app/Jelly/oat/x86_64/Jelly.odex": b"odex"}}),
+             {"entries": {"PRODUCT/app/LatinIME/oat/x86_64/LatinIME.odex": b"odex"}}),
             ("32-bit-elf-in-lib64",
              {"entries": {"VENDOR/lib64/libfixture.so": synthetic_arm_elf()}}),
             ("64-bit-elf-in-lib",
@@ -2154,6 +2154,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("fastbootd", {"extra_entry": "SYSTEM/bin/fastbootd"}),
             ("curated-out-profiles",
              {"extra_entry": "SYSTEM_EXT/app/Profiles/Profiles.apk"}),
+            ("curated-out-jelly",
+             {"extra_entry": "PRODUCT/app/Jelly/Jelly.apk"}),
             ("curated-out-fdroid",
              {"extra_entry": "PRODUCT/app/F-Droid/F-Droid.apk"}),
             ("curated-out-fdroid-extension",
@@ -2738,7 +2740,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           "PRODUCT/app/Orphan/oat/arm/Orphan.vdex": b"vdex"}},
              "has no ARM64 one"),
             ("unknown-isa-cause",
-             {"entries": {"PRODUCT/app/Jelly/oat/x86_64/Jelly.odex": b"odex"}},
+             {"entries": {"PRODUCT/app/LatinIME/oat/x86_64/LatinIME.odex": b"odex"}},
              "not for an ISA of this product"),
             ("32-bit-elf-in-lib64-cause",
              {"entries": {"VENDOR/lib64/libfixture.so": synthetic_arm_elf()}},
