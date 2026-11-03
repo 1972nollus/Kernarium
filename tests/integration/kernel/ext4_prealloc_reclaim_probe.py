@@ -8,9 +8,14 @@ Formats DEVICE as ext4 with fs-verity, which writes a file's Merkle tree
 past its end without delayed allocation and so leaves an inode
 preallocation on a closed inode, writes and verifies many files, drops the
 clean caches and applies anonymous memory pressure until reclaim evicts the
-inodes. Tracepoints count the inode preallocations released from a shrinker
-or reclaim stack and the __GFP_NOFAIL page allocations on that path, and the
-filesystem is checked after it is unmounted.
+inodes. The pressure stops a reserve short of the point where the page
+allocator gives up and kills, with watermark boosting off so that point stays
+put. Each unit of it is a private anonymous mapping, so dropping one returns
+its pages at once; freed malloc memory can stay in the heap and hold the
+guest at that point with nothing left to release. Tracepoints count the inode
+preallocations released from a shrinker or reclaim stack and the
+__GFP_NOFAIL page allocations on that path, and the filesystem is checked
+after it is unmounted.
 
 Prints one line per result:
   EXT4_PA_RECLAIM releases=N nofail=M nofail_in_release=K
@@ -22,6 +27,7 @@ Prints one line per result:
 import collections
 import fcntl
 import hashlib
+import mmap
 import os
 import re
 import struct
@@ -30,10 +36,13 @@ import sys
 import time
 
 TRACING = "/sys/kernel/tracing"
+BOOST_FACTOR = "/proc/sys/vm/watermark_boost_factor"
 DIRECTORIES = 8
 FILES = 300
 SIZE = 300000
+# Headroom kept above the out-of-memory point.
 RESERVE_KB = 8192
+CHUNK = 2 << 20
 CHURN_SECONDS = 30
 ENABLE_VERITY = 0x40806685
 NOFAIL = 0x8000
@@ -62,12 +71,34 @@ def write(path: str, text: str) -> None:
         handle.write(text)
 
 
-def mem_available_kb() -> int:
-    with open("/proc/meminfo") as meminfo:
-        for line in meminfo:
-            if line.startswith("MemAvailable:"):
-                return int(line.split()[1])
-    raise RuntimeError("no MemAvailable")
+def headroom_kb() -> int:
+    """Free and file pages above the minimum watermark, in KiB.
+
+    The page allocator goes out of memory once free and reclaimable pages,
+    which without swap are the file pages, no longer clear the minimum
+    watermark (should_reclaim_retry() in mm/page_alloc.c). The inode shrinker
+    evicts in bulk only when kswapd cannot reach the high watermark, a few
+    megabytes above that point. A watermark boost would lift the minimum past
+    it, by up to 1.5 times the high watermark, until kswapd next balanced the
+    node, so pressure() turns boosting off."""
+    wanted = ("min", "nr_zone_active_file", "nr_zone_inactive_file")
+    zone: dict[str, int] = {}
+    with open("/proc/zoneinfo") as zoneinfo:
+        normal = False
+        for line in zoneinfo:
+            if line.startswith("Node"):
+                normal = line.split()[-1] == "Normal"
+                continue
+            fields = line.split()
+            if not normal:
+                continue
+            if fields[:2] == ["pages", "free"]:
+                zone["free"] = int(fields[2])
+            elif len(fields) == 2 and fields[0] in wanted:
+                zone.setdefault(fields[0], int(fields[1]))
+    pages = (zone["free"] + zone["nr_zone_active_file"]
+             + zone["nr_zone_inactive_file"] - zone["min"])
+    return pages * mmap.PAGESIZE // 1024
 
 
 def start_tracing() -> None:
@@ -114,24 +145,35 @@ def trace_counts() -> tuple[int, int, int]:
 
 
 def pressure() -> None:
-    """Allocate anonymous memory down to the reserve, then churn at its edge."""
-    chunks: list[bytearray] = []
+    """Allocate anonymous memory down to the reserve, then churn at its edge.
+
+    Watermark boosting is off meanwhile. Every chunk is unmapped when it is
+    dropped, and all of them before this returns."""
+    chunks: list[mmap.mmap] = []
     start = time.time()
     reached = None
-    while time.time() - start < CHURN_SECONDS + 60:
-        if mem_available_kb() > RESERVE_KB:
-            chunk = bytearray(2 << 20)
-            for offset in range(0, len(chunk), 4096):
-                chunk[offset] = 1
-            chunks.append(chunk)
-            time.sleep(0.004)
-            continue
-        reached = reached or time.time()
-        if time.time() - reached > CHURN_SECONDS:
-            break
-        for _ in range(max(1, len(chunks) // 16)):
-            if chunks:
-                chunks.pop()
+    with open(BOOST_FACTOR) as handle:
+        boost_factor = handle.read()
+    write(BOOST_FACTOR, "0")
+    try:
+        while time.time() - start < CHURN_SECONDS + 60:
+            if headroom_kb() > RESERVE_KB:
+                chunk = mmap.mmap(-1, CHUNK, flags=mmap.MAP_PRIVATE)
+                for offset in range(0, CHUNK, mmap.PAGESIZE):
+                    chunk[offset] = 1
+                chunks.append(chunk)
+                time.sleep(0.004)
+                continue
+            reached = reached or time.time()
+            if time.time() - reached > CHURN_SECONDS:
+                break
+            for _ in range(max(1, len(chunks) // 16)):
+                if chunks:
+                    chunks.pop().close()
+    finally:
+        for chunk in chunks:
+            chunk.close()
+        write(BOOST_FACTOR, boost_factor)
 
 
 def main() -> int:
