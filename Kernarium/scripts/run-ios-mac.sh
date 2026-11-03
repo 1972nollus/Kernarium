@@ -3,10 +3,12 @@
 # Build, install, provision, and launch the Kernarium iOS app on this Apple
 # silicon Mac in Designed for iPad mode.
 #
-# The iOS Simulator cannot host this stack: Mesa Zink renders on KosmicKrisp,
-# which requires Metal 4, and the Simulator exposes no Metal 4 device. The same
-# unmodified iOS device slice runs natively on an Apple silicon Mac, where the
-# host GPU is used directly; the physical-device lanes are in docs/testing.md.
+# Only the iOS device slice has the product's GPU stack: Mesa Zink renders on
+# KosmicKrisp, which requires Metal 4, and the iOS Simulator exposes no Metal 4
+# device, so it renders on the CPU with llvmpipe instead
+# (run-ios-simulator-tests.sh runs the tests there). The same unmodified iOS
+# device slice runs natively on an Apple silicon Mac, where the host GPU is used
+# directly; the physical-device lanes are in docs/testing.md.
 #
 # --aquarium builds and packages the automation runtimes instead of the release
 # ones and boots the WebGL Aquarium probe as a host payload

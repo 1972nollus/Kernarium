@@ -113,7 +113,7 @@ struct EmulatorSettingsView: View {
                     }
 
                     Stepper(
-                        "Guest RAM: \(configuration.guestMemoryMiB) MB",
+                        "Guest RAM: \(configuration.guestMemoryMiB) MiB",
                         value: $configuration.guestMemoryMiB,
                         in: EmulatorConfiguration.guestMemoryRangeMiB
                             .lowerBound...maximumGuestMemoryMiB,
@@ -126,7 +126,7 @@ struct EmulatorSettingsView: View {
                         Text(
                             "With \(configuration.vCPUCount) vCPUs the " +
                                 "system leaves room for at most " +
-                                "\(maximumGuestMemoryMiB) MB of guest RAM " +
+                                "\(maximumGuestMemoryMiB) MiB of guest RAM " +
                                 "beside graphics and the emulator. More " +
                                 "vCPUs lower it."
                         )
@@ -136,7 +136,7 @@ struct EmulatorSettingsView: View {
                     }
 
                     Stepper(
-                        "Overlay FS: \(configuration.overlaySizeGiB) GB",
+                        "Overlay FS: \(configuration.overlaySizeGiB) GiB",
                         value: $configuration.overlaySizeGiB,
                         in: EmulatorConfiguration.overlaySizeRangeGiB
                     )

@@ -166,7 +166,7 @@ struct LifecycleTests {
     @Test func theFailureReportNamesTheBuildAndTheEnd() {
         let system = SystemInfo(
             version: "17", release: "20261031-los24-r4",
-            kernel: "Linux 6.18.54", architecture: "arm64, 4 KB pages", appVersion: "1.0 (1)"
+            kernel: "Linux 6.18.54", architecture: "arm64, 4 KiB pages", appVersion: "1.0 (1)"
         )
         let guest = Guest(cores: 2, memoryMiB: 1536, capacityGiB: 8)
         let report = RunEnd(result: -5).report(appVersion: "1.0 (1)", system: system, guest: guest, uptimeSeconds: 74)

@@ -130,14 +130,14 @@ The runtime framework is loaded once per process for the flavour chosen at
 launch, so the settings do not ask it: the loader (`KernariumRuntimeLoader`)
 includes the same header, reads the limit from the process (`TASK_VM_INFO`) and
 answers `kernarium_runtime_loader_maximum_guest_memory_mib`. Where the system
-sets no limit, on a Mac included, the answer is 4096 MB and nothing changes.
+sets no limit, on a Mac included, the answer is 4096 MiB and nothing changes.
 
-- The Guest RAM stepper runs from 512 MB to the maximum of the chosen vCPU
+- The Guest RAM stepper runs from 512 MiB to the maximum of the chosen vCPU
   count and updates as the count changes; a footnote states the maximum.
-- Raising the vCPU count takes the RAM down to the new maximum, in 64 MB steps.
+- Raising the vCPU count takes the RAM down to the new maximum, in 64 MiB steps.
   Lowering the count leaves the RAM as it is.
 - Loading a stored size takes it down to the maximum of the stored vCPU count.
-  With nothing stored the default is 1536 MB on a device and 4096 MB on a Mac,
+  With nothing stored the default is 1536 MiB on a device and 4096 MiB on a Mac,
   or the maximum where that is less.
 - `KERNARIUM_GUEST_MEMORY_MIB` states a size as is, for automation; the launch
   notice above covers a size the limit cannot afford.
