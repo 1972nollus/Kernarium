@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import traceback
+import xml.etree.ElementTree as ET
 import zipfile
 import zlib
 from pathlib import Path
@@ -320,12 +321,12 @@ def ext4_system_fstab(fstab: str) -> str:
 
 def tracked_erofs_parameters(android_root: Path) -> tuple[str, str]:
     """The compressor and the cluster size the product makefile sets, once each."""
-    text = (android_root / "overlay/lineage_darwin.mk").read_text()
+    text = (android_root / "overlay/lineage_andarium.mk").read_text()
     found = []
     for name in ("UML_ANDROID_EROFS_COMPRESSOR", "UML_ANDROID_EROFS_PCLUSTER_SIZE"):
         values = re.findall(rf"^{name} := (\S+)$", text, re.MULTILINE)
         if len(values) != 1:
-            fail(f"lineage_darwin.mk does not set {name} exactly once")
+            fail(f"lineage_andarium.mk does not set {name} exactly once")
         found.append(values[0])
     return found[0], found[1]
 
@@ -442,13 +443,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         and entry != pinner_overlay_entry
     )
     arm_preopt_apks = sorted(tool.REQUIRED_ARM_PREOPT_APKS)
-    permission_files = [
-        entry for entry in tool.REQUIRED_ENTRIES
-        if entry.startswith("PRODUCT/etc/permissions/")
-    ]
-    if len(permission_files) != 1:
-        fail(f"expected one required PRODUCT permission file: {permission_files}")
-    fdroid_permissions = permission_files[0]
     uml_fstab = tracked_fstab(verifier.parents[1])
     erofs_compressor, erofs_pcluster_size = tracked_erofs_parameters(verifier.parents[1])
     erofs_compress_hints = (
@@ -669,6 +663,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           half_preopt_pair: bool = False,
                           wrong_audio_defaults: bool = False,
                           wrong_product_model: bool = False,
+                          old_product_identity: bool = False,
+                          user_permissive_su: bool = False,
+                          usb_debugging_default: bool = False,
                           missing_lockscreen_default: bool = False,
                           use_fiemap_variant: str | None = None,
                           userdata_grow_variant: str | None = None,
@@ -679,8 +676,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
                           cas_hal_variant: str | None = None,
+                          adbd_variant: str | None = None,
+                          services_jar_variant: str | None = None,
+                          ota_certificates: str | None = None,
+                          signed: bool = False,
+                          adbd_launch_unreadable: bool = False,
                           vendor_property_variant: str | None = None,
-                          wide_fdroid_permissions: bool = False,
                           video_properties: dict[str, str] | None = None,
                           missing_video_ueventd: bool = False,
                           mesa_gles_alignment: int = 16384,
@@ -726,7 +727,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "odm_fs_type": "erofs",
                     "erofs_default_compressor": erofs_compressor,
                     "erofs_pcluster_size": erofs_pcluster_size,
-                    "erofs_default_compress_hints": "device/kernarium/darwin/config/erofs_compress_hints.txt",
+                    "erofs_default_compress_hints": "device/kernarium/andarium/config/erofs_compress_hints.txt",
                     "erofs_sparse_flag": "-s",
                     "userdata_extfs_inode_count": (
                         "32768" if wrong_userdata_inodes else "8192"
@@ -756,6 +757,17 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr("ROOT/system_dlkm/", b"")
                 archive.writestr("SYSTEM/system_dlkm/etc/build.prop", "")
                 virtual_ab_property = "ro.virtual_ab.enabled=true\n" if virtual_ab else ""
+                system_identity = {
+                    "brand": "Android" if old_product_identity else "Andarium",
+                    "manufacturer": "Kernarium",
+                    "device": "darwin" if old_product_identity else "andarium",
+                    "name": "lineage_darwin" if old_product_identity else "lineage_andarium",
+                    "model": "Darwin UML" if old_product_identity else "Andarium Virtual Device",
+                }
+                system_fingerprint = (
+                    f"{system_identity['brand']}/{system_identity['name']}/"
+                    f"{system_identity['device']}:17/FIXTURE/7:{build_variant}/release-keys"
+                )
 
                 def abi_properties(partition: str, thirty_two: str) -> str:
                     abilist = "arm64-v8a" + ("," + thirty_two if thirty_two else "")
@@ -773,6 +785,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         f"{name}={value}\n"
                         for name, value in BUILD_VARIANTS[build_variant].items()
                     )
+                    + "".join(
+                        f"ro.product.system.{key}={value}\n"
+                        for key, value in system_identity.items()
+                    )
+                    + f"ro.system.build.fingerprint={system_fingerprint}\n"
                     + f"{virtual_ab_property}",
                 )
                 archive.writestr(
@@ -786,7 +803,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "ro.config.alarm_vol_default=7\n"
                     "ro.config.system_vol_default=7\n"
                     "ro.config.assistant_vol_default=15\n"
-                    "persist.sys.usb.config=adb\n"
+                    + ("persist.sys.usb.config=adb\n" if usb_debugging_default else "")
                     + ("" if missing_lockscreen_default else "ro.lockscreen.disable.default=true\n")
                     + {
                         None: "apexd.config.use_fiemap=false\n",
@@ -794,7 +811,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "true": "apexd.config.use_fiemap=true\n",
                     }[use_fiemap_variant]
                     + f"ro.product.product.model="
-                    f"{'Android 17 on Darwin UML' if wrong_product_model else 'Darwin UML'}\n",
+                    f"{'Android 17 on Andarium' if wrong_product_model else 'Andarium Virtual Device'}\n",
                 )
                 archive.writestr(
                     "SYSTEM/bin/android-fixture",
@@ -979,10 +996,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "    setprop ro.hardware.audio.primary goldfish\n"
                     + wifi_dirs
                     + "    setprop service.adb.tcp.port 5555\n"
-                    "    start adbd\n" + rcu_restore + blocker_rules + net_rules,
+                    "    start adbd\n"
+                    + rcu_restore + blocker_rules + net_rules
+                    + ("" if init_variant == "no-adbd-keep-alive"
+                       else "on property:init.svc.adbd=stopped\n    start adbd\n"),
                 )
                 if extra_entry is not None:
                     archive.writestr(extra_entry, "on early-init\n")
+                if build_variant != "user":
+                    # The diagnostics build carries the root shell.
+                    archive.writestr("SYSTEM/xbin/su", synthetic_aarch64_elf(alignment))
                 archive.writestr(
                     "VENDOR/etc/audio_effects_config.xml",
                     '<audio_effects_conf version="2.0"/>\n',
@@ -1170,12 +1193,20 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "SYSTEM/etc/selinux/plat_sepolicy.cil",
                     "(typeattributeset coredomain (adbd init system_server))\n"
-                    "(typeattributeset domain (adbd init system_server vendor_init))\n"
+                    + ("(typeattributeset domain (init system_server vendor_init))\n"
+                       if adbd_launch_unreadable
+                       else "(typeattributeset domain (adbd init system_server vendor_init))\n")
+                    +
                     "(allow domain boot_status_prop (file (read getattr map open)))\n"
                     "(allow domain bootloader_prop (file (read getattr map open)))\n"
+                    "(allow domain system_prop (file (read getattr map open)))\n"
+                    "(allow domain system_adbd_prop (file (read getattr map open)))\n"
+                    "(allow domain init_service_status_prop (file (read getattr map open)))\n"
                     "(typeattributeset mlstrustedsubject (artd installd"
                     + (" mediaprovider_app" if lineage_policy == "mediaprovider-trusted" else "")
-                    + "))\n(typepermissive su)\n"
+                    + "))\n"
+                    + ("(typepermissive su)\n"
+                       if build_variant != "user" or user_permissive_su else "")
                     + "; padding to the size of a real platform policy\n" * (
                         (17 << 20 if oversize_platform_policy else 3_441_569) // 48
                     ),
@@ -1183,7 +1214,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "SYSTEM/etc/selinux/plat_property_contexts",
                     "sys.boot_completed    u:object_r:boot_status_prop:s0 exact bool\n"
-                    "ro.boot.              u:object_r:bootloader_prop:s0\n",
+                    "ro.boot.              u:object_r:bootloader_prop:s0\n"
+                    "persist.sys.usb.config  u:object_r:system_prop:s0 exact string\n"
+                    "persist.adb.tls_server.enable  u:object_r:system_adbd_prop:s0 exact bool\n"
+                    "init.svc.  u:object_r:init_service_status_prop:s0\n",
                 )
                 archive.writestr(
                     "VENDOR/etc/selinux/vendor_property_contexts",
@@ -1431,7 +1465,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     ):
                         archive.writestr(f"{artifact}.odex", b"odex")
                         if not (
-                            half_preopt_pair and apk.endswith("/Jelly.apk")
+                            half_preopt_pair and apk.endswith("/LatinIME.apk")
                         ):
                             archive.writestr(f"{artifact}.vdex", b"vdex")
                 for apk in plain_apks:
@@ -1482,7 +1516,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         overlay.writestr("resources.arsc", table)
                     archive.writestr(
                         "PRODUCT/overlay/"
-                        "SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk",
+                        "SimpleDeviceConfig__lineage_andarium__auto_generated_rro_product.apk",
                         overlay_apk.getvalue(),
                     )
                 if wallpaper_variant != "missing-overlay":
@@ -1513,7 +1547,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             overlay.writestr(name, payload)
                     archive.writestr(
                         "PRODUCT/overlay/"
-                        "framework-res__lineage_darwin__auto_generated_rro_product.apk",
+                        "framework-res__lineage_andarium__auto_generated_rro_product.apk",
                         framework_apk.getvalue(),
                     )
                 for apk in arm_preopt_apks:
@@ -1522,19 +1556,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         artifact = apk_path.parent / "oat" / isa / apk_path.stem
                         archive.writestr(f"{artifact}.odex", b"odex")
                         archive.writestr(f"{artifact}.vdex", b"vdex")
-                archive.writestr(
-                    fdroid_permissions,
-                    '<permissions><privapp-permissions '
-                    'package="org.fdroid.fdroid.privileged">'
-                    '<permission name="android.permission.INSTALL_PACKAGES"/>'
-                    '<permission name="android.permission.DELETE_PACKAGES"/>'
-                    + (
-                        '<permission name="android.permission.WRITE_SECURE_SETTINGS"/>'
-                        if wide_fdroid_permissions
-                        else ""
-                    )
-                    + '</privapp-permissions></permissions>',
-                )
                 advertised_features = ["android.hardware.touchscreen"]
                 if not missing_microphone_feature:
                     advertised_features.append("android.hardware.microphone")
@@ -1713,6 +1734,58 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "VENDOR/apex/com.android.hardware.thermal.apex",
                         synthetic_apex("erofs", thermal_content, files=thermal_files),
                     )
+                # The adb daemon in its APEX: bin/adbd is a file of the payload, stored uncompressed (the payload
+                # hints), and holds the names of the launch properties that the p0011 topics read.
+                adbd_content = b"\x00" * 8
+                if adbd_variant != "no-key":
+                    adbd_content += b"ro.boot.kernarium.adb_key\x00"
+                if adbd_variant != "no-tcp":
+                    adbd_content += b"ro.boot.kernarium.adb_tcp\x00"
+                if adbd_variant != "no-debugging-setting":
+                    adbd_content += b"persist.sys.usb.config\x00persist.adb.tls_server.enable\x00"
+                if adbd_variant != "no-key-rule":
+                    adbd_content += b"kernarium: key refused, debugging is off\x00"
+                if adbd_variant != "missing-apex":
+                    archive.writestr(
+                        "SYSTEM/apex/com.android.adbd.apex",
+                        synthetic_apex(
+                            "erofs", adbd_content,
+                            files=("etc/init.rc",) if adbd_variant == "no-binary" else ("bin/adbd",),
+                        ),
+                    )
+                # The framework's services.jar stores its dex files uncompressed; the p0007 AdbService
+                # topic's log line is in the bytes.
+                if services_jar_variant != "missing":
+                    services_jar = io.BytesIO()
+                    with zipfile.ZipFile(services_jar, "w", zipfile.ZIP_STORED) as jar:
+                        jar.writestr(
+                            "classes.dex",
+                            b"dex\n039\x00"
+                            + (b"" if services_jar_variant == "no-marker"
+                               else b"kernarium: USB debugging is now \x00"),
+                        )
+                    archive.writestr("SYSTEM/framework/services.jar", services_jar.getvalue())
+                # The OTA certificates, the system's and the recovery's: an unsigned build of either variant holds
+                # the AOSP test certificate under its file name, and the signer names the release certificate after
+                # the release key's path.
+                ota_state = ota_certificates or ("release" if signed else "build")
+                state_member = "keys/releasekey.x509.pem" if signed else "testkey.x509.pem"
+                for ota_name in ("SYSTEM/etc/security/otacerts.zip",
+                                 "RECOVERY/RAMDISK/system/etc/security/otacerts.zip"):
+                    if ota_state == "missing-recovery" and ota_name.startswith("RECOVERY"):
+                        continue
+                    members = {
+                        "build": ["testkey.x509.pem"],
+                        "release": ["keys/releasekey.x509.pem"],
+                        "test-key-path": ["build/make/target/product/security/testkey.x509.pem"],
+                        "extra": [state_member, "build/make/target/product/security/testkey.x509.pem"],
+                        "missing-recovery": [state_member],
+                    }[ota_state]
+                    certificates = io.BytesIO()
+                    with zipfile.ZipFile(certificates, "w") as bundle:
+                        for member in members:
+                            bundle.writestr(member, "certificate\n")
+                    archive.writestr(ota_name, certificates.getvalue())
                 # The Wi-Fi HAL and the supplicant (with hostapd), packaged the same way.
                 def hal_apex(apex, binary, name, fqname, service, variant):
                     content = b"\x00" * 8
@@ -1789,6 +1862,25 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         good = root / "good.zip"
         write_fixture(good)
         run_tool(verifier, "--target-files", good, *kernel_options, check=True)
+        # Signed target files are checked with --signed: the release certificate alone is trusted,
+        # and only a user build is signed. The unsigned fixtures above hold the test certificate's
+        # member, which each variant's unsigned build writes.
+        signed_good = root / "signed-good.zip"
+        write_fixture(signed_good, signed=True)
+        run_tool(verifier, "--target-files", signed_good, "--signed", *kernel_options, check=True)
+        for variant in BUILD_VARIANTS:
+            signed_fixture = root / f"{variant}-signed-check.zip"
+            write_fixture(signed_fixture, build_variant=variant, signed=True)
+            result = run_tool(verifier, "--target-files", signed_fixture, "--build-variant", variant,
+                              "--signed", *kernel_options)
+            if (result.returncode == 0) != (variant == "user") or (
+                variant != "user" and "is not signed with the release keys" not in result.stdout
+            ):
+                fail(f"a {variant} build verified as signed wrongly: {result.returncode} {result.stdout}")
+            result = run_tool(verifier, "--target-files", signed_fixture, "--build-variant", variant,
+                              *kernel_options)
+            if result.returncode == 0 or "not an unsigned build" not in result.stdout:
+                fail(f"a signed {variant} archive verified as an unsigned build: {result.returncode} {result.stdout}")
         # Every supported variant verifies as itself and is rejected as any
         # other: the build-type properties follow the requested variant. These
         # run as processes, like the good archive: they state the command line.
@@ -1871,7 +1963,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"PRODUCT/app/Orphan/oat/arm/Orphan.odex": b"odex",
                           "PRODUCT/app/Orphan/oat/arm/Orphan.vdex": b"vdex"}}),
             ("unknown-isa",
-             {"entries": {"PRODUCT/app/Jelly/oat/x86_64/Jelly.odex": b"odex"}}),
+             {"entries": {"PRODUCT/app/LatinIME/oat/x86_64/LatinIME.odex": b"odex"}}),
             ("32-bit-elf-in-lib64",
              {"entries": {"VENDOR/lib64/libfixture.so": synthetic_arm_elf()}}),
             ("64-bit-elf-in-lib",
@@ -2065,6 +2157,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("half-preopt-pair", {"half_preopt_pair": True}),
             ("audio-defaults", {"wrong_audio_defaults": True}),
             ("product-model", {"wrong_product_model": True}),
+            ("old-product-identity", {"old_product_identity": True}),
+            ("user-permissive-su", {"user_permissive_su": True}),
+            ("usb-debugging-on-by-default", {"usb_debugging_default": True}),
+            ("user-carries-su", {"extra_entry": "SYSTEM/xbin/su"}),
+            ("user-carries-remount", {"extra_entry": "SYSTEM/bin/remount"}),
+            ("user-carries-procmem", {"extra_entry": "SYSTEM/bin/procmem"}),
             ("missing-lockscreen-default", {"missing_lockscreen_default": True}),
             ("missing-use-fiemap", {"use_fiemap_variant": "missing"}),
             ("use-fiemap-true", {"use_fiemap_variant": "true"}),
@@ -2096,6 +2194,22 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("cas-apex-without-binary", {"cas_hal_variant": "no-binary"}),
             ("cas-apex-without-fragment", {"cas_hal_variant": "no-fragment"}),
             ("cas-apex-without-service", {"cas_hal_variant": "no-service"}),
+            ("missing-adbd-apex", {"adbd_variant": "missing-apex"}),
+            ("adbd-apex-without-binary", {"adbd_variant": "no-binary"}),
+            ("adbd-without-host-key", {"adbd_variant": "no-key"}),
+            ("adbd-without-tcp-policy", {"adbd_variant": "no-tcp"}),
+            ("adbd-without-debugging-setting", {"adbd_variant": "no-debugging-setting"}),
+            ("adbd-without-key-rule", {"adbd_variant": "no-key-rule"}),
+            ("services-jar-without-the-adb-topics", {"services_jar_variant": "no-marker"}),
+            ("signed-with-the-test-key", {"signed": True, "ota_certificates": "build"}),
+            ("signed-with-the-test-key-path", {"signed": True, "ota_certificates": "test-key-path"}),
+            ("signed-with-an-extra-certificate", {"signed": True, "ota_certificates": "extra"}),
+            ("signed-without-recovery-certificates", {"signed": True, "ota_certificates": "missing-recovery"}),
+            ("unsigned-with-the-release-member", {"ota_certificates": "release"}),
+            ("unsigned-with-an-extra-certificate", {"ota_certificates": "extra"}),
+            ("unsigned-without-recovery-certificates", {"ota_certificates": "missing-recovery"}),
+            ("missing-services-jar", {"services_jar_variant": "missing"}),
+            ("adbd-cannot-read-launch-properties", {"adbd_launch_unreadable": True}),
             ("missing-cas-plugin-64", {"cas_hal_variant": "no-plugin64"}),
             ("missing-cas-plugin-32", {"cas_hal_variant": "no-plugin32"}),
             ("lineage-discrete-ops-list-only", {"discrete_ops_variant": "lineage-list-only"}),
@@ -2137,6 +2251,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-rcu-restore", {"init_variant": "missing-rcu-restore"}),
             ("rcu-restore-at-boot", {"init_variant": "rcu-restore-at-boot"}),
             ("missing-swapon", {"init_variant": "missing-swapon"}),
+            ("no-adbd-keep-alive", {"init_variant": "no-adbd-keep-alive"}),
             ("swapon-also-at-boot", {"init_variant": "swapon-also-at-boot"}),
             ("swapon-twice", {"init_variant": "swapon-twice"}),
             ("cuttlefish-graphics-rc",
@@ -2150,7 +2265,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("fastbootd", {"extra_entry": "SYSTEM/bin/fastbootd"}),
             ("curated-out-profiles",
              {"extra_entry": "SYSTEM_EXT/app/Profiles/Profiles.apk"}),
-            ("fdroid-wide-permissions", {"wide_fdroid_permissions": True}),
+            ("curated-out-jelly",
+             {"extra_entry": "PRODUCT/app/Jelly/Jelly.apk"}),
+            ("curated-out-fdroid",
+             {"extra_entry": "PRODUCT/app/F-Droid/F-Droid.apk"}),
+            ("curated-out-fdroid-extension",
+             {"extra_entry": "PRODUCT/priv-app/F-DroidPrivilegedExtension/"
+                             "F-DroidPrivilegedExtension.apk"}),
+            ("curated-out-fdroid-permissions",
+             {"extra_entry": "PRODUCT/etc/permissions/"
+                             "privapp-permissions-org.fdroid.fdroid.privileged.xml"}),
             ("missing-video-encoder-service",
              {"entries": {f"VENDOR/bin/hw/{video_service}": None}}),
             ("missing-video-plugin-store",
@@ -2447,6 +2571,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "unexpected product property apexd.config.use_fiemap: \\[\\]"),
             ("use-fiemap-true-cause", {"use_fiemap_variant": "true"},
              "unexpected product property apexd.config.use_fiemap: \\['true'\\]"),
+            ("no-adbd-keep-alive-cause", {"init_variant": "no-adbd-keep-alive"},
+             "does not run 'start adbd' at property:init.svc.adbd=stopped"),
             ("missing-swapon-cause", {"init_variant": "missing-swapon"},
              "does not run 'swapon_all /vendor/etc/fstab.uml' once at property:sys.boot_completed=1"),
             ("swapon-twice-cause", {"init_variant": "swapon-twice"},
@@ -2497,6 +2623,39 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not declare IThermal/default in a VINTF fragment"),
             ("thermal-apex-without-service-cause", {"thermal_hal_variant": "no-service"},
              "does not start the vendor.thermal-example service"),
+            ("missing-adbd-apex-cause", {"adbd_variant": "missing-apex"},
+             "SYSTEM/apex/com.android.adbd.apex is missing: the product needs the adb daemon"),
+            ("adbd-apex-without-binary-cause", {"adbd_variant": "no-binary"},
+             "SYSTEM/apex/com.android.adbd.apex does not hold the adb daemon bin/adbd"),
+            ("adbd-without-host-key-cause", {"adbd_variant": "no-key"},
+             "holds an adbd that does not read ro.boot.kernarium.adb_key"),
+            ("adbd-without-tcp-policy-cause", {"adbd_variant": "no-tcp"},
+             "holds an adbd that does not read ro.boot.kernarium.adb_tcp"),
+            ("adbd-without-debugging-setting-cause", {"adbd_variant": "no-debugging-setting"},
+             "holds an adbd that does not read persist.sys.usb.config"),
+            ("adbd-without-key-rule-cause", {"adbd_variant": "no-key-rule"},
+             "holds an adbd without the key rule of route p0011"),
+            ("signed-with-the-test-key-cause", {"signed": True, "ota_certificates": "build"},
+             "holds the members .* not only keys/releasekey.x509.pem: the target files are not "
+             "signed with the release keys"),
+            ("signed-with-the-test-key-path-cause", {"signed": True, "ota_certificates": "test-key-path"},
+             "not signed with the release keys"),
+            ("signed-with-an-extra-certificate-cause", {"signed": True, "ota_certificates": "extra"},
+             "not signed with the release keys"),
+            ("signed-without-recovery-certificates-cause", {"signed": True, "ota_certificates": "missing-recovery"},
+             "RECOVERY/RAMDISK/system/etc/security/otacerts.zip is missing from the signed"),
+            ("unsigned-with-the-release-member-cause", {"ota_certificates": "release"},
+             "holds the members .* not only testkey.x509.pem: the target files are not an unsigned build"),
+            ("unsigned-with-an-extra-certificate-cause", {"ota_certificates": "extra"},
+             "not an unsigned build"),
+            ("unsigned-without-recovery-certificates-cause", {"ota_certificates": "missing-recovery"},
+             "RECOVERY/RAMDISK/system/etc/security/otacerts.zip is missing from the unsigned"),
+            ("services-jar-without-the-adb-topics-cause", {"services_jar_variant": "no-marker"},
+             "lacks the AdbService topics of route p0007"),
+            ("missing-services-jar-cause", {"services_jar_variant": "missing"},
+             "SYSTEM/framework/services.jar is missing"),
+            ("adbd-cannot-read-launch-properties-cause", {"adbd_launch_unreadable": True},
+             "adbd may not read ro.boot.kernarium.adb_key, labelled bootloader_prop"),
             ("missing-cas-apex-cause", {"cas_hal_variant": "missing-apex"},
              "com.android.hardware.cas.apex is missing: the product needs the default CAS HAL"),
             ("cas-apex-without-binary-cause", {"cas_hal_variant": "no-binary"},
@@ -2510,9 +2669,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-cas-plugin-32-cause", {"cas_hal_variant": "no-plugin32"},
              "the ClearKey CAS plugin is missing: VENDOR/lib/mediacas/libclearkeycasplugin.so"),
             ("missing-discrete-ops-overlay-cause", {"discrete_ops_variant": "missing-overlay"},
-             "SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk is missing"),
+             "SimpleDeviceConfig__lineage_andarium__auto_generated_rro_product.apk is missing"),
             ("missing-framework-overlay-cause", {"wallpaper_variant": "missing-overlay"},
-             "framework-res__lineage_darwin__auto_generated_rro_product.apk is missing"),
+             "framework-res__lineage_andarium__auto_generated_rro_product.apk is missing"),
             ("missing-default-wallpaper-variant-cause", {"wallpaper_variant": "missing-variant"},
              "has no res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"),
             ("lineage-size-default-wallpaper-cause", {"wallpaper_variant": "lineage-size"},
@@ -2717,7 +2876,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           "PRODUCT/app/Orphan/oat/arm/Orphan.vdex": b"vdex"}},
              "has no ARM64 one"),
             ("unknown-isa-cause",
-             {"entries": {"PRODUCT/app/Jelly/oat/x86_64/Jelly.odex": b"odex"}},
+             {"entries": {"PRODUCT/app/LatinIME/oat/x86_64/LatinIME.odex": b"odex"}},
              "not for an ISA of this product"),
             ("32-bit-elf-in-lib64-cause",
              {"entries": {"VENDOR/lib64/libfixture.so": synthetic_arm_elf()}},
@@ -2878,11 +3037,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             label = "/".join(case["labels"])
             fixture = root / f"bad-{case['labels'][0]}.zip"
             write_fixture(fixture, **case["options"])
-            result = run_in_process(tool, "--target-files", fixture, *kernel_options)
+            signed_option = ("--signed",) if case["options"].get("signed") else ()
+            result = run_in_process(tool, "--target-files", fixture, *signed_option, *kernel_options)
             if index == 0:
                 # The harness answers as the script does: the first case also
                 # runs as a process.
-                process = run_tool(verifier, "--target-files", fixture, *kernel_options)
+                process = run_tool(verifier, "--target-files", fixture, *signed_option, *kernel_options)
                 if (process.returncode, process.stdout) != (result.returncode, result.stdout):
                     fail(
                         f"the in-process run of the {label} fixture differs from the "
@@ -2931,7 +3091,7 @@ def verify_erofs_board(android_root: Path) -> None:
     for line in (
         "BOARD_EROFS_COMPRESSOR := $(UML_ANDROID_EROFS_COMPRESSOR)\n",
         "BOARD_EROFS_PCLUSTER_SIZE := $(UML_ANDROID_EROFS_PCLUSTER_SIZE)\n",
-        "BOARD_EROFS_COMPRESS_HINTS := device/kernarium/darwin/config/erofs_compress_hints.txt\n",
+        "BOARD_EROFS_COMPRESS_HINTS := device/kernarium/andarium/config/erofs_compress_hints.txt\n",
     ):
         if board.count(line) != 1:
             fail(f"BoardConfig.mk does not contain {line.strip()!r} exactly once")
@@ -2954,6 +3114,16 @@ def verify_erofs_board(android_root: Path) -> None:
         "0 .*\\.apex$"
     ]:
         fail("erofs_compress_hints.txt is not the single rule that stores .apex uncompressed")
+    payload_hints = (android_root / "overlay/config/erofs_apex_payload_hints.txt").read_text()
+    if [line for line in payload_hints.splitlines() if line and not line.startswith("#")] != [
+        "0 .*\\.rc$",
+        "0 .*\\.xml$",
+        "0 .*bin/adbd$",
+    ]:
+        fail(
+            "erofs_apex_payload_hints.txt is not the rules that store init scripts, VINTF "
+            "fragments and the adb daemon uncompressed"
+        )
 
 
 def verify_userdata_grow(android_root: Path) -> None:
@@ -3047,9 +3217,9 @@ def verify_pinner_overlay(android_root: Path) -> None:
     for needle in ('name: "KernariumPinnerOverlay"', "vendor: true,", 'sdk_version: "28",'):
         if needle not in blueprint:
             fail(f"the pinner overlay module lacks {needle}")
-    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
     if len(re.findall(r"^PRODUCT_PACKAGES \+= KernariumPinnerOverlay$", product, re.M)) != 1:
-        fail("lineage_darwin.mk does not add KernariumPinnerOverlay to PRODUCT_PACKAGES exactly once")
+        fail("lineage_andarium.mk does not add KernariumPinnerOverlay to PRODUCT_PACKAGES exactly once")
     if verifier.PINNER_OVERLAY != "VENDOR/overlay/KernariumPinnerOverlay.apk":
         fail("the verifier expects the pinner overlay somewhere other than the vendor overlay directory")
 
@@ -3293,7 +3463,7 @@ def verify_secure_element_topic(android_root: Path) -> None:
             fail(f"the SecureElement topic check accepts {label}")
     # The product keeps the package (the package assertions are verified in verify_package_assertions) and
     # the image verifier does not forbid its directory.
-    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
     removed_block = re.search(
         r"^KERNARIUM_REMOVED_PACKAGES := \\\n((?:    \S+ \\\n)+    \S+)$", product, re.MULTILINE
     )
@@ -3342,9 +3512,9 @@ def verify_reclaim_boot_apps(android_root: Path) -> None:
     ):
         if needle not in blueprint:
             fail(f"overlay/tools/Android.bp lacks {needle}")
-    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
     if len(re.findall(r"^PRODUCT_PACKAGES \+= kernarium_reclaim_boot_apps_script$", product, re.M)) != 1:
-        fail("lineage_darwin.mk does not add the reclaim script to PRODUCT_PACKAGES exactly once")
+        fail("lineage_andarium.mk does not add the reclaim script to PRODUCT_PACKAGES exactly once")
     verifier.check_reclaim_boot_apps((tools / "kernarium_reclaim_boot_apps.rc").read_text(), script.read_bytes())
 
     lru = "\n".join((
@@ -3605,12 +3775,12 @@ def verify_media_codecs_overlay(android_root: Path) -> None:
 
 def verify_package_assertions(android_root: Path) -> None:
     """The producer's package assertions agree with the product's removed-package list."""
-    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
     removed_block = re.search(
         r"^KERNARIUM_REMOVED_PACKAGES := \\\n((?:    \S+ \\\n)+    \S+)$", product, re.MULTILINE
     )
     if removed_block is None:
-        fail("lineage_darwin.mk has no KERNARIUM_REMOVED_PACKAGES list")
+        fail("lineage_andarium.mk has no KERNARIUM_REMOVED_PACKAGES list")
     removed = set(removed_block.group(1).replace("\\", " ").split())
     script = (android_root / "build/build-aosp.sh").read_text()
     excluded_block = re.search(
@@ -3639,6 +3809,25 @@ def verify_package_assertions(android_root: Path) -> None:
     ):
         if package not in present:
             fail(f"build-aosp.sh does not assert that {package} is present")
+
+
+def verify_debugging_defaults(android_root: Path) -> None:
+    """Developer options and USB debugging are off on a fresh data partition."""
+    defaults = ET.fromstring(
+        (android_root / "overlay/overlay/frameworks/base/packages/SettingsProvider/"
+         "res/values/defaults.xml").read_text()
+    )
+    values = [
+        element.text for element in defaults.findall("bool")
+        if element.get("name") == "def_development_settings_enabled"
+    ]
+    if values != ["false"]:
+        fail(f"the SettingsProvider overlay must default Developer options off: {values}")
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
+    for line in product.splitlines():
+        stripped = line.strip().rstrip("\\").strip()
+        if stripped.startswith("persist.sys.usb.config=") and not stripped.endswith(",$(PRODUCT_PRODUCT_PROPERTIES))"):
+            fail(f"lineage_andarium.mk must not set USB debugging on: {stripped}")
 
 
 def verify_hal_selections(android_root: Path) -> None:
@@ -3858,7 +4047,7 @@ def synthetic_lineage_recovery_ramdisk(
         newc_entry(
             "prop.default",
             0o100644,
-            b"ro.product.system.device=darwin\n"
+            b"ro.product.system.device=andarium\n"
             b"persist.adb.tcp.port=5555\n"
             + (b"" if no_memfd else b"sys.use_memfd=true\n"),
             2,
@@ -4480,6 +4669,7 @@ def main() -> None:
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)
     verify_package_assertions(android_root)
+    verify_debugging_defaults(android_root)
     verify_pin_manifest(android_root / "tools/render-pin-manifest.py")
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_boot_image_fixtures(android_root / "tools/boot-image.py")

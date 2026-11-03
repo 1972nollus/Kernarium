@@ -89,7 +89,7 @@ def tracked_fstab(error: Error) -> bytes:
 
 # The two parameters of the compressed EROFS the read-only partitions share,
 # written once in the product makefile.
-EROFS_PARAMETERS_MAKEFILE = "overlay/lineage_darwin.mk"
+EROFS_PARAMETERS_MAKEFILE = "overlay/lineage_andarium.mk"
 EROFS_PARAMETER = re.compile(
     r"^(UML_ANDROID_EROFS_COMPRESSOR|UML_ANDROID_EROFS_PCLUSTER_SIZE) := (\S+)$"
 )

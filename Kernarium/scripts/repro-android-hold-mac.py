@@ -215,8 +215,17 @@ def sample(label: str, baseline_pids: str) -> dict:
     return result
 
 
-def blocked_in_gpu_queue() -> int:
-    """How many blocked tasks wait for room in the guest's GPU control queue."""
+def blocked_in_gpu_queue() -> int | None:
+    """How many blocked tasks wait for room in the guest's GPU control queue.
+
+    The count comes from sysrq-w and the kernel log, which need root: only the
+    userdebug diagnostics image has it. On a user image (ro.debuggable 0) the
+    sample is skipped; the D-state sample and the framework's reports still
+    judge the hold.
+    """
+    _, debuggable = guest("getprop ro.debuggable", timeout=30)
+    if debuggable.strip() != "1":
+        return None
     _, output = guest(
         'su 0 sh -c "echo 1 > /proc/sys/kernel/sysrq; echo w > '
         '/proc/sysrq-trigger; dmesg | tail -n 400"',

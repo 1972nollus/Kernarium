@@ -49,8 +49,9 @@ void authorizationStaysOnUnlessTheLaunchTurnsItOff()
         "the launch setting's name");
 }
 
-/* Off also starts the guest's adb_root service, so it is allowed only where
- * no network can reach the forward: no forward, or a loopback one. */
+/* Off gives whatever reaches the forward an unauthenticated shell (root on a
+ * userdebug image), so it is allowed only where no network can reach the
+ * forward: no forward, or a loopback one. */
 void offIsAllowedOnlyWhereNoNetworkReachesTheForward()
 {
     require(authorizationValue("0", nullptr) == "0", "no forward");

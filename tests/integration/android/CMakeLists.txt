@@ -18,3 +18,21 @@ uml_add_guest_integration_test(
     LABELS guest;boot;android
     TIMEOUT 600
     CPUS 1)
+
+# The release's adb debugging setting and adbd's key rule (the p0007 and p0011
+# adb topics), on a fresh data disk and across reboots. It boots Android with
+# the macOS launcher, so it is opt-in: name the release under test.
+set(UML_ANDROID_ADB_DEBUGGING_RELEASE "" CACHE PATH
+    "Installed Android release directory that the android-adb-debugging test boots")
+if(UML_ANDROID_ADB_DEBUGGING_RELEASE AND TARGET uml-darwin-android17)
+    uml_add_integration_test(
+        NAME android-adb-debugging
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/run_android_adb_debugging.py
+            --release ${UML_ANDROID_ADB_DEBUGGING_RELEASE}
+            --emulator $<TARGET_FILE:uml-darwin-android17>
+        LABELS guest;boot;android
+        TIMEOUT 3600
+        PROCESSORS 4
+        RESOURCE_GROUPS cpus:4)
+endif()

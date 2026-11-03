@@ -26,7 +26,7 @@ Usage: android/lineage-24/build/apply-aosp-patches.sh \
 Run locally on the x86_64 Linux builder after source preparation. Every routed
 project must be clean and at the exact revision in the resolved manifest lock.
 The command applies generated per-project patches, then exactly synchronizes
-the checked device overlay to device/kernarium/darwin. It performs no fetch or
+the checked device overlay to device/kernarium/andarium. It performs no fetch or
 transport operation.
 EOF
 }

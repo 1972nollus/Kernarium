@@ -62,6 +62,12 @@ def main() -> None:
     sys.path.insert(0, str(android_root / "tools"))
     from release_common import (  # noqa: PLC0415
         BUILD_VARIANTS,
+        OTA_CERTIFICATE_BUILD_MEMBER,
+        OTA_CERTIFICATE_MEMBERS,
+        RELEASE_BUILD_VARIANTS,
+        ota_certificate_member,
+        require_release_build_variant,
+        signed_ota_certificate_member,
         DIRECTORY_PREFIX,
         KERNEL_FAMILY,
         PAYLOAD_SPECS,
@@ -312,9 +318,38 @@ def main() -> None:
             "a 16 KiB Android kernel",
         )
         tracked_variant = original["android"]["build_variant"]
+        for variant in RELEASE_BUILD_VARIANTS:
+            require_release_build_variant(variant)
+        expect_failure(
+            lambda: require_release_build_variant("userdebug"),
+            "a diagnostics build published as a release",
+        )
+        # Only a user build is signed, with the release keys: its otacerts.zip member is the release
+        # certificate's. An unsigned build of either variant holds the AOSP test certificate's file name,
+        # and a userdebug build keeps it, as it is never re-signed.
+        if set(OTA_CERTIFICATE_MEMBERS) != set(BUILD_VARIANTS):
+            fail("the variants with an OTA certificate member are not the build variants")
+        if "testkey.x509.pem" != OTA_CERTIFICATE_MEMBERS["userdebug"] or OTA_CERTIFICATE_BUILD_MEMBER != "testkey.x509.pem":
+            fail("a userdebug build's otacerts.zip member is not the test certificate's file name")
+        if signed_ota_certificate_member("user") != "keys/releasekey.x509.pem":
+            fail("a user build's otacerts.zip member is not the release certificate's")
+        for variant in BUILD_VARIANTS:
+            if ota_certificate_member(variant, False) != "testkey.x509.pem":
+                fail(f"an unsigned {variant} build does not hold the test certificate's file name")
+        if ota_certificate_member("user", True) != "keys/releasekey.x509.pem":
+            fail("a signed user build does not hold the release certificate's member")
+        expect_failure(
+            lambda: signed_ota_certificate_member("userdebug"),
+            "a diagnostics build signed with the release keys",
+        )
+        expect_failure(
+            lambda: ota_certificate_member("userdebug", True),
+            "a diagnostics build checked as signed",
+        )
         for variant, label in (
             (next(name for name in BUILD_VARIANTS if name != tracked_variant),
              "a build variant other than the tracked one"),
+            ("userdebug", "a diagnostics build in a release manifest"),
             ("eng", "an unsupported build variant"),
         ):
             manifest = copy.deepcopy(original)

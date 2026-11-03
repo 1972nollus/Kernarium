@@ -240,9 +240,10 @@ runtime reads `KERNARIUM_ANDROID_ADB_AUTH`: `0` starts one launch with
 authorization off, as the macOS launcher does, and `1` or unset keeps the
 prompt. It prints `Kernarium: ADB authorization is off for this launch`, and
 it refuses the setting unless `KERNARIUM_HOST_FORWARD` is unset or listens on
-loopback, because authorization off also makes `adb root` available to
-whatever reaches the forward. A host on USB reaches a loopback forward through
-`iproxy`; a forward on every interface or on a network address is refused.
+loopback, because authorization off gives whatever reaches the forward an
+unauthenticated shell (and `adb root` on a userdebug image). A host on USB
+reaches a loopback forward through `iproxy`; a forward on every interface or on
+a network address is refused.
 The packaging script refuses a release runtime that carries the switch.
 
 Every automation runtime also reads `KERNARIUM_BACKGROUND_JOB_AT_START=1`
