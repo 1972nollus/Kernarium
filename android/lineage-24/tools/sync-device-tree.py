@@ -24,7 +24,11 @@ import time
 from pathlib import Path, PurePosixPath
 
 
-DESTINATION = PurePosixPath("device/kernarium/darwin")
+DESTINATION = PurePosixPath("device/kernarium/andarium")
+# The product's earlier device directory. A workspace that still holds it would define
+# the retired lineage_darwin product beside the current one, so the sync removes it
+# and the verification refuses it.
+RETIRED_DESTINATIONS = (PurePosixPath("device/kernarium/darwin"),)
 
 
 def fail(message: str) -> None:
@@ -138,10 +142,19 @@ def main() -> None:
     except ValueError:
         fail("device destination escapes the AOSP source")
 
+    retired = [workspace / Path(name) for name in RETIRED_DESTINATIONS]
     if args.verify:
+        for name in retired:
+            if name.exists() or name.is_symlink():
+                fail(f"retired device directory is still present: {name}")
         verify(source, destination)
         print(f"verified exact device overlay: {destination}")
     else:
+        for name in retired:
+            if name.is_symlink() or (name.exists() and not name.is_dir()):
+                fail(f"retired device directory is not a regular directory: {name}")
+            if name.exists():
+                shutil.rmtree(name)
         synchronize(source, destination)
         print(f"synchronized exact device overlay: {destination}")
 

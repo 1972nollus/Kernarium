@@ -15,8 +15,8 @@
 #
 
 PRODUCT_MAKEFILES := \
-	lineage_darwin:$(LOCAL_DIR)/lineage_darwin.mk
+	lineage_andarium:$(LOCAL_DIR)/lineage_andarium.mk
 
 COMMON_LUNCH_CHOICES := \
-	lineage_darwin-cp2a-user \
-	lineage_darwin-cp2a-userdebug
+	lineage_andarium-cp2a-user \
+	lineage_andarium-cp2a-userdebug
