@@ -31,9 +31,11 @@ class DisplayActivityLog final {
 public:
     DisplayActivityLog() noexcept
     {
+#ifndef UML_APP_STORE_RUNTIME
         const char* path = std::getenv("UML_GPU_DISPLAY_ACTIVITY_LOG");
         if (path != nullptr && path[0] != '\0')
             file_ = std::fopen(path, "ae");
+#endif
     }
 
     ~DisplayActivityLog()

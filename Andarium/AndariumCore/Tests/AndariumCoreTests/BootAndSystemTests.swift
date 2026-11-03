@@ -103,8 +103,7 @@ struct SystemInfoTests {
 
     @Test func readsTheReleaseManifest() throws {
         let info = try SystemInfo(manifest: Data(manifest.utf8), appVersion: "1.0 (1)")
-        #expect(info.distribution == "LineageOS 24")
-        #expect(info.android == "17")
+        #expect(info.version == "17")
         #expect(info.release == "20261031-los24-r4")
         #expect(info.buildID == "CP2A.260605.016")
         #expect(info.kernel == "Linux 6.18.54")

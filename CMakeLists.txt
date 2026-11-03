@@ -89,9 +89,22 @@ option(UML_BUILD_KERNARIUM_RUNTIME
 option(UML_KERNARIUM_AUTOMATION_HARNESS
     "Build the automation-only Kernarium runtime: Linux boots host payloads, Android lets a launch turn ADB authorization off"
     OFF)
+option(UML_APP_STORE_RUNTIME
+    "Build the App Store Kernarium runtime: it reads no environment variable that tunes, observes or drives a run"
+    OFF)
 option(UML_BUILD_NETWORK_PROVIDER
     "Build the optional SLiRP network provider"
     ${UML_BUILD_KERNEL_RUNNER})
+if(UML_APP_STORE_RUNTIME)
+    if(UML_KERNARIUM_AUTOMATION_HARNESS OR NOT UML_BUILD_KERNARIUM_RUNTIME)
+        message(FATAL_ERROR
+            "UML_APP_STORE_RUNTIME builds the Kernarium runtime and conflicts "
+            "with UML_KERNARIUM_AUTOMATION_HARNESS")
+    endif()
+    # Every component of the runtime reads its diagnostics and A/B switches
+    # through this definition, so one tree agrees.
+    add_compile_definitions(UML_APP_STORE_RUNTIME)
+endif()
 
 # darwin/platform compiles Objective-C++ in every configuration. Without the
 # language its .mm sources fall to the C++ rule, which drops their

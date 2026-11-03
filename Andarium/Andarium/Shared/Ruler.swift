@@ -245,7 +245,7 @@ struct ControlsPanel: View {
                     Text("\(Limits.capacityRangeGiB.upperBound) GB is the largest size")
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("\(Formats.gb(Double(guest.capacityGiB) - guest.usedGB)) free in Android")
+                    Text("\(Formats.gb(Double(guest.capacityGiB) - guest.usedGB)) free in the guest")
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
@@ -414,7 +414,7 @@ struct ResizeSheet: View {
         if capacity > guest.capacityGiB {
             line("arrow.up.circle.fill", .accentColor,
                  "Grows to \(capacity) GB at the next start",
-                 "Android sees the new space once it has started.")
+                 "The guest sees the new space once it has started.")
         } else if let pending = guest.pendingCapacityGiB {
             line("arrow.uturn.backward.circle.fill", .secondary,
                  "Stays at \(guest.capacityGiB) GB",

@@ -5,22 +5,30 @@ import Testing
 
 @testable import AndariumCore
 
+/// The settings of a launch, answered as the application's environment
+/// reader would.
+private func launch(
+    _ settings: [LaunchOverrides.Setting: String], processorCount: Int = 4
+) -> LaunchOverrides {
+    LaunchOverrides(processorCount: processorCount) { settings[$0] }
+}
+
 struct LaunchOverridesTests {
-    @Test func emptyEnvironmentAsksNothing() {
-        let overrides = LaunchOverrides(environment: [:], processorCount: 8)
+    @Test func noSettingAsksNothing() {
+        let overrides = launch([:], processorCount: 8)
         #expect(overrides.isEmpty)
         #expect(overrides.start == nil)
         #expect(!overrides.erase)
     }
 
-    @Test func readsTheSharedKnobs() {
-        let overrides = LaunchOverrides(
-            environment: [
-                "KERNARIUM_VCPU_COUNT": "2",
-                "KERNARIUM_GUEST_MEMORY_MIB": "1536",
-                "KERNARIUM_ANDROID_DISK_SIZE_GIB": "32",
-                "KERNARIUM_RETINA_MODE": "1",
-                "KERNARIUM_GPU_AUTO_RESIZE": "0",
+    @Test func readsTheSharedSettings() {
+        let overrides = launch(
+            [
+                .vCPUCount: "2",
+                .memoryMiB: "1536",
+                .diskGiB: "32",
+                .retina: "1",
+                .followWindow: "0",
             ],
             processorCount: 6
         )
@@ -32,12 +40,12 @@ struct LaunchOverridesTests {
     }
 
     @Test func ignoresValuesOutOfRangeOrOffStep() {
-        let overrides = LaunchOverrides(
-            environment: [
-                "KERNARIUM_VCPU_COUNT": "9",
-                "KERNARIUM_GUEST_MEMORY_MIB": "1000",
-                "KERNARIUM_ANDROID_DISK_SIZE_GIB": "x",
-                "KERNARIUM_RETINA_MODE": "2",
+        let overrides = launch(
+            [
+                .vCPUCount: "9",
+                .memoryMiB: "1000",
+                .diskGiB: "x",
+                .retina: "2",
             ],
             processorCount: 6
         )
@@ -45,10 +53,10 @@ struct LaunchOverridesTests {
     }
 
     /// The application passes the host's vCPU limit as `processorCount`, so
-    /// `KERNARIUM_VCPU_COUNT` states 1 through the limit and nothing above it.
+    /// the vCPU count states 1 through the limit and nothing above it.
     @Test func theVCPUCountIsBoundedByTheHostsLimit() {
         func stated(_ value: String, limit: Int) -> Int? {
-            LaunchOverrides(environment: ["KERNARIUM_VCPU_COUNT": value], processorCount: limit).vCPUCount
+            launch([.vCPUCount: value], processorCount: limit).vCPUCount
         }
         for limit in [6, 8] {
             #expect(stated("1", limit: limit) == 1)
@@ -63,20 +71,17 @@ struct LaunchOverridesTests {
     }
 
     @Test func startModes() {
-        #expect(LaunchOverrides(environment: ["ANDARIUM_START": "normal"], processorCount: 4).start == .normal)
-        #expect(LaunchOverrides(environment: ["ANDARIUM_START": "recovery"], processorCount: 4).start == .recovery)
-        #expect(LaunchOverrides(environment: ["ANDARIUM_START": "other"], processorCount: 4).start == nil)
-        #expect(
-            LaunchOverrides(environment: ["KERNARIUM_ANDROID_BOOT_MODE": "recovery"], processorCount: 4).start
-                == .recovery
-        )
-        #expect(LaunchOverrides(environment: ["KERNARIUM_ANDROID_BOOT_MODE": "normal"], processorCount: 4).start == nil)
+        #expect(launch([.start: "normal"]).start == .normal)
+        #expect(launch([.start: "recovery"]).start == .recovery)
+        #expect(launch([.start: "other"]).start == nil)
+        #expect(launch([.bootMode: "recovery"]).start == .recovery)
+        #expect(launch([.bootMode: "normal"]).start == nil)
     }
 
     @Test func erase() {
-        #expect(LaunchOverrides(environment: ["ANDARIUM_ERASE": "1"], processorCount: 4).erase)
-        #expect(!LaunchOverrides(environment: ["ANDARIUM_ERASE": "0"], processorCount: 4).erase)
-        #expect(!LaunchOverrides(environment: [:], processorCount: 4).erase)
+        #expect(launch([.erase: "1"]).erase)
+        #expect(!launch([.erase: "0"]).erase)
+        #expect(!launch([:]).erase)
     }
 
     @Test func appliesToAGuest() {

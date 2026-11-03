@@ -1,5 +1,6 @@
 import AndariumCore
 import Foundation
+import Metal
 import os
 import TipKit
 import UIKit
@@ -14,6 +15,10 @@ struct AppEntry {
     var hints: ScreenHints { ScreenHints() }
 
     static func fromArguments() -> AppEntry {
+        #if APP_STORE
+        // An App Store build reads no launch setting.
+        return AppEntry(overrides: LaunchOverrides())
+        #else
         let info = ProcessInfo.processInfo
         return AppEntry(
             overrides: LaunchOverrides(
@@ -21,6 +26,7 @@ struct AppEntry {
                 processorCount: GuestProcessorLimit.vCPUs(physicalProcessorCount: info.activeProcessorCount)
             )
         )
+        #endif
     }
 
     func configureTips() {
@@ -39,7 +45,7 @@ struct AppEntry {
 
         var problem: String?
         var system = SystemInfo(
-            distribution: "LineageOS", android: "", release: "unknown", securityPatch: nil,
+            version: "", release: "unknown", securityPatch: nil,
             kernel: "", architecture: "", appVersion: version
         )
         var carried: SystemFolder.Release?
@@ -69,7 +75,7 @@ struct AppEntry {
         do {
             guest = try storage.load()
         } catch {
-            problem = problem ?? "Android\u{2019}s settings could not be read: \(error.localizedDescription)"
+            problem = problem ?? "The guest\u{2019}s settings could not be read: \(error.localizedDescription)"
         }
         // A stored memory size above the bound of its vCPU count comes down to
         // it; a size the launch states stays as stated.
@@ -94,7 +100,7 @@ struct AppEntry {
             model.driver = runtime
             model.refreshPlan()
         }
-        model.alert = problem.map { AppAlert(title: "Android Is Not Available", message: $0) }
+        model.alert = problem.map { AppAlert(title: "The System Is Not Available", message: $0) }
         return model
     }
 
@@ -169,8 +175,19 @@ struct AppEntry {
             name: name, processorCount: limit,
             memory: memoryPolicy(processorCount: limit),
             freeStorageBytes: freeStorageBytes(), isMac: info.isiOSAppOnMac,
-            physicalProcessorCount: info.activeProcessorCount
+            physicalProcessorCount: info.activeProcessorCount,
+            runsGuestGraphics: drawsGuestGraphics()
         )
+    }
+
+    /// The guest is drawn with Metal 4 (the A14 and later). The Simulator
+    /// draws it with the CPU and has no Metal 4 device, so it always can.
+    static func drawsGuestGraphics() -> Bool {
+        #if targetEnvironment(simulator)
+        return true
+        #else
+        return MTLCreateSystemDefaultDevice()?.supportsFamily(.metal4) ?? false
+        #endif
     }
 
     /// The most guest RAM at each vCPU count: the runtime's own budget
