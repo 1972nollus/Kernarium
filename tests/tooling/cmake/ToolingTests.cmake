@@ -62,6 +62,19 @@ uml_add_tooling_test(
     LABELS audit;package
     TIMEOUT 120)
 
+# A bundle's privacy manifest declares every required-reason API the bundle
+# uses. The framework packaging and the Andarium App Store build run this
+# check; the fixtures show it finds a C symbol, an Objective-C class, a
+# selector with no symbol, a missing or malformed manifest and an
+# Info.plist with an empty version or no MinimumOSVersion.
+uml_add_tooling_test(
+    NAME ios-privacy-manifests
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_check_privacy_manifests.py
+        --checker ${PROJECT_SOURCE_DIR}/scripts/check-privacy-manifests.py
+    LABELS audit;package
+    TIMEOUT 180)
+
 # scripts/build-xcframework.sh takes its exact public API from the headers
 # through this check, so a public change needs no second list.
 uml_add_tooling_test(

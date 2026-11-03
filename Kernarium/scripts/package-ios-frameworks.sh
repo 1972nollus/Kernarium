@@ -28,6 +28,12 @@
 # conflicts with it). The output directory is shared: Kernarium needs the
 # default full set, so package that again before building Kernarium.
 #
+# Every embedded framework carries a PrivacyInfo.xcprivacy
+# (Kernarium/PrivacyManifests) in each slice, and the device slices are checked
+# with scripts/check-privacy-manifests.py, which fails a binary that uses a
+# required-reason API the manifest does not declare, and a framework
+# Info.plist with an empty version or no MinimumOSVersion.
+#
 # KernariumTests also links HostBattery.xcframework: the Apple battery
 # provider's archive, as the Android runtime links it, with its header. The
 # application neither links nor embeds it, and the test bundle loads no second
@@ -260,6 +266,25 @@ done
 if has_sdk device; then
 	create_xcframework KosmicKrisp "$DEVICE_GPU/KosmicKrisp.framework" ""
 fi
+# install_privacy_manifest FRAMEWORK MANIFEST: the manifest goes into every
+# slice of the framework's XCFramework.
+PRIVACY_MANIFESTS="$ROOT_DIR/Kernarium/PrivacyManifests"
+install_privacy_manifest()
+{
+	for slice_framework in "$STAGE/$1.xcframework"/*/"$1.framework"; do
+		[ -d "$slice_framework" ] || fail "$1 XCFramework has no framework slice"
+		cp -- "$PRIVACY_MANIFESTS/$2.xcprivacy" \
+			"$slice_framework/PrivacyInfo.xcprivacy" ||
+			fail "could not install the privacy manifest of $1"
+	done
+}
+for framework in $RUNTIME_FRAMEWORKS; do
+	install_privacy_manifest "$framework" KRuntime
+done
+for framework in $GPU_FRAMEWORKS; do
+	[ ! -d "$STAGE/$framework.xcframework" ] ||
+		install_privacy_manifest "$framework" "$framework"
+done
 "$CMAKE" -E copy_directory "$STORAGE" \
 	"$STAGE/GPTFDisk.xcframework"
 "$CMAKE" -E copy_directory "$ZSTD" \
@@ -418,6 +443,16 @@ for platform in ios-arm64 ios-arm64-simulator; do
 	binary="$STAGE/LibZstd.xcframework/$platform/LibZstd.framework/LibZstd"
 	[ -f "$binary" ] || fail "missing packaged zstd decompressor: $binary"
 done
+
+# The device slices are what an upload carries: each must declare the
+# required-reason APIs its binary uses and carry a complete Info.plist.
+if has_sdk device; then
+	for framework in $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS; do
+		"$PYTHON" -B "$ROOT_DIR/scripts/check-privacy-manifests.py" \
+			"$STAGE/$framework.xcframework/ios-arm64/$framework.framework" ||
+			fail "the device slice of $framework fails the privacy manifest check"
+	done
+fi
 
 # The x86-64 JIT and the FEXCore it embeds are macOS-only.
 "$PYTHON" -B "$ROOT_DIR/scripts/check-no-fexcore.py" "$STAGE" ||

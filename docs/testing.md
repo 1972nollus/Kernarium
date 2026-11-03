@@ -794,6 +794,17 @@ bundle ID, to let the application read a removable volume when its derived data
 is on one, and the launch hangs ("the test runner hung before establishing
 connection") until a person answers; build to the internal disk instead.
 
+`ios-privacy-manifests` (tooling) covers `scripts/check-privacy-manifests.py`,
+which fails when a built application or framework uses a required-reason API
+(found in its undefined symbols and Objective-C selectors) that its
+`PrivacyInfo.xcprivacy` does not declare, or declares tracking, collected data
+or a reason code Apple does not define, or has an Info.plist with an empty
+version or no `MinimumOSVersion`. `package-ios-frameworks.sh` runs it on the
+device slice of every framework it packages (the manifests are
+`Kernarium/PrivacyManifests`), and it runs on any built bundle:
+`python3 scripts/check-privacy-manifests.py Andarium.app`. Its fixtures are
+small libraries compiled with the iOS SDK.
+
 ### UI automation on a device
 
 Unattended device automation goes through the long-lived
