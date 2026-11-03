@@ -320,9 +320,13 @@ public:
 			if (received < static_cast<ssize_t>(sizeof(reply) -
 				    maximumConsoleData))
 				return ExchangeResult::pending;
-			const auto length = std::min(
+			auto length = std::min(
 				static_cast<std::size_t>(reply.length),
 				maximumConsoleData);
+			/* The guest's driver counts the NUL that ends each reply in
+			 * the reply's length. It ends the text and is no part of it. */
+			if (length != 0U && reply.data[length - 1U] == '\0')
+				--length;
 			response.append(reply.data.data(), length);
 			if (reply.more == 0U)
 				return reply.error == 0U ? ExchangeResult::accepted :
