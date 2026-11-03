@@ -63,7 +63,7 @@ struct HomeView: View {
         .alert("Not Enough Free Space", isPresented: $model.startBlocked) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Starting needs \(Formats.hostGB(bytes: Limits.startReserveBytes)) free for Android's own writes. This \(model.host.name) has \(Formats.gb(model.host.freeStorageGB)) free.")
+            Text("Starting needs \(Formats.hostGB(bytes: Limits.startReserveBytes)) free for the guest's own writes. This \(model.host.name) has \(Formats.gb(model.host.freeStorageGB)) free.")
         }
     }
 
@@ -134,18 +134,25 @@ struct HomeView: View {
     @ViewBuilder
     private var notices: some View {
         @Bindable var model = model
+        if !model.host.runsGuestGraphics {
+            NoticeCard(
+                symbol: "cpu", color: .orange,
+                title: DeviceRequirement.title,
+                text: DeviceRequirement.explanation(deviceName: model.host.name)
+            )
+        }
         if model.lowSpace {
             NoticeCard(
                 symbol: "externaldrive.badge.exclamationmark", color: .orange,
                 title: "\(Formats.gb(model.host.freeStorageGB)) free on this \(model.host.name)",
-                text: "Android needs \(Formats.hostGB(bytes: Limits.startReserveBytes)) free to start. Free up space in Settings › General › \(model.host.name) Storage."
+                text: "The guest needs \(Formats.hostGB(bytes: Limits.startReserveBytes)) free to start. Free up space in Settings › General › \(model.host.name) Storage."
             )
         }
         switch model.plan {
         case .update(_, let release):
             NoticeCard(
                 symbol: "arrow.down.circle.fill", color: .accentColor,
-                title: "Android updated to \(release)",
+                title: "System updated to \(release)",
                 text: "The next start finishes the update and takes a little longer. Your data is saved first, so a start that does not finish can be undone."
             )
         case .unfinishedUpdate(let release, let canRetry, let canRestore):
@@ -164,7 +171,7 @@ struct HomeView: View {
                 NoticeCard(
                     symbol: "sparkles", color: .accentColor,
                     title: "Guest erased",
-                    text: "The next start runs Android's setup.",
+                    text: "The next start runs the system's setup.",
                     onClose: { withAnimation { model.notice = nil } }
                 )
             case .closedInBackground:
@@ -253,7 +260,7 @@ struct StartButton: View {
         .disabled(blocked)
     }
 
-    private var blocked: Bool { !model.plan.allowsStart }
+    private var blocked: Bool { !model.plan.allowsStart || !model.host.runsGuestGraphics }
 
     private var title: String {
         guard model.guest != nil, model.plan.allowsStart else { return "Start" }
@@ -285,11 +292,11 @@ struct StartMenu: View {
 
     private var detail: String {
         guard model.guest != nil else { return "" }
-        if case .unfinishedUpdate = model.plan { return "Android tries its update again" }
+        if case .unfinishedUpdate = model.plan { return "The system tries its update again" }
         switch model.bootKind(.normal) {
-        case .firstStart: return "First start: Android sets up"
-        case .upgrade: return "Android finishes its update"
-        default: return "\(model.system.distribution) · Android \(model.system.android)"
+        case .firstStart: return "First start: the system sets up"
+        case .upgrade: return "The system finishes its update"
+        default: return "System \(model.system.version)"
         }
     }
 
@@ -336,12 +343,21 @@ struct WelcomeView: View {
                 .padding(.bottom, 34)
             Text("No Guest Yet")
                 .font(.title2.weight(.bold))
-            Text("\(model.system.distribution) (Android \(model.system.android)) is built into Andarium. Set up a guest to run it.")
+            Text("The system (version \(model.system.version)) is built into Andarium. Set up a guest to run it.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 340)
                 .padding(.top, 8)
+            if !model.host.runsGuestGraphics {
+                NoticeCard(
+                    symbol: "cpu", color: .orange,
+                    title: DeviceRequirement.title,
+                    text: DeviceRequirement.explanation(deviceName: model.host.name)
+                )
+                .frame(maxWidth: 400)
+                .padding(.top, 20)
+            }
             Button {
                 model.sheet = .create
             } label: {
@@ -350,6 +366,7 @@ struct WelcomeView: View {
                     .frame(width: 220, height: 50)
             }
             .buttonStyle(.glassProminent)
+            .disabled(!model.host.runsGuestGraphics)
             .padding(.top, 28)
             Spacer(minLength: 20)
             Label("\(Formats.gb(model.host.freeStorageGB)) free on this \(model.host.name)", systemImage: "internaldrive")
@@ -474,7 +491,7 @@ struct BackupNote: View {
     let host: HostDevice
 
     var body: some View {
-        Text("iCloud and computer backups of this \(host.name) leave the guest out, because Android can set itself up again and its files take several gigabytes. Turn on Include in Backups to keep them.")
+        Text("iCloud and computer backups of this \(host.name) leave the guest out, because the system can set itself up again and its files take several gigabytes. Turn on Include in Backups to keep them.")
             .font(.footnote)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 18)
@@ -497,7 +514,7 @@ struct UnfinishedUpdateCard: View {
                     .foregroundStyle(Color.orange)
                     .frame(width: 28)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Android's update didn't finish").font(.subheadline.weight(.semibold))
+                    Text("The system's update didn't finish").font(.subheadline.weight(.semibold))
                     Text(text)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -523,7 +540,7 @@ struct UnfinishedUpdateCard: View {
         case (true, false):
             "The start that updates to \(release) did not reach its end. Start tries it again, or erase the guest to start over."
         case (false, true):
-            "This Andarium carries a different Android than the update that did not finish. Restore puts back your data from before it, or erase the guest to start over."
+            "This Andarium carries a different system than the update that did not finish. Restore puts back your data from before it, or erase the guest to start over."
         case (false, false):
             "The start that updates to \(release) did not reach its end, and nothing from before it is left to put back. Erase the guest to start over."
         }

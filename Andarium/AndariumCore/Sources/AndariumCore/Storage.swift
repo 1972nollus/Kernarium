@@ -89,11 +89,11 @@ public enum StorageError: Error, Equatable, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .notEnoughSpace:
-            return "There is not enough free storage to set up Android."
+            return "There is not enough free storage to set up the guest."
         case .missingRelease:
             return "This copy of Andarium does not carry a system."
         case .unusableDiskPath(let path):
-            return "Android cannot start from \(path): its name has a space, comma, colon or quotation mark."
+            return "The guest cannot start from \(path): its name has a space, comma, colon or quotation mark."
         }
     }
 }

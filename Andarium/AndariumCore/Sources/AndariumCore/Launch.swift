@@ -2,11 +2,23 @@
 
 import Foundation
 
-/// What a launch's environment asks of Andarium, for automation. The
-/// `KERNARIUM_` names mean what they mean in Kernarium; the `ANDARIUM_` ones
-/// are Andarium's own (`Andarium/README.md#automation`). A value that is out
-/// of range, off its step or malformed is ignored, as it is in Kernarium.
+/// What a harness launch asks of Andarium, for automation. The application
+/// names each setting in the environment (`LaunchEnvironment.swift`, which an
+/// App Store build leaves out, so no such name is in it) and answers this
+/// type with the text it found. A value that is out of range, off its step or
+/// malformed is ignored, as it is in Kernarium.
 public struct LaunchOverrides: Equatable, Sendable {
+    /// The settings a launch can state.
+    public enum Setting: CaseIterable, Sendable {
+        case vCPUCount, memoryMiB, diskGiB, retina, followWindow
+        /// "normal" or "recovery": start at launch.
+        case start
+        /// Kernarium's boot mode, whose "recovery" also asks for a start.
+        case bootMode
+        /// "1" erases the guest's data before the start.
+        case erase
+    }
+
     public var vCPUCount: Int?
     public var memoryMiB: Int?
     public var capacityGiB: Int?
@@ -20,33 +32,34 @@ public struct LaunchOverrides: Equatable, Sendable {
     public init() {}
 
     /// `processorCount` is the host's vCPU limit (`HostDevice.processorCount`):
-    /// `KERNARIUM_VCPU_COUNT` states 1 through it and nothing outside.
-    public init(environment: [String: String], processorCount: Int) {
-        func integer(_ key: String, in range: ClosedRange<Int>) -> Int? {
-            environment[key].flatMap { Int($0) }.flatMap { range.contains($0) ? $0 : nil }
+    /// the vCPU count states 1 through it and nothing outside. `value` is the
+    /// text the launch gave a setting, if it gave one.
+    public init(processorCount: Int, value: (Setting) -> String?) {
+        func integer(_ setting: Setting, in range: ClosedRange<Int>) -> Int? {
+            value(setting).flatMap { Int($0) }.flatMap { range.contains($0) ? $0 : nil }
         }
-        func flag(_ key: String) -> Bool? {
-            switch environment[key] {
+        func flag(_ setting: Setting) -> Bool? {
+            switch value(setting) {
             case "0"?: false
             case "1"?: true
             default: nil
             }
         }
-        vCPUCount = integer("KERNARIUM_VCPU_COUNT", in: 1...max(processorCount, 1))
-        memoryMiB = integer("KERNARIUM_GUEST_MEMORY_MIB", in: Limits.runtimeMemoryRangeMiB)
+        vCPUCount = integer(.vCPUCount, in: 1...max(processorCount, 1))
+        memoryMiB = integer(.memoryMiB, in: Limits.runtimeMemoryRangeMiB)
             .flatMap { MemoryPolicy.runtimeAccepts($0) ? $0 : nil }
-        capacityGiB = integer("KERNARIUM_ANDROID_DISK_SIZE_GIB", in: Limits.capacityRangeGiB)
-        retina = flag("KERNARIUM_RETINA_MODE")
-        followWindow = flag("KERNARIUM_GPU_AUTO_RESIZE")
-        switch environment["ANDARIUM_START"] {
+        capacityGiB = integer(.diskGiB, in: Limits.capacityRangeGiB)
+        retina = flag(.retina)
+        followWindow = flag(.followWindow)
+        switch value(.start) {
         case "normal"?: start = .normal
         case "recovery"?: start = .recovery
         default:
             // Kernarium's boot-mode name asks for a start only where the
             // launch names Recovery; the others leave Home alone.
-            if environment["KERNARIUM_ANDROID_BOOT_MODE"] == "recovery" { start = .recovery }
+            if value(.bootMode) == "recovery" { start = .recovery }
         }
-        erase = environment["ANDARIUM_ERASE"] == "1"
+        erase = value(.erase) == "1"
     }
 
     public var isEmpty: Bool { self == LaunchOverrides() }

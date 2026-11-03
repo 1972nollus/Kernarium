@@ -23,8 +23,10 @@ class ActivityLog final {
 public:
     ActivityLog()
     {
+#ifndef UML_APP_STORE_RUNTIME
         const char* path = std::getenv("UML_VIDEO_ACTIVITY_LOG");
         if (path != nullptr && path[0] != '\0') file_ = std::fopen(path, "ae");
+#endif
     }
     ~ActivityLog() { if (file_ != nullptr) std::fclose(file_); }
     ActivityLog(const ActivityLog&) = delete;
