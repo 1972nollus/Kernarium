@@ -47,10 +47,11 @@ inline constexpr std::string_view requestVariable {
 /* The androidboot.kernarium.adb_auth value for one launch. `request` is the
  * KERNARIUM_ANDROID_ADB_AUTH setting and `forward` the launch's
  * KERNARIUM_HOST_FORWARD (null when unset). "1", empty or unset keeps the
- * stock authorization prompt, "0" turns it off. Off also starts the guest's
- * adb_root service, so any process that reaches the forward becomes root in
- * the guest: it is refused unless the launch publishes no host port or only a
- * loopback one, which a host reaches over USB and no network can. */
+ * stock authorization prompt, "0" turns it off. Off gives any process that
+ * reaches the forward an unauthenticated shell (and root on a userdebug
+ * diagnostics image, where it also starts the guest's adb_root service): it is
+ * refused unless the launch publishes no host port or only a loopback one,
+ * which a host reaches over USB and no network can. */
 [[nodiscard]] inline std::string_view authorizationValue(
     const char* request, const char* forward)
 {

@@ -6,7 +6,7 @@
          the stored lockscreen.disabled value, so a true flag would keep a swipe
          lock screen off whatever `locksettings set-disabled false` or the
          Settings app sets. The default lives in ro.lockscreen.disable.default
-         (lineage_darwin.mk), which seeds the stored value when the lock
+         (lineage_andarium.mk), which seeds the stored value when the lock
          settings database is created. -->
     <bool name="config_disableLockscreenByDefault">false</bool>
     <integer name="config_audio_notif_vol_default">7</integer>

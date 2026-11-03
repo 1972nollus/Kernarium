@@ -733,7 +733,7 @@ def main() -> int:
     build.add_argument("--aosp-source", type=Path, required=True,
                        help="AOSP workspace root (also the working directory of dex2oat)")
     build.add_argument("--out-dir", default="out", help="build output directory name inside the workspace")
-    build.add_argument("--product", default="darwin", help="device directory under out/target/product")
+    build.add_argument("--product", default="andarium", help="device directory under out/target/product")
     build.add_argument("--output", type=Path, required=True, help="new directory for the artifacts")
     build.add_argument("--previous", type=Path, help="earlier output; its copies in the build tree count as ours")
     build.add_argument("--jobs", type=int, default=os.cpu_count() or 4)

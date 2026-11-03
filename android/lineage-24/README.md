@@ -20,7 +20,7 @@ builds, verification, image assembly, and publication are offline.
 
 The producer has three independent outputs:
 
-1. the `lineage_darwin` target files of the configured build variant, which
+1. the `lineage_andarium` target files of the configured build variant, which
    carry the kernel-less `init_boot` and LineageOS recovery images;
 2. one static GPT guest disk containing both boot ramdisks; and
 3. a compact rootfs release installed by Apple consumers.
@@ -55,7 +55,7 @@ remote that serves it, from its exact base to final tree. Generated patch
 series under `patches/projects/` are the only maintained modifications to
 upstream projects.
 
-`overlay/` owns the complete `device/kernarium/darwin` product tree and is
+`overlay/` owns the complete `device/kernarium/andarium` product tree and is
 synchronized as one verified unit. The synchronization stamps a file whose
 bytes or mode differ from what the workspace held with the current time, and
 restores the time of every file that did not change: Make treats an output newer
@@ -94,7 +94,7 @@ is valid on a kernel of either size, and `ro.product.page_size` reports 4096.
 
 A `device/google/cuttlefish` topic (route `p0001`) adds the
 `UML_ANDROID_MULTILIB` switch, which makes the page-agnostic phone inherit
-`core_64_bit.mk` instead of `core_64_bit_only.mk`; `overlay/lineage_darwin.mk`
+`core_64_bit.mk` instead of `core_64_bit_only.mk`; `overlay/lineage_andarium.mk`
 sets it and `overlay/BoardConfig.mk` defines the second architecture. The
 builder asserts that configuration, and the target-files verifier checks the
 image: the ABI lists, the 32-bit runtime, the placement of every ELF (32-bit
@@ -124,20 +124,47 @@ volume as the system.
 
 The build variant is the single `LINEAGE24_BUILD_VARIANT` setting in
 `metadata/lineage.env`, `user` or `userdebug`. Lunch, the target-files verifier,
-the release manifest and the accepted-release descriptor all follow it, so a
-release is accepted only as the variant the tracked tree builds. A `user` build
-keeps the stock shell privilege boundary; a `userdebug` build is the
-development variant (see the ADB paragraph below).
+the release manifest and the accepted-release descriptor all follow it. `user`
+is the default and the only variant that is released, signed with release keys,
+published or accepted: `publish-release.py` and the release verifier refuse any
+other (`require_release_build_variant`). A `user` build keeps the stock shell
+privilege boundary: no `su`, no `adb root`, `ro.debuggable=0`, no permissive
+SELinux domain, and the verifier rejects the debug-only payload (`su`,
+`remount`, `procmem`). `userdebug` is the on-demand diagnostics variant: it
+carries `su`, is debuggable and may have the permissive `su` domain, and the
+verifier requires exactly that. Each variant builds in its own output directory
+(on the builder `out-andarium-user` and `out-andarium-userdebug`), so switching
+between them is incremental; `build-aosp.sh` records the variant in its output
+directory and refuses the other one.
+
+The product identity is Andarium's, not a Cuttlefish or "Darwin" one:
+`PRODUCT_BRAND` Andarium, `PRODUCT_MANUFACTURER` Kernarium, `PRODUCT_MODEL`
+"Andarium Virtual Device", `PRODUCT_DEVICE` andarium and `PRODUCT_NAME`
+`lineage_andarium` (the makefile, `AndroidProducts.mk` and the device directory
+follow LineageOS's `lineage_<device>` convention), so the lunch target is
+`lineage_andarium-cp2a-user` and the product output directory is
+`target/product/andarium`. The verifier checks the identity and that the
+fingerprint starts `Andarium/lineage_andarium/andarium:` and names the variant.
+`darwin` stays the name of the host platform.
+
+Diagnostics on a `user` image start on the host and need no guest root: the
+guest console the host captures for kernel logs, UML's mconsole (`sysrq`,
+`proc`, `stack`) for the kernel's state, and tracefs from the shell (the image
+mounts it at `/sys/kernel/tracing`, readable and writable by `shell`). The
+shell can also set `perf.drop_caches` (init writes `drop_caches`), the `debug.*`
+properties and `powerctl`. Only what these cannot reach (`dmesg`, `setenforce`,
+`ctl.*` service control, other uids' `/proc/<pid>/smaps`) needs a `userdebug`
+build with `su`; build one on demand in its own output directory.
 
 The product removes Cuttlefish virtual hardware and services that have no
 Darwin UML implementation while preserving Android framework APIs required by
 ordinary applications.
 
-The product is `lineage_darwin`: the Cuttlefish base with LineageOS's
+The product is `lineage_andarium`: the Cuttlefish base with LineageOS's
 `common_full_tablet_wifionly` product chain on top, so the tablet configuration
 and the LineageOS platform services (LineageParts, LineageSettingsProvider and
 the hardware, live-display, trust and global-actions services) are present.
-`overlay/lineage_darwin.mk` sets the LineageOS switches before inheriting it
+`overlay/lineage_andarium.mk` sets the LineageOS switches before inheriting it
 and names what the product leaves out. The image provides Settings, Trebuchet,
 Files, Package Installer, the LineageOS WebView, LatinIME, ThemePicker and a
 curated application set: Glimpse (gallery), Twelve (music), Etar (calendar),
@@ -309,7 +336,9 @@ the second. Under `userdebug` the build is debuggable and carries `su`, and
 debugging" switch is off on a fresh data partition. A boot with authorization
 off starts that service with the switch on, so on macOS, which authorizes
 nothing, any local process that reaches the loopback ADB port can become root
-in the guest, an accepted property of a development host. iOS keeps
+in a userdebug guest, an accepted property of a diagnostics host. On a `user`
+build the service is installed but built non-debuggable, so authorization off
+still gives an unauthenticated shell and `pm install`, never root. iOS keeps
 authorization and the default-off switch.
 SELinux stays enforcing in both variants; only the host-owned kernel command
 line could change that. Android's wireless-debugging setting
@@ -400,8 +429,8 @@ removable card and no addon.d, so two topics undo them: `system/sepolicy`
 neverallows, and `device/lineage/sepolicy` (route `p0021`) drops the `vold` and
 `fsck_untrusted` grants and the permissive `backuptool`. With the neverallows
 back, a later such grant fails the policy build, and the target-files verifier
-repeats the checks on the built policy (only the userdebug `su` may be
-permissive).
+repeats the checks on the built policy (a user build has no permissive
+domain; a userdebug build may have only `su`).
 
 The guest boots straight to the home screen, and its swipe lock screen can be
 turned on. `LockPatternUtils.isLockScreenDisabled` ORs
@@ -475,7 +504,7 @@ the quantizer the same pixels and the palette stays LineageOS's.
 LineageOS's overlay names the same resource, and where two overlay directories do
 that the one listed earlier in `PRODUCT_PACKAGE_OVERLAYS` wins (Soong gives the
 earlier directory the higher priority). `inherit-product` expands the inherited
-list where its call stands, so `overlay/lineage_darwin.mk` lists
+list where its call stands, so `overlay/lineage_andarium.mk` lists
 `overlay/overlay-priority` before its calls and `overlay/overlay` after them,
 where it ranks under LineageOS's and Cuttlefish's: a resource that both define is
 theirs. That is why the wallpaper has a directory of its own.
@@ -541,7 +570,7 @@ manifest. It writes the artifacts where ART looks first:
 `/system/framework/oat/<isa>/apex@<apex>@<path>@classes.{odex,vdex}` for an APK
 under `/apex`, and `oat/<isa>` beside every other APK. A second pass
 installs them through a generated `PRODUCT_COPY_FILES` fragment named by
-`LINEAGE24_FIRST_BOOT_OAT_MK`, which `overlay/lineage_darwin.mk` includes, and
+`LINEAGE24_FIRST_BOOT_OAT_MK`, which `overlay/lineage_andarium.mk` includes, and
 `build-aosp.sh` then runs the tool's `verify` against the packaged tree: every
 APK with dex code must carry artifacts for its whole ISA set, and the tool's
 own must match its manifest and the packaged APK's dex checksums. An unchanged result skips the
@@ -1093,7 +1122,7 @@ cannot read a Zstandard image.
 The five read-only partitions are compressed EROFS: Zstandard level 15 with
 16 KiB physical clusters on 4 KiB blocks. The two parameters are written once,
 as `UML_ANDROID_EROFS_COMPRESSOR` and `UML_ANDROID_EROFS_PCLUSTER_SIZE` in
-`overlay/lineage_darwin.mk`. `BoardConfig.mk` hands them to the image builder,
+`overlay/lineage_andarium.mk`. `BoardConfig.mk` hands them to the image builder,
 which otherwise uses `mkfs.erofs`'s defaults (no per-partition setting, no
 extended option, no block size beyond the default), and `build/build-aosp.sh`
 asserts that. The compress hints (`overlay/config/erofs_compress_hints.txt`)
@@ -1117,7 +1146,7 @@ cluster at a time; that is why the clusters are 16 KiB and not 64 KiB.
 
 Every APEX payload is compressed EROFS as well, with the same two parameters:
 `PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := erofs` and the three
-`PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_*` settings in `overlay/lineage_darwin.mk`
+`PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_*` settings in `overlay/lineage_andarium.mk`
 reach apexer through Soong, not its lz4hc and 4 KiB defaults, and
 `build/build-aosp.sh` asserts them. The `p0008` series no longer pins
 `com.android.virt` to a payload of its own. The payload hints
@@ -1151,7 +1180,7 @@ discard path.
 `init_boot` and `recovery` contain kernelless boot-image-v4 ramdisks. The
 kernel ELF remains outside the disk in the selected runtime artifact. Both images come
 from the signed AOSP target files; `recovery` is the stock LineageOS recovery
-that `lineage_darwin` builds, with no separate recovery source or build.
+that `lineage_andarium` builds, with no separate recovery source or build.
 Neither ramdisk is duplicated as a standalone release file. Boot mode `auto`
 follows the standard command in the directly writable `misc` partition and is
 the launcher default; explicit normal/recovery selection is a diagnostic
@@ -1174,7 +1203,7 @@ The recovery ramdisk is an LZ4 legacy frame of the product's page-agnostic
 AArch64 ELFs, so it runs on the 4 KiB kernel unchanged. Two product changes
 adapt the stock recovery to the virtual hardware:
 
-- `overlay/recovery/` builds `librecovery_ui_darwin`, selected by
+- `overlay/recovery/` builds `librecovery_ui_andarium`, selected by
   `TARGET_RECOVERY_UI_LIB`. The stock Cuttlefish UI library addresses `eth1`;
   this one addresses the Virtio-net `eth0`, assigns the SLiRP address
   `10.0.2.15/24` itself (init cannot run `ifconfig` from recovery's SELinux

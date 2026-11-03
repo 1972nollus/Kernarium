@@ -62,6 +62,8 @@ def main() -> None:
     sys.path.insert(0, str(android_root / "tools"))
     from release_common import (  # noqa: PLC0415
         BUILD_VARIANTS,
+        RELEASE_BUILD_VARIANTS,
+        require_release_build_variant,
         DIRECTORY_PREFIX,
         KERNEL_FAMILY,
         PAYLOAD_SPECS,
@@ -312,9 +314,16 @@ def main() -> None:
             "a 16 KiB Android kernel",
         )
         tracked_variant = original["android"]["build_variant"]
+        for variant in RELEASE_BUILD_VARIANTS:
+            require_release_build_variant(variant)
+        expect_failure(
+            lambda: require_release_build_variant("userdebug"),
+            "a diagnostics build published as a release",
+        )
         for variant, label in (
             (next(name for name in BUILD_VARIANTS if name != tracked_variant),
              "a build variant other than the tracked one"),
+            ("userdebug", "a diagnostics build in a release manifest"),
             ("eng", "an unsupported build variant"),
         ):
             manifest = copy.deepcopy(original)

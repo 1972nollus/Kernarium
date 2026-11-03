@@ -320,12 +320,12 @@ def ext4_system_fstab(fstab: str) -> str:
 
 def tracked_erofs_parameters(android_root: Path) -> tuple[str, str]:
     """The compressor and the cluster size the product makefile sets, once each."""
-    text = (android_root / "overlay/lineage_darwin.mk").read_text()
+    text = (android_root / "overlay/lineage_andarium.mk").read_text()
     found = []
     for name in ("UML_ANDROID_EROFS_COMPRESSOR", "UML_ANDROID_EROFS_PCLUSTER_SIZE"):
         values = re.findall(rf"^{name} := (\S+)$", text, re.MULTILINE)
         if len(values) != 1:
-            fail(f"lineage_darwin.mk does not set {name} exactly once")
+            fail(f"lineage_andarium.mk does not set {name} exactly once")
         found.append(values[0])
     return found[0], found[1]
 
@@ -662,6 +662,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           half_preopt_pair: bool = False,
                           wrong_audio_defaults: bool = False,
                           wrong_product_model: bool = False,
+                          old_product_identity: bool = False,
+                          user_permissive_su: bool = False,
                           missing_lockscreen_default: bool = False,
                           use_fiemap_variant: str | None = None,
                           userdata_grow_variant: str | None = None,
@@ -720,7 +722,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "odm_fs_type": "erofs",
                     "erofs_default_compressor": erofs_compressor,
                     "erofs_pcluster_size": erofs_pcluster_size,
-                    "erofs_default_compress_hints": "device/kernarium/darwin/config/erofs_compress_hints.txt",
+                    "erofs_default_compress_hints": "device/kernarium/andarium/config/erofs_compress_hints.txt",
                     "erofs_sparse_flag": "-s",
                     "userdata_extfs_inode_count": (
                         "32768" if wrong_userdata_inodes else "8192"
@@ -750,6 +752,17 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr("ROOT/system_dlkm/", b"")
                 archive.writestr("SYSTEM/system_dlkm/etc/build.prop", "")
                 virtual_ab_property = "ro.virtual_ab.enabled=true\n" if virtual_ab else ""
+                system_identity = {
+                    "brand": "Android" if old_product_identity else "Andarium",
+                    "manufacturer": "Kernarium",
+                    "device": "darwin" if old_product_identity else "andarium",
+                    "name": "lineage_darwin" if old_product_identity else "lineage_andarium",
+                    "model": "Darwin UML" if old_product_identity else "Andarium Virtual Device",
+                }
+                system_fingerprint = (
+                    f"{system_identity['brand']}/{system_identity['name']}/"
+                    f"{system_identity['device']}:17/FIXTURE/7:{build_variant}/release-keys"
+                )
 
                 def abi_properties(partition: str, thirty_two: str) -> str:
                     abilist = "arm64-v8a" + ("," + thirty_two if thirty_two else "")
@@ -767,6 +780,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         f"{name}={value}\n"
                         for name, value in BUILD_VARIANTS[build_variant].items()
                     )
+                    + "".join(
+                        f"ro.product.system.{key}={value}\n"
+                        for key, value in system_identity.items()
+                    )
+                    + f"ro.system.build.fingerprint={system_fingerprint}\n"
                     + f"{virtual_ab_property}",
                 )
                 archive.writestr(
@@ -788,7 +806,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "true": "apexd.config.use_fiemap=true\n",
                     }[use_fiemap_variant]
                     + f"ro.product.product.model="
-                    f"{'Android 17 on Darwin UML' if wrong_product_model else 'Darwin UML'}\n",
+                    f"{'Android 17 on Andarium' if wrong_product_model else 'Andarium Virtual Device'}\n",
                 )
                 archive.writestr(
                     "SYSTEM/bin/android-fixture",
@@ -977,6 +995,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 )
                 if extra_entry is not None:
                     archive.writestr(extra_entry, "on early-init\n")
+                if build_variant != "user":
+                    # The diagnostics build carries the root shell.
+                    archive.writestr("SYSTEM/xbin/su", synthetic_aarch64_elf(alignment))
                 archive.writestr(
                     "VENDOR/etc/audio_effects_config.xml",
                     '<audio_effects_conf version="2.0"/>\n',
@@ -1172,7 +1193,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "(allow domain bootloader_prop (file (read getattr map open)))\n"
                     "(typeattributeset mlstrustedsubject (artd installd"
                     + (" mediaprovider_app" if lineage_policy == "mediaprovider-trusted" else "")
-                    + "))\n(typepermissive su)\n"
+                    + "))\n"
+                    + ("(typepermissive su)\n"
+                       if build_variant != "user" or user_permissive_su else "")
                     + "; padding to the size of a real platform policy\n" * (
                         (17 << 20 if oversize_platform_policy else 3_441_569) // 48
                     ),
@@ -1479,7 +1502,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         overlay.writestr("resources.arsc", table)
                     archive.writestr(
                         "PRODUCT/overlay/"
-                        "SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk",
+                        "SimpleDeviceConfig__lineage_andarium__auto_generated_rro_product.apk",
                         overlay_apk.getvalue(),
                     )
                 if wallpaper_variant != "missing-overlay":
@@ -1510,7 +1533,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             overlay.writestr(name, payload)
                     archive.writestr(
                         "PRODUCT/overlay/"
-                        "framework-res__lineage_darwin__auto_generated_rro_product.apk",
+                        "framework-res__lineage_andarium__auto_generated_rro_product.apk",
                         framework_apk.getvalue(),
                     )
                 for apk in arm_preopt_apks:
@@ -2064,6 +2087,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("half-preopt-pair", {"half_preopt_pair": True}),
             ("audio-defaults", {"wrong_audio_defaults": True}),
             ("product-model", {"wrong_product_model": True}),
+            ("old-product-identity", {"old_product_identity": True}),
+            ("user-permissive-su", {"user_permissive_su": True}),
+            ("user-carries-su", {"extra_entry": "SYSTEM/xbin/su"}),
+            ("user-carries-remount", {"extra_entry": "SYSTEM/bin/remount"}),
+            ("user-carries-procmem", {"extra_entry": "SYSTEM/bin/procmem"}),
             ("missing-lockscreen-default", {"missing_lockscreen_default": True}),
             ("missing-use-fiemap", {"use_fiemap_variant": "missing"}),
             ("use-fiemap-true", {"use_fiemap_variant": "true"}),
@@ -2533,9 +2561,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-cas-plugin-32-cause", {"cas_hal_variant": "no-plugin32"},
              "the ClearKey CAS plugin is missing: VENDOR/lib/mediacas/libclearkeycasplugin.so"),
             ("missing-discrete-ops-overlay-cause", {"discrete_ops_variant": "missing-overlay"},
-             "SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk is missing"),
+             "SimpleDeviceConfig__lineage_andarium__auto_generated_rro_product.apk is missing"),
             ("missing-framework-overlay-cause", {"wallpaper_variant": "missing-overlay"},
-             "framework-res__lineage_darwin__auto_generated_rro_product.apk is missing"),
+             "framework-res__lineage_andarium__auto_generated_rro_product.apk is missing"),
             ("missing-default-wallpaper-variant-cause", {"wallpaper_variant": "missing-variant"},
              "has no res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"),
             ("lineage-size-default-wallpaper-cause", {"wallpaper_variant": "lineage-size"},
@@ -2954,7 +2982,7 @@ def verify_erofs_board(android_root: Path) -> None:
     for line in (
         "BOARD_EROFS_COMPRESSOR := $(UML_ANDROID_EROFS_COMPRESSOR)\n",
         "BOARD_EROFS_PCLUSTER_SIZE := $(UML_ANDROID_EROFS_PCLUSTER_SIZE)\n",
-        "BOARD_EROFS_COMPRESS_HINTS := device/kernarium/darwin/config/erofs_compress_hints.txt\n",
+        "BOARD_EROFS_COMPRESS_HINTS := device/kernarium/andarium/config/erofs_compress_hints.txt\n",
     ):
         if board.count(line) != 1:
             fail(f"BoardConfig.mk does not contain {line.strip()!r} exactly once")
@@ -3080,9 +3108,9 @@ def verify_pinner_overlay(android_root: Path) -> None:
     for needle in ('name: "KernariumPinnerOverlay"', "vendor: true,", 'sdk_version: "28",'):
         if needle not in blueprint:
             fail(f"the pinner overlay module lacks {needle}")
-    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
     if len(re.findall(r"^PRODUCT_PACKAGES \+= KernariumPinnerOverlay$", product, re.M)) != 1:
-        fail("lineage_darwin.mk does not add KernariumPinnerOverlay to PRODUCT_PACKAGES exactly once")
+        fail("lineage_andarium.mk does not add KernariumPinnerOverlay to PRODUCT_PACKAGES exactly once")
     if verifier.PINNER_OVERLAY != "VENDOR/overlay/KernariumPinnerOverlay.apk":
         fail("the verifier expects the pinner overlay somewhere other than the vendor overlay directory")
 
@@ -3326,7 +3354,7 @@ def verify_secure_element_topic(android_root: Path) -> None:
             fail(f"the SecureElement topic check accepts {label}")
     # The product keeps the package (the package assertions are verified in verify_package_assertions) and
     # the image verifier does not forbid its directory.
-    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
     removed_block = re.search(
         r"^KERNARIUM_REMOVED_PACKAGES := \\\n((?:    \S+ \\\n)+    \S+)$", product, re.MULTILINE
     )
@@ -3375,9 +3403,9 @@ def verify_reclaim_boot_apps(android_root: Path) -> None:
     ):
         if needle not in blueprint:
             fail(f"overlay/tools/Android.bp lacks {needle}")
-    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
     if len(re.findall(r"^PRODUCT_PACKAGES \+= kernarium_reclaim_boot_apps_script$", product, re.M)) != 1:
-        fail("lineage_darwin.mk does not add the reclaim script to PRODUCT_PACKAGES exactly once")
+        fail("lineage_andarium.mk does not add the reclaim script to PRODUCT_PACKAGES exactly once")
     verifier.check_reclaim_boot_apps((tools / "kernarium_reclaim_boot_apps.rc").read_text(), script.read_bytes())
 
     lru = "\n".join((
@@ -3638,12 +3666,12 @@ def verify_media_codecs_overlay(android_root: Path) -> None:
 
 def verify_package_assertions(android_root: Path) -> None:
     """The producer's package assertions agree with the product's removed-package list."""
-    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
     removed_block = re.search(
         r"^KERNARIUM_REMOVED_PACKAGES := \\\n((?:    \S+ \\\n)+    \S+)$", product, re.MULTILINE
     )
     if removed_block is None:
-        fail("lineage_darwin.mk has no KERNARIUM_REMOVED_PACKAGES list")
+        fail("lineage_andarium.mk has no KERNARIUM_REMOVED_PACKAGES list")
     removed = set(removed_block.group(1).replace("\\", " ").split())
     script = (android_root / "build/build-aosp.sh").read_text()
     excluded_block = re.search(
@@ -3891,7 +3919,7 @@ def synthetic_lineage_recovery_ramdisk(
         newc_entry(
             "prop.default",
             0o100644,
-            b"ro.product.system.device=darwin\n"
+            b"ro.product.system.device=andarium\n"
             b"persist.adb.tcp.port=5555\n"
             + (b"" if no_memfd else b"sys.use_memfd=true\n"),
             2,

@@ -162,6 +162,16 @@ python3 -B "$KERNEL_ARTIFACT_VERIFIER" --artifact "$KERNEL_ARTIFACT" \
 	--abi-metadata "$KERNEL_COMMON_ROOT/abi/identity.env"
 SOONG_BUILD_GRAPH="$OUT_DIR/soong/build.${LINEAGE24_PRODUCT}.ninja"
 mkdir -p -- "$OUT_DIR"
+# One output directory per build variant: a switch between user and userdebug is
+# then incremental, where reusing one directory would rebuild everything. The
+# directory records the variant it was first used for and refuses the other.
+VARIANT_MARK=$OUT_DIR/.lineage24-build-variant
+if [[ -f "$VARIANT_MARK" ]]; then
+	[[ "$(<"$VARIANT_MARK")" == "$LINEAGE24_BUILD_VARIANT" ]] ||
+		fail "output directory holds a $(<"$VARIANT_MARK") build: use one directory per build variant"
+else
+	printf '%s\n' "$LINEAGE24_BUILD_VARIANT" >"$VARIANT_MARK"
+fi
 if [[ -f "$SOONG_BUILD_GRAPH" ]]; then
 	printf '%s\n' "reusing incremental AOSP output: $OUT_DIR"
 else
@@ -226,7 +236,7 @@ for variable in \
 	[[ "$(get_build_var "$variable")" == erofs ]] ||
 		fail "$variable must select erofs for the immutable GPT"
 done
-# The compressor and the cluster size are the two parameters of lineage_darwin.mk
+# The compressor and the cluster size are the two parameters of lineage_andarium.mk
 # and reach every image alike: nothing per partition, no extended option, and
 # the default 4 KiB block that the guest's 4 KiB pages require.
 [[ "$(get_build_var BOARD_EROFS_COMPRESSOR)" == "$(get_build_var UML_ANDROID_EROFS_COMPRESSOR)" &&
@@ -235,7 +245,7 @@ done
 [[ "$(get_build_var BOARD_EROFS_PCLUSTER_SIZE)" == "$(get_build_var UML_ANDROID_EROFS_PCLUSTER_SIZE)" &&
 	"$(get_build_var BOARD_EROFS_PCLUSTER_SIZE)" =~ ^[0-9]+$ ]] ||
 	fail "BOARD_EROFS_PCLUSTER_SIZE must be the product's cluster size"
-[[ "$(get_build_var BOARD_EROFS_COMPRESS_HINTS)" == device/kernarium/darwin/config/erofs_compress_hints.txt ]] ||
+[[ "$(get_build_var BOARD_EROFS_COMPRESS_HINTS)" == device/kernarium/andarium/config/erofs_compress_hints.txt ]] ||
 	fail "BOARD_EROFS_COMPRESS_HINTS must be the product's hints file"
 for variable in \
 	BOARD_EROFS_BLOCKSIZE \
@@ -259,7 +269,7 @@ done
 	fail "the APEX payload compressor must be the product's"
 [[ "$(get_build_var PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_PCLUSTER_SIZE)" == "$(get_build_var UML_ANDROID_EROFS_PCLUSTER_SIZE)" ]] ||
 	fail "the APEX payload cluster size must be the product's"
-[[ "$(get_build_var PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_COMPRESS_HINTS)" == device/kernarium/darwin/config/erofs_apex_payload_hints.txt ]] ||
+[[ "$(get_build_var PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_COMPRESS_HINTS)" == device/kernarium/andarium/config/erofs_apex_payload_hints.txt ]] ||
 	fail "the APEX payload compress hints must be the product's"
 [[ "$(get_build_var PRODUCT_COMPRESSED_APEX)" == false ]] ||
 	fail "PRODUCT_COMPRESSED_APEX must be false: the payloads are compressed, not the files"

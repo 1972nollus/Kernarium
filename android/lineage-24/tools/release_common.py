@@ -50,6 +50,17 @@ BUILD_VARIANTS = {
     "user": {"ro.build.type": "user", "ro.debuggable": "0"},
     "userdebug": {"ro.build.type": "userdebug", "ro.debuggable": "1"},
 }
+# The only variant a release may be. userdebug is the diagnostics build: it carries su and
+# a debuggable framework, so it is never published, signed with release keys or accepted.
+RELEASE_BUILD_VARIANTS = frozenset({"user"})
+
+
+def require_release_build_variant(variant: str) -> None:
+    if variant not in RELEASE_BUILD_VARIANTS:
+        fail(
+            f"a {variant} build is a diagnostics build and cannot be published or accepted: "
+            "set LINEAGE24_BUILD_VARIANT to user"
+        )
 
 
 def configured_build_variant(android_root: Path) -> str:
@@ -205,6 +216,7 @@ def validate_manifest(value: object) -> dict:
         require_string(android[key], f"android.{key}")
     if android["build_variant"] not in BUILD_VARIANTS:
         fail("Android build variant is not user or userdebug")
+    require_release_build_variant(android["build_variant"])
     require_integer(android["vendor_api_level"], "vendor API level", minimum=202604)
     if require_integer(android["build_number"], "Android build number", minimum=1) > 9_999_999_999:
         fail("Android build number has more than ten digits")

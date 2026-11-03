@@ -32,6 +32,7 @@ from release_common import (  # noqa: E402
     fail,
     parse_env,
     read_routes,
+    require_release_build_variant,
     tracked_identity,
     verify_disk_boot_payloads,
     verify_kernel_config,
@@ -277,6 +278,7 @@ def main() -> None:
         fail("release destination already exists")
 
     aosp_metadata = parse_env(android_root / "metadata/lineage.env")
+    require_release_build_variant(aosp_metadata["LINEAGE24_BUILD_VARIANT"])
     tracked = tracked_identity(android_root)
     kernel_root = outer_root / "kernel/mainline-6.18"
     outer_revision = verify_clean_git(outer_root, "outer project")

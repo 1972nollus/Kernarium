@@ -586,8 +586,14 @@ PROPERTY_CONTEXT_FILES = (
 CIL_DONTAUDIT_RULE = re.compile(rb"^\(dontaudit (\S+) (\S+) \((\w+) \(([^)]*)\)\)\)$", re.MULTILINE)
 CIL_ALLOW_RULE = re.compile(rb"^\(allow (\S+) (\S+) \((\w+) \(([^)]*)\)\)\)$", re.MULTILINE)
 CIL_PERMISSIVE_TYPE = re.compile(rb"^\(typepermissive (\S+)\)$", re.MULTILINE)
-# The only domain that may be permissive: the userdebug root shell.
-PERMISSIVE_DOMAINS = frozenset({"su"})
+# The only domain that may be permissive, and only in the diagnostics build: the userdebug
+# root shell. A user build has none.
+PERMISSIVE_DOMAINS = {"user": frozenset(), "userdebug": frozenset({"su"})}
+# What only a debuggable build installs (PRODUCT_PACKAGES_DEBUG, adbd's debuggable block): the
+# root shell, `remount` and `procmem`. A user build must carry none of them; a userdebug build
+# must carry the root shell the diagnostics need.
+DEBUG_ONLY_ENTRIES = ("SYSTEM/xbin/su", "SYSTEM/bin/remount", "SYSTEM/bin/procmem")
+DEBUG_REQUIRED_ENTRIES = ("SYSTEM/xbin/su",)
 SUSPEND_BLOCKER_SERVICE = ("suspend_blocker", "/vendor/bin/suspend_blocker")
 # eth0 is the management NIC adb is reached on and the framework sees only the
 # virtual Wi-Fi built on it. The tool that sets this up runs at post-fs-data, after
@@ -982,6 +988,46 @@ def init_actions(payload: str) -> dict[str, list[str]]:
     return actions
 
 
+# The Android product's identity: what the guest reports as its brand, maker, device,
+# product name and model, and so the prefix of its fingerprint. The product is Andarium's
+# virtual device, not a Cuttlefish or "Darwin" one; the host platform keeps the name darwin.
+PRODUCT_IDENTITY = {
+    "brand": "Andarium",
+    "manufacturer": "Kernarium",
+    "device": "andarium",
+    "name": "lineage_andarium",
+    "model": "Andarium Virtual Device",
+}
+
+
+def check_product_identity(properties: dict[str, str], build_variant: str) -> None:
+    for key, expected in PRODUCT_IDENTITY.items():
+        name = f"ro.product.system.{key}"
+        if properties.get(name) != expected:
+            fail(f"unexpected product identity {name}: {properties.get(name)!r}")
+    fingerprint = properties.get("ro.system.build.fingerprint") or properties.get(
+        "ro.build.fingerprint", ""
+    )
+    prefix = (
+        f"{PRODUCT_IDENTITY['brand']}/{PRODUCT_IDENTITY['name']}/"
+        f"{PRODUCT_IDENTITY['device']}:"
+    )
+    if not fingerprint.startswith(prefix) or f":{build_variant}/" not in fingerprint:
+        fail(f"unexpected build fingerprint for a {build_variant} build: {fingerprint!r}")
+
+
+def check_debuggable_payload(infos: dict[str, zipfile.ZipInfo], build_variant: str) -> None:
+    """A user build carries nothing a debuggable build adds; a userdebug build carries su."""
+    if build_variant == "user":
+        for entry in DEBUG_ONLY_ENTRIES:
+            if entry in infos:
+                fail(f"a user build must not carry {entry}")
+    else:
+        for entry in DEBUG_REQUIRED_ENTRIES:
+            if entry not in infos:
+                fail(f"a {build_variant} build lacks {entry}")
+
+
 def check_boot_policy(
     archive: zipfile.ZipFile,
     infos: dict[str, zipfile.ZipInfo],
@@ -1001,6 +1047,8 @@ def check_boot_policy(
                 f"unexpected {build_variant}-build property {property_name}: "
                 f"{system_property_map.get(property_name)!r}"
             )
+    check_product_identity(system_property_map, build_variant)
+    check_debuggable_payload(infos, build_variant)
 
     fstab = android_image.tracked_fstab(error)
     for entry in UML_FSTAB_ENTRIES:
@@ -1094,7 +1142,7 @@ def check_boot_policy(
 # history. The default ops are DiscreteOpsRegistry's LEGACY_OPS and IMPORTANT_OPS_FOR_SECURITY:
 # LineageOS's list predates most of them, and an op that is not listed never reaches the history.
 DEVICE_CONFIG_OVERLAY = (
-    "PRODUCT/overlay/SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk"
+    "PRODUCT/overlay/SimpleDeviceConfig__lineage_andarium__auto_generated_rro_product.apk"
 )
 DISCRETE_OPS_KEY = b"privacy/discrete_history_ops_cslist="
 DISCRETE_OPS_DEFAULT = frozenset({
@@ -1134,7 +1182,7 @@ def check_discrete_ops(
 # SystemUI sizes the wallpaper surface from the bitmap, so a variant of the default 1920 pixels
 # keeps a 14 MiB buffer alive for a window that is the display's long side wide.
 FRAMEWORK_OVERLAY = (
-    "PRODUCT/overlay/framework-res__lineage_darwin__auto_generated_rro_product.apk"
+    "PRODUCT/overlay/framework-res__lineage_andarium__auto_generated_rro_product.apk"
 )
 FRAMEWORK_OVERLAY_LIMIT = 16 << 20
 DEFAULT_WALLPAPER_ENTRIES = tuple(
@@ -1474,6 +1522,7 @@ def check_kernel_policy(
     infos: dict[str, zipfile.ZipInfo],
     kernel_config: Path,
     kernel_release_file: Path,
+    build_variant: str,
 ) -> None:
     packaged_config = read_small(archive, infos["META/kernel_configs.txt"])
     if packaged_config != kernel_config.read_bytes():
@@ -1542,7 +1591,7 @@ def check_kernel_policy(
             "utf-8", errors="strict"
         ),
     )
-    check_policy_relaxations((platform_policy, vendor_policy, system_ext_policy))
+    check_policy_relaxations((platform_policy, vendor_policy, system_ext_policy), build_variant)
     check_mediaserver_property_audit((platform_policy, vendor_policy, system_ext_policy))
     contexts = [
         line
@@ -1879,7 +1928,7 @@ def check_reclaim_boot_apps_policy(system_ext_policy: bytes, system_ext_file_con
             )
 
 
-def check_policy_relaxations(policies: tuple[bytes, ...]) -> None:
+def check_policy_relaxations(policies: tuple[bytes, ...], build_variant: str) -> None:
     """The policy holds none of the LineageOS grants that Android's neverallow tests refuse.
 
     LineageOS serves an ext4 SD card and addon.d updates with rules that the
@@ -1922,8 +1971,11 @@ def check_policy_relaxations(policies: tuple[bytes, ...]) -> None:
                     )
         for match in CIL_PERMISSIVE_TYPE.finditer(policy):
             domain = CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode())
-            if domain not in PERMISSIVE_DOMAINS:
-                fail(f"policy makes the domain {domain} permissive; only the userdebug su may be")
+            if domain not in PERMISSIVE_DOMAINS[build_variant]:
+                fail(
+                    f"policy makes the domain {domain} permissive; in a {build_variant} build "
+                    f"only {sorted(PERMISSIVE_DOMAINS[build_variant]) or 'no domain'} may be"
+                )
 
 
 def check_mediaserver_property_audit(policies: tuple[bytes, ...]) -> None:
@@ -2449,7 +2501,7 @@ def check_audio_policy(
         "ro.config.alarm_vol_default": "7",
         "ro.config.system_vol_default": "7",
         "ro.config.assistant_vol_default": "15",
-        "ro.product.product.model": "Darwin UML",
+        "ro.product.product.model": PRODUCT_IDENTITY["model"],
         "persist.sys.usb.config": "adb",
         # The guest boots without a lock screen, and `locksettings set-disabled` can turn
         # it on: LockSettingsService stores this default when it creates its database.
@@ -2693,7 +2745,7 @@ def main() -> None:
         check_mesa_gles_stack(archive, infos)
         check_boot_policy(archive, infos, build_variant)
         check_kernel_policy(
-            archive, infos, kernel_config, kernel_release_file
+            archive, infos, kernel_config, kernel_release_file, build_variant
         )
         if sha256_member(archive, infos["BOOT/kernel"]) != sha256_path(args.kernel_elf):
             fail("BOOT/kernel does not match the verified UML ELF")
