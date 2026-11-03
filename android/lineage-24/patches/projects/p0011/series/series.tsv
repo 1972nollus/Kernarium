@@ -4,3 +4,4 @@
 patch	allow-boot-time-ADB-auth-bypass.patch
 patch	adbd-report-whether-an-adb-host-is-connected.patch
 patch	adbd-authorize-the-host-key-from-ro.boot.kernarium.adb_key.patch
+patch	adbd-listen-on-vsock-alone-when-the-launch-has-no-host-forward.patch
