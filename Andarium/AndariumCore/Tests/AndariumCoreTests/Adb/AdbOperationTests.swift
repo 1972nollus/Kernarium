@@ -17,6 +17,14 @@ final class ManualSource: @unchecked Sendable {
     }
 }
 
+/// Counts calls from any thread.
+final class AttemptCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func next() -> Int { lock.withLock { count += 1; return count } }
+}
+
 struct GuestRunClockTests {
     @Test func itCountsOnlyWhileTheGuestRuns() {
         let source = ManualSource()
@@ -155,13 +163,61 @@ struct AdbSessionTests {
         #expect(connector.attemptCount == 4)
     }
 
-    @Test func aGuestThatNeverAnswersTimesOutAtTheConnectLimit() {
+    @Test func aGuestThatNeverAnswersIsNotReadyAtTheConnectLimit() {
         let connector = ScriptedConnector(failures: Array(repeating: .refused, count: 100_000)) {
             CountingTransport()
         }
-        #expect(throws: AdbError.timedOut) {
+        #expect(throws: AdbError.refused) {
             try session(connector, connectLimit: .milliseconds(150)).run { _ in 1 }
         }
+    }
+
+    @Test func aGuestThatAnswersTheConnectButNotTheHandshakeIsNotReady() {
+        let quiet = FakeAdbd(auth: .on { _, _ in true }, services: [:])
+        defer { quiet.shutdown() }
+        // The scripted adbd waits for CNXN; a transport that goes nowhere
+        // never lets it answer, so the connect limit ends the handshake.
+        final class Mute: AdbTransport, @unchecked Sendable {
+            private let gate = DispatchSemaphore(value: 0)
+            func readExactly(_ count: Int) throws -> Data {
+                gate.wait()
+                throw AdbError.guestGone
+            }
+            func writeAll(_ data: Data) throws {}
+            func shutdown() { gate.signal() }
+        }
+        #expect(throws: AdbError.refused) {
+            try session(ScriptedConnector { Mute() }, connectLimit: .milliseconds(150)).run { _ in 1 }
+        }
+    }
+
+    @Test func aHandshakeCutByAnAdbdRestartIsRetriedOnANewConnection() throws {
+        let adbd = FakeAdbd(services: ["shell,v2,raw:true": { stream in
+            try stream.send(ShellPacket(id: ShellPacket.exit, data: Data([0])).encoded())
+        }])
+        defer { adbd.shutdown() }
+        // The first connection is the old adbd, which ends it at once; the
+        // second reaches the new one.
+        let first = CountingTransport()
+        let attempts = AttemptCounter()
+        let connector = ScriptedConnector { () -> any AdbTransport in
+            if attempts.next() == 1 { return first }
+            return adbd.client
+        }
+        let exit = try session(connector).run { connection in
+            try connection.runShell("true").exitCode
+        }
+        #expect(exit == 0)
+        #expect(connector.attemptCount == 2)
+        #expect(first.shutdowns >= 1)
+    }
+
+    @Test func adbdThatKeepsEndingTheHandshakeIsNotReadyAtTheLimit() {
+        let connector = ScriptedConnector { CountingTransport() }
+        #expect(throws: AdbError.refused) {
+            try session(connector, connectLimit: .milliseconds(150)).run { _ in 1 }
+        }
+        #expect(connector.attemptCount > 1)
     }
 
     @Test func aGuestThatIsGoneEndsTheOperationWithoutRetrying() {
@@ -358,6 +414,15 @@ struct BugReportTests {
         #expect(BugReport.stagedName(for: "/x/..hidden") == "hidden.zip")
         #expect(BugReport.stagedName(for: "/") == "bugreport.zip")
         #expect(BugReport.stagedName(for: "/x/" + String(repeating: "a", count: 300)).count <= 120)
+    }
+
+    @Test func theCleanupRemovesTheReportAndOlderLeftovers() {
+        let command = BugReport.cleanupCommand(afterPulling: "/data/b/bugreport-x-1.zip")
+        #expect(command == "cd '/data/b' && for f in bugreport-* dumpstate_log-*; do [ \"$f\" -ot 'bugreport-x-1.zip' ] && rm -f -- \"$f\"; done; rm -f -- 'bugreport-x-1.zip'")
+        // A path the shell would read as more than a name gets only its own removal.
+        #expect(BugReport.cleanupCommand(afterPulling: "/data/b/it's.zip") == #"rm -f '/data/b/it'\''s.zip'"#)
+        #expect(BugReport.cleanupCommand(afterPulling: "relative.zip") == "rm -f 'relative.zip'")
+        #expect(BugReport.cleanupCommand(afterPulling: "/") == "rm -f '/'")
     }
 
     @Test func theGuestCommandsAreQuoted() {

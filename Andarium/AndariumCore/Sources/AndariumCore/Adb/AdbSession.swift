@@ -116,10 +116,11 @@ public final class AdbWatchdog: @unchecked Sendable {
     }
 }
 
-/// One adb operation: it connects (retrying while adbd is not there yet),
-/// does the handshake, runs the caller's work on the same thread, and reports
-/// how it ended in `AdbError`s. Every operation has a session of its own and
-/// leaves nothing behind: the connection is closed when it ends.
+/// One adb operation: it connects (retrying while adbd is not there yet or is
+/// restarting), does the handshake, runs the caller's work on the same
+/// thread, and reports how it ended in `AdbError`s. Every operation has a
+/// session of its own and leaves nothing behind: the connection is closed
+/// when it ends.
 public final class AdbSession: @unchecked Sendable {
     /// Connect and handshake together may take this long, in running time.
     public static let defaultConnectLimit = Duration.seconds(20)
@@ -157,14 +158,38 @@ public final class AdbSession: @unchecked Sendable {
         defer { watchdog.stop() }
         var transport: (any AdbTransport)?
         defer { transport?.shutdown() }
+        var connected: AdbConnection?
         do {
             watchdog.arm(idle: nil, overall: connectLimit)
-            let opened = try openTransport()
-            transport = opened
-            watchdog.attach(opened)
-            let connection = AdbConnection(transport: opened)
-            try connection.handshake(signer: signer)
+            while connected == nil {
+                let opened = try openTransport()
+                transport = opened
+                watchdog.attach(opened)
+                let candidate = AdbConnection(transport: opened)
+                do {
+                    try candidate.handshake(signer: signer)
+                    connected = candidate
+                } catch AdbError.guestGone where ended() == nil {
+                    // adbd ended the connection before the handshake was done:
+                    // it restarts when the guest's USB debugging turns off and
+                    // is back within a second, and the next connection reaches
+                    // the new one. A guest that has stopped fails the connect.
+                    opened.shutdown()
+                    transport = nil
+                    watchdog.sleep(retryInterval)
+                    if let ended = ended() { throw ended }
+                }
+            }
             watchdog.disarm()
+        } catch {
+            // A guest that never completed the handshake within the connect
+            // limit is one that is not ready, not one that stopped talking.
+            let ended = translated(error)
+            if let ended = ended as? AdbError, ended == .timedOut { throw AdbError.refused }
+            throw ended
+        }
+        guard let connection = connected else { throw AdbError.guestGone }
+        do {
             return try body(connection)
         } catch {
             throw translated(error)

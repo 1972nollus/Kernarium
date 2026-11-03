@@ -177,6 +177,26 @@ public enum BugReport {
         "rm -f \(shellQuoted(path))"
     }
 
+    /// What clears the guest after a pull: the report itself, and the
+    /// reports and logs an earlier run left in its directory (every one
+    /// older than this report). A path with an unusual character gets the
+    /// plain removal.
+    public static func cleanupCommand(afterPulling path: String) -> String {
+        let safe = path.unicodeScalars.allSatisfy { scalar in
+            switch scalar {
+            case "a"..."z", "A"..."Z", "0"..."9", ".", "-", "_", "/": true
+            default: false
+            }
+        }
+        guard safe, path.hasPrefix("/"), let slash = path.lastIndex(of: "/"), slash != path.startIndex,
+              path.index(after: slash) != path.endIndex
+        else { return removalCommand(for: path) }
+        let directory = String(path[path.startIndex..<slash])
+        let name = String(path[path.index(after: slash)...])
+        let older = "for f in bugreport-* dumpstate_log-*; do [ \"$f\" -ot '\(name)' ] && rm -f -- \"$f\"; done"
+        return "cd '\(directory)' && \(older); rm -f -- '\(name)'"
+    }
+
     /// Stops a report under way. `bugreportz` ends with its stream; the dump
     /// itself is a service of its own.
     public static let stopCommand = "setprop ctl.stop dumpstatez"

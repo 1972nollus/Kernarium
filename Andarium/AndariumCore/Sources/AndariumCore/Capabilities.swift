@@ -11,8 +11,10 @@ public struct Capabilities: Equatable, Sendable {
     public var systemUpdate: Bool
     /// A computer can reach the guest with ADB over the network.
     public var adbOverNetwork: Bool
-    /// An APK picked in Files can be installed into the guest.
+    /// An app picked in Files (an .apk) can be installed into the guest.
     public var apkInstall: Bool
+    /// The guest's bug report can be made and shared.
+    public var bugReport: Bool
     /// The session can show the guest's own statistics.
     public var statistics: Bool
     /// The number of installed apps can be read.
@@ -23,12 +25,13 @@ public struct Capabilities: Equatable, Sendable {
     public var liveDisplayOptions: Bool
 
     public init(
-        systemUpdate: Bool, adbOverNetwork: Bool, apkInstall: Bool,
+        systemUpdate: Bool, adbOverNetwork: Bool, apkInstall: Bool, bugReport: Bool,
         statistics: Bool, appCount: Bool, liveDisplayOptions: Bool
     ) {
         self.systemUpdate = systemUpdate
         self.adbOverNetwork = adbOverNetwork
         self.apkInstall = apkInstall
+        self.bugReport = bugReport
         self.statistics = statistics
         self.appCount = appCount
         self.liveDisplayOptions = liveDisplayOptions
@@ -36,15 +39,19 @@ public struct Capabilities: Equatable, Sendable {
 
     /// Everything the mock runtime pretends to do.
     public static let preview = Capabilities(
-        systemUpdate: true, adbOverNetwork: true, apkInstall: true, statistics: true, appCount: true,
-        liveDisplayOptions: true
+        systemUpdate: true, adbOverNetwork: true, apkInstall: true, bugReport: true, statistics: true,
+        appCount: true, liveDisplayOptions: true
     )
 
     /// The device application: a guest moves to a newer system with its
-    /// data (`StartPlan`), and the session offers Android's own screen, keys
-    /// and the options.
+    /// data (`StartPlan`), and the session offers an app install, ADB over
+    /// the network, a bug report and the options, all through the runtime's
+    /// adb channel.
     public static let device = Capabilities(
-        systemUpdate: true, adbOverNetwork: false, apkInstall: false, statistics: false, appCount: false,
-        liveDisplayOptions: false
+        systemUpdate: true,
+        adbOverNetwork: false,
+        apkInstall: false,
+        bugReport: false,
+        statistics: false, appCount: false, liveDisplayOptions: false
     )
 }

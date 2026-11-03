@@ -92,6 +92,9 @@ public final class PauseController {
     public private(set) var phase = Phase.foreground
     private let effects: any PauseEffects
     private let marker: PauseMarker
+    /// Stops while the guest is paused, so timers on the guest's running time
+    /// (the adb operations') do not run out meanwhile.
+    private let runClock: GuestRunClock?
     private var guestRunning = false
     private var gpuHeld = false
     private var guestPaused = false
@@ -99,9 +102,10 @@ public final class PauseController {
     /// Resumes that have started and not returned.
     private var resumesInFlight = 0
 
-    public init(effects: any PauseEffects, marker: PauseMarker) {
+    public init(effects: any PauseEffects, marker: PauseMarker, runClock: GuestRunClock? = nil) {
         self.effects = effects
         self.marker = marker
+        self.runClock = runClock
     }
 
     /// The runtime is running a guest. A guest not yet running when the
@@ -131,6 +135,7 @@ public final class PauseController {
         gpuHeld = true
         effects.quiesceGuest(reason: "background", until: deadline)
         guestPaused = true
+        runClock?.pause()
         phase = .paused
         marker.arm()
     }
@@ -161,10 +166,12 @@ public final class PauseController {
         guard guestRunning, !guestPaused else { return }
         effects.quiesceGuest(reason: "terminating", until: DispatchTime.now() + Self.edgeBudget)
         guestPaused = true
+        runClock?.pause()
     }
 
     private func resumeFinished() {
         resumesInFlight = max(resumesInFlight - 1, 0)
+        if !guestPaused, resumesInFlight == 0 { runClock?.resume() }
         disarmWhenSettled()
     }
 
