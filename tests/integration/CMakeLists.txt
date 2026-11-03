@@ -639,6 +639,17 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# What a macOS launcher prints with --stats: the vCPU load against libproc and
+# the guest's /proc/stat, the frames of an offscreen display, and the guest's
+# memory against a console of the test's own.
+uml_add_guest_integration_test(
+    NAME guest-statistics
+    SCRIPT kernel/run_guest_statistics.py
+    LABELS guest;kernel;gpu
+    TIMEOUT 300
+    CPUS 2
+    GPUS 1)
+
 # Unmapping user pages beside the native window leaves the kernel's own
 # mappings in it alone.
 uml_add_guest_integration_test(

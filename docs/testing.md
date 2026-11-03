@@ -941,8 +941,26 @@ against a fake console), `gpu-display-statistics` (the display counters through
 the service), `emulator-statistics` and `emulator-lifecycle` (the public calls
 and their gating: not while quiesced, not beside another lifecycle call, the
 wait outside the mutex), `kernarium-statistics` (the runtime's composition and
-its refusals: quiesced, display off, lifecycle busy) and the package consumers,
-which call both functions on an idle handle.
+its refusals: quiesced, display off, lifecycle busy), `emulator-statistics-report`
+(the line `--stats` prints) and the package consumers, which call both
+functions on an idle handle.
+
+`guest-statistics` (integration, GPU) boots a two-vCPU Linux guest with
+`--stats=500` and an offscreen display, with the launcher's standard error in a
+file so that the lines neither fill the console nor land inside a command's
+markers. An idle guest reads under 5% and a display nobody writes to presents 0
+frames a second; a guest writing to its display presents some; and one busy loop
+reads half of two vCPUs, within 5 points of libproc's count of the same carriers
+and no more than 5 above the guest's own `/proc/stat`. The guest counts the time
+the host took from a vCPU as busy, so on a loaded host its figure is the higher
+one and bounds the host's from above only. The memory part is unavailable, and
+no failure, from a kernel that has no `mem` console request; one that has it
+must equal `MemTotal` less `MemAvailable` within 16 MiB. The test also stands a
+console of its own where the guest's was and checks the launcher sends one `mem`
+datagram in the console's layout and shows what the reply says. For Android, an
+opt-in check runs `uml-darwin-android17 --stats=1000` under enforcing SELinux:
+the memory part must appear with no `avc` denial in the guest's log and match
+`adb shell cat /proc/meminfo`.
 
 ## LTP
 
