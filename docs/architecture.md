@@ -1168,6 +1168,11 @@ with such a wait, so that `irq_work` can run inside the suspend, where it reads
 the request stream once more and must find it nonblocking.
 `guest-vhost-user-suspend-drain` has a console take a backend request between
 the ring disables of a suspend and requires the suspend to end at its alarm.
+`guest-vhost-user-config-crossing` has an external backend raise a config
+change every 2 ms for a one-vCPU guest whose console driver reads its size on
+each, so that the guest's reads cross the changes thousands of times, and
+requires the guest to keep running. A guest that does not serve the backend
+channel while it waits on the main socket stops during its boot.
 
 A backend request that needs an acknowledgement (an in-band completion, a
 config change, or a shared-memory map or unmap) waits for it while still

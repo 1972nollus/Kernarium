@@ -5,16 +5,26 @@
  * channel unread, as a suspended one does, holds the next request back until
  * it resumes.
  *
- * The device has an ID no guest driver binds, so the guest acknowledges each
- * change and does nothing else with it, and it serves no virtqueue: the
- * guest RAM the emulator names in SET_MEM_TABLE is an identity token that
- * only the emulator process resolves (darwin/runtime/bridge.cpp), so a
- * backend in another process could not read a request in any case.
+ * The device has no behavior of its own. Bound to an ID no guest driver
+ * binds, it makes the guest acknowledge each change and do nothing else with
+ * it. Bound to the ID of a driver that reads its configuration when it
+ * changes, it also makes the guest read the configuration over the main
+ * socket from a worker, which crosses the change request on the backend
+ * channel; the server counts the reads it answers. The shape of the device
+ * follows what that driver needs to bind and to read: its queue count, the
+ * size of its configuration, and the feature that makes it read.
  *
- *   uml-vhost-user-churn-server --fd N [--period-ms 50]
+ * It serves no virtqueue: the guest RAM the emulator names in SET_MEM_TABLE
+ * is an identity token that only the emulator process resolves
+ * (darwin/runtime/bridge.cpp), so a backend in another process cannot read a
+ * request in any case. A queue the driver fills at probe, as the console's
+ * input queue, is kicked, and the kick finds no request.
+ *
+ *   uml-vhost-user-churn-server --fd N [--period-ms 50] [--queues 1]
+ *       [--config-bytes 4] [--features 0]
  *
  * It prints the number of changes raised so far when it receives SIGUSR1, and
- * exits when the guest closes the connection with a summary line of the total.
+ * exits when the guest closes the connection with a summary line of the totals.
  */
 
 #include "unique_descriptor.hpp"
@@ -45,6 +55,7 @@ namespace {
 
 std::atomic_bool stopRequested {};
 std::atomic<std::uint64_t> changesRaised {};
+std::atomic<std::uint64_t> configReadsAnswered {};
 
 void requestStop(int) noexcept
 {
@@ -75,12 +86,19 @@ void printMark(int) noexcept
     (void)::write(STDOUT_FILENO, text, length);
 }
 
-/* A device the backend serves with one queue and four bytes of
- * configuration, which nothing reads. */
+/* A device with zero-filled configuration, whose queues the backend never
+ * serves. */
 class ChurningDevice final : public uml::virtio::VhostUserDevice {
 public:
-    explicit ChurningDevice(std::uint64_t periodMilliseconds)
-        : timer_(::kqueue())
+    ChurningDevice(
+        std::uint64_t periodMilliseconds,
+        std::size_t queues,
+        std::size_t configurationBytes,
+        std::uint64_t features)
+        : features_(features)
+        , queues_(queues)
+        , configurationBytes_(configurationBytes)
+        , timer_(::kqueue())
     {
         if (timer_.get() < 0)
             throw std::runtime_error(
@@ -101,17 +119,22 @@ public:
 
     [[nodiscard]] std::uint64_t features() const noexcept override
     {
-        return 0;
+        return features_;
     }
 
     [[nodiscard]] std::size_t queueCount() const noexcept override
     {
-        return 1;
+        return queues_;
     }
 
     [[nodiscard]] std::vector<std::uint8_t> configuration() const override
     {
-        return std::vector<std::uint8_t>(sizeof(std::uint32_t));
+        return std::vector<std::uint8_t>(configurationBytes_);
+    }
+
+    void configurationRead(std::uint32_t, std::uint32_t) noexcept override
+    {
+        configReadsAnswered.fetch_add(1, std::memory_order_relaxed);
     }
 
     void writeConfiguration(
@@ -168,6 +191,9 @@ public:
     }
 
 private:
+    std::uint64_t features_;
+    std::size_t queues_;
+    std::size_t configurationBytes_;
     uml::gpu::UniqueDescriptor timer_;
     bool pending_ {};
 };
@@ -175,7 +201,8 @@ private:
 [[noreturn]] void usage()
 {
     std::fputs(
-        "usage: uml-vhost-user-churn-server --fd N [--period-ms MS]\n",
+        "usage: uml-vhost-user-churn-server --fd N [--period-ms MS] "
+        "[--queues N] [--config-bytes N] [--features MASK]\n",
         stderr);
     std::exit(2);
 }
@@ -195,6 +222,9 @@ int main(int argc, char** argv)
 {
     int descriptor = -1;
     std::uint64_t periodMilliseconds = 50;
+    std::uint64_t queues = 1;
+    std::uint64_t configurationBytes = sizeof(std::uint32_t);
+    std::uint64_t features = 0;
     for (int index = 1; index < argc; ++index) {
         const std::string_view option {argv[index]};
         if (index + 1 >= argc)
@@ -204,11 +234,19 @@ int main(int argc, char** argv)
             descriptor = static_cast<int>(number(value));
         else if (option == "--period-ms")
             periodMilliseconds = number(value);
+        else if (option == "--queues")
+            queues = number(value);
+        else if (option == "--config-bytes")
+            configurationBytes = number(value);
+        else if (option == "--features")
+            features = number(value);
         else
             usage();
     }
-    if (descriptor < 0 || periodMilliseconds == 0)
+    if (descriptor < 0 || periodMilliseconds == 0 || queues == 0 ||
+        queues > 16 || configurationBytes > 256) {
         usage();
+    }
 
     struct sigaction action {};
     action.sa_handler = requestStop;
@@ -220,15 +258,23 @@ int main(int argc, char** argv)
 
     try {
         uml::gpu::VhostUserServer server {
-            std::make_unique<ChurningDevice>(periodMilliseconds)};
+            std::make_unique<ChurningDevice>(
+                periodMilliseconds,
+                static_cast<std::size_t>(queues),
+                static_cast<std::size_t>(configurationBytes),
+                features)};
         server.runConnected(descriptor, stopRequested);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "uml-vhost-user-churn-server: %s\n",
             error.what());
         return 1;
     }
-    std::printf("vhost-user churn: %llu config changes raised\n",
+    std::printf(
+        "vhost-user churn: %llu config changes raised, %llu config reads "
+        "answered\n",
         static_cast<unsigned long long>(
-            changesRaised.load(std::memory_order_relaxed)));
+            changesRaised.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(
+            configReadsAnswered.load(std::memory_order_relaxed)));
     return 0;
 }
