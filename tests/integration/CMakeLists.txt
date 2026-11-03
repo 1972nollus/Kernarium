@@ -430,6 +430,15 @@ uml_add_guest_integration_test(
     TIMEOUT 180
     CPUS 1)
 
+# Two-vCPU guest: a Virtio console or UML line write allocates nothing, and
+# a full line ring holds its writer back instead of losing output.
+uml_add_guest_integration_test(
+    NAME guest-console-write-memory
+    SCRIPT console/run_guest_console_write_memory.py
+    LABELS guest;console;smoke
+    TIMEOUT 300
+    CPUS 2)
+
 # The interpreter runs BPF callbacks through its fixed entry-point pool.
 uml_add_guest_integration_test(
     NAME guest-bpf-callbacks
@@ -491,6 +500,16 @@ uml_add_guest_integration_test(
     LABELS guest;kernel;smoke
     TIMEOUT 600
     CPUS 4)
+
+# Every kind of UBD request, traced allocation by allocation, reaches the disk
+# and reads back intact while the driver allocates no memory to submit or run
+# it.
+uml_add_guest_integration_test(
+    NAME guest-ubd-request-memory
+    SCRIPT kernel/run_guest_ubd_request_memory.py
+    LABELS guest;kernel;smoke
+    TIMEOUT 600
+    CPUS 2)
 
 # Evicting cached ext4 inodes that hold block preallocations, under memory
 # pressure, releases the preallocations without a single __GFP_NOFAIL page
