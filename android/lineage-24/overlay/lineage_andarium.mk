@@ -528,8 +528,9 @@ PRODUCT_VENDOR_PROPERTY_BLACKLIST += ro.vendor.hwc.drm.present_fence_not_reliabl
 # the stock shell privilege boundary; a userdebug build also lets `adb root`
 # restart adbd as root, so whoever can reach the port without authorization is
 # root in the guest. Apple hosts select authorization through the immutable
-# ro.boot.kernarium.adb_auth property on each boot, and that boot policy
-# overrides the build type's ro.adb.secure default inside adbd.
+# ro.boot.kernarium.adb_auth property on each boot, and adbd takes that boot
+# policy in place of the build type's ro.adb.secure. The property itself stays
+# the build type's value (BoardConfig.mk drops the inherited override).
 #
 # USB debugging is off on a fresh data partition: persist.sys.usb.config, which
 # AdbService reads at every boot to set adb_enabled, has no product default.

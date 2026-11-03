@@ -397,10 +397,10 @@ index 30c4e4a82998744ef4c1ec52e9cc08c044ab2ecc..11ceccbd098bd813f962e718e949db6f
  
  void
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 7cd60977abe8119d28fc8a7112813ed0091ac4c6..96795accac170427271b9dcd80e2a6fbc3367f65 100644
+index 6a5e3ea4f75f3cc99baec3b0866ade5d4e7fea43..969e22bf1033d129b243745e7e9f86f8adaa638e 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -4326,6 +4326,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4352,6 +4352,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
     uint32_t geometry_pre_gs_shader = UINT32_MAX;
     struct poly_gs_info transform_feedback_info = {0};
     struct poly_gs_info geometry_info = {0};
@@ -408,7 +408,7 @@ index 7cd60977abe8119d28fc8a7112813ed0091ac4c6..96795accac170427271b9dcd80e2a6fb
     nir_shader *line_source = nir_shaders[0];
     nir_shader *line_source_clone = NULL;
     uint64_t line_raster_outputs = 0;
-@@ -4336,6 +4337,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4362,6 +4363,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        const struct vk_shader_compile_info *gs_compile =
           &infos[geometry_shader];
        nir_shader *main = nir_shaders[geometry_shader];
@@ -417,7 +417,7 @@ index 7cd60977abe8119d28fc8a7112813ed0091ac4c6..96795accac170427271b9dcd80e2a6fb
        nir_shader *count = NULL;
        nir_shader *raster = NULL;
        nir_shader *pre_gs = NULL;
-@@ -4646,6 +4649,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4672,6 +4675,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        struct kk_shader *vs = shaders[0];
        vs->info.vs.geometry_shader_emulation = true;
        vs->info.vs.geometry = geometry_info;
@@ -426,7 +426,7 @@ index 7cd60977abe8119d28fc8a7112813ed0091ac4c6..96795accac170427271b9dcd80e2a6fb
        struct kk_shader *main = shaders[geometry_main_shader];
        vs->geometry_main_msl = main->msl_data[MESA_SHADER_COMPUTE];
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 6a439054966ff29eb571fbaa222117909a0c6e2d..8b278af2c7575dbc170b1c945be114c93deefbc7 100644
+index a57bbe651f864cc13836ab7f5849baf3c60f6e89..b8a5ad1cec6b3fddbd26c0cba8774775dbdd0762 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -99,6 +99,9 @@ struct kk_shader_info {

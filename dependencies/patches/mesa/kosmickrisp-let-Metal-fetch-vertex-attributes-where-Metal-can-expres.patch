@@ -541,10 +541,10 @@ index a31eadde4320459375e9f1e68bb5d39ea24d55d3..4e246852333186c87ebaa80e892f09cc
  #define KK_MAX_PUSH_SIZE                 256
  #define KK_MAX_DYNAMIC_BUFFERS           64
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 8d5fa3570c8ec451d377f52408eb2bac83c05d31..17a927fa393c90204ef395f43697c97de5d60462 100644
+index 705b897306c5860c3e73b68b1bf25f7ccc1a0ead..6c3a505a5c1b42cec3d2a8959e8ec7775b08f01e 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -368,6 +368,291 @@ kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,
+@@ -369,6 +369,291 @@ kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,
     NIR_PASS(_, nir, kk_nir_lower_vbo, attributes, robustness2, byte_strides);
  }
  
@@ -836,7 +836,7 @@ index 8d5fa3570c8ec451d377f52408eb2bac83c05d31..17a927fa393c90204ef395f43697c97d
  static nir_def *
  kk_load_depth_clip_array(nir_builder *b, nir_def *viewport,
                           unsigned array_offset, unsigned element_size)
-@@ -1315,12 +1600,16 @@ gather_shader_info(struct kk_shader *shader, nir_shader *nir,
+@@ -1316,12 +1601,16 @@ gather_shader_info(struct kk_shader *shader, nir_shader *nir,
  }
  
  static void
@@ -856,7 +856,7 @@ index 8d5fa3570c8ec451d377f52408eb2bac83c05d31..17a927fa393c90204ef395f43697c97d
     } else if (nir->info.stage == MESA_SHADER_FRAGMENT) {
        /* Some meta shaders like vk-meta-resolve will have depth_layout as NONE
         * which is not a valid Metal layout */
-@@ -1406,10 +1695,22 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1407,10 +1696,22 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
      * are turned to compute shaders that will be dispatched before the draw
      * call. Tess evalutaion shaders are turned into vertex shaders. */
     if (stage == MESA_SHADER_VERTEX) {
@@ -881,7 +881,7 @@ index 8d5fa3570c8ec451d377f52408eb2bac83c05d31..17a927fa393c90204ef395f43697c97d
           if (line_multiview)
              NIR_PASS(_, nir, kk_nir_lower_line_multiview,
                       state->mv->view_mask);
-@@ -1480,7 +1781,8 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1481,7 +1782,8 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
     NIR_PASS(_, nir, kk_nir_lower_poly, pipeline_statistics);
  
     msl_optimize_nir(nir);
@@ -891,7 +891,7 @@ index 8d5fa3570c8ec451d377f52408eb2bac83c05d31..17a927fa393c90204ef395f43697c97d
  
     struct nir_to_msl_options translate_options = {
        .mem_ctx = NULL,
-@@ -4119,6 +4421,29 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
+@@ -4120,6 +4422,29 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
     mtl_render_pipeline_descriptor_set_input_primitive_topology(
        pipeline_descriptor, vs->info.vs.topology);
  
@@ -922,7 +922,7 @@ index 8d5fa3570c8ec451d377f52408eb2bac83c05d31..17a927fa393c90204ef395f43697c97d
      * in the array so need to check them all, not just first
      * color_attachment_count entries.
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 889ecc06804ac229cbfca446cabb3e74187ba26d..3b30bc48aef7216669c71bfa0cbb5ce42e1dd455 100644
+index 059399497ea496c802d9ee873b7ad9249bbd9e2a..0b96684ea2019494694cae6be04092fc19fc9055 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -9,6 +9,7 @@

@@ -37,7 +37,7 @@ constexpr std::array<double, 8> measured_ceiling_mib{
 	135.3, 173.6, 208.0, 244.9, 262.9, 267.5, 299.3, 298.3};
 
 constexpr std::array<std::uint32_t, 8> expected_cap_mib{
-	176, 208, 240, 288, 304, 304, 336, 336};
+	128, 160, 192, 224, 240, 240, 272, 272};
 
 using Row = std::array<std::uint32_t, 8>;
 
@@ -50,30 +50,31 @@ Row maximumRow(std::uint64_t limit, const budget::LaunchMemorySet &set)
 	return row;
 }
 
-void theCapIsTheMeasuredCeilingRoundedUpPlusAMargin()
+void theCapIsSevenEighthsOfTheMeasuredCeilingRoundedUp()
 {
 	for (unsigned executors = 1; executors <= 8; ++executors) {
 		const double ceiling = measured_ceiling_mib[executors - 1];
-		auto rounded = static_cast<std::uint32_t>(ceiling);
-		if (static_cast<double>(rounded) < ceiling)
+		const double seven_eighths = ceiling * 7.0 / 8.0;
+		auto rounded = static_cast<std::uint32_t>(seven_eighths);
+		if (static_cast<double>(rounded) < seven_eighths)
 			++rounded;
 		const std::uint32_t sixteens = (rounded + 15U) / 16U * 16U;
-		require(sixteens + 32U == expected_cap_mib[executors - 1],
-			"cap = ceiling up to 16 MiB + 32 MiB");
+		require(sixteens == expected_cap_mib[executors - 1],
+			"cap = 7/8 of the ceiling up to 16 MiB");
 		require(budget::gadget_cache_cap(executors) ==
 			expected_cap_mib[executors - 1] * mib);
-		require(budget::gadget_cache_cap(executors) >
+		require(budget::gadget_cache_cap(executors) <
 			static_cast<std::size_t>(ceiling * static_cast<double>(mib)),
-			"above every measured ceiling");
+			"under every measured ceiling, so it binds there");
 	}
 }
 
 void aCountOfZeroIsOneAndFurtherVCPUsAddSixteenEach()
 {
 	require(budget::gadget_cache_cap(0) == budget::gadget_cache_cap(1));
-	require(budget::gadget_cache_cap(9) == 352 * mib);
-	require(budget::gadget_cache_cap(10) == 368 * mib);
-	require(budget::gadget_cache_cap(64) == (336 + 16 * 56) * mib);
+	require(budget::gadget_cache_cap(9) == 288 * mib);
+	require(budget::gadget_cache_cap(10) == 304 * mib);
+	require(budget::gadget_cache_cap(64) == (272 + 16 * 56) * mib);
 	for (unsigned executors = 1; executors < 64; ++executors)
 		require(budget::gadget_cache_cap(executors) <=
 			budget::gadget_cache_cap(executors + 1), "never falls");
@@ -95,20 +96,21 @@ void theCacheBudgetIsCappedOnlyUnderALimit()
 	require(budget::gadget_cache_budget(8 * gib, 0, 1) == 2 * gib);
 	require(budget::gadget_cache_budget(512 * mib, 0, 8) == 128 * mib);
 	/* A roomy limit leaves the cap as the bound: 1024 MiB at 4096 MiB. */
-	require(budget::gadget_cache_budget(4096 * mib, 64 * gib, 1) == 176 * mib);
-	require(budget::gadget_cache_budget(4096 * mib, 64 * gib, 8) == 336 * mib);
+	require(budget::gadget_cache_budget(4096 * mib, 64 * gib, 1) == 128 * mib);
+	require(budget::gadget_cache_budget(4096 * mib, 64 * gib, 8) == 272 * mib);
 	/* An eighth of 2867 MiB is 358.375, above the cap up to 8 vCPUs. */
 	for (unsigned executors = 1; executors <= 8; ++executors)
 		require(budget::gadget_cache_budget(2240 * mib, ipad_limit,
 				executors) == expected_cap_mib[executors - 1] * mib);
-	/* The cap is no floor: a small guest keeps its 128 MiB, a tight limit its
-	 * eighth. */
+	/* The cap is no floor: a small guest keeps its 128 MiB at any count, a
+	 * tight limit its eighth. */
 	require(budget::gadget_cache_budget(512 * mib, ipad_limit, 8) == 128 * mib);
+	require(budget::gadget_cache_budget(512 * mib, ipad_limit, 1) == 128 * mib);
 	require(budget::gadget_cache_budget(2048 * mib, 800 * mib, 8) == 100 * mib);
 	/* More vCPUs than the table measured raise the cap, then the eighth of
 	 * the limit bounds the cache. */
 	require(budget::gadget_cache_budget(4096 * mib, 64 * gib, 12) ==
-		(336 + 16 * 4) * mib);
+		(272 + 16 * 4) * mib);
 }
 
 void theEngineIsTheCacheTheSlotTagsAndTheRest()
@@ -133,14 +135,14 @@ void theLaunchSetIsMainsUntilTheProductOwnerChoosesOne()
 void theMaximumOnAnIPadFollowsTheVCPUCountForEveryCandidateSet()
 {
 	require(maximumRow(ipad_limit, no_terms) ==
-		Row{2240, 2240, 2176, 2176, 2112, 2112, 2112, 2112}, "main");
+		Row{2304, 2304, 2240, 2240, 2176, 2176, 2176, 2176}, "main");
 	require(maximumRow(ipad_limit, measured) ==
-		Row{1600, 1536, 1536, 1472, 1472, 1472, 1408, 1408}, "Measured");
+		Row{1664, 1600, 1536, 1536, 1536, 1536, 1472, 1472}, "Measured");
 	require(maximumRow(ipad_limit, measured_and_growth) ==
-		Row{1472, 1408, 1408, 1344, 1344, 1344, 1280, 1280},
+		Row{1536, 1472, 1472, 1408, 1408, 1408, 1344, 1344},
 		"Measured + growth");
 	require(maximumRow(ipad_limit, conservative) ==
-		Row{1344, 1344, 1280, 1216, 1216, 1216, 1216, 1216},
+		Row{1408, 1344, 1344, 1280, 1280, 1280, 1216, 1216},
 		"Conservative");
 	/* The launch set is the default argument. */
 	require(budget::maximum_guest_memory_mib(ipad_limit, 6) ==
@@ -148,7 +150,7 @@ void theMaximumOnAnIPadFollowsTheVCPUCountForEveryCandidateSet()
 			budget::launch_memory_set));
 	/* The same evaluation as a constant expression. */
 	static_assert(budget::maximum_guest_memory_mib(ipad_limit, 2,
-			measured_and_growth) == 1408);
+			measured_and_growth) == 1472);
 }
 
 /* Every maximum leaves the host GPU its floor at its own size and not at the
@@ -212,7 +214,7 @@ void aTightLimitOffersTheSmallestGuest()
 			conservative) == 512);
 	/* A roomier limit offers more, and steps down with the vCPU count. */
 	require(budget::maximum_guest_memory_mib(4096 * mib, 1) == 3520);
-	require(budget::maximum_guest_memory_mib(4096 * mib, 8) == 3328);
+	require(budget::maximum_guest_memory_mib(4096 * mib, 8) == 3392);
 }
 
 /* The applications default to and offer every physical core, at most the
@@ -247,8 +249,8 @@ void theApplicationLimitIsThePhysicalCoresAtMostTheMeasuredCount()
 int main()
 {
 	static constexpr uml::testing::NamedTest tests[] {
-		{"the-cap-is-the-measured-ceiling-rounded-up-plus-a-margin",
-			theCapIsTheMeasuredCeilingRoundedUpPlusAMargin},
+		{"the-cap-is-seven-eighths-of-the-measured-ceiling-rounded-up",
+			theCapIsSevenEighthsOfTheMeasuredCeilingRoundedUp},
 		{"a-count-of-zero-is-one-and-further-vcpus-add-sixteen-each",
 			aCountOfZeroIsOneAndFurtherVCPUsAddSixteenEach},
 		{"the-slot-tags-are-four-mebibytes-each",

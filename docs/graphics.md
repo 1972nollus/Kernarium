@@ -23,10 +23,13 @@ Apple GPU product links CGL, OpenGL.framework, EAGL, MoltenVK, a Vulkan
 loader, or a second ambient libepoxy/virglrenderer family.
 
 Destroying a GL context frees the pipelines, shader variants, pipeline cache
-and library references of the Zink programs it built, although the screen's
-shared shaders outlive it, so closing a guest application returns the Metal
-pipelines and generated MSL it caused instead of keeping them for the life of
-the process.
+and library references of the Zink programs it built, and the programs
+themselves when they hold only a vertex and a fragment shader, although the
+screen's shared shaders outlive it, so closing a guest application returns the
+Metal pipelines and generated MSL it caused instead of keeping them for the
+life of the process. A set of shaders whose pipeline libraries no program holds
+and no lookup can reach has its libraries freed at once, not when the last
+shader of the set dies.
 
 macOS and the iOS device both build that stack from the same sources; the
 prefixes differ only in their platform contract. The iOS Simulator cannot run
@@ -1066,7 +1069,12 @@ runs atomics and size queries on cube images under shader validation.
 Linked graphics pipelines share native programs and dynamic vertex-input
 variants only while a live Vulkan pipeline owns them. The lookup cache drops
 its entry and releases those resources when the last pipeline owner is
-destroyed, so obsolete programs do not accumulate until device teardown.
+destroyed, so obsolete programs do not accumulate until device teardown. A
+dynamic vertex-input variant frees its generated MSL once its Metal pipelines
+are built; the one use left for it, a render pass that binds fewer colour
+attachments than the pipeline declares, compiles the variant again from the
+parent's NIR and the variant's vertex input. `MESA_KK_REGENERATE_MSL=1` makes
+every draw take that path, so the tests can exercise it.
 Pipeline statistics use draw-time guards in the same executable, including its
 bounded raster variants; query begin and end never compile or retain a second
 shader tree. Every active statistics query counts into one shared block; a
