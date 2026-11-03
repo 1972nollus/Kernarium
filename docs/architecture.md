@@ -1047,14 +1047,6 @@ then waits in the ring until the ring is enabled again. A suspended guest
 disables its rings, so input that arrives meanwhile reaches it once, after the
 resume.
 
-The transport offers `VHOST_USER_PROTOCOL_F_RESET_DEVICE`. A front-end that
-negotiated it sends `RESET_DEVICE` when its driver resets the device: the device
-returns to its initial state and every ring stops and is disabled, with or
-without a request pending, and the memory table and descriptors stay. A request
-without the negotiated feature closes the connection. A front-end without the
-feature still gets that reset when a ring is disabled while requests are
-pending.
-
 A service can be given a request gate, which another thread closes to hold the
 device's requests back. A closed gate lets no request reach the device, and
 closing it waits, for a bounded time, for the request the device is already

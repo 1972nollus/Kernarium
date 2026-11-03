@@ -54,7 +54,6 @@ constexpr std::uint64_t baseOfferedProtocolFeatures =
     protocol::protocolFeatureReplyAck |
     protocol::protocolFeatureSlaveRequest |
     protocol::protocolFeatureConfig |
-    protocol::protocolFeatureResetDevice |
     protocol::protocolFeatureInbandNotifications;
 
 class ConnectionStopped final {};
@@ -1433,13 +1432,6 @@ void VhostUserServer::handleMessage(
         sendAcknowledgement(socket, message.header, 0);
         sentReply = true;
     };
-    const auto retireDeviceAndStopRings = [&] {
-        resetDeviceState();
-        for (auto& queue : queues_) {
-            queue.started = false;
-            queue.enabled = false;
-        }
-    };
     const auto processAcceptedQueue = [&](std::uint32_t index) {
         try {
             processQueue(index);
@@ -1554,23 +1546,11 @@ void VhostUserServer::handleMessage(
          * transport mappings and descriptors, while retiring every renderer
          * object that may refer to guest memory before disabling the rings.
          */
-        retireDeviceAndStopRings();
-        break;
-    case protocol::VhostRequest::resetDevice:
-        requirePayloadSize(message, 0, "RESET_DEVICE");
-        requireNoDescriptors(message, "RESET_DEVICE");
-        if ((negotiatedProtocolFeatures_ &
-             protocol::protocolFeatureResetDevice) == 0) {
-            throw std::runtime_error("RESET_DEVICE was not negotiated");
+        resetDeviceState();
+        for (auto& queue : queues_) {
+            queue.started = false;
+            queue.enabled = false;
         }
-        /* The front-end resets the device it drives, as a guest does when
-         * its driver resets the virtio device. The device returns to its
-         * initial state and every ring stops and is disabled, whether or not
-         * a request is pending: a ring disable alone resets only a device
-         * with requests pending. The memory table and the descriptors belong
-         * to the connection, so they stay.
-         */
-        retireDeviceAndStopRings();
         break;
     case protocol::VhostRequest::setSlaveRequestFd:
         requirePayloadSize(message, 0, "SET_SLAVE_REQ_FD");

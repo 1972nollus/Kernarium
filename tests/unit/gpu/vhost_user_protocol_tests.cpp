@@ -920,10 +920,6 @@ public:
         FixtureDevice::drainEventSource();
         drained_.fetch_add(1, std::memory_order_release);
     }
-    void reset() noexcept override
-    {
-        resets_.fetch_add(1, std::memory_order_release);
-    }
     [[nodiscard]] unsigned delivered() const noexcept
     {
         return delivered_.load(std::memory_order_relaxed);
@@ -932,10 +928,6 @@ public:
     {
         return drained_.load(std::memory_order_acquire);
     }
-    [[nodiscard]] unsigned resets() const noexcept
-    {
-        return resets_.load(std::memory_order_acquire);
-    }
 
     static constexpr std::array<std::uint8_t, 8> event {1, 0, 116, 0, 1, 0, 0, 0};
 
@@ -943,7 +935,6 @@ private:
     std::atomic_uint pending_ {};
     std::atomic_uint delivered_ {};
     std::atomic_uint drained_ {};
-    std::atomic_uint resets_ {};
 };
 
 /* A suspended guest disables its rings. An event raised meanwhile must wait
@@ -999,74 +990,6 @@ void aDisabledRingKeepsTheBuffersTheDeviceFills()
             memory.subspan(eventOffset, EventSourceDevice::event.size()),
             EventSourceDevice::event));
         require(source->delivered() == 1);
-    });
-}
-
-/* A front end that negotiated RESET_DEVICE resets the device when its driver
- * does, with no request pending, which a ring disable does not reset. The
- * request is acknowledged, the device is reset once, and the ring stops and is
- * disabled: an event raised afterwards waits. The memory table stays, so the
- * front end setting its queue up again, as a driver does after a reset, is
- * enough for the event to be delivered. */
-void resetDeviceResetsAnIdleDeviceAndDisablesItsRings()
-{
-    auto device = std::make_unique<EventSourceDevice>();
-    auto* source = device.get();
-    VhostUserServer server {std::move(device)};
-    const SplitRing ring;
-    const auto memory = ring.memory();
-
-    constexpr std::size_t eventOffset = 0x300;
-    const std::array descriptors {
-        protocol::VirtqueueDescriptor {
-            .address = SplitRing::guestBase + eventOffset,
-            .length = EventSourceDevice::event.size(),
-            .flags = protocol::descriptorWrite,
-            .next = 0,
-        },
-    };
-    constexpr std::array<std::uint16_t, 1> heads {0};
-    ring.publish(descriptors, heads);
-
-    withServerConnection(server, [&](int socket) {
-        sendRequest(
-            socket,
-            protocol::VhostRequest::getProtocolFeatures,
-            {},
-            {},
-            false);
-        const auto offered = readValueReply<std::uint64_t>(
-            socket, protocol::VhostRequest::getProtocolFeatures);
-        require((offered & protocol::protocolFeatureResetDevice) != 0);
-
-        negotiateProtocolFeatures(
-            socket,
-            protocol::protocolFeatureReplyAck |
-                protocol::protocolFeatureResetDevice);
-        configureMemory(socket, ring.descriptor());
-        auto channels = startQueue(socket, ring);
-        // Setting the memory table reset the device already.
-        const auto resetsBefore = source->resets();
-
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::resetDevice, {});
-        require(source->resets() == resetsBefore + 1U);
-
-        source->raise();
-        awaitCondition([&] { return source->drained() != 0; });
-        pollfd call {.fd = channels.call.readEnd.get(), .events = POLLIN};
-        require(::poll(&call, 1, 200) == 0);
-        require(ring.usedIndex() == 0);
-        require(source->delivered() == 0);
-
-        channels = startQueue(socket, ring);
-        awaitCall(channels.call.readEnd.get());
-        require(ring.usedIndex() == 1);
-        require(source->delivered() == 1);
-        require(std::ranges::equal(
-            memory.subspan(eventOffset, EventSourceDevice::event.size()),
-            EventSourceDevice::event));
-        require(source->resets() == resetsBefore + 1U);
     });
 }
 
@@ -1879,18 +1802,6 @@ void invalidControlMessagesAreRejected(VhostUserServer& server)
             bytesOf(kick));
     });
     expectRejected(server, [](int socket) {
-        sendRequest(socket, protocol::VhostRequest::resetDevice, {});
-    });
-    expectRejected(server, [](int socket) {
-        negotiateProtocolFeatures(
-            socket,
-            protocol::protocolFeatureReplyAck |
-                protocol::protocolFeatureResetDevice);
-        const std::uint32_t payload = 1;
-        sendRequest(
-            socket, protocol::VhostRequest::resetDevice, bytesOf(payload));
-    });
-    expectRejected(server, [](int socket) {
         const protocol::VringState state {.index = 0, .value = 1};
         sendRequest(
             socket,
@@ -2496,7 +2407,6 @@ void runVhostUserProtocolTests()
     deferredCompletionSupportsFourQueues();
     completedPrefixNotifiesBeforeRetry();
     aDisabledRingKeepsTheBuffersTheDeviceFills();
-    resetDeviceResetsAnIdleDeviceAndDisablesItsRings();
     aDisabledRingKeepsRequestsOnlyForADeviceThatAsksForThem();
     aGateDiscardsOnlyWhileItIsClosed();
     aDiscardingGateCompletesRequestsWithoutRunningThem();
