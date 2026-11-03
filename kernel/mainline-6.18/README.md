@@ -147,7 +147,9 @@ beside the vsock loopback transport. The driver binds only to a Virtio vsock
 device the host offers, so a guest without one differs in a single way: with
 the transport registered, a stream to CID 2 goes to the host and no longer
 loops back, while CID 1 (`VMADDR_CID_LOCAL`) still does. The Android product
-lists the transport among its required built-ins.
+lists the transport among its required built-ins. `guest-kernel-config` checks
+that the driver is registered, that no balloon driver is, and that a stream on
+CID 1 carries a byte.
 
 ### Kernel self-protection
 
