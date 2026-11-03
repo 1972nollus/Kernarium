@@ -364,7 +364,11 @@ struct AdbOverVsockTests {
             defer { try? FileManager.default.removeItem(at: local) }
             try await pull(candidate.path, to: local, operations: operations)
             do {
+                let started = ContinuousClock.now
                 try await operations.installApk(at: local, sizeBytes: candidate.size) { _ in }
+                let elapsed = ContinuousClock.now - started
+                let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+                print("ADBVSOCK: install of \(candidate.size) bytes took \(String(format: "%.1f", seconds)) s")
             } catch {
                 outcomes.append("\(package): \(error.localizedDescription)")
                 continue
