@@ -1346,7 +1346,7 @@ uml::emulator::GpuBudgetPlan planGpuBudget(
     std::uint32_t guestMemoryMiB,
     std::uint32_t guestProcessorCount)
 {
-    return uml::emulator::plan_gpu_budget(
+    auto plan = uml::emulator::plan_gpu_budget(
         static_cast<std::uint64_t>(guestMemoryMiB) * mebibyte,
         /* The host sets the limit; a launch states neither it nor the
          * gadget cache. */
@@ -1358,6 +1358,17 @@ uml::emulator::GpuBudgetPlan planGpuBudget(
             .engine_rest = boot->gpu_budget_engine_mib * mebibyte,
             .headroom = boot->gpu_budget_headroom_mib * mebibyte,
         });
+#if UML_GPU_SOFTWARE_RENDERER
+    /* The Simulator's renderer draws on the CPU and holds no device memory,
+     * so no GPU budget applies and a limit, which the Simulator never
+     * states, cannot leave the GPU short: plan as if there were none. */
+    plan.process_limit = 0;
+    plan.budget = uml::platform::compute_gpu_budget({
+        .process_limit = 0,
+        .guest_memory = plan.guest_memory,
+    });
+#endif
+    return plan;
 }
 
 int runtimePlanGpuBudget(
@@ -1529,10 +1540,16 @@ int runtimeRun(
                 uml::emulator::describe_gpu_budget_shortfall(gpuBudget)
                     .c_str());
         }
+#if UML_GPU_SOFTWARE_RENDERER
+        std::puts(
+            "Kernarium: no GPU budget: the software renderer holds no "
+            "device memory");
+#else
         std::printf(
             "Kernarium: GPU budget %llu MiB of a %llu MiB limit\n",
             static_cast<unsigned long long>(deviceMemoryLimit >> 20),
             static_cast<unsigned long long>(gpuBudget.process_limit >> 20));
+#endif
         /* The display outlives the guest: the GPU service keeps the view and
          * the frame mirror, and hands each boot its own connection. */
         uml::gpu::InProcessGpuService gpuService(

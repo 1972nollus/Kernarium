@@ -46,6 +46,9 @@ public:
 
     [[nodiscard]] virtual VirglRenderer::Capset capset(
         std::uint32_t capsetId) const = 0;
+    /* A renderer without a Vulkan driver, as the iOS Simulator's, offers no
+     * Venus capset. */
+    [[nodiscard]] virtual bool offersVenus() const noexcept { return true; }
     [[nodiscard]] virtual int createContext(
         std::uint32_t contextId,
         std::uint32_t flags,

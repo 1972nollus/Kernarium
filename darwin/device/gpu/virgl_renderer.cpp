@@ -78,6 +78,7 @@ std::atomic<std::uint64_t> deviceMemoryLimit;
 // renderer replaces it only once the one before has been cleaned up.
 std::unique_ptr<DeviceMemoryPool> deviceMemoryPool;
 
+#if !UML_GPU_SOFTWARE_RENDERER
 std::uint64_t deviceMemoryPoolUsage(void* data) noexcept
 {
     return static_cast<DeviceMemoryPool*>(data)->usage();
@@ -92,6 +93,7 @@ void releaseDeviceMemory(void* data, std::uint64_t size) noexcept
 {
     static_cast<DeviceMemoryPool*>(data)->release(size);
 }
+#endif
 
 [[nodiscard]] bool capabilityReportEnabled() noexcept
 {
@@ -263,6 +265,13 @@ VirglRenderer::VirglRenderer()
          * onto renderer-owned sync threads, forbid that poll, and make Virgl
          * fence delivery asynchronous too.
          */
+#if UML_GPU_SOFTWARE_RENDERER
+        // The Simulator renderer serves Virgl only: it has no Vulkan driver,
+        // so there is no Venus, no render server and no device-memory pool.
+        const int rendererFlags = 0;
+        deviceMemoryPool.reset();
+        virgl_renderer_set_device_memory_pool(nullptr);
+#else
         const int rendererFlags =
             VIRGL_RENDERER_VENUS |
             VIRGL_RENDERER_RENDER_SERVER;
@@ -311,6 +320,7 @@ VirglRenderer::VirglRenderer()
         } else {
             virgl_renderer_set_device_memory_pool(nullptr);
         }
+#endif
         const int result =
             virgl_renderer_init(this, rendererFlags, &callbacks);
         const int checkedResult = checkGlDispatchResult(result);
@@ -340,10 +350,18 @@ VirglRenderer::VirglRenderer()
         }
         if (capabilityReportEnabled()) {
             // vrend asks for 4.6 first, the core context this provider serves.
+#if UML_GPU_SOFTWARE_RENDERER
+            // The software rasterizer's desktop GL stops at 4.5, so 4.6 would
+            // report a probe that can never succeed.
+            reportContextProbe(provider_->probeContext(4, 5));
+#else
             reportContextProbe(provider_->probeContext(4, 6));
+#endif
             reportCapset(virglCapsetId, capset(virglCapsetId));
             reportCapset(virgl2CapsetId, capset(virgl2CapsetId));
+#if !UML_GPU_SOFTWARE_RENDERER
             reportCapset(venusCapsetId, capset(venusCapsetId));
+#endif
         }
     } catch (...) {
         if (deviceMemoryPool)
