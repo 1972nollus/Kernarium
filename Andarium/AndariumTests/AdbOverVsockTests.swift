@@ -215,6 +215,81 @@ struct AdbOverVsockTests {
         try await set(initial ?? false)
     }
 
+    /// The image's key rule, which only a guest booted with authorization on
+    /// can show: the application's own key is accepted whatever the debugging
+    /// setting; any other key is refused with no prompt and nothing queued
+    /// while USB and wireless debugging are both off, and raises the stock
+    /// "Allow USB debugging" prompt (left unanswered, so it is refused too)
+    /// while debugging is on.
+    @Test(.timeLimit(.minutes(25))) func theKeyRuleHoldsWithDebuggingOffAndOn() async throws {
+        guard Self.enabled else { return }
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        let own = try #require(operations.identity).privateKey
+        let foreign = try Self.ephemeralKey()
+        let initial = await operations.usbDebugging()
+
+        func setDebugging(_ on: Bool) async throws {
+            _ = try? await operations.shell(
+                "settings put global adb_enabled \(on ? 1 : 0); settings put global adb_wifi_enabled 0")
+            var read: Bool?
+            for _ in 0..<60 {
+                read = await operations.usbDebugging()
+                if read == on { break }
+                try await Task.sleep(for: .seconds(1))
+            }
+            #expect(read == on)
+            // adbd restarts once when both switches go off.
+            try await Task.sleep(for: .seconds(3))
+        }
+        func promptCount() async throws -> Int {
+            var text = ""
+            for _ in 0..<20 {
+                if let result = try? await operations.shell(
+                    "dumpsys activity activities | grep -c UsbDebuggingActivity")
+                {
+                    text = result.text
+                    break
+                }
+                try await Task.sleep(for: .seconds(1))
+            }
+            return Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) ?? -1
+        }
+        func dismissPrompt() async throws {
+            for _ in 0..<10 {
+                _ = try? await operations.shell("input keyevent KEYCODE_BACK")
+                try await Task.sleep(for: .seconds(1))
+                if try await promptCount() == 0 { return }
+            }
+            Issue.record("the debugging prompt did not go away")
+        }
+
+        // Debugging off: the application's key connects, a foreign key does
+        // not even when it offers itself, and no prompt is raised or queued.
+        try await setDebugging(false)
+        #expect(try await promptCount() == 0)
+        #expect(try await Self.attempt(key: own, offer: false) == .accepted, "own key, debugging off")
+        #expect(try await Self.attempt(key: foreign, offer: false) == .refused, "foreign key signing, debugging off")
+        #expect(try await Self.attempt(key: foreign, offer: true) == .unauthorized, "foreign key offered, debugging off")
+        #expect(try await promptCount() == 0, "a prompt was raised with debugging off")
+        print("ADBVSOCK: key rule, debugging off: own accepted, foreign refused, no prompt")
+
+        // Debugging on: nothing was queued meanwhile; the application's key
+        // still connects; the foreign key raises the prompt and stays refused.
+        try await setDebugging(true)
+        try await Task.sleep(for: .seconds(5))
+        #expect(try await promptCount() == 0, "a refused offer was queued for later")
+        #expect(try await Self.attempt(key: own, offer: false) == .accepted, "own key, debugging on")
+        #expect(try await Self.attempt(key: foreign, offer: false) == .refused, "foreign key signing, debugging on")
+        #expect(try await Self.attempt(key: foreign, offer: true) == .unauthorized, "foreign key offered, debugging on")
+        #expect(try await promptCount() > 0, "no prompt for an offered key with debugging on")
+        print("ADBVSOCK: key rule, debugging on: own accepted, foreign refused, prompt raised")
+        try await dismissPrompt()
+        #expect(try await Self.attempt(key: own, offer: false) == .accepted, "own key after the prompt")
+
+        try await setDebugging(initial ?? false)
+    }
+
     /// A real adb on the Mac against the bridge, for as long as the launch
     /// asks (`ANDARIUM_ADB_NET_HOLD_SECONDS`, or until the file named
     /// `adb-net-done` appears in the printed folder). The application's own
@@ -239,7 +314,7 @@ struct AdbOverVsockTests {
         let bridge = AdbNetworkBridge(opener: VsockConnector())
         let port = try bridge.start()
         defer { bridge.stop() }
-        print("ADBVSOCK: bridge ready port=\(port) folder=\(directory.path)")
+        print("ADBVSOCK: bridge ready port=\(port) address=\(LanAddress.current() ?? "none") folder=\(directory.path)")
         let deadline = ContinuousClock.now + .seconds(seconds)
         var peak = 0
         while ContinuousClock.now < deadline, !FileManager.default.fileExists(atPath: done.path) {
@@ -320,6 +395,109 @@ struct AdbOverVsockTests {
                 try sync.receive(remote) { try sink.write($0) }
             }
         }
+    }
+}
+
+extension AdbOverVsockTests {
+    fileprivate enum KeyOutcome: Equatable {
+        /// adbd answered with its CONNECT: the key is authorized.
+        case accepted
+        /// adbd asked for a signature again after this key's.
+        case refused
+        /// The key was offered (AUTH RSAPUBLICKEY) and adbd did not accept it.
+        case unauthorized
+    }
+
+    fileprivate static func ephemeralKey() throws -> SecKey {
+        var error: Unmanaged<CFError>?
+        let attributes: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits as String: 2048,
+        ]
+        return try #require(SecKeyCreateRandomKey(attributes as CFDictionary, &error))
+    }
+
+    /// A connection that signs adbd's token with `key` and, when `offer` is
+    /// set, offers the key's public half after adbd asks again, as a computer
+    /// that wants the person to allow it does.
+    fileprivate static func attempt(key: SecKey, offer: Bool) async throws -> KeyOutcome {
+        // The waits block, so they run off the main thread.
+        try await Task.detached { try attemptBlocking(key: key, offer: offer) }.value
+    }
+
+    private nonisolated static func attemptBlocking(key: SecKey, offer: Bool) throws -> KeyOutcome {
+        let transport = try VsockConnector().connect()
+        defer { transport.shutdown() }
+        let connection = AdbConnection(transport: transport)
+        var hello = Data(AdbWire.hostBanner.utf8)
+        hello.append(0)
+        try connection.send(AdbMessage(
+            command: AdbWire.cnxn, arg0: AdbWire.version, arg1: UInt32(AdbWire.maxData), payload: hello))
+        let signer = SecKeySigner(privateKey: key)
+        var stage = 0
+        while true {
+            let message: AdbMessage?
+            do {
+                message = try receive(connection, transport: transport, seconds: stage == 2 ? 6 : 20)
+            } catch {
+                // adbd ended the connection.
+                return stage == 2 ? .unauthorized : .refused
+            }
+            guard let message else { return stage == 2 ? .unauthorized : .refused }
+            switch message.command {
+            case AdbWire.cnxn:
+                return .accepted
+            case AdbWire.auth where message.arg0 == AdbWire.authToken:
+                switch stage {
+                case 0:
+                    try connection.send(AdbMessage(
+                        command: AdbWire.auth, arg0: AdbWire.authSignature,
+                        payload: signer.sign(token: message.payload)))
+                    stage = 1
+                case 1 where offer:
+                    var line = Data(try AdbKeyStore.line(for: key).utf8)
+                    line.append(contentsOf: Array(" andarium-test@guest".utf8))
+                    line.append(0)
+                    try connection.send(AdbMessage(
+                        command: AdbWire.auth, arg0: AdbWire.authRSAPublicKey, payload: line))
+                    stage = 2
+                case 1:
+                    return .refused
+                default:
+                    return .unauthorized
+                }
+            default:
+                throw AdbError.protocolViolation("a message of \(message.command) in the handshake")
+            }
+        }
+    }
+
+    /// One message, or nil when none came within `seconds` (the connection is
+    /// then ended).
+    fileprivate nonisolated static func receive(
+        _ connection: AdbConnection, transport: any AdbTransport, seconds: Double
+    ) throws -> AdbMessage? {
+        let box = ReceiveBox()
+        let done = DispatchSemaphore(value: 0)
+        let thread = Thread {
+            box.set(Result { try connection.receive() })
+            done.signal()
+        }
+        thread.start()
+        if done.wait(timeout: .now() + seconds) == .timedOut {
+            transport.shutdown()
+            _ = done.wait(timeout: .now() + 5)
+            return nil
+        }
+        return try box.get()
+    }
+}
+
+private nonisolated final class ReceiveBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<AdbMessage, Error>?
+    func set(_ result: Result<AdbMessage, Error>) { lock.withLock { self.result = result } }
+    func get() throws -> AdbMessage? {
+        try lock.withLock { try result?.get() }
     }
 }
 
