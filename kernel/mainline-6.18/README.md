@@ -700,8 +700,14 @@ itself with a wake, with a power key typed on the VNC display and with a
 network connection, after which the host's own suspend must hold under
 traffic on its first attempt. The Virtio sound driver starts a substream afresh
 after a suspend, with no position and no pending message, whether it was
-playing or paused, because the ALSA core restarts it at offset 0;
-`guest-virtio-sound-suspend` plays across a suspend, a pause and a reopen.
+playing or paused, because the ALSA core restarts it at offset 0, and its
+virtio reset sends the vhost-user back-end RESET_DEVICE, so a restored driver
+meets a reset device. The driver reports elapsed periods one at a time, so a
+guest stall longer than the buffer xruns, or carries on when the stop
+threshold is the boundary; it releases the periods queued before a start in
+prepare, hw_params and hw_free; and it pads the last period of a drain with
+silence. `guest-virtio-sound-suspend` plays across a suspend, a pause and a
+reopen, across a 300 ms stop of the guest, and through the drains.
 
 Loadable modules remain disabled. The required guest filesystems, networking,
 Virtio devices, cgroups, BPF interpreter, zram, zswap/zstd, and supported LSM

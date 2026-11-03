@@ -160,7 +160,8 @@ over fakes; it never opens the microphone or shows a permission prompt.
 `audio-mute-clock` covers the schedule a muted sink completes periods on.
 `guest-virtio-sound-suspend` boots a guest with the null output and suspends it
 under a playing and a paused stream: the stream must start afresh, with its
-exact position, its recovery and its reopen (see
+exact position, its recovery and its reopen. It also stops the guest for
+300 ms under a stream and drains streams that end inside a period (see
 [`../../../kernel/mainline-6.18/README.md`](../../../kernel/mainline-6.18/README.md)).
 `UML_TEST_APPLE_AUDIO=ON` adds `apple-audio-playback`, which plays a brief tone
 through the real output, and `apple-audio-interruption`, which runs the sink
