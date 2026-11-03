@@ -311,7 +311,8 @@ property file. On a user build init's property service (stock
 `update_sys_usb_config`) fills the empty property with `none` at every boot, so
 "off" is an empty or `none` value, never `adb`; a debuggable build gets `adb`
 from the same code. `ro.adb.secure` keeps the build type's value (1 on a user
-build): `BoardConfig.mk` drops the `ro.adb.secure=0` that the inherited
+build): the `device/google/cuttlefish` topic that `UML_ANDROID_KEEP_ADB_SECURE`
+switches on (route `p0001`) drops the `ro.adb.secure=0` that the inherited
 Cuttlefish user block adds to the product partition, and the target-files
 verifier rejects a false value in any build property file, because Settings
 hides "Revoke USB debugging authorizations" while the property is false. The

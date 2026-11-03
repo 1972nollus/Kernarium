@@ -4097,15 +4097,15 @@ def verify_debugging_defaults(android_root: Path) -> None:
             fail(f"lineage_andarium.mk must not set USB debugging on: {stripped}")
         if stripped.startswith("ro.adb.secure="):
             fail(f"lineage_andarium.mk must leave ro.adb.secure to the build type: {stripped}")
-    # The inherited Cuttlefish user block adds ro.adb.secure=0 to the product partition. Only the
-    # resolved variable, which the board config sees, loses an inherited entry.
+    # The inherited Cuttlefish user block adds ro.adb.secure=0 to the product partition. The product
+    # makefile cannot filter an inherited entry and the board configuration cannot assign a product
+    # property list (read-only there), so the Cuttlefish topic drops it at its source on request.
+    if "UML_ANDROID_KEEP_ADB_SECURE := true" not in product.splitlines():
+        fail("lineage_andarium.mk must set UML_ANDROID_KEEP_ADB_SECURE := true")
     board = (android_root / "overlay/BoardConfig.mk").read_text()
-    board_filter = (
-        "PRODUCT_PRODUCT_PROPERTIES := "
-        "$(filter-out ro.adb.secure=%,$(PRODUCT_PRODUCT_PROPERTIES))"
-    )
-    if board_filter not in board.splitlines():
-        fail("BoardConfig.mk must filter the inherited ro.adb.secure=0 out of PRODUCT_PRODUCT_PROPERTIES")
+    for number, line in enumerate(board.splitlines(), 1):
+        if re.match(r"\s*PRODUCT_[A-Z_]*PROPERTIES\s*(:|\+|\?)?=", line):
+            fail(f"BoardConfig.mk:{number} assigns a product property list, which is read-only there: {line.strip()}")
 
 
 def verify_hal_selections(android_root: Path) -> None:

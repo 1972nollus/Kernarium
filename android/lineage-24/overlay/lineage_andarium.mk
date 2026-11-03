@@ -28,6 +28,9 @@ UML_ANDROID_DISABLE_IDENTITY := true
 UML_ANDROID_DISABLE_REBOOT_ESCROW := true
 UML_ANDROID_DISABLE_LEGACY_VNDK := true
 UML_ANDROID_MULTILIB := true
+# A user build of the inherited Cuttlefish product adds ro.adb.secure=0 to the product
+# partition; this keeps the build type's value (see the adb paragraph below).
+UML_ANDROID_KEEP_ADB_SECURE := true
 # The compressed EROFS of the five read-only partitions and of every APEX
 # payload: the compressor with its level, and the physical cluster size in
 # bytes. These two lines are the only place either value is written;
@@ -530,12 +533,20 @@ PRODUCT_VENDOR_PROPERTY_BLACKLIST += ro.vendor.hwc.drm.present_fence_not_reliabl
 # root in the guest. Apple hosts select authorization through the immutable
 # ro.boot.kernarium.adb_auth property on each boot, and adbd takes that boot
 # policy in place of the build type's ro.adb.secure. The property itself stays
-# the build type's value (BoardConfig.mk drops the inherited override).
+# the build type's value: Settings hides "Revoke USB debugging authorizations"
+# while it is false, and the user could no longer revoke the computers they
+# allowed. The inherited Cuttlefish user block sets it to 0 in the product
+# partition, whose build.prop is read after system's, so the Cuttlefish topic
+# (route p0001) drops that entry at its source when UML_ANDROID_KEEP_ADB_SECURE
+# is true (set above). Neither this file nor BoardConfig.mk can: inherit-product
+# merges an inherited list after the product's own entries, and the product
+# property lists are read-only by the time the board configuration runs.
 #
 # USB debugging is off on a fresh data partition: persist.sys.usb.config, which
 # AdbService reads at every boot to set adb_enabled, has no product default.
-# The filter removes the value an inherited product would set. adbd serves the
-# host application's key whatever the setting; any other key needs debugging on.
+# The filter drops an entry this product's own lines add, and the target-files
+# verifier rejects any build.prop that sets the property. adbd serves the host
+# application's key whatever the setting; any other key needs debugging on.
 PRODUCT_PRODUCT_PROPERTIES := $(filter-out \
     persist.sys.usb.config=%,$(PRODUCT_PRODUCT_PROPERTIES))
 
