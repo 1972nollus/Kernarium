@@ -1012,11 +1012,13 @@ frames a second; a guest writing to its display presents some; and one busy loop
 reads half of two vCPUs, within 5 points of libproc's count of the same carriers
 and no more than 5 above the guest's own `/proc/stat`. The guest counts the time
 the host took from a vCPU as busy, so on a loaded host its figure is the higher
-one and bounds the host's from above only. The memory part is unavailable, and
-no failure, from a kernel that has no `mem` console request; one that has it
-must equal `MemTotal` less `MemAvailable` within 16 MiB. The test also stands a
-console of its own where the guest's was and checks the launcher sends one `mem`
-datagram in the console's layout and shows what the reply says. For Android, an
+one and bounds the host's from above only. The guest's kernel answers the `mem`
+console request, so the memory part must be there, show `MemTotal` in whole MiB
+and equal `MemTotal` less `MemAvailable` within 16 MiB; a kernel without the
+request fails the test. The test then stands a console of its own where the
+guest's was, one that refuses every request as such a kernel does, and checks
+that the launcher sends only the `mem` datagram in the console's layout and
+shows no memory part. For Android, an
 opt-in check runs `uml-darwin-android17 --stats=1000` under enforcing SELinux:
 the memory part must appear with no `avc` denial in the guest's log and match
 `adb shell cat /proc/meminfo`.

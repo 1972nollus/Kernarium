@@ -21,12 +21,14 @@ command's markers; a poller stamps each line as it arrives.
   host figure is the lower one and the guest cannot bound it from below.
 - Frames: a display nobody draws on presents 0 frames a second, and one a
   guest writes to presents some.
-- Memory: a kernel without the `mem` console request is "unavailable" (no
-  memory part), not a failure; one that has it must report the guest's
-  MemTotal less MemAvailable within 16 MiB. The wire is also checked with a
-  console of the test's own standing where the guest's was: the launcher
-  must send exactly one datagram, `mem`, in the console's request layout, and
-  must show what the reply says. macOS only.
+- Memory: the guest's own kernel answers the `mem` console request, so the
+  line must show the guest's MemTotal in whole MiB and its MemTotal less
+  MemAvailable within 16 MiB, as the launcher's reply parser read them.
+  A kernel without the request is a failure here; for the launcher, which
+  must show no memory part for such a kernel, a console of the test's own
+  that refuses every request stands where the guest's was: the launcher must
+  send only the datagram `mem`, in the console's request layout, and show no
+  memory part. macOS only.
 """
 
 from __future__ import annotations
@@ -76,9 +78,6 @@ LINE_WAIT_SECONDS = 30.0
 MCONSOLE_MAGIC = 0xCAFEBABE
 MCONSOLE_VERSION = 2
 MCONSOLE_DATA = 512
-FAKE_TOTAL = 2048 * MIB
-FAKE_AVAILABLE = 1024 * MIB
-FAKE_FREE = 100 * MIB
 STATS_LINE = re.compile(
     r"uml-darwin: stats (?P<elapsed>\d+\.\d) s "
     r"cpu (?P<cpu>\d+\.\d)% of (?P<vcpus>\d+) vCPUs "
@@ -248,8 +247,9 @@ def mean(values: list[float]) -> float:
 class FakeConsole:
     """A management console of the test's own, bound where the guest's was.
 
-    It answers every request the way a kernel with the `mem` request would,
-    and keeps the requests it received, decoded from the console's layout."""
+    It refuses every request the way a kernel without the `mem` request
+    does, with the error flag and "Unknown command", and keeps the requests
+    it received, decoded from the console's layout."""
 
     def __init__(self, path: pathlib.Path) -> None:
         path.unlink()  # the guest's own socket; its binding is left behind
@@ -267,9 +267,7 @@ class FakeConsole:
         self._socket.close()
 
     def _serve(self) -> None:
-        text = (
-            f"total={FAKE_TOTAL} available={FAKE_AVAILABLE} free={FAKE_FREE}"
-        ).encode()
+        text = b"Unknown command"
         while not self._stop.is_set():
             try:
                 request, client = self._socket.recvfrom(4096)
@@ -280,8 +278,7 @@ class FakeConsole:
                 (magic, version, request[12:12 + length]) if len(request) >= 12
                 else (0, 0, b"")
             )
-            error = 0 if request[12:12 + length] == b"mem" else 1
-            reply = struct.pack("<III", error, 0, len(text)) + text.ljust(
+            reply = struct.pack("<III", 1, 0, len(text)) + text.ljust(
                 MCONSOLE_DATA, b"\0"
             )
             self._socket.sendto(reply, client)
@@ -394,7 +391,9 @@ def check_busy(log: StatsLog, guest: Guest) -> None:
         raise RuntimeError(f"a busy loop shows only {reported:.1f}%")
 
 
-def meminfo_used_mib(guest: Guest) -> int:
+def meminfo_mib(guest: Guest) -> tuple[int, int]:
+    """The guest's MemTotal, in whole MiB, and its MemTotal less MemAvailable,
+    in MiB, from /proc/meminfo."""
     output = guest.check_command(
         "grep -E '^Mem(Total|Available):' /proc/meminfo", 30
     )
@@ -403,46 +402,73 @@ def meminfo_used_mib(guest: Guest) -> int:
         for name, value in re.findall(r"^(MemTotal|MemAvailable):\s+(\d+) kB",
                                       output, re.MULTILINE)
     }
-    return (values["MemTotal"] - values["MemAvailable"]) // 1024
+    if len(values) != 2:
+        raise RuntimeError(f"the guest did not report its memory:\n{output}")
+    return (values["MemTotal"] // 1024,
+            (values["MemTotal"] - values["MemAvailable"]) // 1024)
 
 
 def check_real_memory(log: StatsLog, guest: Guest) -> None:
-    """A kernel with the `mem` request reports the guest's memory in use; one
-    without it is unavailable, which is no failure."""
-    time.sleep(3.0)
-    lines = [line for line in log.lines() if time.monotonic() - line.arrived < 3.0]
-    reported = [line for line in lines if line.used is not None]
-    if not reported:
-        print("memory: the guest's kernel has no `mem` request: unavailable")
-        return
-    used = meminfo_used_mib(guest)
-    for line in reported:
+    """The guest's kernel answers `mem`, and the launcher shows the figures
+    its reply parser read: MemTotal exactly, and the memory in use as
+    /proc/meminfo has it."""
+    line = log.wait_for(
+        lambda l: l.used is not None, LINE_WAIT_SECONDS,
+        "with the guest's memory (a kernel without the `mem` request?)"
+    )
+    total, used = meminfo_mib(guest)
+    for line in [l for l in log.lines() if l.used is not None][-4:]:
+        if line.total != total:
+            raise RuntimeError(
+                f"the line shows {line.total} MiB of memory but MemTotal is "
+                f"{total} MiB:\n{line.text}"
+            )
         if abs(line.used - used) > MEMORY_TOLERANCE_MIB:
             raise RuntimeError(
                 f"the guest's memory in use is {line.used} MiB in the line but "
                 f"{used} MiB in /proc/meminfo (within {MEMORY_TOLERANCE_MIB}):\n"
                 + line.text
             )
-    print(f"memory: {reported[-1].used} MiB in use, /proc/meminfo {used} MiB")
+    print(f"memory: {line.used} MiB in use of {line.total} MiB, "
+          f"/proc/meminfo {used} of {total} MiB")
 
 
-def check_fake_console(
+def check_old_kernel_console(
     log: StatsLog, guest: Guest, private: pathlib.Path
 ) -> None:
-    """The launcher asks a console for the guest's memory with one `mem`
-    datagram in the console's layout, and shows what the reply says."""
+    """Where the console refuses `mem`, as a kernel without it does, the
+    launcher sends the one datagram in the console's layout and shows no
+    memory part."""
     directory = run_directory(guest.process_id, private)
     console = FakeConsole(directory / "mconsole")
     try:
-        expected_used = (FAKE_TOTAL - FAKE_AVAILABLE) // MIB
-        line = log.wait_for(
-            lambda l: l.used == expected_used and l.total == FAKE_TOTAL // MIB,
-            LINE_WAIT_SECONDS,
-            f"with {expected_used} MiB in use of {FAKE_TOTAL // MIB} MiB",
-        )
-        print(f"fake console: {line.text}")
+        # The launcher reads the memory with every second sample, so the
+        # lines between lack the part whatever the kernel says: the test
+        # waits for the refused request and judges the line after it.
+        deadline = time.monotonic() + LINE_WAIT_SECONDS
+        while not console.requests and time.monotonic() < deadline:
+            time.sleep(0.05)
         if not console.requests:
-            raise RuntimeError("the fake console received no request")
+            raise RuntimeError(
+                f"the refusing console received no request in "
+                f"{LINE_WAIT_SECONDS:g} s"
+            )
+        asked = time.monotonic()
+        time.sleep(WINDOW_SECONDS / 2)
+        later = [line for line in log.lines() if line.arrived > asked]
+        if len(later) < 6 or len(console.requests) < 3:
+            raise RuntimeError(
+                f"{len(later)} lines and {len(console.requests)} requests in "
+                f"{WINDOW_SECONDS / 2:g} s of a console that refuses `mem`"
+            )
+        for line in later:
+            if line.used is not None:
+                raise RuntimeError(
+                    f"a memory part from a console that refuses `mem`:\n"
+                    + line.text
+                )
+        print(f"refusing console: {len(later)} lines without a memory part, "
+              f"{len(console.requests)} requests refused")
         for magic, version, data in console.requests:
             if (magic, version, data) != (MCONSOLE_MAGIC, MCONSOLE_VERSION, b"mem"):
                 raise RuntimeError(
@@ -495,7 +521,7 @@ def main() -> int:
             check_animated(log, guest)
             check_busy(log, guest)
             check_real_memory(log, guest)
-            check_fake_console(log, guest, private)
+            check_old_kernel_console(log, guest, private)
             if not guest.shutdown(60):
                 raise RuntimeError("the guest did not power off within 60 s")
         print("the host-side statistics agree with the guest")
