@@ -681,7 +681,8 @@ renderer](graphics.md#ios-simulator-software-renderer).
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
 Xcode. `--sdk device` (the default) and `--sdk simulator` choose the slices, and
 both together give XCFrameworks with an `ios-arm64` and an `ios-arm64-simulator`
-slice. KosmicKrisp has a device slice alone, so the app targets embed it with a
+slice; no Simulator product is built for x86_64, and both Xcode projects exclude
+that architecture for the Simulator SDK. KosmicKrisp has a device slice alone, so the app targets embed it with a
 Run Script phase, `Kernarium/scripts/embed-device-framework.sh`, which embeds it
 for an `iphoneos` build and nothing for the Simulator. For the device it also
 packages the Apple battery provider's archive and the hardware video encoder's,
