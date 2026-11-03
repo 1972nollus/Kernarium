@@ -408,19 +408,40 @@ limited broadcast is none of these and is answered.
 
 The provider answers the guest's name server itself, through the host's system
 resolver (mDNSResponder, `dns_sd`), over UDP and TCP, at the name server
-address and at the gateway address on port 53. SLiRP's own DNS proxy is off:
-it would send each query from the application to the host's first configured
+address and at the gateway address on port 53. SLiRP's own DNS proxy is off: it
+would send each query from the application to the host's first configured
 server, usually a local-network router, which on iOS and macOS needs the user's
-Local Network permission; the system resolver's traffic does not. The name
-server serves nothing but DNS: a TCP connect to another of its ports is reset
-and any other datagram dropped, so nothing addressed to it leaves the host. A
-query unanswered after 10 s gets SERVFAIL, a UDP answer longer than the
-guest's EDNS size (512 bytes without EDNS, at most one 1500-byte frame) is
-truncated so the guest retries over TCP, and stopping the link ends every
-query in flight (`slirp-network-dns`). Guest multicast, such as an mDNS
-advertisement, is dropped on the virtual link for the same reason: it would be
-the application addressing the local network, and it could only name addresses
-behind SLiRP's NAT.
+Local Network permission; the system resolver's traffic does not, and the guest
+follows the device's own resolver configuration. The name server serves
+nothing but DNS: a TCP connect to another of its ports is reset, so Android's
+private-DNS probe of port 853 fails at once and it stays on cleartext DNS, and
+any other datagram is dropped, so nothing addressed to it leaves the host. A
+record of any type passes through unchanged and a CNAME chain keeps its
+aliases. The system resolver reports a name that does not exist and a name
+without the asked type alike, so the guest gets NOERROR with no records for
+both, never NXDOMAIN, and an answer has no authority section. A query
+unanswered after 10 s gets SERVFAIL. A UDP answer longer than the guest's EDNS
+size (512 bytes without EDNS, at most one 1500-byte frame) is truncated so the
+guest retries over TCP.
+
+DNS over TCP runs through a guest forward to a Unix socket in `$TMPDIR` when
+its path fits `sun_path`, else in the user temporary directory, else in `/tmp`
+(an iOS Simulator container's tmp does not fit); where none binds, port 53 is
+reset like any other and the log says so. A client that shuts down its sending
+side after its query still gets the answer. Stopping the link ends every query
+in flight (`slirp-network-dns`, and `network-dns-rules` for the wire rules).
+
+Guest IPv4 multicast is dropped on the virtual link: an mDNS advertisement or
+SSDP search would be the application addressing the local network, an iOS app
+may send multicast only with an Apple entitlement the apps do not hold, and the
+guest could only name addresses behind SLiRP's NAT. A guest therefore neither
+discovers nor is discovered by multicast on the host's network; its `.local`
+names still resolve through the name server. Booting a guest and using the
+Internet address no host on the local network and no DNS server. The Local
+Network permission is asked for only when the guest itself reaches the local
+network: a connection, datagram or ICMP echo to an on-link host, or a `.local`
+name asked of the name server, which mDNSResponder resolves by multicast on the
+application's behalf.
 
 The guest network driver has no transmit flow control, so a frame the provider
 refuses is lost and TCP must retransmit it. A guest transmit into a full
