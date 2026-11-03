@@ -172,6 +172,11 @@ free paths, and a guest is never created at one (`DiskPath`): that is why the
 guest is in `Library/Guest/` and not in `Application Support`, whose name has
 a space.
 
+Home states a guest's capacity and data in binary gigabytes, the unit its disk
+is sized in. Info states every size in decimal gigabytes (`Formats.decimalGB`),
+as iOS's own storage screens do, so the guest sits beside the system and the
+free space in one unit.
+
 The guest is left out of iCloud and computer backups unless the user turns on
 Include in Backups for it: Android can set itself up again, and the files take
 several gigabytes.

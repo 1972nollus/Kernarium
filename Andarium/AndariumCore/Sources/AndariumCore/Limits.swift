@@ -28,8 +28,9 @@ public enum Limits {
 }
 
 /// Display text. Sizes the host reports (free space) are decimal gigabytes,
-/// as iOS Settings shows them; a guest's capacity and data are binary
-/// gigabytes, labelled the same way.
+/// as iOS Settings shows them. Home states a guest's capacity and data in
+/// binary gigabytes, the unit the disk is sized in; Info states every size in
+/// decimal gigabytes, so the guest sits beside the host's figures in one unit.
 public enum Formats {
     /// A size in gigabytes, as "12 GB", "2.4 GB" or "480 MB".
     public static func gb(_ value: Double) -> String {
@@ -39,8 +40,12 @@ public enum Formats {
         return String(format: "%.1f GB", value)
     }
 
-    /// Host-reported bytes in decimal gigabytes.
-    public static func hostGB(bytes: UInt64) -> String { gb(Double(bytes) / 1e9) }
+    /// Bytes in decimal gigabytes (10^9 bytes), the unit iOS's own storage
+    /// screens use. The one conversion Info draws and labels its sizes with.
+    public static func decimalGB(bytes: UInt64) -> Double { Double(bytes) / 1e9 }
+
+    /// Bytes in decimal gigabytes, as text.
+    public static func hostGB(bytes: UInt64) -> String { gb(decimalGB(bytes: bytes)) }
 
     /// Guest data in binary gigabytes.
     public static func guestGB(bytes: UInt64) -> String { gb(Double(bytes) / Double(Limits.bytesPerGiB)) }

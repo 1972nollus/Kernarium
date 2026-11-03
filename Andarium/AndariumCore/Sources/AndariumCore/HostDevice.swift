@@ -33,7 +33,7 @@ public struct HostDevice: Equatable, Sendable {
         self.isMac = isMac
     }
 
-    public var freeStorageGB: Double { Double(freeStorageBytes) / 1e9 }
+    public var freeStorageGB: Double { Formats.decimalGB(bytes: freeStorageBytes) }
 
     public func hasRoom(for bytes: UInt64) -> Bool { freeStorageBytes >= bytes }
 }

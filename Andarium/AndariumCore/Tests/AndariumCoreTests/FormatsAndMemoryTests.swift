@@ -17,6 +17,21 @@ struct FormatsTests {
         #expect(Formats.guestGB(bytes: Limits.bytesPerGiB * 3) == "3 GB")
     }
 
+    /// Info draws the guest's data beside the system and the free space, so
+    /// all three are decimal gigabytes: a binary gigabyte is not drawn as one.
+    @Test func infoSizesAreDecimalGigabytes() {
+        #expect(Formats.decimalGB(bytes: 1_500_000_000) == 1.5)
+        #expect(Formats.decimalGB(bytes: Limits.bytesPerGiB) > 1.07)
+        #expect(Formats.decimalGB(bytes: Limits.bytesPerGiB) < 1.08)
+        let guest = Guest(cores: 2, memoryMiB: 1536, capacityGiB: 8, usedBytes: Limits.bytesPerGiB)
+        #expect(guest.effectiveCapacityBytes == 8 * Limits.bytesPerGiB)
+        #expect(Formats.hostGB(bytes: guest.effectiveCapacityBytes) == "8.6 GB")
+        #expect(Formats.hostGB(bytes: guest.usedBytes) == "1.1 GB")
+        var growing = guest
+        growing.setCapacity(24)
+        #expect(growing.effectiveCapacityBytes == 24 * Limits.bytesPerGiB)
+    }
+
     @Test func memoryShowsQuarterStepsWithoutRounding() {
         #expect(Formats.memory(1024) == "1 GB")
         #expect(Formats.memory(1280) == "1.25 GB")

@@ -241,14 +241,19 @@ struct InfoSheet: View {
                     }
                 }
                 Section("Storage") {
+                    // Every size on this page is in decimal gigabytes, as iOS's
+                    // own storage screens state them.
                     StorageBar(
-                        guestGB: model.guest?.usedGB ?? 0,
-                        systemGB: Double(model.systemBytes) / 1e9,
+                        guestGB: Formats.decimalGB(bytes: model.guest?.usedBytes ?? 0),
+                        systemGB: Formats.decimalGB(bytes: model.systemBytes),
                         freeGB: model.host.freeStorageGB
                     )
                     .padding(.vertical, 6)
                     if let guest = model.guest {
-                        LabeledContent("Guest Data", value: "\(Formats.gb(guest.usedGB)) of \(guest.effectiveCapacityGiB) GB")
+                        LabeledContent(
+                            "Guest Data",
+                            value: "\(Formats.hostGB(bytes: guest.usedBytes)) of \(Formats.hostGB(bytes: guest.effectiveCapacityBytes))"
+                        )
                     }
                     LabeledContent("System", value: Formats.hostGB(bytes: model.systemBytes))
                     LabeledContent("Free on This \(model.host.name)", value: Formats.gb(model.host.freeStorageGB))

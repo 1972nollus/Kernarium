@@ -55,6 +55,10 @@ public struct Guest: Equatable, Codable, Sendable {
     /// The capacity the next start runs with.
     public var effectiveCapacityGiB: Int { pendingCapacityGiB ?? capacityGiB }
 
+    /// That capacity in bytes, for screens that state sizes in decimal
+    /// gigabytes beside the host's own figures.
+    public var effectiveCapacityBytes: UInt64 { UInt64(max(effectiveCapacityGiB, 0)) * Limits.bytesPerGiB }
+
     /// Storage only grows, up to the largest capacity there is.
     public var canGrow: Bool { effectiveCapacityGiB < Limits.capacityRangeGiB.upperBound }
 
