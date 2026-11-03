@@ -310,10 +310,15 @@ overlay defaults Developer options off and the product sets no
 property file. On a user build init's property service (stock
 `update_sys_usb_config`) fills the empty property with `none` at every boot, so
 "off" is an empty or `none` value, never `adb`; a debuggable build gets `adb`
-from the same code. The radio-free product starts adbd on TCP port 5555 and on
-vsock port 5555, and retains the stock authorization prompt for a newly
-connected host. Three immutable launch properties, which adbd reads itself (the
-p0011 topics), shape that:
+from the same code. `ro.adb.secure` keeps the build type's value (1 on a user
+build): `BoardConfig.mk` drops the `ro.adb.secure=0` that the inherited
+Cuttlefish user block adds to the product partition, and the target-files
+verifier rejects a false value in any build property file, because Settings
+hides "Revoke USB debugging authorizations" while the property is false. The
+radio-free product starts adbd on TCP port 5555 and on vsock port 5555, and
+retains the stock authorization prompt for a newly connected host. Three
+immutable launch properties, which adbd reads itself (the p0011 topics), shape
+that:
 
 - `ro.boot.kernarium.adb_auth` can disable the authorization check for
   host-side diagnostics: iOS fixes it to one (only the automation runtime lets a

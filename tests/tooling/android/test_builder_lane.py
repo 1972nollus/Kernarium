@@ -669,6 +669,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           fingerprint_variant: str | None = None,
                           user_permissive_su: bool = False,
                           usb_debugging_default: bool = False,
+                          adb_secure_variant: str | None = None,
                           missing_lockscreen_default: bool = False,
                           use_fiemap_variant: str | None = None,
                           userdata_grow_variant: str | None = None,
@@ -822,6 +823,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     )
                     + f"ro.system.build.fingerprint={system_fingerprint}\n"
                     + public_fingerprint_property
+                    + (
+                        f"ro.adb.secure={'0' if adb_secure_variant == 'system' else '1'}\n"
+                        if build_variant == "user" else ""
+                    )
                     + f"{virtual_ab_property}",
                 )
                 archive.writestr(
@@ -836,6 +841,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "ro.config.system_vol_default=7\n"
                     "ro.config.assistant_vol_default=15\n"
                     + ("persist.sys.usb.config=adb\n" if usb_debugging_default else "")
+                    + {
+                        "product": "ro.adb.secure=0\n",
+                        "product-false": "ro.adb.secure=false\n",
+                    }.get(adb_secure_variant, "")
                     + ("" if missing_lockscreen_default else "ro.lockscreen.disable.default=true\n")
                     + {
                         None: "apexd.config.use_fiemap=false\n",
@@ -2205,6 +2214,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("wrong-type-fingerprint", {"fingerprint_variant": "wrong-type"}),
             ("user-permissive-su", {"user_permissive_su": True}),
             ("usb-debugging-on-by-default", {"usb_debugging_default": True}),
+            ("adb-secure-off-in-product", {"adb_secure_variant": "product"}),
+            ("adb-secure-false-in-product", {"adb_secure_variant": "product-false"}),
+            ("adb-secure-off-in-system", {"adb_secure_variant": "system"}),
             ("user-carries-su", {"extra_entry": "SYSTEM/xbin/su"}),
             ("user-carries-remount", {"extra_entry": "SYSTEM/bin/remount"}),
             ("user-carries-procmem", {"extra_entry": "SYSTEM/bin/procmem"}),
@@ -2666,6 +2678,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not let the fsck domain issue EXT4_IOC_RESIZE_FS"),
             ("userdata-grow-policy-more-ioctls-cause", {"userdata_grow_policy_variant": "more-ioctls"},
              "lets the fsck domain issue more ioctls on /data than EXT4_IOC_RESIZE_FS"),
+            ("adb-secure-off-in-product-cause", {"adb_secure_variant": "product"},
+             "PRODUCT/etc/build.prop sets ro.adb.secure=0: adb authorization is the stock one"),
+            ("adb-secure-false-in-product-cause", {"adb_secure_variant": "product-false"},
+             "PRODUCT/etc/build.prop sets ro.adb.secure=false: adb authorization is the stock one"),
+            ("adb-secure-off-in-system-cause", {"adb_secure_variant": "system"},
+             "SYSTEM/build.prop sets ro.adb.secure=0: adb authorization is the stock one"),
             ("unreliable-present-fence-cause", {"vendor_property_variant": "present-fence-unreliable"},
              "marks the present fences unreliable: ro.vendor.hwc.drm.present_fence_not_reliable=true"),
             ("missing-incremental-property-cause", {"vendor_property_variant": "no-incremental"},
@@ -4077,6 +4095,17 @@ def verify_debugging_defaults(android_root: Path) -> None:
         stripped = line.strip().rstrip("\\").strip()
         if stripped.startswith("persist.sys.usb.config=") and not stripped.endswith(",$(PRODUCT_PRODUCT_PROPERTIES))"):
             fail(f"lineage_andarium.mk must not set USB debugging on: {stripped}")
+        if stripped.startswith("ro.adb.secure="):
+            fail(f"lineage_andarium.mk must leave ro.adb.secure to the build type: {stripped}")
+    # The inherited Cuttlefish user block adds ro.adb.secure=0 to the product partition. Only the
+    # resolved variable, which the board config sees, loses an inherited entry.
+    board = (android_root / "overlay/BoardConfig.mk").read_text()
+    board_filter = (
+        "PRODUCT_PRODUCT_PROPERTIES := "
+        "$(filter-out ro.adb.secure=%,$(PRODUCT_PRODUCT_PROPERTIES))"
+    )
+    if board_filter not in board.splitlines():
+        fail("BoardConfig.mk must filter the inherited ro.adb.secure=0 out of PRODUCT_PRODUCT_PROPERTIES")
 
 
 def verify_hal_selections(android_root: Path) -> None:
