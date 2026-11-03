@@ -1016,14 +1016,26 @@ PRODUCT_IDENTITY = {
 }
 
 
-def check_product_identity(properties: dict[str, str], build_variant: str) -> None:
-    for key, expected in PRODUCT_IDENTITY.items():
-        name = f"ro.product.system.{key}"
-        if properties.get(name) != expected:
-            fail(f"unexpected product identity {name}: {properties.get(name)!r}")
-    fingerprint = properties.get("ro.system.build.fingerprint") or properties.get(
-        "ro.build.fingerprint", ""
-    )
+def check_product_identity(
+    system_properties: dict[str, str],
+    product_properties: dict[str, str],
+    vendor_properties: dict[str, str],
+    build_variant: str,
+) -> None:
+    """The identity lives in the product and vendor partitions and in the public fingerprint.
+
+    The system partition is AOSP's generic system (generic_system.mk): its ro.product.system.*
+    and ro.system.build.fingerprint say Android / generic / Generic System, and the product
+    leaves them so. What the guest reports as Build.BRAND, MODEL and the rest is the product
+    partition's (and the vendor's) ro.product.<partition>.* through
+    ro.product.property_source_order, and Build.FINGERPRINT is ro.build.fingerprint.
+    """
+    for partition, properties in (("product", product_properties), ("vendor", vendor_properties)):
+        for key, expected in PRODUCT_IDENTITY.items():
+            name = f"ro.product.{partition}.{key}"
+            if properties.get(name) != expected:
+                fail(f"unexpected product identity {name}: {properties.get(name)!r}")
+    fingerprint = system_properties.get("ro.build.fingerprint", "")
     prefix = (
         f"{PRODUCT_IDENTITY['brand']}/{PRODUCT_IDENTITY['name']}/"
         f"{PRODUCT_IDENTITY['device']}:"
@@ -1063,7 +1075,16 @@ def check_boot_policy(
                 f"unexpected {build_variant}-build property {property_name}: "
                 f"{system_property_map.get(property_name)!r}"
             )
-    check_product_identity(system_property_map, build_variant)
+    check_product_identity(
+        system_property_map,
+        parse_properties(
+            read_small(archive, infos["PRODUCT/etc/build.prop"]).decode("utf-8", errors="strict")
+        ),
+        parse_properties(
+            read_small(archive, infos["VENDOR/build.prop"]).decode("utf-8", errors="strict")
+        ),
+        build_variant,
+    )
     check_debuggable_payload(infos, build_variant)
 
     fstab = android_image.tracked_fstab(error)
@@ -2170,6 +2191,12 @@ def check_vendor_init_triggers(
 # and the Vulkan loader from exposing VK_GOOGLE_display_timing.
 PRESENT_FENCE_PROPERTY = "ro.vendor.hwc.drm.present_fence_not_reliable"
 FALSE_PROPERTY_VALUES = {"0", "n", "no", "off", "false"}
+# The inherited Cuttlefish configuration adds ro.adb.secure=0 to the product partition of a user
+# build, and the product build.prop is read after system's and system_ext's ro.adb.secure=1, so
+# the guest reads 0. adbd takes its policy from ro.boot.kernarium.adb_auth, but Settings hides
+# "Revoke USB debugging authorizations" when the property is false: the user could no longer
+# revoke the computers they allowed.
+ADB_SECURE_PROPERTY = "ro.adb.secure"
 # Incremental installs (adb install --incremental, the Incremental FS service) need this
 # vendor property and the kernel's incfs.
 INCREMENTAL_PROPERTY = "ro.incremental.enable"
@@ -2206,6 +2233,12 @@ def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None
             fail(
                 f"{info.filename} sets {key}={value}: USB debugging is off on a fresh data "
                 "partition, and AdbService records the user's choice there"
+            )
+        if key == ADB_SECURE_PROPERTY and value.lower() in FALSE_PROPERTY_VALUES:
+            fail(
+                f"{info.filename} sets {key}={value}: adb authorization is the stock one, and "
+                "Settings hides the revocation of allowed computers when the property is false; "
+                "BoardConfig.mk filters the inherited Cuttlefish value out of the product properties"
             )
         if key == PRESENT_FENCE_PROPERTY and value.lower() not in FALSE_PROPERTY_VALUES:
             fail(
@@ -2591,7 +2624,6 @@ def check_audio_policy(
         "ro.config.alarm_vol_default": "7",
         "ro.config.system_vol_default": "7",
         "ro.config.assistant_vol_default": "15",
-        "ro.product.product.model": PRODUCT_IDENTITY["model"],
         # The guest boots without a lock screen, and `locksettings set-disabled` can turn
         # it on: LockSettingsService stores this default when it creates its database.
         "ro.lockscreen.disable.default": "true",

@@ -50,4 +50,17 @@ enum PreviewData {
             usedBytes: gibibytes(5.4)
         )
     }
+
+    /// A sparse file named like the sample APK, for the preview's install.
+    static func sampleApk() -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(ApkInstall.sampleFile)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+            if let handle = try? FileHandle(forWritingTo: url) {
+                try? handle.truncate(atOffset: ApkInstall.sampleSizeBytes)
+                try? handle.close()
+            }
+        }
+        return url
+    }
 }

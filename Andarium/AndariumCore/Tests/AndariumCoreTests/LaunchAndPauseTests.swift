@@ -163,13 +163,13 @@ private final class FakeEffects: PauseEffects {
 }
 
 @MainActor
-private func makeController() throws -> (PauseController, FakeEffects, PauseMarker) {
+private func makeController(runClock: GuestRunClock? = nil) throws -> (PauseController, FakeEffects, PauseMarker) {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("andarium-pause-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let marker = PauseMarker(url: directory.appendingPathComponent("pause.json"))
     let effects = FakeEffects()
-    return (PauseController(effects: effects, marker: marker), effects, marker)
+    return (PauseController(effects: effects, marker: marker, runClock: runClock), effects, marker)
 }
 
 @MainActor
@@ -233,6 +233,45 @@ struct PauseControllerTests {
         second.guestDidStart()
         second.willTerminate()
         #expect(secondEffects.calls == ["quiesce(terminating,wait)"])
+    }
+
+    @Test func theRunClockStopsWhileTheGuestIsPausedAndRunsAgainWhenItIsBack() throws {
+        let clock = GuestRunClock()
+        let (controller, effects, _) = try makeController(runClock: clock)
+        controller.guestDidStart()
+        controller.willResignActive()
+        #expect(!clock.isPaused)
+        controller.didEnterBackground()
+        #expect(clock.isPaused)
+        controller.willEnterForeground()
+        // The guest is not back until the resume has finished.
+        #expect(clock.isPaused)
+        effects.pendingResume?()
+        #expect(!clock.isPaused)
+    }
+
+    @Test func aQuickReturnKeepsTheClockStoppedUntilTheLastResume() throws {
+        let clock = GuestRunClock()
+        let (controller, effects, _) = try makeController(runClock: clock)
+        controller.guestDidStart()
+        controller.didEnterBackground()
+        controller.willEnterForeground()
+        let first = effects.pendingResume
+        controller.didEnterBackground()
+        controller.willEnterForeground()
+        let second = effects.pendingResume
+        first?()
+        #expect(clock.isPaused)
+        second?()
+        #expect(!clock.isPaused)
+    }
+
+    @Test func terminatingAlsoStopsTheClock() throws {
+        let clock = GuestRunClock()
+        let (controller, _, _) = try makeController(runClock: clock)
+        controller.guestDidStart()
+        controller.willTerminate()
+        #expect(clock.isPaused)
     }
 
     @Test func endedGuestIsNotPaused() throws {

@@ -587,6 +587,12 @@ void aMemoryRequestReadsTheGuestsFigures()
 		figures.available_bytes == 1056964608ULL &&
 		figures.free_bytes == 196083712ULL);
 	requireOwnerOnly(consolePath());
+	/* The kernel's driver counts the NUL that ends a reply in its length. */
+	constexpr char terminated[] = "total=2048 available=1024 free=512";
+	require(askMemory(server, std::string_view {terminated, sizeof(terminated)},
+		0U, 0, bound, figures, took) == GuestMemoryResult::done);
+	require(figures.total_bytes == 2048ULL &&
+		figures.available_bytes == 1024ULL && figures.free_bytes == 512ULL);
 	/* A kernel without the command refuses it. */
 	require(askMemory(server, "Unknown command", 1U, 0, bound, figures,
 		took) == GuestMemoryResult::refused);

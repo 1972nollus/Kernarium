@@ -147,14 +147,20 @@ The product identity is Andarium's, not a Cuttlefish or "Darwin" one:
 `lineage_andarium` (the makefile, `AndroidProducts.mk` and the device directory
 follow LineageOS's `lineage_<device>` convention), so the lunch target is
 `lineage_andarium-cp2a-user` and the product output directory is
-`target/product/andarium`. The verifier checks the identity and that the
-fingerprint starts `Andarium/lineage_andarium/andarium:` and names the variant.
-`darwin` stays the name of the host platform.
+`target/product/andarium`. The system partition stays AOSP's generic system
+(`ro.product.system.*` is Android / generic / Generic System), so the identity is
+in the product and vendor partitions (`ro.product.product.*`,
+`ro.product.vendor.*`) and in the public `ro.build.fingerprint`, which `Build.*`
+reports. The verifier checks the identity there and that the fingerprint starts
+`Andarium/lineage_andarium/andarium:` and names the variant; the system
+partition's own identity is not constrained. `darwin` stays the name of the
+host platform.
 
 Diagnostics on a `user` image start on the host and need no guest root: the
 guest console the host captures for kernel logs, UML's mconsole (`sysrq`,
-`proc`, `stack`) for the kernel's state, and tracefs from the shell (the image
-mounts it at `/sys/kernel/tracing`, readable and writable by `shell`). The
+`proc`, `stack`, and `mem` for the memory counters, which it reads without
+opening `/proc/meminfo`) for the kernel's state, and tracefs from the shell (the
+image mounts it at `/sys/kernel/tracing`, readable and writable by `shell`). The
 shell can also set `perf.drop_caches` (init writes `drop_caches`), the `debug.*`
 properties and `powerctl`. Only what these cannot reach (`dmesg`, `setenforce`,
 `ctl.*` service control, other uids' `/proc/<pid>/smaps`) needs a `userdebug`
@@ -301,10 +307,18 @@ Fresh settings databases keep Developer options and USB debugging off: the
 overlay defaults Developer options off and the product sets no
 `persist.sys.usb.config`, which AdbService reads at every boot to set
 `adb_enabled`; the target-files verifier rejects the property in any build
-property file. The radio-free product starts adbd on TCP port 5555 and on vsock
-port 5555, and retains the stock authorization prompt for a newly connected
-host. Three immutable launch properties, which adbd reads itself (the p0011
-topics), shape that:
+property file. On a user build init's property service (stock
+`update_sys_usb_config`) fills the empty property with `none` at every boot, so
+"off" is an empty or `none` value, never `adb`; a debuggable build gets `adb`
+from the same code. `ro.adb.secure` keeps the build type's value (1 on a user
+build): `BoardConfig.mk` drops the `ro.adb.secure=0` that the inherited
+Cuttlefish user block adds to the product partition, and the target-files
+verifier rejects a false value in any build property file, because Settings
+hides "Revoke USB debugging authorizations" while the property is false. The
+radio-free product starts adbd on TCP port 5555 and on vsock port 5555, and
+retains the stock authorization prompt for a newly connected host. Three
+immutable launch properties, which adbd reads itself (the p0011 topics), shape
+that:
 
 - `ro.boot.kernarium.adb_auth` can disable the authorization check for
   host-side diagnostics: iOS fixes it to one (only the automation runtime lets a
@@ -335,11 +349,11 @@ user's setting meaningful:
 
 - The first `frameworks/base` topic (route `p0007`) records the USB debugging
   setting in `persist.sys.usb.config`: this product has no `UsbDeviceManager`,
-  the property's only other writer, so nothing recorded it, and AdbService,
-  which sets `adb_enabled` from the property at every boot, forgot the user's
-  choice at every reboot. `settings get global adb_enabled` (1 on, 0 off) is
-  authoritative and follows the user's toggle within the settings observer's
-  hop.
+  the property's only run-time writer (init writes it at boot only), so nothing
+  recorded it, and AdbService, which sets `adb_enabled` from the property at
+  every boot, forgot the user's choice at every reboot. `settings get global
+  adb_enabled` (1 on, 0 off) is authoritative and follows the user's toggle
+  within the settings observer's hop.
 - The second restarts adbd (`ctl.restart`) where stock stops it when USB and
   wireless debugging are both turned off. Every session ends, as on stock, and
   adbd stays up for the host, whose own session drops once at that toggle and

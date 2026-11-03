@@ -835,7 +835,15 @@ alone.
 ### Andarium
 
 `andarium-core` (unit, macOS hosts) runs the tests of the Swift package
-`Andarium/AndariumCore`, the application's model, with `swift test`.
+`Andarium/AndariumCore`, the application's model and its adb client, with
+`swift test`: the adb client runs against a scripted adbd on a socket pair
+(authorization off, on and rejected, streams, shell v2, sync, a bug report,
+timeouts on a clock the test moves, a cancel from another thread, the end of
+a stream announced right after its last bytes), its key
+encoder against moduli with the text `adb keygen` wrote for them, and the
+listener of ADB over Network on loopback against a fake guest (bytes both
+ways, backpressure each way, half close, a failed stream, the limit of
+computers, stopping, a port in use).
 `andarium-stage-system-image` (tooling) covers the system-image staging script
 and the option checks of `package-ios-frameworks.sh --runtimes android`. The
 application itself builds with Xcode: `AndariumPreview` is its Simulator build
@@ -845,14 +853,27 @@ hosted in `Andarium` and runs on an iPad, in the iOS Simulator and, as an iPad
 app, on an Apple silicon Mac (`xcodebuild test -scheme Andarium`); its
 `UpdateFlowTests` drive
 the update, interrupted-update (Start retries, Restore, Erase) and blocked-start flows
-against a stub runtime, and its `StatisticsLoopTests` the statistics loop
-against a scripted one with the pause between readings held by the test: no
-reading without a viewer, the quarter-second then one-second cadence with the
-memory after every other reading, the loop stopping with the foreground, with a
-guest that is not running and with its last viewer, a memory the kernel does
-not give keeping the last figure, and a new boot starting the figures over.
-`ConsoleReport`, the harness's console lines, is in the application and
-tested there (`ConsoleReportTests`); `StatsMeter` and `StatsSampling` are in
+against a stub runtime, and its `AndroidOperationTests` and
+`AdbOverNetworkModelTests` play Create Bug Report, Install App and ADB over
+Network the same way. `AdbOverVsockTests` drive a real Android guest with the
+application's own client and authorization on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1`
+with `TEST_RUNNER_ANDARIUM_START=normal`): a shell command, the USB debugging
+setting and the channel with it on and off, a computer's connection through the
+bridge, a bug report (a zip above 1 MB, and its time), a cancel, a system APK
+pulled from the image and installed as an update (and its time), the image's
+key rule (the application's key accepted whatever the debugging setting; a
+foreign key refused with no prompt and nothing queued while debugging is off,
+and prompting while it is on), and the key after Erase Guest. With
+`TEST_RUNNER_ANDARIUM_ADB_NET_HOLD_SECONDS` one more test holds the bridge up for
+a real adb on the Mac.
+`StatisticsLoopTests` drive the statistics loop against a scripted runtime with
+the pause between readings held by the test: no reading without a viewer, the
+quarter-second then one-second cadence with the memory after every other
+reading, the loop stopping with the foreground, with a guest that is not
+running and with its last viewer, a memory the kernel does not give keeping the
+last figure, and a new boot starting the figures over. `ConsoleReport`, the
+harness's console lines, is in the application and tested there
+(`ConsoleReportTests`); `StatsMeter` and `StatsSampling` are in
 `andarium-core`. A Mac launch of the guest
 itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
 `TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
@@ -1022,11 +1043,13 @@ frames a second; a guest writing to its display presents some; and one busy loop
 reads half of two vCPUs, within 5 points of libproc's count of the same carriers
 and no more than 5 above the guest's own `/proc/stat`. The guest counts the time
 the host took from a vCPU as busy, so on a loaded host its figure is the higher
-one and bounds the host's from above only. The memory part is unavailable, and
-no failure, from a kernel that has no `mem` console request; one that has it
-must equal `MemTotal` less `MemAvailable` within 16 MiB. The test also stands a
-console of its own where the guest's was and checks the launcher sends one `mem`
-datagram in the console's layout and shows what the reply says. For Android, an
+one and bounds the host's from above only. The guest's kernel answers the `mem`
+console request, so the memory part must be there, show `MemTotal` in whole MiB
+and equal `MemTotal` less `MemAvailable` within 16 MiB; a kernel without the
+request fails the test. The test then stands a console of its own where the
+guest's was, one that refuses every request as such a kernel does, and checks
+that the launcher sends only the `mem` datagram in the console's layout and
+shows no memory part. For Android, an
 opt-in check runs `uml-darwin-android17 --stats=1000` under enforcing SELinux:
 the memory part must appear with no `avc` denial in the guest's log and match
 `adb shell cat /proc/meminfo`.
@@ -1457,13 +1480,15 @@ a blank instance:
   `UML_ANDROID_ADB_DEBUGGING_RELEASE` names the release and the Android macOS
   executable is built) boots a blank instance and checks the adb topics of the
   product: Developer options and USB debugging are off (`adb_enabled` 0,
-  `persist.sys.usb.config` empty); turning USB debugging on records it and
-  leaves adbd's process alone; turning it off clears it, restarts adbd once and
-  leaves adbd serving the host; both survive a reboot. Where the guest checks
-  keys (`ro.boot.kernarium.adb_auth` 1, which the macOS launcher never sets, so
-  only a guest the Kernarium runtime started, which the runner's `--serial`
-  attaches to), a second throwaway key stays unauthorized with no prompt while
-  debugging is off and raises the prompt while it is on.
+  `persist.sys.usb.config` without `adb`, adbd's own rule: empty or `none`, the
+  value init's property service gives a user build at boot; a debuggable build
+  gets `adb`, so the test qualifies the user variant); turning USB debugging on
+  records `adb` and leaves adbd's process alone; turning it off drops `adb`,
+  restarts adbd once and leaves adbd serving the host; both survive a reboot.
+  Where the guest checks keys (`ro.boot.kernarium.adb_auth` 1, which the macOS
+  launcher never sets, so only a guest the Kernarium runtime started, which the
+  runner's `--serial` attaches to), a second throwaway key stays unauthorized
+  with no prompt while debugging is off and raises the prompt while it is on.
 
 ## Android hardware video encoding and decoding
 

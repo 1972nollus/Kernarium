@@ -15,6 +15,7 @@
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <poll.h>
 #include <pthread.h>
 #include <stdexcept>
 #include <string_view>
@@ -96,10 +97,12 @@ public:
 
     ~ArtifactRelay()
     {
+        /* Stopping the service joins its thread, which destroys the console
+         * device and with it the channel that holds the only other end of the
+         * socketpair. That close ends the relay's stream, so the reader needs
+         * no wakeup of its own. */
         if (service_)
             service_->stop();
-        if (host_ >= 0)
-            (void)::shutdown(host_, SHUT_RDWR);
         if (relay_.joinable())
             relay_.join();
         if (host_ >= 0)
@@ -254,7 +257,11 @@ private:
         bool valid = true;
         char buffer[4096];
         for (;;) {
-            const ssize_t received = ::recv(host_, buffer, sizeof(buffer), 0);
+            /* Never sleep in recv(): a local stream socket can lose the wakeup
+             * of a blocked reader (docs/architecture.md, "Local stream
+             * sockets"). Read what is there, and poll when nothing is. */
+            const ssize_t received =
+                ::recv(host_, buffer, sizeof(buffer), MSG_DONTWAIT);
             if (received > 0) {
                 pending.append(buffer, static_cast<std::size_t>(received));
                 while (true) {
@@ -284,6 +291,14 @@ private:
             }
             if (received < 0 && errno == EINTR)
                 continue;
+            if (received < 0 && errno == EAGAIN) {
+                pollfd waiting {host_, POLLIN, 0};
+                if (::poll(&waiting, 1, -1) < 0 && errno != EINTR) {
+                    valid = false;
+                    break;
+                }
+                continue;
+            }
             if (received < 0 && errno != ECONNRESET)
                 valid = false;
             break;

@@ -3,9 +3,11 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Settings while Android runs, opened from the side keys. It slides up over
-/// Android, which keeps running behind it: install an APK from Files, let a
-/// computer connect with ADB, watch the stats, and change the options.
+/// Settings while the guest runs, opened from the side keys. It slides up over
+/// the guest, which keeps running behind it: install an app from Files,
+/// connect a computer with adb, make a bug report, watch the stats, and
+/// change the options. An operation on the guest dismisses Settings and
+/// shows the full-screen progress.
 struct SessionSettingsSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -21,8 +23,9 @@ struct SessionSettingsSheet: View {
         let session = model.session
         NavigationStack {
             List {
-                if model.capabilities.apkInstall { apps(session) }
-                if model.capabilities.adbOverNetwork { adb(session) }
+                if normalSession, model.capabilities.apkInstall { apps(session) }
+                if normalSession, model.capabilities.adbOverNetwork { adb(session) }
+                if normalSession, model.capabilities.bugReport { bugReport }
                 if model.capabilities.statistics { stats(session) }
                 options
             }
@@ -35,17 +38,47 @@ struct SessionSettingsSheet: View {
                 }
             }
         }
+        .task { await model.watchSettings() }
         .presentationDetents([.medium, .large], selection: $detent)
         .presentationBackground(Color(.systemGroupedBackground))
         .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
             guard case .success(let url) = result else { return }
-            let scoped = url.startAccessingSecurityScopedResource()
-            let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            if scoped { url.stopAccessingSecurityScopedResource() }
-            model.session.install(fileName: url.lastPathComponent, sizeBytes: UInt64(max(bytes, 0)))
+            // An .apk starts the install and Settings goes; anything else is
+            // answered by a row here, and Settings stays.
+            if model.installPicked(url) { dismiss() }
         }
     }
+
+    /// Recovery runs no adb: its operations are for a normal session.
+    private var normalSession: Bool {
+        if case .running(.normal) = model.phase { return true }
+        return false
+    }
+
+    // MARK: Bug report
+
+    /// Tapping the row starts at once; the footer says what a report holds.
+    private var bugReport: some View {
+        Section {
+            Button {
+                dismiss()
+                model.createBugReport()
+            } label: {
+                HStack(spacing: 12) {
+                    IconTile(symbol: "ladybug.fill")
+                    Text("Create Bug Report\u{2026}")
+                        .foregroundStyle(Color.accentColor)
+                    Spacer()
+                }
+            }
+        } footer: {
+            Text(Self.bugReportNotice)
+        }
+    }
+
+    /// What the report holds, said before it is made.
+    static let bugReportNotice = "A bug report holds the guest\u{2019}s logs, installed apps, accounts and Wi-Fi names."
 
     // MARK: Apps
 
@@ -56,7 +89,7 @@ struct SessionSettingsSheet: View {
             } label: {
                 HStack(spacing: 12) {
                     IconTile(symbol: "square.and.arrow.down.fill")
-                    Text("Install APK\u{2026}")
+                    Text("Install App\u{2026}")
                         .foregroundStyle(Color.accentColor)
                     Spacer()
                     Text("From Files")
@@ -78,59 +111,74 @@ struct SessionSettingsSheet: View {
     // MARK: ADB
 
     private func adb(_ session: SessionState) -> some View {
-        @Bindable var session = session
-        let command = "adb connect \(SessionState.adbAddress)"
-        return Section {
-            Toggle(isOn: $session.adb.animation(.snappy)) {
+        Section {
+            Toggle(isOn: Binding(get: { session.adb }, set: { model.setAdbOverNetwork($0) })) {
                 HStack(spacing: 12) {
                     IconTile(symbol: "terminal.fill", color: session.adb ? .accentColor : .gray)
                     Text("ADB over Network")
                 }
             }
+            .disabled(!session.adb && !model.adbOverNetworkAvailable)
             if session.adb {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("On a computer on the same network, run:")
+                if let address = session.adbAddress {
+                    connectCommand("adb connect \(address):\(AdbNetworkBridge.defaultPort)")
+                } else {
+                    Text(AdbNetworkMessages.noAddress)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    HStack(spacing: 10) {
-                        Text(command)
-                            .font(.system(.callout, design: .monospaced).weight(.medium))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                            .textSelection(.enabled)
-                        Spacer(minLength: 0)
-                        Button {
-                            UIPasteboard.general.string = command
-                            withAnimation(.snappy) { copied = true }
-                            Task {
-                                try? await Task.sleep(for: .seconds(1.6))
-                                withAnimation(.snappy) { copied = false }
-                            }
-                        } label: {
-                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 15, weight: .semibold))
-                                .contentTransition(.symbolEffect(.replace))
-                                .frame(width: 36, height: 36)
-                        }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel(copied ? "Copied" : "Copy command")
-                    }
-                    .padding(.leading, 14)
-                    .padding(.trailing, 4)
-                    .frame(minHeight: 46)
-                    .background(Color(.tertiarySystemFill), in: .rect(cornerRadius: 12, style: .continuous))
+                        .padding(.vertical, 4)
                 }
-                .padding(.vertical, 4)
             }
         } header: {
             Text("ADB")
         } footer: {
-            if session.adb {
-                Text("Android asks to allow the computer the first time it connects. ADB turns off when Android stops.")
+            if let problem = session.adbProblem {
+                Text(problem).foregroundStyle(.red)
+            } else if session.adb {
+                Text("The guest asks to allow the computer the first time it connects. ADB turns off when the guest stops or USB debugging is turned off.")
+            } else if !model.adbOverNetworkAvailable {
+                Text("Turn on USB debugging in the guest\u{2019}s Developer options to use ADB over Network.")
             } else {
-                Text("Lets a computer on the same network connect to Android with adb.")
+                Text("Lets a computer on the same network connect to the guest with adb.")
             }
         }
+    }
+
+    /// The command to type on the computer, with a button that copies it.
+    private func connectCommand(_ command: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("On a computer on the same network, run:")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Text(command)
+                    .font(.system(.callout, design: .monospaced).weight(.medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .textSelection(.enabled)
+                Spacer(minLength: 0)
+                Button {
+                    UIPasteboard.general.string = command
+                    withAnimation(.snappy) { copied = true }
+                    Task {
+                        try? await Task.sleep(for: .seconds(1.6))
+                        withAnimation(.snappy) { copied = false }
+                    }
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 15, weight: .semibold))
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(copied ? "Copied" : "Copy command")
+            }
+            .padding(.leading, 14)
+            .padding(.trailing, 4)
+            .frame(minHeight: 46)
+            .background(Color(.tertiarySystemFill), in: .rect(cornerRadius: 12, style: .continuous))
+        }
+        .padding(.vertical, 4)
     }
 
     // MARK: Stats
@@ -226,7 +274,7 @@ struct SessionSettingsSheet: View {
     }
 }
 
-/// One APK on its way into Android, or the result.
+/// One app on its way into the guest, or the result.
 struct InstallRow: View {
     let item: ApkInstall
 
@@ -261,7 +309,7 @@ struct InstallRow: View {
     private var tile: some View {
         switch item.state {
         case .installing, .installed:
-            // The app's own icon is not known until Android has it; its
+            // The app's own icon is not known until the guest has it; its
             // initial stands in.
             Text(String(item.appName.prefix(1)))
                 .font(.system(size: 19, weight: .semibold, design: .rounded))
@@ -269,7 +317,7 @@ struct InstallRow: View {
                 .frame(width: 40, height: 40)
                 .background(Color.accentColor.gradient, in: .rect(cornerRadius: 11, style: .continuous))
                 .opacity(item.state == .installed ? 1 : 0.55)
-        case .notApk:
+        case .notApk, .bundle:
             Image(systemName: "doc.fill")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(.white)
@@ -298,7 +346,10 @@ struct InstallRow: View {
             Text(item.version.map { "Installed \u{00B7} version \($0)" } ?? "Installed")
                 .foregroundStyle(.secondary)
         case .notApk:
-            Text("Not an APK. Choose a file that ends in .apk.")
+            Text("This isn\u{2019}t an app. Choose a file that ends in .apk.")
+                .foregroundStyle(.red)
+        case .bundle:
+            Text("Apps that come in several files can\u{2019}t be installed yet. Choose a single .apk file.")
                 .foregroundStyle(.red)
         case .failed(let reason):
             Text(reason)

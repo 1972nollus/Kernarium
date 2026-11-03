@@ -37,7 +37,8 @@ struct AppEntry {
         if resetTips { try? Tips.resetDatastore() }
         if screen == "session-tip" {
             Tips.showAllTipsForTesting()
-        } else if screen.hasPrefix("session") || screen.hasPrefix("settings") || screen.hasPrefix("recovery") || screen.hasPrefix("boot") {
+        } else if screen.hasPrefix("session") || screen.hasPrefix("settings") || screen.hasPrefix("recovery") || screen.hasPrefix("boot")
+            || screen == "bug-report" || screen == "install-apk" {
             Tips.hideAllTipsForTesting()
         }
         try? Tips.configure([.displayFrequency(.immediate)])
@@ -118,6 +119,9 @@ struct AppEntry {
             )
             model.phase = .running(.normal)
         case "settings", "settings-installing", "settings-installed", "settings-not-apk",
+             "settings-bundle", "install-apk",
+             "bug-report",
+             "settings-adb-off", "settings-adb-no-address",
              "settings-install-failed", "settings-adb":
             let session = model.session
             let file = ApkInstall.sampleFile
@@ -133,17 +137,27 @@ struct AppEntry {
                 session.installs = [ApkInstall(fileName: file, sizeBytes: size, state: .installed)]
             case "settings-not-apk":
                 session.installs = [ApkInstall(fileName: "Trip photos.zip", sizeBytes: UInt64(212.4 * Double(Limits.bytesPerMiB)), state: .notApk)]
+            case "settings-bundle":
+                session.installs = [ApkInstall(fileName: "Trip Planner.xapk", sizeBytes: UInt64(84.6 * Double(Limits.bytesPerMiB)), state: .bundle)]
             case "settings-install-failed":
                 session.installs = [ApkInstall(
                     fileName: "Retro Racer 2.3 x86.apk", sizeBytes: 96 * Limits.bytesPerMiB,
-                    state: .failed("Android couldn\u{2019}t install it: this app has no version for arm64 devices.")
+                    state: .failed("The guest couldn\u{2019}t install it: this app has no version for arm64 devices.")
                 )]
             case "settings-adb":
                 session.adb = true
+                session.adbAddress = SessionState.previewAddress
+            case "settings-adb-no-address":
+                session.adb = true
+            case "settings-adb-off":
+                session.usbDebugging = false
             default:
                 break
             }
-            model.sessionPreset = SessionPreset(settings: true, settingsLarge: screen == "settings")
+            // The two guest operations play on the full-screen overlay with
+            // Settings already gone.
+            let operation = screen == "bug-report" || screen == "install-apk"
+            model.sessionPreset = SessionPreset(settings: !operation, settingsLarge: screen == "settings")
             model.phase = .running(.normal)
         case "recovery", "recovery-open":
             model.sessionPreset = SessionPreset(keysOpen: screen == "recovery-open")
@@ -177,6 +191,12 @@ struct AppEntry {
             model.startMenu = true
         case "start-low-space":
             model.start(.normal)
+        case "bug-report":
+            try? await Task.sleep(for: .milliseconds(450))
+            model.createBugReport()
+        case "install-apk":
+            try? await Task.sleep(for: .milliseconds(450))
+            _ = model.installPicked(PreviewData.sampleApk())
         default:
             break
         }

@@ -29,37 +29,6 @@ private final class SleepGate {
     }
 }
 
-/// A driver that answers the readings from a script and counts the asks.
-@MainActor
-private final class ScriptedDriver: RuntimeDriver {
-    private(set) var statisticsAsked = 0
-    private(set) var memoryAsked = 0
-    /// What each statistics reading says; the last one repeats.
-    var samples: [StatsSample?] = []
-    /// What each memory reading says; the last one repeats.
-    var memories: [GuestMemorySample?] = []
-
-    func create(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest { guest }
-    func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest { guest }
-    func save(_ guest: Guest) throws {}
-    func startPlan() -> StartPlan? { .normal }
-    func begin(guest: Guest, mode: StartMode, kind: BootKind) {}
-    func restoreUpdate() throws {}
-    func setMicrophone(_ on: Bool) {}
-
-    func readStatistics() async -> StatsSample? {
-        defer { statisticsAsked += 1 }
-        guard !samples.isEmpty else { return nil }
-        return samples[min(statisticsAsked, samples.count - 1)]
-    }
-
-    func readGuestMemory() async -> GuestMemorySample? {
-        defer { memoryAsked += 1 }
-        guard !memories.isEmpty else { return nil }
-        return memories[min(memoryAsked, memories.count - 1)]
-    }
-}
-
 @MainActor
 struct StatisticsLoopTests {
     private let host = HostDevice(
@@ -85,7 +54,7 @@ struct StatisticsLoopTests {
 
     /// A model that runs a guest, read through `driver` and paced by `gate`.
     private func runningModel(
-        _ driver: ScriptedDriver?, gate: SleepGate, capabilities: Capabilities = .device
+        _ driver: StubDriver?, gate: SleepGate, capabilities: Capabilities = .device
     ) -> AppModel {
         let system = SystemInfo(
             version: "17", release: "r2", kernel: "Linux 6.18",
@@ -118,7 +87,7 @@ struct StatisticsLoopTests {
 
     @Test func nothingIsReadWhileNoViewShowsTheFigures() async {
         let gate = SleepGate()
-        let driver = ScriptedDriver()
+        let driver = StubDriver(plan: .normal)
         let model = runningModel(driver, gate: gate)
         await settle()
         #expect(driver.statisticsAsked == 0)
@@ -136,7 +105,7 @@ struct StatisticsLoopTests {
 
     @Test func theReadingsStartWithTwoAQuarterSecondApartAndThenGoOnceASecond() async {
         let gate = SleepGate()
-        let driver = ScriptedDriver()
+        let driver = StubDriver(plan: .normal)
         driver.samples = [.some(reading(0, busy: 0, frames: 0))]
         let model = runningModel(driver, gate: gate)
         model.statistics(.pill, visible: true)
@@ -161,7 +130,7 @@ struct StatisticsLoopTests {
 
     @Test func theFiguresAreWhatTheReadingsSay() async {
         let gate = SleepGate()
-        let driver = ScriptedDriver()
+        let driver = StubDriver(plan: .normal)
         // 250 ms later: 125 ms of work on two vCPUs is a quarter of them,
         // and 15 frames are 60 a second.
         driver.samples = [.some(reading(0, busy: 0, frames: 0)), .some(reading(250, busy: 125, frames: 15))]
@@ -185,7 +154,7 @@ struct StatisticsLoopTests {
 
     @Test func twoViewsShareOneLoop() async {
         let gate = SleepGate()
-        let driver = ScriptedDriver()
+        let driver = StubDriver(plan: .normal)
         driver.samples = [.some(reading(0, busy: 0, frames: 0))]
         let model = runningModel(driver, gate: gate)
         model.statistics(.pill, visible: true)
@@ -207,7 +176,7 @@ struct StatisticsLoopTests {
 
     @Test func aMemoryTheKernelDoesNotGiveKeepsTheLastFigure() async {
         let gate = SleepGate()
-        let driver = ScriptedDriver()
+        let driver = StubDriver(plan: .normal)
         driver.samples = [.some(reading(0, busy: 0, frames: 0))]
         driver.memories = [nil, .some(memory(usedMiB: 700)), nil]
         let model = runningModel(driver, gate: gate)
@@ -241,7 +210,7 @@ struct StatisticsLoopTests {
 
     @Test func leavingTheForegroundStopsTheReadingsAndReturningStartsOver() async {
         let gate = SleepGate()
-        let driver = ScriptedDriver()
+        let driver = StubDriver(plan: .normal)
         driver.samples = [.some(reading(0, busy: 0, frames: 0)), .some(reading(250, busy: 125, frames: 15))]
         let model = runningModel(driver, gate: gate)
         model.statistics(.pill, visible: true)
@@ -266,7 +235,7 @@ struct StatisticsLoopTests {
 
     @Test func aGuestThatIsNotRunningIsNotRead() async {
         let gate = SleepGate()
-        let driver = ScriptedDriver()
+        let driver = StubDriver(plan: .normal)
         driver.samples = [.some(reading(0, busy: 0, frames: 0))]
         let model = runningModel(driver, gate: gate)
         model.phase = .booting(.normal)
@@ -291,7 +260,7 @@ struct StatisticsLoopTests {
 
     @Test func aRuntimeWithoutStatisticsOrADriverIsNotRead() async {
         let gate = SleepGate()
-        let driver = ScriptedDriver()
+        let driver = StubDriver(plan: .normal)
         driver.samples = [.some(reading(0, busy: 0, frames: 0))]
         var without = Capabilities.device
         without.statistics = false
@@ -308,7 +277,7 @@ struct StatisticsLoopTests {
 
     @Test func aNewBootStartsTheFiguresOver() async {
         let gate = SleepGate()
-        let driver = ScriptedDriver()
+        let driver = StubDriver(plan: .normal)
         driver.samples = [
             .some(reading(0, busy: 0, frames: 0)), .some(reading(250, busy: 125, frames: 15)),
             .some(reading(1250, busy: 625, frames: 75, boot: 1)),

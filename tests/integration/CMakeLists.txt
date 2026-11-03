@@ -652,7 +652,8 @@ uml_add_guest_integration_test(
 
 # What a macOS launcher prints with --stats: the vCPU load against libproc and
 # the guest's /proc/stat, the frames of an offscreen display, and the guest's
-# memory against a console of the test's own.
+# memory, as its kernel's `mem` console request reports it, against
+# /proc/meminfo, and none from a console that refuses the request.
 uml_add_guest_integration_test(
     NAME guest-statistics
     SCRIPT kernel/run_guest_statistics.py

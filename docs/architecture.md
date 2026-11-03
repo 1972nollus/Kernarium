@@ -247,11 +247,13 @@ E(v, G) = c(v, G) + 4 MiB * v + E_rest
 c(v, G) = min(derive_budget(G, L), cap(v))      where L is set; derive_budget(G, L) alone otherwise
 ```
 
-`cap(v)` is the gadget cache's measured worst ceiling at v vCPUs, rounded up to
-16 MiB, plus 32 MiB: 176, 208, 240, 288, 304, 304, 336 and 336 MiB for 1 to 8
-vCPUs, and 16 MiB more for each vCPU beyond. It sits above every measured
-ceiling, so the budget's own shedding (an eighth of the budget below it, when
-the accounts pass it) stays what bounds the cache in the measured loads. The
+`cap(v)` is seven eighths of the gadget cache's measured worst ceiling at v
+vCPUs in the Android and KDE loads, rounded up to 16 MiB: 128, 160, 192, 224,
+240, 240, 272 and 272 MiB for 1 to 8 vCPUs, and 16 MiB more for each vCPU
+beyond. It sits under those loads' worst ceilings, so the budget's own
+shedding (to seven eighths of the budget, when the accounts pass it) bounds the
+cache there. Geekbench's multi-core runs at 8 vCPUs peak at 71 to 94 MiB, and
+a budget forced down to 64 MiB cost them no measurable score. The
 4 MiB per vCPU are the slot tags, which the cache's ledger does not charge. An
 explicit `--gadget-cache-budget=` is used as stated and is not capped. The run
 (`runtime::set_gadget_cache_budget`), the plan's E and the application's bound
@@ -262,7 +264,7 @@ The largest guest RAM a limit leaves, `G_max(v)`, is the largest G of 512 to
 384 MiB floor; with no limit (macOS, and an iOS application running on a Mac)
 it is 4096, and where even 512 MiB leaves less than the floor it is 512 and the
 launch warns as above. On the iPad mini 6 (L = 2,867 MiB) and with A, E_rest and
-S at zero it is 2240, 2240, 2176, 2176, 2112, 2112, 2112 and 2112 MiB for 1 to 8
+S at zero it is 2304, 2304, 2240, 2240, 2176, 2176, 2176 and 2176 MiB for 1 to 8
 vCPUs. Kernarium's settings offer no more than `G_max(v)` for the chosen vCPU
 count; the application reads the limit itself and evaluates the header through
 its loader, because the runtime framework is loaded once per process, for the
@@ -1318,6 +1320,19 @@ measured.
 
 The devices Kernarium attaches and its display geometry are listed in
 [`../Kernarium/README.md`](../Kernarium/README.md).
+
+### Local stream sockets
+
+On Apple hosts, never wait for the end of a local (`AF_UNIX`) stream socket
+with a blocking `read` or `recv`. Wait for readiness first (`poll`, kqueue or a
+Dispatch source), then read, or read non-blocking after readiness. An end made
+by `shutdown()` can lose the wakeup of a reader that is just going to sleep:
+the peer's `SHUT_WR` or `SHUT_RDWR`, and a `shutdown` of the reader's own end
+used to wake it. The reader then stays blocked although `poll` reports the end,
+and with `SO_RCVTIMEO` the loss shows as a false `EAGAIN`. A `close()` by the
+peer is not affected, and a data wakeup is never lost. Python's blocking
+`socket.recv` is exposed in the same way; after `settimeout()` CPython polls
+first, which is safe.
 
 ## Guest lifecycle
 
