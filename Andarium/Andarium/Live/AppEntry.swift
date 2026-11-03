@@ -1,5 +1,6 @@
 import AndariumCore
 import Foundation
+import Metal
 import os
 import TipKit
 import UIKit
@@ -169,8 +170,19 @@ struct AppEntry {
             name: name, processorCount: limit,
             memory: memoryPolicy(processorCount: limit),
             freeStorageBytes: freeStorageBytes(), isMac: info.isiOSAppOnMac,
-            physicalProcessorCount: info.activeProcessorCount
+            physicalProcessorCount: info.activeProcessorCount,
+            runsGuestGraphics: drawsGuestGraphics()
         )
+    }
+
+    /// The guest is drawn with Metal 4 (the A14 and later). The Simulator
+    /// draws it with the CPU and has no Metal 4 device, so it always can.
+    static func drawsGuestGraphics() -> Bool {
+        #if targetEnvironment(simulator)
+        return true
+        #else
+        return MTLCreateSystemDefaultDevice()?.supportsFamily(.metal4) ?? false
+        #endif
     }
 
     /// The most guest RAM at each vCPU count: the runtime's own budget

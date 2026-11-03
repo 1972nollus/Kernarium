@@ -53,6 +53,16 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
     -destination 'generic/platform=iOS Simulator' build
 ```
 
+## Devices
+
+The guest is drawn with Metal 4, which the A14 and later chips have. No
+capability key names the chip, so `UIRequiredDeviceCapabilities` names `metal`
+and a device without Metal 4 still installs the application. At launch the
+application asks the GPU for the Metal 4 family (`HostDevice.runsGuestGraphics`).
+Without it Home shows "Needs an A14 Chip or Later" and dims Start (and Set Up
+Guest, when there is no guest yet); `Lifecycle` answers `needsNewerChip` to any
+start. The Simulator draws on the CPU and always passes.
+
 ## Build
 
 Packaging the Android runtime alone, and staging the system from the accepted

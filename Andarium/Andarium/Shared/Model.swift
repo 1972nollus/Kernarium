@@ -334,6 +334,8 @@ final class AppModel {
             )
         case let .blocked(reason):
             alert = AppAlert(title: reason.title, message: reason.explanation)
+        case .needsNewerChip:
+            alert = AppAlert(title: DeviceRequirement.title, message: DeviceRequirement.explanation(deviceName: host.name))
         case .noGuest: break
         }
     }

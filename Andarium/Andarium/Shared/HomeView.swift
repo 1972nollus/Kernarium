@@ -134,6 +134,13 @@ struct HomeView: View {
     @ViewBuilder
     private var notices: some View {
         @Bindable var model = model
+        if !model.host.runsGuestGraphics {
+            NoticeCard(
+                symbol: "cpu", color: .orange,
+                title: DeviceRequirement.title,
+                text: DeviceRequirement.explanation(deviceName: model.host.name)
+            )
+        }
         if model.lowSpace {
             NoticeCard(
                 symbol: "externaldrive.badge.exclamationmark", color: .orange,
@@ -253,7 +260,7 @@ struct StartButton: View {
         .disabled(blocked)
     }
 
-    private var blocked: Bool { !model.plan.allowsStart }
+    private var blocked: Bool { !model.plan.allowsStart || !model.host.runsGuestGraphics }
 
     private var title: String {
         guard model.guest != nil, model.plan.allowsStart else { return "Start" }
@@ -342,6 +349,15 @@ struct WelcomeView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 340)
                 .padding(.top, 8)
+            if !model.host.runsGuestGraphics {
+                NoticeCard(
+                    symbol: "cpu", color: .orange,
+                    title: DeviceRequirement.title,
+                    text: DeviceRequirement.explanation(deviceName: model.host.name)
+                )
+                .frame(maxWidth: 400)
+                .padding(.top, 20)
+            }
             Button {
                 model.sheet = .create
             } label: {
@@ -350,6 +366,7 @@ struct WelcomeView: View {
                     .frame(width: 220, height: 50)
             }
             .buttonStyle(.glassProminent)
+            .disabled(!model.host.runsGuestGraphics)
             .padding(.top, 28)
             Spacer(minLength: 20)
             Label("\(Formats.gb(model.host.freeStorageGB)) free on this \(model.host.name)", systemImage: "internaldrive")

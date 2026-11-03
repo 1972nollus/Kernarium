@@ -91,6 +91,21 @@ struct LifecycleTests {
         #expect(life.phase == .home)
     }
 
+    /// Metal 4 starts with the A14: an earlier chip cannot draw the guest, so
+    /// nothing starts, with or without a guest, and the words name the chip.
+    @Test func aDeviceThatCannotDrawTheGuestNeverStarts() {
+        var older = ipad
+        older.runsGuestGraphics = false
+        var life = Lifecycle(guest: Guest.fresh(on: older))
+        #expect(life.start(.normal, host: older) == .needsNewerChip)
+        #expect(life.start(.recovery, host: older, plan: .firstStart) == .needsNewerChip)
+        #expect(life.phase == .home)
+        #expect(Lifecycle(guest: nil).startVerdict(.normal, host: older) == .needsNewerChip)
+        #expect(DeviceRequirement.title.contains("A14"))
+        #expect(DeviceRequirement.explanation(deviceName: "iPhone").contains("this iPhone"))
+        #expect(ipad.runsGuestGraphics)
+    }
+
     @Test func aStartNeedsRoomForAndroidsOwnWrites() {
         var life = Lifecycle(guest: Guest.fresh(on: ipad))
         let verdict = life.start(.normal, host: fullIpad)
