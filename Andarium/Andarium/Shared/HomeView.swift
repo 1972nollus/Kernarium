@@ -63,7 +63,7 @@ struct HomeView: View {
         .alert("Not Enough Free Space", isPresented: $model.startBlocked) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Starting needs \(Formats.hostGB(bytes: Limits.startReserveBytes)) free for the guest's own writes. This \(model.host.name) has \(Formats.gb(model.host.freeStorageGB)) free.")
+            Text("Starting needs \(Formats.size(bytes: Limits.startReserveBytes)) free for the guest's own writes. This \(model.host.name) has \(Formats.size(bytes: model.host.freeStorageBytes)) free.")
         }
     }
 
@@ -144,8 +144,8 @@ struct HomeView: View {
         if model.lowSpace {
             NoticeCard(
                 symbol: "externaldrive.badge.exclamationmark", color: .orange,
-                title: "\(Formats.gb(model.host.freeStorageGB)) free on this \(model.host.name)",
-                text: "The guest needs \(Formats.hostGB(bytes: Limits.startReserveBytes)) free to start. Free up space in Settings › General › \(model.host.name) Storage."
+                title: "\(Formats.size(bytes: model.host.freeStorageBytes)) free on this \(model.host.name)",
+                text: "The guest needs \(Formats.size(bytes: Limits.startReserveBytes)) free to start. Free up space in Settings › General › \(model.host.name) Storage."
             )
         }
         switch model.plan {
@@ -369,7 +369,7 @@ struct WelcomeView: View {
             .disabled(!model.host.runsGuestGraphics)
             .padding(.top, 28)
             Spacer(minLength: 20)
-            Label("\(Formats.gb(model.host.freeStorageGB)) free on this \(model.host.name)", systemImage: "internaldrive")
+            Label("\(Formats.size(bytes: model.host.freeStorageBytes)) free on this \(model.host.name)", systemImage: "internaldrive")
                 .font(.footnote)
                 .foregroundStyle(model.canCreate ? Color.secondary : Color.orange)
                 .padding(.bottom, 12)
@@ -491,7 +491,7 @@ struct BackupNote: View {
     let host: HostDevice
 
     var body: some View {
-        Text("iCloud and computer backups of this \(host.name) leave the guest out, because the system can set itself up again and its files take several gigabytes. Turn on Include in Backups to keep them.")
+        Text("iCloud and computer backups of this \(host.name) leave the guest out, because the system can set itself up again and its files take several GiB. Turn on Include in Backups to keep them.")
             .font(.footnote)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 18)
@@ -561,7 +561,7 @@ struct EraseRow: View {
                     .foregroundStyle(.red)
                 Spacer()
                 if let guest = model.guest {
-                    Text(Formats.gb(guest.usedGB))
+                    Text(Formats.size(bytes: guest.usedBytes))
                         .foregroundStyle(.secondary)
                 }
             }

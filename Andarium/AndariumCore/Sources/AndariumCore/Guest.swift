@@ -23,7 +23,7 @@ public struct Guest: Equatable, Codable, Sendable {
     public var pendingCapacityGiB: Int?
     public var microphone: Bool
     /// Whether iCloud and computer backups include the guest's files. Off by
-    /// default: the guest is several gigabytes that Android can set up again.
+    /// default: the guest is several GiB that Android can set up again.
     public var includeInBackups: Bool
 
     // Measured when the guest is loaded; never stored.
@@ -50,14 +50,20 @@ public struct Guest: Equatable, Codable, Sendable {
         self.usedBytes = usedBytes
     }
 
-    public var usedGB: Double { Double(usedBytes) / Double(Limits.bytesPerGiB) }
+    public var usedGiB: Double { Double(usedBytes) / Double(Limits.bytesPerGiB) }
 
     /// The capacity the next start runs with.
     public var effectiveCapacityGiB: Int { pendingCapacityGiB ?? capacityGiB }
 
-    /// That capacity in bytes, for screens that state sizes in decimal
-    /// gigabytes beside the host's own figures.
+    /// That capacity in bytes, for screens that state sizes beside the host's
+    /// own figures.
     public var effectiveCapacityBytes: UInt64 { UInt64(max(effectiveCapacityGiB, 0)) * Limits.bytesPerGiB }
+
+    /// What is left of the current capacity, never below zero.
+    public var freeBytes: UInt64 {
+        let capacity = UInt64(max(capacityGiB, 0)) * Limits.bytesPerGiB
+        return capacity > usedBytes ? capacity - usedBytes : 0
+    }
 
     /// Storage only grows, up to the largest capacity there is.
     public var canGrow: Bool { effectiveCapacityGiB < Limits.capacityRangeGiB.upperBound }

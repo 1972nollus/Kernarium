@@ -519,7 +519,10 @@ The Simulator build is for UI tests of the application and its Android guest.
 Configure and build a `kernarium-ios-simulator*` runtime preset, package it with
 `scripts/package-ios-frameworks.sh --sdk simulator` (`--sdk device` beside it
 gives XCFrameworks that both SDKs build against) and build the scheme for
-`generic/platform=iOS Simulator`. The GPU prefix is the software one, at
+`generic/platform=iOS Simulator`. The Simulator product is arm64 alone, like
+its packaged slices, so the project excludes x86_64 for the Simulator SDK
+(`EXCLUDED_ARCHS[sdk=iphonesimulator*]`) and the build needs no `ARCHS`. The
+GPU prefix is the software one, at
 `.build/dependencies/apple-gpu-vulkan-experiment/ios-simulator-arm64` unless
 `KERNARIUM_SIMULATOR_GPU_PREFIX` names another (`KERNARIUM_DEVICE_GPU_PREFIX`
 does the same for the device's). The application selects Mesa's software device

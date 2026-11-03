@@ -22,7 +22,7 @@ struct NewGuestSheet: View {
                         NoticeCard(
                             symbol: "externaldrive.badge.exclamationmark", color: .orange,
                             title: "Not enough free space",
-                            text: "Setting up needs \(Formats.hostGB(bytes: model.createRequirementBytes)) free for the guest's setup. This \(model.host.name) has \(Formats.gb(model.host.freeStorageGB)). Free up space in Settings › General › \(model.host.name) Storage."
+                            text: "Setting up needs \(Formats.size(bytes: model.createRequirementBytes)) free for the guest's setup. This \(model.host.name) has \(Formats.size(bytes: model.host.freeStorageBytes)). Free up space in Settings › General › \(model.host.name) Storage."
                         )
                     }
                     ControlsPanel(guest: draftBinding, host: model.host, isNew: true)
@@ -104,7 +104,7 @@ struct EraseSheet: View {
                 Section("Erased") {
                     item("person.crop.circle", "Accounts and settings", nil)
                     item("photo.on.rectangle", "Photos, downloads and other files", nil)
-                    item("internaldrive", "Data on this \(model.host.name)", Formats.gb(guest.usedGB))
+                    item("internaldrive", "Data on this \(model.host.name)", Formats.size(bytes: guest.usedBytes))
                     if case .unfinishedUpdate(_, _, true) = model.plan {
                         item("clock.arrow.circlepath", "The data saved before the update", nil)
                     }
@@ -241,22 +241,20 @@ struct InfoSheet: View {
                     }
                 }
                 Section("Storage") {
-                    // Every size on this page is in decimal gigabytes, as iOS's
-                    // own storage screens state them.
                     StorageBar(
-                        guestGB: Formats.decimalGB(bytes: model.guest?.usedBytes ?? 0),
-                        systemGB: Formats.decimalGB(bytes: model.systemBytes),
-                        freeGB: model.host.freeStorageGB
+                        guestBytes: model.guest?.usedBytes ?? 0,
+                        systemBytes: model.systemBytes,
+                        freeBytes: model.host.freeStorageBytes
                     )
                     .padding(.vertical, 6)
                     if let guest = model.guest {
                         LabeledContent(
                             "Guest Data",
-                            value: "\(Formats.hostGB(bytes: guest.usedBytes)) of \(Formats.hostGB(bytes: guest.effectiveCapacityBytes))"
+                            value: "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(bytes: guest.effectiveCapacityBytes))"
                         )
                     }
-                    LabeledContent("System", value: Formats.hostGB(bytes: model.systemBytes))
-                    LabeledContent("Free on This \(model.host.name)", value: Formats.gb(model.host.freeStorageGB))
+                    LabeledContent("System", value: Formats.size(bytes: model.systemBytes))
+                    LabeledContent("Free on This \(model.host.name)", value: Formats.size(bytes: model.host.freeStorageBytes))
                 }
                 Section("This \(model.host.name)") {
                     LabeledContent("Processor", value: "\(model.host.physicalProcessorCount) cores")
@@ -281,19 +279,20 @@ struct InfoSheet: View {
 }
 
 struct StorageBar: View {
-    let guestGB: Double
-    let systemGB: Double
-    let freeGB: Double
+    let guestBytes: UInt64
+    let systemBytes: UInt64
+    let freeBytes: UInt64
 
     var body: some View {
-        let total = guestGB + systemGB + freeGB
+        let guest = Double(guestBytes), system = Double(systemBytes)
+        let total = max(guest + system + Double(freeBytes), 1)
         VStack(alignment: .leading, spacing: 8) {
             GeometryReader { geo in
                 HStack(spacing: 2) {
                     Rectangle().fill(Color.accentColor)
-                        .frame(width: max(4, geo.size.width * guestGB / total))
+                        .frame(width: max(4, geo.size.width * guest / total))
                     Rectangle().fill(Color.accentColor.opacity(0.45))
-                        .frame(width: max(4, geo.size.width * systemGB / total))
+                        .frame(width: max(4, geo.size.width * system / total))
                     Rectangle().fill(Color(.systemFill))
                 }
                 .clipShape(.capsule)

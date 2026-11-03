@@ -220,9 +220,9 @@ struct BootView: View {
 
     static func steps(_ kind: BootKind, guest: Guest, system info: SystemInfo) -> [Step] {
         let system = Step(title: "System", detail: "\(info.release) · read-only", seconds: 0.7)
-        let kernel = Step(title: "Linux Kernel", detail: "\(info.kernel.replacingOccurrences(of: "Linux ", with: "")) · \(guest.cores) vCPUs · \(Formats.memory(guest.memoryMiB)) RAM", seconds: 0.9)
+        let kernel = Step(title: "Linux Kernel", detail: "\(info.kernel.replacingOccurrences(of: "Linux ", with: "")) · \(guest.cores) vCPUs · \(Formats.size(mib: guest.memoryMiB)) RAM", seconds: 0.9)
         let screen = Step(title: "Screen", detail: "Waiting for the first frame", seconds: 0.7)
-        let used = "\(Formats.gb(guest.usedGB)) of \(guest.capacityGiB) GB"
+        let used = "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(gib: guest.capacityGiB))"
         switch kind {
         case .recovery:
             return [system, kernel,
@@ -231,7 +231,7 @@ struct BootView: View {
                     screen]
         case .firstStart:
             return [system, kernel,
-                    Step(title: "Storage", detail: "Preparing \(guest.effectiveCapacityGiB) GB for first use", seconds: 0.9),
+                    Step(title: "Storage", detail: "Preparing \(Formats.size(gib: guest.effectiveCapacityGiB)) for first use", seconds: 0.9),
                     Step(title: "Startup", detail: "Setting up for the first time", seconds: 4.0),
                     screen]
         case .upgrade:
@@ -240,7 +240,7 @@ struct BootView: View {
                     Step(title: "Startup", detail: "Updating apps for \(info.release)", seconds: 3.6),
                     screen]
         case .normal, .restart:
-            let storage = guest.pendingCapacityGiB.map { "Growing from \(guest.capacityGiB) GB to \($0) GB" } ?? used
+            let storage = guest.pendingCapacityGiB.map { "Growing from \(Formats.size(gib: guest.capacityGiB)) to \(Formats.size(gib: $0))" } ?? used
             return [system, kernel,
                     Step(title: "Storage", detail: storage, seconds: guest.pendingCapacityGiB == nil ? 0.6 : 1.2),
                     Step(title: "Startup", detail: kind == .restart ? "Starting again" : "Starting services", seconds: 1.8),
