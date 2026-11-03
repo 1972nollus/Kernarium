@@ -38,3 +38,9 @@ uml_add_unit_test(NAME guest-console-writeback
 uml_add_unit_test(NAME guest-console-trim
     COMMAND uml_guest_console_tests trim
     LABELS console)
+# The guest's memory figures: the strict reply grammar, a request sent under
+# the caller's lock and waited for without it, and the guests that refuse,
+# garble or never answer it.
+uml_add_unit_test(NAME guest-console-memory
+    COMMAND uml_guest_console_tests memory
+    LABELS console)
