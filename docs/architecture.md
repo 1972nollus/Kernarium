@@ -1126,7 +1126,8 @@ device keeps a transmit buffer on a ring the guest disabled, because the
 buffer is stream data that nothing waits on, and it never defers a request,
 because a deferral pending at a disable resets the device and with it every
 connection, at each guest suspend. It is appended after every other Virtio
-device, so no existing index moves.
+device, so no existing index moves. The macOS launchers attach loopback TCP ports to it with
+`--vsock-forward` for tests.
 
 The transport also owns this process's open-descriptor ceiling, and raises it
 to whatever the host permits before the first connection serves a request. A
@@ -1378,7 +1379,7 @@ nothing.
 The macOS launchers (`darwin/app/macos`) restart a guest in the same process.
 The machine is made once: the emulator handle, the SLiRP provider with its
 `--net-forward` list, and the GPU service with its display. Each boot makes its
-own services (battery, video, video encoder, audio, console) and its
+own services (battery, video, video encoder, audio, console, vsock) and its
 command line, runs, and stops them again. After a restart the launcher resets
 the SLiRP link (stop, then open at once, which replays the forwards) so that no
 connection of the old guest survives, asks the GPU service for its next

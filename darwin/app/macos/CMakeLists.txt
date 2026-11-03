@@ -75,6 +75,7 @@ function(uml_add_macos_embedded_kernel_app
         UML::BatteryDevice
         UML::VideoDevice
         UML::ConsoleDevice
+        UML::VsockDevice
         UML::GpuDevice
         UML::GpuMetalShaderCache
         UML::VirtioInput)

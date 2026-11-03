@@ -13,3 +13,9 @@ target_link_libraries(uml_vsock_device_tests PRIVATE UML::VsockDevice)
 uml_add_unit_test(NAME virtio-vsock-device
     COMMAND uml_vsock_device_tests
     LABELS "device;vsock")
+
+add_executable(uml_vsock_forwarder_tests forwarder_tests.cpp)
+target_link_libraries(uml_vsock_forwarder_tests PRIVATE UML::VsockDevice)
+uml_add_unit_test(NAME vsock-forwarder
+    COMMAND uml_vsock_forwarder_tests
+    LABELS "device;vsock")

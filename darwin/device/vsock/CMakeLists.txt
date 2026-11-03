@@ -3,6 +3,7 @@
 add_library(uml_vsock_device STATIC
     connection_table.cpp
     endpoint.cpp
+    forwarder.cpp
     host_events.cpp
     in_process_service.cpp
     virtio_vsock_device.cpp)

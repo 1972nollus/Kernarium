@@ -548,7 +548,9 @@ open, refusal and timeout paths, stalls in both directions, half-closes, resets,
 the 32-connection limit, the never-defer and keep-on-disabled-ring rules, and an
 echo run of several threads opening and closing at once), and
 `virtio-vsock-connection-table` holds the credit arithmetic, its 32-bit wrap
-and the host port allocator.
+and the host port allocator. `vsock-forwarder` covers the `--vsock-forward`
+grammar, which accepts a loopback address only, and the listeners that attach
+each accepted connection to a guest port.
 
 `guest-restart` runs the macOS launcher through a guest that restarts itself.
 Under each of the gadgets and the JIT engine, one `uml-darwin` process boots,

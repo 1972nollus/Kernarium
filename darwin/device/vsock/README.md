@@ -21,6 +21,7 @@ refused with an RST, so no guest process can reach the application.
 | `host_events.{hpp,cpp}` | the kqueue the transport polls: readiness of the host ends, and the wake |
 | `endpoint.{hpp,cpp}` | the thread-safe open API and the gateway it reaches the device through |
 | `in_process_service.{hpp,cpp}` | the service on a thread named `uml-vsock`, and its endpoint |
+| `forwarder.{hpp,cpp}` | macOS test tooling: loopback TCP listeners attached to guest ports |
 
 ## Rules the device keeps
 
@@ -118,6 +119,18 @@ must not block; `Opening::cancel()` gives an open up from another thread.
 The endpoint outlives the device and then answers `-ENODEV`. The application's
 end of a connection is a plain socket: closing it, or half-closing it with
 `shutdown`, is seen by the guest as the stream's end or half-close.
+
+## The forwarder
+
+`macos` launchers take `--vsock-forward=[127.0.0.1:]HOSTPORT-GUESTPORT`,
+repeatable. Each forward is a loopback TCP listener (host port 0 lets the
+system choose, and the launcher prints `vsock forward 127.0.0.1:<port> -> guest
+port <n>` on stderr), and each accepted connection is attached to the guest
+port, so a stock client of a guest service reaches it: `adb connect
+127.0.0.1:<port>` for adbd on 5555. Only a loopback address is accepted. The
+device exists, appended last, only when a forward is given. The forwarder moves
+no bytes; a thread per connection waits for the guest's answer for up to 10
+seconds, and every waiting one is given up when the forwarder stops.
 
 ## Tests
 
