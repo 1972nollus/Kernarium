@@ -24,6 +24,7 @@ struct LaunchEnvironmentTests {
                 "KERNARIUM_GPU_AUTO_RESIZE": "0",
                 "ANDARIUM_START": "recovery",
                 "ANDARIUM_ERASE": "1",
+                "ANDARIUM_STATS": "1",
             ],
             processorCount: 6
         )
@@ -34,6 +35,7 @@ struct LaunchEnvironmentTests {
         #expect(overrides.followWindow == false)
         #expect(overrides.start == .recovery)
         #expect(overrides.erase)
+        #expect(overrides.statistics)
     }
 
     @Test func kernariumsBootModeAsksForARecoveryStartOnly() {

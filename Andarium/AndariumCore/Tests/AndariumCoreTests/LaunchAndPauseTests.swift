@@ -84,6 +84,14 @@ struct LaunchOverridesTests {
         #expect(!launch([:]).erase)
     }
 
+    @Test func statistics() {
+        #expect(launch([.stats: "1"]).statistics)
+        #expect(!launch([.stats: "0"]).statistics)
+        #expect(!launch([.stats: "yes"]).statistics)
+        #expect(!launch([:]).statistics)
+        #expect(!launch([.stats: "1"]).isEmpty)
+    }
+
     @Test func appliesToAGuest() {
         var overrides = LaunchOverrides()
         overrides.vCPUCount = 8

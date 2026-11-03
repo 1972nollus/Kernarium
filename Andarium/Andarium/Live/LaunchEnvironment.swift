@@ -17,6 +17,7 @@ extension LaunchOverrides {
         case .start: "ANDARIUM_START"
         case .bootMode: "KERNARIUM_ANDROID_BOOT_MODE"
         case .erase: "ANDARIUM_ERASE"
+        case .stats: "ANDARIUM_STATS"
         }
     }
 

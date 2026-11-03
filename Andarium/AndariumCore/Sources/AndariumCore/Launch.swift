@@ -17,6 +17,9 @@ public struct LaunchOverrides: Equatable, Sendable {
         case bootMode
         /// "1" erases the guest's data before the start.
         case erase
+        /// "1" opens the session with its statistics on screen and prints
+        /// each reading (`ConsoleReport.statistics`).
+        case stats
     }
 
     public var vCPUCount: Int?
@@ -28,6 +31,8 @@ public struct LaunchOverrides: Equatable, Sendable {
     public var start: StartMode?
     /// Erase the guest's data before the start.
     public var erase = false
+    /// Show the statistics from the start of the run, and print them.
+    public var statistics = false
 
     public init() {}
 
@@ -60,6 +65,7 @@ public struct LaunchOverrides: Equatable, Sendable {
             if value(.bootMode) == "recovery" { start = .recovery }
         }
         erase = value(.erase) == "1"
+        statistics = value(.stats) == "1"
     }
 
     public var isEmpty: Bool { self == LaunchOverrides() }
