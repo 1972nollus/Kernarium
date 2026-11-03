@@ -80,7 +80,7 @@ index 67b8020d2d5a7f6f3dc6f1e55885c6ec939d6299..fc98735d3c7e1bae6616605434a49000
  
  /**
 diff --git a/sound/virtio/virtio_pcm.h b/sound/virtio/virtio_pcm.h
-index 01e7b055b217ce5aca54a7aeb9e83b86d63f4fa6..0e3ddf905f83ddac082c0bfa8ac099152be34a1c 100644
+index fff17cfe7d169099a5049068a2ade322b6604842..4fd4807ab99a7971ffb01812a08fe2c8bfbfbdeb 100644
 --- a/sound/virtio/virtio_pcm.h
 +++ b/sound/virtio/virtio_pcm.h
 @@ -28,7 +28,10 @@ struct virtio_pcm_msg;
@@ -137,7 +137,7 @@ index d04763aba507ecd3a1e87c3a4a0f1ef585345820..b8c363b28c06674166e006b3830c20a4
  	msg->length = 0;
  
 diff --git a/sound/virtio/virtio_pcm_ops.c b/sound/virtio/virtio_pcm_ops.c
-index c910004efa4a45eb327b6225afdca2bbfe8e1910..cebdd75d04e6a0257c37960f29cf9fac9649b79b 100644
+index 9f5646c752dbbdfb7fd7fb08c91be5bb9a79526b..906af639f19c132a890c72fc345c405c25b1a090 100644
 --- a/sound/virtio/virtio_pcm_ops.c
 +++ b/sound/virtio/virtio_pcm_ops.c
 @@ -303,6 +303,7 @@ static int virtsnd_pcm_prepare(struct snd_pcm_substream *substream)

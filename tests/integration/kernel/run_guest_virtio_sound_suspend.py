@@ -11,10 +11,10 @@ stream's period completions moved the position two or three periods each and
 the application wrote twice as fast as the sound plays. A stream paused
 across a suspend could neither be recovered nor, after it was closed, be
 opened again, because the driver still counted the periods the device had
-held; one paused after its queue had drained met a device that kept its
-stopped stream, because a virtio reset never reached the vhost-user back-end.
-The driver's freeze marks every substream suspended and forgets its messages,
-and its reset tells the back-end to reset the device.
+held and the back-end had reset it; one paused after its queue had drained
+met a device that kept its stopped stream. UML runs no virtio freeze, so the
+driver releases such a stream on the device from its own suspend callback,
+before the rings are disabled, and marks the substream for reconfiguration.
 
 The same state is behind other failures, and the test covers them too. A
 period written before a start is queued on the device, and a drop or a
@@ -105,6 +105,14 @@ def show_cases(text: str) -> None:
         print(line.rstrip("\r"))
 
 
+def show_driver_log(guest: Guest) -> None:
+    """What the kernel logged about the sound device, for a failed run."""
+    log = guest.run_command(
+        "dmesg | grep -i -E 'virtio|snd|vhost|sound' | tail -n 60", 30
+    )
+    print("driver log:\n" + log.output)
+
+
 def complaints_of(text: str) -> list[str]:
     """What the guest printed that no run may print, with the driver's own
     messages beside it."""
@@ -134,6 +142,8 @@ def run_cases(arguments) -> list[str]:
         if result.return_code != 0 and not problems:
             problems.append(f"the probe exited with status {result.return_code}")
         problems += complaints_of(tail)
+        if problems:
+            show_driver_log(guest)
         expected = len(
             set(SUSPENDING_CASES) & set(arguments.case or SUSPENDING_CASES)
         )
@@ -185,6 +195,8 @@ def run_stall(arguments, private: pathlib.Path, case: str) -> list[str]:
         if result[1] != "ok":
             problems.append(f"{case}: {result[1].removeprefix('FAIL: ')}")
         problems += complaints_of(guest.output()[request:])
+        if problems:
+            show_driver_log(guest)
         if not problems and not guest.shutdown(60):
             problems.append(f"{case}: the guest did not power off")
         return problems

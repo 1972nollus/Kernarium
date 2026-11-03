@@ -36,9 +36,10 @@ paused        Play, pause, suspend. snd_pcm_recover must return 0 and the
               writes after it must succeed. A paused stream has no trigger at
               the suspend, but its device still loses the periods it held.
 pauseddrained Play one period, let it complete, pause, suspend. The device
-              holds no period, so nothing reaches it from the freeze but the
-              reset. Two prepares return 0, and after a reopen the device
-              takes its parameters and plays.
+              holds no period, so the back-end keeps the stopped stream when
+              the rings are disabled and only the driver can release it. Two
+              prepares return 0, and after a reopen the device takes its
+              parameters and plays.
 pausedreopen  Play, pause, suspend, close, open the device again and play.
               The messages the paused stream counted must not make the next
               open refuse. It runs last, because a driver that fails it fails

@@ -25,7 +25,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 60 insertions(+), 2 deletions(-)
 
 diff --git a/sound/virtio/virtio_pcm_ops.c b/sound/virtio/virtio_pcm_ops.c
-index e2a79f6b7c57a6d30a5715503862835d1cce0612..065df2cc25db154dd67c19aafdcb5138dd264435 100644
+index f162933da2a06c6228a2e22b31e3006dbd19fac4..5f9ea78fe9601ea7de3d42540dd7a03c454388eb 100644
 --- a/sound/virtio/virtio_pcm_ops.c
 +++ b/sound/virtio/virtio_pcm_ops.c
 @@ -112,6 +112,9 @@ static int virtsnd_pcm_open(struct snd_pcm_substream *substream)
@@ -101,7 +101,7 @@ index e2a79f6b7c57a6d30a5715503862835d1cce0612..065df2cc25db154dd67c19aafdcb5138
  	default:
  		return -EINVAL;
  	}
-@@ -517,12 +569,18 @@ static int virtsnd_pcm_pb_ack(struct snd_pcm_substream *substream)
+@@ -562,12 +614,18 @@ static int virtsnd_pcm_pb_ack(struct snd_pcm_substream *substream)
  {
  	struct virtio_pcm_substream *vss = snd_pcm_substream_chip(substream);
  	struct virtio_snd_queue *queue = virtsnd_pcm_queue(vss);

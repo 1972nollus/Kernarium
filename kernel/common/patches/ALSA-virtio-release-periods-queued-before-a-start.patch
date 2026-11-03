@@ -24,7 +24,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 50 insertions(+), 19 deletions(-)
 
 diff --git a/sound/virtio/virtio_pcm_ops.c b/sound/virtio/virtio_pcm_ops.c
-index cebdd75d04e6a0257c37960f29cf9fac9649b79b..e2a79f6b7c57a6d30a5715503862835d1cce0612 100644
+index 906af639f19c132a890c72fc345c405c25b1a090..f162933da2a06c6228a2e22b31e3006dbd19fac4 100644
 --- a/sound/virtio/virtio_pcm_ops.c
 +++ b/sound/virtio/virtio_pcm_ops.c
 @@ -95,6 +95,8 @@ static const struct virtsnd_a2v_rate g_a2v_rate_map[] = {
