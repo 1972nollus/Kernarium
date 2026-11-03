@@ -1,23 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* Test support: a Virtio balloon backend that raises a config change every
- * few milliseconds. Each change is a request on the vhost-user backend
- * channel that waits for the guest's acknowledgement, and each one makes the
- * guest's balloon worker read the config again over the main socket, so the
- * two cross constantly.
+/* Test support: a vhost-user backend that raises a config change every few
+ * milliseconds. Each change is a request on the vhost-user backend channel
+ * that waits for the guest's acknowledgement, so a guest that leaves the
+ * channel unread, as a suspended one does, holds the next request back until
+ * it resumes.
  *
- * The target stays at zero, so the guest never inflates: this process cannot
- * serve a virtqueue. The guest RAM the emulator names in SET_MEM_TABLE is an
- * identity token that only the emulator process resolves
- * (darwin/runtime/bridge.cpp), so a backend in another process maps zeros and
- * would never see an inflate request. Config reads and writes travel in
- * messages and need no guest memory.
+ * The device has an ID no guest driver binds, so the guest acknowledges each
+ * change and does nothing else with it, and it serves no virtqueue: the
+ * guest RAM the emulator names in SET_MEM_TABLE is an identity token that
+ * only the emulator process resolves (darwin/runtime/bridge.cpp), so a
+ * backend in another process could not read a request in any case.
  *
- *   uml-balloon-churn-server --fd N [--period-ms 2]
+ *   uml-vhost-user-churn-server --fd N [--period-ms 50]
  *
- * It exits when the guest closes the connection and prints one summary line.
+ * It prints the number of changes raised so far when it receives SIGUSR1, and
+ * exits when the guest closes the connection with a summary line of the total.
  */
 
-#include "balloon/protocol.hpp"
 #include "unique_descriptor.hpp"
 #include "vhost_user_device.hpp"
 #include "vhost_user_server.hpp"
@@ -26,6 +25,7 @@
 #include <atomic>
 #include <cerrno>
 #include <csignal>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -39,30 +39,48 @@
 #include <vector>
 
 #include <sys/event.h>
+#include <unistd.h>
 
 namespace {
 
-namespace protocol = uml::balloon::protocol;
-
 std::atomic_bool stopRequested {};
+std::atomic<std::uint64_t> changesRaised {};
 
 void requestStop(int) noexcept
 {
     stopRequested.store(true, std::memory_order_release);
 }
 
-struct Counts final {
-    std::uint64_t changes {};
-    std::uint64_t reads {};
-};
+/* Writes "vhost-user churn mark: <changes raised so far>" with nothing but
+ * write(2), so that it is safe in a signal handler. */
+void printMark(int) noexcept
+{
+    static constexpr char prefix[] = "vhost-user churn mark: ";
+    char text[sizeof(prefix) + 24];
+    std::size_t length = 0;
+    for (const char character : prefix) {
+        if (character != '\0')
+            text[length++] = character;
+    }
+    char digits[24];
+    std::size_t count = 0;
+    std::uint64_t value = changesRaised.load(std::memory_order_relaxed);
+    do {
+        digits[count++] = static_cast<char>('0' + value % 10);
+        value /= 10;
+    } while (value != 0);
+    while (count != 0)
+        text[length++] = digits[--count];
+    text[length++] = '\n';
+    (void)::write(STDOUT_FILENO, text, length);
+}
 
-/* A balloon whose target never moves but which reports a config change on
- * every timer tick, as a host whose target estimate keeps being revised. */
-class ChurningBalloon final : public uml::virtio::VhostUserDevice {
+/* A device the backend serves with one queue and four bytes of
+ * configuration, which nothing reads. */
+class ChurningDevice final : public uml::virtio::VhostUserDevice {
 public:
-    ChurningBalloon(std::uint64_t periodMilliseconds, Counts& counts)
-        : counts_(counts)
-        , timer_(::kqueue())
+    explicit ChurningDevice(std::uint64_t periodMilliseconds)
+        : timer_(::kqueue())
     {
         if (timer_.get() < 0)
             throw std::runtime_error(
@@ -78,48 +96,31 @@ public:
 
     [[nodiscard]] const char* name() const noexcept override
     {
-        return "Churning Virtio balloon";
+        return "Churning vhost-user device";
     }
 
     [[nodiscard]] std::uint64_t features() const noexcept override
     {
-        return protocol::featureMustTellHost;
+        return 0;
     }
 
     [[nodiscard]] std::size_t queueCount() const noexcept override
     {
-        return protocol::queueCount;
+        return 1;
     }
 
     [[nodiscard]] std::vector<std::uint8_t> configuration() const override
     {
-        const protocol::Configuration configuration {
-            .numPages = 0,
-            .actual = actual_,
-            .freePageHintCommandId = 0,
-            .poisonValue = 0,
-        };
-        std::vector<std::uint8_t> bytes(sizeof(configuration));
-        std::memcpy(bytes.data(), &configuration, sizeof(configuration));
-        return bytes;
-    }
-
-    void configurationRead(std::uint32_t, std::uint32_t) noexcept override
-    {
-        ++counts_.reads;
+        return std::vector<std::uint8_t>(sizeof(std::uint32_t));
     }
 
     void writeConfiguration(
-        std::uint32_t offset,
         std::uint32_t,
-        std::span<const std::uint8_t> bytes) override
+        std::uint32_t,
+        std::span<const std::uint8_t>) override
     {
-        if (offset == protocol::actualOffset &&
-            bytes.size() == sizeof(actual_))
-            std::memcpy(&actual_, bytes.data(), sizeof(actual_));
     }
 
-    /* The guest never inflates a balloon whose target is zero. */
     [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
         std::uint32_t,
         std::uint64_t,
@@ -131,7 +132,6 @@ public:
 
     void reset() noexcept override
     {
-        actual_ = 0;
         pending_ = false;
     }
 
@@ -153,7 +153,7 @@ public:
             throw std::runtime_error("draining the timer failed");
         if (count > 0 && !pending_) {
             pending_ = true;
-            ++counts_.changes;
+            changesRaised.fetch_add(1, std::memory_order_relaxed);
         }
     }
 
@@ -168,16 +168,15 @@ public:
     }
 
 private:
-    Counts& counts_;
     uml::gpu::UniqueDescriptor timer_;
-    std::uint32_t actual_ {};
     bool pending_ {};
 };
 
 [[noreturn]] void usage()
 {
     std::fputs(
-        "usage: uml-balloon-churn-server --fd N [--period-ms MS]\n", stderr);
+        "usage: uml-vhost-user-churn-server --fd N [--period-ms MS]\n",
+        stderr);
     std::exit(2);
 }
 
@@ -195,7 +194,7 @@ std::uint64_t number(const char* text)
 int main(int argc, char** argv)
 {
     int descriptor = -1;
-    std::uint64_t periodMilliseconds = 2;
+    std::uint64_t periodMilliseconds = 50;
     for (int index = 1; index < argc; ++index) {
         const std::string_view option {argv[index]};
         if (index + 1 >= argc)
@@ -216,19 +215,20 @@ int main(int argc, char** argv)
     sigemptyset(&action.sa_mask);
     (void)::sigaction(SIGTERM, &action, nullptr);
     (void)::sigaction(SIGINT, &action, nullptr);
+    action.sa_handler = printMark;
+    (void)::sigaction(SIGUSR1, &action, nullptr);
 
-    Counts counts;
     try {
         uml::gpu::VhostUserServer server {
-            std::make_unique<ChurningBalloon>(periodMilliseconds, counts)};
+            std::make_unique<ChurningDevice>(periodMilliseconds)};
         server.runConnected(descriptor, stopRequested);
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "uml-balloon-churn-server: %s\n", error.what());
+        std::fprintf(stderr, "uml-vhost-user-churn-server: %s\n",
+            error.what());
         return 1;
     }
-    std::printf("balloon churn: %llu config changes raised, %llu config "
-                "reads answered\n",
-        static_cast<unsigned long long>(counts.changes),
-        static_cast<unsigned long long>(counts.reads));
+    std::printf("vhost-user churn: %llu config changes raised\n",
+        static_cast<unsigned long long>(
+            changesRaised.load(std::memory_order_relaxed)));
     return 0;
 }

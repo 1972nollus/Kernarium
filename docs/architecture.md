@@ -186,15 +186,10 @@ hands free memory to the host at once. Kernarium trims only while it keeps the
 guest running in the background. `uml-darwin` has no background state, so its
 guests trim only when started with `page_cache_trim.enabled=1`.
 
-The Virtio balloon (`device/balloon`) takes the memory the host GPU uses out of
-the guest. Its target is the larger of the process's Metal allocation
-(`MTLDevice.currentAllocatedSize`) and its graphics footprint (the graphics
-ledger of `TASK_VM_INFO`), which also charges the command storage the GPU
-driver has written and the allocation omits. The target is capped at the GPU
-budget (below) and followed in 16 MiB steps. A
-host page leaves the footprint once the guest has ballooned all of its 4 KiB
-frames. Under `VIRTIO_BALLOON_F_MUST_TELL_HOST`, a deflate commits the page
-before the guest may use it.
+The host GPU's memory is not carved out of the guest's RAM, and the host
+provides no Virtio balloon device: the guest keeps the `mem=` it was given,
+less what it releases through page reporting above, and the GPU's share of the
+process's memory is the fixed budget below.
 
 The process's memory limit, L, is the figure the memory budgets derive from;
 the gadget-cache budget takes at most an eighth of it, and where a limit is set
@@ -1349,7 +1344,7 @@ nothing.
 The macOS launchers (`darwin/app/macos`) restart a guest in the same process.
 The machine is made once: the emulator handle, the SLiRP provider with its
 `--net-forward` list, and the GPU service with its display. Each boot makes its
-own services (battery, balloon, video, video encoder, audio, console) and its
+own services (battery, video, video encoder, audio, console) and its
 command line, runs, and stops them again. After a restart the launcher resets
 the SLiRP link (stop, then open at once, which replays the forwards) so that no
 connection of the old guest survives, asks the GPU service for its next

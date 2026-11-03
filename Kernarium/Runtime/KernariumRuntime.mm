@@ -21,8 +21,6 @@
 #include "video/virtio_video_device.hpp"
 #include "video/virtio_video_encoder_device.hpp"
 #include "audio/protocol.hpp"
-#include "balloon/in_process_service.hpp"
-#include "balloon/protocol.hpp"
 #include "battery/in_process_service.hpp"
 #include "battery/protocol.hpp"
 #include "console/in_process_service.hpp"
@@ -983,8 +981,6 @@ struct GuestRequest final {
     std::uint32_t dotsPerInch {};
     std::uint32_t guestMemoryMiB {};
     std::uint32_t guestProcessorCount {};
-    std::uint64_t guestMemoryBytes {};
-    std::uint64_t deviceMemoryLimit {};
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
     /* The guest's two disks: the release's system disk and the instance's
      * data disk. */
@@ -1180,7 +1176,6 @@ public:
 
 private:
     struct Boot final {
-        std::unique_ptr<uml::gpu::InProcessVhostUserService> balloon;
         std::unique_ptr<uml::input::virtio::InProcessInputService> touchscreen;
         std::unique_ptr<uml::input::virtio::InProcessInputService> keyboard;
         std::unique_ptr<uml::gpu::InProcessVhostUserService> audio;
@@ -1199,13 +1194,6 @@ private:
     [[nodiscard]] std::unique_ptr<Boot> buildBoot()
     {
         auto boot = std::make_unique<Boot>();
-        boot->balloon = uml::balloon::makeInProcessService(
-            uml::balloon::BalloonOptions {
-                .guestMemoryBytes = request_.guestMemoryBytes,
-                .target = uml::balloon::hostGpuMemoryTarget(
-                    request_.deviceMemoryLimit),
-                .hostPageSize = static_cast<std::size_t>(getpagesize()),
-            });
         boot->touchscreen =
             std::make_unique<uml::input::virtio::InProcessInputService>(
                 uml::input::virtio::DeviceKind::touchscreen);
@@ -1266,9 +1254,6 @@ private:
             boot->battery->takeConnectionName(),
             uml::battery::protocol::deviceId));
 #endif
-        arguments.emplace_back(uml::gpu::virtioDeviceArgument(
-            boot->balloon->takeConnectionName(),
-            uml::balloon::protocol::deviceId));
         arguments.emplace_back(uml::gpu::virtioDeviceArgument(
             boot->touchscreen->takeConnectionName(),
             uml::input::virtio::protocol::deviceId));
@@ -1531,13 +1516,11 @@ int runtimeRun(
         /* GPU memory is charged to the application like guest RAM: the GPU's
          * budget is what the application's memory limit leaves after the
          * guest, the gadget cache and the launch's allowances, at least 384 MiB
-         * and at most half of the guest's allocation, and the balloon takes
-         * what the GPU uses out of the guest. The application has already
-         * warned the user when the limit leaves less than the floor
+         * and at most half of the guest's allocation. The application has
+         * already warned the user when the limit leaves less than the floor
          * (runtimePlanGpuBudget); the guest boots with the floor. */
         const auto gpuBudget = planGpuBudget(
             boot, guestMemoryMiB, guestProcessorCount);
-        const std::uint64_t guestMemoryBytes = gpuBudget.guest_memory;
         const std::uint64_t deviceMemoryLimit = gpuBudget.budget.bytes;
         if (gpuBudget.budget.short_of_floor) {
             std::fprintf(
@@ -1550,8 +1533,6 @@ int runtimeRun(
             "Kernarium: GPU budget %llu MiB of a %llu MiB limit\n",
             static_cast<unsigned long long>(deviceMemoryLimit >> 20),
             static_cast<unsigned long long>(gpuBudget.process_limit >> 20));
-        request.guestMemoryBytes = guestMemoryBytes;
-        request.deviceMemoryLimit = deviceMemoryLimit;
         /* The display outlives the guest: the GPU service keeps the view and
          * the frame mirror, and hands each boot its own connection. */
         uml::gpu::InProcessGpuService gpuService(

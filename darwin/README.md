@@ -64,9 +64,9 @@ it does not search for the Linux desktop image.
 ## Runtime, memory, and kernel loading
 
 Handle and run ownership, the vCPU carriers and host signal ownership, the
-native kernel window, guest RAM commitment and the balloon, accepted-artifact
-sharing, and the signed kernel loader are cross-module contracts owned by the
-architecture: see its
+native kernel window, guest RAM commitment, accepted-artifact sharing, and the
+signed kernel loader are cross-module contracts owned by the architecture: see
+its
 [runtime ownership](../docs/architecture.md#runtime-ownership),
 [memory and executable code](../docs/architecture.md#memory-and-executable-code),
 and [CPU execution and scheduling](../docs/architecture.md#cpu-execution-and-scheduling)

@@ -399,7 +399,6 @@ uml_add_guest_integration_test(
 
 add_subdirectory(aarch32)
 add_subdirectory(android)
-add_subdirectory(balloon)
 add_subdirectory(exclusive)
 add_subdirectory(no_sve)
 add_subdirectory(restart)
@@ -563,6 +562,13 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# Test support only: an external vhost-user backend that raises a config
+# change every few milliseconds.
+add_executable(uml-vhost-user-churn-server kernel/vhost_user_churn_server.cpp)
+target_link_libraries(uml-vhost-user-churn-server PRIVATE
+    UML::VhostUserTransport)
+add_dependencies(integration-test-binaries uml-vhost-user-churn-server)
+
 # A system suspend holds through network, console and vhost-user traffic
 # until a wake request, and a wake sent while it is still being entered
 # ends it, even while it still syncs file systems. A suspend the host asked
@@ -575,7 +581,7 @@ uml_add_guest_integration_test(
 uml_add_guest_integration_test(
     NAME guest-suspend-holds
     SCRIPT kernel/run_guest_suspend_holds.py
-    ARGS --server $<TARGET_FILE:uml-balloon-churn-server>
+    ARGS --server $<TARGET_FILE:uml-vhost-user-churn-server>
     LABELS guest;kernel;smoke
     TIMEOUT 300
     CPUS 2)

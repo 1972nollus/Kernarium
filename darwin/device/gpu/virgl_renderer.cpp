@@ -289,10 +289,10 @@ VirglRenderer::VirglRenderer()
         if (limit != 0) {
             /*
              * What the host GPU holds is the larger of Metal's allocation
-             * counter and the graphics ledger jetsam counts, as the balloon
-             * target takes it: the ledger also holds the driver's command
-             * storage and the surfaces the counter omits, and the counter can
-             * briefly pass the ledger. Neither estimate may lower the other.
+             * counter and the graphics ledger jetsam counts: the ledger also
+             * holds the driver's command storage and the surfaces the counter
+             * omits, and the counter can briefly pass the ledger. Neither
+             * estimate may lower the other.
              */
             deviceMemoryPool = std::make_unique<DeviceMemoryPool>(limit,
                 [] {
