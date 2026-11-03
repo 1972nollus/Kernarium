@@ -1,10 +1,11 @@
 # Kernarium
 
 Kernarium is the iOS application that runs one Linux or Android guest on the
-Darwin runtime. It is an iOS device product only;
-[`graphics.md`](../docs/graphics.md#current-path) gives the Metal 4 reason and
-how the same device slice runs on an Apple silicon Mac in Designed for iPad
-mode. Build, launch, and test commands are in
+Darwin runtime. It targets the iOS device, whose slice also runs on an Apple
+silicon Mac in Designed for iPad mode, and the iOS Simulator, where the guest
+renders on the CPU for UI tests
+([`graphics.md`](../docs/graphics.md#ios-simulator-software-renderer)). Build,
+launch, and test commands are in
 [`testing.md`](../docs/testing.md#apple-builds-and-kernarium).
 
 ## Ownership
@@ -495,6 +496,18 @@ that mixes with other audio; the window sets the session as the application
 resigns active, because guest audio claims and drops it on its own terms. The
 application plays no sound of its own.
 
+## Simulator
+
+The Simulator build is for UI tests of the application and its Android guest.
+Configure and build a `kernarium-ios-simulator*` runtime preset, package it with
+`scripts/package-ios-frameworks.sh --sdk simulator` (`--sdk device` beside it
+gives XCFrameworks that both SDKs build against) and build the scheme for
+`generic/platform=iOS Simulator`. The GPU prefix is the software one, at
+`.build/dependencies/apple-gpu-vulkan-experiment/ios-simulator-arm64` unless
+`KERNARIUM_SIMULATOR_GPU_PREFIX` names another. The application selects Mesa's
+software device (`LIBGL_ALWAYS_SOFTWARE`) and embeds no KosmicKrisp; the guest
+has no Vulkan and the runtime holds no GPU budget.
+
 ## Scripts
 
 Each script documents its options in `--help` or its header:
@@ -502,12 +515,18 @@ Each script documents its options in `--help` or its header:
 - `run-ios-mac.sh` builds, installs, provisions, and launches the application
   on an Apple silicon Mac in Designed for iPad mode;
 - `package-ios-frameworks.sh` packages the selected runtime and graphics slices
-  and the static GPT fdisk and zstd XCFrameworks for Xcode, with
+  for `--sdk device` (the default) and `--sdk simulator`, and the static GPT
+  fdisk and zstd XCFrameworks for Xcode, with
   `--automation` the automation Linux runtime, with `--android-automation`
   the automation Android runtime, with `--runtimes android` the Android
   runtime alone (for Andarium; the output directory is shared, so package the
-  full set again before building Kernarium), and the host battery and video
-  encoder archives only `KernariumTests` links;
+  full set again before building Kernarium), and, for the device, the host
+  battery and video encoder archives only `KernariumTests` links;
+- `embed-device-framework.sh` is the Run Script phase that embeds the
+  device-only `KosmicKrisp.xcframework` for an `iphoneos` build and nothing for
+  the Simulator, because an XCFramework in an Embed Frameworks phase needs a
+  slice for every SDK the target builds and a platform filter cannot name the
+  device apart from the Simulator;
 - `make-guest-bundle.py` assembles an Android `.kern` bundle (system disk,
   layout, kernel command line) from an installed release;
 - `repro-android-hold-mac.py` sends an Android guest through the background

@@ -234,7 +234,10 @@ process is likely to be ended, as one `uml-darwin:` line on stderr and as a
 dismissible notice in Kernarium (`kernarium_runtime_plan_gpu_budget_function`
 evaluates the plan, for the guest's memory and vCPU count, before the run so the
 application can show it). The device memory budget section of
-[graphics](graphics.md) owns what B bounds.
+[graphics](graphics.md) owns what B bounds. The iOS Simulator's [software
+renderer](graphics.md#ios-simulator-software-renderer) has no device-memory pool
+for B to bound, so its runtime plans with no process limit and prints that it
+holds no GPU budget.
 
 The guest side's memory follows the vCPU count, v, and `runtime/guest_memory_budget.hpp`
 is the one place that says how:
@@ -453,9 +456,10 @@ product uses a separately identified 4 KiB mainline slice. Android uses a
 separate accepted 4 KiB artifact of the `android-6.18` family, built from the
 same mainline tree with the Android configuration.
 
-Kernarium is an iOS device product only; [`graphics.md`](graphics.md)
-gives the Metal 4 reason the Simulator has no build of it or of the Apple GPU
-prefix, and how the device slice runs on an Apple silicon Mac. The application,
+Kernarium and Andarium are iOS products. The device slice also runs on an Apple
+silicon Mac, and the Simulator has a UI-test variant with the CPU-rendering
+GPU prefix of [`graphics.md`](graphics.md#ios-simulator-software-renderer),
+because the Simulator has no Metal 4 device for KosmicKrisp. The application,
 including its one run per launch, is described in
 [`../Kernarium/README.md`](../Kernarium/README.md).
 
