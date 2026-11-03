@@ -120,6 +120,13 @@ The endpoint outlives the device and then answers `-ENODEV`. The application's
 end of a connection is a plain socket: closing it, or half-closing it with
 `shutdown`, is seen by the guest as the stream's end or half-close.
 
+Wait for the application's end with `poll` or a kqueue before reading it, and
+read only what they report. The device reports the guest's half-close as
+`shutdown(SHUT_WR)` on its own end, and on macOS a blocking `read` on a
+socketpair end can miss its peer's `shutdown(SHUT_WR)` when the reader blocks
+again at that moment, and then never return. `poll` and kqueue readers do not
+lose it.
+
 ## The forwarder
 
 `macos` launchers take `--vsock-forward=[127.0.0.1:]HOSTPORT-GUESTPORT`,

@@ -282,8 +282,11 @@ typedef void (*kernarium_runtime_set_restart_callback_function)(
  * when the guest stops or restarts first, and -EINVAL for a port that cannot
  * be named. A guest that suspended itself is woken first, as network traffic
  * wakes it. The stream ends when the guest closes it, stops or restarts, and
- * no other process or guest application can reach it. It blocks: call it
- * away from the main thread. */
+ * no other process or guest application can reach it. Wait for the descriptor
+ * with poll or kqueue and read what they report: the guest's half-close
+ * arrives as shutdown(SHUT_WR) on the peer end, which a blocking read on a
+ * socketpair end can miss on macOS. It blocks: call it away from the main
+ * thread. */
 typedef int (*kernarium_runtime_connect_vsock_function)(
     uint32_t port,
     uint32_t timeout_ms);
