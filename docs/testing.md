@@ -805,6 +805,14 @@ device slice of every framework it packages (the manifests are
 `python3 scripts/check-privacy-manifests.py Andarium.app`. Its fixtures are
 small libraries compiled with the iOS SDK.
 
+`andarium-app-store-bundle` (tooling) covers
+`Andarium/scripts/check-app-store-bundle.py`, the last build phase of the
+AppStore configuration (`Andarium/README.md#configurations`) and the check of
+`package-ios-frameworks.sh --app-store`: Info.plist keys,
+no environment knob in host code, and the privacy check. Its
+fixtures are compiled with the iOS SDK too. The configuration itself is
+validated by building it unsigned (`CODE_SIGNING_ALLOWED=NO`).
+
 ### UI automation on a device
 
 Unattended device automation goes through the long-lived
