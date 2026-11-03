@@ -29,11 +29,24 @@ int main(void)
 		.restart_command = "stale",
 	};
 	const int run_end_status = uml_emulator_get_run_end(emulator, &run_end);
+	/* A guest that does not run has no statistics and no console to ask. */
+	struct uml_emulator_statistics statistics = {
+		.struct_size = sizeof(struct uml_emulator_statistics),
+	};
+	const int statistics_status =
+		uml_emulator_get_statistics(emulator, &statistics);
+	struct uml_emulator_guest_memory guest_memory = {
+		.struct_size = sizeof(struct uml_emulator_guest_memory),
+	};
+	const int guest_memory_status =
+		uml_emulator_get_guest_memory(emulator, &guest_memory);
 	uml_emulator_request_stop(emulator);
 	uml_emulator_destroy(emulator);
 	return status == UML_EMULATOR_OK &&
 		run_status == -UML_EMULATOR_UNSUPPORTED &&
 		run_end_status == UML_EMULATOR_OK &&
+		statistics_status == -UML_EMULATOR_UNSUPPORTED &&
+		guest_memory_status == -UML_EMULATOR_UNSUPPORTED &&
 		run_end.kind == UML_EMULATOR_RUN_END_NONE &&
 		run_end.restart_command[0] == '\0' &&
 		capabilities.abi_version == UML_EMULATOR_ABI_VERSION &&

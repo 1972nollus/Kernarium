@@ -556,10 +556,13 @@ void aStoppedAndQuiescedLifecycleHoldsTheNextBoot()
     require(!lifecycle.held(), "a fresh lifecycle held the boot");
 
     // A paused guest.
+    require(!lifecycle.quiesced(), "a fresh lifecycle was quiesced");
     lifecycle.quiesce();
     require(lifecycle.held(), "a quiesce between boots did not hold the boot");
+    require(lifecycle.quiesced(), "a quiesce was not reported");
     lifecycle.resume();
     require(!lifecycle.held(), "a resume did not release the boot");
+    require(!lifecycle.quiesced(), "a resume left the guest quiesced");
 
     // The GPU's request gate.
     std::atomic_bool gate {};
@@ -567,6 +570,8 @@ void aStoppedAndQuiescedLifecycleHoldsTheNextBoot()
     require(!lifecycle.held(), "an open GPU gate held the boot");
     gate.store(true);
     require(lifecycle.held(), "held GPU requests did not hold the boot");
+    require(!lifecycle.quiesced(),
+        "held GPU requests are not a quiesced guest");
     gate.store(false);
     require(!lifecycle.held(), "released GPU requests held the boot");
 

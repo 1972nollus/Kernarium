@@ -108,6 +108,14 @@ public:
         return display_->guestScanoutActive();
     }
 
+    std::optional<DisplayStatistics> displayStatistics() const noexcept
+    {
+        std::lock_guard lock(displayMutex_);
+        if (!display_)
+            return std::nullopt;
+        return display_->statistics();
+    }
+
     std::string takeConnectionName()
     {
         std::lock_guard lock(connectionMutex_);
@@ -371,6 +379,12 @@ std::optional<bool> InProcessGpuService::guestScanoutActive() const noexcept
 std::optional<std::uint16_t> InProcessGpuService::vncPort() const noexcept
 {
     return implementation_->vncPort();
+}
+
+std::optional<DisplayStatistics> InProcessGpuService::displayStatistics()
+    const noexcept
+{
+    return implementation_->displayStatistics();
 }
 
 } // namespace uml::gpu

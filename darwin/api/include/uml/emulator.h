@@ -73,6 +73,42 @@ struct uml_emulator_run_end {
 	char restart_command[256];
 };
 
+/* What the host measures of a running guest, for a host that shows
+ * statistics. Reading it asks nothing of the guest and starts nothing: the
+ * figures are the system's own accounting of the guest's vCPU threads and the
+ * host's record of the guest RAM it holds. */
+struct uml_emulator_statistics {
+	/* Set by the caller to sizeof the structure. */
+	uint32_t struct_size;
+	/* The guest's vCPUs that have come up. */
+	uint32_t guest_cpu_count;
+	/* The user and system time the guest's vCPU threads have used in this
+	 * boot, in nanoseconds. A guest that restarts starts again from zero.
+	 * Two readings a second apart differ by the time the vCPUs spent in
+	 * that second, so the difference over the elapsed time, divided by
+	 * guest_cpu_count, is the share of its vCPUs the guest used. */
+	uint64_t guest_cpu_time_ns;
+	/* The guest's RAM, kernel image included, and the part of it the host
+	 * holds now: what the guest has committed and not released. Both are 0
+	 * before the guest's kernel has claimed its RAM and while a restart
+	 * hands it back. */
+	uint64_t guest_ram_bytes;
+	uint64_t guest_ram_held_bytes;
+};
+
+/* The guest kernel's own memory figures, as uml_emulator_get_guest_memory
+ * reads them. */
+struct uml_emulator_guest_memory {
+	/* Set by the caller to sizeof the structure. */
+	uint32_t struct_size;
+	uint32_t reserved;
+	/* The guest's total memory, and the part of it available without
+	 * swapping (MemTotal and MemAvailable), in bytes. The guest's memory in
+	 * use is total_bytes - available_bytes. */
+	uint64_t total_bytes;
+	uint64_t available_bytes;
+};
+
 struct uml_emulator_config {
 	uint32_t abi_version;
 	uint32_t struct_size;
@@ -217,6 +253,39 @@ int uml_emulator_set_page_cache_trimming(struct uml_emulator *emulator,
  * that uml_emulator_quiesce suspended was trimmed then, and this returns 0
  * without waking it. Call it away from a user interface thread. */
 int uml_emulator_trim_page_cache(struct uml_emulator *emulator);
+/* Fills `statistics` (whose struct_size the caller has set) with the figures
+ * of the guest this handle is running. Safe to call from any thread, during
+ * the run and only then: it reads counters, takes no time worth measuring and
+ * never waits for the guest. The handle's own guest is the one measured;
+ * -UML_EMULATOR_UNSUPPORTED when no guest runs on it, before the run reaches
+ * its kernel and after the run returns, a handle that is queued for admission
+ * or idle included. -UML_EMULATOR_INVALID_ARGUMENT for a null handle or
+ * output, or a struct_size smaller than the structure, and
+ * -UML_EMULATOR_RUNTIME_ERROR when the system would not list the process's
+ * threads. Nothing is measured between calls: a host that never reads
+ * statistics pays nothing for them. */
+int uml_emulator_get_statistics(const struct uml_emulator *emulator,
+				struct uml_emulator_statistics *statistics);
+/* Asks the guest kernel for its memory figures through the management
+ * console, and waits up to 500 ms for the reply. The guest answers from its
+ * interrupt, with no file read, so it also works where the guest's policy
+ * denies /proc/meminfo to its console.
+ *
+ * Like every console request it wakes a guest that has suspended itself, as
+ * an Android guest does once its display is off, so a host that knows the
+ * guest may be asleep must not ask. It does not ask while the host has
+ * quiesced the guest (uml_emulator_quiesce), nor while another lifecycle call
+ * of this handle (quiesce, resume, trimming) is in progress: either way it
+ * sends nothing and returns -UML_EMULATOR_UNSUPPORTED at once, and a quiesce
+ * never waits for a memory request. -UML_EMULATOR_UNSUPPORTED also when no
+ * console accepts the request, as with no running guest, and when the kernel
+ * does not have the request. -UML_EMULATOR_RUNTIME_ERROR when no reply came
+ * in time, or the reply was not the figures. -UML_EMULATOR_INVALID_ARGUMENT
+ * for a null handle or output, or a struct_size smaller than the structure.
+ * It may wait for the guest's console, so call it away from a user interface
+ * thread. */
+int uml_emulator_get_guest_memory(struct uml_emulator *emulator,
+				  struct uml_emulator_guest_memory *memory);
 
 #ifdef __cplusplus
 }

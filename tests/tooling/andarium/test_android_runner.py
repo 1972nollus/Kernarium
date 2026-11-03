@@ -176,6 +176,19 @@ class AndroidRunnerTests(unittest.TestCase):
             self.assertNotIn("--remove-existing-content", command["args"])
             self.assertNotIn("uninstall", command["args"])
 
+    def assert_adb_follows_launch_and_tunnel(self, outcome: Outcome) -> None:
+        """No adb call is recorded before the launch and the tunnel are.
+
+        The runner starts the launch and the tunnel back to back and neither
+        needs the other to have started, so their order in the log is the
+        scheduler's and is not asserted. It holds adb back until the console
+        shows the guest (the launch) and the tunnel listens.
+        """
+        order = [c["tool"] for c in outcome.commands]
+        first_adb = order.index("adb")
+        self.assertIn("launch", order[:first_adb])
+        self.assertIn("iproxy", order[:first_adb])
+
     def test_a_run_boots_works_powers_off_and_leaves_nothing(self) -> None:
         scratch = self.scratch
         app = scratch.app(automation=True)
@@ -216,9 +229,7 @@ class AndroidRunnerTests(unittest.TestCase):
         self.assertTrue(any(
             call["args"][:2] == ["-s", f"127.0.0.1:{port}"]
             for call in adb_calls))
-        order = [c["tool"] for c in outcome.commands]
-        self.assertLess(order.index("launch"), order.index("iproxy"))
-        self.assertLess(order.index("iproxy"), order.index("adb"))
+        self.assert_adb_follows_launch_and_tunnel(outcome)
         self.assertEqual(outcome.devicectl("device", "copy"), [])
         self.assertEqual(len(outcome.devicectl("device", "install", "app")), 1)
         self.assertEqual(len(outcome.tool("codesign")), 1)
@@ -264,6 +275,27 @@ class AndroidRunnerTests(unittest.TestCase):
         self.assertLess(
             next(i for i, c in enumerate(calls) if c[-1].endswith("Cts.apk")),
             next(i for i, c in enumerate(calls) if c[-1].endswith(".sh")))
+
+    def assert_run_with_start_order(self, first: str, second: str) -> None:
+        outcome = self.run_android(
+            "--script", str(self.scratch.script),
+            environment={"FAKE_START_AFTER": f"{second}:{first}"},
+        )
+        self.assertEqual(outcome.status, 0, outcome.err)
+        order = [c["tool"] for c in outcome.commands]
+        self.assertLess(order.index(first), order.index(second))
+        self.assert_adb_follows_launch_and_tunnel(outcome)
+        self.assert_container_untouched(outcome)
+
+    def test_a_run_does_not_need_the_launch_to_start_before_the_tunnel(
+        self,
+    ) -> None:
+        self.assert_run_with_start_order("iproxy", "launch")
+
+    def test_a_run_does_not_need_the_tunnel_to_start_before_the_launch(
+        self,
+    ) -> None:
+        self.assert_run_with_start_order("launch", "iproxy")
 
     def test_a_push_that_fails_ends_the_workload_not_the_poweroff(
             self) -> None:

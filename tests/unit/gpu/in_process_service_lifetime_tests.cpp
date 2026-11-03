@@ -218,6 +218,27 @@ void holdRequestsHoldsTheServicesRequests()
     service.stop();
 }
 
+/* The display's frame counters are the display's own: the service has them
+ * as soon as it has its display, whether or not its requests are held, and
+ * none once it has let the display go. */
+void displayStatisticsBelongToTheDisplay()
+{
+    InProcessGpuOptions options;
+    options.vncPort = 0;
+    options.width = 64;
+    options.height = 64;
+    InProcessGpuService service {std::move(options)};
+    const auto before = service.displayStatistics();
+    require(before.has_value());
+    require(before->guestFrames == 0 && before->presentedFrames == 0 &&
+        before->droppedFrames == 0 && before->cpuFallbackFrames == 0);
+    require(service.holdRequests(std::chrono::milliseconds {100}));
+    require(service.displayStatistics().has_value());
+    service.releaseRequests();
+    service.stop();
+    require(!service.displayStatistics().has_value());
+}
+
 /* A guest that restarts itself is a new guest on the same machine. The next
  * connection serves it like the first, the old guest's endpoints are the
  * guest's to close, and a hold the application placed before the restart is
@@ -559,6 +580,7 @@ void failedNextConnectionLeavesTheServiceRecoverable()
 void runInProcessServiceTests()
 {
     holdRequestsHoldsTheServicesRequests();
+    displayStatisticsBelongToTheDisplay();
     nextConnectionServesTheNextGuest();
     theGuestEndingDiscardsTheHeldRequests();
     aGuestThatEndsBehindAnOpenGateRunsItsRequests();
