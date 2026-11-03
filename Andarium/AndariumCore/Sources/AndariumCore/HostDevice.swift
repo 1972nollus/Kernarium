@@ -37,8 +37,6 @@ public struct HostDevice: Equatable, Sendable {
         self.runsGuestGraphics = runsGuestGraphics
     }
 
-    public var freeStorageGB: Double { Formats.decimalGB(bytes: freeStorageBytes) }
-
     public func hasRoom(for bytes: UInt64) -> Bool { freeStorageBytes >= bytes }
 }
 

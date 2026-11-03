@@ -12,6 +12,10 @@ import Testing
 /// selecting a runtime is what brings their symbols into the process. Creating a
 /// real surfaceless desktop context here is the narrowest check that the whole
 /// provider chain initializes on this Metal device, independent of a guest.
+///
+/// The iOS Simulator has no Metal 4 device, so its stack is Mesa's software
+/// renderer (llvmpipe) with no Vulkan driver and no KosmicKrisp. The same
+/// checks state that contract there.
 struct HostGraphicsStackTests {
     private static let eglDefaultDisplay = UnsafeMutableRawPointer(bitPattern: 0)
     private static let eglNoContext = UnsafeMutableRawPointer(bitPattern: 0)
@@ -26,6 +30,16 @@ struct HostGraphicsStackTests {
     private static let glVendor: UInt32 = 0x1F00
     private static let glRenderer: UInt32 = 0x1F01
     private static let glVersion: UInt32 = 0x1F02
+
+#if targetEnvironment(simulator)
+    /// The renderer's name in `GL_RENDERER`, and whether a Vulkan driver is
+    /// packaged: the Simulator's software renderer and none.
+    private static let rendererName = "llvmpipe"
+    private static let packagesVulkanDriver = false
+#else
+    private static let rendererName = "zink"
+    private static let packagesVulkanDriver = true
+#endif
 
     private typealias GetPlatformDisplay = @convention(c) (
         UInt32, UnsafeMutableRawPointer?, UnsafePointer<Int32>?
@@ -73,24 +87,26 @@ struct HostGraphicsStackTests {
     }
 
     @Test
-    func vulkanDriverEntryPointIsPackaged() throws {
+    func vulkanDriverEntryPointIsPackagedOnADeviceOnly() throws {
         try Self.selectRuntime()
         // KosmicKrisp is linked directly rather than discovered through a
-        // Vulkan loader, so its own entry points must be in the process.
+        // Vulkan loader, so its own entry points must be in the process. The
+        // Simulator embeds no KosmicKrisp, so none may be.
         for entryPoint in [
             "vkGetInstanceProcAddr",
             "vk_icdGetInstanceProcAddr",
             "vk_icdNegotiateLoaderICDInterfaceVersion",
         ] {
             #expect(
-                dlsym(UnsafeMutableRawPointer(bitPattern: -2), entryPoint) != nil,
-                "KosmicKrisp does not export \(entryPoint)"
+                (dlsym(UnsafeMutableRawPointer(bitPattern: -2), entryPoint)
+                    != nil) == Self.packagesVulkanDriver,
+                "\(entryPoint) (Vulkan driver packaged: \(Self.packagesVulkanDriver))"
             )
         }
     }
 
     @Test
-    func surfacelessDesktopContextRendersOnZink() throws {
+    func surfacelessDesktopContextRendersOnTheHostProvider() throws {
         try Self.selectRuntime()
 
         let getPlatformDisplay = try Self.symbol(
@@ -169,8 +185,12 @@ struct HostGraphicsStackTests {
         // evidence the GPU lane reads back, so record it in the test log.
         print("host GL provider: \(vendor) | \(renderer) | \(version)")
         // Zink names the Vulkan driver it renders on, which must be the
-        // packaged KosmicKrisp driver rather than any ambient loader.
-        #expect(renderer.lowercased().contains("zink"), "renderer: \(renderer)")
+        // packaged KosmicKrisp driver rather than any ambient loader. The
+        // Simulator's provider is llvmpipe, which names no driver.
+        #expect(
+            renderer.lowercased().contains(Self.rendererName),
+            "renderer: \(renderer)"
+        )
         #expect(vendor.lowercased().contains("mesa"), "vendor: \(vendor)")
         #expect(version.hasPrefix("4.6"), "version: \(version)")
     }

@@ -1014,8 +1014,8 @@ struct KernariumTests {
         #expect(warning?.guestMemoryMiB == 2048)
         #expect(warning?.availableMiB == 273)
         #expect(warning?.floorMiB == 384)
-        #expect(warning?.message.contains("2867 MB") == true)
-        #expect(warning?.message.contains("273 MB") == true)
+        #expect(warning?.message.contains("2867 MiB") == true)
+        #expect(warning?.message.contains("273 MiB") == true)
         #expect(warning?.message.contains("likely") == true)
     }
 

@@ -52,7 +52,7 @@ every flow:
 
 ```sh
 xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
-    -destination 'generic/platform=iOS Simulator' build
+    -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' build
 ```
 
 ## Devices
@@ -96,8 +96,15 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme Andarium \
     -destination 'generic/platform=iOS' build
 ```
 
-The `AndariumTests` bundle runs hosted in the application on an iPad or, as an
-iPad app, on an Apple silicon Mac (`xcodebuild test`).
+The `AndariumTests` bundle runs hosted in the application on an iPad, in the
+iOS Simulator or, as an iPad app, on an Apple silicon Mac (`xcodebuild test`).
+For the Simulator, package its slices first (below), then:
+
+```sh
+xcodebuild test -project Andarium/Andarium.xcodeproj -scheme Andarium \
+    -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' \
+    -only-testing:AndariumTests
+```
 
 ### Configurations
 
@@ -141,15 +148,20 @@ an App Store build is uploaded.
 The `Andarium` scheme builds for the Simulator too, with the software renderer:
 build the Simulator runtime, package its slices (add `--sdk device`, with its
 own runtime preset built, for XCFrameworks that both SDKs build against), and
-build for `generic/platform=iOS Simulator`. The device-only KosmicKrisp is left
-out by `Kernarium/scripts/embed-device-framework.sh`.
+build for a concrete Simulator. The device-only KosmicKrisp is left out by
+`Kernarium/scripts/embed-device-framework.sh`. The Simulator product is arm64
+alone, as its packaged slices are: a concrete destination builds that device's
+architecture, and the project excludes x86_64 for the Simulator SDK
+(`EXCLUDED_ARCHS[sdk=iphonesimulator*]`). A generic Simulator destination needs
+`EXCLUDED_ARCHS=x86_64` as well
+([`docs/testing.md`](../docs/testing.md#apple-builds-and-kernarium)).
 
 ```sh
 cmake --preset kernarium-ios-simulator-android
 cmake --build --preset kernarium-ios-simulator-android
 Kernarium/scripts/package-ios-frameworks.sh --sdk simulator --runtimes android
 xcodebuild -project Andarium/Andarium.xcodeproj -scheme Andarium \
-    -destination 'generic/platform=iOS Simulator' build
+    -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' build
 ```
 
 ## Model
@@ -184,8 +196,8 @@ no formula of its own. The picker runs from 512 MiB to the bound of the chosen
 vCPU count in the runtime's 64 MiB steps and follows the count live: raising
 vCPUs takes memory above the new bound down to it, lowering them leaves it, and
 a stored size above its bound comes down on load. A size an automation launch
-states (`KERNARIUM_GUEST_MEMORY_MIB`) stays as stated. The default is 1.5 GB or
-the bound where that is lower, and 4 GB on a Mac.
+states (`KERNARIUM_GUEST_MEMORY_MIB`) stays as stated. The default is 1.5 GiB or
+the bound where that is lower, and 4 GiB on a Mac.
 
 ### Storage
 
@@ -228,14 +240,16 @@ free paths, and a guest is never created at one (`DiskPath`): that is why the
 guest is in `Library/Guest/` and not in `Application Support`, whose name has
 a space.
 
-Home states a guest's capacity and data in binary gigabytes, the unit its disk
-is sized in. Info states every size in decimal gigabytes (`Formats.decimalGB`),
-as iOS's own storage screens do, so the guest sits beside the system and the
-free space in one unit.
+Every size the application shows is binary, in the IEC units KiB, MiB and GiB,
+from one formatter (`Formats.size`): the guest's capacity, data and free
+space, the memory, the system, the host's free space and an installed package.
+The guest sits beside the host's figures in one unit, so they differ from the
+decimal gigabytes of iOS Settings (1 GiB is 1.074 GB). The first start needs
+3 GiB free and later starts 1.5 GiB (`Limits`).
 
 The guest is left out of iCloud and computer backups unless the user turns on
 Include in Backups for it: Android can set itself up again, and the files take
-several gigabytes.
+several GiB.
 
 ## Runtime
 
@@ -269,7 +283,7 @@ Android runtime (`package-ios-frameworks.sh --runtimes android
 ```text
 KERNARIUM_VCPU_COUNT, KERNARIUM_GUEST_MEMORY_MIB, KERNARIUM_RETINA_MODE,
 KERNARIUM_GPU_AUTO_RESIZE, KERNARIUM_ANDROID_BOOT_MODE (recovery starts
-Recovery), KERNARIUM_ANDROID_DISK_SIZE_GIB (the guest's storage in GB),
+Recovery), KERNARIUM_ANDROID_DISK_SIZE_GIB (the guest's storage in GiB),
 KERNARIUM_HOST_FORWARD, KERNARIUM_FOOTPRINT_LOG_MS, KERNARIUM_EXECUTION_ENGINE,
 KERNARIUM_GUEST_HIBERNATION, KERNARIUM_ANDROID_ADB_AUTH
 ANDARIUM_START=normal|recovery   create the guest if there is none, then start
@@ -286,9 +300,12 @@ The console carries the runtime's own `Kernarium:` lines and these of
 Andarium's: `Andarium: runtime returned <n>` when the run ends (0 is a power
 off), `Andarium thermal state: phase=start|change|finish state=<state>
 uptime=<seconds>`, and `Andarium: application inactive|active` when a system
-alert takes the focus and gives it back. The first launch of a bundle makes iOS
-ask once to allow local network access, which only a person answers; the guest
-keeps running meanwhile, and the harness waits for the focus
+alert takes the focus and gives it back. iOS asks to allow local network access
+only when the guest itself reaches the local network, such as a connection to a
+host on the same network or a `.local` name; a boot and ordinary Internet use,
+guest DNS included, raise no alert. The question is asked once per installation
+and only a person answers it; the guest keeps running meanwhile, and a harness
+run that provokes it waits for the focus
 (`run_ios_device_android.py --wait-active`).
 
 The container's `Documents` is the harness's; Andarium never deletes a file

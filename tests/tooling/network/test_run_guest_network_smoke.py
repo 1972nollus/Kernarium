@@ -94,8 +94,20 @@ class NetworkSmokeTaxonomyTests(unittest.TestCase):
             verify_forward.assert_called_once()
         return scripts
 
-    def test_default_campaign_does_not_issue_dns(self) -> None:
-        self.assertEqual(self.run_campaign(external=False), [])
+    def test_default_campaign_asks_only_for_localhost(self) -> None:
+        # The system resolver answers localhost itself, through the name
+        # server and through the gateway, so the default campaign still
+        # needs no network.
+        scripts = self.run_campaign(external=False)
+        self.assertEqual(
+            scripts,
+            [
+                run_guest_network_smoke.SLIRP_DNS_PROBE,
+                run_guest_network_smoke.SLIRP_GATEWAY_DNS_PROBE,
+            ],
+        )
+        for script in scripts:
+            self.assertIn("6c6f63616c686f7374", script)  # "localhost"
 
     def test_external_campaign_issues_dns_before_https(self) -> None:
         scripts = self.run_campaign(external=True)

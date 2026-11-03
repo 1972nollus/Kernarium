@@ -53,6 +53,15 @@ uml_add_unit_test(NAME kernarium-adb-authorization
     COMMAND uml_kernarium_adb_authorization_tests
     LABELS kernarium)
 
+# The kernel arguments that carry an Android guest's adb key and the request
+# that adbd not listen on TCP, and the limit on the whole kernel command line.
+add_executable(uml_kernarium_adb_channel_tests adb_channel_tests.cpp)
+target_include_directories(uml_kernarium_adb_channel_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/Kernarium/Runtime)
+uml_add_unit_test(NAME kernarium-adb-channel
+    COMMAND uml_kernarium_adb_channel_tests
+    LABELS kernarium)
+
 # How a statistics reading is composed from the emulator's and the display's
 # figures, and when the guest's memory may be asked for.
 add_executable(uml_kernarium_statistics_tests statistics_tests.cpp)

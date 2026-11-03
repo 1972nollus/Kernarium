@@ -542,6 +542,33 @@ fences when the guest-end registry reports the guest's end, runs none of them,
 and holds the next guest plainly; `runtime-guest-shutdown` covers the report
 that reaches the registry once per new report.
 
+The Virtio vsock device has its unit tests without a guest: `virtio-vsock-device`
+drives it through its queues with synthetic packets and real socketpairs (the
+open, refusal and timeout paths, stalls in both directions, half-closes, resets,
+the 32-connection limit, the never-defer and keep-on-disabled-ring rules, and an
+echo run of several threads opening and closing at once), and
+`virtio-vsock-connection-table` holds the credit arithmetic, its 32-bit wrap
+and the host port allocator. `vsock-forwarder` covers the `--vsock-forward`
+grammar, which accepts a loopback address only, and the listeners that attach
+each accepted connection to a guest port. `kernarium-adb-channel` covers the
+kernel arguments that carry an Android guest's adb key and the request that adbd
+not listen on TCP, and the limit on the whole kernel command line.
+
+`guest-vsock-stream` (integration) runs the device against a Linux guest's
+driver through the launcher's loopback forward, with a Python `AF_VSOCK` server
+in the guest: 64 MiB each way, four concurrent streams, a stalled reader at
+either end (the sender must be held back and a second stream must stay
+responsive), half-closes in both directions, a refused port, a suspend and
+resume in the middle of a stream, and a guest restart, which every open stream
+must read as its end. Every body is checked by SHA-256 and each direction's
+throughput is printed. `tests/integration/android/run_guest_android_adb_vsock.py`
+is the opt-in Android counterpart: it boots the accepted release with a vsock
+forward to adbd and drives the stock `adb` through it (`connect`, a pulled
+system APK installed with `install -r` and restored with `pm uninstall`, and
+`bugreport`), then checks that the TCP forward answers beside it. It needs the
+`macos-android17` executable, an installed release that carries the vsock
+kernel, and `adb`.
+
 `guest-restart` runs the macOS launcher through a guest that restarts itself.
 Under each of the gadgets and the JIT engine, one `uml-darwin` process boots,
 restarts twice and powers off, with the same pid throughout. The test loads a
@@ -558,6 +585,16 @@ covers the guard's policy and its escaping of the guest's command, and
 the guest has data to send, which must not end the process.
 `android-partition-boot-selection` covers the consumption of a
 `bootonce-bootloader` command and the boot a restart selects.
+
+`slirp-network-dns` covers the guest's DNS through the system resolver and the
+dropped guest multicast, with no network: the resolver is confined to local
+answers (`localhost`), and the test fails if SLiRP opens any host Internet
+socket for a guest's DNS or multicast. `network-dns-rules` is the unit test of
+the wire rules. The probe also runs in the iOS Simulator, where the container's
+tmp is too long for a Unix socket path: configure `ios-simulator` with
+`-DUML_BUILD_NETWORK_PROVIDER=ON -DUML_BUILD_TOOLING_TESTS=ON`, build
+`uml_slirp_dns_tests`, and start its `.app` executable with
+`xcrun simctl spawn <booted device>`.
 
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
@@ -681,13 +718,20 @@ renderer](graphics.md#ios-simulator-software-renderer).
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
 Xcode. `--sdk device` (the default) and `--sdk simulator` choose the slices, and
 both together give XCFrameworks with an `ios-arm64` and an `ios-arm64-simulator`
-slice. KosmicKrisp has a device slice alone, so the app targets embed it with a
+slice. No Simulator product is built for x86_64: both Xcode projects exclude
+that architecture for the Simulator SDK, a concrete Simulator destination
+(`-destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)'`) builds that
+device's arm64 alone, and a generic Simulator destination also builds the Swift
+packages for x86_64 unless `EXCLUDED_ARCHS=x86_64` is on the `xcodebuild`
+command line, which reaches package targets that a project setting does not.
+KosmicKrisp has a device slice alone, so the app targets embed it with a
 Run Script phase, `Kernarium/scripts/embed-device-framework.sh`, which embeds it
-for an `iphoneos` build and nothing for the Simulator. For the device it also
-packages the Apple battery provider's archive and the hardware video encoder's,
-as the Android runtime links them, as `HostBattery.xcframework` and
-`HostVideoEncoder.xcframework`; only `KernariumTests` links them, so the test
-process reaches each without loading a second runtime.
+for an `iphoneos` build and nothing for the Simulator. It also packages the
+Apple battery provider's archive and the video encoder's, as the Android
+runtime links them, as `HostBattery.xcframework` and
+`HostVideoEncoder.xcframework`, with a slice for each packaged SDK; only
+`KernariumTests` links them, so the test process reaches each without loading a
+second runtime.
 
 The Simulator renders with llvmpipe, which runs one rasterizer thread per host
 core; `LP_NUM_THREADS` caps them for a launch (`SIMCTL_CHILD_LP_NUM_THREADS=2`
@@ -774,6 +818,20 @@ up to four tests fail because of how the Mac hosts an iPad app:
   as it launches, so it fails when the launch has no image to boot, as a run
   whose `TEST_RUNNER_KERNARIUM_ROOTFS` names a missing file does.
 
+`KernariumTests` and `KernariumUITests` also run in the iOS Simulator, for UI
+tests of the application, through `Kernarium/scripts/run-ios-simulator-tests.sh`
+after the Simulator slices are packaged. The script turns on the Simulator's
+application accessibility preference, which the keyboard tests need for the
+reason the Mac fails them, and links the accepted KDE desktop image into the
+container, for `anEndedRunIsNeverStartedAgain`, which needs a guest to boot,
+and so that the application's runtime is the Linux one `HostGraphicsStackTests`
+select.
+`HostVideoEncoderTests` skip there, as the Simulator has no hardware video
+encoder, and `HostGraphicsStackTests` states the software renderer's contract
+(llvmpipe, no Vulkan driver) in place of Zink on KosmicKrisp.
+`KernariumAutomation` is the iPad's automation host and builds for the device
+alone.
+
 ### Andarium
 
 `andarium-core` (unit, macOS hosts) runs the tests of the Swift package
@@ -783,8 +841,9 @@ and the option checks of `package-ios-frameworks.sh --runtimes android`. The
 application itself builds with Xcode: `AndariumPreview` is its Simulator build
 with mock data, and `Andarium` is the device application
 ([`Andarium/README.md`](../Andarium/README.md#targets)). `AndariumTests` is
-hosted in `Andarium` and runs on an iPad and, as an iPad app, on an Apple
-silicon Mac (`xcodebuild test -scheme Andarium`); its `UpdateFlowTests` drive
+hosted in `Andarium` and runs on an iPad, in the iOS Simulator and, as an iPad
+app, on an Apple silicon Mac (`xcodebuild test -scheme Andarium`); its
+`UpdateFlowTests` drive
 the update, interrupted-update (Start retries, Restore, Erase) and blocked-start flows
 against a stub runtime. A Mac launch of the guest
 itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,

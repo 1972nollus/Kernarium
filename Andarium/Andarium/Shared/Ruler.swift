@@ -16,6 +16,8 @@ struct Ruler: View {
     /// Draw a short tick only every this many positions.
     var minorEvery: Int = 1
     let label: (Int) -> String
+    /// What VoiceOver reads for a position, where its label leaves out a unit.
+    var valueText: ((Int) -> String)?
     /// Positions at and above this one are past the recommended value.
     var warnFrom: Int?
     var accessibilityName: String = ""
@@ -102,7 +104,7 @@ struct Ruler: View {
         .sensoryFeedback(.selection, trigger: index)
         .accessibilityElement()
         .accessibilityLabel(accessibilityName)
-        .accessibilityValue(label(index))
+        .accessibilityValue((valueText ?? label)(index))
         .accessibilityAdjustableAction { direction in
             switch direction {
             case .increment: index = min(count - 1, index + 1)
@@ -189,7 +191,7 @@ struct ControlsPanel: View {
         let stops = host.memory.stops(vCPUs: guest.cores)
         let top = stops.last ?? Limits.minimumMemoryMiB
         let steps = (1024 - Limits.minimumMemoryMiB) / Limits.memoryStepMiB
-        return ControlRow(title: "Memory", symbol: "memorychip", value: Formats.memory(guest.memoryMiB)) {
+        return ControlRow(title: "Memory", symbol: "memorychip", value: Formats.size(mib: guest.memoryMiB)) {
             Ruler(
                 index: Binding(
                     get: { stops.lastIndex(where: { $0 <= guest.memoryMiB }) ?? 0 },
@@ -199,8 +201,9 @@ struct ControlsPanel: View {
                 majorEvery: 1024 / Limits.memoryStepMiB,
                 majorOffset: steps,
                 minorEvery: 256 / Limits.memoryStepMiB,
-                label: { Formats.memoryNumber(stops[$0]) },
-                accessibilityName: "Memory in gigabytes"
+                label: { Formats.gibibytes(mib: stops[$0]) },
+                valueText: { Formats.size(mib: stops[$0]) },
+                accessibilityName: "Memory"
             )
         } note: {
             Text("\(Formats.memoryBound(top, vCPUs: guest.cores)) on this \(host.name)")
@@ -209,7 +212,7 @@ struct ControlsPanel: View {
     }
 
     private var capacity: some View {
-        ControlRow(title: "Storage", symbol: "internaldrive", value: "\(guest.capacityGiB) GB") {
+        ControlRow(title: "Storage", symbol: "internaldrive", value: Formats.size(gib: guest.capacityGiB)) {
             Ruler(
                 index: Binding(
                     get: { guest.capacityGiB - Limits.capacityRangeGiB.lowerBound },
@@ -220,10 +223,11 @@ struct ControlsPanel: View {
                 majorOffset: 4,
                 minorEvery: 2,
                 label: { "\(Limits.capacityRangeGiB.lowerBound + $0)" },
-                accessibilityName: "Storage in gigabytes"
+                valueText: { Formats.size(gib: Limits.capacityRangeGiB.lowerBound + $0) },
+                accessibilityName: "Storage"
             )
         } note: {
-            Text("\(Formats.gb(host.freeStorageGB)) free on this \(host.name)")
+            Text("\(Formats.size(bytes: host.freeStorageBytes)) free on this \(host.name)")
                 .foregroundStyle(.secondary)
         }
     }
@@ -235,17 +239,17 @@ struct ControlsPanel: View {
 
     private var storage: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ControlHeader(title: "Storage", symbol: "internaldrive", value: "\(Formats.gb(guest.usedGB)) of \(guest.capacityGiB) GB")
-            UsageBar(used: guest.usedGB, capacity: Double(guest.capacityGiB), pending: guest.pendingCapacityGiB.map(Double.init))
+            ControlHeader(title: "Storage", symbol: "internaldrive", value: "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(gib: guest.capacityGiB))")
+            UsageBar(used: guest.usedGiB, capacity: Double(guest.capacityGiB), pending: guest.pendingCapacityGiB.map(Double.init))
             HStack(spacing: 8) {
                 if let pending = guest.pendingCapacityGiB {
-                    Label("Grows to \(pending) GB at the next start", systemImage: "arrow.up.circle.fill")
+                    Label("Grows to \(Formats.size(gib: pending)) at the next start", systemImage: "arrow.up.circle.fill")
                         .foregroundStyle(Color.accentColor)
                 } else if atMaximum {
-                    Text("\(Limits.capacityRangeGiB.upperBound) GB is the largest size")
+                    Text("\(Formats.size(gib: Limits.capacityRangeGiB.upperBound)) is the largest size")
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("\(Formats.gb(Double(guest.capacityGiB) - guest.usedGB)) free in the guest")
+                    Text("\(Formats.size(bytes: guest.freeBytes)) free in the guest")
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
@@ -345,7 +349,7 @@ struct UsageBar: View {
     }
 }
 
-/// Resize opens on the same ruler, from 4 to 64 GB. Storage only grows: the
+/// Resize opens on the same ruler, from 4 to 64 GiB. Storage only grows: the
 /// sizes below the current one are hatched and out of reach, and growth
 /// applies at the next start.
 struct ResizeSheet: View {
@@ -358,11 +362,11 @@ struct ResizeSheet: View {
         NavigationStack {
             VStack(spacing: 16) {
                 VStack(spacing: 2) {
-                    Text("\(capacity) GB")
+                    Text(Formats.size(gib: capacity))
                         .font(.system(size: 50, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .contentTransition(.numericText(value: Double(capacity)))
-                    Text(capacity == guest.capacityGiB ? "Current size" : "From \(guest.capacityGiB) GB")
+                    Text(capacity == guest.capacityGiB ? "Current size" : "From \(Formats.size(gib: guest.capacityGiB))")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -378,10 +382,11 @@ struct ResizeSheet: View {
                     majorOffset: 4,
                     minorEvery: 2,
                     label: { "\(Limits.capacityRangeGiB.lowerBound + $0)" },
-                    accessibilityName: "Storage in gigabytes"
+                    valueText: { Formats.size(gib: Limits.capacityRangeGiB.lowerBound + $0) },
+                    accessibilityName: "Storage"
                 )
                 .padding(.horizontal, 6)
-                UsageBar(used: guest.usedGB, capacity: Double(capacity))
+                UsageBar(used: guest.usedGiB, capacity: Double(capacity))
                     .padding(.horizontal, 18)
                 status(guest)
                 Spacer(minLength: 0)
@@ -413,15 +418,15 @@ struct ResizeSheet: View {
     private func status(_ guest: Guest) -> some View {
         if capacity > guest.capacityGiB {
             line("arrow.up.circle.fill", .accentColor,
-                 "Grows to \(capacity) GB at the next start",
+                 "Grows to \(Formats.size(gib: capacity)) at the next start",
                  "The guest sees the new space once it has started.")
         } else if let pending = guest.pendingCapacityGiB {
             line("arrow.uturn.backward.circle.fill", .secondary,
-                 "Stays at \(guest.capacityGiB) GB",
-                 "The growth to \(pending) GB is cancelled.")
+                 "Stays at \(Formats.size(gib: guest.capacityGiB))",
+                 "The growth to \(Formats.size(gib: pending)) is cancelled.")
         } else {
             line("internaldrive", .secondary,
-                 "\(Formats.gb(guest.usedGB)) used of \(guest.capacityGiB) GB",
+                 "\(Formats.size(bytes: guest.usedBytes)) used of \(Formats.size(gib: guest.capacityGiB))",
                  "Storage can only grow. A larger size applies at the next start.")
         }
     }

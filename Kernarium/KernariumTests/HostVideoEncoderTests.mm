@@ -157,6 +157,11 @@ const VideoEncodeCapability* find(const std::vector<VideoEncodeCapability>& capa
 {
     [super setUp];
     self.continueAfterFailure = NO;
+#if TARGET_OS_SIMULATOR
+    /* The guest's encoder is the device's hardware encoder; the Simulator has
+     * none. */
+    XCTSkip(@"the Simulator has no hardware video encoder");
+#endif
 }
 
 /* Discovery on this device, recorded. */
