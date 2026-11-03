@@ -240,8 +240,7 @@ nonisolated struct AdbGuestOperations: Sendable {
     func installApk(at url: URL, sizeBytes: Int, update: @escaping @Sendable (BusyUpdate) -> Void) async throws {
         guard let identity else { throw AdbFailure(.keyRejected, activity: .installApp) }
         let coordinator = FileCoordinatorBox()
-        let megabytes = String(format: "%.1f", Double(sizeBytes) / 1_000_000)
-        let info = "\(url.lastPathComponent) \u{00B7} \(megabytes) MB"
+        let info = "\(url.lastPathComponent) \u{00B7} \(Formats.size(bytes: UInt64(max(sizeBytes, 0))))"
         do {
             try await AdbOperationRunner.run(
                 identity: identity, clock: clock, connector: connector, onCancel: { coordinator.cancel() }

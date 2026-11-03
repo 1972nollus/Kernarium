@@ -178,7 +178,7 @@ struct AndroidOperationTests {
         for error in [AdbError.refused, .keyRejected, .io(ENOSPC), .remote("no")] {
             #expect(!BugReportOperation.dumpMayGoOn(after: error), "\(error)")
         }
-        #expect(!BugReportOperation.dumpMayGoOn(after: BugReportStaging.NoRoom(megabytes: 1, device: "iPad")))
+        #expect(!BugReportOperation.dumpMayGoOn(after: BugReportStaging.NoRoom(bytes: 1 << 20, device: "iPad")))
     }
 
     @Test func theNoticeIsOneLineAndTheFailuresHaveTheirWords() {
@@ -192,14 +192,14 @@ struct AndroidOperationTests {
             == "The guest\u{2019}s debugging service restarted before the app was installed. Try again.")
         #expect(AdbFailure(.streamClosed, activity: .bugReport).message
             == "The guest\u{2019}s debugging service restarted before the bug report was finished. Try again.")
-        #expect(BugReportStaging.NoRoom(megabytes: 1300, device: "iPad").errorDescription
-            == "There isn\u{2019}t enough free space on this iPad for the report (1300 MB).")
+        #expect(BugReportStaging.NoRoom(bytes: 300 << 20, device: "iPad").errorDescription
+            == "There isn\u{2019}t enough free space on this iPad for the report (300 MiB).")
     }
 
     // MARK: Staging
 
     @Test func theStagedReportNeedsRoomBeyondItsOwnSize() throws {
-        #expect(throws: BugReportStaging.NoRoom(megabytes: 2000, device: "iPad")) {
+        #expect(throws: BugReportStaging.NoRoom(bytes: 2_000_000_000, device: "iPad")) {
             try BugReportStaging.makeSink(
                 remotePath: "/data/b/bugreport-x.zip", size: 2_000_000_000, device: "iPad",
                 available: 2_000_000_000 + BugReportStaging.reserveBytes - 1)

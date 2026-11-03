@@ -198,7 +198,7 @@ struct SessionSettingsSheet: View {
                 rowLabel("CPU", symbol: "cpu")
             }
             LabeledContent {
-                value(String(format: "%.1f of %@", Double(session.readout.memoryMiB) / 1024, Formats.memory(memoryMiB)))
+                value("\(Formats.size(mib: session.readout.memoryMiB)) of \(Formats.size(mib: memoryMiB))")
             } label: {
                 rowLabel("Memory", symbol: "memorychip")
             }
@@ -333,7 +333,7 @@ struct InstallRow: View {
         case .installing(let progress):
             VStack(alignment: .leading, spacing: 5) {
                 ProgressBar(value: max(0.03, progress), height: 5)
-                Text("Installing \u{00B7} \(Int((progress * 100).rounded()))% of \(String(format: "%.1f", item.sizeMB)) MB")
+                Text("Installing \u{00B7} \(Int((progress * 100).rounded()))% of \(Formats.size(bytes: item.sizeBytes))")
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }

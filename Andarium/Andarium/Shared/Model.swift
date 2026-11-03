@@ -48,7 +48,7 @@ struct ApkInstall: Identifiable, Equatable {
 
     let id = UUID()
     var fileName: String
-    var sizeMB: Double
+    var sizeBytes: UInt64
     var state: State
 
     /// "Signal-7.21.4.apk" installs as Signal, version 7.21.4.
@@ -65,7 +65,7 @@ struct ApkInstall: Identifiable, Equatable {
     }
 
     static let sampleFile = "Signal-7.21.4.apk"
-    static let sampleSizeMB = 38.2
+    static let sampleSizeBytes = UInt64(38.2 * Double(Limits.bytesPerMiB))
 }
 
 /// What the running guest offers through Settings: installs, ADB and the
@@ -100,14 +100,14 @@ final class SessionState {
 
     /// Mock install: anything that is not an .apk is refused at once;
     /// an .apk installs over about three seconds.
-    func install(fileName: String, sizeMB: Double, play: Bool = true) {
+    func install(fileName: String, sizeBytes: UInt64, play: Bool = true) {
         if let refused = Self.installKind(of: fileName) {
             withAnimation(.snappy) {
-                installs.insert(ApkInstall(fileName: fileName, sizeMB: sizeMB, state: refused), at: 0)
+                installs.insert(ApkInstall(fileName: fileName, sizeBytes: sizeBytes, state: refused), at: 0)
             }
             return
         }
-        let item = ApkInstall(fileName: fileName, sizeMB: sizeMB, state: .installing(0))
+        let item = ApkInstall(fileName: fileName, sizeBytes: sizeBytes, state: .installing(0))
         withAnimation(.snappy) { installs.insert(item, at: 0) }
         guard play else { return }
         Task {
@@ -130,9 +130,9 @@ final class SessionState {
     }
 
     /// Notes an install's end in the Apps list.
-    func record(_ state: ApkInstall.State, fileName: String, sizeMB: Double) {
+    func record(_ state: ApkInstall.State, fileName: String, sizeBytes: UInt64) {
         withAnimation(.snappy) {
-            installs.insert(ApkInstall(fileName: fileName, sizeMB: sizeMB, state: state), at: 0)
+            installs.insert(ApkInstall(fileName: fileName, sizeBytes: sizeBytes, state: state), at: 0)
         }
     }
 }
@@ -285,7 +285,7 @@ final class AppModel {
         runBusy(
             BusyState(
                 title: "Creating Guest",
-                detail: "Setting up the system with \(guest.effectiveCapacityGiB) GB.", progress: 0
+                detail: "Setting up the system with \(Formats.size(gib: guest.effectiveCapacityGiB)).", progress: 0
             ),
             failure: "The Guest Could Not Be Created"
         ) { progress in
@@ -582,13 +582,13 @@ final class AppModel {
         let name = url.lastPathComponent
         let scoped = url.startAccessingSecurityScopedResource()
         let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        let megabytes = Double(bytes) / 1_000_000
+        let size = UInt64(max(bytes, 0))
         func release() {
             if scoped { url.stopAccessingSecurityScopedResource() }
         }
         guard SessionState.installKind(of: name) == nil else {
             release()
-            session.install(fileName: name, sizeMB: megabytes)
+            session.install(fileName: name, sizeBytes: size)
             return false
         }
         guard busy == nil else {
@@ -598,7 +598,7 @@ final class AppModel {
         runOperation(
             BusyState(
                 title: "Installing App",
-                detail: "\(name) \u{00B7} \(String(format: "%.1f", megabytes)) MB", progress: 0
+                detail: "\(name) \u{00B7} \(Formats.size(bytes: size))", progress: 0
             ),
             failure: "App Not Installed",
             { [driver, weak self] update in
@@ -612,13 +612,13 @@ final class AppModel {
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
-                    self?.session.record(.failed(error.localizedDescription), fileName: name, sizeMB: megabytes)
+                    self?.session.record(.failed(error.localizedDescription), fileName: name, sizeBytes: size)
                     throw error
                 }
                 // 100% for a moment, then the overlay goes.
                 update(BusyUpdate(progress: 1))
                 try? await Task.sleep(for: .milliseconds(500))
-                self?.session.record(.installed, fileName: name, sizeMB: megabytes)
+                self?.session.record(.installed, fileName: name, sizeBytes: size)
             }
         )
         return true
@@ -676,7 +676,7 @@ final class AppModel {
             plan = .normal
             if firstStart {
                 sessionPreset.guestScreen = .setup
-                guest?.usedBytes = 2_100_000_000
+                guest?.usedBytes = UInt64(2.1 * Double(Limits.bytesPerGiB))
             }
         }
     }

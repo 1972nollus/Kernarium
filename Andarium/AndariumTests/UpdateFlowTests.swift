@@ -75,7 +75,7 @@ struct UpdateFlowTests {
     private func model(plan: StartPlan) -> (AppModel, StubDriver) {
         let system = SystemInfo(
             version: "17", release: "r2", kernel: "Linux 6.18",
-            architecture: "arm64, 4 KB pages", appVersion: "1"
+            architecture: "arm64, 4 KiB pages", appVersion: "1"
         )
         let model = AppModel(
             guest: Guest.fresh(on: host), host: host, system: system, capabilities: .device,

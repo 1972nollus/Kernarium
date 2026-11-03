@@ -114,8 +114,10 @@ applications of `android_launch_apps.tsv`, each timed by `am start -W`'s
 `TotalTime` and by the manifest's logcat marker, and `--scenario` files in the
 format of `android_launch_suite.py` that follow an application's first launch.
 `--wait-active SECONDS` holds the workload after the boot until the
-application reports itself active again, for the one-time iOS local network
-alert of a new bundle (a person answers it; the run fails if nobody does).
+application reports itself active again, for a system alert the workload
+provokes, such as iOS asking for local network access when the guest reaches
+the local network (a boot and ordinary Internet use raise none; a person
+answers the alert, and the run fails if nobody does).
 
 ```sh
 python3 tests/perf/run_ios_device_android.py --device DEVICE-UDID \

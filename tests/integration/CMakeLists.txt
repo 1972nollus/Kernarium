@@ -398,6 +398,17 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# The Virtio vsock device carries 64 MiB each way, concurrent streams, a stalled
+# reader at either end, half-closes, a refused port, a suspend in the middle of
+# a stream and a guest restart, all checked by SHA-256 through the launcher's
+# loopback forward.
+uml_add_guest_integration_test(
+    NAME guest-vsock-stream
+    SCRIPT vsock/run_guest_vsock_stream.py
+    LABELS guest;vsock;network
+    TIMEOUT 600
+    CPUS 2)
+
 add_subdirectory(aarch32)
 add_subdirectory(android)
 add_subdirectory(exclusive)
@@ -791,10 +802,11 @@ uml_add_guest_integration_test(
 # no listener on RDS-over-TCP's port, and the strong stack protector and
 # hardened usercopy, a macvlan link that rtnetlink creates over a dummy one,
 # the accept_ra_rt_table sysctl (0 until it is written, then a prefix route in
-# the device's own table where the kernel has IPv6 multiple tables), and one
-# ESP SPI allocated for a second destination address, which a Linux guest
-# refuses and an Android guest allows. A Linux guest has no Incremental file
-# system and no 802.11 stack. An
+# the device's own table where the kernel has IPv6 multiple tables), the
+# Virtio vsock driver registered with no balloon driver beside it and a vsock
+# stream that loops back on CID 1, and one ESP SPI allocated for a second
+# destination address, which a Linux guest refuses and an Android guest
+# allows. A Linux guest has no Incremental file system and no 802.11 stack. An
 # Android guest, which runs the probe by hand, has a static usermode helper
 # that starts nothing, an Incremental file system that mounts, serves a filled
 # block and times out on a missing one, and virtual Wi-Fi: a virt_wifi link

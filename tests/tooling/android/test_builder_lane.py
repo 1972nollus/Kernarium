@@ -11,6 +11,7 @@ import gzip
 import importlib.util
 import io
 import json
+import os
 import random
 import re
 import shutil
@@ -3300,63 +3301,200 @@ def verify_secondary_zygote_topic(android_root: Path) -> None:
             fail(f"the secondary zygote preload check accepts {label}")
 
 
-def decoder_output_delay_problems(added: str, removed: str) -> list[str]:
-    """What is wrong with the added text of the topic that sets the H.264 and HEVC decoder delays.
+DECODE_DELAYS_HEADER = "components/include/v4l2_codec2/components/DecodeDelays.h"
+DECODE_INTERFACE_SOURCE = "components/DecodeInterface.cpp"
+DECODE_INTERFACE_HEADER = "components/include/v4l2_codec2/components/DecodeInterface.h"
+DECODE_COMPONENT_SOURCE = "v4l2/V4L2DecodeComponent.cpp"
+DECODE_FACTORY_SOURCE = "v4l2/V4L2ComponentFactory.cpp"
+DECODE_README = "README.md"
 
-    The framework stops feeding the decoder once the works that wait for an output, with their input
-    released, reach the pipeline delay plus the output delay plus 4, and this device releases a picture
-    once more than the stream's reorder depth R of them wait, so a stream stalls only when R exceeds
-    the sum of the two delays by more than 3 (the input delay is 0). R is at most 16, which needs a sum
-    of at least 13. The framework sizes the capture queue from the output delay and the input queue from
-    the pipeline delay, and a capture buffer costs six times an input block at 4K, so the sum is spent
-    on the pipeline delay. The delays are constants, not properties."""
-    problems = []
-    output = re.search(r"constexpr uint32_t kReorderingOutputDelay = (\d+);", added)
-    pipeline = re.search(r"constexpr uint32_t kReorderingPipelineDelay = (\d+);", added)
-    if not output:
-        problems.append("the topic defines no kReorderingOutputDelay")
-    if not pipeline:
-        problems.append("the topic defines no kReorderingPipelineDelay")
-    if output and pipeline and int(output.group(1)) + int(pipeline.group(1)) + 3 < 16:
-        problems.append(
-            f"delays of {output.group(1)} and {pipeline.group(1)} stall a stream of reorder depth 16"
+# What the framework does with the two delays, as the sum of them and the stall rule: the framework reads both once
+# with one query when it starts, sizes the capture queue to the output delay plus 4, and stops feeding the decoder once
+# the works that wait for an output, with their input released, reach the pipeline delay plus the output delay plus 4,
+# which stalls a stream whose reorder depth R is that limit or more (it plays while R <= pipeline + output + 3, as
+# the edge clips of the cand32 image measured). The model runs the header's own function.
+DECODE_DELAY_MODEL = r"""
+#include <cstdint>
+#include <cstdio>
+#include "DecodeDelays.h"
+using namespace android;
+static int failures = 0;
+#define CHECK(cond) do { if (!(cond)) { std::printf("FAILED line %d: %s\n", __LINE__, #cond); ++failures; } } while (0)
+static bool stalls(DecodeDelays d, unsigned depth) { return depth >= d.pipeline + d.output + 4; }
+static unsigned captureSlots(DecodeDelays d) { return d.output + 4; }
+struct Size { uint32_t w, h; };
+int main() {
+    const Size sizes[] = {{0, 0}, {320, 240}, {1280, 720}, {1920, 1080}, {1920, 1088}, {1920, 1089}, {2048, 1080},
+                          {2560, 1440}, {3840, 2160}, {7680, 4320}, {0xFFFFFFFFu, 0xFFFFFFFFu}};
+    for (Size c : sizes) {
+        const DecodeDelays d = getReorderingDelays(c.w, c.h);
+        CHECK(d.output + d.pipeline == kReorderingDelaySum);
+        for (unsigned depth = 0; depth <= 16; ++depth) CHECK(!stalls(d, depth));
+    }
+    // The size configured and the size the stream's SPS declares on the two sides of the line: the framework sizes
+    // its pools from what it read at the start (the configured size), and a later read from the declared size gives
+    // another split of the same sum, so no depth stalls with either, and the pools are the configured size's.
+    const Size pairs[][2] = {{{1920, 1080}, {3840, 2160}}, {{3840, 2160}, {1920, 1080}}, {{1280, 720}, {3840, 2160}},
+                             {{3840, 2160}, {1280, 720}}, {{1920, 1088}, {1920, 1089}}, {{1920, 1089}, {1920, 1088}}};
+    for (const auto& pair : pairs) {
+        const DecodeDelays configured = getReorderingDelays(pair[0].w, pair[0].h);
+        const DecodeDelays declared = getReorderingDelays(pair[1].w, pair[1].h);
+        for (unsigned depth = 0; depth <= 16; ++depth) CHECK(!stalls(configured, depth) && !stalls(declared, depth));
+        CHECK(configured.output + configured.pipeline == declared.output + declared.pipeline);
+        CHECK(captureSlots(configured) == (pair[0].w * pair[0].h <= kSmallPictureMaxLumaSamples
+                                                   ? captureSlots(kSmallPictureDelays)
+                                                   : captureSlots(kLargePictureDelays)));
+    }
+    CHECK(getReorderingDelays(1920, 1088).output == kSmallPictureDelays.output);
+    CHECK(getReorderingDelays(1920, 1089).output == kLargePictureDelays.output);
+    CHECK(getReorderingDelays(3840, 2160).output == kLargePictureDelays.output);
+    // The two floors the measurements gave: a 4K stream keeps the saving (8 capture buffers), and a picture up to 1080p
+    // has 12 or more, where a 60 fps stream decoded as many frames as with 14 on a busy guest.
+    CHECK(captureSlots(kLargePictureDelays) <= 8);
+    CHECK(captureSlots(kSmallPictureDelays) >= 12 && captureSlots(kSmallPictureDelays) <= 14);
+    return failures == 0 ? 0 : 1;
+}
+"""
+
+
+def decode_delay_model_problems(header_text: str) -> list[str]:
+    """Compile the delay header with the framework model and run it."""
+    compiler = os.environ.get("CXX") or shutil.which("c++") or shutil.which("clang++")
+    if not compiler:
+        return ["no C++ compiler to run the decoder delay model"]
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "DecodeDelays.h").write_text(header_text)
+        (Path(tmp) / "model.cpp").write_text(DECODE_DELAY_MODEL)
+        built = subprocess.run(
+            [compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", tmp, str(Path(tmp) / "model.cpp"), "-o", str(Path(tmp) / "model")],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120,
         )
-    if added.count("return kReorderingOutputDelay;") != 2 or removed.count("return 16;") != 2:
-        problems.append("H.264 and HEVC do not both return the constant in place of 16")
-    if not re.search(r"case VideoCodec::H264:\s*case VideoCodec::HEVC:\s*return kReorderingPipelineDelay;", added) or not re.search(
-        r"case VideoCodec::VP8:\s*case VideoCodec::VP9:\s*case VideoCodec::AV1:\s*return kBasePipelineDelay;", added
-    ):
-        problems.append("H.264 and HEVC do not both take the longer pipeline delay while VP8, VP9 and AV1 keep the base one")
-    if "getPipelineDelay(c) -" not in added or "kBasePipelineDelay);" not in added:
+        if built.returncode != 0:
+            return ["the delay header does not compile with the model: " + built.stderr.strip().splitlines()[-1][:200] if built.stderr.strip() else "the delay header does not compile with the model"]
+        ran = subprocess.run([str(Path(tmp) / "model")], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+        if ran.returncode != 0:
+            return ["the delay model fails: " + "; ".join(ran.stdout.strip().splitlines()[:3])]
+    return []
+
+
+def decoder_delay_problems(files: dict[str, tuple[str, str]], message: str, run_model: bool = True) -> list[str]:
+    """What is wrong with the topic that sets the H.264 and HEVC decoder delays (its lines per file, and its commit message).
+
+    The framework stops feeding the decoder once the works that wait for an output, with their input released, reach the
+    pipeline delay plus the output delay plus 4, and this device releases a picture once more than the stream's reorder
+    depth R of them wait, so a stream stalls only when R exceeds the sum of the two delays by more than 3 (the input delay
+    is 0). R is at most 16, which needs a sum of at least 13. The framework sizes the capture queue from the output delay
+    and the input queue from the pipeline delay, reads both once with one query when it starts, and only a finished work
+    can raise a delay later, so the sum is a constant and the split is chosen from the picture size the client configures:
+    the size the stream's SPS declares later changes nothing the framework has sized, on either side of the 1080p line.
+    A capture buffer costs six times an input block at 4K, so a picture above 1920x1088 spends the sum on the pipeline
+    delay (4 and 9, 8 capture buffers); a smaller one keeps 12 capture buffers or more, which a 60 fps stream needs when the
+    guest is busy (8 decoded 10 to 13 percent fewer frames than 14 on a 2 vCPU guest, 12 as many as 14)."""
+    problems = []
+    expected = {DECODE_DELAYS_HEADER, DECODE_INTERFACE_SOURCE, DECODE_INTERFACE_HEADER, DECODE_COMPONENT_SOURCE, DECODE_FACTORY_SOURCE, DECODE_README}
+    if set(files) != expected:
+        return [f"the topic touches {sorted(set(files) ^ expected)} beyond or short of the delay header, the interface, the component, the factory and the README"]
+    header = files[DECODE_DELAYS_HEADER][0]
+    everything = "\n".join(added for added, _ in files.values())
+    total = re.search(r"constexpr uint32_t kReorderingDelaySum = (\d+);", header)
+    large = re.search(r"constexpr DecodeDelays kLargePictureDelays = \{(\d+), (\d+)\};", header)
+    small = re.search(r"constexpr DecodeDelays kSmallPictureDelays = \{(\d+), (\d+)\};", header)
+    if not total or not large or not small:
+        problems.append("the header does not define kReorderingDelaySum, kLargePictureDelays and kSmallPictureDelays")
+    else:
+        sums = {int(large.group(1)) + int(large.group(2)), int(small.group(1)) + int(small.group(2)), int(total.group(1))}
+        if len(sums) != 1:
+            problems.append(f"the two splits and the sum do not agree: {sorted(sums)}")
+        if int(total.group(1)) + 3 < 16:
+            problems.append(f"a sum of {total.group(1)} stalls a stream of reorder depth 16")
+        if int(large.group(1)) + 4 > 8:
+            problems.append("a picture above 1080p keeps more than 8 capture buffers, which gives up the 4K saving")
+        if not 12 <= int(small.group(1)) + 4 <= 14:
+            problems.append("a picture of 1080p or less is not at 12 to 14 capture buffers, the pool a 60 fps stream was measured to need")
+    if "static_assert(kLargePictureDelays.output + kLargePictureDelays.pipeline == kReorderingDelaySum" not in header or "static_assert(kSmallPictureDelays.output + kSmallPictureDelays.pipeline == kReorderingDelaySum" not in header:
+        problems.append("the header does not assert that both splits keep the sum")
+    if "constexpr uint64_t kSmallPictureMaxLumaSamples = 1920ull * 1088ull;" not in header:
+        problems.append("the line between the splits is not 1920x1088 luma samples")
+    if not re.search(r"constexpr DecodeDelays getReorderingDelays\(uint32_t width, uint32_t height\) \{\s*return static_cast<uint64_t>\(width\) \* height <= kSmallPictureMaxLumaSamples", header):
+        problems.append("the split is not a function of the configured width and height alone, compared in 64 bits")
+    if re.search(r"#include\s*<(?!cstdint>)", header) or "property_get" in everything or "getprop" in everything.lower():
+        problems.append("the header includes more than <cstdint>, or a delay is read from a property")
+    interface = files[DECODE_INTERFACE_SOURCE][0]
+    for setter in ("OutputDelaySetter", "PipelineDelaySetter"):
+        if f".calculatedAs({setter}, mSize)" not in interface:
+            problems.append(f"{setter} is not calculated from the picture size alone")
+    if interface.count("getReorderingDelays(size.v.width, size.v.height)") != 2:
+        problems.append("the setters do not both split by the size they are given")
+    if "withConstValue(new C2PortDelayTuning::output(" not in interface or "withConstValue(new C2PipelineDelayTuning(" not in interface:
+        problems.append("VP8, VP9 and AV1 no longer keep constant delays")
+    if interface.count("return getReorderingDelays(width, height).pipeline;") != 1:
+        problems.append("H.264 and HEVC do not take the pipeline delay of the split")
+    if interface.count("return getReorderingDelays(width, height).output;") != 2:
+        problems.append("H.264 and HEVC do not both take the output delay of the split")
+    if "kReorderingOutputDelay" in everything or "kReorderingPipelineDelay" in everything:
+        problems.append("a constant delay of the old topic remains")
+    component = files[DECODE_COMPONENT_SOURCE][0]
+    if "getMinNumOutputBuffers(mIntfImpl->getConfiguredOutputDelay())" not in component or "size_t getMinNumOutputBuffers(uint32_t outputDelay)" not in component:
+        problems.append("the V4L2 capture queue is not sized from the delay the instance reports")
+    factory = files[DECODE_FACTORY_SOURCE][0]
+    if "getPipelineDelay(c, 0, 0) -" not in factory or "kBasePipelineDelay);" not in factory:
         problems.append("the input notification interval no longer follows the output delay plus the pipeline delay beyond the base one")
-    if "property_get" in added or "getprop" in added.lower():
-        problems.append("the delay is a constant, not a property")
-    if "reorders on the host" not in added or "hold no" not in added:
-        problems.append("the comment does not give the reason: the device reorders on the host and its capture buffers hold no reorder pictures")
+    if "configUpdate" in everything:
+        problems.append("a delay is reported to the framework with a work: only the configured size may decide")
+    readme = files[DECODE_README][0]
+    for needed in ("whose SPS declares 4K keeps the 12 capture buffers", "SPS declares 1080p keeps 8", "reads them once when it starts"):
+        if needed.replace("\n", " ") not in " ".join(readme.split()):
+            problems.append(f"the README does not state: {needed}")
+    flat = " ".join(message.split())
+    for needed in ("Only the configured size decides", "whose SPS declares 4K keeps its 12 capture buffers", "SPS declares 1080p keeps its 8", "reorders on the host"):
+        if needed not in flat:
+            problems.append(f"the commit message does not state: {needed}")
+    if run_model:
+        problems += decode_delay_model_problems(header)
     return problems
 
 
 def verify_decoder_output_delay_topic(android_root: Path) -> None:
-    """The v4l2_codec2 topic that sets the H.264 and HEVC delays keeps every stream decodable."""
+    """The v4l2_codec2 topic that sets the H.264 and HEVC delays keeps every stream decodable, whatever size its SPS declares."""
     patches = sorted((android_root / "patches/projects/p0018/series").glob("v4l2-hold-fewer-capture-buffers-*.patch"))
     if len(patches) != 1:
         fail(f"p0018 has {len(patches)} output delay patches, not one")
-    lines = patches[0].read_text().splitlines()
-    added = "\n".join(line[1:] for line in lines if line.startswith("+") and not line.startswith("+++"))
-    removed = "\n".join(line[1:] for line in lines if line.startswith("-") and not line.startswith("---"))
-    problems = decoder_output_delay_problems(added, removed)
+    files, message = secure_element_topic_files(patches[0].read_text())
+    problems = decoder_delay_problems(files, message)
     if problems:
-        fail("the decoder output delay topic: " + "; ".join(problems))
-    for label, edited_added, edited_removed in (
-        ("delays that sum to 12", added.replace("kReorderingPipelineDelay = 9;", "kReorderingPipelineDelay = 8;"), removed),
-        ("an HEVC case that keeps 16", added.replace("return kReorderingOutputDelay;", "return 16;", 1), removed.replace("return 16;", "", 1)),
-        ("an HEVC pipeline delay left at the base one", added.replace("return kReorderingPipelineDelay;", "return kBasePipelineDelay;", 1), removed),
-        ("an interval that ignores the pipeline delay", added.replace("getPipelineDelay(c) -", "0 -", 1), removed),
-        ("a delay read from a property", added + '\nproperty_get_int32("ro.vendor.v4l2_codec2.output_delay", 10);', removed),
-        ("a delay without its reason", added.replace("reorders on the host", "reorders"), removed),
+        fail("the decoder delay topic: " + "; ".join(problems))
+    header = DECODE_DELAYS_HEADER
+    interface = DECODE_INTERFACE_SOURCE
+
+    def edit(path: str, old: str, new: str) -> tuple[dict[str, tuple[str, str]], str]:
+        added, removed = files[path]
+        if old not in added:
+            fail(f"the decoder delay mutation anchor is gone from {path}: {old!r}")
+        return {**files, path: (added.replace(old, new, 1), removed)}, message
+
+    for label, (edited_files, edited_message) in (
+        ("a small split that sums to 12", edit(header, "kSmallPictureDelays = {8, 5};", "kSmallPictureDelays = {8, 4};")),
+        ("a large split that sums to 12", edit(header, "kLargePictureDelays = {4, 9};", "kLargePictureDelays = {4, 8};")),
+        ("a 4K split that keeps 14 capture buffers", edit(header, "kLargePictureDelays = {4, 9};", "kLargePictureDelays = {10, 3};")),
+        ("a small split of 8 capture buffers", edit(header, "kSmallPictureDelays = {8, 5};", "kSmallPictureDelays = {4, 9};")),
+        ("a line at 1080 rows", edit(header, "1920ull * 1088ull", "1920ull * 1080ull")),
+        ("a 32-bit product", edit(header, "static_cast<uint64_t>(width) * height", "width * height")),
+        ("a split that takes the codec", edit(header, "getReorderingDelays(uint32_t width, uint32_t height)", "getReorderingDelays(uint32_t width, uint32_t height, int codec)")),
+        ("a split that follows a frame rate", edit(interface, ".calculatedAs(OutputDelaySetter, mSize)", ".calculatedAs(OutputDelaySetter, mSize, mFrameRate)")),
+        ("a pipeline delay that ignores the size", edit(interface, ".calculatedAs(PipelineDelaySetter, mSize)", ".withSetter(Setter<decltype(*mPipelineDelay)>::NonStrictValueWithNoDeps)")),
+        ("a capture queue sized from the codec", edit(DECODE_COMPONENT_SOURCE, "getMinNumOutputBuffers(mIntfImpl->getConfiguredOutputDelay())", "getMinNumOutputBuffers(32)")),
+        ("a delay reported with a work", edit(interface, "return C2R::Ok();\n}\n\n// static\nC2R DecodeInterface::PipelineDelaySetter", "work->worklets.front()->output.configUpdate.push_back(C2Param::Copy(*mOutputDelay));\n    return C2R::Ok();\n}\n\n// static\nC2R DecodeInterface::PipelineDelaySetter")),
+        ("a delay read from a property", edit(interface, "return C2R::Ok();\n}\n\n// static\nC2R DecodeInterface::PipelineDelaySetter", 'property_get_int32("ro.vendor.v4l2_codec2.output_delay", 10);\n    return C2R::Ok();\n}\n\n// static\nC2R DecodeInterface::PipelineDelaySetter')),
+        ("an interval that ignores the pipeline delay", edit(DECODE_FACTORY_SOURCE, "getPipelineDelay(c, 0, 0) -", "0 -")),
     ):
-        if (edited_added, edited_removed) == (added, removed) or not decoder_output_delay_problems(edited_added, edited_removed):
-            fail(f"the decoder output delay check accepts {label}")
+        if edited_files == files or not decoder_delay_problems(edited_files, edited_message):
+            fail(f"the decoder delay check accepts {label}")
+    for label, text in (
+        ("a message without the configured size rule", message.replace("Only the configured size decides", "The size decides")),
+        ("a message that drops the reason", message.replace("reorders on the host", "reorders")),
+    ):
+        if text == message or not decoder_delay_problems(files, text, run_model=False):
+            fail(f"the decoder delay check accepts {label}")
 
 
 SECURE_ELEMENT_MANIFEST = "AndroidManifest.xml"

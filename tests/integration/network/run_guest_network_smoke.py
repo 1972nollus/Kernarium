@@ -15,11 +15,14 @@ connection per event-loop pass, so the host kernel queues the rest of the
 burst on the forward's listening socket, and every client must read back its
 own line.
 
+Every campaign also asks for ``localhost`` through both the name server
+address and the gateway address.  The provider answers them through the host's
+system resolver, which answers ``localhost`` itself, so this needs no network.
+
 The default campaign reaches only the SLiRP host gateway.  An explicit
 ``--external`` switch is deliberately required before the guest resolves or
 contacts an Internet host; CMake registers that variant only when the caller
-has opted into external-network permission.  It asks the host resolver through
-both the name server address and the gateway address.
+has opted into external-network permission.
 """
 
 from __future__ import annotations
@@ -70,8 +73,8 @@ def slirp_dns_probe(server: str) -> str:
     )
 
 
-# The name server address, and the gateway address, which SLiRP proxies to
-# the host resolver as well.
+# The name server address, and the gateway address, which the provider answers
+# through the host's system resolver as well.
 SLIRP_DNS_PROBE = slirp_dns_probe("10.0.2.3")
 SLIRP_GATEWAY_DNS_PROBE = slirp_dns_probe("10.0.2.2")
 
@@ -196,15 +199,13 @@ def main() -> int:
         start_guest_dhcp_client(guest)
         verify_slirp_lease(*wait_for_slirp_lease(guest))
         verify_concurrent_forward(guest, forward_port)
+        for probe in (SLIRP_DNS_PROBE, SLIRP_GATEWAY_DNS_PROBE):
+            dns_output = run_node(guest, probe, 15)
+            if "slirp-dns-ok" not in dns_output:
+                raise RuntimeError(
+                    f"SLiRP DNS probe did not report success:\n{dns_output}"
+                )
         if arguments.external:
-            for probe in (SLIRP_DNS_PROBE, SLIRP_GATEWAY_DNS_PROBE):
-                dns_output = run_node(guest, probe, 15)
-                if "slirp-dns-ok" not in dns_output:
-                    raise RuntimeError(
-                        "SLiRP DNS probe did not report success; the external "
-                        "network campaign requires host-network "
-                        f"permission:\n{dns_output}"
-                    )
             output = run_node(guest, external_probe(arguments.external_host), 60)
             if "external-ok" not in output:
                 raise RuntimeError(

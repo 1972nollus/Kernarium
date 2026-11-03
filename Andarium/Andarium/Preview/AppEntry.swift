@@ -125,23 +125,23 @@ struct AppEntry {
              "settings-install-failed", "settings-adb":
             let session = model.session
             let file = ApkInstall.sampleFile
-            let size = ApkInstall.sampleSizeMB
+            let size = ApkInstall.sampleSizeBytes
             switch screen {
             case "settings-installing":
-                session.installs = [ApkInstall(fileName: file, sizeMB: size, state: play ? .installing(0) : .installing(0.62))]
+                session.installs = [ApkInstall(fileName: file, sizeBytes: size, state: play ? .installing(0) : .installing(0.62))]
                 if play {
                     session.installs = []
-                    session.install(fileName: file, sizeMB: size)
+                    session.install(fileName: file, sizeBytes: size)
                 }
             case "settings-installed":
-                session.installs = [ApkInstall(fileName: file, sizeMB: size, state: .installed)]
+                session.installs = [ApkInstall(fileName: file, sizeBytes: size, state: .installed)]
             case "settings-not-apk":
-                session.installs = [ApkInstall(fileName: "Trip photos.zip", sizeMB: 212.4, state: .notApk)]
+                session.installs = [ApkInstall(fileName: "Trip photos.zip", sizeBytes: UInt64(212.4 * Double(Limits.bytesPerMiB)), state: .notApk)]
             case "settings-bundle":
-                session.installs = [ApkInstall(fileName: "Trip Planner.xapk", sizeMB: 84.6, state: .bundle)]
+                session.installs = [ApkInstall(fileName: "Trip Planner.xapk", sizeBytes: UInt64(84.6 * Double(Limits.bytesPerMiB)), state: .bundle)]
             case "settings-install-failed":
                 session.installs = [ApkInstall(
-                    fileName: "Retro Racer 2.3 x86.apk", sizeMB: 96.0,
+                    fileName: "Retro Racer 2.3 x86.apk", sizeBytes: 96 * Limits.bytesPerMiB,
                     state: .failed("The guest couldn\u{2019}t install it: this app has no version for arm64 devices.")
                 )]
             case "settings-adb":

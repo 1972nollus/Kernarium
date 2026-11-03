@@ -79,7 +79,7 @@ public struct SystemInfo: Equatable, Sendable {
             version: String(major), release: release,
             buildID: android?["build_id"] as? String,
             securityPatch: (android?["security_patch"] as? String).flatMap(Self.patchLevel),
-            kernel: "Linux \(version)", architecture: "arm64, \(pageSize / 1024) KB pages",
+            kernel: "Linux \(version)", architecture: "arm64, \(pageSize / 1024) KiB pages",
             appVersion: appVersion
         )
     }

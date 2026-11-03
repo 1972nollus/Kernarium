@@ -28,11 +28,11 @@ nonisolated enum BugReportStaging {
     static let reserveBytes: Int64 = 64 << 20
 
     nonisolated struct NoRoom: LocalizedError, Equatable {
-        var megabytes: Int
+        var bytes: UInt64
         var device: String
 
         var errorDescription: String? {
-            "There isn\u{2019}t enough free space on this \(device) for the report (\(megabytes) MB)."
+            "There isn\u{2019}t enough free space on this \(device) for the report (\(Formats.size(bytes: bytes)))."
         }
     }
 
@@ -43,7 +43,7 @@ nonisolated enum BugReportStaging {
     ) throws -> StagedFileSink {
         let needed = Int64(clamping: size)
         guard available >= needed + reserveBytes else {
-            throw NoRoom(megabytes: Int((needed + 999_999) / 1_000_000), device: device)
+            throw NoRoom(bytes: UInt64(needed), device: device)
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent(BugReport.stagedName(for: remotePath))
