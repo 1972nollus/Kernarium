@@ -23,10 +23,13 @@ Apple GPU product links CGL, OpenGL.framework, EAGL, MoltenVK, a Vulkan
 loader, or a second ambient libepoxy/virglrenderer family.
 
 Destroying a GL context frees the pipelines, shader variants, pipeline cache
-and library references of the Zink programs it built, although the screen's
-shared shaders outlive it, so closing a guest application returns the Metal
-pipelines and generated MSL it caused instead of keeping them for the life of
-the process.
+and library references of the Zink programs it built, and the programs
+themselves when they hold only a vertex and a fragment shader, although the
+screen's shared shaders outlive it, so closing a guest application returns the
+Metal pipelines and generated MSL it caused instead of keeping them for the
+life of the process. A set of shaders whose pipeline libraries no program holds
+and no lookup can reach has its libraries freed at once, not when the last
+shader of the set dies.
 
 macOS and the iOS device both build that stack from the same sources; the
 prefixes differ only in their platform contract. The iOS Simulator cannot run
