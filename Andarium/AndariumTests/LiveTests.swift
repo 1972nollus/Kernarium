@@ -7,7 +7,7 @@ import Testing
 /// The pieces of the device application that touch the host: the release it
 /// carries, the console it reads and the options it keeps.
 struct SystemFolderTests {
-    private static let manifest = #"{"release_id": "20261031-los24-r4", "android": {"fingerprint": "Android/x:17/a/b:userdebug/release-keys", "build_number": 1793463711, "security_patch": "2026-10-01"}}"#
+    private static let manifest = #"{"release_id": "20261031-los24-r4", "android": {"fingerprint": "Andarium/lineage_andarium/andarium:17/a/b:user/release-keys", "build_number": 1793463711, "security_patch": "2026-10-01"}}"#
 
     private func layout(size: Int) -> String {
         #"{"system_disk": {"size_bytes": \#(size), "sha256": "\#(String(repeating: "a", count: 64))"}, "data_disk": {"layout_version": 1, "capacity_gib": {"minimum": 4, "default": 8, "maximum": 64}}}"#

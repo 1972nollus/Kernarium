@@ -149,7 +149,7 @@ def shell(text: str) -> int:
         print("1" if count > 2 else "0")
     elif text == "echo ready":
         print("ready")
-    elif text in ("reboot -p", "su 0 reboot -p", "svc power shutdown"):
+    elif text in ("reboot -p", "svc power shutdown"):
         (STATE / "poweroff").write_text(text)
     elif text.startswith("sh /data/local/tmp/"):
         print("workload ran")

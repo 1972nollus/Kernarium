@@ -13,6 +13,7 @@ INITRAMFS_VERIFIER="$ANDROID_ROOT/tools/verify-initramfs.py"
 RECOVERY_VERIFIER="$ANDROID_ROOT/tools/verify-lineage-recovery.py"
 
 TARGET_FILES=
+SIGNED_OPTION=
 KERNEL_ARTIFACT=
 MKBOOTFS=
 MKBOOTIMG=
@@ -30,7 +31,10 @@ Usage: android/lineage-24/build/assemble-image.sh \
        --kernel-artifact ABSOLUTE_PATH \
        --mkbootfs ABSOLUTE_PATH \
        --mkbootimg ABSOLUTE_PATH \
-       --output-dir ABSOLUTE_PATH
+       --output-dir ABSOLUTE_PATH [--signed]
+
+--signed marks the target files as the signed archive of a release, which the
+verifier then requires to trust the release certificate alone.
 
 Run locally on the x86_64 Linux builder after build-aosp.sh. The target-files
 staging directory must remain beside its .zip archive. The generic and UML
@@ -62,6 +66,10 @@ while [[ $# -gt 0 ]]; do
 		[[ $# -ge 2 ]] || fail "--target-files requires a path"
 		TARGET_FILES=$2
 		shift 2
+		;;
+	--signed)
+		SIGNED_OPTION=--signed
+		shift
 		;;
 	--kernel-artifact)
 		[[ $# -ge 2 ]] || fail "--kernel-artifact requires a path"
@@ -136,7 +144,7 @@ NODE_LIST="$TARGET_FILES_DIR/META/ramdisk_node_list"
 for path in "$RAMDISK_SOURCE" "$FILESYSTEM_CONFIG_SOURCE" "$NODE_LIST" "$VENDOR_FSTAB"; do
 	[[ -e "$path" && ! -L "$path" ]] || fail "required staging input is missing: $path"
 done
-"$TARGET_FILES_VERIFIER" --target-files "$TARGET_FILES" \
+"$TARGET_FILES_VERIFIER" --target-files "$TARGET_FILES" ${SIGNED_OPTION:+"$SIGNED_OPTION"} \
 	--kernel-elf "$KERNEL_ELF" \
 	--kernel-config "$KERNEL_ARTIFACT/kernel/config" \
 	--kernel-release-file "$KERNEL_ARTIFACT/kernel/kernel.release"

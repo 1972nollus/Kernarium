@@ -49,7 +49,7 @@ BOARD_USES_SYSTEM_OTHER_ODEX :=
 # The five immutable partitions are compressed EROFS images, which fstab.uml
 # mounts read-only in the guest. The inherited board gives each its own file
 # system type, so every one is named here. The compressor and the physical
-# cluster size are the product's two parameters (lineage_darwin.mk), applied to
+# cluster size are the product's two parameters (lineage_andarium.mk), applied to
 # every partition alike: no per-partition override, no extended option
 # (ztailpacking, fragments, dedupe) and no block size other than the default
 # 4 KiB, which the guest's 4 KiB pages require. The compress hints keep the
@@ -62,7 +62,7 @@ BOARD_ODMIMAGE_FILE_SYSTEM_TYPE := erofs
 BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE :=
 BOARD_EROFS_COMPRESSOR := $(UML_ANDROID_EROFS_COMPRESSOR)
 BOARD_EROFS_PCLUSTER_SIZE := $(UML_ANDROID_EROFS_PCLUSTER_SIZE)
-BOARD_EROFS_COMPRESS_HINTS := device/kernarium/darwin/config/erofs_compress_hints.txt
+BOARD_EROFS_COMPRESS_HINTS := device/kernarium/andarium/config/erofs_compress_hints.txt
 
 # This product has no SwiftShader: its Vulkan driver is the Mesa Venus HAL.
 # The inherited SwiftShader policy fragment grants bootanim, surfaceflinger,
@@ -73,7 +73,7 @@ BOARD_VENDOR_SEPOLICY_DIRS := $(filter-out \
     device/google/cuttlefish/shared/swiftshader/sepolicy, \
     $(BOARD_VENDOR_SEPOLICY_DIRS))
 
-BOARD_VENDOR_SEPOLICY_DIRS += device/kernarium/darwin/sepolicy/vendor
+BOARD_VENDOR_SEPOLICY_DIRS += device/kernarium/andarium/sepolicy/vendor
 # The Wi-Fi interface is virt_wifi, a station only: the kernel gives it no
 # access-point or peer-to-peer interface type. The inherited board offers
 # station, access point and peer-to-peer interfaces and a second station, which
@@ -86,7 +86,7 @@ WIFI_HAL_INTERFACE_COMBINATIONS := {{{STA}, 1}}
 
 # Properties the platform's core domains set belong to the system partitions: the
 # Treble split forbids a core domain to set a vendor-owned one.
-SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += device/kernarium/darwin/sepolicy/system_ext/private
+SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += device/kernarium/andarium/sepolicy/system_ext/private
 
 # The Android UML ELF is built and published independently. Android packaging
 # must neither substitute a Cuttlefish kernel nor stage loadable modules.
@@ -173,10 +173,10 @@ BOARD_INIT_BOOT_HEADER_VERSION := 4
 BOARD_BOOT_HEADER_VERSION := 4
 BOARD_EXCLUDE_KERNEL_FROM_RECOVERY_IMAGE := true
 BOARD_USES_FULL_RECOVERY_IMAGE := true
-TARGET_RECOVERY_FSTAB := device/kernarium/darwin/config/recovery.fstab
+TARGET_RECOVERY_FSTAB := device/kernarium/andarium/config/recovery.fstab
 # The inherited recovery UI reaches ADB over eth1, which Cuttlefish provides and
 # this machine does not. Darwin's own UI uses eth0, the Virtio-net interface.
-TARGET_RECOVERY_UI_LIB := librecovery_ui_darwin
+TARGET_RECOVERY_UI_LIB := librecovery_ui_andarium
 TARGET_NO_RECOVERY := false
 
 BOARD_SUPER_PARTITION_SIZE :=
