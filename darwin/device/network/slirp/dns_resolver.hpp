@@ -35,6 +35,7 @@
 #include <span>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -45,6 +46,12 @@
 typedef struct _DNSServiceRef_t *DNSServiceRef;
 
 namespace uml::network {
+
+/* The DNS-over-TCP socket is named dns-<pid> for its process. The name stays
+ * the same across a guest restart, which the process audit compares by name,
+ * and a run killed outright leaves its socket for the next run to remove from
+ * the directory it binds in. */
+inline constexpr std::string_view dns_stream_prefix = "dns-";
 
 /* Queries in flight at once, UDP and TCP together; more are refused. */
 inline constexpr std::size_t dns_pending_limit = 256;

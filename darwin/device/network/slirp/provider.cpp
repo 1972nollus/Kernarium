@@ -71,9 +71,8 @@ bool ensure_pipe(std::array<UniqueDescriptor, 2> &result) noexcept
  * resolver binds in /tmp, which the Simulator's processes share with the Mac. */
 std::vector<std::string> dns_stream_paths()
 {
-	static std::atomic_uint sequence{0};
-	const auto name = "dns-" + std::to_string(::getpid()) + "-" +
-		std::to_string(sequence.fetch_add(1));
+	const auto name = std::string{dns_stream_prefix} +
+		std::to_string(::getpid());
 	std::vector<std::string> paths;
 	const auto add = [&](std::string directory) {
 		if (directory.empty() || directory.front() != '/')

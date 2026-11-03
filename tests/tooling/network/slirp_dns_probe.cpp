@@ -20,8 +20,11 @@
 
 #include <dns_sd.h>
 
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <chrono>
 #include <cstdio>
@@ -516,6 +519,86 @@ void check_stream_directory(uml::network::SlirpProvider &provider, Guest &guest,
 	provider.stop();
 }
 
+/* A Unix socket's name left in the file system, as a killed process leaves. */
+void leave_socket(const std::string &path)
+{
+	sockaddr_un address{};
+	address.sun_family = AF_UNIX;
+	std::strncpy(address.sun_path, path.c_str(), sizeof(address.sun_path) - 1);
+	const int descriptor = ::socket(AF_UNIX, SOCK_STREAM, 0);
+	if (descriptor < 0)
+		return;
+	(void)::bind(descriptor, reinterpret_cast<sockaddr *>(&address),
+		     sizeof(address));
+	(void)::close(descriptor);
+}
+
+/* The pid of a process that has exited and been collected. */
+pid_t exited_process()
+{
+	const pid_t child = ::fork();
+	if (child == 0)
+		::_exit(0);
+	int status = 0;
+	if (child > 0)
+		(void)::waitpid(child, &status, 0);
+	return child;
+}
+
+bool exists(const std::string &path)
+{
+	struct stat details{};
+	return ::lstat(path.c_str(), &details) == 0;
+}
+
+/* A run killed outright leaves its DNS-over-TCP socket. The next run in that
+ * directory removes it, and nothing else: not a live process's socket, not a
+ * file that is no socket, not another name. */
+void check_abandoned_streams(uml::network::SlirpProvider &provider,
+			     Guest &guest)
+{
+	const char *label = "a killed run's DNS-over-TCP socket";
+	char base[] = "/tmp/uml-dns-probe.XXXXXX";
+	if (::mkdtemp(base) == nullptr) {
+		fail(label, "no scratch directory");
+		return;
+	}
+	const std::string directory = std::string(base) + "/";
+	const std::string prefix{uml::network::dns_stream_prefix};
+	const pid_t dead = exited_process();
+	const pid_t other_dead = exited_process();
+	const auto stale = directory + prefix + std::to_string(dead);
+	const auto live = directory + prefix + std::to_string(::getppid());
+	const auto regular = directory + prefix + std::to_string(other_dead);
+	const auto unrelated = directory + "mconsole";
+	leave_socket(stale);
+	leave_socket(live);
+	leave_socket(unrelated);
+	(void)::close(::open(regular.c_str(), O_CREAT | O_WRONLY, 0600));
+
+	::setenv("TMPDIR", directory.c_str(), 1);
+	if (!open_provider(provider, guest)) {
+		fail(label, "the provider did not open");
+	} else {
+		const std::string own = provider.resolver_for_testing().stream_path();
+		if (exists(stale))
+			fail(label, "the socket of a process that exited was kept");
+		if (!exists(live))
+			fail(label, "the socket of a live process was removed");
+		if (!exists(regular))
+			fail(label, "a file that is no socket was removed");
+		if (!exists(unrelated))
+			fail(label, "a socket of another name was removed");
+		if (!starts_with(own, directory) || !exists(own))
+			fail(label, "the run has no socket of its own");
+		provider.stop();
+		if (exists(own))
+			fail(label, "the run's socket outlived it");
+	}
+	std::error_code ignored;
+	std::filesystem::remove_all(base, ignored);
+}
+
 } // namespace
 
 int main()
@@ -577,6 +660,7 @@ int main()
 	}
 	check_stream_directory(provider, guest, "a container tmp too long",
 			       "/" + std::string(150, 'l') + "/tmp/", false);
+	check_abandoned_streams(provider, guest);
 
 	if (original != nullptr)
 		::setenv("TMPDIR", saved_directory.c_str(), 1);

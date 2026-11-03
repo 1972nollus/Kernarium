@@ -427,7 +427,9 @@ guest retries over TCP.
 DNS over TCP runs through a guest forward to a Unix socket in `$TMPDIR` when
 its path fits `sun_path`, else in the user temporary directory, else in `/tmp`
 (an iOS Simulator container's tmp does not fit); where none binds, port 53 is
-reset like any other and the log says so. A client that shuts down its sending
+reset like any other and the log says so. The socket is named `dns-<pid>`, the
+same across a guest restart; it goes with the run, and the next run in that
+directory removes one a killed run left. A client that shuts down its sending
 side after its query still gets the answer. Stopping the link ends every query
 in flight (`slirp-network-dns`, and `network-dns-rules` for the wire rules).
 

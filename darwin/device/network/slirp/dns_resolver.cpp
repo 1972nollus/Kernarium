@@ -10,8 +10,12 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <charconv>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -92,6 +96,44 @@ int poll_timeout(std::chrono::steady_clock::time_point now,
 	return static_cast<int>(std::min<long long>(wait, 60'000));
 }
 
+/*
+ * A run killed outright leaves its socket, so each run removes what runs that
+ * have exited left beside its own: sockets named dns-<pid> that this user
+ * owns, whose process no longer exists. A live process, or one this user may
+ * not signal, keeps its socket, and nothing else is touched.
+ */
+void remove_abandoned_streams(const std::filesystem::path &directory) noexcept
+{
+	try {
+		std::error_code error;
+		for (std::filesystem::directory_iterator entry{directory, error};
+		     !error && entry != std::filesystem::directory_iterator{};
+		     entry.increment(error)) {
+			const auto filename = entry->path().filename().native();
+			std::string_view name{filename};
+			if (!name.starts_with(dns_stream_prefix))
+				continue;
+			name.remove_prefix(dns_stream_prefix.size());
+			pid_t owner = 0;
+			const auto [end, parsed] = std::from_chars(
+				name.data(), name.data() + name.size(), owner);
+			if (name.starts_with('0') || parsed != std::errc{} ||
+			    end != name.data() + name.size() || owner <= 0 ||
+			    owner == ::getpid())
+				continue;
+			struct stat details {};
+			if (::lstat(entry->path().c_str(), &details) != 0 ||
+			    !S_ISSOCK(details.st_mode) ||
+			    details.st_uid != ::geteuid())
+				continue;
+			if (::kill(owner, 0) == 0 || errno != ESRCH)
+				continue;
+			(void)::unlink(entry->path().c_str());
+		}
+	} catch (...) {
+	}
+}
+
 } // namespace
 
 /* Out of line: Pending is complete only here. */
@@ -115,6 +157,8 @@ int HostResolver::start(FrameSink sink,
 		error = bind_listener(path);
 		if (error == 0) {
 			stream_path_ = path;
+			remove_abandoned_streams(
+				std::filesystem::path{path}.parent_path());
 			break;
 		}
 	}
