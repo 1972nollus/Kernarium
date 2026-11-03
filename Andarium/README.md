@@ -97,13 +97,18 @@ cannot do a thing leaves its control out instead of offering it.
 
 ### Memory
 
-Guest memory runs from 1 GB in steps of 256 MB. The top of the ruler is one
-step below the recommended maximum, which is the largest guest memory that
-leaves the guest's graphics budget at its floor on that device; so no
-position on the ruler is one iOS is likely to end the application for. The
-default is 1.5 GB, or the ruler's top where that is lower. The budget terms
-(`MemoryTerms`) are measured provisional values; replacing them changes only
-that value.
+Guest memory follows the shared vCPU-aware limit Kernarium uses
+(`runtime/guest_memory_budget.hpp`). The application asks the loader
+(`kernarium_runtime_loader_maximum_guest_memory_mib`) for the most guest RAM at
+each vCPU count, under the memory limit the system sets the process (none on a
+Mac) and the launch set `kernarium_runtime_loader_launch_memory_set` gives
+(also what the boot request passes); `MemoryPolicy` holds those bounds and has
+no formula of its own. The picker runs from 512 MiB to the bound of the chosen
+vCPU count in the runtime's 64 MiB steps and follows the count live: raising
+vCPUs takes memory above the new bound down to it, lowering them leaves it, and
+a stored size above its bound comes down on load. A size an automation launch
+states (`KERNARIUM_GUEST_MEMORY_MIB`) stays as stated. The default is 1.5 GB or
+the bound where that is lower, and 4 GB on a Mac.
 
 ### Storage
 

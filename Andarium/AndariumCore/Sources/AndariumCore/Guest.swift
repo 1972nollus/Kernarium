@@ -87,11 +87,29 @@ public struct Guest: Equatable, Codable, Sendable {
     }
 
     /// A new guest with the host's choices: every processor, the default
-    /// memory the host's ruler reaches, the default capacity.
+    /// memory at that count, the default capacity.
     public static func fresh(on host: HostDevice) -> Guest {
         Guest(
-            cores: host.processorCount, memoryMiB: host.memory.defaultMemoryMiB,
+            cores: host.processorCount,
+            memoryMiB: host.memory.defaultMemoryMiB(vCPUs: host.processorCount, onMac: host.isMac),
             capacityGiB: Limits.defaultCapacityGiB
         )
+    }
+
+    /// The processor ruler's choice. Each added vCPU holds more of the
+    /// process's memory, so raising the count takes memory above the new
+    /// bound down to it; lowering the count leaves memory as it is.
+    public mutating func setCores(_ count: Int, on host: HostDevice) {
+        let raised = count > cores
+        cores = count
+        if raised { memoryMiB = min(memoryMiB, host.memory.maximumMiB(vCPUs: count)) }
+    }
+
+    /// The memory this guest loads with: a stored size above the bound of its
+    /// vCPU count, or off the steps, comes to the nearest allowed size.
+    public func memoryWithinBound(on host: HostDevice) -> Guest {
+        var guest = self
+        guest.memoryMiB = host.memory.clamped(memoryMiB, vCPUs: cores)
+        return guest
     }
 }

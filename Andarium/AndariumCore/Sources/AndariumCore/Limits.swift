@@ -8,15 +8,15 @@ public enum Limits {
     public static let capacityRangeGiB = 4...64
     public static let defaultCapacityGiB = 8
 
-    /// The memory ruler starts here and counts in steps of this size; its top
-    /// comes from `MemoryPolicy`.
-    public static let minimumMemoryMiB = 1024
-    public static let memoryStepMiB = 256
-    /// The default where the ruler reaches it; a lower ruler top wins.
-    public static let defaultMemoryMiB = 1536
-    /// What the runtime accepts for a guest's memory.
+    /// What the runtime accepts for a guest's memory, in steps of 64 MiB. The
+    /// memory ruler starts at the bottom of it and counts in the same steps;
+    /// its top at a vCPU count comes from `MemoryPolicy`.
     public static let runtimeMemoryRangeMiB = 512...4096
     public static let runtimeMemoryStepMiB = 64
+    public static let minimumMemoryMiB = runtimeMemoryRangeMiB.lowerBound
+    public static let memoryStepMiB = runtimeMemoryStepMiB
+    /// The default on a device, where the bound reaches it; a lower bound wins.
+    public static let defaultMemoryMiB = 1536
 
     /// Free space a new guest needs for Android's first start, on top of the
     /// space its storage takes. Decimal bytes, as iOS reports free space.
@@ -54,6 +54,14 @@ public enum Formats {
     }
 
     public static func memory(_ mib: Int) -> String { memoryNumber(mib) + " GB" }
+
+    /// "Up to 1.5 GB with 4 vCPUs": the most memory at a vCPU count, which is
+    /// named only where the host's limit puts it below the runtime's largest
+    /// size.
+    public static func memoryBound(_ mib: Int, vCPUs: Int) -> String {
+        if mib >= Limits.runtimeMemoryRangeMiB.upperBound { return "Up to " + memory(mib) }
+        return "Up to \(memory(mib)) with \(vCPUs == 1 ? "1 vCPU" : "\(vCPUs) vCPUs")"
+    }
 
     public static func elapsed(_ seconds: Int) -> String {
         String(format: "%d:%02d", seconds / 60, seconds % 60)

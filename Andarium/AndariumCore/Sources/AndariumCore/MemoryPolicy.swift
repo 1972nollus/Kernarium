@@ -2,87 +2,75 @@
 
 import Foundation
 
-/// The terms of the launch-time memory budget, in MiB. The guest's graphics
-/// budget is B = clamp(L - A - G - E - S, floor, G / 2); the largest guest
-/// memory G that leaves B at its floor is the recommended maximum. The
-/// values are measured provisional ones (IOS-MEM, the iPad mini 6): the user
-/// has not chosen the budget set, and replacing it changes only this value.
-public struct MemoryTerms: Equatable, Sendable {
-    /// A: the application's own ceiling.
-    public var appMiB: Int
-    /// E: the execution engine's caches and the runtime's other memory.
-    public var engineMiB: Int
-    /// S: safe headroom under the limit.
-    public var headroomMiB: Int
-    /// The smallest graphics budget.
-    public var graphicsFloorMiB: Int
-
-    public init(appMiB: Int, engineMiB: Int, headroomMiB: Int, graphicsFloorMiB: Int) {
-        self.appMiB = appMiB
-        self.engineMiB = engineMiB
-        self.headroomMiB = headroomMiB
-        self.graphicsFloorMiB = graphicsFloorMiB
-    }
-
-    public static let provisional = MemoryTerms(
-        appMiB: 82, engineMiB: 560, headroomMiB: 270, graphicsFloorMiB: 384
-    )
-}
-
-/// What guest memory the host can honour. The ruler runs from 1 GB in steps
-/// of 256 MB, and its top is one step below the recommended maximum, so no
-/// value above the maximum can be chosen.
+/// What guest memory the host can honour, at each vCPU count. The bound is
+/// the runtime's own budget formula (`runtime/guest_memory_budget.hpp`), which
+/// the application reads through the loader the way Kernarium does: the most
+/// guest RAM at a vCPU count is the largest multiple of 64 MiB in 512...4096
+/// that leaves the host GPU its floor under the memory limit the system sets
+/// this process. Each added vCPU holds more of the process's memory, so the
+/// bound does not rise with the count. The limit is fixed for the process, so
+/// the bounds are read once, for every count the host has.
 public struct MemoryPolicy: Equatable, Sendable {
-    /// L: the memory iOS lets the application use, in MiB.
-    public var limitMiB: Int
-    public var terms: MemoryTerms
+    /// The most guest RAM at 1, 2, ... vCPUs, each on the runtime's steps and
+    /// inside its range.
+    private let maximums: [Int]
 
-    public init(limitMiB: Int, terms: MemoryTerms = .provisional) {
-        self.limitMiB = limitMiB
-        self.terms = terms
+    /// The bounds as they are: each is taken down to the runtime's steps and
+    /// into its range.
+    public init(maximumsMiB: [Int]) {
+        let values = maximumsMiB.isEmpty ? [Limits.runtimeMemoryRangeMiB.upperBound] : maximumsMiB
+        maximums = values.map { Self.steppedDown($0) }
     }
 
-    /// The largest guest memory that keeps the graphics budget at its floor,
-    /// rounded down to the runtime's step and capped at the runtime's range.
-    public var recommendedMaximumMiB: Int {
-        let free = limitMiB - terms.appMiB - terms.engineMiB
-            - terms.headroomMiB - terms.graphicsFloorMiB
-        let capped = min(free, Limits.runtimeMemoryRangeMiB.upperBound)
-        let step = Limits.runtimeMemoryStepMiB
-        return max(Limits.minimumMemoryMiB, capped / step * step)
+    /// The bounds of 1...`processorCount` vCPUs from `bound`, the loader's
+    /// answer for a count.
+    public init(processorCount: Int, bound: (Int) -> Int) {
+        self.init(maximumsMiB: (1...max(processorCount, 1)).map(bound))
     }
 
-    /// The ruler's top: the largest ruler position one step below the
-    /// recommended maximum, never below the first position.
-    public var rulerTopMiB: Int {
-        let below = recommendedMaximumMiB - Limits.memoryStepMiB
-        let steps = max(0, (below - Limits.minimumMemoryMiB) / Limits.memoryStepMiB)
-        return Limits.minimumMemoryMiB + steps * Limits.memoryStepMiB
+    /// The most guest RAM the picker offers at `vCPUs` vCPUs; a count above the
+    /// host's takes the last bound.
+    public func maximumMiB(vCPUs: Int) -> Int {
+        maximums[min(max(vCPUs, 1), maximums.count) - 1]
     }
 
-    /// Every position on the ruler.
-    public var stops: [Int] {
-        Array(stride(from: Limits.minimumMemoryMiB, through: rulerTopMiB, by: Limits.memoryStepMiB))
+    /// Every position of the picker at `vCPUs` vCPUs: 512 MiB up to the bound,
+    /// in the runtime's 64 MiB steps.
+    public func stops(vCPUs: Int) -> [Int] {
+        Array(stride(
+            from: Limits.minimumMemoryMiB, through: maximumMiB(vCPUs: vCPUs), by: Limits.memoryStepMiB
+        ))
     }
 
-    /// 1536 MB where the ruler reaches it, otherwise the ruler's top.
-    public var defaultMemoryMiB: Int {
-        min(Limits.defaultMemoryMiB, rulerTopMiB)
+    /// 1536 MiB, or the bound where that is lower, on a device; the largest
+    /// size on a Mac, which sets no memory limit.
+    public func defaultMemoryMiB(vCPUs: Int, onMac: Bool) -> Int {
+        let wanted = onMac ? Limits.runtimeMemoryRangeMiB.upperBound : Limits.defaultMemoryMiB
+        return min(wanted, maximumMiB(vCPUs: vCPUs))
     }
 
-    /// A stored or requested value on the ruler: the nearest position at or
-    /// below it, never above the top. A value the runtime accepts but the
-    /// ruler lacks (an automation launch's 1536) is kept by the caller, not
-    /// here.
-    public func rulerValue(_ mib: Int) -> Int {
-        let clamped = min(max(mib, Limits.minimumMemoryMiB), rulerTopMiB)
-        let steps = (clamped - Limits.minimumMemoryMiB) / Limits.memoryStepMiB
-        return Limits.minimumMemoryMiB + steps * Limits.memoryStepMiB
+    /// A stored or requested size at `vCPUs` vCPUs: on the nearest step in the
+    /// runtime's range, and no more than the bound.
+    public func clamped(_ mib: Int, vCPUs: Int) -> Int {
+        min(Self.nearestStep(mib), maximumMiB(vCPUs: vCPUs))
     }
 
     /// Whether the runtime accepts `mib` (a value of its own step in range).
     public static func runtimeAccepts(_ mib: Int) -> Bool {
         Limits.runtimeMemoryRangeMiB.contains(mib)
             && (mib - Limits.runtimeMemoryRangeMiB.lowerBound) % Limits.runtimeMemoryStepMiB == 0
+    }
+
+    private static func nearestStep(_ mib: Int) -> Int {
+        let range = Limits.runtimeMemoryRangeMiB
+        let offset = min(max(mib, range.lowerBound), range.upperBound) - range.lowerBound
+        let step = Limits.runtimeMemoryStepMiB
+        return range.lowerBound + (offset + step / 2) / step * step
+    }
+
+    private static func steppedDown(_ mib: Int) -> Int {
+        let range = Limits.runtimeMemoryRangeMiB
+        let offset = min(max(mib, range.lowerBound), range.upperBound) - range.lowerBound
+        return range.lowerBound + offset / Limits.runtimeMemoryStepMiB * Limits.runtimeMemoryStepMiB
     }
 }

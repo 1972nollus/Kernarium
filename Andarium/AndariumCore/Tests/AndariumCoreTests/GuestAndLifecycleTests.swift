@@ -5,10 +5,10 @@ import Testing
 @testable import AndariumCore
 
 private let ipad = HostDevice(
-    name: "iPad", processorCount: 6, memory: MemoryPolicy(limitMiB: 5000), freeStorageBytes: 40_000_000_000
+    name: "iPad", processorCount: 6, memory: MemoryPolicy(maximumsMiB: [4096]), freeStorageBytes: 40_000_000_000
 )
 private let fullIpad = HostDevice(
-    name: "iPad", processorCount: 6, memory: MemoryPolicy(limitMiB: 5000), freeStorageBytes: 1_000_000_000
+    name: "iPad", processorCount: 6, memory: MemoryPolicy(maximumsMiB: [4096]), freeStorageBytes: 1_000_000_000
 )
 
 struct GuestTests {

@@ -203,6 +203,13 @@ struct InfoSheet: View {
         _path = State(initialValue: acknowledgements ? ["ack"] : [])
     }
 
+    /// The most memory a guest has at its vCPU count; a new guest takes every
+    /// processor.
+    private var memoryForAGuest: String {
+        let count = model.guest?.cores ?? model.host.processorCount
+        return Formats.memoryBound(model.host.memory.maximumMiB(vCPUs: count), vCPUs: count)
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             List {
@@ -252,7 +259,7 @@ struct InfoSheet: View {
                 }
                 Section("This \(model.host.name)") {
                     LabeledContent("Processor", value: "\(model.host.processorCount) cores")
-                    LabeledContent("Memory for a Guest", value: "Up to \(Formats.memory(model.host.memory.rulerTopMiB))")
+                    LabeledContent("Memory for a Guest", value: memoryForAGuest)
                 }
                 Section {
                     NavigationLink("Acknowledgements", value: "ack")

@@ -33,7 +33,7 @@ private final class StubDriver: RuntimeDriver {
 @MainActor
 struct UpdateFlowTests {
     private let host = HostDevice(
-        name: "iPad", processorCount: 6, memory: MemoryPolicy(limitMiB: 5000), freeStorageBytes: 40_000_000_000
+        name: "iPad", processorCount: 6, memory: MemoryPolicy(maximumsMiB: [4096]), freeStorageBytes: 40_000_000_000
     )
 
     private func model(plan: StartPlan) -> (AppModel, StubDriver) {

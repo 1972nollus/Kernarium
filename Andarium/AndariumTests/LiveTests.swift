@@ -101,7 +101,14 @@ struct HostDeviceTests {
     @Test func theHostReadsThisDevice() {
         let host = AppEntry.hostDevice()
         #expect(host.processorCount >= 1)
-        #expect(host.memory.limitMiB >= 1024)
+        // The bound comes from the runtime's budget formula through the loader:
+        // inside the runtime's range, never rising with the vCPU count, and the
+        // largest size where the system sets no limit (a Mac).
+        let bounds = (1...host.processorCount).map { host.memory.maximumMiB(vCPUs: $0) }
+        #expect(bounds.allSatisfy { Limits.runtimeMemoryRangeMiB.contains($0) })
+        #expect(bounds == bounds.sorted(by: >))
+        #expect(host.isMac == ProcessInfo.processInfo.isiOSAppOnMac)
+        if host.isMac { #expect(bounds.allSatisfy { $0 == Limits.runtimeMemoryRangeMiB.upperBound }) }
         #expect(AppEntry.freeStorageBytes() > 0)
     }
 }

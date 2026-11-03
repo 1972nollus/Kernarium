@@ -25,7 +25,7 @@ private func makeStorage(release: ReleaseIdentity = releaseIdentity()) throws ->
 }
 
 private let host = HostDevice(
-    name: "iPad", processorCount: 6, memory: MemoryPolicy(limitMiB: 5000), freeStorageBytes: 40_000_000_000
+    name: "iPad", processorCount: 6, memory: MemoryPolicy(maximumsMiB: [4096]), freeStorageBytes: 40_000_000_000
 )
 
 struct StorageTests {

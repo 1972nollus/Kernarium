@@ -33,46 +33,110 @@ struct FormatsTests {
 }
 
 struct MemoryPolicyTests {
-    /// The iPad mini 6: iOS lets an application use 2867 MiB.
-    let mini = MemoryPolicy(limitMiB: 2867)
-    /// A host with more than the runtime accepts to offer.
-    let large = MemoryPolicy(limitMiB: 12288)
+    /// A host whose memory limit lets the bound fall as vCPUs are added: 1.5 GB
+    /// at four.
+    let limited = MemoryPolicy(maximumsMiB: [2048, 1920, 1728, 1536])
+    /// A host with no limit to speak of (a Mac).
+    let roomy = MemoryPolicy(maximumsMiB: Array(repeating: 4096, count: 8))
 
-    @Test func theRecommendedMaximumLeavesTheGraphicsFloor() {
-        // 2867 - 82 - 560 - 270 - 384 = 1571, down to the runtime's 64 MiB step.
-        #expect(mini.recommendedMaximumMiB == 1536)
-        let terms = MemoryTerms.provisional
-        let left = mini.limitMiB - terms.appMiB - mini.recommendedMaximumMiB - terms.engineMiB - terms.headroomMiB
-        #expect(left >= terms.graphicsFloorMiB)
+    private func host(_ memory: MemoryPolicy, processors: Int, mac: Bool = false) -> HostDevice {
+        HostDevice(
+            name: mac ? "Mac" : "iPad", processorCount: processors, memory: memory,
+            freeStorageBytes: 40_000_000_000, isMac: mac
+        )
     }
 
-    @Test func theRulerTopIsOneStepBelowTheRecommendation() {
-        #expect(mini.rulerTopMiB == 1280)
-        #expect(mini.stops == [1024, 1280])
-        #expect(mini.defaultMemoryMiB == 1280)
+    @Test func thePickerRunsFrom512ToTheBoundOfTheVCPUCountInSteps64() {
+        let four = limited.stops(vCPUs: 4)
+        #expect(four.first == 512 && four.last == 1536)
+        #expect(four.count == (1536 - 512) / 64 + 1)
+        #expect(four.allSatisfy(MemoryPolicy.runtimeAccepts))
+        #expect(limited.stops(vCPUs: 1).last == 2048)
+        #expect(roomy.stops(vCPUs: 8).count == 57)
+        // Added vCPUs never raise the bound.
+        let bounds = (1...4).map { limited.maximumMiB(vCPUs: $0) }
+        #expect(bounds == bounds.sorted(by: >))
     }
 
-    @Test func theRuntimeRangeCapsTheRuler() {
-        #expect(large.recommendedMaximumMiB == 4096)
-        #expect(large.rulerTopMiB == 3840)
-        #expect(large.stops.count == 12)
-        #expect(large.stops.first == 1024)
-        #expect(large.stops.allSatisfy { ($0 - 1024) % Limits.memoryStepMiB == 0 })
-        #expect(large.defaultMemoryMiB == 1536)
+    @Test func theBoundsComeOntoTheRuntimesStepsAndRange() {
+        let policy = MemoryPolicy(maximumsMiB: [100, 5000, 1700])
+        #expect(policy.maximumMiB(vCPUs: 1) == 512)
+        #expect(policy.maximumMiB(vCPUs: 2) == 4096)
+        #expect(policy.maximumMiB(vCPUs: 3) == 1664)
+        // A count above the host's takes the last bound; zero counts as one.
+        #expect(policy.maximumMiB(vCPUs: 9) == 1664)
+        #expect(policy.maximumMiB(vCPUs: 0) == 512)
+        #expect(MemoryPolicy(maximumsMiB: []).maximumMiB(vCPUs: 1) == 4096)
     }
 
-    @Test func aTinyLimitStillOffersTheFirstPosition() {
-        let tiny = MemoryPolicy(limitMiB: 1500)
-        #expect(tiny.rulerTopMiB == 1024)
-        #expect(tiny.stops == [1024])
-        #expect(tiny.defaultMemoryMiB == 1024)
+    @Test func theLoaderBoundIsReadOncePerVCPUCount() {
+        var asked: [Int] = []
+        let policy = MemoryPolicy(processorCount: 3) { count in
+            asked.append(count)
+            return 4096 - count * 128
+        }
+        #expect(asked == [1, 2, 3])
+        #expect(policy.maximumMiB(vCPUs: 2) == 3840)
     }
 
-    @Test func aStoredValueSnapsDownOntoTheRuler() {
-        #expect(large.rulerValue(1700) == 1536)
-        #expect(large.rulerValue(100) == 1024)
-        #expect(large.rulerValue(9000) == 3840)
-        #expect(mini.rulerValue(2048) == 1280)
+    @Test func theDefaultIs1536OnADeviceAndTheLargestSizeOnAMac() {
+        #expect(roomy.defaultMemoryMiB(vCPUs: 4, onMac: false) == 1536)
+        #expect(roomy.defaultMemoryMiB(vCPUs: 4, onMac: true) == 4096)
+        // A bound below 1536 wins on a device.
+        let tight = MemoryPolicy(maximumsMiB: [1536, 1280])
+        #expect(tight.defaultMemoryMiB(vCPUs: 2, onMac: false) == 1280)
+        #expect(Guest.fresh(on: host(limited, processors: 4)).memoryMiB == 1536)
+        #expect(Guest.fresh(on: host(roomy, processors: 8, mac: true)).memoryMiB == 4096)
+        #expect(Guest.fresh(on: host(tight, processors: 2)).memoryMiB == 1280)
+    }
+
+    @Test func aStoredSizeIsTakenWithinTheBoundOnLoad() {
+        let device = host(limited, processors: 4)
+        // Above the bound of its vCPU count: down to the bound.
+        #expect(Guest(cores: 4, memoryMiB: 3072, capacityGiB: 8).memoryWithinBound(on: device).memoryMiB == 1536)
+        // The same size is allowed with fewer vCPUs.
+        #expect(Guest(cores: 1, memoryMiB: 2048, capacityGiB: 8).memoryWithinBound(on: device).memoryMiB == 2048)
+        // Off the steps: the nearest step, then the bound.
+        #expect(Guest(cores: 2, memoryMiB: 1700, capacityGiB: 8).memoryWithinBound(on: device).memoryMiB == 1728)
+        #expect(Guest(cores: 2, memoryMiB: 100, capacityGiB: 8).memoryWithinBound(on: device).memoryMiB == 512)
+        #expect(Guest(cores: 2, memoryMiB: 1024, capacityGiB: 8).memoryWithinBound(on: device).memoryMiB == 1024)
+    }
+
+    @Test func raisingVCPUsBringsMemoryDownInStepsAndLoweringLeavesIt() {
+        let device = host(limited, processors: 4)
+        var guest = Guest(cores: 1, memoryMiB: 2048, capacityGiB: 8)
+        guest.setCores(2, on: device)
+        #expect(guest.cores == 2 && guest.memoryMiB == 1920)
+        guest.setCores(3, on: device)
+        #expect(guest.memoryMiB == 1728)
+        guest.setCores(4, on: device)
+        #expect(guest.memoryMiB == 1536)
+        #expect(guest.memoryMiB % Limits.memoryStepMiB == 0)
+        // Lowering does not give memory back.
+        guest.setCores(1, on: device)
+        #expect(guest.cores == 1 && guest.memoryMiB == 1536)
+        // Raising with memory already below the new bound leaves it too.
+        var small = Guest(cores: 1, memoryMiB: 1024, capacityGiB: 8)
+        small.setCores(4, on: device)
+        #expect(small.memoryMiB == 1024)
+    }
+
+    @Test func anAutomationLaunchStatesItsSizeUnclamped() {
+        let device = host(limited, processors: 4)
+        var overrides = LaunchOverrides()
+        overrides.memoryMiB = 4096
+        overrides.vCPUCount = 4
+        let stated = overrides.applied(to: Guest.fresh(on: device), on: device)
+        #expect(stated.cores == 4 && stated.memoryMiB == 4096)
+        // A launch that states only vCPUs takes the stored size within the
+        // bound of the count it states.
+        var onlyCPUs = LaunchOverrides()
+        onlyCPUs.vCPUCount = 4
+        let stored = Guest(cores: 1, memoryMiB: 2048, capacityGiB: 8)
+        #expect(onlyCPUs.applied(to: stored, on: device).memoryMiB == 1536)
+        // And a launch that states nothing clamps what is stored.
+        let big = Guest(cores: 4, memoryMiB: 3072, capacityGiB: 8)
+        #expect(LaunchOverrides().applied(to: big, on: device).memoryMiB == 1536)
     }
 
     @Test func theRuntimeAcceptsEvery64MiBInItsRange() {
@@ -84,8 +148,9 @@ struct MemoryPolicyTests {
         #expect(!MemoryPolicy.runtimeAccepts(4160))
     }
 
-    @Test func differentTermsMoveTheRuler() {
-        let roomier = MemoryTerms(appMiB: 82, engineMiB: 400, headroomMiB: 200, graphicsFloorMiB: 384)
-        #expect(MemoryPolicy(limitMiB: 2867, terms: roomier).recommendedMaximumMiB > mini.recommendedMaximumMiB)
+    @Test func theBoundIsWordedWithTheCountWhereTheLimitMattersOnly() {
+        #expect(Formats.memoryBound(4096, vCPUs: 10) == "Up to 4 GB")
+        #expect(Formats.memoryBound(1536, vCPUs: 4) == "Up to 1.5 GB with 4 vCPUs")
+        #expect(Formats.memoryBound(2048, vCPUs: 1) == "Up to 2 GB with 1 vCPU")
     }
 }

@@ -173,7 +173,7 @@ struct ControlsPanel: View {
             value: guest.cores == 1 ? "1 vCPU" : "\(guest.cores) vCPUs"
         ) {
             Ruler(
-                index: Binding(get: { guest.cores - 1 }, set: { guest.cores = $0 + 1 }),
+                index: Binding(get: { guest.cores - 1 }, set: { guest.setCores($0 + 1, on: host) }),
                 count: host.processorCount,
                 label: { "\($0 + 1)" },
                 accessibilityName: "Processor"
@@ -184,7 +184,11 @@ struct ControlsPanel: View {
     }
 
     private var memory: some View {
-        let stops = host.memory.stops
+        // The picker follows the vCPU count live: more vCPUs hold more of the
+        // process's memory, so the top of the ruler falls as the count rises.
+        let stops = host.memory.stops(vCPUs: guest.cores)
+        let top = stops.last ?? Limits.minimumMemoryMiB
+        let steps = (1024 - Limits.minimumMemoryMiB) / Limits.memoryStepMiB
         return ControlRow(title: "Memory", symbol: "memorychip", value: Formats.memory(guest.memoryMiB)) {
             Ruler(
                 index: Binding(
@@ -192,12 +196,14 @@ struct ControlsPanel: View {
                     set: { guest.memoryMiB = stops[min(max($0, 0), stops.count - 1)] }
                 ),
                 count: stops.count,
-                majorEvery: 4,
+                majorEvery: 1024 / Limits.memoryStepMiB,
+                majorOffset: steps,
+                minorEvery: 256 / Limits.memoryStepMiB,
                 label: { Formats.memoryNumber(stops[$0]) },
                 accessibilityName: "Memory in gigabytes"
             )
         } note: {
-            Text("Up to \(Formats.memory(stops.last ?? Limits.minimumMemoryMiB)) on this \(host.name)")
+            Text("\(Formats.memoryBound(top, vCPUs: guest.cores)) on this \(host.name)")
                 .foregroundStyle(.secondary)
         }
     }

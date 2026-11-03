@@ -68,9 +68,9 @@ struct LaunchOverridesTests {
         overrides.capacityGiB = 24
         let host = HostDevice(
             name: "iPad", processorCount: 4,
-            memory: MemoryPolicy(limitMiB: 6000), freeStorageBytes: 200_000_000_000
+            memory: MemoryPolicy(maximumsMiB: [4096, 4096, 3840, 3776]), freeStorageBytes: 200_000_000_000
         )
-        let guest = overrides.applied(to: Guest.fresh(on: host), processorCount: 4)
+        let guest = overrides.applied(to: Guest.fresh(on: host), on: host)
         #expect(guest.cores == 4)
         #expect(guest.memoryMiB == 2048)
         #expect(guest.effectiveCapacityGiB >= 24)

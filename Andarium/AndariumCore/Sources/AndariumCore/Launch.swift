@@ -50,11 +50,18 @@ public struct LaunchOverrides: Equatable, Sendable {
     public var isEmpty: Bool { self == LaunchOverrides() }
 
     /// The guest as this launch asks for it. A guest not yet created takes
-    /// the capacity at once; an existing one can only grow.
-    public func applied(to guest: Guest, processorCount: Int) -> Guest {
+    /// the capacity at once; an existing one can only grow. A memory size the
+    /// environment states is kept as stated, for automation; any other is
+    /// taken within the bound of the vCPU count the guest then has, as a
+    /// stored size is on load.
+    public func applied(to guest: Guest, on host: HostDevice) -> Guest {
         var guest = guest
-        if let vCPUCount { guest.cores = min(vCPUCount, max(processorCount, 1)) }
-        if let memoryMiB { guest.memoryMiB = memoryMiB }
+        if let vCPUCount { guest.cores = min(vCPUCount, host.processorCount) }
+        if let memoryMiB {
+            guest.memoryMiB = memoryMiB
+        } else {
+            guest = guest.memoryWithinBound(on: host)
+        }
         if let capacityGiB { guest.setCapacity(capacityGiB) }
         return guest
     }

@@ -17,7 +17,7 @@ private let r1 = identity("r1", build: 100)
 private let r2 = identity("r2", build: 200)
 private let r3 = identity("r3", build: 300)
 private let host = HostDevice(
-    name: "iPad", processorCount: 6, memory: MemoryPolicy(limitMiB: 5000), freeStorageBytes: 40_000_000_000
+    name: "iPad", processorCount: 6, memory: MemoryPolicy(maximumsMiB: [4096]), freeStorageBytes: 40_000_000_000
 )
 
 private func makeDirectory() throws -> URL {

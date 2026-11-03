@@ -68,7 +68,9 @@ struct AppEntry {
         } catch {
             problem = problem ?? "Android\u{2019}s settings could not be read: \(error.localizedDescription)"
         }
-        guest = guest.map { launch.applied(to: $0, processorCount: host.processorCount) }
+        // A stored memory size above the bound of its vCPU count comes down to
+        // it; a size the launch states stays as stated.
+        guest = guest.map { launch.applied(to: $0, on: host) }
 
         let model = AppModel(
             guest: guest, host: host, system: system, capabilities: .device,
@@ -100,7 +102,7 @@ struct AppEntry {
         let launch = overrides
         guard launch.start != nil || launch.erase else { return }
         if model.guest == nil {
-            model.create(launch.applied(to: Guest.fresh(on: model.host), processorCount: model.host.processorCount))
+            model.create(launch.applied(to: Guest.fresh(on: model.host), on: model.host))
             guard await Self.idle(model) else { return }
         }
         if launch.erase {
@@ -152,35 +154,27 @@ struct AppEntry {
     static func hostDevice() -> HostDevice {
         let info = ProcessInfo.processInfo
         let name: String
-        let limitMiB: Int
         if info.isiOSAppOnMac {
-            // A Mac has no per-application memory limit to read; half its
-            // memory, up to the largest iPad's, is what the policy plans for.
             name = "Mac"
-            limitMiB = min(Int(info.physicalMemory / 1_048_576) / 2, 12_288)
         } else {
             name = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
-            limitMiB = launchLimitMiB()
         }
         return HostDevice(
             name: name, processorCount: info.activeProcessorCount,
-            memory: MemoryPolicy(limitMiB: limitMiB), freeStorageBytes: freeStorageBytes()
+            memory: memoryPolicy(processorCount: info.activeProcessorCount),
+            freeStorageBytes: freeStorageBytes(), isMac: info.isiOSAppOnMac
         )
     }
 
-    /// L: what iOS lets the application use, which is what it has left plus
-    /// what it already holds, read at launch before the guest exists.
-    private static func launchLimitMiB() -> Int {
-        let available = Int(os_proc_available_memory())
-        var info = task_vm_info_data_t()
-        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
-        let status = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
-            }
+    /// The most guest RAM at each vCPU count: the runtime's own budget
+    /// formula, answered by the loader as it is for Kernarium, against the
+    /// memory limit the system sets this process (none on a Mac) and the
+    /// launch parameters.
+    static func memoryPolicy(processorCount: Int) -> MemoryPolicy {
+        let parameters = kernarium_runtime_loader_launch_memory_set()
+        return MemoryPolicy(processorCount: processorCount) { count in
+            Int(kernarium_runtime_loader_maximum_guest_memory_mib(UInt32(count), parameters))
         }
-        let footprint = status == KERN_SUCCESS ? Int(info.phys_footprint) : 0
-        return max((available + footprint) / 1_048_576, 1024)
     }
 
     static func freeStorageBytes() -> UInt64 {
