@@ -681,14 +681,20 @@ renderer](graphics.md#ios-simulator-software-renderer).
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
 Xcode. `--sdk device` (the default) and `--sdk simulator` choose the slices, and
 both together give XCFrameworks with an `ios-arm64` and an `ios-arm64-simulator`
-slice; no Simulator product is built for x86_64, and both Xcode projects exclude
-that architecture for the Simulator SDK. KosmicKrisp has a device slice alone, so the app targets embed it with a
+slice. No Simulator product is built for x86_64: both Xcode projects exclude
+that architecture for the Simulator SDK, a concrete Simulator destination
+(`-destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)'`) builds that
+device's arm64 alone, and a generic Simulator destination also builds the Swift
+packages for x86_64 unless `EXCLUDED_ARCHS=x86_64` is on the `xcodebuild`
+command line, which reaches package targets that a project setting does not.
+KosmicKrisp has a device slice alone, so the app targets embed it with a
 Run Script phase, `Kernarium/scripts/embed-device-framework.sh`, which embeds it
-for an `iphoneos` build and nothing for the Simulator. For the device it also
-packages the Apple battery provider's archive and the hardware video encoder's,
-as the Android runtime links them, as `HostBattery.xcframework` and
-`HostVideoEncoder.xcframework`; only `KernariumTests` links them, so the test
-process reaches each without loading a second runtime.
+for an `iphoneos` build and nothing for the Simulator. It also packages the
+Apple battery provider's archive and the video encoder's, as the Android
+runtime links them, as `HostBattery.xcframework` and
+`HostVideoEncoder.xcframework`, with a slice for each packaged SDK; only
+`KernariumTests` links them, so the test process reaches each without loading a
+second runtime.
 
 The Simulator renders with llvmpipe, which runs one rasterizer thread per host
 core; `LP_NUM_THREADS` caps them for a launch (`SIMCTL_CHILD_LP_NUM_THREADS=2`
@@ -774,6 +780,20 @@ up to four tests fail because of how the Mac hosts an iPad app:
 - `anEndedRunIsNeverStartedAgain` also stops the guest the application boots
   as it launches, so it fails when the launch has no image to boot, as a run
   whose `TEST_RUNNER_KERNARIUM_ROOTFS` names a missing file does.
+
+`KernariumTests` and `KernariumUITests` also run in the iOS Simulator, for UI
+tests of the application, through `Kernarium/scripts/run-ios-simulator-tests.sh`
+after the Simulator slices are packaged. The script turns on the Simulator's
+application accessibility preference, which the keyboard tests need for the
+reason the Mac fails them, and links the accepted KDE desktop image into the
+container, for `anEndedRunIsNeverStartedAgain`, which needs a guest to boot,
+and so that the application's runtime is the Linux one `HostGraphicsStackTests`
+select.
+`HostVideoEncoderTests` skip there, as the Simulator has no hardware video
+encoder, and `HostGraphicsStackTests` states the software renderer's contract
+(llvmpipe, no Vulkan driver) in place of Zink on KosmicKrisp.
+`KernariumAutomation` is the iPad's automation host and builds for the device
+alone.
 
 ### Andarium
 

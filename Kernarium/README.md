@@ -518,10 +518,13 @@ application plays no sound of its own.
 The Simulator build is for UI tests of the application and its Android guest.
 Configure and build a `kernarium-ios-simulator*` runtime preset, package it with
 `scripts/package-ios-frameworks.sh --sdk simulator` (`--sdk device` beside it
-gives XCFrameworks that both SDKs build against) and build the scheme for
-`generic/platform=iOS Simulator`. The Simulator product is arm64 alone, like
-its packaged slices, so the project excludes x86_64 for the Simulator SDK
-(`EXCLUDED_ARCHS[sdk=iphonesimulator*]`) and the build needs no `ARCHS`. The
+gives XCFrameworks that both SDKs build against) and build the scheme for a
+concrete Simulator, or run its tests with `scripts/run-ios-simulator-tests.sh`.
+The Simulator product is arm64 alone, like its packaged slices: a concrete
+destination builds that device's architecture, and the project excludes x86_64
+for the Simulator SDK (`EXCLUDED_ARCHS[sdk=iphonesimulator*]`); a generic
+Simulator destination needs `EXCLUDED_ARCHS=x86_64` as well
+([`docs/testing.md`](../docs/testing.md#apple-builds-and-kernarium)). The
 GPU prefix is the software one, at
 `.build/dependencies/apple-gpu-vulkan-experiment/ios-simulator-arm64` unless
 `KERNARIUM_SIMULATOR_GPU_PREFIX` names another (`KERNARIUM_DEVICE_GPU_PREFIX`
@@ -541,13 +544,15 @@ Each script documents its options in `--help` or its header:
   `--automation` the automation Linux runtime, with `--android-automation`
   the automation Android runtime, with `--runtimes android` the Android
   runtime alone (for Andarium; the output directory is shared, so package the
-  full set again before building Kernarium), and, for the device, the host
-  battery and video encoder archives only `KernariumTests` links;
+  full set again before building Kernarium), and the host battery and video
+  encoder archives, a slice for each SDK, which only `KernariumTests` links;
 - `embed-device-framework.sh` is the Run Script phase that embeds the
   device-only `KosmicKrisp.xcframework` for an `iphoneos` build and nothing for
   the Simulator, because an XCFramework in an Embed Frameworks phase needs a
   slice for every SDK the target builds and a platform filter cannot name the
   device apart from the Simulator;
+- `run-ios-simulator-tests.sh` builds `KernariumTests` and `KernariumUITests`
+  for the iOS Simulator and runs them in one iPad Simulator (`--help`);
 - `make-guest-bundle.py` assembles an Android `.kern` bundle (system disk,
   layout, kernel command line) from an installed release;
 - `repro-android-hold-mac.py` sends an Android guest through the background
