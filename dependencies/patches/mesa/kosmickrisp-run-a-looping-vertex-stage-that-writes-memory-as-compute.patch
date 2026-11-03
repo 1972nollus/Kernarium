@@ -218,10 +218,10 @@ index cb572c11c52ba8b3ee23e9bb69bd78bd5ad7cd5f..76564e8aede311576535f39219757f2e
  
  extern enum kk_debug kk_mesa_debug_flags;
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 42c4ac42c180ddd961fc2bf7df214a23e3869a4f..5730763a88564aa48fc9319879e8793d7d77728a 100644
+index 0c7f83164d674f34a3394e8010f1b39a9681d34d..830f3ad872204d5d0bc7907d770e39adda9e15da 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -3919,6 +3919,7 @@ kk_create_tes_transform_feedback_raster(
+@@ -3920,6 +3920,7 @@ kk_create_tes_transform_feedback_raster(
     }
  
     const struct nir_xfb_info *xfb = tes->xfb_info;
@@ -229,7 +229,7 @@ index 42c4ac42c180ddd961fc2bf7df214a23e3869a4f..5730763a88564aa48fc9319879e8793d
     const unsigned vertices_per_primitive = mesa_vertices_per_prim(primitive);
     nir_def *input_primitives = kk_load_xfb_geometry_param(
        &b, gp, offsetof(struct poly_geometry_params, grid[0]), 32);
-@@ -3928,7 +3929,7 @@ kk_create_tes_transform_feedback_raster(
+@@ -3929,7 +3930,7 @@ kk_create_tes_transform_feedback_raster(
     nir_def *capacity = kk_load_xfb_geometry_param(
        &b, gp, offsetof(struct poly_geometry_params, xfb_verts[0]), 32);
     nir_push_if(&b, nir_ult(&b, index, capacity));
@@ -238,7 +238,7 @@ index 42c4ac42c180ddd961fc2bf7df214a23e3869a4f..5730763a88564aa48fc9319879e8793d
        const nir_xfb_output_info output = xfb->outputs[i];
        if (xfb->buffer_to_stream[output.buffer] != 0)
           continue;
-@@ -3967,14 +3968,14 @@ kk_create_transform_feedback_passthrough(
+@@ -3968,14 +3969,14 @@ kk_create_transform_feedback_passthrough(
     const nir_shader *vs, enum mesa_prim primitive,
     struct poly_gs_info *gs_info, nir_shader **pre_gs_out)
  {
@@ -255,7 +255,7 @@ index 42c4ac42c180ddd961fc2bf7df214a23e3869a4f..5730763a88564aa48fc9319879e8793d
     struct poly_passthrough_gs_key *key = alloca(key_size);
     memset(key, 0, key_size);
  
-@@ -3990,10 +3991,11 @@ kk_create_transform_feedback_passthrough(
+@@ -3991,10 +3992,11 @@ kk_create_transform_feedback_passthrough(
           output->type != nir_type_invalid ? output->type : nir_type_uint32;
     }
  
@@ -271,7 +271,7 @@ index 42c4ac42c180ddd961fc2bf7df214a23e3869a4f..5730763a88564aa48fc9319879e8793d
  
     nir_builder builder = nir_builder_init_simple_shader(
        MESA_SHADER_GEOMETRY, vs->options, "transform_feedback_passthrough");
-@@ -4833,6 +4835,48 @@ kk_shader_render_pipeline(struct kk_device *dev, struct kk_shader *vs,
+@@ -4860,6 +4862,48 @@ kk_shader_render_pipeline(struct kk_device *dev, struct kk_shader *vs,
     return state;
  }
  
@@ -320,7 +320,7 @@ index 42c4ac42c180ddd961fc2bf7df214a23e3869a4f..5730763a88564aa48fc9319879e8793d
  static VkResult
  kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                            struct vk_shader_compile_info *infos,
-@@ -4953,6 +4997,9 @@ kk_precompile_library_stages(struct kk_device *dev, uint32_t shader_count,
+@@ -4980,6 +5024,9 @@ kk_precompile_library_stages(struct kk_device *dev, uint32_t shader_count,
           return;
        if (infos[i].nir->xfb_info != NULL)
           return;
@@ -330,7 +330,7 @@ index 42c4ac42c180ddd961fc2bf7df214a23e3869a4f..5730763a88564aa48fc9319879e8793d
        if (infos[i].stage == MESA_SHADER_VERTEX) {
           attribs_read = container_of(deferred[i], struct kk_shader, vk)
                             ->info.vs.attribs_read;
-@@ -5166,6 +5213,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -5193,6 +5240,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
     /* Determine if the pipeline contains tessellation stages */
     bool tess = false;
     bool transform_feedback_emulation = false;
@@ -338,7 +338,7 @@ index 42c4ac42c180ddd961fc2bf7df214a23e3869a4f..5730763a88564aa48fc9319879e8793d
     uint32_t geometry_shader = UINT32_MAX;
     uint32_t tess_eval_shader = UINT32_MAX;
     for (uint32_t i = 0u; i < shader_count; ++i) {
-@@ -5188,6 +5236,20 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -5215,6 +5263,20 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        const nir_shader *producer = infos[xfb_shader].nir;
        transform_feedback_emulation = producer->xfb_info &&
                                       producer->xfb_info->output_count > 0;
@@ -359,7 +359,7 @@ index 42c4ac42c180ddd961fc2bf7df214a23e3869a4f..5730763a88564aa48fc9319879e8793d
     }
  
     const enum mesa_prim line_raster_prim =
-@@ -5663,6 +5725,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -5690,6 +5752,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
  
        if (i == 0 && transform_feedback_emulation) {
           shaders[i]->info.vs.transform_feedback_emulation = true;
@@ -368,7 +368,7 @@ index 42c4ac42c180ddd961fc2bf7df214a23e3869a4f..5730763a88564aa48fc9319879e8793d
        }
     }
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 55d6a74acf65665013826704d1c4a31c0b8d46f5..836a4df4345af0418e1612f264f0a4ff95c1d1df 100644
+index 0fe1e8a99b062c08deddf8dff0b84e0ffbcb51ed..4817cc67bcc102a09ada72ff4f43402de31c33d2 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -99,6 +99,8 @@ struct kk_shader_info {
@@ -380,7 +380,7 @@ index 55d6a74acf65665013826704d1c4a31c0b8d46f5..836a4df4345af0418e1612f264f0a4ff
           bool geometry_shader_emulation;
           /* The emulated geometry shader writes the layer, so its raster
            * draw selects one. KK_WORKAROUND_18 needs to know. */
-@@ -287,6 +289,12 @@ nir_def *kk_nir_load_root(struct nir_builder *b, unsigned num_components,
+@@ -292,6 +294,12 @@ nir_def *kk_nir_load_root(struct nir_builder *b, unsigned num_components,
                            unsigned bit_size, nir_def *offset, unsigned align);
  
  bool kk_nir_lower_poly(struct nir_shader *nir, bool pipeline_statistics);

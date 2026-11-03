@@ -138,10 +138,10 @@ index 92c532e4137a6ee7e8e71881d4745b34252fb0e4..87e93c0a930beb883b7f3ddbd05d3b9c
        NSError *error;
        id<MTLComputePipelineState> pipeline = [comp newComputePipelineStateWithDescriptor:desc compilerTaskOptions:nil
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 6821a7e4ed4128309533871fefd8c5fa0ca38b77..7cd60977abe8119d28fc8a7112813ed0091ac4c6 100644
+index f04574b19f162d29a290723989b6feb4207e0f99..6a5e3ea4f75f3cc99baec3b0866ade5d4e7fea43 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -3462,10 +3462,32 @@ get_empty_nir(struct kk_device *dev, mesa_shader_stage stage,
+@@ -3463,10 +3463,32 @@ get_empty_nir(struct kk_device *dev, mesa_shader_stage stage,
     return nir;
  }
  
@@ -175,7 +175,7 @@ index 6821a7e4ed4128309533871fefd8c5fa0ca38b77..7cd60977abe8119d28fc8a7112813ed0
                              mtl_compute_pipeline_state **pipe)
  {
     mtl_library *library = mtl_new_library(
-@@ -3477,7 +3499,9 @@ kk_compile_compute_pipeline(struct kk_device *device,
+@@ -3478,7 +3500,9 @@ kk_compile_compute_pipeline(struct kk_device *device,
     mtl_function_descriptor *function =
        mtl_new_library_function_descriptor(library, data->entrypoint_name);
     mtl_compute_pipeline_state *pipeline = mtl_new_compute_pipeline_state(
@@ -186,7 +186,7 @@ index 6821a7e4ed4128309533871fefd8c5fa0ca38b77..7cd60977abe8119d28fc8a7112813ed0
     mtl_release(function);
     mtl_release(library);
  
-@@ -3870,7 +3894,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+@@ -3871,7 +3895,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
              ? vs->info.vs.tess_local_thread_size
              : 64u;
        result = kk_compile_compute_pipeline(device, &vs->msl_data[vs_stage],
@@ -195,7 +195,7 @@ index 6821a7e4ed4128309533871fefd8c5fa0ca38b77..7cd60977abe8119d28fc8a7112813ed0
                                             &pipe->gfx.pre_render[i]);
  
        if (result != VK_SUCCESS)
-@@ -3880,7 +3904,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+@@ -3881,7 +3905,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
  
     if (vs->info.vs.transform_feedback_emulation) {
        result = kk_compile_compute_pipeline(
@@ -204,7 +204,7 @@ index 6821a7e4ed4128309533871fefd8c5fa0ca38b77..7cd60977abe8119d28fc8a7112813ed0
           &pipe->gfx.transform_feedback_pre_gs);
        if (result != VK_SUCCESS)
           return VK_ERROR_INVALID_SHADER_NV;
-@@ -3888,7 +3912,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+@@ -3889,7 +3913,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
  
     if (vs->info.vs.line_raster_materialize) {
        result = kk_compile_compute_pipeline(
@@ -213,7 +213,7 @@ index 6821a7e4ed4128309533871fefd8c5fa0ca38b77..7cd60977abe8119d28fc8a7112813ed0
           &pipe->gfx.line_raster_materialize);
        if (result != VK_SUCCESS)
           return VK_ERROR_INVALID_SHADER_NV;
-@@ -3896,7 +3920,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+@@ -3897,7 +3921,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
  
     if (vs->info.vs.line_raster_stipple || vs->info.vs.line_raster_procedural) {
        result = kk_compile_compute_pipeline(
@@ -222,7 +222,7 @@ index 6821a7e4ed4128309533871fefd8c5fa0ca38b77..7cd60977abe8119d28fc8a7112813ed0
           &pipe->gfx.line_stipple_prefix);
        if (result != VK_SUCCESS)
           return VK_ERROR_INVALID_SHADER_NV;
-@@ -3904,21 +3928,22 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+@@ -3905,21 +3929,22 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
  
     if (vs->info.vs.geometry_shader_emulation) {
        result = kk_compile_compute_pipeline(device, &vs->geometry_main_msl, 64,
@@ -248,7 +248,7 @@ index 6821a7e4ed4128309533871fefd8c5fa0ca38b77..7cd60977abe8119d28fc8a7112813ed0
        if (result != VK_SUCCESS)
           return VK_ERROR_INVALID_SHADER_NV;
     }
-@@ -4651,7 +4676,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4677,7 +4702,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                                      s->info.cs.local_size.z;
        result =
           kk_compile_compute_pipeline(dev, &s->msl_data[MESA_SHADER_COMPUTE],
@@ -258,7 +258,7 @@ index 6821a7e4ed4128309533871fefd8c5fa0ca38b77..7cd60977abe8119d28fc8a7112813ed0
     } else {
        uint32_t skipped_shaders = 0;
        if (transform_feedback_pre_gs_shader != UINT32_MAX)
-@@ -5711,7 +5737,7 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -5843,7 +5869,7 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
                                      shader->info.cs.local_size.z;
        result = kk_compile_compute_pipeline(
           dev, &shader->msl_data[MESA_SHADER_COMPUTE], local_size_threads,

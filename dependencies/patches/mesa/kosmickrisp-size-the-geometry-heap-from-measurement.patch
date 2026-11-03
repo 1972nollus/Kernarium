@@ -934,10 +934,10 @@ index 16ec133e7201e835ec4678e0340a00a572616b12..b6abffab30bf792984aa9890ae4d44b0
                                                mtl_heap *heap);
  void kk_device_add_buffer_to_residency_set(struct kk_device *dev,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index b1885fd178995f7796b09a460fc3c069f702dffb..86edf75c8f325ef66f743cd96e0d215224bac228 100644
+index 17fa07010f1e2ce21974d0d7cdb07f28529b0b27..95605adc464b416be9f6a530a222b13866e3434d 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -1527,6 +1527,65 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
+@@ -1528,6 +1528,65 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
     vk_shader_free(&dev->vk, pAllocator, &shader->vk);
  }
  
@@ -1003,7 +1003,7 @@ index b1885fd178995f7796b09a460fc3c069f702dffb..86edf75c8f325ef66f743cd96e0d2152
  static void
  gather_shader_info(struct kk_shader *shader, nir_shader *nir,
                     const struct vk_graphics_pipeline_state *state)
-@@ -1693,6 +1752,7 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1694,6 +1753,7 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
            * For the non-emulated path we need to subtract base_instance... */
           NIR_PASS(_, nir, msl_nir_lower_instance_id);
     } else if (stage == MESA_SHADER_TESS_CTRL) {
@@ -1012,7 +1012,7 @@ index b1885fd178995f7796b09a460fc3c069f702dffb..86edf75c8f325ef66f743cd96e0d2152
  
        shader->info.tess.info.ccw = nir->info.tess.ccw;
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index a80f55c257a7b855517fe8f6f9e76e888bc48f15..55d6a74acf65665013826704d1c4a31c0b8d46f5 100644
+index 138de17daa7a8769e539537b27a22048f7f0b9d6..0fe1e8a99b062c08deddf8dff0b84e0ffbcb51ed 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -173,6 +173,12 @@ struct kk_shader_info {

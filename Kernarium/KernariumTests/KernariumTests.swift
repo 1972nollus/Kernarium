@@ -798,11 +798,11 @@ struct KernariumTests {
     /// The iPad mini 6's 2,867 MiB with main's launch set (A, E_rest and S
     /// of zero), the rows the runtime's own formula gives at 1 through 6 vCPUs.
     private static let mainGuestMemoryRows = [
-        1: 2240, 2: 2240, 3: 2176, 4: 2176, 5: 2112, 6: 2112,
+        1: 2304, 2: 2304, 3: 2240, 4: 2240, 5: 2176, 6: 2176,
     ]
     private static let mainGuestMemoryBound: EmulatorConfiguration
         .GuestMemoryBound = { vCPUCount, _, _, _ in
-        mainGuestMemoryRows[vCPUCount] ?? 2112
+        mainGuestMemoryRows[vCPUCount] ?? 2176
     }
 
     @Test
@@ -818,22 +818,22 @@ struct KernariumTests {
         let none = kernarium_launch_memory_set(
             application_mib: 0, engine_mib: 0, headroom_mib: 0
         )
-        #expect(maximums(none) == [2240, 2240, 2176, 2176, 2112, 2112, 2112, 2112])
+        #expect(maximums(none) == [2304, 2304, 2240, 2240, 2176, 2176, 2176, 2176])
         // The candidate sets of the user's pending choice.
         #expect(
             maximums(kernarium_launch_memory_set(
                 application_mib: 56, engine_mib: 563, headroom_mib: 64
-            )) == [1600, 1536, 1536, 1472, 1472, 1472, 1408, 1408]
+            )) == [1664, 1600, 1536, 1536, 1536, 1536, 1472, 1472]
         )
         #expect(
             maximums(kernarium_launch_memory_set(
                 application_mib: 64, engine_mib: 604, headroom_mib: 128
-            )) == [1472, 1408, 1408, 1344, 1344, 1344, 1280, 1280]
+            )) == [1536, 1472, 1472, 1408, 1408, 1408, 1344, 1344]
         )
         #expect(
             maximums(kernarium_launch_memory_set(
                 application_mib: 80, engine_mib: 644, headroom_mib: 192
-            )) == [1344, 1344, 1280, 1216, 1216, 1216, 1216, 1216]
+            )) == [1408, 1344, 1344, 1280, 1280, 1280, 1216, 1216]
         )
         // No limit: the whole range, whatever the vCPU count.
         for vCPUs: UInt32 in [0, 1, 6, 8, 64] {
@@ -889,9 +889,9 @@ struct KernariumTests {
 
         // A stored size is taken down to the maximum of the loaded count and
         // kept below it, whatever the count.
-        defaults.set(2240, forKey: "emulator.guestMemoryMiB")
+        defaults.set(2304, forKey: "emulator.guestMemoryMiB")
         for (vCPUs, expected) in [
-            (1, 2240), (2, 2240), (3, 2176), (4, 2176), (5, 2112), (6, 2112),
+            (1, 2304), (2, 2304), (3, 2240), (4, 2240), (5, 2176), (6, 2176),
         ] {
             defaults.set(vCPUs, forKey: "emulator.vCPUCount")
             #expect(
@@ -945,34 +945,34 @@ struct KernariumTests {
     @Test
     func raisingTheVCPUCountTakesGuestMemoryDownToTheNewMaximum() {
         var configuration = EmulatorConfiguration(
-            vCPUCount: 1, guestMemoryMiB: 2240, overlaySizeGiB: 8,
+            vCPUCount: 1, guestMemoryMiB: 2304, overlaySizeGiB: 8,
             androidDiskSizeGiB: 8, rootfsFilename: "x.erofs",
             retinaMode: false, autoResizeGuest: true, androidBootMode: .automatic
         )
         let bound = Self.mainGuestMemoryBound
         #expect(
             configuration.maximumGuestMemoryMiB(vCPUCount: 1, bound: bound) ==
-                2240
+                2304
         )
         #expect(
             configuration.maximumGuestMemoryMiB(vCPUCount: 6, bound: bound) ==
-                2112
+                2176
         )
 
         // Raising the count clamps, in the stepper's steps.
         configuration.vCPUCount = 3
         configuration.vCPUCountChanged(from: 1, bound: bound)
-        #expect(configuration.guestMemoryMiB == 2176)
+        #expect(configuration.guestMemoryMiB == 2240)
         configuration.vCPUCount = 6
         configuration.vCPUCountChanged(from: 3, bound: bound)
-        #expect(configuration.guestMemoryMiB == 2112)
+        #expect(configuration.guestMemoryMiB == 2176)
         #expect(configuration.guestMemoryMiB % 64 == 0)
 
         // Lowering it leaves the size alone, even above the new maximum of a
         // size the environment stated.
         configuration.vCPUCount = 1
         configuration.vCPUCountChanged(from: 6, bound: bound)
-        #expect(configuration.guestMemoryMiB == 2112)
+        #expect(configuration.guestMemoryMiB == 2176)
         configuration.guestMemoryMiB = 4096
         configuration.vCPUCount = 1
         configuration.vCPUCountChanged(from: 2, bound: bound)

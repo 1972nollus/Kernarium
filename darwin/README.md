@@ -242,11 +242,15 @@ guest memory, at least 128 MiB, and at most an eighth of the footprint the
 host lets the process reach where it sets one (iOS; on macOS the launch states
 it with `--memory-limit=` or `UML_MEMORY_LIMIT_MIB`, and otherwise there is
 none), or the size `--gadget-cache-budget=` gives. A process that never sets one, such as a
-unit test, keeps 1 GiB. No measured workload was asked to shed: on four vCPUs
-and 8 GiB the largest, x86 multi-core Geekbench, peaked at a seventh of its
-2 GiB budget, and at the iPad's geometry WebGL Aquarium, the least headroom,
-peaked at 47% of 358 MiB (G282). A census build reports the budget, the bytes
-charged and the reliefs on every `E` record.
+unit test, keeps 1 GiB. No measured workload was asked to shed under that
+budget: on four vCPUs and 8 GiB the largest, x86 multi-core Geekbench, peaked
+at a seventh of its 2 GiB budget, and at the iPad's geometry WebGL Aquarium,
+the least headroom, peaked at 47% of 358 MiB (G282). Where a limit is stated
+the vCPU count's cap (`runtime/guest_memory_budget.hpp`,
+[architecture](../docs/architecture.md#memory-and-executable-code)) lowers the
+budget further, and the Android and KDE loads at their worst ceilings do shed
+under it. A census build reports the budget, the bytes charged and the reliefs
+on every `E` record.
 
 The budget in effect is also the gadget-cache term of the host GPU's budget
 ([architecture](../docs/architecture.md#memory-and-executable-code)): the
