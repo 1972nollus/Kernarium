@@ -554,6 +554,21 @@ each accepted connection to a guest port. `kernarium-adb-channel` covers the
 kernel arguments that carry an Android guest's adb key and the request that adbd
 not listen on TCP, and the limit on the whole kernel command line.
 
+`guest-vsock-stream` (integration) runs the device against a Linux guest's
+driver through the launcher's loopback forward, with a Python `AF_VSOCK` server
+in the guest: 64 MiB each way, four concurrent streams, a stalled reader at
+either end (the sender must be held back and a second stream must stay
+responsive), half-closes in both directions, a refused port, a suspend and
+resume in the middle of a stream, and a guest restart, which every open stream
+must read as its end. Every body is checked by SHA-256 and each direction's
+throughput is printed. `tests/integration/android/run_guest_android_adb_vsock.py`
+is the opt-in Android counterpart: it boots the accepted release with a vsock
+forward to adbd and drives the stock `adb` through it (`connect`, a pulled
+system APK installed with `install -r` and restored with `pm uninstall`, and
+`bugreport`), then checks that the TCP forward answers beside it. It needs the
+`macos-android17` executable, an installed release that carries the vsock
+kernel, and `adb`.
+
 `guest-restart` runs the macOS launcher through a guest that restarts itself.
 Under each of the gadgets and the JIT engine, one `uml-darwin` process boots,
 restarts twice and powers off, with the same pid throughout. The test loads a

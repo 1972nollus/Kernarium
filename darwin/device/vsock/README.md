@@ -145,4 +145,7 @@ seconds, and every waiting one is given up when the forwarder stops.
 and real socketpairs, no guest: the credit arithmetic, the open, refusal and
 timeout paths, stalls in both directions, half-closes, resets, the table's
 limit, the four rules above, and an echo run of several threads opening and
-closing at once.
+closing at once. `guest-vsock-stream` (integration) runs the same device
+against a Linux guest's driver: 64 MiB each way checked by SHA-256, four
+concurrent streams, a stalled reader at either end, half-closes, a refused
+port, a suspend and resume in the middle of a stream, and a guest restart.
