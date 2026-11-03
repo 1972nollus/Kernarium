@@ -4108,6 +4108,67 @@ def verify_debugging_defaults(android_root: Path) -> None:
             fail(f"BoardConfig.mk:{number} assigns a product property list, which is read-only there: {line.strip()}")
 
 
+def adb_secure_topic_problems(added: list[str]) -> list[str]:
+    """What the Cuttlefish topic must add to shared/device.mk so UML_ANDROID_KEEP_ADB_SECURE has a reader."""
+    problems = []
+    if "ifeq ($(UML_ANDROID_KEEP_ADB_SECURE),true)" not in added:
+        problems.append("the filter is not conditional on UML_ANDROID_KEEP_ADB_SECURE")
+    if "PRODUCT_PRODUCT_PROPERTIES := $(filter-out ro.adb.secure=%,$(PRODUCT_PRODUCT_PROPERTIES))" not in added:
+        problems.append("it does not filter ro.adb.secure out of PRODUCT_PRODUCT_PROPERTIES")
+    if "endif" not in added:
+        problems.append("the conditional is not closed")
+    return problems
+
+
+def lunch_topic_problems(patch: str) -> list[str]:
+    """The build/make topic must take both roomservice.py calls out of lunch and add none."""
+    lines = patch.splitlines()
+    removed = [line for line in lines if line.startswith("-") and not line.startswith("---") and "roomservice.py" in line]
+    added = [line for line in lines if line.startswith("+") and not line.startswith("+++") and "roomservice.py" in line]
+    problems = []
+    if len(removed) != 2:
+        problems.append(f"it removes {len(removed)} roomservice.py calls, not the two of lunch")
+    if added:
+        problems.append("it adds a roomservice.py call")
+    return problems
+
+
+def verify_adb_secure_and_lunch_topics(android_root: Path) -> None:
+    """The topics that make the product's ro.adb.secure and a failing lunch what the contracts say."""
+    keep = sorted((android_root / "patches/projects/p0001/series").glob("cuttlefish-let-a-product-keep-ro.adb.secure-*.patch"))
+    if len(keep) != 1:
+        fail(f"p0001 has {len(keep)} patches that read UML_ANDROID_KEEP_ADB_SECURE, not one")
+    text = keep[0].read_text()
+    added = [line[1:] for line in text.splitlines() if line.startswith("+") and not line.startswith("+++")]
+    problems = adb_secure_topic_problems(added)
+    if problems:
+        fail(f"{keep[0].name}: " + "; ".join(problems))
+    for label, edited in (
+        ("a filter that is always on", [line for line in added if "UML_ANDROID_KEEP_ADB_SECURE)" not in line]),
+        ("a filter of another property", [line.replace("ro.adb.secure=%", "persist.adb.tcp.port=%") for line in added]),
+        ("a conditional that is never closed", [line for line in added if line != "endif"]),
+    ):
+        if not adb_secure_topic_problems(edited):
+            fail(f"the Cuttlefish topic check accepts {label}")
+    lunch = sorted((android_root / "patches/projects/p0002/series").glob("build-never-fetch-device-trees-from-lunch.patch"))
+    if len(lunch) != 1:
+        fail(f"p0002 has {len(lunch)} lunch topics, not one")
+    patch = lunch[0].read_text()
+    problems = lunch_topic_problems(patch)
+    if problems:
+        fail(f"{lunch[0].name}: " + "; ".join(problems))
+    lines = patch.splitlines(keepends=True)
+    first = next((n for n, line in enumerate(lines) if line.startswith("-") and not line.startswith("---") and "roomservice.py" in line), None)
+    if first is None:
+        fail(f"{lunch[0].name} removes no roomservice.py call")
+    for label, edited in (
+        ("a patch that keeps a call", "".join(lines[:first] + lines[first + 1:])),
+        ("a patch that adds a call", patch + "+    vendor/lineage/build/tools/roomservice.py $product\n"),
+    ):
+        if edited == patch or not lunch_topic_problems(edited):
+            fail(f"the lunch topic check accepts {label}")
+
+
 def verify_hal_selections(android_root: Path) -> None:
     # The boot command line is the one writer of each graphics HAL selection,
     # so it must name the modules the target-files verifier expects.
@@ -4949,6 +5010,7 @@ def main() -> None:
     verify_media_codecs_overlay(android_root)
     verify_package_assertions(android_root)
     verify_debugging_defaults(android_root)
+    verify_adb_secure_and_lunch_topics(android_root)
     verify_pin_manifest(android_root / "tools/render-pin-manifest.py")
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_boot_image_fixtures(android_root / "tools/boot-image.py")

@@ -16,7 +16,11 @@ outside this repository.
 
 `build/prepare-sources.sh` is the only producer command allowed to use the
 network. It pins the Android source and the guest Mesa source. All patching,
-builds, verification, image assembly, and publication are offline.
+builds, verification, image assembly, and publication are offline. A
+`build/make` topic (route `p0002`) keeps that true of `lunch`: LineageOS's
+`roomservice.py`, which `lunch` ran for a product it could not configure and
+which reads a repository list from GitHub, is never called, so a product
+configuration error stops the build with its own message.
 
 The producer has three independent outputs:
 
