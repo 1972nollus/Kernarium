@@ -122,9 +122,95 @@ def make_fixture(root: Path) -> None:
                 "PRODUCT_BUNDLE_IDENTIFIER = org.example.App;",  # 5 pass
                 'PRODUCT_BUNDLE_IDENTIFIER = "$(PREFIX).App";',  # 6 pass
                 "PRODUCT_BUNDLE_IDENTIFIER = org.linux-um-darwin.App;",  # 7 pass
+                "DEVELOPMENT_TEAM = ${TEAM};",  # 8 pass
+                "DEVELOPMENT_TEAM = TEAM$(X);",  # 9 R3
             ]
         )
         + "\n",
+    )
+    # The canonical form of `xcprojformatter`: pretty printed, quoted keys
+    # with their conditions inside the quotes, string-array values.
+    write(
+        root,
+        "App.xcodeproj/project.xcproj",
+        "\n".join(
+            [
+                "{",  # 1
+                '  "targets": [',  # 2
+                "    {",  # 3
+                '      "build-settings": {',  # 4
+                '        "DEVELOPMENT_TEAM": "ABCDE12345",',  # 5 R3
+                '        "DEVELOPMENT_TEAM[sdk=iphoneos*]": "ABCDE12345",',  # 6 R3
+                '        "DEVELOPMENT_TEAM[sdk=iphoneos*]": [',  # 7
+                '          "ABCDE12345",',  # 8 R3
+                "        ],",  # 9
+                '        "DEVELOPMENT_TEAM": "",',  # 10 pass
+                '        "DEVELOPMENT_TEAM[config=Debug]": "$(TEAM)",',  # 11 pass
+                '        "DEVELOPMENT_TEAM[config=Release]": "${TEAM}",',  # 12 pass
+                '        "DEVELOPMENT_TEAM[sdk=iphoneos*]": [],',  # 13 pass
+                '        "PRODUCT_BUNDLE_IDENTIFIER": "com.acme.App",',  # 14 R3
+                '        "PRODUCT_BUNDLE_IDENTIFIER[config=Debug]": "com.acme.Debug",',  # 15 R3
+                '        "PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]": [',  # 16
+                '          "$(PREFIX).App",',  # 17 pass
+                '          "com.acme.App",',  # 18 R3
+                "        ],",  # 19
+                '        "PRODUCT_BUNDLE_IDENTIFIER": "org.example.App",',  # 20 pass
+                '        "PRODUCT_BUNDLE_IDENTIFIER": "$(PREFIX).App",',  # 21 pass
+                '        "PRODUCT_BUNDLE_IDENTIFIER": "${PREFIX}.App",',  # 22 pass
+                '        "PRODUCT_BUNDLE_IDENTIFIER": "org.linux-um-darwin.App",',  # 23 pass
+                '        "PRODUCT_BUNDLE_IDENTIFIER": "",',  # 24 pass
+                '        "INFOPLIST_KEY_PRODUCT_BUNDLE_IDENTIFIER": "com.acme.X",',  # 25 pass
+                '        "MY_DEVELOPMENT_TEAM": "ABCDE12345",',  # 26 pass
+                '        "DEVELOPMENT_TEAM_NAME": "ABCDE12345",',  # 27 pass
+                '        "PRODUCT_NAME": "com.acme.App",',  # 28 pass
+                '        "DEVELOPMENT_TEAM":',  # 29
+                '          "ABCDE12345",',  # 30 R3
+                "      },",
+                "    },",
+                "  ],",
+                "}",
+            ]
+        )
+        + "\n",
+    )
+    # Hand-written JSON5: unquoted and single-quoted keys and values, compact
+    # objects, comments, and an element list on one line.
+    write(
+        root,
+        "Compact.xcodeproj/project.xcproj",
+        "\n".join(
+            [
+                "{",  # 1
+                "  targets: [",  # 2
+                "    { 'build-settings': { DEVELOPMENT_TEAM: 'ABCDE12345' } },",  # 3 R3
+                "    { 'build-settings': {"
+                " 'DEVELOPMENT_TEAM[sdk=iphoneos*]': ['ABCDE12345'] } },",  # 4 R3
+                "    { 'build-settings': { PRODUCT_BUNDLE_IDENTIFIER: 'com.acme.App' } },",  # 5 R3
+                "    { 'build-settings': {"
+                " \"PRODUCT_BUNDLE_IDENTIFIER[config=Debug]\": 'com.acme.Debug' } },",  # 6 R3
+                "    { 'build-settings': { 'PRODUCT_BUNDLE_IDENTIFIER': [ // one",  # 7
+                "      'org.example.A', /* literal 'com.acme.B' */ 'com.acme.C' ] } },",  # 8 R3
+                "    { 'build-settings': { DEVELOPMENT_TEAM: '$(TEAM)',"
+                " PRODUCT_BUNDLE_IDENTIFIER: 'org.example.App' } },",  # 9 pass
+                "    { 'build-settings': { DEVELOPMENT_TEAM: [ // 'ABCDE12345'",  # 10
+                "      '${TEAM}' ] } },",  # 11 pass
+                "    { 'build-settings': { DEVELOPMENT_TEAM: 'it\\'s', B: 1 } },",  # 12 R3, escaped quote
+                "  ],",
+                "}",
+            ]
+        )
+        + "\n",
+    )
+    # Any `.xcproj` is a JSON project; a file of another name is not.
+    write(
+        root,
+        "Other/Sub.xcproj",
+        '{ "build-settings": { "DEVELOPMENT_TEAM": "ABCDE12345" } }\n',
+    )
+    write(
+        root,
+        "Other/settings.json",
+        '{ "DEVELOPMENT_TEAM": "ABCDE12345", "PRODUCT_BUNDLE_IDENTIFIER": "com.acme.A" }\n',
     )
     write(
         root,
@@ -225,6 +311,21 @@ EXPECTED = {
     ("addresses.txt", 6, "R2"),
     ("App.xcodeproj/project.pbxproj", 1, "R3"),
     ("App.xcodeproj/project.pbxproj", 4, "R3"),
+    ("App.xcodeproj/project.pbxproj", 9, "R3"),
+    ("App.xcodeproj/project.xcproj", 5, "R3"),
+    ("App.xcodeproj/project.xcproj", 6, "R3"),
+    ("App.xcodeproj/project.xcproj", 8, "R3"),
+    ("App.xcodeproj/project.xcproj", 14, "R3"),
+    ("App.xcodeproj/project.xcproj", 15, "R3"),
+    ("App.xcodeproj/project.xcproj", 18, "R3"),
+    ("App.xcodeproj/project.xcproj", 30, "R3"),
+    ("Compact.xcodeproj/project.xcproj", 3, "R3"),
+    ("Compact.xcodeproj/project.xcproj", 4, "R3"),
+    ("Compact.xcodeproj/project.xcproj", 5, "R3"),
+    ("Compact.xcodeproj/project.xcproj", 6, "R3"),
+    ("Compact.xcodeproj/project.xcproj", 8, "R3"),
+    ("Compact.xcodeproj/project.xcproj", 12, "R3"),
+    ("Other/Sub.xcproj", 1, "R3"),
     ("Framework/Info.plist.in", 2, "R3"),
     ("CMakeLists.txt", 2, "R3"),
     ("remote.sh", 1, "R4"),

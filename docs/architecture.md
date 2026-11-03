@@ -1488,15 +1488,20 @@ Every first-party CTest has one primary suite: `unit`, `tooling`, or
 `architecture-audit` checks the CMake File API graph, dependency cycles,
 implementation includes, source ownership, and test registration. Ownership
 includes that only a darwin/ source's owner compiles it: no other CMake file
-and no Xcode project names one. A first-party shell script writes each `cd`
-as `CDPATH= cd --` unless it names a literal absolute directory, so an
-exported `CDPATH` can neither redirect it nor print into captured output.
-No compile definition names a source or build directory, so no binary needs
-the checkout it was built from at run time. No host source under darwin/ or
-Kernarium/ names x18 outside a comment, whether assembly, an assembly
-contract, inline assembly or a generator: Darwin clears that platform register
-when it interrupts a thread, so a value kept there is lost at a random
-preemption. `arm64-emitted-registers` and `x86-64-jit-emitted-registers`
+and no Xcode project, whether Kernarium's `project.pbxproj` or a JSON
+`project.xcproj`, names one. Xcode, not CMake, compiles the sources of
+Andarium/ and the GuestHost/ folder the apps share, so no CMake file owns
+them; the C-source, implementation-include, test-registration,
+compile-definition, `cd` and x18 rules cover them as they cover Kernarium/. A
+first-party shell script writes each `cd` as `CDPATH= cd --` unless it names a
+literal absolute directory, so an exported `CDPATH` can neither redirect it
+nor print into captured output. No compile definition names a source or build
+directory, so no binary needs the checkout it was built from at run time. No
+host source under darwin/, Kernarium/, Andarium/ or GuestHost/ names x18
+outside a comment, whether assembly, an assembly contract, inline assembly or
+a generator: Darwin clears that platform register when it interrupts a
+thread, so a value kept there is lost at a random preemption.
+`arm64-emitted-registers` and `x86-64-jit-emitted-registers`
 hold the emitted code to the same rule, as [`testing.md`](testing.md)
 describes. Outside macOS the configured graph holds none of the macOS-only
 x86-64 JIT, as the x86 section above describes. The audit does not prove

@@ -54,9 +54,10 @@ Python tooling tests keep the host `$TMPDIR` for `sun_path`.
 `repository-environment-portability` is the one tooling test that scans
 tracked source, and it looks for forbidden values rather than expected ones:
 host paths and account names, private addresses, ssh endpoints and Apple
-signing identifiers outside the project's own. It also scans new unignored
-files, so a leak fails before it is committed. A site adds its private tokens
-to a local denylist, found at
+signing identifiers outside the project's own (read from `project.pbxproj` and
+JSON `project.xcproj` projects, xcconfig files, plists and CMake). It also
+scans new unignored files, so a leak fails before it is committed. A site adds
+its private tokens to a local denylist, found at
 `${XDG_CONFIG_HOME:-$HOME/.config}/linux-um-darwin/portability-denylist` or
 through `UML_PORTABILITY_DENYLIST`; the test runs with and without it. A
 reviewed exception goes in
@@ -717,6 +718,16 @@ the automation Android runtime
 `KERNARIUM_ANDROID_ADB_AUTH=0` and a loopback forward, and reaches the forward
 over USB with `iproxy`.
 
+On a connected iOS device that driver is
+[`tests/perf/run_ios_device_android.py`](../tests/perf/README.md): Android runs
+on a device go through Andarium
+([`Andarium/README.md`](../Andarium/README.md#automation)), and Kernarium's
+device runners (`run_ios_device_workload.py`, `run_ios_device_discard_bench.py`
+and the device CTS lane) keep Linux. Both share
+`tests/integration/support/ios_device.py`, and its tooling tests
+(`andarium-android-runner`, `andarium-device-support`) run the runner against a
+fake `devicectl`, `iproxy`, `adb` and `afcclient`, so no device is needed.
+
 Android recovery qualification uses a fresh disposable bundle and sets
 `TEST_RUNNER_KERNARIUM_ANDROID_BOOT_MODE=recovery`. Verify the LineageOS
 recovery UI, touch input, ADB, `adb sideload` of a signed package, fixed-GPT
@@ -743,6 +754,26 @@ up to four tests fail because of how the Mac hosts an iPad app:
 - `anEndedRunIsNeverStartedAgain` also stops the guest the application boots
   as it launches, so it fails when the launch has no image to boot, as a run
   whose `TEST_RUNNER_KERNARIUM_ROOTFS` names a missing file does.
+
+### Andarium
+
+`andarium-core` (unit, macOS hosts) runs the tests of the Swift package
+`Andarium/AndariumCore`, the application's model, with `swift test`.
+`andarium-stage-system-image` (tooling) covers the system-image staging script
+and the option checks of `package-ios-frameworks.sh --runtimes android`. The
+application itself builds with Xcode: `AndariumPreview` is its Simulator build
+with mock data, and `Andarium` is the device application
+([`Andarium/README.md`](../Andarium/README.md#targets)). `AndariumTests` is
+hosted in `Andarium` and runs on an iPad and, as an iPad app, on an Apple
+silicon Mac (`xcodebuild test -scheme Andarium`); its `UpdateFlowTests` drive
+the update, interrupted-update (Start retries, Restore, Erase) and blocked-start flows
+against a stub runtime. A Mac launch of the guest
+itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
+`TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
+([`Andarium/README.md`](../Andarium/README.md#automation)). macOS asks once, per
+bundle ID, to let the application read a removable volume when its derived data
+is on one, and the launch hangs ("the test runner hung before establishing
+connection") until a person answers; build to the internal disk instead.
 
 ### UI automation on a device
 
@@ -1312,7 +1343,9 @@ enabled (`--video`).
 ## Android UI rendering CTS
 
 `CtsUiRenderingTestCases` qualifies on the iPad's gadget engine in the
-automation application, not on the shared Mac. Its
+automation application or in Andarium (`run_ios_device_android.py --push
+Cts.apk:/data/local/tmp/Cts.apk --script`, whose script installs and
+instruments the APK), not on the shared Mac. Its
 `ColorSpaceTests#testMultiAtlasGlyphsWithColorSpace` paints a thousand glyphs
 of the COLRv1 emoji font at 13 sizes on the CPU in each of two renders, and
 each render must finish within the test's 60 s wait. On the iPad mini 6 the

@@ -30,6 +30,7 @@ REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "gpu"))
 sys.path.insert(0, str(REPOSITORY / "tests" / "perf"))
+import ios_device  # noqa: E402
 import kernarium  # noqa: E402
 import run_ios_device_discard_bench as discard_bench  # noqa: E402
 import run_ios_device_vk_cts as device_cts  # noqa: E402
@@ -203,9 +204,9 @@ def attached(device: FakeDevice, clock: FakeClock | None = None):
             mock.patch.object(kernarium.Payload, "write", fake_payload_write))
         if clock is not None:
             stack.enter_context(
-                mock.patch.object(kernarium.time, "monotonic", clock.monotonic))
+                mock.patch.object(ios_device.time, "monotonic", clock.monotonic))
             stack.enter_context(
-                mock.patch.object(kernarium.time, "sleep", clock.sleep))
+                mock.patch.object(ios_device.time, "sleep", clock.sleep))
         yield
 
 
@@ -229,7 +230,7 @@ class PayloadRemovalTests(unittest.TestCase):
             ), contextlib.redirect_stderr(errors):
                 try:
                     status = workload.main(argv)
-                except kernarium.KernariumError:
+                except ios_device.DeviceError:
                     pass
         return status, errors.getvalue()
 

@@ -6,8 +6,9 @@ Only the automation build of the Kernarium Linux runtime boots a host payload
 newc segment in the application's Documents directory, which the runtime
 appends after its own segment, and ``KERNARIUM_SYSTEMD_UNIT`` names the
 systemd target the guest boots. This module writes such segments with
-``uml-initramfs``, recognises the automation build, and copies files into the
-application's container on a connected device.
+``uml-initramfs`` and recognises the automation build; installing, copying
+and launching on a connected device is tests/integration/support/ios_device.py,
+which takes ``APPLICATION`` for Kernarium's bundle and console.
 """
 
 from __future__ import annotations
@@ -15,18 +16,16 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import hashlib
-import json
 import os
 import pathlib
 import re
-import signal
 import subprocess
 import sys
 import tempfile
-import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 import guest
+import ios_device
 
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
@@ -49,7 +48,11 @@ SESSION_EXIT = re.compile(r"UML_SESSION_EXIT:([0-9]+)")
 SYSTEMD_TARGET = re.compile(r"[A-Za-z0-9@_.:-]{1,121}\.target")
 LINUX_RUNTIME_FRAMEWORKS = ("KRuntime_6_18_4K",)
 WORKLOAD_GUEST_PATH = "/usr/local/libexec/uml-workload"
-PROGRESS_INTERVAL_SECONDS = 60
+# What the device plumbing needs to know about Kernarium: a launch clears the
+# inherited KERNARIUM_ settings, and a run ends at the runtime-result line.
+APPLICATION = ios_device.Application(
+    BUNDLE_ID, ("KERNARIUM_",), RUNTIME_RESULT
+)
 
 
 class KernariumError(RuntimeError):
@@ -242,186 +245,8 @@ def report_payload_removal(transcript: str, name: str) -> None:
         )
 
 
-def device_command(*arguments: str) -> list[str]:
-    return ["xcrun", "devicectl", *arguments]
-
-
-def device_documents(device: str, timeout: int = 120) -> dict[str, int]:
-    """The files in the application's Documents directory and their sizes."""
-    with tempfile.TemporaryDirectory(prefix="kernarium-documents-") as name:
-        report = pathlib.Path(name) / "files.json"
-        subprocess.run(
-            device_command(
-                "device", "info", "files", "--device", device,
-                "--domain-type", "appDataContainer",
-                "--domain-identifier", BUNDLE_ID,
-                "--subdirectory", "Documents",
-                "--json-output", str(report),
-                "--quiet", "--timeout", str(timeout),
-            ),
-            check=True,
-            stdin=subprocess.DEVNULL,
-            timeout=timeout + 30,
-        )
-        listing = json.loads(report.read_text(encoding="utf-8"))
-    return {
-        entry["relativePath"]: entry["metadata"]["size"]
-        for entry in listing["result"]["files"]
-        if not entry["resources"]["isDirectory"]
-    }
-
-
-def copy_to_device(
-    device: str, source: pathlib.Path, name: str, timeout: int
-) -> None:
-    """Copy ``source`` to ``Documents/name``, never replacing a file there.
-
-    A file of the same name and size is taken to be this one: payload names
-    carry their digest, and an image name is its release.
-    """
-    if not name or "/" in name or name in (".", ".."):
-        raise KernariumError(f"not a plain Documents name: {name!r}")
-    size = source.stat().st_size
-    existing = device_documents(device).get(name)
-    if existing == size:
-        print(f"the device already holds Documents/{name}", flush=True)
-        return
-    if existing is not None:
-        raise KernariumError(
-            f"the device holds a different Documents/{name}; this lane "
-            "never replaces a file on a device"
-        )
-    subprocess.run(
-        device_command(
-            "device", "copy", "to", "--device", device,
-            "--domain-type", "appDataContainer",
-            "--domain-identifier", BUNDLE_ID,
-            "--user", "mobile",
-            "--source", str(source),
-            "--destination", f"Documents/{name}",
-            "--quiet", "--timeout", str(timeout),
-        ),
-        check=True,
-        stdin=subprocess.DEVNULL,
-        timeout=timeout + 30,
-    )
-
-
-def install_app(device: str, app: pathlib.Path, timeout: int) -> None:
-    subprocess.run(
-        ["codesign", "--verify", "--deep", "--strict", str(app)],
-        check=True,
-        stdin=subprocess.DEVNULL,
-    )
-    subprocess.run(
-        device_command(
-            "device", "install", "app", "--device", device, str(app),
-            "--quiet", "--timeout", str(timeout),
-        ),
-        check=True,
-        stdin=subprocess.DEVNULL,
-        timeout=timeout + 30,
-    )
-
-
-def device_launch_environment(settings: Mapping[str, str]) -> dict[str, str]:
-    """devicectl forwards each ``DEVICECTL_CHILD_`` variable to the app.
-
-    Inherited Kernarium settings are cleared, because one would select a
-    different guest.
-    """
-    environment = {
-        name: value
-        for name, value in os.environ.items()
-        if not name.startswith("DEVICECTL_CHILD_KERNARIUM_")
-    }
-    for name, value in settings.items():
-        environment[f"DEVICECTL_CHILD_{name}"] = value
-    return environment
-
-
-def stop_console(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
-    process.send_signal(signal.SIGINT)
-    try:
-        process.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        process.terminate()
-        process.wait(timeout=10)
-
-
-def run_device_console(
-    device: str,
-    settings: Mapping[str, str],
-    log: pathlib.Path,
-    *,
-    timeout: int,
-    stall_timeout: int,
-    label: str,
-    finished: Callable[[str], bool] | None = None,
-) -> str:
-    """Launch the application and hold its console until the run ends.
-
-    The run ends at the application's own ``Kernarium: runtime returned`` line
-    or when ``finished`` accepts the transcript. The wait is bounded by an
-    overall deadline and by a stall deadline that only a growing console
-    resets.
-    """
-    command = device_command(
-        "device", "process", "launch", "--device", device,
-        "--console", "--terminate-existing", BUNDLE_ID,
-    )
-    started = time.monotonic()
-    deadline = started + timeout
-    stall_deadline = started + stall_timeout
-    next_update = started + PROGRESS_INTERVAL_SECONDS
-    observed = 0
-    with log.open("wb") as output:
-        process = subprocess.Popen(
-            command,
-            stdout=output,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            env=device_launch_environment(settings),
-        )
-        try:
-            while True:
-                transcript = log.read_text(encoding="utf-8", errors="replace")
-                if RUNTIME_RESULT.search(transcript) is not None or (
-                    finished is not None and finished(transcript)
-                ):
-                    return transcript
-                if process.poll() is not None:
-                    return transcript
-                now = time.monotonic()
-                size = log.stat().st_size
-                if size > observed:
-                    observed = size
-                    stall_deadline = now + stall_timeout
-                if now >= deadline:
-                    raise KernariumError(
-                        f"{label} exceeded {timeout} seconds; see {log}"
-                    )
-                if now >= stall_deadline:
-                    raise KernariumError(
-                        f"the console of {label} stopped growing for "
-                        f"{stall_timeout} seconds; see {log}"
-                    )
-                if now >= next_update:
-                    print(
-                        f"{label} is running; console_bytes={size}",
-                        flush=True,
-                    )
-                    next_update = now + PROGRESS_INTERVAL_SECONDS
-                time.sleep(1.0)
-        finally:
-            stop_console(process)
-
-
 def runtime_result(transcript: str) -> int | None:
-    results = RUNTIME_RESULT.findall(transcript)
-    return int(results[-1]) if results else None
+    return ios_device.runtime_result(APPLICATION, transcript)
 
 
 def session_exit(transcript: str) -> int | None:

@@ -101,6 +101,86 @@ void keyboardAdvertisesEvdevKeysAndLeds()
     require(bit(leds, 2));
 }
 
+// Android's Generic key layout maps KEY_BACK and KEY_HOMEPAGE to BACK and
+// HOME, and the guest's input core delivers only advertised keys.
+void keyboardAdvertisesBackAndHomeAndNothingElseAbove127()
+{
+    require(protocol::keyBack == 158);
+    require(protocol::keyHomepage == 172);
+
+    auto events = std::make_shared<EventQueue>();
+    VirtioInputDevice device(DeviceKind::keyboard, events);
+    select(device, protocol::configEventBits, protocol::eventKey);
+    const auto keys = configuration(device);
+    require(bit(keys, protocol::keyBack));
+    require(bit(keys, protocol::keyHomepage));
+    // The map ends at the highest advertised key.
+    require(keys.size == protocol::keyHomepage / 8U + 1U);
+
+    constexpr std::uint16_t bitmapBits = 128U * 8U;
+    for (std::uint16_t code = 0; code < bitmapBits; ++code) {
+        const bool expected = (code >= 1U && code <= 127U) ||
+            code == 158U || code == 172U;
+        require(bit(keys, code) == expected);
+        require(protocol::keyboardAdvertisesKey(code) == expected);
+    }
+    // A key beyond the bitmap is never advertised either.
+    require(!protocol::keyboardAdvertisesKey(bitmapBits));
+    require(!protocol::keyboardAdvertisesKey(0xffff));
+
+    // The touchscreen's key map stays BTN_TOUCH alone.
+    VirtioInputDevice touchscreen(DeviceKind::touchscreen, events);
+    select(touchscreen, protocol::configEventBits, protocol::eventKey);
+    const auto touchKeys = configuration(touchscreen);
+    require(!bit(touchKeys, protocol::keyBack));
+    require(!bit(touchKeys, protocol::keyHomepage));
+}
+
+void keyboardDeliversBackAndHomeAsKeyEvents()
+{
+    auto events = std::make_shared<EventQueue>();
+    VirtioInputDevice device(DeviceKind::keyboard, events);
+
+    // The runtime forwards a key as the key event and a report.
+    std::array<protocol::InputEvent, 8> input {};
+    std::size_t count = 0;
+    const std::array keyCodes {protocol::keyBack, protocol::keyHomepage};
+    for (const std::uint16_t code : keyCodes) {
+        for (const std::int32_t value : {1, 0}) {
+            input[count++] = {
+                .type = protocol::eventKey,
+                .code = code,
+                .value = value,
+            };
+            input[count++] = {
+                .type = protocol::eventSynchronize,
+                .code = protocol::synchronizeReport,
+                .value = 0,
+            };
+        }
+    }
+    events->enqueue(input);
+    pollfd readiness {
+        .fd = device.eventDescriptor(),
+        .events = POLLIN,
+        .revents = 0,
+    };
+    require(::poll(&readiness, 1, 1000) == 1);
+    device.drainEventSource();
+    for (const auto& sent : input) {
+        const auto result =
+            device.processQueue(protocol::eventQueue, 3, {}, 8);
+        require(result.action == uml::virtio::VhostUserQueueAction::complete);
+        const auto returned =
+            uml::testing::loadExact<protocol::InputEvent>(result.response);
+        require(returned.type == sent.type);
+        require(returned.code == sent.code);
+        require(returned.value == sent.value);
+    }
+    require(device.processQueue(protocol::eventQueue, 4, {}, 8).action ==
+        uml::virtio::VhostUserQueueAction::retry);
+}
+
 void eventQueueDefersAndThenReturnsOneWireEvent()
 {
     auto events = std::make_shared<EventQueue>();
@@ -138,6 +218,8 @@ int main()
 {
     touchscreenConfigurationIsDirectWithAFixedRange();
     keyboardAdvertisesEvdevKeysAndLeds();
+    keyboardAdvertisesBackAndHomeAndNothingElseAbove127();
+    keyboardDeliversBackAndHomeAsKeyEvents();
     eventQueueDefersAndThenReturnsOneWireEvent();
     return EXIT_SUCCESS;
 }
