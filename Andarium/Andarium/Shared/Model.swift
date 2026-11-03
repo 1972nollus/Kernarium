@@ -284,10 +284,10 @@ final class AppModel {
         }
         runBusy(
             BusyState(
-                title: "Creating Android",
-                detail: "Setting up \(system.distribution) with \(guest.effectiveCapacityGiB) GB.", progress: 0
+                title: "Creating Guest",
+                detail: "Setting up the system with \(guest.effectiveCapacityGiB) GB.", progress: 0
             ),
-            failure: "Android Could Not Be Created"
+            failure: "The Guest Could Not Be Created"
         ) { progress in
             let made = try await driver.create(guest, progress: progress)
             self.lifecycle.create(made)
@@ -306,7 +306,7 @@ final class AppModel {
         do {
             try driver.restoreUpdate()
         } catch {
-            alert = AppAlert(title: "Android Could Not Be Restored", message: error.localizedDescription)
+            alert = AppAlert(title: "The Guest Could Not Be Restored", message: error.localizedDescription)
         }
         refreshPlan()
     }
@@ -318,8 +318,8 @@ final class AppModel {
             return
         }
         runBusy(
-            BusyState(title: "Erasing Android", detail: "Deleting everything Android stored.", progress: 0),
-            failure: "Android Could Not Be Erased"
+            BusyState(title: "Erasing Guest", detail: "Deleting everything the guest stored.", progress: 0),
+            failure: "The Guest Could Not Be Erased"
         ) { progress in
             _ = try await driver.erase(current, progress: progress)
             self.lifecycle.erase()
@@ -652,13 +652,15 @@ final class AppModel {
         case .lowSpace: startBlocked = true
         case .unfinishedUpdate:
             alert = AppAlert(
-                title: "Android's Update Didn't Finish",
+                title: "The System's Update Didn't Finish",
                 message: plan.allowsStart
                     ? "Recovery starts only once the update has finished. Start tries the update again; Restore or Erase Guest goes back."
                     : "The guest starts only after its data is restored or the guest is erased."
             )
         case let .blocked(reason):
             alert = AppAlert(title: reason.title, message: reason.explanation)
+        case .needsNewerChip:
+            alert = AppAlert(title: DeviceRequirement.title, message: DeviceRequirement.explanation(deviceName: host.name))
         case .noGuest: break
         }
     }

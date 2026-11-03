@@ -18,7 +18,7 @@ struct AndroidOperationTests {
 
     private func running(_ mode: StartMode = .normal) -> (AppModel, StubDriver) {
         let system = SystemInfo(
-            distribution: "LineageOS 24", android: "17", release: "r2", kernel: "Linux 6.18",
+            version: "17", release: "r2", kernel: "Linux 6.18",
             architecture: "arm64, 4 KB pages", appVersion: "1"
         )
         let model = AppModel(
@@ -310,7 +310,7 @@ struct AdbOverNetworkModelTests {
 
     private func running(_ mode: StartMode = .normal) -> (AppModel, StubDriver) {
         let system = SystemInfo(
-            distribution: "LineageOS 24", android: "17", release: "r2", kernel: "Linux 6.18",
+            version: "17", release: "r2", kernel: "Linux 6.18",
             architecture: "arm64, 4 KB pages", appVersion: "1"
         )
         let model = AppModel(
@@ -441,7 +441,7 @@ struct AdbOverNetworkModelTests {
 
     @Test func thePreviewHasNoGuestToAskAndSaysYes() {
         let system = SystemInfo(
-            distribution: "LineageOS 24", android: "17", release: "r2", kernel: "Linux 6.18",
+            version: "17", release: "r2", kernel: "Linux 6.18",
             architecture: "arm64, 4 KB pages", appVersion: "1"
         )
         let model = AppModel(

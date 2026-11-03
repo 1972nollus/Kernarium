@@ -28,6 +28,19 @@
 # conflicts with it). The output directory is shared: Kernarium needs the
 # default full set, so package that again before building Kernarium.
 #
+# --app-store packages the App Store Android runtime, built from the
+# kernarium-ios-device-android-app-store preset, for the device alone and for
+# Andarium's App Store configuration: it reads no environment variable that
+# tunes, observes or drives a run, and the packaging fails if the runtime
+# carries the name of one. It conflicts with both automation options, with the
+# Simulator and with --runtimes all.
+#
+# Every embedded framework carries a PrivacyInfo.xcprivacy
+# (Kernarium/PrivacyManifests) in each slice, and the device slices are checked
+# with scripts/check-privacy-manifests.py, which fails a binary that uses a
+# required-reason API the manifest does not declare, and a framework
+# Info.plist with an empty version or no MinimumOSVersion.
+#
 # KernariumTests also links HostBattery.xcframework: the Apple battery
 # provider's archive, as the Android runtime links it, with its header. The
 # application neither links nor embeds it, and the test bundle loads no second
@@ -46,9 +59,10 @@ fail()
 
 AUTOMATION=0
 ANDROID_AUTOMATION=0
+APP_STORE=0
 RUNTIMES=all
 SDKS=
-USAGE="usage: package-ios-frameworks.sh [--sdk device|simulator]... [--automation] [--android-automation] [--runtimes all|android]"
+USAGE="usage: package-ios-frameworks.sh [--sdk device|simulator]... [--automation] [--android-automation] [--app-store] [--runtimes all|android]"
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--sdk)
@@ -65,6 +79,7 @@ while [ "$#" -gt 0 ]; do
 		;;
 	--automation) AUTOMATION=1 ;;
 	--android-automation) ANDROID_AUTOMATION=1 ;;
+	--app-store) APP_STORE=1 ;;
 	--runtimes)
 		[ "$#" -ge 2 ] || fail "$USAGE"
 		RUNTIMES=$2
@@ -82,6 +97,15 @@ android)
 	;;
 *) fail "--runtimes takes all or android: $RUNTIMES" ;;
 esac
+if [ "$APP_STORE" -eq 1 ]; then
+	[ "$RUNTIMES" = android ] ||
+		fail "--app-store packages the Android runtime alone; add --runtimes android"
+	[ "$AUTOMATION" -eq 0 ] && [ "$ANDROID_AUTOMATION" -eq 0 ] ||
+		fail "--app-store conflicts with the automation options"
+	case " $SDKS " in
+	*" simulator "*) fail "--app-store packages the device alone" ;;
+	esac
+fi
 
 find_tool()
 {
@@ -123,6 +147,8 @@ RUNTIME_TREE=kernarium-runtime-ios-device
 ANDROID_TREE=kernarium-runtime-ios-device-android-4k
 [ "$ANDROID_AUTOMATION" -eq 0 ] ||
 	ANDROID_TREE=kernarium-runtime-ios-device-android-4k-automation
+[ "$APP_STORE" -eq 0 ] ||
+	ANDROID_TREE=kernarium-runtime-ios-device-android-4k-app-store
 DEVICE_RUNTIME_4K="$ROOT_DIR/.build/$RUNTIME_TREE/Kernarium/Runtime/$RUNTIME_4K.framework"
 DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/$ANDROID_TREE/Kernarium/Runtime/$RUNTIME_ANDROID_4K.framework"
 # KERNARIUM_DEVICE_GPU_PREFIX and KERNARIUM_SIMULATOR_GPU_PREFIX name a GPU
@@ -260,6 +286,25 @@ done
 if has_sdk device; then
 	create_xcframework KosmicKrisp "$DEVICE_GPU/KosmicKrisp.framework" ""
 fi
+# install_privacy_manifest FRAMEWORK MANIFEST: the manifest goes into every
+# slice of the framework's XCFramework.
+PRIVACY_MANIFESTS="$ROOT_DIR/Kernarium/PrivacyManifests"
+install_privacy_manifest()
+{
+	for slice_framework in "$STAGE/$1.xcframework"/*/"$1.framework"; do
+		[ -d "$slice_framework" ] || fail "$1 XCFramework has no framework slice"
+		cp -- "$PRIVACY_MANIFESTS/$2.xcprivacy" \
+			"$slice_framework/PrivacyInfo.xcprivacy" ||
+			fail "could not install the privacy manifest of $1"
+	done
+}
+for framework in $RUNTIME_FRAMEWORKS; do
+	install_privacy_manifest "$framework" KRuntime
+done
+for framework in $GPU_FRAMEWORKS; do
+	[ ! -d "$STAGE/$framework.xcframework" ] ||
+		install_privacy_manifest "$framework" "$framework"
+done
 "$CMAKE" -E copy_directory "$STORAGE" \
 	"$STAGE/GPTFDisk.xcframework"
 "$CMAKE" -E copy_directory "$ZSTD" \
@@ -410,6 +455,13 @@ for slice_platform in $PACKAGED_SLICES; do
 	fi
 done
 
+# An App Store runtime carries the name of no environment knob.
+if [ "$APP_STORE" -eq 1 ]; then
+	"$PYTHON" -B "$ROOT_DIR/Andarium/scripts/check-app-store-bundle.py" --runtime \
+		"$STAGE/$RUNTIME_ANDROID_4K.xcframework/ios-arm64/$RUNTIME_ANDROID_4K.framework" ||
+		fail "$RUNTIME_ANDROID_4K carries an environment knob; build the kernarium-ios-device-android-app-store preset"
+fi
+
 # The storage and compression cores carry no Metal dependency, so their
 # XCFrameworks keep both published slices.
 for platform in ios-arm64 ios-arm64-simulator; do
@@ -418,6 +470,16 @@ for platform in ios-arm64 ios-arm64-simulator; do
 	binary="$STAGE/LibZstd.xcframework/$platform/LibZstd.framework/LibZstd"
 	[ -f "$binary" ] || fail "missing packaged zstd decompressor: $binary"
 done
+
+# The device slices are what an upload carries: each must declare the
+# required-reason APIs its binary uses and carry a complete Info.plist.
+if has_sdk device; then
+	for framework in $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS; do
+		"$PYTHON" -B "$ROOT_DIR/scripts/check-privacy-manifests.py" \
+			"$STAGE/$framework.xcframework/ios-arm64/$framework.framework" ||
+			fail "the device slice of $framework fails the privacy manifest check"
+	done
+fi
 
 # The x86-64 JIT and the FEXCore it embeds are macOS-only.
 "$PYTHON" -B "$ROOT_DIR/scripts/check-no-fexcore.py" "$STAGE" ||
@@ -445,7 +507,9 @@ case $publish in
 	;;
 *) fail "could not publish the XCFrameworks: $OUTPUT" ;;
 esac
-if [ "$RUNTIMES" = android ]; then
+if [ "$APP_STORE" -eq 1 ]; then
+	printf '%s\n' "published App Store Android runtime XCFrameworks: $OUTPUT"
+elif [ "$RUNTIMES" = android ]; then
 	printf '%s\n' "published Android runtime XCFrameworks: $OUTPUT"
 elif [ "$AUTOMATION" -eq 1 ] || [ "$ANDROID_AUTOMATION" -eq 1 ]; then
 	printf '%s\n' "published Kernarium automation XCFrameworks: $OUTPUT"

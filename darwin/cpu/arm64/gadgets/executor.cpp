@@ -579,8 +579,12 @@ struct IndirectKey final {
  * each executor is made. */
 [[nodiscard]] bool shared_bodies_enabled() noexcept
 {
+#ifdef UML_APP_STORE_RUNTIME
+	return true;
+#else
 	const char *value = std::getenv("DARWIN_UML_GADGET_SHARED_BODIES");
 	return value == nullptr || std::strcmp(value, "0") != 0;
+#endif
 }
 
 /* A shared address space whose arena holds at least this many bytes that no

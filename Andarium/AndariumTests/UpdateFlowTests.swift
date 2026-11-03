@@ -74,7 +74,7 @@ struct UpdateFlowTests {
 
     private func model(plan: StartPlan) -> (AppModel, StubDriver) {
         let system = SystemInfo(
-            distribution: "LineageOS 24", android: "17", release: "r2", kernel: "Linux 6.18",
+            version: "17", release: "r2", kernel: "Linux 6.18",
             architecture: "arm64, 4 KB pages", appVersion: "1"
         )
         let model = AppModel(
@@ -123,7 +123,7 @@ struct UpdateFlowTests {
         let (model, driver) = model(plan: .unfinishedUpdate(to: "r2", canRetry: true, canRestore: true))
         driver.restoreFails = true
         model.restoreUpdate()
-        #expect(model.alert?.title == "Android Could Not Be Restored")
+        #expect(model.alert?.title == "The Guest Could Not Be Restored")
         #expect(model.phase == .home)
         #expect(model.plan == .unfinishedUpdate(to: "r2", canRetry: true, canRestore: true))
     }
@@ -134,7 +134,7 @@ struct UpdateFlowTests {
         model.start(.normal)
         #expect(model.phase == .home)
         #expect(driver.begun.isEmpty)
-        #expect(model.alert?.title == "Android's Update Didn't Finish")
+        #expect(model.alert?.title == "The System's Update Didn't Finish")
     }
 
     @Test func recoveryWaitsForTheUpdateToFinish() {
@@ -142,7 +142,7 @@ struct UpdateFlowTests {
         model.start(.recovery)
         #expect(model.phase == .home)
         #expect(driver.begun.isEmpty)
-        #expect(model.alert?.title == "Android's Update Didn't Finish")
+        #expect(model.alert?.title == "The System's Update Didn't Finish")
     }
 
     @Test func aBlockedGuestSaysWhyAndStaysAtHome() {

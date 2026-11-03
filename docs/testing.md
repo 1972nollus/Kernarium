@@ -809,6 +809,25 @@ bundle ID, to let the application read a removable volume when its derived data
 is on one, and the launch hangs ("the test runner hung before establishing
 connection") until a person answers; build to the internal disk instead.
 
+`ios-privacy-manifests` (tooling) covers `scripts/check-privacy-manifests.py`,
+which fails when a built application or framework uses a required-reason API
+(found in its undefined symbols and Objective-C selectors) that its
+`PrivacyInfo.xcprivacy` does not declare, or declares tracking, collected data
+or a reason code Apple does not define, or has an Info.plist with an empty
+version or no `MinimumOSVersion`. `package-ios-frameworks.sh` runs it on the
+device slice of every framework it packages (the manifests are
+`Kernarium/PrivacyManifests`), and it runs on any built bundle:
+`python3 scripts/check-privacy-manifests.py Andarium.app`. Its fixtures are
+small libraries compiled with the iOS SDK.
+
+`andarium-app-store-bundle` (tooling) covers
+`Andarium/scripts/check-app-store-bundle.py`, the last build phase of the
+AppStore configuration (`Andarium/README.md#configurations`) and the check of
+`package-ios-frameworks.sh --app-store`: Info.plist keys,
+no environment knob in host code, and the privacy check. Its
+fixtures are compiled with the iOS SDK too. The configuration itself is
+validated by building it unsigned (`CODE_SIGNING_ALLOWED=NO`).
+
 ### UI automation on a device
 
 Unattended device automation goes through the long-lived
@@ -1247,7 +1266,8 @@ filesystem and superblock, and the example HALs' service binaries read from the 
 directories), the userdata inode count,
 the application read of the vendor security patch level, the built-in
 microphone and companion device setup feature declarations, the userdata `quota` flag, and the
-suspend blocker with the adb host-connected property it follows, the network
+suspend blocker with the adb host-connected property it follows, the adb daemon's host-key and
+TCP-policy launch properties (read from its APEX payload, with adbd's right to read their labels), the network
 setup tool with the ARP policy init sets before it, its library, label and domain
 transition, the script that saves the virtual Wi-Fi network once, after boot and
 without touching the user's Wi-Fi switch, with its core domain, its binder transfer to the Wi-Fi service's process and the call back, and its marker, the Wi-Fi
@@ -1348,6 +1368,17 @@ a blank instance:
 - starting a newer release on an instance of an older one keeps its apps and
   data and records the update, and starting the older release on the newer
   instance is refused.
+- `android-adb-debugging` (integration, registered only when
+  `UML_ANDROID_ADB_DEBUGGING_RELEASE` names the release and the Android macOS
+  executable is built) boots a blank instance and checks the adb topics of the
+  product: Developer options and USB debugging are off (`adb_enabled` 0,
+  `persist.sys.usb.config` empty); turning USB debugging on records it and
+  leaves adbd's process alone; turning it off clears it, restarts adbd once and
+  leaves adbd serving the host; both survive a reboot. Where the guest checks
+  keys (`ro.boot.kernarium.adb_auth` 1, which the macOS launcher never sets, so
+  only a guest the Kernarium runtime started, which the runner's `--serial`
+  attaches to), a second throwaway key stays unauthorized with no prompt while
+  debugging is off and raises the prompt while it is on.
 
 ## Android hardware video encoding and decoding
 

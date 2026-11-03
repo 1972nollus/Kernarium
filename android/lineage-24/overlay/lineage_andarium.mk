@@ -87,7 +87,7 @@ endif
 # inherited list where the call stands, so a directory added after the calls below ranks under LineageOS's
 # and Cuttlefish's. The directory with the default wallpaper, which LineageOS also ships, is therefore
 # listed here and no other. The target-files verifier reads the built framework overlay for the result.
-PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay-priority
+PRODUCT_PACKAGE_OVERLAYS += device/kernarium/andarium/overlay-priority
 
 $(call inherit-product, device/google/cuttlefish/vsoc_arm64_pgagnostic/phone/aosp_cf.mk)
 $(call inherit-product, hardware/interfaces/audio/aidl/default/audio_effects.mk)
@@ -106,18 +106,19 @@ PRODUCT_COPY_FILES_EXCLUDE += \
 # owner's key alone: the recovery and the system trust that key and no other.
 PRODUCT_EXTRA_RECOVERY_KEYS :=
 
-PRODUCT_NAME := lineage_darwin
-PRODUCT_DEVICE := darwin
-PRODUCT_BRAND := Android
+PRODUCT_NAME := lineage_andarium
+PRODUCT_DEVICE := andarium
+PRODUCT_BRAND := Andarium
 PRODUCT_MANUFACTURER := Kernarium
-PRODUCT_MODEL := Darwin UML
+PRODUCT_MODEL := Andarium Virtual Device
 
 # LineageOS makes its debug variant not debuggable (any non-empty value of this
-# variable counts as set) and always demands ADB authorization. This product
-# is debuggable like the AOSP debug build it replaces: userdebug has
-# ro.debuggable=1. adbd's boot policy (ro.boot.kernarium.adb_auth) decides
-# authorization per boot, and the root service starts with rooted debugging
-# enabled only when that policy turns authorization off.
+# variable counts as set) and always demands ADB authorization. The diagnostics
+# variant of this product is debuggable like the AOSP debug build it replaces:
+# userdebug has ro.debuggable=1. The user variant, the default and the only
+# release, is not. adbd's boot policy (ro.boot.kernarium.adb_auth) decides
+# authorization per boot, and on a userdebug build the root service starts with
+# rooted debugging enabled only when that policy turns authorization off.
 PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG :=
 
 # The LineageOS updater polls a server for a device this project does not
@@ -148,7 +149,7 @@ PRODUCT_COPY_FILES_EXCLUDE += \
 PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := erofs
 PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_COMPRESSOR := $(UML_ANDROID_EROFS_COMPRESSOR)
 PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_PCLUSTER_SIZE := $(UML_ANDROID_EROFS_PCLUSTER_SIZE)
-PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_COMPRESS_HINTS := device/kernarium/darwin/config/erofs_apex_payload_hints.txt
+PRODUCT_DEFAULT_APEX_PAYLOAD_EROFS_COMPRESS_HINTS := device/kernarium/andarium/config/erofs_apex_payload_hints.txt
 
 # The kernel runs 4 KiB pages. The userspace stays page-agnostic, so a 16 KiB
 # maximum alignment keeps every 64-bit ELF valid on a kernel of either size.
@@ -186,12 +187,12 @@ PRODUCT_PACKAGES_EXCLUDE += \
     fstab.uml \
     fstab.uml.vendor_ramdisk
 PRODUCT_COPY_FILES += \
-    device/kernarium/darwin/config/init.vendor.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/init.kernarium.rc \
-    device/kernarium/darwin/config/ueventd.rc:$(TARGET_COPY_OUT_VENDOR)/etc/ueventd.rc \
-    device/kernarium/darwin/config/fstab.uml:$(TARGET_COPY_OUT_VENDOR)/etc/fstab.uml \
-    device/kernarium/darwin/config/fstab.uml:$(TARGET_COPY_OUT_VENDOR_RAMDISK)/first_stage_ramdisk/fstab.uml \
-    device/kernarium/darwin/config/audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_policy_configuration.xml \
-    device/kernarium/darwin/config/primary_audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/primary_audio_policy_configuration.xml \
+    device/kernarium/andarium/config/init.vendor.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/init.kernarium.rc \
+    device/kernarium/andarium/config/ueventd.rc:$(TARGET_COPY_OUT_VENDOR)/etc/ueventd.rc \
+    device/kernarium/andarium/config/fstab.uml:$(TARGET_COPY_OUT_VENDOR)/etc/fstab.uml \
+    device/kernarium/andarium/config/fstab.uml:$(TARGET_COPY_OUT_VENDOR_RAMDISK)/first_stage_ramdisk/fstab.uml \
+    device/kernarium/andarium/config/audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_policy_configuration.xml \
+    device/kernarium/andarium/config/primary_audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/primary_audio_policy_configuration.xml \
     frameworks/av/services/audiopolicy/config/audio_policy_volumes.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_policy_volumes.xml \
     frameworks/av/services/audiopolicy/config/default_volume_tables.xml:$(TARGET_COPY_OUT_VENDOR)/etc/default_volume_tables.xml \
     frameworks/av/services/audiopolicy/config/r_submix_audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/r_submix_audio_policy_configuration.xml
@@ -238,6 +239,7 @@ KERNARIUM_REMOVED_PACKAGES := \
     EyesFreeVidService \
     Gallery2 \
     ImsServiceEntitlement \
+    Jelly \
     MmsService \
     Music \
     MusicFX \
@@ -311,23 +313,19 @@ PRODUCT_PACKAGES_EXCLUDE += \
     metrics_helper \
     sleep
 
-# The browser (Jelly), the keyboard (LatinIME) and ThemePicker come from the
-# LineageOS product chain. resize2fs grows the compact userdata filesystem
+# The keyboard (LatinIME) and ThemePicker come from the LineageOS product
+# chain. resize2fs grows the compact userdata filesystem
 # online after the host expands its partition, once /data is mounted
-# (init.vendor.rc, post-fs-data). The F-Droid client and its Privileged
-# Extension are presigned prebuilts that source preparation materializes under
-# vendor/kernarium/fdroid.
+# (init.vendor.rc, post-fs-data).
 PRODUCT_PACKAGES += \
     android.hardware.health-service.example \
     android.hardware.health-service.example_recovery \
     e2fsck \
-    F-Droid \
-    F-DroidPrivilegedExtension \
     resize2fs
 
 # First boot compiles nothing. Soong preopts the applications it installs, but
-# never an application inside an APEX, and the presigned F-Droid prebuilts opt
-# out. tools/precompile-first-boot-apps.py compiles the rest after a first build
+# never an application inside an APEX. tools/precompile-first-boot-apps.py
+# compiles the rest after a first build
 # pass; build-aosp.sh hands its PRODUCT_COPY_FILES fragment to the second pass
 # through this variable, a path relative to the workspace root.
 ifneq ($(LINEAGE24_FIRST_BOOT_OAT_MK),)
@@ -363,7 +361,7 @@ PRODUCT_COPY_FILES_EXCLUDE += \
     frameworks/native/data/etc/android.hardware.wifi.passpoint.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.passpoint.xml \
     frameworks/native/data/etc/android.software.verified_boot.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.verified_boot.xml
 PRODUCT_COPY_FILES += \
-    device/kernarium/darwin/config/kernarium_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/handheld_core_hardware.xml
+    device/kernarium/andarium/config/kernarium_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/handheld_core_hardware.xml
 
 # The Vulkan HAL is Mesa's Venus driver built from this project's pinned guest
 # Mesa source. Its generated Soong module names are scoped with a venus_
@@ -499,8 +497,8 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_egl_confi
 PRODUCT_SOONG_NAMESPACES += external/v4l2_codec2
 PRODUCT_PACKAGES += android.hardware.media.c2-service-v4l2
 PRODUCT_COPY_FILES += \
-    device/kernarium/darwin/config/media_codecs_c2.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2.xml \
-    device/kernarium/darwin/config/media_c2_extended_seccomp_policy:$(TARGET_COPY_OUT_VENDOR)/etc/seccomp_policy/android.hardware.media.c2-extended-seccomp_policy
+    device/kernarium/andarium/config/media_codecs_c2.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2.xml \
+    device/kernarium/andarium/config/media_c2_extended_seccomp_policy:$(TARGET_COPY_OUT_VENDOR)/etc/seccomp_policy/android.hardware.media.c2-extended-seccomp_policy
 PRODUCT_VENDOR_PROPERTIES += \
     ro.vendor.v4l2_codec2.encoder.supported.h264=true \
     ro.vendor.v4l2_codec2.encoder.supported.hevc=true \
@@ -511,7 +509,7 @@ PRODUCT_VENDOR_PROPERTIES += \
     ro.vendor.v4l2_codec2.decode_concurrent_instances=4 \
     ro.vendor.v4l2_codec2.video_decode_pixel_rate=456192000
 
-PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
+PRODUCT_PACKAGE_OVERLAYS += device/kernarium/andarium/overlay
 
 # The virtio-gpu device paces the display with a vblank timer, so a present
 # fence signals when the frame is shown. The inherited Cuttlefish graphics
@@ -525,17 +523,20 @@ PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 # rejects it when it is true.
 PRODUCT_VENDOR_PROPERTY_BLACKLIST += ro.vendor.hwc.drm.present_fence_not_reliable
 
-# ADB is available over the inherited TCP port even though this machine has no
-# USB controller. A user build retains the stock shell privilege boundary; a
-# userdebug build also lets `adb root` restart adbd as root, so whoever can
-# reach the port without authorization is root in the guest. Apple hosts select
-# authorization through the immutable ro.boot.kernarium.adb_auth property on
-# each boot, and that boot policy overrides the build type's ro.adb.secure
-# default inside adbd.
+# ADB reaches the guest over vsock (and over TCP when the launch has a host
+# forward) even though this machine has no USB controller. A user build retains
+# the stock shell privilege boundary; a userdebug build also lets `adb root`
+# restart adbd as root, so whoever can reach the port without authorization is
+# root in the guest. Apple hosts select authorization through the immutable
+# ro.boot.kernarium.adb_auth property on each boot, and that boot policy
+# overrides the build type's ro.adb.secure default inside adbd.
+#
+# USB debugging is off on a fresh data partition: persist.sys.usb.config, which
+# AdbService reads at every boot to set adb_enabled, has no product default.
+# The filter removes the value an inherited product would set. adbd serves the
+# host application's key whatever the setting; any other key needs debugging on.
 PRODUCT_PRODUCT_PROPERTIES := $(filter-out \
     persist.sys.usb.config=%,$(PRODUCT_PRODUCT_PROPERTIES))
-PRODUCT_PRODUCT_PROPERTIES += \
-    persist.sys.usb.config=adb
 
 # The WebView provider declares use32bitAbi. Left alone, that makes its 32-bit
 # libraries primary, and every WebView renderer, including those of 64-bit

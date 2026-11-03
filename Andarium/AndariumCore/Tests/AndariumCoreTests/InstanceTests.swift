@@ -209,7 +209,7 @@ struct InstanceFileTests {
     }
 
     @Test func aReleaseIdentityIsReadFromTheManifestAndTheLayout() throws {
-        let manifest = #"{"release_id": "20261102-los24-r5", "android": {"fingerprint": "Android/x:17/a/b:userdebug/release-keys", "build_number": 1793463711, "security_patch": "2026-10-01"}}"#
+        let manifest = #"{"release_id": "20261102-los24-r5", "android": {"fingerprint": "Andarium/lineage_andarium/andarium:17/a/b:user/release-keys", "build_number": 1793463711, "security_patch": "2026-10-01"}}"#
         let layout = #"{"system_disk": {"sha256": "\#(String(repeating: "c", count: 64))"}, "data_disk": {"layout_version": 1, "capacity_gib": {"minimum": 4, "default": 8, "maximum": 64}}}"#
         let identity = try ReleaseIdentity(manifest: Data(manifest.utf8), layout: Data(layout.utf8))
         #expect(identity.releaseID == "20261102-los24-r5" && identity.buildNumber == 1_793_463_711)

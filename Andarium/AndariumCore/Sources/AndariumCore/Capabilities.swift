@@ -17,8 +17,6 @@ public struct Capabilities: Equatable, Sendable {
     public var bugReport: Bool
     /// The session can show the guest's own statistics.
     public var statistics: Bool
-    /// The number of installed apps can be read.
-    public var appCount: Bool
     /// Resolution and Follow Window Size can change while the guest runs;
     /// otherwise they apply at the next start and the session leaves them
     /// out.
@@ -26,21 +24,20 @@ public struct Capabilities: Equatable, Sendable {
 
     public init(
         systemUpdate: Bool, adbOverNetwork: Bool, apkInstall: Bool, bugReport: Bool,
-        statistics: Bool, appCount: Bool, liveDisplayOptions: Bool
+        statistics: Bool, liveDisplayOptions: Bool
     ) {
         self.systemUpdate = systemUpdate
         self.adbOverNetwork = adbOverNetwork
         self.apkInstall = apkInstall
         self.bugReport = bugReport
         self.statistics = statistics
-        self.appCount = appCount
         self.liveDisplayOptions = liveDisplayOptions
     }
 
     /// Everything the mock runtime pretends to do.
     public static let preview = Capabilities(
         systemUpdate: true, adbOverNetwork: true, apkInstall: true, bugReport: true, statistics: true,
-        appCount: true, liveDisplayOptions: true
+        liveDisplayOptions: true
     )
 
     /// The device application: a guest moves to a newer system with its
@@ -52,6 +49,6 @@ public struct Capabilities: Equatable, Sendable {
         adbOverNetwork: true,
         apkInstall: true,
         bugReport: true,
-        statistics: false, appCount: false, liveDisplayOptions: false
+        statistics: false, liveDisplayOptions: false
     )
 }

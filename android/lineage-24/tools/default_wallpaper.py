@@ -15,7 +15,7 @@ LineageOS's overlay names the same resource, and where two overlay directories d
 that, the one listed earlier in PRODUCT_PACKAGE_OVERLAYS wins (Soong gives the
 earlier directory the higher priority). inherit-product expands the inherited list
 where the call stands, so the copies live in their own directory,
-`overlay/overlay-priority`, which `overlay/lineage_darwin.mk` lists before its
+`overlay/overlay-priority`, which `overlay/lineage_andarium.mk` lists before its
 inherit-product calls; the ordinary `overlay/overlay` directory is listed after
 them and ranks under LineageOS's and Cuttlefish's.
 
@@ -53,9 +53,9 @@ from pathlib import Path
 VARIANT_DIRECTORIES = ("drawable-sw600dp-nodpi", "drawable-sw720dp-nodpi")
 OVERLAY_RESOURCES = "overlay/overlay-priority/frameworks/base/core/res/res"
 # The product makefile, and the two PRODUCT_PACKAGE_OVERLAYS entries whose order matters.
-PRODUCT_MAKEFILE = "overlay/lineage_darwin.mk"
-PRIORITY_OVERLAY = "device/kernarium/darwin/overlay-priority"
-ORDINARY_OVERLAY = "device/kernarium/darwin/overlay"
+PRODUCT_MAKEFILE = "overlay/lineage_andarium.mk"
+PRIORITY_OVERLAY = "device/kernarium/andarium/overlay-priority"
+ORDINARY_OVERLAY = "device/kernarium/andarium/overlay"
 ORDINARY_RESOURCES = "overlay/overlay/frameworks/base/core/res/res"
 FILE_NAME = "default_wallpaper.png"
 # No variant of the built framework overlay may be larger than this, on either side.

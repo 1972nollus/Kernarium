@@ -459,9 +459,11 @@ extern "C" int uml_slirp_net_open(
 {
 	if (context == nullptr || mac == nullptr || mtu == nullptr)
 		return -EINVAL;
+#ifndef UML_APP_STORE_RUNTIME
 	if (const auto *disabled = std::getenv("UML_DISABLE_NETWORK");
 	    disabled != nullptr && disabled[0] != '\0' && disabled[0] != '0')
 		return -ENETDOWN;
+#endif
 	try {
 		return static_cast<uml::network::SlirpProvider *>(context)->open(
 			std::span<unsigned char, 6>{mac, 6}, *mtu);

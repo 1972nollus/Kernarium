@@ -40,7 +40,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from release_common import fail
+from release_common import OTA_CERTIFICATE_ARCHIVES, fail, signed_ota_certificate_member
 
 SECURITY_DIR = "build/make/target/product/security/"
 # Source directories of public certificates (AOSP's test keys and LineageOS's
@@ -51,9 +51,8 @@ PLATFORM_KEYS = ("releasekey", "platform", "media", "shared")
 # mappings (the platform keys and the OTA certificate): relative to the work
 # directory it runs in. The other keys keep the link's absolute path.
 KEYS_DIRECTORY = "keys"
-# The one member every signed otacerts.zip holds: the release certificate, named
-# after that relative path.
-OTA_CERTIFICATE_MEMBER = f"{KEYS_DIRECTORY}/releasekey.x509.pem"
+# The one member every signed otacerts.zip holds is the release certificate, named after that
+# relative path (release_common.OTA_CERTIFICATE_MEMBERS, by build variant).
 # `signing: NAME [container] (KEY)` and the continuation `: NAME payload (KEY)`;
 # the tool may print the next record on the same line, so search the text.
 SIGNING_RECORD = re.compile(
@@ -169,12 +168,15 @@ def certificate_digests(keys: Path) -> dict[str, str]:
     }
 
 
-def check_ota_certificates(signed_output: Path, keys: Path, aosp_source: Path) -> None:
+def check_ota_certificates(
+    signed_output: Path, keys: Path, aosp_source: Path, build_variant: str
+) -> None:
     """Every otacerts.zip, in the system and the recovery, must trust the
     release certificate and no public AOSP or LineageOS certificate.
 
     Without the OTA key replacement the recovery and the system keep the AOSP
     public test certificate, which would let anyone sideload an update."""
+    member = signed_ota_certificate_member(build_variant)
     release = pem_digest((keys / "releasekey.x509.pem").read_bytes())
     public = {
         pem_digest(path.read_bytes())
@@ -185,10 +187,7 @@ def check_ota_certificates(signed_output: Path, keys: Path, aosp_source: Path) -
         fail("the source tree holds no public certificates to check against")
     with zipfile.ZipFile(signed_output) as archive:
         names = [name for name in archive.namelist() if name.endswith("/otacerts.zip")]
-        for required in (
-            "SYSTEM/etc/security/otacerts.zip",
-            "RECOVERY/RAMDISK/system/etc/security/otacerts.zip",
-        ):
+        for required in OTA_CERTIFICATE_ARCHIVES:
             if required not in names:
                 fail(f"the signed target files omit {required}")
         for name in names:
@@ -203,9 +202,9 @@ def check_ota_certificates(signed_output: Path, keys: Path, aosp_source: Path) -
                 fail(f"{name} omits the release certificate")
             if digests & public:
                 fail(f"{name} still trusts a public AOSP or LineageOS certificate")
-            if members != [OTA_CERTIFICATE_MEMBER]:
+            if members != [member]:
                 fail(
-                    f"{name} holds the members {members}, not only {OTA_CERTIFICATE_MEMBER}: "
+                    f"{name} holds the members {members}, not only {member}: "
                     "the signer named them after a path of the build host"
                 )
 
@@ -262,15 +261,17 @@ def sign_target_files(
     target_files: Path,
     signed_output: Path,
     keys: Path,
+    build_variant: str,
     host_bin: Path,
     aosp_source: Path,
     jdk_bin: Path,
     temporary_parent: Path | None = None,
 ) -> tuple[int, list[str], dict[str, str]]:
-    """Write a signed copy of the target files.
+    """Write a signed copy of the target files of a user build.
 
     Returns the signed file count, the presigned files left as published and
     the SHA-256 of each platform certificate."""
+    signed_ota_certificate_member(build_variant)    # refuses a variant that is not signed
     if signed_output.exists() or signed_output.is_symlink():
         fail("signed target-files output already exists")
     tool = host_bin / "sign_target_files_apks"
@@ -291,7 +292,7 @@ def sign_target_files(
         env["PATH"] = f"{host_bin}:{jdk_bin}:{env.get('PATH', '/usr/bin:/bin')}"
         log = run_logged(arguments, cwd=work, env=env)
         signed, unsigned = check_signing_log(log, (KEYS_DIRECTORY, str(copy)))
-        check_ota_certificates(signed_output, copy, aosp_source)
+        check_ota_certificates(signed_output, copy, aosp_source, build_variant)
         # Signing rebuilds the partition images but not the data seed.
         with zipfile.ZipFile(target_files) as original, zipfile.ZipFile(
             signed_output, "a", zipfile.ZIP_DEFLATED

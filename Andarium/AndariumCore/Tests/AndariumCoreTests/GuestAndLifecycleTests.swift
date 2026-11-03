@@ -60,14 +60,12 @@ struct GuestTests {
         guest.setCapacity(24)
         guest.didBoot()
         guest.usedBytes = 5_000_000_000
-        guest.apps = 12
         guest.setCapacity(32)
 
         let erased = guest.erased
         #expect(erased.capacityGiB == 32)
         #expect(erased.pendingCapacityGiB == nil)
         #expect(erased.usedBytes == 0)
-        #expect(erased.apps == nil)
         #expect(erased.microphone)
         #expect(erased.includeInBackups)
         #expect(erased.memoryMiB == 2048)
@@ -76,15 +74,12 @@ struct GuestTests {
     @Test func onlyTheChoicesAreStored() throws {
         var guest = Guest.fresh(on: ipad)
         guest.usedBytes = 123
-        guest.apps = 9
         let data = try JSONEncoder().encode(guest)
         let text = String(decoding: data, as: UTF8.self)
         #expect(!text.contains("usedBytes"))
-        #expect(!text.contains("apps"))
 
         let decoded = try JSONDecoder().decode(Guest.self, from: data)
         #expect(decoded.usedBytes == 0)
-        #expect(decoded.apps == nil)
         #expect(decoded.cores == guest.cores)
     }
 }
@@ -94,6 +89,21 @@ struct LifecycleTests {
         var life = Lifecycle(guest: nil)
         #expect(life.start(.normal, host: ipad) == .noGuest)
         #expect(life.phase == .home)
+    }
+
+    /// Metal 4 starts with the A14: an earlier chip cannot draw the guest, so
+    /// nothing starts, with or without a guest, and the words name the chip.
+    @Test func aDeviceThatCannotDrawTheGuestNeverStarts() {
+        var older = ipad
+        older.runsGuestGraphics = false
+        var life = Lifecycle(guest: Guest.fresh(on: older))
+        #expect(life.start(.normal, host: older) == .needsNewerChip)
+        #expect(life.start(.recovery, host: older, plan: .firstStart) == .needsNewerChip)
+        #expect(life.phase == .home)
+        #expect(Lifecycle(guest: nil).startVerdict(.normal, host: older) == .needsNewerChip)
+        #expect(DeviceRequirement.title.contains("A14"))
+        #expect(DeviceRequirement.explanation(deviceName: "iPhone").contains("this iPhone"))
+        #expect(ipad.runsGuestGraphics)
     }
 
     @Test func aStartNeedsRoomForAndroidsOwnWrites() {
@@ -155,13 +165,13 @@ struct LifecycleTests {
 
     @Test func theFailureReportNamesTheBuildAndTheEnd() {
         let system = SystemInfo(
-            distribution: "LineageOS 24", android: "17", release: "20261031-los24-r4",
+            version: "17", release: "20261031-los24-r4",
             kernel: "Linux 6.18.54", architecture: "arm64, 4 KB pages", appVersion: "1.0 (1)"
         )
         let guest = Guest(cores: 2, memoryMiB: 1536, capacityGiB: 8)
         let report = RunEnd(result: -5).report(appVersion: "1.0 (1)", system: system, guest: guest, uptimeSeconds: 74)
         #expect(report == """
-            Andarium 1.0 (1) · LineageOS 24 20261031-los24-r4
+            Andarium 1.0 (1) · 20261031-los24-r4
             Linux 6.18.54 · 2 vCPUs · 1.5 GB
             Guest ended: runtime result -5 after 1:14
             """)

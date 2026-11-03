@@ -50,6 +50,51 @@ BUILD_VARIANTS = {
     "user": {"ro.build.type": "user", "ro.debuggable": "0"},
     "userdebug": {"ro.build.type": "userdebug", "ro.debuggable": "1"},
 }
+# The only variant a release may be. userdebug is the diagnostics build: it carries su and
+# a debuggable framework, so it is never published, signed with release keys or accepted.
+RELEASE_BUILD_VARIANTS = frozenset({"user"})
+
+
+def require_release_build_variant(variant: str) -> None:
+    if variant not in RELEASE_BUILD_VARIANTS:
+        fail(
+            f"a {variant} build is a diagnostics build and cannot be published or accepted: "
+            "set LINEAGE24_BUILD_VARIANT to user"
+        )
+
+
+# The one member of every otacerts.zip (the system's and the recovery's), by build variant. An unsigned
+# build, of either variant, holds the AOSP test key's certificate under its file name: the r7 build's
+# system, recovery and target-files copies each held testkey.x509.pem alone. sign_target_files_apks
+# replaces it with a member named after the path it is given for the release key, which sign_release.py
+# makes keys/releasekey.x509.pem. Only a user build is signed, every one of them with the one release key
+# set; a userdebug build keeps the member the build wrote and is never re-signed.
+OTA_CERTIFICATE_BUILD_MEMBER = "testkey.x509.pem"
+OTA_CERTIFICATE_MEMBERS = {
+    "user": "keys/releasekey.x509.pem",
+    "userdebug": OTA_CERTIFICATE_BUILD_MEMBER,
+}
+OTA_CERTIFICATE_ARCHIVES = (
+    "SYSTEM/etc/security/otacerts.zip",
+    "RECOVERY/RAMDISK/system/etc/security/otacerts.zip",
+)
+
+
+def signed_ota_certificate_member(variant: str) -> str:
+    """The member of a signed build's otacerts.zip; only a release variant is signed."""
+    if variant not in RELEASE_BUILD_VARIANTS:
+        fail(
+            f"a {variant} build is not signed with the release keys: it keeps the AOSP test keys "
+            "of the build and is never re-signed"
+        )
+    return OTA_CERTIFICATE_MEMBERS[variant]
+
+
+def ota_certificate_member(variant: str, signed: bool) -> str:
+    """The member both otacerts.zip hold: the build's test certificate until the build is signed."""
+    if variant not in OTA_CERTIFICATE_MEMBERS:
+        fail(f"no OTA certificate member is known for the build variant {variant}")
+    return signed_ota_certificate_member(variant) if signed else OTA_CERTIFICATE_BUILD_MEMBER
 
 
 def configured_build_variant(android_root: Path) -> str:
@@ -205,6 +250,7 @@ def validate_manifest(value: object) -> dict:
         require_string(android[key], f"android.{key}")
     if android["build_variant"] not in BUILD_VARIANTS:
         fail("Android build variant is not user or userdebug")
+    require_release_build_variant(android["build_variant"])
     require_integer(android["vendor_api_level"], "vendor API level", minimum=202604)
     if require_integer(android["build_number"], "Android build number", minimum=1) > 9_999_999_999:
         fail("Android build number has more than ten digits")
