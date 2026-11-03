@@ -126,6 +126,7 @@ target_link_libraries(KernariumRuntime PRIVATE
 target_compile_definitions(KernariumRuntime PRIVATE
     KERNARIUM_RUNTIME_ANDROID_GUEST=${KERNARIUM_RUNTIME_ANDROID_GUEST}
     KERNARIUM_RUNTIME_GUEST_FLAVOR=${KERNARIUM_RUNTIME_GUEST_FLAVOR}
+    UML_GPU_SOFTWARE_RENDERER=$<BOOL:${UML_GPU_SOFTWARE_RENDERER}>
     KERNARIUM_AUTOMATION_HARNESS=${_kernarium_automation_harness}
     KERNARIUM_AUTOMATION_ADB_AUTH=${_kernarium_automation_adb_auth}
     KERNARIUM_AUTOMATION_JOB_AT_START=${_kernarium_automation_job_at_start})

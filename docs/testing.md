@@ -181,11 +181,13 @@ ctest --test-dir .build/presets/macos-tooling \
 ```
 
 The iOS GPU lane runs the unmodified iOS device build on an Apple silicon Mac
-in Designed for iPad mode; [`graphics.md`](graphics.md#current-path) says why
-the iOS Simulator has no GPU build. Kernarium's own suite carries the narrowest
-check of that provider: it creates a surfaceless OpenGL 4.6 core context in the
-application process and requires Zink on the packaged KosmicKrisp driver, so a
-broken iOS graphics closure fails in seconds rather than inside a guest.
+in Designed for iPad mode; the iOS Simulator renders on the CPU instead
+([`graphics.md`](graphics.md#ios-simulator-software-renderer)), which suits UI
+tests and no conformance or performance campaign. Kernarium's own suite carries
+the narrowest check of the device provider: it creates a surfaceless OpenGL 4.6
+core context in the application process and requires Zink on the packaged
+KosmicKrisp driver, so a broken iOS graphics closure fails in seconds rather
+than inside a guest.
 
 A whole CTS campaign runs in that application through the opt-in
 `apple-ios-mac-vk-gl-cts` lane. It needs Xcode's local install service and a
@@ -671,15 +673,25 @@ cmake --build --preset ios-simulator
 scripts/build-xcframework.sh
 ```
 
-Kernarium is an iOS device product with runtime presets for Linux and Android
-and no Simulator variant; see
-[`graphics.md`](graphics.md#current-path).
+Kernarium has runtime presets for Linux and Android on the iOS device
+(`kernarium-ios-device*`) and the same on the iOS Simulator
+(`kernarium-ios-simulator*`), whose GPU product is the [software
+renderer](graphics.md#ios-simulator-software-renderer).
 `Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
-Xcode. It also packages the Apple battery provider's archive and the hardware
-video encoder's, as the Android runtime links them, as `HostBattery.xcframework`
-and `HostVideoEncoder.xcframework`; only `KernariumTests` links them, so the
-test process reaches each without loading a second runtime.
+Xcode. `--sdk device` (the default) and `--sdk simulator` choose the slices, and
+both together give XCFrameworks with an `ios-arm64` and an `ios-arm64-simulator`
+slice. KosmicKrisp has a device slice alone, so the app targets embed it with a
+Run Script phase, `Kernarium/scripts/embed-device-framework.sh`, which embeds it
+for an `iphoneos` build and nothing for the Simulator. For the device it also
+packages the Apple battery provider's archive and the hardware video encoder's,
+as the Android runtime links them, as `HostBattery.xcframework` and
+`HostVideoEncoder.xcframework`; only `KernariumTests` links them, so the test
+process reaches each without loading a second runtime.
+
+The Simulator renders with llvmpipe, which runs one rasterizer thread per host
+core; `LP_NUM_THREADS` caps them for a launch (`SIMCTL_CHILD_LP_NUM_THREADS=2`
+with `xcrun simctl launch`) on a loaded host, at the cost of frame rate.
 `dependencies/build-ios-storage.sh --verify-only` and
 `dependencies/build-ios-zstd.sh --verify-only` check both arm64 Apple slices,
 their provenance and deployment targets, required APIs, and the absence of

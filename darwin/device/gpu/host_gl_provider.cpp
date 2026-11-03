@@ -38,11 +38,24 @@ namespace {
 
 constexpr EGLenum kClientApi = EGL_OPENGL_API;
 constexpr EGLint kRenderableType = EGL_OPENGL_BIT;
+#if UML_GPU_SOFTWARE_RENDERER
+// The iOS Simulator has no Metal 4 device, so its provider is a Mesa software
+// rasterizer on the CPU: llvmpipe, which Mesa prefers once software rendering
+// is forced, or softpipe where GALLIUM_DRIVER names it (the Gallium drivers of
+// dependencies/build-apple-gpu.sh). Mesa's surfaceless platform reaches either
+// through its software device.
+constexpr const char* kProviderName = "software rasterizer";
+constexpr const char* kDriverOverrideVariable = "LIBGL_ALWAYS_SOFTWARE";
+constexpr const char* kDriverOverride = "true";
+constexpr const char* kProviderMarker =
+    "Virgl software rasterizer provider: software\n";
+#else
 constexpr const char* kProviderName = "Zink/KosmicKrisp";
 constexpr const char* kDriverOverrideVariable = "MESA_LOADER_DRIVER_OVERRIDE";
 constexpr const char* kDriverOverride = "zink";
 constexpr const char* kProviderMarker =
     "Virgl Zink/KosmicKrisp provider: hardware\n";
+#endif
 
 void reportEglFailure(const char* operation) noexcept
 {

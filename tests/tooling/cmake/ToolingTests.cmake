@@ -49,6 +49,19 @@ uml_add_tooling_test(
     LABELS audit;package
     TIMEOUT 120)
 
+# The software renderer is the Simulator's alone. The Kernarium framework
+# packaging runs this check on every device slice, and requires it in the
+# Simulator's GL provider; the fixtures show it finds either Gallium screen as a
+# symbol, an archive member or a nested slice, the provider's marker once the
+# symbols are gone, and that a reference alone proves nothing.
+uml_add_tooling_test(
+    NAME software-renderer-is-simulator-only
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_check_software_renderer.py
+        --checker ${PROJECT_SOURCE_DIR}/scripts/check-software-renderer.py
+    LABELS audit;package
+    TIMEOUT 120)
+
 # scripts/build-xcframework.sh takes its exact public API from the headers
 # through this check, so a public change needs no second list.
 uml_add_tooling_test(
