@@ -143,19 +143,24 @@ struct SessionSettingsSheet: View {
                 HStack(spacing: 10) {
                     Sparkline(values: session.readout.history)
                         .frame(width: 44, height: 18)
-                    value("\(session.readout.cpu)%")
+                    value(session.readout.cpuText)
                         .frame(minWidth: 44, alignment: .trailing)
                 }
             } label: {
                 rowLabel("CPU", symbol: "cpu")
             }
+            // The rows read the statistics while the section shows; the CPU
+            // row stands for it, since a modifier on the section would apply
+            // to every row.
+            .onAppear { model.statistics(.settings, visible: true) }
+            .onDisappear { model.statistics(.settings, visible: false) }
             LabeledContent {
-                value("\(Formats.size(mib: session.readout.memoryMiB)) of \(Formats.size(mib: memoryMiB))")
+                value(session.readout.memoryText(of: memoryMiB))
             } label: {
                 rowLabel("Memory", symbol: "memorychip")
             }
             LabeledContent {
-                value("\(session.readout.fps) fps")
+                value(session.readout.fpsText)
             } label: {
                 rowLabel("Frame Rate", symbol: "speedometer")
             }

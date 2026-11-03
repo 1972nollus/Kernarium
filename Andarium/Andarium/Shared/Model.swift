@@ -2,6 +2,14 @@ import AndariumCore
 import Observation
 import SwiftUI
 
+/// A view that shows the guest's statistics.
+enum StatisticsViewer: Hashable {
+    /// The capsule over the session.
+    case pill
+    /// The Stats rows of the session's Settings.
+    case settings
+}
+
 enum SheetKind: String, Identifiable, Hashable {
     case create, resize, erase, info
 
@@ -114,7 +122,10 @@ final class SessionState {
 /// a screen holds: the open sheet, display options and the session's state.
 @Observable
 final class AppModel {
-    var lifecycle: Lifecycle
+    var lifecycle: Lifecycle {
+        // The readings run while the guest does.
+        didSet { if lifecycle.phase != oldValue.phase { refreshStatistics() } }
+    }
     var host: HostDevice
     /// The system this build of Andarium carries.
     var system: SystemInfo
@@ -165,6 +176,28 @@ final class AppModel {
     var diskProgress: Double?
     var microphoneState = MicrophoneState.notAsked
     private var persistTask: Task<Void, Never>?
+
+    // MARK: Statistics state
+
+    /// The views that show the statistics. Nothing is read while there are
+    /// none.
+    private(set) var statisticsViewers: Set<StatisticsViewer> = []
+    /// Whether the application is the active one. The readings stop when it
+    /// is not, and start again with a new baseline.
+    var applicationActive = true {
+        didSet { if applicationActive != oldValue { refreshStatistics() } }
+    }
+    /// The figures behind the screens, from the driver's readings.
+    private(set) var statisticsMeter = StatsMeter()
+    /// A launch for automation prints each reading.
+    var printsStatistics = false
+    /// Waits between readings; a test paces them by hand.
+    @ObservationIgnored var statisticsSleep: @MainActor (Duration) async -> Void = { duration in
+        try? await Task.sleep(for: duration)
+    }
+    @ObservationIgnored private var statisticsTask: Task<Void, Never>?
+    /// Tells a loop that ended from the one that replaced it.
+    @ObservationIgnored private var statisticsGeneration = 0
 
     init(
         guest: Guest?, host: HostDevice, system: SystemInfo, capabilities: Capabilities,
@@ -385,6 +418,7 @@ final class AppModel {
         let showStats = session.showStats
         session = SessionState()
         session.showStats = showStats
+        statisticsMeter = StatsMeter()
         bootTracker = BootTracker()
         lifecycle.restart()
     }
@@ -403,6 +437,80 @@ final class AppModel {
         guest?.microphone = on
         persistNow()
         driver?.setMicrophone(on)
+    }
+
+    // MARK: Statistics
+
+    /// A view that shows the statistics appears or goes. The readings run
+    /// while some view shows them and everything else allows
+    /// (`StatsSampling.isWanted`), and one loop serves every view.
+    func statistics(_ viewer: StatisticsViewer, visible: Bool) {
+        if visible {
+            statisticsViewers.insert(viewer)
+        } else {
+            statisticsViewers.remove(viewer)
+        }
+        refreshStatistics()
+    }
+
+    private var statisticsWanted: Bool {
+        var running = false
+        if case .running = phase { running = true }
+        return StatsSampling.isWanted(
+            viewers: statisticsViewers.count, applicationActive: applicationActive,
+            capable: capabilities.statistics, hasDriver: driver != nil, running: running
+        )
+    }
+
+    /// Starts the loop when the readings are wanted and none runs, and stops
+    /// it when they are not.
+    func refreshStatistics() {
+        if statisticsWanted {
+            guard statisticsTask == nil else { return }
+            statisticsGeneration += 1
+            let generation = statisticsGeneration
+            statisticsTask = Task { [weak self] in
+                await self?.runStatisticsLoop()
+                if let self, self.statisticsGeneration == generation { self.statisticsTask = nil }
+            }
+        } else if let task = statisticsTask {
+            task.cancel()
+            statisticsTask = nil
+            statisticsGeneration += 1
+        }
+    }
+
+    /// Two readings a moment apart, so figures show within about a third of
+    /// a second, and the guest's memory after the second. Then a reading
+    /// every second and the memory with every other one. A result that
+    /// arrives after the loop was stopped is dropped.
+    private func runStatisticsLoop() async {
+        guard let driver else { return }
+        statisticsMeter.pause()
+        var readings = 0
+        while !Task.isCancelled, statisticsWanted {
+            if let sample = await driver.readStatistics(), !Task.isCancelled {
+                statisticsMeter.record(sample)
+                readings += 1
+                if readings.isMultiple(of: StatsSampling.memoryEvery) {
+                    if let memory = await driver.readGuestMemory(), !Task.isCancelled {
+                        statisticsMeter.record(memory: memory)
+                    }
+                }
+                publishStatistics()
+            }
+            guard !Task.isCancelled else { return }
+            await statisticsSleep(readings == 1 ? StatsSampling.firstGap : StatsSampling.interval)
+        }
+    }
+
+    private func publishStatistics() {
+        session.readout = Readout(statisticsMeter)
+        #if !APP_STORE
+        if printsStatistics {
+            print(ConsoleReport.statistics(statisticsMeter, guestMemoryMiB: guest?.memoryMiB ?? 0))
+        }
+        #endif
     }
 
     /// The step of the boot under way, from the runtime's milestones.

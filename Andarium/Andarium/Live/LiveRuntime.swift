@@ -402,6 +402,7 @@ final class LiveRuntime: RuntimeDriver {
         let edges: [(Notification.Name, @MainActor (LiveRuntime) -> Void)] = [
             (UIApplication.willResignActiveNotification, {
                 print(ConsoleReport.application(active: false))
+                $0.model?.applicationActive = false
                 $0.pause.willResignActive()
             }),
             (UIApplication.didEnterBackgroundNotification, { $0.pause.didEnterBackground() }),
@@ -423,6 +424,7 @@ final class LiveRuntime: RuntimeDriver {
     private func didBecomeActive() {
         print(ConsoleReport.application(active: true))
         guard let model else { return }
+        model.applicationActive = true
         model.host.freeStorageBytes = AppEntry.freeStorageBytes()
         model.microphoneState = Self.state(microphone.access)
         if model.guest?.microphone == true { tellMicrophone(true) }

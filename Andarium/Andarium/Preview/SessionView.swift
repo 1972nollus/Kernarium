@@ -56,8 +56,8 @@ struct SessionView: View {
         .onAppear(perform: prepare)
         .task {
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
                 model.session.readout.tick(memoryMiB: guestModel.memoryMiB)
+                try? await Task.sleep(for: .seconds(1))
             }
         }
     }

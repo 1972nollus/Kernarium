@@ -11,6 +11,14 @@ struct SessionView: View {
 
     var body: some View {
         Color.clear
+            .overlay(alignment: .top) {
+                if model.session.showStats {
+                    StatsOverlay(memoryMiB: model.guest?.memoryMiB ?? Limits.defaultMemoryMiB, recovery: mode == .recovery)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .padding(.top, 36)
+                        .allowsHitTesting(false)
+                }
+            }
             .overlay {
                 SideKeysOverlay(mode: mode, lit: true, actions: actions)
             }
