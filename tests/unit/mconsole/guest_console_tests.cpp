@@ -4,6 +4,7 @@
 #include "guest_console_test_support.hpp"
 #include "require.hpp"
 #include "socket_paths.hpp"
+#include "wait_until.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -12,6 +13,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -31,6 +33,7 @@ using uml::testing::bindServer;
 using uml::testing::receiveRequest;
 using uml::testing::require;
 using uml::testing::sendReply;
+using uml::testing::waitUntil;
 
 const ::uml::device::GuestConsoleLocation &processLocation()
 {
@@ -502,6 +505,204 @@ void aTrimPassIsWaitedForUpToItsBound()
 	(void)::close(server);
 }
 
+/* ---- The guest's memory figures: "mem". ---- */
+
+using ::uml::device::GuestMemoryFigures;
+using ::uml::device::GuestMemoryQuery;
+using ::uml::device::GuestMemoryResult;
+using ::uml::device::parse_guest_memory_reply;
+
+/* The line a guest answers, and every way the host refuses to read one. */
+void theMemoryReplyIsParsedStrictly()
+{
+	constexpr std::uint64_t gib = 1ULL << 30;
+	const auto plain = parse_guest_memory_reply(
+		"total=2147483648 available=1073741824 free=536870912");
+	require(plain && plain->total_bytes == 2 * gib &&
+		plain->available_bytes == gib && plain->free_bytes == gib / 2);
+	/* The field order and a line end are the guest's to choose; a field it
+	 * adds later is not ours to refuse. */
+	const auto reordered = parse_guest_memory_reply(
+		"free=7 available=5 total=9 swap=4\n");
+	require(reordered && reordered->total_bytes == 9 &&
+		reordered->available_bytes == 5 && reordered->free_bytes == 7);
+	/* `free` is informational. */
+	const auto withoutFree = parse_guest_memory_reply("total=9 available=5");
+	require(withoutFree && withoutFree->free_bytes == 0);
+	const auto largest = parse_guest_memory_reply(
+		"total=18446744073709551615 available=0 free=0");
+	require(largest && largest->total_bytes == UINT64_MAX);
+
+	for (const std::string_view bad : {
+		     "", " ", "total=1", "available=1", "total=1 free=1",
+		     "total= available=1", "total=1 available=", "=1 total=1",
+		     "total=-1 available=1", "total=+1 available=1",
+		     "total=1.5 available=1", "total=0x10 available=1",
+		     "total=1 available=1x", "total=1  available=1",
+		     "total=1 available=1 ", " total=1 available=1",
+		     "total=1 total=2 available=1",
+		     "total=1 available=1 available=1",
+		     "total=18446744073709551616 available=1",
+		     "total 1 available 1", "total:1 available:1",
+		     "Unknown command", "total=1 available=1 stray",
+		     "total=1\navailable=1"})
+		require(!parse_guest_memory_reply(bad),
+			"a malformed memory reply was accepted");
+}
+
+/* Sends the request and waits for its reply with the console answering as
+ * `policy` says. */
+GuestMemoryResult askMemory(int server, std::string_view answer,
+	std::uint32_t error, int delayMs, std::chrono::milliseconds wait,
+	GuestMemoryFigures &figures, std::chrono::milliseconds &took)
+{
+	std::vector<std::string> requests;
+	std::thread observer {answerLater, server, answer, error, delayMs,
+		std::ref(requests)};
+	const auto began = std::chrono::steady_clock::now();
+	auto query = GuestMemoryQuery::start();
+	require(query.has_value(), "the request was not sent");
+	const auto result = query->await(wait, figures);
+	took = std::chrono::duration_cast<std::chrono::milliseconds>(
+		std::chrono::steady_clock::now() - began);
+	observer.join();
+	require(requests == std::vector<std::string> {"mem"},
+		"the guest must hear one \"mem\"");
+	return result;
+}
+
+void aMemoryRequestReadsTheGuestsFigures()
+{
+	const ::uml::device::GuestConsoleRun run {true};
+	/* No guest console yet: nothing is sent. */
+	require(!GuestMemoryQuery::start().has_value());
+	const int server = bindServer(consolePath());
+	GuestMemoryFigures figures;
+	std::chrono::milliseconds took {};
+	constexpr std::chrono::milliseconds bound {500};
+	require(askMemory(server,
+		"total=1913519104 available=1056964608 free=196083712", 0U, 0,
+		bound, figures, took) == GuestMemoryResult::done);
+	require(figures.total_bytes == 1913519104ULL &&
+		figures.available_bytes == 1056964608ULL &&
+		figures.free_bytes == 196083712ULL);
+	requireOwnerOnly(consolePath());
+	/* The kernel's driver counts the NUL that ends a reply in its length. */
+	constexpr char terminated[] = "total=2048 available=1024 free=512";
+	require(askMemory(server, std::string_view {terminated, sizeof(terminated)},
+		0U, 0, bound, figures, took) == GuestMemoryResult::done);
+	require(figures.total_bytes == 2048ULL &&
+		figures.available_bytes == 1024ULL && figures.free_bytes == 512ULL);
+	/* A kernel without the command refuses it. */
+	require(askMemory(server, "Unknown command", 1U, 0, bound, figures,
+		took) == GuestMemoryResult::refused);
+	/* A guest that answers something else did the command no good. */
+	require(askMemory(server, "total=1", 0U, 0, bound, figures, took) ==
+		GuestMemoryResult::malformed);
+	require(askMemory(server, "hello", 0U, 0, bound, figures, took) ==
+		GuestMemoryResult::malformed);
+	require(!awaitRequest(server, 200));
+	(void)::close(server);
+}
+
+/* A guest that does not answer is waited for up to the bound and no longer,
+ * and a reply that comes after the bound goes nowhere. The request can be
+ * waited on again until it is destroyed. */
+void aSilentGuestIsWaitedForUpToTheBound()
+{
+	const ::uml::device::GuestConsoleRun run {true};
+	const int server = bindServer(consolePath());
+	GuestMemoryFigures figures;
+	std::chrono::milliseconds took {};
+	require(askMemory(server,
+		"total=100 available=50 free=10", 0U, 1500,
+		std::chrono::milliseconds {200}, figures, took) ==
+		GuestMemoryResult::unanswered);
+	require(took >= std::chrono::milliseconds {150} &&
+		took < std::chrono::milliseconds {1200},
+		"the wait must end at its bound, not at the reply");
+	/* A zero wait takes only what has arrived. */
+	std::vector<std::string> requests;
+	std::thread observer {answerLater, server, "total=8 available=4 free=2",
+		0U, 300, std::ref(requests)};
+	auto query = GuestMemoryQuery::start();
+	require(query.has_value());
+	require(query->await(std::chrono::milliseconds {0}, figures) ==
+		GuestMemoryResult::unanswered);
+	require(query->await(std::chrono::milliseconds {5000}, figures) ==
+		GuestMemoryResult::done);
+	require(figures.total_bytes == 8 && figures.available_bytes == 4);
+	observer.join();
+	(void)::close(server);
+}
+
+/* The reply is waited for without the console's lock: another request
+ * reaches the guest, and is answered, while a "mem" waits for a slow one. */
+void aWaitingMemoryRequestDoesNotHoldTheConsole()
+{
+	const ::uml::device::GuestConsoleRun run {true};
+	const int server = bindServer(consolePath());
+	std::atomic_bool done {};
+	std::mutex heardMutex;
+	std::vector<std::string> heard;
+	const auto heardCount = [&] {
+		const std::lock_guard lock {heardMutex};
+		return heard.size();
+	};
+	std::thread guest {[&] {
+		sockaddr_un client {};
+		socklen_t clientLength {};
+		sockaddr_un slow {};
+		socklen_t slowLength {};
+		std::chrono::steady_clock::time_point slowAt;
+		bool slowPending = false;
+		while (!done.load()) {
+			if (slowPending &&
+			    std::chrono::steady_clock::now() >= slowAt) {
+				slowPending = false;
+				(void)sendReply(server, slow, slowLength, 0U,
+					"total=64 available=32 free=16");
+			}
+			if (!awaitRequest(server, 20))
+				continue;
+			const auto command = receiveRequest(server, client,
+				clientLength);
+			{
+				const std::lock_guard lock {heardMutex};
+				heard.push_back(command);
+			}
+			if (command == "mem") {
+				slow = client;
+				slowLength = clientLength;
+				slowAt = std::chrono::steady_clock::now() +
+					std::chrono::milliseconds {800};
+				slowPending = true;
+			} else {
+				(void)sendReply(server, client, clientLength, 0U,
+					"running");
+			}
+		}
+	}};
+	auto query = GuestMemoryQuery::start();
+	require(query.has_value());
+	/* "mem" is out and unanswered; a wake must not queue behind it. */
+	require(waitUntil([&] { return heardCount() == 1U; },
+		std::chrono::seconds {10}), "the guest never heard the request");
+	const auto began = std::chrono::steady_clock::now();
+	require(::uml::device::wake_guest(), "the wake was not answered");
+	require(std::chrono::steady_clock::now() - began <
+		std::chrono::milliseconds {600},
+		"a wake waited for the memory request's reply");
+	GuestMemoryFigures figures;
+	require(query->await(std::chrono::seconds {10}, figures) ==
+		GuestMemoryResult::done);
+	require(figures.total_bytes == 64);
+	done.store(true);
+	guest.join();
+	require(heard == std::vector<std::string> {"mem", "wake"});
+	(void)::close(server);
+}
+
 /* The widest reply socket a location may name. */
 std::size_t widestClientPath(const ::uml::device::GuestConsoleLocation &location)
 {
@@ -764,6 +965,13 @@ int main(int argc, char **argv)
 		runPrivately([] {
 			trimmingIsSwitchedByOneRequest();
 			aTrimPassIsWaitedForUpToItsBound();
+		});
+	} else if (selected == "memory") {
+		runPrivately([] {
+			theMemoryReplyIsParsedStrictly();
+			aMemoryRequestReadsTheGuestsFigures();
+			aSilentGuestIsWaitedForUpToTheBound();
+			aWaitingMemoryRequestDoesNotHoldTheConsole();
 		});
 	} else if (selected == "suspend-timeout") {
 		runPrivately(aSuspendThatDoesNotReplyIsAborted);

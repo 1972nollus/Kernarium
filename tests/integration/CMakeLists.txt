@@ -398,6 +398,17 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# The Virtio vsock device carries 64 MiB each way, concurrent streams, a stalled
+# reader at either end, half-closes, a refused port, a suspend in the middle of
+# a stream and a guest restart, all checked by SHA-256 through the launcher's
+# loopback forward.
+uml_add_guest_integration_test(
+    NAME guest-vsock-stream
+    SCRIPT vsock/run_guest_vsock_stream.py
+    LABELS guest;vsock;network
+    TIMEOUT 600
+    CPUS 2)
+
 add_subdirectory(aarch32)
 add_subdirectory(android)
 add_subdirectory(exclusive)
@@ -638,6 +649,18 @@ uml_add_guest_integration_test(
     LABELS guest;kernel;smoke
     TIMEOUT 300
     CPUS 2)
+
+# What a macOS launcher prints with --stats: the vCPU load against libproc and
+# the guest's /proc/stat, the frames of an offscreen display, and the guest's
+# memory, as its kernel's `mem` console request reports it, against
+# /proc/meminfo, and none from a console that refuses the request.
+uml_add_guest_integration_test(
+    NAME guest-statistics
+    SCRIPT kernel/run_guest_statistics.py
+    LABELS guest;kernel;gpu
+    TIMEOUT 300
+    CPUS 2
+    GPUS 1)
 
 # Unmapping user pages beside the native window leaves the kernel's own
 # mappings in it alone.

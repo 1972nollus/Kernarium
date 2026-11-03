@@ -7,6 +7,7 @@
 
 #import <Foundation/Foundation.h>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -224,7 +225,10 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->set_microphone == nullptr ||
         api->set_restart_callback == nullptr ||
         api->guest_display_active == nullptr ||
-        api->plan_gpu_budget == nullptr) {
+        api->plan_gpu_budget == nullptr ||
+        api->connect_vsock == nullptr ||
+        api->read_statistics == nullptr ||
+        api->read_guest_memory == nullptr) {
         std::fputs("Kernarium: runtime API validation failed\n", stderr);
         return false;
     }
@@ -255,12 +259,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v18");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v20");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v18: %s\n",
+            "Kernarium: selected runtime lacks API v20: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;
@@ -503,6 +507,16 @@ extern "C" void kernarium_runtime_loader_set_restart_handler(
         updateRestartForwarder(runtime);
 }
 
+extern "C" int kernarium_runtime_loader_connect_vsock(
+    uint32_t port,
+    uint32_t timeoutMilliseconds)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ?
+        -ENODEV :
+        runtime->connect_vsock(port, timeoutMilliseconds);
+}
+
 extern "C" int kernarium_runtime_loader_automation_hold_delay_ms(void)
 {
     return api() != nullptr && automationHoldDelayMs != nullptr
@@ -514,6 +528,20 @@ extern "C" int kernarium_runtime_loader_guest_display_active(void)
 {
     const kernarium_runtime_api* runtime = api();
     return runtime == nullptr ? -1 : runtime->guest_display_active();
+}
+
+extern "C" int kernarium_runtime_loader_read_statistics(
+    kernarium_runtime_statistics* statistics)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ? -ENODEV : runtime->read_statistics(statistics);
+}
+
+extern "C" int kernarium_runtime_loader_read_guest_memory(
+    kernarium_runtime_guest_memory* memory)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ? -ENODEV : runtime->read_guest_memory(memory);
 }
 
 extern "C" int kernarium_runtime_loader_automation_job_at_start(void)

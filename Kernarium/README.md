@@ -130,14 +130,14 @@ The runtime framework is loaded once per process for the flavour chosen at
 launch, so the settings do not ask it: the loader (`KernariumRuntimeLoader`)
 includes the same header, reads the limit from the process (`TASK_VM_INFO`) and
 answers `kernarium_runtime_loader_maximum_guest_memory_mib`. Where the system
-sets no limit, on a Mac included, the answer is 4096 MB and nothing changes.
+sets no limit, on a Mac included, the answer is 4096 MiB and nothing changes.
 
-- The Guest RAM stepper runs from 512 MB to the maximum of the chosen vCPU
+- The Guest RAM stepper runs from 512 MiB to the maximum of the chosen vCPU
   count and updates as the count changes; a footnote states the maximum.
-- Raising the vCPU count takes the RAM down to the new maximum, in 64 MB steps.
+- Raising the vCPU count takes the RAM down to the new maximum, in 64 MiB steps.
   Lowering the count leaves the RAM as it is.
 - Loading a stored size takes it down to the maximum of the stored vCPU count.
-  With nothing stored the default is 1536 MB on a device and 4096 MB on a Mac,
+  With nothing stored the default is 1536 MiB on a device and 4096 MiB on a Mac,
   or the maximum where that is less.
 - `KERNARIUM_GUEST_MEMORY_MIB` states a size as is, for automation; the launch
   notice above covers a size the limit cannot afford.
@@ -246,6 +246,23 @@ reaches a loopback forward through `iproxy`; a forward on every interface or on
 a network address is refused.
 The packaging script refuses a release runtime that carries the switch.
 
+How an Android guest's adbd is reached is told to the guest on its kernel
+command line, by the launcher alone: a release's command-line file cannot set
+either argument. The boot request can carry the adb host key the guest
+authorizes for that boot without asking its user (`android_adb_public_key`,
+runtime API 19): the base64 of adb's `RSAPublicKey` record, 1 to 1024
+characters of `A-Za-z0-9+/=`, or null. A request that carries anything else
+fails with `-UML_EMULATOR_INVALID_ARGUMENT`. The runtime passes it as
+`androidboot.kernarium.adb_key=<key>`. A launch with no
+`KERNARIUM_HOST_FORWARD` has no use for a TCP listener, so the runtime also
+passes `androidboot.kernarium.adb_tcp=0` and adbd listens on vsock alone; a
+launch with a forward passes no `adb_tcp` argument, and adbd keeps listening on
+TCP for the host that reaches it through the forward. adbd reads both as
+`ro.boot` properties itself. The kernel's command line holds 4095 bytes in all,
+counting what the emulator adds, and the runtime refuses a launch whose
+arguments exceed it with a line that says so, because the kernel would end the
+process.
+
 Every automation runtime also reads `KERNARIUM_BACKGROUND_JOB_AT_START=1`
 (`0` or unset asks for nothing; anything else is reported and ignored). A guest
 in the keep-running mode (`KERNARIUM_BACKGROUND_MODE=keepRunning`) then gets
@@ -297,6 +314,11 @@ Kernarium attaches:
   charging state, with a 100-percent charging fallback when the host has no
   readable battery;
 - SLiRP networking from the verified iOS prefix;
+- a Virtio vsock device, the last Virtio device, through which the application
+  opens streams to guest ports (`connect_vsock`, runtime API 19; Andarium opens
+  adbd's port 5555). It is
+  [the device](../darwin/device/vsock/README.md), one per boot, and the guest
+  cannot open a connection to the application;
 - a Virtio-GPU Metal framebuffer; and
 - the guest's `ttyS0` stream mirrored to a terminal view.
 
@@ -513,15 +535,48 @@ that mixes with other audio; the window sets the session as the application
 resigns active, because guest audio claims and drops it on its own terms. The
 application plays no sound of its own.
 
+## Statistics
+
+An application that shows how hard the guest works asks the runtime, which
+measures nothing between calls: no thread, timer or counter of its own runs
+while nobody reads (runtime API 20, `read_statistics` and `read_guest_memory`).
+`read_statistics` returns one reading of the host's figures: the CPU time the
+guest's `uml-vcpu-N-carrier` threads have used, the frames its display
+presented and was offered, and the guest RAM the host holds. It reads counters
+the system and the display keep anyway, in about 0.1 ms, and never waits for
+the guest. Two readings of one boot give the share of the guest's processors
+that computed (the difference of `processor_time_ns` over the difference of
+`timestamp_ns` and `processor_count`) and the rate of presented frames; the
+`boot_index` of a reading is the restart count, and a pair that spans two boots
+is not a rate, because the CPU time starts again at a restart. The share
+includes the engine's own translation work, which runs on the carriers, and
+leaves out the host's device threads.
+
+`read_guest_memory` asks the guest kernel for its own `MemTotal` and
+`MemAvailable` through the management console, which the application shows as
+the memory in use (total less available). Because a console request ends a
+suspend, it is never sent where it could wake a guest that sleeps: it returns
+`-EAGAIN` with nothing sent while the application has quiesced the guest, while
+a lifecycle call (quiesce, resume, sync, trimming) is in progress, and while the
+guest's display is known to be off, which is when an Android guest suspends
+itself. `-ENOTSUP` is a kernel without the request and `-ETIMEDOUT` a guest that
+did not answer in 500 ms; the application keeps the last figure in all three.
+It waits up to 500 ms, and a quiesce, resume or sync made meanwhile waits for
+it, so it is called away from the main thread. `KernariumStatistics.hpp` holds
+the rules, with `kernarium-statistics` as their test.
+
 ## Simulator
 
 The Simulator build is for UI tests of the application and its Android guest.
 Configure and build a `kernarium-ios-simulator*` runtime preset, package it with
 `scripts/package-ios-frameworks.sh --sdk simulator` (`--sdk device` beside it
-gives XCFrameworks that both SDKs build against) and build the scheme for
-`generic/platform=iOS Simulator`. The Simulator product is arm64 alone, like
-its packaged slices, so the project excludes x86_64 for the Simulator SDK
-(`EXCLUDED_ARCHS[sdk=iphonesimulator*]`) and the build needs no `ARCHS`. The
+gives XCFrameworks that both SDKs build against) and build the scheme for a
+concrete Simulator, or run its tests with `scripts/run-ios-simulator-tests.sh`.
+The Simulator product is arm64 alone, like its packaged slices: a concrete
+destination builds that device's architecture, and the project excludes x86_64
+for the Simulator SDK (`EXCLUDED_ARCHS[sdk=iphonesimulator*]`); a generic
+Simulator destination needs `EXCLUDED_ARCHS=x86_64` as well
+([`docs/testing.md`](../docs/testing.md#apple-builds-and-kernarium)). The
 GPU prefix is the software one, at
 `.build/dependencies/apple-gpu-vulkan-experiment/ios-simulator-arm64` unless
 `KERNARIUM_SIMULATOR_GPU_PREFIX` names another (`KERNARIUM_DEVICE_GPU_PREFIX`
@@ -541,13 +596,15 @@ Each script documents its options in `--help` or its header:
   `--automation` the automation Linux runtime, with `--android-automation`
   the automation Android runtime, with `--runtimes android` the Android
   runtime alone (for Andarium; the output directory is shared, so package the
-  full set again before building Kernarium), and, for the device, the host
-  battery and video encoder archives only `KernariumTests` links;
+  full set again before building Kernarium), and the host battery and video
+  encoder archives, a slice for each SDK, which only `KernariumTests` links;
 - `embed-device-framework.sh` is the Run Script phase that embeds the
   device-only `KosmicKrisp.xcframework` for an `iphoneos` build and nothing for
   the Simulator, because an XCFramework in an Embed Frameworks phase needs a
   slice for every SDK the target builds and a platform filter cannot name the
   device apart from the Simulator;
+- `run-ios-simulator-tests.sh` builds `KernariumTests` and `KernariumUITests`
+  for the iOS Simulator and runs them in one iPad Simulator (`--help`);
 - `make-guest-bundle.py` assembles an Android `.kern` bundle (system disk,
   layout, kernel command line) from an installed release;
 - `repro-android-hold-mac.py` sends an Android guest through the background

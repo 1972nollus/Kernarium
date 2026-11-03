@@ -654,6 +654,14 @@ hotplug and restores them before guest tasks resume. The console socket is
 `uml_dir=<dir>`, a directory owned by that machine alone; a path that does not
 fit Darwin's 104-byte `sun_path` is refused, never truncated.
 
+The console's `mem` replies `total=<n> available=<n> free=<n>`: the MemTotal,
+MemAvailable and MemFree that `/proc/meminfo` prints, in decimal bytes, with
+one space between the fields and nothing after them, as one reply and no
+error. It reads `si_meminfo()` and `si_mem_available()` from the console's
+interrupt, with no file and no process context, so it answers where a policy
+keeps the console from `/proc/meminfo`, as on Android. A kernel without the
+command refuses it as an unknown command.
+
 Only a wake source ends the suspend. Some wake any suspend: the management
 console, the UML RTC alarm, VNC input, and a vhost-user device whose wakeup is
 enabled in sysfs (its backend channel and every queue's call descriptor

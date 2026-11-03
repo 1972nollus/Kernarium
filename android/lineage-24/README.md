@@ -147,14 +147,20 @@ The product identity is Andarium's, not a Cuttlefish or "Darwin" one:
 `lineage_andarium` (the makefile, `AndroidProducts.mk` and the device directory
 follow LineageOS's `lineage_<device>` convention), so the lunch target is
 `lineage_andarium-cp2a-user` and the product output directory is
-`target/product/andarium`. The verifier checks the identity and that the
-fingerprint starts `Andarium/lineage_andarium/andarium:` and names the variant.
-`darwin` stays the name of the host platform.
+`target/product/andarium`. The system partition stays AOSP's generic system
+(`ro.product.system.*` is Android / generic / Generic System), so the identity is
+in the product and vendor partitions (`ro.product.product.*`,
+`ro.product.vendor.*`) and in the public `ro.build.fingerprint`, which `Build.*`
+reports. The verifier checks the identity there and that the fingerprint starts
+`Andarium/lineage_andarium/andarium:` and names the variant; the system
+partition's own identity is not constrained. `darwin` stays the name of the
+host platform.
 
 Diagnostics on a `user` image start on the host and need no guest root: the
 guest console the host captures for kernel logs, UML's mconsole (`sysrq`,
-`proc`, `stack`) for the kernel's state, and tracefs from the shell (the image
-mounts it at `/sys/kernel/tracing`, readable and writable by `shell`). The
+`proc`, `stack`, and `mem` for the memory counters, which it reads without
+opening `/proc/meminfo`) for the kernel's state, and tracefs from the shell (the
+image mounts it at `/sys/kernel/tracing`, readable and writable by `shell`). The
 shell can also set `perf.drop_caches` (init writes `drop_caches`), the `debug.*`
 properties and `powerctl`. Only what these cannot reach (`dmesg`, `setenforce`,
 `ctl.*` service control, other uids' `/proc/<pid>/smaps`) needs a `userdebug`

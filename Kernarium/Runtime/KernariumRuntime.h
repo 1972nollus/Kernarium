@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 18U
+#define KERNARIUM_RUNTIME_API_VERSION 20U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -55,7 +55,17 @@ enum {
  * the three launch parameters: A, the application's own expected ceiling;
  * E_rest, the guest side's memory beyond the gadget cache; and S, the headroom
  * left unused. Zero, which is what the application states until their values
- * are chosen, adds nothing to the sum. */
+ * are chosen, adds nothing to the sum.
+ *
+ * An Android guest authorizes one adb host key for this boot without asking
+ * its user: android_adb_public_key is the key as adb writes it, base64 of the
+ * RSAPublicKey record without the trailing comment, 1 through 1024 characters
+ * of A-Z a-z 0-9 + / =, or null for none. The runtime reads it only from a
+ * request whose struct_size covers it and fails the run with
+ * -UML_EMULATOR_INVALID_ARGUMENT when it is anything else. The guest's
+ * kernel command line, which also carries the release's own and the launch's
+ * arguments, holds 4096 bytes; a run whose command line is longer fails
+ * with a message that says so. A Linux guest ignores the key. */
 typedef struct kernarium_runtime_boot {
     uint32_t struct_size;
     uint32_t width;
@@ -73,6 +83,7 @@ typedef struct kernarium_runtime_boot {
     uint32_t gpu_budget_application_mib;
     uint32_t gpu_budget_engine_mib;
     uint32_t gpu_budget_headroom_mib;
+    const char* android_adb_public_key;
 } kernarium_runtime_boot;
 
 /* What a launch's host GPU budget comes to, as the runtime evaluates it for
@@ -233,6 +244,71 @@ enum {
  * runs; a guest that starts later follows it. */
 typedef int (*kernarium_runtime_set_microphone_function)(int enabled);
 
+/* The host-side figures of the running guest, for an application that shows
+ * statistics. Nothing in the runtime measures between calls: a reading is the
+ * system's own accounting of the guest's vCPU threads, the display's frame
+ * counters and the host's record of the guest RAM it holds, taken when the
+ * call is made. */
+typedef struct kernarium_runtime_statistics {
+    /* Set by the caller to sizeof the structure. */
+    uint32_t struct_size;
+    /* The guest's vCPUs that have come up. */
+    uint32_t processor_count;
+    /* How many times this launch's guest has restarted: 0 for the first boot.
+     * Two readings with different values span two guests, and the CPU time of
+     * the second starts again from zero. */
+    uint32_t boot_index;
+    /* As guest_display_active: 1 on, 0 off, -1 unknown. */
+    int32_t display_active;
+    /* When the CPU time was read, in nanoseconds of the steady clock, which
+     * does not count the time the device sleeps. */
+    uint64_t timestamp_ns;
+    /* The user and system time the guest's vCPU threads have used in this
+     * boot, in nanoseconds. Two readings of one boot differ by the time the
+     * vCPUs spent between them: divided by the elapsed timestamps and
+     * processor_count it is the share of the guest's processors that
+     * computed. */
+    uint64_t processor_time_ns;
+    /* Frames that reached the screen, and frames the guest offered, since the
+     * display was made. The display outlives a restart, so neither starts
+     * again; both are 0 while there is no display. */
+    uint64_t presented_frames;
+    uint64_t offered_frames;
+    /* The guest's RAM, and the part of it the host holds now. Both are 0
+     * before the guest's kernel has claimed its RAM. */
+    uint64_t memory_bytes;
+    uint64_t memory_held_bytes;
+} kernarium_runtime_statistics;
+/* Fills `statistics` (the caller sets struct_size) with the running guest's
+ * host-side figures. Returns 0, -ENODEV with no guest running (before its
+ * kernel starts, between two boots, after it ends), or -EINVAL for a null or
+ * short structure. It reads counters, about 0.1 ms, and never waits for the
+ * guest; any thread. */
+typedef int (*kernarium_runtime_read_statistics_function)(
+    kernarium_runtime_statistics* statistics);
+
+typedef struct kernarium_runtime_guest_memory {
+    /* Set by the caller to sizeof the structure. */
+    uint32_t struct_size;
+    uint32_t reserved;
+    /* The guest kernel's own total and available memory (MemTotal and
+     * MemAvailable), in bytes. Its memory in use is total_bytes minus
+     * available_bytes. */
+    uint64_t total_bytes;
+    uint64_t available_bytes;
+} kernarium_runtime_guest_memory;
+/* Asks the guest kernel for its own memory figures through its management
+ * console. Returns 0; -ENODEV with no guest running; -EAGAIN, with nothing
+ * sent, when asking could wake a guest that sleeps (the application quiesced
+ * it, a lifecycle call such as quiesce or sync is in progress, or its display
+ * is off, as an Android guest's is before it suspends itself); -ENOTSUP for a
+ * kernel without the request; -ETIMEDOUT with no answer in 500 ms; or -EINVAL
+ * for a null or short structure. It leaves `memory` alone unless it returns 0.
+ * It blocks up to 500 ms, and a quiesce, resume or sync called meanwhile waits
+ * for it: call it away from the main thread. */
+typedef int (*kernarium_runtime_read_guest_memory_function)(
+    kernarium_runtime_guest_memory* memory);
+
 /* What a restart event reports. */
 enum {
     /* The guest asked to restart and the old guest is gone: its devices are
@@ -262,6 +338,24 @@ typedef void (*kernarium_runtime_set_restart_callback_function)(
     kernarium_runtime_restart_callback callback,
     void* context);
 
+/* Opens a stream to the guest's vsock port `port` (an Android guest's adbd
+ * listens on 5555) and returns a connected SOCK_STREAM descriptor that the
+ * caller owns and closes, or a negated errno: -ENODEV when no guest runs,
+ * -ECONNREFUSED when nothing listens on the port (yet), -ETIMEDOUT when the
+ * guest did not answer within timeout_ms (a guest without the vsock driver, or
+ * one the host quiesced), -EMFILE when 32 connections are open, -ECONNRESET
+ * when the guest stops or restarts first, and -EINVAL for a port that cannot
+ * be named. A guest that suspended itself is woken first, as network traffic
+ * wakes it. The stream ends when the guest closes it, stops or restarts, and
+ * no other process or guest application can reach it. Wait for the descriptor
+ * with poll or kqueue and read what they report: the guest's half-close
+ * arrives as shutdown(SHUT_WR) on the peer end, which a blocking read can miss
+ * (docs/architecture.md, "Local stream sockets"). It blocks: call it away from
+ * the main thread. */
+typedef int (*kernarium_runtime_connect_vsock_function)(
+    uint32_t port,
+    uint32_t timeout_ms);
+
 /* The application resolves only this versioned getter after loading exactly
  * one runtime framework. The table is immutable and remains valid until
  * process exit. The selected framework owns one host runtime and its
@@ -290,6 +384,9 @@ typedef struct kernarium_runtime_api {
     kernarium_runtime_set_restart_callback_function set_restart_callback;
     kernarium_runtime_guest_display_active_function guest_display_active;
     kernarium_runtime_plan_gpu_budget_function plan_gpu_budget;
+    kernarium_runtime_connect_vsock_function connect_vsock;
+    kernarium_runtime_read_statistics_function read_statistics;
+    kernarium_runtime_read_guest_memory_function read_guest_memory;
 } kernarium_runtime_api;
 
 #if defined(__GNUC__)
@@ -299,7 +396,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v18(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v20(void);
 
 /* An automation-only extension, outside the versioned table: only a runtime
  * built for automation exports this symbol, and the application looks it up

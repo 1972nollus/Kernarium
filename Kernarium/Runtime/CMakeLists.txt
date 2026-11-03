@@ -59,6 +59,7 @@ if(NOT _kernarium_carrier_result EQUAL 0)
 endif()
 
 add_library(KernariumRuntime SHARED
+    KernariumAdbChannel.hpp
     KernariumConsoleInput.hpp
     KernariumKeyWake.hpp
     KernariumRestartLoop.hpp
@@ -117,6 +118,7 @@ target_link_libraries(KernariumRuntime PRIVATE
     UML::BatteryDevice
     UML::GpuDevice
     UML::ConsoleDevice
+    UML::VsockDevice
     UML::VirtioInput
     UML::NetworkProvider
     "-framework Foundation"

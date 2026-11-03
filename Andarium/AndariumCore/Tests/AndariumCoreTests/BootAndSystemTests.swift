@@ -107,7 +107,7 @@ struct SystemInfoTests {
         #expect(info.release == "20261031-los24-r4")
         #expect(info.buildID == "CP2A.260605.016")
         #expect(info.kernel == "Linux 6.18.54")
-        #expect(info.architecture == "arm64, 4 KB pages")
+        #expect(info.architecture == "arm64, 4 KiB pages")
         #expect(info.securityPatch == "1 October 2026")
         #expect(info.appVersion == "1.0 (1)")
     }

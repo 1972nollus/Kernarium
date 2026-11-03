@@ -466,6 +466,20 @@ if(TARGET uml_gpu_service)
     set_tests_properties(gpu-display-outlives-connection
         PROPERTIES SKIP_RETURN_CODE 77)
 
+    # The frame counters of the shipped service's display, read through the
+    # service. A host without a usable renderer skips it with status 77.
+    uml_add_gpu_unit_test(gpu-display-statistics
+        uml_gpu_display_statistics_tests
+        in_process_service_statistics_tests.cpp
+        LIBRARIES uml_gpu_service
+        INCLUDES
+            ${_uml_gpu_device_directory}
+            ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
+            ${CMAKE_CURRENT_SOURCE_DIR}
+        UNIT_DIRECTORY)
+    set_tests_properties(gpu-display-statistics
+        PROPERTIES SKIP_RETURN_CODE 77)
+
     uml_add_gpu_unit_test(gpu-service-stop-wake
         uml_gpu_service_stop_wake_tests
         in_process_service_stop_wake_tests.cpp

@@ -1118,6 +1118,20 @@ interfaces `darwin/platform/video_decoder.hpp` and
 [private wire header](../kernel/common/video/README.md) is separate from both
 the public API and the host/kernel bridge ABI.
 
+The [Virtio vsock device](../darwin/device/vsock/README.md) (device 19) carries
+a byte stream from the host application to a service in the guest, adbd on port
+5555, with no listening socket on the host: `Endpoint::connect` makes a
+socketpair, the device runs the guest's side of the connection over the host's
+end with credit-based flow control, and the application keeps the other end. The
+guest cannot open a connection to the host, and every attempt gets an RST. The
+device keeps a transmit buffer on a ring the guest disabled, because the
+buffer is stream data that nothing waits on, and it never defers a request,
+because a deferral pending at a disable resets the device and with it every
+connection, at each guest suspend. It is appended after every other Virtio
+device, so no existing index moves. Kernarium opens streams through the
+runtime's `connect_vsock` call, and the macOS launchers attach loopback TCP
+ports to it with `--vsock-forward` for tests.
+
 The transport also owns this process's open-descriptor ceiling, and raises it
 to whatever the host permits before the first connection serves a request. A
 backend that publishes a shared-memory region hands the guest one descriptor
@@ -1307,6 +1321,19 @@ measured.
 The devices Kernarium attaches and its display geometry are listed in
 [`../Kernarium/README.md`](../Kernarium/README.md).
 
+### Local stream sockets
+
+On Apple hosts, never wait for the end of a local (`AF_UNIX`) stream socket
+with a blocking `read` or `recv`. Wait for readiness first (`poll`, kqueue or a
+Dispatch source), then read, or read non-blocking after readiness. An end made
+by `shutdown()` can lose the wakeup of a reader that is just going to sleep:
+the peer's `SHUT_WR` or `SHUT_RDWR`, and a `shutdown` of the reader's own end
+used to wake it. The reader then stays blocked although `poll` reports the end,
+and with `SO_RCVTIMEO` the loss shows as a false `EAGAIN`. A `close()` by the
+peer is not affected, and a data wakeup is never lost. Python's blocking
+`socket.recv` is exposed in the same way; after `settimeout()` CPython polls
+first, which is safe.
+
 ## Guest lifecycle
 
 The platform layer tracks every writable host descriptor opened for the guest.
@@ -1368,7 +1395,7 @@ nothing.
 The macOS launchers (`darwin/app/macos`) restart a guest in the same process.
 The machine is made once: the emulator handle, the SLiRP provider with its
 `--net-forward` list, and the GPU service with its display. Each boot makes its
-own services (battery, video, video encoder, audio, console) and its
+own services (battery, video, video encoder, audio, console, vsock) and its
 command line, runs, and stops them again. After a restart the launcher resets
 the SLiRP link (stop, then open at once, which replays the forwards) so that no
 connection of the old guest survives, asks the GPU service for its next
@@ -1452,8 +1479,53 @@ runs that have exited. An iOS device uses its application temporary directory
 itself and removes a socket left there before booting. Every such path must
 fit Darwin's 104-byte `sun_path`; one that does not is refused on both sides
 rather than truncated or moved. The guest prints the console's path when it
-binds it. `guest-host-residue` ends guests by poweroff, SIGTERM, SIGHUP, a
-panic and SIGKILL and finds nothing left in `/tmp` or `$TMPDIR`.
+binds it. The SLiRP provider's DNS-over-TCP socket, `dns-<pid>`, is bound in
+the first of `$TMPDIR`, the user's temporary directory and `/tmp` where its path
+fits, goes with the run the same way, and the next run in that directory
+removes one a killed run left. `guest-host-residue` ends guests by poweroff,
+SIGTERM, SIGHUP, a panic and SIGKILL and finds nothing left in `/tmp` or
+`$TMPDIR`.
+
+### Statistics
+
+An application that shows a running guest's load reads it from the host, and
+nothing runs between reads: there is no sampler, timer or counter of its own.
+`uml_emulator_get_statistics()` sums the user and system time of the process's
+`uml-vcpu-N-carrier` threads (the kernel names its host threads; the carriers
+are the only ones that run guest code) and reports the guest RAM the host holds
+from the commitment's own count of released pages (`runtime/guest_statistics`).
+It answers from any thread for the handle whose run is active, and for no other.
+A restart's hand-back retires the commitment under `GuestRamRetirementScope`,
+and a reader that finds it held reports no RAM rather than waiting. The frames
+a display presented come from `InProcessGpuService::displayStatistics()`, the
+counters its present path keeps whether or not anyone reads them.
+
+The guest's own memory in use comes from the kernel:
+`uml_emulator_get_guest_memory()` sends the management console's `mem` command,
+one datagram answered from the console interrupt with
+`total=<bytes> available=<bytes> free=<bytes>`, so a guest policy that denies
+the console `/proc/meminfo` does not matter, and a kernel without the command
+answers "Unknown command", which is unsupported. Like every console request it
+ends a suspend, so it is sent only under the handle's lifecycle mutex, taken
+with `try_lock`, and only while the host has not quiesced the guest. The wait
+for the reply, at most 500 ms, is outside the mutex, so a quiesce never waits
+for a memory request and a request never waits for a quiesce
+(`device/mconsole`'s `GuestMemoryQuery` is the two-step request). Whether the
+guest has suspended itself, as an Android guest does once its display is off,
+is the caller's to know.
+
+The macOS launchers print the same figures with `--stats=<ms>` (at least
+100): a sampler thread, started only with the option, reads the running guest
+once per interval through the public calls and the display's counters, and
+prints one line on standard error,
+`uml-darwin: stats <s> s cpu <n>% of <v> vCPUs frames <p>/s presented <o>/s
+offered [memory <u> MiB in use of <t> MiB] held <h> of <r> MiB`.
+The share is of the guest's `<v>` vCPUs, the frame rates are the presented and
+the offered counters' (`emulator/src/statistics_report.hpp`), and the memory
+part appears on every second line, and not while the guest's display is off,
+when the guest's kernel answers. A restart, or a gap with no guest, starts a
+new baseline. This is measurement tooling with no UI: the Mac validates the
+sources the iOS applications use, and a memory run reads the held figure.
 
 ### Hibernation
 

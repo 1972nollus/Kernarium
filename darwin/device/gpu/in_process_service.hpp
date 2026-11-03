@@ -109,6 +109,15 @@ public:
      * before the display exists, which the first connection makes. */
     [[nodiscard]] std::optional<bool> guestScanoutActive() const noexcept;
 
+    /* The display's frame counters (Display::statistics): the frames the guest
+     * offered and the frames that reached the screen, since the display was
+     * made, which a guest that restarts does not reset. The display counts
+     * them as it presents, whether or not anyone reads them, so asking costs
+     * the call alone. Any thread, whether or not requests are held. Nothing
+     * once stop() has let the display go. */
+    [[nodiscard]] std::optional<DisplayStatistics> displayStatistics()
+        const noexcept;
+
     /* The port a VNC display listens on, or nothing for any other display. */
     [[nodiscard]] std::optional<std::uint16_t> vncPort() const noexcept;
 
