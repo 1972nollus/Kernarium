@@ -66,17 +66,6 @@ keep the build from redoing work that depends only on them. The Vulkan HAL's
 Mesa source has its own pinned source and generated series under
 `third_party/mesa-venus/`.
 
-`third_party/fdroid/` pins the F-Droid client and its Privileged Extension by
-size and SHA-256. Both are upstream-presigned APKs the build installs
-unchanged: the client as an ordinary product app and the extension in
-`priv-app` with a permission allowlist of only `INSTALL_PACKAGES` and
-`DELETE_PACKAGES`. `tools/fdroid_source.py` materializes them into the
-workspace during source preparation (the only networked step, refusing any
-size or digest difference) and the build verifies the result. Their detached
-`.asc` signatures verify only against the 2018 F-Droid release key, which a
-current keyring may list as expired, so the pinned digests and the APK
-signing-certificate pin in `metadata.env` are the checked identity.
-
 Every series here uses the shared
 [`scripts/patch_series.py`](../../scripts/patch_series.py) format and is
 identified by the tree it produces: replay applies it to the pinned base and
@@ -153,11 +142,11 @@ and names what the product leaves out. The image provides Settings, Trebuchet,
 Files, Package Installer, the LineageOS WebView, LatinIME, ThemePicker, the
 patched Jelly browser and a curated application set: Glimpse (gallery), Twelve
 (music), Etar (calendar), ExactCalculator, Camelot (PDF viewer) and Seedvault
-(backup), plus the F-Droid client and Privileged Extension. It has no Google
-or microG services. The LineageOS updater and setup
-wizard, Canvas, Aperture, Profiles, Recorder, QuickAccessWallet, the charger
-animation,
-fastbootd and AudioFX are excluded, as are DeskClock and EmergencyInfo; the
+(backup). It has no app store of its own and no install restriction: Package
+Installer and every install path work. It has no Google or microG services. The
+LineageOS updater and setup wizard, Canvas, Aperture, Profiles, Recorder,
+QuickAccessWallet, the charger animation, fastbootd and AudioFX are excluded,
+as are DeskClock and EmergencyInfo; the
 build and verifier assert both lists. SecureElement, the OMAPI service for
 readers the machine does not have (no eSE, no UICC), is kept but is not
 persistent (a `packages/apps/SecureElement` topic, route `p0024`, drops
@@ -528,11 +517,10 @@ cannot drop it unnoticed.
 A first boot compiles nothing. ART Service would otherwise compile every
 package without a usable artifact, for each instruction set the package runs
 in, on a fresh `/data` (reason `first-boot`, filter `verify`), and Soong leaves
-three groups without one: the applications
-packaged inside updatable APEXes, which it never dexpreopts, the presigned
-F-Droid client and Privileged Extension, whose prebuilt modules opt out, and
-the second instruction set of any package, since Soong dexpreopts an
-application for the first only.
+two groups without one: the applications packaged inside updatable APEXes,
+which it never dexpreopts, and the second instruction set of any package,
+since Soong dexpreopts an application for the first only. A presigned prebuilt
+can opt out as well; the image carries none.
 `tools/precompile-first-boot-apps.py` compiles exactly those after a first
 `target-files-package` pass, with the host `dex2oat`, Soong's own application
 flags, filter `verify` and the class loader context ART Service derives on the
@@ -1281,11 +1269,11 @@ key survives. Signing also replaces the OTA certificates, and the tool then
 requires the system's and the recovery's `otacerts.zip` to trust the release
 certificate and no public AOSP or LineageOS certificate; the product clears
 `PRODUCT_EXTRA_RECOVERY_KEYS`, which would add LineageOS's release certificate
-to the recovery. The presigned F-Droid APKs keep their upstream signature and
-are named in the build receipt, which also records the SHA-256 of each platform
-certificate. The AOSP host tools need `sign_target_files_apks` (built with
-`otatools`). The key directory, its backup and the transfer to the builder are
-the maintainer's responsibility.
+to the recovery. A presigned file keeps its upstream signature and is named in
+the build receipt (`none` when there is none), which also records the SHA-256
+of each platform certificate. The AOSP host tools need `sign_target_files_apks`
+(built with `otatools`). The key directory, its backup and the transfer to the
+builder are the maintainer's responsibility.
 
 ### Superseded releases
 

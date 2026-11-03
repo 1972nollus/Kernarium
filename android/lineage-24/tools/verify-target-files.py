@@ -190,14 +190,11 @@ REQUIRED_ENTRIES = {
     "PRODUCT/app/Camelot/Camelot.apk",
     "PRODUCT/app/Etar/Etar.apk",
     "PRODUCT/app/ExactCalculator/ExactCalculator.apk",
-    "PRODUCT/app/F-Droid/F-Droid.apk",
     "PRODUCT/app/Glimpse/Glimpse.apk",
     "PRODUCT/app/Jelly/Jelly.apk",
     "PRODUCT/app/LatinIME/LatinIME.apk",
     "PRODUCT/app/Twelve/Twelve.apk",
     "PRODUCT/app/webview/webview.apk",
-    "PRODUCT/etc/permissions/privapp-permissions-org.fdroid.fdroid.privileged.xml",
-    "PRODUCT/priv-app/F-DroidPrivilegedExtension/F-DroidPrivilegedExtension.apk",
     "PRODUCT/etc/build.prop",
     "SYSTEM/build.prop",
     "RECOVERY/RAMDISK/system/bin/hw/android.hardware.health-service.example_recovery",
@@ -346,6 +343,7 @@ FORBIDDEN_STATIC_ENTRIES = {
     "META/ab_partitions.txt",
     "PRODUCT/app/QuickSearchBox/QuickSearchBox.apk",
     "PRODUCT/etc/init/init.rc",
+    "PRODUCT/etc/permissions/privapp-permissions-org.fdroid.fdroid.privileged.xml",
     "PRODUCT/overlay/cuttlefish_overlay_uwb.apk",
     "SYSTEM_EXT/etc/permissions/privapp-permissions-com.android.threadnetwork.demoapp.xml",
     "SYSTEM_EXT/priv-app/ThreadNetworkDemoApp/ThreadNetworkDemoApp.apk",
@@ -429,6 +427,8 @@ FORBIDDEN_APP_DIRECTORIES = {
     "Dialer",
     "DynamicSystemInstallationService",
     "EmergencyInfo",
+    "F-Droid",
+    "F-DroidPrivilegedExtension",
     "Gallery2",
     "LineageSetupWizard",
     "Profiles",
@@ -1088,34 +1088,6 @@ def check_boot_policy(
         for prefix in ("/dev/ion", "/dev/pmem", "/dev/vhci"):
             if device.startswith(prefix):
                 fail(f"UML ueventd policy retains unsupported device: {device}")
-
-
-FDROID_PRIVILEGED_PERMISSIONS = [
-    "android.permission.DELETE_PACKAGES",
-    "android.permission.INSTALL_PACKAGES",
-]
-
-
-def check_fdroid(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
-    """The F-Droid Privileged Extension may install and delete packages only."""
-    permissions = ET.fromstring(
-        read_small(
-            archive,
-            infos[
-                "PRODUCT/etc/permissions/"
-                "privapp-permissions-org.fdroid.fdroid.privileged.xml"
-            ],
-        )
-    )
-    grants = {
-        element.get("package"): sorted(
-            permission.get("name") for permission in element.findall("permission")
-        )
-        for element in permissions.findall("privapp-permissions")
-    }
-    if grants != {"org.fdroid.fdroid.privileged": FDROID_PRIVILEGED_PERMISSIONS}:
-        fail("the F-Droid Privileged Extension allowlist must be exactly "
-             "INSTALL_PACKAGES and DELETE_PACKAGES")
 
 
 # The runtime resource overlay Soong generates from the product's SimpleDeviceConfig
@@ -2709,7 +2681,6 @@ def main() -> None:
             fail("target files do not contain an APEX payload")
         check_app_dexpreopt(seen)
         check_hardware_features(archive, infos)
-        check_fdroid(archive, infos)
         check_discrete_ops(archive, infos)
         check_default_wallpaper(archive, infos)
         check_pinner_overlay(archive, infos)

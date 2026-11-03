@@ -442,13 +442,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         and entry != pinner_overlay_entry
     )
     arm_preopt_apks = sorted(tool.REQUIRED_ARM_PREOPT_APKS)
-    permission_files = [
-        entry for entry in tool.REQUIRED_ENTRIES
-        if entry.startswith("PRODUCT/etc/permissions/")
-    ]
-    if len(permission_files) != 1:
-        fail(f"expected one required PRODUCT permission file: {permission_files}")
-    fdroid_permissions = permission_files[0]
     uml_fstab = tracked_fstab(verifier.parents[1])
     erofs_compressor, erofs_pcluster_size = tracked_erofs_parameters(verifier.parents[1])
     erofs_compress_hints = (
@@ -682,7 +675,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           adbd_variant: str | None = None,
                           adbd_launch_unreadable: bool = False,
                           vendor_property_variant: str | None = None,
-                          wide_fdroid_permissions: bool = False,
                           video_properties: dict[str, str] | None = None,
                           missing_video_ueventd: bool = False,
                           mesa_gles_alignment: int = 16384,
@@ -1527,19 +1519,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         artifact = apk_path.parent / "oat" / isa / apk_path.stem
                         archive.writestr(f"{artifact}.odex", b"odex")
                         archive.writestr(f"{artifact}.vdex", b"vdex")
-                archive.writestr(
-                    fdroid_permissions,
-                    '<permissions><privapp-permissions '
-                    'package="org.fdroid.fdroid.privileged">'
-                    '<permission name="android.permission.INSTALL_PACKAGES"/>'
-                    '<permission name="android.permission.DELETE_PACKAGES"/>'
-                    + (
-                        '<permission name="android.permission.WRITE_SECURE_SETTINGS"/>'
-                        if wide_fdroid_permissions
-                        else ""
-                    )
-                    + '</privapp-permissions></permissions>',
-                )
                 advertised_features = ["android.hardware.touchscreen"]
                 if not missing_microphone_feature:
                     advertised_features.append("android.hardware.microphone")
@@ -2175,7 +2154,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("fastbootd", {"extra_entry": "SYSTEM/bin/fastbootd"}),
             ("curated-out-profiles",
              {"extra_entry": "SYSTEM_EXT/app/Profiles/Profiles.apk"}),
-            ("fdroid-wide-permissions", {"wide_fdroid_permissions": True}),
+            ("curated-out-fdroid",
+             {"extra_entry": "PRODUCT/app/F-Droid/F-Droid.apk"}),
+            ("curated-out-fdroid-extension",
+             {"extra_entry": "PRODUCT/priv-app/F-DroidPrivilegedExtension/"
+                             "F-DroidPrivilegedExtension.apk"}),
+            ("curated-out-fdroid-permissions",
+             {"extra_entry": "PRODUCT/etc/permissions/"
+                             "privapp-permissions-org.fdroid.fdroid.privileged.xml"}),
             ("missing-video-encoder-service",
              {"entries": {f"VENDOR/bin/hw/{video_service}": None}}),
             ("missing-video-plugin-store",

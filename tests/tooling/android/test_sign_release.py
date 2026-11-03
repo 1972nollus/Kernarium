@@ -37,7 +37,7 @@ APKCERTS = "\n".join([
     'private_key="build/make/target/product/security/platform.pk8" partition="system_ext"',
     'name="WifiDialog.apk" certificate="packages/modules/Wifi/WifiDialog/certs/com.android.wifi.dialog.x509.pem" '
     'private_key="packages/modules/Wifi/WifiDialog/certs/com.android.wifi.dialog.pk8" partition="system"',
-    'name="F-Droid.apk" certificate="PRESIGNED" private_key="" partition="product"',
+    'name="Presigned.apk" certificate="PRESIGNED" private_key="" partition="product"',
     'name="CtsHelper.apk" certificate="cts/certs/cts-testkey1.x509.pem" private_key="cts/certs/cts-testkey1.pk8" partition="data"',
     "",
 ])
@@ -110,7 +110,7 @@ print("    signing: com.android.adbd.apex                                       
 print("           : com.android.adbd.apex                                                   payload   (%s.pem)" % extra)
 if mode == "leak":
     print("    signing: com.android.tethering.apex                                              container (build/make/target/product/security/testkey)")
-print("NOT signing: F-Droid.apk (skipped due to special cert string)")
+print("NOT signing: Presigned.apk (skipped due to special cert string)")
 '''
 
 
@@ -227,7 +227,7 @@ def main() -> None:
         if "error" in ok:
             fail(f"a valid signing run failed: {ok['error']}")
         signed, unsigned, digests = ok["result"]
-        if signed != 3 or unsigned != ["F-Droid.apk"]:
+        if signed != 3 or unsigned != ["Presigned.apk"]:
             fail(f"unexpected signing summary: {signed} {unsigned}")
         if sorted(digests) != ["media", "platform", "releasekey", "shared"]:
             fail("certificate digests are incomplete")
@@ -258,7 +258,7 @@ def main() -> None:
         if not expected <= set(arguments):
             fail(f"key routing is wrong: {sorted(expected - set(arguments))}")
         joined = " ".join(arguments)
-        for forbidden in ("cts.certs", "CtsHelper", "F-Droid", "cts.shim", "Settings.apk"):
+        for forbidden in ("cts.certs", "CtsHelper", "Presigned", "cts.shim", "Settings.apk"):
             if forbidden in joined:
                 fail(f"{forbidden} must not be routed to a release key")
         with zipfile.ZipFile(ok["signed_zip"]) as archive:

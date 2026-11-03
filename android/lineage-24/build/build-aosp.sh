@@ -10,7 +10,6 @@ ANDROID_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 METADATA="$ANDROID_ROOT/metadata/lineage.env"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
 MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
-FDROID_SOURCE_TOOL="$ANDROID_ROOT/tools/fdroid_source.py"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 FIRST_BOOT_TOOL="$ANDROID_ROOT/tools/precompile-first-boot-apps.py"
 OUTER_ROOT=$(CDPATH= cd -- "$ANDROID_ROOT/../.." && pwd)
@@ -147,7 +146,6 @@ fi
 [[ -f "$METADATA" ]] || fail "AOSP metadata is missing"
 [[ -x "$VERIFIER" ]] || fail "AOSP patch verifier is missing"
 [[ -x "$MESA_VENUS_VERIFIER" ]] || fail "Mesa Venus source verifier is missing"
-[[ -x "$FDROID_SOURCE_TOOL" ]] || fail "F-Droid source tool is missing"
 [[ -x "$TARGET_FILES_VERIFIER" ]] || fail "target-files verifier is missing"
 [[ -f "$FIRST_BOOT_TOOL" ]] || fail "first-boot precompile tool is missing"
 [[ -f "$KERNEL_ARTIFACT_VERIFIER" ]] || fail "kernel artifact verifier is missing"
@@ -155,8 +153,6 @@ fi
 source "$METADATA"
 
 "$MESA_VENUS_VERIFIER" --android-root "$ANDROID_ROOT" \
-	--aosp-source "$AOSP_SOURCE"
-python3 -B "$FDROID_SOURCE_TOOL" verify --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
@@ -384,8 +380,6 @@ for package in \
 	Camelot \
 	Etar \
 	ExactCalculator \
-	F-Droid \
-	F-DroidPrivilegedExtension \
 	Glimpse \
 	init.zygote64_32.rc \
 	Jelly \
@@ -408,6 +402,8 @@ for package in \
 	Aperture \
 	AudioFX \
 	Canvas \
+	F-Droid \
+	F-DroidPrivilegedExtension \
 	fastbootd \
 	lineage_charger_animation \
 	lineage_charger_animation_vendor \
@@ -584,12 +580,11 @@ fi
 # signs with sign_target_files_apks and the tools it runs, so a fresh output
 # builds those host tools.
 # First boot compiles nothing. Soong preopts the applications it installs but
-# never one inside an APEX, and the presigned F-Droid prebuilts opt out, so
-# ART Service would compile them on every fresh /data. After a first pass, the
-# host dex2oat compiles them with the flags and class loader context ART
-# Service uses on the device; a second pass installs the artifacts through the
-# product's PRODUCT_COPY_FILES fragment. An unchanged output skips the second
-# pass.
+# never one inside an APEX, so ART Service would compile them on every fresh
+# /data. After a first pass, the host dex2oat compiles them with the flags and
+# class loader context ART Service uses on the device; a second pass installs
+# the artifacts through the product's PRODUCT_COPY_FILES fragment. An unchanged
+# output skips the second pass.
 FIRST_BOOT_OAT=$OUT_DIR/first-boot-oat
 if [[ -f "$FIRST_BOOT_OAT/first-boot-oat.mk" ]]; then
 	export LINEAGE24_FIRST_BOOT_OAT_MK=$FIRST_BOOT_OAT/first-boot-oat.mk

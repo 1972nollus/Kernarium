@@ -314,20 +314,16 @@ PRODUCT_PACKAGES_EXCLUDE += \
 # The browser (Jelly), the keyboard (LatinIME) and ThemePicker come from the
 # LineageOS product chain. resize2fs grows the compact userdata filesystem
 # online after the host expands its partition, once /data is mounted
-# (init.vendor.rc, post-fs-data). The F-Droid client and its Privileged
-# Extension are presigned prebuilts that source preparation materializes under
-# vendor/kernarium/fdroid.
+# (init.vendor.rc, post-fs-data).
 PRODUCT_PACKAGES += \
     android.hardware.health-service.example \
     android.hardware.health-service.example_recovery \
     e2fsck \
-    F-Droid \
-    F-DroidPrivilegedExtension \
     resize2fs
 
 # First boot compiles nothing. Soong preopts the applications it installs, but
-# never an application inside an APEX, and the presigned F-Droid prebuilts opt
-# out. tools/precompile-first-boot-apps.py compiles the rest after a first build
+# never an application inside an APEX. tools/precompile-first-boot-apps.py
+# compiles the rest after a first build
 # pass; build-aosp.sh hands its PRODUCT_COPY_FILES fragment to the second pass
 # through this variable, a path relative to the workspace root.
 ifneq ($(LINEAGE24_FIRST_BOOT_OAT_MK),)
