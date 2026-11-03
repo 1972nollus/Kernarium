@@ -188,29 +188,3 @@ struct StatsSamplingTests {
         #expect(StatsSampling.interval * StatsSampling.memoryEvery == .seconds(2))
     }
 }
-
-struct StatisticsReportTests {
-    @Test func theLineStatesWhatTheScreensShowInMebibytes() {
-        var meter = StatsMeter()
-        meter.record(reading(boot: 2, at: 0, busy: 0, frames: 0))
-        meter.record(reading(boot: 2, at: 1, busy: 1.36, frames: 59))
-        meter.record(memory: GuestMemorySample(totalBytes: 1826 << 20, availableBytes: 1008 << 20))
-        #expect(
-            ConsoleReport.statistics(meter, guestMemoryMiB: 2048)
-                == "Andarium stats: cpu=34% fps=59 memory-used=818 memory=2048 held=1800 boot=2"
-        )
-    }
-
-    @Test func aFigureNotYetKnownIsADash() {
-        #expect(
-            ConsoleReport.statistics(StatsMeter(), guestMemoryMiB: 1536)
-                == "Andarium stats: cpu=- fps=- memory-used=- memory=1536 held=- boot=-"
-        )
-        var meter = StatsMeter()
-        meter.record(reading(at: 0))
-        #expect(
-            ConsoleReport.statistics(meter, guestMemoryMiB: 1536)
-                == "Andarium stats: cpu=- fps=- memory-used=- memory=1536 held=1800 boot=0"
-        )
-    }
-}

@@ -9,13 +9,18 @@ application that must:
     and iPad, and have no background mode;
   - carry no automation knob: no ANDARIUM_, KERNARIUM_, UML_ or DARWIN_UML_
     environment name in the host code of the application or of any embedded
-    framework (the guest kernel image inside a runtime is not host code); and
+    framework (the guest kernel image inside a runtime is not host code);
+  - carry none of the harness's console lines (ConsoleReport in the
+    application: the statistics, thermal state, runtime and focus lines),
+    which the configuration compiles out; and
   - pass scripts/check-privacy-manifests.py.
 
 The knob scan reads bytes, so it does not see a Swift string of up to 15 bytes
 (ANDARIUM_START is one): the compiler keeps those in instruction immediates.
 The launch names stay out of the application because the configuration
 compiles Live/LaunchEnvironment.swift out, and the scan covers the longer names.
+The console lines are long enough to be text in the binary, so a build whose
+code still holds one fails, whether or not anything calls it.
 
 The Xcode project runs it as the last build phase of the App Store
 configuration, so a build that breaks one of these rules fails.
@@ -34,6 +39,10 @@ import sys
 from pathlib import Path
 
 KNOB = re.compile(rb"\b(?:ANDARIUM|KERNARIUM|DARWIN_UML|UML)_[A-Z][A-Z0-9_]{2,}\b")
+# What ConsoleReport (Shared/ConsoleReport.swift) prints, as far as its text is
+# the same in every line; the configuration compiles the type out.
+HARNESS_LINES = re.compile(
+    rb"Andarium stats|Andarium thermal state|Andarium: runtime returned|Andarium: application ")
 # Sections that hold the guest, not the host: the Linux kernel image a runtime
 # carries, and the boot files of a Linux runtime.
 GUEST_SECTIONS = {("__TEXT", "__uml_elf"), ("__TEXT", "__uml_boot_base"), ("__TEXT", "__uml_boot_init")}
@@ -80,16 +89,29 @@ def guest_ranges(data: bytes, base: int) -> list[tuple[int, int]]:
     return found
 
 
-def knobs(path: Path) -> list[str]:
-    """The automation knob names in the host code of one Mach-O file."""
+def host_code(path: Path) -> bytes | None:
+    """One Mach-O file with the sections that hold the guest zeroed; None for a
+    file that is not one."""
     data = path.read_bytes()
     base = thin_offset(data[:4096])
     if base is None:
-        return []
+        return None
     buffer = bytearray(data)
     for start, end in guest_ranges(data, base):
         buffer[start:end] = bytes(end - start)
-    return sorted({match.decode() for match in KNOB.findall(bytes(buffer))})
+    return bytes(buffer)
+
+
+def knobs(path: Path) -> list[str]:
+    """The automation knob names in the host code of one Mach-O file."""
+    code = host_code(path)
+    return [] if code is None else sorted({match.decode() for match in KNOB.findall(code)})
+
+
+def harness_lines(path: Path) -> list[str]:
+    """The harness's console lines in the host code of one Mach-O file."""
+    code = host_code(path)
+    return [] if code is None else sorted({match.decode().strip() for match in HARNESS_LINES.findall(code)})
 
 
 def info_problems(info: dict) -> list[str]:
@@ -158,6 +180,11 @@ def main() -> int:
             problems.append(
                 f"{binary.relative_to(app)}: carries automation knob(s) "
                 f"{', '.join(names[:6])}{' ...' if len(names) > 6 else ''}")
+        lines = harness_lines(binary)
+        if lines:
+            problems.append(
+                f"{binary.relative_to(app)}: carries the harness's console line(s) "
+                f"{', '.join(repr(line) for line in lines)}")
 
     privacy = subprocess.run(
         [sys.executable, "-B", str(options.privacy_checker), str(app)],

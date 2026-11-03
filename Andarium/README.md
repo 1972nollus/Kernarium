@@ -110,13 +110,15 @@ xcodebuild test -project Andarium/Andarium.xcodeproj -scheme Andarium \
 
 The project has Debug, Release and AppStore. Release is the development and
 harness build: it reads the automation environment below and prints the
-thermal reports the iPad harness reads. AppStore builds as Release does and
+console lines the iPad harness reads. AppStore builds as Release does and
 leaves out everything that exists for automation or only pretends:
 
 - `APP_STORE` is a Swift compilation condition of the configuration. It removes
   the launch environment (`Live/LaunchEnvironment.swift`, so no `ANDARIUM_` or
   `KERNARIUM_` name is in the application or in `AndariumCore`), and the
-  thermal and uptime console reports.
+  harness's console lines (`Shared/ConsoleReport.swift`, with every call to it,
+  and the thermal state and uptime reads behind them). The type is in the
+  application, so no such line is in `AndariumCore` either.
 - It embeds the App Store runtime, packaged by
   `Kernarium/scripts/package-ios-frameworks.sh --app-store --runtimes android`
   from the `kernarium-ios-device-android-app-store` preset, which reads no
@@ -125,7 +127,8 @@ leaves out everything that exists for automation or only pretends:
 - Its last build phase runs `scripts/check-app-store-bundle.py` on the
   application, which fails the build on a missing key in Info.plist,
   an environment knob in the application or a framework,
-  or a privacy manifest that does not cover a binary
+  a console line of the harness in the application's code, or a privacy
+  manifest that does not cover a binary
   ([`scripts/check-privacy-manifests.py`](../scripts/check-privacy-manifests.py)).
 
 ```sh

@@ -136,20 +136,3 @@ public enum StatsSampling {
         viewers > 0 && applicationActive && capable && hasDriver && running
     }
 }
-
-extension ConsoleReport {
-    /// The line a statistics launch prints after each reading, for the iPad
-    /// harness to read: the figures the screens show, the guest RAM the iPad
-    /// holds and the boot they belong to. Sizes are whole mebibytes; a figure
-    /// not yet known is a dash.
-    public static func statistics(_ meter: StatsMeter, guestMemoryMiB: Int) -> String {
-        func mebibytes(_ bytes: UInt64?) -> String {
-            bytes.map { String($0 / Limits.bytesPerMiB) } ?? "-"
-        }
-        let cpu = meter.cpuPercent.map { "\($0)%" } ?? "-"
-        let fps = meter.framesPerSecond.map(String.init) ?? "-"
-        let boot = meter.bootIndex.map(String.init) ?? "-"
-        return "Andarium stats: cpu=\(cpu) fps=\(fps) memory-used=\(mebibytes(meter.memoryInUseBytes))"
-            + " memory=\(guestMemoryMiB) held=\(mebibytes(meter.ramHeldBytes)) boot=\(boot)"
-    }
-}

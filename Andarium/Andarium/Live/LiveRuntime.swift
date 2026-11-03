@@ -266,7 +266,9 @@ final class LiveRuntime: RuntimeDriver {
         console = nil
         pause.guestDidEnd()
         UIApplication.shared.isIdleTimerDisabled = false
+        #if !APP_STORE
         print(ConsoleReport.runtimeReturned(result))
+        #endif
         // A start that reached sys.boot_completed and ended with Android's own
         // power-off is the one that ends a pending update.
         if result == 0, reachedBootCompleted {
@@ -366,14 +368,14 @@ final class LiveRuntime: RuntimeDriver {
     // (`Andarium/README.md#automation`); an App Store build prints neither and
     // reads neither the system uptime nor the thermal state.
 
+    #if !APP_STORE
     private func reportThermalState(_ phase: ConsoleReport.ThermalPhase) {
-        #if !APP_STORE
         print(ConsoleReport.thermal(
             phase: phase, state: ProcessInfo.processInfo.thermalState,
             uptime: ProcessInfo.processInfo.systemUptime
         ))
-        #endif
     }
+    #endif
 
     private func startThermalObservation() {
         #if !APP_STORE
@@ -401,7 +403,9 @@ final class LiveRuntime: RuntimeDriver {
     private func observeLifecycle() {
         let edges: [(Notification.Name, @MainActor (LiveRuntime) -> Void)] = [
             (UIApplication.willResignActiveNotification, {
+                #if !APP_STORE
                 print(ConsoleReport.application(active: false))
+                #endif
                 $0.model?.applicationActive = false
                 $0.pause.willResignActive()
             }),
@@ -422,7 +426,9 @@ final class LiveRuntime: RuntimeDriver {
     /// The person may have changed the permissions or the storage while
     /// Andarium was away.
     private func didBecomeActive() {
+        #if !APP_STORE
         print(ConsoleReport.application(active: true))
+        #endif
         guard let model else { return }
         model.applicationActive = true
         model.host.freeStorageBytes = AppEntry.freeStorageBytes()

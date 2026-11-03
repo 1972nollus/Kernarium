@@ -18,7 +18,7 @@ public struct LaunchOverrides: Equatable, Sendable {
         /// "1" erases the guest's data before the start.
         case erase
         /// "1" opens the session with its statistics on screen and prints
-        /// each reading (`ConsoleReport.statistics`).
+        /// each reading.
         case stats
     }
 
@@ -100,39 +100,6 @@ public struct DisplayOptions: Codable, Equatable, Sendable {
     public init(retina: Bool = false, followWindow: Bool = true) {
         self.retina = retina
         self.followWindow = followWindow
-    }
-}
-
-/// The lines a run prints for the harness to read. Everything else on the
-/// console is the runtime's own `Kernarium:` output.
-public enum ConsoleReport {
-    public enum ThermalPhase: String, Sendable {
-        case start, change, finish
-    }
-
-    public static func thermalName(_ state: ProcessInfo.ThermalState) -> String {
-        switch state {
-        case .nominal: "nominal"
-        case .fair: "fair"
-        case .serious: "serious"
-        case .critical: "critical"
-        @unknown default: "unknown"
-        }
-    }
-
-    public static func thermal(phase: ThermalPhase, state: ProcessInfo.ThermalState, uptime: TimeInterval) -> String {
-        let seconds = String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), uptime)
-        return "Andarium thermal state: phase=\(phase.rawValue) state=\(thermalName(state)) uptime=\(seconds)"
-    }
-
-    public static func runtimeReturned(_ result: Int32) -> String {
-        "Andarium: runtime returned \(result)"
-    }
-
-    /// The application lost or regained focus (a system alert, such as iOS
-    /// asking for local network access, takes it until a person answers).
-    public static func application(active: Bool) -> String {
-        active ? "Andarium: application active" : "Andarium: application inactive"
     }
 }
 

@@ -851,7 +851,9 @@ reading without a viewer, the quarter-second then one-second cadence with the
 memory after every other reading, the loop stopping with the foreground, with a
 guest that is not running and with its last viewer, a memory the kernel does
 not give keeping the last figure, and a new boot starting the figures over.
-`StatsMeter` and `StatsSampling` are in `andarium-core`. A Mac launch of the guest
+`ConsoleReport`, the harness's console lines, is in the application and
+tested there (`ConsoleReportTests`); `StatsMeter` and `StatsSampling` are in
+`andarium-core`. A Mac launch of the guest
 itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
 `TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
 ([`Andarium/README.md`](../Andarium/README.md#automation)). macOS asks once, per
@@ -874,7 +876,8 @@ small libraries compiled with the iOS SDK.
 `Andarium/scripts/check-app-store-bundle.py`, the last build phase of the
 AppStore configuration (`Andarium/README.md#configurations`) and the check of
 `package-ios-frameworks.sh --app-store`: Info.plist keys,
-no environment knob in host code, and the privacy check. Its
+no environment knob or harness console line in host code, and the
+privacy check. Its
 fixtures are compiled with the iOS SDK too. The configuration itself is
 validated by building it unsigned (`CODE_SIGNING_ALLOWED=NO`).
 

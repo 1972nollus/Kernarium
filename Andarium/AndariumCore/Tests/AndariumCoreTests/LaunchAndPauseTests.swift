@@ -109,27 +109,6 @@ struct LaunchOverridesTests {
 }
 
 struct ReportTests {
-    @Test func thermalLine() {
-        #expect(
-            ConsoleReport.thermal(phase: .start, state: .nominal, uptime: 12.3456)
-                == "Andarium thermal state: phase=start state=nominal uptime=12.346"
-        )
-        #expect(
-            ConsoleReport.thermal(phase: .finish, state: .serious, uptime: 0)
-                == "Andarium thermal state: phase=finish state=serious uptime=0.000"
-        )
-    }
-
-    @Test func runtimeLine() {
-        #expect(ConsoleReport.runtimeReturned(0) == "Andarium: runtime returned 0")
-        #expect(ConsoleReport.runtimeReturned(-3) == "Andarium: runtime returned -3")
-    }
-
-    @Test func focusLines() {
-        #expect(ConsoleReport.application(active: true) == "Andarium: application active")
-        #expect(ConsoleReport.application(active: false) == "Andarium: application inactive")
-    }
-
     @Test func guestKeysUseLinuxCodes() {
         #expect(GuestKey.back.rawValue == 158)
         #expect(GuestKey.home.rawValue == 172)
