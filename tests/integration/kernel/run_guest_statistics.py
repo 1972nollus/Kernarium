@@ -412,12 +412,23 @@ def check_real_memory(log: StatsLog, guest: Guest) -> None:
     """The guest's kernel answers `mem`, and the launcher shows the figures
     its reply parser read: MemTotal exactly, and the memory in use as
     /proc/meminfo has it."""
-    line = log.wait_for(
+    log.wait_for(
         lambda l: l.used is not None, LINE_WAIT_SECONDS,
         "with the guest's memory (a kernel without the `mem` request?)"
     )
+    # The launcher reads the memory with every second sample, and a guest that
+    # was just busy still moves it: judge only the lines that came after the
+    # guest had settled.
+    began = time.monotonic()
+    time.sleep(3.0)
     total, used = meminfo_mib(guest)
-    for line in [l for l in log.lines() if l.used is not None][-4:]:
+    lines = [
+        line for line in log.lines()
+        if line.used is not None and line.arrived >= began
+    ]
+    if not lines:
+        raise RuntimeError("no line with the guest's memory in 3 s")
+    for line in lines:
         if line.total != total:
             raise RuntimeError(
                 f"the line shows {line.total} MiB of memory but MemTotal is "
