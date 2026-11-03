@@ -101,6 +101,14 @@ struct HostDeviceTests {
     @Test func theHostReadsThisDevice() {
         let host = AppEntry.hostDevice()
         #expect(host.processorCount >= 1)
+        // A guest has every processor, at most the eight the memory budget is
+        // measured for; the device keeps its own count for Info.
+        #expect(host.physicalProcessorCount >= host.processorCount)
+        #expect(host.processorCount <= 8)
+        #expect(host.processorCount == min(host.physicalProcessorCount, 8))
+        #expect(
+            host.processorCount
+                == GuestProcessorLimit.vCPUs(physicalProcessorCount: host.physicalProcessorCount))
         // The bound comes from the runtime's budget formula through the loader:
         // inside the runtime's range, never rising with the vCPU count, and the
         // largest size where the system sets no limit (a Mac).

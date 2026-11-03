@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "options.hpp"
 #include "guest_memory_argument.hpp"
+#include "platform/host_topology.hpp"
+#include "runtime/guest_memory_budget.hpp"
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
@@ -194,6 +196,12 @@ unsigned configured_guest_cpu_count(
 	const std::vector<std::string> &arguments) noexcept
 {
 	return guest_cpu_count(arguments);
+}
+
+unsigned default_application_guest_cpu_count() noexcept
+{
+	return ::uml::runtime::guest_memory::application_vcpu_limit(
+		::uml::platform::physical_processor_count());
 }
 
 std::size_t configured_guest_memory_bytes(

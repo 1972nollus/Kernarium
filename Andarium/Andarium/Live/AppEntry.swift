@@ -16,7 +16,10 @@ struct AppEntry {
     static func fromArguments() -> AppEntry {
         let info = ProcessInfo.processInfo
         return AppEntry(
-            overrides: LaunchOverrides(environment: info.environment, processorCount: info.activeProcessorCount)
+            overrides: LaunchOverrides(
+                environment: info.environment,
+                processorCount: GuestProcessorLimit.vCPUs(physicalProcessorCount: info.activeProcessorCount)
+            )
         )
     }
 
@@ -159,10 +162,14 @@ struct AppEntry {
         } else {
             name = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
         }
+        // A guest has every processor, at most the count the memory budget is
+        // measured for; the memory policy has a row for each of those counts.
+        let limit = GuestProcessorLimit.vCPUs(physicalProcessorCount: info.activeProcessorCount)
         return HostDevice(
-            name: name, processorCount: info.activeProcessorCount,
-            memory: memoryPolicy(processorCount: info.activeProcessorCount),
-            freeStorageBytes: freeStorageBytes(), isMac: info.isiOSAppOnMac
+            name: name, processorCount: limit,
+            memory: memoryPolicy(processorCount: limit),
+            freeStorageBytes: freeStorageBytes(), isMac: info.isiOSAppOnMac,
+            physicalProcessorCount: info.activeProcessorCount
         )
     }
 

@@ -22,7 +22,6 @@
 namespace {
 
 constexpr std::string_view android_default_guest_memory{"mem=4G"};
-constexpr std::string_view android_default_guest_cpus{"ncpus=10"};
 constexpr std::string_view release_option{"--android-release="};
 constexpr std::string_view data_disk_option{"--android-data-disk="};
 constexpr std::string_view data_gib_option{"--android-data-gib="};
@@ -293,7 +292,6 @@ int main(int argc, char *argv[], char *envp[])
 		uml::app::LaunchConfiguration configuration{
 			.rootfs_path = nullptr,
 			.default_guest_memory = android_default_guest_memory,
-			.default_guest_cpus = android_default_guest_cpus,
 			.top_byte_ignore = true,
 			.input_mode = uml::app::DisplayInput::touchscreen,
 		};

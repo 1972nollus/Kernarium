@@ -102,6 +102,13 @@ uint32_t kernarium_runtime_loader_maximum_guest_memory_mib_for_limit(
     uint64_t limit_bytes,
     uint32_t guest_processor_count,
     kernarium_launch_memory_set parameters);
+/* The vCPU count the applications default to and offer at most on a device with
+ * `physical_processor_count` physical cores (zero counts as one): every core,
+ * and never more than the count the memory budget is measured for
+ * (application_vcpu_limit, runtime/guest_memory_budget.hpp). The loader answers
+ * it too, for the same reason. */
+uint32_t kernarium_runtime_loader_application_vcpu_limit(
+    uint32_t physical_processor_count);
 /* Turns the guest's microphone on (nonzero) or off (zero), as
  * kernarium_runtime_set_microphone_function does, and returns the resulting
  * KERNARIUM_RUNTIME_MICROPHONE_ value, or -1 when no runtime is loaded. It

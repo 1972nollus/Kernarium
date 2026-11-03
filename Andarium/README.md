@@ -97,6 +97,12 @@ cannot do a thing leaves its control out instead of offering it.
 
 ### Memory
 
+A guest has at most the shared
+[vCPU limit](../docs/architecture.md#memory-and-executable-code) (the device's
+processors, at most 8), which a new guest takes and the processor ruler and
+`KERNARIUM_VCPU_COUNT` stop at; a stored count above it comes down on load, and
+Info states the device's own processors.
+
 Guest memory follows the shared vCPU-aware limit Kernarium uses
 (`runtime/guest_memory_budget.hpp`). The application asks the loader
 (`kernarium_runtime_loader_maximum_guest_memory_mib`) for the most guest RAM at

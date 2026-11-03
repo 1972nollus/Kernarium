@@ -26,6 +26,8 @@ Sources/LinuxKeyboard.swift            characters to Linux key codes
 Sources/ZstdUtil.swift                 streamed, sparse zstd decode
 Sources/MicrophonePermission.swift     the system microphone permission, read and requested
 Sources/MetalShaderCache.swift         the bound on Metal's per-application shader cache
+Sources/GuestProcessorLimit.swift      the vCPU count the applications default to and offer
+                                       at most, as the loader answers it
 ```
 
 ## Rules

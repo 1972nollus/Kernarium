@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <sys/mman.h>
+#include <sys/sysctl.h>
 #include <unistd.h>
 
 namespace {
@@ -624,6 +625,32 @@ void test_guest_cpu_count_matches_kernel_policy()
 		"later valid ncpus did not match kernel argument ordering");
 }
 
+/* A standalone launcher that is given no ncpus= states every physical core, at
+ * most the eight the memory budget is measured for. The expected count comes
+ * from the system itself, not from the platform function under test. */
+void test_application_default_cpu_count_is_the_physical_cores_at_most_eight()
+{
+	int physical = 0;
+	std::size_t size = sizeof(physical);
+	require(sysctlbyname("hw.physicalcpu", &physical, &size, nullptr, 0) == 0 &&
+			physical > 0,
+		"the system did not report its physical cores");
+	const unsigned expected = static_cast<unsigned>(std::clamp(physical, 1, 8));
+	require(uml::emulator::default_application_guest_cpu_count() == expected,
+		"the launcher default is not min(physical cores, 8)");
+
+	/* An explicit count keeps the guest maximum, not the application limit,
+	 * so a correctness boot at ten vCPUs is unchanged. */
+	const char *ten[]{"uml-test", "ncpus=10"};
+	require(uml::emulator::prepare_emulator_options(
+			2, ten, "/tmp/rootfs.erofs").guest_cpus == 10,
+		"an explicit ncpus=10 was limited to the application maximum");
+	const char *twelve[]{"uml-test", "ncpus=12"};
+	require(uml::emulator::prepare_emulator_options(
+			2, twelve, "/tmp/rootfs.erofs").guest_cpus == 12,
+		"an explicit ncpus=12 was limited to the application maximum");
+}
+
 void test_invalid_and_informational_inputs()
 {
 	const char *invalid_engine[]{"--execution-engine=unknown"};
@@ -675,6 +702,7 @@ int main()
 		test_scalable_native_kernel_layout_geometry();
 		test_process_native_window_is_one_reservation();
 		test_guest_cpu_count_matches_kernel_policy();
+		test_application_default_cpu_count_is_the_physical_cores_at_most_eight();
 		test_invalid_and_informational_inputs();
 		return EXIT_SUCCESS;
 	} catch (const std::exception &error) {
