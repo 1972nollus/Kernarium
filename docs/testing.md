@@ -1449,13 +1449,15 @@ a blank instance:
   `UML_ANDROID_ADB_DEBUGGING_RELEASE` names the release and the Android macOS
   executable is built) boots a blank instance and checks the adb topics of the
   product: Developer options and USB debugging are off (`adb_enabled` 0,
-  `persist.sys.usb.config` empty); turning USB debugging on records it and
-  leaves adbd's process alone; turning it off clears it, restarts adbd once and
-  leaves adbd serving the host; both survive a reboot. Where the guest checks
-  keys (`ro.boot.kernarium.adb_auth` 1, which the macOS launcher never sets, so
-  only a guest the Kernarium runtime started, which the runner's `--serial`
-  attaches to), a second throwaway key stays unauthorized with no prompt while
-  debugging is off and raises the prompt while it is on.
+  `persist.sys.usb.config` without `adb`, adbd's own rule: empty or `none`, the
+  value init's property service gives a user build at boot; a debuggable build
+  gets `adb`, so the test qualifies the user variant); turning USB debugging on
+  records `adb` and leaves adbd's process alone; turning it off drops `adb`,
+  restarts adbd once and leaves adbd serving the host; both survive a reboot.
+  Where the guest checks keys (`ro.boot.kernarium.adb_auth` 1, which the macOS
+  launcher never sets, so only a guest the Kernarium runtime started, which the
+  runner's `--serial` attaches to), a second throwaway key stays unauthorized
+  with no prompt while debugging is off and raises the prompt while it is on.
 
 ## Android hardware video encoding and decoding
 

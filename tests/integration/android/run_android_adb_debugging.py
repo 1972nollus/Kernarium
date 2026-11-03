@@ -7,11 +7,15 @@ The guest is the release on a fresh data disk, started with the macOS launcher
 is android/lineage-24/README.md (the p0007 and p0011 adb topics):
 
 - Developer options and USB debugging are off on a fresh data partition:
-  `adb_enabled` is 0 (or unset) and `persist.sys.usb.config` is empty;
+  `adb_enabled` is 0 (or unset) and `persist.sys.usb.config` does not hold
+  `adb`: it is empty or `none`. At every boot init's property service fills an
+  empty value, with `none` on a user build and with `adb` on a debuggable one,
+  which is why this runner qualifies the user variant;
 - turning USB debugging on records `adb` in `persist.sys.usb.config` and keeps
   the host's adbd running, the same process;
-- turning it off clears the property, ends the sessions by restarting adbd
-  once, and leaves adbd running for the host, which reconnects;
+- turning it off drops `adb` from the property, ends the sessions by
+  restarting adbd once, and leaves adbd running for the host, which
+  reconnects;
 - both settings survive a guest reboot;
 - when the guest checks keys (`ro.boot.kernarium.adb_auth` is 1, which the
   macOS launcher never sets, so only a guest the Kernarium runtime started),
@@ -44,11 +48,21 @@ LAUNCHER = REPOSITORY / "tools" / "boot_android.py"
 SETTLE_SECONDS = 30
 RECONNECT_SECONDS = 90
 REFUSAL_LINE = "kernarium: key refused, debugging is off"
+USB_CONFIG = "persist.sys.usb.config"
 PROMPT_ACTIVITY = "UsbDebuggingActivity"
 
 
 class Failure(RuntimeError):
     pass
+
+
+def usb_debugging_recorded(value: str) -> bool:
+    """adbd's DebuggingEnabled() rule for the property: `adb` is one of its comma-separated functions.
+
+    Off is any value without it, the empty string AdbService writes when the setting is turned off
+    and the `none` that init writes in its place at the next boot of a user build.
+    """
+    return "adb" in value.split(",")
 
 
 class Device:
@@ -148,8 +162,9 @@ def check_fresh(device: Device) -> None:
     enabled = device.setting("adb_enabled")
     if enabled not in ("0", "null"):
         raise Failure(f"adb_enabled is {enabled!r} on a fresh data partition")
-    if device.getprop("persist.sys.usb.config"):
-        raise Failure("persist.sys.usb.config is set on a fresh data partition")
+    recorded = device.getprop(USB_CONFIG)
+    if usb_debugging_recorded(recorded):
+        raise Failure(f"{USB_CONFIG} is {recorded!r} on a fresh data partition, expected no adb (empty or none)")
     developer = device.setting("development_settings_enabled")
     if developer not in ("0", "null"):
         raise Failure(f"Developer options are on ({developer!r}) on a fresh data partition")
@@ -172,13 +187,13 @@ def check_toggle(device: Device) -> None:
     # The restart ends every session, the host's included.
     wait_for("adbd to restart and the host to reconnect",
              lambda: device.connect() and device.adbd_pid() != pid, RECONNECT_SECONDS)
-    wait_for("persist.sys.usb.config to be cleared",
-             lambda: device.getprop("persist.sys.usb.config") == "", SETTLE_SECONDS)
+    wait_for("persist.sys.usb.config to stop recording adb",
+             lambda: not usb_debugging_recorded(device.getprop(USB_CONFIG)), SETTLE_SECONDS)
     if device.getprop("init.svc.adbd") != "running":
         raise Failure("adbd is not running after debugging was turned off")
     if device.setting("adb_enabled") != "0":
         raise Failure("adb_enabled is not 0 after turning USB debugging off")
-    print("toggle off: cleared, adbd restarted once and serving the host")
+    print("toggle off: adb dropped, adbd restarted once and serving the host")
 
 
 def check_reboot(device: Device, seconds: int, guest: subprocess.Popen | None) -> None:
@@ -192,12 +207,13 @@ def check_reboot(device: Device, seconds: int, guest: subprocess.Popen | None) -
         raise Failure("persist.sys.usb.config lost 'adb' across a reboot")
     device.turn_debugging_off()
     wait_for("the host to reconnect after turning debugging off",
-             lambda: device.connect() and device.getprop("persist.sys.usb.config") == "", RECONNECT_SECONDS)
+             lambda: device.connect() and not usb_debugging_recorded(device.getprop(USB_CONFIG)),
+             RECONNECT_SECONDS)
     reboot(device, seconds, guest)
     wait_for("adb_enabled to be 0 after the reboot", lambda: device.setting("adb_enabled") == "0",
              SETTLE_SECONDS)
-    if device.getprop("persist.sys.usb.config"):
-        raise Failure("persist.sys.usb.config came back after a reboot")
+    if usb_debugging_recorded(device.getprop(USB_CONFIG)):
+        raise Failure("persist.sys.usb.config came back with adb after a reboot")
     print("reboot: both settings persist")
 
 
