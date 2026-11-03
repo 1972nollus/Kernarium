@@ -1,3 +1,3 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#import "KernariumRuntimeLoader.h"
+#import "../../GuestHost/Sources/KernariumRuntimeLoader.h"

@@ -36,7 +36,24 @@ inline constexpr std::uint16_t buttonTouch = 0x14a;
 inline constexpr std::uint32_t touchscreenAbsoluteMaximum = 32767;
 /* Linux's KEY_POWER, which a host forwards as a phone's power button. */
 inline constexpr std::uint16_t keyPower = 116;
+/* Linux's KEY_BACK and KEY_HOMEPAGE, which Android's Generic key layout maps
+ * to BACK and HOME, and a host forwards as a phone's Back and Home keys. */
+inline constexpr std::uint16_t keyBack = 158;
+inline constexpr std::uint16_t keyHomepage = 172;
+/* The keyboard advertises the contiguous codes 1..keyboardKeyMaximum, then
+ * Back and Homepage. A guest's input core delivers only advertised keys, so
+ * the codes in between and above stay unadvertised, and a Linux guest sees two
+ * more keys than before and nothing else. */
 inline constexpr std::uint16_t keyboardKeyMaximum = 0x7f;
+inline constexpr std::uint16_t keyboardKeyLast = keyHomepage;
+
+[[nodiscard]] constexpr bool keyboardAdvertisesKey(
+    std::uint16_t code) noexcept
+{
+    return (code >= 1U && code <= keyboardKeyMaximum) ||
+        code == keyBack || code == keyHomepage;
+}
+
 inline constexpr std::uint8_t propertyDirect = 0x01;
 inline constexpr std::uint16_t busVirtual = 0x06;
 
@@ -78,5 +95,6 @@ struct [[gnu::packed]] InputEvent final {
 
 static_assert(sizeof(InputConfig) == 136);
 static_assert(sizeof(InputEvent) == 8);
+static_assert(keyboardKeyLast / 8U < sizeof(InputConfigValue::bitmap));
 
 } // namespace uml::input::virtio::protocol

@@ -48,7 +48,7 @@ endfunction()
 function(uml_audit_implementation_fragments ROOT OUT_VIOLATIONS)
     set(COMPOSER "${ROOT}/darwin/cpu/arm64/gadgets/program_builder.cpp")
     set(CXX_GLOBS)
-    foreach(TREE IN ITEMS darwin Kernarium tests)
+    foreach(TREE IN ITEMS Andarium darwin GuestHost Kernarium tests)
         foreach(EXTENSION IN ITEMS cpp cc cxx h hh hpp ipp m mm)
             list(APPEND CXX_GLOBS "${ROOT}/${TREE}/*.${EXTENSION}")
         endforeach()
@@ -98,8 +98,9 @@ function(uml_audit_guest_runner_imports ROOT OUT_VIOLATIONS)
     set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
 endfunction()
 
-# First-party CMake files and Xcode projects are each read once for three
-# rules.
+# First-party CMake files and Xcode projects (Kernarium's project.pbxproj and
+# the JSON project.xcproj of Andarium, or of Kernarium once converted) are each
+# read once for three rules.
 #
 # A darwin/ implementation source is compiled only by the CMake owner beneath
 # darwin/ that lists it. Any other target reaches it through a product that
@@ -126,8 +127,8 @@ function(uml_audit_build_files ROOT OUT_VIOLATIONS)
     set(_source "darwin/[A-Za-z0-9_./-]+\\.(cpp|cxx|cc|mm|m|S|s)")
     set(_violations)
     set(_cmake_globs)
-    foreach(_scope IN ITEMS android cmake darwin dependencies kernel Kernarium
-            scripts tests tools)
+    foreach(_scope IN ITEMS Andarium android cmake darwin dependencies
+            GuestHost kernel Kernarium scripts tests tools)
         list(APPEND _cmake_globs
             "${ROOT}/${_scope}/*CMakeLists.txt" "${ROOT}/${_scope}/*.cmake")
     endforeach()
@@ -148,7 +149,7 @@ function(uml_audit_build_files ROOT OUT_VIOLATIONS)
         endif()
         string(TOLOWER "${_text}" _normalized_text)
         if(_relative MATCHES
-           "^(CMakeLists\\.txt$|(android|cmake|darwin|dependencies|kernel|Kernarium|tests)/)"
+           "^(CMakeLists\\.txt$|(Andarium|android|cmake|darwin|dependencies|GuestHost|kernel|Kernarium|tests)/)"
            AND NOT _relative STREQUAL "cmake/UmlTesting.cmake" AND
            _normalized_text MATCHES "(^|[\r\n])[ \t]*add_test[ \t\r]*\\(")
             list(APPEND _violations
@@ -183,6 +184,25 @@ function(uml_audit_build_files ROOT OUT_VIOLATIONS)
                 "${_path}: an Xcode target compiles ${_name}, which only its darwin/ owner may build")
         endforeach()
     endforeach()
+    # A JSON project names a file in a "path" entry. It is JSON5, so the key
+    # is quoted with either quote or bare, and the value takes either quote.
+    # A source must end at the closing quote, so a longer extension such as
+    # .swift is not the .s of an assembly file. GuestHost holds shared source
+    # that the apps compile, not a project.
+    set(_json_path
+        "[ \t\r\n{,][\"']?path[\"']?[ \t\r\n]*:[ \t\r\n]*[\"']([^\"'\n]*/)?${_source}[\"']")
+    file(GLOB_RECURSE _json_projects LIST_DIRECTORIES false
+        "${ROOT}/Andarium/*.xcproj" "${ROOT}/Kernarium/*.xcproj")
+    foreach(_path IN LISTS _json_projects)
+        file(READ "${_path}" _text)
+        string(REGEX MATCHALL "${_json_path}" _references "${_text}")
+        foreach(_reference IN LISTS _references)
+            string(REGEX REPLACE "^[^:]*:[ \t\r\n]*[\"']" "" _name "${_reference}")
+            string(REGEX REPLACE "[\"']$" "" _name "${_name}")
+            list(APPEND _violations
+                "${_path}: an Xcode target compiles ${_name}, which only its darwin/ owner may build")
+        endforeach()
+    endforeach()
     set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
 endfunction()
 
@@ -197,8 +217,8 @@ endfunction()
 # brackets.
 function(uml_audit_shell_cd ROOT OUT_VIOLATIONS)
     set(_globs)
-    foreach(_scope IN ITEMS android cmake darwin dependencies kernel Kernarium
-            scripts tests tools)
+    foreach(_scope IN ITEMS Andarium android cmake darwin dependencies
+            GuestHost kernel Kernarium scripts tests tools)
         list(APPEND _globs "${ROOT}/${_scope}/*.sh")
     endforeach()
     file(GLOB_RECURSE _scripts LIST_DIRECTORIES false ${_globs})
@@ -241,12 +261,13 @@ endfunction()
 
 # Darwin reserves x18 as the platform register and clears it whenever it
 # interrupts a thread, so a value kept there is lost at a random preemption.
-# No first-party host source names it outside a comment: not assembly or an
+# No first-party host source (darwin/, Kernarium/, Andarium/ and the GuestHost/
+# source the apps share) names it outside a comment: not assembly or an
 # assembly contract, not inline assembly, and not a generator that writes
 # either. What a JIT composes at run time is for the emitted-code unit tests.
 function(uml_audit_platform_register ROOT OUT_VIOLATIONS)
     set(_globs)
-    foreach(_tree IN ITEMS darwin Kernarium)
+    foreach(_tree IN ITEMS Andarium darwin GuestHost Kernarium)
         foreach(_extension IN ITEMS
                 S s inc c cc cpp cxx h hh hpp ipp inl m mm py)
             list(APPEND _globs "${ROOT}/${_tree}/*.${_extension}")
@@ -281,7 +302,8 @@ file(GLOB ROOT_C_SOURCES LIST_DIRECTORIES false
     "${SOURCE_ROOT}/Makefile")
 set(C_SOURCES ${ROOT_C_SOURCES})
 foreach(FIRST_PARTY_SCOPE IN ITEMS
-        cmake darwin dependencies kernel Kernarium scripts tests tools)
+        Andarium cmake darwin dependencies GuestHost kernel Kernarium scripts
+        tests tools)
     if(NOT IS_DIRECTORY "${SOURCE_ROOT}/${FIRST_PARTY_SCOPE}")
         continue()
     endif()
@@ -438,7 +460,9 @@ list(APPEND VIOLATIONS ${PLATFORM_REGISTER_VIOLATIONS})
 # Verify that every implementation source is owned by the nearest CMakeLists.txt
 # at or above it, using its complete module-relative path. A same-named source
 # in another module is not evidence of ownership, and darwin/CMakeLists.txt
-# composes subdirectories without owning leaf sources.
+# composes subdirectories without owning leaf sources. Only trees that CMake
+# builds are owned this way: Xcode compiles the sources of Andarium/ and
+# GuestHost/, so they have no CMake owner.
 set(OWNERSHIP_GLOBS)
 foreach(OWNED_TREE IN ITEMS darwin Kernarium/Runtime)
     foreach(EXTENSION IN ITEMS cpp cc cxx m mm S s)
