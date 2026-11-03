@@ -142,6 +142,15 @@ nothing in a guest uses it, so the LTP case that needs it, `recvmsg03`, is in
 `disabled-tests.tsv`. `guest-kernel-config` checks these settings in a Linux
 guest, and the same probe checks an Android guest.
 
+Every product builds the Virtio vsock transport in (`CONFIG_VIRTIO_VSOCKETS`)
+beside the vsock loopback transport. The driver binds only to a Virtio vsock
+device the host offers, so a guest without one differs in a single way: with
+the transport registered, a stream to CID 2 goes to the host and no longer
+loops back, while CID 1 (`VMADDR_CID_LOCAL`) still does. The Android product
+lists the transport among its required built-ins. `guest-kernel-config` checks
+that the driver is registered, that no balloon driver is, and that a stream on
+CID 1 carries a byte.
+
 ### Kernel self-protection
 
 Every product builds the kernel with `CONFIG_STACKPROTECTOR_STRONG` and
@@ -416,15 +425,6 @@ relocation records (`.rela.dyn`, about 2 MB) stay in the image, because pages
 freed below the break lie outside the vhost-user memory table. The
 shared-memory tables stay static, because the map request is served in
 interrupt context, where an atomic allocation can fail.
-
-`CONFIG_VIRTIO_BALLOON` lets the host carve its GPU memory out of guest RAM.
-UML removes virtio drivers from an exitcall that runs
-after `device_shutdown()` has broken every virtqueue. The balloon therefore
-returns its pages without waiting for a host answer once its queue is broken,
-and its shutdown handler breaks the queues only while it holds the balloon
-lock, so that no balloon page migration is left waiting for an answer the
-broken queue would drop. Otherwise power-off with an inflated balloon never
-completes.
 
 Releasing an ext4 inode preallocation never allocates, so evicting a cached
 inode from the inode shrinker, which runs under `PF_MEMALLOC`, does not trip
@@ -768,7 +768,7 @@ The overlay holds only what differs from the Linux product:
 - `CHECKPOINT_RESTORE` is off, as in GKI, so that `MSEAL_SYSTEM_MAPPINGS` can
   seal userspace's system mappings.
 - Android's own facilities: Binder and binderfs, the DMA-BUF heaps and udmabuf,
-  bootconfig, the inline-encryption fallback with fscrypt and HCTR2, PF_KEY for
+  bootconfig, the inline-encryption fallback with fscrypt, PF_KEY for
   the network statistics path, socket destruction for netd, further xtables
   matches and targets, IPsec transforms, traffic control for BPF, the
   gpu_mem tracepoints, the Kernarium battery, hvc for the single-port Virtio
@@ -778,6 +778,13 @@ The overlay holds only what differs from the Linux product:
   `userspace-abort` to `/sys/power/wake_lock`, so without the file a wakelock
   taken while the system is entering a suspend cannot stop it. The Linux
   product leaves the file out for the guest-OS reason given above.
+- The HCTR2 filename-encryption transform (`CONFIG_CRYPTO_HCTR2`) is absent.
+  The product's userdata is unencrypted and no shipped fstab names
+  `fileencryption=`. None of Android 17's kernel configuration lists, its
+  framework compatibility matrices or its VTS tests names HCTR2, and the one
+  CTS test that does, the file-based encryption policy test, accepts
+  AES-256-CTS filenames in its place. A product that encrypts userdata with
+  HCTR2 filenames builds the transform back in.
 - Android's CTS requires that SysV IPC (`CONFIG_SYSVIPC`, whose system calls
   must answer `ENOSYS`) and the NFS client (`CONFIG_NFS_FS`) are absent, so
   the overlay leaves both out, and SCTP too, which Android has no use for. The
