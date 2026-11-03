@@ -541,8 +541,8 @@ Each script documents its options in `--help` or its header:
   `--automation` the automation Linux runtime, with `--android-automation`
   the automation Android runtime, with `--runtimes android` the Android
   runtime alone (for Andarium; the output directory is shared, so package the
-  full set again before building Kernarium), and, for the device, the host
-  battery and video encoder archives only `KernariumTests` links;
+  full set again before building Kernarium), and the host battery and video
+  encoder archives, a slice for each SDK, which only `KernariumTests` links;
 - `embed-device-framework.sh` is the Run Script phase that embeds the
   device-only `KosmicKrisp.xcframework` for an `iphoneos` build and nothing for
   the Simulator, because an XCFramework in an Embed Frameworks phase needs a

@@ -44,8 +44,9 @@
 # KernariumTests also links HostBattery.xcframework: the Apple battery
 # provider's archive, as the Android runtime links it, with its header. The
 # application neither links nor embeds it, and the test bundle loads no second
-# runtime to reach it. HostVideoEncoder.xcframework is the hardware video
-# encoder's archive, packaged the same way for the capability tests.
+# runtime to reach it. HostVideoEncoder.xcframework is the video encoder's
+# archive, packaged the same way for the capability tests. Both have a slice
+# for each packaged SDK, built with the runtime of that SDK.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -174,6 +175,9 @@ HOST_BATTERY_HEADER="$ROOT_DIR/darwin/platform/host_battery.hpp"
 ANDROID_RUNTIME_TREE="$ROOT_DIR/.build/$ANDROID_TREE"
 HOST_VIDEO_ENCODER="$ANDROID_RUNTIME_TREE/darwin/platform/libuml_video_encoder.a"
 HOST_VIDEO_ENCODER_HEADERS="$ROOT_DIR/darwin/platform/video_encoder.hpp $ROOT_DIR/darwin/platform/video_decoder.hpp"
+SIMULATOR_HOST_BATTERY="$ROOT_DIR/.build/$SIMULATOR_ANDROID_TREE/darwin/platform/libuml_host_battery.a"
+SIMULATOR_ANDROID_RUNTIME_TREE="$ROOT_DIR/.build/$SIMULATOR_ANDROID_TREE"
+SIMULATOR_HOST_VIDEO_ENCODER="$SIMULATOR_ANDROID_RUNTIME_TREE/darwin/platform/libuml_video_encoder.a"
 
 # Mesa supplies the host GL provider as MesaEGL and MesaGallium. The device
 # stack also has the Vulkan driver they render on, KosmicKrisp; the Simulator's
@@ -225,6 +229,12 @@ if has_sdk simulator; then
 		[ -d "$SIMULATOR_GPU/$framework.framework" ] ||
 			fail "missing framework slice: $SIMULATOR_GPU/$framework.framework"
 	done
+	[ -f "$SIMULATOR_HOST_BATTERY" ] ||
+		fail "missing host battery archive: $SIMULATOR_HOST_BATTERY"
+	"$CMAKE" --build "$SIMULATOR_ANDROID_RUNTIME_TREE" --target uml_video_encoder ||
+		fail "could not build the host video encoder archive"
+	[ -f "$SIMULATOR_HOST_VIDEO_ENCODER" ] ||
+		fail "missing host video encoder archive: $SIMULATOR_HOST_VIDEO_ENCODER"
 fi
 
 OUTPUT_PARENT=$(dirname -- "$OUTPUT")
@@ -309,30 +319,39 @@ done
 	"$STAGE/GPTFDisk.xcframework"
 "$CMAKE" -E copy_directory "$ZSTD" \
 	"$STAGE/LibZstd.xcframework"
-# The two archives serve KernariumTests, which runs on a device: they have no
-# Simulator slice.
-if has_sdk device; then
-	HOST_BATTERY_HEADERS="$STAGE/host-battery-headers"
-	mkdir -p -- "$HOST_BATTERY_HEADERS"
-	cp -- "$HOST_BATTERY_HEADER" "$HOST_BATTERY_HEADERS/"
-	"$XCODEBUILD" -create-xcframework \
-		-library "$HOST_BATTERY" -headers "$HOST_BATTERY_HEADERS" \
-		-output "$STAGE/HostBattery.xcframework"
-	"$CMAKE" -E remove_directory "$HOST_BATTERY_HEADERS"
-	[ -f "$STAGE/HostBattery.xcframework/ios-arm64/libuml_host_battery.a" ] ||
-		fail "HostBattery XCFramework was not created"
-	HOST_VIDEO_ENCODER_STAGE="$STAGE/host-video-encoder-headers"
-	mkdir -p -- "$HOST_VIDEO_ENCODER_STAGE"
-	for header in $HOST_VIDEO_ENCODER_HEADERS; do
-		cp -- "$header" "$HOST_VIDEO_ENCODER_STAGE/"
+# The two archives serve KernariumTests: each slice is the archive of the
+# runtime tree of its SDK, and an SDK that is not packaged leaves its slice out.
+# create_archive_xcframework NAME HEADER... -- DEVICE-ARCHIVE SIMULATOR-ARCHIVE
+create_archive_xcframework()
+{
+	name=$1
+	shift
+	headers="$STAGE/$name-headers"
+	mkdir -p -- "$headers"
+	while [ "$1" != -- ]; do
+		cp -- "$1" "$headers/"
+		shift
 	done
-	"$XCODEBUILD" -create-xcframework \
-		-library "$HOST_VIDEO_ENCODER" -headers "$HOST_VIDEO_ENCODER_STAGE" \
-		-output "$STAGE/HostVideoEncoder.xcframework"
-	"$CMAKE" -E remove_directory "$HOST_VIDEO_ENCODER_STAGE"
-	[ -f "$STAGE/HostVideoEncoder.xcframework/ios-arm64/libuml_video_encoder.a" ] ||
-		fail "HostVideoEncoder XCFramework was not created"
-fi
+	shift
+	slices=
+	for archive in "$1" "$2"; do
+		[ -z "$archive" ] ||
+			slices="$slices -library $archive -headers $headers"
+	done
+	# shellcheck disable=SC2086
+	"$XCODEBUILD" -create-xcframework $slices \
+		-output "$STAGE/$name.xcframework"
+	"$CMAKE" -E remove_directory "$headers"
+	[ -f "$STAGE/$name.xcframework/Info.plist" ] ||
+		fail "$name XCFramework was not created"
+}
+create_archive_xcframework HostBattery "$HOST_BATTERY_HEADER" -- \
+	"$(device_slice "$HOST_BATTERY")" \
+	"$(simulator_slice "$SIMULATOR_HOST_BATTERY")"
+# shellcheck disable=SC2086
+create_archive_xcframework HostVideoEncoder $HOST_VIDEO_ENCODER_HEADERS -- \
+	"$(device_slice "$HOST_VIDEO_ENCODER")" \
+	"$(simulator_slice "$SIMULATOR_HOST_VIDEO_ENCODER")"
 
 # Every slice of every packaged SDK: the framework slices of the runtimes and
 # the GPU stack, each built for its own platform (Mach-O platform 2 for the
@@ -363,6 +382,17 @@ for slice_platform in $PACKAGED_SLICES; do
 		')
 		[ "$binary_platform" = "$platform" ] ||
 			fail "$framework is built for platform $binary_platform, not the $slice slice's $platform"
+	done
+	# Each archive's objects are built for the slice's own platform.
+	for archive in HostBattery:libuml_host_battery HostVideoEncoder:libuml_video_encoder; do
+		library="$STAGE/${archive%%:*}.xcframework/$slice/${archive##*:}.a"
+		[ -f "$library" ] || fail "missing packaged host archive: $library"
+		archive_platforms=$("$OTOOL" -l "$library" | awk '
+			$1 == "cmd" { command = $2; next }
+			command == "LC_BUILD_VERSION" && $1 == "platform" { print $2 }
+		' | sort -u)
+		[ "$archive_platforms" = "$platform" ] ||
+			fail "${archive##*:}.a is built for platform $archive_platforms, not the $slice slice's $platform"
 	done
 	for framework in $RUNTIME_FRAMEWORKS; do
 		binary="$STAGE/$framework.xcframework/$slice/$framework.framework/$framework"

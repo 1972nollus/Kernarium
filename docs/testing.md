@@ -684,11 +684,12 @@ both together give XCFrameworks with an `ios-arm64` and an `ios-arm64-simulator`
 slice; no Simulator product is built for x86_64, and both Xcode projects exclude
 that architecture for the Simulator SDK. KosmicKrisp has a device slice alone, so the app targets embed it with a
 Run Script phase, `Kernarium/scripts/embed-device-framework.sh`, which embeds it
-for an `iphoneos` build and nothing for the Simulator. For the device it also
-packages the Apple battery provider's archive and the hardware video encoder's,
-as the Android runtime links them, as `HostBattery.xcframework` and
-`HostVideoEncoder.xcframework`; only `KernariumTests` links them, so the test
-process reaches each without loading a second runtime.
+for an `iphoneos` build and nothing for the Simulator. It also packages the
+Apple battery provider's archive and the video encoder's, as the Android
+runtime links them, as `HostBattery.xcframework` and
+`HostVideoEncoder.xcframework`, with a slice for each packaged SDK; only
+`KernariumTests` links them, so the test process reaches each without loading a
+second runtime.
 
 The Simulator renders with llvmpipe, which runs one rasterizer thread per host
 core; `LP_NUM_THREADS` caps them for a launch (`SIMCTL_CHILD_LP_NUM_THREADS=2`
