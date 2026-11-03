@@ -998,8 +998,9 @@ per source: `runtime-guest-statistics` (the carriers' CPU time, found by name,
 and the RAM held), `guest-console-memory` (the `mem` reply parser and request
 against a fake console), `gpu-display-statistics` (the display counters through
 the service), `emulator-statistics` and `emulator-lifecycle` (the public calls
-and their gating: not while quiesced, not beside another lifecycle call, the
-wait outside the mutex), `kernarium-statistics` (the runtime's composition and
+and their gating: not while quiesced or when a suspend gave no final answer,
+not beside another lifecycle call, a suspend starting included, the wait
+outside the mutex), `kernarium-statistics` (the runtime's composition and
 its refusals: quiesced, display off, lifecycle busy), `emulator-statistics-report`
 (the line `--stats` prints) and the package consumers, which call both
 functions on an idle handle.

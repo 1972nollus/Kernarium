@@ -414,6 +414,12 @@ void aSuspendThatTimedOutIsNotHibernated()
 		"a suspend that does not reply is aborted and written back");
 	require(hibernationLog.take().empty(),
 		"only a confirmed system suspension is hibernated");
+	/* A guest known to run has no sleep to end, so it is asked. */
+	uml_emulator_guest_memory memory {.struct_size = sizeof(memory)};
+	require(console.requests(1U, [&] {
+		require(uml_emulator_get_guest_memory(emulator.get(), &memory) ==
+			UML_EMULATOR_OK);
+	}) == Requests {"mem"}, "a guest known to run was not asked");
 	require(console.requests(0U, [&] { uml_emulator_resume(emulator.get()); })
 			.empty(),
 		"a guest known to run has nothing to be woken from");
@@ -432,6 +438,12 @@ void aSuspendThatNeverAnsweredIsWokenAtTheResume()
 	}) == Requests {"trim once", "suspend", "wake", "sysrq s"});
 	require(hibernationLog.take().empty(),
 		"an unconfirmed suspension is not hibernated");
+	/* It may be asleep, and a request would end that sleep. */
+	uml_emulator_guest_memory memory {.struct_size = sizeof(memory)};
+	require(console.requests(0U, [&] {
+		require(uml_emulator_get_guest_memory(emulator.get(), &memory) ==
+			-UML_EMULATOR_UNSUPPORTED);
+	}).empty(), "a guest that may be asleep was asked for its memory");
 	require(console.requests(1U, [&] { uml_emulator_resume(emulator.get()); })
 			== Requests {"wake"},
 		"an unconfirmed guest is woken at the resume");
@@ -599,8 +611,11 @@ void aQuiescedGuestIsNotAskedForItsMemory()
 }
 
 /* A lifecycle call in progress is neither waited for nor waited on: the
- * request is refused at once and sends nothing. */
-void aLifecycleCallInProgressIsNotWaitedFor()
+ * request is refused at once and sends nothing. This holds through the whole
+ * quiesce, so also while its suspend is starting: the guest has been asked
+ * and has not yet replied that it sleeps. `held` is the request whose answer
+ * the guest keeps back. */
+void aLifecycleCallInProgressIsNotWaitedFor(const std::string &held)
 {
 	const auto emulator = makeEmulator();
 	FakeGuestConsole console;
@@ -610,10 +625,10 @@ void aLifecycleCallInProgressIsNotWaitedFor()
 	std::condition_variable changed;
 	bool trimming {false};
 	bool released {false};
-	/* The guest holds its answer to the trim, and the quiesce its lifecycle
+	/* The guest holds its answer to `held`, and the quiesce its lifecycle
 	 * mutex, until the test lets go or the guard does. */
 	console.onRequest = [&](const std::string &command) {
-		if (command != "trim once")
+		if (command != held)
 			return;
 		std::unique_lock lock {mutex};
 		trimming = true;
@@ -630,7 +645,7 @@ void aLifecycleCallInProgressIsNotWaitedFor()
 	{
 		std::unique_lock lock {mutex};
 		require(changed.wait_for(lock, std::chrono::seconds {10},
-			[&] { return trimming; }), "the quiesce never trimmed");
+			[&] { return trimming; }), "the quiesce never sent the request");
 	}
 	auto memory = askedMemory();
 	const auto started = std::chrono::steady_clock::now();
@@ -730,7 +745,8 @@ int main(int argc, char **argv)
 	aResumeDuringTheWriteStopsTheWrite();
 	aStopBringsTheRamBack();
 	aQuiescedGuestIsNotAskedForItsMemory();
-	aLifecycleCallInProgressIsNotWaitedFor();
+	aLifecycleCallInProgressIsNotWaitedFor("trim once");
+	aLifecycleCallInProgressIsNotWaitedFor("suspend");
 	aQuiesceDoesNotWaitForAMemoryRequest();
 	return EXIT_SUCCESS;
 }
