@@ -97,21 +97,26 @@ HostResolver::~HostResolver()
 	stop();
 }
 
-int HostResolver::start(FrameSink sink, std::string stream_path)
+int HostResolver::start(FrameSink sink,
+			const std::vector<std::string> &stream_paths)
 {
 	if (worker_.joinable())
 		return -EBUSY;
 	if (!create_pipe(wake_pipe_))
 		return errno == 0 ? -EIO : -errno;
 	sink_ = std::move(sink);
-	if (!stream_path.empty()) {
-		const int error = bind_listener(stream_path);
-		if (error != 0)
-			std::fprintf(stderr,
-				"Darwin user network: DNS over TCP is "
-				"unavailable (%s: %s)\n",
-				stream_path.c_str(), std::strerror(-error));
+	int error = -ENOENT;
+	for (const auto &path : stream_paths) {
+		error = bind_listener(path);
+		if (error == 0) {
+			stream_path_ = path;
+			break;
+		}
 	}
+	if (error != 0)
+		std::fprintf(stderr,
+			"Darwin user network: DNS over TCP is unavailable "
+			"(%s)\n", std::strerror(-error));
 	{
 		std::lock_guard lock{inbox_mutex_};
 		accepting_ = true;
@@ -142,6 +147,7 @@ void HostResolver::stop() noexcept
 	}
 	listener_.reset();
 	listener_path_.reset();
+	stream_path_.clear();
 	wake_pipe_[0].reset();
 	wake_pipe_[1].reset();
 	sink_ = nullptr;

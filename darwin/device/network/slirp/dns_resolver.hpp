@@ -66,18 +66,24 @@ public:
 	~HostResolver();
 
 	/*
-	 * Starts the resolver thread. `stream_path` names the Unix socket
-	 * SLiRP's guest forward connects to for DNS over TCP; empty, or one
-	 * that cannot be bound, leaves TCP unanswered. The caller blocks the
-	 * guest timer around this call, as for any host thread.
+	 * Starts the resolver thread. `stream_paths` are candidates, in order,
+	 * for the Unix socket SLiRP's guest forward connects to for DNS over
+	 * TCP; the first that binds is used, and none leaves TCP unanswered.
+	 * The caller blocks the guest timer around this call, as for any host
+	 * thread.
 	 */
-	int start(FrameSink sink, std::string stream_path);
+	int start(FrameSink sink, const std::vector<std::string> &stream_paths);
 	/* Cancels every query, closes every connection and joins the thread;
 	 * no frame reaches the sink after it returns. */
 	void stop() noexcept;
 	[[nodiscard]] bool streams_available() const noexcept
 	{
 		return listener_.get() >= 0;
+	}
+	/* The bound DNS-over-TCP socket path, while streams_available(). */
+	[[nodiscard]] const std::string &stream_path() const noexcept
+	{
+		return stream_path_;
 	}
 
 	/* A guest UDP query. Called from SLiRP's worker; it copies `message`. */
@@ -140,6 +146,7 @@ private:
 	std::array<uml::platform::UniqueDescriptor, 2> wake_pipe_;
 	uml::platform::UniqueDescriptor listener_;
 	std::unique_ptr<uml::device::SocketPath> listener_path_;
+	std::string stream_path_;
 	std::mutex inbox_mutex_;
 	std::deque<Incoming> inbox_;
 	bool accepting_{};

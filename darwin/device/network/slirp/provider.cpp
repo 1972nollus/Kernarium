@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/un.h>
 #include <system_error>
 #include <unistd.h>
 
@@ -61,26 +62,33 @@ bool ensure_pipe(std::array<UniqueDescriptor, 2> &result) noexcept
 	return create_pipe(result);
 }
 
-/* Where SLiRP's guest forward reaches the resolver for DNS over TCP: the
- * application's temporary directory, as $TMPDIR names it on iOS and macOS. A
- * Unix socket path must fit sun_path (104 bytes with its terminator). */
-std::string dns_stream_path()
+/* Where SLiRP's guest forward may reach the resolver for DNS over TCP, in
+ * order: the application's temporary directory as $TMPDIR names it, Darwin's
+ * per-user one, then /tmp. A Unix socket path must fit sun_path (103 bytes
+ * and a terminator). An iOS device container's tmp/ is 89 bytes, which the
+ * short name fits; an iOS Simulator container's is about 164, so there the
+ * resolver binds in /tmp, which the Simulator's processes share with the Mac. */
+std::vector<std::string> dns_stream_paths()
 {
 	static std::atomic_uint sequence{0};
-	std::string directory;
-	if (const char *temporary = std::getenv("TMPDIR");
-	    temporary != nullptr && temporary[0] == '/')
-		directory = temporary;
-	else
-		directory = uml::device::user_temporary_directory();
-	if (directory.empty())
-		return {};
-	if (directory.back() != '/')
-		directory.push_back('/');
-	/* An iOS container's tmp/ is 89 bytes long; "dns-<pid>-<n>" keeps the
-	 * whole path within sun_path's 103. */
-	return directory + "dns-" + std::to_string(::getpid()) + "-" +
+	const auto name = "dns-" + std::to_string(::getpid()) + "-" +
 		std::to_string(sequence.fetch_add(1));
+	std::vector<std::string> paths;
+	const auto add = [&](std::string directory) {
+		if (directory.empty() || directory.front() != '/')
+			return;
+		if (directory.back() != '/')
+			directory.push_back('/');
+		auto path = directory + name;
+		if (path.size() < sizeof(sockaddr_un::sun_path) &&
+		    std::ranges::find(paths, path) == paths.end())
+			paths.push_back(std::move(path));
+	};
+	if (const char *temporary = std::getenv("TMPDIR"); temporary != nullptr)
+		add(temporary);
+	add(uml::device::user_temporary_directory());
+	add("/tmp");
+	return paths;
 }
 
 void drain_pipe(UniqueDescriptor &descriptor) noexcept
@@ -168,7 +176,6 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 			resolver_.set_interface_for_testing(
 				dns_interface_for_testing_);
 #endif
-			const std::string stream_path = dns_stream_path();
 			if (resolver_.start(
 				    [this](std::span<const std::uint8_t> frame) {
 					    try {
@@ -177,7 +184,7 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 					    } catch (...) {
 					    }
 				    },
-				    stream_path) != 0) {
+				    dns_stream_paths()) != 0) {
 				slirp_.reset();
 				return -EIO;
 			}
@@ -191,7 +198,7 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 					in_addr address{};
 					(void)inet_pton(AF_INET, server, &address);
 					if (slirp_add_unix(slirp_.get(),
-							   stream_path.c_str(),
+							   resolver_.stream_path().c_str(),
 							   &address, 53) != 0)
 						std::fprintf(stderr,
 							"Darwin user network: no DNS "
