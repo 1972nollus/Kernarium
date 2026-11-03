@@ -167,6 +167,14 @@ struct EmulatorConfiguration: Equatable {
         max(ProcessInfo.processInfo.processorCount, 1)
     }
 
+    /// The most vCPUs the settings offer, the default, and the most
+    /// `KERNARIUM_VCPU_COUNT` can state on a device with this many physical
+    /// cores: every core, at most the count the memory budget is measured for
+    /// (`GuestProcessorLimit`).
+    static func maximumVCPUCount(physicalProcessorCount: Int) -> Int {
+        GuestProcessorLimit.vCPUs(physicalProcessorCount: physicalProcessorCount)
+    }
+
     static func load(defaults: UserDefaults = .standard) -> Self {
         load(
             defaults: defaults,
@@ -177,7 +185,10 @@ struct EmulatorConfiguration: Equatable {
 
     /// `guestMemoryBound` gives the most guest RAM for a vCPU count; a stored
     /// or default size above it for the loaded count is taken down to it. A
-    /// size the environment states is kept as stated, for automation.
+    /// size the environment states is kept as stated, for automation. The
+    /// vCPU count defaults to the maximum for `physicalProcessorCount`; a
+    /// stored count above it comes down to it, and the environment's must lie
+    /// within it.
     static func load(
         defaults: UserDefaults,
         physicalProcessorCount: Int,
@@ -186,7 +197,9 @@ struct EmulatorConfiguration: Equatable {
         guestMemoryBound: GuestMemoryBound =
             EmulatorConfiguration.systemGuestMemoryBound
     ) -> Self {
-        let maximumVCPUCount = max(physicalProcessorCount, 1)
+        let maximumVCPUCount = Self.maximumVCPUCount(
+            physicalProcessorCount: physicalProcessorCount
+        )
         func stored(_ key: String, _ fallback: Int) -> Int {
             defaults.object(forKey: key) == nil
                 ? fallback

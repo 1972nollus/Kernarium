@@ -19,6 +19,8 @@ public struct LaunchOverrides: Equatable, Sendable {
 
     public init() {}
 
+    /// `processorCount` is the host's vCPU limit (`HostDevice.processorCount`):
+    /// `KERNARIUM_VCPU_COUNT` states 1 through it and nothing outside.
     public init(environment: [String: String], processorCount: Int) {
         func integer(_ key: String, in range: ClosedRange<Int>) -> Int? {
             environment[key].flatMap { Int($0) }.flatMap { range.contains($0) ? $0 : nil }
@@ -50,12 +52,14 @@ public struct LaunchOverrides: Equatable, Sendable {
     public var isEmpty: Bool { self == LaunchOverrides() }
 
     /// The guest as this launch asks for it. A guest not yet created takes
-    /// the capacity at once; an existing one can only grow. A memory size the
+    /// the capacity at once; an existing one can only grow. A stored vCPU
+    /// count above what the host offers comes down to it. A memory size the
     /// environment states is kept as stated, for automation; any other is
     /// taken within the bound of the vCPU count the guest then has, as a
     /// stored size is on load.
     public func applied(to guest: Guest, on host: HostDevice) -> Guest {
         var guest = guest
+        guest.cores = min(max(guest.cores, 1), host.processorCount)
         if let vCPUCount { guest.cores = min(vCPUCount, host.processorCount) }
         if let memoryMiB {
             guest.memoryMiB = memoryMiB

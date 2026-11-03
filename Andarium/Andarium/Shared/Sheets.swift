@@ -204,7 +204,7 @@ struct InfoSheet: View {
     }
 
     /// The most memory a guest has at its vCPU count; a new guest takes every
-    /// processor.
+    /// vCPU the host offers.
     private var memoryForAGuest: String {
         let count = model.guest?.cores ?? model.host.processorCount
         return Formats.memoryBound(model.host.memory.maximumMiB(vCPUs: count), vCPUs: count)
@@ -258,7 +258,7 @@ struct InfoSheet: View {
                     LabeledContent("Free on This \(model.host.name)", value: Formats.gb(model.host.freeStorageGB))
                 }
                 Section("This \(model.host.name)") {
-                    LabeledContent("Processor", value: "\(model.host.processorCount) cores")
+                    LabeledContent("Processor", value: "\(model.host.physicalProcessorCount) cores")
                     LabeledContent("Memory for a Guest", value: memoryForAGuest)
                 }
                 Section {

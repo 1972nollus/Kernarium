@@ -129,6 +129,10 @@ def emulator_arguments(
 ) -> list[str]:
     """The launcher command for one guest.
 
+    The launcher gives a guest min(physical cores, 8) vCPUs unless a
+    ``kernel_arguments`` entry is ``ncpus=N``, so a test states the count it
+    runs with.
+
     ``guest_files`` become the per-run initramfs the launcher builds, whose
     /init mounts the image. A guest that boots straight into an init on its
     EROFS image names it with ``init_path`` instead, and the launcher then

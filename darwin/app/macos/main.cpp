@@ -16,6 +16,7 @@
 #include "launcher.hpp"
 #include "gpu_budget_plan.hpp"
 #include "guest_memory_argument.hpp"
+#include "options.hpp"
 #include "platform/microphone_authorization.hpp"
 #include "restart_loop_guard.hpp"
 #include "sockets/socket_paths.hpp"
@@ -610,8 +611,9 @@ PreparedArguments prepare_host_arguments(
 			"mutually exclusive");
 	append_default_kernel_argument(
 		prepared.kernel, "mem=", configuration.default_guest_memory);
-	append_default_kernel_argument(
-		prepared.kernel, "ncpus=", configuration.default_guest_cpus);
+	append_default_kernel_argument(prepared.kernel, "ncpus=",
+		"ncpus=" + std::to_string(
+			uml::emulator::default_application_guest_cpu_count()));
 	if (configuration.top_byte_ignore)
 		prepared.kernel.emplace_back("--guest-top-byte-ignore");
 	return prepared;

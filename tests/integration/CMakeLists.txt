@@ -363,6 +363,7 @@ done'"
         --command "test -x /usr/bin/quota"
         --command "test -x /usr/sbin/quotacheck"
         --command "test -x /usr/sbin/e4crypt"
+        -- ncpus=10
     LABELS guest;overlay;systemd;smoke
     TIMEOUT 300
     CPUS 2)
@@ -1098,6 +1099,7 @@ do
 done'"
             --command "docker run --rm hello-world | grep -Fxq 'Hello from Docker!'"
             --command "docker image rm -f hello-world >/dev/null"
+            -- ncpus=10
         LABELS guest;docker;network;external;full
         TIMEOUT 900
         CPUS 4)

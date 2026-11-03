@@ -11,6 +11,7 @@
 #include "require.hpp"
 #include "runtime/guest_memory_budget.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -214,6 +215,33 @@ void aTightLimitOffersTheSmallestGuest()
 	require(budget::maximum_guest_memory_mib(4096 * mib, 8) == 3328);
 }
 
+/* The applications default to and offer every physical core, at most the
+ * count the cache cap and G_max are measured for. */
+void theApplicationLimitIsThePhysicalCoresAtMostTheMeasuredCount()
+{
+	static_assert(budget::measured_vcpu_maximum == 8);
+	static_assert(budget::measured_vcpu_maximum ==
+		budget::gadget_cache_cap_mib.size());
+	/* An iPad mini 6, an eight-core host, the ten-core devices and a Mac
+	 * with twenty. */
+	require(budget::application_vcpu_limit(6) == 6);
+	require(budget::application_vcpu_limit(8) == 8);
+	require(budget::application_vcpu_limit(10) == 8);
+	require(budget::application_vcpu_limit(20) == 8);
+	require(budget::application_vcpu_limit(1) == 1);
+	require(budget::application_vcpu_limit(0) == 1, "zero counts as one");
+	require(budget::application_vcpu_limit(
+			std::numeric_limits<unsigned>::max()) == 8);
+	for (unsigned physical = 0; physical <= 64; ++physical) {
+		const auto limit = budget::application_vcpu_limit(physical);
+		require(limit >= 1 && limit <= budget::measured_vcpu_maximum);
+		require(limit <= std::max(physical, 1U));
+		/* No limit lies beyond a measured row of the cap and of G_max. */
+		require(budget::gadget_cache_cap(limit) ==
+			budget::gadget_cache_cap_mib[limit - 1] * mib);
+	}
+}
+
 } // namespace
 
 int main()
@@ -239,6 +267,8 @@ int main()
 		{"no-limit-offers-the-whole-range", noLimitOffersTheWholeRange},
 		{"a-tight-limit-offers-the-smallest-guest",
 			aTightLimitOffersTheSmallestGuest},
+		{"the-application-limit-is-the-physical-cores-at-most-the-measured-count",
+			theApplicationLimitIsThePhysicalCoresAtMostTheMeasuredCount},
 	};
 	return uml::testing::runNamedTests(tests);
 }

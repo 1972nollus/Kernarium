@@ -43,7 +43,6 @@ extern const unsigned char uml_boot_init_end[]
 namespace {
 
 constexpr std::string_view macos_default_guest_memory{"mem=8G"};
-constexpr std::string_view macos_default_guest_cpus{"ncpus=10"};
 constexpr std::string_view guest_init_option{"--guest-init="};
 constexpr std::string_view guest_file_option{"--guest-file="};
 constexpr std::string_view scratch_prefix{"uml-guest-initrd-"};
@@ -305,7 +304,6 @@ int main(int argc, char *argv[], char *envp[])
 		{
 			.rootfs_path = rootfs.empty() ? nullptr : rootfs.c_str(),
 			.default_guest_memory = macos_default_guest_memory,
-			.default_guest_cpus = macos_default_guest_cpus,
 			.run_scratch = scratch,
 		});
 	if (!scratch.empty()) {

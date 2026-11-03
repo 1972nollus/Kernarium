@@ -270,6 +270,16 @@ flavour chosen at launch, and cannot be asked before that
 ([Kernarium](../Kernarium/README.md)). The launch does not
 refuse a larger value that automation states.
 
+The applications' vCPU limit is the one rule `application_vcpu_limit` in the
+same header: the host's physical cores, at most 8, the count `cap(v)` and
+`G_max(v)` are measured for. It is the default vCPU count of Kernarium,
+Andarium and the macOS launchers, and the most their settings, a stored count
+and `KERNARIUM_VCPU_COUNT` select; a stored count above it comes down to it on
+load. The loader answers it for the Swift applications, and the launchers take
+it from `emulator/src/options.hpp` (`default_application_guest_cpu_count`).
+An explicit `ncpus=` on a launcher keeps the runtime's own range
+(`maximum_guest_cpu_count`, 64), and a test states the count it needs.
+
 Every iOS memory control carries its macOS path, or records here why none can
 exist, so that a Mac run stays an accurate ground for measuring the device. The
 host graphics stack's paths are switches of a measurement run, described in
