@@ -143,7 +143,7 @@ public struct RunEnd: Equatable, Sendable {
     ) -> String {
         var lines = [
             "Andarium \(appVersion) · \(system.release)",
-            "\(system.kernel) · \(guest?.cores ?? 0) vCPUs · \(Formats.memory(guest?.memoryMiB ?? 0))",
+            "\(system.kernel) · \(guest?.cores ?? 0) vCPUs · \(Formats.size(mib: guest?.memoryMiB ?? 0))",
         ]
         let reason = if let startFailure {
             "it could not start (\(startFailure))"

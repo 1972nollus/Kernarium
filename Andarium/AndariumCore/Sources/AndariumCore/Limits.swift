@@ -4,7 +4,7 @@ import Foundation
 
 /// The ranges, defaults and reserves the application offers.
 public enum Limits {
-    /// A guest's storage capacity, in whole gigabytes. Storage only grows.
+    /// A guest's storage capacity, in whole gibibytes. Storage only grows.
     public static let capacityRangeGiB = 4...64
     public static let defaultCapacityGiB = 8
 
@@ -19,53 +19,63 @@ public enum Limits {
     public static let defaultMemoryMiB = 1536
 
     /// Free space a new guest needs for Android's first start, on top of the
-    /// space its storage takes. Decimal bytes, as iOS reports free space.
-    public static let firstStartReserveBytes: UInt64 = 3_000_000_000
+    /// space its storage takes.
+    public static let firstStartReserveBytes: UInt64 = 3 * bytesPerGiB
     /// Free space any start needs for Android's own writes.
-    public static let startReserveBytes: UInt64 = 1_500_000_000
+    public static let startReserveBytes: UInt64 = bytesPerGiB * 3 / 2
 
+    public static let bytesPerMiB: UInt64 = 1 << 20
     public static let bytesPerGiB: UInt64 = 1 << 30
 }
 
-/// Display text. Sizes the host reports (free space) are decimal gigabytes,
-/// as iOS Settings shows them. Home states a guest's capacity and data in
-/// binary gigabytes, the unit the disk is sized in; Info states every size in
-/// decimal gigabytes, so the guest sits beside the host's figures in one unit.
+/// Display text. Every size the application shows is binary, in the IEC
+/// units KiB, MiB and GiB: the host's free space, the guest's storage and
+/// memory, the system and an installed package. One formatter states them all.
 public enum Formats {
-    /// A size in gigabytes, as "12 GB", "2.4 GB" or "480 MB".
-    public static func gb(_ value: Double) -> String {
-        if value <= 0 { return "0 GB" }
-        if value < 0.95 { return String(format: "%.0f MB", value * 1000) }
-        if value >= 10 || value.rounded() == value { return String(format: "%.0f GB", value) }
-        return String(format: "%.1f GB", value)
+    private static let units = ["B", "KiB", "MiB", "GiB", "TiB"]
+
+    /// A size in bytes, as "480 MiB", "5.4 GiB" or "118 GiB".
+    public static func size(bytes: UInt64) -> String { size(Double(bytes), unit: 0) }
+
+    /// A size in mebibytes, as "512 MiB" or "1.25 GiB".
+    public static func size(mib: Int) -> String { size(Double(mib), unit: 2) }
+
+    /// A size in whole gibibytes, as "8 GiB".
+    public static func size(gib: Int) -> String { size(Double(gib), unit: 3) }
+
+    /// The count of gibibytes in `mib`, without its unit: the labels of a
+    /// ruler whose row states the unit.
+    public static func gibibytes(mib: Int) -> String { number(Double(mib) / 1024) }
+
+    /// A value in `units[unit]`, moved up a unit once it reaches 1024 of
+    /// the one it is in, and in three significant digits.
+    private static func size(_ value: Double, unit: Int) -> String {
+        var value = max(value, 0)
+        var unit = unit
+        while unit < units.count - 1, (Double(number(value)) ?? value) >= 1024 {
+            value /= 1024
+            unit += 1
+        }
+        return number(value) + " " + units[unit]
     }
 
-    /// Bytes in decimal gigabytes (10^9 bytes), the unit iOS's own storage
-    /// screens use. The one conversion Info draws and labels its sizes with.
-    public static func decimalGB(bytes: UInt64) -> Double { Double(bytes) / 1e9 }
-
-    /// Bytes in decimal gigabytes, as text.
-    public static func hostGB(bytes: UInt64) -> String { gb(decimalGB(bytes: bytes)) }
-
-    /// Guest data in binary gigabytes.
-    public static func guestGB(bytes: UInt64) -> String { gb(Double(bytes) / Double(Limits.bytesPerGiB)) }
-
-    public static func memoryNumber(_ mib: Int) -> String {
-        let gb = Double(mib) / 1024
-        if gb.rounded() == gb { return String(format: "%.0f", gb) }
-        if (gb * 2).rounded() == gb * 2 { return String(format: "%.1f", gb) }
-        if (gb * 4).rounded() == gb * 4 { return String(format: "%.2f", gb) }
-        return String(format: "%.1f", gb)
+    /// Three significant digits, without trailing zeros: "1.25", "12.6", "118".
+    private static func number(_ value: Double) -> String {
+        let places = value < 10 ? 2 : value < 100 ? 1 : 0
+        var text = String(format: "%.\(places)f", value)
+        if places > 0 {
+            while text.hasSuffix("0") { text.removeLast() }
+            if text.hasSuffix(".") { text.removeLast() }
+        }
+        return text
     }
 
-    public static func memory(_ mib: Int) -> String { memoryNumber(mib) + " GB" }
-
-    /// "Up to 1.5 GB with 4 vCPUs": the most memory at a vCPU count, which is
+    /// "Up to 1.5 GiB with 4 vCPUs": the most memory at a vCPU count, which is
     /// named only where the host's limit puts it below the runtime's largest
     /// size.
     public static func memoryBound(_ mib: Int, vCPUs: Int) -> String {
-        if mib >= Limits.runtimeMemoryRangeMiB.upperBound { return "Up to " + memory(mib) }
-        return "Up to \(memory(mib)) with \(vCPUs == 1 ? "1 vCPU" : "\(vCPUs) vCPUs")"
+        if mib >= Limits.runtimeMemoryRangeMiB.upperBound { return "Up to " + size(mib: mib) }
+        return "Up to \(size(mib: mib)) with \(vCPUs == 1 ? "1 vCPU" : "\(vCPUs) vCPUs")"
     }
 
     public static func elapsed(_ seconds: Int) -> String {

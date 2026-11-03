@@ -194,8 +194,8 @@ no formula of its own. The picker runs from 512 MiB to the bound of the chosen
 vCPU count in the runtime's 64 MiB steps and follows the count live: raising
 vCPUs takes memory above the new bound down to it, lowering them leaves it, and
 a stored size above its bound comes down on load. A size an automation launch
-states (`KERNARIUM_GUEST_MEMORY_MIB`) stays as stated. The default is 1.5 GB or
-the bound where that is lower, and 4 GB on a Mac.
+states (`KERNARIUM_GUEST_MEMORY_MIB`) stays as stated. The default is 1.5 GiB or
+the bound where that is lower, and 4 GiB on a Mac.
 
 ### Storage
 
@@ -238,14 +238,16 @@ free paths, and a guest is never created at one (`DiskPath`): that is why the
 guest is in `Library/Guest/` and not in `Application Support`, whose name has
 a space.
 
-Home states a guest's capacity and data in binary gigabytes, the unit its disk
-is sized in. Info states every size in decimal gigabytes (`Formats.decimalGB`),
-as iOS's own storage screens do, so the guest sits beside the system and the
-free space in one unit.
+Every size the application shows is binary, in the IEC units KiB, MiB and GiB,
+from one formatter (`Formats.size`): the guest's capacity, data and free
+space, the memory, the system, the host's free space and an installed package.
+The guest sits beside the host's figures in one unit, so they differ from the
+decimal gigabytes of iOS Settings (1 GiB is 1.074 GB). The first start needs
+3 GiB free and later starts 1.5 GiB (`Limits`).
 
 The guest is left out of iCloud and computer backups unless the user turns on
 Include in Backups for it: Android can set itself up again, and the files take
-several gigabytes.
+several GiB.
 
 ## Runtime
 
