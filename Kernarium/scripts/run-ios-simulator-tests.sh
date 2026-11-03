@@ -114,7 +114,7 @@ xcrun simctl bootstatus "$UDID" -b > /dev/null
 xcrun simctl spawn "$UDID" defaults write com.apple.Accessibility \
 	ApplicationAccessibilityEnabled -bool true
 
-cd -- "$ROOT_DIR"
+CDPATH= cd -- "$ROOT_DIR"
 xcodebuild build-for-testing \
 	-project Kernarium/Kernarium.xcodeproj \
 	-scheme Kernarium \
