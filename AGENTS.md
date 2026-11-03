@@ -69,7 +69,8 @@ device -> memory / platform
 - The gadget engines remain data-only. Executable allocation and
   publication belong only to `darwin/cpu/jit_memory/executable_memory.cpp`;
   the arm64 JIT arena and the macOS-only x86-64 JIT (through FEXCore's
-  executable-memory hooks) reach executable memory only through it.
+  executable-memory hooks) reach executable memory only through it. The one
+  exception is Mesa llvmpipe's own LLVM JIT, in the iOS Simulator product only.
 - Keep generated ABI copies, kernel patches, and dependency patches under
   their documented generators. Never edit generated output directly.
 
