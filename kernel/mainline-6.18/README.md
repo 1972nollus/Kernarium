@@ -766,7 +766,7 @@ The overlay holds only what differs from the Linux product:
 - `CHECKPOINT_RESTORE` is off, as in GKI, so that `MSEAL_SYSTEM_MAPPINGS` can
   seal userspace's system mappings.
 - Android's own facilities: Binder and binderfs, the DMA-BUF heaps and udmabuf,
-  bootconfig, the inline-encryption fallback with fscrypt and HCTR2, PF_KEY for
+  bootconfig, the inline-encryption fallback with fscrypt, PF_KEY for
   the network statistics path, socket destruction for netd, further xtables
   matches and targets, IPsec transforms, traffic control for BPF, the
   gpu_mem tracepoints, the Kernarium battery, hvc for the single-port Virtio
@@ -776,6 +776,13 @@ The overlay holds only what differs from the Linux product:
   `userspace-abort` to `/sys/power/wake_lock`, so without the file a wakelock
   taken while the system is entering a suspend cannot stop it. The Linux
   product leaves the file out for the guest-OS reason given above.
+- The HCTR2 filename-encryption transform (`CONFIG_CRYPTO_HCTR2`) is absent.
+  The product's userdata is unencrypted and no shipped fstab names
+  `fileencryption=`. None of Android 17's kernel configuration lists, its
+  framework compatibility matrices or its VTS tests names HCTR2, and the one
+  CTS test that does, the file-based encryption policy test, accepts
+  AES-256-CTS filenames in its place. A product that encrypts userdata with
+  HCTR2 filenames builds the transform back in.
 - Android's CTS requires that SysV IPC (`CONFIG_SYSVIPC`, whose system calls
   must answer `ENOSYS`) and the NFS client (`CONFIG_NFS_FS`) are absent, so
   the overlay leaves both out, and SCTP too, which Android has no use for. The
