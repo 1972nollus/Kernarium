@@ -73,7 +73,6 @@ function(uml_add_macos_embedded_kernel_app
         UML::Emulator
         UML::AudioDevice
         UML::BatteryDevice
-        UML::BalloonDevice
         UML::VideoDevice
         UML::ConsoleDevice
         UML::GpuDevice

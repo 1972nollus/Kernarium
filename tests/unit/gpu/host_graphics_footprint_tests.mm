@@ -2,11 +2,11 @@
 /* A Metal 4 command allocator keeps what its command buffers encoded until it
  * is released, and that storage never shows in the device's allocated size.
  * One large recording once held gigabytes of it and pushed an iOS app past
- * its memory limit, while the balloon, following the allocated size alone,
- * gave the guest none of it back. The graphics footprint charges the storage
- * that recorded commands wrote, and the balloon's target must follow it. */
+ * its memory limit, while the device memory budget, counting the allocated
+ * size alone, did not see it. The graphics footprint charges the storage that
+ * recorded commands wrote, which is why the budget's usage takes the larger of
+ * the two. */
 
-#include "virtio_balloon_device.hpp"
 #include "host_gpu_memory.hpp"
 #include "require.hpp"
 
@@ -15,8 +15,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <functional>
-#include <limits>
 
 namespace {
 
@@ -29,10 +27,9 @@ constexpr unsigned encoders = 16;
 constexpr unsigned copiesPerEncoder = 65536;
 
 /* Grows one allocator by recording many copy commands and returns its
- * storage, checking what each counter charges while it is held. */
+ * storage, checking what the graphics footprint charges while it is held. */
 std::uint64_t recordAndCheck(id<MTLDevice> device,
-    const std::function<std::uint64_t()>& target, std::uint64_t footprintBefore,
-    std::uint64_t allocatedBefore, std::uint64_t targetBefore)
+    std::uint64_t footprintBefore, std::uint64_t allocatedBefore)
 {
     @autoreleasepool {
         id<MTLBuffer> source = [device newBufferWithLength:4096
@@ -63,19 +60,15 @@ std::uint64_t recordAndCheck(id<MTLDevice> device,
 
         const std::uint64_t allocated = uml::platform::hostGpuAllocatedBytes();
         const std::uint64_t footprint = uml::platform::hostGraphicsFootprintBytes();
-        const std::uint64_t followed = target();
         std::printf("%u encoders of %u copies: allocator %.1f MiB, allocated size %+.1f MiB, "
-                    "graphics footprint %+.1f MiB, balloon target %+.1f MiB\n",
+                    "graphics footprint %+.1f MiB\n",
             encoders, copiesPerEncoder, storage / mib,
             (static_cast<double>(allocated) - allocatedBefore) / mib,
-            (static_cast<double>(footprint) - footprintBefore) / mib,
-            (static_cast<double>(followed) - targetBefore) / mib);
+            (static_cast<double>(footprint) - footprintBefore) / mib);
         require(storage >= 64 * 1024 * 1024,
             "the recording grew its allocator by less than 64 MiB");
         require(footprint >= footprintBefore + storage * 9 / 10,
             "the graphics footprint omits the allocator's storage");
-        require(followed >= targetBefore + storage * 9 / 10,
-            "the balloon target omits the allocator's storage");
         return storage;
     }
 }
@@ -90,15 +83,12 @@ int main()
             std::puts("SKIP host graphics footprint: no Metal device");
             return 77;
         }
-        const auto target = uml::balloon::hostGpuMemoryTarget(
-            std::numeric_limits<std::uint64_t>::max());
         const std::uint64_t allocatedBefore =
             uml::platform::hostGpuAllocatedBytes();
         const std::uint64_t footprintBefore =
             uml::platform::hostGraphicsFootprintBytes();
-        const std::uint64_t targetBefore = target();
-        const std::uint64_t storage = recordAndCheck(device, target,
-            footprintBefore, allocatedBefore, targetBefore);
+        const std::uint64_t storage = recordAndCheck(device,
+            footprintBefore, allocatedBefore);
 
         /* Releasing the allocator returns its storage. */
         const std::uint64_t released =

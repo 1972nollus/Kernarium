@@ -104,7 +104,6 @@ target_include_directories(KernariumRuntime
         ${PROJECT_SOURCE_DIR}/darwin/emulator/src
         ${PROJECT_SOURCE_DIR}/darwin/device/audio
         ${PROJECT_SOURCE_DIR}/darwin/device/battery
-        ${PROJECT_SOURCE_DIR}/darwin/device/balloon
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${PROJECT_SOURCE_DIR}/darwin/device/input/virtio
         ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp)
@@ -116,7 +115,6 @@ target_link_libraries(KernariumRuntime PRIVATE
     UML::AudioDevice
     UML::VideoDevice
     UML::BatteryDevice
-    UML::BalloonDevice
     UML::GpuDevice
     UML::ConsoleDevice
     UML::VirtioInput
