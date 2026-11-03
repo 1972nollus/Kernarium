@@ -52,6 +52,17 @@ target_include_directories(uml_emulator_run_end_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/runtime)
 uml_add_unit_test(NAME emulator-run-end COMMAND uml_emulator_run_end_tests)
 
+# What a handle says of its running guest: the vCPU carriers' CPU time, the
+# RAM held, and nothing for a handle that does not run.
+add_executable(uml_emulator_statistics_tests statistics_tests.cpp)
+target_link_libraries(uml_emulator_statistics_tests PRIVATE
+    UML::BridgeAbi
+    UML::MemorySharedBacking
+    uml_emulator_test_variant)
+uml_add_unit_test(
+    NAME emulator-statistics
+    COMMAND uml_emulator_statistics_tests)
+
 # Creation copies the kernel image, except the __TEXT,__uml_elf section the
 # process links into itself, which is run in place.
 add_executable(uml_emulator_kernel_image_ownership_tests

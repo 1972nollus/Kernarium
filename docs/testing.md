@@ -931,6 +931,18 @@ shows the notice. Remove the guest bundles the check copied to the
 application's Documents afterwards, and any payload it launched without
 `KERNARIUM_PAYLOAD_REMOVE=1`.
 
+### Guest statistics
+
+The host side of Andarium's live statistics (the vCPU load, the frames
+presented, the guest's memory in use) is checked on any host by unit tests, one
+per source: `runtime-guest-statistics` (the carriers' CPU time, found by name,
+and the RAM held), `guest-console-memory` (the `mem` reply parser and request
+against a fake console), `gpu-display-statistics` (the display counters through
+the service), `emulator-statistics` and `emulator-lifecycle` (the public calls
+and their gating: not while quiesced, not beside another lifecycle call, the
+wait outside the mutex) and the package consumers, which call both functions on
+an idle handle.
+
 ## LTP
 
 The full LTP campaign is opt-in and runs only on gadget or JIT engines.
