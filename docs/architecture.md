@@ -1319,6 +1319,19 @@ measured.
 The devices Kernarium attaches and its display geometry are listed in
 [`../Kernarium/README.md`](../Kernarium/README.md).
 
+### Local stream sockets
+
+On Apple hosts, never wait for the end of a local (`AF_UNIX`) stream socket
+with a blocking `read` or `recv`. Wait for readiness first (`poll`, kqueue or a
+Dispatch source), then read, or read non-blocking after readiness. An end made
+by `shutdown()` can lose the wakeup of a reader that is just going to sleep:
+the peer's `SHUT_WR` or `SHUT_RDWR`, and a `shutdown` of the reader's own end
+used to wake it. The reader then stays blocked although `poll` reports the end,
+and with `SO_RCVTIMEO` the loss shows as a false `EAGAIN`. A `close()` by the
+peer is not affected, and a data wakeup is never lost. Python's blocking
+`socket.recv` is exposed in the same way; after `settimeout()` CPython polls
+first, which is safe.
+
 ## Guest lifecycle
 
 The platform layer tracks every writable host descriptor opened for the guest.

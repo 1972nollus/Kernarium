@@ -122,10 +122,9 @@ end of a connection is a plain socket: closing it, or half-closing it with
 
 Wait for the application's end with `poll` or a kqueue before reading it, and
 read only what they report. The device reports the guest's half-close as
-`shutdown(SHUT_WR)` on its own end, and on macOS a blocking `read` on a
-socketpair end can miss its peer's `shutdown(SHUT_WR)` when the reader blocks
-again at that moment, and then never return. `poll` and kqueue readers do not
-lose it.
+`shutdown(SHUT_WR)` on its own end, which a blocking read can miss; the
+[local stream socket rule](../../../docs/architecture.md#local-stream-sockets)
+owns the contract.
 
 ## The forwarder
 
