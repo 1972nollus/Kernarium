@@ -586,6 +586,17 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# A Virtio sound stream starts afresh after a system suspend the guest enters
+# by itself: the position of a stream suspended while playing, a prepare after
+# a half-filled period, and a stream paused across a suspend, which recovers
+# and opens again. The guest has the null audio output.
+uml_add_guest_integration_test(
+    NAME guest-virtio-sound-suspend
+    SCRIPT kernel/run_guest_virtio_sound_suspend.py
+    LABELS guest;kernel;audio
+    TIMEOUT 300
+    CPUS 2)
+
 # Path and name strings copied from user memory keep their contract.
 uml_add_guest_integration_test(
     NAME guest-user-strings

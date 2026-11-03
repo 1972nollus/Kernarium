@@ -106,3 +106,8 @@ patch	drm-virtio-fail-a-resource-creation-the-host-refuses.patch
 patch	um-submit-Darwin-UBD-requests-without-allocating-memory.patch
 patch	um-allocate-a-line-s-output-ring-when-the-line-opens.patch
 patch	virtio_console-send-hvc-output-from-a-buffer-the-console-owns.patch
+patch	ALSA-virtio-reset-I-O-message-fill-level-on-prepare.patch
+patch	ALSA-virtio-start-a-substream-afresh-after-a-system-suspend.patch
+patch	ALSA-virtio-report-elapsed-periods-one-at-a-time.patch
+patch	ALSA-virtio-release-periods-queued-before-a-start.patch
+patch	ALSA-virtio-pad-the-last-period-of-a-drain-with-silence.patch

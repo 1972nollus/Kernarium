@@ -1825,6 +1825,83 @@ void profileAndLevelMenus(int fd, bool avc)
     std::fflush(stdout);
 }
 
+/* The size of the coded queue's buffers follows the picture the client states
+ * with its coded format: 1 MiB up to 1280 x 720, 2 MiB up to 1920 x 1088, 4 MiB
+ * up to 4096 x 2304 and 8 MiB, the largest packet the device takes, above that,
+ * and every JPEG stream keeps the 8 MiB. A picture the format does not take is
+ * stated as the nearest one it does, so a client that states none (the Android
+ * V4L2 HAL passes ui::Size(), -1 x -1, which reaches the driver as 0xFFFFFFFF
+ * in both fields) is sized for the largest picture of the format: it must
+ * allocate buffers of the size S_FMT answers or QBUF refuses them. The queue
+ * allocates the size S_FMT answers, which is the one the client reads. */
+void codedBufferSizes(const char* device, unsigned coded)
+{
+    constexpr unsigned mebibyte = 1u << 20;
+    const auto tier = [coded](unsigned width, unsigned height) {
+        if (coded == V4L2_PIX_FMT_MJPEG) return 8 * mebibyte;
+        const std::uint64_t area = std::uint64_t(width) * height;
+        if (area <= 1280u * 720u) return mebibyte;
+        if (area <= 1920u * 1088u) return 2 * mebibyte;
+        if (area <= 4096u * 2304u) return 4 * mebibyte;
+        return 8 * mebibyte;
+    };
+    Device decoder(device);
+    v4l2_frmsizeenum range {};
+    range.index = 0; range.pixel_format = coded;
+    call(decoder.fd, VIDIOC_ENUM_FRAMESIZES, &range, "ENUM_FRAMESIZES");
+    require(range.type == V4L2_FRMSIZE_TYPE_STEPWISE, "frame sizes are not reported stepwise");
+    const auto state = [&decoder, coded](unsigned width, unsigned height) {
+        v4l2_format format {};
+        format.type = output;
+        format.fmt.pix_mp.width = width; format.fmt.pix_mp.height = height;
+        format.fmt.pix_mp.pixelformat = coded;
+        format.fmt.pix_mp.num_planes = 1;
+        call(decoder.fd, VIDIOC_S_FMT, &format, "S_FMT coded size");
+        require(format.fmt.pix_mp.num_planes == 1, "the coded queue is not one plane");
+        return format;
+    };
+    const auto queued = [&decoder](unsigned expected, const char* message) {
+        v4l2_format current {};
+        current.type = output;
+        call(decoder.fd, VIDIOC_G_FMT, &current, "G_FMT coded size");
+        require(current.fmt.pix_mp.plane_fmt[0].sizeimage == expected, message);
+        v4l2_requestbuffers request {};
+        request.type = output; request.memory = V4L2_MEMORY_DMABUF; request.count = 1;
+        call(decoder.fd, VIDIOC_REQBUFS, &request, "REQBUFS coded size");
+        v4l2_plane planes[VIDEO_MAX_PLANES] {};
+        v4l2_buffer buffer {};
+        buffer.type = output; buffer.memory = V4L2_MEMORY_DMABUF; buffer.index = 0;
+        buffer.m.planes = planes; buffer.length = 1;
+        call(decoder.fd, VIDIOC_QUERYBUF, &buffer, "QUERYBUF coded size");
+        request.count = 0;
+        call(decoder.fd, VIDIOC_REQBUFS, &request, "REQBUFS release coded size");
+        require(planes[0].length == expected, "the coded queue allocates another size than G_FMT answers");
+    };
+    struct Case { unsigned width, height; };
+    // One stream states several sizes in turn, the largest first and last.
+    for (const Case size : {Case {3840, 2160}, Case {64, 64}, Case {1280, 720}, Case {720, 1280}, Case {1920, 1080},
+                            Case {1088, 1920}, Case {2560, 1440}, Case {3840, 2160}}) {
+        const auto format = state(size.width, size.height);
+        require(format.fmt.pix_mp.width == size.width && format.fmt.pix_mp.height == size.height,
+                "S_FMT changed a picture size inside the format's range");
+        require(format.fmt.pix_mp.plane_fmt[0].sizeimage == tier(size.width, size.height),
+                "the coded buffer does not follow the stated picture size");
+        queued(tier(size.width, size.height), "G_FMT disagrees with S_FMT about the coded buffer size");
+    }
+    // No size stated, and sizes beyond the format's range: the largest picture it takes.
+    for (const Case size : {Case {0xFFFFFFFFu, 0xFFFFFFFFu}, Case {16384, 16384}}) {
+        const auto format = state(size.width, size.height);
+        const unsigned width = format.fmt.pix_mp.width, height = format.fmt.pix_mp.height;
+        require(width == range.stepwise.max_width && height == range.stepwise.max_height,
+                "a picture beyond the format's range is not stated as the largest the format takes");
+        require(format.fmt.pix_mp.plane_fmt[0].sizeimage == tier(width, height),
+                "the coded buffer does not follow the clamped picture size");
+        queued(tier(width, height), "G_FMT disagrees with S_FMT about the coded buffer size");
+    }
+    std::printf("coded buffer sizes of %.4s follow the stated picture\n", reinterpret_cast<const char*>(&coded));
+    std::fflush(stdout);
+}
+
 int main(int argc, char** argv)
 {
     try {
@@ -1885,6 +1962,7 @@ int main(int argc, char** argv)
                 planar = planar || fmt.pixelformat == V4L2_PIX_FMT_NV12M;
             }
             require(planar, "the capture list does not name the planar format");
+            codedBufferSizes(device, coded.pixelformat);
         }
         /* The pattern a rendering client produces: a small ring of imported
          * descriptors carried through many more pictures than it holds, so
