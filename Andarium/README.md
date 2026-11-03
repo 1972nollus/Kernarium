@@ -215,6 +215,9 @@ for access when it is turned on.
 
 A harness launch (`xcrun devicectl device process launch`, environment given
 as `DEVICECTL_CHILD_` variables) reaches a state without touching the screen.
+The names are the application's, in `Live/LaunchEnvironment.swift`, which the
+App Store configuration leaves out; `AndariumCore` knows the settings
+(`LaunchOverrides.Setting`) and not the names.
 The `KERNARIUM_` names mean what they mean in Kernarium; the automation
 Android runtime (`package-ios-frameworks.sh --runtimes android
 --android-automation`) additionally reads `KERNARIUM_ANDROID_ADB_AUTH`.

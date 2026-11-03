@@ -15,6 +15,10 @@ struct AppEntry {
     var hints: ScreenHints { ScreenHints() }
 
     static func fromArguments() -> AppEntry {
+        #if APP_STORE
+        // An App Store build reads no launch setting.
+        return AppEntry(overrides: LaunchOverrides())
+        #else
         let info = ProcessInfo.processInfo
         return AppEntry(
             overrides: LaunchOverrides(
@@ -22,6 +26,7 @@ struct AppEntry {
                 processorCount: GuestProcessorLimit.vCPUs(physicalProcessorCount: info.activeProcessorCount)
             )
         )
+        #endif
     }
 
     func configureTips() {

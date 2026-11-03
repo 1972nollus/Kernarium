@@ -80,8 +80,9 @@ struct MemoryPolicyTests {
         #expect(Guest.fresh(on: device).cores == 8)
         // The overrides the application builds from the same limit reach
         // eight and no further.
-        var overrides = LaunchOverrides(
-            environment: ["KERNARIUM_VCPU_COUNT": "8"], processorCount: device.processorCount)
+        var overrides = LaunchOverrides(processorCount: device.processorCount) {
+            $0 == .vCPUCount ? "8" : nil
+        }
         #expect(overrides.applied(to: Guest.fresh(on: device), on: device).cores == 8)
         overrides.vCPUCount = 10
         #expect(overrides.applied(to: Guest.fresh(on: device), on: device).cores == 8)
