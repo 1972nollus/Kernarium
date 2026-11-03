@@ -26,6 +26,12 @@ struct BusyOverlay: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let cancel = state.cancel {
+                    Button("Cancel", role: .cancel, action: cancel.action)
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .transition(.opacity)
+                }
             }
             .padding(20)
             .frame(maxWidth: 360)
@@ -33,6 +39,7 @@ struct BusyOverlay: View {
             .padding(24)
         }
         .transition(.opacity)
-        .accessibilityElement(children: .combine)
+        .animation(.easeInOut(duration: 0.2), value: state.cancel != nil)
+        .accessibilityElement(children: .contain)
     }
 }

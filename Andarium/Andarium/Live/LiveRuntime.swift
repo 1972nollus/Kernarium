@@ -48,6 +48,12 @@ final class LiveRuntime: RuntimeDriver {
     /// clean end records. Recovery never does.
     private var reachedBootCompleted = false
     private let pause: PauseController
+    /// Counts the time the guest runs, for the limits of adb operations: it
+    /// stops while the application holds the guest paused.
+    private let clock = GuestRunClock()
+    private let keyStore = AdbKeyStore()
+    /// The guest's adb key, made before the start that boots with it.
+    private var adbIdentity: AdbKeyStore.Identity?
     private let microphone = SystemMicrophonePermission()
     private var observers: [NSObjectProtocol] = []
 
@@ -64,7 +70,7 @@ final class LiveRuntime: RuntimeDriver {
     init(model: AppModel, storage: TwoDiskStorage, marker: PauseMarker) {
         self.model = model
         self.storage = storage
-        pause = PauseController(effects: LivePauseEffects(), marker: marker)
+        pause = PauseController(effects: LivePauseEffects(), marker: marker, runClock: clock)
         model.microphoneState = Self.state(microphone.access)
         observeLifecycle()
         observeDisplayOptions()
@@ -79,7 +85,11 @@ final class LiveRuntime: RuntimeDriver {
 
     func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest {
         defer { model?.host.freeStorageBytes = AppEntry.freeStorageBytes() }
-        return try await storage.erase(guest, progress: progress)
+        let erased = try await storage.erase(guest, progress: progress)
+        // The next guest is a new one: it boots with a key of its own.
+        keyStore.delete()
+        adbIdentity = nil
+        return erased
     }
 
     func save(_ guest: Guest) throws {
@@ -129,6 +139,18 @@ final class LiveRuntime: RuntimeDriver {
             end(startFailure: "the disk could not be prepared: \(error.localizedDescription)")
             return
         }
+        // The guest's adb key, made here when there is none: generating it
+        // takes a moment and the main thread does not wait for it. Without
+        // one the guest still boots; its adb features then say why they fail.
+        let store = keyStore
+        adbIdentity = await Task.detached(priority: .userInitiated) { () -> AdbKeyStore.Identity? in
+            do {
+                return try store.loadOrCreate()
+            } catch {
+                print("Andarium: the adb key could not be made: \(error)")
+                return nil
+            }
+        }.value
         preparing = false
         model?.preparingDisk = false
         guard let view, let geometry else {
@@ -189,6 +211,7 @@ final class LiveRuntime: RuntimeDriver {
         let processorCount = UInt32(run.guest.cores)
         let dotsPerInch = geometry.dotsPerInch
         let autoResize = model?.followWindow ?? true
+        let adbKeyLine = adbIdentity?.publicKeyLine
         // The run occupies its thread for the guest's whole life and the GPU
         // service reaches the main queue while it starts, so it must not be
         // the main thread. It owns a thread outright rather than a place on
@@ -197,7 +220,7 @@ final class LiveRuntime: RuntimeDriver {
             let result = Self.runGuest(
                 view: view, dataDiskPath: dataDiskPath, releasePath: releasePath, dataGiB: dataGiB, bootMode: bootMode,
                 width: width, height: height, dotsPerInch: dotsPerInch, memoryMiB: memoryMiB,
-                processorCount: processorCount, autoResize: autoResize
+                processorCount: processorCount, autoResize: autoResize, adbKeyLine: adbKeyLine
             )
             Task { @MainActor in self.finished(result: result) }
         }
@@ -208,30 +231,78 @@ final class LiveRuntime: RuntimeDriver {
     private nonisolated static func runGuest(
         view: GuestMetalView, dataDiskPath: String, releasePath: String, dataGiB: UInt32, bootMode: UInt32,
         width: UInt32, height: UInt32, dotsPerInch: UInt32, memoryMiB: UInt32,
-        processorCount: UInt32, autoResize: Bool
+        processorCount: UInt32, autoResize: Bool, adbKeyLine: String?
     ) -> Int32 {
         dataDiskPath.withCString { dataDisk in
             releasePath.withCString { release in
-                var request = kernarium_runtime_boot()
-                request.struct_size = UInt32(MemoryLayout<kernarium_runtime_boot>.size)
-                request.width = width
-                request.height = height
-                request.dots_per_inch = dotsPerInch
-                request.guest_memory_mib = memoryMiB
-                request.guest_processor_count = processorCount
-                request.android_boot_mode = bootMode
-                request.auto_resize_guest = autoResize ? 1 : 0
-                request.android_data_disk_path = dataDisk
-                request.android_release_path = release
-                request.android_data_gib = dataGiB
-                // The launch parameters the picker's bound was computed with.
-                let parameters = kernarium_runtime_loader_launch_memory_set()
-                request.gpu_budget_application_mib = parameters.application_mib
-                request.gpu_budget_engine_mib = parameters.engine_mib
-                request.gpu_budget_headroom_mib = parameters.headroom_mib
-                return withUnsafePointer(to: &request) { kernarium_runtime_loader_run(view, $0) }
+                withOptionalCString(adbKeyLine) { adbKey in
+                    var request = kernarium_runtime_boot()
+                    request.struct_size = UInt32(MemoryLayout<kernarium_runtime_boot>.size)
+                    request.width = width
+                    request.height = height
+                    request.dots_per_inch = dotsPerInch
+                    request.guest_memory_mib = memoryMiB
+                    request.guest_processor_count = processorCount
+                    request.android_boot_mode = bootMode
+                    request.auto_resize_guest = autoResize ? 1 : 0
+                    request.android_data_disk_path = dataDisk
+                    request.android_release_path = release
+                    request.android_data_gib = dataGiB
+                    // The launch parameters the picker's bound was computed with.
+                    let parameters = kernarium_runtime_loader_launch_memory_set()
+                    request.gpu_budget_application_mib = parameters.application_mib
+                    request.gpu_budget_engine_mib = parameters.engine_mib
+                    request.gpu_budget_headroom_mib = parameters.headroom_mib
+                    // The key adbd authorizes for this boot, or none.
+                    request.android_adb_public_key = adbKey
+                    return withUnsafePointer(to: &request) { kernarium_runtime_loader_run(view, $0) }
+                }
             }
         }
+    }
+
+    private nonisolated static func withOptionalCString<Output>(
+        _ text: String?, _ body: (UnsafePointer<CChar>?) -> Output
+    ) -> Output {
+        guard let text else { return body(nil) }
+        return text.withCString(body)
+    }
+
+    // MARK: Android operations
+
+    /// What adb does for the screens, with the key this boot carries.
+    private var operations: AdbGuestOperations {
+        AdbGuestOperations(identity: adbIdentity, clock: clock, device: model?.host.name ?? "device")
+    }
+
+    func createBugReport(update: @escaping @Sendable (BusyUpdate) -> Void) async throws -> URL {
+        try await operations.createBugReport(update: update)
+    }
+
+    func installApk(at url: URL, sizeBytes: Int, update: @escaping @Sendable (BusyUpdate) -> Void) async throws {
+        try await operations.installApk(at: url, sizeBytes: sizeBytes, update: update)
+    }
+
+    func usbDebugging() async -> Bool? {
+        await operations.usbDebugging()
+    }
+
+    // MARK: ADB over Network
+
+    /// The listener on the network addresses, whose every connection is
+    /// joined to a fresh stream to the guest's adbd.
+    private let network = AdbNetworkBridge(opener: VsockConnector())
+
+    func startAdbOverNetwork() throws {
+        try network.start()
+    }
+
+    func stopAdbOverNetwork() {
+        network.stop()
+    }
+
+    func localNetworkAddress() -> String? {
+        LanAddress.current()
     }
 
     // MARK: Events

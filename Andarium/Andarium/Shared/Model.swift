@@ -37,9 +37,12 @@ struct ApkInstall: Identifiable, Equatable {
     enum State: Equatable {
         case installing(Double)
         case installed
-        /// The file is not an Android package.
+        /// The file is not an app package.
         case notApk
-        /// Android's package installer refused it.
+        /// The file is an app in several parts (.apks, .xapk, .apkm), which
+        /// the install does not take.
+        case bundle
+        /// The guest's package installer refused it.
         case failed(String)
     }
 
@@ -70,19 +73,37 @@ struct ApkInstall: Identifiable, Equatable {
 @Observable
 final class SessionState {
     var installs: [ApkInstall] = []
+    /// ADB over Network is on: the listener runs.
     var adb = false
+    /// The device's address on the local network while `adb` is on; nil
+    /// without one.
+    var adbAddress: String?
+    /// Why ADB over Network did not start, in words.
+    var adbProblem: String?
+    /// The guest's USB debugging setting as last read; nil until it has
+    /// been. ADB over Network needs it on.
+    var usbDebugging: Bool?
     var showStats = false
     var readout = Readout()
 
-    /// The address a computer on the same network connects to.
-    static let adbAddress = "198.51.100.23:5555"
+    /// The address the preview shows, from the range reserved for examples.
+    static let previewAddress = "198.51.100.23"
+
+    /// The file name's kind for the install: an app in one file, one in
+    /// several, or not an app.
+    static func installKind(of fileName: String) -> ApkInstall.State? {
+        let name = fileName.lowercased()
+        if name.hasSuffix(".apk") { return nil }
+        if [".apks", ".xapk", ".apkm"].contains(where: { name.hasSuffix($0) }) { return .bundle }
+        return .notApk
+    }
 
     /// Mock install: anything that is not an .apk is refused at once;
     /// an .apk installs over about three seconds.
     func install(fileName: String, sizeBytes: UInt64, play: Bool = true) {
-        guard fileName.lowercased().hasSuffix(".apk") else {
+        if let refused = Self.installKind(of: fileName) {
             withAnimation(.snappy) {
-                installs.insert(ApkInstall(fileName: fileName, sizeBytes: sizeBytes, state: .notApk), at: 0)
+                installs.insert(ApkInstall(fileName: fileName, sizeBytes: sizeBytes, state: refused), at: 0)
             }
             return
         }
@@ -106,6 +127,13 @@ final class SessionState {
 
     func remove(_ id: UUID) {
         installs.removeAll { $0.id == id }
+    }
+
+    /// Notes an install's end in the Apps list.
+    func record(_ state: ApkInstall.State, fileName: String, sizeBytes: UInt64) {
+        withAnimation(.snappy) {
+            installs.insert(ApkInstall(fileName: fileName, sizeBytes: sizeBytes, state: state), at: 0)
+        }
     }
 }
 
@@ -165,6 +193,17 @@ final class AppModel {
     var diskProgress: Double?
     var microphoneState = MicrophoneState.notAsked
     private var persistTask: Task<Void, Never>?
+    /// The Android operation under way (a bug report, an install), which the
+    /// overlay's Cancel stops, and the run it belongs to.
+    private var operation: Task<Void, Never>?
+    private var operationEpoch = 0
+    private var operationCancelled = false
+    /// Looks after ADB over Network while it is on.
+    private var adbWatcher: Task<Void, Never>?
+    private var readingUsbDebugging = false
+    /// How often the watcher looks while ADB over Network is on: the address
+    /// every time, the USB debugging setting every fifth. A test shortens it.
+    var adbWatchInterval = Duration.seconds(2)
 
     init(
         guest: Guest?, host: HostDevice, system: SystemInfo, capabilities: Capabilities,
@@ -309,6 +348,292 @@ final class AppModel {
         }
     }
 
+    // MARK: ADB over Network
+
+    /// ADB over Network may be switched on: the guest's USB debugging is on.
+    /// The preview has no guest to ask and says yes unless a screen says no.
+    var adbOverNetworkAvailable: Bool {
+        driver == nil ? session.usbDebugging != false : session.usbDebugging == true
+    }
+
+    /// The toggle in Settings. Turning it on opens the listener on the
+    /// device's network addresses, which the guest's USB debugging being on
+    /// allows; turning it off, USB debugging going off, or the run ending
+    /// closes it. It lasts for this run only.
+    func setAdbOverNetwork(_ on: Bool) {
+        guard capabilities.adbOverNetwork else { return }
+        guard on else {
+            stopAdbOverNetwork()
+            return
+        }
+        guard !session.adb, case .running(.normal) = phase, adbOverNetworkAvailable else { return }
+        do {
+            try driver?.startAdbOverNetwork()
+        } catch {
+            session.adbProblem = AdbNetworkMessages.cannotStart(error)
+            return
+        }
+        withAnimation(.snappy) {
+            session.adb = true
+            session.adbProblem = nil
+            session.adbAddress = driver?.localNetworkAddress() ?? (driver == nil ? SessionState.previewAddress : nil)
+        }
+        watchAdbOverNetwork()
+    }
+
+    /// Closes the listener and switches the toggle off.
+    func stopAdbOverNetwork() {
+        adbWatcher?.cancel()
+        adbWatcher = nil
+        driver?.stopAdbOverNetwork()
+        guard session.adb || session.adbAddress != nil else { return }
+        withAnimation(.snappy) {
+            session.adb = false
+            session.adbAddress = nil
+        }
+    }
+
+    /// The run is over or starts again: nothing about the guest's settings
+    /// holds for the next one.
+    private func endAdbOverNetwork() {
+        stopAdbOverNetwork()
+        session.usbDebugging = nil
+        session.adbProblem = nil
+    }
+
+    /// The address a computer connects to, which changes with the network.
+    /// The preview keeps the one it was given.
+    func refreshAdbAddress() {
+        guard session.adb, let driver else { return }
+        let address = driver.localNetworkAddress()
+        if session.adbAddress != address { session.adbAddress = address }
+    }
+
+    /// Reads the guest's USB debugging setting. ADB over Network ends when
+    /// it is off.
+    func refreshUsbDebugging() async {
+        guard capabilities.adbOverNetwork, let driver, case .running(.normal) = phase,
+              !readingUsbDebugging else { return }
+        readingUsbDebugging = true
+        defer { readingUsbDebugging = false }
+        let current = session
+        let value = await driver.usbDebugging()
+        guard session === current, case .running(.normal) = phase, let value else { return }
+        if current.usbDebugging != value { current.usbDebugging = value }
+        if !value, current.adb { stopAdbOverNetwork() }
+    }
+
+    /// While Settings is open: the address and the setting, read again every
+    /// few seconds until the sheet goes and the task is cancelled.
+    func watchSettings() async {
+        while !Task.isCancelled {
+            refreshAdbAddress()
+            await refreshUsbDebugging()
+            try? await Task.sleep(for: .seconds(3))
+        }
+    }
+
+    /// While ADB over Network is on and Settings is closed, the address is
+    /// read every few seconds and the setting every ten, so that turning
+    /// USB debugging off in the guest turns this off too.
+    private func watchAdbOverNetwork() {
+        adbWatcher?.cancel()
+        guard driver != nil else { return }
+        adbWatcher = Task { [weak self] in
+            var tick = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(for: self?.adbWatchInterval ?? .seconds(2))
+                guard let self, !Task.isCancelled else { return }
+                tick += 1
+                refreshAdbAddress()
+                if tick % 5 == 0 { await refreshUsbDebugging() }
+            }
+        }
+    }
+
+    // MARK: Android operations
+
+    /// Runs one of Android's operations behind the busy overlay: Settings
+    /// has dismissed, the overlay covers the screens, and a Cancel button
+    /// stops it. `work` reports through the update closure and throws
+    /// `CancellationError` when the person cancelled; any other error is an
+    /// alert. `finished` runs once the overlay has gone.
+    private func runOperation<Output: Sendable>(
+        _ state: BusyState, failure: String,
+        _ work: @escaping @MainActor (@escaping @Sendable (BusyUpdate) -> Void) async throws -> Output,
+        finished: @escaping @MainActor (Output) -> Void = { _ in }
+    ) {
+        guard busy == nil else { return }
+        operationEpoch += 1
+        let epoch = operationEpoch
+        operationCancelled = false
+        var state = state
+        state.cancel = BusyCancel { [weak self] in self?.cancelOperation() }
+        busy = state
+        operation = Task { [weak self] in
+            guard let self else { return }
+            var result: Output?
+            do {
+                result = try await work { update in
+                    Task { @MainActor in self.apply(update, epoch: epoch) }
+                }
+            } catch is CancellationError {
+            } catch {
+                if operationEpoch == epoch {
+                    alert = AppAlert(title: failure, message: error.localizedDescription)
+                }
+            }
+            // The run ending, or a restart, took the operation over already.
+            guard operationEpoch == epoch else { return }
+            busy = nil
+            operation = nil
+            if let result { finished(result) }
+        }
+    }
+
+    private func apply(_ update: BusyUpdate, epoch: Int) {
+        guard epoch == operationEpoch, !operationCancelled, busy != nil else { return }
+        // The new value is worked out before the write: reading `busy` while
+        // writing through it is an overlapping access.
+        if let progress = update.progress, let current = busy {
+            busy?.progress = max(current.progress ?? 0, progress)
+        }
+        if let detail = update.detail { busy?.detail = detail }
+        if update.cancellable == false { busy?.cancel = nil }
+    }
+
+    /// The overlay's Cancel: the operation stops and cleans up while the
+    /// overlay stays, so the session returns with nothing left behind.
+    private func cancelOperation() {
+        guard operation != nil, !operationCancelled else { return }
+        operationCancelled = true
+        busy?.cancel = nil
+        busy?.detail = "Cancelling\u{2026}"
+        operation?.cancel()
+    }
+
+    /// The guest ended or restarted under an operation: its stream is gone
+    /// with the boot, so the overlay goes and no alert is raised over the
+    /// screen that says the guest stopped.
+    private func abandonOperation() {
+        guard operation != nil else { return }
+        operationEpoch += 1
+        operation?.cancel()
+        operation = nil
+        busy = nil
+    }
+
+    /// Create Bug Report: Settings has dismissed. Android collects its report
+    /// (minutes, under emulation) and the finished zip goes to the share
+    /// sheet, where Save to Files is one of the actions.
+    func createBugReport() {
+        guard capabilities.bugReport, case .running(.normal) = phase else { return }
+        runOperation(
+            BusyState(
+                title: "Creating Bug Report",
+                detail: "The guest is collecting its logs and state. This can take several minutes.", progress: 0
+            ),
+            failure: "Bug Report Not Created",
+            { [driver] update in
+                if let driver { return try await driver.createBugReport(update: update) }
+                return try await Self.playBugReport(update)
+            },
+            finished: { [weak self] file in self?.share(file) }
+        )
+    }
+
+    /// Opens the share sheet on a finished report; false when there is no
+    /// window to show it. A test puts its own here.
+    var presentShare: (URL, @escaping @MainActor () -> Void) -> Bool = { file, finished in
+        BugReportSharing.present(file, finished: finished)
+    }
+
+    /// The report is deleted on every outcome of the sheet.
+    private func share(_ file: URL) {
+        let shown = presentShare(file) { try? FileManager.default.removeItem(at: file) }
+        if !shown { try? FileManager.default.removeItem(at: file) }
+    }
+
+    /// The preview's report: the same steps on the same overlay, ending in
+    /// the share sheet with a small file.
+    private static func playBugReport(_ update: @Sendable (BusyUpdate) -> Void) async throws -> URL {
+        for step in 1...36 {
+            try await Task.sleep(for: .milliseconds(100))
+            update(BusyUpdate(progress: Double(step) / 36 * 0.9))
+        }
+        update(BusyUpdate(progress: 0.9, detail: "Copying the report\u{2026}"))
+        for step in 1...8 {
+            try await Task.sleep(for: .milliseconds(100))
+            update(BusyUpdate(progress: 0.9 + 0.1 * Double(step) / 8))
+        }
+        try FileManager.default.createDirectory(at: BugReportStaging.directory, withIntermediateDirectories: true)
+        let file = BugReportStaging.directory.appendingPathComponent("bugreport-preview.zip")
+        // An empty zip: its end-of-central-directory record.
+        try Data([0x50, 0x4B, 0x05, 0x06] + [UInt8](repeating: 0, count: 18)).write(to: file)
+        return file
+    }
+
+    /// Install App: `url` is what the Files picker returned. A file that does
+    /// not end in .apk (a split bundle too) is answered at once with a row in
+    /// Settings, which stays open: the result is false. For an .apk the
+    /// caller dismisses Settings and the install runs behind the overlay:
+    /// the result is true. The file's security scope is held to the end.
+    func installPicked(_ url: URL) -> Bool {
+        let name = url.lastPathComponent
+        let scoped = url.startAccessingSecurityScopedResource()
+        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        let size = UInt64(max(bytes, 0))
+        func release() {
+            if scoped { url.stopAccessingSecurityScopedResource() }
+        }
+        guard SessionState.installKind(of: name) == nil else {
+            release()
+            session.install(fileName: name, sizeBytes: size)
+            return false
+        }
+        guard busy == nil else {
+            release()
+            return false
+        }
+        runOperation(
+            BusyState(
+                title: "Installing App",
+                detail: "\(name) \u{00B7} \(Formats.size(bytes: size))", progress: 0
+            ),
+            failure: "App Not Installed",
+            { [driver, weak self] update in
+                defer { release() }
+                do {
+                    if let driver {
+                        try await driver.installApk(at: url, sizeBytes: bytes, update: update)
+                    } else {
+                        try await Self.playInstall(update)
+                    }
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    self?.session.record(.failed(error.localizedDescription), fileName: name, sizeBytes: size)
+                    throw error
+                }
+                // 100% for a moment, then the overlay goes.
+                update(BusyUpdate(progress: 1))
+                try? await Task.sleep(for: .milliseconds(500))
+                self?.session.record(.installed, fileName: name, sizeBytes: size)
+            }
+        )
+        return true
+    }
+
+    /// The preview's install: the file goes over, the guest takes its time.
+    private static func playInstall(_ update: @Sendable (BusyUpdate) -> Void) async throws {
+        for step in 1...20 {
+            try await Task.sleep(for: .milliseconds(100))
+            update(BusyUpdate(progress: Double(step) / 20 * 0.8))
+        }
+        update(BusyUpdate(detail: "The guest is installing the app\u{2026}", cancellable: false))
+        try await Task.sleep(for: .milliseconds(1200))
+    }
+
     /// Starts the guest in `mode`. Start on an update that did not finish
     /// tries the update again.
     func start(_ mode: StartMode) {
@@ -370,6 +695,8 @@ final class AppModel {
     /// The runtime's run returned: the guest powered off, or stopped for a
     /// reason the failure screen reports.
     func runEnded(_ end: RunEnd, uptimeSeconds: Int?) {
+        abandonOperation()
+        endAdbOverNetwork()
         runEnd = end
         runUptimeSeconds = uptimeSeconds
         lifecycle.phase = end.phase
@@ -380,6 +707,8 @@ final class AppModel {
     /// Android's own Restart boots the guest again in place. ADB and the
     /// install list belong to the run that ended.
     func restart() {
+        abandonOperation()
+        endAdbOverNetwork()
         frozenBootStage = nil
         sessionPreset = SessionPreset()
         let showStats = session.showStats

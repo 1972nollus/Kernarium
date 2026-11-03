@@ -835,7 +835,15 @@ alone.
 ### Andarium
 
 `andarium-core` (unit, macOS hosts) runs the tests of the Swift package
-`Andarium/AndariumCore`, the application's model, with `swift test`.
+`Andarium/AndariumCore`, the application's model and its adb client, with
+`swift test`: the adb client runs against a scripted adbd on a socket pair
+(authorization off, on and rejected, streams, shell v2, sync, a bug report,
+timeouts on a clock the test moves, a cancel from another thread, the end of
+a stream announced right after its last bytes), its key
+encoder against moduli with the text `adb keygen` wrote for them, and the
+listener of ADB over Network on loopback against a fake guest (bytes both
+ways, backpressure each way, half close, a failed stream, the limit of
+computers, stopping, a port in use).
 `andarium-stage-system-image` (tooling) covers the system-image staging script
 and the option checks of `package-ios-frameworks.sh --runtimes android`. The
 application itself builds with Xcode: `AndariumPreview` is its Simulator build
@@ -845,7 +853,19 @@ hosted in `Andarium` and runs on an iPad, in the iOS Simulator and, as an iPad
 app, on an Apple silicon Mac (`xcodebuild test -scheme Andarium`); its
 `UpdateFlowTests` drive
 the update, interrupted-update (Start retries, Restore, Erase) and blocked-start flows
-against a stub runtime. A Mac launch of the guest
+against a stub runtime, and its `AndroidOperationTests` and
+`AdbOverNetworkModelTests` play Create Bug Report, Install App and ADB over
+Network the same way. `AdbOverVsockTests` drive a real Android guest with the
+application's own client and authorization on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1`
+with `TEST_RUNNER_ANDARIUM_START=normal`): a shell command, the USB debugging
+setting and the channel with it on and off, a computer's connection through the
+bridge, a bug report (a zip above 1 MB, and its time), a cancel, a system APK
+pulled from the image and installed as an update (and its time), the image's
+key rule (the application's key accepted whatever the debugging setting; a
+foreign key refused with no prompt and nothing queued while debugging is off,
+and prompting while it is on), and the key after Erase Guest. With
+`TEST_RUNNER_ANDARIUM_ADB_NET_HOLD_SECONDS` one more test holds the bridge up for
+a real adb on the Mac. A Mac launch of the guest
 itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
 `TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
 ([`Andarium/README.md`](../Andarium/README.md#automation)). macOS asks once, per

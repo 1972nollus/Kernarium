@@ -17,7 +17,7 @@ bundles.
 Andarium/Shared/      screens and model both targets build
 Andarium/Preview/     mock screens, data and launch arguments (Simulator)
 Andarium/Live/        the runtime, storage and session of the device app
-AndariumCore/         Swift package: the application's model, no UIKit
+AndariumCore/         Swift package: the model and the adb client, no UIKit
 AndariumTests/        hosted tests of the device app
 Config/               entitlements, Info.plist, privacy manifest, bridging header
 scripts/              system staging and the App Store bundle check
@@ -48,7 +48,8 @@ and extended virtual addressing entitlements.
 `Preview` with mock data. It embeds no runtime and boots nothing. Its launch
 arguments (`-screen <name>`, `-play YES`, `-lowSpace YES`, `-resetTips YES`)
 open any screen or state directly so a Simulator driven only by `simctl` reaches
-every flow:
+every flow (`-screen bug-report` and `-screen install-apk` play the two guest
+operations on the overlay):
 
 ```sh
 xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
@@ -176,7 +177,9 @@ holds: the open sheet, display options and the session's state.
 
 A screen shows a control only when the capability behind it exists
 (`Capabilities`). The Simulator preview has them all; a build whose runtime
-cannot do a thing leaves its control out instead of offering it.
+cannot do a thing leaves its control out instead of offering it. The device
+application has `bugReport`, `apkInstall` and `adbOverNetwork`, which the
+runtime's adb channel provides.
 
 ### Memory
 
@@ -269,6 +272,104 @@ takes them at boot, so the session's Settings leaves them out
 (`Capabilities.liveDisplayOptions`). Microphone applies at once and asks iOS
 for access when it is turned on.
 
+## Android operations
+
+Andarium is the adb host for its one guest. The runtime opens a connected stream
+socket to the guest's vsock port 5555
+(`kernarium_runtime_loader_connect_vsock`), so adbd is reached by no other
+process and through no listening socket of the device's, unless ADB over
+Network is on. `AndariumCore/Adb` speaks the
+protocol on it: the message codec, the handshake, shell protocol v2, the `sync:`
+reads, the `bugreportz -p` lines and the encoder that turns a PKCS#1 public key
+into adb's 524-byte structure. It has no install verb. Every operation opens a
+connection of its own on a thread of its own and ends it when it finishes;
+cancelling the task shuts the descriptor down. A read waits with `poll` first,
+because on Darwin a blocking `read` on a socket pair can miss the end the
+other side announces with `shutdown(SHUT_WR)`, which the runtime does when the
+guest closes a stream, and then never wakes. Every limit counts the time the
+guest runs (`GuestRunClock`): it stops while `PauseController` holds the guest
+paused, so Andarium in the background never times an operation out.
+
+adbd restarts once when the guest's USB and wireless debugging both turn off,
+which ends every connection in use. The next operation connects to the new
+adbd (a handshake the restart cut is tried again, and a refusal meanwhile is
+retried to the connect limit); a bug report or an install under way says the
+guest's debugging service restarted and asks to try again, and the bug
+report first stops the dump that went on in the guest. A connection the
+runtime cannot make at all within its timeout is retried the same way, and at
+the limit it says the guest is not answering yet, as against its debugging
+service not being ready.
+
+**Key.** `AdbKeyStore` keeps one RSA-2048 key per guest in the Keychain (the
+Secure Enclave has no RSA): this device only (`AfterFirstUnlockThisDeviceOnly`),
+not synchronized, in the application's own access group. It is made off the main
+thread while a start prepares, when none exists, and its public key goes in each
+boot request (`android_adb_public_key`), which adbd authorizes for that boot on
+the vsock port whatever the guest's USB debugging setting is, so no operation
+depends on it. Finding the key and making it is one locked step, so the start
+that prepares and any other caller get the same key. Erase Guest deletes it. The client signs adbd's AUTH token
+and never offers its key: a second token means adbd refused it, and the
+operation says so.
+
+**Create Bug Report** is in every build, in a normal session. Its row in
+Settings has a footer saying what a report holds, and a tap starts it at once.
+Settings dismisses and the full-screen overlay shows the guest's own progress
+(nine tenths of the bar) and then the copy, with a Cancel button that stops the
+dump in the guest (`setprop ctl.stop dumpstatez`) and removes what it left. The
+zip is staged in `tmp/BugReports/` after a check of the free space
+(`volumeAvailableCapacityForImportantUsage`), is offered in the system share
+sheet (a centred popover on an iPad), and is deleted on every outcome of the
+sheet; each launch sweeps the folder. The guest's copy and any earlier ones are
+removed after a good pull.
+
+**Install App** is in every build, in a normal session: Settings, Apps,
+Install App... picks a single `.apk` in Files (a file of another kind is
+answered by a row, a `.apks`, `.xapk` or `.apkm` bundle by one of its own, and
+Settings stays open). For an `.apk` Settings dismisses and the overlay shows the
+file streamed in 256 KiB reads to `abb_exec:package install -r -t -S <size>` for
+the first eight tenths of the bar; the guest's own install holds it there, with
+the Cancel button gone, and a success closes the overlay and adds an Installed
+row. A failure is an alert and a Failed row, in the words of
+`PackageInstallMessages`.
+
+**ADB over Network** lets a computer on the same network use adb on the guest.
+It is off at every run, never persisted, and available only while the guest's
+USB debugging is on: the toggle is dimmed with a line saying so otherwise, and
+it goes off by itself, closing the listener and every connection already made
+(the guest's adbd ends its non-host sessions too, and this is the second layer),
+when the setting turns off, when the run ends and when the guest restarts. The
+setting is read through the channel (`settings get global adb_enabled`,
+`UsbDebugging`) every 3 seconds while Settings is open and every 10 while the
+toggle is on; each read opens a connection, which wakes a guest that suspended
+itself.
+
+The listener is `AdbNetworkBridge` in `AndariumCore`: a BSD socket on every
+IPv4 address at TCP 5555 and, for each computer that connects, a fresh stream
+from `kernarium_runtime_loader_connect_vsock(5555)` with a thread for each
+direction doing a blocking read and then a blocking write. A slow side holds
+back its sender through the socket buffers, nothing is held beyond one 64 KiB
+block per direction, an end of one side passes on as a half close, a failure
+ends both, and TCP keepalive finds a computer that vanished. At most 8
+computers are served at once, so the runtime's 32 open streams leave room for
+the app's own operations. Plain descriptors on both sides are why it is not
+Network.framework: the runtime hands back a descriptor, and the same code is
+exercised on the host with socket pairs and loopback. The bridge understands no
+byte of adb, so the guest's adbd authenticates the computer: its key is not the
+host's, and the guest's own prompt approves it. The row shows
+`adb connect <address>:5555`, with the address from `getifaddrs` (`en0` first,
+then other `en` interfaces; never cellular, tunnels or link-local), read again
+with the setting; without one it says the device has no Wi-Fi address. iOS
+asks for Local Network access once, and the question carries
+`NSLocalNetworkUsageDescription`, whose text also covers the guest's own
+connections to hosts on the network. Nothing starts a listener before the
+toggle. macOS reaches the guest with the launcher's `--net-forward` instead.
+
+Privacy: the adb features add no required-reason API. The picked file's size is
+the `fileSize` resource value, the limits use Swift clocks, the space check is
+the disk-space API with reason E174.1 (the start's own space check already uses
+it), and neither the Keychain, sockets nor `getifaddrs` is a required-reason
+API.
+
 ## Automation
 
 A harness launch (`xcrun devicectl device process launch`, environment given
@@ -288,6 +389,10 @@ KERNARIUM_HOST_FORWARD, KERNARIUM_FOOTPRINT_LOG_MS, KERNARIUM_EXECUTION_ENGINE,
 KERNARIUM_GUEST_HIBERNATION, KERNARIUM_ANDROID_ADB_AUTH
 ANDARIUM_START=normal|recovery   create the guest if there is none, then start
 ANDARIUM_ERASE=1                 erase the guest's data before the start
+ANDARIUM_ADB_TESTS=1             let AdbOverVsockTests drive the running guest
+ANDARIUM_ADB_KEY_FILE=<path>     where eraseGuestMakesANewKey records the key
+ANDARIUM_ADB_NET_HOLD_SECONDS=<n> keep the bridge up for a real adb (and write the key
+                                 as tmp/adbkey; tmp/adb-net-done ends the hold)
 ```
 
 On an Apple silicon Mac, `xcodebuild test -scheme Andarium -destination

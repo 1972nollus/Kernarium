@@ -6,7 +6,7 @@ import Testing
 
 /// A driver that answers with a fixed plan and records what the model asks.
 @MainActor
-private final class StubDriver: RuntimeDriver {
+final class StubDriver: RuntimeDriver {
     var plan: StartPlan?
     var begun: [(mode: StartMode, kind: BootKind)] = []
     var restored = 0
@@ -28,6 +28,42 @@ private final class StubDriver: RuntimeDriver {
         plan = .update(from: "r1", to: "r2")
     }
     func setMicrophone(_ on: Bool) {}
+
+    /// What a bug report or an install does when the model asks.
+    var bugReport: (@Sendable (@Sendable (BusyUpdate) -> Void) async throws -> URL) = { _ in
+        throw CancellationError()
+    }
+    func createBugReport(update: @escaping @Sendable (BusyUpdate) -> Void) async throws -> URL {
+        try await bugReport(update)
+    }
+    var install: (@Sendable (@Sendable (BusyUpdate) -> Void) async throws -> Void) = { _ in }
+    func installApk(at url: URL, sizeBytes: Int, update: @escaping @Sendable (BusyUpdate) -> Void) async throws {
+        try await install(update)
+    }
+
+    /// ADB over the network as the stub plays it.
+    var debugging: Bool? = true
+    var address: String? = "192.0.2.23"
+    var startError: Error?
+    private(set) var listening = false
+    private(set) var starts = 0
+    private(set) var stops = 0
+    /// Computers connected through the listener, which a stop closes.
+    var connectedComputers = 0
+    private(set) var closedComputers = 0
+    func usbDebugging() async -> Bool? { debugging }
+    func startAdbOverNetwork() throws {
+        if let startError { throw startError }
+        listening = true
+        starts += 1
+    }
+    func stopAdbOverNetwork() {
+        listening = false
+        stops += 1
+        closedComputers += connectedComputers
+        connectedComputers = 0
+    }
+    func localNetworkAddress() -> String? { address }
 }
 
 @MainActor
