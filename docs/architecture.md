@@ -197,7 +197,8 @@ frames. Under `VIRTIO_BALLOON_F_MUST_TELL_HOST`, a deflate commits the page
 before the guest may use it.
 
 The process's memory limit, L, is the figure the memory budgets derive from;
-the gadget-cache budget takes at most an eighth of it. iOS enforces one per
+the gadget-cache budget takes at most an eighth of it, and where a limit is set
+no more than the cap of the guest's vCPU count (below). iOS enforces one per
 application and reports it (`platform::process_memory_limit_bytes()`: the
 footprint plus the limit remaining, 2,867 MiB on the iPad mini 6). macOS
 enforces none, so a measurement run states it with `--memory-limit=2867M` or
@@ -219,23 +220,57 @@ hosts):
 B = clamp(L - A - G - E - S, 384 MiB, G / 2)
 ```
 
-G is the guest's RAM. E is the gadget-cache budget in effect plus the rest of
-the guest side's host memory. A is the application's own expected ceiling and S
-the headroom left unused. Half the guest's RAM is the most the GPU may take, so
-where that is under the floor the maximum wins and B is G / 2; with no limit B
-is G / 2 as well. A, the rest of E and S are launch parameters, all in MiB:
-`--gpu-budget-app=`, `--gpu-budget-engine=` and `--gpu-budget-headroom=` on the
-macOS command line (an optional `K`, `M` or `G` suffix), the fields of the
-runtime's boot request on iOS, which `KERNARIUM_GPU_BUDGET_APP_MIB`,
-`KERNARIUM_GPU_BUDGET_ENGINE_MIB` and `KERNARIUM_GPU_BUDGET_HEADROOM_MIB` set for
-a measurement run. Their defaults are zero until the product owner chooses
-values, so B is G / 2 except where L - G leaves the GPU less than that. A launch
-whose L - A - G - E - S is under the floor is never refused: B is the floor,
-and the launch says the process is likely to be ended, as one `uml-darwin:`
-line on stderr and as a dismissible notice in Kernarium
-(`kernarium_runtime_plan_gpu_budget_function` evaluates the plan before the run
-so the application can show it). The device memory budget section of
+G is the guest's RAM. E is the gadget-cache budget in effect, the slot tags of
+the guest's vCPUs and the rest of the guest side's host memory. A is the
+application's own expected ceiling and S the headroom left unused. Half the
+guest's RAM is the most the GPU may take, so where that is under the floor the
+maximum wins and B is G / 2; with no limit B is G / 2 as well. A, the rest of E
+and S are launch parameters, all in MiB: `--gpu-budget-app=`,
+`--gpu-budget-engine=` and `--gpu-budget-headroom=` on the macOS command line (an
+optional `K`, `M` or `G` suffix), the fields of the runtime's boot request on
+iOS, which `KERNARIUM_GPU_BUDGET_APP_MIB`, `KERNARIUM_GPU_BUDGET_ENGINE_MIB` and
+`KERNARIUM_GPU_BUDGET_HEADROOM_MIB` set for a measurement run. Each defaults to
+the launch set, one constant in `runtime/guest_memory_budget.hpp` that every
+launcher and the application take their defaults from; its values are zero until
+the product owner chooses them (the header names the candidates), so B is G / 2
+except where L - G leaves the GPU less than that. A launch whose L - A - G - E - S
+is under the floor is never refused: B is the floor, and the launch says the
+process is likely to be ended, as one `uml-darwin:` line on stderr and as a
+dismissible notice in Kernarium (`kernarium_runtime_plan_gpu_budget_function`
+evaluates the plan, for the guest's memory and vCPU count, before the run so the
+application can show it). The device memory budget section of
 [graphics](graphics.md) owns what B bounds.
+
+The guest side's memory follows the vCPU count, v, and `runtime/guest_memory_budget.hpp`
+is the one place that says how:
+
+```text
+E(v, G) = c(v, G) + 4 MiB * v + E_rest
+c(v, G) = min(derive_budget(G, L), cap(v))      where L is set; derive_budget(G, L) alone otherwise
+```
+
+`cap(v)` is the gadget cache's measured worst ceiling at v vCPUs, rounded up to
+16 MiB, plus 32 MiB: 176, 208, 240, 288, 304, 304, 336 and 336 MiB for 1 to 8
+vCPUs, and 16 MiB more for each vCPU beyond. It sits above every measured
+ceiling, so the budget's own shedding (an eighth of the budget below it, when
+the accounts pass it) stays what bounds the cache in the measured loads. The
+4 MiB per vCPU are the slot tags, which the cache's ledger does not charge. An
+explicit `--gadget-cache-budget=` is used as stated and is not capped. The run
+(`runtime::set_gadget_cache_budget`), the plan's E and the application's bound
+below all evaluate this header; none states the formula itself.
+
+The largest guest RAM a limit leaves, `G_max(v)`, is the largest G of 512 to
+4096 MiB in 64 MiB steps for which L - G - A - E(v, G) - S is at least the
+384 MiB floor; with no limit (macOS, and an iOS application running on a Mac)
+it is 4096, and where even 512 MiB leaves less than the floor it is 512 and the
+launch warns as above. On the iPad mini 6 (L = 2,867 MiB) and with A, E_rest and
+S at zero it is 2240, 2240, 2176, 2176, 2112, 2112, 2112 and 2112 MiB for 1 to 8
+vCPUs. Kernarium's settings offer no more than `G_max(v)` for the chosen vCPU
+count; the application reads the limit itself and evaluates the header through
+its loader, because the runtime framework is loaded once per process, for the
+flavour chosen at launch, and cannot be asked before that
+([Kernarium](../Kernarium/README.md)). The launch does not
+refuse a larger value that automation states.
 
 Every iOS memory control carries its macOS path, or records here why none can
 exist, so that a Mac run stays an accurate ground for measuring the device. The
@@ -854,8 +889,11 @@ called by those native gadgets. The userspace ISA boundary includes scalar x86
 and x87/MMX, SSE through SSE4.2, AVX/AVX2,
 F16C/FMA, AES/PCLMUL, BMI1/2, atomic and extended-state operations in both
 long64 and compat32 modes. The AVX-VNNI dot products VPDPBUSD, VPDPBUSDS,
-VPDPWSSD and VPDPWSSDS run on both x86 engines, as the FEX corpus requires,
-although CPUID does not report them. The pinned FEX handwritten x86-64 and
+VPDPWSSD and VPDPWSSDS run on both x86 engines, and CPUID reports them in leaf
+7 subleaf 1 EAX bit 4, with leaf 7 subleaf 0 EAX naming subleaf 1 as its
+highest. Each is one gadget, or one short FEXCore sequence, where the AVX2
+fallback is three instructions, so a program that dispatches on the bit runs
+faster on either engine. The pinned FEX handwritten x86-64 and
 i386 corpora are the external instruction acceptance gate. AVX-512 and later
 encodings, RTM/MPX, obsolete protected-mode bounds, 16-bit code segments, and
 privileged, real-mode, virtual-machine, enclave, and system-management
@@ -1285,12 +1323,25 @@ suspended guest itself: at every Power press and at most once a second for any
 other key, so a held key does not repeat it, and never for a touch. The macOS
 VNC display maps XF86PowerOff to the guest's power key, and VNC input is itself
 a wake source. The guest replies to a suspend only after syncing its file
-systems, so the host waits up to eight seconds for that reply. A kernel without
-the suspend command, or a guest that reports within that wait that it could
-not suspend, falls back to the stop/go pair. Guests that need writeback
-requests boot with magic SysRq enabled; if the physical iOS sandbox cannot bind
-the console, host-file flushing still runs but guest writeback and freeze are
-unavailable.
+systems, so the host gives the whole request, its busy retries included, one
+ten-second deadline from the first send. A guest that reports itself busy
+(EBUSY) is asked again every 250 ms for two seconds while the deadline leaves
+time for the answer. Any other refusal, or a guest that stays busy, is not
+frozen: the host logs that it keeps running, asks it to write back, and treats
+it as not suspended (it is not hibernated, and a resume sends nothing). A
+request with no reply at the deadline is aborted: a guest whose freezer cannot
+finish fails its suspend tens of seconds later, so silence proves nothing. The
+host keeps the request's socket, sends the wake edge, which the guest answers
+while its suspend blocks, reads the request's final reply for up to two seconds,
+and asks the guest to write back. Only a "suspended" reply that arrived before
+the wake counts as suspended; a refusal is a guest known to run, and "suspended"
+after the wake, or silence, leaves it unconfirmed: never hibernated, and
+woken at the resume. The management console's own stop is no fallback, since
+the kernel blocks signals per vCPU and the stop halts only the vCPU that takes
+it, so every other vCPU and guest time run on. A process freeze, as on iOS,
+halts every vCPU regardless. Guests that need writeback requests boot with
+magic SysRq enabled; if the physical iOS sandbox cannot bind the console,
+host-file flushing still runs but guest writeback and freeze are unavailable.
 
 The kernel says how the guest ends before it shuts its drivers down or runs
 its exitcalls, with the bridge import `darwin_uml_guest_shutdown()`: power-off,
@@ -1439,7 +1490,7 @@ run reach the same code. The order is the contract:
   Memory a guest ran on while part of it was missing would be corrupt, which is
   worse than the restart.
 
-A quiesce that falls back to the management stop, a guest without a console,
+A quiesce whose guest did not confirm its suspend, a guest without a console,
 and a guest kept running (Picture in Picture, the job) never hibernate.
 
 ## Tests and structural audit

@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 17U
+#define KERNARIUM_RUNTIME_API_VERSION 18U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -114,14 +114,17 @@ enum {
     KERNARIUM_RUNTIME_RESULT_RESTART_LOOP = -100,
 };
 
-/* Evaluates the host GPU's budget for a guest of `guest_memory_mib` with the
- * launch parameters of kernarium_runtime_boot, as a run with that request will
- * (the application's memory limit and the gadget cache included), and fills
- * `plan`, whose struct_size the caller sets. The application calls it before
- * run to warn the user when `short_of_floor` is set. Returns 0, or a negative
- * value for a null or short `plan` or a guest memory of zero. */
+/* Evaluates the host GPU's budget for a guest of `guest_memory_mib` and
+ * `guest_processor_count` vCPUs with the launch parameters of
+ * kernarium_runtime_boot, as a run with that request will (the application's
+ * memory limit and the gadget cache, whose cap follows the vCPU count,
+ * included), and fills `plan`, whose struct_size the caller sets. The
+ * application calls it before run to warn the user when `short_of_floor` is
+ * set. Returns 0, or a negative value for a null or short `plan`, a guest
+ * memory of zero or a vCPU count of zero. */
 typedef int (*kernarium_runtime_plan_gpu_budget_function)(
     uint32_t guest_memory_mib,
+    uint32_t guest_processor_count,
     uint32_t gpu_budget_application_mib,
     uint32_t gpu_budget_engine_mib,
     uint32_t gpu_budget_headroom_mib,
@@ -296,7 +299,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v17(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v18(void);
 
 /* An automation-only extension, outside the versioned table: only a runtime
  * built for automation exports this symbol, and the application looks it up

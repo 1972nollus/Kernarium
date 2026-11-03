@@ -634,10 +634,14 @@ included, in both modes.
 `fenv_probe.cpp` with the image's g++, so it needs an image with a toolchain
 such as the x86-64 LTP rootfs, and checks what glibc's `fetestexcept`,
 STMXCSR and `fadd` show of the sticky SIMD exception flags against an Intel
-Xeon's, on either engine. The slice's SMBIOS tables and thread names, which
-`guest-kernel-dmi` and `guest-kernel-thread-names` check on arm64, are checked
-by running `tests/integration/support/run_guest_probe.py --probe
-tests/integration/kernel/dmi_probe.py --ncpus 2 --probe-timeout 120` and
+Xeon's, on either engine. `run_guest_x86_64_vnni.py`, which takes the same
+options, runs a freestanding probe that dispatches on CPUID leaf 7 subleaf 1
+the way ggml and oneDNN do and requires the AVX-VNNI path, with the AVX2 and
+AVX-VNNI forms of its kernels agreeing exactly, and requires `avx_vnni` in the
+guest's `/proc/cpuinfo`. The slice's SMBIOS tables and
+thread names, which `guest-kernel-dmi` and `guest-kernel-thread-names` check on
+arm64, are checked by running `tests/integration/support/run_guest_probe.py
+--probe tests/integration/kernel/dmi_probe.py --ncpus 2 --probe-timeout 120` and
 `tests/integration/kernel/run_guest_thread_names.py` the same way.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.

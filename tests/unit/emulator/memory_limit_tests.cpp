@@ -43,10 +43,11 @@ int observing_kernel(int, char *const[], char *const[])
 	return 0;
 }
 
-Seen run(uml_emulator *emulator, const char *option = nullptr)
+Seen run(uml_emulator *emulator, const char *option = nullptr,
+	const char *cpus = "ncpus=1")
 {
 	const char *arguments[]{"uml-test", "--execution-engine=gadgets",
-		"mem=1536M", "ncpus=1", option};
+		"mem=1536M", cpus, option};
 	seen = {};
 	require(uml_emulator_run(emulator, option == nullptr ? 4 : 5, arguments,
 			nullptr) == 0,
@@ -64,12 +65,15 @@ void theLaunchStatesTheLimit()
 	require(result.limit == 0 && result.budget == 384 * mib,
 		"a run that states nothing changed");
 
-	/* The iPad mini 6's limit, by option: an eighth of it is 358 MiB. */
+	/* The iPad mini 6's limit, by option: an eighth of it is 358 MiB, above
+	 * the cap of one vCPU and of eight. */
 	result = run(emulator.get(), "--memory-limit=2867M");
-	require(result.limit == 2867 * mib &&
-		result.budget == 2867 * mib / 8 &&
-		result.budget / mib == 358,
-		"the option did not state the limit");
+	require(result.limit == 2867 * mib && result.budget == 176 * mib,
+		"the option did not state the limit, or one vCPU's cap");
+	result = run(emulator.get(), "--memory-limit=2867M", "ncpus=8");
+	require(result.limit == 2867 * mib && result.budget == 336 * mib,
+		"eight vCPUs' cap");
+	require(2867 * mib / 8 / mib == 358);
 
 	/* The option does not outlive its run. */
 	result = run(emulator.get());
@@ -79,7 +83,7 @@ void theLaunchStatesTheLimit()
 	/* The variable states it too, and the option beats it. */
 	require(::setenv(platform::memory_limit_variable, "2867", 1) == 0);
 	result = run(emulator.get());
-	require(result.limit == 2867 * mib && result.budget == 2867 * mib / 8,
+	require(result.limit == 2867 * mib && result.budget == 176 * mib,
 		"the variable did not state the limit");
 	result = run(emulator.get(), "--memory-limit=1024M");
 	require(result.limit == 1024 * mib && result.budget == 128 * mib,

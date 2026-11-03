@@ -103,3 +103,6 @@ patch	um-keep-no-signal-stack-array-for-Darwin-carriers.patch
 patch	ext4-index-a-block-group-quietly-and-again-when-the-insert-failed.patch
 patch	ext4-do-not-warn-when-the-extent-status-cache-cannot-grow.patch
 patch	drm-virtio-fail-a-resource-creation-the-host-refuses.patch
+patch	um-submit-Darwin-UBD-requests-without-allocating-memory.patch
+patch	um-allocate-a-line-s-output-ring-when-the-line-opens.patch
+patch	virtio_console-send-hvc-output-from-a-buffer-the-console-owns.patch
