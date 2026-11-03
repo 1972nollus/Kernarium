@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+import Foundation
+
+/// What the runtime and storage behind the screens can do. A screen shows a
+/// control only when the capability behind it exists, so the application
+/// never offers what it cannot do. The Simulator preview has all of them; the
+/// device application has the ones its runtime provides.
+public struct Capabilities: Equatable, Sendable {
+    /// The app can move an existing guest to a newer system.
+    public var systemUpdate: Bool
+    /// A computer can reach the guest with ADB over the network.
+    public var adbOverNetwork: Bool
+    /// An APK picked in Files can be installed into the guest.
+    public var apkInstall: Bool
+    /// The session can show the guest's own statistics.
+    public var statistics: Bool
+    /// The number of installed apps can be read.
+    public var appCount: Bool
+    /// Resolution and Follow Window Size can change while the guest runs;
+    /// otherwise they apply at the next start and the session leaves them
+    /// out.
+    public var liveDisplayOptions: Bool
+
+    public init(
+        systemUpdate: Bool, adbOverNetwork: Bool, apkInstall: Bool,
+        statistics: Bool, appCount: Bool, liveDisplayOptions: Bool
+    ) {
+        self.systemUpdate = systemUpdate
+        self.adbOverNetwork = adbOverNetwork
+        self.apkInstall = apkInstall
+        self.statistics = statistics
+        self.appCount = appCount
+        self.liveDisplayOptions = liveDisplayOptions
+    }
+
+    /// Everything the mock runtime pretends to do.
+    public static let preview = Capabilities(
+        systemUpdate: true, adbOverNetwork: true, apkInstall: true, statistics: true, appCount: true,
+        liveDisplayOptions: true
+    )
+
+    /// The device application: a guest moves to a newer system with its
+    /// data (`StartPlan`), and the session offers Android's own screen, keys
+    /// and the options.
+    public static let device = Capabilities(
+        systemUpdate: true, adbOverNetwork: false, apkInstall: false, statistics: false, appCount: false,
+        liveDisplayOptions: false
+    )
+}

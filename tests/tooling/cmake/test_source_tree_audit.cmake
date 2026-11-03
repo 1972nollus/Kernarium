@@ -14,7 +14,8 @@ endif()
 # implementation-fragment rule rejects an .ipp include outside the composer,
 # that a darwin/ source cannot include a header that exists only under tests/,
 # that a guest runner cannot import a guest launcher, and that neither a CMake
-# file outside darwin/ nor an Xcode project compiles a darwin/ source.
+# file outside darwin/ nor an Xcode project (Kernarium's pbxproj, or a JSON
+# project.xcproj) compiles a darwin/ source.
 include("${AUDIT_SCRIPT}")
 
 file(REMOVE_RECURSE "${TEST_ROOT}")
@@ -75,6 +76,20 @@ file(WRITE "${TEST_ROOT}/tests/unit/fixture/CMakeLists.txt"
 file(WRITE "${TEST_ROOT}/Kernarium/Fixture.xcodeproj/project.pbxproj"
     "\t\tD1 /* fixture.mm */ = {isa = PBXFileReference; name = fixture.mm; "
     "path = ../${FIXTURE_TREE}/platform/apple/fixture.mm; sourceTree = SOURCE_ROOT; };\n")
+# A JSON project is JSON5: the "path" key and its value use either quote or,
+# for the key, none, and the value may follow on the next line.
+file(WRITE "${TEST_ROOT}/Andarium/Fixture.xcodeproj/project.xcproj"
+    "{\n"
+    "  \"files\": [\n"
+    "    { \"path\": \"../${FIXTURE_TREE}/platform/apple/canonical.mm\", \"target-membership\": [ \"Fixture\" ] },\n"
+    "    { path: '../${FIXTURE_TREE}/platform/apple/bare.cpp' },\n"
+    "    { 'path': \"../${FIXTURE_TREE}/cpu/single.S\" },\n"
+    "    { \"path\": '${FIXTURE_TREE}/cpu/mixed.cxx' },\n"
+    "    { \"path\":\n      \"../${FIXTURE_TREE}/device/split.cc\" },\n"
+    "  ],\n"
+    "}\n")
+file(WRITE "${TEST_ROOT}/Kernarium/Fixture.xcodeproj/project.xcproj"
+    "{ \"files\": [ { \"path\": \"../${FIXTURE_TREE}/platform/apple/converted.mm\" } ] }\n")
 uml_audit_build_files("${TEST_ROOT}" FOREIGN_SOURCE_VIOLATIONS)
 if(NOT FOREIGN_SOURCE_VIOLATIONS MATCHES
    "fixture/CMakeLists.txt: compiles ${FIXTURE_TREE}/device/fixture/fixture_device\\.cpp")
@@ -83,6 +98,22 @@ endif()
 if(NOT FOREIGN_SOURCE_VIOLATIONS MATCHES
    "project.pbxproj: an Xcode target compiles \\.\\./${FIXTURE_TREE}/platform/apple/fixture\\.mm")
     message(FATAL_ERROR "source audit accepted an Xcode target compiling a darwin/ source")
+endif()
+foreach(JSON_NAME IN ITEMS
+        "\\.\\./${FIXTURE_TREE}/platform/apple/canonical\\.mm"
+        "\\.\\./${FIXTURE_TREE}/platform/apple/bare\\.cpp"
+        "\\.\\./${FIXTURE_TREE}/cpu/single\\.S"
+        "${FIXTURE_TREE}/cpu/mixed\\.cxx"
+        "\\.\\./${FIXTURE_TREE}/device/split\\.cc")
+    if(NOT FOREIGN_SOURCE_VIOLATIONS MATCHES
+       "Andarium/Fixture.xcodeproj/project.xcproj: an Xcode target compiles ${JSON_NAME},")
+        message(FATAL_ERROR
+            "source audit accepted a JSON project compiling ${JSON_NAME}:\n${FOREIGN_SOURCE_VIOLATIONS}")
+    endif()
+endforeach()
+if(NOT FOREIGN_SOURCE_VIOLATIONS MATCHES
+   "Kernarium/Fixture.xcodeproj/project.xcproj: an Xcode target compiles \\.\\./${FIXTURE_TREE}/platform/apple/converted\\.mm")
+    message(FATAL_ERROR "source audit ignored a converted Kernarium JSON project")
 endif()
 file(WRITE "${TEST_ROOT}/tests/unit/fixture/CMakeLists.txt"
     "add_executable(fixture_tests fixture_tests.cpp)\n"
@@ -94,17 +125,32 @@ file(WRITE "${TEST_ROOT}/Kernarium/Fixture.xcodeproj/project.pbxproj"
     "name = Fixture.xcframework; "
     "path = \"../.build/kernarium-xcframeworks/Fixture.xcframework\"; "
     "sourceTree = SOURCE_ROOT; };\n")
+# A JSON project may name a packaged product, a header, a source folder, a
+# longer extension and another key that merely ends in "path".
+file(WRITE "${TEST_ROOT}/Andarium/Fixture.xcodeproj/project.xcproj"
+    "{\n"
+    "  \"files\": [\n"
+    "    { \"path\": \"../.build/kernarium-xcframeworks/Fixture.xcframework\" },\n"
+    "    { \"path\": \"../${FIXTURE_TREE}/api/include/uml/fixture.h\" },\n"
+    "    { \"path\": \"../${FIXTURE_TREE}/platform/apple/fixture.swift\" },\n"
+    "    { \"path\": \"Fixture\", \"kind\": \"folder\" },\n"
+    "    { \"base-path\": \"../${FIXTURE_TREE}/platform/apple/other.mm\" },\n"
+    "  ],\n"
+    "}\n")
+file(WRITE "${TEST_ROOT}/Kernarium/Fixture.xcodeproj/project.xcproj"
+    "{ path: 'Runtime/Fixture.xcframework' }\n")
 uml_audit_build_files("${TEST_ROOT}" OWNER_PRODUCT_VIOLATIONS)
 if(OWNER_PRODUCT_VIOLATIONS)
     message(FATAL_ERROR
         "source audit rejected targets linking the owner's product: ${OWNER_PRODUCT_VIOLATIONS}")
 endif()
 
-# The layer, engine-ownership, executable-memory, implementation-include,
-# CPU-header, test-registration, compile-definition and shell cd rules read the
-# whole tree, so the audit itself runs over a fixture tree that breaks each
-# rule beside a file the rule accepts. Every fixture starts on its second line, so a rule cannot
-# pass by matching only at the start of a file.
+# The project-C-source, layer, engine-ownership, executable-memory,
+# implementation-include, CPU-header, test-registration, compile-definition,
+# shell cd and x18 rules read the whole tree, so the audit itself runs over a
+# fixture tree that breaks each rule beside a file the rule accepts. Every
+# fixture starts on its second line, so a rule cannot pass by matching only at
+# the start of a file.
 file(REMOVE_RECURSE "${TEST_ROOT}")
 file(WRITE "${TEST_ROOT}/CMakeLists.txt" "")
 file(WRITE "${TEST_ROOT}/docs/architecture.md" "")
@@ -113,6 +159,16 @@ function(uml_write_audit_fixture PATH TEXT)
 endfunction()
 set(REJECTED)
 set(ACCEPTED)
+
+# The apps and their shared source folder hold no project C source; third-party
+# sources outside the first-party scopes are not this rule's concern.
+uml_write_audit_fixture(Andarium/fixture/andarium_stray.c "int fixture;")
+uml_write_audit_fixture(GuestHost/fixture/guesthost_stray.c "int fixture;")
+uml_write_audit_fixture(external/fixture/vendored_stray.c "int fixture;")
+list(APPEND REJECTED
+    "andarium_stray\\.c: project C source is not allowed"
+    "guesthost_stray\\.c: project C source is not allowed")
+list(APPEND ACCEPTED "vendored_stray\\.c: project C source")
 
 uml_write_audit_fixture(darwin/cpu/fixture/cpu_layer.cpp
     "#include \"runtime/fixture.hpp\"")
@@ -159,6 +215,22 @@ list(APPEND REJECTED
     "fragment_contract\\.cpp: C/C\\+\\+ source includes an implementation fragment"
     "fragment_impl\\.mm: C/C\\+\\+ source includes an implementation fragment")
 list(APPEND ACCEPTED "header_include\\.cpp: C/C\\+\\+ source")
+
+# The apps and the shared host source follow the same rules, and no source
+# outside the composer includes an .ipp fragment.
+uml_write_audit_fixture(Andarium/fixture/andarium_fragment.mm
+    "#include \"fixture_table.cpp\"")
+uml_write_audit_fixture(GuestHost/fixture/guesthost_fragment.mm
+    "#include \"fixture_contract.inc\"")
+uml_write_audit_fixture(GuestHost/fixture/guesthost_ipp.mm
+    "#include \"fixture_decode.ipp\"")
+uml_write_audit_fixture(GuestHost/fixture/guesthost_header.mm
+    "#include \"GuestHost.h\"")
+list(APPEND REJECTED
+    "andarium_fragment\\.mm: C/C\\+\\+ source includes an implementation fragment"
+    "guesthost_fragment\\.mm: C/C\\+\\+ source includes an implementation fragment"
+    "guesthost_ipp\\.mm: only program_builder\\.cpp may include \\.ipp fragments")
+list(APPEND ACCEPTED "guesthost_header\\.mm: C/C\\+\\+ source")
 
 uml_write_audit_fixture(darwin/cpu/fixture/anonymous.hpp
     "namespace fixture {\nnamespace {\n}\n}")
@@ -288,6 +360,32 @@ list(APPEND ACCEPTED
     "UmlTesting\\.cmake: raw add_test"
     "tools/fixture/CMakeLists\\.txt: raw add_test")
 
+# The apps and the shared host source register no raw test, name no darwin/
+# source from CMake and put no source or build directory in a definition. A
+# commented-out registration there is still accepted.
+uml_write_audit_fixture(Andarium/fixture/AndariumSuite.cmake
+    "add_test(NAME fixture COMMAND fixture)")
+uml_write_audit_fixture(GuestHost/fixture/GuestHostSuite.cmake
+    "add_test(NAME fixture COMMAND fixture)")
+uml_write_audit_fixture(Andarium/fixture/AndariumCommented.cmake
+    "# add_test(NAME fixture COMMAND fixture)")
+uml_write_audit_fixture(Andarium/fixture/AndariumOwner.cmake
+    "add_library(fixture \${PROJECT_SOURCE_DIR}/${FIXTURE_TREE}/fixture/andarium_owned.cpp)")
+uml_write_audit_fixture(GuestHost/fixture/GuestHostOwner.cmake
+    "add_library(fixture \${PROJECT_SOURCE_DIR}/${FIXTURE_TREE}/fixture/guesthost_owned.cpp)")
+uml_write_audit_fixture(Andarium/fixture/AndariumDefinition.cmake
+    "target_compile_definitions(fixture PRIVATE\n    FIXTURE_DIR=\"\${PROJECT_SOURCE_DIR}/Andarium\")")
+uml_write_audit_fixture(GuestHost/fixture/GuestHostDefinition.cmake
+    "target_compile_options(fixture PRIVATE\n    -DFIXTURE_ROOT=\${CMAKE_CURRENT_BINARY_DIR})")
+list(APPEND REJECTED
+    "AndariumSuite\\.cmake: raw add_test bypasses"
+    "GuestHostSuite\\.cmake: raw add_test bypasses"
+    "AndariumOwner\\.cmake: compiles ${FIXTURE_TREE}/fixture/andarium_owned\\.cpp"
+    "GuestHostOwner\\.cmake: compiles ${FIXTURE_TREE}/fixture/guesthost_owned\\.cpp"
+    "AndariumDefinition\\.cmake: a compile definition names"
+    "GuestHostDefinition\\.cmake: a compile definition names")
+list(APPEND ACCEPTED "AndariumCommented\\.cmake: raw add_test")
+
 # A darwin/ owner names its own sources.
 uml_write_audit_fixture(darwin/fixture/CMakeLists.txt
     "add_library(fixture \${PROJECT_SOURCE_DIR}/${FIXTURE_TREE}/fixture/owned.cpp)")
@@ -360,6 +458,20 @@ uml_write_audit_fixture(tools/fixture/cd_words.sh
     "cdrom=1\nprintf '%s\\n' abcd cd-image --cd")
 uml_write_audit_fixture(tools/fixture/cd_in_python.py
     "subprocess.run('cd build', shell=True)")
+# The apps and the shared host source are first-party scopes too.
+uml_write_audit_fixture(Andarium/fixture/andarium_cd.sh "cd \"\$work\"")
+uml_write_audit_fixture(GuestHost/fixture/guesthost_cd.sh
+    "(cd \"\$source\" && make)")
+uml_write_audit_fixture(Andarium/fixture/andarium_cleared_cd.sh
+    "root=\$(CDPATH= cd -- \"\$root\" && pwd -P)")
+uml_write_audit_fixture(GuestHost/fixture/guesthost_absolute_cd.sh
+    "cd /usr/src/ltp")
+list(APPEND REJECTED
+    "andarium_cd\\.sh:2: cd \".work\" needs CDPATH= cd --"
+    "guesthost_cd\\.sh:2: cd \".source\" needs CDPATH= cd --")
+list(APPEND ACCEPTED
+    "andarium_cleared_cd\\.sh:"
+    "guesthost_absolute_cd\\.sh:")
 # Third-party sources live outside the first-party directories.
 uml_write_audit_fixture(external/fixture/vendored.sh "cd \"\$work\"")
 list(APPEND ACCEPTED
@@ -371,7 +483,8 @@ list(APPEND ACCEPTED
     "vendored\\.sh:")
 
 # No host source names x18 outside a comment, in any language that can name
-# a register. Guest assembly outside darwin/ and Kernarium/ may use it.
+# a register. Guest assembly outside darwin/, Kernarium/, Andarium/ and
+# GuestHost/ may use it.
 uml_write_audit_fixture(darwin/cpu/fixture/setf_flags.inc
     "\tand w18, w27, #0x20000000")
 uml_write_audit_fixture(darwin/cpu/fixture/entry_pair.S
@@ -384,7 +497,16 @@ uml_write_audit_fixture(Kernarium/fixture/clobber.mm
     "asm volatile(\"\" ::: \"x18\");")
 uml_write_audit_fixture(darwin/cpu/fixture/write_gadget.py
     "emit('mov w18, w0')")
+uml_write_audit_fixture(Andarium/fixture/andarium_clobber.mm
+    "asm volatile(\"\" ::: \"x18\");")
+uml_write_audit_fixture(GuestHost/fixture/guesthost_register.cpp
+    "asm volatile(\"mov %0, x18\" : \"=r\"(value));")
+uml_write_audit_fixture(GuestHost/fixture/guesthost_generator.py
+    "emit('mov w18, w0')")
 list(APPEND REJECTED
+    "andarium_clobber\\.mm: names x18"
+    "guesthost_register\\.cpp: names x18"
+    "guesthost_generator\\.py: names x18"
     "setf_flags\\.inc: names x18"
     "entry_pair\\.S: names x18"
     "define_register\\.S: names x18"
@@ -398,11 +520,31 @@ uml_write_audit_fixture(darwin/cpu/fixture/similar_registers.S
 uml_write_audit_fixture(darwin/cpu/fixture/commented_gadget.py
     "# x18 belongs to Darwin")
 uml_write_audit_fixture(tests/fixture/guest_loop.S "\tmov x18, x0")
+uml_write_audit_fixture(Andarium/fixture/andarium_commented.mm
+    "// x18 belongs to Darwin\n/* so does w18 */")
 list(APPEND ACCEPTED
+    "andarium_commented\\.mm: names x18"
     "commented_register\\.S: names x18"
     "similar_registers\\.S: names x18"
     "commented_gadget\\.py: names x18"
     "guest_loop\\.S: names x18")
+
+# Xcode compiles the apps' sources and the shared host source, so no CMake file
+# owns them as it owns a darwin/ source.
+uml_write_audit_fixture(Andarium/fixture/andarium_unowned.mm "int fixture;")
+uml_write_audit_fixture(GuestHost/fixture/guesthost_unowned.cpp "int fixture;")
+list(APPEND ACCEPTED
+    "andarium_unowned\\.mm: implementation source"
+    "guesthost_unowned\\.cpp: implementation source")
+
+# The audit reads a JSON project too, and a clean one passes.
+uml_write_audit_fixture(Andarium/Fixture.xcodeproj/project.xcproj
+    "{ files: [ { path: '../${FIXTURE_TREE}/platform/apple/andarium_tree.mm' } ] }")
+uml_write_audit_fixture(Andarium/Clean.xcodeproj/project.xcproj
+    "{ \"files\": [ { \"path\": \"../.build/Fixture.xcframework\" } ] }")
+list(APPEND REJECTED
+    "Fixture\\.xcodeproj/project\\.xcproj: an Xcode target compiles \\.\\./${FIXTURE_TREE}/platform/apple/andarium_tree\\.mm")
+list(APPEND ACCEPTED "Clean\\.xcodeproj/project\\.xcproj: an Xcode target")
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${TEST_ROOT}" -P "${AUDIT_SCRIPT}"

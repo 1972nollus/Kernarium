@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Build the Apple playback sink for the iOS Simulator and run its
-interruption test there.
+"""Build the Apple playback sink and the Apple microphone for the iOS Simulator
+and run their interruption tests there.
 
-ios_interruption_tests.mm plays through the sink and posts the audio-session
-notifications iOS posts when another app interrupts the session; it prints one
-PASS or FAIL line per check. This runner compiles it with the sink, the
-session and the clock it uses, runs it in a booted iOS Simulator device (or boots one and shuts it down again), and
-passes when the test does. It exits 77, which CTest reports as skipped, when
-the host has no iOS Simulator runtime at the deployment target.
+ios_interruption_tests.mm plays through the sink, and ios_microphone_tests.mm
+starts the microphone over hooked AVFAudio (no real input, no permission
+prompt); each posts the audio-session notifications iOS posts when another app
+interrupts the session and prints one PASS or FAIL line per check. This runner
+compiles each with the code it tests, the session and the other files it uses,
+runs them in a booted iOS Simulator device (or boots one and shuts it down
+again), and passes when both do. It exits 77, which CTest reports as skipped,
+when the host has no iOS Simulator runtime at the deployment target.
 """
 
 from __future__ import annotations
@@ -79,30 +81,46 @@ def main() -> int:
     udid, was_booted = chosen
 
     here = pathlib.Path(__file__).resolve().parent
+    sink = arguments.sink_directory
+    shared = [here / "ios_session_notifications.mm", sink / "audio_session.mm"]
+    tests = {
+        "interruption_tests": [
+            here / "ios_interruption_tests.mm",
+            sink / "apple_playback_sink.mm",
+            sink / "period_clock.cpp",
+            sink / "virtio_sound_device.cpp",
+            sink / "silent_capture_source.cpp",
+        ],
+        "microphone_tests": [
+            here / "ios_microphone_tests.mm",
+            sink / "apple_microphone_input.mm",
+        ],
+    }
     with tempfile.TemporaryDirectory(prefix="uml-audio-interruption-") as scratch:
-        binary = pathlib.Path(scratch) / "interruption_tests"
-        compile_command = [
-            "xcrun", "--sdk", "iphonesimulator", "clang++",
-            "-target", f"arm64-apple-ios{arguments.deployment_target}-simulator",
-            "-x", "objective-c++", "-std=c++20", "-fobjc-arc", "-O1",
-            "-Wall", "-Wextra", "-Werror",
-            f"-I{arguments.sink_directory}", f"-I{arguments.include_directory}",
-            str(here / "ios_interruption_tests.mm"),
-            str(arguments.sink_directory / "apple_playback_sink.mm"),
-            str(arguments.sink_directory / "audio_session.mm"),
-            str(arguments.sink_directory / "period_clock.cpp"),
-            "-framework", "AVFAudio", "-framework", "Foundation",
-            "-o", str(binary),
-        ]
-        built = subprocess.run(
-            compile_command,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            timeout=COMPILE_TIMEOUT_SECONDS,
-        )
-        if built.returncode != 0:
-            print("FAIL: building the interruption test for the iOS Simulator")
-            return 1
+        binaries = {}
+        for name, sources in tests.items():
+            binary = pathlib.Path(scratch) / name
+            compile_command = [
+                "xcrun", "--sdk", "iphonesimulator", "clang++",
+                "-target", f"arm64-apple-ios{arguments.deployment_target}-simulator",
+                "-x", "objective-c++", "-std=c++20", "-fobjc-arc", "-O1",
+                "-Wall", "-Wextra", "-Werror",
+                f"-I{here}", f"-I{sink}", f"-I{arguments.include_directory}",
+                f"-I{arguments.include_directory / 'device' / 'vhost_user'}",
+                *(str(source) for source in sources + shared),
+                "-framework", "AVFAudio", "-framework", "Foundation",
+                "-o", str(binary),
+            ]
+            built = subprocess.run(
+                compile_command,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                timeout=COMPILE_TIMEOUT_SECONDS,
+            )
+            if built.returncode != 0:
+                print(f"FAIL: building {name} for the iOS Simulator")
+                return 1
+            binaries[name] = binary
 
         if not was_booted:
             booted = simctl("boot", udid, timeout=BOOT_TIMEOUT_SECONDS)
@@ -110,16 +128,20 @@ def main() -> int:
                 print(f"FAIL: booting simulator {udid}: {booted.stderr.strip()}")
                 return 1
             simctl("bootstatus", udid, timeout=BOOT_TIMEOUT_SECONDS)
+        status = 0
         try:
-            result = simctl(
-                "spawn", udid, str(binary), timeout=RUN_TIMEOUT_SECONDS
-            )
+            for name, binary in binaries.items():
+                result = simctl(
+                    "spawn", udid, str(binary), timeout=RUN_TIMEOUT_SECONDS
+                )
+                print(f"== {name}")
+                sys.stdout.write(result.stdout)
+                sys.stderr.write(result.stderr)
+                status = status or (0 if result.returncode == 0 else 1)
         finally:
             if not was_booted:
                 simctl("shutdown", udid, timeout=BOOT_TIMEOUT_SECONDS)
-        sys.stdout.write(result.stdout)
-        sys.stderr.write(result.stderr)
-        return 0 if result.returncode == 0 else 1
+        return status
 
 
 if __name__ == "__main__":

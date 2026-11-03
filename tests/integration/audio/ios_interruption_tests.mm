@@ -12,14 +12,19 @@
 // session's activation, its hint about other apps' audio and the player's
 // scheduling are observed and driven through hooks on AVFAudio's methods.
 
+#include "capture_source.hpp"
+#include "ios_session_notifications.hpp"
 #include "period_clock.hpp"
 #include "playback_sink.hpp"
+#include "protocol.hpp"
+#include "virtio_sound_device.hpp"
 
 #import <AVFAudio/AVFAudio.h>
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 
 #include <poll.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <array>
@@ -33,6 +38,9 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <vector>
+
+namespace protocol = uml::audio::protocol;
 
 namespace {
 
@@ -121,17 +129,70 @@ void installHooks()
         }));
 }
 
+// The lines the sink writes to stderr over a span.
+class StderrCapture final {
+public:
+    StderrCapture()
+        : file_(std::tmpfile())
+    {
+        std::fflush(stderr);
+        saved_ = dup(STDERR_FILENO);
+        dup2(fileno(file_), STDERR_FILENO);
+    }
+
+    ~StderrCapture()
+    {
+        if (file_ != nullptr)
+            (void)finish();
+    }
+
+    [[nodiscard]] std::string finish()
+    {
+        std::fflush(stderr);
+        dup2(saved_, STDERR_FILENO);
+        close(saved_);
+        std::string text;
+        std::rewind(file_);
+        char buffer[512];
+        while (const auto count = std::fread(buffer, 1, sizeof buffer, file_))
+            text.append(buffer, count);
+        std::fclose(file_);
+        file_ = nullptr;
+        return text;
+    }
+
+    [[nodiscard]] static std::size_t count(
+        const std::string& text, const std::string& line)
+    {
+        std::size_t found = 0;
+        for (auto at = text.find(line); at != std::string::npos;
+             at = text.find(line, at + line.size()))
+            ++found;
+        return found;
+    }
+
+private:
+    FILE* file_;
+    int saved_ {-1};
+};
+
 // What the guest saw, and what reached the player and the session, over a span.
 struct Observed final {
     std::uint64_t completed {};
     std::uint64_t scheduled {};
     double seconds {};
+    // Periods a second at the rate of real audio.
+    double expected {nominalRate};
 
     [[nodiscard]] double rate() const { return completed / seconds; }
-    // The guest's frame position advances at the rate of real audio.
+    // The guest's frame position advances at the rate of real audio. Periods
+    // complete one at a time and a window starts and ends between them, so
+    // the count may be a period or two off however long the window is: a
+    // second holds 46 or 47 of them, a difference of more than two percent.
     [[nodiscard]] bool nominal(double tolerance = 0.02) const
     {
-        return std::abs(rate() / nominalRate - 1.0) <= tolerance;
+        const double ideal = expected * seconds;
+        return std::abs(completed - ideal) <= std::max(tolerance * ideal, 2.0);
     }
     [[nodiscard]] bool playing() const
     {
@@ -149,7 +210,7 @@ struct Observed final {
             "%llu periods completed in %.2f s (%.2f/s, nominal %.2f/s), "
             "%llu scheduled",
             static_cast<unsigned long long>(completed), seconds, rate(),
-            nominalRate, static_cast<unsigned long long>(scheduled));
+            expected, static_cast<unsigned long long>(scheduled));
         return buffer;
     }
 };
@@ -194,6 +255,15 @@ public:
         sink_.release();
         service();
         // A release hands every queued period back unplayed.
+        collect(true);
+    }
+
+    // What the device does when the guest's virtio device is reset, as when
+    // the guest suspends: the transport tears the stream down at once.
+    void reset()
+    {
+        sink_.reset();
+        service();
         collect(true);
     }
 
@@ -336,93 +406,175 @@ private:
     std::chrono::steady_clock::duration longestWait_ {};
 };
 
-} // namespace
+// A guest's sound driver on the Virtio Sound device with the real sink under
+// it, as the Linux driver drives it: it keeps the device's transmit queue
+// full while the stream runs, resubmitting a period as each one completes, so
+// the rate at which periods complete is the rate at which the guest's audio
+// advances. The device thread sleeps on the device's clock like the transport
+// worker does.
+class DeviceGuest final {
+public:
+    // `periodFrames` is the period the guest's ALSA picks: 3600 frames for a
+    // buffer of 300 ms in four periods.
+    explicit DeviceGuest(std::uint32_t periodFrames = 3600)
+        : clock_(uml::audio::makePeriodClock())
+        , device_(uml::audio::makeApplePlaybackSink(clock_),
+              uml::audio::makeSilentCaptureSource(), clock_)
+        , periodFrames_(periodFrames)
+        , periodBytes_(periodFrames * channels * sizeof(std::int16_t))
+        , period_(sizeof(protocol::PcmTransfer) + periodBytes_)
+    {
+        for (std::uint32_t frame = 0; frame < periodFrames_; ++frame) {
+            const auto sample = static_cast<std::int16_t>(
+                600.0 * std::sin(2.0 * M_PI * frame / 48.0));
+            for (std::uint32_t channel = 0; channel < channels; ++channel) {
+                std::memcpy(period_.data() + sizeof(protocol::PcmTransfer) +
+                        (frame * channels + channel) * sizeof(sample),
+                    &sample, sizeof(sample));
+            }
+        }
+        const protocol::PcmTransfer header {.streamId = protocol::streamId};
+        std::memcpy(period_.data(), &header, sizeof(header));
+    }
 
-// iOS creates the contexts its notifications carry and offers no initializer,
-// so each is a subclass that answers the reads the sink makes.
-@interface InterruptionContextDouble : AVAudioSessionInterruptionContext
-@end
+    // The driver opens the stream and starts it.
+    [[nodiscard]] bool open()
+    {
+        const protocol::PcmSetParameters parameters {
+            .header = {{static_cast<std::uint32_t>(
+                            protocol::Request::pcmSetParameters)},
+                protocol::streamId},
+            .bufferBytes = periodBytes_ * periods,
+            .periodBytes = periodBytes_,
+            .features = 0,
+            .channels = protocol::channelCount,
+            .format = protocol::PcmFormat::signed16,
+            .rate = protocol::PcmRate::rate48000,
+            .padding = 0,
+        };
+        if (!control(uml::virtio::toBytes(parameters)) ||
+            !control(header(protocol::Request::pcmPrepare)) ||
+            !control(header(protocol::Request::pcmStart)))
+            return false;
+        running_ = true;
+        submit();
+        return true;
+    }
 
-@implementation InterruptionContextDouble
-- (AVAudioSessionInterruptionReason)reason
-{
-    return AVAudioSessionInterruptionReasonDefault;
-}
-@end
+    // The driver stops the stream and releases it.
+    void close()
+    {
+        running_ = false;
+        (void)control(header(protocol::Request::pcmStop));
+        (void)control(header(protocol::Request::pcmRelease));
+        // A release hands every queued period back; the driver waits for them.
+        pump(50ms);
+        outstanding_ = 0;
+    }
 
-@interface DeactivationContextDouble : AVAudioSessionDeactivationContext
-@property(nonatomic) AVAudioSessionDeactivationSource sourceDouble;
-@property(nonatomic, strong) AVAudioSessionInterruptionContext* interruptionDouble;
-@end
+    // The guest suspends: its device is reset under the stream and what was
+    // queued is forgotten.
+    void suspend()
+    {
+        running_ = false;
+        device_.reset();
+        outstanding_ = 0;
+    }
 
-@implementation DeactivationContextDouble
-- (AVAudioSessionDeactivationSource)source
-{
-    return self.sourceDouble;
-}
+    void pump(std::chrono::milliseconds span)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + span;
+        do {
+            submit();
+            pollfd descriptor {device_.eventDescriptor(), POLLIN, 0};
+            if (poll(&descriptor, 1, 10) > 0)
+                device_.drainEventSource();
+            collect();
+        } while (std::chrono::steady_clock::now() < deadline);
+    }
 
-- (AVAudioSessionInterruptionContext*)interruptionContext
-{
-    return self.interruptionDouble;
-}
-@end
+    // The periods the guest saw complete over `span`, after `settle`.
+    [[nodiscard]] Observed window(std::chrono::milliseconds settle,
+        std::chrono::milliseconds span)
+    {
+        if (settle > 0ms)
+            pump(settle);
+        const auto begun = std::chrono::steady_clock::now();
+        const auto completed = completed_;
+        const auto scheduled = scheduledPeriods.load();
+        pump(span);
+        return {.completed = completed_ - completed,
+            .scheduled = scheduledPeriods.load() - scheduled,
+            .seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - begun).count(),
+            .expected = 48000.0 / periodFrames_};
+    }
 
-@interface ResumptionContextDouble : AVAudioSessionResumptionContext
-@property(nonatomic) AVAudioSessionResumptionRecommendation recommendationDouble;
-@end
+    [[nodiscard]] std::uint64_t errors() const { return errors_; }
 
-@implementation ResumptionContextDouble
-- (AVAudioSessionResumptionRecommendation)recommendation
-{
-    return self.recommendationDouble;
-}
-@end
+private:
+    [[nodiscard]] static std::vector<std::uint8_t> header(
+        protocol::Request request)
+    {
+        return uml::virtio::toBytes(protocol::PcmHeader {
+            .header = {static_cast<std::uint32_t>(request)},
+            .streamId = protocol::streamId});
+    }
 
-namespace {
+    [[nodiscard]] bool control(std::vector<std::uint8_t> request)
+    {
+        const auto result = device_.processQueue(
+            protocol::controlQueue, ++requestId_, request, 64);
+        if (result.action != uml::virtio::VhostUserQueueAction::complete ||
+            result.response.size() < sizeof(protocol::Header))
+            return false;
+        return uml::virtio::fromBytes<protocol::Header>(result.response).code ==
+            static_cast<std::uint32_t>(protocol::Status::ok);
+    }
 
-template <class Context> Context* make()
-{
-    return static_cast<Context*>(class_createInstance([Context class], 0));
-}
+    void submit()
+    {
+        while (running_ && outstanding_ < periods) {
+            const auto result = device_.processQueue(protocol::transmitQueue,
+                requestId_ + 1, period_, sizeof(protocol::PcmStatus));
+            if (result.action == uml::virtio::VhostUserQueueAction::retry)
+                return;
+            ++requestId_;
+            if (result.action == uml::virtio::VhostUserQueueAction::complete) {
+                ++errors_;
+                return;
+            }
+            ++outstanding_;
+        }
+    }
 
-// What iOS 27 posts when the session becomes inactive: for the app's own
-// deactivation, or for the system's, which carries an interruption context
-// when another app caused it.
-void postDeactivation(
-    AVAudioSessionDeactivationSource source, bool interrupted)
-{
-    auto* context = make<DeactivationContextDouble>();
-    context.sourceDouble = source;
-    context.interruptionDouble =
-        interrupted ? make<InterruptionContextDouble>() : nil;
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:AVAudioSessionDidBecomeInactiveNotification
-                      object:[AVAudioSession sharedInstance]
-                    userInfo:@{
-                        AVAudioSessionDeactivationContextKey : context
-                    }];
-}
+    void collect()
+    {
+        uml::virtio::VhostUserQueueCompletion completion;
+        while (device_.takeQueueCompletion(completion)) {
+            if (outstanding_ != 0)
+                --outstanding_;
+            ++completed_;
+            if (completion.response.size() < sizeof(protocol::PcmStatus) ||
+                uml::virtio::fromBytes<protocol::PcmStatus>(completion.response)
+                        .status != protocol::Status::ok)
+                ++errors_;
+        }
+    }
 
-void postInterruptionBegan()
-{
-    postDeactivation(AVAudioSessionDeactivationSourceSystem, true);
-}
+    static constexpr std::uint32_t periods = 4;
 
-// What iOS 27 posts when the interrupter lets go, with the system's advice on
-// resuming.
-void postInterruptionEnded(bool shouldResume)
-{
-    auto* context = make<ResumptionContextDouble>();
-    context.recommendationDouble = shouldResume ?
-        AVAudioSessionResumptionRecommendationShouldResume :
-        AVAudioSessionResumptionRecommendationShouldNotResume;
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:AVAudioSessionResumptionRecommendationNotification
-                      object:[AVAudioSession sharedInstance]
-                    userInfo:@{
-                        AVAudioSessionResumptionContextKey : context
-                    }];
-}
+    std::shared_ptr<uml::audio::PeriodClock> clock_;
+    uml::audio::VirtioSoundDevice device_;
+    std::uint32_t periodFrames_;
+    std::uint32_t periodBytes_;
+    std::vector<std::uint8_t> period_;
+    std::uint64_t requestId_ {};
+    std::uint32_t outstanding_ {};
+    std::uint64_t completed_ {};
+    std::uint64_t errors_ {};
+    bool running_ {};
+};
 
 void interruptionMutesAndResumes()
 {
@@ -468,13 +620,42 @@ void interruptionMutesAndResumes()
     seen = stream.window(400ms, 1000ms);
     check(seen.scheduled == 0, "a second interruption stops playback",
         seen.text());
-    postInterruptionEnded(false);
-    seen = stream.window(400ms, 1500ms);
-    check(seen.playing(),
-        "an end that does not advise resuming resumes playback too",
-        seen.text());
 
+    // The end does not advise resuming and the interrupter still plays.
+    // Activating a playback session interrupts such an app, so the sink
+    // stays muted, keeps the guest's clock, and takes no session.
+    mark = activations.load();
+    postInterruptionEnded(false);
+    seen = stream.window(400ms, 4000ms);
+    check(seen.muted(),
+        "an end that does not advise resuming leaves the sink muted while "
+        "another app plays",
+        seen.text());
+    check(activations.load() == mark,
+        "and the sink takes no session from the app that plays", seen.text());
+    check(stream.healthy(), "the muted sink refuses nothing");
+    // The app stops: the hint poll takes the session back.
     otherAudioPlaying = false;
+    const auto polled = stream.untilPlayed(recoveryLimit);
+    check(polled < recoveryLimit && activations.load() == mark + 1,
+        "the sink resumes by one activation once that app has stopped",
+        std::to_string(polled.count()) + " ms");
+    seen = stream.window(300ms, 1500ms);
+    check(seen.playing() && stream.healthy(),
+        "and plays on without failing a period", seen.text());
+
+    // With no other app playing, an end that does not advise resuming
+    // resumes at once, well before the hint poll could.
+    postInterruptionBegan();
+    postInterruptionEnded(false);
+    const auto prompt = stream.untilPlayed(600ms);
+    check(prompt < 600ms,
+        "an end that does not advise resuming resumes at once when no other "
+        "app plays",
+        std::to_string(prompt.count()) + " ms");
+    seen = stream.window(300ms, 1500ms);
+    check(seen.playing(), "the stream plays after it", seen.text());
+
     mark = activations.load();
     postInterruptionEnded(true);
     seen = stream.window(400ms, 1500ms);
@@ -701,25 +882,67 @@ void interruptionBeforeStart()
     stream.close();
 }
 
+// What the guest does when the system suspends and resumes it while another
+// app plays: it stops the stream, releases it, sets the parameters again,
+// prepares it and starts it. Closing the stream tears it down; the session
+// belongs to the app that took it, so the new stream joins the mute, at the
+// rate of real audio, until that app lets go, and then plays at the same
+// rate. Only an interruption that has ended, or no other app playing, makes
+// the sink take the session.
 void restartDuringInterruption()
 {
     Stream stream;
     otherAudioPlaying = false;
     check(stream.open(), "the stream opens again");
-    (void)stream.window(300ms, 300ms);
+    auto seen = stream.window(300ms, 1500ms);
+    check(seen.playing() && seen.nominal(), "the stream plays at the rate of audio",
+        seen.text());
 
     otherAudioPlaying = true;
     postInterruptionBegan();
-    auto seen = stream.window(400ms, 1000ms);
+    seen = stream.window(400ms, 1000ms);
     check(seen.muted(), "an interruption mutes the new stream", seen.text());
-    // Closing the stream releases the session, so the interruption is over
-    // and the guest opening a stream is the user's wish to play.
-    stream.close();
-    check(stream.open(), "the guest reopens the stream while interrupted");
+
+    const auto mark = activations.load();
+    for (int round = 0; round < 2; ++round) {
+        // The guest closes the stream, or its device is reset.
+        if (round == 0)
+            stream.close();
+        else
+            stream.reset();
+        check(stream.open(), "the guest reopens the stream while interrupted");
+        seen = stream.window(500ms, 1500ms);
+        check(seen.muted() && activations.load() == mark,
+            "a stream the guest reopens while another app plays joins the mute",
+            seen.text() + ", " +
+                std::to_string(activations.load() - mark) + " activation(s)");
+        check(stream.healthy(), "the reopened stream failed no period");
+    }
+
+    // The app lets go without a word: the reopened stream plays at once, and
+    // at the rate of audio, not faster.
+    otherAudioPlaying = false;
+    const auto taken = stream.untilPlayed(recoveryLimit);
+    check(taken < recoveryLimit, "the reopened stream plays once nobody plays",
+        std::to_string(taken.count()) + " ms");
     seen = stream.window(500ms, 1500ms);
-    check(seen.playing(), "a stream the guest restarts plays without a resume",
+    check(seen.playing() && seen.nominal(),
+        "and plays at the rate of audio", seen.text());
+
+    // Closed while the interruption stands, then reopened once it has ended.
+    otherAudioPlaying = true;
+    postInterruptionBegan();
+    seen = stream.window(400ms, 1000ms);
+    check(seen.muted(), "a second interruption mutes the stream", seen.text());
+    stream.close();
+    postInterruptionEnded(true);
+    check(stream.open(), "the guest reopens the stream after the interruption");
+    otherAudioPlaying = false;
+    seen = stream.window(500ms, 1500ms);
+    check(seen.playing() && seen.nominal(),
+        "a stream reopened after the interruption plays at the rate of audio",
         seen.text());
-    check(stream.healthy(), "the restart failed no period");
+    check(stream.healthy(), "the restarts failed no period");
     stream.close();
 }
 
@@ -749,6 +972,74 @@ void destroyWhileInterrupted()
     stream.close();
 }
 
+// The guest's driver on the real device, across a suspend: the rate at which
+// its periods complete, in each state the sink can be in.
+void devicePaceAcrossSuspend()
+{
+    StderrCapture lines;
+    DeviceGuest guest;
+    otherAudioPlaying = false;
+    check(guest.open(), "the device stream opens");
+    auto seen = guest.window(300ms, 1500ms);
+    check(seen.nominal(), "the device stream plays at the rate of audio", seen.text());
+
+    for (const bool interrupted : {false, true}) {
+        otherAudioPlaying = interrupted;
+        if (interrupted)
+            postInterruptionBegan();
+        seen = guest.window(300ms, 1500ms);
+        guest.suspend();
+        check(guest.open(), "the device stream opens after a suspend");
+        seen = guest.window(300ms, 2500ms);
+        check(seen.nominal(), "the device stream keeps the rate of audio after a suspend",
+            seen.text());
+    }
+    otherAudioPlaying = false;
+    seen = guest.window(2500ms, 2000ms);
+    check(seen.nominal(), "and after the other app lets go", seen.text());
+    check(guest.errors() == 0, "the guest saw no error", std::to_string(guest.errors()));
+    guest.close();
+
+    // The session will not activate: the sink discards, the device paces.
+    activationsToFail = 1000000;
+    check(guest.open(), "the device stream opens with no session");
+    seen = guest.window(300ms, 2500ms);
+    check(seen.nominal(), "a stream with no session keeps the rate of audio", seen.text());
+    guest.suspend();
+    check(guest.open(), "the device stream reopens with no session");
+    seen = guest.window(300ms, 2500ms);
+    check(seen.nominal(), "and after a suspend", seen.text());
+    activationsToFail = 0;
+    guest.close();
+    const auto text = lines.finish();
+    check(StderrCapture::count(text, "Audio pace:") == 0,
+        "a guest that keeps the rate of audio draws no pace report");
+    check(StderrCapture::count(text, "Audio output unavailable (") == 1,
+        "an output that will not start is reported once");
+}
+
+// A guest whose periods arrive far faster than audio is reported, once, with
+// the sink saying who completed them: here nothing plays and the guest does
+// not wait, as a device that fails to pace would let it.
+void reportsAGuestThatRunsAhead()
+{
+    StderrCapture lines;
+    activationsToFail = 1000000;
+    {
+        Stream stream;
+        check(stream.open(), "a stream opens with no session");
+        // The guest writes every few milliseconds and the sink discards.
+        for (int round = 0; round < 300; ++round)
+            stream.pump(10ms);
+    }
+    activationsToFail = 0;
+    const auto text = lines.finish();
+    check(StderrCapture::count(text, "Audio pace:") == 1,
+        "a guest that runs ahead of audio is reported once");
+    check(StderrCapture::count(text, "Audio output unavailable (") == 1,
+        "and so is the output that will not start");
+}
+
 } // namespace
 
 int main()
@@ -763,6 +1054,8 @@ int main()
         interruptionBeforeStart();
         restartDuringInterruption();
         destroyWhileInterrupted();
+        devicePaceAcrossSuspend();
+        reportsAGuestThatRunsAhead();
     }
     std::printf("%s: %d failure(s)\n", failures == 0 ? "PASS" : "FAIL",
         failures);

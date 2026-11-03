@@ -53,14 +53,16 @@ final class ZstdUtil {
 
     typealias ProgressHandler = (DecompressionProgress) -> Void
 
-    private static let streamBufferSize = 1024 * 1024
-    private static let sparseBlockSize = 64 * 1024
+    nonisolated private static let streamBufferSize = 1024 * 1024
+    nonisolated private static let sparseBlockSize = 64 * 1024
 
     private struct OutputState {
         var logicalOffset: off_t = 0
         var pendingHoleOffset: off_t?
         var pendingHoleLength: off_t = 0
         var sparseBytesSkipped: UInt64 = 0
+
+        nonisolated init() {}
     }
 
     private init() {}
@@ -364,17 +366,27 @@ final class ZstdUtil {
         destinationURL: URL
     ) throws {
         guard let offset = state.pendingHoleOffset else { return }
-        var hole = fpunchhole_t(
-            fp_flags: 0,
-            reserved: 0,
-            fp_offset: offset,
-            fp_length: state.pendingHoleLength
-        )
-        guard Darwin.fcntl(descriptor, F_PUNCHHOLE, &hole) == 0 else {
-            throw posixError(
-                operation: "deallocate sparse output range",
-                url: destinationURL
+        // F_PUNCHHOLE takes whole filesystem blocks. A hole is only as aligned
+        // as the output chunks before it, so one that begins or ends inside a
+        // block leaves that block allocated, which reads as zeros either way.
+        var filesystem = statfs()
+        let block = Darwin.fstatfs(descriptor, &filesystem) == 0 &&
+            filesystem.f_bsize > 0 ? off_t(filesystem.f_bsize) : 4096
+        let start = (offset + block - 1) / block * block
+        let end = (offset + state.pendingHoleLength) / block * block
+        if end > start {
+            var hole = fpunchhole_t(
+                fp_flags: 0,
+                reserved: 0,
+                fp_offset: start,
+                fp_length: end - start
             )
+            guard Darwin.fcntl(descriptor, F_PUNCHHOLE, &hole) == 0 else {
+                throw posixError(
+                    operation: "deallocate sparse output range",
+                    url: destinationURL
+                )
+            }
         }
         state.pendingHoleOffset = nil
         state.pendingHoleLength = 0

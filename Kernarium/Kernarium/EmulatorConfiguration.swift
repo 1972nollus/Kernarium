@@ -48,12 +48,22 @@ struct EmulatorConfiguration: Equatable {
         "KERNARIUM_GPU_BUDGET_ENGINE_MIB"
     static let gpuBudgetHeadroomEnvironmentKey =
         "KERNARIUM_GPU_BUDGET_HEADROOM_MIB"
-    // The values are pending the user's decision, so each adds nothing to the
-    // sum: the budget is then half the guest's memory, except where the
-    // application's memory limit leaves the guest less than that.
-    static let defaultGPUBudgetApplicationMiB = 0
-    static let defaultGPUBudgetEngineMiB = 0
-    static let defaultGPUBudgetHeadroomMiB = 0
+    // They default to the launch set of runtime/guest_memory_budget.hpp, which
+    // the loader answers without a runtime. Its values are pending the user's
+    // decision, so each adds nothing to the sum: the budget is then half the
+    // guest's memory, except where the application's memory limit leaves the
+    // guest less than that.
+    private static let launchMemorySet =
+        kernarium_runtime_loader_launch_memory_set()
+    static var defaultGPUBudgetApplicationMiB: Int {
+        Int(launchMemorySet.application_mib)
+    }
+    static var defaultGPUBudgetEngineMiB: Int {
+        Int(launchMemorySet.engine_mib)
+    }
+    static var defaultGPUBudgetHeadroomMiB: Int {
+        Int(launchMemorySet.headroom_mib)
+    }
     static let gpuBudgetParameterRangeMiB = 0...16384
     static let guestMemoryRangeMiB = 512...4096
     static let guestMemoryStepMiB = 64
@@ -95,6 +105,64 @@ struct EmulatorConfiguration: Equatable {
     var gpuBudgetEngineMiB = defaultGPUBudgetEngineMiB
     var gpuBudgetHeadroomMiB = defaultGPUBudgetHeadroomMiB
 
+    /// The most guest RAM, in MiB, for a vCPU count under A, E_rest and S in
+    /// MiB (the three that follow the count).
+    typealias GuestMemoryBound = (
+        _ vCPUCount: Int,
+        _ application: Int,
+        _ engine: Int,
+        _ headroom: Int
+    ) -> Int
+
+    /// What the system allows: the runtime's own budget formula, read through
+    /// the loader against the memory limit the system sets this process, 4096
+    /// where it sets none (a Mac).
+    static let systemGuestMemoryBound: GuestMemoryBound = {
+        vCPUCount, application, engine, headroom in
+        Int(kernarium_runtime_loader_maximum_guest_memory_mib(
+            UInt32(clamping: max(vCPUCount, 1)),
+            kernarium_launch_memory_set(
+                application_mib: UInt32(clamping: application),
+                engine_mib: UInt32(clamping: engine),
+                headroom_mib: UInt32(clamping: headroom)
+            )
+        ))
+    }
+
+    /// The most guest RAM the settings offer at `vCPUCount` vCPUs: a size of
+    /// the stepper's range that leaves the host GPU its floor under the
+    /// memory limit. Each added vCPU holds more of the process's memory, so
+    /// the bound falls as the count rises.
+    func maximumGuestMemoryMiB(
+        vCPUCount: Int,
+        bound: GuestMemoryBound = EmulatorConfiguration.systemGuestMemoryBound
+    ) -> Int {
+        Self.steppedGuestMemoryMiB(
+            bound(
+                vCPUCount,
+                gpuBudgetApplicationMiB,
+                gpuBudgetEngineMiB,
+                gpuBudgetHeadroomMiB
+            ),
+            rounding: .down
+        )
+    }
+
+    /// Takes guest RAM down to the bound of the vCPU count after the count
+    /// went from `oldCount` to the current one. Raising the count lowers the
+    /// bound, so RAM above it comes down to it, in the stepper's steps;
+    /// lowering the count raises the bound and leaves RAM as it is.
+    mutating func vCPUCountChanged(
+        from oldCount: Int,
+        bound: GuestMemoryBound = EmulatorConfiguration.systemGuestMemoryBound
+    ) {
+        guard vCPUCount > oldCount else { return }
+        guestMemoryMiB = min(
+            guestMemoryMiB,
+            maximumGuestMemoryMiB(vCPUCount: vCPUCount, bound: bound)
+        )
+    }
+
     static var physicalProcessorCount: Int {
         max(ProcessInfo.processInfo.processorCount, 1)
     }
@@ -107,11 +175,16 @@ struct EmulatorConfiguration: Equatable {
         )
     }
 
+    /// `guestMemoryBound` gives the most guest RAM for a vCPU count; a stored
+    /// or default size above it for the loaded count is taken down to it. A
+    /// size the environment states is kept as stated, for automation.
     static func load(
         defaults: UserDefaults,
         physicalProcessorCount: Int,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        documentsDirectory: URL = RootfsImage.documentsDirectory
+        documentsDirectory: URL = RootfsImage.documentsDirectory,
+        guestMemoryBound: GuestMemoryBound =
+            EmulatorConfiguration.systemGuestMemoryBound
     ) -> Self {
         let maximumVCPUCount = max(physicalProcessorCount, 1)
         func stored(_ key: String, _ fallback: Int) -> Int {
@@ -176,18 +249,43 @@ struct EmulatorConfiguration: Equatable {
         )
         let environmentAndroidBootMode = environment[
             AndroidBootMode.environmentKey
-        ].flatMap(AndroidBootMode.init(environmentValue:))
+        ].flatMap { AndroidBootMode(environmentValue: $0) }
 
         let rootfsFilename = RootfsImage.validatedFilename(
             storedRootfsFilename
         ) ?? RootfsImage.defaultFilename
 
-        return Self(
-            vCPUCount: environmentVCPUCount ?? min(
-                max(storedVCPUCount, 1), maximumVCPUCount
+        let vCPUCount = environmentVCPUCount ?? min(
+            max(storedVCPUCount, 1), maximumVCPUCount
+        )
+        let gpuBudgetApplicationMiB = environmentInteger(
+            environment[gpuBudgetApplicationEnvironmentKey],
+            in: gpuBudgetParameterRangeMiB
+        ) ?? defaultGPUBudgetApplicationMiB
+        let gpuBudgetEngineMiB = environmentInteger(
+            environment[gpuBudgetEngineEnvironmentKey],
+            in: gpuBudgetParameterRangeMiB
+        ) ?? defaultGPUBudgetEngineMiB
+        let gpuBudgetHeadroomMiB = environmentInteger(
+            environment[gpuBudgetHeadroomEnvironmentKey],
+            in: gpuBudgetParameterRangeMiB
+        ) ?? defaultGPUBudgetHeadroomMiB
+        let maximumGuestMemoryMiB = steppedGuestMemoryMiB(
+            guestMemoryBound(
+                vCPUCount,
+                gpuBudgetApplicationMiB,
+                gpuBudgetEngineMiB,
+                gpuBudgetHeadroomMiB
             ),
-            guestMemoryMiB: environmentGuestMemoryMiB ??
+            rounding: .down
+        )
+
+        return Self(
+            vCPUCount: vCPUCount,
+            guestMemoryMiB: environmentGuestMemoryMiB ?? min(
                 normalizedGuestMemoryMiB(storedGuestMemoryMiB),
+                maximumGuestMemoryMiB
+            ),
             overlaySizeGiB: environmentOverlaySizeGiB ?? min(
                 max(storedOverlaySizeGiB, overlaySizeRangeGiB.lowerBound),
                 overlaySizeRangeGiB.upperBound
@@ -204,18 +302,9 @@ struct EmulatorConfiguration: Equatable {
             autoResizeGuest: environmentAutoResizeGuest ??
                 storedAutoResizeGuest,
             androidBootMode: environmentAndroidBootMode ?? storedAndroidBootMode,
-            gpuBudgetApplicationMiB: environmentInteger(
-                environment[gpuBudgetApplicationEnvironmentKey],
-                in: gpuBudgetParameterRangeMiB
-            ) ?? defaultGPUBudgetApplicationMiB,
-            gpuBudgetEngineMiB: environmentInteger(
-                environment[gpuBudgetEngineEnvironmentKey],
-                in: gpuBudgetParameterRangeMiB
-            ) ?? defaultGPUBudgetEngineMiB,
-            gpuBudgetHeadroomMiB: environmentInteger(
-                environment[gpuBudgetHeadroomEnvironmentKey],
-                in: gpuBudgetParameterRangeMiB
-            ) ?? defaultGPUBudgetHeadroomMiB
+            gpuBudgetApplicationMiB: gpuBudgetApplicationMiB,
+            gpuBudgetEngineMiB: gpuBudgetEngineMiB,
+            gpuBudgetHeadroomMiB: gpuBudgetHeadroomMiB
         )
     }
 
@@ -235,15 +324,29 @@ struct EmulatorConfiguration: Equatable {
     }
 
     private static func normalizedGuestMemoryMiB(_ value: Int) -> Int {
+        steppedGuestMemoryMiB(value, rounding: .nearest)
+    }
+
+    /// `value` taken into the stepper's range and onto its steps.
+    private static func steppedGuestMemoryMiB(
+        _ value: Int,
+        rounding: Rounding
+    ) -> Int {
         let clamped = min(
             max(value, guestMemoryRangeMiB.lowerBound),
             guestMemoryRangeMiB.upperBound
         )
         let offset = clamped - guestMemoryRangeMiB.lowerBound
-        let roundedSteps = (offset + guestMemoryStepMiB / 2) /
-            guestMemoryStepMiB
-        return guestMemoryRangeMiB.lowerBound +
-            roundedSteps * guestMemoryStepMiB
+        let steps = switch rounding {
+        case .nearest: (offset + guestMemoryStepMiB / 2) / guestMemoryStepMiB
+        case .down: offset / guestMemoryStepMiB
+        }
+        return guestMemoryRangeMiB.lowerBound + steps * guestMemoryStepMiB
+    }
+
+    private enum Rounding {
+        case nearest
+        case down
     }
 
     private static func environmentInteger(

@@ -551,7 +551,8 @@ struct KernariumTests {
 
         let configuration = EmulatorConfiguration.load(
             defaults: defaults,
-            physicalProcessorCount: 6
+            physicalProcessorCount: 6,
+            guestMemoryBound: Self.unboundedGuestMemory
         )
 
         #expect(configuration.vCPUCount == 6)
@@ -590,7 +591,8 @@ struct KernariumTests {
         #expect(
             EmulatorConfiguration.load(
                 defaults: defaults,
-                physicalProcessorCount: 6
+                physicalProcessorCount: 6,
+                guestMemoryBound: Self.unboundedGuestMemory
             ).guestMemoryMiB == 2048
         )
     }
@@ -613,7 +615,8 @@ struct KernariumTests {
         #expect(
             EmulatorConfiguration.load(
                 defaults: defaults,
-                physicalProcessorCount: 6
+                physicalProcessorCount: 6,
+                guestMemoryBound: Self.unboundedGuestMemory
             ) == EmulatorConfiguration(
                 vCPUCount: 4,
                 guestMemoryMiB: 2048,
@@ -633,7 +636,8 @@ struct KernariumTests {
         defaults.set("../phosh.erofs", forKey: "emulator.rootfsFilename")
         let normalized = EmulatorConfiguration.load(
             defaults: defaults,
-            physicalProcessorCount: 6
+            physicalProcessorCount: 6,
+            guestMemoryBound: Self.unboundedGuestMemory
         )
         #expect(normalized.vCPUCount == 6)
         #expect(normalized.guestMemoryMiB == 1024)
@@ -731,6 +735,210 @@ struct KernariumTests {
                 physicalProcessorCount: 6
             ).gpuBudgetApplicationMiB == 0
         )
+    }
+
+    /// No bound at all: a host that sets no memory limit.
+    private static let unboundedGuestMemory: EmulatorConfiguration
+        .GuestMemoryBound = { _, _, _, _ in 4096 }
+
+    /// The iPad mini 6's 2,867 MiB with main's launch set (A, E_rest and S
+    /// of zero), the rows the runtime's own formula gives at 1 through 6 vCPUs.
+    private static let mainGuestMemoryRows = [
+        1: 2240, 2: 2240, 3: 2176, 4: 2176, 5: 2112, 6: 2112,
+    ]
+    private static let mainGuestMemoryBound: EmulatorConfiguration
+        .GuestMemoryBound = { vCPUCount, _, _, _ in
+        mainGuestMemoryRows[vCPUCount] ?? 2112
+    }
+
+    @Test
+    func theLoaderGivesTheRuntimesGuestMemoryMaximumPerVCPUCount() {
+        func maximums(_ set: kernarium_launch_memory_set) -> [Int] {
+            (1...8).map { vCPUs in
+                Int(kernarium_runtime_loader_maximum_guest_memory_mib_for_limit(
+                    2867 << 20, UInt32(vCPUs), set
+                ))
+            }
+        }
+        // Main's set counts none of A, E_rest and S.
+        let none = kernarium_launch_memory_set(
+            application_mib: 0, engine_mib: 0, headroom_mib: 0
+        )
+        #expect(maximums(none) == [2240, 2240, 2176, 2176, 2112, 2112, 2112, 2112])
+        // The candidate sets of the user's pending choice.
+        #expect(
+            maximums(kernarium_launch_memory_set(
+                application_mib: 56, engine_mib: 563, headroom_mib: 64
+            )) == [1600, 1536, 1536, 1472, 1472, 1472, 1408, 1408]
+        )
+        #expect(
+            maximums(kernarium_launch_memory_set(
+                application_mib: 64, engine_mib: 604, headroom_mib: 128
+            )) == [1472, 1408, 1408, 1344, 1344, 1344, 1280, 1280]
+        )
+        #expect(
+            maximums(kernarium_launch_memory_set(
+                application_mib: 80, engine_mib: 644, headroom_mib: 192
+            )) == [1344, 1344, 1280, 1216, 1216, 1216, 1216, 1216]
+        )
+        // No limit: the whole range, whatever the vCPU count.
+        for vCPUs: UInt32 in [0, 1, 6, 8, 64] {
+            #expect(
+                kernarium_runtime_loader_maximum_guest_memory_mib_for_limit(
+                    0, vCPUs, none
+                ) == 4096
+            )
+        }
+        // The launch set the loader reports is the one the defaults follow.
+        let launch = kernarium_runtime_loader_launch_memory_set()
+        #expect(
+            Int(launch.application_mib) ==
+                EmulatorConfiguration.defaultGPUBudgetApplicationMiB
+        )
+        #expect(
+            Int(launch.engine_mib) ==
+                EmulatorConfiguration.defaultGPUBudgetEngineMiB
+        )
+        #expect(
+            Int(launch.headroom_mib) ==
+                EmulatorConfiguration.defaultGPUBudgetHeadroomMiB
+        )
+        // The system's own answer is some size of the stepper's range.
+        let system = EmulatorConfiguration(
+            vCPUCount: 4, guestMemoryMiB: 1024, overlaySizeGiB: 8,
+            androidDiskSizeGiB: 8, rootfsFilename: "x.erofs",
+            retinaMode: false, autoResizeGuest: true, androidBootMode: .automatic
+        ).maximumGuestMemoryMiB(vCPUCount: 4)
+        #expect(EmulatorConfiguration.guestMemoryRangeMiB.contains(system))
+        #expect(
+            (system - EmulatorConfiguration.guestMemoryRangeMiB.lowerBound) %
+                EmulatorConfiguration.guestMemoryStepMiB == 0
+        )
+    }
+
+    @Test
+    func aStoredOrDefaultGuestMemoryAboveTheMaximumComesDownOnLoad() {
+        let (defaults, suiteName) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        // Nothing stored: the default, or the maximum where that is less.
+        let defaultMiB = EmulatorConfiguration.defaultGuestMemoryMiB
+        for (bound, expected) in [(4096, defaultMiB), (1344, 1344), (512, 512)] {
+            #expect(
+                EmulatorConfiguration.load(
+                    defaults: defaults,
+                    physicalProcessorCount: 6,
+                    guestMemoryBound: { _, _, _, _ in bound }
+                ).guestMemoryMiB == min(defaultMiB, expected)
+            )
+        }
+
+        // A stored size is taken down to the maximum of the loaded count and
+        // kept below it, whatever the count.
+        defaults.set(2240, forKey: "emulator.guestMemoryMiB")
+        for (vCPUs, expected) in [
+            (1, 2240), (2, 2240), (3, 2176), (4, 2176), (5, 2112), (6, 2112),
+        ] {
+            defaults.set(vCPUs, forKey: "emulator.vCPUCount")
+            #expect(
+                EmulatorConfiguration.load(
+                    defaults: defaults,
+                    physicalProcessorCount: 6,
+                    guestMemoryBound: Self.mainGuestMemoryBound
+                ).guestMemoryMiB == expected
+            )
+        }
+        defaults.set(1792, forKey: "emulator.guestMemoryMiB")
+        #expect(
+            EmulatorConfiguration.load(
+                defaults: defaults,
+                physicalProcessorCount: 6,
+                guestMemoryBound: Self.mainGuestMemoryBound
+            ).guestMemoryMiB == 1792
+        )
+
+        // The bound sees the vCPU count the environment states and the launch
+        // parameters, and a size the environment states is kept as stated.
+        var seen: [Int] = []
+        let loaded = EmulatorConfiguration.load(
+            defaults: defaults,
+            physicalProcessorCount: 6,
+            environment: [
+                EmulatorConfiguration.vCPUEnvironmentKey: "3",
+                EmulatorConfiguration.gpuBudgetApplicationEnvironmentKey: "60",
+                EmulatorConfiguration.gpuBudgetEngineEnvironmentKey: "600",
+                EmulatorConfiguration.gpuBudgetHeadroomEnvironmentKey: "100",
+            ],
+            guestMemoryBound: { vCPUs, application, engine, headroom in
+                seen = [vCPUs, application, engine, headroom]
+                return 1024
+            }
+        )
+        #expect(seen == [3, 60, 600, 100])
+        #expect(loaded.guestMemoryMiB == 1024)
+        #expect(
+            EmulatorConfiguration.load(
+                defaults: defaults,
+                physicalProcessorCount: 6,
+                environment: [
+                    EmulatorConfiguration.guestMemoryEnvironmentKey: "4096"
+                ],
+                guestMemoryBound: Self.mainGuestMemoryBound
+            ).guestMemoryMiB == 4096
+        )
+    }
+
+    @Test
+    func raisingTheVCPUCountTakesGuestMemoryDownToTheNewMaximum() {
+        var configuration = EmulatorConfiguration(
+            vCPUCount: 1, guestMemoryMiB: 2240, overlaySizeGiB: 8,
+            androidDiskSizeGiB: 8, rootfsFilename: "x.erofs",
+            retinaMode: false, autoResizeGuest: true, androidBootMode: .automatic
+        )
+        let bound = Self.mainGuestMemoryBound
+        #expect(
+            configuration.maximumGuestMemoryMiB(vCPUCount: 1, bound: bound) ==
+                2240
+        )
+        #expect(
+            configuration.maximumGuestMemoryMiB(vCPUCount: 6, bound: bound) ==
+                2112
+        )
+
+        // Raising the count clamps, in the stepper's steps.
+        configuration.vCPUCount = 3
+        configuration.vCPUCountChanged(from: 1, bound: bound)
+        #expect(configuration.guestMemoryMiB == 2176)
+        configuration.vCPUCount = 6
+        configuration.vCPUCountChanged(from: 3, bound: bound)
+        #expect(configuration.guestMemoryMiB == 2112)
+        #expect(configuration.guestMemoryMiB % 64 == 0)
+
+        // Lowering it leaves the size alone, even above the new maximum of a
+        // size the environment stated.
+        configuration.vCPUCount = 1
+        configuration.vCPUCountChanged(from: 6, bound: bound)
+        #expect(configuration.guestMemoryMiB == 2112)
+        configuration.guestMemoryMiB = 4096
+        configuration.vCPUCount = 1
+        configuration.vCPUCountChanged(from: 2, bound: bound)
+        #expect(configuration.guestMemoryMiB == 4096)
+
+        // A size under the new maximum stays as it is.
+        configuration.guestMemoryMiB = 1024
+        configuration.vCPUCount = 8
+        configuration.vCPUCountChanged(from: 1, bound: bound)
+        #expect(configuration.guestMemoryMiB == 1024)
+
+        // The maximum is a size of the stepper's range, whatever the bound
+        // says.
+        for (said, expected) in [(0, 512), (600, 576), (2150, 2112), (99999, 4096)] {
+            #expect(
+                configuration.maximumGuestMemoryMiB(
+                    vCPUCount: 4, bound: { _, _, _, _ in said }
+                ) == expected
+            )
+        }
     }
 
     @Test
@@ -872,7 +1080,8 @@ struct KernariumTests {
                 EmulatorConfiguration.retinaEnvironmentKey: "0",
                 EmulatorConfiguration.autoResizeGuestEnvironmentKey: "1",
                 AndroidBootMode.environmentKey: "recovery"
-            ]
+            ],
+            guestMemoryBound: Self.unboundedGuestMemory
         )
         #expect(selected.vCPUCount == 4)
         #expect(selected.guestMemoryMiB == 1536)
@@ -891,7 +1100,8 @@ struct KernariumTests {
                 EmulatorConfiguration.retinaEnvironmentKey: "false",
                 EmulatorConfiguration.autoResizeGuestEnvironmentKey: "true",
                 AndroidBootMode.environmentKey: "invalid"
-            ]
+            ],
+            guestMemoryBound: Self.unboundedGuestMemory
         )
         #expect(invalid.vCPUCount == 2)
         #expect(invalid.guestMemoryMiB == 2048)
@@ -1054,6 +1264,35 @@ struct KernariumTests {
                 UInt64(Self.zstdOutputSize)
         )
         #expect(reports.last?.fractionCompleted == 1)
+    }
+
+    /// Two frames: 1000 bytes of 0xAB, then 200000 zeros and "END\n". The
+    /// hole starts and ends inside filesystem blocks, which F_PUNCHHOLE
+    /// refuses unless the range is rounded to whole blocks.
+    @Test
+    func zstdUtilPunchesHolesThatAreNotBlockAligned() throws {
+        let manager = FileManager.default
+        let directory = try makeScratchDirectory("zstd-unaligned")
+        defer { try? manager.removeItem(at: directory) }
+
+        let source = directory.appendingPathComponent("unaligned.zst")
+        let destination = directory.appendingPathComponent("unaligned.img")
+        try Data([
+            0x28, 0xB5, 0x2F, 0xFD, 0x60, 0xE8, 0x02, 0x4D, 0x00, 0x00,
+            0x10, 0xAB, 0xAB, 0x01, 0x00, 0xE3, 0x2B, 0x80, 0x05, 0x28,
+            0xB5, 0x2F, 0xFD, 0xA0, 0x44, 0x0D, 0x03, 0x00, 0x54, 0x00,
+            0x00, 0x10, 0x00, 0x00, 0x01, 0x00, 0xFB, 0xFF, 0x39, 0xC0,
+            0x02, 0x6D, 0x00, 0x00, 0x28, 0x00, 0x45, 0x4E, 0x44, 0x0A,
+            0x01, 0x00, 0x3C, 0x0D, 0x39, 0x10, 0x02,
+        ]).write(to: source)
+
+        try ZstdUtil.decompress(from: source, to: destination, sparse: true)
+
+        let output = try Data(contentsOf: destination)
+        #expect(output.count == 201_004)
+        #expect(output.prefix(1000).allSatisfy { $0 == 0xAB })
+        #expect(output[1000..<201_000].allSatisfy { $0 == 0 })
+        #expect(output.suffix(4) == Data("END\n".utf8))
     }
 
     @Test

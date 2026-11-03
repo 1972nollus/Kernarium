@@ -10,9 +10,14 @@
 namespace uml::device {
 
 enum class GuestSuspension {
+	/* The guest runs, or no request reached it. A resume sends nothing. */
 	none,
-	managementStop,
+	/* The guest replied that it entered system suspend. */
 	system,
+	/* The guest may be suspended or running: the suspend did not reply within
+	 * its deadline, was aborted with a wake, and gave no final word. A resume
+	 * sends the wake. */
+	unconfirmed,
 };
 
 /*
@@ -86,19 +91,30 @@ guest_console_location();
 /*
  * Enters Linux system suspend, so devices, secondary CPUs, interrupts, and
  * timekeeping stop at a kernel-owned boundary, and sends the explicit wake
- * edge. Older kernels fall back to management-console stop/go.
+ * edge. Every maintained kernel has system suspend; the management console's
+ * own stop halts only the vCPU that takes it, so nothing replaces a suspend
+ * that fails.
  *
- * The returned mode records which resume command is required. The guest
+ * The returned mode records whether the wake request is required. The guest
  * replies to a suspend request once it has synced its filesystems, so the
- * request waits up to eight seconds for that reply, and a guest that reports
- * within them that it could not suspend is stopped instead. A request that has
- * not replied by then still selects system wake: timeout cannot prove that the
- * kernel did not already enter suspend. None means no request reached the
- * console. Resuming is best effort and reports nothing.
+ * whole request, its busy retries included, has one ten-second deadline from
+ * the first send. A guest that reports itself busy (EBUSY) is asked again every
+ * 250 ms for two seconds while the deadline leaves time for the answer. Any
+ * other refusal, or a busy guest that stays busy, logs that the guest keeps
+ * running, writes its filesystems back, and returns none.
+ *
+ * A request with no reply at the deadline is aborted, not trusted, because a
+ * guest whose freezer is held fails its suspend tens of seconds later. The
+ * request's socket stays open, a wake is sent, and the final reply is read for
+ * two seconds more, then the filesystems are written back. A reply that
+ * arrived before the wake decides: "suspended" is system. After the wake, a
+ * refusal is none (the guest is known to run), and "suspended" or silence is
+ * unconfirmed. None also means no request reached the console. Resuming is
+ * best effort and reports nothing, wakes a system or unconfirmed guest, and
+ * sends nothing for none.
  */
 [[nodiscard]] GuestSuspension suspend_guest(
-	unsigned int writeback_settle_ms,
-	unsigned int stop_settle_ms) noexcept;
+	unsigned int writeback_settle_ms) noexcept;
 void resume_guest(GuestSuspension suspension) noexcept;
 
 /*

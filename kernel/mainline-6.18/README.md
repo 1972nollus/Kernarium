@@ -611,8 +611,13 @@ signal may be running its vCPU's idle task.
 The Darwin network receive path uses NAPI, and the display-mapped absolute
 pointer is a direct touchscreen.
 Direct UBD images advertise discard ranges up to 128 MiB and service each range
-with one host hole punch. The project adds no behavior to upstream UML's COW
-implementation, and Apple launchers never construct a COW image pair.
+with one host hole punch. A UBD request carries its host I/O state in the data
+blk-mq allocates with the request, and the work item that runs it walks its
+segments itself, so accepting or running a request allocates no memory, even
+during writeback under memory pressure. `guest-ubd-request-memory` traces every
+allocation while it drives each kind of request. The project adds no behavior
+to upstream UML's COW implementation, and Apple launchers never construct a COW
+image pair.
 UML runs its exitcalls, which tear its drivers down, while the other vCPUs
 still run tasks, and `poweroff -f` leaves every task running. The UBD exitcall
 therefore quiesces every disk before it destroys the workqueue that runs their

@@ -7,7 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "../Runtime/KernariumRuntime.h"
+#include "../../Kernarium/Runtime/KernariumRuntime.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -71,10 +71,37 @@ int kernarium_runtime_loader_set_page_cache_trimming(int enabled);
  * -1 when no runtime is loaded. */
 int kernarium_runtime_loader_plan_gpu_budget(
     uint32_t guest_memory_mib,
+    uint32_t guest_processor_count,
     uint32_t application_mib,
     uint32_t engine_mib,
     uint32_t headroom_mib,
     kernarium_runtime_gpu_budget* plan);
+/* A, E_rest and S of the host GPU's budget in MiB: the launch parameters
+ * (runtime/guest_memory_budget.hpp). */
+typedef struct kernarium_launch_memory_set {
+    uint32_t application_mib;
+    uint32_t engine_mib;
+    uint32_t headroom_mib;
+} kernarium_launch_memory_set;
+
+/* The parameters a launch states unless it states its own. The loader answers
+ * the next two functions itself, from the same header the runtime's budget
+ * comes from: the runtime is loaded once, for the flavour a launch chooses, so
+ * the settings cannot ask it. */
+kernarium_launch_memory_set kernarium_runtime_loader_launch_memory_set(void);
+/* The most guest RAM, in MiB, the settings offer at `guest_processor_count`
+ * vCPUs with `parameters` (zero vCPUs count as one): the largest multiple of 64
+ * from 512 through 4096 that leaves the host GPU its 384 MiB floor under the
+ * memory limit the system sets this process. 4096 where the system sets none,
+ * the Mac included; 512 where even that leaves less than the floor. */
+uint32_t kernarium_runtime_loader_maximum_guest_memory_mib(
+    uint32_t guest_processor_count,
+    kernarium_launch_memory_set parameters);
+/* The same for a memory limit the caller states in bytes, zero for none. */
+uint32_t kernarium_runtime_loader_maximum_guest_memory_mib_for_limit(
+    uint64_t limit_bytes,
+    uint32_t guest_processor_count,
+    kernarium_launch_memory_set parameters);
 /* Turns the guest's microphone on (nonzero) or off (zero), as
  * kernarium_runtime_set_microphone_function does, and returns the resulting
  * KERNARIUM_RUNTIME_MICROPHONE_ value, or -1 when no runtime is loaded. It

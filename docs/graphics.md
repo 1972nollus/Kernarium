@@ -963,6 +963,54 @@ kernel within about 2% of its unordered time. The Mesa tests
 `kosmickrisp_image_atomic_order` and `kosmickrisp_msl_image_atomic_order`
 cover the order and the placement.
 
+A vertex or tessellation evaluation shader that writes memory and contains a
+loop runs as compute, and a generated vertex function rasterizes what it
+wrote. Apple GPUs kill a Metal vertex function invocation that runs for longer
+than about 10 ms and report a timeout, losing what the invocation had not yet
+done; a compute thread runs for far longer. On Apple7,
+`texture_cube_map_array.image_op_vertex_sh` and its tessellation evaluation
+twin copy a whole image from one invocation and land just past the limit,
+failing under Metal validation or on a busy GPU. That is KosmicKrisp's
+`KK_WORKAROUND_21`. Each kill is a GPU lockup that the system recovers from by
+discarding the in-flight work of every process on the GPU, WindowServer and
+other guests included, and Metal 4 reports those discards with the same
+timeout code. KosmicKrisp's report of a failed submission therefore adds the
+reason Metal nests under the error, which names a hang or a discard. A
+store-free shader is left alone: killed, it would lose its
+draw's rasterized output and set off that recovery, but no realistic one comes
+near the limit.
+The routed draws of a pass overlap as vertex functions do and cost about
+0.12 ms per pass segment and 0.3 us per draw on an M1 Ultra. The Mesa tests
+`kosmickrisp_vertex_compute_routing`, `kosmickrisp_long_vertex_invocation`
+and `kosmickrisp_vertex_compute_draws` cover the decision, invocations of
+50-100 ms and many routed draws in one pass.
+
+The device residency set holds every Metal heap, and Apple's residency sets
+make a heap's placed resources resident with it, so image textures need no
+entry of their own. Metal's API and shader validation check each texture a
+command buffer reaches by itself, though, and shader validation silently drops
+the image loads and stores it does not find; under it, a vertex shader copying
+a cube map array image read and wrote nothing. While a validation layer wraps
+the device, which its class shows at creation, KosmicKrisp therefore also
+registers the textures of bound images, image views and texel buffer views for
+their lifetimes. Without validation it registers none, since that costs about
+1.4 us per image view on an M1 Ultra. The Mesa test
+`kosmickrisp_validated_image_access` runs the copy under shader validation.
+Metal reads the residency sets of a queue while it commits to it, and a set's
+methods are not thread-safe; under shader validation the commit walks every
+heap of the device set, and a heap freed on another thread meanwhile crashed
+the process. Every queue commit therefore holds the lock that every write to
+the set holds, so a write waits for at most the commit in flight and a freed
+allocation still stops counting against the device when `vkFreeMemory`
+returns. The Mesa test `kosmickrisp_residency_commit_race` frees memory on one
+thread while another submits under shader validation.
+A cube or cube map array storage image is a 2D array view of its image, so
+every shader access to one, its size query and the bounds check in front of an
+image atomic included, reads the descriptor through the 2D array type. Metal
+answers a query through another texture type only by chance, and under shader
+validation it answers zero. The Mesa test `kosmickrisp_validated_cube_storage`
+runs atomics and size queries on cube images under shader validation.
+
 Linked graphics pipelines share native programs and dynamic vertex-input
 variants only while a live Vulkan pipeline owns them. The lookup cache drops
 its entry and releases those resources when the last pipeline owner is
@@ -1386,7 +1434,7 @@ and a Steam Big Picture boot together leave about 0.12 MB of index and 30 MB of
 data. Each entry's index record has the same size on the iPad and the Mac, so
 the same workload leaves the same index on both. At the limit the index costs a
 few MiB; the measured costs are beside `indexLimit` in
-`Kernarium/Kernarium/MetalShaderCache.swift`. Removing a full cache is quick,
+`GuestHost/Sources/MetalShaderCache.swift`. Removing a full cache is quick,
 and the next boot then compiles the host's own pipelines before the guest's
 first frame, and each workload compiles its shaders once more.
 

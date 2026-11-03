@@ -30,7 +30,7 @@ namespace uml::gpu {
  * leave about 0.12 MB of index and repeating them adds none, while an index
  * that Metal has let grow to its own ceiling, about 23 MB, costs around
  * 100 MiB. The same limit bounds Kernarium's cache
- * (Kernarium/Kernarium/MetalShaderCache.swift). */
+ * (GuestHost/Sources/MetalShaderCache.swift). */
 inline constexpr std::uint64_t metal_shader_cache_index_limit = 1'000'000;
 
 struct MetalShaderCacheSize final {

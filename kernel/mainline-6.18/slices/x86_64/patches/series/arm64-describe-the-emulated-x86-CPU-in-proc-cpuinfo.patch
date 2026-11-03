@@ -26,13 +26,18 @@ test executes the CPUID gadget for every leaf and fails if the emulator's
 table and its gadget disagree. The slice builds none of the arm64
 slices' /proc/cpuinfo printer.
 
+CPUID leaf 7 subleaf 1 EAX bit 4 is AVX-VNNI, which the host now
+reports and both x86 engines execute, so the emulated CPU's capability
+word 12 carries it and /proc/cpuinfo lists avx_vnni.
+
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- arch/arm64/um/asm/cpufeatures.h | 11 ++++++
+ arch/arm64/um/asm/cpufeatures.h | 11 +++++
  arch/um/kernel/Makefile         |  6 +++
- arch/um/kernel/um_arch.c        | 68 ++++++++++++++++++++++++++++++++-
- 3 files changed, 83 insertions(+), 2 deletions(-)
+ arch/um/kernel/um_arch.c        | 71 ++++++++++++++++++++++++++++++++-
+ 3 files changed, 86 insertions(+), 2 deletions(-)
 
 diff --git a/arch/arm64/um/asm/cpufeatures.h b/arch/arm64/um/asm/cpufeatures.h
 index c224dfb5c3ac46768c8ac1e0304ee6224193df36..3cb07f3bc42f64756253629f30dd397b743396c6 100644
@@ -77,7 +82,7 @@ index e60afe7d2769b4eff2b235a90018a2a91076a75a..aebeb60d6df01013937cacf77c263fb8
  
  obj-$(CONFIG_BLK_DEV_INITRD) += initrd.o
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index a350b79721d49850c56f2e1f4868323504cf54c7..77b6dad098412528b61dac90f02664b6568b5b71 100644
+index a350b79721d49850c56f2e1f4868323504cf54c7..fa4c6e480ec9a0206c07dbefbc3cb3a7c4eb4950 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -88,7 +88,7 @@ static const char * __maybe_unused uml_cpu_model_name(void)
@@ -89,7 +94,7 @@ index a350b79721d49850c56f2e1f4868323504cf54c7..77b6dad098412528b61dac90f02664b6
  /*
   * arm64 userspace reads this file in arm64 Linux's format
   * (arch/arm64/kernel/cpuinfo.c), and software chooses its instructions from
-@@ -198,6 +198,57 @@ static void show_arm64_cpuinfo(struct seq_file *m, int cpu)
+@@ -198,6 +198,60 @@ static void show_arm64_cpuinfo(struct seq_file *m, int cpu)
  }
  #endif
  
@@ -117,6 +122,7 @@ index a350b79721d49850c56f2e1f4868323504cf54c7..77b6dad098412528b61dac90f02664b6
 +#define UML_X86_CAPABILITY_1_ECX		4
 +#define UML_X86_CAPABILITY_8000_0001_ECX	6
 +#define UML_X86_CAPABILITY_7_0_EBX		9
++#define UML_X86_CAPABILITY_7_1_EAX		12
 +#define UML_X86_CAPABILITY_7_ECX		16
 +#define UML_X86_CAPABILITY_7_EDX		18
 +
@@ -134,6 +140,8 @@ index a350b79721d49850c56f2e1f4868323504cf54c7..77b6dad098412528b61dac90f02664b6
 +	capability[UML_X86_CAPABILITY_1_EDX] = 0x07888111;
 +	capability[UML_X86_CAPABILITY_1_ECX] = 0x7ed83203;
 +	capability[UML_X86_CAPABILITY_7_0_EBX] = 0x218c0329;
++	/* CPUID leaf 7 subleaf 1 EAX: AVX-VNNI, bit 4. */
++	capability[UML_X86_CAPABILITY_7_1_EAX] = 0x00000010;
 +	capability[UML_X86_CAPABILITY_7_ECX] = 0x00400000;
 +	capability[UML_X86_CAPABILITY_7_EDX] = 0x00000010;
 +	capability[UML_X86_CAPABILITY_8000_0001_ECX] = 0x00000020;
@@ -147,7 +155,7 @@ index a350b79721d49850c56f2e1f4868323504cf54c7..77b6dad098412528b61dac90f02664b6
  static int show_cpuinfo(struct seq_file *m, void *v)
  {
  	int i = 0;
-@@ -208,12 +259,21 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+@@ -208,12 +262,21 @@ static int show_cpuinfo(struct seq_file *m, void *v)
  		return 0;
  #endif
  
@@ -170,7 +178,7 @@ index a350b79721d49850c56f2e1f4868323504cf54c7..77b6dad098412528b61dac90f02664b6
  	seq_printf(m, "mode\t\t: skas\n");
  	seq_printf(m, "host\t\t: %s\n", host_info);
  	seq_printf(m, "fpu\t\t: %s\n", str_yes_no(cpu_has(&boot_cpu_data, X86_FEATURE_FPU)));
-@@ -564,7 +624,11 @@ int __init __no_stack_protector linux_main(int argc, char **argv, char **envp)
+@@ -564,7 +627,11 @@ int __init __no_stack_protector linux_main(int argc, char **argv, char **envp)
  	/* OS sanity checks that need to happen before the kernel runs */
  	os_early_checks();
  

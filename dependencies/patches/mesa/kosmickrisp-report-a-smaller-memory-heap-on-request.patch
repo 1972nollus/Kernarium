@@ -94,10 +94,10 @@ index b8132353702e9af3ae4020679ba71755bef6e825..b97f3e616386dd8f89f9d34b322e6c55
           }
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index d59901280f046ced86e3bb285da9090d7965f94a..897f40c6edb0038c4ab39a8ab5a298248a7a0d74 100644
+index 4e1365f48c3881ef42f66fa9d07d1a0f9677f07f..8fed05bdee0170c34c0a18b281bd5630df373801 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -388,6 +388,7 @@ if with_tests
+@@ -404,6 +404,7 @@ if with_tests
        ['address_binding_planes', []],
        ['drm_plane_offset', []],
        ['undescribed_format', []],

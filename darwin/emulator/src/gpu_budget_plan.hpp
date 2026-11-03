@@ -2,6 +2,7 @@
 #pragma once
 
 #include "platform/gpu_budget.hpp"
+#include "runtime/guest_memory_budget.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -13,12 +14,16 @@ namespace uml::emulator {
 
 /* The launch parameters of the host GPU's fixed budget
  * (platform/gpu_budget.hpp): A, the application's expected ceiling; E_rest,
- * the guest side's other memory beyond the gadget cache; and S, the headroom.
- * Their values are not chosen yet, so each defaults to zero. */
+ * the guest side's other memory beyond the gadget cache and the slot tags; and
+ * S, the headroom. Each defaults to the launch set
+ * (runtime/guest_memory_budget.hpp), whose values are not chosen yet. */
 struct GpuBudgetParameters final {
-	std::uint64_t application{};
-	std::uint64_t engine_rest{};
-	std::uint64_t headroom{};
+	std::uint64_t application{
+		::uml::runtime::guest_memory::launch_memory_set.application};
+	std::uint64_t engine_rest{
+		::uml::runtime::guest_memory::launch_memory_set.engine_rest};
+	std::uint64_t headroom{
+		::uml::runtime::guest_memory::launch_memory_set.headroom};
 
 	[[nodiscard]] bool operator==(const GpuBudgetParameters &) const = default;
 };
@@ -30,26 +35,30 @@ struct GpuBudgetPlan final {
 	std::uint64_t process_limit{};
 	/* G: the guest's RAM. */
 	std::uint64_t guest_memory{};
-	/* The gadget-cache budget the run will set (runtime::set_gadget_cache_budget)
-	 * plus E_rest. */
+	/* v: the guest's vCPUs. */
+	unsigned guest_cpus{1};
+	/* E: the gadget-cache budget the run will set
+	 * (runtime::set_gadget_cache_budget), the slot tags of the vCPUs and
+	 * E_rest (runtime/guest_memory_budget.hpp). */
 	std::uint64_t engine{};
 	GpuBudgetParameters parameters;
 };
 
-/* Evaluates the budget for a guest of `guest_memory` bytes whose launch
- * states `memory_limit_option` as the process's limit (--memory-limit=, zero
- * for none) and `gadget_cache_option` as the gadget cache's budget
- * (--gadget-cache-budget=, zero to derive it). The limit option is published
- * as the run will publish it, so the plan sees the limit the run will.
+/* Evaluates the budget for a guest of `guest_memory` bytes and `guest_cpus`
+ * vCPUs whose launch states `memory_limit_option` as the process's limit
+ * (--memory-limit=, zero for none) and `gadget_cache_option` as the gadget
+ * cache's budget (--gadget-cache-budget=, zero to derive it). The limit option
+ * is published as the run will publish it, so the plan sees the limit the run
+ * will.
  *
  * Both composition roots use this one function, before the GPU service is
  * created, so the macOS launcher and the iOS runtime cannot disagree. */
 [[nodiscard]] GpuBudgetPlan plan_gpu_budget(std::uint64_t guest_memory,
 	std::size_t memory_limit_option, std::size_t gadget_cache_option,
-	const GpuBudgetParameters &parameters);
+	unsigned guest_cpus, const GpuBudgetParameters &parameters);
 
-/* The same, reading mem=, --memory-limit= and --gadget-cache-budget= from the
- * arguments the emulator is about to be given. */
+/* The same, reading mem=, ncpus=, --memory-limit= and --gadget-cache-budget=
+ * from the arguments the emulator is about to be given. */
 [[nodiscard]] GpuBudgetPlan plan_gpu_budget(
 	const std::vector<std::string> &arguments,
 	const GpuBudgetParameters &parameters);

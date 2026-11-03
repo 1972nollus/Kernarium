@@ -5,6 +5,7 @@
 #include "require.hpp"
 #include "socket_paths.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -51,125 +52,335 @@ void requireOwnerOnly(const std::string &path)
 		(details.st_mode & 0777) == (S_IRUSR | S_IWUSR));
 }
 
-void observeRequests(int descriptor, std::vector<std::string> &requests)
+/* What the guest said, and when it arrived: the time since the first
+ * request. */
+struct Heard final {
+	std::string command;
+	std::chrono::milliseconds at;
+};
+
+using Reply = std::pair<std::uint32_t, std::string>;
+
+/* What a suspend-capable guest replies when it gave a suspend up, busy or
+ * for another reason, and to a writeback request. */
+const Reply busySuspend {1U, "Suspend failed: -16"};
+const Reply failedSuspend {1U, "Suspend failed: -5"};
+const Reply enteredSuspend {0U, "suspended"};
+const Reply writeback {0U, "SysRq : Emergency Sync"};
+
+/* Answers each request with what `policy` gives for it and its index, the
+ * first one only after `firstDelay`, and keeps listening for a while after the
+ * last, so that a request too many shows in the list. A reply whose request
+ * gave up finds no socket. */
+void answerAll(int descriptor, std::chrono::milliseconds firstDelay,
+	std::function<Reply(const std::string &, std::size_t)> policy,
+	std::vector<Heard> &heard)
 {
 	sockaddr_un client {};
 	socklen_t clientLength {};
-	/* suspend_guest sends its request at once. When it sends nothing, the
-	 * observer gives up so that the test fails on the result instead of
-	 * waiting here for ever. */
-	if (!awaitRequest(descriptor, 10000))
-		return;
-	requests.push_back(receiveRequest(descriptor, client, clientLength));
-
-	/* Past the host's wait for a suspend reply, so that a stop sent after
-	 * it gave up shows too. */
-	if (!awaitRequest(descriptor, 9500))
-		return;
-
-	requests.push_back(receiveRequest(descriptor, client, clientLength));
-	require(sendReply(descriptor, client, clientLength, 0U, "stopped"));
-}
-
-void aSuspendTimeoutCannotQueueLegacyStop()
-{
-	/* The run's directory exists before the guest binds its console. */
-	const ::uml::device::GuestConsoleRun run {true};
-	const auto path = consolePath();
-	const int server = bindServer(path);
-	std::vector<std::string> requests;
-	std::thread observer {observeRequests, server, std::ref(requests)};
-
-	const auto suspension = ::uml::device::suspend_guest(0U, 0U);
-	observer.join();
-	require(suspension == ::uml::device::GuestSuspension::system);
-	require(requests == std::vector<std::string> {"suspend"});
-	(void)::close(server);
-}
-
-/* Answers each request in turn with the next scripted reply, an error flag
- * and its text, the first one only after `firstDelay`, then records whatever
- * else arrives shortly after, unanswered, so that a request too many shows in
- * the list. A reply whose request gave up finds no socket, and its loss shows
- * in the requests that follow. */
-void answerInOrder(int descriptor, std::chrono::milliseconds firstDelay,
-	std::vector<std::pair<std::uint32_t, std::string>> answers,
-	std::vector<std::string> &requests)
-{
-	sockaddr_un client {};
-	socklen_t clientLength {};
-	for (const auto &[error, answer] : answers) {
-		if (!awaitRequest(descriptor, 10000))
-			return;
-		requests.push_back(receiveRequest(descriptor, client, clientLength));
-		if (requests.size() == 1U)
+	std::chrono::steady_clock::time_point first;
+	for (int wait = 10000; awaitRequest(descriptor, wait); wait = 500) {
+		const auto command = receiveRequest(descriptor, client, clientLength);
+		const auto now = std::chrono::steady_clock::now();
+		if (heard.empty())
+			first = now;
+		heard.push_back({command,
+			std::chrono::duration_cast<std::chrono::milliseconds>(
+				now - first)});
+		if (heard.size() == 1U)
 			std::this_thread::sleep_for(firstDelay);
-		(void)sendReply(descriptor, client, clientLength, error, answer);
+		const auto &[error, text] = policy(command, heard.size() - 1U);
+		(void)sendReply(descriptor, client, clientLength, error, text);
 	}
-	while (awaitRequest(descriptor, 500))
-		requests.push_back(receiveRequest(descriptor, client, clientLength));
 }
 
-/* What a suspend-capable guest replies when it gave a suspend up. */
-const std::pair<std::uint32_t, std::string> failedSuspend {
-	1U, "Suspend failed: -16"};
-const std::vector<std::pair<std::uint32_t, std::string>> failThenStop {
-	failedSuspend, {0U, "SysRq : Emergency Sync"}, {0U, "stopped"}};
-
-/* A guest that gives a suspend up is stopped instead. */
-void aFailedSuspendFallsBackToStop()
+/* Runs suspend_guest against a console that answers by `policy` and returns
+ * what the console heard. */
+std::vector<Heard> suspendAgainst(
+	std::function<Reply(const std::string &, std::size_t)> policy,
+	std::chrono::milliseconds firstDelay,
+	::uml::device::GuestSuspension &suspension)
 {
 	const ::uml::device::GuestConsoleRun run {true};
 	const int server = bindServer(consolePath());
-	std::vector<std::string> requests;
-	std::thread observer {answerInOrder, server,
-		std::chrono::milliseconds {0}, failThenStop, std::ref(requests)};
-	const auto suspension = ::uml::device::suspend_guest(0U, 0U);
+	std::vector<Heard> heard;
+	std::thread observer {answerAll, server, firstDelay, std::move(policy),
+		std::ref(heard)};
+	suspension = ::uml::device::suspend_guest(0U);
 	observer.join();
-	require(suspension == ::uml::device::GuestSuspension::managementStop);
-	require(requests ==
-		std::vector<std::string> {"suspend", "sysrq s", "stop"});
 	requireOwnerOnly(consolePath());
 	(void)::close(server);
+	return heard;
+}
+
+std::vector<std::string> commandsOf(const std::vector<Heard> &heard)
+{
+	std::vector<std::string> commands;
+	for (const auto &entry : heard)
+		commands.push_back(entry.command);
+	return commands;
+}
+
+/* A console whose suspend does not reply in time. It records what it hears,
+ * with the time since the first request, remembers where each suspend came
+ * from, and answers a wake with "running" and a writeback request as a guest
+ * does. What it says to a suspend's address, and when, is the scenario's. */
+struct HeldSuspend final {
+	/* Sent to the first suspend's address once this long after the request
+	 * arrived; nothing when it is empty. */
+	std::optional<Reply> firstReply;
+	std::chrono::milliseconds firstReplyAfter {0};
+	/* Sent to the latest suspend's address right after the first wake is
+	 * answered: the final word of a suspend the wake aborted. */
+	std::optional<Reply> replyToWake;
+};
+
+struct Held final {
+	std::vector<Heard> heard;
+	/* Whether each send to a suspend's address reached it: a client that
+	 * gave up has removed its socket. */
+	std::vector<bool> sent;
+};
+
+void serveHeldSuspend(int server, const HeldSuspend &scenario,
+	const std::atomic_bool &done, Held &held)
+{
+	sockaddr_un client {};
+	socklen_t clientLength {};
+	sockaddr_un suspendClient {};
+	socklen_t suspendClientLength {};
+	sockaddr_un firstClient {};
+	socklen_t firstClientLength {};
+	std::chrono::steady_clock::time_point first;
+	std::chrono::steady_clock::time_point firstReplyAt;
+	bool firstReplyPending = false;
+	std::size_t suspends = 0U;
+	bool wakeAnswered = false;
+	while (!done.load()) {
+		if (firstReplyPending &&
+		    std::chrono::steady_clock::now() >= firstReplyAt) {
+			firstReplyPending = false;
+			held.sent.push_back(sendReply(server, firstClient,
+				firstClientLength, scenario.firstReply->first,
+				scenario.firstReply->second));
+		}
+		if (!awaitRequest(server, 20))
+			continue;
+		const auto command = receiveRequest(server, client, clientLength);
+		const auto now = std::chrono::steady_clock::now();
+		if (held.heard.empty())
+			first = now;
+		held.heard.push_back({command,
+			std::chrono::duration_cast<std::chrono::milliseconds>(
+				now - first)});
+		if (command == "suspend") {
+			suspendClient = client;
+			suspendClientLength = clientLength;
+			if (++suspends == 1U && scenario.firstReply) {
+				firstClient = client;
+				firstClientLength = clientLength;
+				firstReplyAt = now + scenario.firstReplyAfter;
+				firstReplyPending = true;
+			}
+		} else if (command == "wake") {
+			require(sendReply(server, client, clientLength, 0U, "running"));
+			if (scenario.replyToWake && !wakeAnswered) {
+				wakeAnswered = true;
+				held.sent.push_back(sendReply(server, suspendClient,
+					suspendClientLength, scenario.replyToWake->first,
+					scenario.replyToWake->second));
+			}
+		} else if (command == "sysrq s") {
+			require(sendReply(server, client, clientLength, writeback.first,
+				writeback.second));
+		}
+	}
+}
+
+/* Runs suspend_guest and the resume that follows it against such a console
+ * and returns what the console heard. */
+Held holdSuspend(const HeldSuspend &scenario,
+	::uml::device::GuestSuspension &suspension)
+{
+	const ::uml::device::GuestConsoleRun run {true};
+	const int server = bindServer(consolePath());
+	Held held;
+	std::atomic_bool done {false};
+	std::thread console {serveHeldSuspend, server, std::cref(scenario),
+		std::cref(done), std::ref(held)};
+	suspension = ::uml::device::suspend_guest(0U);
+	::uml::device::resume_guest(suspension);
+	/* A request too many shows too. */
+	std::this_thread::sleep_for(std::chrono::milliseconds {300});
+	done.store(true);
+	console.join();
+	(void)::close(server);
+	return held;
+}
+
+const std::vector<std::string> abortedAndWritten {
+	"suspend", "wake", "sysrq s"};
+const std::vector<std::string> abortedWrittenAndWoken {
+	"suspend", "wake", "sysrq s", "wake"};
+
+/* A suspend with no reply at its deadline is aborted with a wake, not taken
+ * for a suspended guest, and the final word of the request is read from its
+ * own socket, which stays open for it: a freezer that cannot finish refuses
+ * the suspend long after the host's wait. A refusal is a guest known to run,
+ * which the resume leaves alone. */
+void aSuspendThatDoesNotReplyIsAborted()
+{
+	auto suspension = ::uml::device::GuestSuspension::system;
+	const auto held = holdSuspend(
+		{.replyToWake = busySuspend}, suspension);
+	require(suspension == ::uml::device::GuestSuspension::none);
+	require(commandsOf(held.heard) == abortedAndWritten);
+	/* One deadline for the whole suspend, from the request. */
+	require(held.heard[1].at >= std::chrono::milliseconds {9500} &&
+		held.heard[1].at < std::chrono::milliseconds {11000});
+	require(held.sent == std::vector<bool> {true},
+		"the late refusal reached the request's socket");
+}
+
+/* A guest that says nothing after the wake may be asleep or running. */
+void aSilentSuspendIsUnconfirmed()
+{
+	auto suspension = ::uml::device::GuestSuspension::system;
+	const auto held = holdSuspend({}, suspension);
+	require(suspension == ::uml::device::GuestSuspension::unconfirmed);
+	require(commandsOf(held.heard) == abortedWrittenAndWoken,
+		"the resume wakes an unconfirmed guest");
+	require(held.heard[1].at >= std::chrono::milliseconds {9500} &&
+		held.heard[1].at < std::chrono::milliseconds {11000});
+}
+
+/* The guest replies "suspended" before it checks for a wake, so the word does
+ * not prove the sleep once the wake has been sent. */
+void aSuspendedReplyAfterTheWakeIsUnconfirmed()
+{
+	auto suspension = ::uml::device::GuestSuspension::system;
+	const auto held = holdSuspend(
+		{.replyToWake = enteredSuspend}, suspension);
+	require(suspension == ::uml::device::GuestSuspension::unconfirmed);
+	require(commandsOf(held.heard) == abortedWrittenAndWoken,
+		"the resume wakes an unconfirmed guest");
+	require(held.sent == std::vector<bool> {true});
+}
+
+/* A busy refusal late in the wait does not start a wait of its own: the
+ * retry's reply is awaited only until the one deadline. */
+void aBusyRetryCannotOutlastTheDeadline()
+{
+	auto suspension = ::uml::device::GuestSuspension::system;
+	const auto held = holdSuspend(
+		{.firstReply = busySuspend,
+		 .firstReplyAfter = std::chrono::milliseconds {7900}},
+		suspension);
+	require(suspension == ::uml::device::GuestSuspension::unconfirmed);
+	require(commandsOf(held.heard) == std::vector<std::string> {
+		"suspend", "suspend", "wake", "sysrq s", "wake"});
+	require(held.heard[2].at >= std::chrono::milliseconds {9500} &&
+		held.heard[2].at < std::chrono::milliseconds {10500},
+		"the wake follows the deadline, not the retry's own wait");
+}
+
+/* Every guest is refused its first suspend busy: it is asked again every
+ * 250 ms for two seconds after the first refusal, nothing stops it, and when
+ * it stays busy it is left running after the writeback. `refusedAt` is when
+ * the first refusal reached the host. */
+void requireRetriedUntilTheDeadline(const std::vector<Heard> &heard,
+	std::chrono::milliseconds refusedAt)
+{
+	require(heard.size() >= 4U, "a busy guest is asked again");
+	std::size_t suspends = 0U;
+	for (const auto &entry : heard) {
+		require(entry.command == "suspend" || entry.command == "sysrq s",
+			"nothing but suspends and the writeback is sent, never a stop");
+		suspends += entry.command == "suspend" ? 1U : 0U;
+	}
+	require(heard.back().command == "sysrq s" &&
+		suspends == heard.size() - 1U, "the writeback comes last");
+	/* The first retry waits out the interval, and no retry follows the
+	 * deadline: seven fit in two seconds, whatever the host's load adds. */
+	require(heard[1].at >= refusedAt + std::chrono::milliseconds {200});
+	const auto &lastSuspend = heard[heard.size() - 2U];
+	require(lastSuspend.at < refusedAt + std::chrono::milliseconds {3000},
+		"a busy guest is asked only within the deadline");
+	require(suspends <= 8U);
+}
+
+/* A guest that stays busy is retried until the deadline and then left
+ * running, never stopped. */
+void aBusySuspendIsRetriedUntilTheDeadline()
+{
+	auto suspension = ::uml::device::GuestSuspension::system;
+	const auto heard = suspendAgainst(
+		[](const std::string &command, std::size_t) {
+			return command == "sysrq s" ? writeback : busySuspend;
+		},
+		std::chrono::milliseconds {0}, suspension);
+	require(suspension == ::uml::device::GuestSuspension::none);
+	requireRetriedUntilTheDeadline(heard, std::chrono::milliseconds {0});
 }
 
 /* The guest replies to a suspend only after syncing its filesystems, so a
- * failure can arrive seconds after the request; the guest still runs then and
- * is stopped instead. */
-void aLateSuspendFailureFallsBackToStop()
+ * refusal can arrive seconds after the request. The two seconds start with
+ * the refusal. */
+void aLateBusyRefusalIsRetriedOnlyWithinTheDeadline()
 {
-	const ::uml::device::GuestConsoleRun run {true};
-	const int server = bindServer(consolePath());
-	std::vector<std::string> requests;
-	std::thread observer {answerInOrder, server,
-		std::chrono::milliseconds {3000}, failThenStop,
-		std::ref(requests)};
-	const auto suspension = ::uml::device::suspend_guest(0U, 0U);
-	observer.join();
-	require(suspension == ::uml::device::GuestSuspension::managementStop);
-	require(requests ==
-		std::vector<std::string> {"suspend", "sysrq s", "stop"});
-	(void)::close(server);
+	auto suspension = ::uml::device::GuestSuspension::system;
+	const auto heard = suspendAgainst(
+		[](const std::string &command, std::size_t) {
+			return command == "sysrq s" ? writeback : busySuspend;
+		},
+		std::chrono::milliseconds {3000}, suspension);
+	require(suspension == ::uml::device::GuestSuspension::none);
+	requireRetriedUntilTheDeadline(heard, std::chrono::milliseconds {3000});
 }
 
-/* A kernel without the suspend command is stopped at once. */
-void aKernelWithoutSuspendIsStoppedAtOnce()
+/* A guest whose busy state passes suspends: no stop, no writeback. */
+void aRetryThatSucceedsSuspendsTheGuest()
 {
-	const ::uml::device::GuestConsoleRun run {true};
-	const int server = bindServer(consolePath());
-	std::vector<std::string> requests;
-	std::thread observer {answerInOrder, server,
-		std::chrono::milliseconds {0},
-		std::vector<std::pair<std::uint32_t, std::string>> {
-			{1U, "System suspend is not configured"},
-			{0U, "SysRq : Emergency Sync"}, {0U, "stopped"}},
-		std::ref(requests)};
-	const auto suspension = ::uml::device::suspend_guest(0U, 0U);
-	observer.join();
-	require(suspension == ::uml::device::GuestSuspension::managementStop);
-	require(requests ==
-		std::vector<std::string> {"suspend", "sysrq s", "stop"});
-	(void)::close(server);
+	auto suspension = ::uml::device::GuestSuspension::none;
+	const auto heard = suspendAgainst(
+		[](const std::string &, std::size_t index) {
+			return index < 2U ? busySuspend : enteredSuspend;
+		},
+		std::chrono::milliseconds {0}, suspension);
+	require(suspension == ::uml::device::GuestSuspension::system);
+	require(commandsOf(heard) ==
+		std::vector<std::string> {"suspend", "suspend", "suspend"});
+}
+
+/* Only a busy guest is asked again. A kernel without the suspend command, any
+ * other refusal, and a retry that fails some other way leave the guest running
+ * after one writeback. */
+void aRefusalThatIsNotBusyIsNotRetried()
+{
+	using ::uml::device::GuestSuspension;
+	const std::vector<std::string> once {"suspend", "sysrq s"};
+	const Reply notConfigured {1U, "System suspend is not configured"};
+	for (const auto &refusal : {notConfigured, failedSuspend}) {
+		auto suspension = GuestSuspension::system;
+		const auto heard = suspendAgainst(
+			[&refusal](const std::string &command, std::size_t) {
+				return command == "sysrq s" ? writeback : refusal;
+			},
+			std::chrono::milliseconds {0}, suspension);
+		require(suspension == GuestSuspension::none);
+		require(commandsOf(heard) == once, refusal.second.c_str());
+	}
+	auto suspension = GuestSuspension::system;
+	const auto heard = suspendAgainst(
+		[](const std::string &command, std::size_t index) {
+			if (command == "sysrq s")
+				return writeback;
+			return index == 0U ? busySuspend : failedSuspend;
+		},
+		std::chrono::milliseconds {0}, suspension);
+	require(suspension == GuestSuspension::none);
+	require(commandsOf(heard) ==
+		std::vector<std::string> {"suspend", "suspend", "sysrq s"});
 }
 
 /* Answers one request with `answer` and `error` after `delayMs`. A client
@@ -544,9 +755,10 @@ int main(int argc, char **argv)
 		runPrivately(aWritebackIsOneEmergencySync);
 	} else if (selected == "suspend-failure") {
 		runPrivately([] {
-			aFailedSuspendFallsBackToStop();
-			aLateSuspendFailureFallsBackToStop();
-			aKernelWithoutSuspendIsStoppedAtOnce();
+			aBusySuspendIsRetriedUntilTheDeadline();
+			aLateBusyRefusalIsRetriedOnlyWithinTheDeadline();
+			aRetryThatSucceedsSuspendsTheGuest();
+			aRefusalThatIsNotBusyIsNotRetried();
 		});
 	} else if (selected == "trim") {
 		runPrivately([] {
@@ -554,7 +766,13 @@ int main(int argc, char **argv)
 			aTrimPassIsWaitedForUpToItsBound();
 		});
 	} else if (selected == "suspend-timeout") {
-		runPrivately(aSuspendTimeoutCannotQueueLegacyStop);
+		runPrivately(aSuspendThatDoesNotReplyIsAborted);
+	} else if (selected == "suspend-silent") {
+		runPrivately(aSilentSuspendIsUnconfirmed);
+	} else if (selected == "suspend-suspended-after-wake") {
+		runPrivately(aSuspendedReplyAfterTheWakeIsUnconfirmed);
+	} else if (selected == "suspend-retry-deadline") {
+		runPrivately(aBusyRetryCannotOutlastTheDeadline);
 	} else {
 		return EXIT_FAILURE;
 	}

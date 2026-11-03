@@ -184,3 +184,13 @@ uml_add_unit_test(
     NAME runtime-virtual-jetsam
     COMMAND uml_runtime_virtual_jetsam_tests
     LABELS tsan)
+
+# The memory the guest side of the process holds beside the guest's RAM as the
+# vCPU count grows, and the most RAM a process limit leaves a guest.
+add_executable(uml_runtime_guest_memory_budget_tests
+    guest_memory_budget_tests.cpp)
+target_include_directories(uml_runtime_guest_memory_budget_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+uml_add_unit_test(
+    NAME runtime-guest-memory-budget
+    COMMAND uml_runtime_guest_memory_budget_tests)

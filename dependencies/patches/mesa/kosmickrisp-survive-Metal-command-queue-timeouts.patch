@@ -10,7 +10,7 @@ timed-out submissions of its run executing for 0.177804 s and 0.438908 s
 while a submission that succeeded in the same run executed for 0.452050 s,
 longer than either, and both cases that carried a timeout still verified
 their own rendered output as a pass. How long the GPU ran does not predict
-the report; host contention does.
+the report.
 
 The commit callback answered every command queue error with permanent
 device loss. One report therefore destroyed a queue that kept working,
@@ -48,6 +48,18 @@ processes that fail at once line up against each other. One classifier
 decides both the disposition and the wording, and Metal's own text goes
 last, so a long message cannot truncate away what happened.
 
+The report also carries the reason the system gives, which Metal nests
+under the error. A GPU hang in any process makes the system discard the
+in-flight work of every process, and Metal reports each discard with the
+same timeout code and an execution interval of tens of milliseconds, so
+without the reason a bystander reads as the culprit. On an M1 Ultra a
+render loop's submissions failed with "Discarded (victim of GPU
+error/recovery) (00000005:kIOGPUCommandBufferCallbackErrorInnocentVictim)"
+while another process's own report read "Caused GPU Hang Error
+(00000003:kIOGPUCommandBufferCallbackErrorHang)", and each of the six
+timeouts that glmark2, Android and CTS guests whose own work does not hang
+reported on a shared host in one day was such a discard.
+
 Refuse an image extent Metal cannot represent before it reaches Metal.
 Vulkan already requires every texture descriptor size field to be at least
 one, so a conforming caller sees no difference, but this driver serves a
@@ -79,7 +91,10 @@ reported it finishing. The disposition does not change: Metal admitted the
 submission, so the timeout is still survived.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
+ src/kosmickrisp/bridge/mtl_command_queue.m    |  26 ++
+ src/kosmickrisp/bridge/mtl_types.h            |   7 +
  src/kosmickrisp/bridge/vk_to_mtl_map.c        |   8 +-
  src/kosmickrisp/bridge/vk_to_mtl_map.h        |   2 +
  src/kosmickrisp/vulkan/kk_buffer_view.c       |  21 +
@@ -89,12 +104,12 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  src/kosmickrisp/vulkan/kk_image_layout.c      |  21 +-
  src/kosmickrisp/vulkan/kk_image_layout.h      |  12 +-
  src/kosmickrisp/vulkan/kk_queue.c             |  24 +-
- src/kosmickrisp/vulkan/kk_queue_error.c       | 115 ++++++
- src/kosmickrisp/vulkan/kk_queue_error.h       |  66 ++++
+ src/kosmickrisp/vulkan/kk_queue_error.c       | 120 +++++
+ src/kosmickrisp/vulkan/kk_queue_error.h       |  72 +++
  src/kosmickrisp/vulkan/meson.build            |  31 ++
- .../vulkan/tests/test_image_extent.c          | 112 ++++++
- .../vulkan/tests/test_queue_error.c           | 366 ++++++++++++++++++
- 14 files changed, 841 insertions(+), 25 deletions(-)
+ .../vulkan/tests/test_image_extent.c          | 112 +++++
+ .../vulkan/tests/test_queue_error.c           | 422 ++++++++++++++++++
+ 16 files changed, 941 insertions(+), 25 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_image_extent.c
  create mode 100644 src/kosmickrisp/vulkan/kk_image_extent.h
  create mode 100644 src/kosmickrisp/vulkan/kk_queue_error.c
@@ -102,6 +117,65 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_image_extent.c
  create mode 100644 src/kosmickrisp/vulkan/tests/test_queue_error.c
 
+diff --git a/src/kosmickrisp/bridge/mtl_command_queue.m b/src/kosmickrisp/bridge/mtl_command_queue.m
+index a43bb13ca72ad8d33bdacd080742ff90c0915ce7..08008fef7e61bb41e60053e8c610ccad0b9af936 100644
+--- a/src/kosmickrisp/bridge/mtl_command_queue.m
++++ b/src/kosmickrisp/bridge/mtl_command_queue.m
+@@ -28,10 +28,36 @@
+       [opt addFeedbackHandler:^(id<MTL4CommitFeedback> feedback) {
+          @autoreleasepool {
+             NSError *error = feedback.error;
++            /* The top-level error names only its domain and code; the
++             * system's account of the failure is nested under it. Keep the
++             * most specific description and the innermost error's domain and
++             * code. The walk is bounded in case a chain ever loops. */
++            NSError *described = nil, *innermost = nil;
++            NSError *nested = error.userInfo[NSUnderlyingErrorKey];
++            for (unsigned depth = 0u;
++                 depth < 8u && [nested isKindOfClass:[NSError class]];
++                 ++depth, nested = nested.userInfo[NSUnderlyingErrorKey]) {
++               if (nested.userInfo[NSLocalizedDescriptionKey] != nil)
++                  described = nested;
++               innermost = nested;
++            }
++            NSString *reason = nil;
++            if (innermost != nil) {
++               NSString *code = [NSString
++                  stringWithFormat:@"[%@ %ld]", innermost.domain,
++                                   (long)innermost.code];
++               reason = described != nil
++                           ? [NSString
++                                stringWithFormat:@"%@ %@",
++                                                 described.localizedDescription,
++                                                 code]
++                           : code;
++            }
+             struct mtl_feedback_data feedback_data = (struct mtl_feedback_data){
+                .user_data = data,
+                .error_message =
+                   error ? error.localizedDescription.UTF8String : NULL,
++               .reason = reason.UTF8String,
+                .gpu_start = feedback.GPUStartTime,
+                .gpu_end = feedback.GPUEndTime,
+                .error = error
+diff --git a/src/kosmickrisp/bridge/mtl_types.h b/src/kosmickrisp/bridge/mtl_types.h
+index f60ad2721dd26c0c2c06d5a2e3eff3de296eb657..b6ed24d792ca6384a07b463967d9b158b2acee82 100644
+--- a/src/kosmickrisp/bridge/mtl_types.h
++++ b/src/kosmickrisp/bridge/mtl_types.h
+@@ -374,6 +374,13 @@ struct mtl_texture_memory_copy {
+ struct mtl_feedback_data {
+    void *user_data;
+    const char *error_message;
++   /* What the system says happened: the most specific description Metal
++    * nests under the error, with the innermost nested error's domain and
++    * code, or NULL when Metal nests none. A submission that hung the GPU and
++    * one the system discarded while recovering from another submission's
++    * hang, in this process or any other, share one Metal error code; only
++    * this tells them apart. */
++   const char *reason;
+    double gpu_start;
+    double gpu_end;
+    enum mtl_command_queue_error error;
 diff --git a/src/kosmickrisp/bridge/vk_to_mtl_map.c b/src/kosmickrisp/bridge/vk_to_mtl_map.c
 index cc7cfc49a8a97523f74f3552273d145d1ee4ef1d..6968bef2c7509c8973e18da3b6cebb60f78e3cc0 100644
 --- a/src/kosmickrisp/bridge/vk_to_mtl_map.c
@@ -416,10 +490,10 @@ index c9d180dcf7481440bfc4cc6b0c9ce09b675f5a2c..52f85b400486afc6cef134f8a1d819db
  static void
 diff --git a/src/kosmickrisp/vulkan/kk_queue_error.c b/src/kosmickrisp/vulkan/kk_queue_error.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..4e7106a49802a96fb68de3ba2eb0e7e9a7048391
+index 0000000000000000000000000000000000000000..66e8e1e365f641dab079cb9816f465a953d82b11
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_queue_error.c
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,120 @@
 +/*
 + * Copyright 2026 LunarG, Inc.
 + * Copyright 2026 Google LLC
@@ -523,24 +597,29 @@ index 0000000000000000000000000000000000000000..4e7106a49802a96fb68de3ba2eb0e7e9
 +      (data->error_message != NULL && data->error_message[0] != '\0')
 +         ? data->error_message
 +         : "(none)";
++   const char *reason = (data->reason != NULL && data->reason[0] != '\0')
++                           ? data->reason
++                           : "(none)";
 +
 +   /* The timestamps are the raw host GPU clock, so two processes that fail at
 +    * once can be lined up against each other directly. Metal's own text goes
-+    * last: it is the only unbounded part, and truncating it must not take the
-+    * disposition with it. */
++    * last, the system's reason before the top-level message: they are the
++    * only unbounded parts, and truncating them must not take the disposition
++    * with it. */
 +   snprintf(buffer, size,
 +            "command queue error: %s (code %u), %s "
-+            "(gpu_start_s=%.17g gpu_end_s=%.17g), so %s, message: %s",
++            "(gpu_start_s=%.17g gpu_end_s=%.17g), so %s, reason: %s, "
++            "message: %s",
 +            mtl_command_queue_error_to_string(data->error),
 +            (unsigned)data->error, execution, data->gpu_start, data->gpu_end,
-+            disposition, message);
++            disposition, reason, message);
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_queue_error.h b/src/kosmickrisp/vulkan/kk_queue_error.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..87df7b13e24e98c10f606f58a6281bec1c135a7c
+index 0000000000000000000000000000000000000000..bd564c9ec9f0039cb6f1ac08d94d9108f8f2fc9d
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_queue_error.h
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,72 @@
 +/*
 + * Copyright 2026 LunarG, Inc.
 + * Copyright 2026 Google LLC
@@ -567,15 +646,17 @@ index 0000000000000000000000000000000000000000..87df7b13e24e98c10f606f58a6281bec
 +/* Whether this failure destroyed the device.
 + *
 + * A Metal command queue timeout says one submission exceeded the time the
-+ * system allows, not that the device is broken. On a contended host the queue
-+ * keeps accepting and completing work after such a report, and how long the
-+ * GPU ran does not predict it: a submission executing for a fraction of a
-+ * second is reported while a longer one on the same GPU succeeds. Losing the
-+ * device would throw away a live queue and every result that would follow it,
-+ * so a timeout for a submission Metal admitted is reported and survived. What
-+ * such a report puts in doubt is that one submission's contents, which the
-+ * driver cannot repair and Vulkan cannot express short of device loss; the
-+ * work itself is where that shows.
++ * system allows, or was discarded while the system recovered from a hang
++ * another submission caused, in this process or any other; it does not say
++ * the device is broken. On a contended host the queue keeps accepting and
++ * completing work after such a report, and how long the GPU ran does not
++ * predict it: a submission executing for a fraction of a second is reported
++ * while a longer one on the same GPU succeeds. Losing the device would throw
++ * away a live queue and every result that would follow it, so a timeout for
++ * a submission Metal admitted is reported and survived. What such a report
++ * puts in doubt is that one submission's contents, which the driver cannot
++ * repair and Vulkan cannot express short of device loss; the work itself is
++ * where that shows.
 + *
 + * Every other error, and a timeout for a submission the queue never admitted
 + * or started and abandoned without an end timestamp, means the queue stopped
@@ -600,8 +681,12 @@ index 0000000000000000000000000000000000000000..87df7b13e24e98c10f606f58a6281bec
 + * Metal reports a commit failure asynchronously, long after the submission
 + * that caused it returned, so this report is the only evidence the failure
 + * leaves behind. It therefore always states what Metal accounted for, and
-+ * closes with the disposition kk_queue_error_is_device_lost() chose, so the
-+ * report and the action can never disagree.
++ * the disposition kk_queue_error_is_device_lost() chose, so the report and
++ * the action can never disagree. It then carries the system's reason: a GPU
++ * hang in any process makes the system discard every process's in-flight
++ * work, and Metal reports each discard with the timeout code of the
++ * submission that hung, so only the reason says whether this submission
++ * hung the GPU or was thrown away during another's recovery.
 + */
 +void kk_queue_error_describe(char *buffer, size_t size,
 +                             const struct mtl_feedback_data *data);
@@ -783,10 +868,10 @@ index 0000000000000000000000000000000000000000..b34363d6226066b395d22bbf76852bc8
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_queue_error.c b/src/kosmickrisp/vulkan/tests/test_queue_error.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..20595141b3b6a6f2f8dde50c995c6a4ec468fb8e
+index 0000000000000000000000000000000000000000..c27a497960b46b4f5e8abdb880fde0c649b67f39
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_queue_error.c
-@@ -0,0 +1,366 @@
+@@ -0,0 +1,422 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -805,6 +890,7 @@ index 0000000000000000000000000000000000000000..20595141b3b6a6f2f8dde50c995c6a4e
 +   return (struct mtl_feedback_data){
 +      .user_data = NULL,
 +      .error_message = message,
++      .reason = NULL,
 +      .gpu_start = gpu_start,
 +      .gpu_end = gpu_end,
 +      .error = error,
@@ -1099,6 +1185,49 @@ index 0000000000000000000000000000000000000000..20595141b3b6a6f2f8dde50c995c6a4e
 +   assert(strstr(report, "message: (none)") != NULL);
 +}
 +
++/* A GPU hang makes the system discard the in-flight work of every process,
++ * and Metal reports each discard with the same code as the submission that
++ * hung: on an M1 Ultra, a render loop's submissions failed with
++ * MTL4CommandQueueErrorDomain code 1 and about 23 ms of accounted execution
++ * while another process's vertex invocation was killed. Only the nested
++ * reason tells the culprit from the victim, so the report must carry it. */
++static void
++check_reason_tells_a_hang_from_a_discard(void)
++{
++   static const char message[] =
++      "The operation couldn't be completed. (MTL4CommandQueueErrorDomain "
++      "error 1.)";
++   static const char *const reasons[] = {
++      "Caused GPU Hang Error (00000003:kIOGPUCommandBufferCallbackErrorHang) "
++      "[IOGPUCommandQueueErrorDomain 3]",
++      "Discarded (victim of GPU error/recovery) "
++      "(00000005:kIOGPUCommandBufferCallbackErrorInnocentVictim) "
++      "[IOGPUCommandQueueErrorDomain 5]",
++   };
++
++   for (unsigned i = 0u; i < sizeof(reasons) / sizeof(reasons[0]); ++i) {
++      struct mtl_feedback_data data =
++         feedback(MTL_COMMAND_QUEUE_ERROR_TIMEOUT, message, 854712.72508050001,
++                  854712.74698000005);
++      data.reason = reasons[i];
++      char report[KK_QUEUE_ERROR_REPORT_SIZE];
++
++      kk_queue_error_describe(report, sizeof(report), &data);
++      assert(strstr(report, "accounted for 0.021900 s") != NULL);
++      assert(strstr(report, "the device survives") != NULL);
++      assert(strstr(report, reasons[i]) != NULL);
++      assert(strstr(report, message) != NULL);
++      /* The reason precedes Metal's top-level text. */
++      assert(strstr(report, "reason: ") < strstr(report, "message: "));
++   }
++
++   /* Without a nested error the report says so rather than inventing one. */
++   char report[KK_QUEUE_ERROR_REPORT_SIZE];
++   describe(report, sizeof(report), MTL_COMMAND_QUEUE_ERROR_TIMEOUT, message,
++            1.0, 1.5);
++   assert(strstr(report, "reason: (none)") != NULL);
++}
++
 +/* The report is written by an asynchronous Metal feedback handler, so it must
 + * stay inside the caller's buffer and stay NUL terminated. */
 +static void
@@ -1120,6 +1249,17 @@ index 0000000000000000000000000000000000000000..20595141b3b6a6f2f8dde50c995c6a4e
 +   assert(strstr(report, "MTL_COMMAND_QUEUE_ERROR_TIMEOUT") != NULL);
 +   assert(strstr(report, "the GPU never started this submission") != NULL);
 +   assert(strstr(report, "the device is lost") != NULL);
++
++   /* An unbounded reason is cut like the message, after the disposition. */
++   struct mtl_feedback_data long_reason =
++      feedback(MTL_COMMAND_QUEUE_ERROR_TIMEOUT, "message", 0.0, 0.0);
++   long_reason.reason = long_message;
++   memset(report, 0x7f, sizeof(report));
++   kk_queue_error_describe(report, KK_QUEUE_ERROR_REPORT_SIZE, &long_reason);
++   report[KK_QUEUE_ERROR_REPORT_SIZE] = '\0';
++   assert(strlen(report) < KK_QUEUE_ERROR_REPORT_SIZE);
++   assert(strstr(report, "the device is lost") != NULL);
++   assert(strstr(report, "reason: xxx") != NULL);
 +
 +   describe(small, sizeof(small), MTL_COMMAND_QUEUE_ERROR_TIMEOUT, "message",
 +            0.0, 0.0);
@@ -1150,6 +1290,7 @@ index 0000000000000000000000000000000000000000..20595141b3b6a6f2f8dde50c995c6a4e
 +   check_abandoned_submission_reports_no_interval();
 +   check_placeholder_end_is_not_an_execution_interval();
 +   check_missing_message_is_named();
++   check_reason_tells_a_hang_from_a_discard();
 +   check_report_is_bounded();
 +   return 0;
 +}

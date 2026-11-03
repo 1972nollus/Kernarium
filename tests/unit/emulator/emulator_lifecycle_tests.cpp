@@ -62,9 +62,14 @@ public:
 
 	/* Called on the console's thread with each request, before its reply. */
 	std::function<void(const std::string &)> onRequest;
-	/* A guest without suspend support: it refuses "suspend" and takes the
-	 * management stop instead. */
+	/* A guest that cannot suspend: it refuses "suspend" for a reason that
+	 * waiting does not cure (not busy), and keeps running. */
 	bool refuseSuspend {false};
+	/* A guest whose suspend is held, as by a freezer that cannot finish: it
+	 * never replies to "suspend", answers the wake that aborts it, and then,
+	 * for `lateFailure`, gives the suspend up on the request's own socket. */
+	enum class Hold { none, silent, lateFailure };
+	Hold holdSuspend {Hold::none};
 
 	/* Answers `count` requests in another thread while `operation` runs,
 	 * and returns them in the order they arrived. */
@@ -77,7 +82,8 @@ public:
 			for (std::size_t index = 0; index < count; ++index) {
 				/* The operation sends at once; a missing request
 				 * fails the comparison instead of waiting here. */
-				if (!awaitRequest(descriptor_, 10000))
+				if (!awaitRequest(descriptor_,
+					    holdSuspend == Hold::none ? 10000 : 20000))
 					return;
 				received.push_back(answer());
 			}
@@ -97,6 +103,11 @@ private:
 		const auto command = receiveRequest(descriptor_, client, clientLength);
 		if (onRequest)
 			onRequest(command);
+		if (command == "suspend" && holdSuspend != Hold::none) {
+			suspendClient_ = client;
+			suspendClientLength_ = clientLength;
+			return command;
+		}
 		std::string_view text = "running";
 		std::uint32_t error = 0U;
 		if (command == "suspend" && refuseSuspend) {
@@ -104,8 +115,6 @@ private:
 			error = 1U;
 		} else if (command == "suspend") {
 			text = "suspended";
-		} else if (command == "stop") {
-			text = "stopped";
 		}
 		if (command == "trim once")
 			text = "trimmed 0 KiB in 0 ms, compacted in 40 ms, "
@@ -113,11 +122,17 @@ private:
 		else if (command.starts_with("trim "))
 			text = std::string_view {command}.substr(5);
 		require(sendReply(descriptor_, client, clientLength, error, text));
+		if (command == "wake" && holdSuspend == Hold::lateFailure)
+			require(sendReply(descriptor_, suspendClient_,
+				suspendClientLength_, 1U, "Suspend failed: -16"),
+				"the aborted suspend's socket is still open");
 		return command;
 	}
 
 	std::string path_;
 	int descriptor_ {-1};
+	mutable sockaddr_un suspendClient_ {};
+	mutable socklen_t suspendClientLength_ {};
 };
 
 using Requests = std::vector<std::string>;
@@ -331,16 +346,56 @@ void aGuestThatCouldNotSuspendIsNotHibernated()
 	console.refuseSuspend = true;
 	(void)installSteps(emulator.get());
 	(void)hibernationLog.take();
-	const auto requests = console.requests(4U, [&] {
+	const auto requests = console.requests(3U, [&] {
 		require(uml_emulator_quiesce(emulator.get()) == 0);
 	});
-	require(requests == Requests {"trim once", "suspend", "sysrq s", "stop"},
-		"a refused suspend falls back to the management stop");
+	require(requests == Requests {"trim once", "suspend", "sysrq s"},
+		"a refused suspend is written back and left running, never stopped");
 	require(hibernationLog.take().empty(),
 		"only a system suspension is hibernated");
-	require(console.requests(1U, [&] { uml_emulator_resume(emulator.get()); }) ==
-			Requests {"go"},
-		"a stopped guest is resumed with go");
+	require(console.requests(0U, [&] { uml_emulator_resume(emulator.get()); })
+			.empty(),
+		"a guest that kept running has nothing to be woken from");
+}
+
+/* A suspend with no reply at its deadline is aborted with a wake, not taken
+ * for a suspended guest, which would be hibernated while its freezer still
+ * runs. The request's final refusal says the guest runs: its resume sends
+ * nothing. */
+void aSuspendThatTimedOutIsNotHibernated()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	console.holdSuspend = FakeGuestConsole::Hold::lateFailure;
+	(void)installSteps(emulator.get());
+	(void)hibernationLog.take();
+	require(console.requests(4U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend", "wake", "sysrq s"},
+		"a suspend that does not reply is aborted and written back");
+	require(hibernationLog.take().empty(),
+		"only a confirmed system suspension is hibernated");
+	require(console.requests(0U, [&] { uml_emulator_resume(emulator.get()); })
+			.empty(),
+		"a guest known to run has nothing to be woken from");
+}
+
+/* Without a final word the guest may be asleep, so the resume wakes it. */
+void aSuspendThatNeverAnsweredIsWokenAtTheResume()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	console.holdSuspend = FakeGuestConsole::Hold::silent;
+	(void)installSteps(emulator.get());
+	(void)hibernationLog.take();
+	require(console.requests(4U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend", "wake", "sysrq s"});
+	require(hibernationLog.take().empty(),
+		"an unconfirmed suspension is not hibernated");
+	require(console.requests(1U, [&] { uml_emulator_resume(emulator.get()); })
+			== Requests {"wake"},
+		"an unconfirmed guest is woken at the resume");
 }
 
 void aGuestWithoutAConsoleIsNotHibernated()
@@ -431,11 +486,22 @@ void aStopBringsTheRamBack()
 
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
+	const std::string_view selected = argc > 1 ? argv[1] : "";
 	const uml::testing::PrivateTemporaryDirectory temporary {
 		"uml-lifecycle-test.XXXXXX"};
 	const ::uml::device::GuestConsoleRun run {true};
+	if (selected == "suspend-timeout") {
+		aSuspendThatTimedOutIsNotHibernated();
+		return EXIT_SUCCESS;
+	}
+	if (selected == "suspend-silent") {
+		aSuspendThatNeverAnsweredIsWokenAtTheResume();
+		return EXIT_SUCCESS;
+	}
+	if (!selected.empty())
+		return EXIT_FAILURE;
 	const auto emulator = makeEmulator();
 	withoutAConsoleNothingWaits(emulator.get());
 	FakeGuestConsole console;

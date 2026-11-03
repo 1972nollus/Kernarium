@@ -22,4 +22,11 @@ enum class Client : std::uint8_t {
 [[nodiscard]] bool acquire(Client client) noexcept;
 void release(Client client) noexcept;
 
+/* Whether another app plays audio that wants the session to itself (the
+ * session's secondaryAudioShouldBeSilencedHint). It is the question a client
+ * asks before it takes the session back without being told to: a client must
+ * never take it from an app that is playing or recording, such as a call.
+ * Always false on macOS. */
+[[nodiscard]] bool otherAudioPlaying() noexcept;
+
 } // namespace uml::audio::session
