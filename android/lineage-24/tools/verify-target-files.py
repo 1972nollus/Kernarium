@@ -2195,7 +2195,8 @@ FALSE_PROPERTY_VALUES = {"0", "n", "no", "off", "false"}
 # build, and the product build.prop is read after system's and system_ext's ro.adb.secure=1, so
 # the guest reads 0. adbd takes its policy from ro.boot.kernarium.adb_auth, but Settings hides
 # "Revoke USB debugging authorizations" when the property is false: the user could no longer
-# revoke the computers they allowed.
+# revoke the computers they allowed. The Cuttlefish topic (route p0001) drops the entry when the
+# product sets UML_ANDROID_KEEP_ADB_SECURE.
 ADB_SECURE_PROPERTY = "ro.adb.secure"
 # Incremental installs (adb install --incremental, the Incremental FS service) need this
 # vendor property and the kernel's incfs.
@@ -2238,7 +2239,7 @@ def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None
             fail(
                 f"{info.filename} sets {key}={value}: adb authorization is the stock one, and "
                 "Settings hides the revocation of allowed computers when the property is false; "
-                "BoardConfig.mk filters the inherited Cuttlefish value out of the product properties"
+                "the Cuttlefish topic (route p0001) drops the inherited Cuttlefish value at its source"
             )
         if key == PRESENT_FENCE_PROPERTY and value.lower() not in FALSE_PROPERTY_VALUES:
             fail(

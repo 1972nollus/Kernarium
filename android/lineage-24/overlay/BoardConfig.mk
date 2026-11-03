@@ -91,19 +91,6 @@ SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += device/kernarium/andarium/sepolicy/system_ex
 # The Android UML ELF is built and published independently. Android packaging
 # must neither substitute a Cuttlefish kernel nor stage loadable modules.
 PRODUCT_COPY_FILES := $(filter-out %:kernel,$(PRODUCT_COPY_FILES))
-
-# The inherited Cuttlefish product adds ro.adb.secure=0 to the product partition
-# of a user build ("spawn adbd by default without authorization"). The product
-# build.prop is read after system's and system_ext's ro.adb.secure=1, so the
-# guest would read 0. adbd takes its policy from ro.boot.kernarium.adb_auth, but
-# Settings reads the property: with it false the "Revoke USB debugging
-# authorizations" entry is hidden, and the user could no longer revoke the
-# computers they allowed. The property stays the build type's value (1 on a user
-# build). The filter is here and not in the product makefile because
-# inherit-product merges the parent's variables after the product's own, so
-# only the resolved variable, which the board config sees, loses an inherited
-# entry.
-PRODUCT_PRODUCT_PROPERTIES := $(filter-out ro.adb.secure=%,$(PRODUCT_PRODUCT_PROPERTIES))
 TARGET_KERNEL_PATH :=
 SYSTEM_DLKM_SRC :=
 KERNEL_MODULES_PATH :=

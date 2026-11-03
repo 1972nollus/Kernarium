@@ -7,3 +7,4 @@ patch	cuttlefish-use-fixed-UBD-partitions.patch
 patch	cuttlefish-disable-userdata-quotas.patch
 patch	cuttlefish-omit-unsupported-UML-HALs.patch
 patch	cuttlefish-run-32-bit-applications-on-request.patch
+patch	cuttlefish-let-a-product-keep-ro.adb.secure-of-its-build-type.patch

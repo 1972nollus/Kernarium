@@ -16,7 +16,11 @@ outside this repository.
 
 `build/prepare-sources.sh` is the only producer command allowed to use the
 network. It pins the Android source and the guest Mesa source. All patching,
-builds, verification, image assembly, and publication are offline.
+builds, verification, image assembly, and publication are offline. A
+`build/make` topic (route `p0002`) keeps that true of `lunch`: LineageOS's
+`roomservice.py`, which `lunch` ran for a product it could not configure and
+which reads a repository list from GitHub, is never called, so a product
+configuration error stops the build with its own message.
 
 The producer has three independent outputs:
 
@@ -311,7 +315,8 @@ property file. On a user build init's property service (stock
 `update_sys_usb_config`) fills the empty property with `none` at every boot, so
 "off" is an empty or `none` value, never `adb`; a debuggable build gets `adb`
 from the same code. `ro.adb.secure` keeps the build type's value (1 on a user
-build): `BoardConfig.mk` drops the `ro.adb.secure=0` that the inherited
+build): the `device/google/cuttlefish` topic that `UML_ANDROID_KEEP_ADB_SECURE`
+switches on (route `p0001`) drops the `ro.adb.secure=0` that the inherited
 Cuttlefish user block adds to the product partition, and the target-files
 verifier rejects a false value in any build property file, because Settings
 hides "Revoke USB debugging authorizations" while the property is false. The
