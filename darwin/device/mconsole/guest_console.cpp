@@ -320,9 +320,13 @@ public:
 			if (received < static_cast<ssize_t>(sizeof(reply) -
 				    maximumConsoleData))
 				return ExchangeResult::pending;
-			const auto length = std::min(
+			auto length = std::min(
 				static_cast<std::size_t>(reply.length),
 				maximumConsoleData);
+			/* The guest's driver counts the NUL that ends each reply in
+			 * the reply's length. It ends the text and is no part of it. */
+			if (length != 0U && reply.data[length - 1U] == '\0')
+				--length;
 			response.append(reply.data.data(), length);
 			if (reply.more == 0U)
 				return reply.error == 0U ? ExchangeResult::accepted :
@@ -733,6 +737,124 @@ GuestConsoleRun::~GuestConsoleRun()
 			removeConsoleSocket(*location);
 		runDirectoryGuard.reset();
 	} catch (...) {
+	}
+}
+
+
+namespace {
+
+/* Whether `text` is a count of decimal digits that fits 64 bits, and the
+ * count. No sign, no padding. */
+[[nodiscard]] bool parseByteCount(std::string_view text,
+	std::uint64_t &count) noexcept
+{
+	if (text.empty())
+		return false;
+	const auto [end, error] =
+		std::from_chars(text.data(), text.data() + text.size(), count);
+	return error == std::errc {} && end == text.data() + text.size();
+}
+
+} // namespace
+
+std::optional<GuestMemoryFigures> parse_guest_memory_reply(
+	std::string_view text) noexcept
+{
+	if (text.ends_with('\n'))
+		text.remove_suffix(1U);
+	std::optional<std::uint64_t> total;
+	std::optional<std::uint64_t> available;
+	std::optional<std::uint64_t> free;
+	for (;;) {
+		const auto separator = text.find(' ');
+		const auto field = text.substr(0U, separator);
+		const auto equals = field.find('=');
+		if (equals == std::string_view::npos || equals == 0U)
+			return std::nullopt;
+		const auto key = field.substr(0U, equals);
+		std::uint64_t count = 0U;
+		if (!parseByteCount(field.substr(equals + 1U), count))
+			return std::nullopt;
+		std::optional<std::uint64_t> *named = nullptr;
+		if (key == "total")
+			named = &total;
+		else if (key == "available")
+			named = &available;
+		else if (key == "free")
+			named = &free;
+		if (named != nullptr) {
+			if (named->has_value())
+				return std::nullopt;
+			*named = count;
+		}
+		if (separator == std::string_view::npos)
+			break;
+		text.remove_prefix(separator + 1U);
+	}
+	if (!total || !available)
+		return std::nullopt;
+	return GuestMemoryFigures {.total_bytes = *total,
+		.available_bytes = *available,
+		.free_bytes = free.value_or(0U)};
+}
+
+class GuestMemoryQuery::State final {
+public:
+	explicit State(const GuestConsoleLocation &location) : client(location) {}
+
+	Client client;
+};
+
+GuestMemoryQuery::GuestMemoryQuery(std::unique_ptr<State> state) noexcept
+	: state_(std::move(state))
+{
+}
+
+GuestMemoryQuery::GuestMemoryQuery(GuestMemoryQuery &&other) noexcept = default;
+
+GuestMemoryQuery::~GuestMemoryQuery() = default;
+
+std::optional<GuestMemoryQuery> GuestMemoryQuery::start() noexcept
+{
+	try {
+		/* The console's lock covers locating it and sending, not the wait
+		 * for the reply, which the caller makes without it. */
+		std::lock_guard lock(consoleMutex);
+		const auto &location = guest_console_location();
+		if (!location)
+			return std::nullopt;
+		adoptConsolePath(location->console);
+		auto state = std::make_unique<State>(*location);
+		if (!state->client.send("mem"))
+			return std::nullopt;
+		return GuestMemoryQuery(std::move(state));
+	} catch (...) {
+		return std::nullopt;
+	}
+}
+
+GuestMemoryResult GuestMemoryQuery::await(std::chrono::milliseconds wait,
+	GuestMemoryFigures &figures) noexcept
+{
+	try {
+		std::string response;
+		switch (state_->client.receive(response, wait)) {
+		case ExchangeResult::notSent:
+			return GuestMemoryResult::unreachable;
+		case ExchangeResult::pending:
+			return GuestMemoryResult::unanswered;
+		case ExchangeResult::rejected:
+			return GuestMemoryResult::refused;
+		case ExchangeResult::accepted:
+			break;
+		}
+		const auto parsed = parse_guest_memory_reply(response);
+		if (!parsed)
+			return GuestMemoryResult::malformed;
+		figures = *parsed;
+		return GuestMemoryResult::done;
+	} catch (...) {
+		return GuestMemoryResult::unanswered;
 	}
 }
 

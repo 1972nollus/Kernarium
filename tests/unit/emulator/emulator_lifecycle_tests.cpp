@@ -17,6 +17,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <functional>
@@ -70,6 +71,14 @@ public:
 	 * for `lateFailure`, gives the suspend up on the request's own socket. */
 	enum class Hold { none, silent, lateFailure };
 	Hold holdSuspend {Hold::none};
+	/* How the guest answers "mem": with its figures, as a kernel that lacks
+	 * the command does, with a line that is not the figures, not at all, or
+	 * (deferred) with the figures just before it answers its next request,
+	 * so that the next request is heard while "mem" still waits. */
+	enum class Memory { figures, unknown, malformed, silent, deferred };
+	Memory memory {Memory::figures};
+	static constexpr std::string_view memoryFigures {
+		"total=2147483648 available=1073741824 free=104857600"};
 
 	/* Answers `count` requests in another thread while `operation` runs,
 	 * and returns them in the order they arrived. */
@@ -110,6 +119,31 @@ private:
 		}
 		std::string_view text = "running";
 		std::uint32_t error = 0U;
+		if (command == "mem") {
+			switch (memory) {
+			case Memory::figures:
+				text = memoryFigures;
+				break;
+			case Memory::unknown:
+				text = "Unknown command: mem";
+				error = 1U;
+				break;
+			case Memory::malformed:
+				text = "total=lots";
+				break;
+			case Memory::silent:
+				return command;
+			case Memory::deferred:
+				memoryClient_ = client;
+				memoryClientLength_ = clientLength;
+				return command;
+			}
+		} else if (memoryClientLength_ != 0) {
+			require(sendReply(descriptor_, memoryClient_,
+				memoryClientLength_, 0U, memoryFigures),
+				"the waiting memory request is still open");
+			memoryClientLength_ = 0;
+		}
 		if (command == "suspend" && refuseSuspend) {
 			text = "Suspend failed: refused by the test";
 			error = 1U;
@@ -133,6 +167,8 @@ private:
 	int descriptor_ {-1};
 	mutable sockaddr_un suspendClient_ {};
 	mutable socklen_t suspendClientLength_ {};
+	mutable sockaddr_un memoryClient_ {};
+	mutable socklen_t memoryClientLength_ {};
 };
 
 using Requests = std::vector<std::string>;
@@ -194,6 +230,9 @@ void withoutAConsoleNothingWaits(uml_emulator *emulator)
 	require(uml_emulator_set_page_cache_trimming(emulator, 1) ==
 		-UML_EMULATOR_UNSUPPORTED);
 	require(uml_emulator_trim_page_cache(emulator) ==
+		-UML_EMULATOR_UNSUPPORTED);
+	uml_emulator_guest_memory memory {.struct_size = sizeof(memory)};
+	require(uml_emulator_get_guest_memory(emulator, &memory) ==
 		-UML_EMULATOR_UNSUPPORTED);
 	require(uml_emulator_set_page_cache_trimming(nullptr, 1) ==
 		-UML_EMULATOR_INVALID_ARGUMENT);
@@ -484,6 +523,179 @@ void aStopBringsTheRamBack()
 	(void)console.requests(1U, [&] { uml_emulator_resume(emulator.get()); });
 }
 
+/* ---- The guest's memory figures. ---- */
+
+uml_emulator_guest_memory askedMemory()
+{
+	return {.struct_size = sizeof(uml_emulator_guest_memory)};
+}
+
+/* One datagram out, and the guest's own total and available memory back. */
+void theGuestsMemoryIsRead(uml_emulator *emulator, FakeGuestConsole &console)
+{
+	auto memory = askedMemory();
+	require(console.requests(1U, [&] {
+		require(uml_emulator_get_guest_memory(emulator, &memory) ==
+			UML_EMULATOR_OK);
+	}) == Requests {"mem"});
+	require(memory.struct_size == sizeof(memory) &&
+		memory.total_bytes == 2147483648ULL &&
+		memory.available_bytes == 1073741824ULL,
+		"the guest's figures were not returned");
+}
+
+/* A kernel without the command and a reply that is not the figures are not
+ * a reading, and a silent guest is given up on at the bound. */
+void anAnswerThatIsNotTheFiguresIsNoReading(uml_emulator *emulator,
+	FakeGuestConsole &console)
+{
+	auto memory = askedMemory();
+	memory.total_bytes = 7U;
+	console.memory = FakeGuestConsole::Memory::unknown;
+	require(console.requests(1U, [&] {
+		require(uml_emulator_get_guest_memory(emulator, &memory) ==
+			-UML_EMULATOR_UNSUPPORTED);
+	}) == Requests {"mem"}, "a kernel without the command is unsupported");
+	console.memory = FakeGuestConsole::Memory::malformed;
+	require(console.requests(1U, [&] {
+		require(uml_emulator_get_guest_memory(emulator, &memory) ==
+			-UML_EMULATOR_RUNTIME_ERROR);
+	}) == Requests {"mem"}, "a reply that is not the figures is an error");
+	require(memory.total_bytes == 7U, "a refused reading changed the output");
+
+	console.memory = FakeGuestConsole::Memory::silent;
+	const auto started = std::chrono::steady_clock::now();
+	require(console.requests(1U, [&] {
+		require(uml_emulator_get_guest_memory(emulator, &memory) ==
+			-UML_EMULATOR_RUNTIME_ERROR);
+	}) == Requests {"mem"}, "a silent guest is asked once");
+	require(std::chrono::steady_clock::now() - started >=
+		std::chrono::milliseconds {450}, "the reply was not waited for");
+	console.memory = FakeGuestConsole::Memory::figures;
+}
+
+/* A request would end a suspend, so a quiesced guest is not asked, and is
+ * asked again once it has been resumed. */
+void aQuiescedGuestIsNotAskedForItsMemory()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	(void)installSteps(emulator.get());
+	(void)hibernationLog.take();
+	require(console.requests(2U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend"});
+	auto memory = askedMemory();
+	memory.total_bytes = 7U;
+	require(console.requests(0U, [&] {
+		require(uml_emulator_get_guest_memory(emulator.get(), &memory) ==
+			-UML_EMULATOR_UNSUPPORTED);
+	}).empty(), "a quiesced guest was woken to be asked");
+	require(memory.total_bytes == 7U, "a refused reading changed the output");
+	require(console.requests(1U, [&] { uml_emulator_resume(emulator.get()); })
+		== Requests {"wake"});
+	theGuestsMemoryIsRead(emulator.get(), console);
+	(void)hibernationLog.take();
+}
+
+/* A lifecycle call in progress is neither waited for nor waited on: the
+ * request is refused at once and sends nothing. */
+void aLifecycleCallInProgressIsNotWaitedFor()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	(void)installSteps(emulator.get());
+	(void)hibernationLog.take();
+	std::mutex mutex;
+	std::condition_variable changed;
+	bool trimming {false};
+	bool released {false};
+	/* The guest holds its answer to the trim, and the quiesce its lifecycle
+	 * mutex, until the test lets go or the guard does. */
+	console.onRequest = [&](const std::string &command) {
+		if (command != "trim once")
+			return;
+		std::unique_lock lock {mutex};
+		trimming = true;
+		changed.notify_all();
+		(void)changed.wait_for(lock, std::chrono::seconds {5},
+			[&] { return released; });
+	};
+	Requests heard;
+	std::thread quiescing {[&] {
+		heard = console.requests(2U, [&] {
+			require(uml_emulator_quiesce(emulator.get()) == 0);
+		});
+	}};
+	{
+		std::unique_lock lock {mutex};
+		require(changed.wait_for(lock, std::chrono::seconds {10},
+			[&] { return trimming; }), "the quiesce never trimmed");
+	}
+	auto memory = askedMemory();
+	const auto started = std::chrono::steady_clock::now();
+	const int result = uml_emulator_get_guest_memory(emulator.get(), &memory);
+	const auto waited = std::chrono::steady_clock::now() - started;
+	{
+		const std::lock_guard lock {mutex};
+		released = true;
+	}
+	changed.notify_all();
+	quiescing.join();
+	require(result == -UML_EMULATOR_UNSUPPORTED,
+		"a request ran beside a quiesce");
+	require(waited < std::chrono::seconds {2},
+		"a request waited for a quiesce");
+	require(heard == Requests {"trim once", "suspend"},
+		"a request reached the guest beside a quiesce");
+	require(console.requests(1U, [&] { uml_emulator_resume(emulator.get()); })
+		== Requests {"wake"});
+	(void)hibernationLog.take();
+}
+
+/* The wait for the reply is outside the lifecycle mutex, so a quiesce that
+ * starts after the request was sent is heard while it waits. A request that
+ * held the mutex would time out before the quiesce was heard. */
+void aQuiesceDoesNotWaitForAMemoryRequest()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	(void)installSteps(emulator.get());
+	(void)hibernationLog.take();
+	console.memory = FakeGuestConsole::Memory::deferred;
+	std::mutex mutex;
+	std::condition_variable changed;
+	bool asked {false};
+	console.onRequest = [&](const std::string &command) {
+		if (command != "mem")
+			return;
+		const std::lock_guard lock {mutex};
+		asked = true;
+		changed.notify_all();
+	};
+	auto memory = askedMemory();
+	const auto heard = console.requests(3U, [&] {
+		std::thread quiescing {[&] {
+			std::unique_lock lock {mutex};
+			require(changed.wait_for(lock, std::chrono::seconds {10},
+				[&] { return asked; }), "the request never arrived");
+			lock.unlock();
+			require(uml_emulator_quiesce(emulator.get()) == 0);
+		}};
+		const int result =
+			uml_emulator_get_guest_memory(emulator.get(), &memory);
+		quiescing.join();
+		require(result == UML_EMULATOR_OK,
+			"the request was not answered while the quiesce was heard");
+	});
+	require(heard == Requests {"mem", "trim once", "suspend"});
+	require(memory.total_bytes == 2147483648ULL &&
+		memory.available_bytes == 1073741824ULL);
+	require(console.requests(1U, [&] { uml_emulator_resume(emulator.get()); })
+		== Requests {"wake"});
+	(void)hibernationLog.take();
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -508,6 +720,8 @@ int main(int argc, char **argv)
 	quiesceTrimsBeforeItSuspends(emulator.get(), console);
 	aQuiescedGuestHearsOnlyTheResume(emulator.get(), console);
 	aRunningGuestIsAskedAtOnce(emulator.get(), console);
+	theGuestsMemoryIsRead(emulator.get(), console);
+	anAnswerThatIsNotTheFiguresIsNoReading(emulator.get(), console);
 	aHibernatedGuestIsWholeBeforeItIsWoken();
 	aSecondQuiesceKeepsTheHibernation();
 	aGuestThatCouldNotSuspendIsNotHibernated();
@@ -515,5 +729,8 @@ int main(int argc, char **argv)
 	aFailedRestoreWakesNothing();
 	aResumeDuringTheWriteStopsTheWrite();
 	aStopBringsTheRamBack();
+	aQuiescedGuestIsNotAskedForItsMemory();
+	aLifecycleCallInProgressIsNotWaitedFor();
+	aQuiesceDoesNotWaitForAMemoryRequest();
 	return EXIT_SUCCESS;
 }

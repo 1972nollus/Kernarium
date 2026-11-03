@@ -9,7 +9,11 @@ runner must leave it as it is), ``commands.jsonl`` records every invocation,
 and ``poweroff`` is written by the guest's power-off command and ends the fake
 console. ``FAKE_*`` variables choose a failure: ADB (``never-ready``), CONSOLE
 (``silent`` after power off), AUTH (``missing`` line), FOCUS (``alert`` or
-``stuck``), GUEST (``dies``) and LOCKED. Nothing here touches a device.
+``stuck``), GUEST (``dies``) and LOCKED. ``FAKE_START_AFTER=TOOL:OTHER``
+holds TOOL (``launch`` or ``iproxy``) back until OTHER has recorded itself,
+which fixes the order two concurrently started processes appear in
+``commands.jsonl``; without it that order is the scheduler's. Nothing here
+touches a device.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ import sys
 import time
 
 STATE = pathlib.Path(os.environ["FAKE_STATE"])
+START_AFTER_SECONDS = 20
 CHILD = "DEVICECTL_CHILD_"
 LOGCAT = (
     "100.100 I ActivityTaskManager: START u0 {{cmp={component}}}\n"
@@ -35,6 +40,29 @@ def record(tool: str, arguments: list[str], **extra: object) -> None:
     entry = {"tool": tool, "args": arguments, **extra}
     with (STATE / "commands.jsonl").open("a") as log:
         log.write(json.dumps(entry) + "\n")
+
+
+def recorded() -> list[str]:
+    log = STATE / "commands.jsonl"
+    tools = []
+    for line in log.read_text().splitlines() if log.exists() else []:
+        try:
+            tools.append(json.loads(line)["tool"])
+        except ValueError:
+            pass
+    return tools
+
+
+def start_after(tool: str, arguments: list[str]) -> None:
+    """Honor FAKE_START_AFTER; give up after START_AFTER_SECONDS."""
+    launching = (tool == "xcrun"
+                 and arguments[1:4] == ["device", "process", "launch"])
+    held, _, other = os.environ.get("FAKE_START_AFTER", "").partition(":")
+    if held != ("launch" if launching else tool):
+        return
+    deadline = time.monotonic() + START_AFTER_SECONDS
+    while other not in recorded() and time.monotonic() < deadline:
+        time.sleep(0.01)
 
 
 def devicectl(arguments: list[str]) -> int:
@@ -165,6 +193,7 @@ def shell(text: str) -> int:
 
 def main() -> int:
     tool, arguments = sys.argv[1], sys.argv[2:]
+    start_after(tool, arguments)
     if tool == "xcrun":
         assert arguments[0] == "devicectl", arguments
         record("devicectl", arguments[1:])

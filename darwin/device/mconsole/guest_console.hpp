@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <chrono>
+#include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -152,6 +155,80 @@ enum class GuestRequest {
  * suspend, never during one.
  */
 [[nodiscard]] GuestRequest trim_guest_page_cache(unsigned int wait_ms) noexcept;
+
+/*
+ * The guest kernel's own memory figures, in bytes, as its management console
+ * reports them for "mem": MemTotal, MemAvailable and MemFree, the counters
+ * /proc/meminfo prints. They are read without a file, so a guest whose policy
+ * keeps the console from /proc/meminfo answers all the same.
+ */
+struct GuestMemoryFigures final {
+	std::uint64_t total_bytes {};
+	std::uint64_t available_bytes {};
+	std::uint64_t free_bytes {};
+};
+
+/*
+ * The reply to "mem" is one line, "total=<n> available=<n> free=<n>": decimal
+ * byte counts, one space between fields, no sign and no padding. Another
+ * field of the form key=<n> after them is ignored. Nothing when a count is
+ * missing, repeated, signed or too large for 64 bits, when `total` or
+ * `available` is absent, or when anything else is on the line; one trailing
+ * line end is allowed. `free` is informational, so a reply without it
+ * reads as zero free bytes.
+ */
+[[nodiscard]] std::optional<GuestMemoryFigures> parse_guest_memory_reply(
+	std::string_view text) noexcept;
+
+/* How a "mem" request ended. */
+enum class GuestMemoryResult {
+	/* No console was reachable, so nothing was sent. */
+	unreachable,
+	/* Sent, but no reply came within the bound. */
+	unanswered,
+	/* The guest refused it, as a kernel without the command does. */
+	refused,
+	/* The guest answered with something that is not the figures. */
+	malformed,
+	/* The guest answered with its figures. */
+	done,
+};
+
+/*
+ * A "mem" request that was sent and waits for its reply, in two steps so that
+ * a caller can send it while it holds a lock and wait for the reply without
+ * the lock: the guest answers from its interrupt at once, but a guest that
+ * does not would otherwise hold the lock for the whole wait. The request owns
+ * its reply socket until it is destroyed, and a reply that comes after that
+ * finds no socket.
+ *
+ * Like every console request it wakes a guest that is suspended, so send it
+ * only to a guest known to run.
+ */
+class GuestMemoryQuery final {
+public:
+	/* Sends the request and returns at once. Nothing when no console is
+	 * reachable or the datagram could not be sent. */
+	[[nodiscard]] static std::optional<GuestMemoryQuery> start() noexcept;
+
+	GuestMemoryQuery(GuestMemoryQuery &&other) noexcept;
+	GuestMemoryQuery &operator=(GuestMemoryQuery &&) = delete;
+	GuestMemoryQuery(const GuestMemoryQuery &) = delete;
+	GuestMemoryQuery &operator=(const GuestMemoryQuery &) = delete;
+	~GuestMemoryQuery();
+
+	/* Waits up to `wait` for the reply, and fills `figures` when it is
+	 * done. A zero wait takes only a reply that has already arrived. May be
+	 * called again after `unanswered`. */
+	[[nodiscard]] GuestMemoryResult await(std::chrono::milliseconds wait,
+		GuestMemoryFigures &figures) noexcept;
+
+private:
+	class State;
+	explicit GuestMemoryQuery(std::unique_ptr<State> state) noexcept;
+
+	std::unique_ptr<State> state_;
+};
 
 /*
  * Holds this process's console location for one guest run that passed the
