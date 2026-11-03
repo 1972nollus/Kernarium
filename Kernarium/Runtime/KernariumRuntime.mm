@@ -922,7 +922,13 @@ void appendKernelCommandLine(
         arguments.emplace_back(
             std::string {kernarium::adb::keyPrefix} + std::string {adbPublicKey});
     }
-    if (kernarium::adb::tcpDisabled(std::getenv("KERNARIUM_HOST_FORWARD"))) {
+#ifdef UML_APP_STORE_RUNTIME
+    /* An App Store runtime reads no environment knob, so it has no forward. */
+    const char* hostForward = nullptr;
+#else
+    const char* hostForward = std::getenv("KERNARIUM_HOST_FORWARD");
+#endif
+    if (kernarium::adb::tcpDisabled(hostForward)) {
         arguments.emplace_back(std::string {kernarium::adb::tcpPrefix} + "0");
     }
 }
