@@ -153,8 +153,9 @@ fingerprint starts `Andarium/lineage_andarium/andarium:` and names the variant.
 
 Diagnostics on a `user` image start on the host and need no guest root: the
 guest console the host captures for kernel logs, UML's mconsole (`sysrq`,
-`proc`, `stack`) for the kernel's state, and tracefs from the shell (the image
-mounts it at `/sys/kernel/tracing`, readable and writable by `shell`). The
+`proc`, `stack`, and `mem` for the memory counters, which it reads without
+opening `/proc/meminfo`) for the kernel's state, and tracefs from the shell (the
+image mounts it at `/sys/kernel/tracing`, readable and writable by `shell`). The
 shell can also set `perf.drop_caches` (init writes `drop_caches`), the `debug.*`
 properties and `powerctl`. Only what these cannot reach (`dmesg`, `setenforce`,
 `ctl.*` service control, other uids' `/proc/<pid>/smaps`) needs a `userdebug`
