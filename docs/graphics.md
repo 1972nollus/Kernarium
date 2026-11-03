@@ -29,20 +29,16 @@ pipelines and generated MSL it caused instead of keeping them for the life of
 the process.
 
 macOS and the iOS device both build that stack from the same sources; the
-prefixes differ only in their platform contract. The iOS
-Simulator has no build of it, because KosmicKrisp requires Metal 4 and the
-Simulator exposes no Metal 4 device: configuring the GPU product for
-`ios-simulator` fails early with that reason
-(`dependencies/cmake/AppleGpuDependencies.cmake`), and
-`dependencies/build-apple-gpu.sh` accepts only `macos` and `ios`. Kernarium is
-therefore an iOS device product with no Simulator variant, and the Simulator
-remains a target of the ordinary, non-GPU iOS libraries only. The unmodified
-device slice also runs on an Apple silicon Mac in Designed for iPad mode, where
-Metal reports the host GPU and the full Metal 4 family; the physical-device
-lanes are in [`testing.md`](testing.md). The device runtimes use the
-Vulkan-experiment GPU prefix and the accepted kernel descriptors. Desktop GL 4.6
-needs `GL_ARB_buffer_storage`, whose coherent buffers reach the guest through
-the vhost-user shared-memory aperture of the shared kernel series.
+prefixes differ only in their platform contract. The iOS Simulator cannot run
+it, because KosmicKrisp requires Metal 4 and the Simulator exposes no Metal 4
+device; it has the CPU-rendering variant of
+[its own section](#ios-simulator-software-renderer). The unmodified device slice
+also runs on an Apple silicon Mac in Designed for iPad mode, where Metal
+reports the host GPU and the full Metal 4 family; the physical-device lanes are
+in [`testing.md`](testing.md). The device runtimes use the Vulkan-experiment GPU
+prefix and the accepted kernel descriptors. Desktop GL 4.6 needs
+`GL_ARB_buffer_storage`, whose coherent buffers reach the guest through the
+vhost-user shared-memory aperture of the shared kernel series.
 
 The GPU transport thread owns renderer creation, context use, reset, and
 teardown. AppKit and UIKit share the Metal presentation layer. VNC is a macOS
@@ -189,6 +185,61 @@ input is exposed as one direct touch contact with absolute coordinates; hover,
 auxiliary buttons, and wheel events are suppressed, and coordinates are sent
 only for touch down, drag, and release. Non-Android guests retain absolute
 pointer hover, primary and auxiliary mouse buttons, and wheel input.
+
+## iOS Simulator software renderer
+
+The Simulator has no Metal 4 device for KosmicKrisp, so Kernarium and Andarium
+render a guest there on the CPU. That is a product for UI tests, not a faster or
+second graphics backend, and no other product can carry it:
+
+```text
+guest Mesa -> Virtio-GPU/Virgl -> vhost-user -> virglrenderer
+    -> Mesa llvmpipe over surfaceless EGL -> readback -> UIKit
+```
+
+- Its `apple-gpu-vulkan-experiment` prefix (`ios-simulator-arm64`, contract
+  `ios-simulator-gpu-software-arm64.tsv`) holds libepoxy, virglrenderer built
+  without Venus, and `MesaEGL.framework` and `MesaGallium.framework` with
+  Mesa's llvmpipe and softpipe Gallium drivers. It has no KosmicKrisp, Vulkan
+  header or Venus protocol, so its receipt names no protocol.
+  `dependencies/build-apple-gpu.sh --platform ios-simulator` builds it, and the
+  drivers are named once, in that script's `ios-simulator` branch, which is also
+  the contract's `gl_provider`.
+- llvmpipe JITs through LLVM. `dependencies/build-apple-gpu-llvm.sh` builds
+  LLVM's AArch64 libraries for the Simulator from the source archive that
+  `dependencies/llvm/archives.tsv` pins (prepared with
+  `dependencies/prepare.sh --archive-manifest`), and Mesa links them statically
+  into `MesaGallium`, so the prefix ships no LLVM file and records the archive
+  manifest as provenance. softpipe, an interpreter that needs no JIT, stays as
+  the `GALLIUM_DRIVER=softpipe` fallback.
+- The JIT is Mesa's own: gallivm maps its code with `mmap`, makes it executable
+  with `mprotect` and publishes it with `sys_icache_invalidate`, and neither
+  uses `MAP_JIT` nor goes through `darwin/cpu/jit_memory`. It is the one
+  exception to the [executable-memory rule](architecture.md), granted for this
+  test-only product.
+- The host GL provider selects the software device (`LIBGL_ALWAYS_SOFTWARE`),
+  which Mesa answers with llvmpipe, and renders a desktop OpenGL 4.6 core
+  context as the other products do. The guest sees a Virgl GPU with OpenGL ES
+  3.2 and no Vulkan: the device offers no Venus capset, refuses a Venus
+  context, and runs the renderer with no Venus flag and no device-memory pool,
+  so SurfaceFlinger falls back to GL.
+- Every flush is a readback; there is no native Metal texture to look up, and
+  the log says `renderer=software`. The runtime plans no GPU budget, because the
+  budget only sizes the Venus pool, and says so at launch.
+- The rasterizers are a build-time property of the product:
+  `UML_GPU_SOFTWARE_RENDERER` derives from the `ios-simulator` platform alone
+  (`dependencies/cmake/AppleGpuDependencies.cmake`) and excludes the Venus and
+  native-lookup code from every other build as a preprocessor condition on a
+  constant. The architecture audit rejects it, and a link of a software prefix,
+  outside an `ios-simulator` tree; the prefix verifier requires every driver of
+  the contract's `gl_provider` in the Simulator's `MesaGallium` and forbids a
+  software screen and LLVM in the macOS and iOS device prefixes; and
+  `Kernarium/scripts/package-ios-frameworks.sh` checks every device slice for
+  either and for the provider's marker.
+- llvmpipe rasterizes on one thread per host core, so a scroll keeps about three
+  cores busy; it presents about 20 frames per second and a cold app launch
+  draws within about 7 s. A UI test allows about 20 s for a cold launch.
+  softpipe, on one thread, is an order of magnitude slower.
 
 ## Guest capability boundary
 
@@ -545,10 +596,12 @@ remain aligned with the pixels that are actually visible.
 
 ## Vulkan
 
-Every GPU build advertises guest Vulkan. Venus runs over the packaged
-KosmicKrisp on Metal, and the guest reaches the host ring through the kernel's
-vhost-user shared-memory aperture. The device always offers the Venus capset,
-blob resources, and that aperture; no runtime switch withholds them.
+Every GPU build advertises guest Vulkan except the iOS Simulator's [software
+renderer](#ios-simulator-software-renderer), which has no Vulkan driver. Venus
+runs over the packaged KosmicKrisp on Metal, and the guest reaches the host ring
+through the kernel's vhost-user shared-memory aperture. The device of every
+other build always offers the Venus capset, blob resources, and that aperture;
+no runtime switch withholds them.
 
 Venus exposes KosmicKrisp's real version, extensions, features, properties,
 formats, queues, limits, and memory model, with no injected extension or forced

@@ -38,6 +38,7 @@ endif()
 file(READ "${REPLY_ROOT}/${CACHE_FILE}" CACHE_JSON)
 # A tree that names no platform is held to the iOS rules.
 set(APPLE_PLATFORM "unset")
+set(GPU_SOFTWARE_RENDERER_CACHE "")
 string(JSON CACHE_ENTRY_COUNT LENGTH "${CACHE_JSON}" entries)
 foreach(INDEX RANGE 0 ${CACHE_ENTRY_COUNT})
     if(INDEX EQUAL CACHE_ENTRY_COUNT)
@@ -46,7 +47,9 @@ foreach(INDEX RANGE 0 ${CACHE_ENTRY_COUNT})
     string(JSON CACHE_ENTRY_NAME GET "${CACHE_JSON}" entries ${INDEX} name)
     if(CACHE_ENTRY_NAME STREQUAL "UML_APPLE_PLATFORM")
         string(JSON APPLE_PLATFORM GET "${CACHE_JSON}" entries ${INDEX} value)
-        break()
+    elseif(CACHE_ENTRY_NAME STREQUAL "UML_GPU_SOFTWARE_RENDERER")
+        string(JSON GPU_SOFTWARE_RENDERER_CACHE
+            GET "${CACHE_JSON}" entries ${INDEX} value)
     endif()
 endforeach()
 
@@ -350,6 +353,79 @@ function(uml_audit_macos_only_x86_jit TARGET_NAME TARGET_JSON)
     endforeach()
 endfunction()
 
+# The software GPU renderer is the iOS Simulator's alone: the Simulator has no
+# Metal 4 device for KosmicKrisp, so its product renders on the CPU, and no
+# other product may fall back to that. Outside an ios-simulator configuration
+# the build may not select it (UML_GPU_SOFTWARE_RENDERER), no target may compile
+# with it, and no target may link a library of a software GPU prefix, which is
+# the prefix that carries the Simulator's platform contract.
+set(GPU_SOFTWARE_RENDERER_CONTRACT
+    "share/uml-dependencies/ios-simulator-gpu-software-arm64.tsv")
+if(NOT APPLE_PLATFORM STREQUAL "ios-simulator" AND
+   GPU_SOFTWARE_RENDERER_CACHE)
+    message(FATAL_ERROR
+        "Simulator-only software GPU renderer in a "
+        "UML_APPLE_PLATFORM=${APPLE_PLATFORM} configuration: cache "
+        "UML_GPU_SOFTWARE_RENDERER is ${GPU_SOFTWARE_RENDERER_CACHE}")
+endif()
+function(uml_audit_simulator_only_software_renderer TARGET_NAME TARGET_JSON)
+    set(PREFIX
+        "Simulator-only software GPU renderer in a UML_APPLE_PLATFORM=${APPLE_PLATFORM} configuration:")
+    string(JSON GROUP_COUNT ERROR_VARIABLE GROUP_ERROR
+        LENGTH "${TARGET_JSON}" compileGroups)
+    if(GROUP_ERROR)
+        set(GROUP_COUNT 0)
+    endif()
+    foreach(GROUP_INDEX RANGE 0 ${GROUP_COUNT})
+        if(GROUP_INDEX EQUAL GROUP_COUNT)
+            break()
+        endif()
+        string(JSON DEFINE_COUNT ERROR_VARIABLE DEFINE_ERROR
+            LENGTH "${TARGET_JSON}" compileGroups ${GROUP_INDEX} defines)
+        if(DEFINE_ERROR)
+            continue()
+        endif()
+        foreach(DEFINE_INDEX RANGE 0 ${DEFINE_COUNT})
+            if(DEFINE_INDEX EQUAL DEFINE_COUNT)
+                break()
+            endif()
+            string(JSON DEFINE GET "${TARGET_JSON}"
+                compileGroups ${GROUP_INDEX} defines ${DEFINE_INDEX} define)
+            # A bare definition means 1; the generator expression writes 0
+            # or 1.
+            if(DEFINE MATCHES "^UML_GPU_SOFTWARE_RENDERER(=(.*))?$")
+                set(DEFINE_VALUE "${CMAKE_MATCH_2}")
+                if(NOT DEFINE_VALUE STREQUAL "0")
+                    message(FATAL_ERROR
+                        "${PREFIX} ${TARGET_NAME} compiles with ${DEFINE}")
+                endif()
+            endif()
+        endforeach()
+    endforeach()
+    string(JSON FRAGMENT_COUNT ERROR_VARIABLE FRAGMENT_ERROR
+        LENGTH "${TARGET_JSON}" link commandFragments)
+    if(FRAGMENT_ERROR)
+        return()
+    endif()
+    foreach(FRAGMENT_INDEX RANGE 0 ${FRAGMENT_COUNT})
+        if(FRAGMENT_INDEX EQUAL FRAGMENT_COUNT)
+            break()
+        endif()
+        string(JSON FRAGMENT GET "${TARGET_JSON}"
+            link commandFragments ${FRAGMENT_INDEX} fragment)
+        # A prefix library is <prefix>/lib/libX.a or
+        # <prefix>/Frameworks/X.framework/X.
+        if(FRAGMENT MATCHES
+           "^(.+)/(lib/[^/]+|Frameworks/[^/]+\\.framework/[^/]+)$")
+            set(FRAGMENT_PREFIX "${CMAKE_MATCH_1}")
+            if(EXISTS "${FRAGMENT_PREFIX}/${GPU_SOFTWARE_RENDERER_CONTRACT}")
+                message(FATAL_ERROR
+                    "${PREFIX} ${TARGET_NAME} links ${FRAGMENT}")
+            endif()
+        endif()
+    endforeach()
+endfunction()
+
 foreach(INDEX RANGE 0 ${TARGET_COUNT})
     if(INDEX EQUAL TARGET_COUNT)
         break()
@@ -359,6 +435,11 @@ foreach(INDEX RANGE 0 ${TARGET_COUNT})
     if(NOT APPLE_PLATFORM STREQUAL "macos")
         list(GET TARGET_NAMES ${INDEX} AUDITED_TARGET_NAME)
         uml_audit_macos_only_x86_jit("${AUDITED_TARGET_NAME}" "${TARGET_JSON}")
+    endif()
+    if(NOT APPLE_PLATFORM STREQUAL "ios-simulator")
+        list(GET TARGET_NAMES ${INDEX} AUDITED_TARGET_NAME)
+        uml_audit_simulator_only_software_renderer(
+            "${AUDITED_TARGET_NAME}" "${TARGET_JSON}")
     endif()
     string(JSON DEPENDENCY_COUNT ERROR_VARIABLE DEPENDENCY_ERROR
         LENGTH "${TARGET_JSON}" dependencies)

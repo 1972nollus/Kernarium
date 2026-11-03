@@ -201,6 +201,47 @@
       "cacheVariables": {
         "UML_KERNARIUM_AUTOMATION_HARNESS": true
       }
+    },
+    {
+      "name": "kernarium-ios-simulator",
+      "displayName": "Kernarium iOS Simulator runtime (software GPU)",
+      "inherits": "ios-simulator",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-simulator",
+      "cacheVariables": {
+        "UML_BUILD_KERNEL_RUNNER": true,
+        "UML_BUILD_NETWORK_PROVIDER": true,
+        "UML_BUILD_GPU": true,
+        "UML_BUILD_KERNARIUM_RUNTIME": true,
+        "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu-vulkan-experiment/ios-simulator-arm64",
+        "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/ios-simulator-arm64/network"
+      }
+    },
+    {
+      "name": "kernarium-ios-simulator-automation",
+      "displayName": "Kernarium iOS Simulator automation runtime (software GPU)",
+      "inherits": "kernarium-ios-simulator",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-simulator-automation",
+      "cacheVariables": {
+        "UML_KERNARIUM_AUTOMATION_HARNESS": true
+      }
+    },
+    {
+      "name": "kernarium-ios-simulator-android",
+      "displayName": "Kernarium iOS Simulator Android runtime (4 KiB, software GPU)",
+      "inherits": "kernarium-ios-simulator",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-simulator-android-4k",
+      "cacheVariables": {
+        "UML_KERNEL_PRODUCT": "android-17"
+      }
+    },
+    {
+      "name": "kernarium-ios-simulator-android-automation",
+      "displayName": "Kernarium iOS Simulator Android automation runtime (4 KiB, software GPU)",
+      "inherits": "kernarium-ios-simulator-android",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-simulator-android-4k-automation",
+      "cacheVariables": {
+        "UML_KERNARIUM_AUTOMATION_HARNESS": true
+      }
     }
   ],
   "buildPresets": [
@@ -292,6 +333,26 @@
     {
       "name": "kernarium-ios-device-android-automation",
       "configurePreset": "kernarium-ios-device-android-automation",
+      "targets": ["KernariumRuntime", "architecture-audit"]
+    },
+    {
+      "name": "kernarium-ios-simulator",
+      "configurePreset": "kernarium-ios-simulator",
+      "targets": ["KernariumRuntime", "architecture-audit"]
+    },
+    {
+      "name": "kernarium-ios-simulator-automation",
+      "configurePreset": "kernarium-ios-simulator-automation",
+      "targets": ["KernariumRuntime", "architecture-audit"]
+    },
+    {
+      "name": "kernarium-ios-simulator-android",
+      "configurePreset": "kernarium-ios-simulator-android",
+      "targets": ["KernariumRuntime", "architecture-audit"]
+    },
+    {
+      "name": "kernarium-ios-simulator-android-automation",
+      "configurePreset": "kernarium-ios-simulator-android-automation",
       "targets": ["KernariumRuntime", "architecture-audit"]
     }
   ],

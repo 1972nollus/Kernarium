@@ -140,6 +140,11 @@ public:
         };
     }
 
+    [[nodiscard]] bool offersVenus() const noexcept override
+    {
+        return venusOffered;
+    }
+
     [[nodiscard]] int createContext(
         std::uint32_t contextId,
         std::uint32_t flags,
@@ -561,6 +566,8 @@ public:
     std::uint32_t attachedBackingResource {};
     unsigned clearCount {};
     unsigned displayUpdateCount {};
+    // A renderer without a Vulkan driver offers no Venus capset.
+    bool venusOffered {true};
     unsigned createContextCount {};
     std::uint32_t lastContextFlags {};
     unsigned destroyContextCount {};
@@ -1024,6 +1031,47 @@ void contextInitUsesVirgl2ForTheDeviceSelectedDefault()
     requireResponse(device, requestBytes(reservedBits),
         protocol::GpuResponse::errorInvalidParameter);
     require(dependencies.createContextCount == 3);
+}
+
+void aRendererWithoutVulkanOffersAndRunsNoVenus()
+{
+    FakeGpuDependencies dependencies;
+    dependencies.venusOffered = false;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+    require(device.config().capsetCount == protocol::venusCapsetIndex);
+
+    // The Virgl capsets are answered as ever; the Venus index names nothing.
+    auto capsetInfo = newRequest<protocol::GpuGetCapsetInfo>(
+        GpuCommand::getCapsetInfo);
+    capsetInfo.capsetIndex = protocol::virgl2CapsetIndex;
+    requireResponse(device, requestBytes(capsetInfo),
+        protocol::GpuResponse::okCapsetInfo);
+    capsetInfo.capsetIndex = protocol::venusCapsetIndex;
+    const auto venusInfo = device.process(requestBytes(capsetInfo), false);
+    protocol::GpuCapsetInfo information {};
+    std::memcpy(&information, venusInfo.data(), sizeof(information));
+    require(information.capsetId == 0);
+    require(information.maximumSize == 0);
+
+    auto capset = newRequest<protocol::GpuGetCapset>(GpuCommand::getCapset);
+    capset.capsetId = protocol::venusCapsetId;
+    capset.version = 0;
+    requireResponse(device, requestBytes(capset),
+        protocol::GpuResponse::errorInvalidParameter);
+    capset.capsetId = protocol::virgl2CapsetId;
+    capset.version = 1;
+    requireResponse(device, requestBytes(capset),
+        protocol::GpuResponse::okCapset);
+
+    // A Venus context is refused before the renderer hears of it, and a
+    // Virgl context beside it is unaffected.
+    const auto venus = createContext(407, protocol::venusCapsetId);
+    requireResponse(device, requestBytes(venus),
+        protocol::GpuResponse::errorInvalidParameter);
+    require(dependencies.createContextCount == 0);
+    const auto virgl2 = createContext(408, protocol::virgl2CapsetId);
+    requireOk(device, requestBytes(virgl2));
+    require(dependencies.createContextCount == 1);
 }
 
 void lifecycleCommandsAllocateBeforeCommitAndRetry()
@@ -3444,6 +3492,7 @@ int main()
     edidReportsDisplayPixelsAndEffectiveDensity();
     displayChangeEventsPreserveAResizeThatRacesGuestClear();
     contextInitUsesVirgl2ForTheDeviceSelectedDefault();
+    aRendererWithoutVulkanOffersAndRunsNoVenus();
     lifecycleCommandsAllocateBeforeCommitAndRetry();
     contextCreateIsRetryableAfterEachAllocationFailure();
     blobCommandsAllocateBeforeCommitAndRetry();
