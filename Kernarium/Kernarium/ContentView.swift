@@ -864,6 +864,7 @@ final class EmulatorLauncher: ObservableObject {
         )
         if kernarium_runtime_loader_plan_gpu_budget(
             UInt32(configuration.guestMemoryMiB),
+            UInt32(configuration.vCPUCount),
             gpuBudget.applicationMiB,
             gpuBudget.engineMiB,
             gpuBudget.headroomMiB,

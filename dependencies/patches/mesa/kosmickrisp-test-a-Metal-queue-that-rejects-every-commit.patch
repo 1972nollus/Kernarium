@@ -26,10 +26,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_queue_denied.m
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index e4d7bab32bc63452d3a9de6f0c1616f373fb184d..d59901280f046ced86e3bb285da9090d7965f94a 100644
+index 388628cb754022a955d779cda7b11fcbd25311a5..4e1365f48c3881ef42f66fa9d07d1a0f9677f07f 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -479,6 +479,25 @@ if with_tests
+@@ -495,6 +495,25 @@ if with_tests
          timeout : 90,
        )
      endforeach

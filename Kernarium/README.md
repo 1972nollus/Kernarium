@@ -98,10 +98,11 @@ The host GPU's budget is fixed at launch from the guest's memory, the process's
 memory limit and three launch parameters
 ([architecture](../docs/architecture.md#memory-and-executable-code) owns the
 formula; [graphics](../docs/graphics.md#device-memory-budget) what it bounds).
-The application states the parameters in the boot request (runtime API 16:
-`gpu_budget_application_mib`, `gpu_budget_engine_mib`,
+The application states the parameters in the boot request
+(`gpu_budget_application_mib`, `gpu_budget_engine_mib`,
 `gpu_budget_headroom_mib`) and, before it starts the run, asks the runtime for
-the plan (`plan_gpu_budget`), which evaluates exactly what the run will. When
+the plan (`plan_gpu_budget`, which takes the guest's memory and vCPU count as
+the run will, runtime API 18), which evaluates exactly what the run will. When
 the limit leaves the GPU less than its 384 MiB floor, the application shows a
 Memory May Run Short notice in the style of the ended and restarting notices:
 a tap dismisses it, it holds nothing back, and the guest boots with the floor.
@@ -110,7 +111,33 @@ Nothing refuses a launch for lack of memory.
 `KERNARIUM_GPU_BUDGET_APP_MIB`, `KERNARIUM_GPU_BUDGET_ENGINE_MIB` and
 `KERNARIUM_GPU_BUDGET_HEADROOM_MIB` (each 0 to 16384) state the parameters for
 one launch, for a measurement run. They come from the environment only and are
-never stored. All three default to zero until the product owner chooses values.
+never stored. All three default to the launch set of
+`runtime/guest_memory_budget.hpp`, whose values are zero until the product
+owner chooses them; the loader reports the set, so the application keeps no
+copy.
+
+### Safe guest RAM
+
+The settings offer no more guest RAM than the memory limit leaves once the vCPU
+count's share of the process is counted
+([architecture](../docs/architecture.md#memory-and-executable-code) owns the
+formula, `G_max(v)`). Each added vCPU holds more of the process's memory (a
+larger gadget cache and its slot tags), so the maximum falls as vCPUs rise.
+The runtime framework is loaded once per process for the flavour chosen at
+launch, so the settings do not ask it: the loader (`KernariumRuntimeLoader`)
+includes the same header, reads the limit from the process (`TASK_VM_INFO`) and
+answers `kernarium_runtime_loader_maximum_guest_memory_mib`. Where the system
+sets no limit, on a Mac included, the answer is 4096 MB and nothing changes.
+
+- The Guest RAM stepper runs from 512 MB to the maximum of the chosen vCPU
+  count and updates as the count changes; a footnote states the maximum.
+- Raising the vCPU count takes the RAM down to the new maximum, in 64 MB steps.
+  Lowering the count leaves the RAM as it is.
+- Loading a stored size takes it down to the maximum of the stored vCPU count.
+  With nothing stored the default is 1536 MB on a device and 4096 MB on a Mac,
+  or the maximum where that is less.
+- `KERNARIUM_GUEST_MEMORY_MIB` states a size as is, for automation; the launch
+  notice above covers a size the limit cannot afford.
 
 ## Guest storage
 
@@ -322,9 +349,10 @@ budget, and the hold itself waits at most one second for a request already
 running. Requests the guest queues meanwhile wait in their rings, through the
 suspend, and run in order after the release. The handler stops waiting at that
 deadline, but the quiesce carries on under the `guest-sync` background task,
-waiting up to eight seconds for the guest's suspend reply, which follows its
-file system sync. A return to the foreground resumes the guest once that reply
-has arrived or the wait has ended.
+waiting up to ten seconds for the guest's suspend reply, which follows its
+file system sync, and then aborting a suspend that has not replied. A return
+to the foreground resumes the guest once that reply has arrived or the wait has
+ended.
 
 Guest page-cache trimming stays off while the application is in the
 foreground, because the guest then pays a host read for every evicted page its

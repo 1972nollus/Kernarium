@@ -73,11 +73,16 @@ namespace detail {
 		return {0x0003'06c3U, 0x0000'0800U, 0x7ed8'3203U,
 			0x0788'8111U};
 	case 7U:
+		if (subleaf == 1U)
+			/* AVX-VNNI, the VEX forms of the dot products VPDPBUSD,
+			 * VPDPBUSDS, VPDPWSSD and VPDPWSSDS. */
+			return {0x0000'0010U, 0U, 0U, 0U};
 		if (subleaf != 0U)
 			return {};
-		/* FSGSBASE, BMI1, AVX2, BMI2, ERMS, RDSEED, ADX, CLFLUSHOPT,
-		 * CLWB, SHA, RDPID and FSRM. RTM/HLE and MPX stay absent. */
-		return {0U, 0x218c'0329U, 0x0040'0000U, 0x0000'0010U};
+		/* EAX is the highest subleaf, 1 for AVX-VNNI's. FSGSBASE,
+		 * BMI1, AVX2, BMI2, ERMS, RDSEED, ADX, CLFLUSHOPT, CLWB, SHA,
+		 * RDPID and FSRM. RTM/HLE and MPX stay absent. */
+		return {1U, 0x218c'0329U, 0x0040'0000U, 0x0000'0010U};
 	case 13U:
 		if (subleaf == 0U)
 			/* XCR0 enables x87, SSE and AVX; the standard image is

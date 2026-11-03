@@ -219,7 +219,7 @@ index 5e0c19fd3e24007b00c24c725a5c6c40ab125796..e1e6a46ddbea1740a5ecb7ae0fd355d5
  mtl_set_depth_bias(mtl_render_encoder *encoder, float depth_bias,
                     float slope_scale, float clamp)
 diff --git a/src/kosmickrisp/bridge/mtl_types.h b/src/kosmickrisp/bridge/mtl_types.h
-index f60ad2721dd26c0c2c06d5a2e3eff3de296eb657..7ee56bf47fa0d4737a3e8cd39503abb8044baf9e 100644
+index b6ed24d792ca6384a07b463967d9b158b2acee82..1a4d1bb622d2a789c5ab0b11abe42b11280190ad 100644
 --- a/src/kosmickrisp/bridge/mtl_types.h
 +++ b/src/kosmickrisp/bridge/mtl_types.h
 @@ -229,6 +229,47 @@ enum mtl_visibility_result_mode {

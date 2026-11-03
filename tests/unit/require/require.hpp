@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <source_location>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -35,6 +38,20 @@ inline void require(bool condition, std::string_view message,
 {
 	if (!condition)
 		fail(message, location);
+}
+
+/* As require() for a system call that reports failure through errno: the
+ * failure message also names the errno the call left, so a failure that a
+ * loaded host causes says which call failed and why. Call it right after the
+ * system call, because it reads errno on entry. */
+inline void requireSyscall(bool succeeded, std::string_view message,
+	const std::source_location location = std::source_location::current())
+{
+	const int error = errno;
+	if (!succeeded)
+		fail(std::string{message} + ": " + std::strerror(error) +
+				" (errno " + std::to_string(error) + ")",
+			location);
 }
 
 /* Requires `operation` to throw an `Exception`. Anything else it throws
