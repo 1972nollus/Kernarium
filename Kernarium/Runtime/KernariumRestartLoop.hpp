@@ -82,6 +82,12 @@ public:
 
     void quiesce() noexcept { quiesced_.store(true, std::memory_order_release); }
 
+    /* Whether the application has quiesced the guest and not yet resumed it. */
+    [[nodiscard]] bool quiesced() const noexcept
+    {
+        return quiesced_.load(std::memory_order_acquire);
+    }
+
     void resume() noexcept
     {
         quiesced_.store(false, std::memory_order_release);

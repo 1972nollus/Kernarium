@@ -1471,6 +1471,47 @@ removes one a killed run left. `guest-host-residue` ends guests by poweroff,
 SIGTERM, SIGHUP, a panic and SIGKILL and finds nothing left in `/tmp` or
 `$TMPDIR`.
 
+### Statistics
+
+An application that shows a running guest's load reads it from the host, and
+nothing runs between reads: there is no sampler, timer or counter of its own.
+`uml_emulator_get_statistics()` sums the user and system time of the process's
+`uml-vcpu-N-carrier` threads (the kernel names its host threads; the carriers
+are the only ones that run guest code) and reports the guest RAM the host holds
+from the commitment's own count of released pages (`runtime/guest_statistics`).
+It answers from any thread for the handle whose run is active, and for no other.
+A restart's hand-back retires the commitment under `GuestRamRetirementScope`,
+and a reader that finds it held reports no RAM rather than waiting. The frames
+a display presented come from `InProcessGpuService::displayStatistics()`, the
+counters its present path keeps whether or not anyone reads them.
+
+The guest's own memory in use comes from the kernel:
+`uml_emulator_get_guest_memory()` sends the management console's `mem` command,
+one datagram answered from the console interrupt with
+`total=<bytes> available=<bytes> free=<bytes>`, so a guest policy that denies
+the console `/proc/meminfo` does not matter, and a kernel without the command
+answers "Unknown command", which is unsupported. Like every console request it
+ends a suspend, so it is sent only under the handle's lifecycle mutex, taken
+with `try_lock`, and only while the host has not quiesced the guest. The wait
+for the reply, at most 500 ms, is outside the mutex, so a quiesce never waits
+for a memory request and a request never waits for a quiesce
+(`device/mconsole`'s `GuestMemoryQuery` is the two-step request). Whether the
+guest has suspended itself, as an Android guest does once its display is off,
+is the caller's to know.
+
+The macOS launchers print the same figures with `--stats=<ms>` (at least
+100): a sampler thread, started only with the option, reads the running guest
+once per interval through the public calls and the display's counters, and
+prints one line on standard error,
+`uml-darwin: stats <s> s cpu <n>% of <v> vCPUs frames <p>/s presented <o>/s
+offered [memory <u> MiB in use of <t> MiB] held <h> of <r> MiB`.
+The share is of the guest's `<v>` vCPUs, the frame rates are the presented and
+the offered counters' (`emulator/src/statistics_report.hpp`), and the memory
+part appears on every second line, and not while the guest's display is off,
+when the guest's kernel answers. A restart, or a gap with no guest, starts a
+new baseline. This is measurement tooling with no UI: the Mac validates the
+sources the iOS applications use, and a memory run reads the held figure.
+
 ### Hibernation
 
 On a physical iOS device, where guest RAM is wired and so neither compressible

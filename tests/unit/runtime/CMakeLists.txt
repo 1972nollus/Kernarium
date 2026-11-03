@@ -194,3 +194,17 @@ target_include_directories(uml_runtime_guest_memory_budget_tests PRIVATE
 uml_add_unit_test(
     NAME runtime-guest-memory-budget
     COMMAND uml_runtime_guest_memory_budget_tests)
+
+# What the host reads of a guest without asking it: the CPU time of the vCPU
+# carriers, found by name among the process's threads, and the RAM the host
+# holds for the guest.
+add_executable(uml_runtime_guest_statistics_tests
+    guest_statistics_tests.cpp)
+target_link_libraries(uml_runtime_guest_statistics_tests PRIVATE
+    UML::RuntimeGuestStatistics)
+target_include_directories(uml_runtime_guest_statistics_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+uml_add_unit_test(
+    NAME runtime-guest-statistics
+    COMMAND uml_runtime_guest_statistics_tests
+    LABELS tsan)

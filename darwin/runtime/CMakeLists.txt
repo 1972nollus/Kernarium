@@ -110,6 +110,19 @@ target_include_directories(uml_runtime_virtual_jetsam PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin
     ${PROJECT_SOURCE_DIR}/darwin/runtime)
 
+# What the host says of a running guest from the system's own accounting, with
+# nothing running between calls: the CPU time of its vCPU carriers and the RAM
+# it holds.
+add_library(uml_runtime_guest_statistics OBJECT
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/guest_statistics.cpp)
+add_library(UML::RuntimeGuestStatistics ALIAS uml_runtime_guest_statistics)
+uml_declare_architecture_target(uml_runtime_guest_statistics runtime)
+target_link_libraries(uml_runtime_guest_statistics PUBLIC
+    UML::MemorySharedBacking)
+target_include_directories(uml_runtime_guest_statistics PUBLIC
+    ${PROJECT_SOURCE_DIR}/darwin
+    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+
 add_library(uml_runtime_guest_selector OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/guest_selector.cpp)
 uml_declare_architecture_target(uml_runtime_guest_selector runtime)
@@ -148,6 +161,7 @@ target_sources(uml_runtime_objects INTERFACE
     $<TARGET_OBJECTS:uml_runtime_thread_fence>
     $<TARGET_OBJECTS:uml_runtime_hibernation>
     $<TARGET_OBJECTS:uml_runtime_virtual_jetsam>
+    $<TARGET_OBJECTS:uml_runtime_guest_statistics>
     $<TARGET_OBJECTS:uml_runtime_guest_selector>
     $<TARGET_OBJECTS:uml_runtime_entry>
     $<TARGET_OBJECTS:uml_static_runtime>)

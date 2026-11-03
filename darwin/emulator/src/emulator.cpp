@@ -7,6 +7,7 @@
 #include "guest_console.hpp"
 #include "guest_hand_back.hpp"
 #include "guest_hibernation.hpp"
+#include "guest_statistics.hpp"
 #include "kernel_signal_scope.hpp"
 #include "native_kernel_layout.hpp"
 #include "virtual_jetsam.hpp"
@@ -14,6 +15,7 @@
 #include "uml_darwin_abi.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <condition_variable>
@@ -59,6 +61,11 @@ constexpr unsigned int guest_writeback_settle_ms = 1500U;
  * expires finishes before the guest takes the suspend request queued behind
  * it. */
 constexpr unsigned int guest_trim_wait_ms = 3000U;
+
+/* The most a request for the guest's memory figures waits for its reply. The
+ * guest answers from its console interrupt, so a reply that has not come by
+ * now is not coming soon, and the caller is not held longer for it. */
+constexpr std::chrono::milliseconds guest_memory_wait {500};
 
 [[nodiscard]] int guest_request_result(
 	::uml::device::GuestRequest request) noexcept
@@ -575,6 +582,65 @@ public:
 			::uml::device::trim_guest_page_cache(guest_trim_wait_ms));
 	}
 
+	/* The figures of this handle's running guest: its route is the one
+	 * process-wide active run, which is committed once the run is admitted
+	 * and withdrawn before it returns. Nothing here waits for the guest. */
+	[[nodiscard]] int read_statistics(uml_emulator_statistics &statistics)
+		const noexcept
+	{
+		if (::uml::runtime::current_context() != &runtime_)
+			return -UML_EMULATOR_UNSUPPORTED;
+		const auto cpu = ::uml::runtime::guest_cpu_time();
+		if (!cpu.listed)
+			return -UML_EMULATOR_RUNTIME_ERROR;
+		const auto ram = ::uml::runtime::guest_ram_usage();
+		statistics = {
+			.struct_size = sizeof(statistics),
+			.guest_cpu_count = cpu.carriers,
+			.guest_cpu_time_ns = cpu.nanoseconds,
+			.guest_ram_bytes = ram ? ram->ram_bytes : 0U,
+			.guest_ram_held_bytes = ram ? ram->held_bytes : 0U,
+		};
+		return UML_EMULATOR_OK;
+	}
+
+	/* A console request wakes a suspended guest, so it is sent only under
+	 * the lifecycle mutex, which says whether the host has quiesced the
+	 * guest, and never while another lifecycle call holds it: that call
+	 * would otherwise be waited for, or wait for this one. The wait for the
+	 * reply is outside the mutex, so a quiesce that starts after the send
+	 * does not wait for it. */
+	[[nodiscard]] int read_guest_memory(
+		uml_emulator_guest_memory &memory) noexcept
+	{
+		std::unique_lock lock{guest_lifecycle_mutex_, std::try_to_lock};
+		if (!lock.owns_lock() ||
+			guest_suspension_ != ::uml::device::GuestSuspension::none)
+			return -UML_EMULATOR_UNSUPPORTED;
+		auto query = ::uml::device::GuestMemoryQuery::start();
+		lock.unlock();
+		if (!query)
+			return -UML_EMULATOR_UNSUPPORTED;
+		::uml::device::GuestMemoryFigures figures;
+		switch (query->await(guest_memory_wait, figures)) {
+		case ::uml::device::GuestMemoryResult::done:
+			memory = {
+				.struct_size = sizeof(memory),
+				.reserved = 0U,
+				.total_bytes = figures.total_bytes,
+				.available_bytes = figures.available_bytes,
+			};
+			return UML_EMULATOR_OK;
+		case ::uml::device::GuestMemoryResult::unreachable:
+		case ::uml::device::GuestMemoryResult::refused:
+			return -UML_EMULATOR_UNSUPPORTED;
+		case ::uml::device::GuestMemoryResult::unanswered:
+		case ::uml::device::GuestMemoryResult::malformed:
+			break;
+		}
+		return -UML_EMULATOR_RUNTIME_ERROR;
+	}
+
 	void wake() noexcept
 	{
 		std::lock_guard lock{guest_lifecycle_mutex_};
@@ -639,7 +705,14 @@ private:
 		 * hibernation holds the commitment the hand-back retires. */
 		reset_guest_state();
 		::uml::runtime::GuestHandBack hand_back;
-		if (!::uml::runtime::hand_back_guest(hand_back)) {
+		bool handed_back;
+		{
+			/* The commitment of the RAM is deleted in here, and a reader of
+			 * the statistics must not meet it half gone. */
+			const ::uml::runtime::GuestRamRetirementScope retirement;
+			handed_back = ::uml::runtime::hand_back_guest(hand_back);
+		}
+		if (!handed_back) {
 			(void)::dprintf(STDERR_FILENO,
 				"Darwin: the guest could not be handed back: "
 				"errno=%d\n", errno);
@@ -1013,4 +1086,22 @@ extern "C" int uml_emulator_trim_page_cache(uml_emulator *emulator)
 	if (emulator == nullptr)
 		return -UML_EMULATOR_INVALID_ARGUMENT;
 	return emulator->implementation.trim_page_cache();
+}
+
+extern "C" int uml_emulator_get_statistics(const uml_emulator *emulator,
+	uml_emulator_statistics *statistics)
+{
+	if (emulator == nullptr || statistics == nullptr ||
+		statistics->struct_size < sizeof(*statistics))
+		return -UML_EMULATOR_INVALID_ARGUMENT;
+	return emulator->implementation.read_statistics(*statistics);
+}
+
+extern "C" int uml_emulator_get_guest_memory(uml_emulator *emulator,
+	uml_emulator_guest_memory *memory)
+{
+	if (emulator == nullptr || memory == nullptr ||
+		memory->struct_size < sizeof(*memory))
+		return -UML_EMULATOR_INVALID_ARGUMENT;
+	return emulator->implementation.read_guest_memory(*memory);
 }
