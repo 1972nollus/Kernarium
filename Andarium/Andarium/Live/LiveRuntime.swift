@@ -322,6 +322,44 @@ final class LiveRuntime: RuntimeDriver {
         _ = kernarium_runtime_loader_set_microphone(on ? 1 : 0)
     }
 
+    // MARK: Statistics
+
+    /// Both readings are made on one serial queue of their own: the memory
+    /// request waits for the guest and neither runs on the main thread or on
+    /// the cooperative pool, and two never overlap.
+    private let statsQueue = DispatchQueue(label: "com.imxieyi.andarium.stats", qos: .utility)
+
+    func readStatistics() async -> StatsSample? {
+        await withCheckedContinuation { continuation in
+            statsQueue.async { continuation.resume(returning: Self.statisticsReading()) }
+        }
+    }
+
+    func readGuestMemory() async -> GuestMemorySample? {
+        await withCheckedContinuation { continuation in
+            statsQueue.async { continuation.resume(returning: Self.guestMemoryReading()) }
+        }
+    }
+
+    private nonisolated static func statisticsReading() -> StatsSample? {
+        var reading = kernarium_runtime_statistics()
+        reading.struct_size = UInt32(MemoryLayout<kernarium_runtime_statistics>.size)
+        guard kernarium_runtime_loader_read_statistics(&reading) == 0 else { return nil }
+        return StatsSample(
+            bootIndex: reading.boot_index, processorCount: reading.processor_count,
+            timestampNanoseconds: reading.timestamp_ns, processorTimeNanoseconds: reading.processor_time_ns,
+            presentedFrames: reading.presented_frames, ramBytes: reading.memory_bytes,
+            ramHeldBytes: reading.memory_held_bytes
+        )
+    }
+
+    private nonisolated static func guestMemoryReading() -> GuestMemorySample? {
+        var reading = kernarium_runtime_guest_memory()
+        reading.struct_size = UInt32(MemoryLayout<kernarium_runtime_guest_memory>.size)
+        guard kernarium_runtime_loader_read_guest_memory(&reading) == 0 else { return nil }
+        return GuestMemorySample(totalBytes: reading.total_bytes, availableBytes: reading.available_bytes)
+    }
+
     // MARK: Thermal state
 
     // The thermal state and uptime go to the console for the iPad harness

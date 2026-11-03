@@ -28,6 +28,8 @@ private final class StubDriver: RuntimeDriver {
         plan = .update(from: "r1", to: "r2")
     }
     func setMicrophone(_ on: Bool) {}
+    func readStatistics() async -> StatsSample? { nil }
+    func readGuestMemory() async -> GuestMemorySample? { nil }
 }
 
 @MainActor

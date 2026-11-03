@@ -41,6 +41,14 @@ protocol RuntimeDriver: AnyObject {
     /// Turns the guest's microphone on or off, asking the system for access
     /// when the person turns it on for the first time.
     func setMicrophone(_ on: Bool)
+    /// One reading of the running guest's host-side figures, taken off the
+    /// main thread; nil when no guest runs.
+    func readStatistics() async -> StatsSample?
+    /// The guest kernel's own memory figures; nil when they could not be
+    /// had: the kernel does not answer the request yet, or asking could wake
+    /// a guest that sleeps. The caller keeps the last figures then. It may
+    /// wait up to half a second, and never on the main thread.
+    func readGuestMemory() async -> GuestMemorySample?
 }
 
 /// What a screen needs from its launch arguments to open a state directly.
