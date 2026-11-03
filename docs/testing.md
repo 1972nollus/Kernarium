@@ -637,7 +637,8 @@ STMXCSR and `fadd` show of the sticky SIMD exception flags against an Intel
 Xeon's, on either engine. `run_guest_x86_64_vnni.py`, which takes the same
 options, runs a freestanding probe that dispatches on CPUID leaf 7 subleaf 1
 the way ggml and oneDNN do and requires the AVX-VNNI path, with the AVX2 and
-AVX-VNNI forms of its kernels agreeing exactly. The slice's SMBIOS tables and
+AVX-VNNI forms of its kernels agreeing exactly, and requires `avx_vnni` in the
+guest's `/proc/cpuinfo`. The slice's SMBIOS tables and
 thread names, which `guest-kernel-dmi` and `guest-kernel-thread-names` check on
 arm64, are checked by running `tests/integration/support/run_guest_probe.py
 --probe tests/integration/kernel/dmi_probe.py --ncpus 2 --probe-timeout 120` and
