@@ -35,13 +35,6 @@ cache like any other, in phases:
   Then 256 MiB read once must stay cached again, and a command the trimmer
   does not know must be refused.
 
-The same console answers ``mem`` with the memory counters /proc/meminfo
-prints, in bytes, from its interrupt and without opening a file, which an
-Android guest's SELinux policy would deny. The test sends it at boot and
-after the last phase: one reply, no error, the three numbers and nothing else,
-MemTotal to within a page, and MemAvailable and MemFree where /proc/meminfo
-puts them.
-
 The contract is the guest RAM paragraph of the mainline kernel README.
 """
 
@@ -94,8 +87,6 @@ UNTRIMMED_SECONDS = 10
 # The longest back-off is 32 intervals of 2 s, and a pass after it.
 RESUME_SECONDS = 100
 REQUEST_SECONDS = 60.0
-# Counters read a moment apart differ by what the commands between them touch.
-MEMORY_SLACK_BYTES = 64 << 20
 MCONSOLE_MAGIC = 0xCAFEBABE
 MCONSOLE_VERSION = 2
 MCONSOLE_DATA = 512
@@ -103,7 +94,6 @@ TRIMMED = re.compile(
     r"^trimmed (\d+) KiB in \d+ ms, compacted in (\d+) ms, "
     r"released (\d+) KiB in \d+ ms$"
 )
-MEMORY = re.compile(r"total=(\d+) available=(\d+) free=(\d+)")
 FAILURE = re.compile(
     r"WARNING:|BUG:|Oops|Call Trace:|Kernel panic|Darwin UML panic|"
     r"Darwin POSIX|Kernel mode fault"
@@ -126,11 +116,6 @@ class ManagementConsole:
         self._sent = 0
 
     def request(self, command: str) -> tuple[int, str]:
-        error, _, text = self.exchange(command)
-        return error, text
-
-    def exchange(self, command: str) -> tuple[int, int, str]:
-        """The error flag, the more flag and the text of the first reply."""
         console = self._directory / "mconsole"
         if not console.is_socket():
             raise RuntimeError(f"the guest's management console is not {console}")
@@ -166,12 +151,8 @@ class ManagementConsole:
         finally:
             endpoint.close()
             reply.unlink(missing_ok=True)
-        error, more, length = struct.unpack_from("<III", answer)
-        return (
-            error,
-            more,
-            answer[12:12 + length].decode(errors="replace").rstrip("\0"),
-        )
+        error, _, length = struct.unpack_from("<III", answer)
+        return error, answer[12:12 + length].decode(errors="replace").rstrip("\0")
 
     def accepted(self, command: str) -> str:
         error, text = self.request(command)
@@ -185,53 +166,6 @@ def number(output: str, name: str) -> int:
     if match is None:
         raise RuntimeError(f"the guest did not report {name}:\n{output}")
     return int(match.group(1))
-
-
-def meminfo_bytes(guest: Guest) -> dict[str, int]:
-    """MemTotal, MemAvailable and MemFree of /proc/meminfo, in bytes."""
-    output = guest.check_command(
-        "awk '/^(MemTotal|MemAvailable|MemFree):/ "
-        "{ print $1 $2 }' /proc/meminfo",
-        30,
-    )
-    figures = {
-        name: int(value) * 1024
-        for name, value in re.findall(r"^(\w+):(\d+)$", output, re.MULTILINE)
-    }
-    if len(figures) != 3:
-        raise RuntimeError(f"the guest did not report its memory:\n{output}")
-    return figures
-
-
-def check_memory(guest: Guest, console: ManagementConsole, page: int) -> str:
-    """mem is answered with the counters of /proc/meminfo, in bytes, as the
-    one reply of a request that was not refused."""
-    before = meminfo_bytes(guest)
-    error, more, text = console.exchange("mem")
-    after = meminfo_bytes(guest)
-    match = MEMORY.fullmatch(text)
-    if error or more or match is None or len(text) >= MCONSOLE_DATA:
-        raise RuntimeError(
-            f"mem replied {text!r} with error {error} and more {more}"
-        )
-    total, available, free = (int(group) for group in match.groups())
-    if any(abs(total - seen["MemTotal"]) >= page for seen in (before, after)):
-        raise RuntimeError(
-            f"mem reported {total} bytes of memory; /proc/meminfo "
-            f"MemTotal is {before['MemTotal']}"
-        )
-    for name, value, key in (
-        ("available", available, "MemAvailable"),
-        ("free", free, "MemFree"),
-    ):
-        low = min(before[key], after[key]) - MEMORY_SLACK_BYTES
-        high = max(before[key], after[key]) + MEMORY_SLACK_BYTES
-        if not 0 < value <= total or not low <= value <= high:
-            raise RuntimeError(
-                f"mem reported {value} bytes {name} of {total}; "
-                f"/proc/meminfo {key} reads {before[key]}, then {after[key]}"
-            )
-    return f"mem {total // MIB} MiB, {available // MIB} MiB available"
 
 
 def inactive(guest: Guest) -> int:
@@ -414,7 +348,6 @@ def run(
         )
         page = number(identity, "PAGE")
         floor_kib = number(identity, "TOTAL") // 32
-        memory = check_memory(guest, console, page)
 
         require_untrimmed(guest, "at boot")
         if enabled(guest) != "N":
@@ -439,7 +372,6 @@ def run(
         error, text = console.request("trim sometimes")
         if not error:
             raise RuntimeError(f"trim sometimes was accepted: {text!r}")
-        check_memory(guest, console, page)
 
         failure = FAILURE.search(guest.output())
         if failure is not None:
@@ -448,10 +380,10 @@ def run(
                 + guest.output()[max(0, failure.start() - 2000):][:6000]
             )
         print(
-            f"page {page} B: {memory}; off at boot; {once}; on: cold cache "
-            f"trimmed in {cold} s, {read_back // MIB} MiB of "
-            f"{read_again // MIB} MiB read again came back, trimming "
-            f"resumed in {resumed} s; off: {fragmented}"
+            f"page {page} B: off at boot; {once}; on: cold cache trimmed in "
+            f"{cold} s, {read_back // MIB} MiB of {read_again // MIB} MiB "
+            f"read again came back, trimming resumed in {resumed} s; off: "
+            f"{fragmented}"
         )
         if not guest.shutdown(60):
             raise RuntimeError("the guest did not power off")

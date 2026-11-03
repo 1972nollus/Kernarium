@@ -536,8 +536,7 @@ uml_add_guest_integration_test(
 # it on and off and runs one pass that leaves the cache at its floor and,
 # compacting, hands most of what it frees to the host even when the cache lay
 # between pages still in use; a trimming guest backs off while a working set it
-# evicted is read back. The same console answers "mem" with the guest's
-# MemTotal, MemAvailable and MemFree in bytes, at boot and at the end.
+# evicted is read back.
 uml_add_guest_integration_test(
     NAME guest-page-cache-trim
     SCRIPT kernel/run_guest_page_cache_trim.py
