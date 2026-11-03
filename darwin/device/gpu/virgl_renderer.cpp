@@ -350,13 +350,7 @@ VirglRenderer::VirglRenderer()
         }
         if (capabilityReportEnabled()) {
             // vrend asks for 4.6 first, the core context this provider serves.
-#if UML_GPU_SOFTWARE_RENDERER
-            // The software rasterizer's desktop GL stops at 4.5, so 4.6 would
-            // report a probe that can never succeed.
-            reportContextProbe(provider_->probeContext(4, 5));
-#else
             reportContextProbe(provider_->probeContext(4, 6));
-#endif
             reportCapset(virglCapsetId, capset(virglCapsetId));
             reportCapset(virgl2CapsetId, capset(virgl2CapsetId));
 #if !UML_GPU_SOFTWARE_RENDERER

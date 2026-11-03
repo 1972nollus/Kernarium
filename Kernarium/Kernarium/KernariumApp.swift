@@ -18,7 +18,7 @@ struct KernariumApp: App {
         // pointing at freed memory and the next terminal configuration
         // crashes. Every process variable is set here, before any view.
         // The Simulator has no Metal 4 device, so its provider is Mesa's
-        // softpipe rasterizer, which Mesa selects when software rendering
+        // llvmpipe rasterizer, which Mesa selects when software rendering
         // is forced.
         #if targetEnvironment(simulator)
         setenv("LIBGL_ALWAYS_SOFTWARE", "true", 1)
