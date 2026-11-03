@@ -27,13 +27,23 @@ struct AdbOverVsockTests {
     /// Waits, up to 15 minutes, until Android has booted and adbd answers.
     private func awaitAndroid(_ operations: AdbGuestOperations) async throws {
         let deadline = ContinuousClock.now + .seconds(15 * 60)
+        var lastError = "none"
+        var lastReport = ContinuousClock.now
         while ContinuousClock.now < deadline {
-            if let booted = try? await operations.shell("getprop sys.boot_completed"), booted.text.hasPrefix("1") {
-                return
+            do {
+                let booted = try await operations.shell("getprop sys.boot_completed")
+                if booted.text.hasPrefix("1") { return }
+                lastError = "boot_completed reads \(booted.text.debugDescription)"
+            } catch {
+                lastError = String(describing: error)
+            }
+            if ContinuousClock.now - lastReport > .seconds(30) {
+                print("ADBVSOCK: waiting for Android: \(lastError)")
+                lastReport = ContinuousClock.now
             }
             try await Task.sleep(for: .seconds(5))
         }
-        Issue.record("Android did not finish booting in 15 minutes")
+        Issue.record("Android did not finish booting in 15 minutes; last: \(lastError)")
         throw CancellationError()
     }
 
@@ -148,6 +158,95 @@ struct AdbOverVsockTests {
         let reply = try AdbMessage.Header(Data(header))
         #expect(reply.command == AdbWire.auth || reply.command == AdbWire.cnxn)
         #expect(bridge.peerCount == 1)
+    }
+
+    /// A key the guest was not given is not authorized: adbd asks for a
+    /// signature again, and the client reports that it was refused.
+    @Test(.timeLimit(.minutes(20))) func aForeignKeyIsRefused() async throws {
+        guard Self.enabled else { return }
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        var error: Unmanaged<CFError>?
+        let attributes: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits as String: 2048,
+        ]
+        let foreign = try #require(SecKeyCreateRandomKey(attributes as CFDictionary, &error))
+        let session = AdbSession(
+            connector: VsockConnector(), signer: SecKeySigner(privateKey: foreign), clock: operations.clock)
+        #expect(throws: AdbError.keyRejected) { try session.run { $0.banner } }
+        // And the application's own key still works afterwards.
+        let result = try await operations.shell("echo alive")
+        #expect(result.text == "alive\n")
+    }
+
+    /// The channel is the application's own, whatever the guest's USB
+    /// debugging setting is: the setting reads back through it, and it works
+    /// while the setting is on and after both debugging switches are off
+    /// (adbd restarts once then).
+    @Test(.timeLimit(.minutes(20))) func theChannelWorksWhateverUSBDebuggingIsSet() async throws {
+        guard Self.enabled else { return }
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        let initial = await operations.usbDebugging()
+        print("ADBVSOCK: USB debugging starts as \(initial.map(String.init(describing:)) ?? "unreadable")")
+        func set(_ on: Bool) async throws {
+            // The command's own connection can be cut by the restart.
+            _ = try? await operations.shell(
+                "settings put global adb_enabled \(on ? 1 : 0); settings put global adb_wifi_enabled 0")
+            var read: Bool?
+            for _ in 0..<60 {
+                read = await operations.usbDebugging()
+                if read == on { break }
+                try await Task.sleep(for: .seconds(1))
+            }
+            #expect(read == on, "wanted \(on)")
+            var alive = ""
+            for _ in 0..<30 {
+                if let result = try? await operations.shell("echo alive") {
+                    alive = result.text
+                    break
+                }
+                try await Task.sleep(for: .seconds(1))
+            }
+            #expect(alive == "alive\n", "after turning USB debugging \(on ? "on" : "off")")
+        }
+        try await set(true)
+        try await set(false)
+        try await set(initial ?? false)
+    }
+
+    /// A real adb on the Mac against the bridge, for as long as the launch
+    /// asks (`ANDARIUM_ADB_NET_HOLD_SECONDS`, or until the file named
+    /// `adb-net-done` appears in the printed folder). The application's own
+    /// key is written there as `adbkey` for the Mac's adb to offer, since the
+    /// guest authorizes that key for the boot.
+    @Test(.timeLimit(.minutes(60))) func holdTheBridgeForARealAdbClient() async throws {
+        guard Self.enabled,
+            let text = ProcessInfo.processInfo.environment["ANDARIUM_ADB_NET_HOLD_SECONDS"],
+            let seconds = Double(text), seconds > 0
+        else { return }
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        let identity = try #require(operations.identity)
+        var error: Unmanaged<CFError>?
+        let der = try #require(SecKeyCopyExternalRepresentation(identity.privateKey, &error) as Data?)
+        let body = der.base64EncodedString(options: [.lineLength64Characters, .endLineWithLineFeed])
+        let directory = FileManager.default.temporaryDirectory
+        try "-----BEGIN RSA PRIVATE KEY-----\n\(body)\n-----END RSA PRIVATE KEY-----\n"
+            .write(to: directory.appendingPathComponent("adbkey"), atomically: true, encoding: .utf8)
+        let done = directory.appendingPathComponent("adb-net-done")
+        try? FileManager.default.removeItem(at: done)
+        let bridge = AdbNetworkBridge(opener: VsockConnector())
+        let port = try bridge.start()
+        defer { bridge.stop() }
+        print("ADBVSOCK: bridge ready port=\(port) folder=\(directory.path)")
+        let deadline = ContinuousClock.now + .seconds(seconds)
+        var peak = 0
+        while ContinuousClock.now < deadline, !FileManager.default.fileExists(atPath: done.path) {
+            peak = max(peak, bridge.peerCount)
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        print("ADBVSOCK: bridge served at most \(peak) computers at once")
     }
 
     /// The key the application made for this boot changes when the guest is
