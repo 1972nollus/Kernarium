@@ -13,7 +13,7 @@ do not, and TF set by IRET traps after the instruction IRET returns to. POPF
 at CPL 3 loads only the flags a task may change, IRET those and RF, and PUSHF
 stores no RF; IRET without REX.W pops a 32-bit frame. RDRAND and RDSEED,
 which CPUID advertises, succeed and leave only CF of the status flags set.
-The REP case signals from another CPU, which the guest's default vCPUs
+The REP case signals from another CPU, which the guest's ten vCPUs
 provide.
 """
 
@@ -54,6 +54,7 @@ def main() -> int:
         arguments.rootfs,
         "512M",
         "tmpfs",
+        kernel_arguments=("ncpus=10",),
         init_shell=True,
         engine=arguments.engine,
         payloads=payloads,

@@ -181,7 +181,10 @@ def main() -> int:
         arguments.rootfs.resolve(),
         "1024M",
         "tmpfs",
-        (f"--net-forward=tcp:127.0.0.1:{forward_port}-{FORWARD_GUEST_PORT}",),
+        (
+            "ncpus=10",
+            f"--net-forward=tcp:127.0.0.1:{forward_port}-{FORWARD_GUEST_PORT}",
+        ),
         # The production rootfs is raw EROFS and is intentionally entered
         # through a temporary init shell, which keeps this smoke to the
         # emulator's network device and the guest's own DHCP client.
