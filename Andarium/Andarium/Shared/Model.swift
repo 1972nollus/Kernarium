@@ -39,6 +39,9 @@ struct ApkInstall: Identifiable, Equatable {
         case installed
         /// The file is not an app package.
         case notApk
+        /// The file is an app in several parts (.apks, .xapk, .apkm), which
+        /// the install does not take.
+        case bundle
         /// The guest's package installer refused it.
         case failed(String)
     }
@@ -77,12 +80,21 @@ final class SessionState {
     /// The address a computer on the same network connects to.
     static let adbAddress = "198.51.100.23:5555"
 
+    /// The file name's kind for the install: an app in one file, one in
+    /// several, or not an app.
+    static func installKind(of fileName: String) -> ApkInstall.State? {
+        let name = fileName.lowercased()
+        if name.hasSuffix(".apk") { return nil }
+        if [".apks", ".xapk", ".apkm"].contains(where: { name.hasSuffix($0) }) { return .bundle }
+        return .notApk
+    }
+
     /// Mock install: anything that is not an .apk is refused at once;
     /// an .apk installs over about three seconds.
     func install(fileName: String, sizeMB: Double, play: Bool = true) {
-        guard fileName.lowercased().hasSuffix(".apk") else {
+        if let refused = Self.installKind(of: fileName) {
             withAnimation(.snappy) {
-                installs.insert(ApkInstall(fileName: fileName, sizeMB: sizeMB, state: .notApk), at: 0)
+                installs.insert(ApkInstall(fileName: fileName, sizeMB: sizeMB, state: refused), at: 0)
             }
             return
         }
@@ -108,6 +120,12 @@ final class SessionState {
         installs.removeAll { $0.id == id }
     }
 
+    /// Notes an install's end in the Apps list.
+    func record(_ state: ApkInstall.State, fileName: String, sizeMB: Double) {
+        withAnimation(.snappy) {
+            installs.insert(ApkInstall(fileName: fileName, sizeMB: sizeMB, state: state), at: 0)
+        }
+    }
 }
 
 /// What the screens read and change. The guest's life (create, start, boot,
@@ -435,6 +453,67 @@ final class AppModel {
         // An empty zip: its end-of-central-directory record.
         try Data([0x50, 0x4B, 0x05, 0x06] + [UInt8](repeating: 0, count: 18)).write(to: file)
         return file
+    }
+
+    /// Install App: `url` is what the Files picker returned. A file that does
+    /// not end in .apk (a split bundle too) is answered at once with a row in
+    /// Settings, which stays open: the result is false. For an .apk the
+    /// caller dismisses Settings and the install runs behind the overlay:
+    /// the result is true. The file's security scope is held to the end.
+    func installPicked(_ url: URL) -> Bool {
+        let name = url.lastPathComponent
+        let scoped = url.startAccessingSecurityScopedResource()
+        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        let megabytes = Double(bytes) / 1_000_000
+        func release() {
+            if scoped { url.stopAccessingSecurityScopedResource() }
+        }
+        guard SessionState.installKind(of: name) == nil else {
+            release()
+            session.install(fileName: name, sizeMB: megabytes)
+            return false
+        }
+        guard busy == nil else {
+            release()
+            return false
+        }
+        runOperation(
+            BusyState(
+                title: "Installing App",
+                detail: "\(name) \u{00B7} \(String(format: "%.1f", megabytes)) MB", progress: 0
+            ),
+            failure: "App Not Installed",
+            { [driver, weak self] update in
+                defer { release() }
+                do {
+                    if let driver {
+                        try await driver.installApk(at: url, sizeBytes: bytes, update: update)
+                    } else {
+                        try await Self.playInstall(update)
+                    }
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    self?.session.record(.failed(error.localizedDescription), fileName: name, sizeMB: megabytes)
+                    throw error
+                }
+                // 100% for a moment, then the overlay goes.
+                update(BusyUpdate(progress: 1))
+                try? await Task.sleep(for: .milliseconds(500))
+                self?.session.record(.installed, fileName: name, sizeMB: megabytes)
+            }
+        )
+        return true
+    }
+
+    /// The preview's install: the file goes over, the guest takes its time.
+    private static func playInstall(_ update: @Sendable (BusyUpdate) -> Void) async throws {
+        for step in 1...20 {
+            try await Task.sleep(for: .milliseconds(100))
+            update(BusyUpdate(progress: Double(step) / 20 * 0.8))
+        }
+        update(BusyUpdate(detail: "The guest is installing the app\u{2026}", cancellable: false))
+        try await Task.sleep(for: .milliseconds(1200))
     }
 
     /// Starts the guest in `mode`. Start on an update that did not finish

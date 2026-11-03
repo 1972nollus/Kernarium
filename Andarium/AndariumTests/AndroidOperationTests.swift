@@ -215,4 +215,148 @@ struct AndroidOperationTests {
         #expect(!FileManager.default.fileExists(atPath: sink.url.path))
     }
 
+    // MARK: Install
+
+    private func apk(named name: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString)-\(name)")
+        try Data(count: 3_000_000).write(to: url)
+        return url
+    }
+
+    @Test func anApkInstallsBehindTheOverlayAndLeavesAnInstalledRow() async throws {
+        let (model, driver) = running()
+        driver.install = { update in
+            update(BusyUpdate(progress: 0.4))
+            update(BusyUpdate(progress: 0.8, detail: "The guest is installing the app\u{2026}", cancellable: false))
+        }
+        let url = try apk(named: "Signal-7.21.4.apk")
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(model.installPicked(url))
+        #expect(model.busy?.title == "Installing App")
+        #expect(await eventually { model.busy == nil })
+        #expect(model.session.installs.first?.state == .installed)
+        #expect(model.alert == nil)
+    }
+
+    @Test func theCancelButtonGoesOnceTheLastByteIsSent() async throws {
+        let (model, driver) = running()
+        let gate = Gate()
+        driver.install = { update in
+            update(BusyUpdate(progress: 0.8, detail: "The guest is installing the app\u{2026}", cancellable: false))
+            while !gate.isOpen { try await Task.sleep(for: .milliseconds(5)) }
+        }
+        let url = try apk(named: "a.apk")
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(model.installPicked(url))
+        #expect(model.busy?.cancel != nil)
+        #expect(await eventually { model.busy?.cancel == nil })
+        #expect(model.busy?.detail == "The guest is installing the app\u{2026}")
+        gate.release()
+        #expect(await eventually { model.busy == nil })
+    }
+
+    @Test func cancellingTheInstallLeavesNoRowAndNoAlert() async throws {
+        let (model, driver) = running()
+        driver.install = { _ in
+            while true { try await Task.sleep(for: .milliseconds(5)) }
+        }
+        let url = try apk(named: "a.apk")
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(model.installPicked(url))
+        model.busy?.cancel?.action()
+        #expect(await eventually { model.busy == nil })
+        #expect(model.session.installs.isEmpty && model.alert == nil)
+    }
+
+    @Test func aRefusalIsAnAlertAndAFailedRow() async throws {
+        let (model, driver) = running()
+        driver.install = { _ in
+            throw AdbFailure(message: PackageInstallMessages.message(forCode: "FAILED_VERSION_DOWNGRADE"))
+        }
+        let url = try apk(named: "a.apk")
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(model.installPicked(url))
+        #expect(await eventually { model.alert != nil })
+        #expect(model.alert?.title == "App Not Installed")
+        #expect(model.alert?.message == "A newer version of this app is already installed.")
+        #expect(model.session.installs.first?.state == .failed("A newer version of this app is already installed."))
+        #expect(model.busy == nil)
+    }
+
+    @Test func anythingButASingleApkIsAnsweredAtOnceAndSettingsStays() throws {
+        let (model, _) = running()
+        let expected: [(String, ApkInstall.State)] = [
+            ("Trip.zip", .notApk), ("app.apks", .bundle), ("app.xapk", .bundle), ("app.apkm", .bundle),
+            ("notes.txt", .notApk),
+        ]
+        for (name, state) in expected {
+            let url = try apk(named: name)
+            defer { try? FileManager.default.removeItem(at: url) }
+            #expect(!model.installPicked(url), "\(name)")
+            #expect(model.busy == nil)
+            #expect(model.session.installs.first?.state == state, "\(name)")
+        }
+        #expect(model.session.installs.count == 5)
+    }
+}
+
+struct PackageInstallMessagesTests {
+    @Test func everyCodeInTheTableHasItsMessage() {
+        let expected: [String: String] = [
+            "PARSE_FAILED_NOT_APK": "The file isn\u{2019}t a valid app.",
+            "FAILED_INVALID_APK": "The file isn\u{2019}t a valid app.",
+            "PARSE_FAILED_BAD_MANIFEST": "The file isn\u{2019}t a valid app.",
+            "PARSE_FAILED_MANIFEST_MALFORMED": "The file isn\u{2019}t a valid app.",
+            "PARSE_FAILED_UNEXPECTED_EXCEPTION": "The file isn\u{2019}t a valid app.",
+            "PARSE_FAILED_NO_CERTIFICATES": "The app isn\u{2019}t signed correctly.",
+            "PARSE_FAILED_INCONSISTENT_CERTIFICATES": "The app isn\u{2019}t signed correctly.",
+            "PARSE_FAILED_CERTIFICATE_ENCODING": "The app isn\u{2019}t signed correctly.",
+            "FAILED_UPDATE_INCOMPATIBLE": "A version of this app signed by someone else is installed. Uninstall it in the guest first.",
+            "FAILED_SHARED_USER_INCOMPATIBLE": "A version of this app signed by someone else is installed. Uninstall it in the guest first.",
+            "FAILED_VERSION_DOWNGRADE": "A newer version of this app is already installed.",
+            "FAILED_OLDER_SDK": "This app needs a newer system than this guest runs.",
+            "FAILED_DEPRECATED_SDK_VERSION": "This app was made for a system version that this guest no longer installs.",
+            "FAILED_NO_MATCHING_ABIS": "This app has no code for this device\u{2019}s processor.",
+            "FAILED_INSUFFICIENT_STORAGE": "The guest doesn\u{2019}t have enough free space. Free some up in the guest, or give it more storage with Resize.",
+            "FAILED_MISSING_SPLIT": "This app comes in several parts, which Andarium can\u{2019}t install yet.",
+            "FAILED_MISSING_SHARED_LIBRARY": "The app needs a system library this guest doesn\u{2019}t have.",
+            "FAILED_DUPLICATE_PERMISSION": "The app conflicts with an app that\u{2019}s already installed.",
+            "FAILED_CONFLICTING_PROVIDER": "The app conflicts with an app that\u{2019}s already installed.",
+            "FAILED_DUPLICATE_PACKAGE": "The app conflicts with an app that\u{2019}s already installed.",
+            "FAILED_USER_RESTRICTED": "The guest refused to install the app.",
+            "FAILED_VERIFICATION_FAILURE": "The guest refused to install the app.",
+            "FAILED_ABORTED": "The guest refused to install the app.",
+        ]
+        #expect(Set(PackageInstallMessages.mappedCodes) == Set(expected.keys))
+        for (code, message) in expected {
+            #expect(PackageInstallMessages.message(forCode: code) == message, "\(code)")
+            let output = "Failure [INSTALL_\(code): something detailed]\n"
+            #expect(PackageInstallMessages.failure(inOutput: output) == message, "\(code)")
+        }
+    }
+
+    @Test func anUnknownCodeIsNamed() {
+        #expect(PackageInstallMessages.failure(inOutput: "Failure [INSTALL_FAILED_TEST_ONLY: x]\n")
+            == "The guest couldn\u{2019}t install the app (FAILED_TEST_ONLY).")
+    }
+
+    @Test func successIsNil() {
+        #expect(PackageInstallMessages.failure(inOutput: "Success\n") == nil)
+        #expect(PackageInstallMessages.failure(inOutput: "Performing Streamed Install\nSuccess\n") == nil)
+    }
+
+    @Test func outputWithoutAVerdictIsAFailure() {
+        #expect(PackageInstallMessages.failure(inOutput: "") == "The guest couldn\u{2019}t install the app.")
+        #expect(PackageInstallMessages.failure(inOutput: "Failure\n") == "The guest couldn\u{2019}t install the app.")
+    }
+
+    @Test func theCodeIsReadWhateverFollowsIt() {
+        #expect(PackageInstallMessages.code(inFailure: "Failure [INSTALL_FAILED_OLDER_SDK]") == "FAILED_OLDER_SDK")
+        #expect(PackageInstallMessages.code(inFailure: "Failure [FAILED_ABORTED: Session was abandoned]") == "FAILED_ABORTED")
+        #expect(PackageInstallMessages.code(inFailure: "Failure") == nil)
+    }
+
+    @Test func theInstallServiceHasItsArguments() {
+        #expect(ApkInstallOperation.service(size: 1234) == "abb_exec:package\0install\0-r\0-t\0-S\0" + "1234")
+    }
 }

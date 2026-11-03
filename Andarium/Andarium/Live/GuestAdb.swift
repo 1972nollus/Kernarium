@@ -219,4 +219,23 @@ nonisolated struct AdbGuestOperations: Sendable {
         }
     }
 
+    /// Installs the APK at `url` (readable by the caller), cancellable while
+    /// the file is being sent.
+    func installApk(at url: URL, sizeBytes: Int, update: @escaping @Sendable (BusyUpdate) -> Void) async throws {
+        guard let identity else { throw AdbFailure(.keyRejected, activity: .installApp) }
+        let coordinator = FileCoordinatorBox()
+        let megabytes = String(format: "%.1f", Double(sizeBytes) / 1_000_000)
+        let info = "\(url.lastPathComponent) \u{00B7} \(megabytes) MB"
+        do {
+            try await AdbOperationRunner.run(
+                identity: identity, clock: clock, connector: connector, onCancel: { coordinator.cancel() }
+            ) { session in
+                try ApkInstallOperation.run(
+                    session: session, coordinator: coordinator, url: url, size: sizeBytes, fileInfo: info,
+                    update: update)
+            }
+        } catch {
+            throw AdbOperationRunner.presented(error, activity: .installApp)
+        }
+    }
 }

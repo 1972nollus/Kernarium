@@ -7,7 +7,7 @@ import Testing
 struct CapabilitiesTests {
     @Test func theDeviceOffersWhatTheAdbChannelDoes() {
         let device = Capabilities.device
-        #expect(device.bugReport && !device.apkInstall && !device.adbOverNetwork)
+        #expect(device.bugReport && device.apkInstall && !device.adbOverNetwork)
         // The statistics and the app count have no runtime behind them yet.
         #expect(!device.statistics && !device.appCount)
         #expect(device.systemUpdate && !device.liveDisplayOptions)

@@ -23,7 +23,7 @@ struct SessionSettingsSheet: View {
         let session = model.session
         NavigationStack {
             List {
-                if model.capabilities.apkInstall { apps(session) }
+                if normalSession, model.capabilities.apkInstall { apps(session) }
                 if model.capabilities.adbOverNetwork { adb(session) }
                 if normalSession, model.capabilities.bugReport { bugReport }
                 if model.capabilities.statistics { stats(session) }
@@ -43,10 +43,9 @@ struct SessionSettingsSheet: View {
         .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
             guard case .success(let url) = result else { return }
-            let scoped = url.startAccessingSecurityScopedResource()
-            let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            if scoped { url.stopAccessingSecurityScopedResource() }
-            model.session.install(fileName: url.lastPathComponent, sizeMB: Double(bytes) / 1_000_000)
+            // An .apk starts the install and Settings goes; anything else is
+            // answered by a row here, and Settings stays.
+            if model.installPicked(url) { dismiss() }
         }
     }
 
@@ -89,7 +88,7 @@ struct SessionSettingsSheet: View {
             } label: {
                 HStack(spacing: 12) {
                     IconTile(symbol: "square.and.arrow.down.fill")
-                    Text("Install APK\u{2026}")
+                    Text("Install App\u{2026}")
                         .foregroundStyle(Color.accentColor)
                     Spacer()
                     Text("From Files")
@@ -297,7 +296,7 @@ struct InstallRow: View {
                 .frame(width: 40, height: 40)
                 .background(Color.accentColor.gradient, in: .rect(cornerRadius: 11, style: .continuous))
                 .opacity(item.state == .installed ? 1 : 0.55)
-        case .notApk:
+        case .notApk, .bundle:
             Image(systemName: "doc.fill")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(.white)
@@ -326,7 +325,10 @@ struct InstallRow: View {
             Text(item.version.map { "Installed \u{00B7} version \($0)" } ?? "Installed")
                 .foregroundStyle(.secondary)
         case .notApk:
-            Text("Not an APK. Choose a file that ends in .apk.")
+            Text("This isn\u{2019}t an app. Choose a file that ends in .apk.")
+                .foregroundStyle(.red)
+        case .bundle:
+            Text("Apps that come in several files can\u{2019}t be installed yet. Choose a single .apk file.")
                 .foregroundStyle(.red)
         case .failed(let reason):
             Text(reason)

@@ -47,4 +47,17 @@ enum PreviewData {
             usedBytes: UInt64(5.4 * Double(Limits.bytesPerGiB)), apps: 23
         )
     }
+
+    /// A sparse file named like the sample APK, for the preview's install.
+    static func sampleApk() -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(ApkInstall.sampleFile)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+            if let handle = try? FileHandle(forWritingTo: url) {
+                try? handle.truncate(atOffset: UInt64(ApkInstall.sampleSizeMB * 1_000_000))
+                try? handle.close()
+            }
+        }
+        return url
+    }
 }

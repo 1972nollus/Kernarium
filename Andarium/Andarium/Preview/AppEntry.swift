@@ -119,6 +119,7 @@ struct AppEntry {
             )
             model.phase = .running(.normal)
         case "settings", "settings-installing", "settings-installed", "settings-not-apk",
+             "settings-bundle", "install-apk",
              "bug-report",
              "settings-install-failed", "settings-adb":
             let session = model.session
@@ -135,6 +136,8 @@ struct AppEntry {
                 session.installs = [ApkInstall(fileName: file, sizeMB: size, state: .installed)]
             case "settings-not-apk":
                 session.installs = [ApkInstall(fileName: "Trip photos.zip", sizeMB: 212.4, state: .notApk)]
+            case "settings-bundle":
+                session.installs = [ApkInstall(fileName: "Trip Planner.xapk", sizeMB: 84.6, state: .bundle)]
             case "settings-install-failed":
                 session.installs = [ApkInstall(
                     fileName: "Retro Racer 2.3 x86.apk", sizeMB: 96.0,
@@ -185,6 +188,9 @@ struct AppEntry {
         case "bug-report":
             try? await Task.sleep(for: .milliseconds(450))
             model.createBugReport()
+        case "install-apk":
+            try? await Task.sleep(for: .milliseconds(450))
+            _ = model.installPicked(PreviewData.sampleApk())
         default:
             break
         }

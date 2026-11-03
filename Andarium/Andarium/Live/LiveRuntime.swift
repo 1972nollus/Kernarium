@@ -279,6 +279,10 @@ final class LiveRuntime: RuntimeDriver {
         try await operations.createBugReport(update: update)
     }
 
+    func installApk(at url: URL, sizeBytes: Int, update: @escaping @Sendable (BusyUpdate) -> Void) async throws {
+        try await operations.installApk(at: url, sizeBytes: sizeBytes, update: update)
+    }
+
     // MARK: Events
 
     private func reached(_ milestones: [BootMilestone], bootCompleted: Bool) {

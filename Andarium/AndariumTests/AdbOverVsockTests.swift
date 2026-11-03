@@ -108,6 +108,65 @@ struct AdbOverVsockTests {
         try line.write(to: file, atomically: true, encoding: .utf8)
     }
 
+    @Test(.timeLimit(.minutes(20))) func aSystemApkPulledFromTheImageInstallsAndTheUninstallRestoresIt() async throws {
+        guard Self.enabled else { return }
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        // The smallest base APKs of system apps that are not privileged.
+        let listing = try await operations.shell("pm list packages -s -f").text
+        let apps = listing.split(separator: "\n").compactMap { line -> (path: String, package: String)? in
+            guard line.hasPrefix("package:"), let equals = line.lastIndex(of: "=") else { return nil }
+            let path = String(line[line.index(line.startIndex, offsetBy: 8)..<equals])
+            guard path.hasSuffix(".apk"), path.contains("/app/"), !path.contains("/priv-app/") else { return nil }
+            return (path, String(line[line.index(after: equals)...]))
+        }
+        #expect(!apps.isEmpty)
+        let quoted = apps.map { "'\($0.path)'" }.joined(separator: " ")
+        let sizes = try await operations.shell("stat -c '%s %n' \(quoted)").text
+        let ordered = sizes.split(separator: "\n").compactMap { line -> (size: Int, path: String)? in
+            let parts = line.split(separator: " ", maxSplits: 1)
+            guard parts.count == 2, let size = Int(parts[0]), size > 50_000 else { return nil }
+            return (size, String(parts[1]))
+        }.sorted { $0.size < $1.size }
+        var outcomes: [String] = []
+        for candidate in ordered.prefix(5) {
+            let package = try #require(apps.first { $0.path == candidate.path }).package
+            let local = FileManager.default.temporaryDirectory.appendingPathComponent("pulled-\(UUID().uuidString).apk")
+            defer { try? FileManager.default.removeItem(at: local) }
+            try await pull(candidate.path, to: local, operations: operations)
+            do {
+                try await operations.installApk(at: local, sizeBytes: candidate.size) { _ in }
+            } catch {
+                outcomes.append("\(package): \(error.localizedDescription)")
+                continue
+            }
+            // The update is in /data/app; removing it restores the system's copy.
+            let path = try await operations.shell("pm path \(package)").text
+            #expect(path.contains("/data/app/"), "\(path)")
+            let removal = try await operations.shell("pm uninstall \(package)")
+            #expect(removal.text.contains("Success"), "\(removal.text)")
+            let restored = try await operations.shell("pm path \(package)").text
+            #expect(restored.contains(candidate.path), "\(restored)")
+            return
+        }
+        Issue.record("no system APK took an update: \(outcomes)")
+    }
+
+    private func pull(_ remote: String, to local: URL, operations: AdbGuestOperations) async throws {
+        FileManager.default.createFile(atPath: local.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: local)
+        defer { try? handle.close() }
+        let sink = HandleSink(handle)
+        let identity = try #require(operations.identity)
+        try await AdbOperationRunner.run(identity: identity, clock: operations.clock) { session in
+            try session.run { connection in
+                session.watchdog.arm(idle: .seconds(60), overall: .seconds(600))
+                let sync = try AdbSync(connection: connection)
+                defer { sync.quit() }
+                try sync.receive(remote) { try sink.write($0) }
+            }
+        }
+    }
 }
 
 /// Collects a bug report's progress from the operation's thread.
@@ -120,5 +179,17 @@ private nonisolated final class Progress: @unchecked Sendable {
     func add(_ update: BusyUpdate) {
         guard let fraction = update.progress else { return }
         lock.withLock { all.append(fraction) }
+    }
+}
+
+private nonisolated final class HandleSink: @unchecked Sendable {
+    private let handle: FileHandle
+
+    init(_ handle: FileHandle) {
+        self.handle = handle
+    }
+
+    func write(_ data: Data) throws {
+        try handle.write(contentsOf: data)
     }
 }

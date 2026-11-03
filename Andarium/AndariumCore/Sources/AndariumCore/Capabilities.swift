@@ -50,7 +50,7 @@ public struct Capabilities: Equatable, Sendable {
     public static let device = Capabilities(
         systemUpdate: true,
         adbOverNetwork: false,
-        apkInstall: false,
+        apkInstall: true,
         bugReport: true,
         statistics: false, appCount: false, liveDisplayOptions: false
     )

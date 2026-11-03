@@ -71,6 +71,9 @@ protocol RuntimeDriver: AnyObject {
     /// Asks the guest for a bug report and copies it into `BugReportStaging`.
     /// Returns the staged file; cancelling the task stops the report.
     func createBugReport(update: @escaping @Sendable (BusyUpdate) -> Void) async throws -> URL
+    /// Installs the APK at `url`, which the caller can read, into the guest.
+    /// Cancelling the task stops it while the file is still being sent.
+    func installApk(at url: URL, sizeBytes: Int, update: @escaping @Sendable (BusyUpdate) -> Void) async throws
 }
 
 /// What a screen needs from its launch arguments to open a state directly.
