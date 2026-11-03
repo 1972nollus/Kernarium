@@ -65,7 +65,11 @@ GuestCpuTime guest_cpu_time() noexcept
 
 std::optional<GuestRamUsage> guest_ram_usage() noexcept
 {
-	const std::lock_guard lock {ram_retirement_mutex};
+	/* A hand-back in progress holds the lock: the RAM is being given back,
+	 * and the reader does not wait for it. */
+	const std::unique_lock lock {ram_retirement_mutex, std::try_to_lock};
+	if (!lock.owns_lock())
+		return std::nullopt;
 	const ::uml::memory::GuestRamCommitment *const commitment =
 		::uml::memory::guest_ram_commitment();
 	if (commitment == nullptr)

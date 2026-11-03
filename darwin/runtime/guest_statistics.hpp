@@ -46,17 +46,18 @@ struct GuestRamUsage final {
 };
 
 /* The guest's RAM and the part of it the host holds, or nothing before the
- * guest's kernel has claimed its RAM and after the guest has been handed back
- * to the process. Any thread; it takes GuestRamRetirementScope's lock for the
- * length of two loads. */
+ * guest's kernel has claimed its RAM, while the guest is being handed back to
+ * the process and after. Any thread; it never waits: it reads two counters
+ * unless a GuestRamRetirementScope is held. */
 [[nodiscard]] std::optional<GuestRamUsage> guest_ram_usage() noexcept;
 
 /*
  * Held by whoever retires the guest's RAM commitment (the hand-back of a
  * guest that restarted), so that a reader of guest_ram_usage() never meets
- * the object while it is deleted. The commitment is deleted once per
- * restart, never while a guest runs; this exists for the reader that arrives
- * between a guest's end and the next one's start.
+ * the object while it is deleted: a reader that finds it held reports
+ * nothing. The commitment is deleted once per restart, never while a guest
+ * runs; this exists for the reader that arrives between a guest's end and
+ * the next one's start.
  */
 class GuestRamRetirementScope final {
 public:

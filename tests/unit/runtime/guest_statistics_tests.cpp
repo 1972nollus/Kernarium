@@ -284,6 +284,43 @@ void a_reader_never_meets_a_commitment_being_retired()
 	require(!uml::memory::guest_ram_commitment(), "the last one is retired");
 }
 
+/* The held RAM is not read while a hand-back retires it, and the reader
+ * does not wait for the hand-back to end. */
+void a_hand_back_in_progress_is_not_waited_for()
+{
+	const std::size_t page = static_cast<std::size_t>(::getpagesize());
+	constexpr std::size_t pages = 16;
+	Mapping ram {pages * page};
+	publish(ram, pages, page);
+	std::mutex mutex;
+	std::condition_variable changed;
+	bool held {};
+	bool read {};
+	std::thread retiring {[&] {
+		const GuestRamRetirementScope retirement;
+		std::unique_lock lock {mutex};
+		held = true;
+		changed.notify_all();
+		changed.wait(lock, [&] { return read; });
+	}};
+	{
+		std::unique_lock lock {mutex};
+		require(changed.wait_for(lock, bound, [&] { return held; }),
+			"the hand-back never started");
+	}
+	require(!uml::runtime::guest_ram_usage().has_value(),
+		"the RAM was read while it was being handed back");
+	{
+		const std::lock_guard lock {mutex};
+		read = true;
+	}
+	changed.notify_all();
+	retiring.join();
+	require(uml::runtime::guest_ram_usage().has_value(),
+		"the RAM was not read once the scope ended");
+	retire();
+}
+
 } // namespace
 
 int main()
@@ -300,6 +337,8 @@ int main()
 			the_held_ram_follows_the_commitment},
 		{"a-reader-never-meets-a-commitment-being-retired",
 			a_reader_never_meets_a_commitment_being_retired},
+		{"a-hand-back-in-progress-is-not-waited-for",
+			a_hand_back_in_progress_is_not_waited_for},
 	};
 	return uml::testing::runNamedTests(tests);
 }
