@@ -507,14 +507,14 @@ struct LanAddressTests {
         let found = LanAddress.choose(from: [
             address("lo0", [127, 0, 0, 1], loopback: true),
             address("pdp_ip0", [10, 77, 3, 9]),
-            address("en2", [192, 168, 1, 40]),
-            address("en0", [192, 168, 1, 23]),
+            address("en2", [192, 0, 2, 40]),
+            address("en0", [192, 0, 2, 23]),
         ])
-        #expect(found == "192.168.1.23")
+        #expect(found == "192.0.2.23")
     }
 
     @Test func aWiredAdapterServesWhenThereIsNoWiFi() {
-        #expect(LanAddress.choose(from: [address("en3", [10, 0, 0, 8])]) == "10.0.0.8")
+        #expect(LanAddress.choose(from: [address("en3", [198, 51, 100, 8])]) == "198.51.100.8")
     }
 
     @Test func nothingLocalMeansNoAddress() {
@@ -523,7 +523,7 @@ struct LanAddressTests {
             address("pdp_ip0", [10, 77, 3, 9]),
             address("utun2", [100, 64, 0, 2]),
             address("en0", [169, 254, 12, 1]),
-            address("en1", [192, 168, 0, 5], active: false),
+            address("en1", [192, 0, 2, 5], active: false),
             address("en4", [0, 0, 0, 0]),
         ])
         #expect(found == nil)

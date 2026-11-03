@@ -43,7 +43,7 @@ final class StubDriver: RuntimeDriver {
 
     /// ADB over the network as the stub plays it.
     var debugging: Bool? = true
-    var address: String? = "192.168.1.23"
+    var address: String? = "192.0.2.23"
     var startError: Error?
     private(set) var listening = false
     private(set) var starts = 0

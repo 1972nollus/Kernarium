@@ -348,7 +348,7 @@ struct AdbOverNetworkModelTests {
         #expect(model.adbOverNetworkAvailable)
         model.setAdbOverNetwork(true)
         #expect(model.session.adb && driver.listening && driver.starts == 1)
-        #expect(model.session.adbAddress == "192.168.1.23")
+        #expect(model.session.adbAddress == "192.0.2.23")
         // Again changes nothing.
         model.setAdbOverNetwork(true)
         #expect(driver.starts == 1)
@@ -390,8 +390,8 @@ struct AdbOverNetworkModelTests {
         driver.address = nil
         model.setAdbOverNetwork(true)
         #expect(model.session.adb && model.session.adbAddress == nil)
-        driver.address = "10.0.0.8"
-        #expect(await eventually { model.session.adbAddress == "10.0.0.8" })
+        driver.address = "198.51.100.8"
+        #expect(await eventually { model.session.adbAddress == "198.51.100.8" })
         driver.address = nil
         #expect(await eventually { model.session.adbAddress == nil })
         model.setAdbOverNetwork(false)
