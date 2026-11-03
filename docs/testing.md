@@ -1220,7 +1220,8 @@ filesystem and superblock, and the example HALs' service binaries read from the 
 directories), the userdata inode count,
 the application read of the vendor security patch level, the built-in
 microphone and companion device setup feature declarations, the userdata `quota` flag, and the
-suspend blocker with the adb host-connected property it follows, the network
+suspend blocker with the adb host-connected property it follows, the adb daemon's host-key and
+TCP-policy launch properties (read from its APEX payload, with adbd's right to read their labels), the network
 setup tool with the ARP policy init sets before it, its library, label and domain
 transition, the script that saves the virtual Wi-Fi network once, after boot and
 without touching the user's Wi-Fi switch, with its core domain, its binder transfer to the Wi-Fi service's process and the call back, and its marker, the Wi-Fi

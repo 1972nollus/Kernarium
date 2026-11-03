@@ -277,13 +277,41 @@ charging, and power sounds; subsequent volume and sound settings remain owned
 by the user.
 
 Fresh settings databases also enable Developer options and ADB. The radio-free
-product starts adbd on TCP port 5555 and retains the stock authorization prompt
-for a newly connected host. The immutable `ro.boot.kernarium.adb_auth` launch
-property can disable that check for host-side diagnostics: iOS fixes it to one
-(only the automation runtime lets a test launch turn it off, on a loopback
-forward, [`../../Kernarium/README.md`](../../Kernarium/README.md#automation-runs)),
-while the standalone macOS product fixes it to zero. Bundle command lines may
-not override this host security choice. LineageOS makes its debug variant
+product starts adbd on TCP port 5555 and on vsock port 5555, and retains the
+stock authorization prompt for a newly connected host. Three immutable launch
+properties, which adbd reads itself (the p0011 topics), shape that:
+
+- `ro.boot.kernarium.adb_auth` can disable the authorization check for
+  host-side diagnostics: iOS fixes it to one (only the automation runtime lets a
+  test launch turn it off, on a loopback forward,
+  [`../../Kernarium/README.md`](../../Kernarium/README.md#automation-runs)),
+  while the standalone macOS product fixes it to zero.
+- `ro.boot.kernarium.adb_tcp` is 0 when the launch has no host forward, as in
+  the iOS release: adbd then listens on `vsock:5555` alone, so no application
+  of the guest finds a TCP listener. Without the property, or with any other
+  value, adbd listens on both, which the standalone macOS launcher and the test
+  tooling rely on through their forwards. A `service.adb.listen_addrs` value
+  still wins. adbd reads the launch property and not that one because
+  `service.adb.listen_addrs` is a `system_prop`, which `vendor_init` may not
+  set, whereas the `ro.boot` properties are `bootloader_prop`, which every
+  domain reads: nothing in SELinux or init changes.
+- `ro.boot.kernarium.adb_key` is the base64 adb public key that the host
+  application, as the adb host of its guest, authorizes for the boot. adbd
+  offers it first to every key check (the AUTH signature, the TLS client list
+  and the TLS certificate check), so that host needs no prompt and no write to
+  the framework's `adb_keys`, which the framework expires and empties. The
+  guest's user cannot revoke it. The host owns the guest's disk, so the key
+  gives it nothing it lacks, and the value is a public key.
+
+AOSP's `neverallow` keeps untrusted applications from creating or connecting a
+vsock socket, so only the host reaches the vsock listener. Turning off both USB
+and wireless debugging in Developer options stops adbd with its vsock listener;
+the host application asks the user to turn USB debugging on, and no patch keeps
+adbd running for the host key. The target-files verifier requires the adbd
+APEX's `bin/adbd` to carry both property names (the payload hints store that
+binary uncompressed, so they are readable) and the built policy to let adbd
+read their labels. Bundle command lines may not override any of these
+host-owned launch choices. LineageOS makes its debug variant
 non-debuggable and always authorized; the product undoes the first
 (`PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG` is empty) and the boot policy decides
 the second. Under `userdebug` the build is debuggable and carries `su`, and
@@ -1105,9 +1133,9 @@ reach apexer through Soong, not its lz4hc and 4 KiB defaults, and
 `build/build-aosp.sh` asserts them. The `p0008` series no longer pins
 `com.android.virt` to a payload of its own. The payload hints
 (`overlay/config/erofs_apex_payload_hints.txt`) keep `.rc` and `.xml` files
-uncompressed, so the verifier still reads the example HALs' service
-definitions from the payload's bytes; it finds each service binary through the
-payload's directories. The presigned CTS shim APEX is a prebuilt that keeps its
+and the adb daemon uncompressed, so the verifier still reads the example HALs'
+service definitions and adbd's launch property names from the payload's bytes;
+it finds each service binary through the payload's directories. The presigned CTS shim APEX is a prebuilt that keeps its
 ext4 payload: the verifier allows exactly that one and rejects ext4 in any
 other APEX. `tools/precompile-first-boot-apps.py` reads APKs out of an EROFS
 payload with the host `fsck.erofs` (part of `otatools`), and out of an ext4 one
@@ -1363,8 +1391,8 @@ Kernarium represents one Android guest as a `.kern` directory containing:
 The kernel is supplied by the runtime framework and is not bundle payload. The
 manifest is provenance rather than a runtime compatibility token. Missing files
 and malformed disk images fail when opened or parsed. Android appends the
-host-owned display density, ADB authorization policy, and tagged-pointer option
-at launch. Launches write persistent guest changes only to `guest/data.img`.
+host-owned display density, ADB authorization policy, ADB host key, ADB TCP
+policy, and tagged-pointer option at launch. Launches write persistent guest changes only to `guest/data.img`.
 
 How Kernarium keeps, relaunches, and copies a bundle is in
 [`../../Kernarium/README.md`](../../Kernarium/README.md#guest-storage).

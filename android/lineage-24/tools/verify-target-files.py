@@ -557,6 +557,16 @@ AUDIO_HAL_SELF_BINDER = re.compile(
 # domain, which the platform neverallow keeps from setting a vendor-owned property.
 ADB_HOST_PROPERTY = "sys.kernarium.adb.host_connected"
 ADB_HOST_PROPERTY_TYPE = "kernarium_adb_host_prop"
+# The host application is the adb host of its guest and reaches adbd over virtio-vsock. adbd's p0011
+# topics read two launch properties themselves: ro.boot.kernarium.adb_key, the public key the
+# application authorizes for the boot, and ro.boot.kernarium.adb_tcp, 0 when the launch has no
+# host forward, which keeps adbd off guest TCP. The launch properties are bootloader_prop, which
+# every domain may read; service.adb.listen_addrs would not do, as it is a system_prop that
+# vendor_init may not set. The adbd binary sits in its APEX, whose payload hints keep it
+# uncompressed so that the verifier reads these names in the payload's bytes.
+ADBD_APEX = "SYSTEM/apex/com.android.adbd.apex"
+ADBD_BINARY = "bin/adbd"
+ADBD_LAUNCH_PROPERTIES = ("ro.boot.kernarium.adb_key", "ro.boot.kernarium.adb_tcp")
 CIL_PLATFORM_VERSION_SUFFIX = re.compile(r"_[0-9]{6}$")
 CIL_PROPERTY_SET_RULE = re.compile(
     rb"^\(allow (\S+) (\S+) \(property_service \(([^)]*)\)\)\)$", re.MULTILINE
@@ -1321,15 +1331,13 @@ CAS_PLUGINS = (
 )
 
 
-def check_example_hal(
-    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo], hal: dict
-) -> None:
-    """The vendor APEX must hold the example service, its VINTF fragment and its init script."""
-    apex_name = hal["apex"]
-    binary = hal["binary"]
+def read_apex_payload(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo], apex_name: str, need: str
+) -> bytes:
+    """The EROFS payload of a required APEX."""
     info = infos.get(apex_name)
     if info is None:
-        fail(f"{apex_name} is missing: the product needs {hal['need']}")
+        fail(f"{apex_name} is missing: the product needs {need}")
     try:
         with zipfile.ZipFile(io.BytesIO(read_small(archive, info, 16 << 20))) as apex:
             payload_info = apex.getinfo("apex_payload.img")
@@ -1340,14 +1348,47 @@ def check_example_hal(
         fail(f"cannot inspect {apex_name}: {problem}")
     if payload[android_image.EROFS_SUPERBLOCK_OFFSET :][:4] != android_image.EROFS_MAGIC:
         fail(f"cannot inspect {apex_name}: the payload is not EROFS")
+    return payload
+
+
+def check_payload_regular_file(payload: bytes, path: str, apex_name: str, what: str) -> None:
+    """The payload's directories hold a regular file at this path."""
     try:
-        file_type = android_image.erofs_file_type(
-            payload, f"bin/hw/{binary.decode()}", apex_name, error
-        )
+        file_type = android_image.erofs_file_type(payload, path, apex_name, error)
     except (struct.error, ValueError) as parse_error:
         fail(f"cannot read the directories of {apex_name}: {parse_error}")
     if file_type != android_image.EROFS_FILE_TYPE_REGULAR:
-        fail(f"{apex_name} does not hold the service binary bin/hw/{binary.decode()}")
+        fail(f"{apex_name} does not hold {what} {path}")
+
+
+def check_adbd_launch_properties(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The APEX's adbd reads the host application's key and the launch's TCP policy.
+
+    The payload hints store bin/adbd uncompressed, so the names that the p0011 topics add are
+    in the payload's bytes. A build whose adbd lacks them would ignore the key and keep
+    listening on guest TCP, which no other check would notice.
+    """
+    payload = read_apex_payload(archive, infos, ADBD_APEX, "the adb daemon")
+    check_payload_regular_file(payload, ADBD_BINARY, ADBD_APEX, "the adb daemon")
+    for name in ADBD_LAUNCH_PROPERTIES:
+        if name.encode() not in payload:
+            fail(
+                f"{ADBD_APEX} holds an adbd that does not read {name}: the p0011 topics are "
+                "missing from the build, or the payload hints no longer store bin/adbd "
+                "uncompressed"
+            )
+
+
+def check_example_hal(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo], hal: dict
+) -> None:
+    """The vendor APEX must hold the example service, its VINTF fragment and its init script."""
+    apex_name = hal["apex"]
+    binary = hal["binary"]
+    payload = read_apex_payload(archive, infos, apex_name, hal["need"])
+    check_payload_regular_file(payload, f"bin/hw/{binary.decode()}", apex_name, "the service binary")
     if not all(marker in payload for marker in hal["fragment"]):
         fail(f"{apex_name} does not declare {hal['interface']} in a VINTF fragment")
     apex_dir = PurePosixPath(apex_name).stem
@@ -1549,6 +1590,7 @@ def check_kernel_policy(
         contexts,
         (platform_policy, vendor_policy, system_ext_policy),
     )
+    check_adbd_launch_policy(contexts, (platform_policy, vendor_policy, system_ext_policy))
 
 
 def media_codec_limit(codec: ET.Element, name: str) -> ET.Element:
@@ -1973,6 +2015,27 @@ def cil_types_and_attributes(policies: tuple[bytes, ...], type_name: str) -> set
     return names
 
 
+def cil_allows_file_read(policies: tuple[bytes, ...], domain: str, label: str) -> bool:
+    """Whether a domain may read the properties of a label, directly or through attributes."""
+    readers = cil_types_and_attributes(policies, domain)
+    readable = cil_types_and_attributes(policies, label)
+    return any(
+        CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()) in readers
+        and CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode()) in readable
+        and b"read" in match.group(3).split()
+        for policy in policies
+        for match in CIL_FILE_ALLOW_RULE.finditer(policy)
+    )
+
+
+def check_adbd_launch_policy(contexts: list[str], policies: tuple[bytes, ...]) -> None:
+    """adbd may read the launch properties it acts on."""
+    for name in ADBD_LAUNCH_PROPERTIES:
+        label = property_label(name, contexts) or "default_prop"
+        if not cil_allows_file_read(policies, "adbd", label):
+            fail(f"adbd may not read {name}, labelled {label}: it would ignore the launch")
+
+
 def check_vendor_init_triggers(
     actions: dict[str, list[str]], contexts: list[str], policies: tuple[bytes, ...]
 ) -> None:
@@ -1983,18 +2046,10 @@ def check_vendor_init_triggers(
     service that only such a trigger starts never runs. The platform's
     neverallow keeps vendor_init off system_internal_prop types.
     """
-    readers_of = cil_types_and_attributes(policies, "vendor_init")
     for trigger in actions:
         for name in INIT_PROPERTY_TRIGGER.findall(trigger):
             label = property_label(name, contexts) or "default_prop"
-            readable = cil_types_and_attributes(policies, label)
-            if not any(
-                CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()) in readers_of
-                and CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode()) in readable
-                and b"read" in match.group(3).split()
-                for policy in policies
-                for match in CIL_FILE_ALLOW_RULE.finditer(policy)
-            ):
+            if not cil_allows_file_read(policies, "vendor_init", label):
                 fail(
                     f"the trigger 'on {trigger}' names {name}, labelled {label}, which "
                     "vendor_init may not read; init drops the trigger"
@@ -2661,6 +2716,7 @@ def main() -> None:
         check_thermal_hal(archive, infos)
         check_cas_hal(archive, infos)
         check_wifi_hals(archive, infos)
+        check_adbd_launch_properties(archive, infos)
         check_audio_policy(archive, infos)
         check_multilib_properties(archive, infos)
         check_video_encoders(archive, infos)

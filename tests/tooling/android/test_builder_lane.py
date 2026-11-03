@@ -679,6 +679,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
                           cas_hal_variant: str | None = None,
+                          adbd_variant: str | None = None,
+                          adbd_launch_unreadable: bool = False,
                           vendor_property_variant: str | None = None,
                           wide_fdroid_permissions: bool = False,
                           video_properties: dict[str, str] | None = None,
@@ -1170,7 +1172,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "SYSTEM/etc/selinux/plat_sepolicy.cil",
                     "(typeattributeset coredomain (adbd init system_server))\n"
-                    "(typeattributeset domain (adbd init system_server vendor_init))\n"
+                    + ("(typeattributeset domain (init system_server vendor_init))\n"
+                       if adbd_launch_unreadable
+                       else "(typeattributeset domain (adbd init system_server vendor_init))\n")
+                    +
                     "(allow domain boot_status_prop (file (read getattr map open)))\n"
                     "(allow domain bootloader_prop (file (read getattr map open)))\n"
                     "(typeattributeset mlstrustedsubject (artd installd"
@@ -1713,6 +1718,21 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "VENDOR/apex/com.android.hardware.thermal.apex",
                         synthetic_apex("erofs", thermal_content, files=thermal_files),
                     )
+                # The adb daemon in its APEX: bin/adbd is a file of the payload, stored uncompressed (the payload
+                # hints), and holds the names of the launch properties that the p0011 topics read.
+                adbd_content = b"\x00" * 8
+                if adbd_variant != "no-key":
+                    adbd_content += b"ro.boot.kernarium.adb_key\x00"
+                if adbd_variant != "no-tcp":
+                    adbd_content += b"ro.boot.kernarium.adb_tcp\x00"
+                if adbd_variant != "missing-apex":
+                    archive.writestr(
+                        "SYSTEM/apex/com.android.adbd.apex",
+                        synthetic_apex(
+                            "erofs", adbd_content,
+                            files=("etc/init.rc",) if adbd_variant == "no-binary" else ("bin/adbd",),
+                        ),
+                    )
                 # The Wi-Fi HAL and the supplicant (with hostapd), packaged the same way.
                 def hal_apex(apex, binary, name, fqname, service, variant):
                     content = b"\x00" * 8
@@ -2096,6 +2116,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("cas-apex-without-binary", {"cas_hal_variant": "no-binary"}),
             ("cas-apex-without-fragment", {"cas_hal_variant": "no-fragment"}),
             ("cas-apex-without-service", {"cas_hal_variant": "no-service"}),
+            ("missing-adbd-apex", {"adbd_variant": "missing-apex"}),
+            ("adbd-apex-without-binary", {"adbd_variant": "no-binary"}),
+            ("adbd-without-host-key", {"adbd_variant": "no-key"}),
+            ("adbd-without-tcp-policy", {"adbd_variant": "no-tcp"}),
+            ("adbd-cannot-read-launch-properties", {"adbd_launch_unreadable": True}),
             ("missing-cas-plugin-64", {"cas_hal_variant": "no-plugin64"}),
             ("missing-cas-plugin-32", {"cas_hal_variant": "no-plugin32"}),
             ("lineage-discrete-ops-list-only", {"discrete_ops_variant": "lineage-list-only"}),
@@ -2497,6 +2522,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not declare IThermal/default in a VINTF fragment"),
             ("thermal-apex-without-service-cause", {"thermal_hal_variant": "no-service"},
              "does not start the vendor.thermal-example service"),
+            ("missing-adbd-apex-cause", {"adbd_variant": "missing-apex"},
+             "SYSTEM/apex/com.android.adbd.apex is missing: the product needs the adb daemon"),
+            ("adbd-apex-without-binary-cause", {"adbd_variant": "no-binary"},
+             "SYSTEM/apex/com.android.adbd.apex does not hold the adb daemon bin/adbd"),
+            ("adbd-without-host-key-cause", {"adbd_variant": "no-key"},
+             "holds an adbd that does not read ro.boot.kernarium.adb_key"),
+            ("adbd-without-tcp-policy-cause", {"adbd_variant": "no-tcp"},
+             "holds an adbd that does not read ro.boot.kernarium.adb_tcp"),
+            ("adbd-cannot-read-launch-properties-cause", {"adbd_launch_unreadable": True},
+             "adbd may not read ro.boot.kernarium.adb_key, labelled bootloader_prop"),
             ("missing-cas-apex-cause", {"cas_hal_variant": "missing-apex"},
              "com.android.hardware.cas.apex is missing: the product needs the default CAS HAL"),
             ("cas-apex-without-binary-cause", {"cas_hal_variant": "no-binary"},
@@ -2954,6 +2989,16 @@ def verify_erofs_board(android_root: Path) -> None:
         "0 .*\\.apex$"
     ]:
         fail("erofs_compress_hints.txt is not the single rule that stores .apex uncompressed")
+    payload_hints = (android_root / "overlay/config/erofs_apex_payload_hints.txt").read_text()
+    if [line for line in payload_hints.splitlines() if line and not line.startswith("#")] != [
+        "0 .*\\.rc$",
+        "0 .*\\.xml$",
+        "0 .*bin/adbd$",
+    ]:
+        fail(
+            "erofs_apex_payload_hints.txt is not the rules that store init scripts, VINTF "
+            "fragments and the adb daemon uncompressed"
+        )
 
 
 def verify_userdata_grow(android_root: Path) -> None:
