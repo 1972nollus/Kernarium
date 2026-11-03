@@ -22,10 +22,15 @@ final class KernariumUITests: XCTestCase {
         XCTAssertTrue(app.steppers["overlaySizeStepper"].exists)
         XCTAssertTrue(app.switches["retinaModeToggle"].exists)
         XCTAssertTrue(app.switches["autoResizeGuestToggle"].exists)
-        XCTAssertTrue(
-            app.descendants(matching: .any)["rootfsPicker"].exists
-        )
         XCTAssertTrue(app.buttons["settingsSaveButton"].exists)
+
+        // A form lists only the rows near the screen, so a window too short
+        // for all of them scrolls to the picker at the end.
+        let picker = app.descendants(matching: .any)["rootfsPicker"]
+        for _ in 0..<6 where !picker.exists {
+            app.swipeUp()
+        }
+        XCTAssertTrue(picker.exists)
     }
 
     @MainActor
@@ -95,11 +100,16 @@ final class KernariumUITests: XCTestCase {
             "the console did not raise the software keyboard"
         )
         app.typeText("uname -a\n")
+        // The software keyboard has a Tab key of its own, so the keys are
+        // looked up in the key bar's scroll view alone.
+        let keyBar = app.scrollViews.containing(
+            NSPredicate(format: "label == %@", "Escape")
+        ).firstMatch
         for key in [
             "Escape", "Tab", "Up Arrow", "Down Arrow", "Left Arrow",
             "Right Arrow", "Control",
         ] {
-            let button = app.buttons[key]
+            let button = keyBar.buttons[key]
             XCTAssertTrue(button.exists, "the key bar has no \(key) key")
             button.tap()
         }

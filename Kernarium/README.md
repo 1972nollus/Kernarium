@@ -548,6 +548,8 @@ Each script documents its options in `--help` or its header:
   the Simulator, because an XCFramework in an Embed Frameworks phase needs a
   slice for every SDK the target builds and a platform filter cannot name the
   device apart from the Simulator;
+- `run-ios-simulator-tests.sh` builds `KernariumTests` and `KernariumUITests`
+  for the iOS Simulator and runs them in one iPad Simulator (`--help`);
 - `make-guest-bundle.py` assembles an Android `.kern` bundle (system disk,
   layout, kernel command line) from an installed release;
 - `repro-android-hold-mac.py` sends an Android guest through the background

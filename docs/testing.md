@@ -776,6 +776,20 @@ up to four tests fail because of how the Mac hosts an iPad app:
   as it launches, so it fails when the launch has no image to boot, as a run
   whose `TEST_RUNNER_KERNARIUM_ROOTFS` names a missing file does.
 
+`KernariumTests` and `KernariumUITests` also run in the iOS Simulator, for UI
+tests of the application, through `Kernarium/scripts/run-ios-simulator-tests.sh`
+after the Simulator slices are packaged. The script turns on the Simulator's
+application accessibility preference, which the keyboard tests need for the
+reason the Mac fails them, and links the accepted KDE desktop image into the
+container, for `anEndedRunIsNeverStartedAgain`, which needs a guest to boot,
+and so that the application's runtime is the Linux one `HostGraphicsStackTests`
+select.
+`HostVideoEncoderTests` skip there, as the Simulator has no hardware video
+encoder, and `HostGraphicsStackTests` states the software renderer's contract
+(llvmpipe, no Vulkan driver) in place of Zink on KosmicKrisp.
+`KernariumAutomation` is the iPad's automation host and builds for the device
+alone.
+
 ### Andarium
 
 `andarium-core` (unit, macOS hosts) runs the tests of the Swift package
