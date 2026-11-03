@@ -447,6 +447,23 @@ expect_framework_rejection \
 	MesaGallium "$TEST_ROOT/mesa-gallium-provider.c" "$KOSMICKRISP" \
 	-Wl,-U,_vkCreateInstance
 
+# The software rasterizer is the Simulator's alone: a Zink build carries no
+# software Gallium screen.
+cat >"$TEST_ROOT/mesa-gallium-software.c" <<'EOF'
+extern void *vkGetInstanceProcAddr(void *, const char *);
+void *softpipe_create_screen(void)
+{
+    return vkGetInstanceProcAddr(0, "vkCreateInstance");
+}
+void *uml_mesa_gallium_fixture(void)
+{
+    return softpipe_create_screen();
+}
+EOF
+expect_framework_rejection \
+	"MesaGallium.framework carries a software Gallium screen" \
+	MesaGallium "$TEST_ROOT/mesa-gallium-software.c" "$KOSMICKRISP"
+
 CASE_PREFIX="$TEST_ROOT/gl-payload"
 copy_fixture "$CASE_PREFIX"
 mkdir -p "$CASE_PREFIX/Frameworks/MesaEGL.framework/Headers"

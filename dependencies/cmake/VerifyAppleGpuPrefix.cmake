@@ -22,13 +22,20 @@ elseif(PLATFORM STREQUAL "ios")
     set(_minimum_os_key MinimumOSVersion)
 elseif(PLATFORM STREQUAL "ios-simulator")
     # KosmicKrisp is a Metal 4 driver and the iOS Simulator exposes no Metal 4
-    # device, so the Simulator has no build of this stack.
-    message(FATAL_ERROR
-        "the iOS Simulator has no Metal 4 device; build for the iOS device")
+    # device, so the Simulator prefix is the software variant: Mesa's softpipe
+    # rasterizer on the CPU, with no Vulkan driver and no Venus.
+    set(_platform_contract ios-simulator-gpu-software-arm64.tsv)
+    set(_mach_platform 7)
+    set(_minimum_os_key MinimumOSVersion)
 else()
     message(FATAL_ERROR "Unsupported Apple GPU platform: ${PLATFORM}")
 endif()
 set(_deployment_target 27.0)
+if(PLATFORM STREQUAL "ios-simulator")
+    set(_software TRUE)
+else()
+    set(_software FALSE)
+endif()
 
 if(NOT IS_DIRECTORY "${PREFIX}" OR IS_SYMLINK "${PREFIX}")
     message(FATAL_ERROR "Invalid Apple GPU dependency prefix: ${PREFIX}")
@@ -79,8 +86,10 @@ endif()
 file(GLOB _frameworks RELATIVE "${PREFIX}/Frameworks"
     "${PREFIX}/Frameworks/*")
 list(SORT _frameworks)
-set(_expected_frameworks
-    MesaEGL.framework MesaGallium.framework KosmicKrisp.framework)
+set(_expected_frameworks MesaEGL.framework MesaGallium.framework)
+if(NOT _software)
+    list(APPEND _expected_frameworks KosmicKrisp.framework)
+endif()
 list(SORT _expected_frameworks)
 if(NOT _frameworks STREQUAL _expected_frameworks)
     message(FATAL_ERROR "Unexpected Apple GPU frameworks: ${_frameworks}")
@@ -98,7 +107,10 @@ endif()
 
 file(GLOB _include_roots RELATIVE "${PREFIX}/include" "${PREFIX}/include/*")
 list(SORT _include_roots)
-set(_expected_include_roots EGL GL KHR epoxy virgl vk_video vulkan)
+set(_expected_include_roots EGL GL KHR epoxy virgl)
+if(NOT _software)
+    list(APPEND _expected_include_roots vk_video vulkan)
+endif()
 list(SORT _expected_include_roots)
 if(NOT _include_roots STREQUAL _expected_include_roots)
     message(FATAL_ERROR "Unexpected Apple GPU include payload: ${_include_roots}")
@@ -121,7 +133,10 @@ set(_receipt
 file(STRINGS "${_receipt}" _receipt_rows)
 set(_receipt_fields
     format product platform sdk_name sdk_version sdk_path compiler
-    built_at_utc venus_protocol_generated_sha256)
+    built_at_utc)
+if(NOT _software)
+    list(APPEND _receipt_fields venus_protocol_generated_sha256)
+endif()
 # A row is a field and its value, with no list separator in either. Each field
 # is known and appears once; _receipt_value_<field> holds its value.
 foreach(_row IN LISTS _receipt_rows)
@@ -155,11 +170,13 @@ endfunction()
 _receipt_expect(format 2)
 _receipt_expect(product apple-gpu-vulkan-experiment)
 _receipt_expect(platform "${PLATFORM}")
-string(LENGTH "${_receipt_value_venus_protocol_generated_sha256}" _length)
-if(NOT _receipt_value_venus_protocol_generated_sha256 MATCHES "^[0-9a-f]+$" OR
-   NOT _length EQUAL 64)
-    message(FATAL_ERROR
-        "Invalid protocol build identity: venus_protocol_generated_sha256")
+if(NOT _software)
+    string(LENGTH "${_receipt_value_venus_protocol_generated_sha256}" _length)
+    if(NOT _receipt_value_venus_protocol_generated_sha256 MATCHES "^[0-9a-f]+$" OR
+       NOT _length EQUAL 64)
+        message(FATAL_ERROR
+            "Invalid protocol build identity: venus_protocol_generated_sha256")
+    endif()
 endif()
 foreach(_field IN ITEMS sdk_name sdk_version sdk_path compiler built_at_utc)
     if(_receipt_value_${_field} STREQUAL "")
@@ -176,8 +193,10 @@ foreach(_framework IN LISTS _gl_frameworks)
     list(APPEND _framework_binaries
         "${PREFIX}/Frameworks/${_framework}.framework/${_framework}")
 endforeach()
-list(APPEND _framework_binaries
-    "${PREFIX}/Frameworks/KosmicKrisp.framework/KosmicKrisp")
+if(NOT _software)
+    list(APPEND _framework_binaries
+        "${PREFIX}/Frameworks/KosmicKrisp.framework/KosmicKrisp")
+endif()
 set(_required
     ${_static_archives}
     ${_framework_binaries}
@@ -189,11 +208,13 @@ foreach(_framework IN LISTS _gl_frameworks)
     list(APPEND _required
         "${PREFIX}/Frameworks/${_framework}.framework/Info.plist")
 endforeach()
-list(APPEND _required
-    "${PREFIX}/include/vulkan/vulkan.h"
-    "${PREFIX}/Frameworks/KosmicKrisp.framework/Info.plist"
-    "${PREFIX}/Frameworks/KosmicKrisp.framework/Headers/KosmicKrisp.h"
-    "${PREFIX}/Frameworks/KosmicKrisp.framework/Modules/module.modulemap")
+if(NOT _software)
+    list(APPEND _required
+        "${PREFIX}/include/vulkan/vulkan.h"
+        "${PREFIX}/Frameworks/KosmicKrisp.framework/Info.plist"
+        "${PREFIX}/Frameworks/KosmicKrisp.framework/Headers/KosmicKrisp.h"
+        "${PREFIX}/Frameworks/KosmicKrisp.framework/Modules/module.modulemap")
+endif()
 uml_require_prefix_files(LABEL "Apple GPU" FILES ${_required})
 
 foreach(_archive IN LISTS _static_archives)
@@ -210,7 +231,7 @@ foreach(_archive IN LISTS _static_archives)
     # code at run time (venus_dynamic_loading=disabled in the platform
     # contract). libepoxy may dlopen: its Apple topic opens only the packaged
     # @rpath/MesaEGL.framework/MesaEGL and resolves GL through EGL.
-    if(_archive_name STREQUAL "libvirglrenderer.a")
+    if(_archive_name STREQUAL "libvirglrenderer.a" AND NOT _software)
         if(NOT _archive_undefined_symbols MATCHES "_vkGetInstanceProcAddr")
             message(FATAL_ERROR
                 "${_archive} does not directly reference vkGetInstanceProcAddr")
@@ -321,19 +342,27 @@ foreach(_framework IN LISTS _gl_frameworks)
     endif()
 
     # The OpenGL provider is a two-library Mesa stack rendering on the
-    # packaged Vulkan driver, so each links exactly the next one down.
+    # packaged Vulkan driver, so each links exactly the next one down. The
+    # software variant's Gallium library renders on the CPU and links no
+    # driver library.
     if(_framework STREQUAL "MesaEGL")
         set(_next MesaGallium)
+    elseif(_software)
+        set(_next)
     else()
         set(_next KosmicKrisp)
+    endif()
+    set(_next_dependency)
+    if(_next)
+        set(_next_dependency "@rpath/${_next}.framework/${_next}")
     endif()
     _verify_framework(${_framework}
         SYSTEM "CoreFoundation|CoreGraphics|Foundation|IOKit|IOSurface|Metal|QuartzCore"
         DEPENDENCIES
-            /usr/lib/libexpat.1.dylib "@rpath/${_next}.framework/${_next}")
+            /usr/lib/libexpat.1.dylib ${_next_dependency})
     execute_process(COMMAND "${_tool_nm}" -u "${_binary}"
         RESULT_VARIABLE _nm_status OUTPUT_VARIABLE _undefined_symbols)
-    if(_framework STREQUAL "MesaGallium")
+    if(_framework STREQUAL "MesaGallium" AND NOT _software)
         if(NOT _undefined_symbols MATCHES "_vkGetInstanceProcAddr")
             message(FATAL_ERROR
                 "MesaGallium.framework does not reference vkGetInstanceProcAddr")
@@ -349,6 +378,26 @@ foreach(_framework IN LISTS _gl_frameworks)
         message(FATAL_ERROR
             "${_framework}.framework contains a forbidden provider symbol")
     endif()
+    if(_framework STREQUAL "MesaGallium")
+        # The software rasterizer is the Simulator's alone: a Zink build has
+        # no software Gallium screen to fall back to, and the Simulator's has
+        # nothing else to render with.
+        execute_process(COMMAND "${_tool_nm}" -a "${_binary}"
+            RESULT_VARIABLE _all_status OUTPUT_VARIABLE _all_symbols)
+        if(NOT _all_status EQUAL 0)
+            message(FATAL_ERROR "MesaGallium.framework could not be listed")
+        endif()
+        if(_software)
+            if(NOT _all_symbols MATCHES
+               "(^|\n)[0-9a-f]+ [tT] _(softpipe|llvmpipe)_create_screen\n")
+                message(FATAL_ERROR
+                    "MesaGallium.framework carries no software Gallium screen")
+            endif()
+        elseif(_all_symbols MATCHES "_(softpipe|llvmpipe)_create_screen")
+            message(FATAL_ERROR
+                "MesaGallium.framework carries a software Gallium screen")
+        endif()
+    endif()
     if(_framework STREQUAL "MesaEGL")
         execute_process(COMMAND "${_tool_nm}" -gU "${_binary}"
             RESULT_VARIABLE _export_status OUTPUT_VARIABLE _exports)
@@ -361,29 +410,31 @@ foreach(_framework IN LISTS _gl_frameworks)
     endif()
 endforeach()
 
-set(_binary "${PREFIX}/Frameworks/KosmicKrisp.framework/KosmicKrisp")
-_verify_framework(KosmicKrisp SYSTEM "Metal|QuartzCore")
-execute_process(COMMAND "${_tool_nm}" -gU "${_binary}"
-    RESULT_VARIABLE _export_status OUTPUT_VARIABLE _exports)
-if(NOT _export_status EQUAL 0 OR
-   NOT _exports MATCHES "[ \t]_vkGetInstanceProcAddr([ \t\n]|$)")
-    message(FATAL_ERROR
-        "KosmicKrisp.framework does not export vkGetInstanceProcAddr")
-endif()
-execute_process(COMMAND "${_tool_nm}" -u "${_binary}"
-    RESULT_VARIABLE _undefined_status OUTPUT_VARIABLE _undefined_symbols)
-if(NOT _undefined_status EQUAL 0 OR
-   _undefined_symbols MATCHES "(^|\n)_(dlopen|dlsym)(\n|$)")
-    message(FATAL_ERROR
-        "KosmicKrisp.framework contains a dynamic-loader fallback")
-endif()
-file(READ
-    "${PREFIX}/Frameworks/KosmicKrisp.framework/Modules/module.modulemap"
-    _module_map)
-if(NOT _module_map MATCHES "framework module KosmicKrisp" OR
-   NOT _module_map MATCHES "umbrella header \"KosmicKrisp.h\"")
-    message(FATAL_ERROR
-        "KosmicKrisp.framework has an invalid module map")
+if(NOT _software)
+    set(_binary "${PREFIX}/Frameworks/KosmicKrisp.framework/KosmicKrisp")
+    _verify_framework(KosmicKrisp SYSTEM "Metal|QuartzCore")
+    execute_process(COMMAND "${_tool_nm}" -gU "${_binary}"
+        RESULT_VARIABLE _export_status OUTPUT_VARIABLE _exports)
+    if(NOT _export_status EQUAL 0 OR
+       NOT _exports MATCHES "[ \t]_vkGetInstanceProcAddr([ \t\n]|$)")
+        message(FATAL_ERROR
+            "KosmicKrisp.framework does not export vkGetInstanceProcAddr")
+    endif()
+    execute_process(COMMAND "${_tool_nm}" -u "${_binary}"
+        RESULT_VARIABLE _undefined_status OUTPUT_VARIABLE _undefined_symbols)
+    if(NOT _undefined_status EQUAL 0 OR
+       _undefined_symbols MATCHES "(^|\n)_(dlopen|dlsym)(\n|$)")
+        message(FATAL_ERROR
+            "KosmicKrisp.framework contains a dynamic-loader fallback")
+    endif()
+    file(READ
+        "${PREFIX}/Frameworks/KosmicKrisp.framework/Modules/module.modulemap"
+        _module_map)
+    if(NOT _module_map MATCHES "framework module KosmicKrisp" OR
+       NOT _module_map MATCHES "umbrella header \"KosmicKrisp.h\"")
+        message(FATAL_ERROR
+            "KosmicKrisp.framework has an invalid module map")
+    endif()
 endif()
 
 message(STATUS

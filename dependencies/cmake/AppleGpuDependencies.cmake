@@ -3,7 +3,11 @@
 include_guard(GLOBAL)
 
 # The Apple GPU product renders OpenGL with Mesa's Zink Gallium driver on the
-# KosmicKrisp Vulkan driver.
+# KosmicKrisp Vulkan driver. The iOS Simulator has no Metal 4 device for
+# KosmicKrisp, so its prefix is the software variant: Mesa's softpipe
+# rasterizer on the CPU, no Vulkan driver and no Venus. The platform alone
+# selects it; no cache option does.
+set(_uml_apple_gpu_software FALSE)
 if(UML_APPLE_PLATFORM STREQUAL "macos")
     set(_uml_apple_gpu_default_prefix
         "${PROJECT_SOURCE_DIR}/.build/dependencies/apple-gpu-vulkan-experiment/macos-arm64")
@@ -11,12 +15,9 @@ elseif(UML_APPLE_PLATFORM STREQUAL "ios")
     set(_uml_apple_gpu_default_prefix
         "${PROJECT_SOURCE_DIR}/.build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64")
 elseif(UML_APPLE_PLATFORM STREQUAL "ios-simulator")
-    # KosmicKrisp is a Metal 4 driver and the iOS Simulator exposes no Metal 4
-    # device, so the Simulator has no build of this stack. An iOS application
-    # runs on an Apple silicon Mac in Designed for iPad mode instead, where the
-    # host GPU is used directly.
-    message(FATAL_ERROR
-        "the iOS Simulator has no Metal 4 device; build for the iOS device")
+    set(_uml_apple_gpu_default_prefix
+        "${PROJECT_SOURCE_DIR}/.build/dependencies/apple-gpu-vulkan-experiment/ios-simulator-arm64")
+    set(_uml_apple_gpu_software TRUE)
 else()
     message(FATAL_ERROR
         "The Apple GPU product does not support ${UML_APPLE_PLATFORM}")
@@ -41,12 +42,14 @@ foreach(_uml_apple_gl_framework IN LISTS _uml_apple_gl_frameworks)
     list(APPEND _uml_apple_gpu_inputs
         "${_uml_apple_gpu_frameworks}/${_uml_apple_gl_framework}.framework/${_uml_apple_gl_framework}")
 endforeach()
-list(APPEND _uml_apple_gpu_inputs
-    "${_uml_apple_gpu_include}/vulkan/vulkan.h"
-    "${_uml_apple_gpu_include}/vulkan/vulkan_core.h"
-    "${PROJECT_SOURCE_DIR}/tools/rootfs/vulkan/patches/venus-protocol/series.tsv"
-    "${_uml_apple_gpu_frameworks}/KosmicKrisp.framework/KosmicKrisp"
-    "${_uml_apple_gpu_frameworks}/KosmicKrisp.framework/Modules/module.modulemap")
+if(NOT _uml_apple_gpu_software)
+    list(APPEND _uml_apple_gpu_inputs
+        "${_uml_apple_gpu_include}/vulkan/vulkan.h"
+        "${_uml_apple_gpu_include}/vulkan/vulkan_core.h"
+        "${PROJECT_SOURCE_DIR}/tools/rootfs/vulkan/patches/venus-protocol/series.tsv"
+        "${_uml_apple_gpu_frameworks}/KosmicKrisp.framework/KosmicKrisp"
+        "${_uml_apple_gpu_frameworks}/KosmicKrisp.framework/Modules/module.modulemap")
+endif()
 foreach(_uml_apple_gpu_input IN LISTS _uml_apple_gpu_inputs)
     if(NOT EXISTS "${_uml_apple_gpu_input}")
         message(FATAL_ERROR
@@ -88,16 +91,17 @@ set_target_properties(uml_third_party_epoxy PROPERTIES
         "${_uml_apple_gl_provider_targets}")
 add_library(UML::ThirdPartyEpoxy ALIAS uml_third_party_epoxy)
 
-add_library(uml_third_party_kosmickrisp SHARED IMPORTED GLOBAL)
-set_target_properties(uml_third_party_kosmickrisp PROPERTIES
-    IMPORTED_LOCATION
-        "${_uml_apple_gpu_frameworks}/KosmicKrisp.framework/KosmicKrisp"
-    INTERFACE_INCLUDE_DIRECTORIES "${_uml_apple_gpu_include}")
-add_library(UML::ThirdPartyKosmicKrisp ALIAS uml_third_party_kosmickrisp)
-
 set(_uml_apple_gpu_virgl_links
-    UML::ThirdPartyEpoxy Threads::Threads "${_uml_apple_gpu_math}"
-    UML::ThirdPartyKosmicKrisp)
+    UML::ThirdPartyEpoxy Threads::Threads "${_uml_apple_gpu_math}")
+if(NOT _uml_apple_gpu_software)
+    add_library(uml_third_party_kosmickrisp SHARED IMPORTED GLOBAL)
+    set_target_properties(uml_third_party_kosmickrisp PROPERTIES
+        IMPORTED_LOCATION
+            "${_uml_apple_gpu_frameworks}/KosmicKrisp.framework/KosmicKrisp"
+        INTERFACE_INCLUDE_DIRECTORIES "${_uml_apple_gpu_include}")
+    add_library(UML::ThirdPartyKosmicKrisp ALIAS uml_third_party_kosmickrisp)
+    list(APPEND _uml_apple_gpu_virgl_links UML::ThirdPartyKosmicKrisp)
+endif()
 add_library(uml_third_party_virglrenderer STATIC IMPORTED GLOBAL)
 set_target_properties(uml_third_party_virglrenderer PROPERTIES
     IMPORTED_LOCATION "${_uml_apple_gpu_lib}/libvirglrenderer.a"
@@ -128,6 +132,13 @@ set(UML_APPLE_GPU_FRAMEWORK_DIRECTORY
 set(UML_APPLE_GPU_GL_FRAMEWORK_NAMES
     "${_uml_apple_gl_frameworks}"
     CACHE INTERNAL "Packaged Apple host GL provider frameworks")
-set(UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK
-    "${_uml_apple_gpu_frameworks}/KosmicKrisp.framework"
-    CACHE INTERNAL "Verified KosmicKrisp runtime framework")
+if(_uml_apple_gpu_software)
+    set(UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK ""
+        CACHE INTERNAL "Verified KosmicKrisp runtime framework")
+else()
+    set(UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK
+        "${_uml_apple_gpu_frameworks}/KosmicKrisp.framework"
+        CACHE INTERNAL "Verified KosmicKrisp runtime framework")
+endif()
+set(UML_GPU_SOFTWARE_RENDERER ${_uml_apple_gpu_software}
+    CACHE INTERNAL "The host GL provider is a CPU rasterizer without Vulkan")
