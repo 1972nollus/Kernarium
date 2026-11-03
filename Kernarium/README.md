@@ -518,10 +518,13 @@ application plays no sound of its own.
 The Simulator build is for UI tests of the application and its Android guest.
 Configure and build a `kernarium-ios-simulator*` runtime preset, package it with
 `scripts/package-ios-frameworks.sh --sdk simulator` (`--sdk device` beside it
-gives XCFrameworks that both SDKs build against) and build the scheme for
-`generic/platform=iOS Simulator`. The Simulator product is arm64 alone, like
-its packaged slices, so the project excludes x86_64 for the Simulator SDK
-(`EXCLUDED_ARCHS[sdk=iphonesimulator*]`) and the build needs no `ARCHS`. The
+gives XCFrameworks that both SDKs build against) and build the scheme for a
+concrete Simulator, or run its tests with `scripts/run-ios-simulator-tests.sh`.
+The Simulator product is arm64 alone, like its packaged slices: a concrete
+destination builds that device's architecture, and the project excludes x86_64
+for the Simulator SDK (`EXCLUDED_ARCHS[sdk=iphonesimulator*]`); a generic
+Simulator destination needs `EXCLUDED_ARCHS=x86_64` as well
+([`docs/testing.md`](../docs/testing.md#apple-builds-and-kernarium)). The
 GPU prefix is the software one, at
 `.build/dependencies/apple-gpu-vulkan-experiment/ios-simulator-arm64` unless
 `KERNARIUM_SIMULATOR_GPU_PREFIX` names another (`KERNARIUM_DEVICE_GPU_PREFIX`

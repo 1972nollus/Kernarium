@@ -52,7 +52,7 @@ every flow:
 
 ```sh
 xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
-    -destination 'generic/platform=iOS Simulator' build
+    -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' build
 ```
 
 ## Devices
@@ -148,18 +148,20 @@ an App Store build is uploaded.
 The `Andarium` scheme builds for the Simulator too, with the software renderer:
 build the Simulator runtime, package its slices (add `--sdk device`, with its
 own runtime preset built, for XCFrameworks that both SDKs build against), and
-build for `generic/platform=iOS Simulator`. The device-only KosmicKrisp is left
-out by `Kernarium/scripts/embed-device-framework.sh`. The Simulator product is
-arm64 alone, as its packaged slices are, so the project excludes x86_64 for the
-Simulator SDK (`EXCLUDED_ARCHS[sdk=iphonesimulator*]`) and the command needs no
-`ARCHS`.
+build for a concrete Simulator. The device-only KosmicKrisp is left out by
+`Kernarium/scripts/embed-device-framework.sh`. The Simulator product is arm64
+alone, as its packaged slices are: a concrete destination builds that device's
+architecture, and the project excludes x86_64 for the Simulator SDK
+(`EXCLUDED_ARCHS[sdk=iphonesimulator*]`). A generic Simulator destination needs
+`EXCLUDED_ARCHS=x86_64` as well
+([`docs/testing.md`](../docs/testing.md#apple-builds-and-kernarium)).
 
 ```sh
 cmake --preset kernarium-ios-simulator-android
 cmake --build --preset kernarium-ios-simulator-android
 Kernarium/scripts/package-ios-frameworks.sh --sdk simulator --runtimes android
 xcodebuild -project Andarium/Andarium.xcodeproj -scheme Andarium \
-    -destination 'generic/platform=iOS Simulator' build
+    -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' build
 ```
 
 ## Model
