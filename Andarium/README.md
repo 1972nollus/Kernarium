@@ -295,7 +295,10 @@ which ends every connection in use. The next operation connects to the new
 adbd (a handshake the restart cut is tried again, and a refusal meanwhile is
 retried to the connect limit); a bug report or an install under way says the
 guest's debugging service restarted and asks to try again, and the bug
-report first stops the dump that went on in the guest.
+report first stops the dump that went on in the guest. A connection the
+runtime cannot make at all within its timeout is retried the same way, and at
+the limit it says the guest is not answering yet, as against its debugging
+service not being ready.
 
 **Key.** `AdbKeyStore` keeps one RSA-2048 key per guest in the Keychain (the
 Secure Enclave has no RSA): this device only (`AfterFirstUnlockThisDeviceOnly`),
@@ -303,7 +306,8 @@ not synchronized, in the application's own access group. It is made off the main
 thread while a start prepares, when none exists, and its public key goes in each
 boot request (`android_adb_public_key`), which adbd authorizes for that boot on
 the vsock port whatever the guest's USB debugging setting is, so no operation
-depends on it. Erase Guest deletes the key. The client signs adbd's AUTH token
+depends on it. Finding the key and making it is one locked step, so the start
+that prepares and any other caller get the same key. Erase Guest deletes it. The client signs adbd's AUTH token
 and never offers its key: a second token means adbd refused it, and the
 operation says so.
 
@@ -387,6 +391,8 @@ ANDARIUM_START=normal|recovery   create the guest if there is none, then start
 ANDARIUM_ERASE=1                 erase the guest's data before the start
 ANDARIUM_ADB_TESTS=1             let AdbOverVsockTests drive the running guest
 ANDARIUM_ADB_KEY_FILE=<path>     where eraseGuestMakesANewKey records the key
+ANDARIUM_ADB_NET_HOLD_SECONDS=<n> keep the bridge up for a real adb (and write the key
+                                 as tmp/adbkey; tmp/adb-net-done ends the hold)
 ```
 
 On an Apple silicon Mac, `xcodebuild test -scheme Andarium -destination

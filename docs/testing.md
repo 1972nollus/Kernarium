@@ -858,9 +858,14 @@ against a stub runtime, and its `AndroidOperationTests` and
 Network the same way. `AdbOverVsockTests` drive a real Android guest with the
 application's own client and authorization on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1`
 with `TEST_RUNNER_ANDARIUM_START=normal`): a shell command, the USB debugging
-setting, a computer's connection through the bridge, a bug report (a zip above
-1 MB, and its time), a cancel, a system APK pulled from the image and installed
-as an update, and the key after Erase Guest. A Mac launch of the guest
+setting and the channel with it on and off, a computer's connection through the
+bridge, a bug report (a zip above 1 MB, and its time), a cancel, a system APK
+pulled from the image and installed as an update (and its time), the image's
+key rule (the application's key accepted whatever the debugging setting; a
+foreign key refused with no prompt and nothing queued while debugging is off,
+and prompting while it is on), and the key after Erase Guest. With
+`TEST_RUNNER_ANDARIUM_ADB_NET_HOLD_SECONDS` one more test holds the bridge up for
+a real adb on the Mac. A Mac launch of the guest
 itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
 `TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
 ([`Andarium/README.md`](../Andarium/README.md#automation)). macOS asks once, per
