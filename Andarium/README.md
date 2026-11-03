@@ -3,9 +3,10 @@
 Andarium is the iOS application that runs one Android (LineageOS 24, Android
 17) guest on the Darwin runtime. Android ships inside the app; what the user
 creates, sizes and erases is the guest. It is an iOS product like
-[Kernarium](../Kernarium/README.md) and runs on an Apple silicon Mac in
-Designed for iPad mode. It also builds for the iOS Simulator, where the guest
-renders on the CPU for UI tests
+[Kernarium](../Kernarium/README.md) and, in its development configurations,
+runs on an Apple silicon Mac in Designed for iPad mode; the App Store
+configuration is not offered to Macs. It also builds for the iOS Simulator,
+where the guest renders on the CPU for UI tests
 ([`graphics.md`](../docs/graphics.md#ios-simulator-software-renderer)).
 Kernarium stays the developer application for Linux guests and for Android
 bundles.
@@ -34,14 +35,14 @@ after every hand edit. Kernarium keeps its `.pbxproj`.
 
 ## Targets
 
-`Andarium` is the device application (`com.imxieyi.andarium`, iOS and an
-Apple silicon Mac in Designed for iPad mode). It embeds the Android runtime
-frameworks and carries the system image; Kernarium stays beside it on a
-device. It has no background mode: the guest runs while Andarium is in the
-foreground and is paused when it leaves, and iOS ending a paused Andarium
-shows a notice on the next launch. It runs one scene, because the runtime boots
-one guest per process, and needs the increased memory limit and extended
-virtual addressing entitlements.
+`Andarium` is the device application (`com.imxieyi.andarium`, iPhone and iPad,
+and in Debug and Release an Apple silicon Mac in Designed for iPad mode). It
+embeds the Android runtime frameworks and carries the system image; Kernarium
+stays beside it on a device. It has no background mode: the guest runs while
+Andarium is in the foreground and is paused when it leaves, and iOS ending a
+paused Andarium shows a notice on the next launch. It runs one scene, because
+the runtime boots one guest per process, and needs the increased memory limit
+and extended virtual addressing entitlements.
 
 `AndariumPreview` is a Simulator-only target built from `Shared` and
 `Preview` with mock data. It embeds no runtime and boots nothing. Its launch
@@ -63,6 +64,9 @@ application asks the GPU for the Metal 4 family (`HostDevice.runsGuestGraphics`)
 Without it Home shows "Needs an A14 Chip or Later" and dims Start (and Set Up
 Guest, when there is no guest yet); `Lifecycle` answers `needsNewerChip` to any
 start. The Simulator draws on the CPU and always passes.
+
+iPhone and iPad are supported (`TARGETED_DEVICE_FAMILY` 1,2); the App Store
+configuration sets `SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD` to NO.
 
 `ITSAppUsesNonExemptEncryption` is NO in `Config/Info.plist`.
 
@@ -94,6 +98,45 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme Andarium \
 
 The `AndariumTests` bundle runs hosted in the application on an iPad or, as an
 iPad app, on an Apple silicon Mac (`xcodebuild test`).
+
+### Configurations
+
+The project has Debug, Release and AppStore. Release is the development and
+harness build: it reads the automation environment below and prints the
+thermal reports the iPad harness reads. AppStore builds as Release does and
+leaves out everything that exists for automation or only pretends:
+
+- `APP_STORE` is a Swift compilation condition of the configuration. It removes
+  the launch environment (`Live/LaunchEnvironment.swift`, so no `ANDARIUM_` or
+  `KERNARIUM_` name is in the application or in `AndariumCore`), and the
+  thermal and uptime console reports.
+- It embeds the App Store runtime, packaged by
+  `Kernarium/scripts/package-ios-frameworks.sh --app-store --runtimes android`
+  from the `kernarium-ios-device-android-app-store` preset, which reads no
+  environment knob ([`Kernarium/README.md`](../Kernarium/README.md#automation-runs)).
+- It is not offered to Macs, and its Archive action uses it.
+- Its last build phase runs `scripts/check-app-store-bundle.py` on the
+  application, which fails the build on a missing key in Info.plist,
+  an environment knob in the application or a framework,
+  or a privacy manifest that does not cover a binary
+  ([`scripts/check-privacy-manifests.py`](../scripts/check-privacy-manifests.py)).
+
+```sh
+cmake --preset kernarium-ios-device-android-app-store
+cmake --build --preset kernarium-ios-device-android-app-store
+Kernarium/scripts/package-ios-frameworks.sh --app-store --runtimes android
+Andarium/scripts/stage-system-image.py
+xcodebuild -project Andarium/Andarium.xcodeproj -scheme Andarium \
+    -configuration AppStore -destination 'generic/platform=iOS' build
+```
+
+The output directory of the packaged frameworks is shared, so package the
+runtime a build needs just before it. The privacy manifests of the application
+(`Config/PrivacyInfo.xcprivacy`) and of the frameworks
+(`Kernarium/PrivacyManifests`) declare exactly what the App Store build and the
+runtimes use; a release or harness build also reads the system uptime for its
+thermal report, which the application's manifest does not declare because only
+an App Store build is uploaded.
 
 The `Andarium` scheme builds for the Simulator too, with the software renderer:
 build the Simulator runtime, package its slices (add `--sdk device`, with its
