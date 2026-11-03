@@ -5,20 +5,20 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>@KERNARIUM_RUNTIME_FRAMEWORK_NAME@</string>
+	<string>@MACOSX_FRAMEWORK_NAME@</string>
 	<key>CFBundleIdentifier</key>
-	<string>@KERNARIUM_RUNTIME_BUNDLE_IDENTIFIER@</string>
+	<string>@MACOSX_FRAMEWORK_IDENTIFIER@</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>@KERNARIUM_RUNTIME_FRAMEWORK_NAME@</string>
+	<string>@MACOSX_FRAMEWORK_BUNDLE_NAME@</string>
 	<key>CFBundlePackageType</key>
 	<string>FMWK</string>
 	<key>CFBundleShortVersionString</key>
-	<string>@KERNARIUM_RUNTIME_SHORT_VERSION@</string>
+	<string>@MACOSX_FRAMEWORK_SHORT_VERSION_STRING@</string>
 	<key>CFBundleVersion</key>
-	<string>@KERNARIUM_RUNTIME_BUNDLE_VERSION@</string>
+	<string>@MACOSX_FRAMEWORK_BUNDLE_VERSION@</string>
 	<key>MinimumOSVersion</key>
-	<string>@KERNARIUM_RUNTIME_MINIMUM_OS_VERSION@</string>
+	<string>@CMAKE_OSX_DEPLOYMENT_TARGET@</string>
 </dict>
 </plist>

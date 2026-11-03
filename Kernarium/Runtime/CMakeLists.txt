@@ -158,11 +158,12 @@ add_dependencies(KernariumRuntime
 add_dependencies(KernariumRuntime uml_ios_network_prefix_verify)
 set_property(TARGET KernariumRuntime APPEND PROPERTY LINK_DEPENDS
     "${_kernarium_kernel_image}")
-# The framework's Info.plist names and versions it, as App Store validation
-# requires of every embedded framework. The short version is the kernel series
-# the framework is named for. The bundle version is the loader ABI version
-# the application checks before it loads a runtime, so it moves exactly when
-# the application and a runtime stop being interchangeable.
+# The framework's Info.plist (Info.plist.in) names and versions it, as App
+# Store validation requires of every embedded framework. The short version is
+# the kernel series the framework is named for. The bundle version is the
+# loader ABI version the application checks before it loads a runtime, so it
+# moves exactly when the application and a runtime stop being interchangeable.
+# CMake fills the template from the MACOSX_FRAMEWORK_ properties below.
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/KernariumRuntime.h"
     _kernarium_api_line
     REGEX "^#define KERNARIUM_RUNTIME_API_VERSION [0-9]+U$")
@@ -170,20 +171,13 @@ if(NOT _kernarium_api_line MATCHES "VERSION ([0-9]+)U$")
     message(FATAL_ERROR
         "KernariumRuntime.h has no KERNARIUM_RUNTIME_API_VERSION")
 endif()
-set(KERNARIUM_RUNTIME_BUNDLE_VERSION "${CMAKE_MATCH_1}")
-string(REPLACE "_" "." KERNARIUM_RUNTIME_SHORT_VERSION
+set(_kernarium_runtime_bundle_version "${CMAKE_MATCH_1}")
+string(REPLACE "_" "." _kernarium_runtime_short_version
     "${KERNARIUM_KERNEL_RELEASE_COMPONENT}")
-set(KERNARIUM_RUNTIME_BUNDLE_IDENTIFIER
-    "com.imxieyi.${_kernarium_runtime_bundle_component}")
 if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     message(FATAL_ERROR
         "KernariumRuntime needs the Apple deployment target for its Info.plist")
 endif()
-set(KERNARIUM_RUNTIME_MINIMUM_OS_VERSION "${CMAKE_OSX_DEPLOYMENT_TARGET}")
-configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/KernariumRuntime-Info.plist"
-    @ONLY)
 
 set_target_properties(KernariumRuntime PROPERTIES
     OUTPUT_NAME "${KERNARIUM_RUNTIME_FRAMEWORK_NAME}"
@@ -192,8 +186,13 @@ set_target_properties(KernariumRuntime PROPERTIES
     BUILD_WITH_INSTALL_RPATH TRUE
     INSTALL_RPATH "@loader_path/.."
     INSTALL_RPATH_USE_LINK_PATH FALSE
-    MACOSX_FRAMEWORK_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/KernariumRuntime-Info.plist"
-    MACOSX_FRAMEWORK_IDENTIFIER "${KERNARIUM_RUNTIME_BUNDLE_IDENTIFIER}"
+    MACOSX_FRAMEWORK_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
+    MACOSX_FRAMEWORK_BUNDLE_NAME "${KERNARIUM_RUNTIME_FRAMEWORK_NAME}"
+    MACOSX_FRAMEWORK_SHORT_VERSION_STRING
+        "${_kernarium_runtime_short_version}"
+    MACOSX_FRAMEWORK_BUNDLE_VERSION "${_kernarium_runtime_bundle_version}"
+    MACOSX_FRAMEWORK_IDENTIFIER
+        "com.imxieyi.${_kernarium_runtime_bundle_component}"
     PUBLIC_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/KernariumRuntime.h"
     XCODE_ATTRIBUTE_DEFINES_MODULE YES
     XCODE_ATTRIBUTE_PRODUCT_MODULE_NAME
