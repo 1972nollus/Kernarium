@@ -150,6 +150,11 @@ public:
 	{
 		dns_interface_for_testing_ = index;
 	}
+	/* The next open() finds no socket path for DNS over TCP. */
+	void set_dns_streams_unavailable_for_testing(bool unavailable) noexcept
+	{
+		dns_streams_unavailable_for_testing_ = unavailable;
+	}
 	[[nodiscard]] HostResolver &resolver_for_testing() noexcept
 	{
 		return resolver_;
@@ -224,6 +229,10 @@ private:
 	std::array<uml::platform::UniqueDescriptor, 2> receive_pipe_;
 	HostResolver resolver_;
 	std::uint16_t next_identification_{1};
+	/* Where SLiRP's guest forward carries DNS over TCP to the resolver;
+	 * set by open() before the worker exists. */
+	bool name_server_stream_{};
+	bool gateway_stream_{};
 	std::jthread worker_;
 	std::atomic_bool started_{false};
 	std::atomic_bool stopping_{true};
@@ -234,6 +243,7 @@ private:
 	std::atomic_size_t forwards_installed_while_running_for_testing_{};
 	std::atomic_size_t internet_sockets_for_testing_{};
 	std::uint32_t dns_interface_for_testing_{};
+	bool dns_streams_unavailable_for_testing_{};
 	bool write_pause_requested_for_testing_{};
 	bool write_pause_reached_for_testing_{};
 	bool release_write_for_testing_{};

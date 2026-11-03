@@ -99,7 +99,8 @@ bool SlirpProvider::answer_locally(std::span<const std::byte> frame) noexcept
 		reinterpret_cast<const std::uint8_t *>(frame.data()),
 		frame.size()};
 	const auto classified = dns::classify_guest_frame(
-		bytes, nameserver_ipv4, host_alias_ipv4);
+		bytes, {nameserver_ipv4, host_alias_ipv4, name_server_stream_,
+			gateway_stream_});
 	switch (classified.action) {
 	case dns::FrameAction::pass:
 		return false;

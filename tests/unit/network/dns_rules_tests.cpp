@@ -482,9 +482,10 @@ void anAnswerNoTcpMessageCanCarryIsServerFailure()
 	require(header(reply).answers == 0 && (header(reply).flags & 0x0200) == 0);
 }
 
-dns::Classified classify(const Bytes &frame)
+dns::Classified classify(const Bytes &frame, bool streams = true)
 {
-	return dns::classify_guest_frame(frame, name_server, gateway);
+	return dns::classify_guest_frame(
+		frame, {name_server, gateway, streams, streams});
 }
 
 void aQueryToTheNameServerOrTheGatewayIsAnswered()
@@ -702,6 +703,39 @@ void dnsOverTcpIsLeftToSlirpsGuestForward()
 			.action == FrameAction::pass);
 }
 
+void dnsOverTcpWithoutAForwardIsReset()
+{
+	/* SLiRP, with its own DNS proxy off, would connect to the literal
+	 * address on the host's network. */
+	for (const auto &server : {name_server, gateway}) {
+		const auto syn = classify(
+			ip_frame(server, protocol_tcp,
+				 tcp_segment(server, 41000, 53, 5000, 0, tcp_syn)),
+			false);
+		require(syn.action == FrameAction::reset);
+		require(syn.endpoints.server_port == 53 &&
+			syn.endpoints.server_address == server);
+		require(!dns::tcp_reset_frame(syn, 1).empty());
+	}
+	/* The gateway's other ports stay SLiRP's. */
+	require(classify(ip_frame(gateway, protocol_tcp,
+				  tcp_segment(gateway, 41000, 80, 5000, 0, tcp_syn)),
+			 false)
+			.action == FrameAction::pass);
+	/* Each address has its own forward. */
+	const dns::Servers one{name_server, gateway, true, false};
+	require(dns::classify_guest_frame(
+			ip_frame(name_server, protocol_tcp,
+				 tcp_segment(name_server, 41000, 53, 5000, 0, tcp_syn)),
+			one)
+			.action == FrameAction::pass);
+	require(dns::classify_guest_frame(
+			ip_frame(gateway, protocol_tcp,
+				 tcp_segment(gateway, 41000, 53, 5000, 0, tcp_syn)),
+			one)
+			.action == FrameAction::reset);
+}
+
 void aReplyIsAWellFormedUdpFrame()
 {
 	const auto frame = ip_frame(name_server, protocol_udp,
@@ -758,6 +792,7 @@ int main()
 	aResetAnswersASegmentThatAcknowledgesWithItsAcknowledgement();
 	aResetIsNeverAnswered();
 	dnsOverTcpIsLeftToSlirpsGuestForward();
+	dnsOverTcpWithoutAForwardIsReset();
 	aReplyIsAWellFormedUdpFrame();
 	return EXIT_SUCCESS;
 }

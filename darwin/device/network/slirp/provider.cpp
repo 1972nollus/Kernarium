@@ -23,6 +23,7 @@
 #include <new>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace uml::network {
@@ -175,6 +176,10 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 #if UML_SLIRP_TESTING
 			resolver_.set_interface_for_testing(
 				dns_interface_for_testing_);
+			const auto stream_paths = dns_streams_unavailable_for_testing_ ?
+				std::vector<std::string>{} : dns_stream_paths();
+#else
+			const auto stream_paths = dns_stream_paths();
 #endif
 			if (resolver_.start(
 				    [this](std::span<const std::uint8_t> frame) {
@@ -184,7 +189,7 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 					    } catch (...) {
 					    }
 				    },
-				    dns_stream_paths()) != 0) {
+				    stream_paths) != 0) {
 				slirp_.reset();
 				return -EIO;
 			}
@@ -192,14 +197,22 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 			 * SLiRP's own proxy allowed, reaches the resolver through a
 			 * per-connection Unix socket. disable_dns is what lets a
 			 * guest forward claim the name server's port. */
+			name_server_stream_ = false;
+			gateway_stream_ = false;
 			if (resolver_.streams_available()) {
-				for (const char *server :
-				     {nameserver_address, host_alias_address}) {
+				const std::array<std::pair<const char *, bool *>, 2>
+					servers{{{nameserver_address,
+						  &name_server_stream_},
+						 {host_alias_address,
+						  &gateway_stream_}}};
+				for (const auto &[server, installed] : servers) {
 					in_addr address{};
 					(void)inet_pton(AF_INET, server, &address);
-					if (slirp_add_unix(slirp_.get(),
-							   resolver_.stream_path().c_str(),
-							   &address, 53) != 0)
+					*installed = slirp_add_unix(
+						slirp_.get(),
+						resolver_.stream_path().c_str(),
+						&address, 53) == 0;
+					if (!*installed)
 						std::fprintf(stderr,
 							"Darwin user network: no DNS "
 							"over TCP at %s\n", server);

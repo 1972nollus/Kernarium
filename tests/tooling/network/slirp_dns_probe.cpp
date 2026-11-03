@@ -20,9 +20,14 @@
 
 #include <dns_sd.h>
 
+#include <sys/stat.h>
+#include <sys/un.h>
+
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <thread>
@@ -409,42 +414,147 @@ void check_tcp(uml::network::SlirpProvider &provider, Guest &guest)
 		fail("TCP", "the guest's DNS made SLiRP open a host Internet socket");
 }
 
-bool open_provider(uml::network::SlirpProvider &provider)
+/* Without a socket path for DNS over TCP, a connection to port 53 is reset
+ * like one to any other port: SLiRP, with its own proxy off, would connect to
+ * the literal address on the host's network. */
+void check_tcp_without_stream(uml::network::SlirpProvider &provider,
+			      Guest &guest)
+{
+	const auto internet = provider.internet_sockets_for_testing();
+	std::uint16_t port = 41200;
+	for (const auto &server : {name_server, gateway}) {
+		const char *label = server == name_server ?
+			"TCP without a stream socket, name server" :
+			"TCP without a stream socket, gateway";
+		++port;
+		if (!guest.send(tcp_frame(guest_ip, server, port, 53, 7000, 0,
+					  tcp_syn, 65535)))
+			fail(label, "the provider refused the SYN");
+		const auto answer = guest.receive(
+			[&](const std::vector<std::uint8_t> &frame) {
+				const auto segment = parse_tcp(frame);
+				return segment && segment->source == server &&
+					segment->source_port == 53 &&
+					segment->destination_port == port;
+			});
+		const auto segment = answer ? parse_tcp(*answer) : std::nullopt;
+		if (!segment || segment->flags != (tcp_rst | tcp_ack) ||
+		    segment->ack != 7001)
+			fail(label, "port 53 is not reset");
+	}
+	if (provider.internet_sockets_for_testing() != internet)
+		fail("TCP without a stream socket",
+		     "SLiRP opened a host Internet socket");
+}
+
+bool open_provider(uml::network::SlirpProvider &provider, Guest &guest)
 {
 	std::array<unsigned char, 6> mac{};
 	unsigned int mtu = 0;
 	provider.set_dns_interface_for_testing(kDNSServiceInterfaceIndexLocalOnly);
-	return provider.open(mac, mtu) == 0;
+	if (provider.open(mac, mtu) != 0)
+		return false;
+	(void)guest.send(arp_request());
+	(void)guest.receive([](const std::vector<std::uint8_t> &frame) {
+		return frame.size() >= 14 && get16(frame, 12) == 0x0806;
+	});
+	return true;
+}
+
+bool starts_with(const std::string &text, const std::string &prefix)
+{
+	return text.compare(0, prefix.size(), prefix) == 0;
+}
+
+/* The socket for DNS over TCP goes where $TMPDIR names, when that leaves room
+ * in sun_path (an iOS device's container tmp does), and in a shorter
+ * directory when it does not (an iOS Simulator's does not). */
+void check_stream_directory(uml::network::SlirpProvider &provider, Guest &guest,
+			    const char *label, const std::string &directory,
+			    bool expect_inside)
+{
+	::setenv("TMPDIR", directory.c_str(), 1);
+	if (!open_provider(provider, guest)) {
+		fail(label, "the provider did not open");
+		return;
+	}
+	auto &resolver = provider.resolver_for_testing();
+	if (!resolver.streams_available())
+		fail(label, "the resolver has no DNS-over-TCP listener");
+	else if (starts_with(resolver.stream_path(), directory) != expect_inside)
+		fail(label, expect_inside ?
+			"the socket is not in $TMPDIR" :
+			"the socket is in a directory too long for sun_path");
+	else if (resolver.stream_path().size() >= sizeof(sockaddr_un::sun_path))
+		fail(label, "the socket path does not fit sun_path");
+	check_tcp(provider, guest);
+	provider.stop();
 }
 
 } // namespace
 
 int main()
 {
+	const char *original = std::getenv("TMPDIR");
+	const std::string saved_directory = original != nullptr ? original : "";
 	uml::network::SlirpProvider provider;
-	if (!open_provider(provider)) {
+	Guest guest{provider};
+
+	if (!open_provider(provider, guest)) {
 		std::fprintf(stderr, "the provider did not open\n");
 		return 1;
 	}
-	Guest guest{provider};
 	if (!provider.resolver_for_testing().streams_available())
 		fail("TCP", "the resolver has no DNS-over-TCP listener");
-	(void)guest.send(arp_request());
-	(void)guest.receive([](const std::vector<std::uint8_t> &frame) {
-		return frame.size() >= 14 && get16(frame, 12) == 0x0806;
-	});
 	check_udp(provider, guest);
 	check_tcp(provider, guest);
 
 	/* A guest restart: the resolver comes back with the link. */
 	provider.stop();
-	if (!open_provider(provider)) {
+	if (!open_provider(provider, guest)) {
 		std::fprintf(stderr, "the provider did not reopen\n");
 		return 1;
 	}
-	(void)guest.send(arp_request());
 	check_udp(provider, guest);
 	provider.stop();
+
+	provider.set_dns_streams_unavailable_for_testing(true);
+	if (open_provider(provider, guest)) {
+		if (provider.resolver_for_testing().streams_available())
+			fail("TCP without a stream socket",
+			     "a listener exists though no path was offered");
+		check_tcp_without_stream(provider, guest);
+		provider.stop();
+	} else {
+		fail("TCP without a stream socket", "the provider did not open");
+	}
+	provider.set_dns_streams_unavailable_for_testing(false);
+
+	/* An iOS device's container tmp is 89 bytes and the socket's name fits
+	 * it; the Simulator's is about 164 and does not. */
+	char base[] = "/tmp/uml-dns-probe.XXXXXX";
+	if (::mkdtemp(base) == nullptr) {
+		fail("stream directory", "no scratch directory");
+	} else {
+		const std::string container = std::string(base) + "/" +
+			std::string(52, 't') + "/";
+		if (::mkdir((container.substr(0, container.size() - 1)).c_str(),
+			    0700) != 0)
+			fail("stream directory", "no container directory");
+		else
+			check_stream_directory(provider, guest,
+					       "a container tmp that fits",
+					       container, true);
+		std::error_code ignored;
+		std::filesystem::remove_all(base, ignored);
+	}
+	check_stream_directory(provider, guest, "a container tmp too long",
+			       "/" + std::string(150, 'l') + "/tmp/", false);
+
+	if (original != nullptr)
+		::setenv("TMPDIR", saved_directory.c_str(), 1);
+	else
+		::unsetenv("TMPDIR");
 
 	if (failures != 0) {
 		std::fprintf(stderr, "%d DNS check(s) failed\n", failures);

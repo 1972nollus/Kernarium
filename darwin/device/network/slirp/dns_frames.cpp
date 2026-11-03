@@ -8,6 +8,7 @@ namespace {
 
 constexpr std::size_t ethernet_header = 14;
 constexpr std::uint16_t ethertype_ipv4 = 0x0800;
+constexpr std::uint8_t protocol_icmp = 1;
 constexpr std::uint8_t protocol_tcp = 6;
 constexpr std::uint8_t protocol_udp = 17;
 constexpr std::uint16_t dns_port = 53;
@@ -103,8 +104,7 @@ std::vector<std::uint8_t> ip_frame(const Endpoints &endpoints,
 } // namespace
 
 Classified classify_guest_frame(std::span<const std::uint8_t> frame,
-				const Ipv4Address &name_server,
-				const Ipv4Address &gateway)
+				const Servers &servers)
 {
 	Classified result;
 	if (frame.size() < ethernet_header + 20 ||
@@ -124,8 +124,8 @@ Classified classify_guest_frame(std::span<const std::uint8_t> frame,
 		result.action = FrameAction::drop;
 		return result;
 	}
-	const bool to_name_server = destination == name_server;
-	if (!to_name_server && destination != gateway)
+	const bool to_name_server = destination == servers.name_server;
+	if (!to_name_server && destination != servers.gateway)
 		return result;
 	/* From here a malformed packet to the name server is dropped rather
 	 * than passed: SLiRP would send what it makes of it off the host. */
@@ -178,13 +178,20 @@ Classified classify_guest_frame(std::span<const std::uint8_t> frame,
 		result.action = FrameAction::query;
 		return result;
 	}
-	if (!to_name_server)
-		return result;
-	if (protocol != protocol_tcp || fragmented || transport.size() < 20)
-		return protocol == 1 ? result : refuse(); /* SLiRP answers ICMP */
+	if (protocol != protocol_tcp || fragmented || transport.size() < 20) {
+		if (!to_name_server)
+			return result;
+		return protocol == protocol_icmp ? result : /* SLiRP answers it */
+			refuse();
+	}
 	const std::uint16_t port = read16(transport, 2);
-	if (port == dns_port)
-		return result; /* SLiRP's guest forward serves DNS over TCP */
+	/* SLiRP's guest forward serves DNS over TCP, where it is installed. The
+	 * gateway's other ports are SLiRP's own; the name server has none. */
+	if (port == dns_port ?
+	    (to_name_server ? servers.name_server_stream :
+			      servers.gateway_stream) :
+	    !to_name_server)
+		return result;
 	const std::size_t offset = (transport[12] >> 4) * 4U;
 	if (offset < 20 || offset > transport.size())
 		return refuse();

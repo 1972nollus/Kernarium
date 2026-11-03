@@ -32,7 +32,7 @@ struct Endpoints final {
 enum class FrameAction {
 	pass,      /* SLiRP handles it */
 	query,     /* a DNS datagram: `payload` goes to the resolver */
-	reset,     /* a TCP segment to a port the name server does not serve */
+	reset,     /* a TCP segment to a port that nothing serves */
 	drop,      /* anything else addressed to the name server, and multicast */
 };
 
@@ -48,13 +48,23 @@ struct Classified final {
 };
 
 /*
- * `name_server` is SLiRP's virtual name server, which serves only DNS (UDP
- * here, TCP through SLiRP's guest forward). `gateway` answers DNS too, for
- * guests configured with the gateway as their server, and passes the rest.
+ * The two addresses the provider answers DNS for. `name_server` is SLiRP's
+ * virtual name server, which serves only DNS: UDP here, TCP through SLiRP's
+ * guest forward. `gateway` answers DNS too, for guests configured with the
+ * gateway as their server, and passes the rest to SLiRP. A `_stream` flag
+ * says that the guest forward for DNS over TCP is installed at that address;
+ * without it a TCP connection to port 53 is reset, because SLiRP, with its own
+ * DNS proxy off, would connect to the literal address on the host's network.
  */
+struct Servers final {
+	Ipv4Address name_server{};
+	Ipv4Address gateway{};
+	bool name_server_stream{};
+	bool gateway_stream{};
+};
+
 [[nodiscard]] Classified classify_guest_frame(
-	std::span<const std::uint8_t> frame, const Ipv4Address &name_server,
-	const Ipv4Address &gateway);
+	std::span<const std::uint8_t> frame, const Servers &servers);
 
 /* One Ethernet frame carrying `payload` from the server back to the guest.
  * The payload must fit one 1500-byte IP packet. */
