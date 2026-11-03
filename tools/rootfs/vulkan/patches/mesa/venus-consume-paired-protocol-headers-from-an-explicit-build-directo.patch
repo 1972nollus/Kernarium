@@ -79,7 +79,7 @@ index 95d94f8b9ff4efd4a6012f6b4524af53346e00ab..fc8b3d147796e94af56035e8a70bf52c
  #include "vn_device.h"
  
 diff --git a/src/virtio/vulkan/vn_buffer.c b/src/virtio/vulkan/vn_buffer.c
-index 58f2264152472cde2b0054a633d67389e56ae2fb..0950c159859977075cbf148b64ce512cfde38207 100644
+index 6ec595301dea25afd295d7600150f42709b5f8f6..dabc70986d8f26e0ea7abaeb88eac243fdb55cc9 100644
 --- a/src/virtio/vulkan/vn_buffer.c
 +++ b/src/virtio/vulkan/vn_buffer.c
 @@ -10,8 +10,8 @@
@@ -94,7 +94,7 @@ index 58f2264152472cde2b0054a633d67389e56ae2fb..0950c159859977075cbf148b64ce512c
  #include "vn_device.h"
  #include "vn_device_memory.h"
 diff --git a/src/virtio/vulkan/vn_command_buffer.c b/src/virtio/vulkan/vn_command_buffer.c
-index e7be2fff5e83fe436ffad3c6af2454f2317da98d..1e30520d43af1b8376f8a70e8c1d8e3178249561 100644
+index 5538767a84c1ee5da596df5764b8801016e68690..ad769143dcf237cf0cdb341651d53c1069fbc975 100644
 --- a/src/virtio/vulkan/vn_command_buffer.c
 +++ b/src/virtio/vulkan/vn_command_buffer.c
 @@ -10,8 +10,8 @@
@@ -109,7 +109,7 @@ index e7be2fff5e83fe436ffad3c6af2454f2317da98d..1e30520d43af1b8376f8a70e8c1d8e31
  
  #include "vn_descriptor_set.h"
 diff --git a/src/virtio/vulkan/vn_common.c b/src/virtio/vulkan/vn_common.c
-index 84e3052faabdbd070c16b2193d4da7136141a230..dcc23ed52d633984c8b514f54555cb45341be2fb 100644
+index fe9c3755c5345eb132b73c46fdb94b84799003f4..2e4910ecda35119b46fcb2785d7dcd1c2c66c463 100644
 --- a/src/virtio/vulkan/vn_common.c
 +++ b/src/virtio/vulkan/vn_common.c
 @@ -15,7 +15,7 @@
@@ -180,7 +180,7 @@ index e938ebc1c88f5856f71b274bd746c07aab7e8565..7a30a583f32723936524f057e30b2d72
  #include "vn_android.h"
  #include "vn_instance.h"
 diff --git a/src/virtio/vulkan/vn_device_memory.c b/src/virtio/vulkan/vn_device_memory.c
-index c38713be710cad18f8131f34b385a2fb921d2937..db16eff7462f6c32905e4a3e32dc32fb21b63271 100644
+index 35ab14f51dc379bc9e9a21b343ebc5540f6a2bf0..5711aaf614fe189e824cb62ec2c3da3117dd28b6 100644
 --- a/src/virtio/vulkan/vn_device_memory.c
 +++ b/src/virtio/vulkan/vn_device_memory.c
 @@ -10,8 +10,8 @@
@@ -195,7 +195,7 @@ index c38713be710cad18f8131f34b385a2fb921d2937..db16eff7462f6c32905e4a3e32dc32fb
  
  #include "vn_android.h"
 diff --git a/src/virtio/vulkan/vn_host_copy.c b/src/virtio/vulkan/vn_host_copy.c
-index 69ed6314db85fc994682cc31d69002852cf303c8..2eae2f4efb4bb8c74defb71f3656fe272af49b2d 100644
+index 9df4cbf0d5ff03e8bd5a928f95a0503148b0f6ac..ca0c8fa06ec2ce0bab6df506a35ec6f01911b642 100644
 --- a/src/virtio/vulkan/vn_host_copy.c
 +++ b/src/virtio/vulkan/vn_host_copy.c
 @@ -5,7 +5,7 @@
@@ -227,7 +227,7 @@ index 9341c5c194437b744363899af3d2347732d23afe..921a044ddd1ef4d5d8485a36fc50b53f
  
  #include "vn_android.h"
 diff --git a/src/virtio/vulkan/vn_instance.c b/src/virtio/vulkan/vn_instance.c
-index 7fcee07b0d1666f537930efec223f5b87b76efb4..e0f00b9ed96a1297bfc627c5ec76804e86f810d9 100644
+index 21b1a5835d0136e5005fe16f6a11f530487e5542..314d9674bc4e43f4ff806f49fb7c255c6edf0500 100644
 --- a/src/virtio/vulkan/vn_instance.c
 +++ b/src/virtio/vulkan/vn_instance.c
 @@ -11,9 +11,9 @@
@@ -244,7 +244,7 @@ index 7fcee07b0d1666f537930efec223f5b87b76efb4..e0f00b9ed96a1297bfc627c5ec76804e
  #include "vn_icd.h"
  #include "vn_physical_device.h"
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index cdc44a58711855c88a93ee261b248331fb78f5ce..d80fa140833dffb5515da1b69ab5aeeba058b71f 100644
+index b00c56e456f8bfc49f74248bfe2a7989c537786b..8af4d28caaf8c1ac6bd033a132b666cab5f0f164 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -15,7 +15,7 @@
@@ -257,7 +257,7 @@ index cdc44a58711855c88a93ee261b248331fb78f5ce..d80fa140833dffb5515da1b69ab5aeeb
  #include "vk_common_entrypoints.h"
  
 diff --git a/src/virtio/vulkan/vn_pipeline.c b/src/virtio/vulkan/vn_pipeline.c
-index 0876f7b54f9ebe3f2ca5fba4d906f84f100f3a4a..3040a3a75538656e2c11201201c46d8ddeb62e9e 100644
+index ded98f36d07d1c1d5c2d58e4008175e212f3b8b2..4b1e77e12ba81eac7e8e3097a18db0eb628b4757 100644
 --- a/src/virtio/vulkan/vn_pipeline.c
 +++ b/src/virtio/vulkan/vn_pipeline.c
 @@ -10,10 +10,10 @@
@@ -289,7 +289,7 @@ index 383eea694b9d2f77dc7906bdd24b38ec3667b6ce..3944c4051f9911688eb8b67dae6fa4e3
  #include "vn_device.h"
  #include "vn_feedback.h"
 diff --git a/src/virtio/vulkan/vn_queue.c b/src/virtio/vulkan/vn_queue.c
-index 057842a524e248335a080755455b0e5bdf21d833..8fd0b7d69abbffbfa399c2a4f99b6001d1fcb473 100644
+index b84bccb0b0e09e6df0ed6f8d46aca7e52fc2dcb2..3fa4ac49184f692e99214dfa39582eb5d0b72eca 100644
 --- a/src/virtio/vulkan/vn_queue.c
 +++ b/src/virtio/vulkan/vn_queue.c
 @@ -10,8 +10,8 @@
@@ -319,7 +319,7 @@ index 42debbe7cec19b3e1a90c210639fefa17f0aa34e..d552233ebd53dfb5a8fabea651ccde96
  
  #include "vn_device.h"
 diff --git a/src/virtio/vulkan/vn_ring.c b/src/virtio/vulkan/vn_ring.c
-index 2d75f051ed7bd5328957917c063bd5f38cb2c71b..c458ee000643dc442f192de4e58478fcc18746e4 100644
+index 0903011cc4348895b06b68de026428607bfca5b6..733bc2885aa20799aa58aa15aa410d89e498b5b2 100644
 --- a/src/virtio/vulkan/vn_ring.c
 +++ b/src/virtio/vulkan/vn_ring.c
 @@ -9,7 +9,7 @@
@@ -332,7 +332,7 @@ index 2d75f051ed7bd5328957917c063bd5f38cb2c71b..c458ee000643dc442f192de4e58478fc
  #include "vn_cs.h"
  #include "vn_instance.h"
 diff --git a/src/virtio/vulkan/vn_sync.c b/src/virtio/vulkan/vn_sync.c
-index ee0a5391b25d172c5c5bffd6fc39b8189947920a..fdee560022bd94f1237f65bbbe361ba215e30f3f 100644
+index f14598a9e4a9f7a6ff4d645a28af7db6771f5fbf..3d9a6823d42d51f2c6324b4ed813e62b0a334955 100644
 --- a/src/virtio/vulkan/vn_sync.c
 +++ b/src/virtio/vulkan/vn_sync.c
 @@ -5,10 +5,10 @@

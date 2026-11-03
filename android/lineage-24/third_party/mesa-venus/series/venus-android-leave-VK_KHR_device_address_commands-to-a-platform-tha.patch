@@ -21,7 +21,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  1 file changed, 5 insertions(+)
 
 diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
-index e0d42dbe63e3dbcd013f4093d0b4b439f5f2bd7f..9836a150b1eb6213a475549aab44d444eda6b45d 100644
+index a9d6c71142e913edd8e8d9d3e772a8813ee56b97..cd6af3bc66004bde1e2338be8c08dfb8c74cd49a 100644
 --- a/src/virtio/vulkan/vn_physical_device.c
 +++ b/src/virtio/vulkan/vn_physical_device.c
 @@ -1335,7 +1335,12 @@ vn_physical_device_get_passthrough_extensions(

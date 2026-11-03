@@ -23,7 +23,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 3 insertions(+)
 
 diff --git a/src/venus/vkr_common.c b/src/venus/vkr_common.c
-index f55935c0c8f871a2afd461764b1a2bcf17564b0a..83b925ea665393b031c9196e9fdb187649bd12a6 100644
+index 16c26c7083d41616d00669372cd44c52ea520f39..fc526b6f2877fb983f5cc5d64105ef7138c5671c 100644
 --- a/src/venus/vkr_common.c
 +++ b/src/venus/vkr_common.c
 @@ -161,6 +161,7 @@ static const struct vn_info_extension_table vkr_extension_table = {

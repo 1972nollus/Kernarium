@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 7 Sep 2026 20:13:28 +0900
-Subject: [PATCH] mesa/st: delete only a pixel-transfer specialization that was
- compiled
+Subject: [PATCH] mesa/st: test the teardown of a pixel-transfer specialization
 
 A specialized pixel-transfer conversion shader is prepared in two steps: a
 driver thread clones the conversion NIR and inlines the specialization
@@ -11,28 +10,27 @@ shape compiles that clone into a compute state. Teardown read `created` as if
 it also meant a compute state existed and handed `spec->cs` to
 pipe_context::delete_compute_state, so a specialization whose clone finished
 but which no later download picked up passed NULL to a hook that dereferences
-its argument at once in every driver. The generic shader beside it is already
-deleted only when it exists.
+its argument at once in every driver.
 
-Free the clone when the driver thread produced one and delete the compute
-state only when one was compiled. The two structures move to a private header
-so st_pbo_compute_deinit can be driven directly by a test.
-
-st_pbo_compute_deinit covers an uncompiled specialization, one still queued,
-and compiled shaders, which must still be released.
+Mesa 26.2.6 carries the fix itself: teardown frees the clone when `created`
+and deletes the compute state only when `spec->cs` is set. This topic keeps
+what upstream lacks. The two structures move to a private header so
+st_pbo_compute_deinit can be driven directly by a test, which covers an
+uncompiled specialization, one still queued, and compiled shaders, which must
+still be released.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ---
- src/mesa/state_tracker/st_pbo_compute.c       |  25 +--
+ src/mesa/state_tracker/st_pbo_compute.c       |  21 +--
  src/mesa/state_tracker/st_pbo_compute.h       |  65 +++++++
  src/mesa/state_tracker/tests/meson.build      |  14 ++
  .../tests/st_pbo_compute_deinit.cpp           | 159 ++++++++++++++++++
- 4 files changed, 241 insertions(+), 22 deletions(-)
+ 4 files changed, 239 insertions(+), 20 deletions(-)
  create mode 100644 src/mesa/state_tracker/st_pbo_compute.h
  create mode 100644 src/mesa/state_tracker/tests/st_pbo_compute_deinit.cpp
 
 diff --git a/src/mesa/state_tracker/st_pbo_compute.c b/src/mesa/state_tracker/st_pbo_compute.c
-index 25108299cbf47e61db5e675e0ac39d842841e9ab..712e333e931ddf72c7d5b0d39c2c4c51d2cc7b19 100644
+index cfd14f0c010eae4977c1153097d4c7b0f4bcdb0f..7c9ea0938b44940d331121a51fc222eb9f512ca6 100644
 --- a/src/mesa/state_tracker/st_pbo_compute.c
 +++ b/src/mesa/state_tracker/st_pbo_compute.c
 @@ -32,6 +32,7 @@
@@ -70,19 +68,6 @@ index 25108299cbf47e61db5e675e0ac39d842841e9ab..712e333e931ddf72c7d5b0d39c2c4c51
  #define BGR_FORMAT(NAME) \
      {{ \
       [0] = PIPE_FORMAT_##NAME##_SNORM, \
-@@ -1371,10 +1352,10 @@ st_pbo_compute_deinit(struct st_context *st)
-             struct pbo_spec_async_data *spec = (void*)se->key;
-             util_queue_fence_wait(&spec->fence);
-             util_queue_fence_destroy(&spec->fence);
--            if (spec->created) {
-+            if (spec->created)
-                ralloc_free(spec->nir);
-+            if (spec->cs)
-                st->pipe->delete_compute_state(st->pipe, spec->cs);
--            }
-             free(spec);
-          }
-          _mesa_set_fini(&async->specialized, NULL);
 diff --git a/src/mesa/state_tracker/st_pbo_compute.h b/src/mesa/state_tracker/st_pbo_compute.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..926750a312c6e27a18e321d5dbd448664bcedcb7

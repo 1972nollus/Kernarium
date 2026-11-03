@@ -25,10 +25,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  4 files changed, 32 insertions(+), 2 deletions(-)
 
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index 6ab8aa7dd30791b11eef67e3b86fed6c12844bc8..5bae538fdcc67401888b083b85532e288991a06f 100644
+index 14cd3de9da7180ef5229a799249234325687f671..adacb9a0e19775b56ba0a4a3ab7d44759f866ef2 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
-@@ -761,6 +761,11 @@ void virgl_renderer_poll(void)
+@@ -828,6 +828,11 @@ void virgl_renderer_poll(void)
     virgl_context_foreach(&args);
  }
  
@@ -58,7 +58,7 @@ index 7c6969d9385d4726470146f970e119ecf53ce5b8..d524ce473cdf1376cd9b47e7a79e45d8
  VIRGL_EXPORT void *virgl_renderer_get_cursor_data(uint32_t resource_id, uint32_t *width, uint32_t *height);
  
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 4869b94ccf7ebe8f8b7bc395b1fe6b34f2f474ed..2ac1a1aa3bdd680995422b7538e7db02c7bee912 100644
+index 85917e0d826f4cef991ff8ec0c2c74cf17da7fcb..1114c7795b4133a49bdc25225f263035dfd55d22 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -7334,6 +7334,16 @@ void vrend_renderer_poll(void) {
@@ -78,7 +78,7 @@ index 4869b94ccf7ebe8f8b7bc395b1fe6b34f2f474ed..2ac1a1aa3bdd680995422b7538e7db02
  static void wait_sync(struct vrend_fence *fence)
  {
     struct vrend_context *ctx = fence->ctx;
-@@ -11649,11 +11659,19 @@ void vrend_renderer_check_fences(void)
+@@ -11661,11 +11671,19 @@ void vrend_renderer_check_fences(void)
        }
     }
  
@@ -101,10 +101,10 @@ index 4869b94ccf7ebe8f8b7bc395b1fe6b34f2f474ed..2ac1a1aa3bdd680995422b7538e7db02
        struct vrend_context *ctx = fence->ctx;
        ctx->fence_retire(fence->fence_id, ctx->fence_retire_data);
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index 7f086c3fa5bd099cd67d43a475418fe46607a054..4bc62f35f94d86b41306dc2c6bcc1dbf22fa5d83 100644
+index ba4a0a054d84657f67aa351318e3bfe0055d1e71..a64a6dc149a3c7b6fe738159889ebf9c0fa79118 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
-@@ -600,6 +600,7 @@ bool format_is_copy_compatible(enum virgl_formats src, enum virgl_formats dst,
+@@ -599,6 +599,7 @@ bool format_is_copy_compatible(enum virgl_formats src, enum virgl_formats dst,
  void vrend_renderer_prepare_reset(void);
  void vrend_renderer_reset(void);
  void vrend_renderer_poll(void);

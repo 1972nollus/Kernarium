@@ -54,10 +54,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  3 files changed, 66 insertions(+), 15 deletions(-)
 
 diff --git a/src/gallium/frontends/dri/dri2.c b/src/gallium/frontends/dri/dri2.c
-index 292757a2ab6f8bbcb0cba50b277604d0dbfb77c1..f3ff7e5f9b39cbe310f54ec1a01ac68f8e2c6490 100644
+index e73807578951ebacfacdc0c62f9520e0188bc2aa..0e06f8c5346d004be9f1165e78465dec8bfc32aa 100644
 --- a/src/gallium/frontends/dri/dri2.c
 +++ b/src/gallium/frontends/dri/dri2.c
-@@ -978,6 +978,20 @@ dri_create_image(struct dri_screen *screen,
+@@ -930,6 +930,20 @@ dri_create_image(struct dri_screen *screen,
                                      PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_SAMPLER_VIEW_SUBOPTIMAL))
        tex_usage |= PIPE_BIND_SAMPLER_VIEW;
  
@@ -78,7 +78,7 @@ index 292757a2ab6f8bbcb0cba50b277604d0dbfb77c1..f3ff7e5f9b39cbe310f54ec1a01ac68f
     if (!tex_usage)
        return NULL;
  
-@@ -1011,19 +1025,28 @@ dri_create_image(struct dri_screen *screen,
+@@ -963,19 +977,28 @@ dri_create_image(struct dri_screen *screen,
     templ.depth0 = 1;
     templ.array_size = 1;
  
@@ -120,7 +120,7 @@ index 292757a2ab6f8bbcb0cba50b277604d0dbfb77c1..f3ff7e5f9b39cbe310f54ec1a01ac68f
     }
  
     img->level = 0;
-@@ -1067,6 +1090,19 @@ dri2_query_image_common(struct dri_image *image, int attrib, int *value)
+@@ -1019,6 +1042,19 @@ dri2_query_image_common(struct dri_image *image, int attrib, int *value)
        else
           *value = to_dri_compression_rate(image->texture->compression_rate);
        return true;
@@ -141,7 +141,7 @@ index 292757a2ab6f8bbcb0cba50b277604d0dbfb77c1..f3ff7e5f9b39cbe310f54ec1a01ac68f
     default:
        return false;
 diff --git a/src/gallium/frontends/dri/dri_helpers.c b/src/gallium/frontends/dri/dri_helpers.c
-index b335721e1a1256a71b1e8194002f309b18199d9f..2e84e38dcea8ccf426dca59f176867bad91febb5 100644
+index 74676652968238cdceb98340e6e4ba8c7a5fcadd..5786bb80097e83e1bc270c28c9745280784a496a 100644
 --- a/src/gallium/frontends/dri/dri_helpers.c
 +++ b/src/gallium/frontends/dri/dri_helpers.c
 @@ -583,7 +583,12 @@ static const struct dri2_format_mapping dri2_format_table[] = {

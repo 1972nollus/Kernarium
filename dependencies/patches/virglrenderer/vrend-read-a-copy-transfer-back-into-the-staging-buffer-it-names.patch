@@ -12,7 +12,7 @@ writes, so a guest could not read back a blob texture.
  1 file changed, 16 insertions(+), 8 deletions(-)
 
 diff --git a/src/vrend/vrend_decode.c b/src/vrend/vrend_decode.c
-index a2bd100ba1820a833bed30040e0c7606ca57ca0b..e76f006d2a577f714399b7271b4a46ab6eabaf42 100644
+index b4fa098fb412259fe59cc80e2d1c87bffea592b8..b7c6b2ff0cfff4aaa8cef7bfc237351104515537 100644
 --- a/src/vrend/vrend_decode.c
 +++ b/src/vrend/vrend_decode.c
 @@ -1510,16 +1510,23 @@ static int vrend_decode_transfer3d(struct vrend_context *ctx, const uint32_t *bu

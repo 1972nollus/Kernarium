@@ -8,7 +8,7 @@ Subject: [PATCH] vulkan/wsi/x11: bound the swapchain event wait
  1 file changed, 64 insertions(+), 1 deletion(-)
 
 diff --git a/src/vulkan/wsi/wsi_common_x11.c b/src/vulkan/wsi/wsi_common_x11.c
-index a077afeb352546c62fc17ed071e5ab05611756d8..864fa1cf05295d08608fc68e277bb6b0b5a62244 100644
+index bb03c04a581900990683ff1980c5b6fced8f5f3e..22e394140ddbba7aefd5e1695f08adfc23e96d79 100644
 --- a/src/vulkan/wsi/wsi_common_x11.c
 +++ b/src/vulkan/wsi/wsi_common_x11.c
 @@ -40,6 +40,7 @@
@@ -19,7 +19,7 @@ index a077afeb352546c62fc17ed071e5ab05611756d8..864fa1cf05295d08608fc68e277bb6b0
  #include <string.h>
  #include <fcntl.h>
  #include "drm-uapi/drm_fourcc.h"
-@@ -2262,6 +2263,62 @@ static unsigned x11_driver_owned_images(const struct x11_swapchain *chain)
+@@ -2266,6 +2267,62 @@ static unsigned x11_driver_owned_images(const struct x11_swapchain *chain)
     return chain->base.image_count - chain->sent_image_count;
  }
  
@@ -82,7 +82,7 @@ index a077afeb352546c62fc17ed071e5ab05611756d8..864fa1cf05295d08608fc68e277bb6b0
  /* This thread is responsible for pumping PRESENT replies.
   * This is done in a separate thread from the X11 presentation thread
   * to be able to support non-blocking modes like IMMEDIATE and MAILBOX.
-@@ -2313,10 +2370,16 @@ x11_manage_event_queue(void *state)
+@@ -2317,10 +2374,16 @@ x11_manage_event_queue(void *state)
        if (assume_forward_progress) {
           /* Only yield lock when blocking on X11 event. */
           mtx_unlock(&chain->thread_state_lock);

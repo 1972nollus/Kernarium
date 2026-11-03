@@ -23,7 +23,7 @@ under-sized.
  1 file changed, 36 insertions(+), 1 deletion(-)
 
 diff --git a/src/virtio/vulkan/vn_host_copy.c b/src/virtio/vulkan/vn_host_copy.c
-index 7a294a34c992108f89710b40691e2d314494652b..69ed6314db85fc994682cc31d69002852cf303c8 100644
+index d83b72a1c83212a08abad01ac24725c4efc58386..9df4cbf0d5ff03e8bd5a928f95a0503148b0f6ac 100644
 --- a/src/virtio/vulkan/vn_host_copy.c
 +++ b/src/virtio/vulkan/vn_host_copy.c
 @@ -107,6 +107,32 @@ vn_get_memcpy_size(VkDevice dev_handle,
@@ -59,7 +59,7 @@ index 7a294a34c992108f89710b40691e2d314494652b..69ed6314db85fc994682cc31d6900285
  static size_t
  vn_get_copy_size(VkImage img_handle,
                   const VkImageSubresourceLayers *subres_layers,
-@@ -132,7 +158,10 @@ vn_get_copy_size(VkImage img_handle,
+@@ -133,7 +159,10 @@ vn_get_copy_size(VkImage img_handle,
     const uint32_t height = mem_img_height ?: img_extent.height;
     const uint32_t bw = vk_format_get_blockwidth(format);
     const uint32_t bh = vk_format_get_blockheight(format);
@@ -71,7 +71,7 @@ index 7a294a34c992108f89710b40691e2d314494652b..69ed6314db85fc994682cc31d6900285
  
     /* Per spec: Copying Data Between Buffers and Images */
     const size_t row_extent = DIV_ROUND_UP(width, bw) * bs;
-@@ -172,6 +201,9 @@ vn_CopyImageToMemory(VkDevice device,
+@@ -173,6 +202,9 @@ vn_CopyImageToMemory(VkDevice device,
                                 regions[i].memoryImageHeight,
                                 regions[i].imageExtent);
  
@@ -81,7 +81,7 @@ index 7a294a34c992108f89710b40691e2d314494652b..69ed6314db85fc994682cc31d6900285
        VkImageLayout src_layout = info->srcImageLayout;
        if (VN_PRESENT_SRC_INTERNAL_LAYOUT != VK_IMAGE_LAYOUT_PRESENT_SRC_KHR &&
            src_layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
-@@ -224,6 +256,9 @@ vn_CopyMemoryToImage(VkDevice device,
+@@ -225,6 +257,9 @@ vn_CopyMemoryToImage(VkDevice device,
                                 regions[i].memoryImageHeight,
                                 regions[i].imageExtent);
  

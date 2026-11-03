@@ -31,10 +31,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  3 files changed, 101 insertions(+), 20 deletions(-)
 
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index d8b9e1b89c5ea249dfdaafdb4d7ceaa0b00ef0a4..8deb997d852be9cf655d1444df848e788f8ded03 100644
+index 168cd8a1755ded1861f0e4a3042d4e2f3f5799d2..8f7cc928f1656969b6c6f6b50574678d9dc5e23d 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
-@@ -112,9 +112,10 @@ static int virgl_renderer_resource_create_internal(struct virgl_renderer_resourc
+@@ -118,9 +118,10 @@ static int virgl_renderer_resource_create_internal(struct virgl_renderer_resourc
     vrend_args.last_level = args->last_level;
     vrend_args.flags = args->flags;
  
@@ -48,7 +48,7 @@ index d8b9e1b89c5ea249dfdaafdb4d7ceaa0b00ef0a4..8deb997d852be9cf655d1444df848e78
     map_info = vrend_renderer_resource_get_map_info(pipe_res);
     res = virgl_resource_create_from_pipe(args->handle, pipe_res, iov, num_iovs);
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 4cb7e2393dbf1318dcedef96a8cb9d55e917c56b..46399c986d006dc5246675631a9e57080d2daa2d 100644
+index 3c1e9962ca3267e068a0c20d0df9254c38e70e69..b7a198e8f497b0b336db08a0de41010ccdc6701e 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -474,6 +474,43 @@ static bool vrend_pin_host_pages(GLuint buffer, void *ptr, uint64_t size)
@@ -219,7 +219,7 @@ index 4cb7e2393dbf1318dcedef96a8cb9d55e917c56b..46399c986d006dc5246675631a9e5708
  }
  
  static inline void
-@@ -9358,6 +9414,7 @@ static int vrend_resource_alloc_texture(struct vrend_resource *gr,
+@@ -9364,6 +9420,7 @@ static int vrend_resource_alloc_texture(struct vrend_resource *gr,
  
     glGenTextures(1, &gr->gl_id);
     glBindTexture(gr->target, gr->gl_id);
@@ -227,7 +227,7 @@ index 4cb7e2393dbf1318dcedef96a8cb9d55e917c56b..46399c986d006dc5246675631a9e5708
  
     debug_texture(__func__, gr);
  
-@@ -9475,6 +9532,16 @@ static int vrend_resource_alloc_texture(struct vrend_resource *gr,
+@@ -9481,6 +9538,16 @@ static int vrend_resource_alloc_texture(struct vrend_resource *gr,
        }
     }
  
@@ -244,7 +244,7 @@ index 4cb7e2393dbf1318dcedef96a8cb9d55e917c56b..46399c986d006dc5246675631a9e5708
     if (!format_can_texture_storage) {
        glTexParameteri(gr->target, GL_TEXTURE_BASE_LEVEL, 0);
        glTexParameteri(gr->target, GL_TEXTURE_MAX_LEVEL, pr->last_level);
-@@ -9558,11 +9625,15 @@ static void vrend_resource_zero_texture(struct vrend_resource *gr)
+@@ -9564,11 +9631,15 @@ static void vrend_resource_zero_texture(struct vrend_resource *gr)
  
  struct pipe_resource *
  vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args *args,
@@ -261,7 +261,7 @@ index 4cb7e2393dbf1318dcedef96a8cb9d55e917c56b..46399c986d006dc5246675631a9e5708
     gr = vrend_resource_create(args);
     if (!gr)
        return NULL;
-@@ -9600,6 +9671,10 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
+@@ -9606,6 +9677,10 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
     }
  
     if (ret) {
@@ -272,7 +272,7 @@ index 4cb7e2393dbf1318dcedef96a8cb9d55e917c56b..46399c986d006dc5246675631a9e5708
        FREE(gr->packed_yuv);
        FREE(gr);
        return NULL;
-@@ -9642,7 +9717,7 @@ static bool vrend_packed_yuv_make_planes(struct vrend_packed_yuv *yuv)
+@@ -9648,7 +9723,7 @@ static bool vrend_packed_yuv_make_planes(struct vrend_packed_yuv *yuv)
        };
  
        yuv->plane[plane] = (struct vrend_resource *)
@@ -281,7 +281,7 @@ index 4cb7e2393dbf1318dcedef96a8cb9d55e917c56b..46399c986d006dc5246675631a9e5708
        if (!yuv->plane[plane]) {
           while (plane--)
              vrend_resource_reference(&yuv->plane[plane], NULL);
-@@ -14913,9 +14988,10 @@ int vrend_renderer_pipe_resource_create(struct vrend_context *ctx, uint32_t blob
+@@ -14925,9 +15000,10 @@ int vrend_renderer_pipe_resource_create(struct vrend_context *ctx, uint32_t blob
                                          const struct vrend_renderer_resource_create_args *args)
  {
     struct vrend_resource *res;
@@ -295,7 +295,7 @@ index 4cb7e2393dbf1318dcedef96a8cb9d55e917c56b..46399c986d006dc5246675631a9e5708
     res->blob_id = blob_id;
     list_addtail(&res->head, &ctx->vrend_resources);
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index 83539173b331e2965e076ec2d4825acd8419c919..a31cfb46b0d17305637273143980c17071ac3339 100644
+index 522c4db9d8f50fcaee2c8be6b42418279a0041b5..b063283863f0b6d48f625431d26ac9830f112e5d 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
 @@ -356,9 +356,13 @@ struct vrend_renderer_resource_set_type_args {

@@ -760,10 +760,10 @@ index 0000000000000000000000000000000000000000..b6a3eebe72c5dec96e74f34af99cc701
 +   return 0;
 +}
 diff --git a/src/gallium/drivers/zink/zink_bo.c b/src/gallium/drivers/zink/zink_bo.c
-index 0e98a209db900ed18f9418e3dff3bc57f8474a4b..90efa8f98fc4fd96afc4407ac0c1781cd7a86dc6 100644
+index a2bbc8e27ed0400f3b78a9ccef0e2a47e671e0e8..77dda0f4f862f8252cb2b7a5f557af34e6fb5875 100644
 --- a/src/gallium/drivers/zink/zink_bo.c
 +++ b/src/gallium/drivers/zink/zink_bo.c
-@@ -204,10 +204,14 @@ bo_destroy_or_cache(struct zink_screen *screen, struct zink_bo *bo)
+@@ -214,10 +214,14 @@ bo_destroy_or_cache(struct zink_screen *screen, struct zink_bo *bo)
     bo->reads.u = NULL;
     bo->writes.u = NULL;
  
@@ -780,7 +780,7 @@ index 0e98a209db900ed18f9418e3dff3bc57f8474a4b..90efa8f98fc4fd96afc4407ac0c1781c
  }
  
  static struct zink_bo *
-@@ -1361,6 +1365,9 @@ zink_bo_init(struct zink_screen *screen)
+@@ -1371,6 +1375,9 @@ zink_bo_init(struct zink_screen *screen)
                   500000, 1.5f, 0,
                   total_mem / 8, offsetof(struct zink_bo, cache_entry), screen,
                   (void*)bo_destroy, (void*)bo_can_reclaim);
@@ -790,7 +790,7 @@ index 0e98a209db900ed18f9418e3dff3bc57f8474a4b..90efa8f98fc4fd96afc4407ac0c1781c
  
     if (!pb_slabs_init(&screen->pb.bo_slabs,
                          MIN_SLAB_ORDER, 20,
-@@ -1377,7 +1384,11 @@ zink_bo_init(struct zink_screen *screen)
+@@ -1387,7 +1394,11 @@ zink_bo_init(struct zink_screen *screen)
  void
  zink_bo_deinit(struct zink_screen *screen)
  {
@@ -803,7 +803,7 @@ index 0e98a209db900ed18f9418e3dff3bc57f8474a4b..90efa8f98fc4fd96afc4407ac0c1781c
     pb_cache_deinit(&screen->pb.bo_cache);
  }
 diff --git a/src/gallium/drivers/zink/zink_types.h b/src/gallium/drivers/zink/zink_types.h
-index 5089b17e9c7ac976be7b60775f31500cae279e66..7065903f82b9aeca5708cbb45a000664a50d6475 100644
+index 3bf10e877ee28a6150e0f4e9bd010de636d39948..c75722ef54053b8fcada835fe104be97f20d4562 100644
 --- a/src/gallium/drivers/zink/zink_types.h
 +++ b/src/gallium/drivers/zink/zink_types.h
 @@ -37,6 +37,7 @@
@@ -814,7 +814,7 @@ index 5089b17e9c7ac976be7b60775f31500cae279e66..7065903f82b9aeca5708cbb45a000664
  #include "util/pb_slab.h"
  
  #include "util/blob.h"
-@@ -1448,6 +1449,7 @@ struct zink_screen {
+@@ -1459,6 +1460,7 @@ struct zink_screen {
  
     struct {
        struct pb_cache bo_cache;

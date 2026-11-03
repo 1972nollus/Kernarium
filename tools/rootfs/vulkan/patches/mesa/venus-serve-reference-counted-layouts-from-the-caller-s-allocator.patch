@@ -406,7 +406,7 @@ index 0000000000000000000000000000000000000000..d068b8dd261b6d299ec37283f16813ad
 +
 +#endif /* VN_OBJECT_ALLOC_H */
 diff --git a/src/virtio/vulkan/vn_pipeline.c b/src/virtio/vulkan/vn_pipeline.c
-index 3040a3a75538656e2c11201201c46d8ddeb62e9e..bd9f88c96bc98701dced7b0d31961c80a650c9ee 100644
+index 4b1e77e12ba81eac7e8e3097a18db0eb628b4757..e4204caf371aba50b9029a12333c6290dfce3337 100644
 --- a/src/virtio/vulkan/vn_pipeline.c
 +++ b/src/virtio/vulkan/vn_pipeline.c
 @@ -297,7 +297,6 @@ static void

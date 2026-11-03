@@ -14,7 +14,7 @@ through kopper rather than a software rasterizer.
  1 file changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/src/egl/drivers/dri2/platform_surfaceless.c b/src/egl/drivers/dri2/platform_surfaceless.c
-index 8fbb9a60ed406a9c19e79ac42e236a83360c89f5..1473ee36012bb0d403f12d33f6ec6387765da649 100644
+index e85cae5d61b7f5c99972bcaaf545daa040ee38fd..e1ca89213c78c61d0df8953b4daf4cd2df3c148d 100644
 --- a/src/egl/drivers/dri2/platform_surfaceless.c
 +++ b/src/egl/drivers/dri2/platform_surfaceless.c
 @@ -389,7 +389,8 @@ dri2_initialize_surfaceless(_EGLDisplay *disp)

@@ -17,7 +17,7 @@ longer re-enabled at runtime.
  5 files changed, 6 insertions(+), 22 deletions(-)
 
 diff --git a/AndroidManifest.xml b/AndroidManifest.xml
-index 2523082b31132439fad2dd97566ac1a13f4e95b7..fa21f3e4dd282c401d384c5ac136d41119477370 100644
+index e45bc1b23bf66abe198c3c9aac4d468cc21cc028..3cc859830dd7dcb4775c51ed2a11755826bc11cb 100644
 --- a/AndroidManifest.xml
 +++ b/AndroidManifest.xml
 @@ -367,6 +367,7 @@
@@ -28,7 +28,7 @@ index 2523082b31132439fad2dd97566ac1a13f4e95b7..fa21f3e4dd282c401d384c5ac136d411
              android:icon="@drawable/ic_homepage_connected_device">
              <intent-filter android:priority="1">
                  <action android:name="android.settings.BLUETOOTH_SETTINGS" />
-@@ -5450,6 +5451,7 @@
+@@ -5457,6 +5458,7 @@
  
          <activity android:name="Settings$AdvancedConnectedDeviceActivity"
                    android:exported="true"
@@ -36,7 +36,7 @@ index 2523082b31132439fad2dd97566ac1a13f4e95b7..fa21f3e4dd282c401d384c5ac136d411
                    android:label="@string/connected_device_connections_title">
              <intent-filter android:priority="1">
                  <action android:name="com.android.settings.ADVANCED_CONNECTED_DEVICE_SETTINGS" />
-@@ -5481,6 +5483,7 @@
+@@ -5488,6 +5490,7 @@
          <activity android:name="Settings$BluetoothDeviceDetailActivity"
                    android:label="@string/device_details_title"
                    android:exported="true"
@@ -44,7 +44,7 @@ index 2523082b31132439fad2dd97566ac1a13f4e95b7..fa21f3e4dd282c401d384c5ac136d411
                    android:permission="android.permission.BLUETOOTH_CONNECT">
              <intent-filter android:priority="1">
                  <action android:name="com.android.settings.BLUETOOTH_DEVICE_DETAIL_SETTINGS" />
-@@ -5498,6 +5501,7 @@
+@@ -5505,6 +5508,7 @@
              android:name=".Settings$PreviouslyConnectedDeviceActivity"
              android:label="@string/connected_device_saved_title"
              android:exported="true"
@@ -52,7 +52,7 @@ index 2523082b31132439fad2dd97566ac1a13f4e95b7..fa21f3e4dd282c401d384c5ac136d411
              android:permission="android.permission.BLUETOOTH_CONNECT"
              android:icon="@drawable/ic_homepage_connected_device">
              <intent-filter android:priority="1">
-@@ -5968,6 +5972,7 @@
+@@ -5975,6 +5979,7 @@
          <activity android:name="Settings$BluetoothDashboardActivity"
              android:label="@string/bluetooth_settings_title"
              android:permission="android.permission.BLUETOOTH_CONNECT"
@@ -60,7 +60,7 @@ index 2523082b31132439fad2dd97566ac1a13f4e95b7..fa21f3e4dd282c401d384c5ac136d411
              android:exported="true">
              <intent-filter>
                  <action android:name="android.settings.BLUETOOTH_DASHBOARD_SETTINGS" />
-@@ -5980,6 +5985,7 @@
+@@ -5987,6 +5992,7 @@
          <activity
              android:name="com.android.settings.connecteddevice.audiosharing.AudioSharingActivity"
              android:label="@string/audio_sharing_title"
@@ -69,7 +69,7 @@ index 2523082b31132439fad2dd97566ac1a13f4e95b7..fa21f3e4dd282c401d384c5ac136d411
              <intent-filter>
                  <action android:name="com.android.settings.BLUETOOTH_AUDIO_SHARING_SETTINGS" />
 diff --git a/res/xml/development_settings.xml b/res/xml/development_settings.xml
-index a04c5c779d63f797d0a51dbd8a38d5ef51cc14f0..c4cb943f1603668f5034715cb14c447badeaced3 100644
+index 9867b26c07269c49ada2e2412db73341940f3017..92dab85b6bd24a26bf51f7cfcf536db33a2872ea 100644
 --- a/res/xml/development_settings.xml
 +++ b/res/xml/development_settings.xml
 @@ -308,11 +308,6 @@

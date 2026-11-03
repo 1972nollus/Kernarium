@@ -28,10 +28,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  3 files changed, 66 insertions(+), 10 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index c7aed21c0f917a79bdea36e5ff9a7f1a231ae2d8..9196699d11c38d4d63e8fc9b9c7ddba91b35c01b 100644
+index 81e9a063ae3e0922ad2f7a898980997d8c6dd788..226d29a183b8dd795009515c1198c163c1bc34d4 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
-@@ -462,6 +462,60 @@ find_completed_batch_state(struct zink_context *ctx)
+@@ -457,6 +457,60 @@ find_completed_batch_state(struct zink_context *ctx)
     return NULL;
  }
  
@@ -92,7 +92,7 @@ index c7aed21c0f917a79bdea36e5ff9a7f1a231ae2d8..9196699d11c38d4d63e8fc9b9c7ddba9
  /* find a "free" batch state */
  static struct zink_batch_state *
  get_batch_state(struct zink_context *ctx)
-@@ -851,16 +905,7 @@ end:
+@@ -852,16 +906,7 @@ end:
  
     p_atomic_set(&bs->fence.submitted, true);
  
@@ -125,10 +125,10 @@ index 027536d6873a057e01f4603cedbff01e91d1700e..35e41b099f102f086a064960a1aca1a8
  zink_batch_state_destroy(struct zink_screen *screen, struct zink_batch_state *bs);
  
 diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
-index 83b9365164a2ce1b46cbb63a08bc717777469b85..de0c8a1904cc44ea081e32fb7650eb8d0c051116 100644
+index ebd6b5414814b9babfa1274d1cec366afa2be5a8..a4382ff9d62b36bb4551d5df58eb509e05454230 100644
 --- a/src/gallium/drivers/zink/zink_context.c
 +++ b/src/gallium/drivers/zink/zink_context.c
-@@ -4710,6 +4710,13 @@ zink_check_batch_completion(struct zink_context *ctx, uint64_t batch_id)
+@@ -4785,6 +4785,13 @@ zink_check_batch_completion(struct zink_context *ctx, uint64_t batch_id)
     return success;
  }
  
@@ -142,7 +142,7 @@ index 83b9365164a2ce1b46cbb63a08bc717777469b85..de0c8a1904cc44ea081e32fb7650eb8d
  static void
  zink_texture_barrier(struct pipe_context *pctx, unsigned flags)
  {
-@@ -6019,6 +6026,7 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
+@@ -6098,6 +6105,7 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
     ctx->base.flush = zink_flush;
     ctx->base.memory_barrier = zink_memory_barrier;
     ctx->base.texture_barrier = zink_texture_barrier;

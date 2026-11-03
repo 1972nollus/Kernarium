@@ -57,10 +57,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 38 insertions(+), 6 deletions(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index 83f8bad990efe69d9605d9fda91331c5ec454c09..be7fdcec780a8d397afed020a703e6f59a8b9fc0 100644
+index 0bb26a35d242ce759380c0ef36b75aeabf2d46f1..a834d298c568b189ee4ca18c1556bacce5171b47 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
-@@ -3366,15 +3366,47 @@ static void translate_tex(struct dump_ctx *ctx,
+@@ -3381,15 +3381,47 @@ static void translate_tex(struct dump_ctx *ctx,
  
     bool has_bias = strbuf_get_len (&bias_buf) != 0;
     bool has_offset = strbuf_get_len (&offset_buf) != 0;

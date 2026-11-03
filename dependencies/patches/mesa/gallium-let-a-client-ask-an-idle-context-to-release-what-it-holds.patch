@@ -46,10 +46,10 @@ index acfc6ed712cd1d218acd7d3c0863e6f8361a29dc..29b28d5c00f8b4274b8332171dd4737d
  ^^^^^^
  
 diff --git a/src/gallium/auxiliary/util/u_threaded_context.c b/src/gallium/auxiliary/util/u_threaded_context.c
-index 2e51d31054e8b894793daccb5c9bf06ac5126a07..b6636cfbd2ff51d81e6fb5e76f66c2b93adb5990 100644
+index d498eb6fea9c8c37e75ebe2e24eb41f9e490273b..ba3695800eb2a6e70396330b240237b1f499da95 100644
 --- a/src/gallium/auxiliary/util/u_threaded_context.c
 +++ b/src/gallium/auxiliary/util/u_threaded_context.c
-@@ -3610,6 +3610,34 @@ tc_set_context_param(struct pipe_context *_pipe,
+@@ -3613,6 +3613,34 @@ tc_set_context_param(struct pipe_context *_pipe,
  }
  
  
@@ -84,7 +84,7 @@ index 2e51d31054e8b894793daccb5c9bf06ac5126a07..b6636cfbd2ff51d81e6fb5e76f66c2b9
  /********************************************************************
   * draw, launch, clear, blit, copy, flush
   */
-@@ -5730,6 +5758,7 @@ threaded_context_create(struct pipe_context *pipe,
+@@ -5733,6 +5761,7 @@ threaded_context_create(struct pipe_context *pipe,
     CTX_INIT(texture_subdata);
     CTX_INIT(texture_barrier);
     CTX_INIT(memory_barrier);
@@ -105,7 +105,7 @@ index 2cdbb1cb31f42b3563aa14de6b8c1f773818f983..5f9b97f7d8f49e50b175bddfb94c5ed2
  CALL(make_texture_handle_resident)
  CALL(delete_image_handle)
 diff --git a/src/gallium/include/pipe/p_context.h b/src/gallium/include/pipe/p_context.h
-index 51bb420ea8a255fe132f8f6746ea68b28aee8df2..5ee74f78d4ffa1ace26c94ddf68aa5474c68f43c 100644
+index e2dd3dddf1b9a907b2e7c5bdd037aac494b1bc36..3cbbddf0d7bc1fb0d239d46413b615b568ff97b6 100644
 --- a/src/gallium/include/pipe/p_context.h
 +++ b/src/gallium/include/pipe/p_context.h
 @@ -1083,6 +1083,18 @@ struct pipe_context {

@@ -48,10 +48,10 @@ index b9385528911d1e5df6519b05f469c3360505420d..d6730a9715aa550350cce6213287cbc1
  endif
  
 diff --git a/src/gallium/auxiliary/util/u_threaded_context.c b/src/gallium/auxiliary/util/u_threaded_context.c
-index c2beee2a3381e48ffe4b53125f38069eeda73576..2e51d31054e8b894793daccb5c9bf06ac5126a07 100644
+index 3ac16907116e6ffad2e9da107f799358a2ffb7e9..d498eb6fea9c8c37e75ebe2e24eb41f9e490273b 100644
 --- a/src/gallium/auxiliary/util/u_threaded_context.c
 +++ b/src/gallium/auxiliary/util/u_threaded_context.c
-@@ -2771,6 +2771,13 @@ tc_buffer_map(struct pipe_context *_pipe,
+@@ -2774,6 +2774,13 @@ tc_buffer_map(struct pipe_context *_pipe,
  
              void *ret = pipe->buffer_map(pipe, tres->latest ? tres->latest : resource,
                                           0, PIPE_MAP_READ, &box2, &transfer2);
@@ -65,7 +65,7 @@ index c2beee2a3381e48ffe4b53125f38069eeda73576..2e51d31054e8b894793daccb5c9bf06a
              memcpy(&((uint8_t*)tres->cpu_storage)[tres->valid_buffer_range.start],
                     ret,
                     valid_range_len);
-@@ -2852,8 +2859,10 @@ tc_buffer_map(struct pipe_context *_pipe,
+@@ -2855,8 +2862,10 @@ tc_buffer_map(struct pipe_context *_pipe,
  
     void *ret = pipe->buffer_map(pipe, tres->latest ? tres->latest : resource,
                                  level, usage, box, transfer);

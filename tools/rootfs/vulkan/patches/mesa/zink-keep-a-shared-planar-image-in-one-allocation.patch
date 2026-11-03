@@ -29,7 +29,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 35 insertions(+), 13 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_resource.c b/src/gallium/drivers/zink/zink_resource.c
-index 04a447a76a3a9c1d005f858a881f02689e6953ee..6266ea01088e45dddf5c79ff8a6ec1ca5d20e0e2 100644
+index fc273bf1fb3773fd2b38ce2dbb1a7281a7665492..3ce373d857608ca86a8b3a76e16f76ec64779424 100644
 --- a/src/gallium/drivers/zink/zink_resource.c
 +++ b/src/gallium/drivers/zink/zink_resource.c
 @@ -409,6 +409,21 @@ check_ici(struct zink_screen *screen, VkImageCreateInfo *ici, uint64_t modifier)
@@ -67,7 +67,7 @@ index 04a447a76a3a9c1d005f858a881f02689e6953ee..6266ea01088e45dddf5c79ff8a6ec1ca
           continue;
  
        VkImageCreateFlags try_flags = saved_flags;
--      if (feats & VK_FORMAT_FEATURE_DISJOINT_BIT && util_format_get_num_planes(templ->format))
+-      if (feats & VK_FORMAT_FEATURE_DISJOINT_BIT && util_format_get_num_planes(templ->format) > 1)
 +      if (feats & VK_FORMAT_FEATURE_DISJOINT_BIT && can_be_disjoint(screen, templ, bind))
           try_flags |= VK_IMAGE_CREATE_DISJOINT_BIT;
        ici->flags = try_flags;
@@ -106,7 +106,7 @@ index 04a447a76a3a9c1d005f858a881f02689e6953ee..6266ea01088e45dddf5c79ff8a6ec1ca
           info2.pNext = &plane;
        unsigned offset = 0;
        for (unsigned i = 0; i < num_planes; i++) {
-@@ -1583,12 +1603,12 @@ bind_image_memory(struct zink_screen *screen, struct zink_resource_object *obj,
+@@ -1589,12 +1609,12 @@ bind_image_memory(struct zink_screen *screen, struct zink_resource_object *obj,
           infos[i].memory = zink_bo_get_mem(obj->bo);
           infos[i].memoryOffset = obj->plane_offsets[i];
           assert(!alloc_info->need_dedicated || obj->plane_offsets[i] == 0);
@@ -125,7 +125,7 @@ index 04a447a76a3a9c1d005f858a881f02689e6953ee..6266ea01088e45dddf5c79ff8a6ec1ca
        }
        if (VKSCR(BindImageMemory2)(screen->dev, num_planes, infos) != VK_SUCCESS) {
           mesa_loge("ZINK: vkBindImageMemory2 failed");
-@@ -1726,7 +1746,8 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
+@@ -1732,7 +1752,8 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
  
     if (!(templ->bind & ZINK_BIND_VIDEO)) {
        obj->vkfeats = get_format_feature_flags(ici, screen, templ);
@@ -135,7 +135,7 @@ index 04a447a76a3a9c1d005f858a881f02689e6953ee..6266ea01088e45dddf5c79ff8a6ec1ca
           ici.flags |= VK_IMAGE_CREATE_DISJOINT_BIT;
     }
     if (util_format_is_yuv(templ->format)) {
-@@ -1760,7 +1781,8 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
+@@ -1766,7 +1787,8 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
        assert(num_dmabuf_planes <= 4);
     }
  
