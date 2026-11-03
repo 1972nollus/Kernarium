@@ -142,6 +142,13 @@ nothing in a guest uses it, so the LTP case that needs it, `recvmsg03`, is in
 `disabled-tests.tsv`. `guest-kernel-config` checks these settings in a Linux
 guest, and the same probe checks an Android guest.
 
+Every product builds the Virtio vsock transport in (`CONFIG_VIRTIO_VSOCKETS`)
+beside the vsock loopback transport. The driver binds only to a Virtio vsock
+device the host offers, so a guest without one differs in a single way: with
+the transport registered, a stream to CID 2 goes to the host and no longer
+loops back, while CID 1 (`VMADDR_CID_LOCAL`) still does. The Android product
+lists the transport among its required built-ins.
+
 ### Kernel self-protection
 
 Every product builds the kernel with `CONFIG_STACKPROTECTOR_STRONG` and
