@@ -1380,6 +1380,36 @@ def check_payload_regular_file(payload: bytes, path: str, apex_name: str, what: 
         fail(f"{apex_name} does not hold {what} {path}")
 
 
+# The framework's AdbService carries the p0007 topics that record the USB debugging setting in
+# persist.sys.usb.config and restart adbd, where stock stops it, when debugging is turned off.
+# The jar stores its dex files uncompressed, so the topic's log line is in the bytes. A build
+# without it would forget the user's choice at every boot and stop the host's channel.
+SERVICES_JAR = "SYSTEM/framework/services.jar"
+SERVICES_JAR_MARKERS = (b"kernarium: USB debugging is now ",)
+SERVICES_JAR_LIMIT = 48 << 20
+
+
+def check_services_jar(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    info = infos.get(SERVICES_JAR)
+    if info is None:
+        fail(f"{SERVICES_JAR} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, SERVICES_JAR_LIMIT))) as jar:
+            dex = [
+                name for name in jar.namelist() if re.fullmatch(r"classes[0-9]*\.dex", name)
+            ]
+            if not dex:
+                fail(f"{SERVICES_JAR} holds no dex file")
+            for marker in SERVICES_JAR_MARKERS:
+                if not any(marker in jar.read(name) for name in dex):
+                    fail(
+                        f"{SERVICES_JAR} lacks the AdbService topics of route p0007 "
+                        f"({marker.decode()!r} is not in its dex files)"
+                    )
+    except (OSError, zipfile.BadZipFile) as problem:
+        fail(f"cannot inspect {SERVICES_JAR}: {problem}")
+
+
 def check_adbd_launch_properties(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
 ) -> None:
@@ -2743,6 +2773,7 @@ def main() -> None:
         check_cas_hal(archive, infos)
         check_wifi_hals(archive, infos)
         check_adbd_launch_properties(archive, infos)
+        check_services_jar(archive, infos)
         check_audio_policy(archive, infos)
         check_multilib_properties(archive, infos)
         check_video_encoders(archive, infos)

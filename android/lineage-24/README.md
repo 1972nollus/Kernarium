@@ -325,15 +325,23 @@ topics), shape that:
   gives it nothing it lacks, and the value is a public key.
 
 AOSP's `neverallow` keeps untrusted applications from creating or connecting a
-vsock socket, so only the host reaches the vsock listener. Turning off both USB
-and wireless debugging in Developer options stops adbd with its vsock listener;
-the host application asks the user to turn USB debugging on, and no patch keeps
-adbd running for the host key. The target-files verifier requires the adbd
-APEX's `bin/adbd` to carry both property names (the payload hints store that
-binary uncompressed, so they are readable) and the built policy to let adbd
-read their labels. Bundle command lines may not override any of these
-host-owned launch choices. LineageOS makes its debug variant
-non-debuggable and always authorized; the product undoes the first
+vsock socket, so only the host reaches the vsock listener. Two `frameworks/base`
+topics (route `p0007`) make adbd the host's channel whatever the user's
+debugging setting. The first records the USB debugging setting in
+`persist.sys.usb.config`: this product has no `UsbDeviceManager`, the
+property's only other writer, so nothing recorded it, and AdbService, which sets
+`adb_enabled` from the property at every boot, forgot the user's choice at every
+reboot. The second makes AdbService restart adbd where stock stops it when USB
+and wireless debugging are both turned off: every session ends, as on stock,
+and adbd stays up for the host, whose own session drops once at that toggle and
+reconnects. `settings get global adb_enabled` (1 on, 0 off) is therefore
+authoritative and follows the user's toggle within the settings observer's hop.
+The target-files verifier requires the adbd APEX's `bin/adbd` to carry both
+property names (the payload hints store that binary uncompressed, so they are
+readable), the built policy to let adbd read their labels, and the dex files of
+`services.jar` (stored uncompressed) to carry the first topic's log line. Bundle
+command lines may not override any of these host-owned launch choices.
+LineageOS makes its debug variant non-debuggable and always authorized; the product undoes the first
 (`PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG` is empty) and the boot policy decides
 the second. Under `userdebug` the build is debuggable and carries `su`, and
 `adb root` goes through LineageOS's `adb_root` service, whose "Rooted

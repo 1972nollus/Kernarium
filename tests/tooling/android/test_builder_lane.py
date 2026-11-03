@@ -677,6 +677,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           thermal_hal_variant: str | None = None,
                           cas_hal_variant: str | None = None,
                           adbd_variant: str | None = None,
+                          services_jar_variant: str | None = None,
                           adbd_launch_unreadable: bool = False,
                           vendor_property_variant: str | None = None,
                           video_properties: dict[str, str] | None = None,
@@ -1737,6 +1738,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             files=("etc/init.rc",) if adbd_variant == "no-binary" else ("bin/adbd",),
                         ),
                     )
+                # The framework's services.jar stores its dex files uncompressed; the p0007 AdbService
+                # topic's log line is in the bytes.
+                if services_jar_variant != "missing":
+                    services_jar = io.BytesIO()
+                    with zipfile.ZipFile(services_jar, "w", zipfile.ZIP_STORED) as jar:
+                        jar.writestr(
+                            "classes.dex",
+                            b"dex\n039\x00"
+                            + (b"" if services_jar_variant == "no-marker"
+                               else b"kernarium: USB debugging is now \x00"),
+                        )
+                    archive.writestr("SYSTEM/framework/services.jar", services_jar.getvalue())
                 # The Wi-Fi HAL and the supplicant (with hostapd), packaged the same way.
                 def hal_apex(apex, binary, name, fqname, service, variant):
                     content = b"\x00" * 8
@@ -2130,6 +2143,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("adbd-apex-without-binary", {"adbd_variant": "no-binary"}),
             ("adbd-without-host-key", {"adbd_variant": "no-key"}),
             ("adbd-without-tcp-policy", {"adbd_variant": "no-tcp"}),
+            ("services-jar-without-the-adb-topics", {"services_jar_variant": "no-marker"}),
+            ("missing-services-jar", {"services_jar_variant": "missing"}),
             ("adbd-cannot-read-launch-properties", {"adbd_launch_unreadable": True}),
             ("missing-cas-plugin-64", {"cas_hal_variant": "no-plugin64"}),
             ("missing-cas-plugin-32", {"cas_hal_variant": "no-plugin32"}),
@@ -2549,6 +2564,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "holds an adbd that does not read ro.boot.kernarium.adb_key"),
             ("adbd-without-tcp-policy-cause", {"adbd_variant": "no-tcp"},
              "holds an adbd that does not read ro.boot.kernarium.adb_tcp"),
+            ("services-jar-without-the-adb-topics-cause", {"services_jar_variant": "no-marker"},
+             "lacks the AdbService topics of route p0007"),
+            ("missing-services-jar-cause", {"services_jar_variant": "missing"},
+             "SYSTEM/framework/services.jar is missing"),
             ("adbd-cannot-read-launch-properties-cause", {"adbd_launch_unreadable": True},
              "adbd may not read ro.boot.kernarium.adb_key, labelled bootloader_prop"),
             ("missing-cas-apex-cause", {"cas_hal_variant": "missing-apex"},
