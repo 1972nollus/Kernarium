@@ -845,7 +845,13 @@ hosted in `Andarium` and runs on an iPad, in the iOS Simulator and, as an iPad
 app, on an Apple silicon Mac (`xcodebuild test -scheme Andarium`); its
 `UpdateFlowTests` drive
 the update, interrupted-update (Start retries, Restore, Erase) and blocked-start flows
-against a stub runtime. A Mac launch of the guest
+against a stub runtime, and its `StatisticsLoopTests` the statistics loop
+against a scripted one with the pause between readings held by the test: no
+reading without a viewer, the quarter-second then one-second cadence with the
+memory after every other reading, the loop stopping with the foreground, with a
+guest that is not running and with its last viewer, a memory the kernel does
+not give keeping the last figure, and a new boot starting the figures over.
+`StatsMeter` and `StatsSampling` are in `andarium-core`. A Mac launch of the guest
 itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
 `TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
 ([`Andarium/README.md`](../Andarium/README.md#automation)). macOS asks once, per

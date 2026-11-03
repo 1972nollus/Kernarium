@@ -269,6 +269,29 @@ takes them at boot, so the session's Settings leaves them out
 (`Capabilities.liveDisplayOptions`). Microphone applies at once and asks iOS
 for access when it is turned on.
 
+### Statistics
+
+The capsule over the session and the Stats rows of its Settings show the
+guest's CPU, memory and frame rate from the runtime's own readings
+(`kernarium_runtime_loader_read_statistics` and `..._read_guest_memory`,
+[`Kernarium/README.md`](../Kernarium/README.md#statistics)). `StatsMeter`
+(`AndariumCore`) turns them into figures and `AppModel` paces them:
+
+- Nothing is read unless a view shows the figures, the application is active,
+  the guest runs and the runtime offers statistics (`StatsSampling.isWanted`).
+  One loop serves both views. It takes two readings a quarter second apart, so
+  figures show within a third of a second, then one a second, and asks the
+  guest for its memory after the second reading and with every other one.
+  Leaving the foreground ends the loop; coming back starts a new baseline.
+- CPU is the share of the guest's vCPUs the readings' interval used, 0 to 100,
+  and the sparkline holds the last ten readings against the same 100%. Frame
+  rate is the frames the display presented. Memory is the guest's own memory in
+  use (`MemTotal` less `MemAvailable`, from its kernel), in the one size
+  formatter. A figure with no reading is an en dash. A memory the guest cannot
+  give, as when its display is off and it may be asleep, keeps its last value.
+- A restarted guest (a new boot index) starts all of them over. A guest whose
+  screen is off is not dimmed: its figures are as true as any.
+
 ## Automation
 
 A harness launch (`xcrun devicectl device process launch`, environment given
@@ -288,6 +311,8 @@ KERNARIUM_HOST_FORWARD, KERNARIUM_FOOTPRINT_LOG_MS, KERNARIUM_EXECUTION_ENGINE,
 KERNARIUM_GUEST_HIBERNATION, KERNARIUM_ANDROID_ADB_AUTH
 ANDARIUM_START=normal|recovery   create the guest if there is none, then start
 ANDARIUM_ERASE=1                 erase the guest's data before the start
+ANDARIUM_STATS=1                 show the statistics over the session and
+                                 print each reading
 ```
 
 On an Apple silicon Mac, `xcodebuild test -scheme Andarium -destination
@@ -299,8 +324,11 @@ is the launcher, with each setting given as a `TEST_RUNNER_`-prefixed variable
 The console carries the runtime's own `Kernarium:` lines and these of
 Andarium's: `Andarium: runtime returned <n>` when the run ends (0 is a power
 off), `Andarium thermal state: phase=start|change|finish state=<state>
-uptime=<seconds>`, and `Andarium: application inactive|active` when a system
-alert takes the focus and gives it back. iOS asks to allow local network access
+uptime=<seconds>`, `Andarium: application inactive|active` when a system
+alert takes the focus and gives it back, and with `ANDARIUM_STATS=1` a line
+per reading, `Andarium stats: cpu=<n>% fps=<n> memory-used=<MiB> memory=<MiB>
+held=<MiB> boot=<n>` (`-` for a figure not read yet; `memory` is the guest's
+size, `held` what the device holds of it). iOS asks to allow local network access
 only when the guest itself reaches the local network, such as a connection to a
 host on the same network or a `.local` name; a boot and ordinary Internet use,
 guest DNS included, raise no alert. The question is asked once per installation
