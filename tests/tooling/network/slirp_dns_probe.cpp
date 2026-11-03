@@ -341,6 +341,15 @@ void check_udp(uml::network::SlirpProvider &provider, Guest &guest)
 	else
 		std::printf("%s: rcode %u\n", label, reply->rcode);
 
+	label = "guest multicast";
+	const Address mdns{224, 0, 0, 251};
+	const auto before_multicast = provider.internet_sockets_for_testing();
+	if (!guest.send(udp_frame(mdns, 5353, 5353, query_message(0, "Android.local", 255))))
+		fail(label, "the provider refused the datagram");
+	std::this_thread::sleep_for(std::chrono::milliseconds{200});
+	if (provider.internet_sockets_for_testing() != before_multicast)
+		fail(label, "an mDNS datagram left the virtual link");
+
 	label = "a datagram to another port";
 	if (!guest.send(udp_frame(name_server, 40101, 123,
 				  std::vector<std::uint8_t>(48, 0))))

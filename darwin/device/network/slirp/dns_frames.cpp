@@ -115,6 +115,15 @@ Classified classify_guest_frame(std::span<const std::uint8_t> frame,
 		return result;
 	const std::size_t header = (ip[0] & 0x0f) * 4U;
 	const Ipv4Address destination{ip[16], ip[17], ip[18], ip[19]};
+	/* Multicast stays on the virtual link. A guest's mDNS or SSDP leaving
+	 * the host would be the application addressing the local network: it
+	 * would raise the Local Network alert at boot, since Android
+	 * advertises its adb service there, and it could only advertise
+	 * addresses behind SLiRP's NAT that no peer can reach. */
+	if ((destination[0] & 0xf0) == 0xe0) {
+		result.action = FrameAction::drop;
+		return result;
+	}
 	const bool to_name_server = destination == name_server;
 	if (!to_name_server && destination != gateway)
 		return result;

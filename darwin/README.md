@@ -417,7 +417,10 @@ and any other datagram dropped, so nothing addressed to it leaves the host. A
 query unanswered after 10 s gets SERVFAIL, a UDP answer longer than the
 guest's EDNS size (512 bytes without EDNS, at most one 1500-byte frame) is
 truncated so the guest retries over TCP, and stopping the link ends every
-query in flight (`slirp-network-dns`).
+query in flight (`slirp-network-dns`). Guest multicast, such as an mDNS
+advertisement, is dropped on the virtual link for the same reason: it would be
+the application addressing the local network, and it could only name addresses
+behind SLiRP's NAT.
 
 The guest network driver has no transmit flow control, so a frame the provider
 refuses is lost and TCP must retransmit it. A guest transmit into a full

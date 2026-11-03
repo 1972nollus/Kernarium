@@ -33,7 +33,7 @@ enum class FrameAction {
 	pass,      /* SLiRP handles it */
 	query,     /* a DNS datagram: `payload` goes to the resolver */
 	reset,     /* a TCP segment to a port the name server does not serve */
-	drop,      /* anything else addressed to the name server */
+	drop,      /* anything else addressed to the name server, and multicast */
 };
 
 struct Classified final {
