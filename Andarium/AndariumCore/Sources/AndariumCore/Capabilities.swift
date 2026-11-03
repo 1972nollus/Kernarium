@@ -49,7 +49,7 @@ public struct Capabilities: Equatable, Sendable {
     /// adb channel.
     public static let device = Capabilities(
         systemUpdate: true,
-        adbOverNetwork: false,
+        adbOverNetwork: true,
         apkInstall: true,
         bugReport: true,
         statistics: false, appCount: false, liveDisplayOptions: false

@@ -121,6 +121,7 @@ struct AppEntry {
         case "settings", "settings-installing", "settings-installed", "settings-not-apk",
              "settings-bundle", "install-apk",
              "bug-report",
+             "settings-adb-off", "settings-adb-no-address",
              "settings-install-failed", "settings-adb":
             let session = model.session
             let file = ApkInstall.sampleFile
@@ -145,6 +146,11 @@ struct AppEntry {
                 )]
             case "settings-adb":
                 session.adb = true
+                session.adbAddress = SessionState.previewAddress
+            case "settings-adb-no-address":
+                session.adb = true
+            case "settings-adb-off":
+                session.usbDebugging = false
             default:
                 break
             }

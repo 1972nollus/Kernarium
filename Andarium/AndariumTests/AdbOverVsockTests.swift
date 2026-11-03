@@ -95,6 +95,61 @@ struct AdbOverVsockTests {
         #expect(staged.isEmpty)
     }
 
+    @Test(.timeLimit(.minutes(20))) func usbDebuggingIsReadableThroughTheChannel() async throws {
+        guard Self.enabled else { return }
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        // Either answer is fine: what matters is that the channel works
+        // whatever the setting is.
+        let setting = await operations.usbDebugging()
+        print("ADBVSOCK: USB debugging reads as \(setting.map(String.init(describing:)) ?? "unreadable")")
+        #expect(setting != nil)
+    }
+
+    /// A computer on the network, here a loopback client of the bridge, reaches
+    /// the guest's adbd through a fresh stream: adbd answers its CNXN with an
+    /// AUTH challenge, since the computer's key is not the host's.
+    @Test(.timeLimit(.minutes(20))) func theBridgeCarriesAComputersConnectionToAdbd() async throws {
+        guard Self.enabled else { return }
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        let bridge = AdbNetworkBridge(port: 0, opener: VsockConnector())
+        let port = try bridge.start()
+        defer { bridge.stop() }
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        #expect(descriptor >= 0)
+        defer { close(descriptor) }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = port.bigEndian
+        address.sin_addr = in_addr(s_addr: UInt32(0x7F00_0001).bigEndian)
+        let connected = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        #expect(connected == 0)
+        var timeout = timeval(tv_sec: 20, tv_usec: 0)
+        setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        let hello = AdbMessage(
+            command: AdbWire.cnxn, arg0: AdbWire.version, arg1: UInt32(AdbWire.maxData),
+            payload: Data("host::\0".utf8)
+        ).encoded()
+        #expect(hello.withUnsafeBytes { write(descriptor, $0.baseAddress, hello.count) } == hello.count)
+        var header = [UInt8](repeating: 0, count: AdbWire.headerSize)
+        var got = 0
+        while got < header.count {
+            let more = header.withUnsafeMutableBytes { read(descriptor, $0.baseAddress! + got, $0.count - got) }
+            if more <= 0 { break }
+            got += more
+        }
+        #expect(got == header.count)
+        let reply = try AdbMessage.Header(Data(header))
+        #expect(reply.command == AdbWire.auth || reply.command == AdbWire.cnxn)
+        #expect(bridge.peerCount == 1)
+    }
+
     /// The key the application made for this boot changes when the guest is
     /// erased. A first launch records its line in the file the run names; a
     /// launch that erased the guest first (ANDARIUM_ERASE=1) must differ.

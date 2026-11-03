@@ -3,14 +3,22 @@ import Foundation
 
 /// Opens connections to the guest's adbd through the runtime: a connected
 /// stream socket to the guest's vsock port, which only this process holds.
-nonisolated struct VsockConnector: AdbConnector {
+nonisolated struct VsockConnector: AdbConnector, GuestStreamOpener {
     static let adbPort: UInt32 = 5555
     /// How long one attempt waits for the guest to answer; the session asks
     /// again until its connect limit.
     static let attemptTimeoutMilliseconds: UInt32 = 3000
+    /// How long a computer's connection waits for the guest: it asks again
+    /// itself when this one fails.
+    static let networkAttemptTimeoutMilliseconds: UInt32 = 5000
 
     func connect() throws -> any AdbTransport {
         DescriptorTransport(descriptor: try Self.open(timeout: Self.attemptTimeoutMilliseconds))
+    }
+
+    /// A stream for a computer on the network; the bridge owns it.
+    func openStream() throws -> Int32 {
+        try Self.open(timeout: Self.networkAttemptTimeoutMilliseconds)
     }
 
     private static func open(timeout: UInt32) throws -> Int32 {
@@ -206,6 +214,14 @@ nonisolated struct AdbGuestOperations: Sendable {
         ) { session in
             BugReportOperation.stopInGuest(session: session, trail: trail)
         }
+    }
+
+    /// Whether the guest's USB debugging setting is on; nil when it cannot be
+    /// read now (the guest is starting, or stopped). Each call opens a
+    /// connection, which wakes a guest that suspended itself.
+    func usbDebugging() async -> Bool? {
+        guard let result = try? await shell(UsbDebugging.command, limit: .seconds(15)) else { return nil }
+        return UsbDebugging.parse(result)
     }
 
     /// Runs a command in the guest's shell and returns what it printed.

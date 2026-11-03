@@ -283,6 +283,28 @@ final class LiveRuntime: RuntimeDriver {
         try await operations.installApk(at: url, sizeBytes: sizeBytes, update: update)
     }
 
+    func usbDebugging() async -> Bool? {
+        await operations.usbDebugging()
+    }
+
+    // MARK: ADB over Network
+
+    /// The listener on the network addresses, whose every connection is
+    /// joined to a fresh stream to the guest's adbd.
+    private let network = AdbNetworkBridge(opener: VsockConnector())
+
+    func startAdbOverNetwork() throws {
+        try network.start()
+    }
+
+    func stopAdbOverNetwork() {
+        network.stop()
+    }
+
+    func localNetworkAddress() -> String? {
+        LanAddress.current()
+    }
+
     // MARK: Events
 
     private func reached(_ milestones: [BootMilestone], bootCompleted: Bool) {

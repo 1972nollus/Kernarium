@@ -73,12 +73,21 @@ struct ApkInstall: Identifiable, Equatable {
 @Observable
 final class SessionState {
     var installs: [ApkInstall] = []
+    /// ADB over Network is on: the listener runs.
     var adb = false
+    /// The device's address on the local network while `adb` is on; nil
+    /// without one.
+    var adbAddress: String?
+    /// Why ADB over Network did not start, in words.
+    var adbProblem: String?
+    /// The guest's USB debugging setting as last read; nil until it has
+    /// been. ADB over Network needs it on.
+    var usbDebugging: Bool?
     var showStats = false
     var readout = Readout()
 
-    /// The address a computer on the same network connects to.
-    static let adbAddress = "198.51.100.23:5555"
+    /// The address the preview shows, from the range reserved for examples.
+    static let previewAddress = "198.51.100.23"
 
     /// The file name's kind for the install: an app in one file, one in
     /// several, or not an app.
@@ -189,6 +198,12 @@ final class AppModel {
     private var operation: Task<Void, Never>?
     private var operationEpoch = 0
     private var operationCancelled = false
+    /// Looks after ADB over Network while it is on.
+    private var adbWatcher: Task<Void, Never>?
+    private var readingUsbDebugging = false
+    /// How often the watcher looks while ADB over Network is on: the address
+    /// every time, the USB debugging setting every fifth. A test shortens it.
+    var adbWatchInterval = Duration.seconds(2)
 
     init(
         guest: Guest?, host: HostDevice, system: SystemInfo, capabilities: Capabilities,
@@ -330,6 +345,109 @@ final class AppModel {
                 alert = AppAlert(title: failure, message: error.localizedDescription)
             }
             busy = nil
+        }
+    }
+
+    // MARK: ADB over Network
+
+    /// ADB over Network may be switched on: the guest's USB debugging is on.
+    /// The preview has no guest to ask and says yes unless a screen says no.
+    var adbOverNetworkAvailable: Bool {
+        driver == nil ? session.usbDebugging != false : session.usbDebugging == true
+    }
+
+    /// The toggle in Settings. Turning it on opens the listener on the
+    /// device's network addresses, which the guest's USB debugging being on
+    /// allows; turning it off, USB debugging going off, or the run ending
+    /// closes it. It lasts for this run only.
+    func setAdbOverNetwork(_ on: Bool) {
+        guard capabilities.adbOverNetwork else { return }
+        guard on else {
+            stopAdbOverNetwork()
+            return
+        }
+        guard !session.adb, case .running(.normal) = phase, adbOverNetworkAvailable else { return }
+        do {
+            try driver?.startAdbOverNetwork()
+        } catch {
+            session.adbProblem = AdbNetworkMessages.cannotStart(error)
+            return
+        }
+        withAnimation(.snappy) {
+            session.adb = true
+            session.adbProblem = nil
+            session.adbAddress = driver?.localNetworkAddress() ?? (driver == nil ? SessionState.previewAddress : nil)
+        }
+        watchAdbOverNetwork()
+    }
+
+    /// Closes the listener and switches the toggle off.
+    func stopAdbOverNetwork() {
+        adbWatcher?.cancel()
+        adbWatcher = nil
+        driver?.stopAdbOverNetwork()
+        guard session.adb || session.adbAddress != nil else { return }
+        withAnimation(.snappy) {
+            session.adb = false
+            session.adbAddress = nil
+        }
+    }
+
+    /// The run is over or starts again: nothing about the guest's settings
+    /// holds for the next one.
+    private func endAdbOverNetwork() {
+        stopAdbOverNetwork()
+        session.usbDebugging = nil
+        session.adbProblem = nil
+    }
+
+    /// The address a computer connects to, which changes with the network.
+    /// The preview keeps the one it was given.
+    func refreshAdbAddress() {
+        guard session.adb, let driver else { return }
+        let address = driver.localNetworkAddress()
+        if session.adbAddress != address { session.adbAddress = address }
+    }
+
+    /// Reads the guest's USB debugging setting. ADB over Network ends when
+    /// it is off.
+    func refreshUsbDebugging() async {
+        guard capabilities.adbOverNetwork, let driver, case .running(.normal) = phase,
+              !readingUsbDebugging else { return }
+        readingUsbDebugging = true
+        defer { readingUsbDebugging = false }
+        let current = session
+        let value = await driver.usbDebugging()
+        guard session === current, case .running(.normal) = phase, let value else { return }
+        if current.usbDebugging != value { current.usbDebugging = value }
+        if !value, current.adb { stopAdbOverNetwork() }
+    }
+
+    /// While Settings is open: the address and the setting, read again every
+    /// few seconds until the sheet goes and the task is cancelled.
+    func watchSettings() async {
+        while !Task.isCancelled {
+            refreshAdbAddress()
+            await refreshUsbDebugging()
+            try? await Task.sleep(for: .seconds(3))
+        }
+    }
+
+    /// While ADB over Network is on and Settings is closed, the address is
+    /// read every few seconds and the setting every ten, so that turning
+    /// USB debugging off in the guest turns this off too.
+    private func watchAdbOverNetwork() {
+        adbWatcher?.cancel()
+        guard driver != nil else { return }
+        adbWatcher = Task { [weak self] in
+            var tick = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(for: self?.adbWatchInterval ?? .seconds(2))
+                guard let self, !Task.isCancelled else { return }
+                tick += 1
+                refreshAdbAddress()
+                if tick % 5 == 0 { await refreshUsbDebugging() }
+            }
         }
     }
 
@@ -576,6 +694,7 @@ final class AppModel {
     /// reason the failure screen reports.
     func runEnded(_ end: RunEnd, uptimeSeconds: Int?) {
         abandonOperation()
+        endAdbOverNetwork()
         runEnd = end
         runUptimeSeconds = uptimeSeconds
         lifecycle.phase = end.phase
@@ -587,6 +706,7 @@ final class AppModel {
     /// install list belong to the run that ended.
     func restart() {
         abandonOperation()
+        endAdbOverNetwork()
         frozenBootStage = nil
         sessionPreset = SessionPreset()
         let showStats = session.showStats

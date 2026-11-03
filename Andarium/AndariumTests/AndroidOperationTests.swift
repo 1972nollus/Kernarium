@@ -300,6 +300,164 @@ struct AndroidOperationTests {
     }
 }
 
+/// ADB over Network as the model plays it: the toggle, the guest's USB
+/// debugging setting, the address, and the end of a run.
+@MainActor
+struct AdbOverNetworkModelTests {
+    private let host = HostDevice(
+        name: "iPad", processorCount: 6, memory: MemoryPolicy(maximumsMiB: [4096]), freeStorageBytes: 40_000_000_000
+    )
+
+    private func running(_ mode: StartMode = .normal) -> (AppModel, StubDriver) {
+        let system = SystemInfo(
+            distribution: "LineageOS 24", android: "17", release: "r2", kernel: "Linux 6.18",
+            architecture: "arm64, 4 KB pages", appVersion: "1"
+        )
+        let model = AppModel(
+            guest: Guest.fresh(on: host), host: host, system: system, capabilities: .device,
+            createRequirementBytes: 1, systemBytes: 1
+        )
+        let driver = StubDriver(plan: .normal)
+        model.driver = driver
+        model.phase = .running(mode)
+        model.adbWatchInterval = .milliseconds(20)
+        return (model, driver)
+    }
+
+    private func eventually(_ condition: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+
+    @Test func theToggleWaitsForTheGuestsUsbDebuggingToBeKnownOn() async {
+        let (model, driver) = running()
+        #expect(!model.adbOverNetworkAvailable)
+        model.setAdbOverNetwork(true)
+        #expect(!model.session.adb && driver.starts == 0)
+        driver.debugging = false
+        await model.refreshUsbDebugging()
+        #expect(model.session.usbDebugging == false && !model.adbOverNetworkAvailable)
+        model.setAdbOverNetwork(true)
+        #expect(!model.session.adb && driver.starts == 0)
+        driver.debugging = true
+        await model.refreshUsbDebugging()
+        #expect(model.adbOverNetworkAvailable)
+        model.setAdbOverNetwork(true)
+        #expect(model.session.adb && driver.listening && driver.starts == 1)
+        #expect(model.session.adbAddress == "192.168.1.23")
+        // Again changes nothing.
+        model.setAdbOverNetwork(true)
+        #expect(driver.starts == 1)
+        model.setAdbOverNetwork(false)
+        #expect(!model.session.adb && !driver.listening && model.session.adbAddress == nil)
+    }
+
+    @Test func usbDebuggingGoingOffSwitchesItOffAndClosesTheComputersConnected() async {
+        let (model, driver) = running()
+        await model.refreshUsbDebugging()
+        model.setAdbOverNetwork(true)
+        #expect(model.session.adb)
+        driver.connectedComputers = 2
+        driver.debugging = nil
+        await model.refreshUsbDebugging()
+        #expect(model.session.adb && driver.listening, "a setting that cannot be read changes nothing")
+        #expect(driver.closedComputers == 0)
+        driver.debugging = false
+        await model.refreshUsbDebugging()
+        #expect(!model.session.adb && !driver.listening)
+        // The listener goes and so does every connection already made.
+        #expect(driver.closedComputers == 2 && driver.connectedComputers == 0)
+        #expect(!model.adbOverNetworkAvailable)
+    }
+
+    @Test func theWatcherNoticesUsbDebuggingGoingOffWithSettingsClosed() async {
+        let (model, driver) = running()
+        await model.refreshUsbDebugging()
+        model.setAdbOverNetwork(true)
+        driver.connectedComputers = 1
+        driver.debugging = false
+        #expect(await eventually { !model.session.adb && !driver.listening })
+        #expect(driver.closedComputers == 1)
+    }
+
+    @Test func theAddressFollowsTheNetworkAndMayBeMissing() async {
+        let (model, driver) = running()
+        await model.refreshUsbDebugging()
+        driver.address = nil
+        model.setAdbOverNetwork(true)
+        #expect(model.session.adb && model.session.adbAddress == nil)
+        driver.address = "10.0.0.8"
+        #expect(await eventually { model.session.adbAddress == "10.0.0.8" })
+        driver.address = nil
+        #expect(await eventually { model.session.adbAddress == nil })
+        model.setAdbOverNetwork(false)
+    }
+
+    @Test func aPortInUseIsSaidAndTheToggleStaysOff() async {
+        let (model, driver) = running()
+        await model.refreshUsbDebugging()
+        driver.startError = AdbError.io(EADDRINUSE)
+        model.setAdbOverNetwork(true)
+        #expect(!model.session.adb && !driver.listening)
+        #expect(model.session.adbProblem == "Port 5555 is already in use on this device.")
+        driver.startError = POSIXError(.EPERM)
+        model.setAdbOverNetwork(true)
+        #expect(model.session.adbProblem == "ADB over Network could not start.")
+        driver.startError = nil
+        model.setAdbOverNetwork(true)
+        #expect(model.session.adb && model.session.adbProblem == nil)
+        model.setAdbOverNetwork(false)
+    }
+
+    @Test func theEndOfARunClosesItAndForgetsTheSetting() async {
+        let (model, driver) = running()
+        await model.refreshUsbDebugging()
+        model.setAdbOverNetwork(true)
+        model.runEnded(RunEnd(result: 0), uptimeSeconds: 10)
+        #expect(!model.session.adb && !driver.listening)
+        #expect(model.session.usbDebugging == nil)
+    }
+
+    @Test func aRestartClosesItToo() async {
+        let (model, driver) = running()
+        await model.refreshUsbDebugging()
+        model.setAdbOverNetwork(true)
+        model.restart()
+        #expect(!model.session.adb && !driver.listening)
+        #expect(model.session.usbDebugging == nil)
+    }
+
+    @Test func recoveryOffersNoAdb() async {
+        let (model, driver) = running(.recovery)
+        await model.refreshUsbDebugging()
+        #expect(model.session.usbDebugging == nil)
+        model.setAdbOverNetwork(true)
+        #expect(!model.session.adb && driver.starts == 0)
+    }
+
+    @Test func thePreviewHasNoGuestToAskAndSaysYes() {
+        let system = SystemInfo(
+            distribution: "LineageOS 24", android: "17", release: "r2", kernel: "Linux 6.18",
+            architecture: "arm64, 4 KB pages", appVersion: "1"
+        )
+        let model = AppModel(
+            guest: Guest.fresh(on: host), host: host, system: system, capabilities: .preview,
+            createRequirementBytes: 1, systemBytes: 1
+        )
+        model.phase = .running(.normal)
+        #expect(model.adbOverNetworkAvailable)
+        model.setAdbOverNetwork(true)
+        #expect(model.session.adb && model.session.adbAddress == SessionState.previewAddress)
+        model.setAdbOverNetwork(false)
+        model.session.usbDebugging = false
+        #expect(!model.adbOverNetworkAvailable)
+    }
+}
+
 struct PackageInstallMessagesTests {
     @Test func everyCodeInTheTableHasItsMessage() {
         let expected: [String: String] = [

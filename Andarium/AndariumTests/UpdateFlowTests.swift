@@ -40,6 +40,30 @@ final class StubDriver: RuntimeDriver {
     func installApk(at url: URL, sizeBytes: Int, update: @escaping @Sendable (BusyUpdate) -> Void) async throws {
         try await install(update)
     }
+
+    /// ADB over the network as the stub plays it.
+    var debugging: Bool? = true
+    var address: String? = "192.168.1.23"
+    var startError: Error?
+    private(set) var listening = false
+    private(set) var starts = 0
+    private(set) var stops = 0
+    /// Computers connected through the listener, which a stop closes.
+    var connectedComputers = 0
+    private(set) var closedComputers = 0
+    func usbDebugging() async -> Bool? { debugging }
+    func startAdbOverNetwork() throws {
+        if let startError { throw startError }
+        listening = true
+        starts += 1
+    }
+    func stopAdbOverNetwork() {
+        listening = false
+        stops += 1
+        closedComputers += connectedComputers
+        connectedComputers = 0
+    }
+    func localNetworkAddress() -> String? { address }
 }
 
 @MainActor

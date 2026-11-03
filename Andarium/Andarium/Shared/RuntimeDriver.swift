@@ -74,6 +74,18 @@ protocol RuntimeDriver: AnyObject {
     /// Installs the APK at `url`, which the caller can read, into the guest.
     /// Cancelling the task stops it while the file is still being sent.
     func installApk(at url: URL, sizeBytes: Int, update: @escaping @Sendable (BusyUpdate) -> Void) async throws
+    /// Whether the guest's USB debugging setting is on; nil when it cannot be
+    /// read now.
+    func usbDebugging() async -> Bool?
+    /// Opens the listener of ADB over the network on the device's network
+    /// addresses. Throws when it cannot (`AdbError.io(EADDRINUSE)` for a
+    /// port in use).
+    func startAdbOverNetwork() throws
+    /// Closes the listener and every computer's connection through it.
+    func stopAdbOverNetwork()
+    /// The device's IPv4 address on a local network, which a computer
+    /// connects to; nil without one.
+    func localNetworkAddress() -> String?
 }
 
 /// What a screen needs from its launch arguments to open a state directly.
