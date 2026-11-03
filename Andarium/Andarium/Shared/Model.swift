@@ -37,9 +37,9 @@ struct ApkInstall: Identifiable, Equatable {
     enum State: Equatable {
         case installing(Double)
         case installed
-        /// The file is not an Android package.
+        /// The file is not an app package.
         case notApk
-        /// Android's package installer refused it.
+        /// The guest's package installer refused it.
         case failed(String)
     }
 
@@ -107,6 +107,7 @@ final class SessionState {
     func remove(_ id: UUID) {
         installs.removeAll { $0.id == id }
     }
+
 }
 
 /// What the screens read and change. The guest's life (create, start, boot,

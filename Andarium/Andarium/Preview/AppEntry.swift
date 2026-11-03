@@ -136,7 +136,7 @@ struct AppEntry {
             case "settings-install-failed":
                 session.installs = [ApkInstall(
                     fileName: "Retro Racer 2.3 x86.apk", sizeMB: 96.0,
-                    state: .failed("Android couldn\u{2019}t install it: this app has no version for arm64 devices.")
+                    state: .failed("The guest couldn\u{2019}t install it: this app has no version for arm64 devices.")
                 )]
             case "settings-adb":
                 session.adb = true

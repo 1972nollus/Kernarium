@@ -47,4 +47,5 @@ enum PreviewData {
             usedBytes: UInt64(5.4 * Double(Limits.bytesPerGiB)), apps: 23
         )
     }
+
 }

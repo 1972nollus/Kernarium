@@ -6,7 +6,7 @@ import Testing
 
 /// A driver that answers with a fixed plan and records what the model asks.
 @MainActor
-private final class StubDriver: RuntimeDriver {
+final class StubDriver: RuntimeDriver {
     var plan: StartPlan?
     var begun: [(mode: StartMode, kind: BootKind)] = []
     var restored = 0
@@ -28,6 +28,7 @@ private final class StubDriver: RuntimeDriver {
         plan = .update(from: "r1", to: "r2")
     }
     func setMicrophone(_ on: Bool) {}
+
 }
 
 @MainActor

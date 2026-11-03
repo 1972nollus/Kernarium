@@ -3,9 +3,11 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Settings while Android runs, opened from the side keys. It slides up over
-/// Android, which keeps running behind it: install an APK from Files, let a
-/// computer connect with ADB, watch the stats, and change the options.
+/// Settings while the guest runs, opened from the side keys. It slides up over
+/// the guest, which keeps running behind it: install an app from Files,
+/// connect a computer with adb, make a bug report, watch the stats, and
+/// change the options. An operation on the guest dismisses Settings and
+/// shows the full-screen progress.
 struct SessionSettingsSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -221,7 +223,7 @@ struct SessionSettingsSheet: View {
     }
 }
 
-/// One APK on its way into Android, or the result.
+/// One app on its way into the guest, or the result.
 struct InstallRow: View {
     let item: ApkInstall
 
@@ -256,7 +258,7 @@ struct InstallRow: View {
     private var tile: some View {
         switch item.state {
         case .installing, .installed:
-            // The app's own icon is not known until Android has it; its
+            // The app's own icon is not known until the guest has it; its
             // initial stands in.
             Text(String(item.appName.prefix(1)))
                 .font(.system(size: 19, weight: .semibold, design: .rounded))
