@@ -95,7 +95,10 @@ the two zygotes and the WebView RELRO process. Recovery, `init_boot` and the
 vendor ramdisk are 64-bit only. ABI compatibility does not change the platform's
 minimum installable target SDK. An older APK can be tested with the explicit
 `adb install --bypass-low-target-sdk-block` option; ordinary installs keep the
-platform check. The kernel runs 4 KiB pages, because Android's
+platform check. ABI support does not restore an older Android runtime: the
+unmodified ZENONIA3 1.0.7 APK selects `armeabi` and loads its native library,
+but its resource parser crashes on this ART runtime before gameplay.
+The kernel runs 4 KiB pages, because Android's
 32-bit libraries are 4 KiB aligned; the 64-bit userspace stays page-agnostic (a
 16 KiB maximum ELF alignment and no compile-time bionic page-size macro), so it
 is valid on a kernel of either size, and `ro.product.page_size` reports 4096.

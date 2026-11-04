@@ -1404,10 +1404,11 @@ runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
   daemons and HALs 64-bit. ART Service's first-boot pass skips every package,
   the WebView's `arm` artifacts included, and `odrefresh` compiles nothing for
   either ISA.
-- **Applications.** A set of real 32-bit applications: some `armeabi-v7a`
-  only, some dual-ABI installed with `adb install --abi armeabi-v7a` against a
-  64-bit control install, and a Java-only one forced to 32 bits. Each shows
-  `primaryCpuAbi=armeabi-v7a` in `dumpsys package`, descends from the
+- **Applications.** A set of real 32-bit applications: `armeabi`-only and
+  `armeabi-v7a`-only APKs, some dual-ABI installed with
+  `adb install --abi armeabi-v7a` against a 64-bit control install, and a Java-only
+  one forced to 32 bits. Each native package shows its selected `armeabi` or
+  `armeabi-v7a` primary ABI in `dumpsys package`, descends from the
   secondary zygote, draws through GLES and, where it uses it, Vulkan, and
   leaves no tombstone. A deliberate `SIGSEGV` in one must leave a symbolized
   `crash_dump32` tombstone. The 64-bit browser's pages load through the 64-bit
