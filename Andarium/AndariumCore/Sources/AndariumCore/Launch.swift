@@ -17,6 +17,8 @@ public struct LaunchOverrides: Equatable, Sendable {
         case bootMode
         /// "1" erases the guest's data before the start.
         case erase
+        /// A separate guest for a harness run, leaving the ordinary guest alone.
+        case instance
     }
 
     public var vCPUCount: Int?
@@ -28,6 +30,7 @@ public struct LaunchOverrides: Equatable, Sendable {
     public var start: StartMode?
     /// Erase the guest's data before the start.
     public var erase = false
+    public var instance: String?
 
     public init() {}
 
@@ -60,6 +63,17 @@ public struct LaunchOverrides: Equatable, Sendable {
             if value(.bootMode) == "recovery" { start = .recovery }
         }
         erase = value(.erase) == "1"
+        if let name = value(.instance), (1...64).contains(name.utf8.count),
+           name.utf8.allSatisfy({
+               (65...90).contains($0) || (97...122).contains($0) ||
+                   (48...57).contains($0) || $0 == 45 || $0 == 95
+           }) {
+            instance = name
+        } else if value(.instance) != nil {
+            // A malformed selector must never erase or start the ordinary guest.
+            start = nil
+            erase = false
+        }
     }
 
     public var isEmpty: Bool { self == LaunchOverrides() }
