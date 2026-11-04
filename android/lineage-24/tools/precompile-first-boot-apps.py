@@ -68,7 +68,7 @@ import android_image  # noqa: E402
 
 PRIMARY_ISA = "arm64"
 ISAS = ("arm64", "arm")
-ABI_ISA = {"arm64-v8a": "arm64", "armeabi-v7a": "arm"}   # in SUPPORTED_ABIS order
+ABI_ISA = {"arm64-v8a": "arm64", "armeabi-v7a": "arm", "armeabi": "arm"}   # in SUPPORTED_ABIS order
 FILTER = "verify"
 REASON = "prebuilt"
 PARTITIONS = ("system", "system_ext", "product", "vendor", "odm")

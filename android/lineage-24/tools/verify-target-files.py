@@ -144,8 +144,8 @@ REQUIRED_SDK_APEX_ENTRIES = {
     "SYSTEM/apex/com.android.wifi.apex",
 }
 
-# The product runs 64-bit applications natively and armeabi-v7a ones beside
-# them, never the older armeabi. The build writes each ABI list per partition
+# The product runs 64-bit applications and 32-bit armeabi-v7a or legacy
+# armeabi applications. The build writes each ABI list per partition
 # (ro.<partition>.product.cpu.abilist*) and the runtime derives the unprefixed
 # ones from them.
 ABI_PROPERTY = re.compile(
@@ -154,8 +154,8 @@ ABI_PROPERTY = re.compile(
 EXPECTED_ABIS = {
     "abi": "arm64-v8a",
     "abi2": "",
-    "abilist": "arm64-v8a,armeabi-v7a",
-    "abilist32": "armeabi-v7a",
+    "abilist": "arm64-v8a,armeabi-v7a,armeabi",
+    "abilist32": "armeabi-v7a,armeabi",
     "abilist64": "arm64-v8a",
 }
 # Partitions whose build properties list the ABIs, with the properties a
@@ -2223,8 +2223,6 @@ def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None
             fail(f"A/B update property is enabled in {info.filename}")
         abi_property = ABI_PROPERTY.fullmatch(key)
         if abi_property is not None:
-            if "armeabi" in {item.strip() for item in value.split(",")}:
-                fail(f"the legacy armeabi ABI is forbidden in {info.filename}: {key}={value}")
             expected = EXPECTED_ABIS[abi_property.group(1)]
             if value != expected:
                 fail(f"unexpected ABI in {info.filename}: {key}={value!r}, not {expected!r}")

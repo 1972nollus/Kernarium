@@ -1356,7 +1356,7 @@ cases have lost a reservation, and requires that every case then agreed.
 
 ## Android 32-bit userspace
 
-The Android product runs `armeabi-v7a` applications beside `arm64-v8a` ones
+The Android product runs `armeabi-v7a` and legacy `armeabi` applications beside `arm64-v8a` ones
 ([`../android/lineage-24/README.md`](../android/lineage-24/README.md#android-product)).
 The build side needs no Android build. `lineage24-target-files-fixtures` drives the
 target-files verifier over fixtures (ABI lists, the 32-bit runtime, ELF32
@@ -1398,7 +1398,7 @@ runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
 `SIGILL` anywhere is a blocker, as everywhere.
 
 - **Boot.** `boot_completed` with `ro.product.cpu.abilist` listing
-  `arm64-v8a,armeabi-v7a`, `ro.zygote=zygote64_32` and the secondary zygote
+  `arm64-v8a,armeabi-v7a,armeabi`, `ro.zygote=zygote64_32` and the secondary zygote
   running without restarts; SELinux enforcing with no denial from the 32-bit
   zygote, `crash_dump32`, the WebView zygote or its RELRO process; native
   daemons and HALs 64-bit. ART Service's first-boot pass skips every package,

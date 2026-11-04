@@ -201,9 +201,9 @@ lunch "${LINEAGE24_PRODUCT}-${LINEAGE24_RELEASE_CONFIG}-${LINEAGE24_BUILD_VARIAN
 [[ "$(get_build_var TARGET_BUILD_VARIANT)" == "$LINEAGE24_BUILD_VARIANT" ]] ||
 	fail "lunch selected the wrong build variant"
 [[ "$(get_build_var TARGET_ARCH)" == arm64 ]] || fail "product is not arm64"
-# The second architecture is the softfp armeabi-v7a ABI and nothing else: no
-# armeabi, and no 32-bit daemon (IGNORE_PREFER32_ON_DEVICE keeps prefer32
-# modules 64-bit). Applications of both ABIs run from zygote64_32.
+# The second architecture uses the softfp armeabi-v7a ABI and its armeabi
+# fallback. Both use the same arm runtime; IGNORE_PREFER32_ON_DEVICE keeps
+# native daemons 64-bit. Applications run from zygote64_32.
 [[ "$(get_build_var TARGET_2ND_ARCH)" == arm ]] || fail "product has no arm secondary architecture"
 [[ "$(get_build_var TARGET_2ND_ARCH_VARIANT)" == armv8-a ]] ||
 	fail "secondary architecture variant is not armv8-a"
@@ -211,8 +211,8 @@ lunch "${LINEAGE24_PRODUCT}-${LINEAGE24_RELEASE_CONFIG}-${LINEAGE24_BUILD_VARIAN
 	fail "secondary CPU variant is not cortex-a53"
 [[ "$(get_build_var TARGET_2ND_CPU_ABI)" == armeabi-v7a ]] ||
 	fail "secondary ABI is not armeabi-v7a"
-[[ -z "$(get_build_var TARGET_2ND_CPU_ABI2)" ]] ||
-	fail "product lists a further 32-bit ABI; armeabi-v7a is the only one"
+[[ "$(get_build_var TARGET_2ND_CPU_ABI2)" == armeabi ]] ||
+	fail "secondary ABI fallback is not armeabi"
 [[ "$(get_build_var TARGET_SUPPORTS_32_BIT_APPS)" == true ]] ||
 	fail "product does not support 32-bit applications"
 [[ -z "$(get_build_var ZYGOTE_FORCE_64)" ]] ||
