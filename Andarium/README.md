@@ -272,6 +272,17 @@ takes them at boot, so the session's Settings leaves them out
 (`Capabilities.liveDisplayOptions`). Microphone applies at once and asks iOS
 for access when it is turned on.
 
+Motion Sensors is off by default. Its switch in Home’s Options (and the
+session’s Settings) shares the device’s accelerometer and gyroscope with the
+guest. The choice is saved with the guest; existing settings load it as off.
+A device with neither sensor leaves the switch unavailable. Capture starts
+after a normal boot finishes, while the app is active, and stops when the
+switch turns off, the app becomes inactive, or the guest ends or restarts.
+Recovery never captures motion. Only the newest samples are sent, at up to
+100 Hz, over private vsock port 5556; nothing listens on the host’s network.
+The system image must include the [motion sub-HAL](../android/lineage-24/README.md#motion-sensors);
+a missing service is reported in Options and Settings.
+
 ## Android operations
 
 Andarium is the adb host for its one guest. The runtime opens a connected stream

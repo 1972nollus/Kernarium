@@ -1,0 +1,204 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#include "motion_protocol.hpp"
+#include <V2_1/SubHal.h>
+#include <android-base/unique_fd.h>
+#include <log/log.h>
+#include <linux/vm_sockets.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <time.h>
+#include <unistd.h>
+#include <algorithm>
+#include <cerrno>
+#include <cstring>
+#include <mutex>
+#include <thread>
+
+namespace {
+using namespace android::hardware;
+using namespace android::hardware::sensors;
+using V1_0::Result;
+using V1_0::OperationMode;
+using V1_0::RateLevel;
+using V1_0::SharedMemInfo;
+using V2_1::Event;
+using V2_1::SensorType;
+using V2_1::implementation::IHalProxyCallback;
+using android::base::unique_fd;
+
+int64_t nowNs() {
+    timespec time{};
+    clock_gettime(CLOCK_BOOTTIME, &time);
+    return int64_t(time.tv_sec) * 1'000'000'000 + time.tv_nsec;
+}
+struct SensorState {
+    bool active = false;
+    int64_t period = 10'000'000;
+    int64_t next = 0;
+};
+
+class MotionSubHal final : public V2_1::implementation::ISensorsSubHal {
+public:
+    MotionSubHal() : worker_([this](std::stop_token stop) { serve(stop); }) {}
+
+    Return<void> getSensorsList_2_1(getSensorsList_2_1_cb callback) override {
+        hidl_vec<V2_1::SensorInfo> sensors;
+        sensors.resize(2);
+        for (size_t i = 0; i < sensors.size(); ++i) {
+            auto& sensor = sensors[i];
+            sensor.sensorHandle = i + 1;
+            sensor.name = i == 0 ? "Host Accelerometer" : "Host Gyroscope";
+            sensor.vendor = "Andarium";
+            sensor.version = 1;
+            sensor.type = i == 0 ? SensorType::ACCELEROMETER : SensorType::GYROSCOPE;
+            sensor.maxRange = i == 0 ? 156.9064f : 34.9066f;
+            sensor.resolution = 0.001f;
+            sensor.power = 0.5f;
+            sensor.minDelay = 10'000;
+            sensor.maxDelay = 1'000'000;
+            // Continuous, non-wake-up, no FIFO, injection or direct channel.
+            sensor.flags = 0;
+        }
+        callback(sensors);
+        return Void();
+    }
+    Return<Result> initialize(const android::sp<IHalProxyCallback>& callback) override {
+        std::lock_guard lock(mutex_);
+        callback_ = callback;
+        states_ = {};
+        return Result::OK;
+    }
+    const std::string getName() override { return "Andarium Motion"; }
+    Return<Result> setOperationMode(OperationMode mode) override {
+        return mode == OperationMode::NORMAL ? Result::OK : Result::BAD_VALUE;
+    }
+    Return<Result> activate(int32_t handle, bool enabled) override {
+        if (handle < 1 || handle > 2) return Result::BAD_VALUE;
+        std::lock_guard lock(mutex_);
+        states_[handle - 1].active = enabled;
+        states_[handle - 1].next = 0;
+        return Result::OK;
+    }
+    Return<Result> batch(int32_t handle, int64_t period, int64_t latency) override {
+        if (handle < 1 || handle > 2 || period < 0 || latency < 0) return Result::BAD_VALUE;
+        std::lock_guard lock(mutex_);
+        states_[handle - 1].period = std::clamp<int64_t>(period, 10'000'000, 1'000'000'000);
+        return Result::OK;
+    }
+    Return<Result> flush(int32_t handle) override {
+        if (handle < 1 || handle > 2) return Result::BAD_VALUE;
+        std::lock_guard lock(mutex_);
+        if (!states_[handle - 1].active || !callback_) return Result::BAD_VALUE;
+        Event event{};
+        event.sensorHandle = handle;
+        event.sensorType = SensorType::META_DATA;
+        event.timestamp = nowNs();
+        event.u.meta.what = V1_0::MetaDataEventType::META_DATA_FLUSH_COMPLETE;
+        post(event);
+        return Result::OK;
+    }
+    Return<Result> injectSensorData_2_1(const Event&) override { return Result::INVALID_OPERATION; }
+    Return<void> registerDirectChannel(const SharedMemInfo&, registerDirectChannel_cb callback) override {
+        callback(Result::INVALID_OPERATION, -1);
+        return Void();
+    }
+    Return<Result> unregisterDirectChannel(int32_t) override { return Result::INVALID_OPERATION; }
+    Return<void> configDirectReport(int32_t, int32_t, RateLevel, configDirectReport_cb callback) override {
+        callback(Result::INVALID_OPERATION, 0);
+        return Void();
+    }
+    Return<void> debug(const hidl_handle& fd, const hidl_vec<hidl_string>&) override {
+        if (fd.getNativeHandle() && fd->numFds > 0) {
+            std::lock_guard lock(mutex_);
+            dprintf(fd->data[0], "Andarium motion: accelerometer=%d gyroscope=%d\n",
+                    states_[0].active, states_[1].active);
+        }
+        return Void();
+    }
+
+private:
+    // Serialize events with activate, initialize and flush.
+    void post(const Event& event) {
+        callback_->postEvents({event}, callback_->createScopedWakelock(false));
+    }
+    void consume(const andarium::motion::Sample& sample) {
+        const auto index = sample.type == 1 ? 0 : 1;
+        std::lock_guard lock(mutex_);
+        auto& state = states_[index];
+        if (!callback_ || !state.active) return;
+        const auto timestamp = nowNs();
+        // Keep a sampling deadline instead of rounding every jittered host
+        // interval up to two periods. Late samples never cause a catch-up burst.
+        if (timestamp + state.period / 10 < state.next) return;
+        state.next = state.next == 0 || timestamp > state.next + state.period
+            ? timestamp + state.period : state.next + state.period;
+        Event event{};
+        event.sensorHandle = index + 1;
+        event.sensorType = static_cast<SensorType>(sample.type);
+        event.timestamp = timestamp;
+        event.u.vec3.x = sample.values[0];
+        event.u.vec3.y = sample.values[1];
+        event.u.vec3.z = sample.values[2];
+        event.u.vec3.status = V1_0::SensorStatus::ACCURACY_HIGH;
+        post(event);
+    }
+    static bool readable(int fd, std::stop_token stop) {
+        while (!stop.stop_requested()) {
+            pollfd descriptor{fd, POLLIN, 0};
+            const auto result = poll(&descriptor, 1, 250);
+            if (result > 0) return (descriptor.revents & POLLIN) != 0;
+            if (result < 0 && errno != EINTR) return false;
+        }
+        return false;
+    }
+    void receive(int fd, std::stop_token stop) {
+        std::array<uint8_t, andarium::motion::record_size> record{};
+        size_t used = 0;
+        while (readable(fd, stop)) {
+            const auto count = recv(fd, record.data() + used, record.size() - used, MSG_DONTWAIT);
+            if (count < 0 && (errno == EINTR || errno == EAGAIN)) continue;
+            if (count <= 0) return;
+            used += count;
+            if (used != record.size()) continue;
+            const auto sample = andarium::motion::decode(record);
+            if (!sample) return;
+            consume(*sample);
+            used = 0;
+        }
+    }
+    void serve(std::stop_token stop) {
+        unique_fd listener(socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0));
+        sockaddr_vm address{};
+        address.svm_family = AF_VSOCK;
+        address.svm_cid = VMADDR_CID_ANY;
+        address.svm_port = andarium::motion::port;
+        if (listener < 0 || bind(listener.get(), reinterpret_cast<sockaddr*>(&address), sizeof(address)) ||
+            listen(listener.get(), 1)) {
+            ALOGE("Andarium motion: cannot listen on vsock: %s", strerror(errno));
+            return;
+        }
+        while (readable(listener.get(), stop)) {
+            sockaddr_vm peer{};
+            socklen_t length = sizeof(peer);
+            unique_fd stream(accept4(listener.get(), reinterpret_cast<sockaddr*>(&peer), &length,
+                                     SOCK_CLOEXEC | SOCK_NONBLOCK));
+            if (stream < 0) continue;
+            // Only the private host channel may supply hardware samples.
+            if (peer.svm_cid != VMADDR_CID_HOST) continue;
+            receive(stream.get(), stop);
+        }
+    }
+    std::mutex mutex_;
+    android::sp<IHalProxyCallback> callback_;
+    std::array<SensorState, 2> states_{};
+    // Destroyed first; joins the bounded polling loop before state teardown.
+    std::jthread worker_;
+};
+} // namespace
+
+V2_1::implementation::ISensorsSubHal* sensorsHalGetSubHal_2_1(uint32_t* version) {
+    static MotionSubHal hal;
+    *version = SUB_HAL_2_1_VERSION;
+    return &hal;
+}

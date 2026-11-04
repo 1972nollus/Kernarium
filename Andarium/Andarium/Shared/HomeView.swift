@@ -417,7 +417,7 @@ struct NoticeCard: View {
     }
 }
 
-/// Display and microphone: plain rows in one glass panel.
+/// Display, input and backup options: plain rows in one glass panel.
 struct OptionsPanel: View {
     @Environment(AppModel.self) private var model
 
@@ -451,6 +451,16 @@ struct OptionsPanel: View {
                         .labelsHidden()
                     }
                     divider
+                    row("Motion Sensors", symbol: "gyroscope") {
+                        Toggle("Motion Sensors", isOn: Binding(
+                            get: { guest.motionSensors },
+                            set: { model.setMotionSensors($0) }
+                        ))
+                        .labelsHidden()
+                        .disabled(!model.motionSensorsAvailable && !guest.motionSensors)
+                        .accessibilityHint("Shares this device's accelerometer and gyroscope with the guest.")
+                    }
+                    divider
                     row("Include in Backups", symbol: "icloud.fill") {
                         Toggle("Include in Backups", isOn: Binding(
                             get: { guest.includeInBackups },
@@ -462,6 +472,12 @@ struct OptionsPanel: View {
             }
             .glassEffect(.regular, in: .rect(cornerRadius: 26))
             if model.guest != nil {
+                Text(model.motionSensorsProblem ?? (model.motionSensorsAvailable
+                     ? "Motion Sensors shares this device’s acceleration and rotation with the guest while Andarium is active."
+                     : "Motion sensors aren’t available on this device."))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 18)
                 BackupNote(host: model.host)
             }
         }

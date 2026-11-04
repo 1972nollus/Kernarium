@@ -849,6 +849,14 @@ encoder against moduli with the text `adb keygen` wrote for them, and the
 listener of ADB over Network on loopback against a fake guest (bytes both
 ways, backpressure each way, half close, a failed stream, the limit of
 computers, stopping, a port in use).
+`andarium-motion-protocol` (unit) decodes independent motion wire fixtures
+and rejects truncated records, unknown sensor types and non-finite values.
+The core package also checks SI conversion, default-off settings migration,
+socket delivery, stop during connection and stale callbacks. Hosted
+`AndroidOperationTests` checks that the motion toggle persists and reaches
+the runtime driver. Physical sensor delivery requires a sensor-capable iOS
+device and a guest image carrying the motion sub-HAL; Simulator and Mac tests
+do not establish that path.
 `andarium-stage-system-image` (tooling) covers the system-image staging script
 and the option checks of `package-ios-frameworks.sh --runtimes android`. The
 application itself builds with Xcode: `AndariumPreview` is its Simulator build

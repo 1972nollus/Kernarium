@@ -191,6 +191,8 @@ final class AppModel {
     /// The guest's disk is being written before the run can begin.
     var preparingDisk = false
     var diskProgress: Double?
+    var motionSensorsAvailable = true
+    var motionSensorsProblem: String?
     var microphoneState = MicrophoneState.notAsked
     private var persistTask: Task<Void, Never>?
     /// The Android operation under way (a bug report, an install), which the
@@ -724,6 +726,13 @@ final class AppModel {
         // disk stays and Android sets itself up again by itself.
         if driver == nil { plan = .firstStart }
         persistNow()
+    }
+
+    func setMotionSensors(_ on: Bool) {
+        guard guest != nil, !on || motionSensorsAvailable else { return }
+        guest?.motionSensors = on
+        persistNow()
+        driver?.setMotionSensors(on)
     }
 
     /// The microphone switch: the guest's choice, then the system's answer.

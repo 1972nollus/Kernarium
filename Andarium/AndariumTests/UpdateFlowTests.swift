@@ -16,7 +16,7 @@ final class StubDriver: RuntimeDriver {
 
     func create(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest { guest }
     func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest { guest }
-    func save(_ guest: Guest) throws {}
+    func save(_ guest: Guest) throws { savedGuest = guest }
     func startPlan() -> StartPlan? { plan }
     func begin(guest: Guest, mode: StartMode, kind: BootKind) {
         begun.append((mode, kind))
@@ -27,6 +27,9 @@ final class StubDriver: RuntimeDriver {
         // The files now say the update waits for the next start.
         plan = .update(from: "r1", to: "r2")
     }
+    var motionSensors = false
+    var savedGuest: Guest?
+    func setMotionSensors(_ on: Bool) { motionSensors = on }
     func setMicrophone(_ on: Bool) {}
 
     /// What a bug report or an install does when the model asks.

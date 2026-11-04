@@ -65,6 +65,8 @@ protocol RuntimeDriver: AnyObject {
     /// Puts the data back to what the update that did not finish started
     /// from; the guest does not start.
     func restoreUpdate() throws
+    /// Enables or stops sharing motion with the guest.
+    func setMotionSensors(_ on: Bool)
     /// Turns the guest's microphone on or off, asking the system for access
     /// when the person turns it on for the first time.
     func setMicrophone(_ on: Bool)

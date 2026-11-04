@@ -55,6 +55,9 @@ final class LiveRuntime: RuntimeDriver {
     /// The guest's adb key, made before the start that boots with it.
     private var adbIdentity: AdbKeyStore.Identity?
     private let microphone = SystemMicrophonePermission()
+    private let motion = MotionSensors()
+    private var normalRun = false
+    private var active = UIApplication.shared.applicationState == .active
     private var observers: [NSObjectProtocol] = []
 
     private var pending: PendingRun?
@@ -72,6 +75,8 @@ final class LiveRuntime: RuntimeDriver {
         self.storage = storage
         pause = PauseController(effects: LivePauseEffects(), marker: marker, runClock: clock)
         model.microphoneState = Self.state(microphone.access)
+        model.motionSensorsAvailable = motion.available
+        motion.problem = { [weak model] in model?.motionSensorsProblem = $0 }
         observeLifecycle()
         observeDisplayOptions()
     }
@@ -206,6 +211,13 @@ final class LiveRuntime: RuntimeDriver {
         let releasePath = storage.releaseDirectory.path
         let dataGiB = storage.dataGiB(for: run.guest)
         reachedBootCompleted = false
+        normalRun = run.mode == .normal
+        motion.axes = switch view.window?.windowScene?.effectiveGeometry.interfaceOrientation {
+        case .landscapeLeft: .landscapeLeft
+        case .landscapeRight: .landscapeRight
+        case .portraitUpsideDown: .portraitUpsideDown
+        default: .portrait
+        }
         let bootMode: UInt32 = run.mode == .recovery ? 2 : 1
         let memoryMiB = UInt32(run.guest.memoryMiB)
         let processorCount = UInt32(run.guest.cores)
@@ -310,7 +322,10 @@ final class LiveRuntime: RuntimeDriver {
     private func reached(_ milestones: [BootMilestone], bootCompleted: Bool) {
         guard let model else { return }
         let seconds = Int(Date().timeIntervalSince(bootStartedAt))
-        if bootCompleted { reachedBootCompleted = true }
+        if bootCompleted {
+            reachedBootCompleted = true
+            updateMotionSensors()
+        }
         for milestone in milestones where model.bootTracker.reach(milestone, atSeconds: seconds) {
             print("Andarium: boot reached \(milestone) at \(seconds) s")
         }
@@ -322,6 +337,7 @@ final class LiveRuntime: RuntimeDriver {
         // The boot that follows is another one: it ends an update only by
         // reaching sys.boot_completed itself.
         reachedBootCompleted = false
+        motion.stop()
         switch model.phase {
         case .running, .booting:
             bootStartedAt = Date()
@@ -332,6 +348,8 @@ final class LiveRuntime: RuntimeDriver {
     }
 
     private func finished(result: Int32) {
+        normalRun = false
+        motion.stop()
         stopThermalObservation()
         kernarium_runtime_loader_set_console_output_handler(nil)
         console = nil
@@ -361,6 +379,21 @@ final class LiveRuntime: RuntimeDriver {
         Task {
             try? await Task.sleep(for: .seconds(seconds))
             kernarium_runtime_loader_send_key(key.rawValue, 0)
+        }
+    }
+
+    // MARK: Motion sensors
+
+    func setMotionSensors(_ on: Bool) {
+        model?.motionSensorsProblem = nil
+        updateMotionSensors()
+    }
+
+    private func updateMotionSensors() {
+        if normalRun, reachedBootCompleted, active, model?.guest?.motionSensors == true {
+            motion.start()
+        } else {
+            motion.stop()
         }
     }
 
@@ -435,6 +468,8 @@ final class LiveRuntime: RuntimeDriver {
         let edges: [(Notification.Name, @MainActor (LiveRuntime) -> Void)] = [
             (UIApplication.willResignActiveNotification, {
                 print(ConsoleReport.application(active: false))
+                $0.active = false
+                $0.motion.stop()
                 $0.pause.willResignActive()
             }),
             (UIApplication.didEnterBackgroundNotification, { $0.pause.didEnterBackground() }),
@@ -455,6 +490,8 @@ final class LiveRuntime: RuntimeDriver {
     /// Andarium was away.
     private func didBecomeActive() {
         print(ConsoleReport.application(active: true))
+        active = true
+        updateMotionSensors()
         guard let model else { return }
         model.host.freeStorageBytes = AppEntry.freeStorageBytes()
         model.microphoneState = Self.state(microphone.access)
