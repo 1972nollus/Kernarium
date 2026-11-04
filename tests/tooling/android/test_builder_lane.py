@@ -615,6 +615,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           context_hub: bool = False,
                           unsupported_hal: bool = False,
                           unsupported_feature: bool = False,
+                          missing_multitouch_feature: str | None = None,
                           missing_microphone_feature: bool = False,
                           missing_companion_feature: bool = False,
                           missing_mic_policy: bool = False,
@@ -1603,6 +1604,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         archive.writestr(f"{artifact}.odex", b"odex")
                         archive.writestr(f"{artifact}.vdex", b"vdex")
                 advertised_features = ["android.hardware.touchscreen"]
+                advertised_features.extend(
+                    feature for feature in (
+                        "android.hardware.touchscreen.multitouch",
+                        "android.hardware.touchscreen.multitouch.distinct",
+                        "android.hardware.touchscreen.multitouch.jazzhand",
+                    ) if feature != missing_multitouch_feature
+                )
                 if not missing_microphone_feature:
                     advertised_features.append("android.hardware.microphone")
                 if not missing_companion_feature:
@@ -2095,6 +2103,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("context-hub", {"context_hub": True}),
             ("unsupported-hal", {"unsupported_hal": True}),
             ("unsupported-feature", {"unsupported_feature": True}),
+            *((f"missing-{feature}", {"missing_multitouch_feature": feature})
+              for feature in (
+                  "android.hardware.touchscreen.multitouch",
+                  "android.hardware.touchscreen.multitouch.distinct",
+                  "android.hardware.touchscreen.multitouch.jazzhand",
+              )),
             ("missing-microphone-feature", {"missing_microphone_feature": True}),
             ("missing-companion-feature", {"missing_companion_feature": True}),
             ("missing-mic-policy", {"missing_mic_policy": True}),

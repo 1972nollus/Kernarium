@@ -2,6 +2,7 @@
 
 add_library(uml_virtio_input STATIC
     in_process_service.cpp
+    touchscreen.cpp
     virtio_input_device.cpp)
 add_library(UML::VirtioInput ALIAS uml_virtio_input)
 uml_declare_architecture_target(uml_virtio_input device)

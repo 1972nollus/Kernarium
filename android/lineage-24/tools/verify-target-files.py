@@ -478,6 +478,10 @@ FORBIDDEN_FEATURE_DECLARATIONS = {
 # CTS run. android.hardware.ethernet is not declared, because eth0 is the management
 # NIC and the framework must not manage it.
 REQUIRED_FEATURE_NAMES = {
+    "android.hardware.touchscreen",
+    "android.hardware.touchscreen.multitouch",
+    "android.hardware.touchscreen.multitouch.distinct",
+    "android.hardware.touchscreen.multitouch.jazzhand",
     "android.hardware.microphone",
     "android.hardware.wifi",
     "android.software.companion_device_setup",

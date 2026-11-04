@@ -757,6 +757,11 @@ host maps the guest's visible rectangle onto it
 ([`../../docs/graphics.md`](../../docs/graphics.md#dynamic-native-geometry)),
 so touch stays exact at every size the display takes.
 
+The iOS host's Virtio touchscreen supports ten independent contacts using Linux
+type-B slots and tracking IDs. The product declares the multitouch, distinct
+multitouch and jazzhand features, and target-files verification requires them.
+VNC remains a single pointer; the recovery UI also accepts that input.
+
 `third_party/mesa-venus/` pins that source as three independent inputs: the
 upstream Mesa revision, the guest Vulkan series under
 [`../../tools/rootfs/vulkan/`](../../tools/rootfs/vulkan/README.md), and the

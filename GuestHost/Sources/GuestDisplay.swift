@@ -26,7 +26,7 @@ struct GuestDisplayView: UIViewControllerRepresentable {
         view.isPaused = true
         view.enableSetNeedsDisplay = true
         view.autoResizeDrawable = false
-        view.isMultipleTouchEnabled = false
+        view.isMultipleTouchEnabled = true
         return GuestDisplayViewController(metalView: view)
     }
 
@@ -44,7 +44,7 @@ struct GuestDisplayView: UIViewControllerRepresentable {
         _ controller: GuestDisplayViewController,
         coordinator: ()
     ) {
-        controller.metalView.releaseTrackedTouch()
+        controller.metalView.releaseTrackedTouches()
         controller.metalView.finishHostResize()
         controller.metalView.resignFirstResponder()
     }
@@ -129,8 +129,7 @@ final class GuestMetalView: MTKView, UIKeyInput {
     ) -> Void)?
     var retinaMode = false
     @objc private(set) var umlGuestResizeInProgress = false
-    private var trackedTouch: UITouch?
-    private var touchPath = GuestTouchPath()
+    private var touchContacts = GuestTouchContacts<ObjectIdentifier>()
     private var guestContentSize: CGSize?
 
     override var canBecomeFirstResponder: Bool { true }
@@ -194,7 +193,7 @@ final class GuestMetalView: MTKView, UIKeyInput {
 
     @objc(umlSetGuestDisplayWidth:height:)
     func setGuestDisplay(width: UInt32, height: UInt32) {
-        releaseTrackedTouch()
+        releaseTrackedTouches()
         guard width > 0, height > 0 else {
             guestContentSize = nil
             return
@@ -237,34 +236,41 @@ final class GuestMetalView: MTKView, UIKeyInput {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
-        guard trackedTouch == nil, let touch = touches.first else { return }
-        trackedTouch = touch
-        sendTouchEvents(touchPath.begin(
-            at: touch.location(in: self),
-            geometry: touchGeometry()
-        ))
+        for touch in touches {
+            sendTouchEvents(touchContacts.begin(
+                ObjectIdentifier(touch),
+                at: touch.location(in: self),
+                geometry: touchGeometry()
+            ))
+        }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesMoved(touches, with: event)
-        guard let touch = trackedTouch, touches.contains(touch) else { return }
-        let current = touch.location(in: self)
-        let coalescedTouches = event?.coalescedTouches(for: touch) ?? []
-        let coalesced = coalescedTouches.map {
-            $0.location(in: self)
+        for touch in touches {
+            let coalesced = (event?.coalescedTouches(for: touch) ?? []).map {
+                $0.location(in: self)
+            }
+            sendTouchEvents(touchContacts.move(
+                ObjectIdentifier(touch),
+                through: GuestTouchSamples.ordered(
+                    coalesced: coalesced,
+                    current: touch.location(in: self)
+                ),
+                geometry: touchGeometry()
+            ))
         }
-        sendTouchEvents(touchPath.move(
-            through: GuestTouchSamples.ordered(
-                coalesced: coalesced,
-                current: current
-            ),
-            geometry: touchGeometry()
-        ))
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesEnded(touches, with: event)
-        finishTouch(in: touches)
+        for touch in touches {
+            sendTouchEvents(touchContacts.end(
+                ObjectIdentifier(touch),
+                at: touch.location(in: self),
+                geometry: touchGeometry()
+            ))
+        }
     }
 
     override func touchesCancelled(
@@ -272,16 +278,9 @@ final class GuestMetalView: MTKView, UIKeyInput {
         with event: UIEvent?
     ) {
         super.touchesCancelled(touches, with: event)
-        finishTouch(in: touches)
-    }
-
-    private func finishTouch(in touches: Set<UITouch>) {
-        guard let touch = trackedTouch, touches.contains(touch) else { return }
-        sendTouchEvents(touchPath.end(
-            at: touch.location(in: self),
-            geometry: touchGeometry()
-        ))
-        trackedTouch = nil
+        for touch in touches {
+            sendTouchEvents(touchContacts.cancel(ObjectIdentifier(touch)))
+        }
     }
 
     private func touchGeometry() -> GuestTouchGeometry? {
@@ -293,20 +292,24 @@ final class GuestMetalView: MTKView, UIKeyInput {
         )
     }
 
-    private func sendTouchEvents(_ events: [GuestTouchEvent]) {
-        for event in events {
+    private func sendTouchEvents(_ events: [GuestTouchContactEvent]) {
+        for contact in events {
             kernarium_runtime_loader_send_touch(
-                event.x,
-                event.y,
-                event.pressed ? 1 : 0
+                contact.slot,
+                contact.event.x,
+                contact.event.y,
+                contact.event.pressed ? 1 : 0
             )
         }
     }
 
-    func releaseTrackedTouch() {
-        guard trackedTouch != nil else { return }
-        sendTouchEvents(touchPath.release())
-        trackedTouch = nil
+    func releaseTrackedTouches() {
+        sendTouchEvents(touchContacts.releaseAll())
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil { releaseTrackedTouches() }
     }
 
     private func sendKey(code: UInt16, pressed: Bool) {

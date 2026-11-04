@@ -33,6 +33,7 @@
 #include "gpu/in_process_service.hpp"
 #include "gpu/protocol.hpp"
 #include "input/virtio/in_process_service.hpp"
+#include "input/virtio/touchscreen.hpp"
 #include "block/android_boot.hpp"
 #include "block/boot_initramfs.hpp"
 #include "block/ubd_path.hpp"
@@ -154,6 +155,7 @@ std::mutex activeEmulatorMutex;
 uml_emulator* activeEmulator;
 std::mutex activeInputMutex;
 uml::input::virtio::InProcessInputService* activeTouchscreen;
+uml::input::virtio::Touchscreen touchscreenContacts;
 uml::input::virtio::InProcessInputService* activeKeyboard;
 /* The way into the running guest's vsock device. Callers copy the pointer and
  * open their stream without the mutex, which an open can hold for seconds. */
@@ -592,6 +594,7 @@ public:
         uml::input::virtio::InProcessInputService& keyboard)
     {
         std::lock_guard lock(activeInputMutex);
+        touchscreenContacts = {};
         activeTouchscreen = &touchscreen;
         activeKeyboard = &keyboard;
     }
@@ -1877,37 +1880,21 @@ static_assert(
     KERNARIUM_RUNTIME_TOUCH_MAXIMUM ==
     uml::input::virtio::protocol::touchscreenAbsoluteMaximum);
 
+static_assert(
+    KERNARIUM_RUNTIME_TOUCH_CONTACTS ==
+    uml::input::virtio::protocol::touchscreenContactCount);
+
 void runtimeSendTouch(
+    uint32_t slot,
     uint32_t x,
     uint32_t y,
     int pressed)
 {
-    namespace input = uml::input::virtio::protocol;
-    const std::array events {
-        input::InputEvent {
-            .type = input::eventAbsolute,
-            .code = input::absoluteX,
-            .value = static_cast<std::int32_t>(x),
-        },
-        input::InputEvent {
-            .type = input::eventAbsolute,
-            .code = input::absoluteY,
-            .value = static_cast<std::int32_t>(y),
-        },
-        input::InputEvent {
-            .type = input::eventKey,
-            .code = input::buttonTouch,
-            .value = pressed != 0 ? 1 : 0,
-        },
-        input::InputEvent {
-            .type = input::eventSynchronize,
-            .code = input::synchronizeReport,
-            .value = 0,
-        },
-    };
     std::lock_guard lock(activeInputMutex);
-    if (activeTouchscreen != nullptr)
-        activeTouchscreen->send(events);
+    if (activeTouchscreen != nullptr) {
+        const auto report = touchscreenContacts.touch(slot, x, y, pressed != 0);
+        activeTouchscreen->send(report.span());
+    }
 }
 
 void runtimeSendKey(uint16_t code, int pressed)
@@ -2220,7 +2207,7 @@ kernarium_runtime_automation_hold_delay_ms(void)
 }
 #endif
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v20(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v21(void)
 {
     return &runtimeApi;
 }

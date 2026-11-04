@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 20U
+#define KERNARIUM_RUNTIME_API_VERSION 21U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -28,9 +28,12 @@ enum {
 /* The send_touch coordinates are absolute positions in the guest's
  * touchscreen range, 0 through this value on both axes, wherever the display
  * is and however it is sized. The host maps its view onto that range, so the
- * range never has to follow a mode change. */
+ * range never has to follow a mode change. Each simultaneous host contact
+ * keeps a slot in 0..<TOUCH_CONTACTS until it ends. A release affects only
+ * that slot; invalid slots and out-of-range coordinates are ignored. */
 enum {
     KERNARIUM_RUNTIME_TOUCH_MAXIMUM = 32767,
+    KERNARIUM_RUNTIME_TOUCH_CONTACTS = 10,
 };
 
 enum {
@@ -151,6 +154,7 @@ typedef int (*kernarium_runtime_sync_function)(void);
 typedef int (*kernarium_runtime_quiesce_function)(void);
 typedef void (*kernarium_runtime_resume_function)(void);
 typedef void (*kernarium_runtime_send_touch_function)(
+    uint32_t slot,
     uint32_t x,
     uint32_t y,
     int pressed);
@@ -396,7 +400,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v20(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v21(void);
 
 /* An automation-only extension, outside the versioned table: only a runtime
  * built for automation exports this symbol, and the application looks it up

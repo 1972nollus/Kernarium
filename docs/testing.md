@@ -856,14 +856,20 @@ with mock data, and `Andarium` is the device application
 ([`Andarium/README.md`](../Andarium/README.md#targets)). `AndariumTests` is
 hosted in `Andarium` and runs on an iPad, in the iOS Simulator and, as an iPad
 app, on an Apple silicon Mac (`xcodebuild test -scheme Andarium`); its
+`MultitouchTests` cover independent finger paths and slots, cancellation,
+viewport crossings, the ten-contact limit and releasing all contacts. The host
+`virtio-input-protocol` test covers the advertised multitouch axes, tracking-ID
+lifetimes and wraparound, and legacy primary-finger coordinates. Its
 `UpdateFlowTests` drive
 the update, interrupted-update (Start retries, Restore, Erase) and blocked-start flows
 against a stub runtime, and its `AndroidOperationTests` and
 `AdbOverNetworkModelTests` play Create Bug Report, Install App and ADB over
 Network the same way. `AdbOverVsockTests` drive a real Android guest with the
 application's own client and authorization on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1`
-with `TEST_RUNNER_ANDARIUM_START=normal`): a shell command, the USB debugging
-setting and the channel with it on and off, a computer's connection through the
+with `TEST_RUNNER_ANDARIUM_START=normal`): a shell command, two runtime touch
+contacts reaching Android's input reader through movement and independent
+release, the USB debugging setting and the channel with it on and off, a
+computer's connection through the
 bridge, a bug report (a zip above 1 MB, and its time), a cancel, a system APK
 pulled from the image and installed as an update (and its time), the image's
 key rule (the application's key accepted whatever the debugging setting; a

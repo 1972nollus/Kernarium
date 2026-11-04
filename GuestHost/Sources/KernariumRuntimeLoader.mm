@@ -259,12 +259,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v20");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v21");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v20: %s\n",
+            "Kernarium: selected runtime lacks API v21: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;
@@ -467,13 +467,14 @@ extern "C" int kernarium_runtime_loader_set_microphone(int enabled)
 }
 
 extern "C" void kernarium_runtime_loader_send_touch(
+    uint32_t slot,
     uint32_t x,
     uint32_t y,
     int pressed)
 {
     const kernarium_runtime_api* runtime = api();
     if (runtime != nullptr)
-        runtime->send_touch(x, y, pressed);
+        runtime->send_touch(slot, x, y, pressed);
 }
 
 extern "C" void kernarium_runtime_loader_send_key(uint16_t code, int pressed)

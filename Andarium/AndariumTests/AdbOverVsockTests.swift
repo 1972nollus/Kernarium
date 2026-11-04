@@ -61,6 +61,48 @@ struct AdbOverVsockTests {
         #expect(banner.features.isSuperset(of: ["shell_v2", "cmd", "stat_v2", "abb_exec"]))
     }
 
+    @Test(.timeLimit(.minutes(20)))
+    func twoRuntimeContactsReachAndroidInputReader() async throws {
+        guard Self.enabled else { return }
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        _ = try await operations.shell("input keyevent KEYCODE_WAKEUP")
+        defer {
+            kernarium_runtime_loader_send_touch(0, 6000, 16000, 0)
+            kernarium_runtime_loader_send_touch(1, 26000, 16000, 0)
+        }
+
+        func awaitPointers(_ count: Int, positions: [String]) async throws {
+            let deadline = ContinuousClock.now + .seconds(15)
+            var state = ""
+            while ContinuousClock.now < deadline {
+                let dump = try await operations.shell("dumpsys input", limit: .seconds(15)).text
+                if let name = dump.range(of: "Kernarium Touchscreen", options: .backwards) {
+                    state = String(dump[name.upperBound...])
+                        .components(separatedBy: "\n  Device ")[0]
+                    if state.contains("Last Cooked Touch: pointerCount=\(count)") &&
+                        positions.allSatisfy({ state.contains($0) }) {
+                        return
+                    }
+                }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            Issue.record("Android did not read \(count) contacts: \(state)")
+            throw CancellationError()
+        }
+
+        kernarium_runtime_loader_send_touch(0, 10000, 16000, 1)
+        kernarium_runtime_loader_send_touch(1, 22000, 16000, 1)
+        try await awaitPointers(2, positions: ["x=10000, y=16000", "x=22000, y=16000"])
+        kernarium_runtime_loader_send_touch(0, 6000, 16000, 1)
+        kernarium_runtime_loader_send_touch(1, 26000, 16000, 1)
+        try await awaitPointers(2, positions: ["x=6000, y=16000", "x=26000, y=16000"])
+        kernarium_runtime_loader_send_touch(0, 6000, 16000, 0)
+        try await awaitPointers(1, positions: ["x=26000, y=16000"])
+        kernarium_runtime_loader_send_touch(1, 26000, 16000, 0)
+        try await awaitPointers(0, positions: [])
+    }
+
     @Test(.timeLimit(.minutes(30))) func aBugReportIsAZipOfMoreThanAMegabyte() async throws {
         guard Self.enabled else { return }
         let operations = try operations()

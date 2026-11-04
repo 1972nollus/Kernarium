@@ -267,6 +267,10 @@ runtime reports boot events.
 The side keys send Android's keys as Linux key codes: Power 116 (held for the
 power menu), volume 115 and 114, Back 158 and Home 172.
 
+The guest display supports up to ten simultaneous fingers, including pinch
+and other gestures. The shared [GuestHost input](../GuestHost/README.md) maps
+each finger independently onto the guest's visible display.
+
 Resolution and Follow Window Size apply at the next start, because the runtime
 takes them at boot, so the session's Settings leaves them out
 (`Capabilities.liveDisplayOptions`). Microphone applies at once and asks iOS
