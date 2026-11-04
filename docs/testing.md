@@ -832,6 +832,11 @@ encoder, and `HostGraphicsStackTests` states the software renderer's contract
 `KernariumAutomation` is the iPad's automation host and builds for the device
 alone.
 
+`kernarium-device-framework-symbols` (tooling) checks that the device-only
+embed script places its dSYM beside the app's symbols for an archive, refuses
+missing symbols, and leaves Simulator builds alone. The GPU prefix verifier
+also rejects supplied dSYMs whose UUIDs differ from their frameworks.
+
 ### Andarium
 
 `andarium-core` (unit, macOS hosts) runs the tests of the Swift package

@@ -36,7 +36,7 @@
       "kind": "group",
       "name": "Frameworks",
       "children": [
-        { "path": "../.build/kernarium-xcframeworks/KRuntime_ACK_6_18_4K.xcframework", "target-membership": [ { "build-phase": "Andarium/copy/Embed Frameworks", "code-sign-on-copy": true, "header-preservation": "remove-on-copy" } ] },
+        { "path": "../.build/kernarium-xcframeworks/KRuntime_Android_6_18_4K.xcframework", "target-membership": [ { "build-phase": "Andarium/copy/Embed Frameworks", "code-sign-on-copy": true, "header-preservation": "remove-on-copy" } ] },
         { "path": "../.build/kernarium-xcframeworks/MesaEGL.xcframework", "target-membership": [ { "build-phase": "Andarium/copy/Embed Frameworks", "code-sign-on-copy": true, "header-preservation": "remove-on-copy" } ] },
         { "path": "../.build/kernarium-xcframeworks/MesaGallium.xcframework", "target-membership": [ { "build-phase": "Andarium/copy/Embed Frameworks", "code-sign-on-copy": true, "header-preservation": "remove-on-copy" } ] },
         { "path": "../.build/kernarium-xcframeworks/KosmicKrisp.xcframework" },
@@ -98,7 +98,7 @@
         "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "AccentColor",
         "CODE_SIGN_ENTITLEMENTS": "Config/Andarium.entitlements",
         "CODE_SIGN_STYLE": "Automatic",
-        "CURRENT_PROJECT_VERSION": "1",
+        "CURRENT_PROJECT_VERSION": "2",
         "ENABLE_PREVIEWS": "YES",
         "ENABLE_USER_SCRIPT_SANDBOXING": "NO",
         "FRAMEWORK_SEARCH_PATHS": [

@@ -131,7 +131,7 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     case KERNARIUM_RUNTIME_GUEST_LINUX:
         return @"KRuntime_";
     case KERNARIUM_RUNTIME_GUEST_ANDROID:
-        return @"KRuntime_ACK_";
+        return @"KRuntime_Android_";
     default:
         return nil;
     }

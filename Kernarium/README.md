@@ -36,6 +36,13 @@ commits, and each carries its kernel ELF in signed Mach-O `__TEXT` (see the
 application embeds every framework, links none at launch, and loads exactly
 one for the process lifetime.
 
+The Android framework is `KRuntime_Android_6_18_4K`; the Linux framework is
+`KRuntime_6_18_4K`. Runtime builds retain debug information at Release
+optimization and generate a companion dSYM. Packaging includes the runtime
+and graphics dSYMs in each XCFramework, and archives collect them alongside
+the application's symbols. The device-only embed script also copies
+KosmicKrisp's dSYM into the archive's symbols directory.
+
 The library runs one guest per process, so a launch makes one run. A guest that
 restarts itself (a reboot, `adb reboot`, a recovery or bootloader round trip) is
 booted again inside that run, in the same process, and the run returns only when

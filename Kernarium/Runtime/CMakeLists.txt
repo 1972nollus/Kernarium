@@ -37,7 +37,7 @@ set(KERNARIUM_KERNEL_PAGE_VARIANT 4K)
 # page-profile suffix as well.
 if(KERNARIUM_RUNTIME_ANDROID_GUEST)
     set(KERNARIUM_RUNTIME_FRAMEWORK_NAME
-        "KRuntime_ACK_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}")
+        "KRuntime_Android_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}")
 else()
     set(KERNARIUM_RUNTIME_FRAMEWORK_NAME
         "KRuntime_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}")
@@ -212,4 +212,12 @@ add_custom_command(TARGET KernariumRuntime POST_BUILD
         "${CMAKE_CURRENT_BINARY_DIR}/module.modulemap"
         "$<TARGET_BUNDLE_DIR:KernariumRuntime>/Modules/module.modulemap"
     COMMENT "Installing the versioned Kernarium runtime module map"
+    VERBATIM)
+
+add_custom_command(TARGET KernariumRuntime POST_BUILD
+    COMMAND xcrun dsymutil "$<TARGET_FILE:KernariumRuntime>"
+        -o "$<TARGET_BUNDLE_DIR:KernariumRuntime>.dSYM"
+    BYPRODUCTS
+        "${CMAKE_CURRENT_BINARY_DIR}/${KERNARIUM_RUNTIME_FRAMEWORK_NAME}.framework.dSYM/Contents/Resources/DWARF/${KERNARIUM_RUNTIME_FRAMEWORK_NAME}"
+    COMMENT "Generating Kernarium runtime debug symbols"
     VERBATIM)
