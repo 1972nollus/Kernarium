@@ -302,7 +302,8 @@ void a_real_hibernation_holds_the_kernel_threads_and_brings_the_ram_back()
 		require(stood_still(ram), "the kernel thread runs while hibernated");
 		const std::string image = directory + "/" +
 			uml::memory::guest_ram_image_name(static_cast<int>(getpid()));
-		require(std::filesystem::exists(image), "the image file");
+		require(!std::filesystem::exists(image),
+			"the private RAM image must have no directory entry during suspension");
 		require(hibernation->restore(), "the restore must succeed");
 		require(hibernation->report().restored.chunks_failed == 0,
 			"no chunk failed");

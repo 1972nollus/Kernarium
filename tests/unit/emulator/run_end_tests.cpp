@@ -10,12 +10,19 @@
 #include "emulator_test_support.hpp"
 #include "require.hpp"
 #include "testing.hpp"
+#include "uml_darwin_host.h"
+#include "scratch_directory.hpp"
+#include "wait_until.hpp"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <stdexcept>
 #include <string>
+#include <sys/wait.h>
+#include <unistd.h>
 
 namespace {
 
@@ -31,6 +38,7 @@ struct Script final {
 	const char *command{};
 	bool request_stop{};
 	int status{};
+	int disk{-1};
 	/* What the handle reported while the kernel ran. */
 	int during_result{};
 	uml_emulator_run_end during{};
@@ -40,6 +48,14 @@ Script script;
 
 int scripted_kernel(int, char *const[], char *const[])
 {
+	if (script.disk >= 0) {
+		struct flock lock {};
+		lock.l_type = F_WRLCK;
+		lock.l_whence = SEEK_SET;
+		require(darwin_uml_fcntl(script.disk, F_SETLK,
+			reinterpret_cast<long>(&lock)) == 0,
+			"the kernel could not lock its disk");
+	}
 	script.during = {
 		.struct_size = sizeof(script.during),
 		.kind = UML_EMULATOR_RUN_END_FAILED,
@@ -204,6 +220,34 @@ void test_a_run_that_ran_no_guest_ends_nothing()
 	uml_emulator_destroy(bare);
 }
 
+void test_a_finished_run_releases_its_disk_lock()
+{
+	const uml::testing::ScratchSubdirectory directory{"run-end-lock.XXXXXX"};
+	const auto path = (directory.path() / "data.img").string();
+	const int disk = open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
+	require(disk >= 0, "create the guest disk");
+	auto emulator = make_emulator(scripted_kernel);
+	script = {.emulator = emulator.get(), .disk = disk};
+	require(run(emulator.get()) == 0, "the guest run failed");
+	/* The kernel may leave descriptors open until hand-back, but those
+	 * descriptors must not keep iOS from suspending the idle application. */
+	const pid_t child = fork();
+	require(child >= 0, "start a separate disk owner");
+	if (child == 0) {
+		struct flock lock {};
+		lock.l_type = F_WRLCK;
+		lock.l_whence = SEEK_SET;
+		_exit(fcntl(disk, F_SETLK, &lock) == 0 ? 0 : 1);
+	}
+	int status = 0;
+	require(uml::testing::waitUntil([&] {
+		return waitpid(child, &status, WNOHANG) == child;
+	}, std::chrono::seconds{5}), "the disk owner did not finish");
+	require(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		"a finished guest kept its host disk locked");
+	close(disk);
+}
+
 } // namespace
 
 int main()
@@ -213,6 +257,7 @@ int main()
 		test_each_end_is_reported();
 		test_a_stop_wins_over_the_guest();
 		test_a_run_that_ran_no_guest_ends_nothing();
+		test_a_finished_run_releases_its_disk_lock();
 	} catch (const std::exception &error) {
 		std::fprintf(stderr, "run end test failed: %s\n", error.what());
 		return EXIT_FAILURE;

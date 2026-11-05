@@ -93,6 +93,14 @@ int darwin_uml_open(const char *path, int flags, int mode)
 
 int darwin_uml_fcntl(int fd, int command, long argument)
 {
+	if (command == F_SETLK || command == F_SETLKW) {
+		if (argument == 0) {
+			errno = EFAULT;
+			return -1;
+		}
+		return ::uml::platform::set_guest_file_lock(fd, command,
+			*reinterpret_cast<const struct flock *>(argument));
+	}
 	if (command == F_PUNCHHOLE &&
 	    ::uml::memory::is_anonymous_shared_backing(fd)) {
 		errno = EOPNOTSUPP;

@@ -356,7 +356,8 @@ public:
 	{
 		workers_.stop();
 		if (fd_ >= 0) {
-			(void)unlink(options_.path.c_str());
+			if (linked_)
+				(void)unlink(options_.path.c_str());
 			(void)close(fd_);
 		}
 	}
@@ -389,34 +390,25 @@ public:
 			O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
 		if (fd_ < 0)
 			return false;
-		if (flock(fd_, LOCK_EX | LOCK_NB) != 0) {
-			const int error = errno;
-			(void)::close(fd_);
-			fd_ = -1;
-			errno = error;
+		linked_ = true;
+		if (options_.anonymous) {
+			/* A process suspended with a file lock is killed by iOS
+			 * (0xdead10cc). This image belongs only to this process, so an
+			 * unlinked file needs neither a lock nor stale-file cleanup. */
+			if (unlink(options_.path.c_str()) != 0)
+				return false;
+			linked_ = false;
+		} else if (flock(fd_, LOCK_EX | LOCK_NB) != 0) {
 			return false;
 		}
 		if (options_.bypass_cache)
 			(void)fcntl(fd_, F_NOCACHE, 1);
 		const std::uint64_t file_size =
 			data_offset_ + chunk_count_ * chunk_bytes_;
-		if (ftruncate(fd_, static_cast<off_t>(file_size)) != 0) {
-			const int error = errno;
-			(void)unlink(options_.path.c_str());
-			(void)::close(fd_);
-			fd_ = -1;
-			errno = error;
+		if (ftruncate(fd_, static_cast<off_t>(file_size)) != 0)
 			return false;
-		}
-		if (!workers_.start(std::max(1U, options_.threads))) {
-			const int error = errno;
-			workers_.stop();
-			(void)unlink(options_.path.c_str());
-			(void)::close(fd_);
-			fd_ = -1;
-			errno = error;
+		if (!workers_.start(std::max(1U, options_.threads)))
 			return false;
-		}
 		return true;
 	}
 
@@ -864,6 +856,7 @@ private:
 	GuestRamCommitment &ram_;
 	Options options_;
 	int fd_{-1};
+	bool linked_{false};
 	std::size_t page_size_{};
 	std::size_t chunk_bytes_{};
 	std::size_t chunk_count_{};

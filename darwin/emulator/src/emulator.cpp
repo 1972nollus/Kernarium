@@ -549,10 +549,14 @@ public:
 				guest_writeback_settle_ms);
 		}
 		const auto result = ::uml::runtime::sync_guest_files();
+		unsigned unlock_failures = 0;
 		/* Last, with the guest asleep and its files on disk. */
-		if (guest_suspension_ == ::uml::device::GuestSuspension::system)
+		if (guest_suspension_ == ::uml::device::GuestSuspension::system) {
+			unlock_failures = ::uml::runtime::release_guest_file_locks();
+			guest_file_locks_released_ = true;
 			hibernate_guest_ram();
-		return static_cast<int>(result.failed);
+		}
+		return static_cast<int>(result.failed + unlock_failures);
 	}
 
 	void resume() noexcept
@@ -564,6 +568,10 @@ public:
 		/* The RAM and the threads are back before the guest is woken. A
 		 * restore that fails ends the process and does not return; where
 		 * the end is replaced, nothing is woken either. */
+		if (guest_file_locks_released_) {
+			::uml::runtime::restore_guest_file_locks();
+			guest_file_locks_released_ = false;
+		}
 		if (hibernation_ != nullptr && !hibernation_->restore())
 			return;
 		const auto suspension = std::exchange(guest_suspension_,
@@ -780,6 +788,7 @@ private:
 		publish_hibernation(nullptr);
 		hibernation_.reset();
 		guest_suspension_ = ::uml::device::GuestSuspension::none;
+		guest_file_locks_released_ = false;
 		pending_page_cache_trim_.reset();
 	}
 
@@ -836,6 +845,11 @@ private:
 		}
 		~RunEndRecorder()
 		{
+			{
+				std::lock_guard lock{emulator_.guest_lifecycle_mutex_};
+				(void)::uml::runtime::release_guest_file_locks(true);
+				emulator_.guest_file_locks_released_ = false;
+			}
 			emulator_.record_run_end();
 		}
 		RunEndRecorder(const RunEndRecorder &) = delete;
@@ -896,6 +910,10 @@ private:
 	{
 		request_hibernation_abort();
 		std::lock_guard lock{guest_lifecycle_mutex_};
+		if (guest_file_locks_released_) {
+			::uml::runtime::restore_guest_file_locks();
+			guest_file_locks_released_ = false;
+		}
 		if (hibernation_ != nullptr)
 			(void)hibernation_->restore();
 	}
@@ -923,6 +941,7 @@ private:
 	uml::network::Provider network_;
 	uml::network::ProviderContext network_context_;
 	std::mutex guest_lifecycle_mutex_;
+	bool guest_file_locks_released_{};
 	::uml::device::GuestSuspension guest_suspension_ {
 		::uml::device::GuestSuspension::none};
 	/* A trimming change requested while the guest was quiesced. */

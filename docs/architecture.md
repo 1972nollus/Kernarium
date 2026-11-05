@@ -1474,6 +1474,17 @@ quiesces, with the runtime's `set_gpu_hold` (see the request gate under
 [devices](#devices-and-graphics)), and releases them before it resumes. The
 guest's rings stay disabled until the resume, and what it queued waits in them.
 
+Once the guest confirms system suspension and its host files are flushed,
+quiescing releases the kernel's whole-file disk locks. iOS terminates a process
+that retains a file lock when suspended. Resume and stop reacquire every lock
+before restoring guest RAM or waking a thread, and verify the disk's identity,
+size, modification time and change time against the state before unlocking.
+Contention, a replaced descriptor or changed storage ends the process without
+resuming the guest. A finished run releases and retires its locks even if its
+descriptors remain open until hand-back. An unconfirmed suspension retains the
+locks, since its guest may still write. The host bridge records lock acquisition
+before reporting success and refuses new locks while the guest is quiesced.
+
 The guest binds the management console as a Unix datagram socket and replies
 to each request's own bound socket, which the host places beside it. Both live
 in a directory the host passes as `uml_dir=`, under short fixed names, never
@@ -1567,10 +1578,12 @@ run reach the same code. The order is the contract:
   application's `$TMPDIR`, never Documents, in 64-page chunks that are stored
   as LZ4, raw or zero, each hashed, and each taken off the footprint (unwired,
   `MADV_FREE_REUSABLE`) once written. The file is opened with `F_NOCACHE` and
-  `flock`ed for the life of the process. It persists across backgroundings, and
-  a later hibernation rewrites only the chunks whose hash or held-page set
-  changed. A chunk that fails to write stays resident. A run first deletes the
-  images that a killed process left unlocked.
+  immediately unlinked, with no file lock: iOS terminates an application that
+  holds a file lock during suspension. Its open descriptor keeps the image
+  across backgroundings, and the OS reclaims it when the process ends. A later
+  hibernation rewrites only the chunks whose hash or held-page set changed.
+  A chunk that fails to write stays resident. A run first deletes unlocked
+  named images left by older versions.
 - **Restore.** `uml_emulator_resume()` asks any hibernation still writing to
   leave the chunks it has not reached resident, then restores every chunk
   (`MADV_FREE_REUSE`, wire, read, verify against its hash), then releases the
