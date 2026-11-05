@@ -8,9 +8,9 @@ import Testing
 /// The application's own adb client against a real Android guest, with
 /// authorization on. It runs only when the launch asks, as the hold test does:
 ///
-///     xcodebuild test -scheme Andarium -destination 'platform=macOS,variant=Designed for iPad' \
-///         -only-testing:AndariumTests/AdbOverVsockTests \
-///         TEST_RUNNER_ANDARIUM_ADB_TESTS=1 TEST_RUNNER_ANDARIUM_START=normal
+///     TEST_RUNNER_ANDARIUM_ADB_TESTS=1 TEST_RUNNER_ANDARIUM_START=normal \
+///         xcodebuild test -scheme Andarium -destination 'platform=macOS,variant=Designed for iPad' \
+///         -only-testing:AndariumTests/AdbOverVsockTests
 ///
 /// The application boots the guest as it launches; the tests wait for Android
 /// and use the key the application made for that boot.
@@ -59,6 +59,23 @@ struct AdbOverVsockTests {
             connector: VsockConnector(), signer: operations.identity?.signer, clock: operations.clock)
         let banner = try session.run { $0.banner }
         #expect(banner.features.isSuperset(of: ["shell_v2", "cmd", "stat_v2", "abb_exec"]))
+    }
+
+    @Test(.timeLimit(.minutes(20)))
+    func androidAdvertisesMultitouchToApplications() async throws {
+        guard Self.enabled else { return }
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        let result = try await operations.shell("pm list features")
+        #expect(result.exitCode == 0)
+        let features = Set(result.text.split(separator: "\n").map(String.init))
+        for feature in [
+            "android.hardware.touchscreen.multitouch",
+            "android.hardware.touchscreen.multitouch.distinct",
+            "android.hardware.touchscreen.multitouch.jazzhand",
+        ] {
+            #expect(features.contains("feature:\(feature)"))
+        }
     }
 
     @Test(.timeLimit(.minutes(20)))

@@ -866,7 +866,8 @@ against a stub runtime, and its `AndroidOperationTests` and
 `AdbOverNetworkModelTests` play Create Bug Report, Install App and ADB over
 Network the same way. `AdbOverVsockTests` drive a real Android guest with the
 application's own client and authorization on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1`
-with `TEST_RUNNER_ANDARIUM_START=normal`): a shell command, two runtime touch
+with `TEST_RUNNER_ANDARIUM_START=normal`): a shell command, the multitouch
+features Android advertises to applications, two runtime touch
 contacts reaching Android's input reader through movement and independent
 release, the USB debugging setting and the channel with it on and off, a
 computer's connection through the
