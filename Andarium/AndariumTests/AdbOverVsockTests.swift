@@ -94,7 +94,7 @@ struct AdbOverVsockTests {
         do {
             try await operations.installApk(at: apk, sizeBytes: bytes) { _ in }
             let result = try await operations.shell(
-                "am instrument -w -e class com.android.frameworks.andariumstorage.StorageAccountingTest#exactFilesystemBytes com.android.frameworks.andariumstorage.tests/androidx.test.runner.AndroidJUnitRunner",
+                "am instrument -w -r -e class com.android.frameworks.andariumstorage.StorageAccountingTest#exactFilesystemBytes com.android.frameworks.andariumstorage.tests/androidx.test.runner.AndroidJUnitRunner",
                 limit: .seconds(180))
             print("ANDROID_STORAGE: \(result.text)")
             #expect(result.exitCode == 0)
