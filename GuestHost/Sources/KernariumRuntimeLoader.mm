@@ -27,8 +27,13 @@ bool selectionAttempted;
  * a release runtime does not export them. */
 int (*automationJobAtStart)(void);
 int (*automationHoldDelayMs)(void);
-std::mutex consoleOutputHandlerMutex;
-KernariumConsoleOutputHandler consoleOutputHandler;
+/* The runtime relay can still call into the loader while exit() destroys
+ * ordinary statics. Keep its lock and retained handler alive together. */
+struct ConsoleOutputHandlerState final {
+    std::mutex mutex;
+    KernariumConsoleOutputHandler handler {nil};
+};
+ConsoleOutputHandlerState& consoleOutput = *new ConsoleOutputHandlerState;
 /* The handler is read on the runtime's callback path, under the runtime's own
  * lock, so it has a mutex of its own that is held only to copy it. Changing
  * the registration, which takes the runtime's lock, is serialized by the
@@ -47,8 +52,8 @@ void forwardConsoleOutput(
     NSData* data = [NSData dataWithBytes:buffer length:length];
     KernariumConsoleOutputHandler handler;
     {
-        std::lock_guard lock(consoleOutputHandlerMutex);
-        handler = consoleOutputHandler;
+        std::lock_guard lock(consoleOutput.mutex);
+        handler = consoleOutput.handler;
     }
     if (handler == nil)
         return;
@@ -59,9 +64,9 @@ void forwardConsoleOutput(
 
 void updateConsoleOutputForwarder(const kernarium_runtime_api* runtime)
 {
-    std::lock_guard lock(consoleOutputHandlerMutex);
+    std::lock_guard lock(consoleOutput.mutex);
     runtime->set_console_output_callback(
-        consoleOutputHandler == nil ? nullptr : forwardConsoleOutput,
+        consoleOutput.handler == nil ? nullptr : forwardConsoleOutput,
         nullptr);
 }
 
@@ -488,8 +493,8 @@ extern "C" void kernarium_runtime_loader_set_console_output_handler(
     KernariumConsoleOutputHandler handler)
 {
     {
-        std::lock_guard lock(consoleOutputHandlerMutex);
-        consoleOutputHandler = [handler copy];
+        std::lock_guard lock(consoleOutput.mutex);
+        consoleOutput.handler = [handler copy];
     }
     const kernarium_runtime_api* runtime = api();
     if (runtime != nullptr)

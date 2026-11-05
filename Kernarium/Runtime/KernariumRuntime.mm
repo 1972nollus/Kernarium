@@ -3,6 +3,7 @@
 #include "KernariumRuntime.h"
 #include "KernariumAdbChannel.hpp"
 #include "KernariumConsoleInput.hpp"
+#include "KernariumConsoleOutput.hpp"
 #include "KernariumKeyWake.hpp"
 #include "KernariumRestartLoop.hpp"
 #include "KernariumStatistics.hpp"
@@ -174,10 +175,6 @@ constexpr std::chrono::milliseconds gpuHoldBudget {1000};
  * terminal can still write while the process exits. */
 kernarium::console::InputRegistry& consoleInputs =
     *new kernarium::console::InputRegistry;
-std::mutex consoleOutputCallbackMutex;
-std::mutex consoleStdoutMutex;
-kernarium_runtime_console_output_callback consoleOutputCallback;
-void* consoleOutputContext;
 /* What the application has told the runtime about the guest's life, which the
  * run loop reads between boots: a stop, a quiesce, the GPU hold. Process
  * lifetime, like the callers that reach it. */
@@ -231,15 +228,7 @@ const std::shared_ptr<uml::audio::MicrophoneSwitch>& microphoneSwitch()
 
 void publishConsoleOutput(const void* buffer, std::size_t length)
 {
-    kernarium_runtime_console_output_callback callback;
-    void* context;
-    {
-        std::lock_guard lock(consoleOutputCallbackMutex);
-        callback = consoleOutputCallback;
-        context = consoleOutputContext;
-    }
-    if (callback != nullptr)
-        callback(context, buffer, length);
+    kernarium::console::output().publish(buffer, length);
 }
 
 class AppNetwork final {
@@ -697,7 +686,8 @@ public:
                     if (received > 0) {
                         publishConsoleOutput(
                             buffer, static_cast<std::size_t>(received));
-                        std::lock_guard outputLock(consoleStdoutMutex);
+                        std::lock_guard outputLock(
+                            kernarium::console::output().stdoutMutex());
                         std::string_view output(
                             buffer, static_cast<std::size_t>(received));
                         while (!output.empty()) {
@@ -1703,7 +1693,7 @@ int runtimeRun(
 #if KERNARIUM_AUTOMATION_HARNESS
         const auto automation =
             kernarium::harness::AutomationBoot::fromEnvironment(
-                consoleStdoutMutex);
+                kernarium::console::output().stdoutMutex());
         if (automation)
             std::fprintf(
                 stderr,
@@ -2087,9 +2077,7 @@ void runtimeSetConsoleOutputCallback(
     kernarium_runtime_console_output_callback callback,
     void* context)
 {
-    std::lock_guard lock(consoleOutputCallbackMutex);
-    consoleOutputCallback = callback;
-    consoleOutputContext = context;
+    kernarium::console::output().setCallback(callback, context);
 }
 
 int runtimeSendConsoleInput(const void* buffer, std::size_t length)

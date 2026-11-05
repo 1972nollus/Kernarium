@@ -492,6 +492,9 @@ A host can call `exit()` while carriers still run, as an iOS application and
 an XCTest host do. The arm64 gadget contract indexes, the shared-backing
 state, and the active-access registry therefore have no exit-time destructor;
 `arm64-gadget-exit` keeps carriers using them through `exit()`.
+The console relay's output registration and stdout lock, and the loader's
+retained output handler and lock, likewise have process lifetime: guest output
+can still arrive while the application's static destructors run.
 
 Carriers are named `uml-vcpu-N-carrier`. The kernels use a 100 Hz tick with
 `NO_HZ_IDLE` and high-resolution timers: the one-shot clock event records a

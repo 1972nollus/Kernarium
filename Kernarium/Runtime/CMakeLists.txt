@@ -61,6 +61,7 @@ endif()
 add_library(KernariumRuntime SHARED
     KernariumAdbChannel.hpp
     KernariumConsoleInput.hpp
+    KernariumConsoleOutput.hpp
     KernariumKeyWake.hpp
     KernariumRestartLoop.hpp
     KernariumRuntime.h
