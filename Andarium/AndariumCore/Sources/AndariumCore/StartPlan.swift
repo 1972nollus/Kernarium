@@ -38,8 +38,8 @@ public enum StartPlan: Equatable, Sendable {
     case firstStart
     /// The Android the data was last started with.
     case normal
-    /// A newer Android on the same data layout: the data is snapshotted, then
-    /// Android upgrades it on its first start.
+    /// A newer Android on the same data layout. An unfinished update's data
+    /// is restored first; the data is snapshotted before Android upgrades it.
     case update(from: String, to: String)
     /// An update started and did not reach a clean end. Start tries the
     /// update again when this Android is the one that was updating
@@ -84,7 +84,8 @@ extension InstanceRules {
         switch decision.action {
         case .create: return .firstStart
         case .boot, .retry, .restore: return .normal
-        case .update: return .update(from: state?.releaseID ?? "", to: release.releaseID)
+        case .update:
+            return .update(from: state?.pendingUpdate?.from.releaseID ?? state?.releaseID ?? "", to: release.releaseID)
         case .migrate: return .blocked(.newerDataLayout)
         case .refuseDowngrade: return .blocked(.olderAndroid)
         case .refuseConflict: return .blocked(.mismatch)

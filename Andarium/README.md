@@ -228,10 +228,12 @@ snapshot kept. Home's one other way back is Restore, shown only while the
 snapshot exists: it puts the data back to what the update started from and
 does nothing more, so Home then shows the ordinary pending update and the next
 Start updates afresh from that data. Restore ends in the same state as the
-rules' restore followed by a normal start. When the Android in this build is not
-the one that was updating, Start is dimmed until Restore or Erase Guest. Erase
-Guest deletes the snapshot too. A guest the Android in this build is older
-than, or whose files do not match it, is blocked: Start is dimmed and erasing
+rules' restore followed by a normal start. Any older release can update directly
+to any newer release. If the carried system is newer than an unfinished update,
+Start automatically restores the pre-update data, then starts the newer system
+with a fresh snapshot; no intermediate release needs to finish. A missing
+snapshot prevents that restoration. Erase Guest deletes the snapshot too.
+A guest the Android in this build is older than, or whose files do not match it, is blocked: Start is dimmed and erasing
 is the way out. A guest of the first release (one `guest.img`, an
 `instance.json` of schema 0) is not read: its start fails with the reason, and
 Erase makes it a guest of this layout.

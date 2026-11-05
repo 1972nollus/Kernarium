@@ -310,6 +310,18 @@ public enum InstanceRules {
                 }
                 return InstanceDecision(.retry, "The update starts again, its snapshot kept.")
             }
+            if release.releaseID != state.releaseID, release.buildNumber > state.buildNumber {
+                guard snapshotExists else {
+                    return InstanceDecision(.refuseConflict, "The update's snapshot is missing.")
+                }
+                if release.dataLayout < pending.from.dataLayout {
+                    return InstanceDecision(.refuseDowngrade, "The release's data layout is older than the snapshot's.")
+                }
+                return InstanceDecision(
+                    release.dataLayout == pending.from.dataLayout ? .update : .migrate,
+                    "The unfinished update's data is restored before starting the newer system."
+                )
+            }
             return InstanceDecision(
                 .refusePending,
                 "The start of \(pending.toReleaseID) never finished: retry it, restore its snapshot, or erase the guest."
@@ -469,6 +481,10 @@ public struct InstanceFiles: Sendable {
             return current
         }
         precondition(action == .update || action == .migrate)
+        if current.pendingUpdate != nil {
+            try apply(InstanceDecision(.restore, "Restore the data before the unfinished update."), release: release, now: now)
+            return try apply(decide(for: release), release: release, now: now)
+        }
         if action == .migrate {
             // No data layout other than 1 exists, so there is no migration.
             throw InstanceError.refused("This system needs a newer data layout than Andarium can migrate to; erase the guest.")

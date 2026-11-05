@@ -69,7 +69,7 @@ struct DecisionVectorTests {
 
     @Test func everyVectorIsReproduced() throws {
         let cases = try Self.vectors()
-        #expect(cases.count == 25)
+        #expect(cases.count == 28)
         for vector in cases {
             let state = vector.instance.map { instance in
                 var state = InstanceState(
@@ -182,6 +182,42 @@ struct InstanceFileTests {
         let again = try files.apply(next, release: second)
         #expect(try Data(contentsOf: files.data) == Data("android data".utf8))
         #expect(again.pendingUpdate?.toReleaseID == "rel-b")
+    }
+
+    @Test func aNewerReleaseRestoresAnUnfinishedUpdateBeforeStarting() throws {
+        let (files, root, first) = try started()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let second = release("rel-b", build: 200)
+        let newer = release("rel-d", build: 10000, sha: String(repeating: "d", count: 64))
+        try files.apply(try files.decide(for: second), release: second)
+        try Data("partially upgraded data".utf8).write(to: files.data)
+
+        let decision = try files.decide(for: newer)
+        #expect(decision.action == .update)
+        let updated = try files.apply(decision, release: newer)
+        #expect(try Data(contentsOf: files.data) == Data("android data".utf8))
+        #expect(try Data(contentsOf: files.snapshot(for: "rel-d")) == Data("android data".utf8))
+        #expect(!FileManager.default.fileExists(atPath: files.snapshot(for: "rel-b").path))
+        #expect(updated.releaseID == "rel-d" && updated.pendingUpdate?.from.releaseID == first.releaseID)
+        #expect(updated.pendingUpdate?.toReleaseID == "rel-d" && updated.createdWith == first.releaseID)
+        try files.complete(release: newer)
+        #expect(!FileManager.default.fileExists(atPath: files.snapshot(for: "rel-d").path))
+    }
+
+    @Test func aMissingSnapshotLeavesTheUnfinishedUpdatesDataAlone() throws {
+        let (files, root, _) = try started()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let second = release("rel-b", build: 200)
+        try files.apply(try files.decide(for: second), release: second)
+        try Data("partially upgraded data".utf8).write(to: files.data)
+        try FileManager.default.removeItem(at: files.snapshot(for: "rel-b"))
+        let state = try Data(contentsOf: files.state)
+        let newer = release("rel-d", build: 10000, sha: String(repeating: "d", count: 64))
+        let decision = try files.decide(for: newer)
+        #expect(decision.action == .refuseConflict)
+        #expect(throws: InstanceError.self) { try files.apply(decision, release: newer) }
+        #expect(try Data(contentsOf: files.state) == state)
+        #expect(try Data(contentsOf: files.data) == Data("partially upgraded data".utf8))
     }
 
     @Test func aRefusalChangesNothing() throws {

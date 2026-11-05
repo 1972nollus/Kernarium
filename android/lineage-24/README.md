@@ -1423,7 +1423,13 @@ releases; the rules compare nothing else. Before a start:
 | newer build, newer `data_layout` | snapshot, run the registered migration (none exists yet), start |
 | older build | refuse: Android's key store, package manager and apexd do not go back |
 | same build, another release or system disk, or a `data.img` without `instance.json` | refuse |
-| an unfinished update | refuse until the user retries it, restores its snapshot, or resets |
+| an unfinished update, same build | retry with its snapshot kept, restore, or reset |
+| an unfinished update, newer build | restore the pre-update snapshot, then update directly to the newer build |
+
+Any older build can update directly to any newer build; intermediate releases
+need not boot. When an earlier update is unfinished, the launcher restores its
+pre-update data before starting the newer release, which takes its own snapshot.
+The existing snapshot must be available for that restoration.
 
 The snapshot, `data.img.pre-<release_id>`, is an APFS clone, so it is instant
 and costs only the blocks that later diverge; a volume without clones refuses
