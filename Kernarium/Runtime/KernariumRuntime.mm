@@ -1640,131 +1640,154 @@ int runtimeRun(
             guestMemoryMiB,
             guestProcessorCount);
 
-        /* The host-visible shared-memory region belongs to the GPU backend,
-         * and the video decoder fills capture buffers that live in it, so
-         * both backends share one index of the ranges published there. */
-        auto sharedMemoryRegions =
-            std::make_shared<uml::virtio::SharedMemoryRegions>();
-        /* GPU memory is charged to the application like guest RAM: the GPU's
-         * budget is what the application's memory limit leaves after the
-         * guest, the gadget cache and the launch's allowances, at least 384 MiB
-         * and at most half of the guest's allocation. The application has
-         * already warned the user when the limit leaves less than the floor
-         * (runtimePlanGpuBudget); the guest boots with the floor. */
-        const auto gpuBudget = planGpuBudget(
-            boot, guestMemoryMiB, guestProcessorCount);
-        const std::uint64_t deviceMemoryLimit = gpuBudget.budget.bytes;
-        if (gpuBudget.budget.short_of_floor) {
-            std::fprintf(
-                stderr,
-                "Kernarium: %s\n",
-                uml::emulator::describe_gpu_budget_shortfall(gpuBudget)
-                    .c_str());
-        }
-#if UML_GPU_SOFTWARE_RENDERER
-        std::puts(
-            "Kernarium: no GPU budget: the software renderer holds no "
-            "device memory");
-#else
-        std::printf(
-            "Kernarium: GPU budget %llu MiB of a %llu MiB limit\n",
-            static_cast<unsigned long long>(deviceMemoryLimit >> 20),
-            static_cast<unsigned long long>(gpuBudget.process_limit >> 20));
-#endif
-        /* The display outlives the guest: the GPU service keeps the view and
-         * the frame mirror, and hands each boot its own connection. */
-        uml::gpu::InProcessGpuService gpuService(
-            uml::gpu::InProcessGpuOptions {
-                .displayMode = uml::gpu::DisplayMode::native,
-                .width = width,
-                .height = height,
-                .dotsPerInch = dotsPerInch,
-                .nativeView = (__bridge void*)view,
-                .autoResizeGuest = boot->auto_resize_guest != 0,
-                .sharedMemoryRegions = sharedMemoryRegions,
-                .deviceMemoryLimit = deviceMemoryLimit,
-            });
-        /* Discovery of the hardware encoder takes test encodes, so it starts
-         * now and the capability check at each boot finds it done or nearly. */
-        uml::platform::prepareVideoEncodeCapabilities();
         AppNetwork network;
         auto networkCallbacks = network.callbacks();
-#if !KERNARIUM_RUNTIME_ANDROID_GUEST
-#if KERNARIUM_AUTOMATION_HARNESS
-        const auto automation =
-            kernarium::harness::AutomationBoot::fromEnvironment(
-                kernarium::console::output().stdoutMutex());
-        if (automation)
-            std::fprintf(
-                stderr,
-                "Kernarium: automation boot with a %zu-byte payload and "
-                "target %s\n",
-                automation->payload().size(),
-                automation->systemdUnit().empty()
-                    ? "graphical.target"
-                    : automation->systemdUnit().c_str());
-        const RunInitrd initrd {
-            request.derivativeRootfs,
-            automation ? automation->payload()
-                       : std::span<const std::byte> {}};
-        request.automation = automation.get();
-        request.systemdUnit =
-            automation && !automation->systemdUnit().empty()
-            ? automation->systemdUnit()
-            : std::string {"graphical.target"};
-#else
-        const RunInitrd initrd {request.derivativeRootfs, {}};
-        request.systemdUnit = "graphical.target";
-#endif
-        request.initrdArgument = initrd.kernelArgument();
-#endif
-        /* Declared before the handle, so the handle is destroyed before the
-         * services of the last boot, as it always was. */
-        RestartableGuest guest {
-            std::move(request),
-            gpuService,
-            sharedMemoryRegions,
-            network};
-        const uml_emulator_config config {
-            .abi_version = UML_EMULATOR_ABI_VERSION,
-            .struct_size = sizeof(uml_emulator_config),
-#if KERNARIUM_RUNTIME_ANDROID_GUEST
-            .rootfs_path = nullptr,
-#else
-            .rootfs_path = rootfsPath,
-#endif
-            .kernel_image = uml_elf_start,
-            .kernel_image_size = static_cast<std::size_t>(
-                uml_elf_end - uml_elf_start),
-            .network = &networkCallbacks,
-        };
-        uml_emulator* created = nullptr;
-        const int createResult = uml_emulator_create(&config, &created);
-        if (createResult != UML_EMULATOR_OK) {
-            std::fprintf(
-                stderr, "Kernarium: emulator creation failed: %d\n",
-                createResult);
-            return createResult;
-        }
-        const std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)>
-            emulator {created, uml_emulator_destroy};
-        guest.attach(emulator.get());
-        /* The host devices, the GPU driver among them, start before the
-         * guest does; the footprint log times that stretch. */
-        if (FootprintReporter::enabled())
-            std::printf("Kernarium: emulator created %.1f ms after booting\n",
-                std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - bootingAt).count());
+        const auto destroy = &uml_emulator_destroy;
+        std::unique_ptr<uml_emulator, decltype(destroy)> emulator {nullptr, destroy};
         int result = 0;
         {
-            /* The handle and the GPU stay registered between boots: a sync
-             * flushes what the last guest left open, a hold is applied to the
-             * next guest's GPU, and a stop reaches the loop. */
-            ActiveEmulatorRegistration registration {emulator.get()};
-            ActiveGpuRegistration gpuRegistration {gpuService};
-            const FootprintReporter footprintReporter;
-            result = kernarium::restart::run(guest);
+            /* The host-visible shared-memory region belongs to the GPU backend,
+             * and the video decoder fills capture buffers that live in it, so
+             * both backends share one index of the ranges published there. */
+            auto sharedMemoryRegions =
+                std::make_shared<uml::virtio::SharedMemoryRegions>();
+            /* GPU memory is charged to the application like guest RAM: the GPU's
+             * budget is what the application's memory limit leaves after the
+             * guest, the gadget cache and the launch's allowances, at least 384 MiB
+             * and at most half of the guest's allocation. The application has
+             * already warned the user when the limit leaves less than the floor
+             * (runtimePlanGpuBudget); the guest boots with the floor. */
+            const auto gpuBudget = planGpuBudget(
+                boot, guestMemoryMiB, guestProcessorCount);
+            const std::uint64_t deviceMemoryLimit = gpuBudget.budget.bytes;
+            if (gpuBudget.budget.short_of_floor) {
+                std::fprintf(
+                    stderr,
+                    "Kernarium: %s\n",
+                    uml::emulator::describe_gpu_budget_shortfall(gpuBudget)
+                        .c_str());
+            }
+#if UML_GPU_SOFTWARE_RENDERER
+            std::puts(
+                "Kernarium: no GPU budget: the software renderer holds no "
+                "device memory");
+#else
+            std::printf(
+                "Kernarium: GPU budget %llu MiB of a %llu MiB limit\n",
+                static_cast<unsigned long long>(deviceMemoryLimit >> 20),
+                static_cast<unsigned long long>(gpuBudget.process_limit >> 20));
+#endif
+            /* The display outlives the guest: the GPU service keeps the view and
+             * the frame mirror, and hands each boot its own connection. */
+            uml::gpu::InProcessGpuService gpuService(
+                uml::gpu::InProcessGpuOptions {
+                    .displayMode = uml::gpu::DisplayMode::native,
+                    .width = width,
+                    .height = height,
+                    .dotsPerInch = dotsPerInch,
+                    .nativeView = (__bridge void*)view,
+                    .autoResizeGuest = boot->auto_resize_guest != 0,
+                    .sharedMemoryRegions = sharedMemoryRegions,
+                    .deviceMemoryLimit = deviceMemoryLimit,
+                });
+            /* Discovery of the hardware encoder takes test encodes, so it starts
+             * now and the capability check at each boot finds it done or nearly. */
+            uml::platform::prepareVideoEncodeCapabilities();
+#if !KERNARIUM_RUNTIME_ANDROID_GUEST
+#if KERNARIUM_AUTOMATION_HARNESS
+            const auto automation =
+                kernarium::harness::AutomationBoot::fromEnvironment(
+                    kernarium::console::output().stdoutMutex());
+            if (automation)
+                std::fprintf(
+                    stderr,
+                    "Kernarium: automation boot with a %zu-byte payload and "
+                    "target %s\n",
+                    automation->payload().size(),
+                    automation->systemdUnit().empty()
+                        ? "graphical.target"
+                        : automation->systemdUnit().c_str());
+            const RunInitrd initrd {
+                request.derivativeRootfs,
+                automation ? automation->payload()
+                           : std::span<const std::byte> {}};
+            request.automation = automation.get();
+            request.systemdUnit =
+                automation && !automation->systemdUnit().empty()
+                ? automation->systemdUnit()
+                : std::string {"graphical.target"};
+#else
+            const RunInitrd initrd {request.derivativeRootfs, {}};
+            request.systemdUnit = "graphical.target";
+#endif
+            request.initrdArgument = initrd.kernelArgument();
+#endif
+            /* Every boot's device services end before guest RAM is released. */
+            RestartableGuest guest {
+                std::move(request),
+                gpuService,
+                sharedMemoryRegions,
+                network};
+            const uml_emulator_config config {
+                .abi_version = UML_EMULATOR_ABI_VERSION,
+                .struct_size = sizeof(uml_emulator_config),
+#if KERNARIUM_RUNTIME_ANDROID_GUEST
+                .rootfs_path = nullptr,
+#else
+                .rootfs_path = rootfsPath,
+#endif
+                .kernel_image = uml_elf_start,
+                .kernel_image_size = static_cast<std::size_t>(
+                    uml_elf_end - uml_elf_start),
+                .network = &networkCallbacks,
+            };
+            uml_emulator* created = nullptr;
+            const int createResult = uml_emulator_create(&config, &created);
+            if (createResult != UML_EMULATOR_OK) {
+                std::fprintf(
+                    stderr, "Kernarium: emulator creation failed: %d\n",
+                    createResult);
+                return createResult;
+            }
+            emulator.reset(created);
+            guest.attach(emulator.get());
+            /* The host devices, the GPU driver among them, start before the
+             * guest does; the footprint log times that stretch. */
+            if (FootprintReporter::enabled())
+                std::printf("Kernarium: emulator created %.1f ms after booting\n",
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - bootingAt).count());
+            {
+                /* The handle and the GPU stay registered between boots: a sync
+                 * flushes what the last guest left open, a hold is applied to the
+                 * next guest's GPU, and a stop reaches the loop. */
+                ActiveEmulatorRegistration registration {emulator.get()};
+                ActiveGpuRegistration gpuRegistration {gpuService};
+                const FootprintReporter footprintReporter;
+                result = kernarium::restart::run(guest);
+            }
         }
+#if KERNARIUM_RUNTIME_ANDROID_GUEST
+        // Only Android's own clean power-off may return a reusable process.
+        if (result == 0) {
+            uml_emulator_run_end end {.struct_size = sizeof(end)};
+            if (uml_emulator_get_run_end(emulator.get(), &end) != UML_EMULATOR_OK ||
+                end.kind != UML_EMULATOR_RUN_END_POWER_OFF) {
+                result = -UML_EMULATOR_RUNTIME_ERROR;
+            } else {
+                result = uml_emulator_release_guest(emulator.get());
+                for (unsigned attempt = 0;
+                     result == -UML_EMULATOR_RUNTIME_ERROR &&
+                     attempt < uml::emulator::restart_run_retries; ++attempt) {
+                    std::this_thread::sleep_for(uml::emulator::restart_run_retry_delay);
+                    result = uml_emulator_release_guest(emulator.get());
+                }
+                if (result != 0)
+                    std::fprintf(stderr,
+                        "Kernarium: clean shutdown could not release the guest: %d\n", result);
+            }
+        }
+#endif
         std::printf("Kernarium: guest exited with status %d\n", result);
         return result;
     } catch (const std::exception& error) {
@@ -2195,7 +2218,7 @@ kernarium_runtime_automation_hold_delay_ms(void)
 }
 #endif
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v21(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v22(void)
 {
     return &runtimeApi;
 }

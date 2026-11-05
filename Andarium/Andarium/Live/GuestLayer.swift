@@ -32,7 +32,7 @@ struct GuestLayer: View {
     private var showsGuest: Bool {
         switch model.phase {
         case .booting, .running: true
-        case .home, .poweredOff, .failed: false
+        case .home, .failed: false
         }
     }
 }

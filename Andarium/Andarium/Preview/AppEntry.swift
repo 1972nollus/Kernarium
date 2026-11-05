@@ -163,7 +163,7 @@ struct AppEntry {
             model.sessionPreset = SessionPreset(keysOpen: screen == "recovery-open")
             model.phase = .running(.recovery)
         case "off":
-            model.phase = .poweredOff
+            model.powerOff()
         case "failed":
             model.phase = .failed
         default:

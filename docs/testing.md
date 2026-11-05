@@ -862,7 +862,13 @@ viewport crossings, the ten-contact limit and releasing all contacts. The host
 lifetimes and wraparound, and legacy primary-finger coordinates. Its
 `UpdateFlowTests` drive
 the update, interrupted-update (Start retries, Restore, Erase) and blocked-start flows
-against a stub runtime, and its `AndroidOperationTests` and
+against a stub runtime, including a clean shutdown returning Home with a fresh
+session and a failed run refusing another Start. `ShutdownFlowTests` runs the
+production views and runtime with `TEST_RUNNER_ANDARIUM_SHUTDOWN_TESTS=1` and
+`TEST_RUNNER_ANDARIUM_GUEST_INSTANCE=shutdown-flow`, without `ANDARIUM_START`:
+two clean power-offs each return Home, three boots reuse the app process, and a
+host-stopped third run stays failed until relaunch. It deletes only that isolated
+test guest. Its `AndroidOperationTests` and
 `AdbOverNetworkModelTests` play Create Bug Report, Install App and ADB over
 Network the same way. `AdbOverVsockTests` drive a real Android guest with the
 application's own client and authorization on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1`

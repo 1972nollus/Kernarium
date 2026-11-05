@@ -38,11 +38,13 @@ state, and copied network callback table. A handle admits at most one run at a
 time. Stop requests affect only that handle's current or queued run and are not
 carried into later runs.
 
-A process runs one guest, and that guest may restart itself. After a run's
-kernel has claimed guest RAM, every later run in the process, on any handle,
-returns `UML_EMULATOR_UNSUPPORTED` without entering a kernel, except the next
-run on the handle whose last run ended with a restart: that run hands the guest
-back to the process and boots again (`runtime/guest_hand_back`). A run says how
+A process runs one guest at a time. After a kernel has claimed guest RAM,
+a later run is refused until that guest has been handed back
+(`runtime/guest_hand_back`). The next run on a handle whose guest restarted
+hands it back automatically. After a clean power-off or halt, the owning handle
+can instead call `uml_emulator_release_guest`, then this or a fresh handle can
+boot again. A failed or host-stopped guest cannot be released and requires a
+fresh process. A run says how
 its guest ended through `uml_emulator_get_run_end`: the guest's own report (see
 [guest lifecycle](#guest-lifecycle)), the host's stop request ahead of it, and a
 failure when the kernel said nothing. The hand-back refuses with `UML_EMULATOR_RUNTIME_ERROR` while a host service
@@ -474,9 +476,9 @@ same mainline tree with the Android configuration.
 Kernarium and Andarium are iOS products. The device slice also runs on an Apple
 silicon Mac, and the Simulator has a UI-test variant with the CPU-rendering
 GPU prefix that [`graphics.md`](graphics.md) describes, because the Simulator
-has no Metal 4 device for KosmicKrisp. The application,
-including its one run per launch, is described in
-[`../Kernarium/README.md`](../Kernarium/README.md).
+has no Metal 4 device for KosmicKrisp. Their run and shutdown policies are
+described in [`../Kernarium/README.md`](../Kernarium/README.md) and
+[`../Andarium/README.md`](../Andarium/README.md).
 
 ## CPU execution and scheduling
 
@@ -1459,6 +1461,10 @@ recording fake. What differs from the launchers:
   a kernel (the vCPU throttle, the page-cache trimming) to the new one. The
   console probe sends the application's last trimming request, so it never
   undoes one, and gives up after 120 s with the event marked unanswered.
+- After Android powers off cleanly, the runtime stops all device services,
+  releases the guest through `uml_emulator_release_guest`, and returns success
+  only once another run can start. A host stop or cleanup failure returns an
+  error, keeping Andarium on its relaunch-required screen.
 - A hibernation needs nothing here: the hand-back drops the handle's
   suspension and hibernation image with the rest of the guest's state, and a
   quiesce asked of an idle handle only flushes.

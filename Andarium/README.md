@@ -41,7 +41,7 @@ embeds the Android runtime frameworks and carries the system image; Kernarium
 stays beside it on a device. It has no background mode: the guest runs while
 Andarium is in the foreground and is paused when it leaves, and iOS ending a
 paused Andarium shows a notice on the next launch. It runs one scene, because
-the runtime boots one guest per process, and needs the increased memory limit
+the runtime runs one guest at a time, and needs the increased memory limit
 and extended virtual addressing entitlements.
 
 `AndariumPreview` is a Simulator-only target built from `Shared` and
@@ -260,8 +260,10 @@ several GiB.
 
 The device application drives the Android runtime through the same loader as
 Kernarium. A run starts when the guest's display has its size and the disk is
-ready, on a thread of its own, and lasts the launch: Android's power-off ends
-it, and starting again means opening Andarium again. The boot screen follows
+ready, on a thread of its own. Android's clean power-off stops the device
+services and releases the kernel's resources and guest RAM, then returns to Home;
+Start can boot again in the same app process. An unclean shutdown, a host stop,
+or cleanup that fails keeps the failure screen and requires reopening Andarium. The boot screen follows
 the guest's console for its milestones (the kernel, Android's init, its
 graphics service and `sys.boot_completed`, or Recovery's service) until the
 runtime reports boot events.

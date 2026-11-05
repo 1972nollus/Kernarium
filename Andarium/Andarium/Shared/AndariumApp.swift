@@ -21,7 +21,7 @@ struct AndariumApp: App {
     }
 }
 
-/// A launch moves forward only: home, one boot, its run, and how it ended.
+/// Clean power-off returns to Home; a failed run waits for a fresh process.
 struct RootView: View {
     @Environment(AppModel.self) private var model
     let entry: AppEntry
@@ -41,10 +41,8 @@ struct RootView: View {
                         .id(kind)
                 case .running(let mode):
                     SessionView(mode: mode)
-                case .poweredOff:
-                    EndView(failure: false)
                 case .failed:
-                    EndView(failure: true)
+                    EndView()
                 }
             }
             .transition(.opacity)

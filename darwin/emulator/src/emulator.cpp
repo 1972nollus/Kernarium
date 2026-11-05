@@ -356,6 +356,22 @@ public:
 	Emulator(const Emulator &) = delete;
 	Emulator &operator=(const Emulator &) = delete;
 
+	[[nodiscard]] int release_guest()
+	{
+		ProcessAddressSpaceAdmission process_admission;
+		::uml::runtime::RunScope run_scope{runtime_};
+		if (!run_scope.entered())
+			return -UML_EMULATOR_RUNTIME_ERROR;
+		if (!power_off_pending_)
+			return -UML_EMULATOR_UNSUPPORTED;
+		if (!process_admission.enter(runtime_))
+			return -UML_EMULATOR_RUNTIME_ERROR;
+		const int result = hand_back_guest();
+		if (result == 0)
+			power_off_pending_ = false;
+		return result;
+	}
+
 	[[nodiscard]] int run(int argc, const char *const argv[],
 			      const char *const envp[])
 	{
@@ -804,6 +820,8 @@ private:
 			end.kind = UML_EMULATOR_RUN_END_POWER_OFF;
 		}
 		restartable_ = end.kind == UML_EMULATOR_RUN_END_RESTART;
+		power_off_pending_ = end.kind == UML_EMULATOR_RUN_END_POWER_OFF &&
+			::uml::runtime::process_guest_spent();
 		std::lock_guard lock{run_end_mutex_};
 		run_end_ = end;
 	}
@@ -923,6 +941,10 @@ private:
 	 * the process when the handle runs again. Only the handle's one run at a
 	 * time reads or writes it. */
 	bool restartable_{};
+	/* Only the handle that owns a cleanly powered-off guest can release it.
+	 * Clearing this on success prevents an old handle from releasing a later
+	 * guest belonging to another handle. */
+	bool power_off_pending_{};
 	/* How the handle's most recent run ended, for uml_emulator_get_run_end. */
 	mutable std::mutex run_end_mutex_;
 	uml_emulator_run_end run_end_ {
@@ -1032,6 +1054,17 @@ extern "C" int uml_emulator_get_run_end(const uml_emulator *emulator,
 		return -UML_EMULATOR_INVALID_ARGUMENT;
 	*end = emulator->implementation.run_end();
 	return UML_EMULATOR_OK;
+}
+
+extern "C" int uml_emulator_release_guest(uml_emulator *emulator)
+{
+	if (emulator == nullptr)
+		return -UML_EMULATOR_INVALID_ARGUMENT;
+	try {
+		return emulator->implementation.release_guest();
+	} catch (...) {
+		return -UML_EMULATOR_RUNTIME_ERROR;
+	}
 }
 
 extern "C" void uml_emulator_request_stop(uml_emulator *emulator)

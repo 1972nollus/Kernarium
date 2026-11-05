@@ -662,6 +662,7 @@ final class AppModel {
         case .needsNewerChip:
             alert = AppAlert(title: DeviceRequirement.title, message: DeviceRequirement.explanation(deviceName: host.name))
         case .noGuest: break
+        case .relaunchRequired: break
         }
     }
 
@@ -682,8 +683,7 @@ final class AppModel {
     }
 
     func powerOff() {
-        runEnd = RunEnd(result: 0)
-        lifecycle.powerOff()
+        runEnded(RunEnd(result: 0), uptimeSeconds: nil)
     }
 
     func fail(_ end: RunEnd = RunEnd(result: -11), uptimeSeconds: Int? = 2530) {
@@ -699,6 +699,14 @@ final class AppModel {
         endAdbOverNetwork()
         runEnd = end
         runUptimeSeconds = uptimeSeconds
+        if end.poweredOff {
+            sheet = nil
+            startMenu = false
+            sessionPreset = SessionPreset()
+            let showStats = session.showStats
+            session = SessionState()
+            session.showStats = showStats
+        }
         lifecycle.phase = end.phase
         persistNow()
         refreshPlan()

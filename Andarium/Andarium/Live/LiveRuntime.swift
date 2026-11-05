@@ -33,7 +33,7 @@ private struct PendingRun {
 }
 
 /// The device application behind the screens: the guest's storage, and the
-/// runtime that runs it. One run is made per launch, on a thread of its own,
+/// runtime that runs it. Each run has a thread of its own,
 /// into the display view the screens keep alive.
 @MainActor
 final class LiveRuntime: RuntimeDriver {
@@ -108,6 +108,10 @@ final class LiveRuntime: RuntimeDriver {
     }
 
     func begin(guest: Guest, mode: StartMode, kind: BootKind) {
+        // The previous display is removed on return to Home. Wait for the
+        // new boot's view to lay out before starting another runtime.
+        view = nil
+        geometry = nil
         pending = PendingRun(guest: guest, mode: mode, kind: kind)
         launching = false
         startIfReady()
@@ -336,6 +340,9 @@ final class LiveRuntime: RuntimeDriver {
         kernarium_runtime_loader_set_console_output_handler(nil)
         console = nil
         pause.guestDidEnd()
+        view = nil
+        geometry = nil
+        launching = false
         UIApplication.shared.isIdleTimerDisabled = false
         print(ConsoleReport.runtimeReturned(result))
         // A start that reached sys.boot_completed and ended with Android's own
@@ -344,6 +351,7 @@ final class LiveRuntime: RuntimeDriver {
             do { try storage.completeRun() } catch { print("Andarium: the guest's record was not updated: \(error.localizedDescription)") }
         }
         let uptime = runStartedAt.map { Int(Date().timeIntervalSince($0)) }
+        runStartedAt = nil
         let loop = result == Int32(KERNARIUM_RUNTIME_RESULT_RESTART_LOOP)
         model?.runEnded(RunEnd(result: result, restartedInALoop: loop), uptimeSeconds: uptime)
     }

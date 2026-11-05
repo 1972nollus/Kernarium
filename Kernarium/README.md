@@ -43,7 +43,7 @@ and graphics dSYMs in each XCFramework, and archives collect them alongside
 the application's symbols. The device-only embed script also copies
 KosmicKrisp's dSYM into the archive's symbols directory.
 
-The library runs one guest per process, so a launch makes one run. A guest that
+Kernarium makes one run per launch. A guest that
 restarts itself (a reboot, `adb reboot`, a recovery or bootloader round trip) is
 booted again inside that run, in the same process, and the run returns only when
 the guest is over: it powered off, the user stopped it, a boot failed, or it

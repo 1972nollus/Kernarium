@@ -152,15 +152,27 @@ struct LifecycleTests {
         life.restart()
         #expect(life.phase == .booting(.restart))
         life.powerOff()
-        #expect(life.phase == .poweredOff)
+        #expect(life.phase == .home)
         life.fail()
         #expect(life.phase == .failed)
     }
 
     @Test func aRunEndFollowsTheRuntimeResult() {
-        #expect(RunEnd(result: 0).phase == .poweredOff)
+        #expect(RunEnd(result: 0).phase == .home)
         #expect(RunEnd(result: -5).phase == .failed)
         #expect(RunEnd(result: 0, restartedInALoop: true).phase == .failed)
+    }
+
+    @Test func cleanPowerOffAllowsAnotherStartAndFailureRequiresRelaunch() {
+        var life = Lifecycle(guest: Guest.fresh(on: ipad))
+        #expect(life.start(.normal, host: ipad) == .allowed(.normal))
+        life.finishBoot(.normal)
+        life.powerOff()
+        #expect(life.phase == .home)
+        #expect(life.start(.recovery, host: ipad) == .allowed(.recovery))
+        life.fail()
+        #expect(life.start(.normal, host: ipad) == .relaunchRequired)
+        #expect(life.phase == .failed)
     }
 
     @Test func theFailureReportNamesTheBuildAndTheEnd() {

@@ -157,7 +157,9 @@ int uml_emulator_get_capabilities(const struct uml_emulator *emulator,
  * or enters a kernel, except the next run on the handle whose last run ended
  * with UML_EMULATOR_RUN_END_RESTART (uml_emulator_get_run_end): that run first
  * hands the guest back to the process and then boots it again. A power-off, a
- * stop and any other end leave the guest spent. A run that ends before its
+ * stop and any other end leave the guest spent. After a clean power-off,
+ * uml_emulator_release_guest can return it to the process explicitly.
+ * A run that ends before its
  * kernel claims guest RAM, such as one refused for its arguments or cancelled
  * while queued, leaves the process's guest unspent.
  *
@@ -196,6 +198,16 @@ int uml_emulator_run(struct uml_emulator *emulator, int argc,
  * null handle or output, or a struct_size smaller than the structure. */
 int uml_emulator_get_run_end(const struct uml_emulator *emulator,
 			     struct uml_emulator_run_end *end);
+/* Releases the guest owned by this idle handle after its own clean power-off
+ * (including halt). Stop all device services that borrow guest RAM first.
+ * Returns 0 once the kernel resources and guest RAM have been returned, so
+ * this or another handle can boot again. Does not change the recorded run end.
+ * A failed or host-stopped guest cannot be released. Returns
+ * -UML_EMULATOR_UNSUPPORTED when no cleanly powered-off guest is owned, and
+ * -UML_EMULATOR_RUNTIME_ERROR while the handle is running, a service borrows
+ * its RAM, or a kernel thread still runs. A refused release may be retried
+ * after those services and threads stop. */
+int uml_emulator_release_guest(struct uml_emulator *emulator);
 /* This and uml_emulator_sync are the operations intended to overlap
  * uml_emulator_run on the same handle. A stop request made while idle is not
  * inherited by a later run. A request made while a run is queued at process

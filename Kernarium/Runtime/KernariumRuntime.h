@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 21U
+#define KERNARIUM_RUNTIME_API_VERSION 22U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -116,7 +116,9 @@ typedef struct kernarium_runtime_gpu_budget {
  * fails, or the guest restarts itself again and again within seconds of
  * booting. It returns the guest's own status (0 for a power-off or a stop), a
  * negated uml_emulator error constant for a run or start-up that failed, or
- * KERNARIUM_RUNTIME_RESULT_RESTART_LOOP. */
+ * KERNARIUM_RUNTIME_RESULT_RESTART_LOOP. For Android, 0 means the guest powered
+ * off cleanly and all its resources have been released: another run may start
+ * in this process. A host stop or an unreported shutdown returns an error. */
 typedef int (*kernarium_runtime_run_function)(
     KernariumMetalView view,
     const kernarium_runtime_boot* boot);
@@ -400,7 +402,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v21(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v22(void);
 
 /* An automation-only extension, outside the versioned table: only a runtime
  * built for automation exports this symbol, and the application looks it up
