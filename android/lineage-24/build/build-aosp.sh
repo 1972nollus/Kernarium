@@ -372,6 +372,10 @@ done
 [[ "$(get_build_var TRUSTY_SYSTEM_VM)" == disabled ]] ||
 	fail "TRUSTY_SYSTEM_VM must be disabled for the UML guest"
 PRODUCT_PACKAGES=" $(get_build_var PRODUCT_PACKAGES) "
+[[ "$PRODUCT_PACKAGES" == *" android.hardware.sensors-service.multihal "* ]] ||
+	fail "the Android motion sensor service is absent"
+[[ "$PRODUCT_PACKAGES" == *" android.hardware.sensors@2.1-impl.andarium "* ]] ||
+	fail "the Andarium motion sensor backend is absent"
 for package in \
 	android.hardware.health-service.example \
 	android.hardware.health-service.example_recovery \
@@ -557,7 +561,6 @@ for package in \
 done
 for package in \
 	ThreadNetworkDemoApp \
-	android.hardware.sensors-service.multihal \
 	android.hardware.sensors@2.1-impl.cuttlefish \
 	com.android.hardware.neuralnetworks \
 	com.android.hardware.threadnetwork \

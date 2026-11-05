@@ -4082,6 +4082,8 @@ def verify_package_assertions(android_root: Path) -> None:
     for package in sorted(present & removed):
         fail(f"build-aosp.sh asserts {package} is present, but the product removes it")
     for package in (
+        "android.hardware.sensors-service.multihal",
+        "android.hardware.sensors@2.1-impl.andarium",
         "com.android.hardware.thermal",
         "com.android.hardware.cas",
         "libclearkeycasplugin",
