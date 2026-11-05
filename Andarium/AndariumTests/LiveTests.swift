@@ -121,6 +121,36 @@ struct HostDeviceTests {
     }
 }
 
+@MainActor
+struct RuntimeDisplayLifetimeTests {
+    @Test func homeDoesNotRetainALayoutFromTheRetiredDisplay() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let systemDirectory = try #require(Bundle.main.resourceURL).appendingPathComponent(SystemFolder.name)
+        let release = try SystemFolder.release(in: systemDirectory)
+        let storage = TwoDiskStorage(
+            locations: GuestLocations(directory: directory), release: release.identity, releaseDirectory: systemDirectory
+        )
+        let model = AppModel(
+            guest: nil, host: AppEntry.hostDevice(),
+            system: SystemInfo(version: "17", release: "test", kernel: "Linux", architecture: "arm64", appVersion: "1"),
+            capabilities: .device, createRequirementBytes: storage.createRequirementBytes, systemBytes: release.systemDiskBytes
+        )
+        let runtime = LiveRuntime(model: model, storage: storage, marker: PauseMarker(url: directory.appendingPathComponent("pause.json")))
+        weak var display: GuestMetalView?
+        autoreleasepool {
+            let view = GuestMetalView(frame: .zero, device: nil)
+            display = view
+        }
+        #expect(display == nil)
+        autoreleasepool {
+            let view = GuestMetalView(frame: .zero, device: nil)
+            display = view
+            runtime.viewDidLayout(view, GuestDisplayGeometry(pixelSize: CGSize(width: 100, height: 100), dotsPerInch: 160))
+        }
+        #expect(display == nil, "A late layout must not retain a display while the guest is off")
+    }
+}
+
 /// The system Andarium carries, written the way Create writes it: decoded
 /// sparse from the bundled archive and grown to the guest's size. It is the
 /// one test that reads the real archive, so it takes tens of seconds.

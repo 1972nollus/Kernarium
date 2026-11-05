@@ -868,7 +868,23 @@ production views and runtime with `TEST_RUNNER_ANDARIUM_SHUTDOWN_TESTS=1` and
 `TEST_RUNNER_ANDARIUM_GUEST_INSTANCE=shutdown-flow`, without `ANDARIUM_START`:
 two clean power-offs each return Home, three boots reuse the app process, and a
 host-stopped third run stays failed until relaunch. It deletes only that isolated
-test guest. Its `AndroidOperationTests` and
+test guest.
+
+Run `ShutdownFlowTests/cleanShutdownMemorySnapshots()` alone with
+`TEST_RUNNER_ANDARIUM_MEMORY_SNAPSHOTS=1` and the same isolated guest setting,
+without `ANDARIUM_START`, for five clean boot/power-off cycles. It saves allocation
+totals, thread names and VM-region metadata (no memory contents) to the app's
+`tmp/ShutdownMemory/` before boot, while running, and immediately and ten seconds
+after each return Home. Each settled snapshot requires zero wired memory and
+zero dirty or swapped pages in the guest-domain and scratch heaps; the retired
+guest display must also deallocate. The initial thirty-second pause allows
+Instruments Allocations and VM Tracker to attach. Collect the snapshots from the
+app container afterward. Compare live allocations across cycles: the runtime's
+address reservations, signed code, framework caches and malloc's freed capacity
+may remain in the process. `RuntimeDisplayLifetimeTests` also checks that a late
+layout cannot retain a retired display while Home is showing.
+
+Its `AndroidOperationTests` and
 `AdbOverNetworkModelTests` play Create Bug Report, Install App and ADB over
 Network the same way. `AdbOverVsockTests` drive a real Android guest with the
 application's own client and authorization on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1`

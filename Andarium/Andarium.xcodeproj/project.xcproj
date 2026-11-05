@@ -171,7 +171,7 @@
         "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD": "YES",
         "SWIFT_APPROACHABLE_CONCURRENCY": "YES",
         "SWIFT_DEFAULT_ACTOR_ISOLATION": "MainActor",
-        "SWIFT_OBJC_BRIDGING_HEADER": "Config/Andarium-Bridging-Header.h",
+        "SWIFT_OBJC_BRIDGING_HEADER": "AndariumTests/AndariumTests-Bridging-Header.h",
         "SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY": "YES",
         "SWIFT_VERSION": "5.0",
         "TARGETED_DEVICE_FAMILY": "1,2",

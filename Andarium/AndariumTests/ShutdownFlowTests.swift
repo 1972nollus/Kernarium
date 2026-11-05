@@ -14,6 +14,16 @@ struct ShutdownFlowTests {
     @Test(.timeLimit(.minutes(20)))
     func cleanPowerOffReturnsHomeAndAnUncleanEndRequiresRelaunch() async throws {
         guard ProcessInfo.processInfo.environment["ANDARIUM_SHUTDOWN_TESTS"] == "1" else { return }
+        try await exercise(boots: 3, memorySnapshots: false)
+    }
+
+    @Test(.timeLimit(.minutes(20)))
+    func cleanShutdownMemorySnapshots() async throws {
+        guard ProcessInfo.processInfo.environment["ANDARIUM_MEMORY_SNAPSHOTS"] == "1" else { return }
+        try await exercise(boots: 5, memorySnapshots: true)
+    }
+
+    private func exercise(boots: Int, memorySnapshots: Bool) async throws {
         #expect(ProcessInfo.processInfo.environment["ANDARIUM_START"] == nil)
         try #require(ProcessInfo.processInfo.environment["ANDARIUM_GUEST_INSTANCE"] == "shutdown-flow")
         let directory = AppEntry.guestDirectory(instance: "shutdown-flow")
@@ -39,7 +49,14 @@ struct ShutdownFlowTests {
 
         let identity = try AdbKeyStore().loadOrCreate()
         let operations = AdbGuestOperations(identity: identity, clock: GuestRunClock(), device: "device")
-        for boot in 1...3 {
+        weak var display: GuestMetalView?
+        if memorySnapshots {
+            // Allow Instruments to attach before the first boot.
+            print("ANDROID_MEMORY: ready for Instruments")
+            try await Task.sleep(for: .seconds(30))
+            try memorySnapshot("before-boot")
+        }
+        for boot in 1...boots {
             model.start(.normal)
             let bootDeadline = ContinuousClock.now + .seconds(5 * 60)
             var ready = false
@@ -53,9 +70,13 @@ struct ShutdownFlowTests {
                 try await Task.sleep(for: .seconds(2))
             }
             try #require(ready, "Boot \(boot) did not reach Android: \(model.runReport)")
+            display = guestDisplay(in: window)
+            let displayWasCreated = display != nil
+            try #require(displayWasCreated)
             print("ANDROID_SHUTDOWN: boot \(boot) reached Android in the same app process")
+            if memorySnapshots { try memorySnapshot("running-\(boot)") }
             let expected: Phase
-            if boot < 3 {
+            if memorySnapshots || boot < boots {
                 expected = .home
                 _ = try? await operations.shell("reboot -p", limit: .seconds(30))
             } else {
@@ -68,14 +89,51 @@ struct ShutdownFlowTests {
             }
             try #require(model.phase == expected, "Boot \(boot) ended at \(model.phase): \(model.runReport)")
             print("ANDROID_SHUTDOWN: boot \(boot) ended at \(model.phase)")
-            if boot < 3 {
+            if memorySnapshots || boot < boots {
                 #expect(model.runEnd.poweredOff)
                 #expect(model.plan == .normal)
+                if memorySnapshots {
+                    try memorySnapshot("home-\(boot)-immediate")
+                    try await Task.sleep(for: .seconds(10))
+                    #expect(display == nil, "The retired guest display must be released at Home")
+                    try memorySnapshot("home-\(boot)-settled")
+                }
             } else {
                 #expect(!model.runEnd.poweredOff)
                 model.start(.normal)
                 #expect(model.phase == .failed)
             }
         }
+    }
+
+    private func memorySnapshot(_ label: String) throws {
+        try autoreleasepool {
+            var snapshot = andarium_test_memory_snapshot()
+            snapshot["label"] = label
+            snapshot["time"] = Date().timeIntervalSince1970
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ShutdownMemory")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let data = try JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys])
+            try data.write(to: directory.appendingPathComponent("\(label).json"), options: .atomic)
+            let fields = ["footprint", "wired", "malloc_in_use", "malloc_allocated", "heap_dirty", "scratch_dirty", "graphics"]
+            let figures = fields.map { "\($0)=\(snapshot[$0] ?? "?")" }.joined(separator: " ")
+            print("ANDROID_MEMORY: \(label) \(figures)")
+            #expect((snapshot["task_info_result"] as? NSNumber)?.intValue == 0)
+            #expect((snapshot["thread_info_result"] as? NSNumber)?.intValue == 0)
+            #expect((snapshot["vm_walk_result"] as? NSNumber)?.int32Value == KERN_INVALID_ADDRESS)
+            if label.hasSuffix("settled") {
+                #expect((snapshot["heap_dirty"] as? NSNumber)?.uint64Value == 0)
+                #expect((snapshot["scratch_dirty"] as? NSNumber)?.uint64Value == 0)
+                #expect((snapshot["wired"] as? NSNumber)?.uint64Value == 0)
+            }
+        }
+    }
+
+    private func guestDisplay(in view: UIView) -> GuestMetalView? {
+        if let display = view as? GuestMetalView { return display }
+        for child in view.subviews {
+            if let display = guestDisplay(in: child) { return display }
+        }
+        return nil
     }
 }

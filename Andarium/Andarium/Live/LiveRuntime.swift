@@ -120,6 +120,9 @@ final class LiveRuntime: RuntimeDriver {
     /// The display view has a size. The first layout after a run is wanted
     /// starts it.
     func viewDidLayout(_ view: GuestMetalView, _ geometry: GuestDisplayGeometry) {
+        // Removing the guest screen can lay it out once more. A completed
+        // run must not take ownership of that retired view again.
+        guard pending != nil || launching else { return }
         self.view = view
         self.geometry = geometry
         startIfReady()
@@ -337,6 +340,7 @@ final class LiveRuntime: RuntimeDriver {
 
     private func finished(result: Int32) {
         stopThermalObservation()
+        kernarium_runtime_loader_set_restart_handler(nil)
         kernarium_runtime_loader_set_console_output_handler(nil)
         console = nil
         pause.guestDidEnd()
