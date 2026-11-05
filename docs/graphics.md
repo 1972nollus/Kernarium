@@ -44,7 +44,9 @@ prefix and the accepted kernel descriptors. Desktop GL 4.6 needs
 vhost-user shared-memory aperture of the shared kernel series.
 
 The GPU transport thread owns renderer creation, context use, reset, and
-teardown. AppKit and UIKit share the Metal presentation layer. VNC is a macOS
+teardown. Renderer cleanup frees its external EGL display wrapper even when
+GBM is disabled; the host retains ownership of the shared display itself.
+AppKit and UIKit share the Metal presentation layer. VNC is a macOS
 consumer of the same renderer and is intended for diagnostics and remote
 display, not as a second graphics backend. With no connected VNC client, a
 native Metal scanout's flushes retire without any GPU-to-CPU readback; a
