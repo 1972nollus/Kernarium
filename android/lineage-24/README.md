@@ -1395,12 +1395,16 @@ OS filesystems (`/system`, `/system_ext`, `/product`, `/vendor` and `/odm`).
 `StorageStatsManager` uses that total and keeps its filesystem-available plus
 reclaimable-cache calculation for free space. Settings derives its used space
 and System category from those consistent byte counts. The `frameworks/base`
-storage topic in route `p0007` owns this policy; Settings adds no display bounds.
+storage topic in route `p0007` owns this policy; the framework fix leaves Settings'
+display calculations unchanged.
 
 Retail capacity rounding does not apply to these virtual disks: it can report
 less than the data filesystem contains, making the System category negative,
 or inflate the total to the next advertised capacity. The configured sparse
 disk capacity is independent of the Apple host's currently available storage.
+Settings still imposes an upstream 1 GiB minimum on Temporary system files, so its
+category sizes can sum to more than the displayed total used; exact filesystem
+accounting does not remove that separate Settings calculation.
 
 ## Guest instance storage
 

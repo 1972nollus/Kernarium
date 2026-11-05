@@ -885,6 +885,12 @@ before running only that method. It installs the APK through the application's
 client, runs `StorageAccountingTest#exactFilesystemBytes`,
 which checks both primary-storage helpers and `StorageStatsManager` against the
 mounted filesystem sizes, removes the APK and powers Android off cleanly.
+With the same ADB, storage and normal-start settings,
+`AdbOverVsockTests/storageSettingsShowNonnegativeUsage()` opens Android's internal
+Storage settings, waits for the summary, checks for negative displayed values
+while scrolling through the category rows, saves PNG screenshots and UI hierarchies
+to the application's `tmp/StorageSettings/`, and powers Android off. Run this method
+alone and collect that directory from the app container afterward.
 
 With `TEST_RUNNER_ANDARIUM_ADB_NET_HOLD_SECONDS` one more test holds the bridge up for
 a real adb on the Mac. A Mac launch of the guest
