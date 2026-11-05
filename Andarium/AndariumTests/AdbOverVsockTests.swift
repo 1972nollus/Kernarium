@@ -78,6 +78,45 @@ struct AdbOverVsockTests {
         }
     }
 
+    /// A standalone storage gate: the Android framework test APK is copied
+    /// to tmp first. This opt-in run installs it, checks the public APIs,
+    /// removes it and powers Android off so an update can finish cleanly.
+    @Test(.timeLimit(.minutes(20)))
+    func androidReportsExactStorageSizes() async throws {
+        guard Self.enabled,
+            ProcessInfo.processInfo.environment["ANDARIUM_STORAGE_TESTS"] == "1"
+        else { return }
+        let apk = FileManager.default.temporaryDirectory.appendingPathComponent("AndariumStorageTests.apk")
+        defer { try? FileManager.default.removeItem(at: apk) }
+        let bytes = try #require(try apk.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        do {
+            try await operations.installApk(at: apk, sizeBytes: bytes) { _ in }
+            let result = try await operations.shell(
+                "am instrument -w -e class com.android.frameworks.andariumstorage.StorageAccountingTest#exactFilesystemBytes com.android.frameworks.andariumstorage.tests/androidx.test.runner.AndroidJUnitRunner",
+                limit: .seconds(180))
+            print("ANDROID_STORAGE: \(result.text)")
+            #expect(result.exitCode == 0)
+            #expect(result.text.contains("OK (1 test)"), "\(result.text)")
+            #expect(result.text.contains("INSTRUMENTATION_CODE: -1"), "\(result.text)")
+        } catch {
+            _ = try? await operations.shell("pm uninstall com.android.frameworks.andariumstorage.tests")
+            throw error
+        }
+        let removed = try await operations.shell("pm uninstall com.android.frameworks.andariumstorage.tests")
+        #expect(removed.text.contains("Success"), "\(removed.text)")
+        let files = InstanceFiles(directory: AppEntry.guestDirectory())
+        let before = try files.readState()?.lastCompleted?.at
+        _ = try? await operations.shell("reboot -p", limit: .seconds(30))
+        let deadline = ContinuousClock.now + .seconds(90)
+        while ContinuousClock.now < deadline {
+            if try files.readState()?.lastCompleted?.at != before { return }
+            try await Task.sleep(for: .seconds(1))
+        }
+        Issue.record("Android did not finish its clean shutdown")
+    }
+
     @Test(.timeLimit(.minutes(20)))
     func twoRuntimeContactsReachAndroidInputReader() async throws {
         guard Self.enabled else { return }

@@ -1387,6 +1387,21 @@ The second architecture adds a variant to nearly every module, so the first
 multilib release is built in a fresh output directory, never over the 64-bit-only
 one; that output is a superseded build once the multilib release is accepted.
 
+## Storage accounting
+
+The framework reports exact filesystem bytes for the static virtual disks.
+`StorageManager`'s two primary-storage helpers sum `/data` and the five mounted
+OS filesystems (`/system`, `/system_ext`, `/product`, `/vendor` and `/odm`).
+`StorageStatsManager` uses that total and keeps its filesystem-available plus
+reclaimable-cache calculation for free space. Settings derives its used space
+and System category from those consistent byte counts. The `frameworks/base`
+storage topic in route `p0007` owns this policy; Settings adds no display bounds.
+
+Retail capacity rounding does not apply to these virtual disks: it can report
+less than the data filesystem contains, making the System category negative,
+or inflate the total to the next advertised capacity. The configured sparse
+disk capacity is independent of the Apple host's currently available storage.
+
 ## Guest instance storage
 
 A guest instance is the writable half of a guest: a directory holding the data

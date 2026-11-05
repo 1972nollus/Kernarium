@@ -875,8 +875,18 @@ bridge, a bug report (a zip above 1 MB, and its time), a cancel, a system APK
 pulled from the image and installed as an update (and its time), the image's
 key rule (the application's key accepted whatever the debugging setting; a
 foreign key refused with no prompt and nothing queued while debugging is off,
-and prompting while it is on), and the key after Erase Guest. With
-`TEST_RUNNER_ANDARIUM_ADB_NET_HOLD_SECONDS` one more test holds the bridge up for
+and prompting while it is on), and the key after Erase Guest.
+
+`AdbOverVsockTests/androidReportsExactStorageSizes()` is a standalone storage
+run with `TEST_RUNNER_ANDARIUM_STORAGE_TESTS=1` in addition to the ADB and normal
+start settings. Build AOSP's `AndariumStorageTests`, sign the APK with the image's
+platform certificate, and copy it into the application's `tmp/AndariumStorageTests.apk`
+before running only that method. It installs the APK through the application's
+client, runs `StorageAccountingTest#exactFilesystemBytes`,
+which checks both primary-storage helpers and `StorageStatsManager` against the
+mounted filesystem sizes, removes the APK and powers Android off cleanly.
+
+With `TEST_RUNNER_ANDARIUM_ADB_NET_HOLD_SECONDS` one more test holds the bridge up for
 a real adb on the Mac. A Mac launch of the guest
 itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
 `TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
