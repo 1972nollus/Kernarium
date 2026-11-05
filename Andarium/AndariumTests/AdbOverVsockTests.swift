@@ -78,6 +78,108 @@ struct AdbOverVsockTests {
         }
     }
 
+    /// A standalone storage gate: the Android framework test APK is copied
+    /// to tmp first. This opt-in run installs it, checks the public APIs,
+    /// removes it and powers Android off so an update can finish cleanly.
+    @Test(.timeLimit(.minutes(20)))
+    func androidReportsExactStorageSizes() async throws {
+        guard Self.enabled,
+            ProcessInfo.processInfo.environment["ANDARIUM_STORAGE_TESTS"] == "1"
+        else { return }
+        let apk = FileManager.default.temporaryDirectory.appendingPathComponent("AndariumStorageTests.apk")
+        defer { try? FileManager.default.removeItem(at: apk) }
+        let bytes = try #require(try apk.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        do {
+            try await operations.installApk(at: apk, sizeBytes: bytes) { _ in }
+            let result = try await operations.shell(
+                "am instrument -w -r -e class com.android.frameworks.andariumstorage.StorageAccountingTest#exactFilesystemBytes com.android.frameworks.andariumstorage.tests/androidx.test.runner.AndroidJUnitRunner",
+                limit: .seconds(180))
+            print("ANDROID_STORAGE: \(result.text)")
+            #expect(result.exitCode == 0)
+            #expect(result.text.contains("OK (1 test)"), "\(result.text)")
+            #expect(result.text.contains("INSTRUMENTATION_CODE: -1"), "\(result.text)")
+        } catch {
+            _ = try? await operations.shell("pm uninstall com.android.frameworks.andariumstorage.tests")
+            throw error
+        }
+        let removed = try await operations.shell("pm uninstall com.android.frameworks.andariumstorage.tests")
+        #expect(removed.text.contains("Success"), "\(removed.text)")
+        try await powerOffAndroid(operations)
+    }
+
+    /// Captures the real Settings UI, including categories below the fold.
+    /// Images and accessibility hierarchies stay in tmp/StorageSettings for
+    /// the runner to collect after this standalone opt-in test powers off.
+    @Test(.timeLimit(.minutes(20)))
+    func storageSettingsShowNonnegativeUsage() async throws {
+        guard Self.enabled,
+            ProcessInfo.processInfo.environment["ANDARIUM_STORAGE_TESTS"] == "1"
+        else { return }
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        _ = try await operations.shell("input keyevent KEYCODE_WAKEUP; wm dismiss-keyguard")
+        let launchCommand = "am start -W -n 'com.android.settings/.Settings$StorageDashboardActivity'"
+        let launched = try await operations.shell(launchCommand)
+        print("ANDROID_STORAGE_SETTINGS launch: \(launched.text)")
+        #expect(launched.exitCode == 0, "\(launched.text)")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("StorageSettings")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let dumpCommand = "uiautomator dump --compressed /data/local/tmp/andarium-storage-settings.xml >/dev/null && cat /data/local/tmp/andarium-storage-settings.xml"
+        let deadline = ContinuousClock.now + .seconds(120)
+        var hierarchy = ""
+        repeat {
+            try await Task.sleep(for: .seconds(3))
+            let dump = try await operations.shell(dumpCommand)
+            hierarchy = dump.text
+            if hierarchy.contains("GB total") && !hierarchy.contains("Calculating") { break }
+        } while ContinuousClock.now < deadline
+        #expect(hierarchy.contains("GB total"), "\(hierarchy)")
+
+        let size = try await operations.shell("wm size")
+        let sizePattern = try NSRegularExpression(pattern: #"(\d+)x(\d+)"#)
+        let sizeMatch = try #require(sizePattern.firstMatch(
+            in: size.text, range: NSRange(size.text.startIndex..., in: size.text)))
+        let width = try #require(Int((size.text as NSString).substring(with: sizeMatch.range(at: 1))))
+        let height = try #require(Int((size.text as NSString).substring(with: sizeMatch.range(at: 2))))
+        let negative = try NSRegularExpression(pattern: #"text="[−-][0-9]"#)
+        let labels = try NSRegularExpression(pattern: #"text="([^"]+)"#)
+        for page in 0..<3 {
+            if page > 0 {
+                _ = try await operations.shell(
+                    "input swipe \(width / 2) \(height * 4 / 5) \(width / 2) \(height / 4) 500")
+                try await Task.sleep(for: .seconds(2))
+                hierarchy = try await operations.shell(dumpCommand).text
+            }
+            try Data(hierarchy.utf8).write(to: directory.appendingPathComponent("storage-\(page).xml"))
+            let range = NSRange(hierarchy.startIndex..., in: hierarchy)
+            let texts = labels.matches(in: hierarchy, range: range).map {
+                (hierarchy as NSString).substring(with: $0.range(at: 1))
+            }
+            print("ANDROID_STORAGE_SETTINGS page=\(page): \(texts.joined(separator: " | "))")
+            #expect(negative.firstMatch(in: hierarchy, range: range) == nil, "\(texts)")
+            let screenshot = try await operations.shell("screencap -p")
+            #expect(screenshot.exitCode == 0)
+            #expect(screenshot.stdout.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+            try screenshot.stdout.write(to: directory.appendingPathComponent("storage-\(page).png"))
+        }
+        _ = try await operations.shell("rm /data/local/tmp/andarium-storage-settings.xml")
+        try await powerOffAndroid(operations)
+    }
+
+    private func powerOffAndroid(_ operations: AdbGuestOperations) async throws {
+        let files = InstanceFiles(directory: AppEntry.guestDirectory())
+        let before = try files.readState()?.lastCompleted?.at
+        _ = try? await operations.shell("reboot -p", limit: .seconds(30))
+        let deadline = ContinuousClock.now + .seconds(90)
+        while ContinuousClock.now < deadline {
+            if try files.readState()?.lastCompleted?.at != before { return }
+            try await Task.sleep(for: .seconds(1))
+        }
+        Issue.record("Android did not finish its clean shutdown")
+    }
+
     @Test(.timeLimit(.minutes(20)))
     func twoRuntimeContactsReachAndroidInputReader() async throws {
         guard Self.enabled else { return }
