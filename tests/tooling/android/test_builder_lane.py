@@ -691,8 +691,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_video_ueventd: bool = False,
                           mesa_gles_alignment: int = 16384,
                           elf_edit: tuple[str, int, int] | None = None,
-                          abilist32: str = "armeabi-v7a",
-                          vendor_abilist32: str = "armeabi-v7a",
+                          abilist32: str = "armeabi-v7a,armeabi",
+                          vendor_abilist32: str = "armeabi-v7a,armeabi",
                           zygote: str = "zygote64_32",
                           dex2oat64: bool = True,
                           arm_alignment: int = 4096,
@@ -1742,7 +1742,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         ).items()
                     ),
                 )
-                archive.writestr("ODM/etc/build.prop", abi_properties("odm", "armeabi-v7a"))
+                archive.writestr("ODM/etc/build.prop", abi_properties("odm", "armeabi-v7a,armeabi"))
                 if module:
                     archive.writestr("VENDOR/lib/modules/forbidden.ko", b"module")
                 if module_loader:
@@ -2458,7 +2458,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("elf-big-endian", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF32 or ELF64"),
             ("elf-machine", {"elf_edit": ("<H", 18, 62)}, "not AArch64"),
             ("elf-program-header-size", {"elf_edit": ("<H", 54, 32)}, "program.header"),
-            ("armeabi", {"abilist32": "armeabi-v7a,armeabi"}, "armeabi is forbidden|legacy armeabi"),
+            ("missing-armeabi", {"abilist32": "armeabi-v7a"}, "unexpected ABI"),
+            ("wrong-abi-order", {"abilist32": "armeabi,armeabi-v7a"}, "unexpected ABI"),
+            ("unsupported-abi", {"abilist32": "armeabi-v7a,armeabi,x86"}, "unexpected ABI"),
             ("no-32-bit-abi-cause", {"abilist32": ""}, "unexpected ABI"),
             ("product-model-cause", {"wrong_product_model": True},
              "unexpected product identity ro.product.product.model: 'Android 17 on Andarium'"),

@@ -1363,7 +1363,7 @@ cases have lost a reservation, and requires that every case then agreed.
 
 ## Android 32-bit userspace
 
-The Android product runs `armeabi-v7a` applications beside `arm64-v8a` ones
+The Android product runs `armeabi-v7a` and legacy `armeabi` applications beside `arm64-v8a` ones
 ([`../android/lineage-24/README.md`](../android/lineage-24/README.md#android-product)).
 The build side needs no Android build. `lineage24-target-files-fixtures` drives the
 target-files verifier over fixtures (ABI lists, the 32-bit runtime, ELF32
@@ -1405,16 +1405,17 @@ runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
 `SIGILL` anywhere is a blocker, as everywhere.
 
 - **Boot.** `boot_completed` with `ro.product.cpu.abilist` listing
-  `arm64-v8a,armeabi-v7a`, `ro.zygote=zygote64_32` and the secondary zygote
+  `arm64-v8a,armeabi-v7a,armeabi`, `ro.zygote=zygote64_32` and the secondary zygote
   running without restarts; SELinux enforcing with no denial from the 32-bit
   zygote, `crash_dump32`, the WebView zygote or its RELRO process; native
   daemons and HALs 64-bit. ART Service's first-boot pass skips every package,
   the WebView's `arm` artifacts included, and `odrefresh` compiles nothing for
   either ISA.
-- **Applications.** A set of real 32-bit applications: some `armeabi-v7a`
-  only, some dual-ABI installed with `adb install --abi armeabi-v7a` against a
-  64-bit control install, and a Java-only one forced to 32 bits. Each shows
-  `primaryCpuAbi=armeabi-v7a` in `dumpsys package`, descends from the
+- **Applications.** A set of real 32-bit applications: `armeabi`-only and
+  `armeabi-v7a`-only APKs, some dual-ABI installed with
+  `adb install --abi armeabi-v7a` against a 64-bit control install, and a Java-only
+  one forced to 32 bits. Each native package shows its selected `armeabi` or
+  `armeabi-v7a` primary ABI in `dumpsys package`, descends from the
   secondary zygote, draws through GLES and, where it uses it, Vulkan, and
   leaves no tombstone. A deliberate `SIGSEGV` in one must leave a symbolized
   `crash_dump32` tombstone. The 64-bit browser's pages load through the 64-bit
@@ -1435,6 +1436,24 @@ runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
   of iPad cold boot or 100 MiB of guest `MemAvailable`. A 32-bit application
   installed on a device that had none starts the preload, so the first launch
   after that install is the one to time.
+
+Legacy `armeabi` application smoke coverage has passed on the physical iPad
+with these unmodified F-Droid archive builds:
+
+| APK | Exercised behavior |
+| --- | --- |
+| [Simon Tatham's Puzzles 9561.1 (72)](https://f-droid.org/archive/name.boyle.chris.sgtpuzzles_72.apk) | Native Fifteen board generation, three moves, undo and redo. |
+| [Gears ES2 7](https://f-droid.org/archive/com.jeffboody.GearsES2eclair_7.apk) | Animated native OpenGL ES 2 gears and touch-controlled view rotation. |
+| [Gloomy Dungeons 2013.03.07.0416](https://f-droid.org/archive/zame.GloomyDungeons.opensource.game_1358421967.apk) | Native OpenGL ES 1 level rendering, forward movement, turning, opening a door and firing two shots (ammunition 20 to 18). |
+
+Each APK's only ARM ABI is `armeabi` (Puzzles also contains x86), and its
+native libraries declare ARMv5TE. Install with the explicit
+`--bypass-low-target-sdk-block` option and no `--abi` override: all three
+selected `primaryCpuAbi=armeabi`, loaded their native libraries and ran as
+children of the 32-bit zygote. The run kept SELinux enforcing, left the native
+crash buffer empty and powered off with runtime result 0. Use
+`ANDARIUM_GUEST_INSTANCE` for an isolated compatibility-test guest; full release
+qualification still uses the gates above.
 
 ## Android guest storage
 

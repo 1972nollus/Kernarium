@@ -86,12 +86,19 @@ described in [`kernel/mainline-6.18/README.md`](../../kernel/mainline-6.18/READM
 
 The product is a 64-bit system with a 32-bit application ABI, 4 KiB-only, and
 built-in-kernel-only. Applications of both ABIs run from one image:
-`arm64-v8a` and `armeabi-v7a`, in that order. The 32-bit side is ARMv8-A
-AArch32 on a cortex-a53, built as the softfp `armeabi-v7a` ABI; the image lists
-no `armeabi`, and `ro.zygote` is `zygote64_32`. Every daemon and HAL stays
+`arm64-v8a`, `armeabi-v7a` and `armeabi`, in that order. The 32-bit side is
+ARMv8-A AArch32 on a cortex-a53, built as the softfp `armeabi-v7a` ABI; the
+`armeabi` fallback runs older native applications through the same arm runtime,
+and `ro.zygote` is `zygote64_32`. Every daemon and HAL stays
 64-bit (`IGNORE_PREFER32_ON_DEVICE`), so 32-bit code runs only in applications,
 the two zygotes and the WebView RELRO process. Recovery, `init_boot` and the
-vendor ramdisk are 64-bit only. The kernel runs 4 KiB pages, because Android's
+vendor ramdisk are 64-bit only. ABI compatibility does not change the platform's
+minimum installable target SDK. An older APK can be tested with the explicit
+`adb install --bypass-low-target-sdk-block` option; ordinary installs keep the
+platform check. ABI support does not restore an older Android runtime: the
+unmodified ZENONIA3 1.0.7 APK selects `armeabi` and loads its native library,
+but its resource parser crashes on this ART runtime before gameplay.
+The kernel runs 4 KiB pages, because Android's
 32-bit libraries are 4 KiB aligned; the 64-bit userspace stays page-agnostic (a
 16 KiB maximum ELF alignment and no compile-time bionic page-size macro), so it
 is valid on a kernel of either size, and `ro.product.page_size` reports 4096.
