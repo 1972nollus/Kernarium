@@ -326,6 +326,7 @@ public:
     ActiveRuntime& operator=(const ActiveRuntime&) = delete;
 };
 
+#ifndef UML_APP_STORE_RUNTIME
 /* The figures the memory of a restarting guest is checked by, which a guest
  * that gives its RAM back must return to the first boot's level. */
 struct MemoryFigures final {
@@ -425,12 +426,8 @@ class FootprintReporter final {
 public:
     static long intervalMilliseconds() noexcept
     {
-#ifdef UML_APP_STORE_RUNTIME
-        return 0;
-#else
         const char* value = std::getenv("KERNARIUM_FOOTPRINT_LOG_MS");
         return value == nullptr ? 0 : std::strtol(value, nullptr, 10);
-#endif
     }
 
     static bool enabled() noexcept { return intervalMilliseconds() > 0; }
@@ -560,6 +557,7 @@ private:
     std::uint64_t leastRemaining_ {UINT64_MAX};
     std::thread thread_;
 };
+#endif
 
 class ActiveEmulatorRegistration final {
 public:
@@ -1220,8 +1218,10 @@ public:
 
     void restarting(unsigned restarts) noexcept override
     {
+#ifndef UML_APP_STORE_RUNTIME
         if (FootprintReporter::enabled())
             reportMemory("ended");
+#endif
         publishRestart(KERNARIUM_RUNTIME_RESTART_BEGAN, restarts);
     }
 
@@ -1242,8 +1242,10 @@ public:
             "Kernarium: restart %u: the new guest's console %s\n",
             restarts,
             answered ? "answers" : "has not answered; sending the event anyway");
+#ifndef UML_APP_STORE_RUNTIME
         if (FootprintReporter::enabled())
             reportMemory("booted");
+#endif
         publishRestart(KERNARIUM_RUNTIME_RESTART_BOOTED, restarts);
     }
 
@@ -1642,7 +1644,9 @@ int runtimeRun(
         lifecycle.begin();
         ignoreBrokenPipes();
         (void)setvbuf(stdout, nullptr, _IONBF, 0);
+#ifndef UML_APP_STORE_RUNTIME
         const auto bootingAt = std::chrono::steady_clock::now();
+#endif
         std::printf(
             "Kernarium: booting %ux%u guest at %u DPI with mem=%uM "
             "ncpus=%u\n",
@@ -1763,19 +1767,23 @@ int runtimeRun(
             }
             emulator.reset(created);
             guest.attach(emulator.get());
+#ifndef UML_APP_STORE_RUNTIME
             /* The host devices, the GPU driver among them, start before the
              * guest does; the footprint log times that stretch. */
             if (FootprintReporter::enabled())
                 std::printf("Kernarium: emulator created %.1f ms after booting\n",
                     std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - bootingAt).count());
+#endif
             {
                 /* The handle and the GPU stay registered between boots: a sync
                  * flushes what the last guest left open, a hold is applied to the
                  * next guest's GPU, and a stop reaches the loop. */
                 ActiveEmulatorRegistration registration {emulator.get()};
                 ActiveGpuRegistration gpuRegistration {gpuService};
+#ifndef UML_APP_STORE_RUNTIME
                 const FootprintReporter footprintReporter;
+#endif
                 result = kernarium::restart::run(guest);
             }
         }
