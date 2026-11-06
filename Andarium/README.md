@@ -53,10 +53,14 @@ arguments (`-screen <name>`, `-play YES`, `-lowSpace YES`, `-resetTips YES`,
 `-bootStage <step>` for a frozen boot screen, `-systemMicrophone YES` to run the
 Microphone switch against the Simulator's own permission) open any screen or state directly
 so a Simulator driven only by `simctl` reaches every flow (`-screen bug-report`
-and `-screen install-apk` play the two guest operations on the overlay).
-`scripts/capture-screens.py` launches every screen on a Simulator and saves a
-labelled PNG set with a `manifest.json` (device, orientation, appearance, screen
-and what to look at; `--list` prints the screens):
+and `-screen install-apk` hold the overlay of the two guest operations part way;
+`-play YES` plays them). The Preview also writes `capture-state.json` to its
+caches (process, screen, and whether the app is active), which
+`scripts/capture-screens.py` reads to keep only a picture of the app in front.
+`scripts/capture-screens.py` launches every screen on a Simulator made for the
+run (not one another session or test uses) and saves a labelled PNG set with a
+`manifest.json` (device, orientation, appearance, screen and what to look at;
+`--list` prints the screens):
 
 ```sh
 xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \

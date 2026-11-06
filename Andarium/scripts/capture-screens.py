@@ -13,10 +13,23 @@ UI driver) between runs, and the orientation is read from each image.
     capture-screens.py --out DIR --device <udid> [--device <udid> ...]
     capture-screens.py --list
 
+Capture on a Simulator made for the run (`simctl create`, deleted afterwards),
+never one another session or test uses: any other app that comes to the front
+spoils a picture. The script keeps a picture only when the Preview reports
+(`capture-state.json`, written by `Preview/CaptureState.swift`) that it is the
+launched process, on the shot's screen, and active, both before and after the
+screenshot, and the frame is neither blank nor black; a shot that fails is
+reported and not recorded.
+
 A shot with `-systemMicrophone YES` runs the Microphone switch against the
 Simulator's own permission: the script sets it first with `simctl privacy`
 (grant, revoke or reset), and the revoked-while-backgrounded shot takes the
-permission away while the app is in the background.
+permission away while the app is in the background. The Simulator keeps the
+system's permission alert up, over whatever launches next, until SpringBoard is
+restarted, and a restart turns an iPad upright. A launch under such an alert
+leaves the app inactive, which the check above refuses, so the one shot that
+raises the alert runs last, and SpringBoard is restarted once after it: rotate
+the iPad again before the next run.
 
 Light mode is captured for every screen; dark mode only for the screens flagged
 in the table, where the design adapts to it. Every Simulator command has a hard
@@ -30,6 +43,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import json
+import os
 import re
 import struct
 import subprocess
@@ -42,6 +56,9 @@ BUNDLE = "com.imxieyi.AndariumPreview"
 COMMAND_SECONDS = 60
 SETTLE_SECONDS = 15
 SETTLED_FRACTION = 0.003
+# How long the Preview has, after a launch, to report that it is the app in front.
+FRONT_SECONDS = 10
+STATE_FILE = "capture-state.json"
 
 
 @dataclass(frozen=True)
@@ -58,6 +75,9 @@ class Shot:
     # Steps after the launch, for a state that needs the app in the background: "background", "grant", "revoke",
     # "foreground".
     flow: tuple[str, ...] = ()
+    # The shot raises the system's own alert, which stays up over whatever launches next: it runs last, and
+    # SpringBoard is restarted after it.
+    alert: bool = False
 
     def launch_arguments(self) -> list[str]:
         return ["-screen", self.screen, *self.args]
@@ -72,7 +92,7 @@ SYSTEM = ("-systemMicrophone", "YES")
 
 def system_mic(id: str, group: str, screen: str, description: str, privacy: str, *flow: str) -> Shot:
     """A shot with the Microphone switch on the Simulator's own permission, set to `privacy` first."""
-    return Shot(id, group, screen, description, SYSTEM, privacy=privacy, flow=tuple(flow))
+    return Shot(id, group, screen, description, SYSTEM, privacy=privacy, flow=tuple(flow), alert=privacy == "reset")
 
 
 def boot_stages(prefix: str, screen: str, names: list[str], what: str, dark_step: int | None = None) -> list[Shot]:
@@ -172,8 +192,7 @@ SHOTS: list[Shot] = [
     # Operations on the guest
     s("overlay-bug-report", "Operations", "bug-report", "The full-screen progress while a bug report is made.", wait=2.0),
     s("overlay-install-apk", "Operations", "install-apk", "The full-screen progress while an app installs from Files.", wait=2.0),
-    # End
-    s("end-off", "End", "off", "The screen after the guest ended: close and reopen Andarium to start again."),
+    # End: a clean power-off returns to Home; only a failed run keeps an end screen
     s("end-failed", "End", "failed", "The screen after the guest stopped unexpectedly."),
 ]
 
@@ -222,14 +241,69 @@ def differing_pixels(first: Path, second: Path) -> float:
         return 1.0
 
 
-def blank(path: Path) -> bool:
-    """A plain white frame: an app that has not drawn yet."""
+def empty_frame(path: Path) -> str | None:
+    """"white" for a plain white frame (an app that has not drawn yet), "black" for a plain black one (a display
+    that is off or an app that went away), None for anything with content."""
     try:
         result = run(["magick", str(path), "-format", "%[fx:mean] %[fx:standard_deviation]", "info:"], timeout=30)
         mean, deviation = (float(value) for value in result.stdout.split())
-        return mean > 0.97 and deviation < 0.02
     except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    if deviation >= 0.02:
+        return None
+    if mean > 0.97:
+        return "white"
+    return "black" if mean < 0.03 else None
+
+
+def app_state(udid: str) -> dict | None:
+    """What the Preview last wrote to its capture-state.json: its process, screen and whether it is active."""
+    container = simctl("get_app_container", udid, BUNDLE, "data")
+    if container.returncode != 0:
+        return None
+    try:
+        return json.loads((Path(container.stdout.strip()) / "Library" / "Caches" / STATE_FILE).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def alive(pid: int) -> bool:
+    """A Simulator app is a process of the host's own."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
         return False
+    except PermissionError:
+        return True
+    return True
+
+
+def not_in_front(udid: str, pid: int, shot: Shot, *, after: bool = False) -> str | None:
+    """Why the app is not showing `shot`: None when it is the launched process, on the shot's screen and active;
+    otherwise the reason. An app launched while a system alert is up stays inactive, so a stale alert shows here.
+    The alert a shot raises itself leaves the app active; if it does not, `after` the screenshot it is no reason."""
+    if not alive(pid):
+        return f"the app (process {pid}) is not running"
+    state = app_state(udid)
+    if state is None:
+        return "the app has not reported its state"
+    if state.get("pid") != pid:
+        return f"the app that reported is process {state.get('pid')}, not the launched {pid}"
+    if state.get("screen") != shot.screen:
+        return f"the app reported screen {state.get('screen')!r}, not {shot.screen!r}"
+    if state.get("state") != "active" and not (after and shot.alert):
+        return f"the app is {state.get('state')}, not active: a system alert, another app or the Home screen is in front"
+    return None
+
+
+def wait_in_front(udid: str, pid: int, shot: Shot, seconds: float = FRONT_SECONDS) -> str | None:
+    """`not_in_front`, given a few seconds after a launch for the app to report."""
+    deadline = time.monotonic() + seconds
+    while True:
+        reason = not_in_front(udid, pid, shot)
+        if reason is None or time.monotonic() >= deadline:
+            return reason
+        time.sleep(0.5)
 
 
 def settled_screenshot(udid: str, shot_id: str, out: Path) -> tuple[Path | None, bool]:
@@ -245,7 +319,7 @@ def settled_screenshot(udid: str, shot_id: str, out: Path) -> tuple[Path | None,
         if taken.returncode != 0 or not temporary.is_file():
             print(f"  {shot_id}: screenshot failed: {taken.stderr.strip()}", file=sys.stderr)
             return None, False
-        if previous.is_file() and differing_pixels(previous, temporary) < SETTLED_FRACTION and not blank(temporary):
+        if previous.is_file() and differing_pixels(previous, temporary) < SETTLED_FRACTION and empty_frame(temporary) is None:
             settled = True
             break
         if time.monotonic() >= deadline:
@@ -256,10 +330,10 @@ def settled_screenshot(udid: str, shot_id: str, out: Path) -> tuple[Path | None,
     return temporary, settled
 
 
-def play_flow(udid: str, shot: Shot, pid: str) -> bool:
-    """The steps that follow the launch of a shot whose state needs the app in the background. The Simulator
-    ends an app whose permission changes, as iOS does, so the last step is a relaunch there; an app still
-    running just comes forward, which is the activation."""
+def play_flow(udid: str, shot: Shot, pid: int) -> int | None:
+    """The steps that follow the launch of a shot whose state needs the app in the background; the process that
+    ends them, or None. The Simulator ends an app whose permission changes, as iOS does, so the last step is a
+    relaunch there; an app still running just comes forward, which is the activation."""
     for step in shot.flow:
         if step == "background":
             result = simctl("launch", udid, "com.apple.Preferences")
@@ -268,25 +342,37 @@ def play_flow(udid: str, shot: Shot, pid: str) -> bool:
         elif step == "foreground":
             result = simctl("launch", udid, BUNDLE, *shot.launch_arguments())
             if result.returncode == 0:
-                again = result.stdout.strip().rsplit(" ", 1)[-1]
+                again = launched_pid(result)
                 print(f"  {shot.id}: {'the app was still running' if again == pid else 'the permission change ended the app'}")
+                pid = again if again is not None else pid
         else:
             sys.exit(f"capture-screens.py: unknown flow step {step!r}")
         if result.returncode != 0:
             print(f"  {shot.id}: {step} failed: {result.stderr.strip()}", file=sys.stderr)
-            return False
+            return None
         time.sleep(2.0)
-    return True
+    return pid
+
+
+def launched_pid(launched: subprocess.CompletedProcess[str]) -> int | None:
+    """The process `simctl launch` started: its output is "<bundle>: <pid>"."""
+    try:
+        return int(launched.stdout.strip().rsplit(" ", 1)[-1])
+    except ValueError:
+        return None
 
 
 def clear_system_alert(udid: str) -> None:
-    """The Simulator keeps its permission alert up, over whatever launches next, until someone answers it. A shot
-    that asks (privacy "reset") restarts SpringBoard afterwards, which takes the alert and the app with it."""
+    """The Simulator keeps its permission alert up, over whatever launches next, until someone answers it.
+    Restarting SpringBoard takes the alert and the app with it, and turns an iPad upright."""
     simctl("spawn", udid, "launchctl", "kill", "SIGKILL", "user/foreground/com.apple.SpringBoard")
     time.sleep(15.0)
 
 
-def capture(udid: str, name: str, shot: Shot, appearance: str, out: Path, wait: float) -> dict | None:
+def capture(udid: str, name: str, shot: Shot, appearance: str, out: Path, wait: float, orientation: str | None) -> dict | None:
+    """One shot, or None (with the reason on stderr) when the picture cannot be Andarium's: the app is not the
+    launched process on the shot's screen in front, the frame is empty, or the device turned since the run began
+    (`orientation`)."""
     simctl("terminate", udid, BUNDLE)
     if shot.privacy is not None:
         privacy = simctl("privacy", udid, shot.privacy, "microphone", BUNDLE)
@@ -294,29 +380,42 @@ def capture(udid: str, name: str, shot: Shot, appearance: str, out: Path, wait: 
             print(f"  {shot.id}: privacy {shot.privacy} failed: {privacy.stderr.strip()}", file=sys.stderr)
             return None
     launched = simctl("launch", udid, BUNDLE, *shot.launch_arguments())
-    if launched.returncode != 0:
+    pid = launched_pid(launched)
+    if launched.returncode != 0 or pid is None:
         print(f"  {shot.id}: launch failed: {launched.stderr.strip()}", file=sys.stderr)
         return None
     time.sleep(max(wait, shot.wait))
-    if shot.flow and not play_flow(udid, shot, launched.stdout.strip().rsplit(" ", 1)[-1]):
+    if shot.flow:
+        pid = play_flow(udid, shot, pid)
+        if pid is None:
+            return None
+    reason = wait_in_front(udid, pid, shot)
+    if reason is not None:
+        print(f"  {shot.id}: not recorded: {reason}", file=sys.stderr)
         return None
     temporary, settled = settled_screenshot(udid, shot.id, out)
-    if shot.privacy == "reset":
-        clear_system_alert(udid)
     if temporary is None:
+        return None
+    reason = not_in_front(udid, pid, shot, after=True) or (f"the frame is {empty_frame(temporary)}" if empty_frame(temporary) else None)
+    if reason is None:
+        width, height = png_size(temporary)
+        now = "landscape" if width > height else "portrait"
+        if orientation is not None and now != orientation:
+            reason = f"the device is {now}, not {orientation} as at the start of the run"
+    if reason is not None:
+        temporary.unlink(missing_ok=True)
+        print(f"  {shot.id}: not recorded: {reason}", file=sys.stderr)
         return None
     if not settled:
         print(f"  {shot.id}: the screen kept changing; kept the last look", file=sys.stderr)
-    width, height = png_size(temporary)
-    orientation = "landscape" if width > height else "portrait"
     idiom = "iPad" if "iPad" in name else "iPhone"
-    file = f"{idiom.lower()}-{orientation}-{appearance}-{shot.id}.png"
+    file = f"{idiom.lower()}-{now}-{appearance}-{shot.id}.png"
     temporary.replace(out / file)
     return {
         "file": file,
         "device": name,
         "idiom": idiom,
-        "orientation": orientation,
+        "orientation": now,
         "appearance": appearance,
         "group": shot.group,
         "id": shot.id,
@@ -326,6 +425,27 @@ def capture(udid: str, name: str, shot: Shot, appearance: str, out: Path, wait: 
         "settled": settled,
         "description": shot.description,
     }
+
+
+def preflight(udid: str, name: str, out: Path) -> str | None:
+    """Before the first shot: the Preview must come to the front on a plain screen. A permission alert left up by
+    an earlier use of the Simulator is cleared (which turns an iPad upright, as is said). The result is the
+    orientation the run keeps, or None when the Preview cannot be brought to the front."""
+    probe = Shot("preflight", "", "home", "")
+    for attempt in range(2):
+        simctl("terminate", udid, BUNDLE)
+        launched = simctl("launch", udid, BUNDLE, *probe.launch_arguments())
+        pid = launched_pid(launched)
+        if pid is not None and wait_in_front(udid, pid, probe) is None:
+            temporary = out / ".preflight.png"
+            if simctl("io", udid, "screenshot", str(temporary)).returncode == 0 and temporary.is_file():
+                width, height = png_size(temporary)
+                temporary.unlink()
+                return "landscape" if width > height else "portrait"
+        if attempt == 0:
+            print(f"{name}: the Preview did not come to the front; restarting SpringBoard to clear an alert", file=sys.stderr)
+            clear_system_alert(udid)
+    return None
 
 
 def write_manifest(path: Path, entries: dict[str, dict]) -> None:
@@ -338,6 +458,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, help="directory for the PNG files and manifest.json")
     parser.add_argument("--device", action="append", default=[], metavar="UDID", help="a booted Simulator (repeatable)")
     parser.add_argument("--only", metavar="REGEX", help="capture only shots whose id matches")
+    parser.add_argument("--appearance", choices=("light", "dark"), help="capture only this appearance")
     parser.add_argument("--wait", type=float, default=0.0, help="minimum seconds after each launch")
     parser.add_argument("--list", action="store_true", help="list the shots and exit")
     args = parser.parse_args(argv)
@@ -366,14 +487,24 @@ def main(argv: list[str] | None = None) -> int:
             "status_bar", udid, "override", "--time", "9:41", "--batteryState", "charged", "--batteryLevel", "100",
             "--cellularMode", "active", "--cellularBars", "4", "--wifiBars", "3", "--dataNetwork", "wifi",
         )
-        for appearance in ("light", "dark"):
+        orientation = preflight(udid, name, args.out)
+        if orientation is None:
+            print(f"capture-screens.py: {name} ({udid}): the Preview does not come to the front; nothing captured", file=sys.stderr)
+            status = 1
+            continue
+        # The shot of the system's own alert runs last: the alert outlives its shot and covers whatever launches next.
+        plain = [shot for shot in selected if not shot.alert]
+        passes = [("light", plain), ("dark", [shot for shot in plain if shot.dark]),
+                  ("light", [shot for shot in selected if shot.alert])]
+        passes = [(appearance, shots) for appearance, shots in passes if args.appearance in (None, appearance)]
+        asked = False
+        for appearance, shots in passes:
             simctl("ui", udid, "appearance", appearance)
-            for shot in selected:
-                if appearance == "dark" and not shot.dark:
-                    continue
-                entry = capture(udid, name, shot, appearance, args.out, args.wait)
+            for shot in shots:
+                entry = capture(udid, name, shot, appearance, args.out, args.wait, orientation)
                 if entry is None:
-                    entry = capture(udid, name, shot, appearance, args.out, args.wait)
+                    entry = capture(udid, name, shot, appearance, args.out, args.wait, orientation)
+                asked = asked or shot.alert
                 if entry is None:
                     status = 1
                     continue
@@ -381,6 +512,8 @@ def main(argv: list[str] | None = None) -> int:
                 write_manifest(manifest_path, entries)
                 print(f"{name} {entry['orientation']} {appearance}: {shot.id}", flush=True)
         simctl("ui", udid, "appearance", "light")
+        if asked:
+            clear_system_alert(udid)
     write_manifest(manifest_path, entries)
     return status
 
