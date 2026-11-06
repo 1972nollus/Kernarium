@@ -48,7 +48,7 @@ DEVICE_CONTRACTS = (
 SCHEMA = 1
 
 GROUPS = [
-    {"id": "system", "title": "System"},
+    {"id": "system", "title": "Operating System"},
     {"id": "graphics", "title": "Graphics"},
     {"id": "libraries", "title": "Libraries"},
 ]
