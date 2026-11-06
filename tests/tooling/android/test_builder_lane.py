@@ -225,26 +225,37 @@ def synthetic_arm_elf(
 
 
 def synthetic_compiled_manifest(
-    target_sdk: int | None, *, string_value: bool = False, debuggable: bool | str | None = None
+    target_sdk: int | None, *, string_value: bool = False, debuggable: bool | str | None = None,
+    permissions: tuple[str, ...] = (), declared: tuple[str, ...] = (), utf8: bool = False,
 ) -> bytes:
     """A compiled manifest with <uses-sdk>, which carries targetSdkVersion when given, and, when
     debuggable is not None, an <application> that carries android:debuggable: a literal boolean,
-    or a resource reference when debuggable is "reference".
+    or a resource reference when debuggable is "reference". It requests each of `permissions` with
+    <uses-permission> and declares each of `declared` with <permission>; the string pool is UTF-8
+    when `utf8` is set, UTF-16 as the platform's own compiled manifests are otherwise.
 
     It has the chunks the verifier reads and no more: a string pool, the resource map that gives
     the attribute names their framework IDs, and the elements."""
-    strings = ["targetSdkVersion", "debuggable", "uses-sdk", "application", "28"]
+    strings = ["targetSdkVersion", "debuggable", "uses-sdk", "application", "28", "name",
+               "uses-permission", "permission", *permissions, *declared]
     pool_strings = b""
     offsets = []
     for text in strings:
         offsets.append(len(pool_strings))
-        pool_strings += struct.pack("<H", len(text)) + text.encode("utf-16-le") + b"\0\0"
+        if utf8:
+            pool_strings += bytes([len(text), len(text)]) + text.encode() + b"\0"
+        else:
+            pool_strings += struct.pack("<H", len(text)) + text.encode("utf-16-le") + b"\0\0"
     pool_strings += b"\0" * (-len(pool_strings) % 4)
     strings_start = 28 + 4 * len(strings)
     pool = struct.pack(
-        "<HHIIIIII", 0x0001, 28, strings_start + len(pool_strings), len(strings), 0, 0, strings_start, 0
+        "<HHIIIIII", 0x0001, 28, strings_start + len(pool_strings), len(strings),
+        0, 0x100 if utf8 else 0, strings_start, 0,
     ) + b"".join(struct.pack("<I", offset) for offset in offsets) + pool_strings
-    resource_map = struct.pack("<HHIII", 0x0180, 8, 16, 0x01010270, 0x0101000F)
+    # The attribute names (strings 0 and 1, and "name" at 5) carry their framework IDs.
+    ids = [0x01010270, 0x0101000F, 0, 0, 0, 0x01010003]
+    resource_map = struct.pack("<HHI", 0x0180, 8, 8 + 4 * len(ids)) + b"".join(
+        struct.pack("<I", value) for value in ids)
 
     def element(name: int, attributes: bytes) -> bytes:
         body = struct.pack(
@@ -259,6 +270,10 @@ def synthetic_compiled_manifest(
             0x03 if string_value else 0x10, 4 if string_value else target_sdk,
         )
     elements = element(2, sdk_attributes)
+    for index, element_name in enumerate([6] * len(permissions) + [7] * len(declared)):
+        permission = 8 + index
+        elements += element(element_name, struct.pack(
+            "<IIIHBBI", 0xFFFFFFFF, 5, permission, 8, 0, 0x03, permission))
     if debuggable is not None:
         value = (0x01, 0x7F010000) if debuggable == "reference" else (
             0x12, 0xFFFFFFFF if debuggable else 0)
@@ -268,11 +283,13 @@ def synthetic_compiled_manifest(
     return struct.pack("<HHI", 0x0003, 8, 8 + len(payload)) + payload
 
 
-def synthetic_apk(debuggable: bool | str | None = None) -> bytes:
+def synthetic_apk(debuggable: bool | str | None = None, permissions: tuple[str, ...] = (),
+                  declared: tuple[str, ...] = ()) -> bytes:
     """An application archive whose compiled manifest is the one synthetic_compiled_manifest builds."""
     package = io.BytesIO()
     with zipfile.ZipFile(package, "w") as apk:
-        apk.writestr("AndroidManifest.xml", synthetic_compiled_manifest(None, debuggable=debuggable))
+        apk.writestr("AndroidManifest.xml", synthetic_compiled_manifest(
+            None, debuggable=debuggable, permissions=permissions, declared=declared))
     return package.getvalue()
 
 
@@ -2047,6 +2064,27 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     f"{result.returncode} {result.stdout}"
                 )
 
+        # Every variant refuses an application that requests the trade-in permission, and only
+        # a request: an application that declares it (framework-res.apk declares every platform
+        # permission) is not an application that can start the mode.
+        trade_in_permission = "android.permission.ENTER_TRADE_IN_MODE"
+        for variant in BUILD_VARIANTS:
+            for label, apk, accepted in (
+                ("requests", synthetic_apk(permissions=(trade_in_permission,)), False),
+                ("declares", synthetic_apk(declared=(trade_in_permission,)), True),
+            ):
+                fixture = root / f"{variant}-with-an-application-that-{label}-trade-in-mode.zip"
+                write_fixture(fixture, build_variant=variant, entries={"SYSTEM/priv-app/Fixture/Fixture.apk": apk})
+                result = run_tool(
+                    verifier, "--target-files", fixture,
+                    "--build-variant", variant, *kernel_options,
+                )
+                if (result.returncode == 0) != accepted:
+                    fail(
+                        f"a {variant} build with an application that {label} the trade-in permission "
+                        f"verified wrongly: {result.returncode} {result.stdout}"
+                    )
+
         # A rejection fixture is built and verified once however many tables
         # state it: the cases whose options are the same share one run, which
         # must satisfy every assertion of every case (the status and the
@@ -2447,6 +2485,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable=True)}}),
             ("debuggable-application-by-reference",
              {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable="reference")}}),
+            ("application-that-starts-trade-in-mode",
+             {"entries": {"SYSTEM/priv-app/Fixture/Fixture.apk":
+                          synthetic_apk(permissions=("android.permission.ENTER_TRADE_IN_MODE",))}}),
+            ("device-diagnostics-in-the-image",
+             {"extra_entry": "SYSTEM/priv-app/DeviceDiagnostics/DeviceDiagnostics.apk"}),
             ("application-without-a-manifest",
              {"entries": {"PRODUCT/app/Fixture/Fixture.apk": b"not an archive"}}),
             ("curated-out-canvas",
@@ -2928,6 +2971,15 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable="reference")}},
              "PRODUCT/app/Fixture/Fixture.apk has no readable manifest: "
              "android:debuggable is not a literal boolean"),
+            ("application-that-starts-trade-in-mode-cause",
+             {"entries": {"SYSTEM/priv-app/Fixture/Fixture.apk":
+                          synthetic_apk(permissions=("android.permission.ENTER_TRADE_IN_MODE",))}},
+             "SYSTEM/priv-app/Fixture/Fixture.apk requests android.permission.ENTER_TRADE_IN_MODE: "
+             "trade-in mode would start on an unprovisioned first boot"),
+            ("device-diagnostics-in-the-image-cause",
+             {"extra_entry": "SYSTEM/priv-app/DeviceDiagnostics/DeviceDiagnostics.apk"},
+             "unneeded built-in application payload is forbidden: "
+             "SYSTEM/priv-app/DeviceDiagnostics"),
             ("application-without-a-manifest-cause",
              {"entries": {"PRODUCT/app/Fixture/Fixture.apk": b"not an archive"}},
              "PRODUCT/app/Fixture/Fixture.apk has no readable manifest: "),
@@ -3549,17 +3601,30 @@ def verify_pinner_overlay(android_root: Path) -> None:
     ):
         if verifier.manifest_target_sdk(blob) != expected:
             fail(f"the manifest reader does not read {label} as {expected}")
+    request, declaration = ("android.permission.ENTER_TRADE_IN_MODE",), ("android.permission.BACKUP",)
+    for utf8 in (False, True):
+        encoding = "UTF-8" if utf8 else "UTF-16"
+        for label, blob, expected in (
+            ("none", synthetic_compiled_manifest(28, utf8=utf8), set()),
+            ("one", synthetic_compiled_manifest(28, permissions=request, utf8=utf8), set(request)),
+            ("two", synthetic_compiled_manifest(None, permissions=request + declaration, utf8=utf8),
+             set(request + declaration)),
+            ("a declaration", synthetic_compiled_manifest(28, declared=request, utf8=utf8), set()),
+        ):
+            if verifier.manifest_requested_permissions(blob) != expected:
+                fail(f"the manifest reader does not read {label} in a {encoding} pool as {expected}")
     good = synthetic_compiled_manifest(28)
     for label, blob in (
         ("empty", b""),
         ("not compiled XML", b"<manifest/>" + bytes(8)),
         ("truncated", good[:-6]),
     ):
-        try:
-            verifier.manifest_target_sdk(blob)
-        except (ValueError, struct.error):
-            continue
-        fail(f"the manifest reader accepts a {label} manifest")
+        for reader in (verifier.manifest_target_sdk, verifier.manifest_requested_permissions):
+            try:
+                reader(blob)
+            except (ValueError, struct.error):
+                continue
+            fail(f"the manifest reader accepts a {label} manifest")
 
 
 def secondary_zygote_preloader_problems(added: str) -> list[str]:

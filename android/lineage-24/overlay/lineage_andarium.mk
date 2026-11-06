@@ -231,6 +231,14 @@ PRODUCT_COPY_FILES += \
 # device tree below. CuttlefishWifiOverlay turns on MAC randomization that
 # virt_wifi cannot do (KernariumWifiOverlay replaces it), and the tethering
 # overlay serves a tethering stack that has no upstream here.
+#
+# DeviceDiagnostics goes too, to turn Android's trade-in mode off: its boot
+# receiver asks TradeInModeService to start on a first boot that has not been
+# set up, which turns USB debugging on and restarts adbd twice (the virtual
+# Wi-Fi stops the mode again at once). The service has no configuration switch
+# and answers only to a package that holds ENTER_TRADE_IN_MODE, which
+# DeviceDiagnostics alone requests, so the product without it never enters the
+# mode. A virtual device has no trade-in. The verifier asserts both.
 KERNARIUM_REMOVED_PACKAGES := \
     BasicDreams \
     BluetoothMidiService \
@@ -250,6 +258,7 @@ KERNARIUM_REMOVED_PACKAGES := \
     CuttlefishService \
     DeskClock \
     DeviceAsWebcam \
+    DeviceDiagnostics \
     DynamicSystemInstallationService \
     Dialer \
     EasterEgg \

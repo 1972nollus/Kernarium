@@ -287,7 +287,6 @@ REQUIRED_PREOPT_APKS = {
     "SYSTEM/priv-app/BlockedNumberProvider/BlockedNumberProvider.apk",
     "SYSTEM/priv-app/ContactsProvider/ContactsProvider.apk",
     "SYSTEM/priv-app/CredentialManager/CredentialManager.apk",
-    "SYSTEM/priv-app/DeviceDiagnostics/DeviceDiagnostics.apk",
     "SYSTEM/priv-app/E2eeContactKeysProvider/E2eeContactKeysProvider.apk",
     "SYSTEM/priv-app/IntentResolver/IntentResolver.apk",
     "SYSTEM/priv-app/LiveWallpapersPicker/LiveWallpapersPicker.apk",
@@ -434,6 +433,7 @@ FORBIDDEN_APP_DIRECTORIES = {
     "Contacts",
     "CuttlefishService",
     "DeskClock",
+    "DeviceDiagnostics",
     "Dialer",
     "DynamicSystemInstallationService",
     "EmergencyInfo",
@@ -1329,8 +1329,12 @@ PINNER_OVERLAY_MAX_TARGET_SDK = 28
 # boolean (TYPE_INT_BOOLEAN, all ones for true).
 ATTR_TARGET_SDK_VERSION = 0x01010270
 ATTR_DEBUGGABLE = 0x0101000F
+ATTR_NAME = 0x01010003
+AXML_STRING_POOL = 0x0001
 AXML_START_ELEMENT = 0x0102
 AXML_RESOURCE_MAP = 0x0180
+AXML_STRING_TYPE = 0x03
+AXML_UTF8_POOL = 0x100
 AXML_INTEGER_TYPES = (0x10, 0x11)
 AXML_BOOLEAN_TYPE = 0x12
 
@@ -1357,6 +1361,79 @@ def manifest_attribute(manifest: bytes, attribute: int) -> tuple[int, int] | Non
                     return data_type, data
         offset += size
     return None
+
+
+def axml_strings(manifest: bytes, chunk: int) -> list[str]:
+    """The strings of the compiled XML string pool chunk at this offset."""
+    _, header, size, count, _, flags, strings_start, _ = struct.unpack_from("<HHIIIIII", manifest, chunk)
+
+    def length8(position: int) -> tuple[int, int]:
+        # One byte, or two when the high bit of the first is set.
+        (first,) = struct.unpack_from("B", manifest, position)
+        if first & 0x80:
+            (second,) = struct.unpack_from("B", manifest, position + 1)
+            return (first & 0x7F) << 8 | second, position + 2
+        return first, position + 1
+
+    strings = []
+    for index in range(count):
+        position = chunk + strings_start + struct.unpack_from("<I", manifest, chunk + header + 4 * index)[0]
+        if flags & AXML_UTF8_POOL:
+            _, position = length8(position)  # the character count, then the byte count
+            length, position = length8(position)
+            encoding = "utf-8"
+        else:
+            (length,) = struct.unpack_from("<H", manifest, position)
+            position += 2
+            if length & 0x8000:
+                length = (length & 0x7FFF) << 16 | struct.unpack_from("<H", manifest, position)[0]
+                position += 2
+            length *= 2
+            encoding = "utf-16-le"
+        text = manifest[position:position + length]
+        if position + length > chunk + size or len(text) != length:
+            raise ValueError("truncated compiled XML string")
+        strings.append(text.decode(encoding))
+    return strings
+
+
+# The manifest elements that request a permission.
+PERMISSION_REQUEST_ELEMENTS = {"uses-permission", "uses-permission-sdk-23", "uses-permission-sdk-m"}
+
+
+def manifest_requested_permissions(manifest: bytes) -> set[str]:
+    """The permissions a compiled manifest requests with <uses-permission>.
+
+    A manifest that declares a permission (framework-res.apk declares every platform permission)
+    or guards a component with it does not request it, and is not listed."""
+    if len(manifest) < 8 or struct.unpack_from("<HH", manifest, 0)[0] != 0x0003:
+        raise ValueError("not a compiled XML file")
+    strings: list[str] = []
+    resource_ids: list[int] = []
+    requested: set[str] = set()
+    offset = struct.unpack_from("<H", manifest, 2)[0]
+    while offset + 8 <= len(manifest):
+        kind, header, size = struct.unpack_from("<HHI", manifest, offset)
+        if size < 8 or offset + size > len(manifest):
+            raise ValueError("truncated compiled XML chunk")
+        if kind == AXML_STRING_POOL:
+            strings = axml_strings(manifest, offset)
+        elif kind == AXML_RESOURCE_MAP:
+            resource_ids = list(struct.unpack_from(f"<{(size - header) // 4}I", manifest, offset + header))
+        elif kind == AXML_START_ELEMENT:
+            body = offset + header
+            element = struct.unpack_from("<I", manifest, body + 4)[0]
+            if element < len(strings) and strings[element] in PERMISSION_REQUEST_ELEMENTS:
+                attribute_start, attribute_size, count = struct.unpack_from("<HHH", manifest, body + 8)
+                for index in range(count):
+                    position = body + attribute_start + index * attribute_size
+                    name, raw, _, data_type, data = struct.unpack_from("<IIHxBI", manifest, position + 4)
+                    if name < len(resource_ids) and resource_ids[name] == ATTR_NAME and data_type == AXML_STRING_TYPE:
+                        if data >= len(strings):
+                            raise ValueError("a permission name outside the string pool")
+                        requested.add(strings[data])
+        offset += size
+    return requested
 
 
 def manifest_target_sdk(manifest: bytes) -> int | None:
@@ -1407,19 +1484,29 @@ def check_pinner_overlay(
         fail(f"{PINNER_OVERLAY} does not set {PINNER_OVERLAY_RESOURCE.decode()}")
 
 
-def check_no_debuggable_applications(
+# The permission that lets an application start Android's trade-in mode (TradeInModeService in
+# system_server). An unprovisioned device enters it a few tens of seconds after boot when an
+# application asks, which turns USB debugging on and restarts adbd twice. A virtual device has no
+# use for it, and the service has no configuration switch, so the product carries no application
+# that can ask: AOSP's DeviceDiagnostics, whose boot receiver does, is excluded from the product.
+TRADE_IN_MODE_PERMISSION = "android.permission.ENTER_TRADE_IN_MODE"
+
+
+def check_application_manifests(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo], build_variant: str
 ) -> None:
-    """A user build holds no application that opts in to debugging.
+    """No application opts in to debugging (a user build) or can start trade-in mode (every build).
 
     A debuggable application is open to `run-as` and to a debugger whatever ro.debuggable says,
     and release signing would not change that, so a test probe left in the shared product
     output (or a prebuilt built with --debug-mode) must stop the build here. Only a user build
-    is checked: a userdebug build is the diagnostics variant. The check reads every APK of the
-    image partitions; APKs inside an APEX payload are compressed EROFS and out of its reach.
+    is checked for it: a userdebug build is the diagnostics variant. Trade-in mode can start only
+    for an application that requests ENTER_TRADE_IN_MODE, and the privapp allowlist's entry for
+    a package that is not installed grants nothing, so the request is what the check looks for,
+    in every variant (a userdebug build never enters it, but the product list is one list). The
+    check reads every APK of the image partitions; APKs inside an APEX payload are compressed
+    EROFS and out of its reach.
     """
-    if build_variant != "user":
-        return
     for entry in sorted(infos):
         info = infos[entry]
         path = PurePosixPath(entry)
@@ -1433,11 +1520,19 @@ def check_no_debuggable_applications(
             continue
         try:
             with zipfile.ZipFile(io.BytesIO(archive.read(info))) as apk:
-                debuggable = manifest_debuggable(apk.read("AndroidManifest.xml"))
+                manifest = apk.read("AndroidManifest.xml")
+            debuggable = build_variant == "user" and manifest_debuggable(manifest)
+            requested = manifest_requested_permissions(manifest)
         except (KeyError, OSError, zipfile.BadZipFile, ValueError, struct.error) as error:
             fail(f"{entry} has no readable manifest: {error}")
         if debuggable:
             fail(f"a user build must not carry a debuggable application: {entry}")
+        if TRADE_IN_MODE_PERMISSION in requested:
+            fail(
+                f"{entry} requests {TRADE_IN_MODE_PERMISSION}: trade-in mode would start on an "
+                "unprovisioned first boot and restart adbd twice; the product must not carry "
+                "an application that can start it (DeviceDiagnostics is excluded)"
+            )
 
 
 # The AOSP example HALs the product keeps, each packaged as the vendor APEX that Cuttlefish
@@ -3014,7 +3109,7 @@ def main() -> None:
         check_discrete_ops(archive, infos)
         check_default_wallpaper(archive, infos)
         check_pinner_overlay(archive, infos)
-        check_no_debuggable_applications(archive, infos, build_variant)
+        check_application_manifests(archive, infos, build_variant)
         check_thermal_hal(archive, infos)
         check_cas_hal(archive, infos)
         check_wifi_hals(archive, infos)

@@ -197,26 +197,32 @@ own and no install restriction: Package Installer and every install path work.
 It has no Google or microG services. LineageOS Setup Wizard handles the first
 boot of a fresh guest; completing it provisions that guest (both settings 1 and
 the wizard's HOME activity disabled), so subsequent boots go directly to the
-launcher. Until then HOME returns to the wizard. An unprovisioned guest also
-restarts adbd twice, a few seconds apart, some tens of seconds after
-`sys.boot_completed` (about 230 s into the first boot on the iPad): DeviceDiagnostics' boot receiver
-asks Android's trade-in mode to start, which turns USB debugging on, and the
-virtual Wi-Fi that is already connected stops it at once, which turns it off,
-and the framework restarts adbd where stock stops it. Android does not enter
-trade-in mode once the device is set up, so the restarts happen only on the
-first boot of an erased guest. A client connecting in that window retries
-(Andarium's session waits up to 20 s for adbd); an operation already running
-over adbd, an install or a bug report, is cut and fails. A harness that erases
+launcher. Until then HOME returns to the wizard. The image has no trade-in
+mode, and so adbd is one process through a first boot. AOSP's DeviceDiagnostics
+asks Android's trade-in mode to start from a boot receiver on a first boot that
+has not been set up, which turns USB debugging on, and the virtual Wi-Fi that
+is already connected stops it at once, which turns it off; the framework
+restarts adbd each time, twice a few seconds apart, some tens of seconds after
+`sys.boot_completed` (about 230 s into the first boot on the iPad), and an
+install or a bug report running over adbd was cut. TradeInModeService has no
+configuration switch and starts only for a package that holds
+`android.permission.ENTER_TRADE_IN_MODE`, which DeviceDiagnostics alone
+requests, so the product excludes DeviceDiagnostics (`KERNARIUM_REMOVED_PACKAGES`,
+asserted by `build-aosp.sh`). The verifier refuses its directory and any APK of
+the image partitions that requests the permission; a manifest that declares the
+permission, as framework-res.apk does, is not a request. A virtual device has
+no trade-in. A harness that erases
 a guest to measure it provisions the guest over adb after `sys.boot_completed`
 ([`tools/android_provision.py`](../../tools/android_provision.py), through
 `tools/boot_android.py --provision`, `tests/perf/run_ios_device_android.py
 --erase` and `tests/perf/android_launch_suite.py`): it sets both settings and
 disables the wizard package for user 0 (the shell may not disable the wizard's
 own components), so HOME resolves to the launcher, and it changes nothing in
-the image. Set at `sys.boot_completed`, the settings keep trade-in mode from
-starting at all ("Not starting trade-in mode, device is setup"); a helper that
-comes late finds the restarts under way, and it returns only after adbd has
-stayed one process for six seconds with no trade-in mode pending. A measurement
+the image. It returns only after adbd has stayed one process for six seconds
+with no trade-in mode pending, which costs those six seconds on this image and
+keeps a harness correct on an older release that still carries DeviceDiagnostics
+(r15 and earlier, where provisioning at `sys.boot_completed` also keeps the
+mode from starting: "Not starting trade-in mode, device is setup"). A measurement
 of the first-boot experience itself keeps the wizard.
 The `android-oobe` test completes the wizard through its pages and checks that
 the helper reaches the same observable state. The LineageOS updater, Canvas,

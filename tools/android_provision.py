@@ -17,16 +17,19 @@ to another package's components, so the helper disables the wizard package for
 user 0 instead. It changes nothing in the image, and it changes nothing in a
 guest that is already provisioned.
 
-An unprovisioned guest also restarts adbd twice, a few seconds apart, some tens
-of seconds after `sys.boot_completed`: DeviceDiagnostics' boot receiver enters
-Android's trade-in mode, which turns USB debugging on, and the virtual Wi-Fi
-that is already connected ends it at once, which turns it off (the framework
-restarts adbd where stock stops it). A provisioned guest never enters trade-in
-mode ("Not starting trade-in mode, device is setup"), so provisioning at
-`sys.boot_completed` prevents the restarts; a late helper finds them under
-way. Either way `provision` returns only after adbd has stayed the same process
-for a few seconds with no trade-in mode pending, so the harness never starts a
-shell that the restart would kill.
+The current image has no trade-in mode (DeviceDiagnostics is not in the
+product), so adbd is one process through a first boot. A release that still
+carries DeviceDiagnostics (r15 and earlier) restarts adbd twice, a few seconds
+apart, some tens of seconds after `sys.boot_completed` on an unprovisioned
+guest: its boot receiver enters Android's trade-in mode, which turns USB
+debugging on, and the virtual Wi-Fi that is already connected ends it at once,
+which turns it off (the framework restarts adbd where stock stops it). A
+provisioned guest never enters trade-in mode ("Not starting trade-in mode,
+device is setup"), so provisioning at `sys.boot_completed` prevents the
+restarts there; a late helper finds them under way. On any image `provision`
+returns only after adbd has stayed the same process for a few seconds with no
+trade-in mode pending, which costs those seconds and no more on the current one,
+so the harness never starts a shell that a restart would kill.
 
 The helper takes a `shell` callable: it runs one command string in the guest's
 shell and returns its standard output, so each harness keeps its own adb
