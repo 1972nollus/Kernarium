@@ -473,6 +473,17 @@ three-dimensional texture beside a two-dimensional texture, which leaves no
 attachment layered, and the rule requiring a common texture target applies
 only when one is.
 
+Each distinct sample mask is a pipeline compile. Metal has no fixed-function
+sample mask, so KosmicKrisp folds a pipeline's mask into its fragment function
+and offers no dynamic sample mask, and Zink keys its pipelines on the mask: a
+new value costs a pipeline and a Metal compile, about 70 ms. The host state
+tracker therefore hands the driver only the mask bits that select the
+framebuffer's samples, and the full mask when they select every sample. A GL
+application that varies the other bits, as
+`dEQP-GLES31.functional.multisample.default_framebuffer.sample_mask_non_effective_bits`
+does for every quad it draws, compiles once per effective mask, at most sixteen
+times on a four-sample framebuffer.
+
 Hardware video decode is not advertised over Virgl; the renderer is built
 without it.
 
