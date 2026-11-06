@@ -219,8 +219,38 @@ activity implementing that intent. The modular framework API
 containers remain part of base AOSP so ordinary applications can still resolve
 the Android SDK classes; excluding them also removes required system-server
 dexpreopt inputs. Telephony,
-GNSS, NFC, UWB, Thread, camera, biometric, sensor, vibrator, secure-element,
+GNSS, NFC, UWB, Thread, camera, biometric, vibrator, secure-element,
 USB, and Trusty hardware is not advertised.
+
+### Motion sensors
+
+The product installs Android’s AIDL multi-HAL service and the 2.1 motion
+sub-HAL in `overlay/sensors/`. It advertises an accelerometer and gyroscope,
+with continuous, non-wake-up delivery, 10 ms minimum periods and no hardware
+FIFO, direct channels or data injection. Each sensor’s activation and sampling
+period are independent; flush posts a completion after earlier delivered
+events. The target-files verifier requires the service, its VINTF instance,
+feature declarations and exactly this backend in `hals.conf`.
+
+Andarium supplies samples only when the user enables Motion Sensors. The
+sub-HAL accepts a single stream on vsock port 5556 from host CID 2; it accepts
+no guest-originated sensor source. Its SELinux domain uses the platform’s
+explicit virtual-device vsock classification, with only create, bind, listen,
+accept, read, getattr and getopt on its own sockets; no connect or ioctl access
+is granted. Each 20-byte record is little endian:
+`ANS1`, a uint32 Android sensor type (1 accelerometer or 4 gyroscope), then
+three float32 values in m/s² or rad/s. Axes match the mounted virtual display
+(x right, y up, z out of the screen). Andarium keeps them fixed while Android
+owns rotation; its [scene policy](../../Andarium/README.md#devices) describes
+windowed operation and returning to a locked full-screen scene.
+Core Motion acceleration is multiplied by −9.80665: a stationary,
+face-up device reports +9.80665 on z. Gyroscope units and signs carry through.
+Events use the guest’s CLOCK_BOOTTIME at receipt; this is a live input path,
+not a synchronized recording of host acquisition times. Invalid records close
+the stream. Disconnecting preserves no partial record or sample; a host can
+reconnect after foregrounding or a guest reboot.
+
+### Networking
 
 The guest's one network device, `eth0`, is the host's user-mode network (SLiRP:
 10.0.2.0/24, gateway 10.0.2.2, DNS 10.0.2.3), and it is the management NIC: adb

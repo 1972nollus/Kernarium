@@ -22,6 +22,8 @@ public struct Guest: Equatable, Codable, Sendable {
     /// A larger capacity that applies when the guest next starts.
     public var pendingCapacityGiB: Int?
     public var microphone: Bool
+    /// Shares the host accelerometer and gyroscope with the guest. Off by default.
+    public var motionSensors: Bool
     /// Whether iCloud and computer backups include the guest's files. Off by
     /// default: the guest is several GiB that Android can set up again.
     public var includeInBackups: Bool
@@ -33,12 +35,12 @@ public struct Guest: Equatable, Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case cores, memoryMiB, capacityGiB, pendingCapacityGiB, microphone
-        case includeInBackups
+        case includeInBackups, motionSensors
     }
 
     public init(
         cores: Int, memoryMiB: Int, capacityGiB: Int, pendingCapacityGiB: Int? = nil,
-        microphone: Bool = false, includeInBackups: Bool = false,
+        microphone: Bool = false, includeInBackups: Bool = false, motionSensors: Bool = false,
         usedBytes: UInt64 = 0
     ) {
         self.cores = cores
@@ -46,8 +48,20 @@ public struct Guest: Equatable, Codable, Sendable {
         self.capacityGiB = capacityGiB
         self.pendingCapacityGiB = pendingCapacityGiB
         self.microphone = microphone
+        self.motionSensors = motionSensors
         self.includeInBackups = includeInBackups
         self.usedBytes = usedBytes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        cores = try values.decode(Int.self, forKey: .cores)
+        memoryMiB = try values.decode(Int.self, forKey: .memoryMiB)
+        capacityGiB = try values.decode(Int.self, forKey: .capacityGiB)
+        pendingCapacityGiB = try values.decodeIfPresent(Int.self, forKey: .pendingCapacityGiB)
+        microphone = try values.decode(Bool.self, forKey: .microphone)
+        includeInBackups = try values.decode(Bool.self, forKey: .includeInBackups)
+        motionSensors = try values.decodeIfPresent(Bool.self, forKey: .motionSensors) ?? false
     }
 
     public var usedGiB: Double { Double(usedBytes) / Double(Limits.bytesPerGiB) }

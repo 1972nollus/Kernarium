@@ -1603,7 +1603,19 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         artifact = apk_path.parent / "oat" / isa / apk_path.stem
                         archive.writestr(f"{artifact}.odex", b"odex")
                         archive.writestr(f"{artifact}.vdex", b"vdex")
-                advertised_features = ["android.hardware.touchscreen"]
+                archive.writestr("VENDOR/bin/hw/android.hardware.sensors-service.multihal", synthetic_aarch64_elf())
+                archive.writestr("VENDOR/lib64/hw/android.hardware.sensors@2.1-impl.andarium.so", synthetic_aarch64_elf())
+                archive.writestr("VENDOR/etc/sensors/hals.conf",
+                                 "/vendor/lib64/hw/android.hardware.sensors@2.1-impl.andarium.so\n")
+                archive.writestr("VENDOR/etc/init/android.hardware.sensors-service-multihal.rc",
+                                 "service vendor.sensors-hal-multihal /vendor/bin/hw/android.hardware.sensors-service.multihal\n")
+                archive.writestr("VENDOR/etc/vintf/manifest/android.hardware.sensors-multihal.xml",
+                                 '<manifest version="1.0" type="device"><hal format="aidl">'
+                                 '<name>android.hardware.sensors</name><version>3</version>'
+                                 '<fqname>ISensors/default</fqname></hal></manifest>')
+                advertised_features = ["android.hardware.touchscreen",
+                                       "android.hardware.sensor.accelerometer",
+                                       "android.hardware.sensor.gyroscope"]
                 advertised_features.extend(
                     feature for feature in (
                         "android.hardware.touchscreen.multitouch",
@@ -2030,6 +2042,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"SYSTEM/bin/mediaserver": synthetic_arm_elf()}}),
             ("32-bit-vendor-daemon",
              {"entries": {"VENDOR/bin/hw/android.hardware.fixture-service": synthetic_arm_elf()}}),
+            ("missing-motion-backend", {"entries": {
+                "VENDOR/lib64/hw/android.hardware.sensors@2.1-impl.andarium.so": None}}),
+            ("foreign-motion-backend", {"entries": {
+                "VENDOR/etc/sensors/hals.conf": b"/vendor/lib64/hw/other.so\n"}}),
+            ("missing-motion-instance", {"entries": {
+                "VENDOR/etc/vintf/manifest/android.hardware.sensors-multihal.xml": b'<manifest/>'}}),
+            ("wrong-motion-service", {"entries": {
+                "VENDOR/etc/init/android.hardware.sensors-service-multihal.rc": b'service sensor /vendor/bin/other\n'}}),
             ("32-bit-alignment", {"arm_alignment": 2048}),
             ("32-bit-hard-float", {"arm_flags": 0x05000400}),
             ("alignment", {"alignment": 4096}),
@@ -4078,6 +4098,8 @@ def verify_package_assertions(android_root: Path) -> None:
     for package in sorted(present & removed):
         fail(f"build-aosp.sh asserts {package} is present, but the product removes it")
     for package in (
+        "android.hardware.sensors-service.multihal",
+        "android.hardware.sensors@2.1-impl.andarium",
         "com.android.hardware.thermal",
         "com.android.hardware.cas",
         "libclearkeycasplugin",

@@ -178,6 +178,12 @@ VENDOR_MULTILIB_PROPERTIES = {
 
 
 REQUIRED_ENTRIES = {
+    "VENDOR/bin/hw/android.hardware.sensors-service.multihal",
+    "VENDOR/etc/sensors/hals.conf",
+    "VENDOR/etc/vintf/manifest/android.hardware.sensors-multihal.xml",
+    "VENDOR/lib64/hw/android.hardware.sensors@2.1-impl.andarium.so",
+    "VENDOR/etc/init/android.hardware.sensors-service-multihal.rc",
+
     "BOOT/kernel",
     "INIT_BOOT/RAMDISK/init",
     "IMAGES/init_boot.img",
@@ -364,15 +370,12 @@ FORBIDDEN_STATIC_ENTRIES = {
     "VENDOR/apex/com.google.cf.oemlock.apex",
     "VENDOR/apex/com.google.cf.rild.apex",
     "VENDOR/apex/com.google.cf.wifi.apex",
-    "VENDOR/bin/hw/android.hardware.sensors-service.multihal",
     "VENDOR/etc/bluetooth_with_le_audio_policy_configuration_7_0.xml",
     "VENDOR/etc/init/init_graphics.vendor.rc",
     "VENDOR/etc/init/seriallogging.rc",
     "VENDOR/etc/permissions/android.hardware.ethernet.xml",
     "VENDOR/etc/permissions/android.hardware.uwb.xml",
     "VENDOR/etc/recovery-resource.dat",
-    "VENDOR/etc/sensors/hals.conf",
-    "VENDOR/etc/vintf/manifest/android.hardware.sensors-multihal.xml",
     "VENDOR/lib64/hw/android.hardware.sensors@2.1-impl.cuttlefish.so",
     "VENDOR/overlay/CuttlefishTetheringOverlay.apk",
     "VENDOR/overlay/CuttlefishWifiOverlay.apk",
@@ -482,6 +485,8 @@ REQUIRED_FEATURE_NAMES = {
     "android.hardware.touchscreen.multitouch",
     "android.hardware.touchscreen.multitouch.distinct",
     "android.hardware.touchscreen.multitouch.jazzhand",
+    "android.hardware.sensor.accelerometer",
+    "android.hardware.sensor.gyroscope",
     "android.hardware.microphone",
     "android.hardware.wifi",
     "android.software.companion_device_setup",
@@ -1542,6 +1547,24 @@ def check_cas_hal(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -
     for plugin in CAS_PLUGINS:
         if plugin not in infos:
             fail(f"the ClearKey CAS plugin is missing: {plugin}")
+
+
+def check_motion_sensors(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    configuration = read_small(archive, infos["VENDOR/etc/sensors/hals.conf"]).decode().strip()
+    if configuration != "/vendor/lib64/hw/android.hardware.sensors@2.1-impl.andarium.so":
+        fail("motion multi-HAL must load only the Andarium backend")
+    fragment = ET.fromstring(read_small(
+        archive, infos["VENDOR/etc/vintf/manifest/android.hardware.sensors-multihal.xml"]
+    ))
+    if not any(hal.get("format") == "aidl"
+               and hal.findtext("name") == "android.hardware.sensors"
+               and hal.findtext("fqname") == "ISensors/default" for hal in fragment.findall("hal")):
+        fail("motion sensor HAL is not declared as AIDL ISensors/default")
+    script = read_small(archive, infos[
+        "VENDOR/etc/init/android.hardware.sensors-service-multihal.rc"
+    ]).decode()
+    if not re.search(r"^service \S+ /vendor/bin/hw/android\.hardware\.sensors-service\.multihal$", script, re.M):
+        fail("motion sensor HAL service does not start the multi-HAL binary")
 
 
 def check_hardware_features(
@@ -2862,6 +2885,7 @@ def main() -> None:
             fail("target files do not contain an APEX payload")
         check_app_dexpreopt(seen)
         check_hardware_features(archive, infos)
+        check_motion_sensors(archive, infos)
         check_discrete_ops(archive, infos)
         check_default_wallpaper(archive, infos)
         check_pinner_overlay(archive, infos)

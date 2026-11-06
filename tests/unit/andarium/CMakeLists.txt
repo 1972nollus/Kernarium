@@ -9,3 +9,9 @@ uml_add_unit_test(NAME andarium-core
         --scratch-path ${CMAKE_BINARY_DIR}/andarium-core-swiftpm
     LABELS andarium
     TIMEOUT 1200)
+
+add_executable(uml_andarium_motion_protocol_tests motion_protocol_tests.cpp)
+target_include_directories(uml_andarium_motion_protocol_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/android/lineage-24/overlay/sensors)
+uml_add_unit_test(NAME andarium-motion-protocol
+    COMMAND uml_andarium_motion_protocol_tests LABELS andarium)

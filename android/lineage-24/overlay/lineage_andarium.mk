@@ -15,7 +15,7 @@
 #
 
 # Select the UML-safe branches in the inherited Cuttlefish product before it
-# is evaluated. The Darwin machine has no nested Trusty VM, modem, NFC, sensor,
+# is evaluated. The Darwin machine has no nested Trusty VM, modem, NFC,
 # Bluetooth, GNSS, biometric, secure-element, or camera transport, and its
 # Wi-Fi is the kernel's virtual one (kernarium_net_setup).
 TRUSTY_SYSTEM_VM := disabled
@@ -44,7 +44,12 @@ CF_VENDOR_NO_THREADNETWORK := true
 LOCAL_ENABLE_LIGHT := false
 LOCAL_ENABLE_OEMLOCK := false
 LOCAL_ENABLE_NEURALNETWORKS := false
-LOCAL_ENABLE_SENSORS := false
+# Android's multi-HAL service loads only the private host motion backend.
+LOCAL_ENABLE_SENSORS := true
+LOCAL_SENSOR_FILE_OVERRIDES := true
+LOCAL_SENSOR_PRODUCT_PACKAGE := \
+    android.hardware.sensors-service.multihal \
+    android.hardware.sensors@2.1-impl.andarium
 LOCAL_ENABLE_NFC := false
 LOCAL_ENABLE_FRP := false
 LOCAL_GNSS_PRODUCT_PACKAGE :=
@@ -108,6 +113,12 @@ PRODUCT_COPY_FILES_EXCLUDE += \
 # the project's own builds can be sideloaded. This product is signed with its
 # owner's key alone: the recovery and the system trust that key and no other.
 PRODUCT_EXTRA_RECOVERY_KEYS :=
+
+PRODUCT_PACKAGES_EXCLUDE += cuttlefish_sensor_injection
+PRODUCT_COPY_FILES += \
+    device/kernarium/andarium/sensors/hals.conf:$(TARGET_COPY_OUT_VENDOR)/etc/sensors/hals.conf \
+    frameworks/native/data/etc/android.hardware.sensor.accelerometer.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.sensor.accelerometer.xml \
+    frameworks/native/data/etc/android.hardware.sensor.gyroscope.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.sensor.gyroscope.xml
 
 PRODUCT_NAME := lineage_andarium
 PRODUCT_DEVICE := andarium
