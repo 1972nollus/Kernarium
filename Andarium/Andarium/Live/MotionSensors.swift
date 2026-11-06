@@ -13,8 +13,9 @@ private nonisolated struct MotionConnector: GuestStreamOpener {
 }
 
 /// Core Motion is opened only for an opted-in, booted, foreground guest.
-/// Device axes stay fixed as the interface rotates. No samples are retained
-/// across backgrounding, power-off, or a guest restart.
+/// The axes are set before a start and never change per sample (`MotionMount`
+/// decides when they move). No samples are retained across backgrounding,
+/// power-off, or a guest restart.
 @MainActor
 final class MotionSensors {
     private let manager = CMMotionManager()
@@ -51,7 +52,7 @@ final class MotionSensors {
             Task { @MainActor [weak self] in
                 guard let self, self.running, self.epoch == current else { return }
                 self.stop()
-                self.problem?("Motion sensors could not be read. Check Andarium’s Motion & Fitness access in Settings, then turn Motion Sensors on again.")
+                self.problem?("The device’s motion sensors could not be read. Turn Gyroscope off and on to try again.")
             }
         }
         if manager.isAccelerometerAvailable {

@@ -48,6 +48,44 @@ struct AdbKeyStoreTests {
         #expect(!lines.all.contains("failed"))
     }
 
+    /// A test that waits for a guest the application started must not make a
+    /// key of its own: an automation launch that erases first deletes the key
+    /// the test would have made, and the guest is given another.
+    @Test func theTestsReadTheKeyAgainAndNeverMakeIt() throws {
+        let store = store()
+        defer { store.delete() }
+        #expect(try store.existingIdentity() == nil)
+        #expect(try store.find() == nil, "reading the key must not make one")
+        let first = try store.loadOrCreate()
+        #expect(try store.existingIdentity()?.publicKeyLine == first.publicKeyLine)
+        // Erase Guest deletes the key and the next start makes another.
+        #expect(store.delete())
+        #expect(try store.existingIdentity() == nil)
+        let second = try store.loadOrCreate()
+        #expect(try store.existingIdentity()?.publicKeyLine == second.publicKeyLine)
+        #expect(second.publicKeyLine != first.publicKeyLine)
+    }
+
+    /// Erasing an isolated instance must never delete the ordinary guest's
+    /// key. The tests use a base tag of their own, never the application's.
+    @Test func anIsolatedInstanceHasItsOwnKeyAndItsEraseLeavesTheOthers() throws {
+        let base = "com.imxieyi.andarium.adb-key.test-\(UUID().uuidString)"
+        let ordinary = AdbKeyStore(instance: nil, base: base)
+        let first = AdbKeyStore(instance: "retina-memory", base: base)
+        let second = AdbKeyStore(instance: "shutdown_flow-2", base: base)
+        defer { [ordinary, first, second].forEach { $0.delete() } }
+        #expect(AdbKeyStore(instance: nil).tag == AdbKeyStore.defaultTag)
+        #expect(Set([ordinary.tag, first.tag, second.tag]).count == 3)
+        let lines = try [ordinary, first, second].map { try $0.loadOrCreate().publicKeyLine }
+        #expect(Set(lines).count == 3)
+        #expect(first.delete())
+        #expect(try first.find() == nil)
+        #expect(try ordinary.loadOrCreate().publicKeyLine == lines[0])
+        #expect(try second.loadOrCreate().publicKeyLine == lines[2])
+        // An instance finds its own key again, and a new one after its erase.
+        #expect(try first.loadOrCreate().publicKeyLine != lines[1])
+    }
+
     @Test func theKeyIsRSA2048ThisDeviceOnlyAndNotSynchronized() throws {
         let store = store()
         defer { store.delete() }
@@ -99,4 +137,12 @@ private nonisolated final class LineBox: @unchecked Sendable {
     private var lines: [String] = []
     var all: [String] { lock.withLock { lines } }
     func add(_ line: String) { lock.withLock { lines.append(line) } }
+}
+
+extension AdbKeyStore {
+    /// The key as it is now, or nil when there is none; never makes one.
+    func existingIdentity() throws -> Identity? {
+        guard let key = try find() else { return nil }
+        return try Identity(privateKey: key, publicKeyLine: Self.line(for: key))
+    }
 }

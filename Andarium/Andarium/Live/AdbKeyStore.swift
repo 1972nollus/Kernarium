@@ -7,7 +7,8 @@ import Security
 /// key is a software key the Keychain protects. Its public half goes to the
 /// guest in each boot request, where adbd takes it as authorized for that
 /// boot; its private half signs adbd's AUTH tokens. It is made before the
-/// first start that has none, and Erase Guest deletes it.
+/// first start that has none, and Erase Guest deletes it. An isolated
+/// instance has a key of its own.
 nonisolated struct AdbKeyStore {
     static let defaultTag = "com.imxieyi.andarium.adb-key"
     static let label = "Andarium debugging key"
@@ -31,6 +32,13 @@ nonisolated struct AdbKeyStore {
 
     init(tag: String = AdbKeyStore.defaultTag) {
         self.tag = tag
+    }
+
+    /// The key of the guest a launch runs. The ordinary guest keeps the
+    /// default tag; an isolated instance is tagged with its name, so erasing
+    /// one never deletes the ordinary guest's key. `base` is for tests.
+    init(instance: String?, base: String = AdbKeyStore.defaultTag) {
+        self.init(tag: instance.map { "\(base).instance.\($0)" } ?? base)
     }
 
     private var tagData: Data { Data(tag.utf8) }

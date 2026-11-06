@@ -1027,7 +1027,8 @@ public:
 	}
 
 	bool prepare() noexcept override { return true; }
-	bool hold(uml::runtime::HibernationReport &) noexcept override
+	bool hold(uml::runtime::HibernationReport &,
+		uml::runtime::HoldCondition) noexcept override
 	{
 		return true;
 	}

@@ -35,6 +35,13 @@
 # carries the name of one. It conflicts with both automation options, with the
 # Simulator and with --runtimes all.
 #
+# No packaged framework keeps the linker's debug map: it names the object files
+# of the build host (N_OSO stabs, absolute paths of the checkout and the
+# dependency trees) and would ship in the application. Each framework's dSYM,
+# made from the unstripped binary, keeps the symbols, and `strip -S` keeps the
+# binary's UUID that the two share. An App Store packaging also checks that no
+# framework still has it.
+#
 # Every embedded framework carries a PrivacyInfo.xcprivacy
 # (Kernarium/PrivacyManifests) in each slice, and the device slices are checked
 # with scripts/check-privacy-manifests.py, which fails a binary that uses a
@@ -134,6 +141,7 @@ has_sdk()
 find_tool XCODEBUILD xcodebuild
 find_tool CMAKE cmake
 find_tool OTOOL otool
+find_tool STRIP strip
 find_tool PYTHON python3
 
 RUNTIME_4K="KRuntime_6_18_4K"
@@ -323,6 +331,23 @@ install_privacy_manifest()
 			fail "could not install the privacy manifest of $1"
 	done
 }
+# strip_debug_maps FRAMEWORK...: removes the debug stabs from every slice of
+# each XCFramework, once its dSYM has been taken into the XCFramework.
+strip_debug_maps()
+{
+	for stripped_framework in "$@"; do
+		for slice_framework in "$STAGE/$stripped_framework.xcframework"/*/"$stripped_framework.framework"; do
+			[ -f "$slice_framework/$stripped_framework" ] ||
+				fail "$stripped_framework XCFramework has no framework binary in $slice_framework"
+			"$STRIP" -S "$slice_framework/$stripped_framework" ||
+				fail "could not strip the debug map of $slice_framework"
+		done
+	done
+}
+strip_debug_maps $RUNTIME_FRAMEWORKS $GL_FRAMEWORKS
+if has_sdk device; then
+	strip_debug_maps KosmicKrisp
+fi
 for framework in $RUNTIME_FRAMEWORKS; do
 	install_privacy_manifest "$framework" KRuntime
 done
@@ -500,11 +525,17 @@ for slice_platform in $PACKAGED_SLICES; do
 	fi
 done
 
-# An App Store runtime carries the name of no environment knob.
+# An App Store runtime carries the name of no environment knob, and no framework
+# of it keeps a trace of the host that built it.
 if [ "$APP_STORE" -eq 1 ]; then
 	"$PYTHON" -B "$ROOT_DIR/Andarium/scripts/check-app-store-bundle.py" --runtime \
 		"$STAGE/$RUNTIME_ANDROID_4K.xcframework/ios-arm64/$RUNTIME_ANDROID_4K.framework" ||
-		fail "$RUNTIME_ANDROID_4K carries an environment knob; build the kernarium-ios-device-android-app-store preset"
+		fail "$RUNTIME_ANDROID_4K carries an environment knob or a trace of its build host; build the kernarium-ios-device-android-app-store preset"
+	for framework in $GPU_FRAMEWORKS; do
+		"$PYTHON" -B "$ROOT_DIR/Andarium/scripts/check-app-store-bundle.py" --host-traces \
+			"$STAGE/$framework.xcframework/ios-arm64/$framework.framework" ||
+			fail "$framework keeps a trace of its build host"
+	done
 fi
 
 # The storage and compression cores carry no Metal dependency, so their

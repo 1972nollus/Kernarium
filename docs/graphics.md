@@ -583,8 +583,9 @@ to the footprint.
 CPU pixel-format conversion writes directly into the locked framebuffer with
 the same channel permutation for vector and scalar pixels. It needs no
 full-image temporary allocation or second copy; a source overlapping the
-framebuffer uses temporary storage to preserve its input. The lock keeps a
-complete update atomic with drawing and mode changes.
+framebuffer, in any format, is first copied to temporary storage so that every
+pixel is read as it was before the update. The lock keeps a complete update
+atomic with drawing and mode changes.
 
 Kernarium's EDID lists only the host's preferred mode, so a guest reaches a
 larger one, such as 4096x2160, by setting a user-defined mode. The renderer can

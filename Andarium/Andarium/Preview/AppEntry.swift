@@ -12,6 +12,9 @@ struct AppEntry {
     var play: Bool
     var lowSpace: Bool
     var resetTips: Bool
+    /// The boot step a frozen boot screen shows, from 0; the screen's own
+    /// when absent.
+    var bootStage: Int?
 
     static func fromArguments() -> AppEntry {
         let defaults = UserDefaults.standard
@@ -19,15 +22,38 @@ struct AppEntry {
             screen: defaults.string(forKey: "screen") ?? "home",
             play: defaults.bool(forKey: "play"),
             lowSpace: defaults.bool(forKey: "lowSpace"),
-            resetTips: defaults.bool(forKey: "resetTips")
+            resetTips: defaults.bool(forKey: "resetTips"),
+            bootStage: defaults.string(forKey: "bootStage").flatMap { Int($0) }
         )
     }
 
+    /// Where Home scrolls to for a screen that shows a lower section.
+    private static let scrollTargets: [String: String] = [
+        "home-options": "erase", "home-recovery-erase": "erase", "start-recovery": "erase",
+        "home-display": "display",
+        "home-capabilities": "capabilities", "home-mic-on": "capabilities", "home-mic-denied": "capabilities",
+        "home-mic-alert": "capabilities", "home-gyroscope-unavailable": "capabilities",
+        "home-backup": "backup",
+    ]
+
+    /// Where Settings scrolls to for a screen that shows a lower section.
+    private static let settingsScrolls: [String: String] = [
+        "settings-stats": "stats", "settings-display": "display",
+        "settings-capabilities": "capabilities", "settings-mic-denied": "capabilities",
+    ]
+
+    /// The page of Info a screen opens on.
+    private static let infoPages: [String: InfoPage] = [
+        "info-acknowledgements": .acknowledgements,
+        "info-license": .license("mesa"),
+        "info-license-gpl": .license("linux"),
+    ]
+
     var hints: ScreenHints {
         ScreenHints(
-            scrollTarget: ["home-options", "home-restore", "start-recovery"].contains(screen) ? "erase" : nil,
+            scrollTarget: Self.scrollTargets[screen],
             eraseConfirmed: screen == "erase-confirm",
-            acknowledgements: screen == "info-acknowledgements"
+            infoPage: Self.infoPages[screen]
         )
     }
 
@@ -51,12 +77,12 @@ struct AppEntry {
         if ["welcome", "create", "create-low-space"].contains(screen) { guest = nil }
         let model = AppModel(
             guest: guest, host: host, system: PreviewData.system, capabilities: .preview,
-            createRequirementBytes: PreviewData.createRequirementBytes, systemBytes: PreviewData.systemBytes
+            createRequirementBytes: PreviewData.createRequirementBytes
         )
         let freeze = !play
 
         func boot(_ kind: BootKind, stage: Int, seconds: Int) {
-            model.frozenBootStage = freeze ? stage : nil
+            model.frozenBootStage = freeze ? (bootStage ?? stage) : nil
             model.frozenElapsed = seconds
             model.phase = .booting(kind)
         }
@@ -83,13 +109,28 @@ struct AppEntry {
             model.plan = .blocked(.olderAndroid)
         case "home-closed":
             model.notice = .closedInBackground
-        case "home-options":
+        case "home-options", "home-display", "home-capabilities", "home-backup", "system-edit":
             break
+        case "home-mic-on":
+            model.guest?.microphone = true
+            model.microphoneState = .granted
+        case "home-mic-denied", "home-mic-alert":
+            model.microphoneState = .denied
+        case "home-gyroscope-unavailable":
+            model.motionSensorsAvailable = false
         case "home-erased":
             model.erase()
+        case "busy-create":
+            model.busy = BusyState(title: "Creating Guest", detail: "Setting up Andarium with 16 GiB.", progress: 0.42)
+        case "busy-erase":
+            model.busy = BusyState(title: "Erasing Guest", detail: "Deleting everything the guest stored.", progress: 0.65)
+        case "alert-update-unfinished":
+            model.plan = .unfinishedUpdate(to: PreviewData.release, canRetry: false, canRestore: true)
+        case "alert-blocked":
+            model.plan = .blocked(.olderAndroid)
         case "boot":
             model.guest?.pendingCapacityGiB = 24
-            boot(.normal, stage: 2, seconds: 9)
+            boot(.normal, stage: 3, seconds: 9)
         case "boot-first":
             model.erase()
             boot(.firstStart, stage: 3, seconds: 74)
@@ -122,7 +163,8 @@ struct AppEntry {
              "settings-bundle", "install-apk",
              "bug-report",
              "settings-adb-off", "settings-adb-no-address",
-             "settings-install-failed", "settings-adb":
+             "settings-install-failed", "settings-adb",
+             "settings-stats", "settings-display", "settings-capabilities", "settings-mic-denied":
             let session = model.session
             let file = ApkInstall.sampleFile
             let size = ApkInstall.sampleSizeBytes
@@ -151,13 +193,19 @@ struct AppEntry {
                 session.adb = true
             case "settings-adb-off":
                 session.usbDebugging = false
+            case "settings-mic-denied":
+                model.microphoneState = .denied
             default:
                 break
             }
             // The two guest operations play on the full-screen overlay with
             // Settings already gone.
             let operation = screen == "bug-report" || screen == "install-apk"
-            model.sessionPreset = SessionPreset(settings: !operation, settingsLarge: screen == "settings")
+            model.sessionPreset = SessionPreset(
+                settings: !operation,
+                settingsLarge: Self.settingsScrolls.keys.contains(screen) || screen == "settings",
+                settingsScroll: Self.settingsScrolls[screen]
+            )
             model.phase = .running(.normal)
         case "recovery", "recovery-open":
             model.sessionPreset = SessionPreset(keysOpen: screen == "recovery-open")
@@ -182,12 +230,21 @@ struct AppEntry {
             model.sheet = .create
         case "resize":
             model.sheet = .resize
+        case "system-edit":
+            model.sheet = .system
+        case "home-mic-alert":
+            model.setMicrophone(true)
         case "erase", "erase-confirm":
             model.sheet = .erase
-        case "info", "info-acknowledgements":
+        case "info", "info-acknowledgements", "info-license", "info-license-gpl":
             model.sheet = .info
-        case "start-low-space":
+        case "start-low-space", "alert-update-unfinished", "alert-blocked":
             model.start(.normal)
+        case "alert-error":
+            model.alert = AppAlert(
+                title: "Settings Not Saved",
+                message: "The file couldn\u{2019}t be saved because there is no space left on the device."
+            )
         case "bug-report":
             try? await Task.sleep(for: .milliseconds(450))
             model.createBugReport()

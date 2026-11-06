@@ -32,6 +32,7 @@ class DeviceFrameworkSymbolsTests(unittest.TestCase):
         self.environment = {
             **os.environ, "ACTION": "install", "PLATFORM_NAME": "iphoneos",
             "CODE_SIGNING_ALLOWED": "NO", "TARGET_BUILD_DIR": str(self.root / "build"),
+            "TARGET_TEMP_DIR": str(self.root / "intermediates"),
             "FRAMEWORKS_FOLDER_PATH": "Fixture.app/Frameworks",
             "DWARF_DSYM_FOLDER_PATH": str(self.destination),
         }

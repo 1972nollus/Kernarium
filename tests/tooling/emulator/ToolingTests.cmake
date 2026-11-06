@@ -25,6 +25,15 @@ uml_add_tooling_test(
     LABELS emulator;guest
     TIMEOUT 60)
 
+# How the guest-restart runner compares the process at two boots: the reply
+# ports follow the threads, and everything else is exact. No guest starts.
+uml_add_tooling_test(
+    NAME guest-restart-audit-comparison
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/emulator/guest_restart_audit_tests.py
+    LABELS emulator;guest
+    TIMEOUT 60)
+
 if(UML_BUILD_KERNEL_RUNNER)
     add_executable(uml_embedded_kernel_serialization_tests
         ${PROJECT_SOURCE_DIR}/tests/tooling/emulator/embedded_kernel_serialization_tests.cpp)

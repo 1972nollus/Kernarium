@@ -48,6 +48,14 @@ enum MicrophoneState: Equatable {
     case notAsked, denied, granted
 }
 
+/// A question about a permission iOS has already refused, which only the
+/// person can change in Settings.
+enum PermissionPrompt: Identifiable, Equatable {
+    case microphone
+
+    var id: Self { self }
+}
+
 /// What the device application does behind the screens: the guest's files and
 /// its run. The Simulator preview has no driver, and the model then plays the
 /// same steps against mock data.
@@ -67,6 +75,9 @@ protocol RuntimeDriver: AnyObject {
     func restoreUpdate() throws
     /// Enables or stops sharing motion with the guest.
     func setMotionSensors(_ on: Bool)
+    /// The scene's geometry changed, which may include its interface
+    /// orientation.
+    func sceneGeometryDidChange()
     /// Turns the guest's microphone on or off, asking the system for access
     /// when the person turns it on for the first time.
     func setMicrophone(_ on: Bool)
@@ -94,5 +105,5 @@ protocol RuntimeDriver: AnyObject {
 struct ScreenHints {
     var scrollTarget: String?
     var eraseConfirmed = false
-    var acknowledgements = false
+    var infoPage: InfoPage?
 }

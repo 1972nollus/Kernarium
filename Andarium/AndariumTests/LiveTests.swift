@@ -39,7 +39,6 @@ struct SystemFolderTests {
         let release = try SystemFolder.release(in: url)
         #expect(release.identity.releaseID == "20261031-los24-r4")
         #expect(release.identity.buildNumber == 1_793_463_711)
-        #expect(release.systemDiskBytes == 4096)
     }
 
     @Test func aFileThatIsMissingIsNamed() throws {
@@ -95,8 +94,8 @@ struct DisplayOptionsStoreTests {
     @Test func optionsSurviveTheStore() {
         let saved = DisplayOptionsStore.load()
         defer { DisplayOptionsStore.save(saved) }
-        DisplayOptionsStore.save(DisplayOptions(retina: true, followWindow: false))
-        #expect(DisplayOptionsStore.load() == DisplayOptions(retina: true, followWindow: false))
+        DisplayOptionsStore.save(DisplayOptions(retina: true))
+        #expect(DisplayOptionsStore.load() == DisplayOptions(retina: true))
     }
 }
 
@@ -105,22 +104,58 @@ struct HostDeviceTests {
         let host = AppEntry.hostDevice()
         #expect(host.processorCount >= 1)
         // A guest has every processor, at most the eight the memory budget is
-        // measured for; the device keeps its own count for Info.
-        #expect(host.physicalProcessorCount >= host.processorCount)
+        // measured for.
+        let physical = ProcessInfo.processInfo.activeProcessorCount
         #expect(host.processorCount <= 8)
-        #expect(host.processorCount == min(host.physicalProcessorCount, 8))
-        #expect(
-            host.processorCount
-                == GuestProcessorLimit.vCPUs(physicalProcessorCount: host.physicalProcessorCount))
+        #expect(host.processorCount == min(physical, 8))
+        #expect(host.processorCount == GuestProcessorLimit.vCPUs(physicalProcessorCount: physical))
         // The bound comes from the runtime's budget formula through the loader:
         // inside the runtime's range, never rising with the vCPU count, and the
         // largest size where the system sets no limit (a Mac).
         let bounds = (1...host.processorCount).map { host.memory.maximumMiB(vCPUs: $0) }
         #expect(bounds.allSatisfy { Limits.runtimeMemoryRangeMiB.contains($0) })
         #expect(bounds == bounds.sorted(by: >))
-        #expect(host.isMac == ProcessInfo.processInfo.isiOSAppOnMac)
-        if host.isMac { #expect(bounds.allSatisfy { $0 == Limits.runtimeMemoryRangeMiB.upperBound }) }
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            #expect(bounds.allSatisfy { $0 == Limits.runtimeMemoryRangeMiB.upperBound })
+        }
+        // A new guest takes every vCPU the device offers and the default
+        // memory of that count (the safe limit in half-gibibyte steps).
+        let fresh = Guest.fresh(on: host)
+        #expect(fresh.cores == host.processorCount)
+        #expect(fresh.memoryMiB == host.memory.defaultMemoryMiB(vCPUs: host.processorCount))
+        #expect(fresh.memoryMiB <= host.memory.maximumMiB(vCPUs: host.processorCount))
         #expect(AppEntry.freeStorageBytes() > 0)
+    }
+}
+
+/// The unit fixtures of the default memory are the shared budget formula's
+/// own answers; this asks the loader, which holds that formula, for the same
+/// rows, and for the vCPU count a device with a given number of cores offers.
+struct DefaultGuestTests {
+    @Test func theFixturesAreTheLoadersBoundsAndTheCoreLimitIsEightAtMost() {
+        let parameters = kernarium_runtime_loader_launch_memory_set()
+        for (cores, expected) in [(1, 1), (4, 4), (6, 6), (8, 8), (10, 8), (12, 8), (20, 8)] {
+            #expect(GuestProcessorLimit.vCPUs(physicalProcessorCount: cores) == expected)
+        }
+        for (limitMiB, bounds, defaults) in [
+            (1536, [960, 960, 896, 896, 896, 896, 896, 896], [4: 896, 6: 896, 8: 896]),
+            (2048, [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344], [4: 1408, 6: 1344, 8: 1344]),
+            (2304, [1728, 1728, 1664, 1664, 1600, 1600, 1600, 1600], [4: 1536, 6: 1536, 8: 1536]),
+            (2867, [2304, 2304, 2240, 2240, 2176, 2176, 2176, 2176], [4: 2048, 6: 2048, 8: 2048]),
+            (3584, [3008, 3008, 2944, 2944, 2880, 2880, 2880, 2880], [4: 2560, 6: 2560, 8: 2560]),
+            (4096, [3520, 3520, 3456, 3456, 3392, 3392, 3392, 3392], [4: 3072, 6: 3072, 8: 3072]),
+            (5120, Array(repeating: 4096, count: 8), [4: 4096, 6: 4096, 8: 4096]),
+            (0, Array(repeating: 4096, count: 8), [4: 4096, 6: 4096, 8: 4096]),
+        ] as [(Int, [Int], [Int: Int])] {
+            let policy = MemoryPolicy(processorCount: 8) { count in
+                Int(kernarium_runtime_loader_maximum_guest_memory_mib_for_limit(
+                    UInt64(limitMiB) << 20, UInt32(count), parameters))
+            }
+            #expect((1...8).map { policy.maximumMiB(vCPUs: $0) } == bounds, "limit \(limitMiB) MiB")
+            for (cores, memory) in defaults {
+                #expect(policy.defaultMemoryMiB(vCPUs: cores) == memory, "limit \(limitMiB) MiB, \(cores) vCPUs")
+            }
+        }
     }
 }
 
@@ -136,7 +171,7 @@ struct RuntimeDisplayLifetimeTests {
         let model = AppModel(
             guest: nil, host: AppEntry.hostDevice(),
             system: SystemInfo(version: "17", release: "test", kernel: "Linux", architecture: "arm64", appVersion: "1"),
-            capabilities: .device, createRequirementBytes: storage.createRequirementBytes, systemBytes: release.systemDiskBytes
+            capabilities: .device, createRequirementBytes: storage.createRequirementBytes
         )
         let runtime = LiveRuntime(model: model, storage: storage, marker: PauseMarker(url: directory.appendingPathComponent("pause.json")))
         weak var display: GuestMetalView?
@@ -196,7 +231,7 @@ struct RecoveryDisplayTests {
         // Check the guest property boundary too: a valid launch DPI alone
         // does not mean Recovery can read it under its SELinux policy.
         do {
-            let identity = try AdbKeyStore().loadOrCreate()
+            let identity = try AppEntry.fromArguments().adbKeyStore.loadOrCreate()
             let operations = AdbGuestOperations(identity: identity, clock: GuestRunClock(), device: "device")
             let density = try await operations.shell("getprop ro.sf.lcd_density", limit: .seconds(5))
             let scale = model.retina ? scene.screen.nativeScale : 1

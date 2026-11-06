@@ -1,7 +1,9 @@
 import AndariumCore
 import SwiftUI
 
-/// Setting up the one guest: the same controls, already at the defaults.
+/// Setting up the one guest: its storage and backups. A new guest takes every
+/// vCPU the device offers and the default memory (`Guest.fresh`), which the
+/// System section of Home can change afterwards.
 struct NewGuestSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -25,21 +27,13 @@ struct NewGuestSheet: View {
                             text: "Setting up needs \(Formats.size(bytes: model.createRequirementBytes)) free for the guest's setup. This \(model.host.name) has \(Formats.size(bytes: model.host.freeStorageBytes)). Free up space in Settings › General › \(model.host.name) Storage."
                         )
                     }
-                    ControlsPanel(guest: draftBinding, host: model.host, isNew: true)
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 12) {
-                            IconTile(symbol: "icloud.fill")
-                            Text("Include in Backups")
-                            Spacer(minLength: 8)
-                            Toggle("Include in Backups", isOn: Binding(
-                                get: { draftBinding.wrappedValue.includeInBackups },
-                                set: { draftBinding.wrappedValue.includeInBackups = $0 }
-                            ))
-                            .labelsHidden()
-                        }
-                        .padding(.horizontal, 16)
-                        .frame(minHeight: 54)
-                        .glassEffect(.regular, in: .rect(cornerRadius: 26))
+                    StoragePanel(guest: draftBinding, host: model.host, isNew: true)
+                    HomeSection(title: "Backup") {
+                        BackupOption(isOn: Binding(
+                            get: { draftBinding.wrappedValue.includeInBackups },
+                            set: { draftBinding.wrappedValue.includeInBackups = $0 }
+                        ))
+                    } footer: {
                         BackupNote(host: model.host)
                     }
                 }
@@ -64,6 +58,62 @@ struct NewGuestSheet: View {
                 }
             }
         }
+    }
+}
+
+/// Edit on Home's System section: the guest's vCPUs and memory on their
+/// rulers, with the limits of the device. Save applies them; they take effect
+/// when the guest next starts.
+struct SystemSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: Guest?
+
+    private var current: Guest { model.guest ?? Guest.fresh(on: model.host) }
+
+    private var draftBinding: Binding<Guest> {
+        Binding(get: { draft ?? current }, set: { draft = $0 })
+    }
+
+    private var changed: Bool {
+        guard let draft else { return false }
+        return draft.cores != current.cores || draft.memoryMiB != current.memoryMiB
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 14) {
+                    SystemControls(guest: draftBinding, host: model.host)
+                    SectionNote("Changes apply the next time the guest starts.")
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 24)
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("System")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", role: .cancel) { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        if let draft {
+                            model.guest?.cores = draft.cores
+                            model.guest?.memoryMiB = draft.memoryMiB
+                        }
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(!changed)
+                }
+            }
+        }
+        .presentationDetents([.height(450)])
+        .presentationSizing(FixedSheetSizing(width: 540, height: 460))
+        .onAppear { draft = model.guest }
     }
 }
 
@@ -92,7 +142,7 @@ struct EraseSheet: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Erase Guest")
                                 .font(.title2.weight(.bold))
-                            Text("Deletes everything the guest has stored. The next start runs the system's setup.")
+                            Text("Deletes everything the guest has stored. The next start runs Andarium's setup.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -110,7 +160,7 @@ struct EraseSheet: View {
                     }
                 }
                 Section("Kept") {
-                    item("checkmark.seal", "System \(model.system.version), built in", nil, kept: true)
+                    item("checkmark.seal", "Andarium, built in", nil, kept: true)
                     item("slider.horizontal.3", "vCPUs, memory, storage size and options", nil, kept: true)
                 }
             }
@@ -190,21 +240,14 @@ nonisolated struct EraseSheetSizing: PresentationSizing {
     }
 }
 
-/// What is installed and where the space goes. Read-only.
+/// The app, the system it carries and the notices for what is in it. Read-only.
 struct InfoSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var path: [String]
+    @State private var path: [InfoPage]
 
-    init(acknowledgements: Bool) {
-        _path = State(initialValue: acknowledgements ? ["ack"] : [])
-    }
-
-    /// The most memory a guest has at its vCPU count; a new guest takes every
-    /// vCPU the host offers.
-    private var memoryForAGuest: String {
-        let count = model.guest?.cores ?? model.host.processorCount
-        return Formats.memoryBound(model.host.memory.maximumMiB(vCPUs: count), vCPUs: count)
+    init(page: InfoPage?) {
+        _path = State(initialValue: page?.trail ?? [])
     }
 
     var body: some View {
@@ -223,123 +266,32 @@ struct InfoSheet: View {
                     }
                     .padding(.vertical, 6)
                 }
-                Section {
-                    LabeledContent("Version", value: model.system.version)
+                Section("System Info") {
+                    LabeledContent("Android Version", value: model.system.version)
                     LabeledContent("Build", value: model.system.release)
                     if let patch = model.system.securityPatch {
                         LabeledContent("Security Patch", value: patch)
                     }
                     LabeledContent("Kernel", value: model.system.kernel)
                     LabeledContent("Architecture", value: model.system.architecture)
-                } header: {
-                    Text("Built-in System")
-                } footer: {
-                    if model.capabilities.systemUpdate {
-                        Text("The system is read-only and updates with Andarium from the App Store.")
-                    } else {
-                        Text("A guest keeps the system it was created with. Erase the guest to start again with the system in this version of Andarium.")
-                    }
-                }
-                Section("Storage") {
-                    StorageBar(
-                        guestBytes: model.guest?.usedBytes ?? 0,
-                        systemBytes: model.systemBytes,
-                        freeBytes: model.host.freeStorageBytes
-                    )
-                    .padding(.vertical, 6)
-                    if let guest = model.guest {
-                        LabeledContent(
-                            "Guest Data",
-                            value: "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(bytes: guest.effectiveCapacityBytes))"
-                        )
-                    }
-                    LabeledContent("System", value: Formats.size(bytes: model.systemBytes))
-                    LabeledContent("Free on This \(model.host.name)", value: Formats.size(bytes: model.host.freeStorageBytes))
-                }
-                Section("This \(model.host.name)") {
-                    LabeledContent("Processor", value: "\(model.host.physicalProcessorCount) cores")
-                    LabeledContent("Memory for a Guest", value: memoryForAGuest)
                 }
                 Section {
-                    NavigationLink("Acknowledgements", value: "ack")
-                } footer: {
-                    Text("The guest hears the microphone only while Microphone is on.")
+                    NavigationLink("Acknowledgements", value: InfoPage.acknowledgements)
                 }
             }
             .navigationTitle("Info")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: String.self) { _ in AcknowledgementsView() }
+            .navigationDestination(for: InfoPage.self) { page in
+                switch page {
+                case .acknowledgements: AcknowledgementsView()
+                case .license(let id): LicenseView(projectID: id)
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
         }
-    }
-}
-
-struct StorageBar: View {
-    let guestBytes: UInt64
-    let systemBytes: UInt64
-    let freeBytes: UInt64
-
-    var body: some View {
-        let guest = Double(guestBytes), system = Double(systemBytes)
-        let total = max(guest + system + Double(freeBytes), 1)
-        VStack(alignment: .leading, spacing: 8) {
-            GeometryReader { geo in
-                HStack(spacing: 2) {
-                    Rectangle().fill(Color.accentColor)
-                        .frame(width: max(4, geo.size.width * guest / total))
-                    Rectangle().fill(Color.accentColor.opacity(0.45))
-                        .frame(width: max(4, geo.size.width * system / total))
-                    Rectangle().fill(Color(.systemFill))
-                }
-                .clipShape(.capsule)
-            }
-            .frame(height: 10)
-            HStack(spacing: 14) {
-                key(Color.accentColor, "Guest")
-                key(Color.accentColor.opacity(0.45), "System")
-                key(Color(.systemFill), "Free")
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-    }
-
-    private func key(_ color: Color, _ title: String) -> some View {
-        HStack(spacing: 5) {
-            Circle().fill(color).frame(width: 8, height: 8)
-            Text(title)
-        }
-    }
-}
-
-struct AcknowledgementsView: View {
-    private let items: [(String, String)] = [
-        ("LineageOS", "Apache License 2.0 and others"),
-        ("Android Open Source Project", "Apache License 2.0"),
-        ("Linux", "GNU General Public License v2"),
-        ("User-Mode Linux", "GNU General Public License v2"),
-        ("virglrenderer", "MIT License"),
-        ("Mesa", "MIT License"),
-    ]
-
-    var body: some View {
-        List {
-            Section {
-                ForEach(items, id: \.0) { item in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.0)
-                        Text(item.1).font(.footnote).foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 2)
-                }
-            } footer: {
-                Text("Source code for the built-in system is available as its licences require.\n\nAndroid, LineageOS, Linux and the other names and marks here belong to their owners. They identify the software built into Andarium and imply no endorsement.")
-            }
-        }
-        .navigationTitle("Acknowledgements")
     }
 }
