@@ -71,16 +71,6 @@ struct MotionOverVsockTests {
         }
     }
 
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["ANDARIUM_COMPLETE_UPDATE_ONLY"] == "1"), .timeLimit(.minutes(20)))
-    func finishTheCurrentSystemUpdate() async throws {
-        guard ProcessInfo.processInfo.environment["ANDARIUM_COMPLETE_UPDATE_ONLY"] == "1" else { return }
-        try await withAndroidGuest { model, operations in
-            let build = try await operations.shell("getprop ro.build.version.incremental")
-            print("MOTION: completing existing release \(model.system.release), build \(build.text)")
-        }
-        print("MOTION: existing update finished with a clean guest shutdown")
-    }
-
     private func capture(_ mode: String, seconds: Int, operations: AdbGuestOperations) async throws -> Report {
         let runID = UUID().uuidString
         let launch = try await operations.shell(

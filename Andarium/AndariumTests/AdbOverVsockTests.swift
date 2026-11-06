@@ -136,9 +136,10 @@ struct AdbOverVsockTests {
         }
     }
 
-    /// A standalone storage gate: the Android framework test APK is copied
-    /// to tmp first. This opt-in run installs it, checks the public APIs,
-    /// removes it and powers Android off so an update can finish cleanly.
+    /// A standalone storage gate: the Android framework test APK, signed with
+    /// the AOSP test key, is copied to tmp first. This opt-in run installs it,
+    /// lets it call the one hidden API it uses (`hidden_api_policy` 1, put back
+    /// afterwards), checks the public APIs, removes it and powers Android off.
     @Test(.timeLimit(.minutes(20)))
     func androidReportsExactStorageSizes() async throws {
         guard Self.enabled,
@@ -148,8 +149,19 @@ struct AdbOverVsockTests {
         defer { try? FileManager.default.removeItem(at: apk) }
         let bytes = try #require(try apk.resourceValues(forKeys: [.fileSizeKey]).fileSize)
         let operations = try await readyOperations()
+        // The APK is test-key signed, so its one hidden API call needs the
+        // policy; the guest's own value (unset: "null") is put back.
+        let policy = try await operations.shell("settings get global hidden_api_policy").text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        func restorePolicy() async {
+            _ = try? await operations.shell(policy == "null" || policy.isEmpty
+                ? "settings delete global hidden_api_policy"
+                : "settings put global hidden_api_policy \(policy)")
+        }
         do {
             try await operations.installApk(at: apk, sizeBytes: bytes) { _ in }
+            let enabled = try await operations.shell("settings put global hidden_api_policy 1")
+            #expect(enabled.exitCode == 0, "\(enabled.text)")
             let result = try await operations.shell(
                 "am instrument -w -r -e class com.android.frameworks.andariumstorage.StorageAccountingTest#exactFilesystemBytes com.android.frameworks.andariumstorage.tests/androidx.test.runner.AndroidJUnitRunner",
                 limit: .seconds(180))
@@ -158,9 +170,11 @@ struct AdbOverVsockTests {
             #expect(result.text.contains("OK (1 test)"), "\(result.text)")
             #expect(result.text.contains("INSTRUMENTATION_CODE: -1"), "\(result.text)")
         } catch {
+            await restorePolicy()
             _ = try? await operations.shell("pm uninstall com.android.frameworks.andariumstorage.tests")
             throw error
         }
+        await restorePolicy()
         let removed = try await operations.shell("pm uninstall com.android.frameworks.andariumstorage.tests")
         #expect(removed.text.contains("Success"), "\(removed.text)")
         try await powerOffAndroid(operations)

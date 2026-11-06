@@ -936,10 +936,13 @@ deletes it would be one the guest was not given.
 
 `AdbOverVsockTests/androidReportsExactStorageSizes()` is a standalone storage
 run with `TEST_RUNNER_ANDARIUM_STORAGE_TESTS=1` in addition to the ADB and normal
-start settings. Build AOSP's `AndariumStorageTests`, sign the APK with the image's
-platform certificate, and copy it into the application's `tmp/AndariumStorageTests.apk`
+start settings. Build `AndariumStorageTests`
+([`tests/integration/android/storage`](../tests/integration/android/storage/README.md))
+as an explicit Soong module, which signs it with the AOSP test key (never a release
+key), and copy it into the application's `tmp/AndariumStorageTests.apk`
 before running only that method. It installs the APK through the application's
-client, runs `StorageAccountingTest#exactFilesystemBytes`,
+client, sets the guest's `hidden_api_policy` to 1 for the run (the test calls one
+hidden API) and restores it, runs `StorageAccountingTest#exactFilesystemBytes`,
 which checks both primary-storage helpers and `StorageStatsManager` against the
 mounted filesystem sizes, removes the APK and powers Android off cleanly.
 With the same ADB, storage and normal-start settings,
@@ -1573,7 +1576,8 @@ tests cover them without an Android build:
   and the bootloader message.
 - `android17-instance-rules` and `android17-macos-launcher-options` cover the
   instance rules (create, update with a snapshot, refused downgrade, an
-  unfinished update) over the shared vectors in
+  unfinished update, an update that boots counting as applied) over the shared
+  vectors and transitions in
   `android/lineage-24/support/instance/update-decisions.json`, and the macOS
   launcher built on them.
 - `guest-android-disks` (integration) boots the Linux test guest on that
@@ -1595,13 +1599,28 @@ a blank instance:
 - starting a newer release on an instance of an older one keeps its apps and
   data and records the update, and starting the older release on the newer
   instance is refused.
+- `android-oobe` (integration, registered only when
+  `UML_ANDROID_OOBE_RELEASE` names the release and the Android macOS executable
+  is built) boots two fresh instances. On the first it checks that the guest
+  starts unprovisioned in LineageOS Setup Wizard, which HOME does not leave,
+  completes the wizard through its own pages and checks the end state: both
+  settings 1, the wizard's HOME activity and flow manager disabled, and HOME
+  reaching the launcher. The second is started with `boot_android.py
+  --provision`, the harness path of `tools/android_provision.py`, and must end
+  with both settings 1 and HOME on the launcher, the wizard package disabled
+  for user 0 (the shell may not disable its components), and nothing left for
+  the helper to do. Measurements on an erased guest use that helper, so they do
+  not land in the wizard.
 - `android-adb-debugging` (integration, registered only when
   `UML_ANDROID_ADB_DEBUGGING_RELEASE` names the release and the Android macOS
   executable is built) boots a blank instance and checks the adb topics of the
   product: Developer options and USB debugging are off (`adb_enabled` 0,
   `persist.sys.usb.config` without `adb`, adbd's own rule: empty or `none`, the
   value init's property service gives a user build at boot; a debuggable build
-  gets `adb`, so the test qualifies the user variant); turning USB debugging on
+  gets `adb`, so the test qualifies the user variant); `adb root` is refused at
+  once, adbd stays the shell user and the connection stays (the macOS launcher's
+  guest checks no keys, the case that once made adbd announce a restart it never
+  made); turning USB debugging on
   records `adb` and leaves adbd's process alone; turning it off drops `adb`,
   restarts adbd once and leaves adbd serving the host; both survive a reboot.
   Where the guest checks keys (`ro.boot.kernarium.adb_auth` 1, which the macOS

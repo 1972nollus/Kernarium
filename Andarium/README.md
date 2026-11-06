@@ -270,8 +270,9 @@ Home shows of it before Start (`GuestStorage.startPlan`, which changes
 nothing): first start, ordinary start, update, an update that did not finish,
 or a start that is blocked. An update first clones `data.img` to
 `data.img.pre-<release id>` (an APFS clone), and an update counts as finished
-only after Android itself reported `sys.boot_completed` in that run and the
-run ended cleanly; Recovery never does.
+the moment Android itself reports `sys.boot_completed` in that run, which
+deletes the snapshot; Recovery never reaches it. A newer release after that
+updates from the data as it is, and nothing restores the old snapshot.
 
 Start on an update that did not finish tries it again: the same update, the
 snapshot kept. Home's one other way back is Restore, shown only while the
@@ -540,6 +541,8 @@ through Recovery's own menu. Its rendered guest frame is saved as
 unprovisioned flags and setup welcome activity, captures `tmp/setup-welcome.png`,
 then powers off. Run it with `ANDARIUM_ADB_TESTS=1`, `ANDARIUM_OOBE_TESTS=1`,
 `ANDARIUM_START=normal` and the fresh isolated `recovery-display` instance.
+The product's first boot stays in the wizard; completing it, and harnesses that
+skip it, are checked by `android-oobe` (`docs/testing.md`).
 
 On an Apple silicon Mac, `xcodebuild test -scheme Andarium -destination
 'platform=macOS,variant=Designed for iPad' -only-testing:AndariumTests/AutomationHoldTests`

@@ -5,14 +5,8 @@ Subject: [PATCH] storage: report exact virtual filesystem sizes
 
 Change-Id: I71084985d09716f44e043dffc6e595f083bbff97
 ---
- .../android/os/storage/StorageManager.java    | 20 ++++++--
- core/tests/andariumstorage/Android.bp         | 13 +++++
- .../tests/andariumstorage/AndroidManifest.xml |  8 +++
- .../StorageAccountingTest.java                | 49 +++++++++++++++++++
- 4 files changed, 85 insertions(+), 5 deletions(-)
- create mode 100644 core/tests/andariumstorage/Android.bp
- create mode 100644 core/tests/andariumstorage/AndroidManifest.xml
- create mode 100644 core/tests/andariumstorage/src/com/android/frameworks/andariumstorage/StorageAccountingTest.java
+ .../android/os/storage/StorageManager.java    | 20 ++++++++++++++-----
+ 1 file changed, 15 insertions(+), 5 deletions(-)
 
 diff --git a/core/java/android/os/storage/StorageManager.java b/core/java/android/os/storage/StorageManager.java
 index 81fb975984d8bb5b1afbabfb72cb4075fb368179..37faebd388c4de6a92519e2b7d562dcab56e4f59 100644
@@ -49,91 +43,3 @@ index 81fb975984d8bb5b1afbabfb72cb4075fb368179..37faebd388c4de6a92519e2b7d562dca
      }
  
      /** @hide */
-diff --git a/core/tests/andariumstorage/Android.bp b/core/tests/andariumstorage/Android.bp
-new file mode 100644
-index 0000000000000000000000000000000000000000..259d684819648584584d808407d39231c083d089
---- /dev/null
-+++ b/core/tests/andariumstorage/Android.bp
-@@ -0,0 +1,13 @@
-+// SPDX-License-Identifier: Apache-2.0
-+package {
-+    default_applicable_licenses: ["frameworks_base_license"],
-+}
-+
-+android_test {
-+    name: "AndariumStorageTests",
-+    srcs: ["src/**/*.java"],
-+    static_libs: ["androidx.test.runner", "androidx.test.ext.junit"],
-+    platform_apis: true,
-+    certificate: "platform",
-+    test_suites: ["device-tests"],
-+}
-diff --git a/core/tests/andariumstorage/AndroidManifest.xml b/core/tests/andariumstorage/AndroidManifest.xml
-new file mode 100644
-index 0000000000000000000000000000000000000000..c01f4700dd85df63aaff110a6e088208df501358
---- /dev/null
-+++ b/core/tests/andariumstorage/AndroidManifest.xml
-@@ -0,0 +1,8 @@
-+<?xml version="1.0" encoding="utf-8"?>
-+<!-- SPDX-License-Identifier: Apache-2.0 -->
-+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-+    package="com.android.frameworks.andariumstorage.tests">
-+    <application android:label="Andarium Storage Tests" />
-+    <instrumentation android:name="androidx.test.runner.AndroidJUnitRunner"
-+        android:targetPackage="com.android.frameworks.andariumstorage.tests" />
-+</manifest>
-diff --git a/core/tests/andariumstorage/src/com/android/frameworks/andariumstorage/StorageAccountingTest.java b/core/tests/andariumstorage/src/com/android/frameworks/andariumstorage/StorageAccountingTest.java
-new file mode 100644
-index 0000000000000000000000000000000000000000..b8d078a25345b55fd8ff8a800d5fe3c5892977a5
---- /dev/null
-+++ b/core/tests/andariumstorage/src/com/android/frameworks/andariumstorage/StorageAccountingTest.java
-@@ -0,0 +1,49 @@
-+// SPDX-License-Identifier: Apache-2.0
-+package com.android.frameworks.andariumstorage;
-+
-+import static org.junit.Assert.assertEquals;
-+import static org.junit.Assert.assertTrue;
-+
-+import android.app.usage.StorageStatsManager;
-+import android.content.Context;
-+import android.os.Bundle;
-+import android.os.StatFs;
-+import android.os.storage.StorageManager;
-+
-+import androidx.test.ext.junit.runners.AndroidJUnit4;
-+import androidx.test.platform.app.InstrumentationRegistry;
-+
-+import org.junit.Test;
-+import org.junit.runner.RunWith;
-+
-+@RunWith(AndroidJUnit4.class)
-+public class StorageAccountingTest {
-+    @Test
-+    public void exactFilesystemBytes() throws Exception {
-+        long totalBytes = 0;
-+        long osBytes = 0;
-+        for (String path : new String[] {
-+                "/data", "/system", "/system_ext", "/product", "/vendor", "/odm"}) {
-+            final long bytes = new StatFs(path).getTotalBytes();
-+            totalBytes += bytes;
-+            if (!path.equals("/data")) {
-+                osBytes += bytes;
-+            }
-+        }
-+        final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-+        final StorageManager storage = context.getSystemService(StorageManager.class);
-+        assertEquals(totalBytes, storage.getPrimaryStorageSize());
-+        assertEquals(totalBytes,
-+                StorageManager.getPrimaryStoragePathAndSize().second.longValue());
-+        final StorageStatsManager stats = context.getSystemService(StorageStatsManager.class);
-+        assertEquals(totalBytes, stats.getTotalBytes(StorageManager.UUID_DEFAULT));
-+        final long freeBytes = stats.getFreeBytes(StorageManager.UUID_DEFAULT);
-+        assertTrue(freeBytes >= 0);
-+        assertTrue(freeBytes <= new StatFs("/data").getTotalBytes());
-+        final Bundle result = new Bundle();
-+        result.putLong("storage_total_bytes", totalBytes);
-+        result.putLong("storage_os_bytes", osBytes);
-+        result.putLong("storage_free_bytes", freeBytes);
-+        InstrumentationRegistry.getInstrumentation().sendStatus(2, result);
-+    }
-+}
