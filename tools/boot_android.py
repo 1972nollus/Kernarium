@@ -6,8 +6,9 @@ The guest has the release's read-only system disk and one writable data disk,
 which lives in an instance directory beside `instance.json`. Before each start
 the launcher checks, with `tools/android_instance.py`, that the release may run
 on that disk: a newer release is snapshotted and started, an older one is
-refused. After a start that reached `sys.boot_completed` and shut down cleanly
-it records the completion and drops the snapshot.
+refused. The moment a start reaches `sys.boot_completed` the update it began
+counts as applied and its snapshot is dropped; after that start shuts down
+cleanly the launcher records the completion.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ _TOOLS = str(REPO_ROOT / "tools")
 if _TOOLS not in sys.path:
     sys.path.insert(0, _TOOLS)
 import android_instance  # noqa: E402
+import android_provision  # noqa: E402
 _GUEST_SUPPORT = str(REPO_ROOT / "tests/integration/support")
 if _GUEST_SUPPORT not in sys.path:
     sys.path.insert(0, _GUEST_SUPPORT)
@@ -140,8 +142,8 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--retry",
         action="store_true",
         help=(
-            "boot again a release whose update did not reach boot_completed "
-            "and shut down cleanly, keeping its snapshot"
+            "boot again a release whose update did not reach boot_completed, "
+            "keeping its snapshot"
         ),
     )
     update.add_argument(
@@ -182,6 +184,16 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help=(
             "seconds after ADB to wait for sys.boot_completed before the start "
             "no longer counts as complete (default: 900)"
+        ),
+    )
+    parser.add_argument(
+        "--provision",
+        action="store_true",
+        help=(
+            "for harnesses that measure an erased guest: once the guest has "
+            "reached sys.boot_completed, provision it over adb the way Setup "
+            "Wizard's last step does (tools/android_provision.py). The product "
+            "starts a fresh guest in Setup Wizard, and does so without this"
         ),
     )
     parser.add_argument("--cpus", type=positive_integer, default=10)
@@ -552,6 +564,24 @@ def wait_for_boot_completed(
     return False
 
 
+def provision_guest(adb: Path, serial: str) -> None:
+    """Provision the booted guest (--provision); a failure ends the start."""
+    try:
+        changed = android_provision.provision(
+            android_provision.adb_shell(str(adb), serial)
+        )
+    except (
+        android_provision.ProvisionError,
+        subprocess.SubprocessError,
+        OSError,
+    ) as error:
+        raise LauncherError(f"cannot provision the guest: {error}") from error
+    print(
+        "Guest provisioned." if changed else "Guest was already provisioned.",
+        file=sys.stderr,
+    )
+
+
 def plan_start(
     options: argparse.Namespace,
     release: android_instance.Release,
@@ -643,6 +673,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 )
                 if booted:
                     print("Android reached sys.boot_completed.", file=sys.stderr)
+                    # A pending update counts as applied from this moment, so
+                    # whatever ends the run after it, the next release updates
+                    # from this data rather than restoring the snapshot.
+                    android_instance.booted(instance, identity)
+                    if options.provision:
+                        provision_guest(adb, serial)
                 else:
                     print("Android did not reach sys.boot_completed.",
                           file=sys.stderr)
@@ -659,8 +695,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             disconnect_adb(adb, serial)
             print(f"ADB disconnected: {serial}", file=sys.stderr)
             # Only a start that reached boot_completed and ended with the guest
-            # powering off or being stopped (status 0) is complete; it ends an
-            # update's snapshot.
+            # powering off or being stopped (status 0) is complete.
             if booted and guest.returncode == 0:
                 android_instance.complete(instance, identity)
                 print("Instance start recorded as complete.", file=sys.stderr)

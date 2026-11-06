@@ -39,8 +39,10 @@ import time
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
+sys.path.insert(0, str(REPOSITORY / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import android_launch_suite as launch_suite  # noqa: E402
+import android_provision  # noqa: E402
 import andarium  # noqa: E402
 import ios_device  # noqa: E402
 
@@ -79,7 +81,12 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--start", choices=andarium.START_MODES,
                         default="normal", help="ANDARIUM_START")
     parser.add_argument("--erase", action="store_true",
-                        help="start from a fresh data disk (ANDARIUM_ERASE)")
+                        help="start from a fresh data disk (ANDARIUM_ERASE); "
+                        "the guest is then provisioned over adb after the boot, "
+                        "so the workload does not land in Setup Wizard")
+    parser.add_argument("--keep-setup-wizard", action="store_true",
+                        help="with --erase, leave the guest in Setup Wizard "
+                        "(to measure the first-boot experience itself)")
     parser.add_argument("--cpus", type=int, default=2)
     parser.add_argument("--memory-mib", type=int, default=1536)
     parser.add_argument("--engine", choices=("gadgets", "jit"),
@@ -398,6 +405,21 @@ def wait_for_boot(adb: Adb, console: ios_device.Console, *, timeout: int,
         time.sleep(interval)
 
 
+def provision_guest(adb: Adb) -> bool:
+    """Provision the erased guest the way Setup Wizard's last step leaves it.
+
+    Without it HOME returns to the wizard, which then runs during the launch
+    and memory measurements (tools/android_provision.py); whether the helper
+    changed anything is recorded in the summary.
+    """
+    try:
+        return android_provision.provision(
+            lambda command: adb.shell(command, timeout=60).stdout
+        )
+    except android_provision.ProvisionError as error:
+        raise andarium.AndariumError(str(error)) from error
+
+
 def require_adb_ready(adb: Adb) -> None:
     """Stop before a workload whose adb is gone: it would record nothing."""
     state = adb.state()
@@ -645,6 +667,8 @@ class Run:
             self.summary["waited_for_active_seconds"] = round(
                 wait_for_active(console, options.wait_active,
                                 options.poll_interval), 1)
+            if options.erase and not options.keep_setup_wizard:
+                self.summary["provisioned"] = provision_guest(adb)
             time.sleep(options.settle)
             self.summary["workload"] = run_workload(
                 adb, self.plan, options, self.artifact,

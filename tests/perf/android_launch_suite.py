@@ -18,6 +18,11 @@ waits for a completion line and records named values captured from it (for a
 benchmark, its own loading time and score), plus the emulator CPU time spent.
 Taps are in guest display pixels, so a scenario belongs to one display size.
 
+The guest is provisioned after its boot (boot_android.py --provision), so a
+source instance prepared on an erased disk, which the product starts in Setup
+Wizard, is measured on the launcher; a provisioned source is left as it is, and
+--keep-setup-wizard measures a source in the wizard.
+
 The tool does not serialize guests: run one guest per measurement.
 Each record carries the guest's vCPU count (--cpus, default 4) and execution
 engine (--engine, default gadgets). Environment
@@ -217,6 +222,8 @@ class Guest:
                    "--cpus", str(arguments.cpus),
                    "--memory", arguments.memory,
                    "--engine", arguments.engine]
+        if not arguments.keep_setup_wizard:
+            command.append("--provision")
         self.process = subprocess.Popen(
             command, cwd=REPOSITORY, env=environment, stdin=subprocess.DEVNULL,
             stdout=self.console, stderr=subprocess.STDOUT)
@@ -497,6 +504,11 @@ def main() -> int:
     parser.add_argument("--engine", choices=("gadgets", "jit"),
                         default="gadgets")
     parser.add_argument("--memory", default="8G")
+    parser.add_argument("--keep-setup-wizard", action="store_true",
+                        help="do not provision the guest after its boot "
+                             "(boot_android.py --provision), so a source "
+                             "instance that never left Setup Wizard is "
+                             "measured in it")
     parser.add_argument("--settle", type=int, default=45)
     parser.add_argument("--display", choices=("native", "vnc"),
                         default="native")
