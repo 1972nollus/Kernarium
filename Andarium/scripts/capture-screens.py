@@ -154,9 +154,13 @@ SHOTS: list[Shot] = [
 
 
 def run(command: list[str], *, timeout: float = COMMAND_SECONDS) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command, check=False, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout
-    )
+    """Run a command with a hard time bound; a command that outlives it fails."""
+    try:
+        return subprocess.run(
+            command, check=False, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(command, 124, "", f"timed out after {timeout:.0f} s")
 
 
 def simctl(*arguments: str, timeout: float = COMMAND_SECONDS) -> subprocess.CompletedProcess[str]:
@@ -260,6 +264,11 @@ def capture(udid: str, name: str, shot: Shot, appearance: str, out: Path, wait: 
     }
 
 
+def write_manifest(path: Path, entries: dict[str, dict]) -> None:
+    manifest = {"schema": 1, "shots": sorted(entries.values(), key=lambda entry: entry["file"])}
+    path.write_text(json.dumps(manifest, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, help="directory for the PNG files and manifest.json")
@@ -300,13 +309,15 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 entry = capture(udid, name, shot, appearance, args.out, args.wait)
                 if entry is None:
+                    entry = capture(udid, name, shot, appearance, args.out, args.wait)
+                if entry is None:
                     status = 1
                     continue
                 entries[entry["file"]] = entry
+                write_manifest(manifest_path, entries)
                 print(f"{name} {entry['orientation']} {appearance}: {shot.id}", flush=True)
         simctl("ui", udid, "appearance", "light")
-    manifest = {"schema": 1, "shots": sorted(entries.values(), key=lambda entry: entry["file"])}
-    manifest_path.write_text(json.dumps(manifest, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_manifest(manifest_path, entries)
     return status
 
 
