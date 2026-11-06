@@ -726,9 +726,11 @@ public:
 #endif
 
 private:
-	/* Hands the process's guest back before the handle boots it again. A
-	 * refusal changes nothing the caller cannot repeat: the guest stays to be
-	 * handed back by a later run, once the caller has stopped what holds it. */
+	/* Hands the process's guest back, for the run that boots it again after a
+	 * restart and for an explicit release after a power-off. A refusal
+	 * changes nothing the caller cannot repeat: the guest stays to be handed
+	 * back by a later run or release, once the caller has stopped what holds
+	 * it. */
 	[[nodiscard]] int hand_back_guest() noexcept
 	{
 		switch (::uml::runtime::guest_hand_back_block()) {
@@ -736,14 +738,14 @@ private:
 			break;
 		case ::uml::runtime::GuestHandBackBlock::borrowed_ram:
 			(void)::dprintf(STDERR_FILENO,
-				"Darwin: the guest cannot restart: a host service "
-				"still borrows its RAM; stop the device services "
-				"first\n");
+				"Darwin: the guest cannot be handed back: a host "
+				"service still borrows its RAM; stop the device "
+				"services first\n");
 			return -UML_EMULATOR_RUNTIME_ERROR;
 		case ::uml::runtime::GuestHandBackBlock::kernel_threads:
 			(void)::dprintf(STDERR_FILENO,
-				"Darwin: the guest cannot restart: a kernel thread "
-				"is still running\n");
+				"Darwin: the guest cannot be handed back: a kernel "
+				"thread is still running\n");
 			return -UML_EMULATOR_RUNTIME_ERROR;
 		}
 		/* The handle's state describes this kernel and its RAM; the
