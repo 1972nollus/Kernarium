@@ -23,8 +23,7 @@ enum PreviewData {
         if UIDevice.current.userInterfaceIdiom == .pad {
             return HostDevice(
                 name: "iPad", processorCount: 8, memory: MemoryPolicy(maximumsMiB: Array(repeating: 4096, count: 8)),
-                freeStorageBytes: gibibytes(lowSpace ? 1.2 : 118.3),
-                physicalProcessorCount: 10
+                freeStorageBytes: gibibytes(lowSpace ? 1.2 : 118.3)
             )
         }
         return HostDevice(
@@ -36,9 +35,6 @@ enum PreviewData {
 
     /// A mock size, in gibibytes.
     private static func gibibytes(_ count: Double) -> UInt64 { UInt64(count * Double(Limits.bytesPerGiB)) }
-
-    /// What the mock system takes on the device.
-    static let systemBytes = gibibytes(2.6)
 
     /// The seed the mock storage would write: about as large as the real one.
     static let createRequirementBytes: UInt64 = 3_274_702_848 + Limits.firstStartReserveBytes

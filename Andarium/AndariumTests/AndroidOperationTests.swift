@@ -23,7 +23,7 @@ struct AndroidOperationTests {
         )
         let model = AppModel(
             guest: Guest.fresh(on: host), host: host, system: system, capabilities: .device,
-            createRequirementBytes: 1, systemBytes: 1
+            createRequirementBytes: 1
         )
         let driver = StubDriver(plan: .normal)
         model.driver = driver
@@ -332,7 +332,7 @@ struct AdbOverNetworkModelTests {
         )
         let model = AppModel(
             guest: Guest.fresh(on: host), host: host, system: system, capabilities: .device,
-            createRequirementBytes: 1, systemBytes: 1
+            createRequirementBytes: 1
         )
         let driver = StubDriver(plan: .normal)
         model.driver = driver
@@ -463,7 +463,7 @@ struct AdbOverNetworkModelTests {
         )
         let model = AppModel(
             guest: Guest.fresh(on: host), host: host, system: system, capabilities: .preview,
-            createRequirementBytes: 1, systemBytes: 1
+            createRequirementBytes: 1
         )
         model.phase = .running(.normal)
         #expect(model.adbOverNetworkAvailable)

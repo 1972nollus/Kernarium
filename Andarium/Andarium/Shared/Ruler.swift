@@ -148,23 +148,20 @@ nonisolated struct HatchPattern: Shape {
     }
 }
 
-/// Processor, memory and storage in one glass panel: each a row with its
-/// value on the right and, for processor and memory, a ruler beneath.
-struct ControlsPanel: View {
+/// Processor and memory, the two rows of the System sheet: each with its
+/// value on the right and a ruler beneath. The rulers keep the limits of the
+/// host: the processor count stops at the vCPUs the device offers, and memory
+/// runs from 512 MiB to the bound of the chosen vCPU count, with the bound
+/// said beneath it.
+struct SystemControls: View {
     @Binding var guest: Guest
     let host: HostDevice
-    /// A new guest chooses its capacity on a ruler; an existing one shows
-    /// what it holds and opens Resize.
-    var isNew = false
-    var resize: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
             processor
             Divider().padding(.leading, 58)
             memory
-            Divider().padding(.leading, 58)
-            if isNew { capacity } else { storage }
         }
         .glassEffect(.regular, in: .rect(cornerRadius: 30))
     }
@@ -209,6 +206,22 @@ struct ControlsPanel: View {
             Text("\(Formats.memoryBound(top, vCPUs: guest.cores)) on this \(host.name)")
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+/// Storage in one glass panel: a new guest chooses its capacity on a ruler;
+/// an existing one shows what it holds and opens Resize.
+struct StoragePanel: View {
+    @Binding var guest: Guest
+    let host: HostDevice
+    var isNew = false
+    var resize: () -> Void = {}
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if isNew { capacity } else { storage }
+        }
+        .glassEffect(.regular, in: .rect(cornerRadius: 30))
     }
 
     private var capacity: some View {
