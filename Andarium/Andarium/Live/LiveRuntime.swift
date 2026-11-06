@@ -51,11 +51,13 @@ final class LiveRuntime: RuntimeDriver {
     /// Counts the time the guest runs, for the limits of adb operations: it
     /// stops while the application holds the guest paused.
     private let clock = GuestRunClock()
-    private let keyStore = AdbKeyStore()
+    private let keyStore: AdbKeyStore
     /// The guest's adb key, made before the start that boots with it.
     private var adbIdentity: AdbKeyStore.Identity?
     private let microphone = SystemMicrophonePermission()
     private let motion = MotionSensors()
+    /// The interface orientation the sensors' axes are mounted to.
+    private var motionMount = MotionMount()
     private lazy var rotation = GuestRotationController(
         apply: { [weak self] policy in
             guard let self else { throw CancellationError() }
@@ -73,7 +75,6 @@ final class LiveRuntime: RuntimeDriver {
                 title: "Display Rotation Unavailable",
                 message: "The guest’s screen could not follow this window. Close and reopen Andarium to try again.")
         })
-    private var lastRotationPolicy: GuestRotationPolicy?
     private var normalRun = false
     private var active = UIApplication.shared.applicationState == .active
     private var observers: [NSObjectProtocol] = []
@@ -88,9 +89,10 @@ final class LiveRuntime: RuntimeDriver {
     private var thermalObserver: NSObjectProtocol?
     private var console: ConsoleSink?
 
-    init(model: AppModel, storage: TwoDiskStorage, marker: PauseMarker) {
+    init(model: AppModel, storage: TwoDiskStorage, marker: PauseMarker, keyStore: AdbKeyStore = AdbKeyStore()) {
         self.model = model
         self.storage = storage
+        self.keyStore = keyStore
         pause = PauseController(effects: LivePauseEffects(), marker: marker, runClock: clock)
         model.microphoneState = Self.state(microphone.access)
         model.motionSensorsAvailable = motion.available
@@ -219,8 +221,8 @@ final class LiveRuntime: RuntimeDriver {
         console = sink
         kernarium_runtime_loader_set_console_output_handler { data in sink.feed(data) }
         // A Microphone setting the person turned on earlier follows the
-        // guest; one that is off leaves the microphone alone.
-        if run.guest.microphone { tellMicrophone(true) }
+        // guest while iOS still allows it; otherwise the guest hears nothing.
+        tellMicrophone(model?.microphoneShownOn ?? false)
 
         pause.guestDidStart()
         bootStartedAt = Date()
@@ -237,12 +239,11 @@ final class LiveRuntime: RuntimeDriver {
         let dataGiB = storage.dataGiB(for: run.guest)
         reachedBootCompleted = false
         normalRun = run.mode == .normal
-        motion.axes = currentMotionAxes
+        motionMount.begin(interface: interfaceMotionAxes)
         let bootMode: UInt32 = run.mode == .recovery ? 2 : 1
         let memoryMiB = UInt32(run.guest.memoryMiB)
         let processorCount = UInt32(run.guest.cores)
         let dotsPerInch = geometry.dotsPerInch
-        let autoResize = model?.followWindow ?? true
         let adbKeyLine = adbIdentity?.publicKeyLine
         // The run occupies its thread for the guest's whole life and the GPU
         // service reaches the main queue while it starts, so it must not be
@@ -252,7 +253,7 @@ final class LiveRuntime: RuntimeDriver {
             let result = Self.runGuest(
                 view: view, dataDiskPath: dataDiskPath, releasePath: releasePath, dataGiB: dataGiB, bootMode: bootMode,
                 width: width, height: height, dotsPerInch: dotsPerInch, memoryMiB: memoryMiB,
-                processorCount: processorCount, autoResize: autoResize, adbKeyLine: adbKeyLine
+                processorCount: processorCount, adbKeyLine: adbKeyLine
             )
             Task { @MainActor in self.finished(result: result) }
         }
@@ -263,7 +264,7 @@ final class LiveRuntime: RuntimeDriver {
     private nonisolated static func runGuest(
         view: GuestMetalView, dataDiskPath: String, releasePath: String, dataGiB: UInt32, bootMode: UInt32,
         width: UInt32, height: UInt32, dotsPerInch: UInt32, memoryMiB: UInt32,
-        processorCount: UInt32, autoResize: Bool, adbKeyLine: String?
+        processorCount: UInt32, adbKeyLine: String?
     ) -> Int32 {
         dataDiskPath.withCString { dataDisk in
             releasePath.withCString { release in
@@ -276,7 +277,8 @@ final class LiveRuntime: RuntimeDriver {
                     request.guest_memory_mib = memoryMiB
                     request.guest_processor_count = processorCount
                     request.android_boot_mode = bootMode
-                    request.auto_resize_guest = autoResize ? 1 : 0
+                    // The guest's display always follows the window.
+                    request.auto_resize_guest = 1
                     request.android_data_disk_path = dataDisk
                     request.android_release_path = release
                     request.android_data_gib = dataGiB
@@ -411,8 +413,11 @@ final class LiveRuntime: RuntimeDriver {
 
     // MARK: Motion sensors
 
-    private var currentMotionAxes: MotionSample.Axes {
-        switch view?.window?.windowScene?.effectiveGeometry.interfaceOrientation {
+    /// The interface orientation of the guest's window; nil while the display
+    /// is not in a scene, which leaves the mount as it is.
+    private var interfaceMotionAxes: MotionSample.Axes? {
+        guard let scene = view?.window?.windowScene else { return nil }
+        return switch scene.effectiveGeometry.interfaceOrientation {
         case .landscapeLeft: .landscapeLeft
         case .landscapeRight: .landscapeRight
         case .portraitUpsideDown: .portraitUpsideDown
@@ -424,16 +429,22 @@ final class LiveRuntime: RuntimeDriver {
         model?.hostDrivesGuestRotation == true ? .host : .guest
     }
 
+    /// The scene's geometry changed, which may include its interface
+    /// orientation. The hosting controller coalesces its triggers into one call
+    /// per turn, and the mount restarts the sensors only when it moves.
+    func sceneGeometryDidChange() {
+        guard normalRun else { return }
+        updateGuestRotation()
+    }
+
     private func updateGuestRotation() {
         let policy = rotationPolicy
-        if lastRotationPolicy != policy {
-            motion.stop()
-            // A new full-screen session mounts the virtual device to the
-            // orientation now locked by UIKit. Keep that frame until the
-            // host owns rotation again; never remap per sensor sample.
-            if policy == .guest { motion.axes = currentMotionAxes }
-            lastRotationPolicy = policy
-        }
+        // A new full-screen session mounts the virtual device to the
+        // orientation now locked by UIKit and keeps that frame until the host
+        // owns rotation; while the host does, the guest is drawn upright in
+        // the window and the mount follows the window's orientation. Never
+        // remap per sensor sample.
+        if motionMount.update(policy: policy, interface: interfaceMotionAxes) { motion.stop() }
         rotation.update(policy: policy, ready: normalRun && reachedBootCompleted && active)
         updateMotionSensors()
     }
@@ -446,6 +457,7 @@ final class LiveRuntime: RuntimeDriver {
     private func updateMotionSensors() {
         if normalRun, reachedBootCompleted, active, rotation.applied == rotationPolicy,
            model?.guest?.motionSensors == true {
+            motion.axes = motionMount.axes
             motion.start()
         } else {
             motion.stop()
@@ -463,16 +475,39 @@ final class LiveRuntime: RuntimeDriver {
     }
 
     func setMicrophone(_ on: Bool) {
-        model?.microphoneState = Self.state(microphone.access)
-        if on, microphone.access == .notAsked {
+        let access = microphone.access
+        model?.microphoneState = Self.state(access)
+        guard on else {
+            tellMicrophone(false)
+            return
+        }
+        switch access {
+        case .granted:
+            tellMicrophone(true)
+        case .denied:
+            tellMicrophone(false)
+        case .notAsked:
+            // The guest hears nothing until the person has answered iOS's
+            // question, which is asked now.
+            tellMicrophone(false)
             microphone.request { answer in
-                Task { @MainActor in
-                    self.model?.microphoneState = Self.state(answer)
-                    if self.model?.guest?.microphone == true { self.tellMicrophone(true) }
-                }
+                Task { @MainActor in self.accessAnswered(Self.state(answer)) }
             }
         }
-        tellMicrophone(on)
+    }
+
+    /// iOS's answer, or Andarium's access as the person left it in Settings:
+    /// the model keeps the switch, and the guest follows it.
+    private func accessAnswered(_ state: MicrophoneState) {
+        guard let model else { return }
+        model.microphoneAccessChanged(state)
+        tellMicrophone(model.microphoneShownOn)
+    }
+
+    /// Looks at the permission again: at launch and whenever Andarium becomes
+    /// active, since the person may have changed it in Settings.
+    func refreshPermissions() {
+        accessAnswered(Self.state(microphone.access))
     }
 
     /// The runtime is told the setting and never asks the system itself; a
@@ -550,18 +585,17 @@ final class LiveRuntime: RuntimeDriver {
         updateGuestRotation()
         guard let model else { return }
         model.host.freeStorageBytes = AppEntry.freeStorageBytes()
-        model.microphoneState = Self.state(microphone.access)
-        if model.guest?.microphone == true { tellMicrophone(true) }
+        refreshPermissions()
     }
 
     private func observeDisplayOptions() {
         guard let model else { return }
         withObservationTracking {
-            _ = (model.retina, model.followWindow, model.hostDrivesGuestRotation)
+            _ = (model.retina, model.hostDrivesGuestRotation)
         } onChange: {
             Task { @MainActor in
                 guard let model = self.model else { return }
-                DisplayOptionsStore.save(DisplayOptions(retina: model.retina, followWindow: model.followWindow))
+                DisplayOptionsStore.save(DisplayOptions(retina: model.retina))
                 self.updateGuestRotation()
                 self.observeDisplayOptions()
             }

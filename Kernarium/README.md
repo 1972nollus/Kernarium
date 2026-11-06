@@ -40,8 +40,11 @@ The Android framework is `KRuntime_Android_6_18_4K`; the Linux framework is
 `KRuntime_6_18_4K`. Runtime builds retain debug information at Release
 optimization and generate a companion dSYM. Packaging includes the runtime
 and graphics dSYMs in each XCFramework, and archives collect them alongside
-the application's symbols. The device-only embed script also copies
-KosmicKrisp's dSYM into the archive's symbols directory.
+the application's symbols. Packaging then strips each framework binary with
+`strip -S`, which drops the linker's debug map (it names the object files and
+directories of the build host) and keeps the UUID the dSYM matches. The
+device-only embed script also copies KosmicKrisp's dSYM into the archive's
+symbols directory.
 
 Kernarium makes one run per launch. A guest that
 restarts itself (a reboot, `adb reboot`, a recovery or bootloader round trip) is
@@ -609,7 +612,9 @@ Each script documents its options in `--help` or its header:
   device-only `KosmicKrisp.xcframework` for an `iphoneos` build and nothing for
   the Simulator, because an XCFramework in an Embed Frameworks phase needs a
   slice for every SDK the target builds and a platform filter cannot name the
-  device apart from the Simulator;
+  device apart from the Simulator. It runs on every build but copies and signs
+  the framework only when the framework or its signing changed, so an
+  unchanged build keeps the application's seal valid;
 - `run-ios-simulator-tests.sh` builds `KernariumTests` and `KernariumUITests`
   for the iOS Simulator and runs them in one iPad Simulator (`--help`);
 - `make-guest-bundle.py` assembles an Android `.kern` bundle (system disk,

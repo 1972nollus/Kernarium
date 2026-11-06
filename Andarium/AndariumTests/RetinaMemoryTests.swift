@@ -17,10 +17,9 @@ struct RetinaMemoryTests {
             || environment["ANDARIUM_PROFILE_EXISTING_GUEST"] == "1")
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let model = try #require((scene.delegate as? AndariumSceneDelegate)?.model)
-        let original = DisplayOptions(retina: model.retina, followWindow: model.followWindow)
-        defer { model.retina = original.retina; model.followWindow = original.followWindow }
+        let original = DisplayOptions(retina: model.retina)
+        defer { model.retina = original.retina }
         model.retina = environment["ANDARIUM_RETINA_PROFILE"] == "1"
-        model.followWindow = true
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("RetinaMemory")
         if FileManager.default.fileExists(atPath: directory.path) {
             try FileManager.default.removeItem(at: directory)
@@ -41,13 +40,16 @@ struct RetinaMemoryTests {
             values["label"] = label
             values["time"] = Date().timeIntervalSince1970
             values["retina"] = model.retina
+            // The configuration the numbers belong to, whatever the device.
+            values["guest_memory_mib"] = model.guest?.memoryMiB ?? 0
+            values["guest_cores"] = model.guest?.cores ?? 0
             values["metal_allocated"] = MTLCreateSystemDefaultDevice()?.currentAllocatedSize ?? 0
             var statistics = kernarium_runtime_statistics()
             statistics.struct_size = UInt32(MemoryLayout<kernarium_runtime_statistics>.size)
             if kernarium_runtime_loader_read_statistics(&statistics) == 0 {
                 values["guest_held"] = statistics.memory_held_bytes
             }
-            let fields = ["footprint", "remaining", "graphics", "metal_allocated", "malloc_in_use", "guest_held"]
+            let fields = ["guest_memory_mib", "guest_cores", "footprint", "remaining", "graphics", "metal_allocated", "malloc_in_use", "guest_held"]
             print("RETINA_MEMORY: \(label) \(fields.map { "\($0)=\(values[$0] ?? "?")" }.joined(separator: " "))")
             try file.write(contentsOf: JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]))
             try file.write(contentsOf: Data([10]))
@@ -58,8 +60,14 @@ struct RetinaMemoryTests {
         print("RETINA_MEMORY: ready for Instruments; starting in 20 seconds")
         try await Task.sleep(for: .seconds(20))
         try await withAndroidGuest(cleanupCommand: webGL ? "pm uninstall org.example.andarium.webglprobe >/dev/null 2>&1" : "true") { model, operations in
-            try #require(model.guest?.memoryMiB == 1536)
-            try #require(model.guest?.cores == 6)
+            // The launch states the configuration to profile
+            // (KERNARIUM_GUEST_MEMORY_MIB, KERNARIUM_VCPU_COUNT); the guest
+            // must have what it states. Either way the configuration is
+            // recorded with every snapshot.
+            let launched = AppEntry.fromArguments().overrides
+            if let expected = launched.memoryMiB { try #require(model.guest?.memoryMiB == expected) }
+            if let expected = launched.vCPUCount { try #require(model.guest?.cores == expected) }
+            print("RETINA_MEMORY: guest \(model.guest?.memoryMiB ?? 0) MiB, \(model.guest?.cores ?? 0) vCPUs")
             let display = try await operations.shell("wm size; wm density; getprop ro.build.version.incremental")
             print("RETINA_MEMORY: display \(display.text)")
             let installed = try await operations.shell("pm list packages -3; cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER")

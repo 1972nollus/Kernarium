@@ -29,6 +29,9 @@ struct AppEntry {
         #endif
     }
 
+    /// The adb key of the guest this launch runs.
+    var adbKeyStore: AdbKeyStore { AdbKeyStore(instance: overrides.instance) }
+
     func configureTips() {
         try? Tips.configure([.displayFrequency(.immediate)])
     }
@@ -85,12 +88,10 @@ struct AppEntry {
         BugReportStaging.sweep()
         let model = AppModel(
             guest: guest, host: host, system: system, capabilities: .device,
-            createRequirementBytes: storage.createRequirementBytes,
-            systemBytes: carried?.systemDiskBytes ?? 0
+            createRequirementBytes: storage.createRequirementBytes
         )
         let options = DisplayOptionsStore.load()
         model.retina = launch.retina ?? options.retina
-        model.followWindow = launch.followWindow ?? options.followWindow
 
         let markerDirectory = launch.instance == nil ? Self.supportDirectory() : locations.directory
         let marker = PauseMarker(url: markerDirectory.appendingPathComponent("pause.json"))
@@ -99,11 +100,14 @@ struct AppEntry {
             print("Andarium: the previous process ended out of the foreground; the guest starts again from boot")
         }
         if carried != nil {
-            let runtime = LiveRuntime(model: model, storage: storage, marker: marker)
+            let runtime = LiveRuntime(model: model, storage: storage, marker: marker, keyStore: adbKeyStore)
             model.driver = runtime
             model.refreshPlan()
+            // Access the person took away while Andarium was closed takes the
+            // Microphone choice with it.
+            runtime.refreshPermissions()
         }
-        model.alert = problem.map { AppAlert(title: "The System Is Not Available", message: $0) }
+        model.alert = problem.map { AppAlert(title: "Andarium Is Incomplete", message: $0) }
         return model
     }
 
@@ -181,8 +185,7 @@ struct AppEntry {
         return HostDevice(
             name: name, processorCount: limit,
             memory: memoryPolicy(processorCount: limit),
-            freeStorageBytes: freeStorageBytes(), isMac: info.isiOSAppOnMac,
-            physicalProcessorCount: info.activeProcessorCount,
+            freeStorageBytes: freeStorageBytes(),
             runsGuestGraphics: drawsGuestGraphics()
         )
     }
@@ -215,7 +218,7 @@ struct AppEntry {
     }
 }
 
-/// The two display options, kept across launches.
+/// The display option, kept across launches.
 enum DisplayOptionsStore {
     private static let key = "andarium.display"
 
@@ -259,7 +262,6 @@ enum SystemFolder {
 
     struct Release {
         var identity: ReleaseIdentity
-        var systemDiskBytes: UInt64
     }
 
     static func release(in folder: URL) throws -> Release {
@@ -278,6 +280,6 @@ enum SystemFolder {
         else { throw Problem.missing("the system disk's size in \(layout)") }
         let actual = UInt64((try? folder.appendingPathComponent(systemDisk).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
         guard actual == declared else { throw Problem.sizeDiffers(declared: declared, actual: actual) }
-        return Release(identity: identity, systemDiskBytes: declared)
+        return Release(identity: identity)
     }
 }

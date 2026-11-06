@@ -10,6 +10,7 @@
 #include "guest_statistics.hpp"
 #include "kernel_signal_scope.hpp"
 #include "native_kernel_layout.hpp"
+#include "thread_fence.hpp"
 #include "virtual_jetsam.hpp"
 #include "testing.hpp"
 #include "uml_darwin_abi.h"
@@ -66,6 +67,39 @@ constexpr unsigned int guest_trim_wait_ms = 3000U;
  * guest answers from its console interrupt, so a reply that has not come by
  * now is not coming soon, and the caller is not held longer for it. */
 constexpr std::chrono::milliseconds guest_memory_wait {500};
+
+/* A line written with write(2) alone: it takes no lock and allocates
+ * nothing, so it can be written while the guest's threads are held. */
+void write_line(const char *before, unsigned number,
+	const char *after) noexcept
+{
+	char line[256];
+	std::size_t size = 0;
+	const auto append = [&](const char *text) {
+		while (*text != '\0' && size < sizeof line - 1)
+			line[size++] = *text++;
+	};
+	append(before);
+	char digits[12];
+	std::size_t count = 0;
+	do {
+		digits[count++] = static_cast<char>('0' + number % 10U);
+		number /= 10U;
+	} while (number != 0U);
+	while (count != 0 && size < sizeof line - 1)
+		line[size++] = digits[--count];
+	append(after);
+	line[size++] = '\n';
+	(void)!::write(STDERR_FILENO, line, size);
+}
+
+/* The fence's condition for the plain hold, with every thread stopped: none
+ * of them owns the guest file registry, so the release and the restore of the
+ * disk locks cannot wait on a stopped owner. */
+[[nodiscard]] bool registry_idle(void *) noexcept
+{
+	return ::uml::runtime::guest_file_registry_idle();
+}
 
 [[nodiscard]] int guest_request_result(
 	::uml::device::GuestRequest request) noexcept
@@ -549,14 +583,13 @@ public:
 				guest_writeback_settle_ms);
 		}
 		const auto result = ::uml::runtime::sync_guest_files();
-		unsigned unlock_failures = 0;
 		/* Last, with the guest asleep and its files on disk. */
-		if (guest_suspension_ == ::uml::device::GuestSuspension::system) {
-			unlock_failures = ::uml::runtime::release_guest_file_locks();
-			guest_file_locks_released_ = true;
-			hibernate_guest_ram();
-		}
-		return static_cast<int>(result.failed + unlock_failures);
+		if (guest_suspension_ == ::uml::device::GuestSuspension::system)
+			settle_suspended_guest();
+		/* The files the host could not flush, as the API reports them. A
+		 * lock it could not release is no file left unflushed, and is
+		 * logged where it happens. */
+		return static_cast<int>(result.failed);
 	}
 
 	void resume() noexcept
@@ -565,14 +598,10 @@ public:
 		 * process. */
 		request_hibernation_abort();
 		std::lock_guard lock{guest_lifecycle_mutex_};
-		/* The RAM and the threads are back before the guest is woken. A
-		 * restore that fails ends the process and does not return; where
-		 * the end is replaced, nothing is woken either. */
-		if (guest_file_locks_released_) {
-			::uml::runtime::restore_guest_file_locks();
-			guest_file_locks_released_ = false;
-		}
-		if (hibernation_ != nullptr && !hibernation_->restore())
+		/* The disks, the RAM and the threads are back before the guest is
+		 * woken. A restore that fails ends the process and does not
+		 * return; where the end is replaced, nothing is woken either. */
+		if (!bring_back_guest_locked())
 			return;
 		const auto suspension = std::exchange(guest_suspension_,
 			::uml::device::GuestSuspension::none);
@@ -705,9 +734,11 @@ public:
 #endif
 
 private:
-	/* Hands the process's guest back before the handle boots it again. A
-	 * refusal changes nothing the caller cannot repeat: the guest stays to be
-	 * handed back by a later run, once the caller has stopped what holds it. */
+	/* Hands the process's guest back, for the run that boots it again after a
+	 * restart and for an explicit release after a power-off. A refusal
+	 * changes nothing the caller cannot repeat: the guest stays to be handed
+	 * back by a later run or release, once the caller has stopped what holds
+	 * it. */
 	[[nodiscard]] int hand_back_guest() noexcept
 	{
 		switch (::uml::runtime::guest_hand_back_block()) {
@@ -715,14 +746,14 @@ private:
 			break;
 		case ::uml::runtime::GuestHandBackBlock::borrowed_ram:
 			(void)::dprintf(STDERR_FILENO,
-				"Darwin: the guest cannot restart: a host service "
-				"still borrows its RAM; stop the device services "
-				"first\n");
+				"Darwin: the guest cannot be handed back: a host "
+				"service still borrows its RAM; stop the device "
+				"services first\n");
 			return -UML_EMULATOR_RUNTIME_ERROR;
 		case ::uml::runtime::GuestHandBackBlock::kernel_threads:
 			(void)::dprintf(STDERR_FILENO,
-				"Darwin: the guest cannot restart: a kernel thread "
-				"is still running\n");
+				"Darwin: the guest cannot be handed back: a kernel "
+				"thread is still running\n");
 			return -UML_EMULATOR_RUNTIME_ERROR;
 		}
 		/* The handle's state describes this kernel and its RAM; the
@@ -787,6 +818,10 @@ private:
 		 * none starts after, so the object is destroyed unobserved. */
 		publish_hibernation(nullptr);
 		hibernation_.reset();
+		if (guest_hold_ == GuestHold::fence)
+			guest_fence_->release();
+		guest_hold_ = GuestHold::none;
+		guest_hold_failure_logged_ = false;
 		guest_suspension_ = ::uml::device::GuestSuspension::none;
 		guest_file_locks_released_ = false;
 		pending_page_cache_trim_.reset();
@@ -870,21 +905,94 @@ private:
 				::uml::runtime::hibernation_directory());
 	}
 
-	void hibernate_guest_ram() noexcept
+	/* What a confirmed system suspension has the host do, last, with the guest
+	 * asleep and its files on disk. The guest's disks are the host's to keep:
+	 * the kernel's own wake sources (the RTC alarm, VNC input) end a suspend
+	 * the host asked for, so once the host's locks on the disks are gone,
+	 * only a hold on every thread that can run the guest keeps it from
+	 * writing them before the resume has locked them again and found them
+	 * unchanged. The locks therefore leave only with the threads held, and
+	 * stay where they cannot be. */
+	void settle_suspended_guest() noexcept
 	{
-		if (hibernation_ == nullptr) {
-			if (hibernation_mode_ == ::uml::runtime::HibernationMode::off)
-				return;
+		if (!hold_guest_threads()) {
+			if (!std::exchange(guest_hold_failure_logged_, true))
+				write_line("Darwin: the guest's disk locks stay held: "
+					"its threads could not be held (reason ",
+					static_cast<unsigned>(guest_hold_failure_), ")");
+			return;
+		}
+		/* The locks leave first: a process holding one when the system
+		 * suspends it is ended, and the write can take a while. */
+		const unsigned failed = ::uml::runtime::release_guest_file_locks();
+		guest_file_locks_released_ = true;
+		if (failed != 0U)
+			write_line("Darwin: ", failed, " guest disk lock(s) could not "
+				"be released; the system may end the process while it "
+				"is suspended");
+		if (guest_hold_ == GuestHold::hibernation)
+			hibernation_->write();
+	}
+
+	/* Holds every thread that can touch the guest's RAM or disks until
+	 * `release_guest_hold`. The hibernation does it where the RAM is wired
+	 * (or a mode forces it), and goes on to write the RAM out; elsewhere a
+	 * fence of the handle's own does, and nothing is written. False, with
+	 * everything running, when the threads could not be held. */
+	[[nodiscard]] bool hold_guest_threads() noexcept
+	{
+		if (guest_hold_ != GuestHold::none)
+			return true;
+		if (hibernation_ == nullptr &&
+		    hibernation_mode_ != ::uml::runtime::HibernationMode::off) {
 			try {
 				hibernation_ = ::uml::runtime::GuestHibernation::create(
 					hibernation_mode_,
 					::uml::runtime::hibernation_directory());
 			} catch (...) {
-				return;
+				return false;
 			}
 			publish_hibernation(hibernation_.get());
 		}
-		(void)hibernation_->hibernate();
+		if (hibernation_ != nullptr) {
+			switch (hibernation_->hold(
+				&::uml::runtime::guest_file_registry_idle)) {
+			case ::uml::runtime::HibernationHold::held:
+				guest_hold_ = GuestHold::hibernation;
+				return true;
+			case ::uml::runtime::HibernationHold::failed:
+				guest_hold_failure_ = hibernation_->report().hold_failure;
+				return false;
+			case ::uml::runtime::HibernationHold::unavailable:
+				break;
+			}
+		}
+		try {
+			if (!guest_fence_)
+				guest_fence_ = std::make_unique<::uml::runtime::ThreadFence>();
+		} catch (...) {
+			return false;
+		}
+		if (!guest_fence_->hold(::uml::runtime::guest_hold_budget_ms,
+			    &registry_idle)) {
+			guest_hold_failure_ = guest_fence_->report().failure;
+			return false;
+		}
+		guest_hold_ = GuestHold::fence;
+		return true;
+	}
+
+	/* Lets the held threads run, after the hibernation has brought the RAM
+	 * back. False when it could not: nothing runs then. */
+	[[nodiscard]] bool release_guest_hold() noexcept
+	{
+		if (hibernation_ != nullptr && !hibernation_->restore())
+			return false;
+		if (guest_hold_ == GuestHold::fence)
+			guest_fence_->release();
+		guest_hold_ = GuestHold::none;
+		guest_hold_failure_logged_ = false;
+		return true;
 	}
 
 	/* Names the hibernation the abort request may reach, or none. The
@@ -910,12 +1018,19 @@ private:
 	{
 		request_hibernation_abort();
 		std::lock_guard lock{guest_lifecycle_mutex_};
+		(void)bring_back_guest_locked();
+	}
+
+	/* The disks locked and verified again, then the RAM, then the threads:
+	 * the guest runs on nothing the host has not checked. False when the RAM
+	 * could not be brought back. */
+	[[nodiscard]] bool bring_back_guest_locked() noexcept
+	{
 		if (guest_file_locks_released_) {
 			::uml::runtime::restore_guest_file_locks();
 			guest_file_locks_released_ = false;
 		}
-		if (hibernation_ != nullptr)
-			(void)hibernation_->restore();
+		return release_guest_hold();
 	}
 
 	[[nodiscard]] static uml::network::Provider network_provider(
@@ -942,6 +1057,14 @@ private:
 	uml::network::ProviderContext network_context_;
 	std::mutex guest_lifecycle_mutex_;
 	bool guest_file_locks_released_{};
+	/* What holds the quiesced guest's threads: its hibernation, or a fence
+	 * of the handle's own where the RAM is not hibernated. Guarded by the
+	 * lifecycle mutex, like the fence. */
+	enum class GuestHold { none, hibernation, fence };
+	GuestHold guest_hold_{GuestHold::none};
+	std::unique_ptr<::uml::runtime::ThreadFence> guest_fence_;
+	int guest_hold_failure_{};
+	bool guest_hold_failure_logged_{};
 	::uml::device::GuestSuspension guest_suspension_ {
 		::uml::device::GuestSuspension::none};
 	/* A trimming change requested while the guest was quiesced. */

@@ -10,7 +10,7 @@ import Foundation
 public struct LaunchOverrides: Equatable, Sendable {
     /// The settings a launch can state.
     public enum Setting: CaseIterable, Sendable {
-        case vCPUCount, memoryMiB, diskGiB, retina, followWindow
+        case vCPUCount, memoryMiB, diskGiB, retina
         /// "normal" or "recovery": start at launch.
         case start
         /// Kernarium's boot mode, whose "recovery" also asks for a start.
@@ -25,7 +25,6 @@ public struct LaunchOverrides: Equatable, Sendable {
     public var memoryMiB: Int?
     public var capacityGiB: Int?
     public var retina: Bool?
-    public var followWindow: Bool?
     /// Start at launch, creating the guest first when there is none.
     public var start: StartMode?
     /// Erase the guest's data before the start.
@@ -53,7 +52,6 @@ public struct LaunchOverrides: Equatable, Sendable {
             .flatMap { MemoryPolicy.runtimeAccepts($0) ? $0 : nil }
         capacityGiB = integer(.diskGiB, in: Limits.capacityRangeGiB)
         retina = flag(.retina)
-        followWindow = flag(.followWindow)
         switch value(.start) {
         case "normal"?: start = .normal
         case "recovery"?: start = .recovery
@@ -98,16 +96,15 @@ public struct LaunchOverrides: Equatable, Sendable {
     }
 }
 
-/// The two display options set on Home, kept across launches.
+/// The display option set on Home, kept across launches. The guest's display
+/// always follows the window, so that is not an option; a value an earlier
+/// version stored for it is ignored.
 public struct DisplayOptions: Codable, Equatable, Sendable {
     /// Whether the guest draws at the screen's pixel density.
     public var retina = false
-    /// Whether the guest follows the window's size.
-    public var followWindow = true
 
-    public init(retina: Bool = false, followWindow: Bool = true) {
+    public init(retina: Bool = false) {
         self.retina = retina
-        self.followWindow = followWindow
     }
 }
 

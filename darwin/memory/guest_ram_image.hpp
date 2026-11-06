@@ -149,14 +149,12 @@ struct ImageStats final {
 class GuestRamImage final {
 public:
 	struct Options final {
-		/* The image file, created exclusively and locked for as long as the
-		 * image lives unless anonymous, so that the next launch can tell it
-		 * is left over. */
+		/* Where the image file is created, exclusively, and unlinked at once
+		 * with no file lock: a process suspended with a lock is ended by iOS.
+		 * The descriptor keeps its contents alive until closed, including
+		 * across suspension, and the OS reclaims them if the process ends,
+		 * so the path names nothing once `create` returns. */
 		std::string path;
-		/* Unlink the file immediately and hold no file lock. The descriptor
-		 * keeps its contents alive until closed, including across suspension;
-		 * the OS reclaims them if the process ends. */
-		bool anonymous{false};
 		/* Threads that store and restore chunks, the caller's included. */
 		unsigned threads{4};
 		/* Compress chunks; otherwise store them raw. */
@@ -197,7 +195,6 @@ public:
 	void request_abort() noexcept;
 	void clear_abort() noexcept;
 
-	[[nodiscard]] const std::string &path() const noexcept;
 	/* The size of a chunk in bytes. */
 	[[nodiscard]] std::size_t chunk_bytes() const noexcept;
 	[[nodiscard]] std::size_t chunk_count() const noexcept;
@@ -209,9 +206,9 @@ private:
 	std::unique_ptr<State> state_;
 };
 
-/* Deletes the images that a process which has ended left in `directory`
- * (files named uml-hibernation-<pid>.img whose lock is free). Returns how
- * many it removed. */
+/* Deletes the images that a process which has ended left in `directory`:
+ * files named uml-hibernation-<pid>.img whose lock is free, as older versions
+ * left them (an image now has no name). Returns how many it removed. */
 std::size_t remove_stale_guest_ram_images(
 	const std::string &directory) noexcept;
 

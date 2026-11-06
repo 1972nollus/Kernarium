@@ -15,7 +15,11 @@ final class StubDriver: RuntimeDriver {
     init(plan: StartPlan?) { self.plan = plan }
 
     func create(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest { guest }
-    func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest { guest }
+    private(set) var erased = 0
+    func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest {
+        erased += 1
+        return guest
+    }
     func save(_ guest: Guest) throws { savedGuest = guest }
     func startPlan() -> StartPlan? { plan }
     func begin(guest: Guest, mode: StartMode, kind: BootKind) {
@@ -30,7 +34,10 @@ final class StubDriver: RuntimeDriver {
     var motionSensors = false
     var savedGuest: Guest?
     func setMotionSensors(_ on: Bool) { motionSensors = on }
-    func setMicrophone(_ on: Bool) {}
+    private(set) var geometryChanges = 0
+    func sceneGeometryDidChange() { geometryChanges += 1 }
+    private(set) var microphoneCalls: [Bool] = []
+    func setMicrophone(_ on: Bool) { microphoneCalls.append(on) }
 
     /// What a bug report or an install does when the model asks.
     var bugReport: (@Sendable (@Sendable (BusyUpdate) -> Void) async throws -> URL) = { _ in
@@ -82,7 +89,7 @@ struct UpdateFlowTests {
         )
         let model = AppModel(
             guest: Guest.fresh(on: host), host: host, system: system, capabilities: .device,
-            createRequirementBytes: 1, systemBytes: 1
+            createRequirementBytes: 1
         )
         let driver = StubDriver(plan: plan)
         model.driver = driver
@@ -137,7 +144,7 @@ struct UpdateFlowTests {
         model.start(.normal)
         #expect(model.phase == .home)
         #expect(driver.begun.isEmpty)
-        #expect(model.alert?.title == "The System's Update Didn't Finish")
+        #expect(model.alert?.title == "Andarium's Update Didn't Finish")
     }
 
     @Test func recoveryWaitsForTheUpdateToFinish() {
@@ -145,7 +152,7 @@ struct UpdateFlowTests {
         model.start(.recovery)
         #expect(model.phase == .home)
         #expect(driver.begun.isEmpty)
-        #expect(model.alert?.title == "The System's Update Didn't Finish")
+        #expect(model.alert?.title == "Andarium's Update Didn't Finish")
     }
 
     @Test func aBlockedGuestSaysWhyAndStaysAtHome() {
