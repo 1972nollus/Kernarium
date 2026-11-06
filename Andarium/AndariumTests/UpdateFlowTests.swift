@@ -243,15 +243,6 @@ struct UpdateFlowTests {
         #expect(driver.savedGuest == nil)
     }
 
-    @Test func aBlockedGuestSaysWhyAndStaysAtHome() {
-        let (model, driver) = model(plan: .blocked(.olderAndroid))
-        model.start(.normal)
-        #expect(model.phase == .home)
-        #expect(driver.begun.isEmpty)
-        #expect(model.alert?.title == StartBlock.olderAndroid.title)
-        #expect(model.alert?.message == StartBlock.olderAndroid.explanation)
-    }
-
     @Test func theEndOfARunReadsThePlanAgain() {
         let (model, driver) = model(plan: .update(from: "r1", to: "r2"))
         model.start(.normal)

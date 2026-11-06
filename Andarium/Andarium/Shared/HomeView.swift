@@ -131,8 +131,13 @@ struct HomeView: View {
     private func panel(large: Bool) -> some View {
         @Bindable var model = model
         if model.guest != nil {
+            // The panel can be read once more as the guest goes (Erase Guest),
+            // so the binding never assumes there is one.
             StoragePanel(
-                guest: Binding(get: { model.guest! }, set: { model.guest = $0 }),
+                guest: Binding(
+                    get: { model.guest ?? Guest.fresh(on: model.host) },
+                    set: { if model.guest != nil { model.guest = $0 } }
+                ),
                 host: model.host,
                 stops: model.capacityStopsGiB,
                 resize: { model.sheet = .resize }
