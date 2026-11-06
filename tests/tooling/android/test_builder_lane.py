@@ -692,6 +692,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_product_model: bool = False,
                           old_product_identity: bool = False,
                           wrong_vendor_identity: bool = False,
+                          vendor_build_identity: str | None = None,
                           fingerprint_variant: str | None = None,
                           user_permissive_su: bool = False,
                           usb_debugging_default: bool = False,
@@ -1745,7 +1746,25 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     )
                 archive.writestr(
                     "VENDOR/build.prop",
-                    "ro.vendor.build.fingerprint=kernarium\n"
+                    # The vendor partition's own build identity: the build's, or (vendor_build_identity)
+                    # one that an earlier build left behind.
+                    {
+                        None: (
+                            f"ro.vendor.build.fingerprint={public_fingerprint}\n"
+                            f"ro.vendor.build.type={build_variant}\n"
+                            "ro.vendor.build.tags=release-keys\n"
+                            "ro.vendor.build.id=FIXTURE\n"
+                            "ro.vendor.build.version.incremental=7\n"
+                        ),
+                        "eng": (
+                            "ro.vendor.build.fingerprint=Andarium/lineage_andarium/andarium:17/FIXTURE/eng.build:userdebug/release-keys\n"
+                            "ro.vendor.build.type=userdebug\n"
+                            "ro.vendor.build.tags=release-keys\n"
+                            "ro.vendor.build.id=FIXTURE\n"
+                            "ro.vendor.build.version.incremental=eng.build\n"
+                        ),
+                        "missing": "",
+                    }[vendor_build_identity]
                     + "".join(
                         f"ro.product.vendor.{key}={value}\n"
                         for key, value in vendor_identity.items()
@@ -2296,6 +2315,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("product-model", {"wrong_product_model": True}),
             ("old-product-identity", {"old_product_identity": True}),
             ("wrong-vendor-identity", {"wrong_vendor_identity": True}),
+            ("vendor-build-identity-of-an-eng-build", {"vendor_build_identity": "eng"}),
+            ("vendor-without-a-build-identity", {"vendor_build_identity": "missing"}),
             ("missing-public-fingerprint", {"fingerprint_variant": "missing"}),
             ("generic-system-fingerprint", {"fingerprint_variant": "generic-system"}),
             ("wrong-type-fingerprint", {"fingerprint_variant": "wrong-type"}),
@@ -2559,6 +2580,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "unexpected product identity ro.product.product.brand: 'Android'"),
             ("wrong-vendor-identity-cause", {"wrong_vendor_identity": True},
              "unexpected product identity ro.product.vendor.model: 'Android 17 on Andarium'"),
+            ("vendor-build-identity-of-an-eng-build-cause", {"vendor_build_identity": "eng"},
+             "the vendor partition does not carry the build's identity: ro.vendor.build.fingerprint"),
+            ("vendor-without-a-build-identity-cause", {"vendor_build_identity": "missing"},
+             "the vendor partition does not carry the build's identity: ro.vendor.build.fingerprint is None"),
             ("missing-public-fingerprint-cause", {"fingerprint_variant": "missing"},
              "unexpected build fingerprint for a .* build: ''"),
             ("generic-system-fingerprint-cause", {"fingerprint_variant": "generic-system"},
@@ -3419,7 +3444,17 @@ def verify_product_identity(android_root: Path) -> None:
             "Andarium/lineage_andarium/andarium:17/CP2A.260605.016/eng.build:user/test-keys",
     }
     product = {f"ro.product.product.{key}": value for key, value in identity.items()}
-    vendor = {f"ro.product.vendor.{key}": value for key, value in identity.items()}
+    # The vendor partition states the build's identity too (ro.vendor.build.*), the same as the
+    # public fingerprint: a vendor image that kept an earlier build's says so in these properties.
+    vendor_build = {
+        "ro.vendor.build.fingerprint": generic["ro.build.fingerprint"],
+        "ro.vendor.build.type": "user",
+        "ro.vendor.build.tags": "test-keys",
+        "ro.vendor.build.id": "CP2A.260605.016",
+        "ro.vendor.build.version.incremental": "eng.build",
+    }
+    vendor_product = {f"ro.product.vendor.{key}": value for key, value in identity.items()}
+    vendor = dict(vendor_product, **vendor_build)
     verifier.check_product_identity(generic, product, vendor, "user")
     # The generic system's own identity is not constrained: it may also carry the product's.
     verifier.check_product_identity(
@@ -3437,6 +3472,17 @@ def verify_product_identity(android_root: Path) -> None:
         ("a wrong vendor device", generic, product,
          dict(vendor, **{"ro.product.vendor.device": "generic"}), "user"),
         ("no vendor identity", generic, product, {}, "user"),
+        ("no vendor build identity", generic, product, vendor_product, "user"),
+        ("the vendor build identity of a canary build", generic, product, dict(vendor, **{
+            "ro.vendor.build.fingerprint":
+                "Andarium/lineage_andarium/andarium:17/CP2A.260605.016/eng.build:userdebug/test-keys",
+            "ro.vendor.build.type": "userdebug"}), "user"),
+        ("a vendor build id of another build", generic, product,
+         dict(vendor, **{"ro.vendor.build.id": "CP2A.250101.001"}), "user"),
+        ("a vendor build number of another build", generic, product,
+         dict(vendor, **{"ro.vendor.build.version.incremental": "2026110100"}), "user"),
+        ("a vendor build signed with other keys", generic, product,
+         dict(vendor, **{"ro.vendor.build.tags": "release-keys"}), "user"),
         ("the generic system's fingerprint", dict(generic, **{
             "ro.build.fingerprint": generic["ro.system.build.fingerprint"]}),
          product, vendor, "user"),

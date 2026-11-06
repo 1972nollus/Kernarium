@@ -1040,6 +1040,12 @@ PRODUCT_IDENTITY = {
 }
 
 
+# brand/name/device:release/id/incremental:type/tags, the form of ro.build.fingerprint.
+BUILD_FINGERPRINT = re.compile(
+    r"^[^/]+/[^/]+/[^:/]+:[^/]+/(?P<id>[^/]+)/(?P<incremental>[^:/]+):(?P<type>[^/]+)/(?P<tags>.+)$"
+)
+
+
 def check_product_identity(
     system_properties: dict[str, str],
     product_properties: dict[str, str],
@@ -1066,6 +1072,24 @@ def check_product_identity(
     )
     if not fingerprint.startswith(prefix) or f":{build_variant}/" not in fingerprint:
         fail(f"unexpected build fingerprint for a {build_variant} build: {fingerprint!r}")
+    # The vendor partition states its own build identity, which the guest reports as
+    # ro.vendor.build.*. It must be the build's, not the identity of an earlier or smaller build
+    # (a canary build leaves "eng.build" and a userdebug type there) that the partition kept.
+    parts = BUILD_FINGERPRINT.match(fingerprint)
+    if parts is None:
+        fail(f"the build fingerprint has no build identity: {fingerprint!r}")
+    for name, expected in (
+        ("ro.vendor.build.fingerprint", fingerprint),
+        ("ro.vendor.build.type", parts["type"]),
+        ("ro.vendor.build.tags", parts["tags"]),
+        ("ro.vendor.build.id", parts["id"]),
+        ("ro.vendor.build.version.incremental", parts["incremental"]),
+    ):
+        if vendor_properties.get(name) != expected:
+            fail(
+                f"the vendor partition does not carry the build's identity: {name} is "
+                f"{vendor_properties.get(name)!r}, expected {expected!r} from {fingerprint!r}"
+            )
 
 
 def check_debuggable_payload(infos: dict[str, zipfile.ZipInfo], build_variant: str) -> None:
