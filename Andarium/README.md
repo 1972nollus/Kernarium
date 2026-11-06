@@ -168,6 +168,11 @@ leaves out everything that exists for automation or only pretends:
   harness's console lines (`Shared/ConsoleReport.swift`, with every call to it,
   and the thermal state and uptime reads behind them). The type is in the
   application, so no such line is in `AndariumCore` either.
+- It also leaves out what only a launch setting could use: the launch's
+  deferred work (create, erase, start; `AppEntry.applyDeferred`), the printing
+  of each statistics reading and the isolated guest instance (its directory
+  and adb key tag). `LaunchOverrides` stays in `AndariumCore` for its
+  clamping, and an App Store build gives it no value.
 - It embeds the App Store runtime, packaged by
   `Kernarium/scripts/package-ios-frameworks.sh --app-store --runtimes android`
   from the `kernarium-ios-device-android-app-store` preset, which reads no
