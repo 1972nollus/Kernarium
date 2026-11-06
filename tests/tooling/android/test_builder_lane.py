@@ -437,6 +437,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
 
     tool = load_tool(verifier)
     pinner_overlay_entry = tool.PINNER_OVERLAY
+    statistics_apks = tool.STATISTICS_APKS
     preopt_apks = sorted(tool.REQUIRED_PREOPT_APKS)
     plain_apks = sorted(
         entry for entry in tool.REQUIRED_ENTRIES
@@ -677,6 +678,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           userdata_grow_policy_variant: str | None = None,
                           discrete_ops_variant: str | None = None,
                           pinner_overlay_variant: str | None = None,
+                          statistics_variant: str | None = None,
+                          wizard_branding_variant: str | None = None,
                           reclaim_variant: str | None = None,
                           wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
@@ -1500,8 +1503,38 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     f"VENDOR/etc/vintf/manifest/{video_service}.xml",
                     '<manifest version="1.0" type="device"/>\n',
                 )
+                def application_payload(apk: str) -> bytes:
+                    # LineageParts and the Setup Wizard are real archives, so the check that
+                    # LineageOS's statistics uploader is gone has members to search; the other
+                    # applications stay placeholders.
+                    if apk not in statistics_apks:
+                        return b"apk"
+                    parts = apk.endswith("/LineageParts.apk")
+                    manifest = "package org.lineageos." + ("lineageparts" if parts else "setupwizard")
+                    dex = b"dex\n035\0 neutral"
+                    table = b"\x00config_fixture\x00"
+                    catalogue = "parts_catalog"
+                    if statistics_variant == "parts-manifest" and parts:
+                        manifest += " org.lineageos.lineageparts.lineagestats.ReportingServiceManager"
+                    if statistics_variant == "parts-dex" and parts:
+                        dex += b" Lorg/lineageos/lineageparts/lineagestats/AnonymousStats;"
+                    if statistics_variant == "parts-endpoint" and parts:
+                        table += b"https://stats.lineageos.org/api/v1/stats\x00"
+                    if statistics_variant == "parts-catalogue" and parts:
+                        catalogue += " lineagestats"
+                    if statistics_variant == "wizard-setting" and not parts:
+                        dex += b" stats_collection"
+                    payload = io.BytesIO()
+                    with zipfile.ZipFile(payload, "w") as application:
+                        # Compiled XML holds UTF-16 strings; the marker must be found there too.
+                        application.writestr("AndroidManifest.xml", manifest.encode("utf-16-le"))
+                        application.writestr("classes.dex", dex)
+                        application.writestr("resources.arsc", table)
+                        application.writestr("res/xml/parts_catalog.xml", catalogue.encode("utf-16-le"))
+                    return payload.getvalue()
+
                 for apk in preopt_apks:
-                    archive.writestr(apk, b"apk")
+                    archive.writestr(apk, application_payload(apk))
                     apk_path = Path(apk)
                     artifact = (
                         apk_path.parent / "oat" / "arm64" / apk_path.stem
@@ -1516,7 +1549,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         ):
                             archive.writestr(f"{artifact}.vdex", b"vdex")
                 for apk in plain_apks:
-                    archive.writestr(apk, b"apk")
+                    archive.writestr(apk, application_payload(apk))
                 # The overlay that releases the home app's pin: built for SDK 28, with the
                 # resource it sets in its table.
                 pinner_overlay = io.BytesIO()
@@ -1565,6 +1598,31 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "PRODUCT/overlay/"
                         "SimpleDeviceConfig__lineage_andarium__auto_generated_rro_product.apk",
                         overlay_apk.getvalue(),
+                    )
+                if wizard_branding_variant != "missing-overlay":
+                    # The Setup Wizard's overlay: the default-locale strings are in its table, as
+                    # UTF-16 when the build packs the pool that way.
+                    wizard_table = (
+                        b"\x00os_name\x00Andarium features\x00Update Andarium Recovery\x00"
+                        b"Updates Andarium Recovery on first boot subsequent to every update.\x00"
+                    )
+                    if wizard_branding_variant == "utf16-table":
+                        wizard_table = wizard_table.decode().encode("utf-16-le")
+                    if wizard_branding_variant == "lineage-name":
+                        wizard_table += b"LineageOS features\x00"
+                    if wizard_branding_variant == "lineage-name-utf16":
+                        wizard_table += "Update Lineage Recovery".encode("utf-16-le")
+                    if wizard_branding_variant == "no-recovery-strings":
+                        wizard_table = b"\x00os_name\x00Andarium features\x00"
+                    if wizard_branding_variant == "lineage-features":
+                        wizard_table = wizard_table.replace(b"Andarium features", b"Features")
+                    wizard_apk = io.BytesIO()
+                    with zipfile.ZipFile(wizard_apk, "w") as overlay:
+                        overlay.writestr("resources.arsc", wizard_table)
+                    archive.writestr(
+                        "PRODUCT/overlay/"
+                        "LineageSetupWizard__lineage_andarium__auto_generated_rro_product.apk",
+                        wizard_apk.getvalue(),
                     )
                 if wallpaper_variant != "missing-overlay":
                     # The framework's runtime resource overlay: Soong lists the tablet default
@@ -2310,6 +2368,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("pinner-overlay-target-sdk-current", {"pinner_overlay_variant": "target-sdk-current"}),
             ("pinner-overlay-no-target-sdk", {"pinner_overlay_variant": "no-target-sdk"}),
             ("pinner-overlay-named-target-sdk", {"pinner_overlay_variant": "named-target-sdk"}),
+            ("missing-setup-wizard-overlay", {"wizard_branding_variant": "missing-overlay"}),
+            ("setup-wizard-names-lineageos", {"wizard_branding_variant": "lineage-name"}),
+            ("setup-wizard-names-lineage-in-utf16", {"wizard_branding_variant": "lineage-name-utf16"}),
+            ("setup-wizard-without-recovery-strings", {"wizard_branding_variant": "no-recovery-strings"}),
+            ("setup-wizard-without-andarium-features", {"wizard_branding_variant": "lineage-features"}),
+            ("statistics-uploader-in-parts-manifest", {"statistics_variant": "parts-manifest"}),
+            ("statistics-uploader-in-parts-dex", {"statistics_variant": "parts-dex"}),
+            ("statistics-endpoint-in-parts-resources", {"statistics_variant": "parts-endpoint"}),
+            ("statistics-part-in-parts-catalogue", {"statistics_variant": "parts-catalogue"}),
+            ("statistics-setting-in-setup-wizard", {"statistics_variant": "wizard-setting"}),
             ("pinner-overlay-no-resource", {"pinner_overlay_variant": "no-resource"}),
             ("missing-reclaim-script", {"reclaim_variant": "missing-script"}),
             ("missing-reclaim-rc", {"reclaim_variant": "missing-rc"}),
@@ -2808,6 +2876,31 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "KernariumPinnerOverlay.apk targets SDK 29: .* 28 or lower"),
             ("pinner-overlay-target-sdk-current-cause", {"pinner_overlay_variant": "target-sdk-current"},
              "KernariumPinnerOverlay.apk targets SDK 37: .* 28 or lower"),
+            ("missing-setup-wizard-overlay-cause", {"wizard_branding_variant": "missing-overlay"},
+             "LineageSetupWizard__lineage_andarium__auto_generated_rro_product.apk is missing"),
+            ("setup-wizard-names-lineageos-cause", {"wizard_branding_variant": "lineage-name"},
+             "still names LineageOS or Lineage"),
+            ("setup-wizard-names-lineage-in-utf16-cause", {"wizard_branding_variant": "lineage-name-utf16"},
+             "still names LineageOS or Lineage"),
+            ("setup-wizard-without-recovery-strings-cause", {"wizard_branding_variant": "no-recovery-strings"},
+             "does not set the string 'Update Andarium Recovery'"),
+            ("setup-wizard-without-andarium-features-cause", {"wizard_branding_variant": "lineage-features"},
+             "does not set the string 'Andarium features'"),
+            ("statistics-uploader-in-parts-manifest-cause", {"statistics_variant": "parts-manifest"},
+             "LineageParts.apk still carries LineageOS's statistics uploader: AndroidManifest.xml "
+             "contains lineagestats"),
+            ("statistics-uploader-in-parts-dex-cause", {"statistics_variant": "parts-dex"},
+             "LineageParts.apk still carries LineageOS's statistics uploader: classes.dex "
+             "contains lineagestats"),
+            ("statistics-endpoint-in-parts-resources-cause", {"statistics_variant": "parts-endpoint"},
+             "LineageParts.apk still carries LineageOS's statistics uploader: resources.arsc "
+             "contains stats.lineageos.org"),
+            ("statistics-part-in-parts-catalogue-cause", {"statistics_variant": "parts-catalogue"},
+             "LineageParts.apk still carries LineageOS's statistics uploader: "
+             "res/xml/parts_catalog.xml contains lineagestats"),
+            ("statistics-setting-in-setup-wizard-cause", {"statistics_variant": "wizard-setting"},
+             "LineageSetupWizard.apk still carries LineageOS's statistics uploader: classes.dex "
+             "contains stats_collection"),
             ("pinner-overlay-no-target-sdk-cause", {"pinner_overlay_variant": "no-target-sdk"},
              "KernariumPinnerOverlay.apk targets SDK None: .* 28 or lower"),
             ("pinner-overlay-named-target-sdk-cause", {"pinner_overlay_variant": "named-target-sdk"},

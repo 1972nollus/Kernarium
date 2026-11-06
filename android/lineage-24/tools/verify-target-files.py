@@ -1231,6 +1231,95 @@ def check_discrete_ops(
         )
 
 
+# LineageOS's anonymous statistics uploader posts the device name, build, country, carrier and a
+# hash of the Android ID to stats.lineageos.org once its setting is on, and the Setup Wizard asks
+# for that setting. The product removes both: the two applications carry no statistics
+# components, no endpoint and no switch for the setting, so nothing can post whatever the setting
+# says. Names are searched in the compiled manifest, resource table, layouts and every dex, as
+# UTF-8 and as UTF-16 (the two string-pool encodings).
+STATISTICS_APKS = (
+    "SYSTEM_EXT/priv-app/LineageParts/LineageParts.apk",
+    "SYSTEM_EXT/priv-app/LineageSetupWizard/LineageSetupWizard.apk",
+)
+STATISTICS_MARKERS = (
+    b"lineagestats",
+    b"stats.lineageos.org",
+    b"lineageos.org",
+    b"stats_collection",
+    b"send_metrics",
+    b"services_metrics",
+    b"anonymous_statistics",
+    b"StatsUploadJobService",
+    b"ReportingService",
+)
+STATISTICS_APK_LIMIT = 64 << 20
+
+
+def check_no_statistics_uploader(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """No application can post statistics to LineageOS, whatever the setting says."""
+    for entry in STATISTICS_APKS:
+        info = infos.get(entry)
+        if info is None:
+            fail(f"{entry} is missing")
+        try:
+            with zipfile.ZipFile(io.BytesIO(read_small(archive, info, STATISTICS_APK_LIMIT))) as apk:
+                for name in apk.namelist():
+                    if not (
+                        name in ("AndroidManifest.xml", "resources.arsc")
+                        or (name.startswith("classes") and name.endswith(".dex"))
+                        or (name.startswith("res/") and name.endswith(".xml"))
+                    ):
+                        continue
+                    payload = apk.read(name)
+                    for marker in STATISTICS_MARKERS:
+                        if marker in payload or marker.decode().encode("utf-16-le") in payload:
+                            fail(
+                                f"{entry} still carries LineageOS's statistics uploader: "
+                                f"{name} contains {marker.decode()}"
+                            )
+        except (OSError, zipfile.BadZipFile) as error:
+            fail(f"{entry} is not a readable application archive: {error}")
+
+
+# The Setup Wizard names the system Andarium. Its strings come from a runtime resource overlay that
+# the product's overlay directory contributes to Soong's one overlay for the application; the
+# resource table must hold the product's name and recovery strings and none of LineageOS's. The
+# table is searched as UTF-8 and as UTF-16, the two string-pool encodings.
+SETUP_WIZARD_OVERLAY = (
+    "PRODUCT/overlay/LineageSetupWizard__lineage_andarium__auto_generated_rro_product.apk"
+)
+SETUP_WIZARD_NAMES = (
+    b"Andarium features",
+    b"Update Andarium Recovery",
+    b"Updates Andarium Recovery on first boot subsequent to every update.",
+)
+
+
+def check_setup_wizard_branding(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The Setup Wizard's strings say Andarium, in the default locale, and carry no LineageOS name."""
+    info = infos.get(SETUP_WIZARD_OVERLAY)
+    if info is None:
+        fail(f"{SETUP_WIZARD_OVERLAY} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, 16 << 20))) as overlay:
+            table = overlay.read("resources.arsc")
+    except (KeyError, OSError, zipfile.BadZipFile) as error:
+        fail(f"{SETUP_WIZARD_OVERLAY} has no readable resource table: {error}")
+
+    def holds(text: bytes) -> bool:
+        return text in table or text.decode().encode("utf-16-le") in table
+
+    for text in SETUP_WIZARD_NAMES:
+        if not holds(text):
+            fail(f"{SETUP_WIZARD_OVERLAY} does not set the string {text.decode()!r}")
+    if holds(b"Lineage"):
+        fail(f"{SETUP_WIZARD_OVERLAY} still names LineageOS or Lineage")
+
+
 # The framework's runtime resource overlay holds the product's replacement for LineageOS's
 # default wallpaper. Its two tablet variants are what every display of 600dp and more draws, and
 # SystemUI sizes the wallpaper surface from the bitmap, so a variant of the default 1920 pixels
@@ -2891,6 +2980,8 @@ def main() -> None:
         check_motion_sensors(archive, infos)
         check_discrete_ops(archive, infos)
         check_default_wallpaper(archive, infos)
+        check_no_statistics_uploader(archive, infos)
+        check_setup_wizard_branding(archive, infos)
         check_pinner_overlay(archive, infos)
         check_thermal_hal(archive, infos)
         check_cas_hal(archive, infos)
