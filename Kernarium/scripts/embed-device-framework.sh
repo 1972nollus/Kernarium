@@ -59,7 +59,7 @@ STAMP="$TARGET_TEMP_DIR/embed-device-framework-$NAME.stamp"
 tree_digest()
 {
 	(
-		cd -- "$1"
+		CDPATH= cd -- "$1"
 		find . \( -name .DS_Store -o -name Headers -o -name PrivateHeaders \
 			-o -name Modules -o -name '*.tbd' \) -prune \
 			-o \( -type f -o -type l \) -print | LC_ALL=C sort |
