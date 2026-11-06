@@ -15,7 +15,11 @@ final class StubDriver: RuntimeDriver {
     init(plan: StartPlan?) { self.plan = plan }
 
     func create(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest { guest }
-    func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest { guest }
+    private(set) var erased = 0
+    func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest {
+        erased += 1
+        return guest
+    }
     func save(_ guest: Guest) throws { savedGuest = guest }
     func startPlan() -> StartPlan? { plan }
     func begin(guest: Guest, mode: StartMode, kind: BootKind) {

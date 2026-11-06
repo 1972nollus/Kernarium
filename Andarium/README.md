@@ -42,7 +42,10 @@ stays beside it on a device. It has no background mode: the guest runs while
 Andarium is in the foreground and is paused when it leaves, and iOS ending a
 paused Andarium shows a notice on the next launch. It runs one scene, because
 the runtime runs one guest at a time, and needs the increased memory limit
-and extended virtual addressing entitlements.
+and extended virtual addressing entitlements. The model and the runtime belong
+to the process (`AndariumProcess`): a scene that connects again shows the same
+ones, and only an application window is Andarium's, not the Mac's menu bar
+scene.
 
 `AndariumPreview` is a Simulator-only target built from `Shared` and
 `Preview` with mock data. It embeds no runtime and boots nothing. Its launch
