@@ -1274,6 +1274,127 @@ def check_discrete_ops(
         )
 
 
+# LineageOS's anonymous statistics uploader posts the device name, build, country, carrier and a
+# hash of the Android ID to stats.lineageos.org once its setting is on, and the Setup Wizard asks
+# for that setting. The product removes both: the two applications carry no statistics
+# components, no endpoint and no switch for the setting, so nothing can post whatever the setting
+# says. Names are searched in the compiled manifest, resource table, layouts and every dex, as
+# UTF-8 and as UTF-16 (the two string-pool encodings).
+STATISTICS_APKS = (
+    "SYSTEM_EXT/priv-app/LineageParts/LineageParts.apk",
+    "SYSTEM_EXT/priv-app/LineageSetupWizard/LineageSetupWizard.apk",
+)
+STATISTICS_MARKERS = (
+    b"lineagestats",
+    b"stats.lineageos.org",
+    b"lineageos.org",
+    b"stats_collection",
+    b"send_metrics",
+    b"services_metrics",
+    b"anonymous_statistics",
+    b"StatsUploadJobService",
+    b"ReportingService",
+)
+STATISTICS_APK_LIMIT = 64 << 20
+
+
+def check_no_statistics_uploader(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """No application can post statistics to LineageOS, whatever the setting says."""
+    for entry in STATISTICS_APKS:
+        info = infos.get(entry)
+        if info is None:
+            fail(f"{entry} is missing")
+        try:
+            with zipfile.ZipFile(io.BytesIO(read_small(archive, info, STATISTICS_APK_LIMIT))) as apk:
+                for name in apk.namelist():
+                    if not (
+                        name in ("AndroidManifest.xml", "resources.arsc")
+                        or (name.startswith("classes") and name.endswith(".dex"))
+                        or (name.startswith("res/") and name.endswith(".xml"))
+                    ):
+                        continue
+                    payload = apk.read(name)
+                    for marker in STATISTICS_MARKERS:
+                        if marker in payload or marker.decode().encode("utf-16-le") in payload:
+                            fail(
+                                f"{entry} still carries LineageOS's statistics uploader: "
+                                f"{name} contains {marker.decode()}"
+                            )
+        except (OSError, zipfile.BadZipFile) as error:
+            fail(f"{entry} is not a readable application archive: {error}")
+
+
+# The Setup Wizard names the system Andarium. Its strings come from a runtime resource overlay that
+# the product's overlay directory contributes to Soong's one overlay for the application; the
+# resource table must hold the product's name and recovery strings and none of LineageOS's. The
+# table is searched as UTF-8 and as UTF-16, the two string-pool encodings.
+SETUP_WIZARD_OVERLAY = (
+    "PRODUCT/overlay/LineageSetupWizard__lineage_andarium__auto_generated_rro_product.apk"
+)
+SETUP_WIZARD_NAMES = (
+    b"Andarium features",
+    b"Update Andarium Recovery",
+    b"Updates Andarium Recovery on first boot subsequent to every update.",
+)
+
+
+# The Setup Wizard's two logos are the product's: the overlay replaces the vector drawable of the
+# Finish screen and the services page header, and the Lottie animation of the Welcome screen. The
+# animation is a raw file, which the overlay carries unchanged; the compiled vector keeps its path
+# data as strings, and a vector that holds every path of the tracked one is that vector.
+SETUP_WIZARD_ART = (
+    Path(__file__).resolve().parents[1]
+    / "overlay/overlay/packages/apps/SetupWizard/app/src/main/res"
+)
+SETUP_WIZARD_WELCOME = "res/raw/lottie_welcome.json"
+
+
+def check_setup_wizard_art(overlay: zipfile.ZipFile) -> None:
+    paths = re.findall(
+        r'android:pathData="([^"]+)"', (SETUP_WIZARD_ART / "drawable/logo.xml").read_text(encoding="utf-8")
+    )
+    if len(paths) < 2:
+        fail(f"{SETUP_WIZARD_ART}/drawable/logo.xml has fewer than two paths: the tracked logo is not the product's")
+    logos = [name for name in overlay.namelist() if re.fullmatch(r"res/drawable[^/]*/logo\.xml", name)]
+    if not any(
+        all(path.encode() in table or path.encode("utf-16-le") in table for path in paths)
+        for table in (overlay.read(name) for name in logos)
+    ):
+        fail(f"{SETUP_WIZARD_OVERLAY} has no res/drawable/logo.xml that holds the product's logo")
+    try:
+        welcome = overlay.read(SETUP_WIZARD_WELCOME)
+    except KeyError:
+        fail(f"{SETUP_WIZARD_OVERLAY} has no {SETUP_WIZARD_WELCOME}")
+    if welcome != (SETUP_WIZARD_ART / "raw/lottie_welcome.json").read_bytes():
+        fail(f"{SETUP_WIZARD_OVERLAY}'s {SETUP_WIZARD_WELCOME} is not the product's animation")
+
+
+def check_setup_wizard_branding(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The Setup Wizard's strings say Andarium, in the default locale, and carry no LineageOS name."""
+    info = infos.get(SETUP_WIZARD_OVERLAY)
+    if info is None:
+        fail(f"{SETUP_WIZARD_OVERLAY} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, 16 << 20))) as overlay:
+            table = overlay.read("resources.arsc")
+            check_setup_wizard_art(overlay)
+    except (KeyError, OSError, zipfile.BadZipFile) as error:
+        fail(f"{SETUP_WIZARD_OVERLAY} has no readable resource table: {error}")
+
+    def holds(text: bytes) -> bool:
+        return text in table or text.decode().encode("utf-16-le") in table
+
+    for text in SETUP_WIZARD_NAMES:
+        if not holds(text):
+            fail(f"{SETUP_WIZARD_OVERLAY} does not set the string {text.decode()!r}")
+    if holds(b"Lineage"):
+        fail(f"{SETUP_WIZARD_OVERLAY} still names LineageOS or Lineage")
+
+
 # The framework's runtime resource overlay holds the product's replacement for LineageOS's
 # default wallpaper. Its two tablet variants are what every display of 600dp and more draws, and
 # SystemUI sizes the wallpaper surface from the bitmap, so a variant of the default 1920 pixels
@@ -1314,6 +1435,126 @@ def check_default_wallpaper(
                     )
     except (OSError, zipfile.BadZipFile) as error:
         fail(f"{FRAMEWORK_OVERLAY} is not a readable archive: {error}")
+
+
+# The guest's clock is the host's: the runtime hands the guest the host's wall clock at boot and at
+# resume, so the platform gets no network time. NetworkTimeUpdateService polls NTP whenever a default
+# network exists, whatever the time detector's origin priorities say, and NtpTrustedTime takes its
+# servers from config_ntpServers. The one value that leaves it without a server is a list whose
+# entries are not ntp:// URIs: the client rejects the list and refreshes nothing before any lookup,
+# whereas an empty list makes NtpConfig throw in system_server. The origin priorities then leave
+# the network out as well. An empty priority list means the platform default, which holds the
+# network, and a list of telephony alone, on a device without telephony, would make the platform
+# drop "Set time automatically"; "external" keeps automatic detection supported.
+NETWORK_TIME_SERVERS = "config_ntpServers"
+NETWORK_TIME_ORIGINS = "config_autoTimeSourcesPriority"
+
+
+def resource_string_pool(table: bytes, offset: int) -> list[str]:
+    """The strings of the ResStringPool chunk at offset."""
+    count, _styles, flags, strings_start = struct.unpack_from("<IIII", table, offset + 8)
+    offsets = struct.unpack_from(f"<{count}I", table, offset + 28)
+    strings = []
+    for start in offsets:
+        position = offset + strings_start + start
+        if flags & 0x100:
+            # UTF-8: the length in characters, then the length in bytes, each one or two bytes.
+            for _ in range(2):
+                length = table[position]
+                position += 1
+                if length & 0x80:
+                    length = ((length & 0x7F) << 8) | table[position]
+                    position += 1
+            strings.append(table[position:position + length].decode("utf-8", "replace"))
+        else:
+            length = struct.unpack_from("<H", table, position)[0]
+            position += 2
+            if length & 0x8000:
+                length = ((length & 0x7FFF) << 16) | struct.unpack_from("<H", table, position)[0]
+                position += 2
+            strings.append(table[position:position + 2 * length].decode("utf-16-le", "replace"))
+    return strings
+
+
+def resource_arrays(table: bytes) -> dict[str, list[list[str]]]:
+    """Every array resource of a compiled resource table, by name: one list of its items'
+    strings for each definition (an item that is not a string reads as "<type:data>")."""
+    arrays: dict[str, list[list[str]]] = {}
+    position = struct.unpack_from("<H", table, 2)[0]
+    chunk, _, size = struct.unpack_from("<HHI", table, position)
+    if chunk != 0x0001:
+        raise ValueError("the table does not start with a string pool")
+    values = resource_string_pool(table, position)
+    position += size
+    while position + 8 <= len(table):
+        chunk, header_size, size = struct.unpack_from("<HHI", table, position)
+        if size < 8:
+            break
+        if chunk == 0x0200:
+            type_pool, _, key_pool = struct.unpack_from("<III", table, position + 268)
+            types = resource_string_pool(table, position + type_pool)
+            keys = resource_string_pool(table, position + key_pool)
+            inner, end = position + header_size, position + size
+            while inner + 8 <= end:
+                inner_chunk, inner_header, inner_size = struct.unpack_from("<HHI", table, inner)
+                if inner_size < 8:
+                    break
+                if inner_chunk == 0x0201 and types[table[inner + 8] - 1] == "array":
+                    count, entries_start = struct.unpack_from("<II", table, inner + 12)
+                    kind = table[inner + 9]
+                    if kind & 0x01:  # sparse: (index, offset / 4) pairs of 16 bits
+                        offsets = [4 * pair[1] for pair in struct.iter_unpack("<HH", table[inner + inner_header:inner + inner_header + 4 * count])]
+                    elif kind & 0x02:  # 16-bit offsets in units of 4 bytes
+                        offsets = [0xFFFFFFFF if value == 0xFFFF else 4 * value
+                                   for value in struct.unpack_from(f"<{count}H", table, inner + inner_header)]
+                    else:
+                        offsets = struct.unpack_from(f"<{count}I", table, inner + inner_header)
+                    for entry_offset in offsets:
+                        if entry_offset == 0xFFFFFFFF:
+                            continue
+                        entry = inner + entries_start + entry_offset
+                        _, flags, key = struct.unpack_from("<HHI", table, entry)
+                        if not flags & 1:
+                            continue
+                        item_count = struct.unpack_from("<I", table, entry + 12)[0]
+                        items = []
+                        for index in range(item_count):
+                            _, _, data_type, data = struct.unpack_from(
+                                "<HBBI", table, entry + 16 + 12 * index + 4
+                            )
+                            items.append(values[data] if data_type == 3 else f"<{data_type}:{data}>")
+                        arrays.setdefault(keys[key], []).append(items)
+                inner += inner_size
+        position += size
+    return arrays
+
+
+def check_network_time(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    """The platform queries no NTP server and takes no time from the network."""
+    info = infos.get(FRAMEWORK_OVERLAY)
+    if info is None:
+        fail(f"{FRAMEWORK_OVERLAY} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, FRAMEWORK_OVERLAY_LIMIT))) as overlay:
+            arrays = resource_arrays(overlay.read("resources.arsc"))
+    except (KeyError, OSError, ValueError, struct.error, IndexError, zipfile.BadZipFile) as error:
+        fail(f"{FRAMEWORK_OVERLAY} has no readable resource table: {error}")
+    for name in (NETWORK_TIME_SERVERS, NETWORK_TIME_ORIGINS):
+        if name not in arrays:
+            fail(f"{FRAMEWORK_OVERLAY} does not set {name}: the platform would query time.android.com")
+    for items in arrays[NETWORK_TIME_SERVERS]:
+        if not items:
+            fail(f"{NETWORK_TIME_SERVERS} is empty in {FRAMEWORK_OVERLAY}: NtpConfig throws on an empty list in system_server")
+        for item in items:
+            if re.match(r"(?i)ntp:", item):
+                fail(f"{NETWORK_TIME_SERVERS} names the NTP server {item} in {FRAMEWORK_OVERLAY}: no NTP query may be left")
+    for items in arrays[NETWORK_TIME_ORIGINS]:
+        if not items:
+            fail(f"{NETWORK_TIME_ORIGINS} is empty in {FRAMEWORK_OVERLAY}: the platform default holds the network")
+        if "network" in items:
+            fail(f"{NETWORK_TIME_ORIGINS} lists the network in {FRAMEWORK_OVERLAY}: network time is not a time source")
+        if "external" not in items:
+            fail(f"{NETWORK_TIME_ORIGINS} in {FRAMEWORK_OVERLAY} lacks external: without it a device without telephony loses \"Set time automatically\"")
 
 
 # PinnerService's pin sizes are framework resources that the platform does not declare
@@ -3113,6 +3354,9 @@ def main() -> None:
         check_motion_sensors(archive, infos)
         check_discrete_ops(archive, infos)
         check_default_wallpaper(archive, infos)
+        check_no_statistics_uploader(archive, infos)
+        check_setup_wizard_branding(archive, infos)
+        check_network_time(archive, infos)
         check_pinner_overlay(archive, infos)
         check_application_manifests(archive, infos, build_variant)
         check_thermal_hal(archive, infos)

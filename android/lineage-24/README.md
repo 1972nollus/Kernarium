@@ -782,6 +782,68 @@ and jobs, are never used. The list is a reviewed table in the script and in
 `tools/verify-target-files.py`, which require each other, and the script runs once
 per boot.
 
+### Time
+
+The guest's wall clock is the host's: the runtime gives the guest the host's
+wall clock at boot and its kernel then advances it with the host's monotonic
+clock, and a resume corrects it by what the suspend left. The platform
+therefore takes no network time. `NetworkTimeUpdateService` polls NTP whenever
+a default network exists, whatever `config_autoTimeSourcesPriority` says, and
+`NtpTrustedTime` reads its servers from `config_ntpServers`, so the overlay
+sets that list to one entry that is not an `ntp://` URI, the only value that
+leaves the client without a server (it rejects the list before any lookup; an
+empty list makes `NtpConfig` throw in `system_server`), and LineageOS's own
+list for mcc 460 is replaced in `overlay-priority`. The origin priorities drop
+the network too: `telephony` and `external`, because an empty list means the
+platform's default, which holds the network, and `telephony` alone would make a
+platform without telephony hide "Set time automatically". The setting stays,
+and a host clock step while the guest runs is corrected at its next resume or
+boot, not at once. The target-files verifier reads the built framework overlay
+and fails an NTP server, a network origin, an empty list or a missing list.
+
+### Branding and diagnostics
+
+The Setup Wizard names the system Andarium. The strings that carry the name
+(`os_name`, `setup_services`, `update_recovery_title`, `update_recovery_setting`
+and `update_recovery_description`) come from a runtime resource overlay in
+`overlay/overlay/packages/apps/SetupWizard/app/src/main/res`, one file per
+locale that translates them, because a locale that translates a string would
+otherwise show LineageOS's text over the default. The application's resources
+sit in a Gradle layout, which the overlay path follows. Settings, About, the
+boot animation, the fingerprint and the build properties keep LineageOS's names.
+Recovery's own text names no system. The target-files verifier requires the
+wizard overlay's resource table to hold the Andarium strings and no Lineage name.
+
+The artwork is the Andarium icon's three stacked tiles. In the Setup Wizard
+the same overlay replaces the vector drawable `logo.xml` (the Finish screen,
+and the services page header, where the layout tints it and only the three
+silhouettes remain) and the Lottie animation `lottie_welcome.json` of the
+Welcome screen. Recovery's header images (`logo_image.png`,
+`logo_image_switch.png` and `fastbootd.png`, 256 by 160) and its 30 progress
+frames (200 by 200) are mdpi pixel art in `overlay/recovery/res/images`: the
+build copies a device's `recovery/res` over the stock resources, and recovery
+scales the images to the host's density with nearest-neighbour sampling, so
+they are drawn on the 1x grid and in greys that no byte order changes. The
+recovery verifier requires each of those files byte for byte and no other
+progress frame, and the target-files verifier requires the wizard's animation
+byte for byte and every path of its vector.
+
+LineageOS reports device data to its statistics server from LineageParts
+(`ReportingService`, started by a boot receiver and a daily job) once
+`stats_collection` is on, and the Setup Wizard asks for it on its services page.
+The image has neither. Route `p0025` removes LineageParts' statistics feature
+whole: the receiver and services, the preview screen, the part in the catalogue
+that Settings lists and searches, the Trust entry, the endpoint and the strings.
+LineageParts runs in the system uid, so a manifest cannot take its network
+access away, and only removed code guarantees that nothing posts. Route `p0026`
+removes the wizard's diagnostic data row, its privacy paragraph and policy URL,
+and the code that wrote the answer to `stats_collection`, whose default stays
+off. What is left of the services page is the on-screen navigation keys row,
+which a device with a key disabler shows; this product has none, so the page
+skips itself and disables its own activity. The target-files verifier searches
+both applications' manifests, dex files and resources for the uploader's
+components, endpoint and setting, and fails the image that still carries one.
+
 ## Graphics
 
 Both graphics APIs come from one Mesa build of this project's own guest Mesa
@@ -1376,6 +1438,17 @@ Recovery loads only its ramdisk's `prop.default`, which the build fills from the
 product's properties, so `sys.use_memfd=true` reaches it and its ashmem users
 fall back to memfd on a kernel without `/dev/ashmem`. The verifier requires
 that line.
+
+Recovery draws into a DRM dumb buffer, and the Virtio-GPU driver always creates
+that buffer as `B8G8R8X8` whatever format the framebuffer declares afterwards.
+`TARGET_RECOVERY_PIXEL_FORMAT := BGRX_8888` makes minui declare `XRGB8888`, the
+buffer's own byte order, so every pixel appears exactly as stored. The
+Cuttlefish default `ABGR_8888` declares `RGBA8888` for bytes nothing converts
+and swaps red and blue; the kernel patch that offers the extra scanout formats
+is meant for Android's composer, which scans out blobs that carry their own
+format. The verifier requires `ro.minui.pixel_format=BGRX_8888` in the
+ramdisk's `prop.default`. The correction is guest-side, so the iOS display path
+(the same scanout code) needs none.
 
 The stock LineageOS recovery image measures 15.07 MiB (15,802,368 bytes). Its
 `BOARD_RECOVERYIMAGE_PARTITION_SIZE` of 20 MiB is the image builder's limit, 25%

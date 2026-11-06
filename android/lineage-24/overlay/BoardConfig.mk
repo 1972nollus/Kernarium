@@ -177,6 +177,12 @@ TARGET_RECOVERY_FSTAB := device/kernarium/andarium/config/recovery.fstab
 # The inherited recovery UI reaches ADB over eth1, which Cuttlefish provides and
 # this machine does not. Darwin's own UI uses eth0, the Virtio-net interface.
 TARGET_RECOVERY_UI_LIB := librecovery_ui_andarium
+# Recovery draws into a dumb buffer, which the Virtio-GPU driver always creates
+# as B8G8R8X8 whatever format the framebuffer declares afterwards. The inherited
+# ABGR_8888 declares RGBA8888 for bytes in R, G, B, A order that nothing
+# converts, so red and blue swap on screen. BGRX_8888 is XRGB8888, the
+# buffer's own byte order.
+TARGET_RECOVERY_PIXEL_FORMAT := BGRX_8888
 TARGET_NO_RECOVERY := false
 
 BOARD_SUPER_PARTITION_SIZE :=

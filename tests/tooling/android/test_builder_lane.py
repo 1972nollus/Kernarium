@@ -372,6 +372,50 @@ def tracked_erofs_parameters(android_root: Path) -> tuple[str, str]:
     return found[0], found[1]
 
 
+def synthetic_resource_table(arrays: list[tuple[str, list[str]]], *, utf8: bool = True) -> bytes:
+    """A compiled resource table whose one package holds the given string-array resources."""
+
+    def pool(strings: list[str]) -> bytes:
+        data, offsets = b"", []
+        for text in strings:
+            offsets.append(len(data))
+            if utf8:
+                raw = text.encode()
+                data += bytes([len(text), len(raw)]) + raw + b"\x00"
+            else:
+                data += struct.pack("<H", len(text)) + text.encode("utf-16-le") + b"\x00\x00"
+        data += b"\x00" * (-len(data) % 4)
+        start = 28 + 4 * len(strings)
+        return (struct.pack("<HHIIIIII", 1, 28, start + len(data), len(strings), 0,
+                            0x100 if utf8 else 0, start, 0)
+                + struct.pack(f"<{len(strings)}I", *offsets) + data)
+
+    values = sorted({item for _, items in arrays for item in items})
+    names = [name for name, _ in arrays]
+    entries = b""
+    offsets = []
+    for index, (_, items) in enumerate(arrays):
+        offsets.append(len(entries))
+        entries += struct.pack("<HHIII", 16, 1, index, 0, len(items))
+        for item in items:
+            entries += struct.pack("<IHBBI", 0x02000001, 8, 0, 3, values.index(item))
+    configuration = struct.pack("<I", 64) + b"\x00" * 60
+    type_header = 20 + len(configuration)
+    type_chunk = (struct.pack("<HHIBBHII", 0x0201, type_header,
+                              type_header + 4 * len(arrays) + len(entries), 1, 0, 0, len(arrays),
+                              type_header + 4 * len(arrays))
+                  + configuration + struct.pack(f"<{len(arrays)}I", *offsets) + entries)
+    type_pool, key_pool = pool(["array"]), pool(names)
+    package_header = 288
+    package = (struct.pack("<HHII", 0x0200, package_header,
+                           package_header + len(type_pool) + len(key_pool) + len(type_chunk), 0x7F)
+               + b"\x00" * 256
+               + struct.pack("<IIIII", package_header, 0, package_header + len(type_pool), 0, 0)
+               + type_pool + key_pool + type_chunk)
+    global_pool = pool(values)
+    return struct.pack("<HHII", 2, 12, 12 + len(global_pool) + len(package), 1) + global_pool + package
+
+
 def synthetic_apex(filesystem: str = "erofs", content: bytes = b"", **superblock) -> bytes:
     """An APEX container whose payload has the superblock of `filesystem` and then `content`."""
     if filesystem == "ext4":
@@ -477,6 +521,22 @@ def verify_target_files_fixtures(verifier: Path) -> None:
 
     tool = load_tool(verifier)
     pinner_overlay_entry = tool.PINNER_OVERLAY
+    statistics_apks = tool.STATISTICS_APKS
+    # The Setup Wizard overlay's artwork, as the build would carry it: the raw animation unchanged and
+    # the compiled vector holding its path data as strings.
+    wizard_art_root = verifier.parents[1] / "overlay/overlay/packages/apps/SetupWizard/app/src/main/res"
+    wizard_paths = re.findall(
+        r'android:pathData="([^"]+)"', (wizard_art_root / "drawable/logo.xml").read_text(encoding="utf-8")
+    )
+    wizard_welcome = (wizard_art_root / "raw/lottie_welcome.json").read_bytes()
+    # The reader of compiled array resources sees the same items through either string pool.
+    tables = [("config_ntpServers", ["none"]), ("config_autoTimeSourcesPriority", ["telephony", "external"]),
+              ("config_ntpServers", ["ntp://ntp.example", "x"]), ("empty", [])]
+    expected_arrays = {"config_ntpServers": [["none"], ["ntp://ntp.example", "x"]],
+                       "config_autoTimeSourcesPriority": [["telephony", "external"]], "empty": [[]]}
+    for utf8 in (True, False):
+        if tool.resource_arrays(synthetic_resource_table(tables, utf8=utf8)) != expected_arrays:
+            fail(f"the resource array reader misreads a {'UTF-8' if utf8 else 'UTF-16'} string pool")
     release_manifest = synthetic_compiled_manifest(None, debuggable=False)
     release_apk = synthetic_apk(debuggable=False)
     preopt_apks = sorted(tool.REQUIRED_PREOPT_APKS)
@@ -721,6 +781,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           userdata_grow_policy_variant: str | None = None,
                           discrete_ops_variant: str | None = None,
                           pinner_overlay_variant: str | None = None,
+                          statistics_variant: str | None = None,
+                          wizard_branding_variant: str | None = None,
+                          network_time_variant: str | None = None,
                           reclaim_variant: str | None = None,
                           wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
@@ -1550,8 +1613,43 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     f"VENDOR/etc/vintf/manifest/{video_service}.xml",
                     '<manifest version="1.0" type="device"/>\n',
                 )
+                def application_payload(apk: str) -> bytes:
+                    # LineageParts and the Setup Wizard are real archives, so the check that
+                    # LineageOS's statistics uploader is gone has members to search; the other
+                    # applications stay the placeholder release archive.
+                    if apk not in statistics_apks:
+                        return release_apk
+                    parts = apk.endswith("/LineageParts.apk")
+                    marker = ""
+                    dex = b"dex\n035\0 neutral"
+                    table = b"\x00config_fixture\x00"
+                    catalogue = "parts_catalog"
+                    if statistics_variant == "parts-manifest" and parts:
+                        marker = "org.lineageos.lineageparts.lineagestats.ReportingServiceManager"
+                    if statistics_variant == "parts-dex" and parts:
+                        dex += b" Lorg/lineageos/lineageparts/lineagestats/AnonymousStats;"
+                    if statistics_variant == "parts-endpoint" and parts:
+                        table += b"https://stats.lineageos.org/api/v1/stats\x00"
+                    if statistics_variant == "parts-catalogue" and parts:
+                        catalogue += " lineagestats"
+                    if statistics_variant == "wizard-setting" and not parts:
+                        dex += b" stats_collection"
+                    payload = io.BytesIO()
+                    with zipfile.ZipFile(payload, "w") as application:
+                        # The compiled manifest's string pool is UTF-16, so a marker named there is
+                        # found in its UTF-16 form; the manifest is otherwise a release one.
+                        application.writestr(
+                            "AndroidManifest.xml",
+                            synthetic_compiled_manifest(None, debuggable=False, permissions=(marker,))
+                            if marker else release_manifest,
+                        )
+                        application.writestr("classes.dex", dex)
+                        application.writestr("resources.arsc", table)
+                        application.writestr("res/xml/parts_catalog.xml", catalogue.encode("utf-16-le"))
+                    return payload.getvalue()
+
                 for apk in preopt_apks:
-                    archive.writestr(apk, release_apk)
+                    archive.writestr(apk, application_payload(apk))
                     apk_path = Path(apk)
                     artifact = (
                         apk_path.parent / "oat" / "arm64" / apk_path.stem
@@ -1566,7 +1664,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         ):
                             archive.writestr(f"{artifact}.vdex", b"vdex")
                 for apk in plain_apks:
-                    archive.writestr(apk, release_apk)
+                    archive.writestr(apk, application_payload(apk))
                 # The overlay that releases the home app's pin: built for SDK 28, with the
                 # resource it sets in its table.
                 pinner_overlay = io.BytesIO()
@@ -1617,6 +1715,44 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "SimpleDeviceConfig__lineage_andarium__auto_generated_rro_product.apk",
                         overlay_apk.getvalue(),
                     )
+                if wizard_branding_variant != "missing-overlay":
+                    # The Setup Wizard's overlay: the default-locale strings are in its table, as
+                    # UTF-16 when the build packs the pool that way.
+                    wizard_table = (
+                        b"\x00os_name\x00Andarium features\x00Update Andarium Recovery\x00"
+                        b"Updates Andarium Recovery on first boot subsequent to every update.\x00"
+                    )
+                    if wizard_branding_variant == "utf16-table":
+                        wizard_table = wizard_table.decode().encode("utf-16-le")
+                    if wizard_branding_variant == "lineage-name":
+                        wizard_table += b"LineageOS features\x00"
+                    if wizard_branding_variant == "lineage-name-utf16":
+                        wizard_table += "Update Lineage Recovery".encode("utf-16-le")
+                    if wizard_branding_variant == "no-recovery-strings":
+                        wizard_table = b"\x00os_name\x00Andarium features\x00"
+                    if wizard_branding_variant == "lineage-features":
+                        wizard_table = wizard_table.replace(b"Andarium features", b"Features")
+                    wizard_logo = b"\x00".join(path.encode() for path in wizard_paths)
+                    wizard_animation = wizard_welcome
+                    if wizard_branding_variant == "stock-logo":
+                        wizard_logo = b"\x00M0,0L1,1\x00"
+                    elif wizard_branding_variant == "logo-lacks-a-path":
+                        wizard_logo = b"\x00".join(path.encode() for path in wizard_paths[:-1])
+                    elif wizard_branding_variant == "stock-animation":
+                        wizard_animation = wizard_welcome.replace(b"Andarium", b"LineageOS", 1) + b" "
+                    wizard_apk = io.BytesIO()
+                    with zipfile.ZipFile(wizard_apk, "w") as overlay:
+                        overlay.writestr("AndroidManifest.xml", release_manifest)
+                        overlay.writestr("resources.arsc", wizard_table)
+                        if wizard_branding_variant != "no-logo":
+                            overlay.writestr("res/drawable-v24/logo.xml", wizard_logo)
+                        if wizard_branding_variant != "no-animation":
+                            overlay.writestr("res/raw/lottie_welcome.json", wizard_animation)
+                    archive.writestr(
+                        "PRODUCT/overlay/"
+                        "LineageSetupWizard__lineage_andarium__auto_generated_rro_product.apk",
+                        wizard_apk.getvalue(),
+                    )
                 if wallpaper_variant != "missing-overlay":
                     # The framework's runtime resource overlay: Soong lists the tablet default
                     # wallpapers with the version qualifier aapt2 adds to a smallest-width one.
@@ -1638,10 +1774,37 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         wallpapers["res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"] = png_header(1024, 768)
                     elif wallpaper_variant == "not-png":
                         wallpapers["res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"] = b"not a png at all, just bytes"
+                    # The product's network time: no NTP server the client accepts, and no network origin.
+                    network_time = {
+                        "config_ntpServers": ["none"],
+                        "config_autoTimeSourcesPriority": ["telephony", "external"],
+                    }
+                    extra_definitions: list[tuple[str, list[str]]] = []
+                    if network_time_variant == "ntp-server":
+                        network_time["config_ntpServers"] = ["ntp://time.android.com"]
+                    elif network_time_variant == "ntp-server-in-a-qualified-table":
+                        extra_definitions.append(("config_ntpServers", ["ntp://ntp.aliyun.com"]))
+                    elif network_time_variant == "ntp-server-in-capitals":
+                        network_time["config_ntpServers"] = ["NTP://time.example"]
+                    elif network_time_variant == "ntp-empty":
+                        network_time["config_ntpServers"] = []
+                    elif network_time_variant == "ntp-missing":
+                        del network_time["config_ntpServers"]
+                    elif network_time_variant == "origin-network":
+                        network_time["config_autoTimeSourcesPriority"] = ["network", "telephony", "external"]
+                    elif network_time_variant == "origin-empty":
+                        network_time["config_autoTimeSourcesPriority"] = []
+                    elif network_time_variant == "origin-without-external":
+                        network_time["config_autoTimeSourcesPriority"] = ["telephony"]
+                    elif network_time_variant == "origin-missing":
+                        del network_time["config_autoTimeSourcesPriority"]
+                    network_table = synthetic_resource_table(
+                        [*network_time.items(), *extra_definitions], utf8=network_time_variant != "utf16-pool"
+                    )
                     framework_apk = io.BytesIO()
                     with zipfile.ZipFile(framework_apk, "w") as overlay:
                         overlay.writestr("AndroidManifest.xml", release_manifest)
-                        overlay.writestr("resources.arsc", b"\x00")
+                        overlay.writestr("resources.arsc", network_table)
                         for name, payload in wallpapers.items():
                             overlay.writestr(name, payload)
                     archive.writestr(
@@ -2437,6 +2600,31 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("pinner-overlay-target-sdk-current", {"pinner_overlay_variant": "target-sdk-current"}),
             ("pinner-overlay-no-target-sdk", {"pinner_overlay_variant": "no-target-sdk"}),
             ("pinner-overlay-named-target-sdk", {"pinner_overlay_variant": "named-target-sdk"}),
+            ("missing-setup-wizard-overlay", {"wizard_branding_variant": "missing-overlay"}),
+            ("setup-wizard-names-lineageos", {"wizard_branding_variant": "lineage-name"}),
+            ("setup-wizard-names-lineage-in-utf16", {"wizard_branding_variant": "lineage-name-utf16"}),
+            ("setup-wizard-without-recovery-strings", {"wizard_branding_variant": "no-recovery-strings"}),
+            ("setup-wizard-without-andarium-features", {"wizard_branding_variant": "lineage-features"}),
+            ("setup-wizard-without-logo", {"wizard_branding_variant": "no-logo"}),
+            ("setup-wizard-with-another-logo", {"wizard_branding_variant": "stock-logo"}),
+            ("setup-wizard-logo-lacking-a-path", {"wizard_branding_variant": "logo-lacks-a-path"}),
+            ("setup-wizard-without-animation", {"wizard_branding_variant": "no-animation"}),
+            ("setup-wizard-with-another-animation", {"wizard_branding_variant": "stock-animation"}),
+            ("ntp-server-left", {"network_time_variant": "ntp-server"}),
+            ("ntp-server-left-in-a-qualified-definition",
+             {"network_time_variant": "ntp-server-in-a-qualified-table"}),
+            ("ntp-server-left-in-capitals", {"network_time_variant": "ntp-server-in-capitals"}),
+            ("ntp-server-list-empty", {"network_time_variant": "ntp-empty"}),
+            ("ntp-server-list-missing", {"network_time_variant": "ntp-missing"}),
+            ("network-time-origin-left", {"network_time_variant": "origin-network"}),
+            ("time-origin-list-empty", {"network_time_variant": "origin-empty"}),
+            ("time-origin-list-without-external", {"network_time_variant": "origin-without-external"}),
+            ("time-origin-list-missing", {"network_time_variant": "origin-missing"}),
+            ("statistics-uploader-in-parts-manifest", {"statistics_variant": "parts-manifest"}),
+            ("statistics-uploader-in-parts-dex", {"statistics_variant": "parts-dex"}),
+            ("statistics-endpoint-in-parts-resources", {"statistics_variant": "parts-endpoint"}),
+            ("statistics-part-in-parts-catalogue", {"statistics_variant": "parts-catalogue"}),
+            ("statistics-setting-in-setup-wizard", {"statistics_variant": "wizard-setting"}),
             ("pinner-overlay-no-resource", {"pinner_overlay_variant": "no-resource"}),
             ("missing-reclaim-script", {"reclaim_variant": "missing-script"}),
             ("missing-reclaim-rc", {"reclaim_variant": "missing-rc"}),
@@ -2992,6 +3180,60 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "KernariumPinnerOverlay.apk targets SDK 29: .* 28 or lower"),
             ("pinner-overlay-target-sdk-current-cause", {"pinner_overlay_variant": "target-sdk-current"},
              "KernariumPinnerOverlay.apk targets SDK 37: .* 28 or lower"),
+            ("missing-setup-wizard-overlay-cause", {"wizard_branding_variant": "missing-overlay"},
+             "LineageSetupWizard__lineage_andarium__auto_generated_rro_product.apk is missing"),
+            ("setup-wizard-names-lineageos-cause", {"wizard_branding_variant": "lineage-name"},
+             "still names LineageOS or Lineage"),
+            ("setup-wizard-names-lineage-in-utf16-cause", {"wizard_branding_variant": "lineage-name-utf16"},
+             "still names LineageOS or Lineage"),
+            ("setup-wizard-without-recovery-strings-cause", {"wizard_branding_variant": "no-recovery-strings"},
+             "does not set the string 'Update Andarium Recovery'"),
+            ("setup-wizard-without-andarium-features-cause", {"wizard_branding_variant": "lineage-features"},
+             "does not set the string 'Andarium features'"),
+            ("setup-wizard-without-logo-cause", {"wizard_branding_variant": "no-logo"},
+             "LineageSetupWizard.* has no res/drawable/logo.xml that holds the product's logo"),
+            ("setup-wizard-with-another-logo-cause", {"wizard_branding_variant": "stock-logo"},
+             "LineageSetupWizard.* has no res/drawable/logo.xml that holds the product's logo"),
+            ("setup-wizard-logo-lacking-a-path-cause", {"wizard_branding_variant": "logo-lacks-a-path"},
+             "LineageSetupWizard.* has no res/drawable/logo.xml that holds the product's logo"),
+            ("setup-wizard-without-animation-cause", {"wizard_branding_variant": "no-animation"},
+             "LineageSetupWizard.* has no res/raw/lottie_welcome.json"),
+            ("setup-wizard-with-another-animation-cause", {"wizard_branding_variant": "stock-animation"},
+             "res/raw/lottie_welcome.json is not the product's animation"),
+            ("ntp-server-left-cause", {"network_time_variant": "ntp-server"},
+             "config_ntpServers names the NTP server ntp://time.android.com in .*framework-res"),
+            ("ntp-server-left-in-a-qualified-definition-cause",
+             {"network_time_variant": "ntp-server-in-a-qualified-table"},
+             "config_ntpServers names the NTP server ntp://ntp.aliyun.com in .*framework-res"),
+            ("ntp-server-left-in-capitals-cause", {"network_time_variant": "ntp-server-in-capitals"},
+             "config_ntpServers names the NTP server NTP://time.example in .*framework-res"),
+            ("ntp-server-list-empty-cause", {"network_time_variant": "ntp-empty"},
+             "config_ntpServers is empty in .*framework-res.*NtpConfig throws"),
+            ("ntp-server-list-missing-cause", {"network_time_variant": "ntp-missing"},
+             "framework-res.* does not set config_ntpServers: the platform would query time.android.com"),
+            ("network-time-origin-left-cause", {"network_time_variant": "origin-network"},
+             "config_autoTimeSourcesPriority lists the network in .*framework-res"),
+            ("time-origin-list-empty-cause", {"network_time_variant": "origin-empty"},
+             "config_autoTimeSourcesPriority is empty in .*framework-res.*platform default holds the network"),
+            ("time-origin-list-without-external-cause", {"network_time_variant": "origin-without-external"},
+             "config_autoTimeSourcesPriority in .*framework-res.* lacks external"),
+            ("time-origin-list-missing-cause", {"network_time_variant": "origin-missing"},
+             "framework-res.* does not set config_autoTimeSourcesPriority"),
+            ("statistics-uploader-in-parts-manifest-cause", {"statistics_variant": "parts-manifest"},
+             "LineageParts.apk still carries LineageOS's statistics uploader: AndroidManifest.xml "
+             "contains lineagestats"),
+            ("statistics-uploader-in-parts-dex-cause", {"statistics_variant": "parts-dex"},
+             "LineageParts.apk still carries LineageOS's statistics uploader: classes.dex "
+             "contains lineagestats"),
+            ("statistics-endpoint-in-parts-resources-cause", {"statistics_variant": "parts-endpoint"},
+             "LineageParts.apk still carries LineageOS's statistics uploader: resources.arsc "
+             "contains stats.lineageos.org"),
+            ("statistics-part-in-parts-catalogue-cause", {"statistics_variant": "parts-catalogue"},
+             "LineageParts.apk still carries LineageOS's statistics uploader: "
+             "res/xml/parts_catalog.xml contains lineagestats"),
+            ("statistics-setting-in-setup-wizard-cause", {"statistics_variant": "wizard-setting"},
+             "LineageSetupWizard.apk still carries LineageOS's statistics uploader: classes.dex "
+             "contains stats_collection"),
             ("pinner-overlay-no-target-sdk-cause", {"pinner_overlay_variant": "no-target-sdk"},
              "KernariumPinnerOverlay.apk targets SDK None: .* 28 or lower"),
             ("pinner-overlay-named-target-sdk-cause", {"pinner_overlay_variant": "named-target-sdk"},
@@ -4633,11 +4875,13 @@ def lz4_legacy_frame(payload: bytes, block_size: int = 1 << 20) -> bytes:
     return bytes(frame)
 
 
-def synthetic_lineage_recovery_ramdisk(
+def synthetic_lineage_ramdisk_for(
     fstab: bytes, *, alignment: int = 16384, omit_dependency: bool = False,
     interface: bytes = b"eth0\0", compression: str = "lz4",
     module: str | None = None, no_memfd: bool = False,
     elf_edit: tuple[str, int, int] | None = None,
+    pixel_format: bytes = b"BGRX_8888",
+    art: dict[str, bytes] | None = None,
     script: bytes = b"", imported: bytes | None = b"service console /system/bin/sh\n",
     script_name: str = "init.recovery.cutf_cvm.rc",
 ) -> bytes:
@@ -4650,7 +4894,8 @@ def synthetic_lineage_recovery_ramdisk(
             0o100644,
             b"ro.product.system.device=andarium\n"
             b"persist.adb.tcp.port=5555\n"
-            + (b"" if no_memfd else b"sys.use_memfd=true\n"),
+            + (b"" if no_memfd else b"sys.use_memfd=true\n")
+            + b"ro.minui.pixel_format=" + pixel_format + b"\n",
             2,
         ),
         newc_entry(
@@ -4682,6 +4927,10 @@ def synthetic_lineage_recovery_ramdisk(
             )
         ]),
         *([newc_entry(f"lib/modules/{module}", 0o100644, b"module", 13)] if module else []),
+        *[
+            newc_entry(f"res/images/{name}", 0o100644, payload, 100 + index)
+            for index, (name, payload) in enumerate(sorted((art or {}).items()))
+        ],
         # The product's recovery script, and the Cuttlefish one it imports.
         *([newc_entry(script_name, 0o100644, script, 14)] if script_name else []),
         *([newc_entry("init.recovery.cuttlefish.rc", 0o100644, imported, 15)]
@@ -4700,9 +4949,18 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
     fstab = (android_root / "overlay/config/recovery.fstab").read_bytes()
     script = (android_root / "overlay/config/init.recovery.rc").read_bytes()
     module = load_tool(verifier)
+    # The product's recovery artwork, which the ramdisk of a good image carries.
+    art = {
+        path.name: path.read_bytes()
+        for path in sorted((android_root / module.ART_DIRECTORY).iterdir())
+    }
+    if len(art) != 33 or not set(module.ART_REQUIRED) <= art.keys():
+        fail(f"the product's recovery artwork is {len(art)} files, not the 33 of the design")
 
     def ramdisk_for(fstab_bytes: bytes, **options: object) -> bytes:
-        return synthetic_lineage_recovery_ramdisk(fstab_bytes, **{"script": script, **options})
+        return synthetic_lineage_ramdisk_for(
+            fstab_bytes, **{"script": script, "art": art, **options}
+        )
 
     # A match whose offset is shorter than its length repeats the pattern.
     if module.lz4_block(b"\x35abc\x03\x00\x20de", 1 << 20) != b"abcabcabcabcde":
@@ -4755,12 +5013,36 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
                 ramdisk_for(fstab, no_memfd=True),
             ),
             (
+                "the Cuttlefish ABGR_8888 pixel format",
+                ramdisk_for(fstab, pixel_format=b"ABGR_8888"),
+            ),
+            (
                 "a changed fstab",
                 ramdisk_for(fstab + b"# changed\n"),
             ),
             (
                 "an uncompressed ramdisk",
                 ramdisk_for(fstab, compression="none"),
+            ),
+            (
+                "a ramdisk without the product's artwork",
+                ramdisk_for(fstab, art={}),
+            ),
+            (
+                "a ramdisk without the header image",
+                ramdisk_for(fstab, art={k: v for k, v in art.items() if k != "logo_image_switch.png"}),
+            ),
+            (
+                "LineageOS's header image",
+                ramdisk_for(fstab, art={**art, "logo_image_switch.png": b"the wire logo"}),
+            ),
+            (
+                "a missing progress frame",
+                ramdisk_for(fstab, art={k: v for k, v in art.items() if k != "loop00017.png"}),
+            ),
+            (
+                "a stock progress frame the product does not supply",
+                ramdisk_for(fstab, art={**art, "loop00030.png": b"stock"}),
             ),
         ):
             bad = root / "recovery-bad.img"
@@ -4782,6 +5064,12 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
                 {"module": "modules.builtin.alias.bin"},
                 "loadable-module payload",
             ),
+            ("a missing logo", {"art": {k: v for k, v in art.items() if k != "logo_image.png"}},
+             "lacks the product's artwork res/images/logo_image.png"),
+            ("a stock fastbootd image", {"art": {**art, "fastbootd.png": b"stock"}},
+             "res/images/fastbootd.png is not the product's artwork"),
+            ("a surplus frame", {"art": {**art, "loop00031.png": b"stock"}},
+             "animation frames the product does not supply: .*loop00031.png"),
             ("a 32-bit ELF", {"elf_edit": ("<B", 4, 1)}, "little-endian ELF64"),
             ("a big-endian ELF", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF64"),
             ("a foreign machine", {"elf_edit": ("<H", 18, 62)}, "not AArch64"),
@@ -4840,7 +5128,7 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
                 fail(f"the recovery script fixture for {label} did not change the script")
             (tree / "overlay/config/init.recovery.rc").write_bytes(checked)
             bad = root / "recovery-bad.img"
-            bad.write_bytes(synthetic_boot_image(synthetic_lineage_recovery_ramdisk(fstab, script=checked)))
+            bad.write_bytes(synthetic_boot_image(synthetic_lineage_ramdisk_for(fstab, script=checked)))
             result = run(bad, tree)
             if result.returncode == 0 or not re.search(reason, result.stdout):
                 fail(f"Lineage recovery verifier did not reject {label} for {reason!r}: {result.stdout}")

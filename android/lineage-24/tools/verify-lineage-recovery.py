@@ -9,6 +9,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import gzip
 import io
+import re
 import stat
 import struct
 from pathlib import Path, PurePosixPath
@@ -41,6 +42,14 @@ RECOVERY_SCRIPT_IMPORT = "init.recovery.cuttlefish.rc"
 # host's ro.boot.lcd_density is vendor-private, so the script publishes it.
 DENSITY_TRIGGER = "on early-init && property:ro.boot.lcd_density=*"
 DENSITY_COMMAND = "setprop ro.sf.lcd_density ${ro.boot.lcd_density}"
+
+
+# The product's own recovery artwork: the device overlay's recovery/res/images, which the build copies
+# over the stock resources of the ramdisk's /res/images. Every file there must reach the ramdisk
+# unchanged, and the ramdisk must hold no other progress animation frame than the product's.
+ART_DIRECTORY = "overlay/recovery/res/images"
+ART_REQUIRED = ("fastbootd.png", "logo_image.png", "logo_image_switch.png", "loop00000.png")
+ART_FRAME = re.compile(r"loop[0-9]{5}\.png")
 
 
 class VerificationError(ValueError):
@@ -169,6 +178,36 @@ def elf_needed(name: str, payload: bytes) -> set[str]:
     return needed
 
 
+def product_art(android_root: Path) -> dict[str, bytes]:
+    """The artwork the device overlay supplies to recovery, by file name."""
+    directory = android_root / ART_DIRECTORY
+    art = {}
+    if directory.is_dir():
+        for path in sorted(directory.iterdir()):
+            art[path.name] = regular_file(path, "product recovery artwork").read_bytes()
+    absent = [name for name in ART_REQUIRED if name not in art]
+    if absent:
+        fail(f"{ART_DIRECTORY} lacks the product's recovery artwork: {absent}")
+    return art
+
+
+def verify_art(entries: dict[str, android_image.NewcEntry], art: dict[str, bytes]) -> None:
+    for name, payload in art.items():
+        entry = entries.get(f"res/images/{name}")
+        if entry is None:
+            fail(f"recovery ramdisk lacks the product's artwork res/images/{name}")
+        if entry.payload != payload:
+            fail(f"recovery ramdisk's res/images/{name} is not the product's artwork")
+    frames = {
+        PurePosixPath(name).name
+        for name in entries
+        if name.startswith("res/images/") and ART_FRAME.fullmatch(name[len("res/images/"):])
+    }
+    foreign = sorted(frames - art.keys())
+    if foreign:
+        fail(f"recovery ramdisk carries progress animation frames the product does not supply: {foreign}")
+
+
 def check_recovery_script(script: bytes) -> None:
     """The script imports Cuttlefish's and publishes the host density before the UI starts."""
     imports: list[str] = []
@@ -194,13 +233,15 @@ def check_recovery_script(script: bytes) -> None:
 
 
 def verify_entries(
-    entries: dict[str, android_image.NewcEntry], expected_fstab: bytes, expected_script: bytes
+    entries: dict[str, android_image.NewcEntry], expected_fstab: bytes, expected_script: bytes,
+    art: dict[str, bytes],
 ) -> int:
     missing = sorted((REQUIRED_PATHS | {RECOVERY_SCRIPT, RECOVERY_SCRIPT_IMPORT}) - entries.keys())
     if missing:
         fail(f"recovery ramdisk is missing required paths: {missing}")
     if entries[RECOVERY_SCRIPT].payload != expected_script:
         fail(f"recovery {RECOVERY_SCRIPT} differs from the checked device tree")
+    verify_art(entries, art)
     for name in ("system/bin/recovery", "system/bin/adbd"):
         entry = entries[name]
         if not stat.S_ISREG(entry.mode) or not entry.mode & 0o111:
@@ -215,6 +256,11 @@ def verify_entries(
     # (the mainline line) fails every ashmem_create_region caller in recovery.
     if b"sys.use_memfd=true" not in properties:
         fail("recovery properties omit sys.use_memfd, which the ashmem fallback needs")
+    # The display is a Virtio-GPU dumb buffer, always B8G8R8X8 on the wire. Any
+    # other minui format makes DRM declare a byte order nothing converts, and
+    # the screen shows red and blue swapped.
+    if b"ro.minui.pixel_format=BGRX_8888" not in properties:
+        fail("recovery properties omit ro.minui.pixel_format=BGRX_8888, the dumb buffer's byte order")
     interface = entries["system/lib64/librecovery_ui_ext.so"].payload
     if b"eth1" in interface or any(
         token not in interface for token in (b"eth0\0", b"10.0.2.15\0", b"255.255.255.0\0")
@@ -263,6 +309,7 @@ def main() -> None:
             android_root / "overlay/config/init.recovery.rc", "checked recovery script"
         ).read_bytes()
         check_recovery_script(expected_script)
+        art = product_art(android_root)
         if args.image is not None:
             if args.layout is not None:
                 fail("--layout is valid only with --disk")
@@ -290,7 +337,7 @@ def main() -> None:
             lambda name, mode: True,
             VerificationError,
         )
-        elf_count = verify_entries(entries, expected_fstab, expected_script)
+        elf_count = verify_entries(entries, expected_fstab, expected_script, art)
     except (OSError, UnicodeError, struct.error, VerificationError) as error:
         raise SystemExit(f"LineageOS recovery: {error}") from error
     print(
