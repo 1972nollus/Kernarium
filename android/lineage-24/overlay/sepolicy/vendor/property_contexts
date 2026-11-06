@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # Mesa resolves a driver option named "<opt>" through the properties
 # "debug.<opt>", "vendor.<opt>" and "<opt>" in that order. The Venus HAL and
 # the Mesa EGL/GLES stack beside it run inside application processes and

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # AOSP recovery sees the same fixed, non-A/B GPT as normal Android.
 /dev/block/by-name/system /system erofs ro wait
 /dev/block/by-name/system_ext /system_ext erofs ro wait

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # The UML product exposes one single-port Virtio console as its Android shell.
 /dev/hvc0  u:object_r:serial_device:s0
 

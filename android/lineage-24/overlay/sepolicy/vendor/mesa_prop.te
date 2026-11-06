@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # Driver options for the Mesa graphics stack on this product. The values are
 # configuration, not device state: vendor_init sets them from the vendor build
 # properties and every process that loads the driver reads them.

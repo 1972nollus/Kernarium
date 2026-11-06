@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # Fixed GPT partitions exposed by the Darwin UML UBD device. The five read-only
 # partitions are compressed EROFS: read-only by nature, so no mount options
 # beyond ro.
