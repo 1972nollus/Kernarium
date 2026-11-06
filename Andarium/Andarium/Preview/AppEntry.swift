@@ -25,7 +25,7 @@ struct AppEntry {
 
     var hints: ScreenHints {
         ScreenHints(
-            scrollTarget: ["home-options", "home-restore", "start-recovery"].contains(screen) ? "erase" : nil,
+            scrollTarget: ["home-options", "home-recovery-erase", "start-recovery"].contains(screen) ? "erase" : nil,
             eraseConfirmed: screen == "erase-confirm",
             acknowledgements: screen == "info-acknowledgements"
         )

@@ -21,10 +21,14 @@ ANDARIUM_RETINA_MEMORY_TESTS=1
 ANDARIUM_GUEST_INSTANCE=retina-memory
 ANDARIUM_RETINA_PROFILE=1
 ANDARIUM_WEBGL_PROFILE=1
-KERNARIUM_GUEST_MEMORY_MIB=1536
-KERNARIUM_VCPU_COUNT=6
+KERNARIUM_GUEST_MEMORY_MIB=<guest memory in MiB>
+KERNARIUM_VCPU_COUNT=<guest vCPUs>
 KERNARIUM_FOOTPRINT_LOG_MS=1000
 ```
+
+The test requires the guest to have the memory and vCPU count the launch
+states and records both in every snapshot, so a run on any device names its
+configuration.
 
 The test runs two rounds of six installed system apps and WebGL, closing apps
 between rounds, then powers the guest off cleanly. `ANDARIUM_RETINA_PROFILE=0`

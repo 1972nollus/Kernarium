@@ -13,8 +13,9 @@ private nonisolated struct MotionConnector: GuestStreamOpener {
 }
 
 /// Core Motion is opened only for an opted-in, booted, foreground guest.
-/// Device axes stay fixed as the interface rotates. No samples are retained
-/// across backgrounding, power-off, or a guest restart.
+/// The axes are set before a start and never change per sample (`MotionMount`
+/// decides when they move). No samples are retained across backgrounding,
+/// power-off, or a guest restart.
 @MainActor
 final class MotionSensors {
     private let manager = CMMotionManager()

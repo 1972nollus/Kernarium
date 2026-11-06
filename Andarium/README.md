@@ -42,7 +42,9 @@ stays beside it on a device. It has no background mode: the guest runs while
 Andarium is in the foreground and is paused when it leaves, and iOS ending a
 paused Andarium shows a notice on the next launch. It runs one scene, because
 the runtime runs one guest at a time, and needs the increased memory limit
-and extended virtual addressing entitlements.
+and extended virtual addressing entitlements. The model and the runtime belong
+to the process (`AndariumProcess`): a scene that connects again shows the same
+ones.
 
 `AndariumPreview` is a Simulator-only target built from `Shared` and
 `Preview` with mock data. It embeds no runtime and boots nothing. Its launch
@@ -56,8 +58,8 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
     -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' build
 ```
 
-Home has one Start button for a normal boot. The Restore section groups
-Start in Recovery and Erase Guest. A fresh guest opens the system's setup
+Home has one Start button for a normal boot. The Recovery and Erase section
+groups Start in Recovery and Erase Guest. A fresh guest opens the system's setup
 wizard on its first normal boot.
 
 ## Devices
@@ -84,7 +86,9 @@ preferences. The saved preferences live in the guest until restored, so an app
 termination or guest restart cannot replace them with the temporary override.
 Sensor axes stay fixed during each period of guest-driven rotation; entering
 that mode mounts them to the newly locked interface orientation and discards
-the previous stream's pending samples.
+the previous stream's pending samples. During host-driven rotation the guest
+is drawn upright in the window, so the axes follow the window's interface
+orientation and each change restarts the stream (`MotionMount`).
 
 `ITSAppUsesNonExemptEncryption` is NO in `Config/Info.plist`.
 
@@ -306,7 +310,7 @@ not bound Andarium's memory use.
 
 Motion Sensors is off by default. Its switch in Home’s Options (and the
 session’s Settings) shares the device’s accelerometer and gyroscope with the
-guest. The choice is saved with the guest; existing settings load it as off.
+guest. The choice is saved with the guest.
 A device with neither sensor leaves the switch unavailable. Capture starts
 after a normal boot finishes, while the app is active, and stops when the
 switch turns off, the app becomes inactive, or the guest ends or restarts.
@@ -350,7 +354,9 @@ thread while a start prepares, when none exists, and its public key goes in each
 boot request (`android_adb_public_key`), which adbd authorizes for that boot on
 the vsock port whatever the guest's USB debugging setting is, so no operation
 depends on it. Finding the key and making it is one locked step, so the start
-that prepares and any other caller get the same key. Erase Guest deletes it. The client signs adbd's AUTH token
+that prepares and any other caller get the same key. Erase Guest deletes it;
+an isolated instance has a key of its own, tagged with its name, which only its
+Erase Guest deletes. The client signs adbd's AUTH token
 and never offers its key: a second token means adbd refused it, and the
 operation says so.
 
@@ -442,8 +448,8 @@ ANDARIUM_ADB_NET_HOLD_SECONDS=<n> keep the bridge up for a real adb (and write t
 An isolated instance name contains 1–64 ASCII letters, digits, hyphens or
 underscores. Use it for compatibility tests that need a fresh guest while the
 ordinary guest or its pending update must be preserved. The instance keeps its
-own disks, settings and pause marker across launches. An invalid name cancels
-the automatic start and erase requests.
+own disks, settings, adb key and pause marker across launches. An invalid name
+cancels the automatic start and erase requests.
 
 For a Recovery display check, run only `AndariumTests/RecoveryDisplayTests`
 with `ANDARIUM_RECOVERY_TESTS=1`, `ANDARIUM_GUEST_INSTANCE=recovery-display`
