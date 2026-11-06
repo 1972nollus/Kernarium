@@ -612,7 +612,9 @@ Each script documents its options in `--help` or its header:
   device-only `KosmicKrisp.xcframework` for an `iphoneos` build and nothing for
   the Simulator, because an XCFramework in an Embed Frameworks phase needs a
   slice for every SDK the target builds and a platform filter cannot name the
-  device apart from the Simulator;
+  device apart from the Simulator. It runs on every build but copies and signs
+  the framework only when the framework or its signing changed, so an
+  unchanged build keeps the application's seal valid;
 - `run-ios-simulator-tests.sh` builds `KernariumTests` and `KernariumUITests`
   for the iOS Simulator and runs them in one iPad Simulator (`--help`);
 - `make-guest-bundle.py` assembles an Android `.kern` bundle (system disk,

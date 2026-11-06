@@ -726,7 +726,9 @@ packages for x86_64 unless `EXCLUDED_ARCHS=x86_64` is on the `xcodebuild`
 command line, which reaches package targets that a project setting does not.
 KosmicKrisp has a device slice alone, so the app targets embed it with a
 Run Script phase, `Kernarium/scripts/embed-device-framework.sh`, which embeds it
-for an `iphoneos` build and nothing for the Simulator. It also packages the
+for an `iphoneos` build and nothing for the Simulator, and leaves an unchanged
+embedded framework untouched so the application's seal stays valid
+(`kernarium-device-framework-embed`). It also packages the
 Apple battery provider's archive and the video encoder's, as the Android
 runtime links them, as `HostBattery.xcframework` and
 `HostVideoEncoder.xcframework`, with a slice for each packaged SDK; only
