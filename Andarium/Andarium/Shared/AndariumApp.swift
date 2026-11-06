@@ -7,6 +7,10 @@ final class AndariumApp: UIResponder, UIApplicationDelegate {
     private var sceneConnection: NSObjectProtocol?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // Mesa reads its disk cache's location and limit from the process
+        // environment when the runtime thread creates the guest's screen.
+        // Set them here, before any scene or runtime exists.
+        MesaShaderCache.configureBeforeFirstUse()
         // Existing installations can restore the scene configuration saved
         // by the former SwiftUI App entry point. Adopt those scenes too;
         // their old delegate no longer has an App graph to create a window.

@@ -2,46 +2,15 @@
 
 #include "metal_shader_cache.hpp"
 
-#include <CoreFoundation/CoreFoundation.h>
+#include "process_cache_location.hpp"
 
 #include <string>
-#include <unistd.h>
 
 namespace uml::gpu {
 
 namespace {
 
 namespace fs = std::filesystem;
-
-[[nodiscard]] std::optional<fs::path> darwin_user_cache_directory()
-{
-	const std::size_t length = ::confstr(_CS_DARWIN_USER_CACHE_DIR, nullptr, 0);
-	if (length <= 1U)
-		return std::nullopt;
-	std::string path(length, '\0');
-	if (::confstr(_CS_DARWIN_USER_CACHE_DIR, path.data(), length) != length)
-		return std::nullopt;
-	path.resize(length - 1U);
-	return fs::path(path);
-}
-
-/* CoreFoundation reads the identifier of a command-line process from the
- * Info.plist embedded in its executable, the same source Metal names the
- * cache after. */
-[[nodiscard]] std::optional<std::string> main_bundle_identifier()
-{
-	const CFBundleRef bundle = CFBundleGetMainBundle();
-	if (bundle == nullptr)
-		return std::nullopt;
-	const CFStringRef identifier = CFBundleGetIdentifier(bundle);
-	if (identifier == nullptr)
-		return std::nullopt;
-	char buffer[256];
-	if (CFStringGetCString(identifier, buffer, sizeof buffer,
-			       kCFStringEncodingUTF8) == 0)
-		return std::nullopt;
-	return std::string(buffer);
-}
 
 } // namespace
 

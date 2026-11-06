@@ -26,7 +26,7 @@ Andarium.xcodeproj/   JSON project (project.xcproj) and its shared schemes
 
 `../GuestHost/Sources` holds the host code Kernarium and Andarium share to
 run a guest: the runtime loader, the display and touch view, the zstd utility
-and the shader cache.
+and the Metal and Mesa shader caches.
 
 The project file is the JSON format Xcode 27 reads and Xcode 27.2 writes
 (`project.xcproj`), kept in the canonical form

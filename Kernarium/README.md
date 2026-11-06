@@ -335,7 +335,7 @@ Android's logical density on the kernel command line use that launch geometry.
 The touchscreen's absolute range is fixed at 0 through 32767 on both axes, as
 the VNC touchscreen's is, and Kernarium maps the guest's visible rectangle in
 the view onto it, so touch resolution does not depend on the launch size. The
-Metal shader cache policy is in
+Metal and Mesa shader cache policies are in
 [`graphics.md`](../docs/graphics.md#metal-shader-cache).
 
 The guest view lies within the content the system leaves clear of the window
