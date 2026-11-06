@@ -489,8 +489,9 @@ struct AdbOverVsockTests {
     /// task before that process has created the activity, as it does while
     /// the guest is still busy starting up. Nothing then tells the framework,
     /// so stock Android leaves adbd's prompt pending and every later offer is
-    /// skipped until adbd restarts. An image that raises the prompt again
-    /// shows the dialog for the next offer. This test kills the process that
+    /// skipped until adbd restarts. An image whose framework looks for the
+    /// dialog 15 s after it starts it, and starts it again when it is gone,
+    /// shows the dialog again by itself. This test kills the process that
     /// shows it (SystemUI) while the dialog is up, so it needs such an image:
     /// `ANDARIUM_ADB_REARM_TESTS=1`.
     @Test(.timeLimit(.minutes(25))) func aPromptWhoseDialogDiedIsRaisedAgain() async throws {
@@ -505,14 +506,12 @@ struct AdbOverVsockTests {
         #expect(try await Self.attempt(key: foreign, offer: true) == .unauthorized, "foreign key offered")
         #expect(try await control.awaitPrompt(seconds: 90), "no prompt for the first offer")
 
-        // The dialog dies with the process that shows it: no onStop, so no answer.
+        // The dialog dies with the process that shows it, with no answer to adbd. This must happen
+        // within the 15 s the framework gives the dialog before it looks for it once.
         _ = try? await operations.shell("am crash com.android.systemui")
         var gone = false
         for _ in 0..<60 {
-            if try await control.promptCount() == 0,
-                let pid = try? await operations.shell("pidof com.android.systemui").text,
-                !pid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
+            if try await control.promptCount() == 0 {
                 gone = true
                 break
             }
@@ -520,10 +519,10 @@ struct AdbOverVsockTests {
         }
         #expect(gone, "the dialog did not go away with SystemUI")
 
-        // A new offer, as the same computer's adb makes it, must raise the dialog again.
-        #expect(try await Self.attempt(key: foreign, offer: true) == .unauthorized, "foreign key offered again")
+        // No new offer: adbd ignores requests while its prompt is dispatched. The framework starts
+        // the dialog again by itself when it finds it gone.
         let raised = try await control.awaitPrompt(seconds: 90)
-        #expect(raised, "the next offer raised no dialog: adbd's prompt is still pending for the dead one")
+        #expect(raised, "the dialog was not raised again: adbd's prompt is still pending for the dead one")
         print("ADBVSOCK: prompt raised again after its dialog died: \(raised)")
         try await control.dismissPrompt()
         try await control.setDebugging(initial ?? false)
