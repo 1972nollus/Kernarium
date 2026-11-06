@@ -105,23 +105,21 @@ public struct BootTracker: Equatable, Sendable {
 }
 
 /// Which of the boot screen's steps is under way, as the boot reaches its
-/// milestones. A normal boot has four: Andarium, Linux Kernel, Storage and
-/// Startup, which stays under way from Android's init until Android reports
-/// `sys.boot_completed`. Recovery adds a fifth, Screen, for its first frame.
-/// `count(recovery:)` is past the last. Preparing the guest's disk is the
-/// first step: it writes the system the application carries.
+/// milestones. Every boot has four: System image, Linux Kernel, Storage and
+/// the last (Startup, or Recovery), which stays under way from Android's init
+/// until Android reports `sys.boot_completed` (or Recovery is up). `count` is
+/// past the last. Preparing the guest's disk is the first step: it writes the
+/// system the application carries.
 public enum BootSteps {
-    public static func count(recovery: Bool) -> Int { recovery ? 5 : 4 }
+    public static let count = 4
 
-    public static func current(preparingDisk: Bool, milestone: BootMilestone, recovery: Bool = false) -> Int {
+    public static func current(preparingDisk: Bool, milestone: BootMilestone) -> Int {
         if preparingDisk { return 0 }
-        let last = count(recovery: recovery) - 1
         switch milestone {
         case .starting: return 1
         case .kernelRunning: return 2
-        case .androidStarting: return 3
-        case .screenStarting: return min(4, last)
-        case .ready: return count(recovery: recovery)
+        case .androidStarting, .screenStarting: return 3
+        case .ready: return count
         }
     }
 }
