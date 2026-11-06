@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Sign a target-files archive with a private key directory.
 
 `publish-release.py --signing-keys DIR` uses this module. DIR must be a private

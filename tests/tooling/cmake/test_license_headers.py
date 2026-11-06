@@ -69,7 +69,12 @@ CLEAN = {
         "# SPDX-License-Identifier: Apache-2.0\n/dev/hvc0 u:object_r:x:s0\n"
     ),
     "android/lineage-24/tools/build.py": "#!/usr/bin/env python3\n# SPDX-License-Identifier: GPL-2.0-or-later\n",
-    "android/lineage-24/tools/old.py": "#!/usr/bin/env python3\n# SPDX-License-Identifier: Apache-2.0\n",
+    "android/lineage-24/metadata/accepted.env": "# SPDX-License-Identifier: GPL-2.0-or-later\n",
+    "android/lineage-24/patches/projects.tsv": "# SPDX-License-Identifier: Apache-2.0\n",
+    "android/lineage-24/patches/projects/p0001/series/series.tsv": (
+        "# SPDX-License-Identifier: Apache-2.0\n"
+    ),
+    "android/lineage-24/support/image/policy.json": "{}\n",
     "android/lineage-24/third_party/mesa-venus/soong-port.toml": "# SPDX-License-Identifier: MIT\n",
     "android/lineage-24/third_party/mesa-venus/metadata.env": "# SPDX-License-Identifier: Apache-2.0\n",
     "tests/integration/android/webgl/Android.bp": "// SPDX-License-Identifier: Apache-2.0\n",
@@ -253,9 +258,26 @@ def test_headers(fixture: Fixture) -> None:
     mutate(fixture, "a patch with another project's header",
            "dependencies/patches/mesa/0002-y.patch",
            "+/* SPDX-License-Identifier: GPL-2.0+ */\n")
-    mutate(fixture, "Apache-2.0 host tool that is allowed to stay",
-           "android/lineage-24/tools/old.py",
-           "#!/usr/bin/env python3\n# SPDX-License-Identifier: Apache-2.0\n")
+    mutate(fixture, "Apache-2.0 in the Android build-host tools",
+           "android/lineage-24/tools/build.py",
+           "#!/usr/bin/env python3\n# SPDX-License-Identifier: Apache-2.0\n",
+           ("android/lineage-24/tools/build.py", 2, "H2"))
+    mutate(fixture, "Apache-2.0 in the Android build scripts",
+           "android/lineage-24/build/build-aosp.sh",
+           "#!/bin/bash\n# SPDX-License-Identifier: Apache-2.0\n",
+           ("android/lineage-24/build/build-aosp.sh", 2, "H2"))
+    mutate(fixture, "Apache-2.0 in the Android recorded metadata",
+           "android/lineage-24/metadata/accepted.env",
+           "# SPDX-License-Identifier: Apache-2.0\n",
+           ("android/lineage-24/metadata/accepted.env", 1, "H2"))
+    mutate(fixture, "GPL on the digest-bound route table",
+           "android/lineage-24/patches/projects.tsv",
+           "# SPDX-License-Identifier: GPL-2.0-or-later\n",
+           ("android/lineage-24/patches/projects.tsv", 1, "H2"))
+    mutate(fixture, "GPL on an Android series manifest",
+           "android/lineage-24/patches/projects/p0001/series/series.tsv",
+           "# SPDX-License-Identifier: GPL-2.0-or-later\n",
+           ("android/lineage-24/patches/projects/p0001/series/series.tsv", 1, "H2"))
 
 
 def test_texts(fixture: Fixture) -> None:

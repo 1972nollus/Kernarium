@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Assemble the verified Android partition images into the read-only system disk.
 set -euo pipefail
 

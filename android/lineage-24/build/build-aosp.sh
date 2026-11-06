@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Build the fixed LineageOS 24 UML product: page-agnostic arm64 userspace with
 # a 32-bit armeabi-v7a second architecture for applications, on the 4 KiB
 # kernel.

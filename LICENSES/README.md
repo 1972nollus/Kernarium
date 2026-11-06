@@ -36,7 +36,10 @@ These keep the licence they came with, under their own notices:
 - `dependencies/patches/`, `tools/rootfs/*/patches/`, `kernel/*/patches/` and
   `android/lineage-24/patches/`: patch files carry no header and keep the
   patched project's licence. A series manifest (`series.tsv`) is this
-  project's own generated metadata and follows the rule by location.
+  project's own generated metadata and follows the rule by location: the
+  Android route table and series under `android/lineage-24/patches` and
+  `third_party`, which their regenerators export as Apache-2.0, stay
+  Apache-2.0, and everything else is GPL-2.0-or-later.
 - `tests/unit/x86_64/corpus/LICENSE.*` and `darwin/cpu/arm64/gadgets/NOTICE.md`:
   the notices of the third-party material beside them.
 - The Khronos must-pass lists under `tests/integration/gpu/`, which state their
