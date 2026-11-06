@@ -224,7 +224,8 @@ struct AppEntry {
             model.sessionPreset = SessionPreset(keysOpen: screen == "recovery-open")
             model.phase = .running(.recovery)
         case "failed":
-            model.phase = .failed
+            // The failure path a real run takes: a crash after 42 minutes.
+            model.fail()
         default:
             break
         }
