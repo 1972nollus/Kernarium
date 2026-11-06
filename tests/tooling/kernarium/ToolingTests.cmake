@@ -8,6 +8,13 @@ uml_add_tooling_test(
     TIMEOUT 120)
 
 uml_add_tooling_test(
+    NAME kernarium-device-framework-embed
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernarium/test_device_framework_embed.py
+    LABELS kernarium;package
+    TIMEOUT 120)
+
+uml_add_tooling_test(
     NAME kernarium-ipad-automation-keys
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/kernarium/test_ipad_automation_keys.py
