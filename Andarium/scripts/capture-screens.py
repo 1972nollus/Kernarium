@@ -13,6 +13,11 @@ UI driver) between runs, and the orientation is read from each image.
     capture-screens.py --out DIR --device <udid> [--device <udid> ...]
     capture-screens.py --list
 
+A shot with `-systemMicrophone YES` runs the Microphone switch against the
+Simulator's own permission: the script sets it first with `simctl privacy`
+(grant, revoke or reset), and the revoked-while-backgrounded shot takes the
+permission away while the app is in the background.
+
 Light mode is captured for every screen; dark mode only for the screens flagged
 in the table, where the design adapts to it. Every Simulator command has a hard
 time bound. A rerun replaces the files and manifest entries it captures and
@@ -48,6 +53,11 @@ class Shot:
     args: tuple[str, ...] = ()
     dark: bool = False
     wait: float = 3.0
+    # The Simulator's microphone permission before the launch: "grant", "revoke" or "reset" (not asked).
+    privacy: str | None = None
+    # Steps after the launch, for a state that needs the app in the background: "background", "grant", "revoke",
+    # "foreground".
+    flow: tuple[str, ...] = ()
 
     def launch_arguments(self) -> list[str]:
         return ["-screen", self.screen, *self.args]
@@ -55,6 +65,14 @@ class Shot:
 
 def s(id: str, group: str, screen: str, description: str, *args: str, dark: bool = False, wait: float = 3.0) -> Shot:
     return Shot(id, group, screen, description, tuple(args), dark, wait)
+
+
+SYSTEM = ("-systemMicrophone", "YES")
+
+
+def system_mic(id: str, group: str, screen: str, description: str, privacy: str, *flow: str) -> Shot:
+    """A shot with the Microphone switch on the Simulator's own permission, set to `privacy` first."""
+    return Shot(id, group, screen, description, SYSTEM, privacy=privacy, flow=tuple(flow))
 
 
 def boot_stages(prefix: str, screen: str, names: list[str], what: str, dark_step: int | None = None) -> list[Shot]:
@@ -136,6 +154,13 @@ SHOTS: list[Shot] = [
     s("settings-display", "Settings", "settings-display", "Settings scrolled to Display: Retina mode."),
     s("settings-capabilities", "Settings", "settings-capabilities", "Settings scrolled to Capabilities: Microphone and Gyroscope.", dark=True),
     s("settings-capabilities-mic-denied", "Settings", "settings-mic-denied", "Settings' Capabilities with the microphone refused: dimmed row, not allowed in Settings."),
+    system_mic("home-mic-system-prompt", "Capabilities", "home-mic-alert", "The system's own question when Microphone is turned on for the first time (the Simulator's alert).", "reset"),
+    system_mic("home-mic-system-allowed", "Capabilities", "home-mic-on", "Microphone on after iOS allowed it.", "grant"),
+    system_mic("home-mic-system-refused", "Capabilities", "home-capabilities", "Microphone after iOS refused it: the row is dimmed and says it is not allowed in Settings.", "revoke"),
+    system_mic("home-mic-system-settings-prompt", "Capabilities", "home-mic-alert", "Turning Microphone on after a refusal: Andarium explains and offers Settings.", "revoke"),
+    system_mic("home-mic-system-revoked", "Capabilities", "home-mic-on", "Microphone on, access taken away in Settings while Andarium was in the background, Andarium active again: the switch is off and dimmed.", "grant", "background", "revoke", "foreground"),
+    system_mic("settings-mic-system-allowed", "Capabilities", "settings-mic-on", "Settings' Capabilities with the microphone on after iOS allowed it.", "grant"),
+    system_mic("settings-mic-system-refused", "Capabilities", "settings-capabilities", "Settings' Capabilities after iOS refused the microphone: dimmed row.", "revoke"),
     s("settings-install-running", "Settings", "settings-installing", "Apps: an install under way."),
     s("settings-install-done", "Settings", "settings-installed", "Apps: an app installed."),
     s("settings-install-not-apk", "Settings", "settings-not-apk", "Apps: a file that is not an app."),
@@ -231,14 +256,53 @@ def settled_screenshot(udid: str, shot_id: str, out: Path) -> tuple[Path | None,
     return temporary, settled
 
 
+def play_flow(udid: str, shot: Shot, pid: str) -> bool:
+    """The steps that follow the launch of a shot whose state needs the app in the background. The Simulator
+    ends an app whose permission changes, as iOS does, so the last step is a relaunch there; an app still
+    running just comes forward, which is the activation."""
+    for step in shot.flow:
+        if step == "background":
+            result = simctl("launch", udid, "com.apple.Preferences")
+        elif step in ("grant", "revoke"):
+            result = simctl("privacy", udid, step, "microphone", BUNDLE)
+        elif step == "foreground":
+            result = simctl("launch", udid, BUNDLE, *shot.launch_arguments())
+            if result.returncode == 0:
+                again = result.stdout.strip().rsplit(" ", 1)[-1]
+                print(f"  {shot.id}: {'the app was still running' if again == pid else 'the permission change ended the app'}")
+        else:
+            sys.exit(f"capture-screens.py: unknown flow step {step!r}")
+        if result.returncode != 0:
+            print(f"  {shot.id}: {step} failed: {result.stderr.strip()}", file=sys.stderr)
+            return False
+        time.sleep(2.0)
+    return True
+
+
+def clear_system_alert(udid: str) -> None:
+    """The Simulator keeps its permission alert up, over whatever launches next, until someone answers it. A shot
+    that asks (privacy "reset") restarts SpringBoard afterwards, which takes the alert and the app with it."""
+    simctl("spawn", udid, "launchctl", "kill", "SIGKILL", "user/foreground/com.apple.SpringBoard")
+    time.sleep(15.0)
+
+
 def capture(udid: str, name: str, shot: Shot, appearance: str, out: Path, wait: float) -> dict | None:
     simctl("terminate", udid, BUNDLE)
+    if shot.privacy is not None:
+        privacy = simctl("privacy", udid, shot.privacy, "microphone", BUNDLE)
+        if privacy.returncode != 0:
+            print(f"  {shot.id}: privacy {shot.privacy} failed: {privacy.stderr.strip()}", file=sys.stderr)
+            return None
     launched = simctl("launch", udid, BUNDLE, *shot.launch_arguments())
     if launched.returncode != 0:
         print(f"  {shot.id}: launch failed: {launched.stderr.strip()}", file=sys.stderr)
         return None
     time.sleep(max(wait, shot.wait))
+    if shot.flow and not play_flow(udid, shot, launched.stdout.strip().rsplit(" ", 1)[-1]):
+        return None
     temporary, settled = settled_screenshot(udid, shot.id, out)
+    if shot.privacy == "reset":
+        clear_system_alert(udid)
     if temporary is None:
         return None
     if not settled:

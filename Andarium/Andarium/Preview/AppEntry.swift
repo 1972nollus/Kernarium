@@ -2,6 +2,7 @@ import AndariumCore
 import Foundation
 import SwiftUI
 import TipKit
+import UIKit
 
 /// The Simulator preview's entry. `-screen <name>` opens any screen or state
 /// directly with mock data, so a simulator driven only by `simctl` reaches
@@ -15,6 +16,10 @@ struct AppEntry {
     /// The boot step a frozen boot screen shows, from 0; the screen's own
     /// when absent.
     var bootStage: Int?
+    /// The Microphone switch asks the Simulator's own permission instead of
+    /// taking the access as given, so `simctl privacy` and the system's
+    /// alert drive it as they drive the device's.
+    var systemMicrophone: Bool
 
     static func fromArguments() -> AppEntry {
         let defaults = UserDefaults.standard
@@ -23,7 +28,8 @@ struct AppEntry {
             play: defaults.bool(forKey: "play"),
             lowSpace: defaults.bool(forKey: "lowSpace"),
             resetTips: defaults.bool(forKey: "resetTips"),
-            bootStage: defaults.string(forKey: "bootStage").flatMap { Int($0) }
+            bootStage: defaults.string(forKey: "bootStage").flatMap { Int($0) },
+            systemMicrophone: defaults.bool(forKey: "systemMicrophone")
         )
     }
 
@@ -39,7 +45,7 @@ struct AppEntry {
     /// Where Settings scrolls to for a screen that shows a lower section.
     private static let settingsScrolls: [String: String] = [
         "settings-stats": "stats", "settings-display": "display",
-        "settings-capabilities": "capabilities", "settings-mic-denied": "capabilities",
+        "settings-capabilities": "capabilities", "settings-mic-denied": "capabilities", "settings-mic-on": "capabilities",
     ]
 
     /// The page of Info a screen opens on.
@@ -164,7 +170,7 @@ struct AppEntry {
              "bug-report",
              "settings-adb-off", "settings-adb-no-address",
              "settings-install-failed", "settings-adb",
-             "settings-stats", "settings-display", "settings-capabilities", "settings-mic-denied":
+             "settings-stats", "settings-display", "settings-capabilities", "settings-mic-denied", "settings-mic-on":
             let session = model.session
             let file = ApkInstall.sampleFile
             let size = ApkInstall.sampleSizeBytes
@@ -195,6 +201,9 @@ struct AppEntry {
                 session.usbDebugging = false
             case "settings-mic-denied":
                 model.microphoneState = .denied
+            case "settings-mic-on":
+                model.guest?.microphone = true
+                model.microphoneState = .granted
             default:
                 break
             }
@@ -217,7 +226,19 @@ struct AppEntry {
         default:
             break
         }
+        if systemMicrophone { useSystemMicrophone(in: model) }
         return model
+    }
+
+    /// The device's microphone conversation against the Simulator's
+    /// permission, which is read again whenever the app becomes active.
+    private func useSystemMicrophone(in model: AppModel) {
+        model.microphone = MicrophoneController(model: model, source: SimulatorMicrophoneSource()) { _ in }
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { _ in
+            Task { @MainActor in model.microphone?.refresh() }
+        }
     }
 
     /// Sheets and dialogs open after the first frame so SwiftUI presents them

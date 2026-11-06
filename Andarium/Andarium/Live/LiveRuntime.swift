@@ -54,7 +54,6 @@ final class LiveRuntime: RuntimeDriver {
     private let keyStore: AdbKeyStore
     /// The guest's adb key, made before the start that boots with it.
     private var adbIdentity: AdbKeyStore.Identity?
-    private let microphone = SystemMicrophonePermission()
     private let motion = MotionSensors()
     /// The interface orientation the sensors' axes are mounted to.
     private var motionMount = MotionMount()
@@ -94,7 +93,11 @@ final class LiveRuntime: RuntimeDriver {
         self.storage = storage
         self.keyStore = keyStore
         pause = PauseController(effects: LivePauseEffects(), marker: marker, runClock: clock)
-        model.microphoneState = Self.state(microphone.access)
+        model.microphone = MicrophoneController(model: model, source: SystemMicrophoneSource()) {
+            // The runtime is told the setting and never asks the system
+            // itself; a guest records silence while access is out of reach.
+            _ = kernarium_runtime_loader_set_microphone($0 ? 1 : 0)
+        }
         model.motionSensorsAvailable = motion.available
         motion.problem = { [weak model] in model?.motionSensorsProblem = $0 }
         observeLifecycle()
@@ -222,7 +225,7 @@ final class LiveRuntime: RuntimeDriver {
         kernarium_runtime_loader_set_console_output_handler { data in sink.feed(data) }
         // A Microphone setting the person turned on earlier follows the
         // guest while iOS still allows it; otherwise the guest hears nothing.
-        tellMicrophone(model?.microphoneShownOn ?? false)
+        model?.microphone?.guestStarting()
 
         pause.guestDidStart()
         bootStartedAt = Date()
@@ -472,56 +475,6 @@ final class LiveRuntime: RuntimeDriver {
 
     // MARK: Microphone
 
-    private static func state(_ access: MicrophoneAccess) -> MicrophoneState {
-        switch access {
-        case .notAsked: .notAsked
-        case .denied: .denied
-        case .granted: .granted
-        }
-    }
-
-    func setMicrophone(_ on: Bool) {
-        let access = microphone.access
-        model?.microphoneState = Self.state(access)
-        guard on else {
-            tellMicrophone(false)
-            return
-        }
-        switch access {
-        case .granted:
-            tellMicrophone(true)
-        case .denied:
-            tellMicrophone(false)
-        case .notAsked:
-            // The guest hears nothing until the person has answered iOS's
-            // question, which is asked now.
-            tellMicrophone(false)
-            microphone.request { answer in
-                Task { @MainActor in self.accessAnswered(Self.state(answer)) }
-            }
-        }
-    }
-
-    /// iOS's answer, or Andarium's access as the person left it in Settings:
-    /// the model keeps the switch, and the guest follows it.
-    private func accessAnswered(_ state: MicrophoneState) {
-        guard let model else { return }
-        model.microphoneAccessChanged(state)
-        tellMicrophone(model.microphoneShownOn)
-    }
-
-    /// Looks at the permission again: at launch and whenever Andarium becomes
-    /// active, since the person may have changed it in Settings.
-    func refreshPermissions() {
-        accessAnswered(Self.state(microphone.access))
-    }
-
-    /// The runtime is told the setting and never asks the system itself; a
-    /// guest records silence while access is out of reach.
-    private func tellMicrophone(_ on: Bool) {
-        _ = kernarium_runtime_loader_set_microphone(on ? 1 : 0)
-    }
-
     // MARK: Statistics
 
     /// Both readings are made on one serial queue of their own: the memory
@@ -635,7 +588,7 @@ final class LiveRuntime: RuntimeDriver {
         guard let model else { return }
         model.applicationActive = true
         model.host.freeStorageBytes = AppEntry.freeStorageBytes()
-        refreshPermissions()
+        model.microphone?.refresh()
     }
 
     private func observeDisplayOptions() {

@@ -36,8 +36,6 @@ final class StubDriver: RuntimeDriver {
     func setMotionSensors(_ on: Bool) { motionSensors = on }
     private(set) var geometryChanges = 0
     func sceneGeometryDidChange() { geometryChanges += 1 }
-    private(set) var microphoneCalls: [Bool] = []
-    func setMicrophone(_ on: Bool) { microphoneCalls.append(on) }
 
     /// What the statistics readings answer, in turn, the last one repeating;
     /// nothing until a test scripts them.
