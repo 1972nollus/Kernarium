@@ -40,11 +40,13 @@ int main(void)
 	};
 	const int guest_memory_status =
 		uml_emulator_get_guest_memory(emulator, &guest_memory);
+	const int release_status = uml_emulator_release_guest(emulator);
 	uml_emulator_request_stop(emulator);
 	uml_emulator_destroy(emulator);
 	return status == UML_EMULATOR_OK &&
 		run_status == -UML_EMULATOR_UNSUPPORTED &&
 		run_end_status == UML_EMULATOR_OK &&
+		release_status == -UML_EMULATOR_UNSUPPORTED &&
 		statistics_status == -UML_EMULATOR_UNSUPPORTED &&
 		guest_memory_status == -UML_EMULATOR_UNSUPPORTED &&
 		run_end.kind == UML_EMULATOR_RUN_END_NONE &&

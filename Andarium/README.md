@@ -41,7 +41,7 @@ embeds the Android runtime frameworks and carries the system image; Kernarium
 stays beside it on a device. It has no background mode: the guest runs while
 Andarium is in the foreground and is paused when it leaves, and iOS ending a
 paused Andarium shows a notice on the next launch. It runs one scene, because
-the runtime boots one guest per process, and needs the increased memory limit
+the runtime runs one guest at a time, and needs the increased memory limit
 and extended virtual addressing entitlements.
 
 `AndariumPreview` is a Simulator-only target built from `Shared` and
@@ -56,6 +56,10 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
     -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' build
 ```
 
+Home has one Start button for a normal boot. The Restore section groups
+Start in Recovery and Erase Guest. A fresh guest opens the system's setup
+wizard on its first normal boot.
+
 ## Devices
 
 The guest is drawn with Metal 4, which the A14 and later chips have. No
@@ -68,6 +72,19 @@ start. The Simulator draws on the CPU and always passes.
 
 iPhone and iPad are supported (`TARGETED_DEVICE_FAMILY` 1,2); the App Store
 configuration sets `SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD` to NO.
+
+The iPhone interface is portrait-only. On iPad, Home follows the host's
+orientation. During a guest session, the scene's root hosting controller
+requests an interface orientation lock while the scene fills its screen, so
+Android alone rotates its display. A window, or a full-screen scene whose
+lock iPadOS releases, uses host-driven rotation: the guest is held at display
+rotation zero and the existing Follow Window Size option controls its layout.
+Returning to a locked full-screen scene restores the guest's previous rotation
+preferences. The saved preferences live in the guest until restored, so an app
+termination or guest restart cannot replace them with the temporary override.
+Sensor axes stay fixed during each period of guest-driven rotation; entering
+that mode mounts them to the newly locked interface orientation and discards
+the previous stream's pending samples.
 
 `ITSAppUsesNonExemptEncryption` is NO in `Config/Info.plist`.
 
@@ -228,10 +245,12 @@ snapshot kept. Home's one other way back is Restore, shown only while the
 snapshot exists: it puts the data back to what the update started from and
 does nothing more, so Home then shows the ordinary pending update and the next
 Start updates afresh from that data. Restore ends in the same state as the
-rules' restore followed by a normal start. When the Android in this build is not
-the one that was updating, Start is dimmed until Restore or Erase Guest. Erase
-Guest deletes the snapshot too. A guest the Android in this build is older
-than, or whose files do not match it, is blocked: Start is dimmed and erasing
+rules' restore followed by a normal start. Any older release can update directly
+to any newer release. If the carried system is newer than an unfinished update,
+Start automatically restores the pre-update data, then starts the newer system
+with a fresh snapshot; no intermediate release needs to finish. A missing
+snapshot prevents that restoration. Erase Guest deletes the snapshot too.
+A guest the Android in this build is older than, or whose files do not match it, is blocked: Start is dimmed and erasing
 is the way out. A guest of the first release (one `guest.img`, an
 `instance.json` of schema 0) is not read: its start fails with the reason, and
 Erase makes it a guest of this layout.
@@ -258,8 +277,10 @@ several GiB.
 
 The device application drives the Android runtime through the same loader as
 Kernarium. A run starts when the guest's display has its size and the disk is
-ready, on a thread of its own, and lasts the launch: Android's power-off ends
-it, and starting again means opening Andarium again. The boot screen follows
+ready, on a thread of its own. Android's clean power-off stops the device
+services and releases the kernel's resources and guest RAM, then returns to Home;
+Start can boot again in the same app process. An unclean shutdown, a host stop,
+or cleanup that fails keeps the failure screen and requires reopening Andarium. The boot screen follows
 the guest's console for its milestones (the kernel, Android's init, its
 graphics service and `sys.boot_completed`, or Recovery's service) until the
 runtime reports boot events.
@@ -267,10 +288,31 @@ runtime reports boot events.
 The side keys send Android's keys as Linux key codes: Power 116 (held for the
 power menu), volume 115 and 114, Back 158 and Home 172.
 
+The guest display supports up to ten simultaneous fingers, including pinch
+and other gestures. The shared [GuestHost input](../GuestHost/README.md) maps
+each finger independently onto the guest's visible display.
+
 Resolution and Follow Window Size apply at the next start, because the runtime
 takes them at boot, so the session's Settings leaves them out
 (`Capabilities.liveDisplayOptions`). Microphone applies at once and asks iOS
 for access when it is turned on.
+
+Retina uses the screen's native pixels. On a 2× display, that makes each
+full-screen colour or depth buffer four times the size at point resolution;
+apps can keep several such buffers. These host graphics allocations count
+against the same iOS process limit as guest RAM, so the RAM setting alone does
+not bound Andarium's memory use.
+
+Motion Sensors is off by default. Its switch in Home’s Options (and the
+session’s Settings) shares the device’s accelerometer and gyroscope with the
+guest. The choice is saved with the guest; existing settings load it as off.
+A device with neither sensor leaves the switch unavailable. Capture starts
+after a normal boot finishes, while the app is active, and stops when the
+switch turns off, the app becomes inactive, or the guest ends or restarts.
+Recovery never captures motion. Only the newest samples are sent, at up to
+100 Hz, over private vsock port 5556; nothing listens on the host’s network.
+The system image must include the [motion sub-HAL](../android/lineage-24/README.md#motion-sensors);
+a missing service is reported in Options and Settings.
 
 ## Android operations
 
@@ -389,11 +431,30 @@ KERNARIUM_HOST_FORWARD, KERNARIUM_FOOTPRINT_LOG_MS, KERNARIUM_EXECUTION_ENGINE,
 KERNARIUM_GUEST_HIBERNATION, KERNARIUM_ANDROID_ADB_AUTH
 ANDARIUM_START=normal|recovery   create the guest if there is none, then start
 ANDARIUM_ERASE=1                 erase the guest's data before the start
+ANDARIUM_GUEST_INSTANCE=<name>   use Library/TestGuests/<name> instead of Library/Guest
 ANDARIUM_ADB_TESTS=1             let AdbOverVsockTests drive the running guest
 ANDARIUM_ADB_KEY_FILE=<path>     where eraseGuestMakesANewKey records the key
 ANDARIUM_ADB_NET_HOLD_SECONDS=<n> keep the bridge up for a real adb (and write the key
                                  as tmp/adbkey; tmp/adb-net-done ends the hold)
 ```
+
+An isolated instance name contains 1–64 ASCII letters, digits, hyphens or
+underscores. Use it for compatibility tests that need a fresh guest while the
+ordinary guest or its pending update must be preserved. The instance keeps its
+own disks, settings and pause marker across launches. An invalid name cancels
+the automatic start and erase requests.
+
+For a Recovery display check, run only `AndariumTests/RecoveryDisplayTests`
+with `ANDARIUM_RECOVERY_TESTS=1`, `ANDARIUM_GUEST_INSTANCE=recovery-display`
+and `KERNARIUM_RETINA_MODE=0` or `1`, without `ANDARIUM_START`. It checks the
+guest's display density, provides a 30-second capture window, then powers off
+through Recovery's own menu. Its rendered guest frame is saved as
+`tmp/recovery-points.png` or `tmp/recovery-retina.png` in the app's container.
+
+`AdbOverVsockTests/aFreshGuestOpensTheSetupWizard()` checks a fresh guest's
+unprovisioned flags and setup welcome activity, captures `tmp/setup-welcome.png`,
+then powers off. Run it with `ANDARIUM_ADB_TESTS=1`, `ANDARIUM_OOBE_TESTS=1`,
+`ANDARIUM_START=normal` and the fresh isolated `recovery-display` instance.
 
 On an Apple silicon Mac, `xcodebuild test -scheme Andarium -destination
 'platform=macOS,variant=Designed for iPad' -only-testing:AndariumTests/AutomationHoldTests`

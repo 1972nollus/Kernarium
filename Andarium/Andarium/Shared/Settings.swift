@@ -241,9 +241,16 @@ struct SessionSettingsSheet: View {
                 )) {
                     rowLabel("Microphone", symbol: "mic.fill")
                 }
+                Toggle(isOn: Binding(
+                    get: { guest.motionSensors }, set: { model.setMotionSensors($0) }
+                )) {
+                    rowLabel("Motion Sensors", symbol: "gyroscope")
+                }
+                .disabled(!model.motionSensorsAvailable && !guest.motionSensors)
             } header: {
                 Text("Options")
             } footer: {
+                if let problem = model.motionSensorsProblem { Text(problem) }
                 if guest.microphone && model.microphoneState == .denied {
                     Text("iOS has not allowed Andarium to use the microphone, so the guest records silence. Allow it for Andarium in Settings.")
                 }

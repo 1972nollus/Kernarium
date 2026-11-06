@@ -124,7 +124,7 @@ class Scratch:
 
     def app(self, *, automation: bool) -> pathlib.Path:
         binary = (self.root / "Andarium.app" / "Frameworks"
-                  / "KRuntime_ACK_6_18_4K.framework" / "KRuntime_ACK_6_18_4K")
+                  / "KRuntime_Android_6_18_4K.framework" / "KRuntime_Android_6_18_4K")
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_bytes(
             b"x\0KERNARIUM_ANDROID_ADB_AUTH\0y" if automation

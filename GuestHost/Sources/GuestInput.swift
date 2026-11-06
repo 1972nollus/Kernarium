@@ -128,6 +128,76 @@ struct GuestTouchEvent: Equatable {
     let pressed: Bool
 }
 
+struct GuestTouchContactEvent: Equatable {
+    let slot: UInt32
+    let event: GuestTouchEvent
+}
+
+/// Each UIKit contact owns a path and a stable slot, including while it is
+/// outside the guest's visible rectangle. Excess fingers stay ignored until
+/// they lift, so freeing a slot cannot turn a held finger into a new gesture.
+struct GuestTouchContacts<Identifier: Hashable> {
+    private struct Contact {
+        let slot: UInt32
+        var path = GuestTouchPath()
+    }
+
+    private var contacts: [Identifier: Contact] = [:]
+
+    mutating func begin(
+        _ id: Identifier,
+        at point: CGPoint,
+        geometry: GuestTouchGeometry?
+    ) -> [GuestTouchContactEvent] {
+        guard contacts[id] == nil,
+              let slot = (0..<UInt32(KERNARIUM_RUNTIME_TOUCH_CONTACTS)).first(
+                  where: { candidate in
+                      !contacts.values.contains { $0.slot == candidate }
+                  }
+              ) else { return [] }
+        var contact = Contact(slot: slot)
+        let events = contact.path.begin(at: point, geometry: geometry)
+        contacts[id] = contact
+        return events.map { GuestTouchContactEvent(slot: slot, event: $0) }
+    }
+
+    mutating func move(
+        _ id: Identifier,
+        through points: [CGPoint],
+        geometry: GuestTouchGeometry?
+    ) -> [GuestTouchContactEvent] {
+        guard var contact = contacts[id] else { return [] }
+        let events = contact.path.move(through: points, geometry: geometry)
+        contacts[id] = contact
+        return events.map { GuestTouchContactEvent(slot: contact.slot, event: $0) }
+    }
+
+    mutating func end(
+        _ id: Identifier,
+        at point: CGPoint,
+        geometry: GuestTouchGeometry?
+    ) -> [GuestTouchContactEvent] {
+        guard var contact = contacts.removeValue(forKey: id) else { return [] }
+        return contact.path.end(at: point, geometry: geometry).map {
+            GuestTouchContactEvent(slot: contact.slot, event: $0)
+        }
+    }
+
+    mutating func cancel(_ id: Identifier) -> [GuestTouchContactEvent] {
+        guard var contact = contacts.removeValue(forKey: id) else { return [] }
+        return contact.path.release().map {
+            GuestTouchContactEvent(slot: contact.slot, event: $0)
+        }
+    }
+
+    mutating func releaseAll() -> [GuestTouchContactEvent] {
+        let ids = contacts.keys.sorted {
+            contacts[$0]!.slot < contacts[$1]!.slot
+        }
+        return ids.flatMap { cancel($0) }
+    }
+}
+
 enum GuestTouchSamples {
     static func ordered(
         coalesced: [CGPoint],

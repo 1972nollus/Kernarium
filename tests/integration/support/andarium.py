@@ -41,7 +41,7 @@ APPLICATION_INACTIVE_LINE = "Andarium: application inactive"
 # Only the automation runtime reads the authorization setting, so its name in
 # the Android runtime's binary identifies that build.
 AUTOMATION_SYMBOL = b"KERNARIUM_ANDROID_ADB_AUTH"
-ANDROID_RUNTIME_FRAMEWORKS = ("KRuntime_ACK_6_18_4K",)
+ANDROID_RUNTIME_FRAMEWORKS = ("KRuntime_Android_6_18_4K",)
 # The application reads the memory setting in 64 MiB steps within the range
 # its ruler spans.
 MEMORY_MIB_RANGE = (1024, 4096)

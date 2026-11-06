@@ -836,9 +836,71 @@ void a_spent_end_stays_spent(Ending ending,
 		"the guest did not boot");
 	require(run_end_kind(emulator.get()) == expected,
 		"the run did not report how it ended");
+	if (ending == Ending::stopped || ending == Ending::failed)
+		require(uml_emulator_release_guest(emulator.get()) ==
+			-UML_EMULATOR_UNSUPPORTED,
+			"an unclean guest could be released");
 	require_refused(emulator.get());
 	require_refused(make_emulator(boot).get());
 	require_hand_backs(0);
+	(void)close(world.control);
+}
+
+void clean_power_off_releases_the_process(bool fresh_handle, Ending ending)
+{
+	const HandBackHooks hooks;
+	auto first = make_emulator(boot);
+	begin_restarts(first.get(), 0, ending);
+	require(uml_emulator_release_guest(nullptr) == -UML_EMULATOR_INVALID_ARGUMENT,
+		"a null handle could release a guest");
+	require(uml_emulator_release_guest(first.get()) == -UML_EMULATOR_UNSUPPORTED,
+		"a fresh handle could release a guest");
+	require(run(first.get()) == kernel_booted, "the first guest did not boot");
+	auto second = make_emulator(boot);
+	require(uml_emulator_release_guest(second.get()) == -UML_EMULATOR_UNSUPPORTED,
+		"another handle could release the first guest");
+	require(uml_emulator_release_guest(first.get()) == 0,
+		"a clean power-off could not release its guest");
+	require_hand_backs(1);
+	require(run_end_kind(first.get()) == UML_EMULATOR_RUN_END_POWER_OFF,
+		"releasing a guest changed its run end");
+	world.handle = fresh_handle ? second.get() : first.get();
+	require(run(world.handle) == kernel_booted, "the next guest did not boot");
+	if (fresh_handle)
+		require(uml_emulator_release_guest(first.get()) == -UML_EMULATOR_UNSUPPORTED,
+			"an old handle could release a newer guest");
+	require(uml_emulator_release_guest(world.handle) == 0,
+		"the second clean shutdown could not release its guest");
+	require_hand_backs(2);
+	(void)close(world.control);
+}
+
+void a_clean_release_waits_for_resources(bool leave_thread)
+{
+	const HandBackHooks hooks;
+	auto emulator = make_emulator(boot);
+	begin_restarts(emulator.get(), 0, Ending::power_off, leave_thread);
+	require(run(emulator.get()) == kernel_booted, "the clean guest did not boot");
+	uml::memory::SharedBackingView view;
+	if (!leave_thread)
+		view = uml::memory::acquire_shared_backing_view(world.token,
+			image_pages * host_page(), host_page(), PROT_READ | PROT_WRITE);
+	const auto before = uml::runtime::kernel_resource_counts();
+	for (int attempt = 0; attempt < 2; ++attempt)
+		require(uml_emulator_release_guest(emulator.get()) == -UML_EMULATOR_RUNTIME_ERROR,
+			"guest RAM was released while a service or kernel thread held it");
+	require_hand_backs(0);
+	require(uml::runtime::kernel_resource_counts().descriptors == before.descriptors,
+		"a refused release closed kernel resources");
+	if (leave_thread) {
+		world.release_thread.store(true, std::memory_order_release);
+		require(pthread_join(world.held_thread, nullptr) == 0, "could not join the kernel thread");
+	} else {
+		view = {};
+	}
+	require(uml_emulator_release_guest(emulator.get()) == 0,
+		"the clean guest was not released after its resources stopped");
+	require_hand_backs(1);
 	(void)close(world.control);
 }
 
@@ -1103,6 +1165,16 @@ int main(int argc, char **argv)
 			second_run_on_a_fresh_handle();
 		else if (mode == "unclaimed-first-run")
 			run_that_left_guest_ram();
+		else if (mode == "release-same-handle")
+			clean_power_off_releases_the_process(false, Ending::power_off);
+		else if (mode == "release-fresh-handle")
+			clean_power_off_releases_the_process(true, Ending::power_off);
+		else if (mode == "release-halt")
+			clean_power_off_releases_the_process(true, Ending::halt);
+		else if (mode == "release-borrowed-view")
+			a_clean_release_waits_for_resources(false);
+		else if (mode == "release-running-thread")
+			a_clean_release_waits_for_resources(true);
 		else if (mode == "restart")
 			restart_storm();
 		else if (mode == "power-off")
@@ -1132,7 +1204,9 @@ int main(int argc, char **argv)
 				"usage: uml_runtime_sequential_run_tests "
 				"same-handle|fresh-handle|unclaimed-first-run|restart|"
 				"power-off|halt|stopped|failed|another-handle|"
-				"borrowed-view|running-thread|abort-stop|abort-resume"};
+				"borrowed-view|running-thread|abort-stop|abort-resume|"
+				"release-same-handle|release-fresh-handle|release-halt|"
+				"release-borrowed-view|release-running-thread"};
 	} catch (const std::exception &error) {
 		std::fprintf(stderr, "%s\n", error.what());
 		return EXIT_FAILURE;

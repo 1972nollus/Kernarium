@@ -720,6 +720,44 @@ void freeze_refuses_a_second_hibernate_and_a_missing_freeze()
 	require(ram.check().empty(), ram.check());
 }
 
+void an_anonymous_image_restores_without_owning_its_old_path()
+{
+	TestRam ram;
+	GuestRamImage::Options options;
+	options.path = image_path("anonymous");
+	options.anonymous = true;
+	auto image = GuestRamImage::create(ram.commitment(), options);
+	require(image != nullptr, "the anonymous image could not be created");
+	require(!std::filesystem::exists(options.path),
+		"an anonymous image must be unlinked before it is used");
+	/* Reusing the name must neither replace the RAM image's contents nor
+	 * let its destructor delete another file. */
+	const int replacement = open(options.path.c_str(),
+		O_RDWR | O_CREAT | O_EXCL, 0600);
+	require(replacement >= 0, "the old name must be free to reuse");
+	const char sentinel[] = "another file";
+	require(write(replacement, sentinel, sizeof sentinel) == sizeof sentinel,
+		"write the replacement");
+	for (int cycle = 0; cycle < 2; ++cycle) {
+		ImageStats written;
+		hibernate_now(*image, written);
+		require(written.evicted_bytes == ram.held_pages() * ram.page(),
+			"every held page must leave the process");
+		ImageStats restored;
+		require(image->restore(restored), "restore the unlinked image");
+		require(ram.check().empty(), ram.check());
+	}
+	image.reset();
+	require(std::filesystem::exists(options.path),
+		"closing the image must not unlink the replacement");
+	char actual[sizeof sentinel] {};
+	require(pread(replacement, actual, sizeof actual, 0) == sizeof actual &&
+		std::memcmp(actual, sentinel, sizeof actual) == 0,
+		"hibernation must not write into the replacement");
+	close(replacement);
+	unlink(options.path.c_str());
+}
+
 void the_image_file_is_exclusive_and_stale_files_are_removed()
 {
 	const uml::testing::ScratchSubdirectory scratch{"stale.XXXXXX"};
@@ -807,6 +845,8 @@ int main()
 			freeze_refuses_a_second_hibernate_and_a_missing_freeze},
 		{"the image file is exclusive and stale files are removed",
 			the_image_file_is_exclusive_and_stale_files_are_removed},
+		{"an anonymous image restores without owning its old path",
+			an_anonymous_image_restores_without_owning_its_old_path},
 	};
 	return uml::testing::runNamedTests(tests);
 }

@@ -144,8 +144,8 @@ REQUIRED_SDK_APEX_ENTRIES = {
     "SYSTEM/apex/com.android.wifi.apex",
 }
 
-# The product runs 64-bit applications natively and armeabi-v7a ones beside
-# them, never the older armeabi. The build writes each ABI list per partition
+# The product runs 64-bit applications and 32-bit armeabi-v7a or legacy
+# armeabi applications. The build writes each ABI list per partition
 # (ro.<partition>.product.cpu.abilist*) and the runtime derives the unprefixed
 # ones from them.
 ABI_PROPERTY = re.compile(
@@ -154,8 +154,8 @@ ABI_PROPERTY = re.compile(
 EXPECTED_ABIS = {
     "abi": "arm64-v8a",
     "abi2": "",
-    "abilist": "arm64-v8a,armeabi-v7a",
-    "abilist32": "armeabi-v7a",
+    "abilist": "arm64-v8a,armeabi-v7a,armeabi",
+    "abilist32": "armeabi-v7a,armeabi",
     "abilist64": "arm64-v8a",
 }
 # Partitions whose build properties list the ABIs, with the properties a
@@ -178,6 +178,12 @@ VENDOR_MULTILIB_PROPERTIES = {
 
 
 REQUIRED_ENTRIES = {
+    "VENDOR/bin/hw/android.hardware.sensors-service.multihal",
+    "VENDOR/etc/sensors/hals.conf",
+    "VENDOR/etc/vintf/manifest/android.hardware.sensors-multihal.xml",
+    "VENDOR/lib64/hw/android.hardware.sensors@2.1-impl.andarium.so",
+    "VENDOR/etc/init/android.hardware.sensors-service-multihal.rc",
+
     "BOOT/kernel",
     "INIT_BOOT/RAMDISK/init",
     "IMAGES/init_boot.img",
@@ -208,6 +214,7 @@ REQUIRED_ENTRIES = {
     "SYSTEM/bin/resize2fs",
     "SYSTEM_EXT/priv-app/Launcher3QuickStep/Launcher3QuickStep.apk",
     "SYSTEM_EXT/priv-app/LineageParts/LineageParts.apk",
+    "SYSTEM_EXT/priv-app/LineageSetupWizard/LineageSetupWizard.apk",
     "SYSTEM_EXT/priv-app/LineageSettingsProvider/LineageSettingsProvider.apk",
     "SYSTEM_EXT/priv-app/Seedvault/Seedvault.apk",
     "SYSTEM_EXT/bin/kernarium_wifi_network.sh",
@@ -294,6 +301,7 @@ REQUIRED_PREOPT_APKS = {
     "SYSTEM/priv-app/VpnDialogs/VpnDialogs.apk",
     "SYSTEM_EXT/priv-app/Launcher3QuickStep/Launcher3QuickStep.apk",
     "SYSTEM_EXT/priv-app/LineageParts/LineageParts.apk",
+    "SYSTEM_EXT/priv-app/LineageSetupWizard/LineageSetupWizard.apk",
     "SYSTEM_EXT/priv-app/Seedvault/Seedvault.apk",
     "SYSTEM_EXT/priv-app/Settings/Settings.apk",
     "SYSTEM_EXT/priv-app/StorageManager/StorageManager.apk",
@@ -364,15 +372,12 @@ FORBIDDEN_STATIC_ENTRIES = {
     "VENDOR/apex/com.google.cf.oemlock.apex",
     "VENDOR/apex/com.google.cf.rild.apex",
     "VENDOR/apex/com.google.cf.wifi.apex",
-    "VENDOR/bin/hw/android.hardware.sensors-service.multihal",
     "VENDOR/etc/bluetooth_with_le_audio_policy_configuration_7_0.xml",
     "VENDOR/etc/init/init_graphics.vendor.rc",
     "VENDOR/etc/init/seriallogging.rc",
     "VENDOR/etc/permissions/android.hardware.ethernet.xml",
     "VENDOR/etc/permissions/android.hardware.uwb.xml",
     "VENDOR/etc/recovery-resource.dat",
-    "VENDOR/etc/sensors/hals.conf",
-    "VENDOR/etc/vintf/manifest/android.hardware.sensors-multihal.xml",
     "VENDOR/lib64/hw/android.hardware.sensors@2.1-impl.cuttlefish.so",
     "VENDOR/overlay/CuttlefishTetheringOverlay.apk",
     "VENDOR/overlay/CuttlefishWifiOverlay.apk",
@@ -435,8 +440,9 @@ FORBIDDEN_APP_DIRECTORIES = {
     "F-DroidPrivilegedExtension",
     "Gallery2",
     "Jelly",
-    "LineageSetupWizard",
     "Profiles",
+    # Setup Wizard owns provisioning; the AOSP auto-provisioner would bypass OOBE.
+    "Provision",
     "QuickAccessWallet",
     "QuickSearchBox",
     "Recorder",
@@ -478,6 +484,12 @@ FORBIDDEN_FEATURE_DECLARATIONS = {
 # CTS run. android.hardware.ethernet is not declared, because eth0 is the management
 # NIC and the framework must not manage it.
 REQUIRED_FEATURE_NAMES = {
+    "android.hardware.touchscreen",
+    "android.hardware.touchscreen.multitouch",
+    "android.hardware.touchscreen.multitouch.distinct",
+    "android.hardware.touchscreen.multitouch.jazzhand",
+    "android.hardware.sensor.accelerometer",
+    "android.hardware.sensor.gyroscope",
     "android.hardware.microphone",
     "android.hardware.wifi",
     "android.software.companion_device_setup",
@@ -1540,6 +1552,24 @@ def check_cas_hal(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -
             fail(f"the ClearKey CAS plugin is missing: {plugin}")
 
 
+def check_motion_sensors(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    configuration = read_small(archive, infos["VENDOR/etc/sensors/hals.conf"]).decode().strip()
+    if configuration != "/vendor/lib64/hw/android.hardware.sensors@2.1-impl.andarium.so":
+        fail("motion multi-HAL must load only the Andarium backend")
+    fragment = ET.fromstring(read_small(
+        archive, infos["VENDOR/etc/vintf/manifest/android.hardware.sensors-multihal.xml"]
+    ))
+    if not any(hal.get("format") == "aidl"
+               and hal.findtext("name") == "android.hardware.sensors"
+               and hal.findtext("fqname") == "ISensors/default" for hal in fragment.findall("hal")):
+        fail("motion sensor HAL is not declared as AIDL ISensors/default")
+    script = read_small(archive, infos[
+        "VENDOR/etc/init/android.hardware.sensors-service-multihal.rc"
+    ]).decode()
+    if not re.search(r"^service \S+ /vendor/bin/hw/android\.hardware\.sensors-service\.multihal$", script, re.M):
+        fail("motion sensor HAL service does not start the multi-HAL binary")
+
+
 def check_hardware_features(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
 ) -> None:
@@ -2223,8 +2253,6 @@ def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None
             fail(f"A/B update property is enabled in {info.filename}")
         abi_property = ABI_PROPERTY.fullmatch(key)
         if abi_property is not None:
-            if "armeabi" in {item.strip() for item in value.split(",")}:
-                fail(f"the legacy armeabi ABI is forbidden in {info.filename}: {key}={value}")
             expected = EXPECTED_ABIS[abi_property.group(1)]
             if value != expected:
                 fail(f"unexpected ABI in {info.filename}: {key}={value!r}, not {expected!r}")
@@ -2860,6 +2888,7 @@ def main() -> None:
             fail("target files do not contain an APEX payload")
         check_app_dexpreopt(seen)
         check_hardware_features(archive, infos)
+        check_motion_sensors(archive, infos)
         check_discrete_ops(archive, infos)
         check_default_wallpaper(archive, infos)
         check_pinner_overlay(archive, infos)

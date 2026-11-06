@@ -174,6 +174,37 @@ EOF
 
 verify "$BASE_PREFIX" >/dev/null
 
+# Symbols are optional for older host prefixes, but a prefix that supplies
+# them must carry one matching dSYM for every dynamic framework.
+CASE_PREFIX="$TEST_ROOT/with-symbols"
+copy_fixture "$CASE_PREFIX"
+mkdir -p "$CASE_PREFIX/dSYMs"
+for framework in KosmicKrisp MesaGallium MesaEGL; do
+	case $framework in
+	KosmicKrisp) source=kosmickrisp; dependency= ;;
+	MesaGallium) source=mesa-gallium; dependency=KosmicKrisp ;;
+	MesaEGL) source=mesa-egl; dependency=MesaGallium ;;
+	esac
+	xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=27.0 -g \
+		-c "$TEST_ROOT/$source.c" -o "$TEST_ROOT/$framework.debug.o"
+	set --
+	if [ -n "$dependency" ]; then
+		set -- "$CASE_PREFIX/Frameworks/$dependency.framework/$dependency"
+	fi
+	make_framework "$CASE_PREFIX" "$framework" "$TEST_ROOT/$framework.debug.o" "$@"
+	xcrun dsymutil "$CASE_PREFIX/Frameworks/$framework.framework/$framework" \
+		-o "$CASE_PREFIX/dSYMs/$framework.framework.dSYM"
+done
+verify "$CASE_PREFIX" >/dev/null
+cp -R "$CASE_PREFIX" "$TEST_ROOT/mismatched-symbols"
+rm -rf "$TEST_ROOT/mismatched-symbols/dSYMs/MesaEGL.framework.dSYM"
+cp -R "$CASE_PREFIX/dSYMs/MesaGallium.framework.dSYM" \
+	"$TEST_ROOT/mismatched-symbols/dSYMs/MesaEGL.framework.dSYM"
+expect_cmake_diagnostic "MesaEGL.framework debug symbol UUID does not match" \
+	verify "$TEST_ROOT/mismatched-symbols"
+rm -rf "$CASE_PREFIX/dSYMs/KosmicKrisp.framework.dSYM"
+expect_cmake_diagnostic "Missing debug symbol UUID" verify "$CASE_PREFIX"
+
 expect_failure "wrong platform" verify "$BASE_PREFIX" ios-simulator
 
 # A prefix is current exactly while each source tree matches its series.

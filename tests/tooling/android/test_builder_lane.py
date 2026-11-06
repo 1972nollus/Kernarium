@@ -615,6 +615,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           context_hub: bool = False,
                           unsupported_hal: bool = False,
                           unsupported_feature: bool = False,
+                          missing_multitouch_feature: str | None = None,
                           missing_microphone_feature: bool = False,
                           missing_companion_feature: bool = False,
                           missing_mic_policy: bool = False,
@@ -690,8 +691,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_video_ueventd: bool = False,
                           mesa_gles_alignment: int = 16384,
                           elf_edit: tuple[str, int, int] | None = None,
-                          abilist32: str = "armeabi-v7a",
-                          vendor_abilist32: str = "armeabi-v7a",
+                          abilist32: str = "armeabi-v7a,armeabi",
+                          vendor_abilist32: str = "armeabi-v7a,armeabi",
                           zygote: str = "zygote64_32",
                           dex2oat64: bool = True,
                           arm_alignment: int = 4096,
@@ -1602,7 +1603,26 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         artifact = apk_path.parent / "oat" / isa / apk_path.stem
                         archive.writestr(f"{artifact}.odex", b"odex")
                         archive.writestr(f"{artifact}.vdex", b"vdex")
-                advertised_features = ["android.hardware.touchscreen"]
+                archive.writestr("VENDOR/bin/hw/android.hardware.sensors-service.multihal", synthetic_aarch64_elf())
+                archive.writestr("VENDOR/lib64/hw/android.hardware.sensors@2.1-impl.andarium.so", synthetic_aarch64_elf())
+                archive.writestr("VENDOR/etc/sensors/hals.conf",
+                                 "/vendor/lib64/hw/android.hardware.sensors@2.1-impl.andarium.so\n")
+                archive.writestr("VENDOR/etc/init/android.hardware.sensors-service-multihal.rc",
+                                 "service vendor.sensors-hal-multihal /vendor/bin/hw/android.hardware.sensors-service.multihal\n")
+                archive.writestr("VENDOR/etc/vintf/manifest/android.hardware.sensors-multihal.xml",
+                                 '<manifest version="1.0" type="device"><hal format="aidl">'
+                                 '<name>android.hardware.sensors</name><version>3</version>'
+                                 '<fqname>ISensors/default</fqname></hal></manifest>')
+                advertised_features = ["android.hardware.touchscreen",
+                                       "android.hardware.sensor.accelerometer",
+                                       "android.hardware.sensor.gyroscope"]
+                advertised_features.extend(
+                    feature for feature in (
+                        "android.hardware.touchscreen.multitouch",
+                        "android.hardware.touchscreen.multitouch.distinct",
+                        "android.hardware.touchscreen.multitouch.jazzhand",
+                    ) if feature != missing_multitouch_feature
+                )
                 if not missing_microphone_feature:
                     advertised_features.append("android.hardware.microphone")
                 if not missing_companion_feature:
@@ -1734,7 +1754,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         ).items()
                     ),
                 )
-                archive.writestr("ODM/etc/build.prop", abi_properties("odm", "armeabi-v7a"))
+                archive.writestr("ODM/etc/build.prop", abi_properties("odm", "armeabi-v7a,armeabi"))
                 if module:
                     archive.writestr("VENDOR/lib/modules/forbidden.ko", b"module")
                 if module_loader:
@@ -2022,6 +2042,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"SYSTEM/bin/mediaserver": synthetic_arm_elf()}}),
             ("32-bit-vendor-daemon",
              {"entries": {"VENDOR/bin/hw/android.hardware.fixture-service": synthetic_arm_elf()}}),
+            ("missing-motion-backend", {"entries": {
+                "VENDOR/lib64/hw/android.hardware.sensors@2.1-impl.andarium.so": None}}),
+            ("foreign-motion-backend", {"entries": {
+                "VENDOR/etc/sensors/hals.conf": b"/vendor/lib64/hw/other.so\n"}}),
+            ("missing-motion-instance", {"entries": {
+                "VENDOR/etc/vintf/manifest/android.hardware.sensors-multihal.xml": b'<manifest/>'}}),
+            ("wrong-motion-service", {"entries": {
+                "VENDOR/etc/init/android.hardware.sensors-service-multihal.rc": b'service sensor /vendor/bin/other\n'}}),
             ("32-bit-alignment", {"arm_alignment": 2048}),
             ("32-bit-hard-float", {"arm_flags": 0x05000400}),
             ("alignment", {"alignment": 4096}),
@@ -2095,6 +2123,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("context-hub", {"context_hub": True}),
             ("unsupported-hal", {"unsupported_hal": True}),
             ("unsupported-feature", {"unsupported_feature": True}),
+            *((f"missing-{feature}", {"missing_multitouch_feature": feature})
+              for feature in (
+                  "android.hardware.touchscreen.multitouch",
+                  "android.hardware.touchscreen.multitouch.distinct",
+                  "android.hardware.touchscreen.multitouch.jazzhand",
+              )),
             ("missing-microphone-feature", {"missing_microphone_feature": True}),
             ("missing-companion-feature", {"missing_companion_feature": True}),
             ("missing-mic-policy", {"missing_mic_policy": True}),
@@ -2315,6 +2349,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"extra_entry": "VENDOR/etc/init/init_graphics.vendor.rc"}),
             ("product-init-rc", {"extra_entry": "PRODUCT/etc/init/init.rc"}),
             ("legacy-ueventd", {"extra_entry": "VENDOR/ueventd.rc"}),
+            ("missing-setup-wizard",
+             {"entries": {"SYSTEM_EXT/priv-app/LineageSetupWizard/LineageSetupWizard.apk": None}}),
+            ("auto-provisioner-bypasses-setup",
+             {"extra_entry": "SYSTEM/priv-app/Provision/Provision.apk"}),
             ("curated-out-canvas",
              {"extra_entry": "PRODUCT/app/Canvas/Canvas.apk"}),
             ("curated-out-updater",
@@ -2444,7 +2482,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("elf-big-endian", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF32 or ELF64"),
             ("elf-machine", {"elf_edit": ("<H", 18, 62)}, "not AArch64"),
             ("elf-program-header-size", {"elf_edit": ("<H", 54, 32)}, "program.header"),
-            ("armeabi", {"abilist32": "armeabi-v7a,armeabi"}, "armeabi is forbidden|legacy armeabi"),
+            ("missing-armeabi", {"abilist32": "armeabi-v7a"}, "unexpected ABI"),
+            ("wrong-abi-order", {"abilist32": "armeabi,armeabi-v7a"}, "unexpected ABI"),
+            ("unsupported-abi", {"abilist32": "armeabi-v7a,armeabi,x86"}, "unexpected ABI"),
             ("no-32-bit-abi-cause", {"abilist32": ""}, "unexpected ABI"),
             ("product-model-cause", {"wrong_product_model": True},
              "unexpected product identity ro.product.product.model: 'Android 17 on Andarium'"),
@@ -4062,6 +4102,8 @@ def verify_package_assertions(android_root: Path) -> None:
     for package in sorted(present & removed):
         fail(f"build-aosp.sh asserts {package} is present, but the product removes it")
     for package in (
+        "android.hardware.sensors-service.multihal",
+        "android.hardware.sensors@2.1-impl.andarium",
         "com.android.hardware.thermal",
         "com.android.hardware.cas",
         "libclearkeycasplugin",

@@ -23,6 +23,50 @@ struct Record final {
 std::mutex registryMutex;
 std::vector<Record> registry;
 
+struct LockRecord final {
+	struct stat identity {};
+	struct flock lock {};
+	bool recorded{};
+	bool released{};
+};
+
+std::vector<LockRecord> diskLocks;
+bool locksSuspended{};
+
+[[nodiscard]] bool sameFile(const struct stat &a, const struct stat &b) noexcept
+{
+	return a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+}
+
+[[nodiscard]] bool unchanged(const struct stat &a, const struct stat &b) noexcept
+{
+	return sameFile(a, b) && a.st_size == b.st_size &&
+		a.st_nlink == b.st_nlink &&
+		a.st_mtimespec.tv_sec == b.st_mtimespec.tv_sec &&
+		a.st_mtimespec.tv_nsec == b.st_mtimespec.tv_nsec &&
+		a.st_ctimespec.tv_sec == b.st_ctimespec.tv_sec &&
+		a.st_ctimespec.tv_nsec == b.st_ctimespec.tv_nsec;
+}
+
+[[nodiscard]] int unlock(int descriptor) noexcept
+{
+	struct flock lock {};
+	lock.l_type = F_UNLCK;
+	lock.l_whence = SEEK_SET;
+	return ::fcntl(descriptor, F_SETLK, &lock);
+}
+
+void undoRestoredLocks() noexcept
+{
+	for (std::size_t index = 0; index < diskLocks.size(); ++index) {
+		auto &record = diskLocks[index];
+		if (record.recorded && !record.released) {
+			(void)unlock(static_cast<int>(index));
+			record.released = true;
+		}
+	}
+}
+
 [[nodiscard]] bool flushDescriptor(int descriptor) noexcept
 {
 	/* fsync alone leaves the write in the device's own cache on Darwin. The
@@ -80,7 +124,112 @@ std::size_t forget_guest_files() noexcept
 	/* The storage goes with the records: a descriptor table that once grew
 	 * large must not keep its vector. */
 	std::vector<Record>().swap(registry);
+	std::vector<LockRecord>().swap(diskLocks);
+	locksSuspended = false;
 	return forgotten;
+}
+
+int set_guest_file_lock(int descriptor, int command,
+	const struct flock &requested) noexcept
+{
+	/* UML's os_lock_file owns an entire disk, never a byte range. Refuse
+	 * anything this registry could not restore faithfully. */
+	if (requested.l_whence != SEEK_SET || requested.l_start != 0 ||
+	    requested.l_len != 0 || (requested.l_type != F_RDLCK &&
+	    requested.l_type != F_WRLCK && requested.l_type != F_UNLCK)) {
+		errno = EINVAL;
+		return -1;
+	}
+	std::lock_guard guard(registryMutex);
+	if (locksSuspended && requested.l_type != F_UNLCK) {
+		errno = EAGAIN;
+		return -1;
+	}
+	struct stat identity {};
+	if (::fstat(descriptor, &identity) != 0)
+		return -1;
+	const auto index = static_cast<std::size_t>(descriptor);
+	try {
+		if (diskLocks.size() <= index)
+			diskLocks.resize(index + 1U);
+	} catch (...) {
+		errno = ENOMEM;
+		return -1;
+	}
+	struct flock lock = requested;
+	if (::fcntl(descriptor, command, &lock) != 0)
+		return -1;
+	diskLocks[index] = {identity, requested, requested.l_type != F_UNLCK,
+		false};
+	return 0;
+}
+
+unsigned release_guest_file_locks(bool retiring) noexcept
+{
+	std::lock_guard guard(registryMutex);
+	locksSuspended = true;
+	unsigned failed = 0;
+	for (std::size_t index = 0; index < diskLocks.size(); ++index) {
+		auto &record = diskLocks[index];
+		if (!record.recorded || record.released)
+			continue;
+		const auto descriptor = static_cast<int>(index);
+		struct stat identity {};
+		if (::fstat(descriptor, &identity) != 0 ||
+		    !sameFile(identity, record.identity)) {
+			record = {};
+			continue;
+		}
+		if (unlock(descriptor) != 0) {
+			++failed;
+			continue;
+		}
+		record.identity = identity;
+		record.released = true;
+	}
+	if (retiring && failed == 0) {
+		diskLocks.clear();
+		locksSuspended = false;
+	}
+	return failed;
+}
+
+bool restore_guest_file_locks() noexcept
+{
+	std::lock_guard guard(registryMutex);
+	if (!locksSuspended)
+		return true;
+	int error = 0;
+	for (std::size_t index = 0; index < diskLocks.size(); ++index) {
+		auto &record = diskLocks[index];
+		if (!record.recorded || !record.released)
+			continue;
+		const auto descriptor = static_cast<int>(index);
+		struct stat identity {};
+		if (::fstat(descriptor, &identity) != 0 ||
+		    !sameFile(identity, record.identity)) {
+			error = ESTALE;
+			break;
+		}
+		struct flock lock = record.lock;
+		if (::fcntl(descriptor, F_SETLK, &lock) != 0) {
+			error = errno;
+			break;
+		}
+		record.released = false;
+		if (::fstat(descriptor, &identity) != 0 ||
+		    !unchanged(identity, record.identity)) {
+			error = ESTALE;
+			break;
+		}
+	}
+	if (error != 0) {
+		undoRestoredLocks();
+		errno = error;
+		return false;
+	}
+	locksSuspended = false;
+	return true;
 }
 
 GuestFileSyncResult sync_guest_files() noexcept

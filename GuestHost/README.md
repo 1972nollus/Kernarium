@@ -32,6 +32,13 @@ Sources/GuestProcessorLimit.swift      the vCPU count the applications default t
 
 ## Rules
 
+The display forwards up to ten simultaneous UIKit contacts through the runtime
+API. Each finger keeps an independent path and slot until it ends or is
+cancelled. Clipping a path to the visible guest rectangle releases and restarts
+only that contact. Display mode changes and removal of the view release every
+contact. The Virtio device uses Linux type-B slots and tracking IDs; its legacy
+`ABS_X/Y` coordinates follow the primary finger until that finger lifts.
+
 - A file here depends only on the system frameworks, the runtime header, and
   the prebuilt `LibZstd` XCFramework. It names neither application's views,
   settings or product text; an application supplies those.

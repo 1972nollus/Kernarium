@@ -141,7 +141,7 @@ RUNTIME_4K="KRuntime_6_18_4K"
 # The Android runtime carries an independently accepted Android kernel
 # artifact. Rootfs release updates do not rename this framework and kernel-only
 # updates do not invalidate an existing guest bundle.
-RUNTIME_ANDROID_4K="KRuntime_ACK_6_18_4K"
+RUNTIME_ANDROID_4K="KRuntime_Android_6_18_4K"
 
 RUNTIME_TREE=kernarium-runtime-ios-device
 [ "$AUTOMATION" -eq 0 ] || RUNTIME_TREE=kernarium-runtime-ios-device-automation
@@ -250,18 +250,28 @@ cleanup()
 }
 trap cleanup EXIT HUP INT TERM
 
-# create_xcframework NAME DEVICE-FRAMEWORK SIMULATOR-FRAMEWORK: each slice is
-# named only for an SDK that is packaged, and the framework is created from the
-# slices named; an empty name leaves its SDK out.
+# create_xcframework NAME DEVICE-FRAMEWORK SIMULATOR-FRAMEWORK DEVICE-DSYM SIMULATOR-DSYM:
+# each selected slice carries its original dSYM so Xcode copies it into an
+# archive. An empty framework leaves its SDK out.
 create_xcframework()
 {
 	name=$1
-	slices=
-	for slice_framework in "$2" "$3"; do
-		[ -z "$slice_framework" ] || slices="$slices -framework $slice_framework"
-	done
-	# shellcheck disable=SC2086
-	"$XCODEBUILD" -create-xcframework $slices \
+	device_framework=$2
+	simulator_framework=$3
+	device_symbols=$4
+	simulator_symbols=$5
+	set -- -create-xcframework
+	if [ -n "$device_framework" ]; then
+		[ -d "$device_symbols" ] ||
+			fail "missing debug symbols: $device_symbols; rebuild the framework"
+		set -- "$@" -framework "$device_framework" -debug-symbols "$device_symbols"
+	fi
+	if [ -n "$simulator_framework" ]; then
+		[ -d "$simulator_symbols" ] ||
+			fail "missing debug symbols: $simulator_symbols; rebuild the framework"
+		set -- "$@" -framework "$simulator_framework" -debug-symbols "$simulator_symbols"
+	fi
+	"$XCODEBUILD" "$@" \
 		-output "$STAGE/$name.xcframework"
 	[ -f "$STAGE/$name.xcframework/Info.plist" ] ||
 		fail "$name XCFramework was not created"
@@ -282,19 +292,24 @@ if [ "$RUNTIMES" = all ]; then
 	RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_ANDROID_4K"
 	create_xcframework "$RUNTIME_4K" \
 		"$(device_slice "$DEVICE_RUNTIME_4K")" \
-		"$(simulator_slice "$SIMULATOR_RUNTIME_4K")"
+		"$(simulator_slice "$SIMULATOR_RUNTIME_4K")" \
+		"$DEVICE_RUNTIME_4K.dSYM" "$SIMULATOR_RUNTIME_4K.dSYM"
 fi
 create_xcframework "$RUNTIME_ANDROID_4K" \
 	"$(device_slice "$DEVICE_RUNTIME_ANDROID")" \
-	"$(simulator_slice "$SIMULATOR_RUNTIME_ANDROID")"
+	"$(simulator_slice "$SIMULATOR_RUNTIME_ANDROID")" \
+	"$DEVICE_RUNTIME_ANDROID.dSYM" "$SIMULATOR_RUNTIME_ANDROID.dSYM"
 for framework in $GL_FRAMEWORKS; do
 	create_xcframework "$framework" \
 		"$(device_slice "$DEVICE_GPU/$framework.framework")" \
-		"$(simulator_slice "$SIMULATOR_GPU/$framework.framework")"
+		"$(simulator_slice "$SIMULATOR_GPU/$framework.framework")" \
+		"$DEVICE_GPU_PREFIX/dSYMs/$framework.framework.dSYM" \
+		"$SIMULATOR_GPU_PREFIX/dSYMs/$framework.framework.dSYM"
 done
 # KosmicKrisp needs Metal 4, so it has a device slice alone.
 if has_sdk device; then
-	create_xcframework KosmicKrisp "$DEVICE_GPU/KosmicKrisp.framework" ""
+	create_xcframework KosmicKrisp "$DEVICE_GPU/KosmicKrisp.framework" "" \
+		"$DEVICE_GPU_PREFIX/dSYMs/KosmicKrisp.framework.dSYM" ""
 fi
 # install_privacy_manifest FRAMEWORK MANIFEST: the manifest goes into every
 # slice of the framework's XCFramework.

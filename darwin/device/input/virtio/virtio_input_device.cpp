@@ -268,6 +268,10 @@ protocol::InputConfig VirtioInputDevice::selectedConfiguration() const
             } else if (subselect_ == protocol::eventAbsolute) {
                 setBit(config.value.bitmap, protocol::absoluteX);
                 setBit(config.value.bitmap, protocol::absoluteY);
+                setBit(config.value.bitmap, protocol::absoluteMtSlot);
+                setBit(config.value.bitmap, protocol::absoluteMtPositionX);
+                setBit(config.value.bitmap, protocol::absoluteMtPositionY);
+                setBit(config.value.bitmap, protocol::absoluteMtTrackingId);
             }
         } else if (subselect_ == protocol::eventKey) {
             for (std::uint16_t code = 1;
@@ -286,10 +290,20 @@ protocol::InputConfig VirtioInputDevice::selectedConfiguration() const
     case protocol::configAbsoluteInfo:
         if (kind_ == DeviceKind::touchscreen &&
             (subselect_ == protocol::absoluteX ||
-             subselect_ == protocol::absoluteY)) {
+             subselect_ == protocol::absoluteY ||
+             subselect_ == protocol::absoluteMtPositionX ||
+             subselect_ == protocol::absoluteMtPositionY ||
+             subselect_ == protocol::absoluteMtSlot ||
+             subselect_ == protocol::absoluteMtTrackingId)) {
+            const auto maximum = subselect_ == protocol::absoluteMtSlot ?
+                protocol::touchscreenContactCount - 1 :
+                subselect_ == protocol::absoluteMtTrackingId ?
+                    static_cast<std::uint32_t>(
+                        protocol::touchscreenTrackingIdMaximum) :
+                    protocol::touchscreenAbsoluteMaximum;
             const protocol::InputAbsoluteInfo info {
                 .minimum = 0,
-                .maximum = protocol::touchscreenAbsoluteMaximum,
+                .maximum = maximum,
                 .fuzz = 0,
                 .flat = 0,
                 .resolution = 0,

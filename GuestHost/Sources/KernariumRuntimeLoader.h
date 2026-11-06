@@ -126,6 +126,7 @@ uint32_t kernarium_runtime_loader_application_vcpu_limit(
  * never asks the system for access; the caller asks first. */
 int kernarium_runtime_loader_set_microphone(int enabled);
 void kernarium_runtime_loader_send_touch(
+    uint32_t slot,
     uint32_t x,
     uint32_t y,
     int pressed);

@@ -56,6 +56,21 @@ struct AndroidOperationTests {
         var isOpen: Bool { lock.withLock { open } }
     }
 
+    @Test func motionSensorsAreOptionalAndPersisted() {
+        let (model, driver) = running()
+        #expect(model.guest?.motionSensors == false)
+        model.setMotionSensors(true)
+        #expect(model.guest?.motionSensors == true)
+        #expect(driver.savedGuest?.motionSensors == true)
+        #expect(driver.motionSensors)
+        model.setMotionSensors(false)
+        #expect(model.guest?.motionSensors == false)
+        #expect(!driver.motionSensors)
+        model.motionSensorsAvailable = false
+        model.setMotionSensors(true)
+        #expect(model.guest?.motionSensors == false)
+    }
+
     // MARK: Bug report
 
     @Test func aBugReportCoversTheScreensThenOffersTheFile() async throws {

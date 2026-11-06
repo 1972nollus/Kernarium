@@ -15,7 +15,7 @@
 #
 
 # Select the UML-safe branches in the inherited Cuttlefish product before it
-# is evaluated. The Darwin machine has no nested Trusty VM, modem, NFC, sensor,
+# is evaluated. The Darwin machine has no nested Trusty VM, modem, NFC,
 # Bluetooth, GNSS, biometric, secure-element, or camera transport, and its
 # Wi-Fi is the kernel's virtual one (kernarium_net_setup).
 TRUSTY_SYSTEM_VM := disabled
@@ -44,7 +44,12 @@ CF_VENDOR_NO_THREADNETWORK := true
 LOCAL_ENABLE_LIGHT := false
 LOCAL_ENABLE_OEMLOCK := false
 LOCAL_ENABLE_NEURALNETWORKS := false
-LOCAL_ENABLE_SENSORS := false
+# Android's multi-HAL service loads only the private host motion backend.
+LOCAL_ENABLE_SENSORS := true
+LOCAL_SENSOR_FILE_OVERRIDES := true
+LOCAL_SENSOR_PRODUCT_PACKAGE := \
+    android.hardware.sensors-service.multihal \
+    android.hardware.sensors@2.1-impl.andarium
 LOCAL_ENABLE_NFC := false
 LOCAL_ENABLE_FRP := false
 LOCAL_GNSS_PRODUCT_PACKAGE :=
@@ -109,6 +114,12 @@ PRODUCT_COPY_FILES_EXCLUDE += \
 # owner's key alone: the recovery and the system trust that key and no other.
 PRODUCT_EXTRA_RECOVERY_KEYS :=
 
+PRODUCT_PACKAGES_EXCLUDE += cuttlefish_sensor_injection
+PRODUCT_COPY_FILES += \
+    device/kernarium/andarium/sensors/hals.conf:$(TARGET_COPY_OUT_VENDOR)/etc/sensors/hals.conf \
+    frameworks/native/data/etc/android.hardware.sensor.accelerometer.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.sensor.accelerometer.xml \
+    frameworks/native/data/etc/android.hardware.sensor.gyroscope.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.sensor.gyroscope.xml
+
 PRODUCT_NAME := lineage_andarium
 PRODUCT_DEVICE := andarium
 PRODUCT_BRAND := Andarium
@@ -125,15 +136,14 @@ PRODUCT_MODEL := Andarium Virtual Device
 PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG :=
 
 # The LineageOS updater polls a server for a device this project does not
-# publish, the setup wizard would block automation, and the remaining apps
-# have nothing to work with: no recorder input, no NFC wallet, no fastboot
+# publish. The remaining apps have nothing to work with: no recorder input,
+# no NFC wallet, no fastboot
 # transport, and Canvas is the largest app for the least use. The Profiles app
 # has no hardware triggers to act on here. DeskClock and EmergencyInfo leave
 # with the other absent-hardware packages below.
 PRODUCT_PACKAGES_EXCLUDE += \
     Canvas \
     fastbootd \
-    LineageSetupWizard \
     Profiles \
     QuickAccessWallet \
     Recorder \
@@ -189,7 +199,12 @@ PRODUCT_PACKAGES_EXCLUDE += \
     device_google_cuttlefish_uml_config_ueventd_rc \
     fstab.uml \
     fstab.uml.vendor_ramdisk
+# The first source for a destination wins, including inherited copy entries.
+PRODUCT_COPY_FILES := \
+    device/kernarium/andarium/config/init.recovery.rc:$(TARGET_COPY_OUT_RECOVERY)/root/init.recovery.cutf_cvm.rc \
+    $(PRODUCT_COPY_FILES)
 PRODUCT_COPY_FILES += \
+    device/google/cuttlefish/shared/config/init.recovery.rc:$(TARGET_COPY_OUT_RECOVERY)/root/init.recovery.cuttlefish.rc \
     device/kernarium/andarium/config/init.vendor.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/init.kernarium.rc \
     device/kernarium/andarium/config/ueventd.rc:$(TARGET_COPY_OUT_VENDOR)/etc/ueventd.rc \
     device/kernarium/andarium/config/fstab.uml:$(TARGET_COPY_OUT_VENDOR)/etc/fstab.uml \

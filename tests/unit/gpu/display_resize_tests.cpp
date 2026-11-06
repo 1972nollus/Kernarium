@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "allocation_failure.hpp"
 #include "display_geometry.hpp"
 #include "display_resize_notifier.hpp"
 #include "require.hpp"
@@ -15,6 +16,7 @@
 #include <mutex>
 #include <poll.h>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -195,6 +197,101 @@ void retainedFramebufferKeepsItsStorage()
     framebuffer.clear();
     require(framebufferHasStorage(framebuffer),
         "clearing a retained framebuffer released its storage");
+}
+
+void pixelConversionReusesTheLiveFramebuffer()
+{
+    using uml::gpu::protocol::GpuFormat;
+    struct Case {
+        GpuFormat format;
+        std::array<std::uint8_t, 4> expected;
+    };
+    constexpr Case cases[] {
+        {GpuFormat::r8g8b8a8Unorm, {33, 22, 11, 44}},
+        {GpuFormat::r8g8b8x8Unorm, {33, 22, 11, 44}},
+        {GpuFormat::a8r8g8b8Unorm, {44, 33, 22, 11}},
+        {GpuFormat::x8r8g8b8Unorm, {44, 33, 22, 11}},
+        {GpuFormat::x8b8g8r8Unorm, {22, 33, 44, 11}},
+        {GpuFormat::a8b8g8r8Unorm, {22, 33, 44, 11}},
+    };
+    // Odd widths exercise both vector and scalar pixels; source and target
+    // have different pitches and origins, and the source has padding.
+    constexpr std::uint32_t width = 35, height = 4;
+    constexpr std::size_t stride = 160;
+    std::array<std::uint8_t, stride * height> source {};
+    for (std::uint32_t y = 0; y < height; ++y) {
+        for (std::uint32_t x = 0; x < width; ++x) {
+            const auto gradient = x + 3U * y;
+            const std::array<std::uint8_t, 4> pixel {
+                static_cast<std::uint8_t>(11U + gradient),
+                static_cast<std::uint8_t>(22U + gradient),
+                static_cast<std::uint8_t>(33U + gradient),
+                static_cast<std::uint8_t>(44U + gradient)};
+            std::copy(pixel.begin(), pixel.end(), source.begin() + y * stride + x * 4U);
+        }
+    }
+    for (const auto& test : cases) {
+        uml::gpu::ScanoutFramebuffer framebuffer {37, 5};
+        framebuffer.fillSelfTestPattern();
+        std::vector<std::uint8_t> before;
+        {
+            std::lock_guard lock(framebuffer);
+            before.assign(framebuffer.pixels().begin(), framebuffer.pixels().end());
+        }
+        uml::testing::fail_after_allocations(0);
+        try {
+            const auto rectangle = framebuffer.update(source, width, height, stride,
+                test.format, 1, 1, 2, 2, 33, 3);
+            (void)uml::testing::cancel_pending_allocation_failure();
+            require(rectangle.x == 2 && rectangle.y == 2 &&
+                    rectangle.width == 33 && rectangle.height == 3);
+        } catch (...) {
+            (void)uml::testing::cancel_pending_allocation_failure();
+            throw;
+        }
+        std::lock_guard lock(framebuffer);
+        for (std::uint32_t y = 0; y < 5; ++y) {
+            for (std::uint32_t x = 0; x < 37; ++x) {
+                const auto offset = (y * 37U + x) * 4U;
+                auto expectedPixel = test.expected;
+                if (x >= 2 && x < 35 && y >= 2) {
+                    for (auto& channel : expectedPixel)
+                        channel += (x - 1U) + 3U * (y - 1U);
+                }
+                const auto* expected = x >= 2 && x < 35 && y >= 2 ?
+                    expectedPixel.data() : before.data() + offset;
+                require(std::equal(expected, expected + 4, framebuffer.pixels().begin() + offset),
+                    "pixel conversion changed the rectangle or its surroundings");
+            }
+        }
+    }
+}
+
+void overlappingPixelConversionPreservesItsSource()
+{
+    uml::gpu::ScanoutFramebuffer framebuffer {35, 4};
+    framebuffer.fillSelfTestPattern();
+    std::vector<std::uint8_t> before;
+    std::span<const std::uint8_t> source;
+    {
+        std::lock_guard lock(framebuffer);
+        source = framebuffer.pixels();
+        before.assign(source.begin(), source.end());
+    }
+    (void)framebuffer.update(source, 35, 4, 35 * 4,
+        uml::gpu::protocol::GpuFormat::r8g8b8a8Unorm, 0, 0, 1, 1, 34, 3);
+    std::lock_guard lock(framebuffer);
+    for (std::uint32_t y = 0; y < 4; ++y) {
+        for (std::uint32_t x = 0; x < 35; ++x) {
+            const auto offset = (y * 35U + x) * 4U;
+            auto expected = std::array<std::uint8_t, 4> {};
+            const auto input = x >= 1 && y >= 1 ? ((y - 1) * 35U + x - 1) * 4U : offset;
+            std::copy_n(before.data() + input, 4, expected.data());
+            if (x >= 1 && y >= 1) std::swap(expected[0], expected[2]);
+            require(std::equal(expected.begin(), expected.end(), framebuffer.pixels().begin() + offset),
+                "an overlapping conversion overwrote pixels before reading them");
+        }
+    }
 }
 
 void aspectFitCentersGuestContentWithoutDistortion()
@@ -810,6 +907,8 @@ int main()
         resizeNotificationsAreCoalescedAndBounded();
         framebufferResizePublishesOneClearedGeometry();
         retainedFramebufferKeepsItsStorage();
+        pixelConversionReusesTheLiveFramebuffer();
+        overlappingPixelConversionPreservesItsSource();
         aspectFitCentersGuestContentWithoutDistortion();
         scanoutRectanglesSampleOnlyTheirOwnTexels();
         hostRotationSwapsPresentationAndMapsGuestInput();

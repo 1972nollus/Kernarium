@@ -3,14 +3,15 @@ import AndariumCore
 import Foundation
 @preconcurrency import Security
 import Testing
+import UIKit
 @testable import Andarium
 
 /// The application's own adb client against a real Android guest, with
 /// authorization on. It runs only when the launch asks, as the hold test does:
 ///
-///     xcodebuild test -scheme Andarium -destination 'platform=macOS,variant=Designed for iPad' \
-///         -only-testing:AndariumTests/AdbOverVsockTests \
-///         TEST_RUNNER_ANDARIUM_ADB_TESTS=1 TEST_RUNNER_ANDARIUM_START=normal
+///     TEST_RUNNER_ANDARIUM_ADB_TESTS=1 TEST_RUNNER_ANDARIUM_START=normal \
+///         xcodebuild test -scheme Andarium -destination 'platform=macOS,variant=Designed for iPad' \
+///         -only-testing:AndariumTests/AdbOverVsockTests
 ///
 /// The application boots the guest as it launches; the tests wait for Android
 /// and use the key the application made for that boot.
@@ -59,6 +60,219 @@ struct AdbOverVsockTests {
             connector: VsockConnector(), signer: operations.identity?.signer, clock: operations.clock)
         let banner = try session.run { $0.banner }
         #expect(banner.features.isSuperset(of: ["shell_v2", "cmd", "stat_v2", "abb_exec"]))
+    }
+
+    @MainActor
+    @Test(.timeLimit(.minutes(20))) func aFreshGuestOpensTheSetupWizard() async throws {
+        guard Self.enabled,
+            ProcessInfo.processInfo.environment["ANDARIUM_OOBE_TESTS"] == "1"
+        else { return }
+        try #require(ProcessInfo.processInfo.environment["ANDARIUM_GUEST_INSTANCE"] == "recovery-display")
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        let command = "getprop ro.setupwizard.mode; settings get global device_provisioned; settings get secure user_setup_complete; dumpsys activity activities | grep ResumedActivity"
+        var state = try await operations.shell(command, limit: .seconds(10))
+        // sys.boot_completed can precede the first resumed activity.
+        let welcomeDeadline = ContinuousClock.now + .seconds(60)
+        while !state.text.contains("org.lineageos.setupwizard/.WelcomeActivity"), ContinuousClock.now < welcomeDeadline {
+            try await Task.sleep(for: .seconds(1))
+            state = try await operations.shell(command, limit: .seconds(10))
+        }
+        print("ANDROID_OOBE: \(state.text)")
+        #expect(state.text.hasPrefix("OPTIONAL\n0\n0\n"))
+        #expect(state.text.contains("org.lineageos.setupwizard/.WelcomeActivity"))
+        do {
+            var tree = ""
+            var lastError = "none"
+            let uiDeadline = ContinuousClock.now + .seconds(60)
+            // A user build restarts adbd when its trade-in initialization ends.
+            // Reconnect after that transient loss before reading the visible UI.
+            while !tree.contains("text=\"Start\""), ContinuousClock.now < uiDeadline {
+                do {
+                    tree = try await operations.shell(
+                        "rm -f /data/local/tmp/andarium-setup.xml; uiautomator dump /data/local/tmp/andarium-setup.xml; cat /data/local/tmp/andarium-setup.xml; rm -f /data/local/tmp/andarium-setup.xml",
+                        limit: .seconds(30)).text
+                } catch { lastError = String(describing: error) }
+                if !tree.contains("text=\"Start\"") { try await Task.sleep(for: .seconds(1)) }
+            }
+            print("ANDROID_OOBE_UI: \(tree)")
+            #expect(tree.contains("text=\"Start\""), "Last UI query error: \(lastError)")
+            #expect(tree.contains("package=\"org.lineageos.setupwizard\""))
+            try await captureGuestFrame(named: "setup-welcome.png")
+        } catch {
+            Issue.record("Setup welcome screen could not be captured: \(error)")
+        }
+
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let model = try #require((scene.delegate as? AndariumSceneDelegate)?.model)
+        // adbd can close the channel before replying to a successful shutdown.
+        _ = try? await operations.shell("reboot -p", limit: .seconds(10))
+        let deadline = ContinuousClock.now + .seconds(60)
+        while model.phase != .home, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        #expect(model.phase == .home && model.runEnd.poweredOff, "\(model.runReport)")
+    }
+
+    @Test(.timeLimit(.minutes(20)))
+    func androidAdvertisesMultitouchToApplications() async throws {
+        guard Self.enabled else { return }
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        let result = try await operations.shell("pm list features")
+        #expect(result.exitCode == 0)
+        let features = Set(result.text.split(separator: "\n").map(String.init))
+        for feature in [
+            "android.hardware.touchscreen.multitouch",
+            "android.hardware.touchscreen.multitouch.distinct",
+            "android.hardware.touchscreen.multitouch.jazzhand",
+        ] {
+            #expect(features.contains("feature:\(feature)"))
+        }
+    }
+
+    /// A standalone storage gate: the Android framework test APK is copied
+    /// to tmp first. This opt-in run installs it, checks the public APIs,
+    /// removes it and powers Android off so an update can finish cleanly.
+    @Test(.timeLimit(.minutes(20)))
+    func androidReportsExactStorageSizes() async throws {
+        guard Self.enabled,
+            ProcessInfo.processInfo.environment["ANDARIUM_STORAGE_TESTS"] == "1"
+        else { return }
+        let apk = FileManager.default.temporaryDirectory.appendingPathComponent("AndariumStorageTests.apk")
+        defer { try? FileManager.default.removeItem(at: apk) }
+        let bytes = try #require(try apk.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        do {
+            try await operations.installApk(at: apk, sizeBytes: bytes) { _ in }
+            let result = try await operations.shell(
+                "am instrument -w -r -e class com.android.frameworks.andariumstorage.StorageAccountingTest#exactFilesystemBytes com.android.frameworks.andariumstorage.tests/androidx.test.runner.AndroidJUnitRunner",
+                limit: .seconds(180))
+            print("ANDROID_STORAGE: \(result.text)")
+            #expect(result.exitCode == 0)
+            #expect(result.text.contains("OK (1 test)"), "\(result.text)")
+            #expect(result.text.contains("INSTRUMENTATION_CODE: -1"), "\(result.text)")
+        } catch {
+            _ = try? await operations.shell("pm uninstall com.android.frameworks.andariumstorage.tests")
+            throw error
+        }
+        let removed = try await operations.shell("pm uninstall com.android.frameworks.andariumstorage.tests")
+        #expect(removed.text.contains("Success"), "\(removed.text)")
+        try await powerOffAndroid(operations)
+    }
+
+    /// Captures the real Settings UI, including categories below the fold.
+    /// Images and accessibility hierarchies stay in tmp/StorageSettings for
+    /// the runner to collect after this standalone opt-in test powers off.
+    @Test(.timeLimit(.minutes(20)))
+    func storageSettingsShowNonnegativeUsage() async throws {
+        guard Self.enabled,
+            ProcessInfo.processInfo.environment["ANDARIUM_STORAGE_TESTS"] == "1"
+        else { return }
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        _ = try await operations.shell("input keyevent KEYCODE_WAKEUP; wm dismiss-keyguard")
+        let launchCommand = "am start -W -n 'com.android.settings/.Settings$StorageDashboardActivity'"
+        let launched = try await operations.shell(launchCommand)
+        print("ANDROID_STORAGE_SETTINGS launch: \(launched.text)")
+        #expect(launched.exitCode == 0, "\(launched.text)")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("StorageSettings")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let dumpCommand = "uiautomator dump --compressed /data/local/tmp/andarium-storage-settings.xml >/dev/null && cat /data/local/tmp/andarium-storage-settings.xml"
+        let deadline = ContinuousClock.now + .seconds(120)
+        var hierarchy = ""
+        repeat {
+            try await Task.sleep(for: .seconds(3))
+            let dump = try await operations.shell(dumpCommand)
+            hierarchy = dump.text
+            if hierarchy.contains("GB total") && !hierarchy.contains("Calculating") { break }
+        } while ContinuousClock.now < deadline
+        #expect(hierarchy.contains("GB total"), "\(hierarchy)")
+
+        let size = try await operations.shell("wm size")
+        let sizePattern = try NSRegularExpression(pattern: #"(\d+)x(\d+)"#)
+        let sizeMatch = try #require(sizePattern.firstMatch(
+            in: size.text, range: NSRange(size.text.startIndex..., in: size.text)))
+        let width = try #require(Int((size.text as NSString).substring(with: sizeMatch.range(at: 1))))
+        let height = try #require(Int((size.text as NSString).substring(with: sizeMatch.range(at: 2))))
+        let negative = try NSRegularExpression(pattern: #"text="[−-][0-9]"#)
+        let labels = try NSRegularExpression(pattern: #"text="([^"]+)"#)
+        for page in 0..<3 {
+            if page > 0 {
+                _ = try await operations.shell(
+                    "input swipe \(width / 2) \(height * 4 / 5) \(width / 2) \(height / 4) 500")
+                try await Task.sleep(for: .seconds(2))
+                hierarchy = try await operations.shell(dumpCommand).text
+            }
+            try Data(hierarchy.utf8).write(to: directory.appendingPathComponent("storage-\(page).xml"))
+            let range = NSRange(hierarchy.startIndex..., in: hierarchy)
+            let texts = labels.matches(in: hierarchy, range: range).map {
+                (hierarchy as NSString).substring(with: $0.range(at: 1))
+            }
+            print("ANDROID_STORAGE_SETTINGS page=\(page): \(texts.joined(separator: " | "))")
+            #expect(negative.firstMatch(in: hierarchy, range: range) == nil, "\(texts)")
+            let screenshot = try await operations.shell("screencap -p")
+            #expect(screenshot.exitCode == 0)
+            #expect(screenshot.stdout.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+            try screenshot.stdout.write(to: directory.appendingPathComponent("storage-\(page).png"))
+        }
+        _ = try await operations.shell("rm /data/local/tmp/andarium-storage-settings.xml")
+        try await powerOffAndroid(operations)
+    }
+
+    private func powerOffAndroid(_ operations: AdbGuestOperations) async throws {
+        let files = InstanceFiles(directory: AppEntry.guestDirectory())
+        let before = try files.readState()?.lastCompleted?.at
+        _ = try? await operations.shell("reboot -p", limit: .seconds(30))
+        let deadline = ContinuousClock.now + .seconds(90)
+        while ContinuousClock.now < deadline {
+            if try files.readState()?.lastCompleted?.at != before { return }
+            try await Task.sleep(for: .seconds(1))
+        }
+        Issue.record("Android did not finish its clean shutdown")
+    }
+
+    @Test(.timeLimit(.minutes(20)))
+    func twoRuntimeContactsReachAndroidInputReader() async throws {
+        guard Self.enabled else { return }
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        _ = try await operations.shell("input keyevent KEYCODE_WAKEUP")
+        defer {
+            kernarium_runtime_loader_send_touch(0, 6000, 16000, 0)
+            kernarium_runtime_loader_send_touch(1, 26000, 16000, 0)
+        }
+
+        func awaitPointers(_ count: Int, positions: [String]) async throws {
+            let deadline = ContinuousClock.now + .seconds(15)
+            var state = ""
+            while ContinuousClock.now < deadline {
+                let dump = try await operations.shell("dumpsys input", limit: .seconds(15)).text
+                if let name = dump.range(of: "Kernarium Touchscreen", options: .backwards) {
+                    state = String(dump[name.upperBound...])
+                        .components(separatedBy: "\n  Device ")[0]
+                    if state.contains("Last Cooked Touch: pointerCount=\(count)") &&
+                        positions.allSatisfy({ state.contains($0) }) {
+                        return
+                    }
+                }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            Issue.record("Android did not read \(count) contacts: \(state)")
+            throw CancellationError()
+        }
+
+        kernarium_runtime_loader_send_touch(0, 10000, 16000, 1)
+        kernarium_runtime_loader_send_touch(1, 22000, 16000, 1)
+        try await awaitPointers(2, positions: ["x=10000, y=16000", "x=22000, y=16000"])
+        kernarium_runtime_loader_send_touch(0, 6000, 16000, 1)
+        kernarium_runtime_loader_send_touch(1, 26000, 16000, 1)
+        try await awaitPointers(2, positions: ["x=6000, y=16000", "x=26000, y=16000"])
+        kernarium_runtime_loader_send_touch(0, 6000, 16000, 0)
+        try await awaitPointers(1, positions: ["x=26000, y=16000"])
+        kernarium_runtime_loader_send_touch(1, 26000, 16000, 0)
+        try await awaitPointers(0, positions: [])
     }
 
     @Test(.timeLimit(.minutes(30))) func aBugReportIsAZipOfMoreThanAMegabyte() async throws {
