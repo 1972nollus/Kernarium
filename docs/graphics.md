@@ -29,7 +29,9 @@ screen's shared shaders outlive it, so closing a guest application returns the
 Metal pipelines and generated MSL it caused instead of keeping them for the
 life of the process. A set of shaders whose pipeline libraries no program holds
 and no lookup can reach has its libraries freed at once, not when the last
-shader of the set dies.
+shader of the set dies. A set's default library is made once: a context that
+links a set another context already linked reuses the library in the screen's
+cache instead of making a second, which would replace it and outlive it.
 
 macOS and the iOS device both build that stack from the same sources; the
 prefixes differ only in their platform contract. The iOS Simulator cannot run
