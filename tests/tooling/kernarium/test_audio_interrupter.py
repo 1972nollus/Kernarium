@@ -4,9 +4,10 @@
 
 The interrupter is test support that plays digital silence on a non-mixable
 session so a run can interrupt Kernarium. It is built and driven by
-Kernarium/scripts/audio-interrupter.py, which derives the signing team and the
-bundle identifier from the Kernarium project and hands the settings to the
-application through DEVICECTL_CHILD_ environment variables. These tests keep
+Kernarium/scripts/audio-interrupter.py, which takes the signing team from the
+environment or the local signing xcconfig, derives the bundle identifier from
+the Kernarium project and hands the settings to the application through
+DEVICECTL_CHILD_ environment variables. These tests keep
 the three from drifting apart without a device: the script's settings are the
 ones the Swift source reads, the project signs nothing by itself, the audio
 background mode is declared, and the sources compile for the iOS SDK.
@@ -18,18 +19,22 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import importlib.util
+import os
 from pathlib import Path
 import plistlib
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "Kernarium/scripts/audio-interrupter.py"
 PROJECT = ROOT / "Kernarium/AudioInterrupter"
 SOURCES = sorted((PROJECT / "AudioInterrupter").glob("*.swift"))
+TEAM = "ABCDE12345"
 SPEC = importlib.util.spec_from_file_location("audio_interrupter", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 interrupter = importlib.util.module_from_spec(SPEC)
@@ -45,10 +50,27 @@ def swift_text() -> str:
 
 
 class ScriptTests(unittest.TestCase):
-    def test_settings_come_from_the_kernarium_project(self) -> None:
-        team, identifier = interrupter.kernarium_settings()
-        self.assertRegex(team, r"^[A-Z0-9]{10}$")
-        self.assertEqual(identifier, "com.imxieyi.Kernarium")
+    def test_identifier_comes_from_the_kernarium_project(self) -> None:
+        self.assertEqual(interrupter.kernarium_identifier(), "com.imxieyi.Kernarium")
+
+    def test_team_comes_from_the_environment_or_the_local_xcconfig(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            local = Path(directory) / "Signing.local.xcconfig"
+            local.write_text("// the signer\nDEVELOPMENT_TEAM = " + TEAM + " // comment\n")
+            self.assertEqual(interrupter.signing_team({}, local), TEAM)
+            self.assertEqual(
+                interrupter.signing_team({interrupter.TEAM_VARIABLE: "ZYXWV98765"}, local), "ZYXWV98765")
+
+    def test_a_missing_team_says_where_to_set_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            local = Path(directory) / "Signing.local.xcconfig"
+            for content in (None, "DEVELOPMENT_TEAM =\n", "DEVELOPMENT_TEAM = not-a-team\n"):
+                if content is not None:
+                    local.write_text(content)
+                with self.assertRaises(SystemExit) as raised:
+                    interrupter.signing_team({}, local)
+                self.assertIn(interrupter.TEAM_VARIABLE, str(raised.exception))
+                self.assertIn("Signing.local.xcconfig.example", str(raised.exception))
 
     def test_launch_is_foreground_unless_asked(self) -> None:
         command, _ = interrupter.launch_command(launch_arguments())
@@ -74,18 +96,21 @@ class ScriptTests(unittest.TestCase):
 
     def test_build_passes_team_identifier_and_version(self) -> None:
         arguments = interrupter.parser().parse_args(["build", "--build-version", "7"])
-        command = interrupter.build_command(arguments)
-        self.assertIn("DEVELOPMENT_TEAM=" + interrupter.kernarium_settings()[0], command)
+        with mock.patch.dict(os.environ, {interrupter.TEAM_VARIABLE: TEAM}):
+            command = interrupter.build_command(arguments)
+        self.assertIn("DEVELOPMENT_TEAM=" + TEAM, command)
         self.assertIn("KERNARIUM_BUNDLE_IDENTIFIER=com.imxieyi.Kernarium", command)
         self.assertIn("CURRENT_PROJECT_VERSION=7", command)
         self.assertEqual(command[command.index("-scheme") + 1], "AudioInterrupter")
         self.assertIn("-allowProvisioningUpdates", command)
 
     def test_dry_run_prints_every_command_and_runs_none(self) -> None:
+        environment = dict(os.environ, **{interrupter.TEAM_VARIABLE: TEAM})
         for arguments in (["build"], ["install"], ["launch", "--console"], ["terminate", "--pid", "1"]):
             done = subprocess.run(
                 [sys.executable, "-B", "-I", str(SCRIPT), "--device", "UDID", "--dry-run", *arguments],
-                capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30, check=False)
+                capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30, check=False,
+                env=environment)
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertTrue(done.stdout.startswith("+ "), done.stdout)
 

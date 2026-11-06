@@ -107,7 +107,7 @@ SIGNING_FILE = re.compile(r"\.(?:pbxproj|xcconfig)$")
 JSON_PROJECT_FILE = re.compile(r"\.xcproj$")
 PLIST_FILE = re.compile(r"\.(?:plist|plist\.in|entitlements)$")
 CMAKE_FILE = re.compile(r"(?:^|/)CMakeLists\.txt$|\.cmake$")
-DEVELOPMENT_TEAM = re.compile(r"\bDEVELOPMENT_TEAM\s*=\s*(?P<value>[^;\n]*)")
+DEVELOPMENT_TEAM = re.compile(r"\bDEVELOPMENT_TEAM[ \t]*=[ \t]*(?P<value>[^;\n]*)")
 BUNDLE_SETTING = re.compile(
     r"\bPRODUCT_BUNDLE_IDENTIFIER\s*=\s*(?P<value>\"[^\"\n]*\"|[^;\n]*)"
 )

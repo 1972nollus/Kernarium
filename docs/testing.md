@@ -54,8 +54,9 @@ Python tooling tests keep the host `$TMPDIR` for `sun_path`.
 `repository-environment-portability` is the one tooling test that scans
 tracked source, and it looks for forbidden values rather than expected ones:
 host paths and account names, private addresses, ssh endpoints and Apple
-signing identifiers outside the project's own (read from `project.pbxproj` and
-JSON `project.xcproj` projects, xcconfig files, plists and CMake). It also
+signing identifiers (a development team is never tracked; a bundle identifier
+stays inside the project's own namespace), read from `project.pbxproj` and
+JSON `project.xcproj` projects, xcconfig files, plists and CMake. It also
 scans new unignored files, so a leak fails before it is committed. A site adds
 its private tokens to a local denylist, found at
 `${XDG_CONFIG_HOME:-$HOME/.config}/linux-um-darwin/portability-denylist` or
@@ -734,6 +735,11 @@ runtime links them, as `HostBattery.xcframework` and
 `HostVideoEncoder.xcframework`, with a slice for each packaged SDK; only
 `KernariumTests` links them, so the test process reaches each without loading a
 second runtime.
+
+Both projects sign with the team in the ignored
+`GuestHost/Config/Signing.local.xcconfig` ([setup](../GuestHost/README.md#signing)).
+Without it a Simulator build works unsigned and a device build stops asking for
+a development team.
 
 The Simulator renders with llvmpipe, which runs one rasterizer thread per host
 core; `LP_NUM_THREADS` caps them for a launch (`SIMCTL_CHILD_LP_NUM_THREADS=2`

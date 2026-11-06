@@ -128,6 +128,22 @@ def make_fixture(root: Path) -> None:
         )
         + "\n",
     )
+    # A base xcconfig with an empty team passes, whatever follows it; a
+    # literal team fails.
+    write(
+        root,
+        "Config/Signing.xcconfig",
+        "\n".join(
+            [
+                "// base",  # 1
+                "DEVELOPMENT_TEAM =",  # 2 pass
+                "",  # 3
+                '#include? "Signing.local.xcconfig"',  # 4
+                "DEVELOPMENT_TEAM = ABCDE12345",  # 5 R3
+            ]
+        )
+        + "\n",
+    )
     # The canonical form of `xcprojformatter`: pretty printed, quoted keys
     # with their conditions inside the quotes, string-array values.
     write(
@@ -312,6 +328,7 @@ EXPECTED = {
     ("App.xcodeproj/project.pbxproj", 1, "R3"),
     ("App.xcodeproj/project.pbxproj", 4, "R3"),
     ("App.xcodeproj/project.pbxproj", 9, "R3"),
+    ("Config/Signing.xcconfig", 5, "R3"),
     ("App.xcodeproj/project.xcproj", 5, "R3"),
     ("App.xcodeproj/project.xcproj", 6, "R3"),
     ("App.xcodeproj/project.xcproj", 8, "R3"),

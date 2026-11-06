@@ -32,7 +32,11 @@ and the Metal and Mesa shader caches.
 The project file is the JSON format Xcode 27 reads and Xcode 27.2 writes
 (`project.xcproj`), kept in the canonical form
 `xcrun xcprojformatter --update Andarium/Andarium.xcodeproj` produces: format
-after every hand edit. Kernarium keeps its `.pbxproj`.
+after every hand edit. Kernarium keeps its `.pbxproj`. Every configuration
+takes its base settings from `../GuestHost/Config/Signing.xcconfig`; the
+signer's team is in the ignored `Signing.local.xcconfig` beside it
+([`GuestHost/README.md`](../GuestHost/README.md#signing)), so the project names
+no team.
 
 ## Targets
 
