@@ -176,7 +176,8 @@ leaves out everything that exists for automation or only pretends:
 - Its last build phase runs `scripts/check-app-store-bundle.py` on the
   application, which fails the build on a missing key in Info.plist,
   an environment knob or a trace of the build host (the
-  linker's debug map, a home-directory path) in the application or a framework,
+  linker's debug map, a path under a home directory, on a mounted volume or in
+  a temporary directory) in the application or a framework,
   a console line of the harness in the application's code, or a privacy
   manifest that does not cover a binary
   ([`scripts/check-privacy-manifests.py`](../scripts/check-privacy-manifests.py)).
