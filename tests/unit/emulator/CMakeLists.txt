@@ -47,6 +47,13 @@ uml_add_unit_test(
     NAME emulator-lifecycle-unheld-guest
     COMMAND uml_emulator_lifecycle_tests unheld-guest
     LABELS console)
+# A guest that is inside the disk-lock registry nearly all the time is held at
+# a moment when none of its threads owns the registry's mutex, or the release
+# of the locks waits on a stopped owner for good.
+uml_add_unit_test(
+    NAME emulator-lifecycle-registry-owner
+    COMMAND uml_emulator_lifecycle_tests registry-owner
+    LABELS console)
 
 # How a run says its guest ended: the kernel's report, the host's stop, and
 # the runs that ran no guest.

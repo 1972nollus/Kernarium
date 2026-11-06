@@ -81,9 +81,18 @@ private:
 	std::size_t size_{};
 };
 
-[[nodiscard]] bool freeze_changes(void *image) noexcept
+/* What the fence asks with every thread stopped: the caller's condition
+ * first, which changes nothing, and then the freeze of the commitment. */
+struct Settling final {
+	GuestRamImage *image;
+	HoldCondition condition;
+};
+
+[[nodiscard]] bool settled(void *context) noexcept
 {
-	return static_cast<GuestRamImage *>(image)->freeze_changes();
+	const auto *const settling = static_cast<const Settling *>(context);
+	return (settling->condition == nullptr || settling->condition()) &&
+		settling->image->freeze_changes();
 }
 
 class RealSteps final : public HibernationSteps {
@@ -125,11 +134,12 @@ public:
 		return true;
 	}
 
-	bool hold(HibernationReport &report) noexcept override
+	bool hold(HibernationReport &report, HoldCondition condition) noexcept override
 	{
 		const std::uint64_t started = now_ms();
-		const bool held = fence_->hold(guest_hold_budget_ms, &freeze_changes,
-			image_.get());
+		Settling settling{image_.get(), condition};
+		const bool held = fence_->hold(guest_hold_budget_ms, &settled,
+			&settling);
 		const ThreadFence::Report &fence = fence_->report();
 		report.threads_held = fence.held;
 		report.threads_named = fence.named;
@@ -214,7 +224,7 @@ void GuestHibernation::request_abort() noexcept
 	steps_->set_abort(true);
 }
 
-HibernationHold GuestHibernation::hold() noexcept
+HibernationHold GuestHibernation::hold(HoldCondition condition) noexcept
 {
 	if (hibernated_)
 		return HibernationHold::held;
@@ -223,7 +233,7 @@ HibernationHold GuestHibernation::hold() noexcept
 	if (!steps_->prepare())
 		return HibernationHold::unavailable;
 	held_at_ms_ = now_ms();
-	if (!steps_->hold(report_)) {
+	if (!steps_->hold(report_, condition)) {
 		Line{}.text("uml: guest RAM stays in the process: ")
 			.text("could not hold the threads (reason ")
 			.number(static_cast<std::uint64_t>(report_.hold_failure))
@@ -269,9 +279,9 @@ void GuestHibernation::write() noexcept
 	line.emit();
 }
 
-bool GuestHibernation::hibernate() noexcept
+bool GuestHibernation::hibernate(HoldCondition condition) noexcept
 {
-	if (hold() != HibernationHold::held)
+	if (hold(condition) != HibernationHold::held)
 		return false;
 	write();
 	return true;

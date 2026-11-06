@@ -44,6 +44,19 @@ struct GuestFileSyncResult final {
 int set_guest_file_lock(int descriptor, int command,
 	const struct flock &lock) noexcept;
 
+/*
+ * True when no thread is inside the registry's critical section, which every
+ * flush, lock request, release and restore passes through. The mutex is an
+ * ordinary one, so a thread stopped inside it would keep it for as long as it
+ * is stopped, and a release or a restore on another thread would wait for it
+ * forever. A caller that stops the guest's threads and then releases or
+ * restores locks therefore asks this with every one of them stopped (as the
+ * thread fence's `settled` condition) and accepts the stop only on true. The
+ * answer then holds until they run again: a stopped thread cannot take the
+ * mutex, and none of them owns it.
+ */
+[[nodiscard]] bool guest_file_registry_idle() noexcept;
+
 /* A suspended iOS process must hold no file locks. Release the disk locks
  * after guest writeback; remember their file metadata for resume. Retiring
  * a run drops the lock records instead. Returns the number of locks that

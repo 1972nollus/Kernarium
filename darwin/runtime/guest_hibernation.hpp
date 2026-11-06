@@ -45,6 +45,14 @@ namespace uml::runtime {
 /* The most a hold may spend finding a moment to stop every thread. */
 inline constexpr unsigned guest_hold_budget_ms = 2000;
 
+/* A condition the caller needs of the moment the threads are held, besides
+ * the hibernation's own: asked with every thread stopped, it accepts the
+ * moment on true. On false everything runs again and the hold starts over. It
+ * must neither allocate nor wait. A caller that is about to take a lock the
+ * stopped threads could own, such as the guest file registry's, passes the
+ * test that no thread owns it. */
+using HoldCondition = bool (*)() noexcept;
+
 /* What one hibernation and its restore did, for the log and for tests. */
 struct HibernationReport final {
 	std::size_t threads_held{};
@@ -78,9 +86,11 @@ public:
 	/* Makes ready what can only be made before a thread is held, and says
 	 * whether there is anything to hibernate. */
 	[[nodiscard]] virtual bool prepare() noexcept = 0;
-	/* Holds every thread that can touch guest RAM and freezes the guest's
-	 * memory commitment. False leaves everything running. */
-	[[nodiscard]] virtual bool hold(HibernationReport &report) noexcept = 0;
+	/* Holds every thread that can touch guest RAM at a moment `condition`
+	 * (if given) accepts, and freezes the guest's memory commitment. False
+	 * leaves everything running. */
+	[[nodiscard]] virtual bool hold(HibernationReport &report,
+		HoldCondition condition) noexcept = 0;
 	/* Writes the image and evicts. False when part of the RAM stayed in the
 	 * process; whatever left is still brought back by `restore`. */
 	[[nodiscard]] virtual bool write(HibernationReport &report) noexcept = 0;
@@ -125,15 +135,16 @@ public:
 	GuestHibernation &operator=(const GuestHibernation &) = delete;
 
 	/* After the guest is suspended and its host files are flushed: holds the
-	 * threads, when there is RAM to hibernate. Already held is held. */
-	[[nodiscard]] HibernationHold hold() noexcept;
+	 * threads, when there is RAM to hibernate, at a moment `condition` (if
+	 * given) accepts. Already held is held. */
+	[[nodiscard]] HibernationHold hold(HoldCondition condition = nullptr) noexcept;
 	/* With the threads held: writes the RAM out. Nothing before `hold` has
 	 * held the threads, and nothing after a write that already happened. */
 	void write() noexcept;
 	/* `hold` and then `write`. True when the hibernation took place, in whole
 	 * or in part; false when nothing was changed and the guest's RAM is as it
 	 * was. */
-	[[nodiscard]] bool hibernate() noexcept;
+	[[nodiscard]] bool hibernate(HoldCondition condition = nullptr) noexcept;
 	/* Before the guest is woken. True when the RAM is whole, or was never
 	 * hibernated, and the threads run again. False when it could not be
 	 * restored: the failure handler has been called, and nothing runs. */

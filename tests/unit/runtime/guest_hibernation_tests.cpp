@@ -54,9 +54,10 @@ public:
 		return script_.prepare;
 	}
 
-	bool hold(HibernationReport &) noexcept override
+	bool hold(HibernationReport &, HoldCondition condition) noexcept override
 	{
 		events.push_back(Event::hold);
+		heldWith = condition;
 		require(!held_, "held twice");
 		held_ = script_.hold;
 		return script_.hold;
@@ -90,11 +91,19 @@ public:
 		events.push_back(abort ? Event::abort_on : Event::abort_off);
 	}
 
+	/* The condition the last hold was given. */
+	static inline HoldCondition heldWith{};
+
 private:
 	Script script_;
 	bool held_{false};
 	bool restored_{false};
 };
+
+[[nodiscard]] bool accept_always() noexcept
+{
+	return true;
+}
 
 void the_failure_handler() noexcept
 {
@@ -165,6 +174,32 @@ void the_hold_comes_before_the_write_and_says_what_it_found()
 	unheld.write();
 	require_events({Event::abort_off, Event::prepare, Event::hold},
 		"and a write after a refusal writes nothing");
+}
+
+/* What the caller needs of the moment the threads are held reaches the steps,
+ * for the hold alone and for the two steps together. */
+void the_callers_condition_reaches_the_steps()
+{
+	events.clear();
+	GuestHibernation plain = make({});
+	require(plain.hold() == HibernationHold::held, "held");
+	require(RecordingSteps::heldWith == nullptr,
+		"no condition is asked of a caller that gave none");
+	require(plain.restore(), "restored");
+
+	GuestHibernation asked = make({});
+	require(asked.hold(&accept_always) == HibernationHold::held, "held");
+	require(RecordingSteps::heldWith == &accept_always,
+		"the hold passes the caller's condition to the steps");
+	require(asked.restore(), "restored");
+
+	GuestHibernation both = make({});
+	require(both.hibernate(&accept_always), "hibernated");
+	require(RecordingSteps::heldWith == &accept_always,
+		"so does the hibernation");
+	require(both.restore(), "restored");
+	events.clear();
+	RecordingSteps::heldWith = nullptr;
 }
 
 void nothing_happens_when_there_is_nothing_to_hibernate()
@@ -304,6 +339,15 @@ void wait_for_ticks(const Ram &ram)
 	return ram.ticks.load() == ticks && ram.changes.load() == changes;
 }
 
+/* Refuses the first two moments it is asked about, as a caller does whose
+ * lock a stopped thread owns. */
+std::atomic<unsigned> conditionAsked{0};
+
+[[nodiscard]] bool refuse_twice() noexcept
+{
+	return conditionAsked.fetch_add(1) >= 2;
+}
+
 void a_real_hibernation_holds_the_kernel_threads_and_brings_the_ram_back()
 {
 	Ram ram;
@@ -334,8 +378,13 @@ void a_real_hibernation_holds_the_kernel_threads_and_brings_the_ram_back()
 	wait_for_ticks(ram);
 
 	for (int cycle = 0; cycle < 6; ++cycle) {
-		require(hibernation->hibernate(), "the hibernation must take place");
+		/* The first hold is refused twice and settles on the third try. */
+		require(hibernation->hibernate(cycle == 0 ? &refuse_twice : nullptr),
+			"the hibernation must take place");
 		const HibernationReport &report = hibernation->report();
+		if (cycle == 0)
+			require(conditionAsked.load() == 3 && report.hold_unsettled == 2,
+				"the caller's condition decides the moment");
 		require(report.threads_held == 1 && report.threads_registered == 1,
 			"the kernel thread is the one thread held");
 		require(report.written.evicted_bytes != 0, "RAM left the process");
@@ -377,6 +426,8 @@ int main()
 			a_hibernation_holds_before_it_writes_and_restores_before_it_releases},
 		{"the hold comes before the write and says what it found",
 			the_hold_comes_before_the_write_and_says_what_it_found},
+		{"the caller's condition reaches the steps",
+			the_callers_condition_reaches_the_steps},
 		{"nothing happens when there is nothing to hibernate",
 			nothing_happens_when_there_is_nothing_to_hibernate},
 		{"threads that cannot be held leave the RAM alone",

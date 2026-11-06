@@ -12,10 +12,12 @@
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
+#include <atomic>
 #include <poll.h>
 #include <string>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 
 namespace {
@@ -377,6 +379,47 @@ void aBlockingLockRequestIsRefusedInsteadOfWaiting()
 	(void)uml::platform::forget_guest_files();
 }
 
+/* The registry is idle unless a thread is inside it: a thread that asks for
+ * its disk's lock without pause is inside most of the time, and the answer
+ * follows it in both directions. */
+void theRegistryIsIdleUnlessAThreadIsInsideIt()
+{
+	(void)uml::platform::forget_guest_files();
+	require(uml::platform::guest_file_registry_idle(),
+		"nobody is inside an unused registry");
+	const int disk = openScratch("busy-disk", O_RDWR);
+	lockDisk(disk);
+	require(uml::platform::guest_file_registry_idle(),
+		"nobody is inside the registry between requests");
+	std::atomic<bool> stop {false};
+	std::thread guest {[&] {
+		struct flock lock {};
+		lock.l_type = F_WRLCK;
+		lock.l_whence = SEEK_SET;
+		while (!stop.load(std::memory_order_acquire))
+			(void)uml::platform::set_guest_file_lock(disk, F_SETLK, lock);
+	}};
+	bool sawInside = false;
+	bool sawOutside = false;
+	const auto deadline =
+		std::chrono::steady_clock::now() + std::chrono::seconds {10};
+	while (!(sawInside && sawOutside) &&
+	       std::chrono::steady_clock::now() < deadline) {
+		if (uml::platform::guest_file_registry_idle())
+			sawOutside = true;
+		else
+			sawInside = true;
+	}
+	stop.store(true, std::memory_order_release);
+	guest.join();
+	require(sawInside, "a thread inside the registry must be seen");
+	require(sawOutside, "a thread outside the registry must be seen");
+	require(uml::platform::guest_file_registry_idle(),
+		"nobody is inside the registry once the thread is gone");
+	close(disk);
+	(void)uml::platform::forget_guest_files();
+}
+
 } // namespace
 
 int main()
@@ -395,6 +438,7 @@ int main()
 	aReusedDiskDescriptorMustNotBeRelocked();
 	aContendedDiskRefusesResume();
 	aBlockingLockRequestIsRefusedInsteadOfWaiting();
+	theRegistryIsIdleUnlessAThreadIsInsideIt();
 	std::puts("guest file sync tests passed");
 	return 0;
 }

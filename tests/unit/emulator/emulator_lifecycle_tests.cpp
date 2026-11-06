@@ -17,6 +17,7 @@
 #include "thread_nap.hpp"
 #include "uml_darwin_host.h"
 #include "wait_until.hpp"
+#include "watchdog.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -288,7 +289,8 @@ struct Steps final : uml::runtime::HibernationSteps {
 		hibernationLog.add("prepare");
 		return true;
 	}
-	bool hold(uml::runtime::HibernationReport &) noexcept override
+	bool hold(uml::runtime::HibernationReport &,
+		uml::runtime::HoldCondition) noexcept override
 	{
 		hibernationLog.add("hold");
 		if (atHold)
@@ -726,6 +728,92 @@ void aGuestThatCannotBeHeldKeepsItsLocks()
 	require(guest.runsAgain(), "the guest runs once it is woken");
 }
 
+/* A thread of the kernel that asks the host bridge for its disk's lock without
+ * pause, as os_lock_file does on every open. Each request spends most of its
+ * time inside the guest file registry's critical section, so a thread stopped
+ * at a random moment is very likely to stop inside it, owning the registry's
+ * mutex. */
+class LockingGuest final {
+public:
+	explicit LockingGuest(int disk) : disk_{disk}
+	{
+		require(::uml::runtime::kernel_pthread_create(&thread_, nullptr,
+			&lockUntilStopped, this) == 0, "create the guest's thread");
+		require(runsAgain(), "the guest's thread must run");
+	}
+
+	LockingGuest(const LockingGuest &) = delete;
+	LockingGuest &operator=(const LockingGuest &) = delete;
+
+	~LockingGuest()
+	{
+		stop_.store(true);
+		require(::pthread_join(thread_, nullptr) == 0);
+	}
+
+	/* The guest gets its disk's lock again: a request is granted only while
+	 * the host has given the locks back. */
+	[[nodiscard]] bool runsAgain() const
+	{
+		const auto before = granted_.load();
+		return uml::testing::waitUntil(
+			[&] { return granted_.load() > before + 2U; },
+			std::chrono::seconds {5}, std::chrono::milliseconds {2});
+	}
+
+private:
+	static void *lockUntilStopped(void *argument)
+	{
+		auto *const guest = static_cast<LockingGuest *>(argument);
+		while (!guest->stop_.load(std::memory_order_acquire)) {
+			struct flock lock {};
+			lock.l_type = F_WRLCK;
+			lock.l_whence = SEEK_SET;
+			if (darwin_uml_fcntl(guest->disk_, F_SETLK,
+				    reinterpret_cast<long>(&lock)) == 0)
+				guest->granted_.fetch_add(1, std::memory_order_relaxed);
+		}
+		return nullptr;
+	}
+
+	int disk_;
+	pthread_t thread_ {};
+	std::atomic<std::uint64_t> granted_ {0};
+	std::atomic<bool> stop_ {false};
+};
+
+/* The hold stops the guest's threads wherever they are, and the host then
+ * takes the registry's mutex to release the disk locks and, at the resume, to
+ * restore them. A thread stopped inside the registry would own that mutex for
+ * as long as it is stopped, and the release would wait for it forever with
+ * the process asleep. The hold is therefore accepted only at a moment when no
+ * stopped thread owns the registry. Every suspension below stops a guest that
+ * is inside the registry nearly all the time; the watchdog turns a wedged one
+ * into a failure. */
+void aGuestInsideTheRegistryDoesNotWedgeTheSuspension()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	GuestDisk disk;
+	LockingGuest guest {disk.descriptor()};
+	const uml::testing::Watchdog wedged {
+		"a suspension with the guest inside the registry",
+		std::chrono::seconds {60}};
+	for (int round = 0; round < 25; ++round) {
+		require(console.requests(2U, [&] {
+			require(uml_emulator_quiesce(emulator.get()) == 0);
+		}) == Requests {"trim once", "suspend"});
+		require(!disk.lockedByAnotherProcess(),
+			"a suspended guest leaves its disk unlocked for the system");
+		require(console.requests(1U, [&] {
+			uml_emulator_resume(emulator.get());
+		}) == Requests {"wake"});
+		require(disk.lockedByAnotherProcess(),
+			"the resume locks the disk again");
+		require(guest.runsAgain(), "the guest runs once it is woken");
+	}
+}
+
 /* With the RAM hibernated the one hold covers both: the locks leave once the
  * threads are held and before the write, which can take long enough for the
  * system to suspend the process. */
@@ -968,6 +1056,10 @@ int main(int argc, char **argv)
 	}
 	if (selected == "unheld-guest") {
 		aGuestThatCannotBeHeldKeepsItsLocks();
+		return EXIT_SUCCESS;
+	}
+	if (selected == "registry-owner") {
+		aGuestInsideTheRegistryDoesNotWedgeTheSuspension();
 		return EXIT_SUCCESS;
 	}
 	if (!selected.empty())

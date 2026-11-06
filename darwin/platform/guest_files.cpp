@@ -178,6 +178,14 @@ int set_guest_file_lock(int descriptor, int command,
 	return 0;
 }
 
+bool guest_file_registry_idle() noexcept
+{
+	if (!registryMutex.try_lock())
+		return false;
+	registryMutex.unlock();
+	return true;
+}
+
 unsigned release_guest_file_locks(bool retiring) noexcept
 {
 	std::lock_guard guard(registryMutex);

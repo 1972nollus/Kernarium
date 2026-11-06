@@ -1483,10 +1483,14 @@ asked for, so a woken guest would otherwise write a disk nobody has locked
 and the resume would find it changed. The hibernation holds the threads where
 it applies; on every other host, and when hibernation is off or has given up,
 a [thread fence](#hibernation) of the handle's own does, and nothing is
-written. A hold that cannot be taken (the same two-second budget, so a
-service thread stuck in the allocator for that long) leaves the locks in
-place, as an unconfirmed suspension does, and the host logs it once per
-suspension. Resume and stop reacquire every lock before restoring guest RAM,
+written. The hold is accepted only at a moment when no stopped thread owns
+the mutex of the platform's guest file registry, which the release and the
+restore of the locks take: a thread stopped inside it would keep it, and the
+host would wait on it with the process asleep. A guest that is inside the
+registry at every attempt is let go and held again. A hold that cannot be
+taken (the same two-second budget, so a service thread stuck in the allocator
+for that long) leaves the locks in place, as an unconfirmed suspension does,
+and the host logs it once per suspension. Resume and stop reacquire every lock before restoring guest RAM,
 releasing a thread or waking the guest, and verify the disk's identity, size,
 modification time and change time against the state before unlocking.
 Contention, a replaced descriptor or changed storage ends the process without
@@ -1580,7 +1584,9 @@ run reach the same code. The order is the contract:
   of another stays unfinished is waiting for a lock a held thread owns (the
   thread library's), so every thread is let go to let it finish and the hold
   starts over. The kernel's commit and release calls are then frozen, and the
-  hold is refused while one is in flight. If every thread is
+  hold is refused while one is in flight. The caller may add a condition of
+  its own for the moment, asked with every thread stopped; the emulator's is
+  that none of them owns the guest file registry. If every thread is
   not held within two seconds, or the registry overflowed, nothing is held,
   nothing is written, and the guest stays wired and resident. No code between
   the hold and the release allocates or writes to a stream.

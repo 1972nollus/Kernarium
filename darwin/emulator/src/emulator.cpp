@@ -93,6 +93,14 @@ void write_line(const char *before, unsigned number,
 	(void)!::write(STDERR_FILENO, line, size);
 }
 
+/* The fence's condition for the plain hold, with every thread stopped: none
+ * of them owns the guest file registry, so the release and the restore of the
+ * disk locks cannot wait on a stopped owner. */
+[[nodiscard]] bool registry_idle(void *) noexcept
+{
+	return ::uml::runtime::guest_file_registry_idle();
+}
+
 [[nodiscard]] int guest_request_result(
 	::uml::device::GuestRequest request) noexcept
 {
@@ -947,7 +955,8 @@ private:
 			publish_hibernation(hibernation_.get());
 		}
 		if (hibernation_ != nullptr) {
-			switch (hibernation_->hold()) {
+			switch (hibernation_->hold(
+				&::uml::runtime::guest_file_registry_idle)) {
 			case ::uml::runtime::HibernationHold::held:
 				guest_hold_ = GuestHold::hibernation;
 				return true;
@@ -964,7 +973,8 @@ private:
 		} catch (...) {
 			return false;
 		}
-		if (!guest_fence_->hold(::uml::runtime::guest_hold_budget_ms)) {
+		if (!guest_fence_->hold(::uml::runtime::guest_hold_budget_ms,
+			    &registry_idle)) {
 			guest_hold_failure_ = guest_fence_->report().failure;
 			return false;
 		}
