@@ -279,6 +279,13 @@ def play_flow(udid: str, shot: Shot, pid: str) -> bool:
     return True
 
 
+def clear_system_alert(udid: str) -> None:
+    """The Simulator keeps its permission alert up, over whatever launches next, until someone answers it. A shot
+    that asks (privacy "reset") restarts SpringBoard afterwards, which takes the alert and the app with it."""
+    simctl("spawn", udid, "launchctl", "kill", "SIGKILL", "user/foreground/com.apple.SpringBoard")
+    time.sleep(15.0)
+
+
 def capture(udid: str, name: str, shot: Shot, appearance: str, out: Path, wait: float) -> dict | None:
     simctl("terminate", udid, BUNDLE)
     if shot.privacy is not None:
@@ -294,6 +301,8 @@ def capture(udid: str, name: str, shot: Shot, appearance: str, out: Path, wait: 
     if shot.flow and not play_flow(udid, shot, launched.stdout.strip().rsplit(" ", 1)[-1]):
         return None
     temporary, settled = settled_screenshot(udid, shot.id, out)
+    if shot.privacy == "reset":
+        clear_system_alert(udid)
     if temporary is None:
         return None
     if not settled:
