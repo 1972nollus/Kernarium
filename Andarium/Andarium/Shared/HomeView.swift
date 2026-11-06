@@ -76,7 +76,7 @@ struct HomeView: View {
             panel(large: false)
             SystemSection()
             guestSections
-            RestorePanel()
+            RecoveryErasePanel()
                 .id("erase")
         }
         .padding(.horizontal, 16)
@@ -85,14 +85,14 @@ struct HomeView: View {
     }
 
     /// iPad in portrait or a tall window: the controls across the top, the
-    /// options and Restore beneath.
+    /// options and Recovery and Erase beneath.
     private var tallLayout: some View {
         VStack(spacing: 28) {
             notices
             panel(large: true)
             SystemSection()
             guestSections
-            RestorePanel()
+            RecoveryErasePanel()
                 .id("erase")
         }
         .frame(maxWidth: 680)
@@ -112,7 +112,7 @@ struct HomeView: View {
             .frame(maxWidth: 520)
             VStack(spacing: 22) {
                 guestSections
-                RestorePanel()
+                RecoveryErasePanel()
                     .id("erase")
             }
             .frame(maxWidth: 400)
@@ -223,7 +223,8 @@ struct HomeView: View {
     }
 }
 
-/// The main action starts Android normally. Recovery lives in Restore.
+/// The main action starts Android normally. Recovery lives in the Recovery
+/// and Erase section.
 struct StartButton: View {
     @Environment(AppModel.self) private var model
 
@@ -405,13 +406,14 @@ struct UnfinishedUpdateCard: View {
     }
 }
 
-/// Recovery and erasing the guest share one Restore section.
-struct RestorePanel: View {
+/// Recovery and erasing the guest share one section. Its title is not
+/// "Restore", the name of the unfinished-update card's button.
+struct RecoveryErasePanel: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Restore")
+            Text("Recovery and Erase")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .padding(.leading, 18)

@@ -61,7 +61,7 @@ public struct Guest: Equatable, Codable, Sendable {
         pendingCapacityGiB = try values.decodeIfPresent(Int.self, forKey: .pendingCapacityGiB)
         microphone = try values.decode(Bool.self, forKey: .microphone)
         includeInBackups = try values.decode(Bool.self, forKey: .includeInBackups)
-        motionSensors = try values.decodeIfPresent(Bool.self, forKey: .motionSensors) ?? false
+        motionSensors = try values.decode(Bool.self, forKey: .motionSensors)
     }
 
     public var usedGiB: Double { Double(usedBytes) / Double(Limits.bytesPerGiB) }

@@ -862,8 +862,8 @@ a window (`TEST_RUNNER_ANDARIUM_ROTATION_VISUAL=1`, selecting
 `RotationOverVsockTests`); pure policy tests do not establish the visible result.
 `andarium-motion-protocol` (unit) decodes independent motion wire fixtures
 and rejects truncated records, unknown sensor types and non-finite values.
-The core package also checks SI conversion, default-off settings migration,
-socket delivery, stop during connection and stale callbacks. Hosted
+The core package also checks SI conversion, the saved choice, socket delivery,
+stop during connection and stale callbacks. Hosted
 `AndroidOperationTests` checks that the motion toggle persists and reaches
 the runtime driver. Physical sensor delivery requires a sensor-capable iOS
 device and a guest image carrying the motion sub-HAL; Simulator and Mac tests
@@ -908,7 +908,8 @@ may remain in the process. `RuntimeDisplayLifetimeTests` also checks that a late
 layout cannot retain a retired display while Home is showing.
 
 The opt-in `RetinaMemoryTests` compares repeated system-app launches at Retina
-and point resolution with 1.5 GiB of guest RAM. Its optional full-resolution
+and point resolution at the guest memory and vCPU count the launch states,
+which every snapshot records. Its optional full-resolution
 WebGL Aquarium workload records actual renderer, frames and FPS alongside
 process, guest and GPU memory. See the [WebGL workload](../tests/integration/android/webgl/README.md)
 for invocation and snapshot collection.

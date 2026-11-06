@@ -183,6 +183,10 @@ final class AppModel {
     /// Seconds the boot screen shows when it is held.
     var frozenElapsed = 9
 
+    /// The launch's automation work (create, erase, start) has run; a scene
+    /// that connects to this model again does not repeat it.
+    var launchApplied = false
+
     /// The runtime and storage behind the screens; nil plays mock data.
     var driver: (any RuntimeDriver)?
     /// A long task the screens wait for.

@@ -51,11 +51,13 @@ final class LiveRuntime: RuntimeDriver {
     /// Counts the time the guest runs, for the limits of adb operations: it
     /// stops while the application holds the guest paused.
     private let clock = GuestRunClock()
-    private let keyStore = AdbKeyStore()
+    private let keyStore: AdbKeyStore
     /// The guest's adb key, made before the start that boots with it.
     private var adbIdentity: AdbKeyStore.Identity?
     private let microphone = SystemMicrophonePermission()
     private let motion = MotionSensors()
+    /// The interface orientation the sensors' axes are mounted to.
+    private var motionMount = MotionMount()
     private lazy var rotation = GuestRotationController(
         apply: { [weak self] policy in
             guard let self else { throw CancellationError() }
@@ -73,7 +75,6 @@ final class LiveRuntime: RuntimeDriver {
                 title: "Display Rotation Unavailable",
                 message: "The guest’s screen could not follow this window. Close and reopen Andarium to try again.")
         })
-    private var lastRotationPolicy: GuestRotationPolicy?
     private var normalRun = false
     private var active = UIApplication.shared.applicationState == .active
     private var observers: [NSObjectProtocol] = []
@@ -88,9 +89,10 @@ final class LiveRuntime: RuntimeDriver {
     private var thermalObserver: NSObjectProtocol?
     private var console: ConsoleSink?
 
-    init(model: AppModel, storage: TwoDiskStorage, marker: PauseMarker) {
+    init(model: AppModel, storage: TwoDiskStorage, marker: PauseMarker, keyStore: AdbKeyStore = AdbKeyStore()) {
         self.model = model
         self.storage = storage
+        self.keyStore = keyStore
         pause = PauseController(effects: LivePauseEffects(), marker: marker, runClock: clock)
         model.microphoneState = Self.state(microphone.access)
         model.motionSensorsAvailable = motion.available
@@ -237,7 +239,7 @@ final class LiveRuntime: RuntimeDriver {
         let dataGiB = storage.dataGiB(for: run.guest)
         reachedBootCompleted = false
         normalRun = run.mode == .normal
-        motion.axes = currentMotionAxes
+        motionMount.begin(interface: interfaceMotionAxes)
         let bootMode: UInt32 = run.mode == .recovery ? 2 : 1
         let memoryMiB = UInt32(run.guest.memoryMiB)
         let processorCount = UInt32(run.guest.cores)
@@ -411,8 +413,11 @@ final class LiveRuntime: RuntimeDriver {
 
     // MARK: Motion sensors
 
-    private var currentMotionAxes: MotionSample.Axes {
-        switch view?.window?.windowScene?.effectiveGeometry.interfaceOrientation {
+    /// The interface orientation of the guest's window; nil while the display
+    /// is not in a scene, which leaves the mount as it is.
+    private var interfaceMotionAxes: MotionSample.Axes? {
+        guard let scene = view?.window?.windowScene else { return nil }
+        return switch scene.effectiveGeometry.interfaceOrientation {
         case .landscapeLeft: .landscapeLeft
         case .landscapeRight: .landscapeRight
         case .portraitUpsideDown: .portraitUpsideDown
@@ -424,16 +429,22 @@ final class LiveRuntime: RuntimeDriver {
         model?.hostDrivesGuestRotation == true ? .host : .guest
     }
 
+    /// The scene's geometry changed, which may include its interface
+    /// orientation. The hosting controller coalesces its triggers into one call
+    /// per turn, and the mount restarts the sensors only when it moves.
+    func sceneGeometryDidChange() {
+        guard normalRun else { return }
+        updateGuestRotation()
+    }
+
     private func updateGuestRotation() {
         let policy = rotationPolicy
-        if lastRotationPolicy != policy {
-            motion.stop()
-            // A new full-screen session mounts the virtual device to the
-            // orientation now locked by UIKit. Keep that frame until the
-            // host owns rotation again; never remap per sensor sample.
-            if policy == .guest { motion.axes = currentMotionAxes }
-            lastRotationPolicy = policy
-        }
+        // A new full-screen session mounts the virtual device to the
+        // orientation now locked by UIKit and keeps that frame until the host
+        // owns rotation; while the host does, the guest is drawn upright in
+        // the window and the mount follows the window's orientation. Never
+        // remap per sensor sample.
+        if motionMount.update(policy: policy, interface: interfaceMotionAxes) { motion.stop() }
         rotation.update(policy: policy, ready: normalRun && reachedBootCompleted && active)
         updateMotionSensors()
     }
@@ -446,6 +457,7 @@ final class LiveRuntime: RuntimeDriver {
     private func updateMotionSensors() {
         if normalRun, reachedBootCompleted, active, rotation.applied == rotationPolicy,
            model?.guest?.motionSensors == true {
+            motion.axes = motionMount.axes
             motion.start()
         } else {
             motion.stop()
