@@ -87,8 +87,11 @@ public struct LaunchOverrides: Equatable, Sendable {
     /// count above what the host offers comes down to it. A memory size the
     /// environment states is kept as stated, for automation; any other is
     /// taken within the bound of the vCPU count the guest then has, as a
-    /// stored size is on load.
-    public func applied(to guest: Guest, on host: HostDevice) -> Guest {
+    /// stored size is on load. A capacity the launch states is held to
+    /// `capacityMaximumGiB`, the largest data disk the carried system accepts.
+    public func applied(
+        to guest: Guest, on host: HostDevice, capacityMaximumGiB: Int = Limits.capacityRangeGiB.upperBound
+    ) -> Guest {
         var guest = guest
         guest.cores = min(max(guest.cores, 1), host.processorCount)
         if let vCPUCount { guest.cores = min(vCPUCount, host.processorCount) }
@@ -97,7 +100,7 @@ public struct LaunchOverrides: Equatable, Sendable {
         } else {
             guest = guest.memoryWithinBound(on: host)
         }
-        if let capacityGiB { guest.setCapacity(capacityGiB) }
+        if let capacityGiB { guest.setCapacity(capacityGiB, maximum: capacityMaximumGiB) }
         return guest
     }
 }

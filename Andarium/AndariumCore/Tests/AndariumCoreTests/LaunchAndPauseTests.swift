@@ -37,6 +37,18 @@ struct LaunchOverridesTests {
         #expect(overrides.retina == true)
     }
 
+    @Test func aCapacityTheLaunchStatesIsHeldToTheCarriedSystemsDisk() {
+        var overrides = LaunchOverrides()
+        overrides.capacityGiB = 100
+        let host = HostDevice(
+            name: "iPad", processorCount: 4,
+            memory: MemoryPolicy(maximumsMiB: [4096, 4096, 3840, 3776]), freeStorageBytes: 200_000_000_000
+        )
+        #expect(overrides.applied(to: Guest.fresh(on: host), on: host).effectiveCapacityGiB == 100)
+        let held = overrides.applied(to: Guest.fresh(on: host), on: host, capacityMaximumGiB: 64)
+        #expect(held.effectiveCapacityGiB == 64)
+    }
+
     @Test func aStoredFollowWindowValueIsIgnored() throws {
         // The guest's display always follows the window: an earlier version's
         // stored choice is read past, not migrated.

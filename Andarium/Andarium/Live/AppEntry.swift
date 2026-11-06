@@ -82,7 +82,9 @@ struct AppEntry {
         }
         // A stored memory size above the bound of its vCPU count comes down to
         // it; a size the launch states stays as stated.
-        guest = guest.map { launch.applied(to: $0, on: host) }
+        guest = guest.map {
+            launch.applied(to: $0, on: host, capacityMaximumGiB: storage.release.maximumGiB)
+        }
 
         // A report staged for sharing by a process that ended is of no use.
         BugReportStaging.sweep()
@@ -127,7 +129,7 @@ struct AppEntry {
         let launch = overrides
         guard launch.start != nil || launch.erase else { return }
         if model.guest == nil {
-            model.create(launch.applied(to: Guest.fresh(on: model.host), on: model.host))
+            model.create(Self.launchGuest(launch, on: model))
             guard await Self.idle(model) else { return }
         }
         if launch.erase {
@@ -136,13 +138,22 @@ struct AppEntry {
             // Erasing leaves no guest; a launch that starts one sets up a new
             // guest first.
             if launch.start != nil, model.guest == nil {
-                model.create(launch.applied(to: Guest.fresh(on: model.host), on: model.host))
+                model.create(Self.launchGuest(launch, on: model))
                 guard await Self.idle(model) else { return }
             }
         }
         if let mode = launch.start, model.alert == nil {
             model.start(mode)
         }
+    }
+
+    /// A new guest as the launch asks for it, within the carried system's data
+    /// disk.
+    @MainActor
+    private static func launchGuest(_ launch: LaunchOverrides, on model: AppModel) -> Guest {
+        launch.applied(
+            to: Guest.fresh(on: model.host), on: model.host, capacityMaximumGiB: model.releaseMaximumGiB
+        )
     }
 
     /// Waits for the busy overlay to go, within a bound; false if it did not.
