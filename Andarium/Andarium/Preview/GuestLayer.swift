@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import SwiftUI
 
 /// The preview has no guest display: its session screens draw mock screens.

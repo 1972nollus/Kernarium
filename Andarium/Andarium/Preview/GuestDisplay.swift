@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import SwiftUI
 
 /// Stand-ins for the guest's Metal display. Android draws its own status bar
