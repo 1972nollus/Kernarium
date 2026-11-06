@@ -77,6 +77,7 @@ struct AppEntry {
     }
 
     func makeModel() -> AppModel {
+        CaptureState.begin(screen: screen)
         let lowSpace = lowSpace || ["create-low-space", "start-low-space", "home-low-space"].contains(screen)
         let host = PreviewData.host(lowSpace: lowSpace)
         var guest: Guest? = PreviewData.sampleGuest(on: host)
@@ -216,11 +217,12 @@ struct AppEntry {
                 settingsScroll: Self.settingsScrolls[screen]
             )
             model.phase = .running(.normal)
+            // The real operation lasts a few seconds, too short for a
+            // screenshot to catch: hold its overlay part way unless `-play`.
+            if operation && freeze { model.busy = Self.operationOverlay(for: screen) }
         case "recovery", "recovery-open":
             model.sessionPreset = SessionPreset(keysOpen: screen == "recovery-open")
             model.phase = .running(.recovery)
-        case "off":
-            model.powerOff()
         case "failed":
             model.phase = .failed
         default:
@@ -228,6 +230,24 @@ struct AppEntry {
         }
         if systemMicrophone { useSystemMicrophone(in: model) }
         return model
+    }
+
+    /// A guest operation's overlay as it looks part way: what `createBugReport`
+    /// and `installPicked` show, held still.
+    private static func operationOverlay(for screen: String) -> BusyState {
+        let cancel = BusyCancel {}
+        if screen == "bug-report" {
+            return BusyState(
+                title: "Creating Bug Report",
+                detail: "The guest is collecting its logs and state. This can take several minutes.",
+                progress: 0.6, cancel: cancel
+            )
+        }
+        return BusyState(
+            title: "Installing App",
+            detail: "\(ApkInstall.sampleFile) \u{00B7} \(Formats.size(bytes: ApkInstall.sampleSizeBytes))",
+            progress: 0.45, cancel: cancel
+        )
     }
 
     /// The device's microphone conversation against the Simulator's
@@ -266,10 +286,10 @@ struct AppEntry {
                 title: "Settings Not Saved",
                 message: "The file couldn\u{2019}t be saved because there is no space left on the device."
             )
-        case "bug-report":
+        case "bug-report" where play:
             try? await Task.sleep(for: .milliseconds(450))
             model.createBugReport()
-        case "install-apk":
+        case "install-apk" where play:
             try? await Task.sleep(for: .milliseconds(450))
             _ = model.installPicked(PreviewData.sampleApk())
         default:
