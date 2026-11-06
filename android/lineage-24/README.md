@@ -142,7 +142,8 @@ other (`require_release_build_variant`). A `user` build keeps the stock shell
 privilege boundary: no `su`, no `adb root`, `ro.debuggable=0`, no permissive
 SELinux domain, and the verifier rejects the debug-only payload (`su`,
 `remount`, `procmem`), any application whose manifest sets
-`android:debuggable`, and the in-tree test probes by name. `userdebug` is the
+`android:debuggable`, and the in-tree test applications (the probes and the
+storage test) by name, in any partition or under `DATA`. `userdebug` is the
 on-demand diagnostics variant: it carries `su`, is debuggable and may have the
 permissive `su` domain, and the verifier requires exactly that. Each variant
 builds in its own output directory (on the builder `out-andarium-user` and
