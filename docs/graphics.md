@@ -563,10 +563,11 @@ and a cleared display start without any of them. The first CPU write allocates
 the framebuffer, zeroed, and the first draw that shows it creates the texture;
 the first flush that reads a Virgl scanout back allocates the staging. Each is
 then reused for the CPU frames that follow. A mode change releases the
-framebuffer and its texture, and a clear releases the framebuffer at once and
-its texture at the next draw. The staging is released when the scanout changes
-size, becomes a 2D or native Metal scanout, or is disabled. A mode shown only
-through Metal textures therefore holds none of them, and neither does the frame
+framebuffer and its texture, and a clear releases both at once, including when
+a native frame supersedes the clear before it is drawn. In-flight Metal work
+keeps the resources it uses until completion. The staging is released when the
+scanout changes size, becomes a 2D or native Metal scanout, or is disabled.
+A mode shown only through Metal textures therefore holds none of them, and neither does the frame
 that follows each mode change, which presents the view's clear colour alone. A
 direct frame leaves any copies an earlier CPU frame made, because a later
 partial CPU update writes into them. Failing to allocate the framebuffer or the
@@ -576,6 +577,12 @@ the view. The device memory pool counts the process's Metal and graphics
 memory, so growth there, including the guest's own scanout buffers and the CPU
 path's texture, uses the GPU budget, while the framebuffer and the staging add
 to the footprint.
+
+CPU pixel-format conversion writes directly into the locked framebuffer with
+the same channel permutation for vector and scalar pixels. It needs no
+full-image temporary allocation or second copy; a source overlapping the
+framebuffer uses temporary storage to preserve its input. The lock keeps a
+complete update atomic with drawing and mode changes.
 
 Kernarium's EDID lists only the host's preferred mode, so a guest reaches a
 larger one, such as 4096x2160, by setting a user-defined mode. The renderer can

@@ -907,6 +907,12 @@ address reservations, signed code, framework caches and malloc's freed capacity
 may remain in the process. `RuntimeDisplayLifetimeTests` also checks that a late
 layout cannot retain a retired display while Home is showing.
 
+The opt-in `RetinaMemoryTests` compares repeated system-app launches at Retina
+and point resolution with 1.5 GiB of guest RAM. Its optional full-resolution
+WebGL Aquarium workload records actual renderer, frames and FPS alongside
+process, guest and GPU memory. See the [WebGL workload](../tests/integration/android/webgl/README.md)
+for invocation and snapshot collection.
+
 Its `AndroidOperationTests` and
 `AdbOverNetworkModelTests` play Create Bug Report, Install App and ADB over
 Network the same way. `AdbOverVsockTests` drive a real Android guest with the

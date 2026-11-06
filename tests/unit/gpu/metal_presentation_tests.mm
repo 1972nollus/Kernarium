@@ -314,6 +314,47 @@ void checkCpuFrames(
     require(allOf(pixels, red), "a CPU frame after a clear was not shown");
 }
 
+void checkClearSupersededByNativeFrame(
+    MetalPresentation& presentation, Harness& harness,
+    std::vector<std::uint8_t>& pixels)
+{
+    // Keep the drawable tiny while making the obsolete fallback allocation
+    // large enough to distinguish it from command and pipeline bookkeeping.
+    require(presentation.resize(2048, 1152), "fallback mode did not change");
+    writeCpuFrame(presentation, green);
+    require(harness.draw(pixels), "fallback frame did not finish");
+    id<MTLDevice> device = (__bridge id<MTLDevice>)presentation.device();
+    const auto allocated = device.currentAllocatedSize;
+
+    presentation.framebuffer().clear();
+    presentation.publishCpuFrame();
+    require(accepted(harness.present({.width = sourceWidth, .height = sourceHeight})),
+        "native frame after a clear was refused");
+    // Do not draw the clear: the next native frame superseded it. Releasing
+    // the empty framebuffer's texture must not depend on drawing that clear.
+    require(uml::testing::waitUntil([&] {
+        return device.currentAllocatedSize + (8U << 20) < allocated;
+    }, std::chrono::seconds(5)), "a superseded clear retained the CPU fallback texture");
+    require(harness.draw(pixels), "native frame after a clear did not finish");
+    require(pixelIs(pixels, 16, 9, red) && pixelIs(pixels, 48, 27, white),
+        "clearing the fallback changed native presentation");
+
+    // A later partial CPU write starts on the cleared black image and still
+    // creates a usable fallback texture, without reviving the old pixels.
+    const auto written = presentation.framebuffer().update(red, 1, 1, 4,
+        uml::gpu::protocol::GpuFormat::b8g8r8a8Unorm, 0, 0, 0, 0, 1, 1);
+    require(written.width == 1 && written.height == 1, "partial CPU write was refused");
+    presentation.publishCpuFrame();
+    require(harness.draw(pixels), "partial CPU frame after native did not finish");
+    require(pixelIs(pixels, 32, 18, black),
+        "a partial CPU update revived cleared fallback pixels");
+    writeCpuFrame(presentation, blue);
+    require(harness.draw(pixels) && allOf(pixels, blue),
+        "fallback texture could not be recreated after native presentation");
+    require(presentation.resize(framebufferWidth, framebufferHeight),
+        "fallback mode did not return");
+}
+
 /* What the mirror delivered: the newest frame, and how many arrived. */
 struct TapRecorder final {
     struct Frame final {
@@ -652,6 +693,7 @@ int run()
         "a scanout rectangle was not aspect-fitted at its own aspect");
 
     checkCpuFrames(*presentation, harness, pixels);
+    checkClearSupersededByNativeFrame(*presentation, harness, pixels);
 
     /* A clockwise quarter-turn shows the guest's top-left at the display's
      * top-right, pillarboxed at the rotated aspect. */

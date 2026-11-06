@@ -293,6 +293,12 @@ takes them at boot, so the session's Settings leaves them out
 (`Capabilities.liveDisplayOptions`). Microphone applies at once and asks iOS
 for access when it is turned on.
 
+Retina uses the screen's native pixels. On a 2× display, that makes each
+full-screen colour or depth buffer four times the size at point resolution;
+apps can keep several such buffers. These host graphics allocations count
+against the same iOS process limit as guest RAM, so the RAM setting alone does
+not bound Andarium's memory use.
+
 Motion Sensors is off by default. Its switch in Home’s Options (and the
 session’s Settings) shares the device’s accelerometer and gyroscope with the
 guest. The choice is saved with the guest; existing settings load it as off.

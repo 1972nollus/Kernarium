@@ -117,6 +117,15 @@ struct MetalPresentationState final :
     {
         {
             std::lock_guard lock(presentationMutex);
+            if (fallbackTexture != nil) {
+                std::lock_guard framebufferLock(framebuffer);
+                if (!framebuffer.hasStorage()) {
+                    // A clear may be superseded by a native frame before
+                    // draw() sees it. Its obsolete texture goes now; Metal
+                    // retains any resource an in-flight draw still uses.
+                    fallbackTexture = nil;
+                }
+            }
             latestTexture = nil;
             latestIsCpu = true;
             ++latestContentGeneration;
