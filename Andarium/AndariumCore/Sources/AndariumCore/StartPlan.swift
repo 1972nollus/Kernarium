@@ -22,11 +22,11 @@ extension StartBlock {
     public var explanation: String {
         switch self {
         case .olderAndroid:
-            "This Andarium is older than the one the guest last started with, and its data does not go back. Install a newer Andarium, or erase the guest to start again with this one."
+            "This app version is older than the one the guest last started with, and its data does not go back. Install a newer version of Andarium, or erase the guest to start again with this one."
         case .newerDataLayout:
-            "The guest's data uses a newer layout than this Andarium can open. Erase the guest to start again with this one."
+            "The guest's data uses a newer layout than this app version can open. Erase the guest to start again with this one."
         case .mismatch:
-            "The guest's files do not match this Andarium. Erase the guest to start again."
+            "The guest's files do not match this app version. Erase the guest to start again."
         }
     }
 }

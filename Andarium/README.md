@@ -68,11 +68,13 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
 ```
 
 Home has one Start button for a normal boot. Below its Storage card come the
-System section (vCPUs and RAM as a summary; Edit opens the sheet that changes
-them), Display (Retina mode), Capabilities (Microphone, Gyroscope) and Backup
-(Back Up Guest Data); the Recovery and Erase section groups Start in Recovery and
-Erase Guest. Setting a guest up asks only for its storage and backups. A fresh guest
-opens the system's setup wizard on its first normal boot.
+Guest System section (vCPUs and RAM as a summary; Edit opens the sheet that
+changes them), Display (Retina mode), Capabilities (Microphone, Gyroscope) and
+Backup (Back Up Guest Data); the Recovery and Erase section groups Start in
+Recovery and Erase Guest. The sections carry no explanatory notes except where a
+capability is unavailable (a device without a gyroscope says so). Setting a guest
+up asks only for its storage and backups. A fresh guest opens the system's setup
+wizard on its first normal boot.
 
 ## Devices
 

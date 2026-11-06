@@ -73,14 +73,6 @@ public enum Formats {
         return text
     }
 
-    /// "Up to 1.5 GiB with 4 vCPUs": the most memory at a vCPU count, which is
-    /// named only where the host's limit puts it below the runtime's largest
-    /// size.
-    public static func memoryBound(_ mib: Int, vCPUs: Int) -> String {
-        if mib >= Limits.runtimeMemoryRangeMiB.upperBound { return "Up to " + size(mib: mib) }
-        return "Up to \(size(mib: mib)) with \(vCPUs == 1 ? "1 vCPU" : "\(vCPUs) vCPUs")"
-    }
-
     public static func elapsed(_ seconds: Int) -> String {
         String(format: "%d:%02d", seconds / 60, seconds % 60)
     }

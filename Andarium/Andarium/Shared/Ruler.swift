@@ -186,7 +186,6 @@ struct SystemControls: View {
         // The picker follows the vCPU count live: more vCPUs hold more of the
         // process's memory, so the top of the ruler falls as the count rises.
         let stops = host.memory.stops(vCPUs: guest.cores)
-        let top = stops.last ?? Limits.minimumMemoryMiB
         let steps = (1024 - Limits.minimumMemoryMiB) / Limits.memoryStepMiB
         return ControlRow(title: "Memory", symbol: "memorychip", value: Formats.size(mib: guest.memoryMiB)) {
             Ruler(
@@ -203,8 +202,7 @@ struct SystemControls: View {
                 accessibilityName: "Memory"
             )
         } note: {
-            Text("\(Formats.memoryBound(top, vCPUs: guest.cores)) on this \(host.name)")
-                .foregroundStyle(.secondary)
+            EmptyView()
         }
     }
 }
@@ -260,9 +258,6 @@ struct StoragePanel: View {
                         .foregroundStyle(Color.accentColor)
                 } else if atMaximum {
                     Text("\(Formats.size(gib: Limits.capacityRangeGiB.upperBound)) is the largest size")
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("\(Formats.size(bytes: guest.freeBytes)) free in the guest")
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
@@ -431,8 +426,7 @@ struct ResizeSheet: View {
     private func status(_ guest: Guest) -> some View {
         if capacity > guest.capacityGiB {
             line("arrow.up.circle.fill", .accentColor,
-                 "Grows to \(Formats.size(gib: capacity)) at the next start",
-                 "The guest sees the new space once it has started.")
+                 "Grows to \(Formats.size(gib: capacity)) at the next start", nil)
         } else if let pending = guest.pendingCapacityGiB {
             line("arrow.uturn.backward.circle.fill", .secondary,
                  "Stays at \(Formats.size(gib: guest.capacityGiB))",
@@ -444,7 +438,7 @@ struct ResizeSheet: View {
         }
     }
 
-    private func line(_ symbol: String, _ tint: Color, _ title: String, _ detail: String) -> some View {
+    private func line(_ symbol: String, _ tint: Color, _ title: String, _ detail: String?) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: symbol)
                 .font(.title3)
@@ -452,10 +446,12 @@ struct ResizeSheet: View {
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.subheadline.weight(.semibold))
-                Text(detail)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let detail {
+                    Text(detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 0)
         }

@@ -281,7 +281,9 @@ struct SessionSettingsSheet: View {
             } header: {
                 Text("Capabilities")
             } footer: {
-                Text(model.motionSensorsProblem ?? CapabilitiesSection.gyroscopeNote(available: model.motionSensorsAvailable))
+                if let reason = model.motionSensorsProblem ?? CapabilitiesSection.gyroscopeUnavailable(available: model.motionSensorsAvailable) {
+                    Text(reason)
+                }
             }
             .id("capabilities")
         }

@@ -83,10 +83,7 @@ struct SystemSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 14) {
-                    SystemControls(guest: draftBinding, host: model.host)
-                    SectionNote("Changes apply the next time the guest starts.")
-                }
+                SystemControls(guest: draftBinding, host: model.host)
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 24)

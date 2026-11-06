@@ -165,8 +165,8 @@ struct HomeView: View {
         case .update(_, let release):
             NoticeCard(
                 symbol: "arrow.down.circle.fill", color: .accentColor,
-                title: "Andarium updated to \(release)",
-                text: "The next start finishes the update and takes a little longer. Your data is saved first, so a start that does not finish can be undone."
+                title: "System image updated",
+                text: "Andarium system image is updated to \(release). The next start finishes the update and takes a little longer."
             )
         case .unfinishedUpdate(let release, let canRetry, let canRestore):
             UnfinishedUpdateCard(release: release, canRetry: canRetry, canRestore: canRestore)
@@ -191,7 +191,7 @@ struct HomeView: View {
                 NoticeCard(
                     symbol: "moon.zzz.fill", color: .secondary,
                     title: "iOS closed Andarium",
-                    text: "The guest was paused in the background. Start it again when you're ready.",
+                    text: "The guest was shut down in the background.",
                     onClose: { withAnimation { model.notice = nil } }
                 )
             }
@@ -284,12 +284,6 @@ struct WelcomeView: View {
                 .padding(.bottom, 34)
             Text("No Guest Yet")
                 .font(.title2.weight(.bold))
-            Text("Andarium is built in. Set up a guest to run it.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 340)
-                .padding(.top, 8)
             if !model.host.runsGuestGraphics {
                 NoticeCard(
                     symbol: "cpu", color: .orange,
@@ -400,7 +394,7 @@ struct UnfinishedUpdateCard: View {
         case (true, false):
             "The start that updates to \(release) did not reach its end. Start tries it again, or erase the guest to start over."
         case (false, true):
-            "This Andarium carries a different release than the update that did not finish. Restore puts back your data from before it, or erase the guest to start over."
+            "This app version carries a different release than the update that did not finish. Restore puts back your data from before it, or erase the guest to start over."
         case (false, false):
             "The start that updates to \(release) did not reach its end, and nothing from before it is left to put back. Erase the guest to start over."
         }
