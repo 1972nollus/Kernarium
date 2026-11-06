@@ -27,8 +27,13 @@ bool selectionAttempted;
  * a release runtime does not export them. */
 int (*automationJobAtStart)(void);
 int (*automationHoldDelayMs)(void);
-std::mutex consoleOutputHandlerMutex;
-KernariumConsoleOutputHandler consoleOutputHandler;
+/* The runtime relay can still call into the loader while exit() destroys
+ * ordinary statics. Keep its lock and retained handler alive together. */
+struct ConsoleOutputHandlerState final {
+    std::mutex mutex;
+    KernariumConsoleOutputHandler handler {nil};
+};
+ConsoleOutputHandlerState& consoleOutput = *new ConsoleOutputHandlerState;
 /* The handler is read on the runtime's callback path, under the runtime's own
  * lock, so it has a mutex of its own that is held only to copy it. Changing
  * the registration, which takes the runtime's lock, is serialized by the
@@ -47,8 +52,8 @@ void forwardConsoleOutput(
     NSData* data = [NSData dataWithBytes:buffer length:length];
     KernariumConsoleOutputHandler handler;
     {
-        std::lock_guard lock(consoleOutputHandlerMutex);
-        handler = consoleOutputHandler;
+        std::lock_guard lock(consoleOutput.mutex);
+        handler = consoleOutput.handler;
     }
     if (handler == nil)
         return;
@@ -59,9 +64,9 @@ void forwardConsoleOutput(
 
 void updateConsoleOutputForwarder(const kernarium_runtime_api* runtime)
 {
-    std::lock_guard lock(consoleOutputHandlerMutex);
+    std::lock_guard lock(consoleOutput.mutex);
     runtime->set_console_output_callback(
-        consoleOutputHandler == nil ? nullptr : forwardConsoleOutput,
+        consoleOutput.handler == nil ? nullptr : forwardConsoleOutput,
         nullptr);
 }
 
@@ -131,7 +136,7 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     case KERNARIUM_RUNTIME_GUEST_LINUX:
         return @"KRuntime_";
     case KERNARIUM_RUNTIME_GUEST_ANDROID:
-        return @"KRuntime_ACK_";
+        return @"KRuntime_Android_";
     default:
         return nil;
     }
@@ -259,12 +264,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v20");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v22");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v20: %s\n",
+            "Kernarium: selected runtime lacks API v21: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;
@@ -467,13 +472,14 @@ extern "C" int kernarium_runtime_loader_set_microphone(int enabled)
 }
 
 extern "C" void kernarium_runtime_loader_send_touch(
+    uint32_t slot,
     uint32_t x,
     uint32_t y,
     int pressed)
 {
     const kernarium_runtime_api* runtime = api();
     if (runtime != nullptr)
-        runtime->send_touch(x, y, pressed);
+        runtime->send_touch(slot, x, y, pressed);
 }
 
 extern "C" void kernarium_runtime_loader_send_key(uint16_t code, int pressed)
@@ -487,8 +493,8 @@ extern "C" void kernarium_runtime_loader_set_console_output_handler(
     KernariumConsoleOutputHandler handler)
 {
     {
-        std::lock_guard lock(consoleOutputHandlerMutex);
-        consoleOutputHandler = [handler copy];
+        std::lock_guard lock(consoleOutput.mutex);
+        consoleOutput.handler = [handler copy];
     }
     const kernarium_runtime_api* runtime = api();
     if (runtime != nullptr)

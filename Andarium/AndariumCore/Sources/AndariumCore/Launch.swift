@@ -20,6 +20,8 @@ public struct LaunchOverrides: Equatable, Sendable {
         /// "1" opens the session with its statistics on screen and prints
         /// each reading.
         case stats
+        /// A separate guest for a harness run, leaving the ordinary guest alone.
+        case instance
     }
 
     public var vCPUCount: Int?
@@ -33,6 +35,7 @@ public struct LaunchOverrides: Equatable, Sendable {
     public var erase = false
     /// Show the statistics from the start of the run, and print them.
     public var statistics = false
+    public var instance: String?
 
     public init() {}
 
@@ -66,6 +69,17 @@ public struct LaunchOverrides: Equatable, Sendable {
         }
         erase = value(.erase) == "1"
         statistics = value(.stats) == "1"
+        if let name = value(.instance), (1...64).contains(name.utf8.count),
+           name.utf8.allSatisfy({
+               (65...90).contains($0) || (97...122).contains($0) ||
+                   (48...57).contains($0) || $0 == 45 || $0 == 95
+           }) {
+            instance = name
+        } else if value(.instance) != nil {
+            // A malformed selector must never erase or start the ordinary guest.
+            start = nil
+            erase = false
+        }
     }
 
     public var isEmpty: Bool { self == LaunchOverrides() }

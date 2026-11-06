@@ -16,7 +16,11 @@ outside this repository.
 
 `build/prepare-sources.sh` is the only producer command allowed to use the
 network. It pins the Android source and the guest Mesa source. All patching,
-builds, verification, image assembly, and publication are offline.
+builds, verification, image assembly, and publication are offline. A
+`build/make` topic (route `p0002`) keeps that true of `lunch`: LineageOS's
+`roomservice.py`, which `lunch` ran for a product it could not configure and
+which reads a repository list from GitHub, is never called, so a product
+configuration error stops the build with its own message.
 
 The producer has three independent outputs:
 
@@ -82,12 +86,19 @@ described in [`kernel/mainline-6.18/README.md`](../../kernel/mainline-6.18/READM
 
 The product is a 64-bit system with a 32-bit application ABI, 4 KiB-only, and
 built-in-kernel-only. Applications of both ABIs run from one image:
-`arm64-v8a` and `armeabi-v7a`, in that order. The 32-bit side is ARMv8-A
-AArch32 on a cortex-a53, built as the softfp `armeabi-v7a` ABI; the image lists
-no `armeabi`, and `ro.zygote` is `zygote64_32`. Every daemon and HAL stays
+`arm64-v8a`, `armeabi-v7a` and `armeabi`, in that order. The 32-bit side is
+ARMv8-A AArch32 on a cortex-a53, built as the softfp `armeabi-v7a` ABI; the
+`armeabi` fallback runs older native applications through the same arm runtime,
+and `ro.zygote` is `zygote64_32`. Every daemon and HAL stays
 64-bit (`IGNORE_PREFER32_ON_DEVICE`), so 32-bit code runs only in applications,
 the two zygotes and the WebView RELRO process. Recovery, `init_boot` and the
-vendor ramdisk are 64-bit only. The kernel runs 4 KiB pages, because Android's
+vendor ramdisk are 64-bit only. ABI compatibility does not change the platform's
+minimum installable target SDK. An older APK can be tested with the explicit
+`adb install --bypass-low-target-sdk-block` option; ordinary installs keep the
+platform check. ABI support does not restore an older Android runtime: the
+unmodified ZENONIA3 1.0.7 APK selects `armeabi` and loads its native library,
+but its resource parser crashes on this ART runtime before gameplay.
+The kernel runs 4 KiB pages, because Android's
 32-bit libraries are 4 KiB aligned; the 64-bit userspace stays page-agnostic (a
 16 KiB maximum ELF alignment and no compile-time bionic page-size macro), so it
 is valid on a kernel of either size, and `ro.product.page_size` reports 4096.
@@ -181,8 +192,10 @@ curated application set: Glimpse (gallery), Twelve (music), Etar (calendar),
 ExactCalculator, Camelot (PDF viewer) and Seedvault (backup). It has no browser
 app (the WebView stays, so that a user can install one), no app store of its
 own and no install restriction: Package Installer and every install path work.
-It has no Google or microG services. The LineageOS updater and setup wizard,
-Canvas, Aperture, Profiles, Recorder, QuickAccessWallet, the charger animation,
+It has no Google or microG services. LineageOS Setup Wizard handles the first
+boot of a fresh guest; completing it provisions that guest, so subsequent boots
+go directly to the launcher. The LineageOS updater, Canvas, Aperture, Profiles,
+Recorder, QuickAccessWallet, the charger animation,
 fastbootd, AudioFX and the Jelly browser are excluded, as are DeskClock and
 EmergencyInfo; the build and verifier assert both lists. SecureElement, the
 OMAPI service for readers the machine does not have (no eSE, no UICC), is kept
@@ -208,8 +221,38 @@ activity implementing that intent. The modular framework API
 containers remain part of base AOSP so ordinary applications can still resolve
 the Android SDK classes; excluding them also removes required system-server
 dexpreopt inputs. Telephony,
-GNSS, NFC, UWB, Thread, camera, biometric, sensor, vibrator, secure-element,
+GNSS, NFC, UWB, Thread, camera, biometric, vibrator, secure-element,
 USB, and Trusty hardware is not advertised.
+
+### Motion sensors
+
+The product installs Android’s AIDL multi-HAL service and the 2.1 motion
+sub-HAL in `overlay/sensors/`. It advertises an accelerometer and gyroscope,
+with continuous, non-wake-up delivery, 10 ms minimum periods and no hardware
+FIFO, direct channels or data injection. Each sensor’s activation and sampling
+period are independent; flush posts a completion after earlier delivered
+events. The target-files verifier requires the service, its VINTF instance,
+feature declarations and exactly this backend in `hals.conf`.
+
+Andarium supplies samples only when the user enables Motion Sensors. The
+sub-HAL accepts a single stream on vsock port 5556 from host CID 2; it accepts
+no guest-originated sensor source. Its SELinux domain uses the platform’s
+explicit virtual-device vsock classification, with only create, bind, listen,
+accept, read, getattr and getopt on its own sockets; no connect or ioctl access
+is granted. Each 20-byte record is little endian:
+`ANS1`, a uint32 Android sensor type (1 accelerometer or 4 gyroscope), then
+three float32 values in m/s² or rad/s. Axes match the mounted virtual display
+(x right, y up, z out of the screen). Andarium keeps them fixed while Android
+owns rotation; its [scene policy](../../Andarium/README.md#devices) describes
+windowed operation and returning to a locked full-screen scene.
+Core Motion acceleration is multiplied by −9.80665: a stationary,
+face-up device reports +9.80665 on z. Gyroscope units and signs carry through.
+Events use the guest’s CLOCK_BOOTTIME at receipt; this is a live input path,
+not a synchronized recording of host acquisition times. Invalid records close
+the stream. Disconnecting preserves no partial record or sample; a host can
+reconnect after foregrounding or a guest reboot.
+
+### Networking
 
 The guest's one network device, `eth0`, is the host's user-mode network (SLiRP:
 10.0.2.0/24, gateway 10.0.2.2, DNS 10.0.2.3), and it is the management NIC: adb
@@ -311,7 +354,8 @@ property file. On a user build init's property service (stock
 `update_sys_usb_config`) fills the empty property with `none` at every boot, so
 "off" is an empty or `none` value, never `adb`; a debuggable build gets `adb`
 from the same code. `ro.adb.secure` keeps the build type's value (1 on a user
-build): `BoardConfig.mk` drops the `ro.adb.secure=0` that the inherited
+build): the `device/google/cuttlefish` topic that `UML_ANDROID_KEEP_ADB_SECURE`
+switches on (route `p0001`) drops the `ro.adb.secure=0` that the inherited
 Cuttlefish user block adds to the product partition, and the target-files
 verifier rejects a false value in any build property file, because Settings
 hides "Revoke USB debugging authorizations" while the property is false. The
@@ -751,6 +795,18 @@ touchscreen's absolute range is fixed at 0 through 32767 on both axes, and the
 host maps the guest's visible rectangle onto it
 ([`../../docs/graphics.md`](../../docs/graphics.md#dynamic-native-geometry)),
 so touch stays exact at every size the display takes.
+
+The iOS host's Virtio touchscreen supports ten independent contacts using Linux
+type-B slots and tracking IDs. The product declares the multitouch, distinct
+multitouch and jazzhand features, and target-files verification requires them.
+VNC remains a single pointer; the recovery UI also accepts that input. Recovery
+reads the host-supplied display density for its layout and scales its
+fonts, localized text and graphic assets once at load time. Text stays readable
+at Retina resolution throughout the Recovery screens.
+Recovery init publishes `ro.boot.lcd_density` as the readable `ro.sf.lcd_density`,
+as vendor init does in normal Android; the boot property is vendor-private.
+The `recovery_minui_test` Soong target covers glyph boundaries and alpha/RGBA
+scaling, including padded rows and fractional display densities.
 
 `third_party/mesa-venus/` pins that source as three independent inputs: the
 upstream Mesa revision, the guest Vulkan series under
@@ -1377,6 +1433,25 @@ The second architecture adds a variant to nearly every module, so the first
 multilib release is built in a fresh output directory, never over the 64-bit-only
 one; that output is a superseded build once the multilib release is accepted.
 
+## Storage accounting
+
+The framework reports exact filesystem bytes for the static virtual disks.
+`StorageManager`'s two primary-storage helpers sum `/data` and the five mounted
+OS filesystems (`/system`, `/system_ext`, `/product`, `/vendor` and `/odm`).
+`StorageStatsManager` uses that total and keeps its filesystem-available plus
+reclaimable-cache calculation for free space. Settings derives its used space
+and System category from those consistent byte counts. The `frameworks/base`
+storage topic in route `p0007` owns this policy; the framework fix leaves Settings'
+display calculations unchanged.
+
+Retail capacity rounding does not apply to these virtual disks: it can report
+less than the data filesystem contains, making the System category negative,
+or inflate the total to the next advertised capacity. The configured sparse
+disk capacity is independent of the Apple host's currently available storage.
+Settings still imposes an upstream 1 GiB minimum on Temporary system files, so its
+category sizes can sum to more than the displayed total used; exact filesystem
+accounting does not remove that separate Settings calculation.
+
 ## Guest instance storage
 
 A guest instance is the writable half of a guest: a directory holding the data
@@ -1413,7 +1488,13 @@ releases; the rules compare nothing else. Before a start:
 | newer build, newer `data_layout` | snapshot, run the registered migration (none exists yet), start |
 | older build | refuse: Android's key store, package manager and apexd do not go back |
 | same build, another release or system disk, or a `data.img` without `instance.json` | refuse |
-| an unfinished update | refuse until the user retries it, restores its snapshot, or resets |
+| an unfinished update, same build | retry with its snapshot kept, restore, or reset |
+| an unfinished update, newer build | restore the pre-update snapshot, then update directly to the newer build |
+
+Any older build can update directly to any newer build; intermediate releases
+need not boot. When an earlier update is unfinished, the launcher restores its
+pre-update data before starting the newer release, which takes its own snapshot.
+The existing snapshot must be available for that restoration.
 
 The snapshot, `data.img.pre-<release_id>`, is an APFS clone, so it is instant
 and costs only the blocks that later diverge; a volume without clones refuses

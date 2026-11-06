@@ -56,6 +56,12 @@ Bison 2, the OpenGL build generates Mesa's GLSL parsers through
 remain scoped by the checked contracts and series rather than being described
 as general hardware capability.
 
+New GPU prefixes retain Release optimization while compiling the Mesa
+frameworks with debug information, and carry their matching dSYMs under
+`dSYMs/`. Prefix verification checks their UUIDs. An older prefix without
+symbols remains usable by host builds, but iOS framework packaging requires
+the symbols: rebuild such a prefix before archiving an application.
+
 The kernel host tools are patch-managed ports of elfutils, musl-obstack,
 libbpf, and dwarves to Darwin, built with argp-standalone. elfutils' Git
 source carries only the generators of its DWARF name and x86 decoder tables,

@@ -16,7 +16,7 @@ final class StubDriver: RuntimeDriver {
 
     func create(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest { guest }
     func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest { guest }
-    func save(_ guest: Guest) throws {}
+    func save(_ guest: Guest) throws { savedGuest = guest }
     func startPlan() -> StartPlan? { plan }
     func begin(guest: Guest, mode: StartMode, kind: BootKind) {
         begun.append((mode, kind))
@@ -27,6 +27,9 @@ final class StubDriver: RuntimeDriver {
         // The files now say the update waits for the next start.
         plan = .update(from: "r1", to: "r2")
     }
+    var motionSensors = false
+    var savedGuest: Guest?
+    func setMotionSensors(_ on: Bool) { motionSensors = on }
     func setMicrophone(_ on: Bool) {}
 
     /// What the statistics readings answer, in turn, the last one repeating;
@@ -182,5 +185,36 @@ struct UpdateFlowTests {
         driver.plan = nil
         model.refreshPlan()
         #expect(model.plan == .normal)
+    }
+
+    @Test func cleanShutdownReturnsHomeAndStartsANewSession() {
+        let (model, driver) = model(plan: .normal)
+        model.start(.normal)
+        model.finishBoot(.normal)
+        let guest = model.guest
+        model.session.installs = [ApkInstall(fileName: "test.apk", sizeBytes: 10, state: .installed)]
+        model.session.showStats = true
+        model.sessionPreset.settings = true
+        model.sheet = .info
+        model.runEnded(RunEnd(result: 0), uptimeSeconds: 60)
+        #expect(model.phase == .home)
+        #expect(model.guest == guest)
+        #expect(model.sheet == nil)
+        #expect(model.session.installs.isEmpty)
+        #expect(model.session.showStats)
+        #expect(model.sessionPreset == SessionPreset())
+        model.start(.recovery)
+        #expect(model.phase == .booting(.recovery))
+        #expect(driver.begun.map(\.mode) == [.normal, .recovery])
+    }
+
+    @Test func uncleanShutdownCannotStartAgainInThisProcess() {
+        let (model, driver) = model(plan: .normal)
+        model.start(.normal)
+        model.runEnded(RunEnd(result: -4), uptimeSeconds: 60)
+        #expect(model.phase == .failed)
+        model.start(.normal)
+        #expect(model.phase == .failed)
+        #expect(driver.begun.count == 1)
     }
 }

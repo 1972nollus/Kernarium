@@ -28,6 +28,12 @@ inline constexpr std::uint16_t eventLed = 0x11;
 inline constexpr std::uint16_t synchronizeReport = 0x00;
 inline constexpr std::uint16_t absoluteX = 0x00;
 inline constexpr std::uint16_t absoluteY = 0x01;
+inline constexpr std::uint16_t absoluteMtSlot = 0x2f;
+inline constexpr std::uint16_t absoluteMtPositionX = 0x35;
+inline constexpr std::uint16_t absoluteMtPositionY = 0x36;
+inline constexpr std::uint16_t absoluteMtTrackingId = 0x39;
+inline constexpr std::uint32_t touchscreenContactCount = 10;
+inline constexpr std::int32_t touchscreenTrackingIdMaximum = 65535;
 inline constexpr std::uint16_t buttonTouch = 0x14a;
 /* The touchscreen's absolute range is 0..touchscreenAbsoluteMaximum on both
  * axes, the VNC touchscreen's range too. It does not depend on the display, so

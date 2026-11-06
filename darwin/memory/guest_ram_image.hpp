@@ -150,8 +150,13 @@ class GuestRamImage final {
 public:
 	struct Options final {
 		/* The image file, created exclusively and locked for as long as the
-		 * image lives, so that the next launch can tell it is left over. */
+		 * image lives unless anonymous, so that the next launch can tell it
+		 * is left over. */
 		std::string path;
+		/* Unlink the file immediately and hold no file lock. The descriptor
+		 * keeps its contents alive until closed, including across suspension;
+		 * the OS reclaims them if the process ends. */
+		bool anonymous{false};
 		/* Threads that store and restore chunks, the caller's included. */
 		unsigned threads{4};
 		/* Compress chunks; otherwise store them raw. */

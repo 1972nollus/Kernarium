@@ -117,7 +117,9 @@ uml_add_unit_test(
 # it waits for a stop or a resume still reaching the hibernation it drops.
 # One process each, because the claim on guest RAM outlives every handle.
 foreach(_uml_restart_mode IN ITEMS restart power-off halt stopped failed
-        another-handle borrowed-view running-thread abort-stop abort-resume)
+        another-handle borrowed-view running-thread abort-stop abort-resume
+        release-same-handle release-fresh-handle release-halt
+        release-borrowed-view release-running-thread)
     uml_add_unit_test(
         NAME runtime-restart-${_uml_restart_mode}
         COMMAND uml_runtime_sequential_run_tests ${_uml_restart_mode})

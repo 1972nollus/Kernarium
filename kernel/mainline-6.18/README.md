@@ -1048,10 +1048,8 @@ GKI also turns on hardening and memory options that no list requires
 (`INIT_ON_ALLOC_DEFAULT_ON`, `FORTIFY_SOURCE`, `SLAB_FREELIST_HARDENED`,
 `LRU_GEN` and others); the product does not carry them.
 
-The iOS runtime framework for this product keeps its earlier name,
-`KRuntime_ACK_6_18_4K`, though it now embeds this line's Android artifact.
-Renaming it touches the Kernarium project and its packaging scripts and needs
-the full XCFramework script to verify, so it is a follow-up.
+The iOS runtime framework for this product is `KRuntime_Android_6_18_4K`;
+[Kernarium](../../Kernarium/README.md#runtimes-and-runs) owns its packaging.
 
 ## Standalone build and publication
 

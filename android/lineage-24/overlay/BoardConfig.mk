@@ -20,8 +20,8 @@
 include device/google/cuttlefish/vsoc_arm64_pgagnostic/BoardConfig.mk
 
 # 32-bit applications run beside the 64-bit ones. The second architecture is
-# ARMv8-A AArch32 built as the softfp armeabi-v7a ABI, the only 32-bit ABI the
-# image lists (no armeabi). The parent board is 64-bit only; the
+# ARMv8-A AArch32 built as the softfp armeabi-v7a ABI, with armeabi as the
+# fallback for older native applications. The parent board is 64-bit only; the
 # UML_ANDROID_MULTILIB switch of the product makes it start the secondary
 # zygote. Native daemons and HALs stay 64-bit: IGNORE_PREFER32_ON_DEVICE turns
 # every prefer32 module into a 64-bit one, so only applications, the zygotes
@@ -30,7 +30,7 @@ include device/google/cuttlefish/vsoc_arm64_pgagnostic/BoardConfig.mk
 TARGET_2ND_ARCH := arm
 TARGET_2ND_ARCH_VARIANT := armv8-a
 TARGET_2ND_CPU_ABI := armeabi-v7a
-TARGET_2ND_CPU_ABI2 :=
+TARGET_2ND_CPU_ABI2 := armeabi
 TARGET_2ND_CPU_VARIANT := cortex-a53
 TARGET_TRANSLATE_2ND_ARCH := false
 IGNORE_PREFER32_ON_DEVICE := true
@@ -91,19 +91,6 @@ SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += device/kernarium/andarium/sepolicy/system_ex
 # The Android UML ELF is built and published independently. Android packaging
 # must neither substitute a Cuttlefish kernel nor stage loadable modules.
 PRODUCT_COPY_FILES := $(filter-out %:kernel,$(PRODUCT_COPY_FILES))
-
-# The inherited Cuttlefish product adds ro.adb.secure=0 to the product partition
-# of a user build ("spawn adbd by default without authorization"). The product
-# build.prop is read after system's and system_ext's ro.adb.secure=1, so the
-# guest would read 0. adbd takes its policy from ro.boot.kernarium.adb_auth, but
-# Settings reads the property: with it false the "Revoke USB debugging
-# authorizations" entry is hidden, and the user could no longer revoke the
-# computers they allowed. The property stays the build type's value (1 on a user
-# build). The filter is here and not in the product makefile because
-# inherit-product merges the parent's variables after the product's own, so
-# only the resolved variable, which the board config sees, loses an inherited
-# entry.
-PRODUCT_PRODUCT_PROPERTIES := $(filter-out ro.adb.secure=%,$(PRODUCT_PRODUCT_PROPERTIES))
 TARGET_KERNEL_PATH :=
 SYSTEM_DLKM_SRC :=
 KERNEL_MODULES_PATH :=

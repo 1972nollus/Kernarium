@@ -14,3 +14,4 @@ patch	settings-let-apps-read-uids_allowed_on_restricted_networks.patch
 patch	zygote-preload-the-secondary-zygote-only-when-a-package-needs-it.patch
 patch	adb-record-the-USB-debugging-setting-in-persist.sys.usb.config.patch
 patch	adb-restart-adbd-instead-of-stopping-it-when-debugging-is-turned-off.patch
+patch	storage-report-exact-virtual-filesystem-sizes.patch

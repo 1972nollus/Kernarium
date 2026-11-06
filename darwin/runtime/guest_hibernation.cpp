@@ -107,6 +107,7 @@ public:
 				GuestRamImage::Options options;
 				options.path = directory_ + "/" +
 					memory::guest_ram_image_name(static_cast<int>(getpid()));
+				options.anonymous = true;
 				options.threads = image_threads;
 				image_ = GuestRamImage::create(*ram, options);
 				if (!image_) {

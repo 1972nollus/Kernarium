@@ -61,7 +61,7 @@ struct AppEntry {
             problem = "This copy of Andarium does not carry a system."
         }
 
-        let locations = GuestLocations(directory: Self.guestDirectory())
+        let locations = GuestLocations(directory: Self.guestDirectory(instance: launch.instance))
         let storage = TwoDiskStorage(
             locations: locations,
             release: carried?.identity ?? ReleaseIdentity(
@@ -96,7 +96,8 @@ struct AppEntry {
         model.session.showStats = launch.statistics
         model.printsStatistics = launch.statistics
 
-        let marker = PauseMarker(url: Self.supportDirectory().appendingPathComponent("pause.json"))
+        let markerDirectory = launch.instance == nil ? Self.supportDirectory() : locations.directory
+        let marker = PauseMarker(url: markerDirectory.appendingPathComponent("pause.json"))
         if marker.consume(), guest != nil {
             model.notice = .closedInBackground
             print("Andarium: the previous process ended out of the foreground; the guest starts again from boot")
@@ -151,10 +152,14 @@ struct AppEntry {
     /// `Library/Guest/`. The disk's path goes to Linux in a kernel argument
     /// that cannot carry a space, so the guest does not live in `Application
     /// Support`; the library directory's name is safe on a device and on a Mac.
-    static func guestDirectory() -> URL {
+    static func guestDirectory(instance: String? = nil) -> URL {
         let library = (try? FileManager.default.url(
             for: .libraryDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         )) ?? FileManager.default.temporaryDirectory
+        if let instance {
+            return library.appendingPathComponent("TestGuests", isDirectory: true)
+                .appendingPathComponent(instance, isDirectory: true)
+        }
         return library.appendingPathComponent("Guest", isDirectory: true)
     }
 

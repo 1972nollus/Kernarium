@@ -213,9 +213,9 @@
     {
       "name": "an unfinished update blocks the next start",
       "instance": {
-        "release_id": "rel-a",
-        "build_number": 100,
-        "system_disk_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "release_id": "rel-b",
+        "build_number": 200,
+        "system_disk_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "data_layout": 1,
         "pending_to_release_id": "rel-b"
       },
@@ -231,11 +231,11 @@
       "expect": "refuse_pending"
     },
     {
-      "name": "an unfinished update blocks a newer release too",
+      "name": "a newer release restores an unfinished update before updating",
       "instance": {
-        "release_id": "rel-a",
-        "build_number": 100,
-        "system_disk_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "release_id": "rel-b",
+        "build_number": 200,
+        "system_disk_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "data_layout": 1,
         "pending_to_release_id": "rel-b"
       },
@@ -248,7 +248,7 @@
         "data_layout": 1
       },
       "flags": [],
-      "expect": "refuse_pending"
+      "expect": "update"
     },
     {
       "name": "retry boots the release whose update did not complete",
@@ -509,6 +509,66 @@
         "restore_snapshot"
       ],
       "expect": "refuse_conflict"
+    },
+    {
+      "name": "a newer release cannot restore a missing update snapshot",
+      "instance": {
+        "release_id": "rel-b",
+        "build_number": 200,
+        "system_disk_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "data_layout": 1,
+        "pending_to_release_id": "rel-b"
+      },
+      "data_disk": true,
+      "snapshot": false,
+      "release": {
+        "release_id": "rel-d",
+        "build_number": 300,
+        "system_disk_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "data_layout": 1
+      },
+      "flags": [],
+      "expect": "refuse_conflict"
+    },
+    {
+      "name": "a newer release migrates from the restored data layout",
+      "instance": {
+        "release_id": "rel-b",
+        "build_number": 200,
+        "system_disk_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "data_layout": 1,
+        "pending_to_release_id": "rel-b"
+      },
+      "data_disk": true,
+      "snapshot": true,
+      "release": {
+        "release_id": "rel-d",
+        "build_number": 300,
+        "system_disk_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "data_layout": 2
+      },
+      "flags": [],
+      "expect": "migrate"
+    },
+    {
+      "name": "an old release can skip directly to any newer build",
+      "instance": {
+        "release_id": "rel-a",
+        "build_number": 100,
+        "system_disk_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "data_layout": 1,
+        "pending_to_release_id": null
+      },
+      "data_disk": true,
+      "snapshot": false,
+      "release": {
+        "release_id": "rel-d",
+        "build_number": 10000,
+        "system_disk_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "data_layout": 1
+      },
+      "flags": [],
+      "expect": "update"
     }
   ]
 }

@@ -832,6 +832,11 @@ encoder, and `HostGraphicsStackTests` states the software renderer's contract
 `KernariumAutomation` is the iPad's automation host and builds for the device
 alone.
 
+`kernarium-device-framework-symbols` (tooling) checks that the device-only
+embed script places its dSYM beside the app's symbols for an archive, refuses
+missing symbols, and leaves Simulator builds alone. The GPU prefix verifier
+also rejects supplied dSYMs whose UUIDs differ from their frameworks.
+
 ### Andarium
 
 `andarium-core` (unit, macOS hosts) runs the tests of the Swift package
@@ -844,6 +849,29 @@ encoder against moduli with the text `adb keygen` wrote for them, and the
 listener of ADB over Network on loopback against a fake guest (bytes both
 ways, backpressure each way, half close, a failed stream, the limit of
 computers, stopping, a port in use).
+The package also tests orientation ownership for phones, full-screen and
+windowed iPads, loss of a scene lock, coalesced guest commands, partial failures
+and stale completions after a guest restart. `SessionOrientationHostingTests`
+checks the real scene root's session lock and the built bundle's portrait-only
+iPhone declaration. The opt-in `RotationOverVsockTests`
+(`TEST_RUNNER_ANDARIUM_ROTATION_TESTS=1`, selecting only that suite) boots Android
+and verifies that the host override preserves and restores locked and unset
+guest rotation preferences. A hands-on iPad check additionally covers rotation
+with Control Center's lock off and transitions between a full-screen scene and
+a window (`TEST_RUNNER_ANDARIUM_ROTATION_VISUAL=1`, selecting
+`RotationOverVsockTests`); pure policy tests do not establish the visible result.
+`andarium-motion-protocol` (unit) decodes independent motion wire fixtures
+and rejects truncated records, unknown sensor types and non-finite values.
+The core package also checks SI conversion, default-off settings migration,
+socket delivery, stop during connection and stale callbacks. Hosted
+`AndroidOperationTests` checks that the motion toggle persists and reaches
+the runtime driver. Physical sensor delivery requires a sensor-capable iOS
+device and a guest image carrying the motion sub-HAL; Simulator and Mac tests
+do not establish that path. The opt-in `MotionOverVsockTests` drives the real
+model and runtime on the iPad and reads both sensors through Android's public
+SensorManager API in a foreground probe. Its automated mode checks sustained
+delivery and off/on/off; its separate `ANDARIUM_MOTION_INTERACTIVE=1` mode checks
+physical tilt and rotation ([probe and invocation](../tests/integration/android/motion/README.md)).
 `andarium-stage-system-image` (tooling) covers the system-image staging script
 and the option checks of `package-ios-frameworks.sh --runtimes android`. The
 application itself builds with Xcode: `AndariumPreview` is its Simulator build
@@ -851,20 +879,71 @@ with mock data, and `Andarium` is the device application
 ([`Andarium/README.md`](../Andarium/README.md#targets)). `AndariumTests` is
 hosted in `Andarium` and runs on an iPad, in the iOS Simulator and, as an iPad
 app, on an Apple silicon Mac (`xcodebuild test -scheme Andarium`); its
+`MultitouchTests` cover independent finger paths and slots, cancellation,
+viewport crossings, the ten-contact limit and releasing all contacts. The host
+`virtio-input-protocol` test covers the advertised multitouch axes, tracking-ID
+lifetimes and wraparound, and legacy primary-finger coordinates. Its
 `UpdateFlowTests` drive
 the update, interrupted-update (Start retries, Restore, Erase) and blocked-start flows
-against a stub runtime, and its `AndroidOperationTests` and
+against a stub runtime, including a clean shutdown returning Home with a fresh
+session and a failed run refusing another Start. `ShutdownFlowTests` runs the
+production views and runtime with `TEST_RUNNER_ANDARIUM_SHUTDOWN_TESTS=1` and
+`TEST_RUNNER_ANDARIUM_GUEST_INSTANCE=shutdown-flow`, without `ANDARIUM_START`:
+two clean power-offs each return Home, three boots reuse the app process, and a
+host-stopped third run stays failed until relaunch. It deletes only that isolated
+test guest.
+
+Run `ShutdownFlowTests/cleanShutdownMemorySnapshots()` alone with
+`TEST_RUNNER_ANDARIUM_MEMORY_SNAPSHOTS=1` and the same isolated guest setting,
+without `ANDARIUM_START`, for five clean boot/power-off cycles. It saves allocation
+totals, thread names and VM-region metadata (no memory contents) to the app's
+`tmp/ShutdownMemory/` before boot, while running, and immediately and ten seconds
+after each return Home. Each settled snapshot requires zero wired memory and
+zero dirty or swapped pages in the guest-domain and scratch heaps; the retired
+guest display must also deallocate. The initial thirty-second pause allows
+Instruments Allocations and VM Tracker to attach. Collect the snapshots from the
+app container afterward. Compare live allocations across cycles: the runtime's
+address reservations, signed code, framework caches and malloc's freed capacity
+may remain in the process. `RuntimeDisplayLifetimeTests` also checks that a late
+layout cannot retain a retired display while Home is showing.
+
+The opt-in `RetinaMemoryTests` compares repeated system-app launches at Retina
+and point resolution with 1.5 GiB of guest RAM. Its optional full-resolution
+WebGL Aquarium workload records actual renderer, frames and FPS alongside
+process, guest and GPU memory. See the [WebGL workload](../tests/integration/android/webgl/README.md)
+for invocation and snapshot collection.
+
+Its `AndroidOperationTests` and
 `AdbOverNetworkModelTests` play Create Bug Report, Install App and ADB over
 Network the same way. `AdbOverVsockTests` drive a real Android guest with the
 application's own client and authorization on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1`
-with `TEST_RUNNER_ANDARIUM_START=normal`): a shell command, the USB debugging
-setting and the channel with it on and off, a computer's connection through the
+with `TEST_RUNNER_ANDARIUM_START=normal`): a shell command, the multitouch
+features Android advertises to applications, two runtime touch
+contacts reaching Android's input reader through movement and independent
+release, the USB debugging setting and the channel with it on and off, a
+computer's connection through the
 bridge, a bug report (a zip above 1 MB, and its time), a cancel, a system APK
 pulled from the image and installed as an update (and its time), the image's
 key rule (the application's key accepted whatever the debugging setting; a
 foreign key refused with no prompt and nothing queued while debugging is off,
-and prompting while it is on), and the key after Erase Guest. With
-`TEST_RUNNER_ANDARIUM_ADB_NET_HOLD_SECONDS` one more test holds the bridge up for
+and prompting while it is on), and the key after Erase Guest.
+
+`AdbOverVsockTests/androidReportsExactStorageSizes()` is a standalone storage
+run with `TEST_RUNNER_ANDARIUM_STORAGE_TESTS=1` in addition to the ADB and normal
+start settings. Build AOSP's `AndariumStorageTests`, sign the APK with the image's
+platform certificate, and copy it into the application's `tmp/AndariumStorageTests.apk`
+before running only that method. It installs the APK through the application's
+client, runs `StorageAccountingTest#exactFilesystemBytes`,
+which checks both primary-storage helpers and `StorageStatsManager` against the
+mounted filesystem sizes, removes the APK and powers Android off cleanly.
+With the same ADB, storage and normal-start settings,
+`AdbOverVsockTests/storageSettingsShowNonnegativeUsage()` opens Android's internal
+Storage settings, waits for the summary, checks for negative displayed values
+while scrolling through the category rows, saves PNG screenshots and UI hierarchies
+to the application's `tmp/StorageSettings/`, and powers Android off. Run this method
+alone and collect that directory from the app container afterward.
+
+With `TEST_RUNNER_ANDARIUM_ADB_NET_HOLD_SECONDS` one more test holds the bridge up for
 a real adb on the Mac.
 `StatisticsLoopTests` drive the statistics loop against a scripted runtime with
 the pause between readings held by the test: no reading without a viewer, the
@@ -1362,7 +1441,7 @@ cases have lost a reservation, and requires that every case then agreed.
 
 ## Android 32-bit userspace
 
-The Android product runs `armeabi-v7a` applications beside `arm64-v8a` ones
+The Android product runs `armeabi-v7a` and legacy `armeabi` applications beside `arm64-v8a` ones
 ([`../android/lineage-24/README.md`](../android/lineage-24/README.md#android-product)).
 The build side needs no Android build. `lineage24-target-files-fixtures` drives the
 target-files verifier over fixtures (ABI lists, the 32-bit runtime, ELF32
@@ -1404,16 +1483,17 @@ runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
 `SIGILL` anywhere is a blocker, as everywhere.
 
 - **Boot.** `boot_completed` with `ro.product.cpu.abilist` listing
-  `arm64-v8a,armeabi-v7a`, `ro.zygote=zygote64_32` and the secondary zygote
+  `arm64-v8a,armeabi-v7a,armeabi`, `ro.zygote=zygote64_32` and the secondary zygote
   running without restarts; SELinux enforcing with no denial from the 32-bit
   zygote, `crash_dump32`, the WebView zygote or its RELRO process; native
   daemons and HALs 64-bit. ART Service's first-boot pass skips every package,
   the WebView's `arm` artifacts included, and `odrefresh` compiles nothing for
   either ISA.
-- **Applications.** A set of real 32-bit applications: some `armeabi-v7a`
-  only, some dual-ABI installed with `adb install --abi armeabi-v7a` against a
-  64-bit control install, and a Java-only one forced to 32 bits. Each shows
-  `primaryCpuAbi=armeabi-v7a` in `dumpsys package`, descends from the
+- **Applications.** A set of real 32-bit applications: `armeabi`-only and
+  `armeabi-v7a`-only APKs, some dual-ABI installed with
+  `adb install --abi armeabi-v7a` against a 64-bit control install, and a Java-only
+  one forced to 32 bits. Each native package shows its selected `armeabi` or
+  `armeabi-v7a` primary ABI in `dumpsys package`, descends from the
   secondary zygote, draws through GLES and, where it uses it, Vulkan, and
   leaves no tombstone. A deliberate `SIGSEGV` in one must leave a symbolized
   `crash_dump32` tombstone. The 64-bit browser's pages load through the 64-bit
@@ -1434,6 +1514,24 @@ runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
   of iPad cold boot or 100 MiB of guest `MemAvailable`. A 32-bit application
   installed on a device that had none starts the preload, so the first launch
   after that install is the one to time.
+
+Legacy `armeabi` application smoke coverage has passed on the physical iPad
+with these unmodified F-Droid archive builds:
+
+| APK | Exercised behavior |
+| --- | --- |
+| [Simon Tatham's Puzzles 9561.1 (72)](https://f-droid.org/archive/name.boyle.chris.sgtpuzzles_72.apk) | Native Fifteen board generation, three moves, undo and redo. |
+| [Gears ES2 7](https://f-droid.org/archive/com.jeffboody.GearsES2eclair_7.apk) | Animated native OpenGL ES 2 gears and touch-controlled view rotation. |
+| [Gloomy Dungeons 2013.03.07.0416](https://f-droid.org/archive/zame.GloomyDungeons.opensource.game_1358421967.apk) | Native OpenGL ES 1 level rendering, forward movement, turning, opening a door and firing two shots (ammunition 20 to 18). |
+
+Each APK's only ARM ABI is `armeabi` (Puzzles also contains x86), and its
+native libraries declare ARMv5TE. Install with the explicit
+`--bypass-low-target-sdk-block` option and no `--abi` override: all three
+selected `primaryCpuAbi=armeabi`, loaded their native libraries and ran as
+children of the 32-bit zygote. The run kept SELinux enforcing, left the native
+crash buffer empty and powered off with runtime result 0. Use
+`ANDARIUM_GUEST_INSTANCE` for an isolated compatibility-test guest; full release
+qualification still uses the gates above.
 
 ## Android guest storage
 

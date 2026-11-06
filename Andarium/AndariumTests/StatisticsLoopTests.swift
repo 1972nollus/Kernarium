@@ -245,8 +245,9 @@ struct StatisticsLoopTests {
         model.phase = .running(.normal)
         #expect(await until { gate.waits.count == 1 && gate.isWaiting })
         #expect(driver.statisticsAsked == 1)
-        // It ends: the loop ends with it, without waiting for its next turn.
-        model.phase = .poweredOff
+        // It ends (a clean shutdown returns to Home): the loop ends with it,
+        // without waiting for its next turn.
+        model.phase = .home
         await settle()
         gate.release()
         await settle()

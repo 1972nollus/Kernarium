@@ -82,13 +82,13 @@ struct StartPlanTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let files = try unfinishedUpdate(in: directory)
         #expect(files.startPlan(for: r2) == .unfinishedUpdate(to: "r2", canRetry: true, canRestore: true))
-        // A newer build has taken the place of the one that did not finish:
-        // its start cannot be retried, but the data it started from can come
-        // back.
-        #expect(files.startPlan(for: r3) == .unfinishedUpdate(to: "r2", canRetry: false, canRestore: true))
+        // A newer build restores the data and updates directly, without
+        // needing the intermediate release to finish first.
+        #expect(files.startPlan(for: r3) == .update(from: "r1", to: "r3"))
         // Without its snapshot there is nothing to put back.
         try FileManager.default.removeItem(at: files.snapshot(for: "r2"))
         #expect(files.startPlan(for: r2) == .unfinishedUpdate(to: "r2", canRetry: true, canRestore: false))
+        #expect(files.startPlan(for: r3) == .blocked(.mismatch))
     }
 
     @Test func theBootKindFollowsThePlanAndTheMode() {

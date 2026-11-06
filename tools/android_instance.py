@@ -281,6 +281,15 @@ def decide(
                     "a retry boots the release whose update did not complete",
                 )
             return Decision("retry", "the update boots again, its snapshot kept")
+        if release.release_id != state.release_id and release.build_number > state.build_number:
+            if not snapshot_exists:
+                return Decision("refuse_conflict", "the update's snapshot is missing")
+            if release.data_layout < pending["from"]["data_layout"]:
+                return Decision("refuse_downgrade", "the release's data layout is older than the snapshot's")
+            return Decision(
+                "update" if release.data_layout == pending["from"]["data_layout"] else "migrate",
+                "the unfinished update's data is restored before starting the newer release",
+            )
         return Decision(
             "refuse_pending",
             f"the start of {pending['to_release_id']} never reached boot_completed "
@@ -417,6 +426,10 @@ def apply(
         write_state(instance, updated)
         return updated
     assert action in ("update", "migrate")
+    if state.pending_update is not None:
+        return apply(
+            instance, release, Decision("restore", "restore the data before the unfinished update"), now=now
+        )
     name = snapshot_name(release.release_id)
     _replace_with_clone(data, instance / name)
     if action == "migrate":

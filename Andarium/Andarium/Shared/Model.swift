@@ -166,7 +166,6 @@ final class AppModel {
     /// What the system takes on this device.
     var systemBytes: UInt64
     var sheet: SheetKind?
-    var startMenu = false
     var startBlocked = false
     /// What a start would be, from the guest's files: Home words Start and
     /// shows the update notices by it.
@@ -179,6 +178,9 @@ final class AppModel {
     // App-wide display options, set on the home screen.
     var retina = false
     var followWindow = true
+    /// The host window owns display rotation until iPadOS grants the
+    /// full-screen session's orientation lock. Never a saved guest setting.
+    var hostDrivesGuestRotation = false
 
     var sessionPreset = SessionPreset()
     var session = SessionState()
@@ -202,6 +204,8 @@ final class AppModel {
     /// The guest's disk is being written before the run can begin.
     var preparingDisk = false
     var diskProgress: Double?
+    var motionSensorsAvailable = true
+    var motionSensorsProblem: String?
     var microphoneState = MicrophoneState.notAsked
     private var persistTask: Task<Void, Never>?
     /// The Android operation under way (a bug report, an install), which the
@@ -670,7 +674,6 @@ final class AppModel {
     /// Starts the guest in `mode`. Start on an update that did not finish
     /// tries the update again.
     func start(_ mode: StartMode) {
-        startMenu = false
         switch lifecycle.start(mode, host: host, plan: plan) {
         case let .allowed(kind):
             frozenBootStage = nil
@@ -695,6 +698,7 @@ final class AppModel {
         case .needsNewerChip:
             alert = AppAlert(title: DeviceRequirement.title, message: DeviceRequirement.explanation(deviceName: host.name))
         case .noGuest: break
+        case .relaunchRequired: break
         }
     }
 
@@ -715,8 +719,7 @@ final class AppModel {
     }
 
     func powerOff() {
-        runEnd = RunEnd(result: 0)
-        lifecycle.powerOff()
+        runEnded(RunEnd(result: 0), uptimeSeconds: nil)
     }
 
     func fail(_ end: RunEnd = RunEnd(result: -11), uptimeSeconds: Int? = 2530) {
@@ -732,6 +735,13 @@ final class AppModel {
         endAdbOverNetwork()
         runEnd = end
         runUptimeSeconds = uptimeSeconds
+        if end.poweredOff {
+            sheet = nil
+            sessionPreset = SessionPreset()
+            let showStats = session.showStats
+            session = SessionState()
+            session.showStats = showStats
+        }
         lifecycle.phase = end.phase
         persistNow()
         refreshPlan()
@@ -758,6 +768,13 @@ final class AppModel {
         // disk stays and Android sets itself up again by itself.
         if driver == nil { plan = .firstStart }
         persistNow()
+    }
+
+    func setMotionSensors(_ on: Bool) {
+        guard guest != nil, !on || motionSensorsAvailable else { return }
+        guest?.motionSensors = on
+        persistNow()
+        driver?.setMotionSensors(on)
     }
 
     /// The microphone switch: the guest's choice, then the system's answer.

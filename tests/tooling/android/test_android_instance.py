@@ -209,6 +209,39 @@ class InstanceFiles(unittest.TestCase):
                 (instance / "data.img.pre-rel-b").read_bytes(), b"guest data"
             )
 
+    def test_a_newer_release_restores_an_unfinished_update_before_starting(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-instance-") as temporary:
+            instance = Path(temporary) / "instance"
+            self.apply(instance, release("rel-a", 100, "a" * 64))
+            (instance / "data.img").write_bytes(b"guest data")
+            self.apply(instance, release("rel-b", 200, "b" * 64))
+            (instance / "data.img").write_bytes(b"partially upgraded data")
+            decision, state = self.apply(instance, release("rel-d", 10000, "d" * 64))
+            self.assertEqual(decision.action, "update")
+            self.assertEqual((instance / "data.img").read_bytes(), b"guest data")
+            self.assertEqual((instance / "data.img.pre-rel-d").read_bytes(), b"guest data")
+            self.assertFalse((instance / "data.img.pre-rel-b").exists())
+            self.assertEqual(state.release_id, "rel-d")
+            self.assertEqual(state.created_with, "rel-a")
+            self.assertEqual(state.pending_update["from"]["release_id"], "rel-a")
+            self.assertEqual(state.pending_update["to_release_id"], "rel-d")
+            android_instance.complete(instance, release("rel-d", 10000, "d" * 64))
+            self.assertFalse((instance / "data.img.pre-rel-d").exists())
+
+    def test_a_missing_snapshot_preserves_the_unfinished_updates_data(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-instance-") as temporary:
+            instance = Path(temporary) / "instance"
+            self.apply(instance, release("rel-a", 100, "a" * 64))
+            (instance / "data.img").write_bytes(b"guest data")
+            self.apply(instance, release("rel-b", 200, "b" * 64))
+            (instance / "data.img").write_bytes(b"partially upgraded data")
+            (instance / "data.img.pre-rel-b").unlink()
+            before = (instance / "instance.json").read_bytes()
+            with self.assertRaises(android_instance.InstanceError):
+                self.apply(instance, release("rel-d", 10000, "d" * 64))
+            self.assertEqual((instance / "instance.json").read_bytes(), before)
+            self.assertEqual((instance / "data.img").read_bytes(), b"partially upgraded data")
+
     def test_restoring_before_a_downgrade_is_refused(self) -> None:
         with tempfile.TemporaryDirectory(prefix="android-instance-") as temporary:
             instance = Path(temporary) / "instance"

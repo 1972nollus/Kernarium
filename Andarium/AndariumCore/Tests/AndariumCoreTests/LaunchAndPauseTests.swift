@@ -92,6 +92,16 @@ struct LaunchOverridesTests {
         #expect(!launch([.stats: "1"]).isEmpty)
     }
 
+    @Test func isolatedInstanceNamesCannotEscapeTheirDirectory() {
+        #expect(launch([.instance: "armeabi-legacy_1"]).instance == "armeabi-legacy_1")
+        for name in ["", ".", "..", "../Guest", "/tmp/guest", "a/b", "a b", "游戏", String(repeating: "a", count: 65)] {
+            let overrides = launch([.instance: name, .start: "normal", .erase: "1"])
+            #expect(overrides.instance == nil)
+            #expect(overrides.start == nil)
+            #expect(!overrides.erase)
+        }
+    }
+
     @Test func appliesToAGuest() {
         var overrides = LaunchOverrides()
         overrides.vCPUCount = 8

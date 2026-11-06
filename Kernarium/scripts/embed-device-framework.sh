@@ -51,6 +51,18 @@ rm -rf -- "$DESTINATION"
 	--exclude Modules --exclude '*.tbd' \
 	"$SLICE/" "$DESTINATION/"
 
+# This framework bypasses Xcode's Embed Frameworks phase, so its symbols must
+# follow the same path explicitly. Xcode gathers that directory into dSYMs in
+# the archive; debug symbols never belong inside the application bundle.
+if [ "${ACTION:-}" = install ]; then
+	SYMBOLS="$XCFRAMEWORK/ios-arm64/dSYMs/$NAME.framework.dSYM"
+	[ -d "$SYMBOLS" ] || fail "missing debug symbols: $SYMBOLS; repackage the framework"
+	[ -n "${DWARF_DSYM_FOLDER_PATH:-}" ] || fail "the archive has no debug symbols directory"
+	mkdir -p -- "$DWARF_DSYM_FOLDER_PATH"
+	/usr/bin/rsync -a --delete "$SYMBOLS/" \
+		"$DWARF_DSYM_FOLDER_PATH/$NAME.framework.dSYM/"
+fi
+
 # Sign it on copy, as the Embed Frameworks phase's CodeSignOnCopy does.
 if [ "${CODE_SIGNING_ALLOWED:-YES}" = YES ] &&
 	[ -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]; then

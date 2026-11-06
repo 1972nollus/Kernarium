@@ -17,10 +17,11 @@ process, on any handle, returns `UML_EMULATOR_UNSUPPORTED` before it names a
 console, maps a kernel window or enters a kernel, except the next run on the
 handle whose last run ended with `UML_EMULATOR_RUN_END_RESTART`
 (`uml_emulator_get_run_end`): that run hands the guest back to the process and
-boots again. A power-off, a host stop and any other end leave the guest spent,
-and another handle never takes it. A run that ends before its kernel claims
-guest RAM leaves the process's guest unspent. A host that wants another guest
-starts another process.
+boots again. A clean power-off can instead be released explicitly with
+`uml_emulator_release_guest` on the owning handle, after its device services
+stop; this or another handle can then boot again. A host stop or failed guest
+remains spent. A run that ends before its kernel claims
+guest RAM leaves the process's guest unspent.
 
 The hand-back refuses with `UML_EMULATOR_RUNTIME_ERROR`, and changes nothing,
 while a host service still borrows guest RAM or a kernel thread still runs; the
@@ -58,3 +59,7 @@ kernel into. The handle runs that section in place: a copy would be dirty heap
 for the handle's life, and the section outlives every handle. Any other buffer
 is still copied, and its caller may free it. The contract is the comment on
 `uml_emulator_create`.
+
+Outcome, 2026-11-05: clean power-off supports explicit release after all device
+services stop. Android returns to Andarium's Home only after that cleanup succeeds;
+a failed or host-stopped guest still requires a fresh process.

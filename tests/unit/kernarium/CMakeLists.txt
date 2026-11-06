@@ -11,6 +11,13 @@ uml_add_unit_test(NAME kernarium-console-input
     COMMAND uml_kernarium_console_input_tests
     LABELS kernarium)
 
+add_executable(uml_kernarium_console_output_tests console_output_tests.cpp)
+target_include_directories(uml_kernarium_console_output_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/Kernarium/Runtime)
+uml_add_unit_test(NAME kernarium-console-output
+    COMMAND uml_kernarium_console_output_tests
+    LABELS kernarium)
+
 add_executable(uml_kernarium_payload_file_tests payload_file_tests.cpp)
 target_include_directories(uml_kernarium_payload_file_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/Kernarium/Runtime)

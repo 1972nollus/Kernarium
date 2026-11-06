@@ -25,6 +25,7 @@ struct LaunchEnvironmentTests {
                 "ANDARIUM_START": "recovery",
                 "ANDARIUM_ERASE": "1",
                 "ANDARIUM_STATS": "1",
+                "ANDARIUM_GUEST_INSTANCE": "legacy-test",
             ],
             processorCount: 6
         )
@@ -36,6 +37,16 @@ struct LaunchEnvironmentTests {
         #expect(overrides.start == .recovery)
         #expect(overrides.erase)
         #expect(overrides.statistics)
+        #expect(overrides.instance == "legacy-test")
+    }
+
+    @Test func isolatedGuestsHaveSeparateStorage() {
+        let ordinary = AppEntry.guestDirectory()
+        let isolated = AppEntry.guestDirectory(instance: "legacy-test")
+        #expect(ordinary.lastPathComponent == "Guest")
+        #expect(isolated.lastPathComponent == "legacy-test")
+        #expect(isolated.deletingLastPathComponent().lastPathComponent == "TestGuests")
+        #expect(isolated != ordinary)
     }
 
     @Test func kernariumsBootModeAsksForARecoveryStartOnly() {

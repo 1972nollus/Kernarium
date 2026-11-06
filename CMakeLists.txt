@@ -86,6 +86,11 @@ option(UML_BUILD_AUDIO "Build the host Virtio Sound playback provider"
     ${UML_BUILD_GPU})
 option(UML_BUILD_KERNARIUM_RUNTIME
     "Build the Kernarium application framework for iOS" OFF)
+if(UML_BUILD_KERNARIUM_RUNTIME)
+    # The framework's dSYM needs debug information from its whole static
+    # closure, including optimized Release objects.
+    add_compile_options(-g)
+endif()
 option(UML_KERNARIUM_AUTOMATION_HARNESS
     "Build the automation-only Kernarium runtime: Linux boots host payloads, Android lets a launch turn ADB authorization off"
     OFF)

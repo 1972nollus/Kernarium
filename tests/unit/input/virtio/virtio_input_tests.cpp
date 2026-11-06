@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "require.hpp"
+#include "touchscreen.hpp"
 #include "virtio_input_device.hpp"
 #include "wire_bytes.hpp"
 
@@ -71,6 +72,10 @@ void touchscreenConfigurationIsDirectWithAFixedRange()
     const auto absoluteBits = configuration(device);
     require(bit(absoluteBits, protocol::absoluteX));
     require(bit(absoluteBits, protocol::absoluteY));
+    require(bit(absoluteBits, protocol::absoluteMtSlot));
+    require(bit(absoluteBits, protocol::absoluteMtTrackingId));
+    require(bit(absoluteBits, protocol::absoluteMtPositionX));
+    require(bit(absoluteBits, protocol::absoluteMtPositionY));
 
     select(device, protocol::configAbsoluteInfo, protocol::absoluteX);
     const auto x = configuration(device);
@@ -81,6 +86,119 @@ void touchscreenConfigurationIsDirectWithAFixedRange()
     const auto y = configuration(device);
     require(y.value.absolute.minimum == 0);
     require(y.value.absolute.maximum == protocol::touchscreenAbsoluteMaximum);
+    for (const auto axis : {protocol::absoluteMtPositionX,
+                            protocol::absoluteMtPositionY}) {
+        select(device, protocol::configAbsoluteInfo,
+               static_cast<std::uint8_t>(axis));
+        const auto info = configuration(device);
+        require(info.size == sizeof(protocol::InputAbsoluteInfo));
+        require(info.value.absolute.minimum == 0);
+        require(info.value.absolute.maximum == 32767);
+    }
+    select(device, protocol::configAbsoluteInfo, protocol::absoluteMtSlot);
+    require(configuration(device).value.absolute.maximum == 9);
+    select(device, protocol::configAbsoluteInfo, protocol::absoluteMtTrackingId);
+    require(configuration(device).value.absolute.maximum == 65535);
+}
+
+std::int32_t value(
+    const uml::input::virtio::TouchscreenReport& report,
+    std::uint16_t type,
+    std::uint16_t code)
+{
+    for (const auto& event : report.span()) {
+        if (event.type == type && event.code == code)
+            return event.value;
+    }
+    require(false);
+    return -1;
+}
+
+void multipleContactsMoveAndLiftIndependently()
+{
+    uml::input::virtio::Touchscreen screen;
+    const auto first = screen.touch(3, 100, 200, true);
+    require(first.events[0].type == protocol::eventKey);
+    require(first.events[0].code == protocol::buttonTouch);
+    require(first.events[first.count - 1].type == protocol::eventSynchronize);
+    const auto firstId = value(first, 3, 0x39); // ABS_MT_TRACKING_ID
+    const auto second = screen.touch(1, 300, 400, true);
+    const auto secondId = value(second, 3, 0x39);
+    require(firstId >= 0 && secondId >= 0 && firstId != secondId);
+    require(value(second, 3, 0x2f) == 1); // ABS_MT_SLOT
+    require(value(second, 3, 0x35) == 300);
+    require(value(second, 3, 0x36) == 400);
+    require(value(second, 3, 0) == 100); // ABS_X keeps the original finger
+    require(value(second, 3, 1) == 200);
+
+    const auto move = screen.touch(3, 150, 250, true);
+    require(value(move, 3, 0x2f) == 3);
+    require(value(move, 3, 0x35) == 150);
+    require(value(move, 3, 0x36) == 250);
+    for (const auto& event : move.span())
+        require(event.code != 0x39 || event.type != 3);
+
+    const auto lift = screen.touch(3, 150, 250, false);
+    require(value(lift, 3, 0x39) == -1);
+    require(value(lift, 1, 0x14a) == 1); // BTN_TOUCH stays down
+    require(value(lift, 3, 0) == 300); // primary moves to the remaining finger
+    require(value(lift, 3, 1) == 400);
+    const auto last = screen.touch(1, 300, 400, false);
+    require(value(last, 1, 0x14a) == 0);
+    require(value(last, 3, 0x39) == -1);
+    require(screen.touch(1, 300, 400, false).count == 0);
+    require(value(screen.touch(3, 100, 200, true), 3, 0x39) != firstId);
+}
+
+void tenContactsAndTrackingIdWrapKeepLiveIdsUnique()
+{
+    uml::input::virtio::Touchscreen screen;
+    std::array<std::int32_t, 10> ids {};
+    for (std::uint32_t slot = 0; slot < ids.size(); ++slot) {
+        ids[slot] = value(screen.touch(slot, slot, slot, true), 3, 0x39);
+        for (std::uint32_t prior = 0; prior < slot; ++prior)
+            require(ids[slot] != ids[prior]);
+    }
+    require(screen.touch(10, 0, 0, true).count == 0);
+    require(screen.touch(0, 32768, 0, true).count == 0);
+    require(screen.touch(0, 0, 32768, true).count == 0);
+    for (std::uint32_t index = 0; index < 65536; ++index) {
+        (void)screen.touch(9, 0, 0, false);
+        const auto id = value(screen.touch(9, 0, 0, true), 3, 0x39);
+        require(id >= 0 && id <= 65535);
+        for (std::size_t slot = 0; slot < 9; ++slot)
+            require(id != ids[slot]);
+    }
+    for (std::uint32_t slot = 0; slot < 10; ++slot) {
+        const auto lift = screen.touch(slot, 0, 0, false);
+        require(value(lift, 1, 0x14a) == (slot == 9 ? 0 : 1));
+    }
+}
+
+void liftingAtTheViewportEdgeDeliversTheFinalMovementBeforeUp()
+{
+    uml::input::virtio::Touchscreen screen;
+    (void)screen.touch(0, 100, 200, true);
+    const auto lift = screen.touch(0, 32767, 200, false);
+    unsigned reports = 0;
+    bool moved = false;
+    bool released = false;
+    for (const auto& event : lift.span()) {
+        if (event.type == 3 && event.code == 0x35) {
+            require(!released);
+            require(event.value == 32767);
+            moved = true;
+        }
+        if (event.type == 3 && event.code == 0x39) {
+            require(moved && reports == 1);
+            require(event.value == -1);
+            released = true;
+        }
+        if (event.type == 0 && event.code == 0)
+            ++reports;
+    }
+    require(moved && released && reports == 2);
+    require(lift.events[lift.count - 1].type == protocol::eventSynchronize);
 }
 
 void keyboardAdvertisesEvdevKeysAndLeds()
@@ -217,6 +335,9 @@ void eventQueueDefersAndThenReturnsOneWireEvent()
 int main()
 {
     touchscreenConfigurationIsDirectWithAFixedRange();
+    multipleContactsMoveAndLiftIndependently();
+    tenContactsAndTrackingIdWrapKeepLiveIdsUnique();
+    liftingAtTheViewportEdgeDeliversTheFinalMovementBeforeUp();
     keyboardAdvertisesEvdevKeysAndLeds();
     keyboardAdvertisesBackAndHomeAndNothingElseAbove127();
     keyboardDeliversBackAndHomeAsKeyEvents();

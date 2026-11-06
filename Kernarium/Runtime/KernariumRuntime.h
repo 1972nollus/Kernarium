@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 20U
+#define KERNARIUM_RUNTIME_API_VERSION 22U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -28,9 +28,12 @@ enum {
 /* The send_touch coordinates are absolute positions in the guest's
  * touchscreen range, 0 through this value on both axes, wherever the display
  * is and however it is sized. The host maps its view onto that range, so the
- * range never has to follow a mode change. */
+ * range never has to follow a mode change. Each simultaneous host contact
+ * keeps a slot in 0..<TOUCH_CONTACTS until it ends. A release affects only
+ * that slot; invalid slots and out-of-range coordinates are ignored. */
 enum {
     KERNARIUM_RUNTIME_TOUCH_MAXIMUM = 32767,
+    KERNARIUM_RUNTIME_TOUCH_CONTACTS = 10,
 };
 
 enum {
@@ -113,7 +116,9 @@ typedef struct kernarium_runtime_gpu_budget {
  * fails, or the guest restarts itself again and again within seconds of
  * booting. It returns the guest's own status (0 for a power-off or a stop), a
  * negated uml_emulator error constant for a run or start-up that failed, or
- * KERNARIUM_RUNTIME_RESULT_RESTART_LOOP. */
+ * KERNARIUM_RUNTIME_RESULT_RESTART_LOOP. For Android, 0 means the guest powered
+ * off cleanly and all its resources have been released: another run may start
+ * in this process. A host stop or an unreported shutdown returns an error. */
 typedef int (*kernarium_runtime_run_function)(
     KernariumMetalView view,
     const kernarium_runtime_boot* boot);
@@ -151,6 +156,7 @@ typedef int (*kernarium_runtime_sync_function)(void);
 typedef int (*kernarium_runtime_quiesce_function)(void);
 typedef void (*kernarium_runtime_resume_function)(void);
 typedef void (*kernarium_runtime_send_touch_function)(
+    uint32_t slot,
     uint32_t x,
     uint32_t y,
     int pressed);
@@ -396,7 +402,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v20(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v22(void);
 
 /* An automation-only extension, outside the versioned table: only a runtime
  * built for automation exports this symbol, and the application looks it up

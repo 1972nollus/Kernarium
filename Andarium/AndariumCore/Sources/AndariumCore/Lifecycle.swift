@@ -6,7 +6,6 @@ public enum Phase: Equatable, Sendable {
     case home
     case booting(BootKind)
     case running(StartMode)
-    case poweredOff
     case failed
 }
 
@@ -20,6 +19,8 @@ public enum HomeNotice: Equatable, Sendable {
 /// Whether a start may go ahead.
 public enum StartVerdict: Equatable, Sendable {
     case allowed(BootKind)
+    /// This process has an active or failed run and cannot start another.
+    case relaunchRequired
     case noGuest
     /// The device's GPU cannot draw the guest (`HostDevice.runsGuestGraphics`).
     case needsNewerChip
@@ -33,9 +34,8 @@ public enum StartVerdict: Equatable, Sendable {
     case blocked(StartBlock)
 }
 
-/// Where Andarium's one guest is in its life. A launch moves forward only:
-/// Home, one boot and its run, and how it ended; the runtime boots Android
-/// once per process, and a restart Android asks for happens inside the run.
+/// A clean power-off returns to Home. A failed run requires a fresh process;
+/// a restart Android asks for happens inside the run.
 public struct Lifecycle: Equatable, Sendable {
     /// Andarium holds at most one guest.
     public var guest: Guest?
@@ -74,6 +74,7 @@ public struct Lifecycle: Equatable, Sendable {
     public func startVerdict(
         _ mode: StartMode, host: HostDevice, plan: StartPlan = .normal
     ) -> StartVerdict {
+        guard phase == .home else { return .relaunchRequired }
         guard host.runsGuestGraphics else { return .needsNewerChip }
         guard guest != nil else { return .noGuest }
         guard host.hasRoom(for: Limits.startReserveBytes) else {
@@ -110,7 +111,7 @@ public struct Lifecycle: Equatable, Sendable {
         phase = .running(kind == .recovery ? .recovery : .normal)
     }
 
-    public mutating func powerOff() { phase = .poweredOff }
+    public mutating func powerOff() { phase = .home }
 
     public mutating func fail() { phase = .failed }
 
@@ -135,7 +136,7 @@ public struct RunEnd: Equatable, Sendable {
 
     public var poweredOff: Bool { result == 0 && !restartedInALoop && startFailure == nil }
 
-    public var phase: Phase { poweredOff ? .poweredOff : .failed }
+    public var phase: Phase { poweredOff ? .home : .failed }
 
     /// The lines the failure screen offers to copy.
     public func report(

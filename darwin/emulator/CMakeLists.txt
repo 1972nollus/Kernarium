@@ -40,9 +40,10 @@ _uml_add_emulator_boundary(uml_emulator_boundary 0)
 # libraries and interface-carried objects into it, never a linked static
 # archive. Socket-path ownership and the guest-end registry remain separate
 # archives for the in-tree device libraries, so each emulator archive also
-# carries their objects; a link that names both archives loads only one copy
-# of each table.
+# carries their objects and the process-wide heap region; a link that names
+# both archives loads only one copy of each table and heap region.
 set(_uml_emulator_carried_objects
+    $<TARGET_OBJECTS:uml_memory_heap>
     $<TARGET_OBJECTS:uml_device_socket_paths>
     $<TARGET_OBJECTS:uml_device_guest_end>)
 

@@ -230,6 +230,7 @@ def build_fixture(root: Path) -> Path:
     make_apk(product / "product/app/webview/webview.apk", MULTI_ARCH_XMLTREE, b"dex-web", both_abis)
     make_apk(product / "product/app/Plain/Plain.apk", NOT_MULTI_ARCH_XMLTREE, b"dex-plain", both_abis)
     make_apk(product / "product/app/Only32/Only32.apk", XMLTREE, b"dex-only32", ("armeabi-v7a",))
+    make_apk(product / "product/app/Legacy32/Legacy32.apk", XMLTREE, b"dex-legacy32", ("armeabi",))
     make_apk(product / "product/app/Bundled/Bundled.apk", XMLTREE, b"dex-bundled")
     for isa in ("arm64", "arm"):
         (product / "product/app/Bundled/lib" / isa).mkdir(parents=True)
@@ -359,6 +360,7 @@ def check_build_and_verify(tool, scratch: Path) -> None:
     expected = [
         ("/product/app/Bundled/Bundled.apk", "arm"),
         ("/product/app/Foo/Foo.apk", "arm64"),
+        ("/product/app/Legacy32/Legacy32.apk", "arm"),
         ("/product/app/Only32/Only32.apk", "arm"),
         ("/product/app/Plain/Plain.apk", "arm64"),
         ("/product/app/webview/webview.apk", "arm64"),

@@ -515,6 +515,7 @@ if [ "$SOFTWARE" -eq 0 ]; then
 	mesa_setup "$MESA_TOOL_PATH" \
 		"$MESON" setup "$MESA_BUILD" "$SOURCES/Mesa" \
 			--prefix "$MESA_STAGE" --libdir lib --buildtype release \
+			-Ddebug=true \
 			--wrap-mode=nodownload --prefer-static \
 			$MESA_MACHINE_ARGS $MESA_PRECOMP_ARGS \
 			-Dplatforms=macos -Dvulkan-drivers=kosmickrisp \
@@ -592,6 +593,7 @@ esac
 mesa_setup "$MESA_GL_TOOL_PATH" \
 	"$MESON" setup "$MESA_GL_BUILD" "$SOURCES/Mesa" \
 		--prefix "$MESA_GL_STAGE" --libdir lib --buildtype release \
+		-Ddebug=true \
 		--wrap-mode=nodownload \
 		$MESA_MACHINE_ARGS $MESA_PRECOMP_ARGS \
 		-Dplatforms=macos -Dvulkan-drivers= \
@@ -697,6 +699,16 @@ fi
 
 mkdir -p "$STAGE/share/uml-dependencies"
 cp "$MANIFEST" "$STAGE/share/uml-dependencies/manifest.tsv"
+# Extract symbols while Mesa's objects still exist: the temporary build tree
+# is removed after publication. Keep Release optimization and assertions as
+# configured above; debug information is a separate compiler option.
+mkdir -p -- "$STAGE/dSYMs"
+for framework in "$STAGE/Frameworks/"*.framework; do
+	framework_name=$(basename -- "$framework")
+	"$XCRUN" dsymutil "$framework/${framework_name%.framework}" \
+		-o "$STAGE/dSYMs/$framework_name.dSYM"
+done
+
 {
 	printf 'source\ttree\n'
 	for source in libepoxy virglrenderer mesa venus-protocol; do

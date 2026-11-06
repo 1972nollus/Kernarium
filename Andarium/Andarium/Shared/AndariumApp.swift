@@ -1,27 +1,73 @@
 import AndariumCore
 import SwiftUI
+import UIKit
 
 @main
-struct AndariumApp: App {
-    @State private var model: AppModel
-    private let entry: AppEntry
+final class AndariumApp: UIResponder, UIApplicationDelegate {
+    private var sceneConnection: NSObjectProtocol?
 
-    init() {
-        let entry = AppEntry.fromArguments()
-        entry.configureTips()
-        self.entry = entry
-        _model = State(initialValue: entry.makeModel())
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // Existing installations can restore the scene configuration saved
+        // by the former SwiftUI App entry point. Adopt those scenes too;
+        // their old delegate no longer has an App graph to create a window.
+        sceneConnection = NotificationCenter.default.addObserver(
+            forName: UIScene.willConnectNotification, object: nil, queue: .main
+        ) { notification in
+            guard let scene = notification.object as? UIWindowScene else { return }
+            Task { @MainActor in Self.adopt(scene) }
+        }
+        Task { @MainActor in
+            for case let scene as UIWindowScene in application.connectedScenes { Self.adopt(scene) }
+        }
+        return true
     }
 
-    var body: some Scene {
-        WindowGroup {
-            RootView(entry: entry)
-                .environment(model)
-        }
+    private static func adopt(_ scene: UIWindowScene) {
+        guard !(scene.delegate is AndariumSceneDelegate) else { return }
+        let delegate = AndariumSceneDelegate()
+        scene.delegate = delegate
+        delegate.connect(scene)
+    }
+
+    func application(
+        _ application: UIApplication, configurationForConnecting session: UISceneSession,
+        options: UIScene.ConnectionOptions
+    ) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: "Andarium", sessionRole: session.role)
+        configuration.delegateClass = AndariumSceneDelegate.self
+        return configuration
     }
 }
 
-/// A launch moves forward only: home, one boot, its run, and how it ended.
+final class AndariumSceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+    /// One model, runtime and motion manager for the scene's whole life.
+    private(set) var model: AppModel?
+
+    func windowScene(_ windowScene: UIWindowScene, didUpdateEffectiveGeometry previousGeometry: UIWindowScene.Geometry) {
+        (window?.rootViewController as? SceneGeometryObserver)?.sceneGeometryDidChange()
+    }
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
+        guard let scene = scene as? UIWindowScene else { return }
+        connect(scene)
+    }
+
+    func connect(_ scene: UIWindowScene) {
+        guard window == nil else { return }
+        let entry = AppEntry.fromArguments()
+        entry.configureTips()
+        let model = entry.makeModel()
+        self.model = model
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = AndariumHostingController(
+            rootView: RootView(entry: entry).environment(model), model: model)
+        self.window = window
+        window.makeKeyAndVisible()
+    }
+}
+
+/// Clean power-off returns to Home; a failed run waits for a fresh process.
 struct RootView: View {
     @Environment(AppModel.self) private var model
     let entry: AppEntry
@@ -41,10 +87,8 @@ struct RootView: View {
                         .id(kind)
                 case .running(let mode):
                     SessionView(mode: mode)
-                case .poweredOff:
-                    EndView(failure: false)
                 case .failed:
-                    EndView(failure: true)
+                    EndView()
                 }
             }
             .transition(.opacity)

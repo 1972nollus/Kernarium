@@ -2,7 +2,6 @@
 
 #include "scanout_framebuffer.hpp"
 
-#include <Accelerate/Accelerate.h>
 #include <arm_neon.h>
 
 #include <algorithm>
@@ -49,65 +48,62 @@ std::size_t framebufferSize(std::uint32_t width, std::uint32_t height)
         protocol::gpuBytesPerPixel;
 }
 
-std::array<std::uint8_t, 4> channelPermutation(protocol::GpuFormat format)
-{
-    switch (format) {
-    case protocol::GpuFormat::b8g8r8a8Unorm:
-    case protocol::GpuFormat::b8g8r8x8Unorm:
-        return {0, 1, 2, 3};
-    case protocol::GpuFormat::a8r8g8b8Unorm:
-    case protocol::GpuFormat::x8r8g8b8Unorm:
-        return {3, 2, 1, 0};
-    case protocol::GpuFormat::r8g8b8a8Unorm:
-    case protocol::GpuFormat::r8g8b8x8Unorm:
-        return {2, 1, 0, 3};
-    case protocol::GpuFormat::x8b8g8r8Unorm:
-    case protocol::GpuFormat::a8b8g8r8Unorm:
-        return {1, 2, 3, 0};
-    }
-    throw std::invalid_argument("unsupported Virtio-GPU pixel format");
-}
-
-void copyRectangleWithVImage(
+/* Convert straight into the locked framebuffer, with no full-image staging
+ * allocation or second copy. All supported formats are byte permutations;
+ * the vector loop and scalar tail perform the same permutation. */
+template<unsigned blue, unsigned green, unsigned red, unsigned alpha>
+void permuteRectangle(
     std::uint8_t* destination,
     const std::uint8_t* source,
     std::uint32_t width,
     std::uint32_t height,
     std::size_t sourceRowBytes,
-    std::size_t destinationRowBytes,
-    protocol::GpuFormat format)
+    std::size_t destinationRowBytes) noexcept
 {
-    const vImage_Buffer sourceBuffer {
-        .data = const_cast<std::uint8_t*>(source),
-        .height = height,
-        .width = width,
-        .rowBytes = sourceRowBytes,
-    };
-    const vImage_Buffer destinationBuffer {
-        .data = destination,
-        .height = height,
-        .width = width,
-        .rowBytes = destinationRowBytes,
-    };
-
-    vImage_Error error = kvImageNoError;
-    if (format == protocol::GpuFormat::b8g8r8a8Unorm ||
-        format == protocol::GpuFormat::b8g8r8x8Unorm) {
-        error = vImageCopyBuffer(
-            &sourceBuffer,
-            &destinationBuffer,
-            protocol::gpuBytesPerPixel,
-            kvImageNoFlags);
-    } else {
-        const auto permutation = channelPermutation(format);
-        error = vImagePermuteChannels_ARGB8888(
-            &sourceBuffer,
-            &destinationBuffer,
-            permutation.data(),
-            kvImageNoFlags);
+    for (std::uint32_t y = 0; y < height; ++y) {
+        const auto* input = source + y * sourceRowBytes;
+        auto* output = destination + y * destinationRowBytes;
+        std::uint32_t x = 0;
+        for (; width - x >= 16U; x += 16U) {
+            const auto offset = static_cast<std::size_t>(x) * 4U;
+            const auto channels = vld4q_u8(input + offset);
+            uint8x16x4_t pixels;
+            pixels.val[0] = channels.val[blue];
+            pixels.val[1] = channels.val[green];
+            pixels.val[2] = channels.val[red];
+            pixels.val[3] = channels.val[alpha];
+            vst4q_u8(output + offset, pixels);
+        }
+        for (; x < width; ++x) {
+            const auto offset = static_cast<std::size_t>(x) * 4U;
+            output[offset] = input[offset + blue];
+            output[offset + 1U] = input[offset + green];
+            output[offset + 2U] = input[offset + red];
+            output[offset + 3U] = input[offset + alpha];
+        }
     }
-    if (error != kvImageNoError)
-        throw std::runtime_error("vImage pixel conversion failed");
+}
+
+using PixelConversion = void (*)(std::uint8_t*, const std::uint8_t*,
+    std::uint32_t, std::uint32_t, std::size_t, std::size_t) noexcept;
+
+PixelConversion pixelConversion(protocol::GpuFormat format)
+{
+    switch (format) {
+    case protocol::GpuFormat::b8g8r8a8Unorm:
+    case protocol::GpuFormat::b8g8r8x8Unorm:
+        return nullptr;
+    case protocol::GpuFormat::a8r8g8b8Unorm:
+    case protocol::GpuFormat::x8r8g8b8Unorm:
+        return &permuteRectangle<3, 2, 1, 0>;
+    case protocol::GpuFormat::r8g8b8a8Unorm:
+    case protocol::GpuFormat::r8g8b8x8Unorm:
+        return &permuteRectangle<2, 1, 0, 3>;
+    case protocol::GpuFormat::x8b8g8r8Unorm:
+    case protocol::GpuFormat::a8b8g8r8Unorm:
+        return &permuteRectangle<1, 2, 3, 0>;
+    }
+    throw std::invalid_argument("unsupported Virtio-GPU pixel format");
 }
 
 std::vector<std::uint8_t> initialPixels(
@@ -270,52 +266,53 @@ ScanoutRectangle ScanoutFramebuffer::update(
     const auto sourceOffset =
         static_cast<std::size_t>(sourceY) * sourceRowBytes +
         static_cast<std::size_t>(sourceX) * protocol::gpuBytesPerPixel;
-    // Copies the rectangle's rows, each rowStride after the one before, into
-    // the framebuffer unless it was resized meanwhile.
-    const auto copyRows = [&](const std::uint8_t* rows,
-                              std::size_t rowStride) -> ScanoutRectangle {
-        std::lock_guard lock(mutex_);
-        if (dimensions_.load(std::memory_order_acquire) !=
-            framebufferDimensions) {
-            return {};
+    const auto convert = pixelConversion(sourceFormat);
+    // Released after unlocking, including the exceptional overlapping case.
+    std::vector<std::uint8_t> converted;
+    std::lock_guard lock(mutex_);
+    if (dimensions_.load(std::memory_order_acquire) != framebufferDimensions)
+        return {};
+
+    const auto sourceAddress = reinterpret_cast<std::uintptr_t>(source.data());
+    const auto storageAddress = reinterpret_cast<std::uintptr_t>(pixels_.data());
+    const bool overlaps = !pixels_.empty() && (sourceAddress < storageAddress ?
+        storageAddress - sourceAddress < source.size() :
+        sourceAddress - storageAddress < pixels_.size());
+    const auto* rows = source.data() + sourceOffset;
+    auto rowStride = sourceRowBytes;
+    if (convert != nullptr && overlaps) {
+        // A caller may convert a rectangle of this framebuffer into another
+        // rectangle of itself. Preserve its input before overwriting it.
+        if (rectangleHeight >
+            std::numeric_limits<std::size_t>::max() / convertedRowBytes) {
+            throw std::invalid_argument("overflowing display update rectangle");
         }
-        ensureStorageLocked(framebufferDimensions);
+        converted.resize(convertedRowBytes * rectangleHeight);
+        convert(converted.data(), rows, rectangleWidth, rectangleHeight,
+            rowStride, convertedRowBytes);
+        rows = converted.data();
+        rowStride = convertedRowBytes;
+    }
+    ensureStorageLocked(framebufferDimensions);
+    const auto destinationOffset =
+        (static_cast<std::size_t>(destinationY) * destinationWidth +
+            destinationX) * protocol::gpuBytesPerPixel;
+    if (convert != nullptr && !overlaps) {
+        convert(pixels_.data() + destinationOffset, rows,
+            rectangleWidth, rectangleHeight, rowStride,
+            static_cast<std::size_t>(destinationWidth) * protocol::gpuBytesPerPixel);
+    } else {
         for (std::uint32_t row = 0; row < rectangleHeight; ++row) {
-            const auto destinationOffset =
-                (static_cast<std::size_t>(destinationY + row) *
-                    destinationWidth + destinationX) *
-                protocol::gpuBytesPerPixel;
+            const auto rowOffset = static_cast<std::size_t>(row) *
+                destinationWidth * protocol::gpuBytesPerPixel;
             std::memcpy(
-                pixels_.data() + destinationOffset,
+                pixels_.data() + destinationOffset + rowOffset,
                 rows + static_cast<std::size_t>(row) * rowStride,
                 convertedRowBytes);
         }
-        return {
-            .x = destinationX,
-            .y = destinationY,
-            .width = rectangleWidth,
-            .height = rectangleHeight,
-        };
-    };
-    if (sourceFormat == protocol::GpuFormat::b8g8r8a8Unorm ||
-        sourceFormat == protocol::GpuFormat::b8g8r8x8Unorm) {
-        return copyRows(source.data() + sourceOffset, sourceRowBytes);
     }
-    if (rectangleHeight >
-        std::numeric_limits<std::size_t>::max() / convertedRowBytes) {
-        throw std::invalid_argument("overflowing display update rectangle");
-    }
-    std::vector<std::uint8_t> converted(
-        convertedRowBytes * static_cast<std::size_t>(rectangleHeight));
-    copyRectangleWithVImage(
-        converted.data(),
-        source.data() + sourceOffset,
-        rectangleWidth,
-        rectangleHeight,
-        sourceRowBytes,
-        convertedRowBytes,
-        sourceFormat);
-    return copyRows(converted.data(), convertedRowBytes);
+    return {.x = destinationX, .y = destinationY,
+        .width = rectangleWidth, .height = rectangleHeight};
 }
 
 void ScanoutFramebuffer::fillSelfTestPattern()

@@ -3,15 +3,19 @@
 #include "guest_files.hpp"
 #include "require.hpp"
 #include "scratch_directory.hpp"
+#include "wait_until.hpp"
 
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
+#include <poll.h>
 #include <string>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 namespace {
@@ -160,6 +164,170 @@ void anEmptyRegistryFlushesNothing()
 	require(result.failed == 0U);
 }
 
+void waitForChild(pid_t child)
+{
+	int status = 0;
+	require(uml::testing::waitUntil([&] {
+		return waitpid(child, &status, WNOHANG) == child;
+	}, std::chrono::seconds{5}), "the lock observer did not exit");
+	require(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		"the lock observer failed");
+}
+
+char receiveByte(int descriptor)
+{
+	pollfd ready {descriptor, POLLIN, 0};
+	require(poll(&ready, 1, 5000) == 1, "the lock observer did not answer");
+	char result = 0;
+	require(read(descriptor, &result, 1) == 1, "read the lock observer");
+	return result;
+}
+
+/* POSIX locks belong to a process, so another process must observe them. */
+bool anotherProcessSeesALock(int descriptor)
+{
+	int result[2];
+	require(pipe(result) == 0);
+	const pid_t child = fork();
+	require(child >= 0);
+	if (child == 0) {
+		close(result[0]);
+		struct flock query {};
+		query.l_type = F_WRLCK;
+		query.l_whence = SEEK_SET;
+		const char answer = fcntl(descriptor, F_GETLK, &query) == 0 ?
+			(query.l_type == F_UNLCK ? 'n' : 'y') : 'e';
+		_exit(write(result[1], &answer, 1) == 1 ? 0 : 1);
+	}
+	close(result[1]);
+	const char answer = receiveByte(result[0]);
+	close(result[0]);
+	waitForChild(child);
+	require(answer != 'e', "query the file lock");
+	return answer == 'y';
+}
+
+void lockDisk(int descriptor, short type = F_WRLCK)
+{
+	struct flock lock {};
+	lock.l_type = type;
+	lock.l_whence = SEEK_SET;
+	require(uml::platform::set_guest_file_lock(descriptor, F_SETLK, lock) == 0,
+		"lock the guest disk");
+}
+
+void diskLocksLeaveBeforeSuspensionAndReturnBeforeResume()
+{
+	(void)uml::platform::forget_guest_files();
+	const int disk = openScratch("locked-disk", O_RDWR);
+	lockDisk(disk);
+	require(anotherProcessSeesALock(disk), "the running disk must be locked");
+	for (int cycle = 0; cycle < 2; ++cycle) {
+		require(uml::platform::release_guest_file_locks() == 0);
+		require(!anotherProcessSeesALock(disk),
+			"the suspended guest must hold no file lock");
+		struct flock requested {};
+		requested.l_type = F_WRLCK;
+		requested.l_whence = SEEK_SET;
+		require(uml::platform::set_guest_file_lock(disk, F_SETLK, requested) == -1 &&
+			errno == EAGAIN, "a suspended guest must acquire no new lock");
+		require(uml::platform::restore_guest_file_locks());
+		require(anotherProcessSeesALock(disk), "resume must restore the disk lock");
+	}
+	require(uml::platform::release_guest_file_locks(true) == 0);
+	require(!anotherProcessSeesALock(disk), "a finished run must hold no lock");
+	require(uml::platform::restore_guest_file_locks());
+	require(!anotherProcessSeesALock(disk), "an ended run must not be relocked");
+	close(disk);
+}
+
+void aReadOnlyDiskLockIsReleasedToo()
+{
+	const int disk = openScratch("locked-read-only", O_RDONLY);
+	lockDisk(disk, F_RDLCK);
+	require(anotherProcessSeesALock(disk));
+	require(uml::platform::release_guest_file_locks() == 0);
+	require(!anotherProcessSeesALock(disk));
+	require(uml::platform::restore_guest_file_locks());
+	require(anotherProcessSeesALock(disk));
+	close(disk);
+	(void)uml::platform::forget_guest_files();
+}
+
+void aChangedDiskRefusesResumeAndReleasesEarlierLocks()
+{
+	const int first = openScratch("unchanged-first", O_RDWR);
+	const int second = openScratch("changed-second", O_RDWR);
+	require(pwrite(second, "before!", 7, 0) == 7);
+	lockDisk(first);
+	lockDisk(second);
+	require(uml::platform::release_guest_file_locks() == 0);
+	require(pwrite(second, "changed", 7, 0) == 7);
+	errno = 0;
+	require(!uml::platform::restore_guest_file_locks() && errno == ESTALE,
+		"a disk modified while unlocked must never resume");
+	require(!anotherProcessSeesALock(first) && !anotherProcessSeesALock(second),
+		"a failed restore must release every lock it reacquired");
+	close(first);
+	close(second);
+	(void)uml::platform::forget_guest_files();
+}
+
+void aReusedDiskDescriptorMustNotBeRelocked()
+{
+	const int first = openScratch("released-first", O_RDWR);
+	lockDisk(first);
+	require(uml::platform::release_guest_file_locks() == 0);
+	close(first);
+	const int second = openScratch("released-reused", O_RDWR);
+	require(first == second);
+	require(!uml::platform::restore_guest_file_locks() && errno == ESTALE,
+		"a reused descriptor is not the suspended disk");
+	require(!anotherProcessSeesALock(second), "the replacement must stay unlocked");
+	close(second);
+	(void)uml::platform::forget_guest_files();
+}
+
+void aContendedDiskRefusesResume()
+{
+	const int first = openScratch("contended-first", O_RDWR);
+	const int second = openScratch("contended-second", O_RDWR);
+	lockDisk(first);
+	lockDisk(second);
+	require(uml::platform::release_guest_file_locks() == 0);
+	int ready[2], release[2];
+	require(pipe(ready) == 0 && pipe(release) == 0);
+	const pid_t child = fork();
+	require(child >= 0);
+	if (child == 0) {
+		close(ready[0]);
+		close(release[1]);
+		struct flock lock {};
+		lock.l_type = F_WRLCK;
+		lock.l_whence = SEEK_SET;
+		const char answer = fcntl(second, F_SETLK, &lock) == 0 ? 'y' : 'n';
+		if (write(ready[1], &answer, 1) != 1)
+			_exit(1);
+		pollfd request {release[0], POLLIN, 0};
+		_exit(poll(&request, 1, 10000) == 1 ? 0 : 1);
+	}
+	close(ready[1]);
+	close(release[0]);
+	require(receiveByte(ready[0]) == 'y', "another process can lock a paused disk");
+	close(ready[0]);
+	require(!uml::platform::restore_guest_file_locks(),
+		"the guest must not resume while another process owns its disk");
+	require(!anotherProcessSeesALock(first), "roll back the first disk's lock");
+	require(write(release[1], "x", 1) == 1);
+	close(release[1]);
+	waitForChild(child);
+	require(uml::platform::restore_guest_file_locks(),
+		"an unchanged disk can resume after its other owner leaves");
+	close(first);
+	close(second);
+	(void)uml::platform::forget_guest_files();
+}
+
 } // namespace
 
 int main()
@@ -172,6 +340,11 @@ int main()
 	everyRecordedDescriptorIsFlushed();
 	anUnflushableDescriptorIsReportedWithoutStoppingTheRest();
 	forgottenRecordsAreNeitherFlushedNorRetired();
+	diskLocksLeaveBeforeSuspensionAndReturnBeforeResume();
+	aReadOnlyDiskLockIsReleasedToo();
+	aChangedDiskRefusesResumeAndReleasesEarlierLocks();
+	aReusedDiskDescriptorMustNotBeRelocked();
+	aContendedDiskRefusesResume();
 	std::puts("guest file sync tests passed");
 	return 0;
 }
