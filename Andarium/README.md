@@ -444,7 +444,13 @@ the app's own operations. Plain descriptors on both sides are why it is not
 Network.framework: the runtime hands back a descriptor, and the same code is
 exercised on the host with socket pairs and loopback. The bridge understands no
 byte of adb, so the guest's adbd authenticates the computer: its key is not the
-host's, and the guest's own prompt approves it. The row shows
+host's, and the guest's own prompt approves it (the prompt is the guest's, and
+"Always allow" there is what lets the same computer reconnect without it). The
+guest pauses with the application, which has no background mode: while Andarium
+is in the background a computer's adb commands wait, the kernel still completes
+new connections into the listener's backlog, and a transfer in flight resumes
+when Andarium returns. iOS may end a paused Andarium under memory pressure,
+which closes the listener and every connection. The row shows
 `adb connect <address>:5555`, with the address from `getifaddrs` (`en0` first,
 then other `en` interfaces; never cellular, tunnels or link-local), read again
 with the setting; without one it says the device has no Wi-Fi address. iOS
