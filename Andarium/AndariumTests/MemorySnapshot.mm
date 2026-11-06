@@ -4,6 +4,19 @@
 #include <mach/mach.h>
 #include <malloc/malloc.h>
 #include <cstdint>
+#include <dlfcn.h>
+
+NSInteger andarium_test_release_gpu_caches(void)
+{
+    using Entry = void (*)(void);
+    using GetProcAddress = Entry (*)(const char *);
+    auto getProcAddress = reinterpret_cast<GetProcAddress>(
+        dlsym(RTLD_DEFAULT, "eglGetProcAddress"));
+    if (getProcAddress == nullptr) return -1;
+    auto release = reinterpret_cast<int (*)(void)>(
+        getProcAddress("eglReleaseCachedMemoryMESA"));
+    return release == nullptr ? -1 : release();
+}
 
 NSDictionary<NSString *, id> *andarium_test_memory_snapshot(void)
 {
@@ -16,6 +29,8 @@ NSDictionary<NSString *, id> *andarium_test_memory_snapshot(void)
     NSMutableDictionary *result = [@{
         @"task_info_result": @(taskResult),
         @"footprint": @(task.phys_footprint),
+        @"peak_footprint": @(task.ledger_phys_footprint_peak),
+        @"remaining": @(task.limit_bytes_remaining),
         @"resident": @(task.resident_size),
         @"virtual": @(task.virtual_size),
         @"graphics": @(task.ledger_tag_graphics_footprint + task.ledger_tag_graphics_footprint_compressed),
