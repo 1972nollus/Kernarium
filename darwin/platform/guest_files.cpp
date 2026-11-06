@@ -27,7 +27,12 @@ struct LockRecord final {
 	struct stat identity {};
 	struct flock lock {};
 	bool recorded{};
+	/* Unlocked by a release, and to be locked again by a restore. A lock
+	 * whose release failed was never unlocked and stays false. */
 	bool released{};
+	/* Locked again by the restore in progress, which a failed restore
+	 * unlocks and nothing else. */
+	bool reacquired{};
 };
 
 std::vector<LockRecord> diskLocks;
@@ -56,13 +61,16 @@ bool locksSuspended{};
 	return ::fcntl(descriptor, F_SETLK, &lock);
 }
 
+/* A failed restore gives back the locks it took and leaves the others as they
+ * were: a lock whose release failed is still the guest's. */
 void undoRestoredLocks() noexcept
 {
 	for (std::size_t index = 0; index < diskLocks.size(); ++index) {
 		auto &record = diskLocks[index];
-		if (record.recorded && !record.released) {
+		if (record.reacquired) {
 			(void)unlock(static_cast<int>(index));
 			record.released = true;
+			record.reacquired = false;
 		}
 	}
 }
@@ -132,8 +140,14 @@ std::size_t forget_guest_files() noexcept
 int set_guest_file_lock(int descriptor, int command,
 	const struct flock &requested) noexcept
 {
-	/* UML's os_lock_file owns an entire disk, never a byte range. Refuse
-	 * anything this registry could not restore faithfully. */
+	/* UML's os_lock_file owns an entire disk, never a byte range, and takes
+	 * it without waiting. Refuse anything this registry could not restore
+	 * faithfully, and a wait it would spend holding the mutex that every
+	 * flush and every quiesce needs. */
+	if (command != F_SETLK) {
+		errno = EINVAL;
+		return -1;
+	}
 	if (requested.l_whence != SEEK_SET || requested.l_start != 0 ||
 	    requested.l_len != 0 || (requested.l_type != F_RDLCK &&
 	    requested.l_type != F_WRLCK && requested.l_type != F_UNLCK)) {
@@ -217,6 +231,7 @@ bool restore_guest_file_locks() noexcept
 			break;
 		}
 		record.released = false;
+		record.reacquired = true;
 		if (::fstat(descriptor, &identity) != 0 ||
 		    !unchanged(identity, record.identity)) {
 			error = ESTALE;
@@ -228,6 +243,8 @@ bool restore_guest_file_locks() noexcept
 		errno = error;
 		return false;
 	}
+	for (auto &record : diskLocks)
+		record.reacquired = false;
 	locksSuspended = false;
 	return true;
 }

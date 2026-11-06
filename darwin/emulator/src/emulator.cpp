@@ -575,11 +575,13 @@ public:
 				guest_writeback_settle_ms);
 		}
 		const auto result = ::uml::runtime::sync_guest_files();
-		unsigned unlock_failures = 0;
 		/* Last, with the guest asleep and its files on disk. */
 		if (guest_suspension_ == ::uml::device::GuestSuspension::system)
-			unlock_failures = settle_suspended_guest();
-		return static_cast<int>(result.failed + unlock_failures);
+			settle_suspended_guest();
+		/* The files the host could not flush, as the API reports them. A
+		 * lock it could not release is no file left unflushed, and is
+		 * logged where it happens. */
+		return static_cast<int>(result.failed);
 	}
 
 	void resume() noexcept
@@ -901,22 +903,25 @@ private:
 	 * writing them before the resume has locked them again and found them
 	 * unchanged. The locks therefore leave only with the threads held, and
 	 * stay where they cannot be. */
-	[[nodiscard]] unsigned settle_suspended_guest() noexcept
+	void settle_suspended_guest() noexcept
 	{
 		if (!hold_guest_threads()) {
 			if (!std::exchange(guest_hold_failure_logged_, true))
 				write_line("Darwin: the guest's disk locks stay held: "
 					"its threads could not be held (reason ",
 					static_cast<unsigned>(guest_hold_failure_), ")");
-			return 0;
+			return;
 		}
 		/* The locks leave first: a process holding one when the system
 		 * suspends it is ended, and the write can take a while. */
 		const unsigned failed = ::uml::runtime::release_guest_file_locks();
 		guest_file_locks_released_ = true;
+		if (failed != 0U)
+			write_line("Darwin: ", failed, " guest disk lock(s) could not "
+				"be released; the system may end the process while it "
+				"is suspended");
 		if (guest_hold_ == GuestHold::hibernation)
 			hibernation_->write();
-		return failed;
 	}
 
 	/* Holds every thread that can touch the guest's RAM or disks until

@@ -328,6 +328,55 @@ void aContendedDiskRefusesResume()
 	(void)uml::platform::forget_guest_files();
 }
 
+/* The registry restores a lock without waiting, and its mutex is the one every
+ * flush needs, so a request to wait for a lock is refused rather than made
+ * while another process owns the disk. */
+void aBlockingLockRequestIsRefusedInsteadOfWaiting()
+{
+	(void)uml::platform::forget_guest_files();
+	const int disk = openScratch("blocking-lock", O_RDWR);
+	int ready[2], release[2];
+	require(pipe(ready) == 0 && pipe(release) == 0);
+	const pid_t child = fork();
+	require(child >= 0);
+	if (child == 0) {
+		close(ready[0]);
+		close(release[1]);
+		struct flock lock {};
+		lock.l_type = F_WRLCK;
+		lock.l_whence = SEEK_SET;
+		const char answer = fcntl(disk, F_SETLK, &lock) == 0 ? 'y' : 'n';
+		if (write(ready[1], &answer, 1) != 1)
+			_exit(1);
+		pollfd request {release[0], POLLIN, 0};
+		_exit(poll(&request, 1, 10000) == 1 ? 0 : 1);
+	}
+	close(ready[1]);
+	close(release[0]);
+	require(receiveByte(ready[0]) == 'y', "another process owns the disk");
+	close(ready[0]);
+	struct flock requested {};
+	requested.l_type = F_WRLCK;
+	requested.l_whence = SEEK_SET;
+	const auto started = std::chrono::steady_clock::now();
+	errno = 0;
+	require(uml::platform::set_guest_file_lock(disk, F_SETLKW, requested) == -1 &&
+		errno == EINVAL, "a waiting lock request must be refused");
+	require(std::chrono::steady_clock::now() - started <
+		std::chrono::seconds {5}, "the refused request waited for the disk");
+	errno = 0;
+	require(uml::platform::set_guest_file_lock(disk, F_GETLK, requested) == -1 &&
+		errno == EINVAL, "only the non-blocking lock is a lock request");
+	require(uml::platform::release_guest_file_locks() == 0 &&
+		uml::platform::restore_guest_file_locks(),
+		"a refused request left nothing for the registry to restore");
+	require(write(release[1], "x", 1) == 1);
+	close(release[1]);
+	waitForChild(child);
+	close(disk);
+	(void)uml::platform::forget_guest_files();
+}
+
 } // namespace
 
 int main()
@@ -345,6 +394,7 @@ int main()
 	aChangedDiskRefusesResumeAndReleasesEarlierLocks();
 	aReusedDiskDescriptorMustNotBeRelocked();
 	aContendedDiskRefusesResume();
+	aBlockingLockRequestIsRefusedInsteadOfWaiting();
 	std::puts("guest file sync tests passed");
 	return 0;
 }
