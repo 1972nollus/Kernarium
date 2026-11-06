@@ -37,6 +37,7 @@ struct SectionNote: View {
         Text(text)
             .font(.footnote)
             .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 18)
     }
 }

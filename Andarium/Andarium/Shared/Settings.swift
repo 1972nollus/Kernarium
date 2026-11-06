@@ -22,13 +22,20 @@ struct SessionSettingsSheet: View {
     var body: some View {
         let session = model.session
         NavigationStack {
-            List {
-                if normalSession, model.capabilities.apkInstall { apps(session) }
-                if normalSession, model.capabilities.adbOverNetwork { adb(session) }
-                if normalSession, model.capabilities.bugReport { bugReport }
-                if model.capabilities.statistics { stats(session) }
-                display
-                capabilities
+            ScrollViewReader { proxy in
+                List {
+                    if normalSession, model.capabilities.apkInstall { apps(session) }
+                    if normalSession, model.capabilities.adbOverNetwork { adb(session) }
+                    if normalSession, model.capabilities.bugReport { bugReport }
+                    if model.capabilities.statistics { stats(session) }
+                    display
+                    capabilities
+                }
+                .task {
+                    guard let target = model.sessionPreset.settingsScroll else { return }
+                    try? await Task.sleep(for: .milliseconds(500))
+                    proxy.scrollTo(target, anchor: .top)
+                }
             }
             .listSectionSpacing(.compact)
             .navigationTitle("Settings")
@@ -213,6 +220,7 @@ struct SessionSettingsSheet: View {
                 rowLabel("Show on Screen", symbol: "rectangle.topthird.inset.filled")
             }
         }
+        .id("stats")
     }
 
     // MARK: Display and capabilities
@@ -228,6 +236,7 @@ struct SessionSettingsSheet: View {
                     rowLabel("Retina mode", symbol: "rectangle.inset.filled")
                 }
             }
+            .id("display")
         }
     }
 
@@ -269,6 +278,7 @@ struct SessionSettingsSheet: View {
             } footer: {
                 Text(model.motionSensorsProblem ?? CapabilitiesSection.gyroscopeNote(available: model.motionSensorsAvailable))
             }
+            .id("capabilities")
         }
     }
 

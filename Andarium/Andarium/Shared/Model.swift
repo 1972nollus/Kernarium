@@ -16,6 +16,9 @@ struct SessionPreset: Equatable {
     var settings = false
     /// Settings opens at full height instead of half.
     var settingsLarge = false
+    /// Settings scrolls to the section with this identifier ("stats",
+    /// "display" or "capabilities").
+    var settingsScroll: String?
     var powerMenu = false
     var leftEdge = false
     var guestScreen: GuestScreen = .home

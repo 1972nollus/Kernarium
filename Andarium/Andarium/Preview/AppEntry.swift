@@ -12,6 +12,9 @@ struct AppEntry {
     var play: Bool
     var lowSpace: Bool
     var resetTips: Bool
+    /// The boot step a frozen boot screen shows, from 0; the screen's own
+    /// when absent.
+    var bootStage: Int?
 
     static func fromArguments() -> AppEntry {
         let defaults = UserDefaults.standard
@@ -19,7 +22,8 @@ struct AppEntry {
             screen: defaults.string(forKey: "screen") ?? "home",
             play: defaults.bool(forKey: "play"),
             lowSpace: defaults.bool(forKey: "lowSpace"),
-            resetTips: defaults.bool(forKey: "resetTips")
+            resetTips: defaults.bool(forKey: "resetTips"),
+            bootStage: defaults.string(forKey: "bootStage").flatMap { Int($0) }
         )
     }
 
@@ -30,6 +34,12 @@ struct AppEntry {
         "home-capabilities": "capabilities", "home-mic-on": "capabilities", "home-mic-denied": "capabilities",
         "home-mic-alert": "capabilities", "home-gyroscope-unavailable": "capabilities",
         "home-backup": "backup",
+    ]
+
+    /// Where Settings scrolls to for a screen that shows a lower section.
+    private static let settingsScrolls: [String: String] = [
+        "settings-stats": "stats", "settings-display": "display",
+        "settings-capabilities": "capabilities", "settings-mic-denied": "capabilities",
     ]
 
     /// The page of Info a screen opens on.
@@ -72,7 +82,7 @@ struct AppEntry {
         let freeze = !play
 
         func boot(_ kind: BootKind, stage: Int, seconds: Int) {
-            model.frozenBootStage = freeze ? stage : nil
+            model.frozenBootStage = freeze ? (bootStage ?? stage) : nil
             model.frozenElapsed = seconds
             model.phase = .booting(kind)
         }
@@ -145,7 +155,8 @@ struct AppEntry {
              "settings-bundle", "install-apk",
              "bug-report",
              "settings-adb-off", "settings-adb-no-address",
-             "settings-install-failed", "settings-adb":
+             "settings-install-failed", "settings-adb",
+             "settings-stats", "settings-display", "settings-capabilities", "settings-mic-denied":
             let session = model.session
             let file = ApkInstall.sampleFile
             let size = ApkInstall.sampleSizeBytes
@@ -174,13 +185,19 @@ struct AppEntry {
                 session.adb = true
             case "settings-adb-off":
                 session.usbDebugging = false
+            case "settings-mic-denied":
+                model.microphoneState = .denied
             default:
                 break
             }
             // The two guest operations play on the full-screen overlay with
             // Settings already gone.
             let operation = screen == "bug-report" || screen == "install-apk"
-            model.sessionPreset = SessionPreset(settings: !operation, settingsLarge: screen == "settings")
+            model.sessionPreset = SessionPreset(
+                settings: !operation,
+                settingsLarge: Self.settingsScrolls.keys.contains(screen) || screen == "settings",
+                settingsScroll: Self.settingsScrolls[screen]
+            )
             model.phase = .running(.normal)
         case "recovery", "recovery-open":
             model.sessionPreset = SessionPreset(keysOpen: screen == "recovery-open")

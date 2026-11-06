@@ -20,7 +20,8 @@ Andarium/Live/        the runtime, storage and session of the device app
 AndariumCore/         Swift package: the model and the adb client, no UIKit
 AndariumTests/        hosted tests of the device app
 Config/               entitlements, Info.plist, privacy manifest, bridging header
-scripts/              system staging, the App Store bundle check, acknowledgements
+scripts/              system staging, the App Store bundle check, acknowledgements,
+                      screen capture
 Andarium.xcodeproj/   JSON project (project.xcproj) and its shared schemes
 ```
 
@@ -48,10 +49,13 @@ ones.
 
 `AndariumPreview` is a Simulator-only target built from `Shared` and
 `Preview` with mock data. It embeds no runtime and boots nothing. Its launch
-arguments (`-screen <name>`, `-play YES`, `-lowSpace YES`, `-resetTips YES`)
-open any screen or state directly so a Simulator driven only by `simctl` reaches
-every flow (`-screen bug-report` and `-screen install-apk` play the two guest
-operations on the overlay):
+arguments (`-screen <name>`, `-play YES`, `-lowSpace YES`, `-resetTips YES`,
+`-bootStage <step>` for a frozen boot screen) open any screen or state directly
+so a Simulator driven only by `simctl` reaches every flow (`-screen bug-report`
+and `-screen install-apk` play the two guest operations on the overlay).
+`scripts/capture-screens.py` launches every screen on a Simulator and saves a
+labelled PNG set with a `manifest.json` (device, orientation, appearance, screen
+and what to look at; `--list` prints the screens):
 
 ```sh
 xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
