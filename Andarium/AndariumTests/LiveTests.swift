@@ -196,7 +196,7 @@ struct RecoveryDisplayTests {
         // Check the guest property boundary too: a valid launch DPI alone
         // does not mean Recovery can read it under its SELinux policy.
         do {
-            let identity = try AdbKeyStore().loadOrCreate()
+            let identity = try AppEntry.fromArguments().adbKeyStore.loadOrCreate()
             let operations = AdbGuestOperations(identity: identity, clock: GuestRunClock(), device: "device")
             let density = try await operations.shell("getprop ro.sf.lcd_density", limit: .seconds(5))
             let scale = model.retina ? scene.screen.nativeScale : 1

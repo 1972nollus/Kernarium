@@ -8,10 +8,9 @@ import Foundation
 /// values. The guest timestamps receipt in its own CLOCK_BOOTTIME domain.
 public struct MotionSample: Sendable {
     public enum Sensor: UInt32, Sendable { case accelerometer = 1, gyroscope = 4 }
-    /// The host interface orientation when the virtual device is mounted.
-    /// Fixed while Android owns rotation; a return from a host-owned window
-    /// starts a new mount and discards the old stream's pending samples.
-    public enum Axes: Sendable { case portrait, portraitUpsideDown, landscapeLeft, landscapeRight }
+    /// The host interface orientation the virtual device is mounted to
+    /// (`MotionMount` decides when it changes).
+    public enum Axes: Equatable, Sendable { case portrait, portraitUpsideDown, landscapeLeft, landscapeRight }
     public let sensor: Sensor
     public let x: Float
     public let y: Float
