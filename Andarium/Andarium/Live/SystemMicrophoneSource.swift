@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import AndariumCore
 
 /// What iOS says about Andarium's microphone, through the access wrapper the

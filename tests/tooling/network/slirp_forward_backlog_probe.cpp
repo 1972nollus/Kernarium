@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Several host clients may connect to one forward at once: an adb client and
  * its tools, a browser, a parallel test runner. SLiRP accepts one connection

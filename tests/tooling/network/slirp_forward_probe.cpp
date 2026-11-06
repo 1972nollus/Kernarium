@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * The host-forward specification is the only user-facing grammar the user
  * network exposes, and a silently misread forward is worse than a refused one:

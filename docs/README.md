@@ -35,12 +35,18 @@ investigation date.
 | LineageOS 24 (Android 17) producer and guest image | [`../android/lineage-24/README.md`](../android/lineage-24/README.md) |
 | Linux guest images and the boot ramdisk | the README beside each producer under [`../tools/rootfs/`](../tools/rootfs/); the Vulkan guest image and its receipt: [`../tools/rootfs/vulkan/README.md`](../tools/rootfs/vulkan/README.md) |
 | Public and kernel ABI maintenance | [`../kernel/common/abi/README.md`](../kernel/common/abi/README.md) |
+| Licensing: the project licence, the rule by location, carried content | [`../LICENSES/README.md`](../LICENSES/README.md) |
 
 `scripts/` holds build, packaging and patch-series infrastructure that CMake
 and other tools call. `tools/` holds developer-facing launchers, producers and
 generators, together with what each one owns: the guest sources, patch series
 and boot files a producer builds from, and the runner for a corpus a generator
 writes. CMake and CTest may read or run those files in place.
+
+The project is licensed under GPL-2.0-or-later, with Apache-2.0 for the code
+that goes into the Android image and the licence of the patched project for a
+patch to another project. The root [`LICENSE`](../LICENSE) is the GPL-2.0 text
+and [`../LICENSES/`](../LICENSES/README.md) holds the rest.
 
 Short accepted decisions remain under [`decisions/`](decisions/). Machine-
 readable manifests, identities, and test inventories are the source of truth

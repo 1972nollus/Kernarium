@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import Foundation
 
 /// What the package manager answered an install with, in plain words. The

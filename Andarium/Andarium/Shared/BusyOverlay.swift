@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import SwiftUI
 
 /// Covers the screens while a long task runs, so nothing else is asked of the

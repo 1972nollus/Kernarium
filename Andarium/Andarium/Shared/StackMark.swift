@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import SwiftUI
 
 /// The app's mark drawn live, as the Dusk Jade icon draws it: three turned

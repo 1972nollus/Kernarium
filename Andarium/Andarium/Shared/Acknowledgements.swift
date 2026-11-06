@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import SwiftUI
 
 /// A page of Info that a navigation path or a launch can open directly.

@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "uml_darwin_network.h"
 #include "provider.hpp"
 #include "uml_slirp_net.h"

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* DC ZVA is fixed at 64 bytes by the virtual DCZID_EL0. Translation selects
  * the real-register and XZR forms, and the 64-byte alignment guarantees that
  * one successful guest-page TLB lookup covers every store. Stream:

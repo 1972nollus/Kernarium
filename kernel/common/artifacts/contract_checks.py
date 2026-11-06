@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Value and metadata checks shared by the kernel-artifact and Android release verifiers."""
 
 from __future__ import annotations

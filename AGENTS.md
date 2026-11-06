@@ -42,6 +42,16 @@ avoid unrelated formatting churn. There is no repository-wide formatter.
 Keep C++20 code warning-clean under `-Wall -Wextra -Werror`, preserve SPDX
 headers, and follow adjacent formatting.
 
+Licensing: the project is GPL-2.0-or-later, and each file's own SPDX header
+governs. A patch to another project, and a file derived from that project,
+keeps that project's licence. Code that goes into the Android tree or image
+(the overlay, sepolicy, sensors and the Android test apps) is Apache-2.0.
+Everything else is GPL-2.0-or-later. A first-party file derived from kernel
+code keeps the kernel's identifier and records the reason in its header. New
+files carry a header from `LICENSES/`; `repository-license-headers` enforces
+the rule by location. [`LICENSES/README.md`](LICENSES/README.md) has the
+detail.
+
 ## Architecture and source ownership
 
 Preserve this dependency direction:
@@ -190,7 +200,8 @@ outcomes. Git history is the worklog.
   documents instead of retaining duplicate status summaries.
 - Keep project documentation under `docs/` or beside the subsystem it owns.
   The repository root is reserved for `AGENTS.md`, the one-line `CLAUDE.md`
-  compatibility link, and an optional human-facing `README.md`.
+  compatibility link, `LICENSE` and `LICENSES/`, and an optional human-facing
+  `README.md`.
 
 Update documentation in the same change whenever its current contract changes.
 `CLAUDE.md` must remain exactly one line containing `@AGENTS.md`.

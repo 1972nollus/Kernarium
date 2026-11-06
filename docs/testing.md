@@ -69,6 +69,16 @@ reasons, and an entry that matches nothing fails.
 `python3 tests/tooling/cmake/check_environment_portability.py --list-rules`
 describes the rules and the denylist format.
 
+`repository-license-headers` enforces the [licensing rule](../LICENSES/README.md)
+by location. It reads the first lines of every tracked or new unignored source
+file or script, skips patch files, and requires an SPDX header whose
+identifier is allowed where the file lives, no deprecated identifier, and the
+texts in `LICENSE` and `LICENSES/` for each identifier in use. A reviewed
+exception goes in `tests/tooling/cmake/license-header-exceptions.tsv`, and an
+entry that matches nothing fails. Its fixtures mutate a header, a text and an
+exception; `python3 tests/tooling/cmake/check_license_headers.py --list-rules`
+describes the locations.
+
 Unit tests create scratch files through `tests/unit/scratch/`, never at a
 host-global path unless that path is the production contract under test, as
 for the management console's run directory. Each registration owns

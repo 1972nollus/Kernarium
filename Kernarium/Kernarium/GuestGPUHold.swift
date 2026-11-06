@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import Foundation
 
 /// The guest's GPU request gate as the background policy drives it. The runtime

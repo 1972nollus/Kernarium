@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * SLiRP's receive window must describe the buffer it has left. A guest may
  * legitimately advance SLiRP's next expected sequence past the edge SLiRP

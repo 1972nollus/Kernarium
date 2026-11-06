@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * A guest connect that the host stack refuses at once must fail the way it
  * does on the network SLiRP models. SLiRP answers such a connect with ICMP

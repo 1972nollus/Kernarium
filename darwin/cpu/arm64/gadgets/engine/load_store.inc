@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* engine/sme.inc assembles this file a second time with
  * UML_GADGET_SME_TWIN set, as the streaming twins of its GPR families; the
  * #if blocks below hold what has no twin there: the nop, which is shared,
