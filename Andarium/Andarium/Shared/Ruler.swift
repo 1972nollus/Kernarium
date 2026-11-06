@@ -156,14 +156,19 @@ struct ControlsPanel: View {
     /// A new guest chooses its capacity on a ruler; an existing one shows
     /// what it holds and opens Resize.
     var isNew = false
+    /// Setting up a guest skips processor and memory: a new guest takes every
+    /// vCPU and the default memory of the device.
+    var showsCompute = true
     var resize: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
-            processor
-            Divider().padding(.leading, 58)
-            memory
-            Divider().padding(.leading, 58)
+            if showsCompute {
+                processor
+                Divider().padding(.leading, 58)
+                memory
+                Divider().padding(.leading, 58)
+            }
             if isNew { capacity } else { storage }
         }
         .glassEffect(.regular, in: .rect(cornerRadius: 30))

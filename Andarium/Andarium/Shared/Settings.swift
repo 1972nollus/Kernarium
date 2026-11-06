@@ -185,7 +185,7 @@ struct SessionSettingsSheet: View {
 
     private func stats(_ session: SessionState) -> some View {
         @Bindable var session = session
-        let memoryMiB = model.guest?.memoryMiB ?? Limits.defaultMemoryMiB
+        let memoryMiB = model.guest?.memoryMiB ?? Limits.defaultMemoryRangeMiB.lowerBound
         return Section("Stats") {
             LabeledContent {
                 HStack(spacing: 10) {

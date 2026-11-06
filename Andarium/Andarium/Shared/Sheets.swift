@@ -1,7 +1,9 @@
 import AndariumCore
 import SwiftUI
 
-/// Setting up the one guest: the same controls, already at the defaults.
+/// Setting up the one guest: its storage and backups. A new guest takes every
+/// vCPU the device offers and the default memory (`Guest.fresh`), which the
+/// System section of Home can change afterwards.
 struct NewGuestSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -25,7 +27,7 @@ struct NewGuestSheet: View {
                             text: "Setting up needs \(Formats.size(bytes: model.createRequirementBytes)) free for the guest's setup. This \(model.host.name) has \(Formats.size(bytes: model.host.freeStorageBytes)). Free up space in Settings › General › \(model.host.name) Storage."
                         )
                     }
-                    ControlsPanel(guest: draftBinding, host: model.host, isNew: true)
+                    ControlsPanel(guest: draftBinding, host: model.host, isNew: true, showsCompute: false)
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 12) {
                             IconTile(symbol: "icloud.fill")

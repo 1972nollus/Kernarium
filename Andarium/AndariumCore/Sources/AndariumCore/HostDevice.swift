@@ -15,9 +15,6 @@ public struct HostDevice: Equatable, Sendable {
     public var physicalProcessorCount: Int
     public var memory: MemoryPolicy
     public var freeStorageBytes: UInt64
-    /// Whether this is a Mac running the iPad application, which sets no
-    /// memory limit.
-    public var isMac: Bool
     /// Whether the device's GPU can draw the guest. The guest's graphics need
     /// Metal 4, which the A14 and later chips (and the M1 and later) have.
     public var runsGuestGraphics: Bool
@@ -25,7 +22,7 @@ public struct HostDevice: Equatable, Sendable {
     /// `processorCount` is the vCPU limit; the device's own processors default
     /// to it.
     public init(
-        name: String, processorCount: Int, memory: MemoryPolicy, freeStorageBytes: UInt64, isMac: Bool = false,
+        name: String, processorCount: Int, memory: MemoryPolicy, freeStorageBytes: UInt64,
         physicalProcessorCount: Int? = nil, runsGuestGraphics: Bool = true
     ) {
         self.name = name
@@ -33,7 +30,6 @@ public struct HostDevice: Equatable, Sendable {
         self.physicalProcessorCount = max(self.processorCount, physicalProcessorCount ?? 0)
         self.memory = memory
         self.freeStorageBytes = freeStorageBytes
-        self.isMac = isMac
         self.runsGuestGraphics = runsGuestGraphics
     }
 

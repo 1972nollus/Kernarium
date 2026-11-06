@@ -181,7 +181,7 @@ struct AppEntry {
         return HostDevice(
             name: name, processorCount: limit,
             memory: memoryPolicy(processorCount: limit),
-            freeStorageBytes: freeStorageBytes(), isMac: info.isiOSAppOnMac,
+            freeStorageBytes: freeStorageBytes(),
             physicalProcessorCount: info.activeProcessorCount,
             runsGuestGraphics: drawsGuestGraphics()
         )

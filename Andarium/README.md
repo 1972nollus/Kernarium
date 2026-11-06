@@ -216,8 +216,11 @@ no formula of its own. The picker runs from 512 MiB to the bound of the chosen
 vCPU count in the runtime's 64 MiB steps and follows the count live: raising
 vCPUs takes memory above the new bound down to it, lowering them leaves it, and
 a stored size above its bound comes down on load. A size an automation launch
-states (`KERNARIUM_GUEST_MEMORY_MIB`) stays as stated. The default is 1.5 GiB or
-the bound where that is lower, and 4 GiB on a Mac.
+states (`KERNARIUM_GUEST_MEMORY_MIB`) stays as stated. Setting a guest up asks
+for neither vCPUs nor memory: a new guest takes every vCPU the device offers
+(`min(8, physical cores)`) and the bound of that count rounded down to a half
+GiB and held within 1.5 to 4 GiB, never above the bound itself
+(`MemoryPolicy.defaultMemoryMiB`; 4 GiB on a Mac, which sets no limit).
 
 ### Storage
 

@@ -101,11 +101,8 @@ struct MemoryPolicyTests {
     /// A host with no limit to speak of (a Mac).
     let roomy = MemoryPolicy(maximumsMiB: Array(repeating: 4096, count: 8))
 
-    private func host(_ memory: MemoryPolicy, processors: Int, mac: Bool = false) -> HostDevice {
-        HostDevice(
-            name: mac ? "Mac" : "iPad", processorCount: processors, memory: memory,
-            freeStorageBytes: 40_000_000_000, isMac: mac
-        )
+    private func host(_ memory: MemoryPolicy, processors: Int) -> HostDevice {
+        HostDevice(name: "iPad", processorCount: processors, memory: memory, freeStorageBytes: 40_000_000_000)
     }
 
     /// A ten-core device offers the eight vCPUs the memory budget is measured
@@ -142,7 +139,7 @@ struct MemoryPolicyTests {
         let device = HostDevice(
             name: "Mac", processorCount: 8,
             memory: MemoryPolicy(maximumsMiB: [4096, 4096, 4096, 4096, 4096, 4096, 3840, 3584]),
-            freeStorageBytes: 40_000_000_000, isMac: true, physicalProcessorCount: 20
+            freeStorageBytes: 40_000_000_000, physicalProcessorCount: 20
         )
         let stored = Guest(cores: 10, memoryMiB: 4096, capacityGiB: 8)
         let loaded = LaunchOverrides().applied(to: stored, on: device)
@@ -194,15 +191,57 @@ struct MemoryPolicyTests {
         #expect(policy.maximumMiB(vCPUs: 2) == 3840)
     }
 
-    @Test func theDefaultIs1536OnADeviceAndTheLargestSizeOnAMac() {
-        #expect(roomy.defaultMemoryMiB(vCPUs: 4, onMac: false) == 1536)
-        #expect(roomy.defaultMemoryMiB(vCPUs: 4, onMac: true) == 4096)
-        // A bound below 1536 wins on a device.
-        let tight = MemoryPolicy(maximumsMiB: [1536, 1280])
-        #expect(tight.defaultMemoryMiB(vCPUs: 2, onMac: false) == 1280)
-        #expect(Guest.fresh(on: host(limited, processors: 4)).memoryMiB == 1536)
-        #expect(Guest.fresh(on: host(roomy, processors: 8, mac: true)).memoryMiB == 4096)
-        #expect(Guest.fresh(on: host(tight, processors: 2)).memoryMiB == 1280)
+    /// The bounds the shared budget formula (`runtime/guest_memory_budget.hpp`,
+    /// `maximum_guest_memory_mib`) gives at 1 through 8 vCPUs for a process
+    /// memory limit, and the default a new guest then takes at 4, 6 and 8
+    /// vCPUs: the bound rounded down to 0.5 GiB, held within 1.5 to 4 GiB,
+    /// and never above the bound. `AndariumTests` asks the loader for the same
+    /// bounds, so these rows stay the formula's.
+    static let defaultFixtures: [(limitMiB: Int, bounds: [Int], defaults: [Int: Int])] = [
+        // Below 1.5 GiB the bound wins: the safe limit is never exceeded.
+        (1536, [960, 960, 896, 896, 896, 896, 896, 896], [4: 896, 6: 896, 8: 896]),
+        (2048, [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344], [4: 1408, 6: 1344, 8: 1344]),
+        // The lower clamp: 1664 and 1600 round down to 1536.
+        (2304, [1728, 1728, 1664, 1664, 1600, 1600, 1600, 1600], [4: 1536, 6: 1536, 8: 1536]),
+        // An iPad mini 6's 2867 MiB.
+        (2867, [2304, 2304, 2240, 2240, 2176, 2176, 2176, 2176], [4: 2048, 6: 2048, 8: 2048]),
+        (3584, [3008, 3008, 2944, 2944, 2880, 2880, 2880, 2880], [4: 2560, 6: 2560, 8: 2560]),
+        (4096, [3520, 3520, 3456, 3456, 3392, 3392, 3392, 3392], [4: 3072, 6: 3072, 8: 3072]),
+        // The upper clamp: a limit that leaves the whole range, and a Mac with none.
+        (5120, Array(repeating: 4096, count: 8), [4: 4096, 6: 4096, 8: 4096]),
+        (0, Array(repeating: 4096, count: 8), [4: 4096, 6: 4096, 8: 4096]),
+    ]
+
+    @Test(arguments: [4, 6, 8])
+    func aNewGuestTakesEveryCoreAndTheSafeLimitInHalfGiBSteps(cores: Int) {
+        for fixture in Self.defaultFixtures {
+            let policy = MemoryPolicy(maximumsMiB: fixture.bounds)
+            let device = host(policy, processors: cores)
+            let guest = Guest.fresh(on: device)
+            #expect(guest.cores == cores)
+            #expect(guest.memoryMiB == fixture.defaults[cores], "limit \(fixture.limitMiB) MiB")
+            #expect(guest.memoryMiB == policy.defaultMemoryMiB(vCPUs: cores))
+            // Never above the safe limit, on the runtime's steps, and
+            // whole half gibibytes wherever the clamp did not take the bound.
+            #expect(guest.memoryMiB <= policy.maximumMiB(vCPUs: cores))
+            #expect(MemoryPolicy.runtimeAccepts(guest.memoryMiB))
+            if guest.memoryMiB < policy.maximumMiB(vCPUs: cores) {
+                #expect(guest.memoryMiB % Limits.defaultMemoryStepMiB == 0)
+            }
+            if policy.maximumMiB(vCPUs: cores) >= Limits.defaultMemoryRangeMiB.lowerBound {
+                #expect(Limits.defaultMemoryRangeMiB.contains(guest.memoryMiB))
+            }
+        }
+    }
+
+    @Test func theDefaultFollowsTheVCPUCountWhenTheBoundFalls() {
+        // 4096 MiB limit: the bound falls from 3520 at one vCPU to 3392 at six.
+        let policy = MemoryPolicy(maximumsMiB: [3520, 3520, 3456, 3456, 3392, 3392, 3392, 3392])
+        #expect(policy.defaultMemoryMiB(vCPUs: 1) == 3072)
+        #expect(policy.defaultMemoryMiB(vCPUs: 8) == 3072)
+        // A bound just under a half-gibibyte step steps down to the one below.
+        #expect(MemoryPolicy(maximumsMiB: [3520, 3071]).defaultMemoryMiB(vCPUs: 2) == 2560)
+        #expect(MemoryPolicy(maximumsMiB: [3520, 3072]).defaultMemoryMiB(vCPUs: 2) == 3072)
     }
 
     @Test func aStoredSizeIsTakenWithinTheBoundOnLoad() {
