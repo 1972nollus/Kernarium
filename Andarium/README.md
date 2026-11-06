@@ -59,8 +59,8 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
     -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' build
 ```
 
-Home has one Start button for a normal boot. The Restore section groups
-Start in Recovery and Erase Guest. A fresh guest opens the system's setup
+Home has one Start button for a normal boot. The Recovery and Erase section
+groups Start in Recovery and Erase Guest. A fresh guest opens the system's setup
 wizard on its first normal boot.
 
 ## Devices
