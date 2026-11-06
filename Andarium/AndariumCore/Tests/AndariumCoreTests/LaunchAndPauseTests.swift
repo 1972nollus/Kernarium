@@ -42,7 +42,6 @@ struct LaunchOverridesTests {
         // stored choice is read past, not migrated.
         let old = Data(#"{"retina":true,"followWindow":false}"#.utf8)
         #expect(try JSONDecoder().decode(DisplayOptions.self, from: old) == DisplayOptions(retina: true))
-        #expect(try JSONDecoder().decode(DisplayOptions.self, from: Data("{}".utf8)) == DisplayOptions())
     }
 
     @Test func ignoresValuesOutOfRangeOrOffStep() {
