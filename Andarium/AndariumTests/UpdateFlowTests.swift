@@ -144,7 +144,7 @@ struct UpdateFlowTests {
         model.start(.normal)
         #expect(model.phase == .home)
         #expect(driver.begun.isEmpty)
-        #expect(model.alert?.title == "The System's Update Didn't Finish")
+        #expect(model.alert?.title == "Andarium's Update Didn't Finish")
     }
 
     @Test func recoveryWaitsForTheUpdateToFinish() {
@@ -152,7 +152,7 @@ struct UpdateFlowTests {
         model.start(.recovery)
         #expect(model.phase == .home)
         #expect(driver.begun.isEmpty)
-        #expect(model.alert?.title == "The System's Update Didn't Finish")
+        #expect(model.alert?.title == "Andarium's Update Didn't Finish")
     }
 
     @Test func aBlockedGuestSaysWhyAndStaysAtHome() {
