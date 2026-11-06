@@ -26,7 +26,7 @@ LAUNCH_KNOB = (
     'const char *fixture(void) { return getenv("ANDARIUM_START"); }\n'
 )
 HOME_PATH = (
-    "const char *fixture(void) { return \"/Users/builder/work/project/file.c\"; }\n"
+    "const char *fixture(void) { return \"/Users/NAME/work/project/file.c\"; }\n"
 )
 MANIFEST = {
     "NSPrivacyTracking": False,
@@ -207,7 +207,7 @@ def main() -> int:
         check(make_app(root, "stripped-debug-map", stripped, app_info(), framework=stripped),
               passes=True, expect="ready for the App Store")
         check(make_app(root, "app-home-path", homed, app_info()),
-              passes=False, expect="/Users/builder/work/project/file.c")
+              passes=False, expect="/Users/NAME/work/project/file.c")
         check(make_app(root, "framework-home-path", clean, app_info(), framework=homed),
               passes=False, expect="names a path under a home directory")
 
