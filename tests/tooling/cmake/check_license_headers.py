@@ -86,13 +86,6 @@ LOCATIONS = (
         {"Apache-2.0", GPL},
         "host-side producer tooling is GPL-2.0-or-later; the files here that "
         "still say Apache-2.0 predate the rule and stay until relabelled"),
-    location(
-        r"^(dependencies/patches|tools/rootfs/[^/]+/patches)/(.*/)?series\.tsv$",
-        {GPL, "MIT", "BSD-3-Clause", "Apache-2.0"},
-        "the series manifest of patches to another project: the generator "
-        "labels it GPL-2.0-or-later or, with export --license, the patched "
-        "project's licence; the patch bodies keep the patched project's "
-        "licence"),
 )
 DEFAULT_LOCATION = location(
     r"", {GPL}, "everything else is GPL-2.0-or-later")

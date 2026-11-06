@@ -34,6 +34,7 @@ EXCEPTIONS = (
     "kernel/common/video/virtio_video.h\tGPL-2.0+\tmirrored in a generated topic\n"
     "darwin/derived/kernel_file.cpp\tGPL-2.0-only\tderived from kernel code\n"
     "darwin/include/uapi_copy.h\tGPL-2.0-only WITH Linux-syscall-note\tuapi header\n"
+    "darwin/include/bsd_header.h\tBSD-3-Clause\ta header that states BSD terms\n"
 )
 
 # path -> text of the clean fixture
@@ -55,7 +56,9 @@ CLEAN = {
     "dependencies/patches/mesa/0001-x.patch": (
         "diff --git a/a b/a\n+/* SPDX-License-Identifier: GPL-2.0 */\n"
     ),
-    "dependencies/patches/mesa/series.tsv": "# SPDX-License-Identifier: MIT\npatch\t0001-x.patch\n",
+    "dependencies/patches/mesa/series.tsv": (
+        "# SPDX-License-Identifier: GPL-2.0-or-later\npatch\t0001-x.patch\n"
+    ),
     "android/lineage-24/overlay/init.rc": "# SPDX-License-Identifier: Apache-2.0\n",
     "android/lineage-24/overlay/config/audio.xml": (
         '<?xml version="1.0" encoding="utf-8"?>\n'
@@ -76,6 +79,7 @@ CLEAN = {
     "darwin/include/uapi_copy.h": (
         "/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */\n"
     ),
+    "darwin/include/bsd_header.h": "/* SPDX-License-Identifier: BSD-3-Clause */\n",
 }
 
 # The exception text of a fixture that uses the Linux-syscall-note exception.
@@ -203,9 +207,9 @@ def test_headers(fixture: Fixture) -> None:
            "android/lineage-24/third_party/mesa-venus/soong-port.toml",
            "# SPDX-License-Identifier: Apache-2.0\n",
            ("android/lineage-24/third_party/mesa-venus/soong-port.toml", 1, "H2"))
-    mutate(fixture, "an unlisted licence on a series manifest",
+    mutate(fixture, "the patched project's licence on a series manifest",
            "dependencies/patches/mesa/series.tsv",
-           "# SPDX-License-Identifier: GPL-3.0-or-later\n",
+           "# SPDX-License-Identifier: MIT\n",
            ("dependencies/patches/mesa/series.tsv", 1, "H2"))
     mutate(fixture, "an empty identifier", "darwin/a.cpp",
            "/* SPDX-License-Identifier: */\n", ("darwin/a.cpp", 1, "H2"))
@@ -278,9 +282,6 @@ def test_texts(fixture: Fixture) -> None:
 
     fixture.reset()
     write(fixture.root, "LICENSES/BSD-3-Clause.txt", "Redistribute freely.\n")
-    write(fixture.root, "tools/bsd.py", "# SPDX-License-Identifier: GPL-2.0-or-later\n")
-    write(fixture.root, "dependencies/patches/mesa/series.tsv",
-          "# SPDX-License-Identifier: BSD-3-Clause\n")
     result = fixture.run()
     got = findings(result.stdout)
     require({(p, rule) for p, _, rule in got} == {("LICENSES/BSD-3-Clause.txt", "H4")},
