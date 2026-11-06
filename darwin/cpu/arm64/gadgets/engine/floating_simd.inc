@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Direct CpuState vector offsets fit in 16 bits. Builders use these layouts
  * whenever one instruction has multiple vector operands; gadget/link/helper
  * pointers and full-width data remain separate stream cells. */

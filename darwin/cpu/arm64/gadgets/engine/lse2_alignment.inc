@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* FEAT_LSE2 alignment of single-copy-atomic accesses. With LSE2, an LSE
  * atomic, an exclusive, or a load-acquire/store-release access that is not
  * naturally aligned but lies inside one 16-byte block completes single-copy

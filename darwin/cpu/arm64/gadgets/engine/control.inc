@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 gadget svc
 	ldr x8, [_stream]
 	str x8, [_cpu, #UML_GADGET_CPU_PC]

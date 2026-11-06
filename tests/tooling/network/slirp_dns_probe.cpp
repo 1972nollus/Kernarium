@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * The guest's name server is answered by the host's system resolver, and the
  * guest's DNS never makes SLiRP open a host Internet socket: SLiRP's own proxy
