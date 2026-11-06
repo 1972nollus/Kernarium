@@ -573,6 +573,13 @@ AUDIO_HAL_SELF_BINDER = re.compile(
     rb"\(binder \([^)]*\bcall\b[^)]*\)\)\)$",
     re.MULTILINE,
 )
+# The Wi-Fi HAL reads the platform's persist.vendor.debug.wifi.* properties at start-up
+# (overlay/sepolicy/vendor/hal_wifi_default.te).
+WIFI_HAL_DEBUG_PROPERTY_READ = re.compile(
+    rb"^\(allow hal_wifi_default(?:_[0-9]+)? persist_vendor_debug_wifi_prop(?:_[0-9]+)? "
+    rb"\(file \([^)]*\bread\b[^)]*\)\)\)$",
+    re.MULTILINE,
+)
 # adbd reports its host in this property and init holds a userspace wakelock while
 # it is 1 (adbd's p0011 topic, overlay/config/init.vendor.rc,
 # overlay/sepolicy/system_ext/private). The property is system-owned: adbd is a core
@@ -1812,6 +1819,8 @@ def check_kernel_policy(
         fail("vendor policy does not let applications read vendor_security_patch_level_prop")
     if not AUDIO_HAL_SELF_BINDER.search(vendor_policy):
         fail("vendor policy does not let the audio HAL processes call each other's binder")
+    if not WIFI_HAL_DEBUG_PROPERTY_READ.search(vendor_policy):
+        fail("vendor policy does not let the Wi-Fi HAL read persist_vendor_debug_wifi_prop")
     check_clearkey_memfd_policy(vendor_policy)
     check_userdata_grow_policy(vendor_policy)
     check_network_setup_policy(

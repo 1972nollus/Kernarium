@@ -479,6 +479,14 @@ open was denied (the audit rate limit hid how many).
 `overlay/sepolicy/vendor/hal_audio_default.te` allows the call, and the
 target-files verifier requires the rule.
 
+The example Wi-Fi HAL reads the platform's `persist.vendor.debug.wifi.*`
+properties at start-up, which its domain may not do, so every boot logged an
+`hal_wifi_default` to `persist_vendor_debug_wifi_prop` denial. The read is the
+AOSP HAL's own and harmless (an unset property reads as its default), so
+`overlay/sepolicy/vendor/hal_wifi_default.te` allows exactly that read, never a
+set and never a blanket `dontaudit`, and the target-files verifier requires the
+rule in the packaged vendor policy.
+
 The guest kernel has no ashmem, the product sets `sys.use_memfd`, and the
 vendor policy enables `memfd_class`, so the shared buffers an application
 creates are memfd files labelled with the application's domain. A MediaCodec

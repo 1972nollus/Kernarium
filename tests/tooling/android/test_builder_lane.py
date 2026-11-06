@@ -667,6 +667,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_adb_prop_policy: bool = False,
                           core_sets_vendor_prop: bool = False,
                           missing_audio_binder_policy: bool = False,
+                          missing_wifi_debug_policy: bool = False,
                           clearkey_memfd_variant: str | None = None,
                           oversize_platform_policy: bool = False,
                           media_codecs_variant: str | None = None,
@@ -1429,6 +1430,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         ""
                         if missing_audio_binder_policy
                         else "(allow hal_audio_default hal_audio_default (binder (call transfer)))\n"
+                    )
+                    + (
+                        ""
+                        if missing_wifi_debug_policy
+                        else "(allow hal_wifi_default persist_vendor_debug_wifi_prop_202604 "
+                        "(file (read getattr map open)))\n"
                     )
                     + (
                         "(allow adbd_202604 virtual_face_hal_prop_202604 (property_service (set)))\n"
@@ -2276,6 +2283,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("adb-prop-policy", {"missing_adb_prop_policy": True}),
             ("core-sets-vendor-prop", {"core_sets_vendor_prop": True}),
             ("audio-binder-policy", {"missing_audio_binder_policy": True}),
+            ("wifi-debug-property-policy", {"missing_wifi_debug_policy": True}),
             ("clearkey-memfd-missing", {"clearkey_memfd_variant": "missing"}),
             ("clearkey-memfd-no-write", {"clearkey_memfd_variant": "no-write"}),
             ("clearkey-memfd-isolated-apps", {"clearkey_memfd_variant": "all-apps"}),
@@ -2738,6 +2746,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "SYSTEM/etc/selinux/plat_sepolicy.cil"),
             ("audio-binder-policy-cause", {"missing_audio_binder_policy": True},
              "audio HAL processes call each other's binder"),
+            ("wifi-debug-property-policy-cause", {"missing_wifi_debug_policy": True},
+             "Wi-Fi HAL read persist_vendor_debug_wifi_prop"),
             ("clearkey-memfd-missing-cause", {"clearkey_memfd_variant": "missing"},
              "ClearKey DRM HAL read, write and map the memfd files"),
             ("clearkey-memfd-no-write-cause", {"clearkey_memfd_variant": "no-write"},
