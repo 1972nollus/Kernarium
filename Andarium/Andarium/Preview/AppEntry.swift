@@ -35,7 +35,7 @@ struct AppEntry {
 
     /// Where Home scrolls to for a screen that shows a lower section.
     private static let scrollTargets: [String: String] = [
-        "home-options": "erase", "home-recovery-erase": "erase", "start-recovery": "erase",
+        "home-options": "erase", "home-recovery-erase": "erase", "start-recovery": "erase", "erase": "erase",
         "home-display": "display",
         "home-capabilities": "capabilities", "home-mic-on": "capabilities", "home-mic-denied": "capabilities",
         "home-mic-alert": "capabilities", "home-gyroscope-unavailable": "capabilities",
@@ -58,7 +58,6 @@ struct AppEntry {
     var hints: ScreenHints {
         ScreenHints(
             scrollTarget: Self.scrollTargets[screen],
-            eraseConfirmed: screen == "erase-confirm",
             infoPage: Self.infoPages[screen]
         )
     }
@@ -125,21 +124,16 @@ struct AppEntry {
             model.microphoneState = .denied
         case "home-gyroscope-unavailable":
             model.motionSensorsAvailable = false
-        case "home-erased":
-            model.erase()
         case "busy-create":
             model.busy = BusyState(title: "Creating Guest", detail: "Setting up Andarium with 16 GiB.", progress: 0.42)
         case "busy-erase":
             model.busy = BusyState(title: "Erasing Guest", detail: "Deleting everything the guest stored.", progress: 0.65)
-        case "alert-update-unfinished":
-            model.plan = .unfinishedUpdate(to: PreviewData.release, canRetry: false, canRestore: true)
-        case "alert-blocked":
-            model.plan = .blocked(.olderAndroid)
         case "boot":
             model.guest?.pendingCapacityGiB = 24
             boot(.normal, stage: 3, seconds: 9)
         case "boot-first":
-            model.erase()
+            model.guest = model.guest?.erased
+            model.plan = .firstStart
             boot(.firstStart, stage: 3, seconds: 74)
         case "boot-upgrade":
             model.bootFrom = PreviewData.previousRelease
@@ -276,11 +270,11 @@ struct AppEntry {
             model.sheet = .system
         case "home-mic-alert":
             model.setMicrophone(true)
-        case "erase", "erase-confirm":
-            model.sheet = .erase
+        case "erase":
+            model.confirmingErase = true
         case "info", "info-acknowledgements", "info-license", "info-license-gpl":
             model.sheet = .info
-        case "start-low-space", "alert-update-unfinished", "alert-blocked":
+        case "start-low-space":
             model.start(.normal)
         case "alert-error":
             model.alert = AppAlert(

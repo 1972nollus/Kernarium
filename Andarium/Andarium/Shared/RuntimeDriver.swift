@@ -62,7 +62,8 @@ enum PermissionPrompt: Identifiable, Equatable {
 @MainActor
 protocol RuntimeDriver: AnyObject {
     func create(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest
-    func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest
+    /// Deletes the guest and everything it stored, its choices included.
+    func erase(progress: @escaping @Sendable (Double) -> Void) async throws
     func save(_ guest: Guest) throws
     /// What a start would be, from the guest's files; nil when they cannot be
     /// read, which a start then reports.
@@ -109,6 +110,5 @@ protocol RuntimeDriver: AnyObject {
 /// What a screen needs from its launch arguments to open a state directly.
 struct ScreenHints {
     var scrollTarget: String?
-    var eraseConfirmed = false
     var infoPage: InfoPage?
 }

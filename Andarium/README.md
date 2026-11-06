@@ -71,10 +71,21 @@ Home has one Start button for a normal boot. Below its Storage card come the
 Guest System section (vCPUs and RAM as a summary; Edit opens the sheet that
 changes them), Display (Retina mode), Capabilities (Microphone, Gyroscope) and
 Backup (Back Up Guest Data); the Recovery and Erase section groups Start in
-Recovery and Erase Guest. The sections carry no explanatory notes except where a
-capability is unavailable (a device without a gyroscope says so). Setting a guest
-up asks only for its storage and backups. A fresh guest opens the system's setup
-wizard on its first normal boot.
+Recovery and Erase Guest, which asks to be confirmed in a standard destructive
+alert. The sections carry no explanatory notes except where a capability is
+unavailable (a device without a gyroscope says so). Setting a guest up asks
+only for its storage and backups. A fresh guest opens the system's setup wizard
+on its first normal boot.
+
+A start the plan refuses is never offered and never answered with a message:
+Start and Start in Recovery are dimmed (`StartPlan.allowsStart(_:)`) while the
+card above says what the guest waits for, and a start that arrives anyway, from
+a launch, is ignored. Only the two things Home cannot show beforehand are
+alerts: too little free space and a chip that cannot draw the guest.
+
+Erase Guest deletes everything the guest has stored, its choices included
+(`GuestStorage.erase`), and Andarium returns to the first-launch screen, from
+where a new guest is set up with the defaults.
 
 ## Devices
 
@@ -538,7 +549,8 @@ KERNARIUM_ANDROID_BOOT_MODE (recovery starts Recovery), KERNARIUM_ANDROID_DISK_S
 KERNARIUM_HOST_FORWARD, KERNARIUM_FOOTPRINT_LOG_MS, KERNARIUM_EXECUTION_ENGINE,
 KERNARIUM_GUEST_HIBERNATION, KERNARIUM_ANDROID_ADB_AUTH
 ANDARIUM_START=normal|recovery   create the guest if there is none, then start
-ANDARIUM_ERASE=1                 erase the guest's data before the start
+ANDARIUM_ERASE=1                 erase the guest before the start; with ANDARIUM_START
+                                 a new guest is then set up
 ANDARIUM_STATS=1                 show the statistics over the session and
                                  print each reading
 ANDARIUM_GUEST_INSTANCE=<name>   use Library/TestGuests/<name> instead of Library/Guest

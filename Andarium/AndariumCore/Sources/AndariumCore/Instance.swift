@@ -429,6 +429,22 @@ public struct InstanceFiles: Sendable {
         return formatter.string(from: date)
     }
 
+    /// Deletes the data disk, the record and every snapshot, trying each of
+    /// them; the first failure is thrown once the rest are done.
+    public func removeAll() throws {
+        let manager = FileManager.default
+        var doomed = [data, state]
+        for entry in (try? manager.contentsOfDirectory(atPath: directory.path)) ?? []
+        where entry.hasPrefix(Self.snapshotPrefix) {
+            doomed.append(directory.appendingPathComponent(entry))
+        }
+        var failure: Error?
+        for url in doomed where manager.fileExists(atPath: url.path) {
+            do { try manager.removeItem(at: url) } catch { failure = failure ?? error }
+        }
+        if let failure { throw failure }
+    }
+
     /// Carries out `decision` before the guest starts and returns the new
     /// state. Every step leaves the instance in a state `decide` handles: the
     /// snapshot exists before `instance.json` records it.
@@ -439,12 +455,7 @@ public struct InstanceFiles: Sendable {
         var action = decision.action
         if action.isRefusal { throw InstanceError.refused(decision.reason) }
         if action == .reset {
-            try? manager.removeItem(at: data)
-            try? manager.removeItem(at: state)
-            for entry in (try? manager.contentsOfDirectory(atPath: directory.path)) ?? []
-            where entry.hasPrefix(Self.snapshotPrefix) {
-                try? manager.removeItem(at: directory.appendingPathComponent(entry))
-            }
+            try? removeAll()
             action = .create
         }
         if action == .restore {

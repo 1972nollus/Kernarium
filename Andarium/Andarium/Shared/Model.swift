@@ -11,7 +11,7 @@ enum StatisticsViewer: Hashable {
 }
 
 enum SheetKind: String, Identifiable, Hashable {
-    case create, resize, erase, info, system
+    case create, resize, info, system
 
     var id: String { rawValue }
 }
@@ -89,6 +89,8 @@ final class SessionState {
     /// The device's address on the local network while `adb` is on; nil
     /// without one.
     var adbAddress: String?
+    /// Erase Guest is asking to be confirmed.
+    var confirmingErase = false
     /// Why ADB over Network did not start, in words.
     var adbProblem: String?
     /// The guest's USB debugging setting as last read; nil until it has
@@ -301,6 +303,8 @@ final class AppModel {
 
     var phase: Phase {
         get { lifecycle.phase }
+    /// Erase Guest: everything the guest stored is deleted, its choices
+    /// included, and Andarium returns to the first-launch screen.
         set { lifecycle.phase = newValue }
     }
 
@@ -386,7 +390,7 @@ final class AppModel {
     }
 
     func erase() {
-        guard let driver, let current = guest else {
+        guard let driver, guest != nil else {
             lifecycle.erase()
             plan = .firstStart
             return
@@ -395,9 +399,13 @@ final class AppModel {
             BusyState(title: "Erasing Guest", detail: "Deleting everything the guest stored.", progress: 0),
             failure: "The Guest Could Not Be Erased"
         ) { progress in
-            _ = try await driver.erase(current, progress: progress)
+            // A choice saved a moment after the last change must not come
+            // back after the files are gone.
+            self.persistTask?.cancel()
+            try await driver.erase(progress: progress)
             self.lifecycle.erase()
-            self.persistNow()
+            self.resizePreset = nil
+            self.sheet = nil
             self.refreshPlan()
         }
     }
@@ -723,15 +731,10 @@ final class AppModel {
                 driver.begin(guest: guest, mode: mode, kind: kind)
             }
         case .lowSpace: startBlocked = true
-        case .unfinishedUpdate:
-            alert = AppAlert(
-                title: "Andarium's Update Didn't Finish",
-                message: plan.allowsStart
-                    ? "Recovery starts only once the update has finished. Start tries the update again; Restore or Erase Guest goes back."
-                    : "The guest starts only after its data is restored or the guest is erased."
-            )
-        case let .blocked(reason):
-            alert = AppAlert(title: reason.title, message: reason.explanation)
+        // The screens offer no start the plan refuses (`StartPlan.allowsStart`),
+        // so one that arrives anyway, from a keyboard or a launch, is ignored
+        // without a message: Home already says what the guest waits for.
+        case .unfinishedUpdate, .blocked: break
         case .needsNewerChip:
             alert = AppAlert(title: DeviceRequirement.title, message: DeviceRequirement.explanation(deviceName: host.name))
         case .noGuest: break

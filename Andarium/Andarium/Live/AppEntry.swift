@@ -133,6 +133,12 @@ struct AppEntry {
             guard await Self.idle(model) else { return }
         }
         if let mode = launch.start, model.alert == nil {
+            // Erasing leaves no guest; a launch that starts one sets up a new
+            // guest first.
+            if launch.start != nil, model.guest == nil {
+                model.create(launch.applied(to: Guest.fresh(on: model.host), on: model.host))
+                guard await Self.idle(model) else { return }
+            }
             model.start(mode)
         }
     }

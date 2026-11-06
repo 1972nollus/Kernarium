@@ -74,7 +74,7 @@ struct GuestTests {
         #expect(guest.pendingCapacityGiB == nil)
     }
 
-    @Test func eraseKeepsTheChoicesAndTheCapacityTheNextStartRunsWith() {
+    @Test func erasedKeepsTheChoicesAndTheCapacityTheNextStartRunsWith() {
         var guest = Guest.fresh(on: ipad)
         guest.microphone = true
         guest.includeInBackups = true
@@ -153,18 +153,27 @@ struct LifecycleTests {
         #expect(life.guest?.pendingCapacityGiB == 24)
     }
 
-    @Test func eraseLeavesAFreshGuestAndANotice() {
+    @Test func eraseLeavesNoGuestAndNoNotice() {
         var life = Lifecycle(guest: Guest.fresh(on: ipad))
+        life.notice = .closedInBackground
         life.erase()
-        #expect(life.notice == .erased)
-        life.create(Guest.fresh(on: ipad))
+        #expect(life.guest == nil)
         #expect(life.notice == nil)
+        #expect(life.phase == .home)
+        #expect(life.startVerdict(.normal, host: ipad) == .noGuest)
+        life.create(Guest.fresh(on: ipad))
+        #expect(life.guest != nil)
     }
 
-    @Test func aFactoryResetFromRecoveryErasesWithoutANotice() {
-        var life = Lifecycle(guest: Guest.fresh(on: ipad))
+    @Test func aFactoryResetFromRecoveryKeepsTheGuestAndItsChoices() {
+        var guest = Guest.fresh(on: ipad)
+        guest.memoryMiB = 2048
+        guest.usedBytes = 4_000_000_000
+        var life = Lifecycle(guest: guest)
         life.factoryReset()
         #expect(life.notice == nil)
+        #expect(life.guest?.memoryMiB == 2048)
+        #expect(life.guest?.usedBytes == 0)
     }
 
     @Test func theRunEndsInOneOfThreeWays() {

@@ -55,13 +55,16 @@ struct HomeView: View {
             case .create: NewGuestSheet()
             case .resize: ResizeSheet()
             case .system: SystemSheet()
-            case .erase:
-                EraseSheet(confirmed: hints.eraseConfirmed)
-                    .presentationSizing(EraseSheetSizing())
             case .info: InfoSheet(page: hints.infoPage)
             }
         }
         .microphoneAccessAlert()
+        .alert("Erase Guest?", isPresented: $model.confirmingErase) {
+            Button("Erase Guest", role: .destructive) { model.erase() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Everything the guest has stored is deleted. This can\u{2019}t be undone.")
+        }
         .alert("Not Enough Free Space", isPresented: $model.startBlocked) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -181,13 +184,6 @@ struct HomeView: View {
         }
         if let notice = model.notice {
             switch notice {
-            case .erased:
-                NoticeCard(
-                    symbol: "sparkles", color: .accentColor,
-                    title: "Guest erased",
-                    text: "The next start runs Andarium's setup.",
-                    onClose: { withAnimation { model.notice = nil } }
-                )
             case .closedInBackground:
                 NoticeCard(
                     symbol: "moon.zzz.fill", color: .secondary,
@@ -430,10 +426,10 @@ struct RecoveryErasePanel: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(!model.plan.allowsStart || !model.host.runsGuestGraphics)
+                .disabled(!model.plan.allowsStart(.recovery) || !model.host.runsGuestGraphics)
                 Divider().padding(.leading, 58)
                 Button {
-                    model.sheet = .erase
+                    model.confirmingErase = true
                 } label: {
                     HStack(spacing: 12) {
                         IconTile(symbol: "trash.fill", color: .red)

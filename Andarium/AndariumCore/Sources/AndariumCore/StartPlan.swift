@@ -62,6 +62,16 @@ public enum StartPlan: Equatable, Sendable {
         }
     }
 
+    /// Whether a start in `mode` can go ahead; the screens offer no start
+    /// that cannot, and refuse none with a message. Recovery does not finish
+    /// an update, so it waits for Restore or Erase as the rest do.
+    public func allowsStart(_ mode: StartMode) -> Bool {
+        switch self {
+        case .unfinishedUpdate(_, let canRetry, _): mode == .normal && canRetry
+        case .blocked, .firstStart, .normal, .update: allowsStart
+        }
+    }
+
     /// What a start in `mode` is, for the words and steps of the boot.
     public func bootKind(_ mode: StartMode) -> BootKind {
         if mode == .recovery { return .recovery }

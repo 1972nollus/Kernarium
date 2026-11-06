@@ -10,8 +10,6 @@ public enum Phase: Equatable, Sendable {
 }
 
 public enum HomeNotice: Equatable, Sendable {
-    /// The guest was just erased.
-    case erased
     /// iOS ended Andarium while the guest was paused out of the foreground.
     case closedInBackground
 }
@@ -53,16 +51,15 @@ public struct Lifecycle: Equatable, Sendable {
         notice = nil
     }
 
-    /// Erases everything in the guest and leaves a fresh one with the same
-    /// choices; its next start runs Android's first-run setup.
+    /// Erase Guest: nothing is left of the guest, its choices included, and
+    /// the application is where it was before the first one was set up.
     public mutating func erase() {
-        guard let guest else { return }
-        self.guest = guest.erased
-        notice = .erased
+        guest = nil
+        notice = nil
     }
 
-    /// Android's own factory reset from Recovery: the result of Erase, done
-    /// from inside, so there is no Home notice to show.
+    /// Android's own factory reset from Recovery: its data erased from
+    /// inside, the guest and its choices kept.
     public mutating func factoryReset() {
         guard let guest else { return }
         self.guest = guest.erased
@@ -83,8 +80,8 @@ public struct Lifecycle: Equatable, Sendable {
         switch plan {
         case .blocked(let reason):
             return .blocked(reason)
-        case .unfinishedUpdate(_, let canRetry, _):
-            return mode == .normal && canRetry ? .allowed(.upgrade) : .unfinishedUpdate
+        case .unfinishedUpdate:
+            return plan.allowsStart(mode) ? .allowed(.upgrade) : .unfinishedUpdate
         case .firstStart, .normal, .update:
             return .allowed(plan.bootKind(mode))
         }

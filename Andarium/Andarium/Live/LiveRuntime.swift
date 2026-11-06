@@ -111,13 +111,12 @@ final class LiveRuntime: RuntimeDriver {
         return try await storage.create(guest, progress: progress)
     }
 
-    func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest {
+    func erase(progress: @escaping @Sendable (Double) -> Void) async throws {
         defer { model?.host.freeStorageBytes = AppEntry.freeStorageBytes() }
-        let erased = try await storage.erase(guest, progress: progress)
+        try await storage.erase(progress: progress)
         // The next guest is a new one: it boots with a key of its own.
         keyStore.delete()
         adbIdentity = nil
-        return erased
     }
 
     func save(_ guest: Guest) throws {

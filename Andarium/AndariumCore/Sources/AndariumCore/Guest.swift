@@ -99,7 +99,8 @@ public struct Guest: Equatable, Codable, Sendable {
         }
     }
 
-    /// The same choices with nothing in it: what Erase leaves behind.
+    /// The same choices with nothing in it: what Android's own factory reset
+    /// leaves behind.
     public var erased: Guest {
         var guest = self
         guest.capacityGiB = effectiveCapacityGiB

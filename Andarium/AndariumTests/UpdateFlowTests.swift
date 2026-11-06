@@ -16,7 +16,9 @@ final class StubDriver: RuntimeDriver {
 
     func create(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest { guest }
     private(set) var erased = 0
-    func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest {
+    var eraseFails = false
+    func erase(progress: @escaping @Sendable (Double) -> Void) async throws {
+        if eraseFails { throw InstanceError.refused("Nothing could be deleted.") }
         erased += 1
         return guest
     }
@@ -167,7 +169,73 @@ struct UpdateFlowTests {
         model.start(.recovery)
         #expect(model.phase == .home)
         #expect(driver.begun.isEmpty)
-        #expect(model.alert?.title == "Andarium's Update Didn't Finish")
+        #expect(model.alert == nil)
+    }
+
+    @Test func aBlockedGuestIsNotStartedAndNothingIsSaid() {
+        let (model, driver) = model(plan: .blocked(.olderAndroid))
+        for mode in [StartMode.normal, .recovery] {
+            #expect(!model.plan.allowsStart(mode))
+            model.start(mode)
+        }
+        #expect(model.phase == .home)
+        #expect(driver.begun.isEmpty)
+        #expect(model.alert == nil && !model.startBlocked)
+    }
+
+    @Test func lowSpaceStillAsksBeforeAStart() {
+        let (model, driver) = model(plan: .normal)
+        model.host.freeStorageBytes = 1_000_000
+        model.start(.normal)
+        #expect(model.startBlocked)
+        #expect(driver.begun.isEmpty)
+    }
+
+    // MARK: Erase
+
+    private func eventually(_ condition: () -> Bool) async -> Bool {
+        for _ in 0..<400 {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+
+    @Test func eraseDeletesTheGuestAndReturnsToTheFirstLaunchScreen() async {
+        let (model, driver) = model(plan: .normal)
+        model.notice = .closedInBackground
+        model.resizePreset = 24
+        model.erase()
+        #expect(model.busy?.title == "Erasing Guest")
+        #expect(await eventually { model.busy == nil })
+        #expect(driver.erased == 1)
+        // No guest: Home shows the first-launch screen, with no notice that
+        // the guest was erased.
+        #expect(model.guest == nil)
+        #expect(model.notice == nil)
+        #expect(model.resizePreset == nil)
+        #expect(model.phase == .home)
+        #expect(model.alert == nil)
+        #expect(model.plan == .normal)
+    }
+
+    @Test func aFailedEraseKeepsTheGuestAndSaysSo() async {
+        let (model, driver) = model(plan: .normal)
+        driver.eraseFails = true
+        model.erase()
+        #expect(await eventually { model.alert != nil })
+        #expect(model.alert?.title == "The Guest Could Not Be Erased")
+        #expect(model.guest != nil)
+        #expect(await eventually { model.busy == nil })
+    }
+
+    @Test func aChoiceMadeJustBeforeEraseIsNotSavedBack() async {
+        let (model, driver) = model(plan: .normal)
+        model.guest?.cores = 2
+        model.erase()
+        #expect(await eventually { model.busy == nil })
+        try? await Task.sleep(for: .milliseconds(500))
+        #expect(driver.savedGuest == nil)
     }
 
     @Test func aBlockedGuestSaysWhyAndStaysAtHome() {
