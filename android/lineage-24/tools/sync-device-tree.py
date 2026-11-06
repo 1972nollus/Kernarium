@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Synchronize the checked Kernarium device overlay into the AOSP workspace.
 
 The copy gives every file whose bytes or mode differ from what the destination

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Precompile, at build time, every application that first boot would compile.
 
 ART Service compiles every package that lacks a usable artifact on the first
