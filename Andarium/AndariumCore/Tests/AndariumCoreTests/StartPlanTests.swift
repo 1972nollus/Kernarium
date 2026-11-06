@@ -127,6 +127,28 @@ struct StartVerdictTests {
         #expect(StartPlan.update(from: "r1", to: "r2").allowsStart && StartPlan.firstStart.allowsStart)
     }
 
+    @Test func theScreensOfferNoStartThePlanRefuses() {
+        let other = StartPlan.unfinishedUpdate(to: "r2", canRetry: false, canRestore: true)
+        for mode in [StartMode.normal, .recovery] {
+            #expect(!StartPlan.blocked(.mismatch).allowsStart(mode))
+            #expect(!other.allowsStart(mode))
+            #expect(StartPlan.firstStart.allowsStart(mode) && StartPlan.normal.allowsStart(mode))
+            #expect(StartPlan.update(from: "r1", to: "r2").allowsStart(mode))
+        }
+        // Recovery does not finish the update, so it waits like the rest.
+        #expect(unfinished.allowsStart(.normal))
+        #expect(!unfinished.allowsStart(.recovery))
+        // The lifecycle's verdict agrees with it for every plan.
+        let life = Lifecycle(guest: Guest.fresh(on: host))
+        for plan in [unfinished, other, StartPlan.blocked(.olderAndroid), .normal, .firstStart] {
+            for mode in [StartMode.normal, .recovery] {
+                let allowed: Bool
+                if case .allowed = life.startVerdict(mode, host: host, plan: plan) { allowed = true } else { allowed = false }
+                #expect(allowed == plan.allowsStart(mode))
+            }
+        }
+    }
+
     @Test func aBlockedStartLeavesTheLifeAtHome() {
         var life = Lifecycle(guest: Guest.fresh(on: host))
         #expect(life.start(.normal, host: host, plan: .blocked(.olderAndroid)) == .blocked(.olderAndroid))

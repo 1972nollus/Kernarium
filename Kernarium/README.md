@@ -655,6 +655,8 @@ Each script documents its options in `--help` or its header:
   test-support application that plays digital silence on a non-mixable audio
   session so that a run can interrupt Kernarium's audio without UI
   automation (`launch` starts it in the foreground, `terminate --pid` ends it,
-  and `--help` lists its modes); and
+  and `--help` lists its modes); `build` signs with the team of
+  [`GuestHost/Config/Signing.local.xcconfig`](../GuestHost/README.md#signing)
+  or `UML_DEVELOPMENT_TEAM`; and
 - `verify-signed-kernel-carrier.py` checks that a kernel image is safe for the
   signed carrier.

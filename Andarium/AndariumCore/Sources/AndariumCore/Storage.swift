@@ -16,8 +16,10 @@ public protocol GuestStorage: Sendable {
     /// The guest on disk, with its measured data, or nil if there is none.
     func load() throws -> Guest?
     func create(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest
-    /// Everything in the guest is replaced by a fresh one.
-    func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest
+    /// Deletes everything the guest has: its data, its record and its
+    /// choices. Afterwards `load` finds no guest, and the application is
+    /// where it was before the first one was set up.
+    func erase(progress: @escaping @Sendable (Double) -> Void) async throws
     /// What a start would be, from the instance on disk; nil when its record
     /// cannot be read.
     func startPlan() -> StartPlan?
@@ -36,8 +38,8 @@ extension GuestStorage {
         try await create(guest, progress: { _ in })
     }
 
-    public func erase(_ guest: Guest) async throws -> Guest {
-        try await erase(guest, progress: { _ in })
+    public func erase() async throws {
+        try await erase(progress: { _ in })
     }
 
     public func prepareStart(_ guest: Guest) async throws {
@@ -156,12 +158,19 @@ public struct TwoDiskStorage: GuestStorage {
         return created
     }
 
-    public func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest {
+    public func erase(progress: @escaping @Sendable (Double) -> Void) async throws {
         try requireUsablePaths()
         // The data goes first, with the record and any snapshot: a guest that
         // cannot be read any more (an earlier layout) is erased the same way.
-        try files.apply(InstanceDecision(.reset, "The guest is deleted and created anew."), release: release)
-        return try await create(guest, progress: progress)
+        // The choices go last, so a failure before them leaves the guest in
+        // view for another try.
+        try files.removeAll()
+        let manager = FileManager.default
+        for legacy in locations.legacyImages { try? manager.removeItem(at: legacy) }
+        if manager.fileExists(atPath: locations.settings.path) {
+            try manager.removeItem(at: locations.settings)
+        }
+        progress(1)
     }
 
     public func startPlan() -> StartPlan? {

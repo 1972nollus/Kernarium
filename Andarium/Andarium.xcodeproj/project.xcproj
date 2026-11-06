@@ -1,9 +1,9 @@
 {
   "default-configuration": "Release",
   "configurations": [
-    "AppStore",
-    "Debug",
-    "Release",
+    { "name": "AppStore", "file": "Config/Signing.xcconfig" },
+    { "name": "Debug", "file": "Config/Signing.xcconfig" },
+    { "name": "Release", "file": "Config/Signing.xcconfig" },
   ],
   "localizations": {
     "development": "en",
@@ -31,6 +31,7 @@
         { "path": "Andarium-Bridging-Header.h" },
         { "path": "Info.plist" },
         { "path": "PrivacyInfo.xcprivacy", "target-membership": [ "Andarium/resources" ] },
+        { "path": "../../GuestHost/Config/Signing.xcconfig" },
       ],
     }, {
       "kind": "group",
@@ -236,7 +237,6 @@
     "DEBUG_INFORMATION_FORMAT[config=AppStore]": "dwarf-with-dsym",
     "DEBUG_INFORMATION_FORMAT[config=Debug]": "dwarf",
     "DEBUG_INFORMATION_FORMAT[config=Release]": "dwarf-with-dsym",
-    "DEVELOPMENT_TEAM": "XXXXXXXXXX",
     "ENABLE_NS_ASSERTIONS[config=AppStore]": "NO",
     "ENABLE_NS_ASSERTIONS[config=Release]": "NO",
     "ENABLE_STRICT_OBJC_MSGSEND": "YES",
@@ -244,7 +244,10 @@
     "ENABLE_USER_SCRIPT_SANDBOXING": "YES",
     "EXCLUDED_ARCHS[sdk=iphonesimulator*]": "x86_64",
     "GCC_OPTIMIZATION_LEVEL[config=Debug]": "0",
-    "GCC_PREPROCESSOR_DEFINITIONS[config=AppStore]": "UML_APP_STORE_APPLICATION=1 $(inherited)",
+    "GCC_PREPROCESSOR_DEFINITIONS[config=AppStore]": [
+      "UML_APP_STORE_APPLICATION=1",
+      "$(inherited)",
+    ],
     "IPHONEOS_DEPLOYMENT_TARGET": "27.0",
     "ONLY_ACTIVE_ARCH[config=Debug]": "YES",
     "SDKROOT": "iphoneos",

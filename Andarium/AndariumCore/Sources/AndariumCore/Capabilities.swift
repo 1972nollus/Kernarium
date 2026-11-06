@@ -15,25 +15,17 @@ public struct Capabilities: Equatable, Sendable {
     public var bugReport: Bool
     /// The session can show the guest's own statistics.
     public var statistics: Bool
-    /// Retina mode can change while the guest runs; otherwise it applies at
-    /// the next start and the session leaves it out.
-    public var liveDisplayOptions: Bool
 
-    public init(
-        adbOverNetwork: Bool, apkInstall: Bool, bugReport: Bool,
-        statistics: Bool, liveDisplayOptions: Bool
-    ) {
+    public init(adbOverNetwork: Bool, apkInstall: Bool, bugReport: Bool, statistics: Bool) {
         self.adbOverNetwork = adbOverNetwork
         self.apkInstall = apkInstall
         self.bugReport = bugReport
         self.statistics = statistics
-        self.liveDisplayOptions = liveDisplayOptions
     }
 
     /// Everything the mock runtime pretends to do.
     public static let preview = Capabilities(
-        adbOverNetwork: true, apkInstall: true, bugReport: true, statistics: true,
-        liveDisplayOptions: true
+        adbOverNetwork: true, apkInstall: true, bugReport: true, statistics: true
     )
 
     /// The device application: the session offers an app install, ADB over
@@ -43,6 +35,6 @@ public struct Capabilities: Equatable, Sendable {
         adbOverNetwork: true,
         apkInstall: true,
         bugReport: true,
-        statistics: true, liveDisplayOptions: false
+        statistics: true
     )
 }

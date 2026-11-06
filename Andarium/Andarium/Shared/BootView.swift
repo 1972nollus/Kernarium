@@ -5,7 +5,8 @@ import SwiftUI
 
 /// The boot, from Andarium's start to the guest's `sys.boot_completed`: a
 /// status line with a live dot, what is starting and the elapsed time; the
-/// title with overall progress; and the stages in one panel. First start,
+/// title; and the steps in one panel, with no bar or percentage of the whole
+/// (only the disk write, which knows its length, says one). First start,
 /// update, recovery and restart are variants of the same screen. A launch
 /// has one run, so there is no Cancel.
 ///
@@ -34,11 +35,10 @@ struct BootView: View {
         let steps = shownSteps(guest: guest)
         let frozen = model.frozenBootStage.map { min($0, steps.count - 1) }
         let current = frozen ?? stage
-        let progress = min(1, (Double(current) + (frozen != nil ? 0.45 : 0.5)) / Double(steps.count))
         VStack(spacing: 0) {
             statusLine(frozen: frozen != nil)
             ScrollView {
-                content(guest: guest, system: model.system, steps: steps, current: current, progress: progress)
+                content(guest: guest, system: model.system, steps: steps, current: current)
                     .containerRelativeFrame(.vertical, alignment: .center) { length, _ in length }
             }
             .scrollBounceBehavior(.basedOnSize)
@@ -80,8 +80,8 @@ struct BootView: View {
     private func shownSteps(guest: Guest) -> [Step] {
         var steps = Self.steps(kind, guest: guest, system: model.system)
         if model.preparingDisk {
-            let detail = model.diskProgress.map { "Preparing Andarium \u{00B7} \(Int(($0 * 100).rounded()))%" }
-                ?? "Preparing Andarium"
+            let detail = model.diskProgress.map { "Preparing \u{00B7} \(Int(($0 * 100).rounded()))%" }
+                ?? "Preparing"
             steps[0] = Step(title: steps[0].title, detail: detail, seconds: 0)
         }
         return steps
@@ -91,7 +91,7 @@ struct BootView: View {
     /// says, and ends when the guest has something to show.
     private func followRuntime(stepCount: Int) async {
         while !Task.isCancelled && !model.bootTracker.isReady {
-            let live = min(model.liveBootStage(recovery: kind == .recovery), stepCount - 1)
+            let live = min(model.liveBootStage(), stepCount - 1)
             if live != stage { withAnimation(.snappy) { stage = live } }
             try? await Task.sleep(for: .milliseconds(200))
         }
@@ -126,17 +126,11 @@ struct BootView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func content(guest: Guest, system: SystemInfo, steps: [Step], current: Int, progress: Double) -> some View {
+    private func content(guest: Guest, system: SystemInfo, steps: [Step], current: Int) -> some View {
         VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text(kind == .recovery ? "Recovery" : "Andarium")
-                    .font(.largeTitle.weight(.bold))
-                // The bar only marks the stage the boot has reached, and is not
-                // read out as a percentage.
-                ProgressBar(value: progress)
-                    .accessibilityHidden(true)
-            }
-            .padding(.horizontal, 4)
+            Text(kind == .recovery ? "Recovery" : "Andarium")
+                .font(.largeTitle.weight(.bold))
+                .padding(.horizontal, 4)
 
             VStack(spacing: 0) {
                 ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
@@ -226,7 +220,7 @@ struct BootView: View {
     static func note(_ kind: BootKind, from: String?, system: SystemInfo) -> String? {
         switch kind {
         case .firstStart:
-            "The first-run setup takes a few minutes."
+            "The first-run setup may take a few minutes."
         case .upgrade:
             "Updating \(from.map { "from \($0) " } ?? "")to \(system.release). Apps and files are kept."
         case .recovery:
@@ -237,15 +231,14 @@ struct BootView: View {
     }
 
     static func steps(_ kind: BootKind, guest: Guest, system info: SystemInfo) -> [Step] {
-        let system = Step(title: "Andarium", detail: "\(info.release) · read-only", seconds: 0.7)
+        let system = Step(title: "System image", detail: "\(info.release) · read-only", seconds: 0.7)
         let kernel = Step(title: "Linux Kernel", detail: "\(info.kernel.replacingOccurrences(of: "Linux ", with: "")) · \(guest.cores) vCPUs · \(Formats.size(mib: guest.memoryMiB)) RAM", seconds: 0.9)
         let used = "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(gib: guest.capacityGiB))"
         switch kind {
         case .recovery:
             return [system, kernel,
-                    Step(title: "Storage", detail: "\(used) · unchanged", seconds: 0.6),
-                    Step(title: "Recovery", detail: "Loading Recovery", seconds: 1.4),
-                    Step(title: "Screen", detail: "Waiting for the first frame", seconds: 0.7)]
+                    Step(title: "Storage", detail: used, seconds: 0.6),
+                    Step(title: "Recovery", detail: "Loading Recovery", seconds: 1.4)]
         case .firstStart:
             return [system, kernel,
                     Step(title: "Storage", detail: "Preparing \(Formats.size(gib: guest.effectiveCapacityGiB)) for first use", seconds: 0.9),
@@ -258,7 +251,7 @@ struct BootView: View {
             let storage = guest.pendingCapacityGiB.map { "Growing from \(Formats.size(gib: guest.capacityGiB)) to \(Formats.size(gib: $0))" } ?? used
             return [system, kernel,
                     Step(title: "Storage", detail: storage, seconds: guest.pendingCapacityGiB == nil ? 0.6 : 1.2),
-                    Step(title: "Startup", detail: kind == .restart ? "Starting again" : "Starting services", seconds: 1.8)]
+                    Step(title: "Startup", detail: "Starting services", seconds: 1.8)]
         }
     }
 }

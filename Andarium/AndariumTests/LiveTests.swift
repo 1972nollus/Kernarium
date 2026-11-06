@@ -94,8 +94,18 @@ struct DisplayOptionsStoreTests {
     @Test func optionsSurviveTheStore() {
         let saved = DisplayOptionsStore.load()
         defer { DisplayOptionsStore.save(saved) }
-        DisplayOptionsStore.save(DisplayOptions(retina: true))
-        #expect(DisplayOptionsStore.load() == DisplayOptions(retina: true))
+        for options in [DisplayOptions(chosenRetina: true), DisplayOptions(chosenRetina: false), DisplayOptions()] {
+            DisplayOptionsStore.save(options)
+            #expect(DisplayOptionsStore.load() == options)
+        }
+    }
+
+    @Test func theMemoryLimitIsReadOrNone() {
+        // Zero where the system sets none (a Mac); otherwise the footprint
+        // plus what it may still grow by, which is above the footprint.
+        let limit = MemoryLimit.bytes()
+        #expect(limit == 0 || limit > 64 << 20)
+        #expect(limit < 1 << 40)
     }
 }
 

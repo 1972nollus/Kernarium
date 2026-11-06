@@ -13,7 +13,8 @@ enum PreviewData {
     static let system = SystemInfo(
         version: "17", release: release,
         securityPatch: "5 October 2026", kernel: "Linux 6.18.54",
-        architecture: "arm64, 4 KiB pages", appVersion: "1.0 (1)"
+        architecture: "arm64, 4 KiB pages", abis: ["arm64-v8a", "armeabi-v7a", "armeabi"],
+        appVersion: "1.0 (1)"
     )
 
     /// An iPad Pro or an iPhone, by idiom. The memory bounds are made-up ones
@@ -49,13 +50,16 @@ enum PreviewData {
         )
     }
 
+    static let sampleApkName = "Signal-7.21.4.apk"
+    static let sampleApkSizeBytes = UInt64(38.2 * Double(Limits.bytesPerMiB))
+
     /// A sparse file named like the sample APK, for the preview's install.
     static func sampleApk() -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(ApkInstall.sampleFile)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(sampleApkName)
         if !FileManager.default.fileExists(atPath: url.path) {
             FileManager.default.createFile(atPath: url.path, contents: nil)
             if let handle = try? FileHandle(forWritingTo: url) {
-                try? handle.truncate(atOffset: ApkInstall.sampleSizeBytes)
+                try? handle.truncate(atOffset: sampleApkSizeBytes)
                 try? handle.close()
             }
         }

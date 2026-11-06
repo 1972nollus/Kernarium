@@ -43,6 +43,10 @@ __pycache__/
 # CMakePresets.json.
 CMakeUserPresets.json
 
+# The signer's Apple Developer team for Kernarium and Andarium. The tracked
+# example documents the one setting.
+/GuestHost/Config/Signing.local.xcconfig
+
 # Per-line kernel source locations. The tracked examples document the required
 # format; real paths are host-specific and must name case-sensitive
 # filesystems. Keep the former singleton path ignored because it is

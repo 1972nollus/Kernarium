@@ -53,9 +53,12 @@ Python tooling tests keep the host `$TMPDIR` for `sun_path`.
 
 `repository-environment-portability` is the one tooling test that scans
 tracked source, and it looks for forbidden values rather than expected ones:
-host paths and account names, private addresses, ssh endpoints and Apple
-signing identifiers outside the project's own (read from `project.pbxproj` and
-JSON `project.xcproj` projects, xcconfig files, plists and CMake). It also
+host paths and account names, private addresses, ssh endpoints, a
+`Claude-Session:` trailer line (patch export drops it, and no exception
+allows it) and Apple
+signing identifiers (a development team is never tracked; a bundle identifier
+stays inside the project's own namespace), read from `project.pbxproj` and
+JSON `project.xcproj` projects, xcconfig files, plists and CMake. It also
 scans new unignored files, so a leak fails before it is committed. A site adds
 its private tokens to a local denylist, found at
 `${XDG_CONFIG_HOME:-$HOME/.config}/linux-um-darwin/portability-denylist` or
@@ -745,6 +748,11 @@ runtime links them, as `HostBattery.xcframework` and
 `KernariumTests` links them, so the test process reaches each without loading a
 second runtime.
 
+Both projects sign with the team in the ignored
+`GuestHost/Config/Signing.local.xcconfig` ([setup](../GuestHost/README.md#signing)).
+Without it a Simulator build works unsigned and a device build stops asking for
+a development team.
+
 The Simulator renders with llvmpipe, which runs one rasterizer thread per host
 core; `LP_NUM_THREADS` caps them for a launch (`SIMCTL_CHILD_LP_NUM_THREADS=2`
 with `xcrun simctl launch`) on a loaded host, at the cost of frame rate.
@@ -936,7 +944,7 @@ process, guest and GPU memory. See the [WebGL workload](../tests/integration/and
 for invocation and snapshot collection.
 
 Its `AndroidOperationTests` and
-`AdbOverNetworkModelTests` play Create Bug Report, Install App and ADB over
+`AdbOverNetworkModelTests` play Create Bug Report, Install APK and ADB over
 Network the same way. `AdbOverVsockTests` drive a real Android guest with the
 application's own client and authorization on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1`
 with `TEST_RUNNER_ANDARIUM_START=normal`): a shell command, the multitouch

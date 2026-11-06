@@ -47,10 +47,11 @@ python3 tests/perf/run_guest_geekbench.py \
 
 A 32-bit Arm guest runs Geekbench 5's `geekbench_armv7`, which the workload
 finds by name beside Geekbench 6's `geekbench6` and runs with the same options.
-The armhf starter disk carries no Geekbench: [`make_geekbench_images.py`](make_geekbench_images.py) packages the
-release, checked by the SHA-256 of its
-program, into images that stay local and that the tool refuses to write into
-the repository outside `.build`. It makes two kinds. `payload` is the EROFS
+The armhf starter disk carries no Geekbench:
+[`make_geekbench_images.py`](make_geekbench_images.py) packages a Geekbench
+release directory (`--release-dir`), checked by the SHA-256 of its program,
+into images that stay local and that the tool refuses to write into the
+repository outside `.build`. It makes two kinds. `payload` is the EROFS
 image `--payload` attaches, with `geekbench_armv7` and `geekbench.plar` at its
 root and a 4 KiB block size, which the guest mounts. `rootfs`
 cuts the starter disk's ext4 filesystem into an unpartitioned `.ext4` image,

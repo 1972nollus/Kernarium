@@ -48,7 +48,6 @@ nonisolated struct Acknowledgements: Decodable, Sendable {
         let license: String
         /// Its SPDX expression.
         let spdx: String
-        let note: String?
         /// Identifiers into `Acknowledgements.licenses`.
         let licenses: [String]
         let texts: [Notice]
@@ -182,11 +181,6 @@ struct LicenseView: View {
         VStack(alignment: .leading, spacing: 14) {
             field("Copyright", "© \(project.copyright)")
             field("License", project.license, detail: project.spdx)
-            if let note = project.note {
-                Text(note)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)

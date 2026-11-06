@@ -67,7 +67,9 @@ a patch file. A patch's only identity is its topic's author, so
 invented from the host name, such as a `localhost`, `.local`, `.invalid`, or
 `example.com` address. The topic's owner fixes it with an ordinary amend such
 as `git commit --amend --reset-author`. Tools never name or rewrite an
-identity.
+identity. Export also leaves out a `Claude-Session:` trailer line: it links a
+private session and describes no change, and the series' tree does not depend
+on a message.
 
 `verify-replay.sh` starts from the pinned upstream commit, verifies the shared
 series, branches and verifies the x86_64 overlay, and by default builds the

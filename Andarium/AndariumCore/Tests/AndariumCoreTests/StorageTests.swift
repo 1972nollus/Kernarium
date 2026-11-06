@@ -58,16 +58,37 @@ struct StorageTests {
         #expect(used >= 3 * 1024 * 1024 && used < 8 * 1024 * 1024)
     }
 
-    @Test func eraseDeletesTheDataAndKeepsTheChoices() async throws {
+    @Test func eraseDeletesTheDataTheRecordAndTheChoicesSoNoGuestIsLeft() async throws {
         let (storage, root) = try makeStorage()
         defer { try? FileManager.default.removeItem(at: root) }
         var guest = Guest.fresh(on: host)
         guest.cores = 3
         let created = try await storage.create(guest)
         try Data(repeating: 1, count: 4096).write(to: storage.locations.data)
-        let erased = try await storage.erase(created)
-        #expect(erased.cores == 3 && erased.usedBytes == 0)
-        #expect(!FileManager.default.fileExists(atPath: storage.locations.data.path))
+        // A snapshot an update left is erased with the rest.
+        let snapshot = storage.locations.directory.appendingPathComponent(InstanceFiles.snapshotPrefix + "r2")
+        try Data(repeating: 2, count: 4096).write(to: snapshot)
+        #expect(try storage.load()?.cores == 3 && created.cores == 3)
+
+        try await storage.erase()
+        let manager = FileManager.default
+        #expect(!manager.fileExists(atPath: storage.locations.data.path))
+        #expect(!manager.fileExists(atPath: storage.locations.settings.path))
+        #expect(!manager.fileExists(atPath: storage.locations.instance.path))
+        #expect(!manager.fileExists(atPath: snapshot.path))
+        // The next launch finds no guest, so it shows the first-launch screen,
+        // and a guest set up afterwards starts from the defaults.
+        #expect(try storage.load() == nil)
+        #expect(storage.startPlan() == .firstStart)
+        let next = try await storage.create(Guest.fresh(on: host))
+        #expect(next.cores == host.processorCount)
+    }
+
+    @Test func eraseWithNoGuestChangesNothing() async throws {
+        let (storage, root) = try makeStorage()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await storage.erase()
+        #expect(try storage.load() == nil)
     }
 
     @Test func aGuestOfTheFirstReleaseIsErasedLikeAnyOtherAndItsImageGoes() async throws {
@@ -81,8 +102,11 @@ struct StorageTests {
         #expect(throws: InstanceError.self) { try storage.completeRun() }
         await #expect(throws: InstanceError.self) { try await storage.prepareStart(Guest.fresh(on: host)) }
 
-        _ = try await storage.erase(Guest.fresh(on: host))
+        try await storage.erase()
         #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("guest.img").path))
+        #expect(try InstanceFiles(directory: directory).readState() == nil)
+        // A guest set up afterwards records the current release.
+        _ = try await storage.create(Guest.fresh(on: host))
         #expect(try InstanceFiles(directory: directory).readState()?.releaseID == "20261031-los24-r4")
     }
 
@@ -166,9 +190,10 @@ struct StorageTests {
         )
         #expect(older.startPlan() == .blocked(.olderAndroid))
         await #expect(throws: InstanceError.self) { try await older.prepareStart(guest) }
-        _ = try await older.erase(guest)
+        try await older.erase()
         #expect(older.startPlan() == .firstStart)
-        try await older.prepareStart(guest)
+        let again = try await older.create(guest)
+        try await older.prepareStart(again)
     }
 
     @Test func theGuestIsExcludedFromBackupsUnlessTheUserAsks() async throws {
@@ -231,7 +256,7 @@ struct DiskPathTests {
         let expected = StorageError.unusableDiskPath(directory.appendingPathComponent("data.img").path)
 
         await #expect(throws: expected) { try await storage.create(guest) }
-        await #expect(throws: expected) { try await storage.erase(guest) }
+        await #expect(throws: expected) { try await storage.erase() }
         await #expect(throws: expected) { try await storage.prepareStart(guest) }
         #expect(!FileManager.default.fileExists(atPath: directory.path))
         #expect(expected.errorDescription?.contains("Application Support") == true)

@@ -188,7 +188,6 @@ struct SystemControls: View {
         // The picker follows the vCPU count live: more vCPUs hold more of the
         // process's memory, so the top of the ruler falls as the count rises.
         let stops = host.memory.stops(vCPUs: guest.cores)
-        let top = stops.last ?? Limits.minimumMemoryMiB
         let steps = (1024 - Limits.minimumMemoryMiB) / Limits.memoryStepMiB
         return ControlRow(title: "Memory", symbol: "memorychip", value: Formats.size(mib: guest.memoryMiB)) {
             Ruler(
@@ -205,8 +204,7 @@ struct SystemControls: View {
                 accessibilityName: "Memory"
             )
         } note: {
-            Text("\(Formats.memoryBound(top, vCPUs: guest.cores)) on this \(host.name)")
-                .foregroundStyle(.secondary)
+            EmptyView()
         }
     }
 }
@@ -216,6 +214,8 @@ struct SystemControls: View {
 struct StoragePanel: View {
     @Binding var guest: Guest
     let host: HostDevice
+    /// The sizes the ruler offers (`AppModel.capacityStopsGiB`).
+    let stops: [Int]
     var isNew = false
     var resize: () -> Void = {}
 
@@ -230,15 +230,14 @@ struct StoragePanel: View {
         ControlRow(title: "Storage", symbol: "internaldrive", value: Formats.size(gib: guest.capacityGiB)) {
             Ruler(
                 index: Binding(
-                    get: { guest.capacityGiB - Limits.capacityRangeGiB.lowerBound },
-                    set: { guest.capacityGiB = Limits.capacityRangeGiB.lowerBound + $0 }
+                    get: { stops.firstIndex { $0 >= guest.capacityGiB } ?? stops.count - 1 },
+                    set: { guest.capacityGiB = stops[min(max($0, 0), stops.count - 1)] }
                 ),
-                count: Limits.capacityRangeGiB.count,
-                majorEvery: 8,
-                majorOffset: 4,
-                minorEvery: 2,
-                label: { "\(Limits.capacityRangeGiB.lowerBound + $0)" },
-                valueText: { Formats.size(gib: Limits.capacityRangeGiB.lowerBound + $0) },
+                count: stops.count,
+                majorEvery: 4,
+                majorOffset: 3,
+                label: { "\(stops[$0])" },
+                valueText: { Formats.size(gib: stops[$0]) },
                 accessibilityName: "Storage"
             )
         } note: {
@@ -249,7 +248,7 @@ struct StoragePanel: View {
 
     /// Storage only grows, so at the largest size Resize has nothing to offer.
     private var atMaximum: Bool {
-        guest.capacityGiB >= Limits.capacityRangeGiB.upperBound
+        guest.capacityGiB >= (stops.last ?? Limits.capacityRangeGiB.upperBound)
     }
 
     private var storage: some View {
@@ -261,10 +260,7 @@ struct StoragePanel: View {
                     Label("Grows to \(Formats.size(gib: pending)) at the next start", systemImage: "arrow.up.circle.fill")
                         .foregroundStyle(Color.accentColor)
                 } else if atMaximum {
-                    Text("\(Formats.size(gib: Limits.capacityRangeGiB.upperBound)) is the largest size")
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("\(Formats.size(bytes: guest.freeBytes)) free in the guest")
+                    Text("\(Formats.size(gib: stops.last ?? guest.capacityGiB)) is the largest size")
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
@@ -364,9 +360,9 @@ struct UsageBar: View {
     }
 }
 
-/// Resize opens on the same ruler, from 4 to 64 GiB. Storage only grows: the
-/// sizes below the current one are hatched and out of reach, and growth
-/// applies at the next start.
+/// Resize opens on the same ruler, from 4 GiB in steps of 4. Storage only
+/// grows: the sizes below the current one are hatched and out of reach, and
+/// growth applies at the next start.
 struct ResizeSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -374,6 +370,7 @@ struct ResizeSheet: View {
 
     var body: some View {
         let guest = model.guest ?? Guest.fresh(on: model.host)
+        let stops = model.capacityStopsGiB
         NavigationStack {
             VStack(spacing: 16) {
                 VStack(spacing: 2) {
@@ -388,16 +385,19 @@ struct ResizeSheet: View {
                 .padding(.top, 4)
                 Ruler(
                     index: Binding(
-                        get: { capacity - Limits.capacityRangeGiB.lowerBound },
-                        set: { value in withAnimation(.snappy) { capacity = Limits.capacityRangeGiB.lowerBound + value } }
+                        get: { stops.firstIndex { $0 >= capacity } ?? stops.count - 1 },
+                        set: { value in
+                            withAnimation(.snappy) { capacity = stops[min(max(value, 0), stops.count - 1)] }
+                        }
                     ),
-                    count: Limits.capacityRangeGiB.count,
-                    floor: guest.capacityGiB - Limits.capacityRangeGiB.lowerBound,
-                    majorEvery: 8,
-                    majorOffset: 4,
-                    minorEvery: 2,
-                    label: { "\(Limits.capacityRangeGiB.lowerBound + $0)" },
-                    valueText: { Formats.size(gib: Limits.capacityRangeGiB.lowerBound + $0) },
+                    count: stops.count,
+                    // A size an earlier version allowed, off the 4 GiB steps, has
+                    // the next step up as its first choice.
+                    floor: stops.firstIndex { $0 >= guest.capacityGiB } ?? stops.count - 1,
+                    majorEvery: 4,
+                    majorOffset: 3,
+                    label: { "\(stops[$0])" },
+                    valueText: { Formats.size(gib: stops[$0]) },
                     accessibilityName: "Storage"
                 )
                 .padding(.horizontal, 6)
@@ -415,7 +415,7 @@ struct ResizeSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Resize", systemImage: "checkmark") {
-                        model.guest?.setCapacity(capacity)
+                        model.guest?.setCapacity(capacity, maximum: model.releaseMaximumGiB)
                         dismiss()
                     }
                     .disabled(capacity == guest.effectiveCapacityGiB)
@@ -433,8 +433,7 @@ struct ResizeSheet: View {
     private func status(_ guest: Guest) -> some View {
         if capacity > guest.capacityGiB {
             line("arrow.up.circle.fill", .accentColor,
-                 "Grows to \(Formats.size(gib: capacity)) at the next start",
-                 "The guest sees the new space once it has started.")
+                 "Grows to \(Formats.size(gib: capacity)) at the next start", nil)
         } else if let pending = guest.pendingCapacityGiB {
             line("arrow.uturn.backward.circle.fill", .secondary,
                  "Stays at \(Formats.size(gib: guest.capacityGiB))",
@@ -446,7 +445,7 @@ struct ResizeSheet: View {
         }
     }
 
-    private func line(_ symbol: String, _ tint: Color, _ title: String, _ detail: String) -> some View {
+    private func line(_ symbol: String, _ tint: Color, _ title: String, _ detail: String?) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: symbol)
                 .font(.title3)
@@ -454,10 +453,12 @@ struct ResizeSheet: View {
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.subheadline.weight(.semibold))
-                Text(detail)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let detail {
+                    Text(detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 0)
         }

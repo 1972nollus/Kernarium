@@ -29,9 +29,11 @@ the notify-others option (it receives a resumption recommendation), and
 `--end stay` keeps the session until `terminate`. Every decision is printed as
 an AUDIO_INTERRUPTER line, which `--console` shows.
 
-The signing team and the bundle identifier come from the Kernarium project:
-the interrupter's identifier is the Kernarium identifier followed by
-AudioInterrupter, and automatic signing registers it under the same team.
+The bundle identifier comes from the Kernarium project: the interrupter's
+identifier is the Kernarium identifier followed by AudioInterrupter. The
+signing team is the one Kernarium builds with, from UML_DEVELOPMENT_TEAM or
+from the ignored GuestHost/Config/Signing.local.xcconfig; automatic signing
+registers the interrupter under it.
 """
 
 import argparse
@@ -46,26 +48,38 @@ import sys
 SCRIPTS = pathlib.Path(__file__).resolve().parent
 PROJECT = SCRIPTS.parent / "AudioInterrupter" / "AudioInterrupter.xcodeproj"
 KERNARIUM_PROJECT = SCRIPTS.parent / "Kernarium.xcodeproj" / "project.pbxproj"
+SIGNING = SCRIPTS.parents[1] / "GuestHost" / "Config" / "Signing.local.xcconfig"
+TEAM_VARIABLE = "UML_DEVELOPMENT_TEAM"
 DEFAULT_OUTPUT = SCRIPTS.parents[1] / ".build" / "audio-interrupter"
 SUFFIX = "AudioInterrupter"
 MODES = ("direct", "switch")
 ENDS = ("quiet", "notify", "stay")
 
 
-def kernarium_settings(project: pathlib.Path = KERNARIUM_PROJECT) -> tuple[str, str]:
-    """The development team and the Kernarium bundle identifier."""
-    text = project.read_text()
-    teams = set(re.findall(r"\bDEVELOPMENT_TEAM = ([A-Z0-9]+);", text))
-    if len(teams) != 1:
-        raise SystemExit(f"{project}: expected one DEVELOPMENT_TEAM, found {sorted(teams)}")
-    identifiers = set(re.findall(r"\bPRODUCT_BUNDLE_IDENTIFIER = ([A-Za-z0-9.-]+);", text))
+def signing_team(environment: dict[str, str] | None = None, signing: pathlib.Path = SIGNING) -> str:
+    """The development team: UML_DEVELOPMENT_TEAM, else the local signing xcconfig."""
+    environment = os.environ if environment is None else environment
+    team = environment.get(TEAM_VARIABLE, "").strip()
+    if not team and signing.is_file():
+        teams = re.findall(r"^\s*DEVELOPMENT_TEAM\s*=\s*([^\s/]+)", signing.read_text(), re.M)
+        team = teams[-1] if teams else ""
+    if not re.fullmatch(r"[A-Z0-9]{10}", team):
+        raise SystemExit(
+            f"no development team: set {TEAM_VARIABLE}, or copy {signing.name}.example to "
+            f"{signing.name} in {signing.parent.parent.name}/{signing.parent.name} and name your team there")
+    return team
+
+
+def kernarium_identifier(project: pathlib.Path = KERNARIUM_PROJECT) -> str:
+    """The Kernarium bundle identifier."""
+    identifiers = set(re.findall(r"\bPRODUCT_BUNDLE_IDENTIFIER = ([A-Za-z0-9.-]+);", project.read_text()))
     if not identifiers:
         raise SystemExit(f"{project}: no PRODUCT_BUNDLE_IDENTIFIER")
-    return teams.pop(), min(identifiers, key=len)
+    return min(identifiers, key=len)
 
 
 def build_command(args: argparse.Namespace) -> list[str]:
-    team, identifier = kernarium_settings()
+    team, identifier = signing_team(), kernarium_identifier()
     command = [
         "xcodebuild", "-project", str(PROJECT), "-scheme", SUFFIX,
         "-configuration", args.configuration, "-destination", "generic/platform=iOS",
@@ -92,7 +106,7 @@ def output_app(args: argparse.Namespace) -> pathlib.Path:
 
 def launch_command(args: argparse.Namespace) -> tuple[list[str], dict[str, str]]:
     """The devicectl launch command and the environment that carries the settings."""
-    _, identifier = kernarium_settings()
+    identifier = kernarium_identifier()
     environment = {
         "DEVICECTL_CHILD_AUDIO_INTERRUPTER_MODE": args.mode,
         "DEVICECTL_CHILD_AUDIO_INTERRUPTER_HOLD": str(args.hold),
@@ -148,7 +162,7 @@ def do_build(args: argparse.Namespace) -> int:
     code = run(["codesign", "--verify", "--deep", "--strict", str(destination)], False)
     if code != 0:
         return code
-    print(json.dumps({"app": str(destination), "bundle_identifier": kernarium_settings()[1] + SUFFIX,
+    print(json.dumps({"app": str(destination), "bundle_identifier": kernarium_identifier() + SUFFIX,
                       "version": bundle_version(destination)}))
     return 0
 

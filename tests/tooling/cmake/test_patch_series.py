@@ -267,6 +267,43 @@ def run(scratch: Path) -> None:
     fixed = (placeholder / "fix-add-f.patch").read_text()
     assert "placeholder@example.invalid" not in fixed and "\nFrom: " in fixed, fixed
 
+    # A session link in a topic message describes no change: export leaves the
+    # line out of the patch, keeps the rest of the message and every diff line,
+    # and the series still produces the topic's tree. A series that carries the
+    # line no longer matches its topic, so a replay cannot bring it back.
+    link = "Claude" + "-Session: https://example.invalid/session/1"
+    trailing = scratch / "trailing"
+    trailing.mkdir()
+    git(trailing, "init", "-q", "-b", "base")
+    trailing_base = commit(trailing, "base", {"a.txt": b"alpha\n"}, 1)
+    git(trailing, "checkout", "-q", "-b", "topic")
+    (trailing / "a.txt").write_bytes(b"alpha\n" + link.encode() + b"\n")
+    git(trailing, "add", "-A")
+    git(trailing, "commit", "-q", "-m", "fix: keep a diff line", "-m", "Body.", "-m",
+        "Co-Authored-By: Example <example@example.com>\n" + link,
+        date="2026-01-02T12:00:00+0900")
+    (trailing / "b.txt").write_bytes(b"bravo\n")
+    git(trailing, "add", "-A")
+    git(trailing, "commit", "-q", "-m", "feat: link last", "-m", "Body.", "-m", link,
+        date="2026-01-03T12:00:00+0900")
+    trailing_tree = git(trailing, "rev-parse", "topic^{tree}").strip()
+    trailer_series = scratch / "trailer-series"
+    assert export(trailing, trailing_base, "topic", trailer_series, record_tree=True) == trailing_tree
+    kept = (trailer_series / "fix-keep-a-diff-line.patch").read_text()
+    assert "\n" + link not in kept and "\n+" + link + "\n" in kept, kept
+    assert "\nBody.\n\nCo-Authored-By: Example <example@example.com>\n---\n" in kept, kept
+    last = (trailer_series / "feat-link-last.patch").read_text()
+    assert link not in last and "\nBody.\n---\n" in last, last
+    assert patch_series.series_tree(trailing, trailing_base, [trailer_series]) == trailing_tree
+    export(trailing, trailing_base, "topic", trailer_series, record_tree=True, check=True)
+    stale = scratch / "trailer-stale"
+    shutil.copytree(trailer_series, stale)
+    stale_patch = stale / "feat-link-last.patch"
+    stale_patch.write_text(stale_patch.read_text().replace("\n---\n", "\n\n" + link + "\n---\n", 1))
+    expect_error("stale session link", "changed feat-link-last.patch",
+                 lambda: export(trailing, trailing_base, "topic", stale, record_tree=True, check=True))
+    assert patch_series.series_tree(trailing, trailing_base, [stale]) == trailing_tree
+
     # The command line reports tree mismatches with a non-zero status.
     verify = [sys.executable, "-B", str(TOOL), "verify", "--series-dir", str(series),
               "--repo", str(source), "--base", base]
