@@ -42,6 +42,9 @@ RULES = {
     "(placeholders and git forges pass), and the ssh options ControlPath, "
     "ControlMaster and ControlPersist",
     "R5": "private-token: a pattern of the local denylist",
+    "R6": "agent-session: a Claude-Session: trailer at the start of a line, "
+    "which links a private coding session (never allowlisted; patch export "
+    "drops it)",
 }
 ALLOWLIST_RULES = ("R1", "R2", "R3", "R4")
 ALLOWLIST_REASONS = (
@@ -81,6 +84,7 @@ PATCH_TRAILER = re.compile(
     re.IGNORECASE,
 )
 PATCH_MBOX_SEPARATOR = re.compile(r"From [0-9a-f]{40} ")
+SESSION_TRAILER = re.compile(r"^Claude-Session:", re.MULTILINE)
 
 PATH_SEGMENT = r"[^\s/\"'`<>()\[\]{},;:|\\*?$%@!&=+]+"
 HOST_PATH = re.compile(
@@ -475,7 +479,13 @@ def patch_lines(text: str) -> Iterable[tuple[int, str]]:
             yield number, line
 
 
+def scan_sessions(scan: FileScan) -> None:
+    for match in SESSION_TRAILER.finditer(scan.text):
+        scan.add("R6", match.start())
+
+
 def scan_rules(scan: FileScan) -> None:
+    scan_sessions(scan)
     scan_host_paths(scan)
     scan_addresses(scan)
     scan_endpoints(scan)

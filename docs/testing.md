@@ -53,7 +53,9 @@ Python tooling tests keep the host `$TMPDIR` for `sun_path`.
 
 `repository-environment-portability` is the one tooling test that scans
 tracked source, and it looks for forbidden values rather than expected ones:
-host paths and account names, private addresses, ssh endpoints and Apple
+host paths and account names, private addresses, ssh endpoints, a
+`Claude-Session:` trailer line (patch export drops it, and no exception
+allows it) and Apple
 signing identifiers (a development team is never tracked; a bundle identifier
 stays inside the project's own namespace), read from `project.pbxproj` and
 JSON `project.xcproj` projects, xcconfig files, plists and CMake. It also
