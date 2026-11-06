@@ -221,8 +221,8 @@ final class LiveRuntime: RuntimeDriver {
         console = sink
         kernarium_runtime_loader_set_console_output_handler { data in sink.feed(data) }
         // A Microphone setting the person turned on earlier follows the
-        // guest; one that is off leaves the microphone alone.
-        if run.guest.microphone { tellMicrophone(true) }
+        // guest while iOS still allows it; otherwise the guest hears nothing.
+        tellMicrophone(model?.microphoneShownOn ?? false)
 
         pause.guestDidStart()
         bootStartedAt = Date()
@@ -244,7 +244,6 @@ final class LiveRuntime: RuntimeDriver {
         let memoryMiB = UInt32(run.guest.memoryMiB)
         let processorCount = UInt32(run.guest.cores)
         let dotsPerInch = geometry.dotsPerInch
-        let autoResize = model?.followWindow ?? true
         let adbKeyLine = adbIdentity?.publicKeyLine
         // The run occupies its thread for the guest's whole life and the GPU
         // service reaches the main queue while it starts, so it must not be
@@ -254,7 +253,7 @@ final class LiveRuntime: RuntimeDriver {
             let result = Self.runGuest(
                 view: view, dataDiskPath: dataDiskPath, releasePath: releasePath, dataGiB: dataGiB, bootMode: bootMode,
                 width: width, height: height, dotsPerInch: dotsPerInch, memoryMiB: memoryMiB,
-                processorCount: processorCount, autoResize: autoResize, adbKeyLine: adbKeyLine
+                processorCount: processorCount, adbKeyLine: adbKeyLine
             )
             Task { @MainActor in self.finished(result: result) }
         }
@@ -265,7 +264,7 @@ final class LiveRuntime: RuntimeDriver {
     private nonisolated static func runGuest(
         view: GuestMetalView, dataDiskPath: String, releasePath: String, dataGiB: UInt32, bootMode: UInt32,
         width: UInt32, height: UInt32, dotsPerInch: UInt32, memoryMiB: UInt32,
-        processorCount: UInt32, autoResize: Bool, adbKeyLine: String?
+        processorCount: UInt32, adbKeyLine: String?
     ) -> Int32 {
         dataDiskPath.withCString { dataDisk in
             releasePath.withCString { release in
@@ -278,7 +277,8 @@ final class LiveRuntime: RuntimeDriver {
                     request.guest_memory_mib = memoryMiB
                     request.guest_processor_count = processorCount
                     request.android_boot_mode = bootMode
-                    request.auto_resize_guest = autoResize ? 1 : 0
+                    // The guest's display always follows the window.
+                    request.auto_resize_guest = 1
                     request.android_data_disk_path = dataDisk
                     request.android_release_path = release
                     request.android_data_gib = dataGiB
@@ -475,16 +475,39 @@ final class LiveRuntime: RuntimeDriver {
     }
 
     func setMicrophone(_ on: Bool) {
-        model?.microphoneState = Self.state(microphone.access)
-        if on, microphone.access == .notAsked {
+        let access = microphone.access
+        model?.microphoneState = Self.state(access)
+        guard on else {
+            tellMicrophone(false)
+            return
+        }
+        switch access {
+        case .granted:
+            tellMicrophone(true)
+        case .denied:
+            tellMicrophone(false)
+        case .notAsked:
+            // The guest hears nothing until the person has answered iOS's
+            // question, which is asked now.
+            tellMicrophone(false)
             microphone.request { answer in
-                Task { @MainActor in
-                    self.model?.microphoneState = Self.state(answer)
-                    if self.model?.guest?.microphone == true { self.tellMicrophone(true) }
-                }
+                Task { @MainActor in self.accessAnswered(Self.state(answer)) }
             }
         }
-        tellMicrophone(on)
+    }
+
+    /// iOS's answer, or Andarium's access as the person left it in Settings:
+    /// the model keeps the switch, and the guest follows it.
+    private func accessAnswered(_ state: MicrophoneState) {
+        guard let model else { return }
+        model.microphoneAccessChanged(state)
+        tellMicrophone(model.microphoneShownOn)
+    }
+
+    /// Looks at the permission again: at launch and whenever Andarium becomes
+    /// active, since the person may have changed it in Settings.
+    func refreshPermissions() {
+        accessAnswered(Self.state(microphone.access))
     }
 
     /// The runtime is told the setting and never asks the system itself; a
@@ -562,18 +585,17 @@ final class LiveRuntime: RuntimeDriver {
         updateGuestRotation()
         guard let model else { return }
         model.host.freeStorageBytes = AppEntry.freeStorageBytes()
-        model.microphoneState = Self.state(microphone.access)
-        if model.guest?.microphone == true { tellMicrophone(true) }
+        refreshPermissions()
     }
 
     private func observeDisplayOptions() {
         guard let model else { return }
         withObservationTracking {
-            _ = (model.retina, model.followWindow, model.hostDrivesGuestRotation)
+            _ = (model.retina, model.hostDrivesGuestRotation)
         } onChange: {
             Task { @MainActor in
                 guard let model = self.model else { return }
-                DisplayOptionsStore.save(DisplayOptions(retina: model.retina, followWindow: model.followWindow))
+                DisplayOptionsStore.save(DisplayOptions(retina: model.retina))
                 self.updateGuestRotation()
                 self.observeDisplayOptions()
             }

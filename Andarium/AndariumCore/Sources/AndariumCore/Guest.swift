@@ -106,13 +106,14 @@ public struct Guest: Equatable, Codable, Sendable {
         return guest
     }
 
-    /// A new guest with the host's choices: every vCPU the host offers (its
-    /// processors, at most the count the memory budget is measured for), the
-    /// default memory at that count, the default capacity.
+    /// A new guest with the host's choices, so setting one up asks for neither:
+    /// every vCPU the host offers (its processors, at most the count the
+    /// memory budget is measured for), the default memory at that count, the
+    /// default capacity.
     public static func fresh(on host: HostDevice) -> Guest {
         Guest(
             cores: host.processorCount,
-            memoryMiB: host.memory.defaultMemoryMiB(vCPUs: host.processorCount, onMac: host.isMac),
+            memoryMiB: host.memory.defaultMemoryMiB(vCPUs: host.processorCount),
             capacityGiB: Limits.defaultCapacityGiB
         )
     }

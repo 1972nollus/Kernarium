@@ -1,13 +1,21 @@
 import AndariumCore
 import SwiftUI
 
-/// The boot, from the built-in system to Android's first frame: a status
-/// line with a live dot, what is starting and the elapsed time; the title
-/// with overall progress; and the stages in one glass panel. First start,
+/// The boot, from Andarium's start to the guest's `sys.boot_completed`: a
+/// status line with a live dot, what is starting and the elapsed time; the
+/// title with overall progress; and the stages in one panel. First start,
 /// update, recovery and restart are variants of the same screen. A launch
 /// has one run, so there is no Cancel.
+///
+/// A normal boot lays the guest's display out from the first frame and shows
+/// it dimmed behind this screen, so the guest is seen starting. The dim is a
+/// plain translucent fill and the panels are flat fills too, not materials or
+/// glass: the display costs the presentation pass it costs when it is
+/// visible, and the screen asks the render server for no blur of it.
+/// Recovery keeps an opaque screen.
 struct BootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
     let kind: BootKind
 
     @State private var stage = 0
@@ -33,7 +41,8 @@ struct BootView: View {
             }
             .scrollBounceBehavior(.basedOnSize)
         }
-        .background(Color(.systemGroupedBackground))
+        .background { backdrop }
+        .environment(\.colorScheme, dimmed ? .dark : colorScheme)
         .statusBarHidden(true)
         .task(id: kind) {
             guard frozen == nil else { return }
@@ -52,13 +61,25 @@ struct BootView: View {
         }
     }
 
+    /// The guest's display shows through, dimmed, on every boot but Recovery's.
+    private var dimmed: Bool { kind != .recovery }
+
+    @ViewBuilder
+    private var backdrop: some View {
+        if dimmed {
+            Color.black.opacity(0.64).ignoresSafeArea()
+        } else {
+            Color(.systemGroupedBackground).ignoresSafeArea()
+        }
+    }
+
     /// The steps, with the first saying what the disk write is doing while
     /// one is under way.
     private func shownSteps(guest: Guest) -> [Step] {
         var steps = Self.steps(kind, guest: guest, system: model.system)
         if model.preparingDisk {
-            let detail = model.diskProgress.map { "Preparing the system \u{00B7} \(Int(($0 * 100).rounded()))%" }
-                ?? "Preparing the system"
+            let detail = model.diskProgress.map { "Preparing Andarium \u{00B7} \(Int(($0 * 100).rounded()))%" }
+                ?? "Preparing Andarium"
             steps[0] = Step(title: steps[0].title, detail: detail, seconds: 0)
         }
         return steps
@@ -68,7 +89,7 @@ struct BootView: View {
     /// says, and ends when the guest has something to show.
     private func followRuntime(stepCount: Int) async {
         while !Task.isCancelled && !model.bootTracker.isReady {
-            let live = min(model.liveBootStage, stepCount - 1)
+            let live = min(model.liveBootStage(recovery: kind == .recovery), stepCount - 1)
             if live != stage { withAnimation(.snappy) { stage = live } }
             try? await Task.sleep(for: .milliseconds(200))
         }
@@ -106,17 +127,12 @@ struct BootView: View {
     private func content(guest: Guest, system: SystemInfo, steps: [Step], current: Int, progress: Double) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(kind == .recovery ? "Recovery" : "System")
-                        .font(.largeTitle.weight(.bold))
-                    Spacer()
-                    Text("\(Int((progress * 100).rounded()))%")
-                        .font(.system(.title3, design: .rounded).weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                        .contentTransition(.numericText())
-                }
+                Text(kind == .recovery ? "Recovery" : "Andarium")
+                    .font(.largeTitle.weight(.bold))
+                // The bar only marks the stage the boot has reached, and is not
+                // read out as a percentage.
                 ProgressBar(value: progress)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 4)
 
@@ -127,7 +143,7 @@ struct BootView: View {
                 }
             }
             .padding(.vertical, 4)
-            .glassEffect(.regular, in: .rect(cornerRadius: 26))
+            .modifier(BootPanel(dimmed: dimmed, radius: 26))
 
             if let note = Self.note(kind, from: model.bootFrom, system: system) {
                 Label {
@@ -141,7 +157,7 @@ struct BootView: View {
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .glassEffect(.regular, in: .rect(cornerRadius: 22))
+                .modifier(BootPanel(dimmed: dimmed, radius: 22))
             }
         }
         .padding(.horizontal, 20)
@@ -219,32 +235,47 @@ struct BootView: View {
     }
 
     static func steps(_ kind: BootKind, guest: Guest, system info: SystemInfo) -> [Step] {
-        let system = Step(title: "System", detail: "\(info.release) · read-only", seconds: 0.7)
+        let system = Step(title: "Andarium", detail: "\(info.release) · read-only", seconds: 0.7)
         let kernel = Step(title: "Linux Kernel", detail: "\(info.kernel.replacingOccurrences(of: "Linux ", with: "")) · \(guest.cores) vCPUs · \(Formats.size(mib: guest.memoryMiB)) RAM", seconds: 0.9)
-        let screen = Step(title: "Screen", detail: "Waiting for the first frame", seconds: 0.7)
         let used = "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(gib: guest.capacityGiB))"
         switch kind {
         case .recovery:
             return [system, kernel,
                     Step(title: "Storage", detail: "\(used) · unchanged", seconds: 0.6),
                     Step(title: "Recovery", detail: "Loading Recovery", seconds: 1.4),
-                    screen]
+                    Step(title: "Screen", detail: "Waiting for the first frame", seconds: 0.7)]
         case .firstStart:
             return [system, kernel,
                     Step(title: "Storage", detail: "Preparing \(Formats.size(gib: guest.effectiveCapacityGiB)) for first use", seconds: 0.9),
-                    Step(title: "Startup", detail: "Setting up for the first time", seconds: 4.0),
-                    screen]
+                    Step(title: "Startup", detail: "Setting up for the first time", seconds: 4.0)]
         case .upgrade:
             return [system, kernel,
                     Step(title: "Storage", detail: used, seconds: 0.7),
-                    Step(title: "Startup", detail: "Updating apps for \(info.release)", seconds: 3.6),
-                    screen]
+                    Step(title: "Startup", detail: "Updating apps for \(info.release)", seconds: 3.6)]
         case .normal, .restart:
             let storage = guest.pendingCapacityGiB.map { "Growing from \(Formats.size(gib: guest.capacityGiB)) to \(Formats.size(gib: $0))" } ?? used
             return [system, kernel,
                     Step(title: "Storage", detail: storage, seconds: guest.pendingCapacityGiB == nil ? 0.6 : 1.2),
-                    Step(title: "Startup", detail: kind == .restart ? "Starting again" : "Starting services", seconds: 1.8),
-                    screen]
+                    Step(title: "Startup", detail: kind == .restart ? "Starting again" : "Starting services", seconds: 1.8)]
+        }
+    }
+}
+
+/// The boot screen's panels: a flat translucent fill over the dimmed
+/// display, which needs no backdrop sampling, and glass over Recovery's
+/// opaque screen.
+private struct BootPanel: ViewModifier {
+    let dimmed: Bool
+    let radius: CGFloat
+
+    func body(content: Content) -> some View {
+        if dimmed {
+            content.background(
+                Color(.secondarySystemGroupedBackground).opacity(0.78),
+                in: .rect(cornerRadius: radius, style: .continuous)
+            )
+        } else {
+            content.glassEffect(.regular, in: .rect(cornerRadius: radius))
         }
     }
 }

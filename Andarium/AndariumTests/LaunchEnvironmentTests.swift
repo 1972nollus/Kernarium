@@ -21,7 +21,6 @@ struct LaunchEnvironmentTests {
                 "KERNARIUM_GUEST_MEMORY_MIB": "1536",
                 "KERNARIUM_ANDROID_DISK_SIZE_GIB": "32",
                 "KERNARIUM_RETINA_MODE": "1",
-                "KERNARIUM_GPU_AUTO_RESIZE": "0",
                 "ANDARIUM_START": "recovery",
                 "ANDARIUM_ERASE": "1",
                 "ANDARIUM_GUEST_INSTANCE": "legacy-test",
@@ -32,7 +31,6 @@ struct LaunchEnvironmentTests {
         #expect(overrides.memoryMiB == 1536)
         #expect(overrides.capacityGiB == 32)
         #expect(overrides.retina == true)
-        #expect(overrides.followWindow == false)
         #expect(overrides.start == .recovery)
         #expect(overrides.erase)
         #expect(overrides.instance == "legacy-test")
