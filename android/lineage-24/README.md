@@ -735,6 +735,25 @@ and jobs, are never used. The list is a reviewed table in the script and in
 `tools/verify-target-files.py`, which require each other, and the script runs once
 per boot.
 
+### Time
+
+The guest's wall clock is the host's: the runtime gives the guest the host's
+wall clock at boot and its kernel then advances it with the host's monotonic
+clock, and a resume corrects it by what the suspend left. The platform
+therefore takes no network time. `NetworkTimeUpdateService` polls NTP whenever
+a default network exists, whatever `config_autoTimeSourcesPriority` says, and
+`NtpTrustedTime` reads its servers from `config_ntpServers`, so the overlay
+sets that list to one entry that is not an `ntp://` URI, the only value that
+leaves the client without a server (it rejects the list before any lookup; an
+empty list makes `NtpConfig` throw in `system_server`), and LineageOS's own
+list for mcc 460 is replaced in `overlay-priority`. The origin priorities drop
+the network too: `telephony` and `external`, because an empty list means the
+platform's default, which holds the network, and `telephony` alone would make a
+platform without telephony hide "Set time automatically". The setting stays,
+and a host clock step while the guest runs is corrected at its next resume or
+boot, not at once. The target-files verifier reads the built framework overlay
+and fails an NTP server, a network origin, an empty list or a missing list.
+
 ## Graphics
 
 Both graphics APIs come from one Mesa build of this project's own guest Mesa

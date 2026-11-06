@@ -332,6 +332,50 @@ def tracked_erofs_parameters(android_root: Path) -> tuple[str, str]:
     return found[0], found[1]
 
 
+def synthetic_resource_table(arrays: list[tuple[str, list[str]]], *, utf8: bool = True) -> bytes:
+    """A compiled resource table whose one package holds the given string-array resources."""
+
+    def pool(strings: list[str]) -> bytes:
+        data, offsets = b"", []
+        for text in strings:
+            offsets.append(len(data))
+            if utf8:
+                raw = text.encode()
+                data += bytes([len(text), len(raw)]) + raw + b"\x00"
+            else:
+                data += struct.pack("<H", len(text)) + text.encode("utf-16-le") + b"\x00\x00"
+        data += b"\x00" * (-len(data) % 4)
+        start = 28 + 4 * len(strings)
+        return (struct.pack("<HHIIIIII", 1, 28, start + len(data), len(strings), 0,
+                            0x100 if utf8 else 0, start, 0)
+                + struct.pack(f"<{len(strings)}I", *offsets) + data)
+
+    values = sorted({item for _, items in arrays for item in items})
+    names = [name for name, _ in arrays]
+    entries = b""
+    offsets = []
+    for index, (_, items) in enumerate(arrays):
+        offsets.append(len(entries))
+        entries += struct.pack("<HHIII", 16, 1, index, 0, len(items))
+        for item in items:
+            entries += struct.pack("<IHBBI", 0x02000001, 8, 0, 3, values.index(item))
+    configuration = struct.pack("<I", 64) + b"\x00" * 60
+    type_header = 20 + len(configuration)
+    type_chunk = (struct.pack("<HHIBBHII", 0x0201, type_header,
+                              type_header + 4 * len(arrays) + len(entries), 1, 0, 0, len(arrays),
+                              type_header + 4 * len(arrays))
+                  + configuration + struct.pack(f"<{len(arrays)}I", *offsets) + entries)
+    type_pool, key_pool = pool(["array"]), pool(names)
+    package_header = 288
+    package = (struct.pack("<HHII", 0x0200, package_header,
+                           package_header + len(type_pool) + len(key_pool) + len(type_chunk), 0x7F)
+               + b"\x00" * 256
+               + struct.pack("<IIIII", package_header, 0, package_header + len(type_pool), 0, 0)
+               + type_pool + key_pool + type_chunk)
+    global_pool = pool(values)
+    return struct.pack("<HHII", 2, 12, 12 + len(global_pool) + len(package), 1) + global_pool + package
+
+
 def synthetic_apex(filesystem: str = "erofs", content: bytes = b"", **superblock) -> bytes:
     """An APEX container whose payload has the superblock of `filesystem` and then `content`."""
     if filesystem == "ext4":
@@ -438,6 +482,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
     tool = load_tool(verifier)
     pinner_overlay_entry = tool.PINNER_OVERLAY
     statistics_apks = tool.STATISTICS_APKS
+    # The reader of compiled array resources sees the same items through either string pool.
+    tables = [("config_ntpServers", ["none"]), ("config_autoTimeSourcesPriority", ["telephony", "external"]),
+              ("config_ntpServers", ["ntp://ntp.example", "x"]), ("empty", [])]
+    expected_arrays = {"config_ntpServers": [["none"], ["ntp://ntp.example", "x"]],
+                       "config_autoTimeSourcesPriority": [["telephony", "external"]], "empty": [[]]}
+    for utf8 in (True, False):
+        if tool.resource_arrays(synthetic_resource_table(tables, utf8=utf8)) != expected_arrays:
+            fail(f"the resource array reader misreads a {'UTF-8' if utf8 else 'UTF-16'} string pool")
     preopt_apks = sorted(tool.REQUIRED_PREOPT_APKS)
     plain_apks = sorted(
         entry for entry in tool.REQUIRED_ENTRIES
@@ -680,6 +732,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           pinner_overlay_variant: str | None = None,
                           statistics_variant: str | None = None,
                           wizard_branding_variant: str | None = None,
+                          network_time_variant: str | None = None,
                           reclaim_variant: str | None = None,
                           wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
@@ -1645,9 +1698,36 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         wallpapers["res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"] = png_header(1024, 768)
                     elif wallpaper_variant == "not-png":
                         wallpapers["res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"] = b"not a png at all, just bytes"
+                    # The product's network time: no NTP server the client accepts, and no network origin.
+                    network_time = {
+                        "config_ntpServers": ["none"],
+                        "config_autoTimeSourcesPriority": ["telephony", "external"],
+                    }
+                    extra_definitions: list[tuple[str, list[str]]] = []
+                    if network_time_variant == "ntp-server":
+                        network_time["config_ntpServers"] = ["ntp://time.android.com"]
+                    elif network_time_variant == "ntp-server-in-a-qualified-table":
+                        extra_definitions.append(("config_ntpServers", ["ntp://ntp.aliyun.com"]))
+                    elif network_time_variant == "ntp-server-in-capitals":
+                        network_time["config_ntpServers"] = ["NTP://time.example"]
+                    elif network_time_variant == "ntp-empty":
+                        network_time["config_ntpServers"] = []
+                    elif network_time_variant == "ntp-missing":
+                        del network_time["config_ntpServers"]
+                    elif network_time_variant == "origin-network":
+                        network_time["config_autoTimeSourcesPriority"] = ["network", "telephony", "external"]
+                    elif network_time_variant == "origin-empty":
+                        network_time["config_autoTimeSourcesPriority"] = []
+                    elif network_time_variant == "origin-without-external":
+                        network_time["config_autoTimeSourcesPriority"] = ["telephony"]
+                    elif network_time_variant == "origin-missing":
+                        del network_time["config_autoTimeSourcesPriority"]
+                    network_table = synthetic_resource_table(
+                        [*network_time.items(), *extra_definitions], utf8=network_time_variant != "utf16-pool"
+                    )
                     framework_apk = io.BytesIO()
                     with zipfile.ZipFile(framework_apk, "w") as overlay:
-                        overlay.writestr("resources.arsc", b"\x00")
+                        overlay.writestr("resources.arsc", network_table)
                         for name, payload in wallpapers.items():
                             overlay.writestr(name, payload)
                     archive.writestr(
@@ -2373,6 +2453,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("setup-wizard-names-lineage-in-utf16", {"wizard_branding_variant": "lineage-name-utf16"}),
             ("setup-wizard-without-recovery-strings", {"wizard_branding_variant": "no-recovery-strings"}),
             ("setup-wizard-without-andarium-features", {"wizard_branding_variant": "lineage-features"}),
+            ("ntp-server-left", {"network_time_variant": "ntp-server"}),
+            ("ntp-server-left-in-a-qualified-definition",
+             {"network_time_variant": "ntp-server-in-a-qualified-table"}),
+            ("ntp-server-left-in-capitals", {"network_time_variant": "ntp-server-in-capitals"}),
+            ("ntp-server-list-empty", {"network_time_variant": "ntp-empty"}),
+            ("ntp-server-list-missing", {"network_time_variant": "ntp-missing"}),
+            ("network-time-origin-left", {"network_time_variant": "origin-network"}),
+            ("time-origin-list-empty", {"network_time_variant": "origin-empty"}),
+            ("time-origin-list-without-external", {"network_time_variant": "origin-without-external"}),
+            ("time-origin-list-missing", {"network_time_variant": "origin-missing"}),
             ("statistics-uploader-in-parts-manifest", {"statistics_variant": "parts-manifest"}),
             ("statistics-uploader-in-parts-dex", {"statistics_variant": "parts-dex"}),
             ("statistics-endpoint-in-parts-resources", {"statistics_variant": "parts-endpoint"}),
@@ -2886,6 +2976,25 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not set the string 'Update Andarium Recovery'"),
             ("setup-wizard-without-andarium-features-cause", {"wizard_branding_variant": "lineage-features"},
              "does not set the string 'Andarium features'"),
+            ("ntp-server-left-cause", {"network_time_variant": "ntp-server"},
+             "config_ntpServers names the NTP server ntp://time.android.com in .*framework-res"),
+            ("ntp-server-left-in-a-qualified-definition-cause",
+             {"network_time_variant": "ntp-server-in-a-qualified-table"},
+             "config_ntpServers names the NTP server ntp://ntp.aliyun.com in .*framework-res"),
+            ("ntp-server-left-in-capitals-cause", {"network_time_variant": "ntp-server-in-capitals"},
+             "config_ntpServers names the NTP server NTP://time.example in .*framework-res"),
+            ("ntp-server-list-empty-cause", {"network_time_variant": "ntp-empty"},
+             "config_ntpServers is empty in .*framework-res.*NtpConfig throws"),
+            ("ntp-server-list-missing-cause", {"network_time_variant": "ntp-missing"},
+             "framework-res.* does not set config_ntpServers: the platform would query time.android.com"),
+            ("network-time-origin-left-cause", {"network_time_variant": "origin-network"},
+             "config_autoTimeSourcesPriority lists the network in .*framework-res"),
+            ("time-origin-list-empty-cause", {"network_time_variant": "origin-empty"},
+             "config_autoTimeSourcesPriority is empty in .*framework-res.*platform default holds the network"),
+            ("time-origin-list-without-external-cause", {"network_time_variant": "origin-without-external"},
+             "config_autoTimeSourcesPriority in .*framework-res.* lacks external"),
+            ("time-origin-list-missing-cause", {"network_time_variant": "origin-missing"},
+             "framework-res.* does not set config_autoTimeSourcesPriority"),
             ("statistics-uploader-in-parts-manifest-cause", {"statistics_variant": "parts-manifest"},
              "LineageParts.apk still carries LineageOS's statistics uploader: AndroidManifest.xml "
              "contains lineagestats"),
