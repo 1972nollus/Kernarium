@@ -948,7 +948,10 @@ to the application's `tmp/StorageSettings/`, and powers Android off. Run this me
 alone and collect that directory from the app container afterward.
 
 With `TEST_RUNNER_ANDARIUM_ADB_NET_HOLD_SECONDS` one more test holds the bridge up for
-a real adb on the Mac. A Mac launch of the guest
+a real adb on the Mac, in a Mac run or in an iPad run (`platform=iOS,id=<udid>`
+with `test-without-building`): it prints the address, and `tmp/adbkey` in the
+application's container is the key to give the Mac's adb (`devicectl device copy
+from` on an iPad). Give that adb its own server port and key home. A Mac launch of the guest
 itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
 `TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
 ([`Andarium/README.md`](../Andarium/README.md#automation)). macOS asks once, per
