@@ -173,10 +173,12 @@ bool gpuHoldRequested;
 /* Longest a hold waits for a GPU request already running. The application
  * holds inside didEnterBackground, which iOS gives about five seconds. */
 constexpr std::chrono::milliseconds gpuHoldBudget {1000};
+#ifndef UML_APP_STORE_RUNTIME
 /* Process lifetime, like the input callers it serves: the application's
  * terminal can still write while the process exits. */
 kernarium::console::InputRegistry& consoleInputs =
     *new kernarium::console::InputRegistry;
+#endif
 /* What the application has told the runtime about the guest's life, which the
  * run loop reads between boots: a stop, a quiesce, the GPU hold. Process
  * lifetime, like the callers that reach it. */
@@ -743,10 +745,12 @@ public:
     ConsoleBridge(const ConsoleBridge&) = delete;
     ConsoleBridge& operator=(const ConsoleBridge&) = delete;
 
+#ifndef UML_APP_STORE_RUNTIME
     [[nodiscard]] kernarium::console::HostEnd& host() noexcept
     {
         return *host_;
     }
+#endif
 
     [[nodiscard]] std::string kernelArgument() const
     {
@@ -760,6 +764,7 @@ private:
     std::thread relay_;
 };
 
+#ifndef UML_APP_STORE_RUNTIME
 class ActiveConsoleRegistration final {
 public:
     explicit ActiveConsoleRegistration(ConsoleBridge& console)
@@ -778,6 +783,7 @@ public:
     ActiveConsoleRegistration& operator=(
         const ActiveConsoleRegistration&) = delete;
 };
+#endif
 
 #if !KERNARIUM_RUNTIME_ANDROID_GUEST
 bool usableFile(const char* path)
@@ -1256,7 +1262,9 @@ private:
         std::optional<ConsoleBridge> console;
         std::vector<std::string> arguments;
         std::vector<const char*> pointers;
+#ifndef UML_APP_STORE_RUNTIME
         std::optional<ActiveConsoleRegistration> consoleRegistration;
+#endif
         std::optional<ActiveInputRegistration> inputRegistration;
         std::optional<ActiveVsockRegistration> vsockRegistration;
     };
@@ -1378,7 +1386,9 @@ private:
         for (const auto& argument : arguments)
             boot->pointers.push_back(argument.c_str());
         requireKernelCommandLineFits(boot->pointers);
+#ifndef UML_APP_STORE_RUNTIME
         boot->consoleRegistration.emplace(*boot->console);
+#endif
         boot->inputRegistration.emplace(*boot->touchscreen, *boot->keyboard);
         boot->vsockRegistration.emplace(boot->vsock->endpoint);
         return boot;
@@ -2117,11 +2127,19 @@ void runtimeSetConsoleOutputCallback(
     kernarium::console::output().setCallback(callback, context);
 }
 
+#ifdef UML_APP_STORE_RUNTIME
+/* An App Store runtime takes no console input; the table keeps the entry. */
+int runtimeSendConsoleInput(const void*, std::size_t)
+{
+    return -ENOTSUP;
+}
+#else
 int runtimeSendConsoleInput(const void* buffer, std::size_t length)
 {
     const int error = consoleInputs.send(buffer, length);
     return error == 0 ? 0 : -error;
 }
+#endif
 
 int runtimeConnectVsock(uint32_t port, uint32_t timeoutMilliseconds)
 {
