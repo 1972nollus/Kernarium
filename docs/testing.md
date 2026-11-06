@@ -929,7 +929,10 @@ bridge, a bug report (a zip above 1 MB, and its time), a cancel, a system APK
 pulled from the image and installed as an update (and its time), the image's
 key rule (the application's key accepted whatever the debugging setting; a
 foreign key refused with no prompt and nothing queued while debugging is off,
-and prompting while it is on), and the key after Erase Guest.
+and prompting while it is on), and the key after Erase Guest. The tests read the
+key the application made for the boot, again on every attempt until adbd accepts
+it, and never make one: a key made before an `ANDARIUM_ERASE=1` launch's erase
+deletes it would be one the guest was not given.
 
 `AdbOverVsockTests/androidReportsExactStorageSizes()` is a standalone storage
 run with `TEST_RUNNER_ANDARIUM_STORAGE_TESTS=1` in addition to the ADB and normal
@@ -947,7 +950,10 @@ to the application's `tmp/StorageSettings/`, and powers Android off. Run this me
 alone and collect that directory from the app container afterward.
 
 With `TEST_RUNNER_ANDARIUM_ADB_NET_HOLD_SECONDS` one more test holds the bridge up for
-a real adb on the Mac.
+a real adb on the Mac, in a Mac run or in an iPad run (`platform=iOS,id=<udid>`
+with `test-without-building`): it prints the address, and `tmp/adbkey` in the
+application's container is the key to give the Mac's adb (`devicectl device copy
+from` on an iPad). Give that adb its own server port and key home.
 `StatisticsLoopTests` drive the statistics loop against a scripted runtime with
 the pause between readings held by the test: no reading without a viewer, the
 quarter-second then one-second cadence with the memory after every other
