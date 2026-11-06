@@ -5,7 +5,8 @@ filesystems exactly: the primary-storage helpers and `StorageStatsManager`
 against `StatFs` of `/data`, `/system`, `/system_ext`, `/product`, `/vendor` and
 `/odm`. It guards the `frameworks/base` storage topic (route `p0007`). It is a
 test of the framework, not a product package, and is never installed in a
-release image.
+release image: the target-files verifier refuses `AndariumStorageTests` in any
+partition and under `DATA`.
 
 The APK is signed with the AOSP test key, the default certificate, like the
 other probes here, and never with a release key. It calls one hidden API
