@@ -442,8 +442,8 @@ FORBIDDEN_APP_DIRECTORIES = {
     "Gallery2",
     "Jelly",
     # In-tree test applications (tests/integration/android/{motion,webgl,storage}):
-    # `m <module>` installs them into the shared product output (the probes
-    # under SYSTEM, the storage test under DATA/app).
+    # `m <module>` leaves them in the shared product output, and none belongs
+    # in an image, whichever partition or DATA/app path it would reach.
     "AndariumMotionProbe",
     "AndariumStorageTests",
     "AndariumWebGLProbe",
