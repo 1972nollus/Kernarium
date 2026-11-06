@@ -1585,7 +1585,10 @@ a blank instance:
   product: Developer options and USB debugging are off (`adb_enabled` 0,
   `persist.sys.usb.config` without `adb`, adbd's own rule: empty or `none`, the
   value init's property service gives a user build at boot; a debuggable build
-  gets `adb`, so the test qualifies the user variant); turning USB debugging on
+  gets `adb`, so the test qualifies the user variant); `adb root` is refused at
+  once, adbd stays the shell user and the connection stays (the macOS launcher's
+  guest checks no keys, the case that once made adbd announce a restart it never
+  made); turning USB debugging on
   records `adb` and leaves adbd's process alone; turning it off drops `adb`,
   restarts adbd once and leaves adbd serving the host; both survive a reboot.
   Where the guest checks keys (`ro.boot.kernarium.adb_auth` 1, which the macOS

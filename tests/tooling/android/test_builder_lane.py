@@ -1842,6 +1842,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     adbd_content += b"persist.sys.usb.config\x00persist.adb.tls_server.enable\x00"
                 if adbd_variant != "no-key-rule":
                     adbd_content += b"kernarium: key refused, debugging is off\x00"
+                # The adb_root service of the same route: its log line for a build that is not debuggable.
+                if adbd_variant != "no-root-service":
+                    archive.writestr(
+                        "SYSTEM_EXT/bin/adb_root",
+                        b"\x00" * 8
+                        + (b"" if adbd_variant == "no-root-guard"
+                           else b"kernarium: rooted debugging stays off, this build is not debuggable\x00"),
+                    )
                 if adbd_variant != "missing-apex":
                     archive.writestr(
                         "SYSTEM/apex/com.android.adbd.apex",
@@ -2336,6 +2344,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("adbd-without-tcp-policy", {"adbd_variant": "no-tcp"}),
             ("adbd-without-debugging-setting", {"adbd_variant": "no-debugging-setting"}),
             ("adbd-without-key-rule", {"adbd_variant": "no-key-rule"}),
+            ("adb-root-service-without-the-debuggable-rule", {"adbd_variant": "no-root-guard"}),
+            ("missing-adb-root-service", {"adbd_variant": "no-root-service"}),
             ("services-jar-without-the-adb-topics", {"services_jar_variant": "no-marker"}),
             ("signed-with-the-test-key", {"signed": True, "ota_certificates": "build"}),
             ("signed-with-the-test-key-path", {"signed": True, "ota_certificates": "test-key-path"}),
@@ -2807,6 +2817,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "holds an adbd that does not read persist.sys.usb.config"),
             ("adbd-without-key-rule-cause", {"adbd_variant": "no-key-rule"},
              "holds an adbd without the key rule of route p0011"),
+            ("adb-root-service-without-the-debuggable-rule-cause", {"adbd_variant": "no-root-guard"},
+             "SYSTEM_EXT/bin/adb_root does not hold the debuggable-build rule of route p0011"),
+            ("missing-adb-root-service-cause", {"adbd_variant": "no-root-service"},
+             "SYSTEM_EXT/bin/adb_root is missing: the product needs LineageOS's adb_root service"),
             ("signed-with-the-test-key-cause", {"signed": True, "ota_certificates": "build"},
              "holds the members .* not only keys/releasekey.x509.pem: the target files are not "
              "signed with the release keys"),

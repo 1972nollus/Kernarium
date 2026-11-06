@@ -595,6 +595,13 @@ ADBD_LAUNCH_PROPERTIES = ("ro.boot.kernarium.adb_key", "ro.boot.kernarium.adb_tc
 # is what only the guard topic adds, as stock adbd already holds the property names.
 ADBD_DEBUGGING_PROPERTIES = ("persist.sys.usb.config", "persist.adb.tls_server.enable")
 ADBD_REFUSAL_MARKER = b"kernarium: key refused, debugging is off"
+# A guest that boots without ADB authorization is an unattended test host, and the p0011 bypass
+# topic starts LineageOS's adb_root service with rooted debugging on for it. Only a debuggable
+# build can act on that: a user build has no init trigger that restarts adbd as root, so adbd would
+# announce a restart that never comes and `adb root` would hang. The topic leaves the switch off on
+# a build that is not debuggable and logs this line; it is what only the guarded topic adds.
+ADB_ROOT_BINARY = "SYSTEM_EXT/bin/adb_root"
+ADB_ROOT_GUARD_MARKER = b"kernarium: rooted debugging stays off, this build is not debuggable"
 CIL_PLATFORM_VERSION_SUFFIX = re.compile(r"_[0-9]{6}$")
 CIL_PROPERTY_SET_RULE = re.compile(
     rb"^\(allow (\S+) (\S+) \(property_service \(([^)]*)\)\)\)$", re.MULTILINE
@@ -1576,6 +1583,27 @@ def check_adbd_launch_properties(
             f"{ADBD_APEX} holds an adbd without the key rule of route p0011 "
             f"({ADBD_REFUSAL_MARKER.decode()!r} is not in bin/adbd): it would offer every "
             "key a prompt while debugging is off"
+        )
+
+
+def check_adb_root_service(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The adb_root service must not turn rooted debugging on for a build that is not debuggable.
+
+    Stock adb_root has no such rule and the bypass topic of route p0011 would otherwise enable it on
+    every build whose boot policy skips authorization, which makes `adb root` on a user build print
+    "restarting adbd as root" and wait for a restart that no init trigger performs. The service binary
+    is in the target files as a file, so the guarded topic's log line is in its bytes.
+    """
+    info = infos.get(ADB_ROOT_BINARY)
+    if info is None or info.is_dir():
+        fail(f"{ADB_ROOT_BINARY} is missing: the product needs LineageOS's adb_root service")
+    if ADB_ROOT_GUARD_MARKER not in read_small(archive, info, 64 << 20):
+        fail(
+            f"{ADB_ROOT_BINARY} does not hold the debuggable-build rule of route p0011 "
+            f"({ADB_ROOT_GUARD_MARKER.decode()!r} is not in it): it would enable rooted debugging on "
+            "a user build, whose `adb root` then waits for an adbd restart that never comes"
         )
 
 
@@ -2958,6 +2986,7 @@ def main() -> None:
         check_cas_hal(archive, infos)
         check_wifi_hals(archive, infos)
         check_adbd_launch_properties(archive, infos)
+        check_adb_root_service(archive, infos)
         check_services_jar(archive, infos)
         check_audio_policy(archive, infos)
         check_multilib_properties(archive, infos)

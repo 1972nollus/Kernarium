@@ -444,8 +444,14 @@ off starts that service with the switch on, so on macOS, which authorizes
 nothing, any local process that reaches the loopback ADB port can become root
 in a userdebug guest, an accepted property of a diagnostics host. On a `user`
 build the service is installed but built non-debuggable, so authorization off
-still gives an unauthenticated shell and `pm install`, never root. iOS keeps
-authorization and the default-off switch.
+still gives an unauthenticated shell and `pm install`, never root: the bypass
+topic (route `p0011`) turns the switch on only when the build is debuggable, so
+`adb root` is refused at once and the connection stays, where a switch that was
+on would make adbd announce a restart as root that no init trigger of a user
+build performs and leave the client waiting about 45 s. The target-files
+verifier requires the topic's log line in `adb_root`, and the adb debugging
+runner (`tests/integration/android/run_android_adb_debugging.py`) asks a user
+guest for root. iOS keeps authorization and the default-off switch.
 SELinux stays enforcing in both variants; only the host-owned kernel command
 line could change that. Android's wireless-debugging setting
 is the stock one: it trusts a Wi-Fi network by its SSID and publishes its mDNS
