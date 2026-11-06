@@ -66,6 +66,7 @@ struct AdbKeyStoreTests {
         #expect(second.publicKeyLine != first.publicKeyLine)
     }
 
+    #if !APP_STORE
     /// Erasing an isolated instance must never delete the ordinary guest's
     /// key. The tests use a base tag of their own, never the application's.
     @Test func anIsolatedInstanceHasItsOwnKeyAndItsEraseLeavesTheOthers() throws {
@@ -85,6 +86,7 @@ struct AdbKeyStoreTests {
         // An instance finds its own key again, and a new one after its erase.
         #expect(try first.loadOrCreate().publicKeyLine != lines[1])
     }
+    #endif
 
     @Test func theKeyIsRSA2048ThisDeviceOnlyAndNotSynchronized() throws {
         let store = store()

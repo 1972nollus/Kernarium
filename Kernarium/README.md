@@ -310,6 +310,32 @@ runtime whose host code carries the name of one of them
 (`Andarium/scripts/check-app-store-bundle.py --runtime`). The release and
 automation runtimes read them as they did.
 
+The App Store runtime also carries none of the debugging support the others
+have, so a shipped application cannot capture its screen, inject input, profile
+itself or log its memory: the frame mirror (`gpu/frame_tap.hpp`, with the
+mirror thread of each `MetalPresentation`), console input
+(`console::InputRegistry`; the console output relay stays), the guest sampler
+(`guest_sampler_disabled.cpp` replaces `guest_sampler.cpp`), the footprint log
+(`FootprintReporter`), the virtual Jetsam (`virtual_jetsam_disabled.cpp`), the
+display and video activity logs and the frame statistics reports. Configuring
+it with `UML_GADGET_CACHE_CENSUS` or `UML_GADGET_EXECUTION_HISTOGRAM` fails.
+The runtime API table keeps its layout and version in every runtime
+(`KernariumRuntime.h`): the App Store runtime's `set_frame_sink` and
+`send_console_input` entries answer `-ENOTSUP`. Touch and key input, adb over
+vsock, the statistics and motion channels, `request_stop`, the throttle, trim
+and budget calls, the cache counters and the shader caches are product features
+and stay. The packaging check refuses the symbols and log text of what is left
+out (`DEBUG_SYMBOLS` and `DEBUG_STRINGS` in the script) and keeps the two
+stand-ins' names allowed.
+
+Switches that third-party libraries read from the environment (Mesa's
+`GALLIUM_*`, `ZINK_DEBUG` and `MESA_SHADER_*`, KosmicKrisp's `KK_DEBUG`,
+virglrenderer's `VREND_DEBUG` and `VIRGL_LOG_FILE`, glib's `G_DEBUG` and
+libslirp's `SLIRP_DEBUG`) stay in the shipped libraries, and the check does not
+look for them. Nothing reaches them on an App Store install: iOS fixes the
+launch environment of an installed application, and no debugger can attach to
+it.
+
 ## Devices and display
 
 Kernarium attaches:
