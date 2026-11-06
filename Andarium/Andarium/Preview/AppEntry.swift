@@ -89,7 +89,7 @@ struct AppEntry {
             model.erase()
         case "boot":
             model.guest?.pendingCapacityGiB = 24
-            boot(.normal, stage: 2, seconds: 9)
+            boot(.normal, stage: 3, seconds: 9)
         case "boot-first":
             model.erase()
             boot(.firstStart, stage: 3, seconds: 74)

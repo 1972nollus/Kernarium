@@ -752,8 +752,8 @@ final class AppModel {
     }
 
     /// The step of the boot under way, from the runtime's milestones.
-    var liveBootStage: Int {
-        BootSteps.current(preparingDisk: preparingDisk, milestone: bootTracker.milestone)
+    func liveBootStage(recovery: Bool) -> Int {
+        BootSteps.current(preparingDisk: preparingDisk, milestone: bootTracker.milestone, recovery: recovery)
     }
 
     /// The failure screen's copyable report.

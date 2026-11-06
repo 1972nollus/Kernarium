@@ -281,9 +281,14 @@ ready, on a thread of its own. Android's clean power-off stops the device
 services and releases the kernel's resources and guest RAM, then returns to Home;
 Start can boot again in the same app process. An unclean shutdown, a host stop,
 or cleanup that fails keeps the failure screen and requires reopening Andarium. The boot screen follows
-the guest's console for its milestones (the kernel, Android's init, its
-graphics service and `sys.boot_completed`, or Recovery's service) until the
-runtime reports boot events.
+the guest's console for its milestones (the kernel, Android's init and
+`sys.boot_completed`, or Recovery's service) until the runtime reports boot
+events. A normal boot has four stages, and the last, Startup, spins until
+`sys.boot_completed`; the guest's display is laid out from the first frame and
+shows dimmed behind the screen, which a plain translucent fill dims and flat
+panels sit on, so the display costs what a visible one costs and the render
+server samples no backdrop for it. Recovery keeps its fifth stage, Screen, on an
+opaque screen.
 
 The side keys send Android's keys as Linux key codes: Power 116 (held for the
 power menu), volume 115 and 114, Back 158 and Home 172.
