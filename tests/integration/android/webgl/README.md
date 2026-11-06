@@ -42,3 +42,13 @@ shutdown; a process peak alone cannot establish a leak. Shutdown requires zero
 wired pages and no dirty or swapped guest-domain or scratch-heap pages. The
 test preserves display, motion and screen-timeout preferences, uninstalls the
 probe and consumes the cached APK. It needs network access to load the Aquarium.
+
+To clean up the isolated guest, launch Andarium with
+`ANDARIUM_GUEST_INSTANCE=retina-memory` and `ANDARIUM_ERASE=1` in its launch
+environment, without a start mode. Its erase action removes the test disk
+without booting Android. Relaunch without those overrides to return to the
+primary guest.
+
+Do not use CoreDevice's `copy to --remove-existing-content` for this cleanup.
+With the `appDataContainer` domain it can clear the entire container, including
+the primary guest, even when a subdirectory destination is supplied.
