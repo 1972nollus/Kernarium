@@ -217,6 +217,10 @@ final class AppModel {
     /// The person went to Settings to allow the microphone: when Andarium is
     /// active again with access, the switch they tapped turns on.
     var microphoneAwaitsSettings = false
+    /// Asks iOS about the microphone and tells the guest. The device
+    /// application and the Simulator preview's system mode have one; a preview
+    /// without it takes the access as given.
+    @ObservationIgnored var microphone: MicrophoneController?
     /// Opens Andarium's page in the system's Settings. A test puts its own here.
     @ObservationIgnored var openSettings: @MainActor () -> Void = {
         if let url = URL(string: UIApplication.openSettingsURLString) {
@@ -806,7 +810,7 @@ final class AppModel {
             microphoneAwaitsSettings = false
             guest?.microphone = false
             persistNow()
-            driver?.setMicrophone(false)
+            microphone?.setOn(false)
             return
         }
         switch microphoneState {
@@ -815,13 +819,14 @@ final class AppModel {
         case .notAsked:
             guest?.microphone = true
             persistNow()
-            // The device asks iOS and reports the answer to `microphoneAccessChanged`.
-            // The preview has no system prompt to show and takes it as given.
-            if let driver { driver.setMicrophone(true) } else { microphoneAccessChanged(.granted) }
+            // The controller asks iOS and reports the answer to
+            // `microphoneAccessChanged`. A preview without one has no system
+            // prompt to show and takes it as given.
+            if let microphone { microphone.setOn(true) } else { microphoneAccessChanged(.granted) }
         case .granted:
             guest?.microphone = true
             persistNow()
-            driver?.setMicrophone(true)
+            microphone?.setOn(true)
         }
     }
 

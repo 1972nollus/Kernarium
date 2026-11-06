@@ -78,9 +78,6 @@ protocol RuntimeDriver: AnyObject {
     /// The scene's geometry changed, which may include its interface
     /// orientation.
     func sceneGeometryDidChange()
-    /// Turns the guest's microphone on or off, asking the system for access
-    /// when the person turns it on for the first time.
-    func setMicrophone(_ on: Bool)
     /// Asks the guest for a bug report and copies it into `BugReportStaging`.
     /// Returns the staged file; cancelling the task stops the report.
     func createBugReport(update: @escaping @Sendable (BusyUpdate) -> Void) async throws -> URL
