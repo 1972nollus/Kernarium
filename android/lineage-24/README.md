@@ -448,6 +448,23 @@ user's setting meaningful:
   key, not by origin. Authorization off (`ro.boot.kernarium.adb_auth`) skips the
   check and so the rule. adbd listens on guest TCP only when the launch has a
   host forward.
+- The last `frameworks/base` topic keeps a dialog that dies unanswered from stranding adbd's
+  prompt. The dialog (`UsbDebuggingActivity` of SystemUI) answers the framework through its
+  buttons and through `onDestroy` when it is finishing. A process that dies under it, or a task
+  that the system destroys before SystemUI has created the activity (SystemUI needs many seconds
+  to do that in the first half minute after boot, and a foreground change such as the Setup
+  Wizard's next step or the launcher's first start trims the task), sends no answer, and
+  adbd's libadbd_auth then keeps that prompt dispatched, logging `prompt currently pending,
+  skipping` for every later offer. `AdbDebuggingManager` therefore looks for the dialog's
+  activity in the system's task list once, 15 s after each start of the dialog, and starts the
+  dialog again when it is gone while the prompt is still awaited: at most three restarts per
+  prompt, each but the last followed by one more look. A prompt stops being awaited at the user's allow or
+  deny, a request to clear the keys, USB debugging turned off, a new request and the adbd socket
+  closing. Nothing is scheduled while no prompt is awaited. A dialog that dies later than its
+  look is not raised again; the prompt stays pending until adbd restarts (USB debugging off, then
+  on in a separate command, because the restart ends the shell that asked for it).
+  `AdbOverVsockTests/aPromptWhoseDialogDiedIsRaisedAgain()` kills SystemUI under the dialog, and
+  `aPromptWhoseDialogIsUpIsNotRaisedTwice()` checks that a dialog that stays up is left alone.
 
 The target-files verifier requires the adbd APEX's `bin/adbd` to carry the
 launch property names, the debugging property names and the refusal line (the
