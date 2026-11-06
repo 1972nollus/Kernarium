@@ -78,6 +78,9 @@ final class AndariumHostingController<Content: View>: UIHostingController<Conten
                 setNeedsUpdateOfPrefersInterfaceOrientationLocked()
             }
             model.hostDrivesGuestRotation = policy.hostDrivesGuestRotation
+            // One call per turn, whatever the number of layouts and geometry
+            // updates that scheduled it.
+            model.driver?.sceneGeometryDidChange()
         }
     }
 }
