@@ -40,8 +40,11 @@ The Android framework is `KRuntime_Android_6_18_4K`; the Linux framework is
 `KRuntime_6_18_4K`. Runtime builds retain debug information at Release
 optimization and generate a companion dSYM. Packaging includes the runtime
 and graphics dSYMs in each XCFramework, and archives collect them alongside
-the application's symbols. The device-only embed script also copies
-KosmicKrisp's dSYM into the archive's symbols directory.
+the application's symbols. Packaging then strips each framework binary with
+`strip -S`, which drops the linker's debug map (it names the object files and
+directories of the build host) and keeps the UUID the dSYM matches. The
+device-only embed script also copies KosmicKrisp's dSYM into the archive's
+symbols directory.
 
 Kernarium makes one run per launch. A guest that
 restarts itself (a reboot, `adb reboot`, a recovery or bootloader round trip) is
