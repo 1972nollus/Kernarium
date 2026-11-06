@@ -1002,9 +1002,12 @@ small libraries compiled with the iOS SDK.
 AppStore configuration (`Andarium/README.md#configurations`) and the check of
 `package-ios-frameworks.sh --app-store`: Info.plist keys,
 no environment knob or harness console line in host code, no trace
-of the build host in an executable (the linker's debug map, which `strip -S`
-removes, and a path under `/Users/<name>/`), and the privacy check. Its
-fixtures are compiled with the iOS SDK too. The configuration itself is
+of the build host in an executable (the linker's debug map of a framework,
+which `strip -S` removes, and a path under `/Users/<name>/`,
+`/Volumes/<name>/` or `/var/folders/`, found outside the strings of the debug
+map, which Xcode strips from the application's own executable when it
+archives), and the privacy check. Its fixtures are compiled with the iOS SDK
+too. The configuration itself is
 validated by building it unsigned (`CODE_SIGNING_ALLOWED=NO`).
 
 `andarium-acknowledgements` (tooling) checks that the Acknowledgements

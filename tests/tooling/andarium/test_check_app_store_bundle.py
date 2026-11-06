@@ -36,6 +36,28 @@ REPORT_LINES = (
 HOME_PATH = (
     "const char *fixture(void) { return \"/Users/NAME/work/project/file.c\"; }\n"
 )
+# What a dependency compiles in from the prefix it was built under: a locale
+# directory on the volume that held the dependency prefixes, and a path in the
+# per-user temporary directory that held a build.
+VOLUME_PATH = (
+    "const char *fixture(void) { return \"/Volumes/NAME/prefix/share/locale\"; }\n"
+)
+VOLUME_NAME_WITH_SPACE = (
+    "const char *fixture(void) { return \"/Volumes/NAME 2/prefix/lib\"; }\n"
+)
+TEMPORARY_PATH = (
+    "const char *fixture(void) {"
+    ' return "/private" "/var/folders/NAME/T/source-build.abc123/stage"; }\n'
+)
+# Strings that are no path of a build: the volumes directory alone, a format
+# for one, a different directory of a temporary tree, and the neutral
+# directory the dependency builds compile in.
+HARMLESS_PATHS = (
+    "const char *const fixture[] = {\n"
+    '  "/Volumes/", "/Volumes/%s", "/var/folders/", "/tmp/mesa_%s",\n'
+    '  "/nonexistent/share/locale",\n'
+    "};\n"
+)
 MANIFEST = {
     "NSPrivacyTracking": False,
     "NSPrivacyTrackingDomains": [],
@@ -60,9 +82,12 @@ def build(root: Path, name: str, source: str, extra: list[str] | None = None) ->
     source_path = root / f"{name}.c"
     source_path.write_text(source, encoding="utf-8")
     output = root / f"lib{name}.dylib"
+    # A framework's install name is @rpath-relative; the default one is the
+    # output path, which is the temporary directory of this test.
     built = run([
         "xcrun", "--sdk", "iphoneos", "clang", "-target", "arm64-apple-ios27.0",
-        "-dynamiclib", str(source_path), "-o", str(output), *(extra or []),
+        "-dynamiclib", str(source_path), "-o", str(output),
+        f"-Wl,-install_name,@rpath/{output.name}", *(extra or []),
     ])
     if built.returncode != 0:
         raise SystemExit(f"could not build {name}:\n{built.stdout}")
@@ -74,7 +99,7 @@ def build_with_debug_map(root: Path, name: str) -> Path:
     debug map whose N_OSO entry names the object file. The object sits in a
     directory that looks like a mounted volume, so that the map names a
     build-host path of the kind the check refuses elsewhere."""
-    work = root / "Users" / "NAME"
+    work = root / "Volumes" / "NAME"
     work.mkdir(parents=True, exist_ok=True)
     source_path = work / f"{name}.c"
     source_path.write_text(CLEAN, encoding="utf-8")
@@ -93,8 +118,8 @@ def build_with_debug_map(root: Path, name: str) -> Path:
     ])
     if linked.returncode != 0:
         raise SystemExit(f"could not link {name}:\n{linked.stdout}")
-    if b"/Users/NAME/" not in output.read_bytes():
-        raise SystemExit(f"the debug map of {name} names no object under a home directory")
+    if b"/Volumes/NAME/" not in output.read_bytes():
+        raise SystemExit(f"the debug map of {name} names no object under a volume")
     return output
 
 
@@ -181,7 +206,8 @@ def main() -> int:
         # it belongs to the guest.
         guest = root / "guest.bin"
         guest.write_bytes(
-            b"\0UML_ROOTFS\0KERNARIUM_GUEST_NOTE\0/Users/guest/built/here.c\0")
+            b"\0UML_ROOTFS\0KERNARIUM_GUEST_NOTE\0/Users/guest/built/here.c\0"
+            b"/Volumes/NAME/built/here.c\0")
         carrier = build(
             root, "carrier", CLEAN,
             ["-Wl,-sectcreate,__TEXT,__uml_elf," + str(guest)])
@@ -219,11 +245,16 @@ def main() -> int:
                   passes=False, expect=f"'{name}'")
 
         # What the build host leaves in a binary: the linker's debug map, whose
-        # N_OSO entries name the objects of the build, and a home-directory
-        # path. The same library stripped with `strip -S` passes.
+        # N_OSO entries name the objects of the build, and a home-directory,
+        # volume or temporary-directory path. The same library stripped with
+        # `strip -S` passes.
         mapped = build_with_debug_map(root, "mapped")
         stripped = strip_debug_map(mapped)
         homed = build(root, "homed", HOME_PATH)
+        volumed = build(root, "volumed", VOLUME_PATH)
+        spaced = build(root, "spaced", VOLUME_NAME_WITH_SPACE)
+        temporary = build(root, "temporary", TEMPORARY_PATH)
+        harmless = build(root, "harmless", HARMLESS_PATHS)
         # Xcode strips the application's own executable when it archives, so
         # only an embedded framework's debug map is the check's concern, and
         # the object paths in the map of either are not searched for a path:
@@ -233,7 +264,7 @@ def main() -> int:
               passes=False, expect="Runtime.framework/Runtime: carries the linker's debug map")
         mapped_result = run([sys.executable, "-B", str(options.checker),
                              str(root / "framework-debug-map" / "Fixture.app")])
-        if "home directory" in mapped_result.stdout:
+        if "mounted volume" in mapped_result.stdout:
             failures.append(
                 "a debug map's object paths were reported as paths:\n"
                 + mapped_result.stdout)
@@ -243,6 +274,20 @@ def main() -> int:
               passes=False, expect="/Users/NAME/work/project/file.c")
         check(make_app(root, "framework-home-path", clean, app_info(), framework=homed),
               passes=False, expect="names a path under a home directory")
+        # A volume path is as much the build host's as a home directory: the
+        # dependency prefixes live on the volume that built them.
+        check(make_app(root, "app-volume-path", volumed, app_info()),
+              passes=False, expect="/Volumes/NAME/prefix/share/locale")
+        check(make_app(root, "framework-volume-path", clean, app_info(), framework=volumed),
+              passes=False, expect="Runtime.framework/Runtime: names a path on a mounted volume")
+        check(make_app(root, "framework-volume-space", clean, app_info(), framework=spaced),
+              passes=False, expect="/Volumes/NAME 2/prefix/lib")
+        check(make_app(root, "app-temporary-path", temporary, app_info()),
+              passes=False, expect="names a path in a temporary build directory")
+        check(make_app(root, "framework-temporary-path", clean, app_info(), framework=temporary),
+              passes=False, expect="/var/folders/NAME/T/source-build.abc123/stage")
+        check(make_app(root, "harmless-paths", harmless, app_info(), framework=harmless),
+              passes=True, expect="ready for the App Store")
 
         # A runtime framework alone (what package-ios-frameworks.sh --app-store
         # checks): its host code, and not the guest kernel image.
@@ -250,6 +295,9 @@ def main() -> int:
             ("framework-knob", False, "KERNARIUM_HOST_FORWARD"),
             ("framework-debug-map", False, "debug map"),
             ("framework-home-path", False, "home directory"),
+            ("framework-volume-path", False, "mounted volume"),
+            ("framework-temporary-path", False, "temporary build directory"),
+            ("harmless-paths", True, ""),
             ("stripped-debug-map", True, ""),
             ("guest-section", True, ""),
             ("ready", True, ""),
@@ -265,6 +313,9 @@ def main() -> int:
             ("framework-knob", True, ""),
             ("framework-debug-map", False, "debug map"),
             ("framework-home-path", False, "home directory"),
+            ("framework-volume-path", False, "mounted volume"),
+            ("framework-temporary-path", False, "temporary build directory"),
+            ("harmless-paths", True, ""),
             ("stripped-debug-map", True, ""),
         ):
             framework = root / name / "Fixture.app" / "Frameworks" / "Runtime.framework"

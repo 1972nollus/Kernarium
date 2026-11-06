@@ -14,12 +14,14 @@ application that must:
     application: the statistics, thermal state, runtime and focus lines),
     which the configuration compiles out;
   - carry no trace of the machine that built it: no path under a user's home
-    directory (/Users/<name>/) in the host code of an executable, and no debug
-    stabs in an embedded framework (the linker's debug map, whose N_OSO
-    entries name the object files of the build host's checkout and dependency
-    trees; dsymutil has read it into the dSYM by then, and strip -S removes it
-    and keeps the UUID). Xcode strips the application's own executable when it
-    archives, and strips nothing it embeds; and
+    directory (/Users/<name>/), on a mounted volume (/Volumes/<name>/) or in
+    the per-user temporary directories (/var/folders/) in the host code of an
+    executable, and no debug stabs in an embedded framework (the linker's
+    debug map, whose N_OSO entries name the object files of the build host's
+    checkout and dependency trees; dsymutil has read it into the dSYM by then,
+    and strip -S removes it and keeps the UUID). The strings of those stabs
+    are not searched for a path. Xcode strips the application's own
+    executable when it archives, and strips nothing it embeds; and
   - pass scripts/check-privacy-manifests.py.
 
 The knob scan reads bytes, so it does not see a Swift string of up to 15 bytes
@@ -50,8 +52,19 @@ KNOB = re.compile(rb"\b(?:ANDARIUM|KERNARIUM|DARWIN_UML|UML)_[A-Z][A-Z0-9_]{2,}\
 # the same in every line; the configuration compiles the type out.
 HARNESS_LINES = re.compile(
     rb"Andarium stats|Andarium thermal state|Andarium: runtime returned|Andarium: application ")
-# A path under a user's home directory names the account that built the code.
-HOME_PATH = re.compile(rb"/Users/[A-Za-z0-9._-]+/[\x21-\x7e]*")
+# What a path names about the machine that built the code: the account whose
+# home directory held the checkout, the volume that held the checkout or the
+# dependency prefixes, and the build's temporary directories. A bare
+# "/Volumes/" or a format such as "/Volumes/%s" is no path of a build and
+# does not match.
+HOST_PATHS = (
+    ("a path under a home directory",
+     re.compile(rb"/Users/[A-Za-z0-9._-]+/[\x21-\x7e]*")),
+    ("a path on a mounted volume",
+     re.compile(rb"/Volumes/[A-Za-z0-9._ -]+/[\x21-\x7e]*")),
+    ("a path in a temporary build directory",
+     re.compile(rb"/(?:private/)?var/folders/[\x21-\x7e]+")),
+)
 # Sections that hold the guest, not the host: the Linux kernel image a runtime
 # carries, and the boot files of a Linux runtime.
 GUEST_SECTIONS = {("__TEXT", "__uml_elf"), ("__TEXT", "__uml_boot_base"), ("__TEXT", "__uml_boot_init")}
@@ -194,11 +207,12 @@ def build_host_traces(path: Path, debug_map: bool = True) -> list[str]:
             f"carries the linker's debug map ({stabs} stabs, {objects} N_OSO "
             "object paths); strip -S it after dsymutil")
     data = without_debug_map(data, base)
-    paths = sorted({match.decode() for match in HOME_PATH.findall(data)})
-    if paths:
-        found.append(
-            f"names a path under a home directory ({len(paths)}): "
-            f"{paths[0][:80]}{' ...' if len(paths) > 1 else ''}")
+    for label, pattern in HOST_PATHS:
+        paths = sorted({match.decode() for match in pattern.findall(data)})
+        if paths:
+            found.append(
+                f"names {label} ({len(paths)}): "
+                f"{paths[0][:80]}{' ...' if len(paths) > 1 else ''}")
     return found
 
 
