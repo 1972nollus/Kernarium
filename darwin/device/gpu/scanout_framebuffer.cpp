@@ -280,16 +280,28 @@ ScanoutRectangle ScanoutFramebuffer::update(
         sourceAddress - storageAddress < pixels_.size());
     const auto* rows = source.data() + sourceOffset;
     auto rowStride = sourceRowBytes;
-    if (convert != nullptr && overlaps) {
-        // A caller may convert a rectangle of this framebuffer into another
-        // rectangle of itself. Preserve its input before overwriting it.
+    if (overlaps) {
+        // A caller may update a rectangle of this framebuffer from another
+        // rectangle of itself, in any format. Rows written first would
+        // overwrite rows not yet read, and a row copied onto itself shifted
+        // overlaps its own source, so preserve the input before writing.
         if (rectangleHeight >
             std::numeric_limits<std::size_t>::max() / convertedRowBytes) {
             throw std::invalid_argument("overflowing display update rectangle");
         }
         converted.resize(convertedRowBytes * rectangleHeight);
-        convert(converted.data(), rows, rectangleWidth, rectangleHeight,
-            rowStride, convertedRowBytes);
+        if (convert != nullptr) {
+            convert(converted.data(), rows, rectangleWidth, rectangleHeight,
+                rowStride, convertedRowBytes);
+        } else {
+            for (std::uint32_t row = 0; row < rectangleHeight; ++row) {
+                std::memcpy(
+                    converted.data() +
+                        static_cast<std::size_t>(row) * convertedRowBytes,
+                    rows + static_cast<std::size_t>(row) * rowStride,
+                    convertedRowBytes);
+            }
+        }
         rows = converted.data();
         rowStride = convertedRowBytes;
     }

@@ -47,7 +47,7 @@ struct ShutdownFlowTests {
         }
         try #require(model.guest != nil && model.busy == nil && model.alert == nil)
 
-        let identity = try AdbKeyStore().loadOrCreate()
+        let identity = try entry.adbKeyStore.loadOrCreate()
         let operations = AdbGuestOperations(identity: identity, clock: GuestRunClock(), device: "device")
         weak var display: GuestMetalView?
         if memorySnapshots {

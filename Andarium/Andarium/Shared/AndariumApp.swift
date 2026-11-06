@@ -4,29 +4,8 @@ import UIKit
 
 @main
 final class AndariumApp: UIResponder, UIApplicationDelegate {
-    private var sceneConnection: NSObjectProtocol?
-
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Existing installations can restore the scene configuration saved
-        // by the former SwiftUI App entry point. Adopt those scenes too;
-        // their old delegate no longer has an App graph to create a window.
-        sceneConnection = NotificationCenter.default.addObserver(
-            forName: UIScene.willConnectNotification, object: nil, queue: .main
-        ) { notification in
-            guard let scene = notification.object as? UIWindowScene else { return }
-            Task { @MainActor in Self.adopt(scene) }
-        }
-        Task { @MainActor in
-            for case let scene as UIWindowScene in application.connectedScenes { Self.adopt(scene) }
-        }
-        return true
-    }
-
-    private static func adopt(_ scene: UIWindowScene) {
-        guard !(scene.delegate is AndariumSceneDelegate) else { return }
-        let delegate = AndariumSceneDelegate()
-        scene.delegate = delegate
-        delegate.connect(scene)
+        true
     }
 
     func application(
@@ -39,9 +18,26 @@ final class AndariumApp: UIResponder, UIApplicationDelegate {
     }
 }
 
+/// The entry, model and runtime of the process. A scene shows them and owns
+/// only its window: UIKit disconnects a scene it releases and connects one
+/// again, and the runtime holds a guest that a new scene cannot be handed.
+@MainActor
+final class AndariumProcess {
+    static let shared = AndariumProcess()
+
+    let entry: AppEntry
+    let model: AppModel
+
+    private init() {
+        entry = AppEntry.fromArguments()
+        entry.configureTips()
+        model = entry.makeModel()
+    }
+}
+
 final class AndariumSceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
-    /// One model, runtime and motion manager for the scene's whole life.
+    /// The process's model, which this scene shows.
     private(set) var model: AppModel?
 
     func windowScene(_ windowScene: UIWindowScene, didUpdateEffectiveGeometry previousGeometry: UIWindowScene.Geometry) {
@@ -55,9 +51,9 @@ final class AndariumSceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func connect(_ scene: UIWindowScene) {
         guard window == nil else { return }
-        let entry = AppEntry.fromArguments()
-        entry.configureTips()
-        let model = entry.makeModel()
+        let process = AndariumProcess.shared
+        let entry = process.entry
+        let model = process.model
         self.model = model
         let window = UIWindow(windowScene: scene)
         window.rootViewController = AndariumHostingController(
@@ -110,6 +106,11 @@ struct RootView: View {
             Text(alert.message)
         }
         .task {
+            // The launch's automation work happens once per model: a scene
+            // that connects again must not create, erase or start the guest
+            // a second time.
+            guard !model.launchApplied else { return }
+            model.launchApplied = true
             await entry.applyDeferred(to: model)
         }
     }

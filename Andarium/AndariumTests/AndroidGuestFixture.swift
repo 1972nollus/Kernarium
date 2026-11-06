@@ -30,7 +30,7 @@ func withAndroidGuest(
     model.start(.normal)
     try #require(model.alert == nil, "\(String(describing: model.alert))")
 
-    let identity = try AdbKeyStore().loadOrCreate()
+    let identity = try entry.adbKeyStore.loadOrCreate()
     let operations = AdbGuestOperations(identity: identity, clock: GuestRunClock(), device: model.host.name)
     var restoreDisplayTimeout = "true"
     do {

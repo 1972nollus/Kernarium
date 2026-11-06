@@ -16,6 +16,11 @@ GuestSyncResult sync_guest_files() noexcept
 	return {.flushed = result.flushed, .failed = result.failed};
 }
 
+bool guest_file_registry_idle() noexcept
+{
+	return ::uml::platform::guest_file_registry_idle();
+}
+
 unsigned release_guest_file_locks(bool retiring) noexcept
 {
 	return ::uml::platform::release_guest_file_locks(retiring);
