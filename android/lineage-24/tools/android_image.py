@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: GPL-2.0-or-later
 """What the Android image verifiers share.
 
 boot-image.py, verify-initramfs.py, verify-target-files.py and

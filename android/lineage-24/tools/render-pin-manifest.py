@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Render the Repo local manifest that pins a workspace to the base manifest.
 
 The base manifest is a `repo manifest -r` snapshot. A project the manifest

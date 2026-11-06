@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: GPL-2.0-or-later
 """What the Android producer's pinned-source tools share.
 
 Mesa Venus keeps a metadata.env with one key prefix, a generated patch

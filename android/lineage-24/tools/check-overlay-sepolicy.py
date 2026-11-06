@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Reject overlay sepolicy that the platform's property neverallow would refuse.
 
 The platform keeps its core domains from setting a vendor-owned property
