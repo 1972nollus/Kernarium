@@ -2064,25 +2064,30 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     f"{result.returncode} {result.stdout}"
                 )
 
-        # Every variant refuses an application that requests the trade-in permission, and only
-        # a request: an application that declares it (framework-res.apk declares every platform
-        # permission) is not an application that can start the mode.
+        # Every variant refuses an application that requests the trade-in permission, and only a
+        # request: an application that declares it (framework-res.apk declares every platform
+        # permission) is not an application that can start the mode, and the shell package holds
+        # the permission for what a person types over adb.
         trade_in_permission = "android.permission.ENTER_TRADE_IN_MODE"
         for variant in BUILD_VARIANTS:
-            for label, apk, accepted in (
-                ("requests", synthetic_apk(permissions=(trade_in_permission,)), False),
-                ("declares", synthetic_apk(declared=(trade_in_permission,)), True),
+            for slug, description, entry, apk, accepted in (
+                ("requests", "an application that requests the permission",
+                 "SYSTEM/priv-app/Fixture/Fixture.apk", synthetic_apk(permissions=(trade_in_permission,)), False),
+                ("declares", "an application that declares the permission",
+                 "SYSTEM/priv-app/Fixture/Fixture.apk", synthetic_apk(declared=(trade_in_permission,)), True),
+                ("shell", "the shell package requesting the permission",
+                 "SYSTEM/priv-app/Shell/Shell.apk", synthetic_apk(permissions=(trade_in_permission,)), True),
             ):
-                fixture = root / f"{variant}-with-an-application-that-{label}-trade-in-mode.zip"
-                write_fixture(fixture, build_variant=variant, entries={"SYSTEM/priv-app/Fixture/Fixture.apk": apk})
+                fixture = root / f"{variant}-with-trade-in-permission-{slug}.zip"
+                write_fixture(fixture, build_variant=variant, entries={entry: apk})
                 result = run_tool(
                     verifier, "--target-files", fixture,
                     "--build-variant", variant, *kernel_options,
                 )
                 if (result.returncode == 0) != accepted:
                     fail(
-                        f"a {variant} build with an application that {label} the trade-in permission "
-                        f"verified wrongly: {result.returncode} {result.stdout}"
+                        f"a {variant} build with {description} verified wrongly: "
+                        f"{result.returncode} {result.stdout}"
                     )
 
         # A rejection fixture is built and verified once however many tables

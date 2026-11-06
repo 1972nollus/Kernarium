@@ -1488,8 +1488,12 @@ def check_pinner_overlay(
 # system_server). An unprovisioned device enters it a few tens of seconds after boot when an
 # application asks, which turns USB debugging on and restarts adbd twice. A virtual device has no
 # use for it, and the service has no configuration switch, so the product carries no application
-# that can ask: AOSP's DeviceDiagnostics, whose boot receiver does, is excluded from the product.
+# that asks at boot: AOSP's DeviceDiagnostics, whose boot receiver does, is excluded from the
+# product. The shell package holds the permission too, for the commands a person types over adb;
+# nothing in it starts the mode by itself. Any other APK of the image partitions that requests the
+# permission is refused.
 TRADE_IN_MODE_PERMISSION = "android.permission.ENTER_TRADE_IN_MODE"
+TRADE_IN_MODE_REQUESTERS = {"SYSTEM/priv-app/Shell/Shell.apk"}
 
 
 def check_application_manifests(
@@ -1503,7 +1507,8 @@ def check_application_manifests(
     is checked for it: a userdebug build is the diagnostics variant. Trade-in mode can start only
     for an application that requests ENTER_TRADE_IN_MODE, and the privapp allowlist's entry for
     a package that is not installed grants nothing, so the request is what the check looks for,
-    in every variant (a userdebug build never enters it, but the product list is one list). The
+    in every variant (a userdebug build never enters it, but the product list is one list), in
+    every APK but the shell's (TRADE_IN_MODE_REQUESTERS). The
     check reads every APK of the image partitions; APKs inside an APEX payload are compressed
     EROFS and out of its reach.
     """
@@ -1527,7 +1532,7 @@ def check_application_manifests(
             fail(f"{entry} has no readable manifest: {error}")
         if debuggable:
             fail(f"a user build must not carry a debuggable application: {entry}")
-        if TRADE_IN_MODE_PERMISSION in requested:
+        if TRADE_IN_MODE_PERMISSION in requested and entry not in TRADE_IN_MODE_REQUESTERS:
             fail(
                 f"{entry} requests {TRADE_IN_MODE_PERMISSION}: trade-in mode would start on an "
                 "unprovisioned first boot and restart adbd twice; the product must not carry "

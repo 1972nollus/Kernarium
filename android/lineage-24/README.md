@@ -206,12 +206,14 @@ restarts adbd each time, twice a few seconds apart, some tens of seconds after
 `sys.boot_completed` (about 230 s into the first boot on the iPad), and an
 install or a bug report running over adbd was cut. TradeInModeService has no
 configuration switch and starts only for a package that holds
-`android.permission.ENTER_TRADE_IN_MODE`, which DeviceDiagnostics alone
-requests, so the product excludes DeviceDiagnostics (`KERNARIUM_REMOVED_PACKAGES`,
-asserted by `build-aosp.sh`). The verifier refuses its directory and any APK of
-the image partitions that requests the permission; a manifest that declares the
-permission, as framework-res.apk does, is not a request. A virtual device has
-no trade-in. A harness that erases
+`android.permission.ENTER_TRADE_IN_MODE`. DeviceDiagnostics is the one that
+asks at boot (the shell package holds the permission too, for what a person
+types over adb), so the product excludes DeviceDiagnostics
+(`KERNARIUM_REMOVED_PACKAGES`, asserted by `build-aosp.sh`). The verifier
+refuses its directory and any APK of the image partitions other than the
+shell's that requests the permission; a manifest that declares the permission,
+as framework-res.apk does, is not a request. A virtual device has no trade-in.
+A harness that erases
 a guest to measure it provisions the guest over adb after `sys.boot_completed`
 ([`tools/android_provision.py`](../../tools/android_provision.py), through
 `tools/boot_android.py --provision`, `tests/perf/run_ios_device_android.py
