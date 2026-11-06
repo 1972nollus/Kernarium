@@ -10,13 +10,16 @@ import Foundation
 public struct LaunchOverrides: Equatable, Sendable {
     /// The settings a launch can state.
     public enum Setting: CaseIterable, Sendable {
-        case vCPUCount, memoryMiB, diskGiB, retina, followWindow
+        case vCPUCount, memoryMiB, diskGiB, retina
         /// "normal" or "recovery": start at launch.
         case start
         /// Kernarium's boot mode, whose "recovery" also asks for a start.
         case bootMode
         /// "1" erases the guest's data before the start.
         case erase
+        /// "1" opens the session with its statistics on screen and prints
+        /// each reading.
+        case stats
         /// A separate guest for a harness run, leaving the ordinary guest alone.
         case instance
     }
@@ -25,11 +28,12 @@ public struct LaunchOverrides: Equatable, Sendable {
     public var memoryMiB: Int?
     public var capacityGiB: Int?
     public var retina: Bool?
-    public var followWindow: Bool?
     /// Start at launch, creating the guest first when there is none.
     public var start: StartMode?
     /// Erase the guest's data before the start.
     public var erase = false
+    /// Show the statistics from the start of the run, and print them.
+    public var statistics = false
     public var instance: String?
 
     public init() {}
@@ -53,7 +57,6 @@ public struct LaunchOverrides: Equatable, Sendable {
             .flatMap { MemoryPolicy.runtimeAccepts($0) ? $0 : nil }
         capacityGiB = integer(.diskGiB, in: Limits.capacityRangeGiB)
         retina = flag(.retina)
-        followWindow = flag(.followWindow)
         switch value(.start) {
         case "normal"?: start = .normal
         case "recovery"?: start = .recovery
@@ -63,6 +66,7 @@ public struct LaunchOverrides: Equatable, Sendable {
             if value(.bootMode) == "recovery" { start = .recovery }
         }
         erase = value(.erase) == "1"
+        statistics = value(.stats) == "1"
         if let name = value(.instance), (1...64).contains(name.utf8.count),
            name.utf8.allSatisfy({
                (65...90).contains($0) || (97...122).contains($0) ||
@@ -98,49 +102,15 @@ public struct LaunchOverrides: Equatable, Sendable {
     }
 }
 
-/// The two display options set on Home, kept across launches.
+/// The display option set on Home, kept across launches. The guest's display
+/// always follows the window, so that is not an option; a value an earlier
+/// version stored for it is ignored.
 public struct DisplayOptions: Codable, Equatable, Sendable {
     /// Whether the guest draws at the screen's pixel density.
     public var retina = false
-    /// Whether the guest follows the window's size.
-    public var followWindow = true
 
-    public init(retina: Bool = false, followWindow: Bool = true) {
+    public init(retina: Bool = false) {
         self.retina = retina
-        self.followWindow = followWindow
-    }
-}
-
-/// The lines a run prints for the harness to read. Everything else on the
-/// console is the runtime's own `Kernarium:` output.
-public enum ConsoleReport {
-    public enum ThermalPhase: String, Sendable {
-        case start, change, finish
-    }
-
-    public static func thermalName(_ state: ProcessInfo.ThermalState) -> String {
-        switch state {
-        case .nominal: "nominal"
-        case .fair: "fair"
-        case .serious: "serious"
-        case .critical: "critical"
-        @unknown default: "unknown"
-        }
-    }
-
-    public static func thermal(phase: ThermalPhase, state: ProcessInfo.ThermalState, uptime: TimeInterval) -> String {
-        let seconds = String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), uptime)
-        return "Andarium thermal state: phase=\(phase.rawValue) state=\(thermalName(state)) uptime=\(seconds)"
-    }
-
-    public static func runtimeReturned(_ result: Int32) -> String {
-        "Andarium: runtime returned \(result)"
-    }
-
-    /// The application lost or regained focus (a system alert, such as iOS
-    /// asking for local network access, takes it until a person answers).
-    public static func application(active: Bool) -> String {
-        active ? "Andarium: application active" : "Andarium: application inactive"
     }
 }
 

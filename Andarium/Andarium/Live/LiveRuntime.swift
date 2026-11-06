@@ -221,8 +221,8 @@ final class LiveRuntime: RuntimeDriver {
         console = sink
         kernarium_runtime_loader_set_console_output_handler { data in sink.feed(data) }
         // A Microphone setting the person turned on earlier follows the
-        // guest; one that is off leaves the microphone alone.
-        if run.guest.microphone { tellMicrophone(true) }
+        // guest while iOS still allows it; otherwise the guest hears nothing.
+        tellMicrophone(model?.microphoneShownOn ?? false)
 
         pause.guestDidStart()
         bootStartedAt = Date()
@@ -244,7 +244,6 @@ final class LiveRuntime: RuntimeDriver {
         let memoryMiB = UInt32(run.guest.memoryMiB)
         let processorCount = UInt32(run.guest.cores)
         let dotsPerInch = geometry.dotsPerInch
-        let autoResize = model?.followWindow ?? true
         let adbKeyLine = adbIdentity?.publicKeyLine
         // The run occupies its thread for the guest's whole life and the GPU
         // service reaches the main queue while it starts, so it must not be
@@ -254,7 +253,7 @@ final class LiveRuntime: RuntimeDriver {
             let result = Self.runGuest(
                 view: view, dataDiskPath: dataDiskPath, releasePath: releasePath, dataGiB: dataGiB, bootMode: bootMode,
                 width: width, height: height, dotsPerInch: dotsPerInch, memoryMiB: memoryMiB,
-                processorCount: processorCount, autoResize: autoResize, adbKeyLine: adbKeyLine
+                processorCount: processorCount, adbKeyLine: adbKeyLine
             )
             Task { @MainActor in self.finished(result: result) }
         }
@@ -265,7 +264,7 @@ final class LiveRuntime: RuntimeDriver {
     private nonisolated static func runGuest(
         view: GuestMetalView, dataDiskPath: String, releasePath: String, dataGiB: UInt32, bootMode: UInt32,
         width: UInt32, height: UInt32, dotsPerInch: UInt32, memoryMiB: UInt32,
-        processorCount: UInt32, autoResize: Bool, adbKeyLine: String?
+        processorCount: UInt32, adbKeyLine: String?
     ) -> Int32 {
         dataDiskPath.withCString { dataDisk in
             releasePath.withCString { release in
@@ -278,7 +277,8 @@ final class LiveRuntime: RuntimeDriver {
                     request.guest_memory_mib = memoryMiB
                     request.guest_processor_count = processorCount
                     request.android_boot_mode = bootMode
-                    request.auto_resize_guest = autoResize ? 1 : 0
+                    // The guest's display always follows the window.
+                    request.auto_resize_guest = 1
                     request.android_data_disk_path = dataDisk
                     request.android_release_path = release
                     request.android_data_gib = dataGiB
@@ -347,6 +347,9 @@ final class LiveRuntime: RuntimeDriver {
         if bootCompleted {
             reachedBootCompleted = true
             updateGuestRotation()
+            // An update counts as applied once its start has booted, whatever
+            // happens to the application after that.
+            do { try storage.bootCompleted() } catch { print("Andarium: the guest's record was not updated: \(error.localizedDescription)") }
         }
         for milestone in milestones where model.bootTracker.reach(milestone, atSeconds: seconds) {
             print("Andarium: boot reached \(milestone) at \(seconds) s")
@@ -383,9 +386,12 @@ final class LiveRuntime: RuntimeDriver {
         geometry = nil
         launching = false
         UIApplication.shared.isIdleTimerDisabled = false
+        #if !APP_STORE
         print(ConsoleReport.runtimeReturned(result))
+        #endif
         // A start that reached sys.boot_completed and ended with Android's own
-        // power-off is the one that ends a pending update.
+        // power-off is a completed one (`lastCompleted`); the pending update it
+        // may have started ended when the start booted.
         if result == 0, reachedBootCompleted {
             do { try storage.completeRun() } catch { print("Andarium: the guest's record was not updated: \(error.localizedDescription)") }
         }
@@ -475,16 +481,39 @@ final class LiveRuntime: RuntimeDriver {
     }
 
     func setMicrophone(_ on: Bool) {
-        model?.microphoneState = Self.state(microphone.access)
-        if on, microphone.access == .notAsked {
+        let access = microphone.access
+        model?.microphoneState = Self.state(access)
+        guard on else {
+            tellMicrophone(false)
+            return
+        }
+        switch access {
+        case .granted:
+            tellMicrophone(true)
+        case .denied:
+            tellMicrophone(false)
+        case .notAsked:
+            // The guest hears nothing until the person has answered iOS's
+            // question, which is asked now.
+            tellMicrophone(false)
             microphone.request { answer in
-                Task { @MainActor in
-                    self.model?.microphoneState = Self.state(answer)
-                    if self.model?.guest?.microphone == true { self.tellMicrophone(true) }
-                }
+                Task { @MainActor in self.accessAnswered(Self.state(answer)) }
             }
         }
-        tellMicrophone(on)
+    }
+
+    /// iOS's answer, or Andarium's access as the person left it in Settings:
+    /// the model keeps the switch, and the guest follows it.
+    private func accessAnswered(_ state: MicrophoneState) {
+        guard let model else { return }
+        model.microphoneAccessChanged(state)
+        tellMicrophone(model.microphoneShownOn)
+    }
+
+    /// Looks at the permission again: at launch and whenever Andarium becomes
+    /// active, since the person may have changed it in Settings.
+    func refreshPermissions() {
+        accessAnswered(Self.state(microphone.access))
     }
 
     /// The runtime is told the setting and never asks the system itself; a
@@ -493,20 +522,58 @@ final class LiveRuntime: RuntimeDriver {
         _ = kernarium_runtime_loader_set_microphone(on ? 1 : 0)
     }
 
+    // MARK: Statistics
+
+    /// Both readings are made on one serial queue of their own: the memory
+    /// request waits for the guest and neither runs on the main thread or on
+    /// the cooperative pool, and two never overlap.
+    private let statsQueue = DispatchQueue(label: "com.imxieyi.andarium.stats", qos: .utility)
+
+    func readStatistics() async -> StatsSample? {
+        await withCheckedContinuation { continuation in
+            statsQueue.async { continuation.resume(returning: Self.statisticsReading()) }
+        }
+    }
+
+    func readGuestMemory() async -> GuestMemorySample? {
+        await withCheckedContinuation { continuation in
+            statsQueue.async { continuation.resume(returning: Self.guestMemoryReading()) }
+        }
+    }
+
+    private nonisolated static func statisticsReading() -> StatsSample? {
+        var reading = kernarium_runtime_statistics()
+        reading.struct_size = UInt32(MemoryLayout<kernarium_runtime_statistics>.size)
+        guard kernarium_runtime_loader_read_statistics(&reading) == 0 else { return nil }
+        return StatsSample(
+            bootIndex: reading.boot_index, processorCount: reading.processor_count,
+            timestampNanoseconds: reading.timestamp_ns, processorTimeNanoseconds: reading.processor_time_ns,
+            presentedFrames: reading.presented_frames, ramBytes: reading.memory_bytes,
+            ramHeldBytes: reading.memory_held_bytes
+        )
+    }
+
+    private nonisolated static func guestMemoryReading() -> GuestMemorySample? {
+        var reading = kernarium_runtime_guest_memory()
+        reading.struct_size = UInt32(MemoryLayout<kernarium_runtime_guest_memory>.size)
+        guard kernarium_runtime_loader_read_guest_memory(&reading) == 0 else { return nil }
+        return GuestMemorySample(totalBytes: reading.total_bytes, availableBytes: reading.available_bytes)
+    }
+
     // MARK: Thermal state
 
     // The thermal state and uptime go to the console for the iPad harness
     // (`Andarium/README.md#automation`); an App Store build prints neither and
     // reads neither the system uptime nor the thermal state.
 
+    #if !APP_STORE
     private func reportThermalState(_ phase: ConsoleReport.ThermalPhase) {
-        #if !APP_STORE
         print(ConsoleReport.thermal(
             phase: phase, state: ProcessInfo.processInfo.thermalState,
             uptime: ProcessInfo.processInfo.systemUptime
         ))
-        #endif
     }
+    #endif
 
     private func startThermalObservation() {
         #if !APP_STORE
@@ -534,8 +601,11 @@ final class LiveRuntime: RuntimeDriver {
     private func observeLifecycle() {
         let edges: [(Notification.Name, @MainActor (LiveRuntime) -> Void)] = [
             (UIApplication.willResignActiveNotification, {
+                #if !APP_STORE
                 print(ConsoleReport.application(active: false))
+                #endif
                 $0.active = false
+                $0.model?.applicationActive = false
                 $0.motion.stop()
                 $0.updateGuestRotation()
                 $0.pause.willResignActive()
@@ -557,23 +627,25 @@ final class LiveRuntime: RuntimeDriver {
     /// The person may have changed the permissions or the storage while
     /// Andarium was away.
     private func didBecomeActive() {
+        #if !APP_STORE
         print(ConsoleReport.application(active: true))
+        #endif
         active = true
         updateGuestRotation()
         guard let model else { return }
+        model.applicationActive = true
         model.host.freeStorageBytes = AppEntry.freeStorageBytes()
-        model.microphoneState = Self.state(microphone.access)
-        if model.guest?.microphone == true { tellMicrophone(true) }
+        refreshPermissions()
     }
 
     private func observeDisplayOptions() {
         guard let model else { return }
         withObservationTracking {
-            _ = (model.retina, model.followWindow, model.hostDrivesGuestRotation)
+            _ = (model.retina, model.hostDrivesGuestRotation)
         } onChange: {
             Task { @MainActor in
                 guard let model = self.model else { return }
-                DisplayOptionsStore.save(DisplayOptions(retina: model.retina, followWindow: model.followWindow))
+                DisplayOptionsStore.save(DisplayOptions(retina: model.retina))
                 self.updateGuestRotation()
                 self.observeDisplayOptions()
             }

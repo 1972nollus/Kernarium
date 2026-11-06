@@ -15,7 +15,8 @@ struct GuestTests {
     @Test func aFreshGuestTakesTheHostsChoices() {
         let guest = Guest.fresh(on: ipad)
         #expect(guest.cores == 6)
-        #expect(guest.memoryMiB == 1536)
+        // The safe limit is 4096 MiB here: nothing to round down or clamp.
+        #expect(guest.memoryMiB == 4096)
         #expect(guest.capacityGiB == 8)
         #expect(!guest.includeInBackups)
         #expect(!guest.microphone)

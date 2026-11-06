@@ -22,11 +22,11 @@ extension StartBlock {
     public var explanation: String {
         switch self {
         case .olderAndroid:
-            "This Andarium carries an older system than the one the guest last started with, and the system's data does not go back. Install a newer Andarium, or erase the guest to start again with this system."
+            "This Andarium is older than the one the guest last started with, and its data does not go back. Install a newer Andarium, or erase the guest to start again with this one."
         case .newerDataLayout:
-            "The guest's data uses a newer layout than this Andarium can open. Erase the guest to start again with this system."
+            "The guest's data uses a newer layout than this Andarium can open. Erase the guest to start again with this one."
         case .mismatch:
-            "The guest's files do not match the system in this Andarium. Erase the guest to start again."
+            "The guest's files do not match this Andarium. Erase the guest to start again."
         }
     }
 }
@@ -41,7 +41,8 @@ public enum StartPlan: Equatable, Sendable {
     /// A newer Android on the same data layout. An unfinished update's data
     /// is restored first; the data is snapshotted before Android upgrades it.
     case update(from: String, to: String)
-    /// An update started and did not reach a clean end. Start tries the
+    /// An update started and did not reach `sys.boot_completed`; one that did
+    /// counts as applied and is not this. Start tries the
     /// update again when this Android is the one that was updating
     /// (`canRetry`); Restore puts back the data the update started from
     /// (`canRestore`, only while that copy exists); erasing the guest starts

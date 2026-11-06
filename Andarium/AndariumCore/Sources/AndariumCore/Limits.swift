@@ -15,8 +15,11 @@ public enum Limits {
     public static let runtimeMemoryStepMiB = 64
     public static let minimumMemoryMiB = runtimeMemoryRangeMiB.lowerBound
     public static let memoryStepMiB = runtimeMemoryStepMiB
-    /// The default on a device, where the bound reaches it; a lower bound wins.
-    public static let defaultMemoryMiB = 1536
+    /// A new guest's memory is the safe limit of its vCPU count rounded down
+    /// to a half gibibyte, then held within this range. The safe limit itself
+    /// is never exceeded, so a device whose limit is lower takes that.
+    public static let defaultMemoryRangeMiB = 1536...4096
+    public static let defaultMemoryStepMiB = 512
 
     /// Free space a new guest needs for Android's first start, on top of the
     /// space its storage takes.

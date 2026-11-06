@@ -54,12 +54,14 @@ struct HomeView: View {
             switch kind {
             case .create: NewGuestSheet()
             case .resize: ResizeSheet()
+            case .system: SystemSheet()
             case .erase:
                 EraseSheet(confirmed: hints.eraseConfirmed)
                     .presentationSizing(EraseSheetSizing())
-            case .info: InfoSheet(acknowledgements: hints.acknowledgements)
+            case .info: InfoSheet(page: hints.infoPage)
             }
         }
+        .microphoneAccessAlert()
         .alert("Not Enough Free Space", isPresented: $model.startBlocked) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -73,7 +75,8 @@ struct HomeView: View {
         VStack(spacing: 22) {
             notices
             panel(large: false)
-            OptionsPanel()
+            SystemSection()
+            guestSections
             RecoveryErasePanel()
                 .id("erase")
         }
@@ -88,7 +91,8 @@ struct HomeView: View {
         VStack(spacing: 28) {
             notices
             panel(large: true)
-            OptionsPanel()
+            SystemSection()
+            guestSections
             RecoveryErasePanel()
                 .id("erase")
         }
@@ -104,10 +108,11 @@ struct HomeView: View {
             VStack(spacing: 22) {
                 notices
                 panel(large: true)
+                SystemSection()
             }
             .frame(maxWidth: 520)
             VStack(spacing: 22) {
-                OptionsPanel()
+                guestSections
                 RecoveryErasePanel()
                     .id("erase")
             }
@@ -123,12 +128,20 @@ struct HomeView: View {
     private func panel(large: Bool) -> some View {
         @Bindable var model = model
         if model.guest != nil {
-            ControlsPanel(
+            StoragePanel(
                 guest: Binding(get: { model.guest! }, set: { model.guest = $0 }),
                 host: model.host,
                 resize: { model.sheet = .resize }
             )
         }
+    }
+
+    /// Display, Capabilities and Backup: what the guest shows and may use.
+    @ViewBuilder
+    private var guestSections: some View {
+        DisplaySection()
+        CapabilitiesSection()
+        BackupSection()
     }
 
     @ViewBuilder
@@ -152,7 +165,7 @@ struct HomeView: View {
         case .update(_, let release):
             NoticeCard(
                 symbol: "arrow.down.circle.fill", color: .accentColor,
-                title: "System updated to \(release)",
+                title: "Andarium updated to \(release)",
                 text: "The next start finishes the update and takes a little longer. Your data is saved first, so a start that does not finish can be undone."
             )
         case .unfinishedUpdate(let release, let canRetry, let canRestore):
@@ -171,7 +184,7 @@ struct HomeView: View {
                 NoticeCard(
                     symbol: "sparkles", color: .accentColor,
                     title: "Guest erased",
-                    text: "The next start runs the system's setup.",
+                    text: "The next start runs Andarium's setup.",
                     onClose: { withAnimation { model.notice = nil } }
                 )
             case .closedInBackground:
@@ -271,7 +284,7 @@ struct WelcomeView: View {
                 .padding(.bottom, 34)
             Text("No Guest Yet")
                 .font(.title2.weight(.bold))
-            Text("The system (version \(model.system.version)) is built into Andarium. Set up a guest to run it.")
+            Text("Andarium is built in. Set up a guest to run it.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -345,103 +358,6 @@ struct NoticeCard: View {
     }
 }
 
-/// Display, input and backup options: plain rows in one glass panel.
-struct OptionsPanel: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        @Bindable var model = model
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Options")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.leading, 18)
-            VStack(spacing: 0) {
-                row("Resolution", symbol: "rectangle.inset.filled") {
-                    Picker("Resolution", selection: $model.retina) {
-                        Text("Points").tag(false)
-                        Text("Retina").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 150)
-                }
-                divider
-                row("Follow Window Size", symbol: "arrow.up.left.and.arrow.down.right") {
-                    Toggle("Follow Window Size", isOn: $model.followWindow).labelsHidden()
-                }
-                if let guest = model.guest {
-                    divider
-                    row("Microphone", symbol: "mic.fill") {
-                        Toggle("Microphone", isOn: Binding(
-                            get: { guest.microphone },
-                            set: { model.setMicrophone($0) }
-                        ))
-                        .labelsHidden()
-                    }
-                    divider
-                    row("Motion Sensors", symbol: "gyroscope") {
-                        Toggle("Motion Sensors", isOn: Binding(
-                            get: { guest.motionSensors },
-                            set: { model.setMotionSensors($0) }
-                        ))
-                        .labelsHidden()
-                        .disabled(!model.motionSensorsAvailable && !guest.motionSensors)
-                        .accessibilityHint("Shares this device's accelerometer and gyroscope with the guest.")
-                    }
-                    divider
-                    row("Include in Backups", symbol: "icloud.fill") {
-                        Toggle("Include in Backups", isOn: Binding(
-                            get: { guest.includeInBackups },
-                            set: { model.guest?.includeInBackups = $0 }
-                        ))
-                        .labelsHidden()
-                    }
-                }
-            }
-            .glassEffect(.regular, in: .rect(cornerRadius: 26))
-            if model.guest != nil {
-                Text(model.motionSensorsProblem ?? (model.motionSensorsAvailable
-                     ? "Motion Sensors shares this device’s acceleration and rotation with the guest while Andarium is active."
-                     : "Motion sensors aren’t available on this device."))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 18)
-                BackupNote(host: model.host)
-            }
-        }
-        .id("options")
-    }
-
-    private var divider: some View {
-        Divider().padding(.leading, 58)
-    }
-
-    private func row<C: View>(_ title: String, symbol: String, @ViewBuilder control: () -> C) -> some View {
-        HStack(spacing: 12) {
-            IconTile(symbol: symbol)
-            Text(title)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-            Spacer(minLength: 8)
-            control()
-        }
-        .padding(.horizontal, 16)
-        .frame(minHeight: 54)
-    }
-}
-
-/// What Include in Backups does to iCloud and computer backups.
-struct BackupNote: View {
-    let host: HostDevice
-
-    var body: some View {
-        Text("iCloud and computer backups of this \(host.name) leave the guest out, because the system can set itself up again and its files take several GiB. Turn on Include in Backups to keep them.")
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 18)
-    }
-}
-
 /// An update that did not reach its end. Start tries it again; the one
 /// button, Restore, puts the data back to what the update started from.
 struct UnfinishedUpdateCard: View {
@@ -458,7 +374,7 @@ struct UnfinishedUpdateCard: View {
                     .foregroundStyle(Color.orange)
                     .frame(width: 28)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("The system's update didn't finish").font(.subheadline.weight(.semibold))
+                    Text("Andarium's update didn't finish").font(.subheadline.weight(.semibold))
                     Text(text)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -484,7 +400,7 @@ struct UnfinishedUpdateCard: View {
         case (true, false):
             "The start that updates to \(release) did not reach its end. Start tries it again, or erase the guest to start over."
         case (false, true):
-            "This Andarium carries a different system than the update that did not finish. Restore puts back your data from before it, or erase the guest to start over."
+            "This Andarium carries a different release than the update that did not finish. Restore puts back your data from before it, or erase the guest to start over."
         case (false, false):
             "The start that updates to \(release) did not reach its end, and nothing from before it is left to put back. Erase the guest to start over."
         }

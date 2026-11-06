@@ -10,6 +10,9 @@ application that must:
   - carry no automation knob: no ANDARIUM_, KERNARIUM_, UML_ or DARWIN_UML_
     environment name in the host code of the application or of any embedded
     framework (the guest kernel image inside a runtime is not host code);
+  - carry none of the harness's console lines (ConsoleReport in the
+    application: the statistics, thermal state, runtime and focus lines),
+    which the configuration compiles out;
   - carry no trace of the machine that built it: no path under a user's home
     directory (/Users/<name>/) in the host code of an executable, and no debug
     stabs in an embedded framework (the linker's debug map, whose N_OSO
@@ -23,6 +26,8 @@ The knob scan reads bytes, so it does not see a Swift string of up to 15 bytes
 (ANDARIUM_START is one): the compiler keeps those in instruction immediates.
 The launch names stay out of the application because the configuration
 compiles Live/LaunchEnvironment.swift out, and the scan covers the longer names.
+The console lines are long enough to be text in the binary, so a build whose
+code still holds one fails, whether or not anything calls it.
 
 The Xcode project runs it as the last build phase of the App Store
 configuration, so a build that breaks one of these rules fails.
@@ -41,6 +46,10 @@ import sys
 from pathlib import Path
 
 KNOB = re.compile(rb"\b(?:ANDARIUM|KERNARIUM|DARWIN_UML|UML)_[A-Z][A-Z0-9_]{2,}\b")
+# What ConsoleReport (Shared/ConsoleReport.swift) prints, as far as its text is
+# the same in every line; the configuration compiles the type out.
+HARNESS_LINES = re.compile(
+    rb"Andarium stats|Andarium thermal state|Andarium: runtime returned|Andarium: application ")
 # A path under a user's home directory names the account that built the code.
 HOME_PATH = re.compile(rb"/Users/[A-Za-z0-9._-]+/[\x21-\x7e]*")
 # Sections that hold the guest, not the host: the Linux kernel image a runtime
@@ -111,6 +120,14 @@ def knobs(path: Path) -> list[str]:
     if code is None:
         return []
     return sorted({match.decode() for match in KNOB.findall(code[0])})
+
+
+def harness_lines(path: Path) -> list[str]:
+    """The harness's console lines in the host code of one Mach-O file."""
+    code = host_code(path)
+    if code is None:
+        return []
+    return sorted({match.decode().strip() for match in HARNESS_LINES.findall(code[0])})
 
 
 def debug_stabs(data: bytes, base: int) -> tuple[int, int]:
@@ -225,6 +242,11 @@ def main() -> int:
             problems.append(
                 f"{binary.relative_to(app)}: carries automation knob(s) "
                 f"{', '.join(names[:6])}{' ...' if len(names) > 6 else ''}")
+        lines = harness_lines(binary)
+        if lines:
+            problems.append(
+                f"{binary.relative_to(app)}: carries the harness's console line(s) "
+                f"{', '.join(repr(line) for line in lines)}")
         # The application's own executable is stripped when Xcode archives it.
         problems.extend(
             f"{binary.relative_to(app)}: {trace}"

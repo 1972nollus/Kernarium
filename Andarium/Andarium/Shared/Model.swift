@@ -2,8 +2,16 @@ import AndariumCore
 import Observation
 import SwiftUI
 
+/// A view that shows the guest's statistics.
+enum StatisticsViewer: Hashable {
+    /// The capsule over the session.
+    case pill
+    /// The Stats rows of the session's Settings.
+    case settings
+}
+
 enum SheetKind: String, Identifiable, Hashable {
-    case create, resize, erase, info
+    case create, resize, erase, info, system
 
     var id: String { rawValue }
 }
@@ -16,6 +24,9 @@ struct SessionPreset: Equatable {
     var settings = false
     /// Settings opens at full height instead of half.
     var settingsLarge = false
+    /// Settings scrolls to the section with this identifier ("stats",
+    /// "display" or "capabilities").
+    var settingsScroll: String?
     var powerMenu = false
     var leftEdge = false
     var guestScreen: GuestScreen = .home
@@ -142,7 +153,10 @@ final class SessionState {
 /// a screen holds: the open sheet, display options and the session's state.
 @Observable
 final class AppModel {
-    var lifecycle: Lifecycle
+    var lifecycle: Lifecycle {
+        // The readings run while the guest does.
+        didSet { if lifecycle.phase != oldValue.phase { refreshStatistics() } }
+    }
     var host: HostDevice
     /// The system this build of Andarium carries.
     var system: SystemInfo
@@ -152,8 +166,6 @@ final class AppModel {
     /// Free space a new guest needs, which the storage behind the screens
     /// decides.
     var createRequirementBytes: UInt64
-    /// What the system takes on this device.
-    var systemBytes: UInt64
     var sheet: SheetKind?
     var startBlocked = false
     /// What a start would be, from the guest's files: Home words Start and
@@ -164,9 +176,9 @@ final class AppModel {
     /// The preview's plan after Restore; a device reads it from the files.
     var planAfterRestore: StartPlan?
 
-    // App-wide display options, set on the home screen.
+    // App-wide display option, set on the home screen: the guest draws at the
+    // screen's pixel density. The guest's display always follows the window.
     var retina = false
-    var followWindow = true
     /// The host window owns display rotation until iPadOS grants the
     /// full-screen session's orientation lock. Never a saved guest setting.
     var hostDrivesGuestRotation = false
@@ -200,6 +212,17 @@ final class AppModel {
     var motionSensorsAvailable = true
     var motionSensorsProblem: String?
     var microphoneState = MicrophoneState.notAsked
+    /// The question about a permission the person is being asked, if any.
+    var permissionPrompt: PermissionPrompt?
+    /// The person went to Settings to allow the microphone: when Andarium is
+    /// active again with access, the switch they tapped turns on.
+    var microphoneAwaitsSettings = false
+    /// Opens Andarium's page in the system's Settings. A test puts its own here.
+    @ObservationIgnored var openSettings: @MainActor () -> Void = {
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
+        }
+    }
     private var persistTask: Task<Void, Never>?
     /// The Android operation under way (a bug report, an install), which the
     /// overlay's Cancel stops, and the run it belongs to.
@@ -213,16 +236,37 @@ final class AppModel {
     /// every time, the USB debugging setting every fifth. A test shortens it.
     var adbWatchInterval = Duration.seconds(2)
 
+    // MARK: Statistics state
+
+    /// The views that show the statistics. Nothing is read while there are
+    /// none.
+    private(set) var statisticsViewers: Set<StatisticsViewer> = []
+    /// Whether the application is the active one. The readings stop when it
+    /// is not, and start again with a new baseline.
+    var applicationActive = true {
+        didSet { if applicationActive != oldValue { refreshStatistics() } }
+    }
+    /// The figures behind the screens, from the driver's readings.
+    private(set) var statisticsMeter = StatsMeter()
+    /// A launch for automation prints each reading.
+    var printsStatistics = false
+    /// Waits between readings; a test paces them by hand.
+    @ObservationIgnored var statisticsSleep: @MainActor (Duration) async -> Void = { duration in
+        try? await Task.sleep(for: duration)
+    }
+    @ObservationIgnored private var statisticsTask: Task<Void, Never>?
+    /// Tells a loop that ended from the one that replaced it.
+    @ObservationIgnored private var statisticsGeneration = 0
+
     init(
         guest: Guest?, host: HostDevice, system: SystemInfo, capabilities: Capabilities,
-        createRequirementBytes: UInt64, systemBytes: UInt64
+        createRequirementBytes: UInt64
     ) {
         lifecycle = Lifecycle(guest: guest)
         self.host = host
         self.system = system
         self.capabilities = capabilities
         self.createRequirementBytes = createRequirementBytes
-        self.systemBytes = systemBytes
     }
 
     var guest: Guest? {
@@ -293,7 +337,7 @@ final class AppModel {
         runBusy(
             BusyState(
                 title: "Creating Guest",
-                detail: "Setting up the system with \(Formats.size(gib: guest.effectiveCapacityGiB)).", progress: 0
+                detail: "Setting up Andarium with \(Formats.size(gib: guest.effectiveCapacityGiB)).", progress: 0
             ),
             failure: "The Guest Could Not Be Created"
         ) { progress in
@@ -659,7 +703,7 @@ final class AppModel {
         case .lowSpace: startBlocked = true
         case .unfinishedUpdate:
             alert = AppAlert(
-                title: "The System's Update Didn't Finish",
+                title: "Andarium's Update Didn't Finish",
                 message: plan.allowsStart
                     ? "Recovery starts only once the update has finished. Start tries the update again; Restore or Erase Guest goes back."
                     : "The guest starts only after its data is restored or the guest is erased."
@@ -728,6 +772,7 @@ final class AppModel {
         let showStats = session.showStats
         session = SessionState()
         session.showStats = showStats
+        statisticsMeter = StatsMeter()
         bootTracker = BootTracker()
         lifecycle.restart()
     }
@@ -747,17 +792,144 @@ final class AppModel {
         driver?.setMotionSensors(on)
     }
 
-    /// The microphone switch: the guest's choice, then the system's answer.
+    /// The Microphone switch as the screens show it: the guest's choice is on
+    /// and iOS lets Andarium record. Access that was refused or taken away
+    /// shows it off, and the guest hears nothing then.
+    var microphoneShownOn: Bool { guest?.microphone == true && microphoneState != .denied }
+
+    /// The Microphone switch. Turning it on asks iOS for access at once, the
+    /// first time. After a refusal there is nothing to ask: the person is told
+    /// and offered Andarium's page in Settings.
     func setMicrophone(_ on: Bool) {
         guard guest != nil else { return }
-        guest?.microphone = on
-        persistNow()
-        driver?.setMicrophone(on)
+        guard on else {
+            microphoneAwaitsSettings = false
+            guest?.microphone = false
+            persistNow()
+            driver?.setMicrophone(false)
+            return
+        }
+        switch microphoneState {
+        case .denied:
+            permissionPrompt = .microphone
+        case .notAsked:
+            guest?.microphone = true
+            persistNow()
+            // The device asks iOS and reports the answer to `microphoneAccessChanged`.
+            // The preview has no system prompt to show and takes it as given.
+            if let driver { driver.setMicrophone(true) } else { microphoneAccessChanged(.granted) }
+        case .granted:
+            guest?.microphone = true
+            persistNow()
+            driver?.setMicrophone(true)
+        }
+    }
+
+    /// iOS answered the microphone question, or the person changed Andarium's
+    /// access in Settings. A refusal takes the choice back with it; access the
+    /// person went to Settings to give turns the switch they tapped on.
+    func microphoneAccessChanged(_ state: MicrophoneState) {
+        microphoneState = state
+        switch state {
+        case .denied:
+            if guest?.microphone == true {
+                guest?.microphone = false
+                persistNow()
+            }
+        case .granted:
+            if microphoneAwaitsSettings, guest != nil, guest?.microphone != true {
+                guest?.microphone = true
+                persistNow()
+            }
+        case .notAsked:
+            break
+        }
+        if state != .notAsked { microphoneAwaitsSettings = false }
+    }
+
+    /// The alert's Open Settings.
+    func openMicrophoneSettings() {
+        microphoneAwaitsSettings = true
+        openSettings()
+    }
+
+    // MARK: Statistics
+
+    /// A view that shows the statistics appears or goes. The readings run
+    /// while some view shows them and everything else allows
+    /// (`StatsSampling.isWanted`), and one loop serves every view.
+    func statistics(_ viewer: StatisticsViewer, visible: Bool) {
+        if visible {
+            statisticsViewers.insert(viewer)
+        } else {
+            statisticsViewers.remove(viewer)
+        }
+        refreshStatistics()
+    }
+
+    private var statisticsWanted: Bool {
+        var running = false
+        if case .running = phase { running = true }
+        return StatsSampling.isWanted(
+            viewers: statisticsViewers.count, applicationActive: applicationActive,
+            capable: capabilities.statistics, hasDriver: driver != nil, running: running
+        )
+    }
+
+    /// Starts the loop when the readings are wanted and none runs, and stops
+    /// it when they are not.
+    func refreshStatistics() {
+        if statisticsWanted {
+            guard statisticsTask == nil else { return }
+            statisticsGeneration += 1
+            let generation = statisticsGeneration
+            statisticsTask = Task { [weak self] in
+                await self?.runStatisticsLoop()
+                if let self, self.statisticsGeneration == generation { self.statisticsTask = nil }
+            }
+        } else if let task = statisticsTask {
+            task.cancel()
+            statisticsTask = nil
+            statisticsGeneration += 1
+        }
+    }
+
+    /// Two readings a moment apart, so figures show within about a third of
+    /// a second, and the guest's memory after the second. Then a reading
+    /// every second and the memory with every other one. A result that
+    /// arrives after the loop was stopped is dropped.
+    private func runStatisticsLoop() async {
+        guard let driver else { return }
+        statisticsMeter.pause()
+        var readings = 0
+        while !Task.isCancelled, statisticsWanted {
+            if let sample = await driver.readStatistics(), !Task.isCancelled {
+                statisticsMeter.record(sample)
+                readings += 1
+                if readings.isMultiple(of: StatsSampling.memoryEvery) {
+                    if let memory = await driver.readGuestMemory(), !Task.isCancelled {
+                        statisticsMeter.record(memory: memory)
+                    }
+                }
+                publishStatistics()
+            }
+            guard !Task.isCancelled else { return }
+            await statisticsSleep(readings == 1 ? StatsSampling.firstGap : StatsSampling.interval)
+        }
+    }
+
+    private func publishStatistics() {
+        session.readout = Readout(statisticsMeter)
+        #if !APP_STORE
+        if printsStatistics {
+            print(ConsoleReport.statistics(statisticsMeter, guestMemoryMiB: guest?.memoryMiB ?? 0))
+        }
+        #endif
     }
 
     /// The step of the boot under way, from the runtime's milestones.
-    var liveBootStage: Int {
-        BootSteps.current(preparingDisk: preparingDisk, milestone: bootTracker.milestone)
+    func liveBootStage(recovery: Bool) -> Int {
+        BootSteps.current(preparingDisk: preparingDisk, milestone: bootTracker.milestone, recovery: recovery)
     }
 
     /// The failure screen's copyable report.

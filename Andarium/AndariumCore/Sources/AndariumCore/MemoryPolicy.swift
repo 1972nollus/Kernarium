@@ -42,11 +42,15 @@ public struct MemoryPolicy: Equatable, Sendable {
         ))
     }
 
-    /// 1536 MiB, or the bound where that is lower, on a device; the largest
-    /// size on a Mac, which sets no memory limit.
-    public func defaultMemoryMiB(vCPUs: Int, onMac: Bool) -> Int {
-        let wanted = onMac ? Limits.runtimeMemoryRangeMiB.upperBound : Limits.defaultMemoryMiB
-        return min(wanted, maximumMiB(vCPUs: vCPUs))
+    /// What a new guest gets at `vCPUs` vCPUs: the bound (the safe limit),
+    /// rounded down to a 0.5 GiB step and held within 1.5 to 4 GiB, and never
+    /// above the bound itself. A Mac, which sets no limit, has the 4 GiB top.
+    public func defaultMemoryMiB(vCPUs: Int) -> Int {
+        let bound = maximumMiB(vCPUs: vCPUs)
+        let step = Limits.defaultMemoryStepMiB
+        let range = Limits.defaultMemoryRangeMiB
+        let held = min(max(bound / step * step, range.lowerBound), range.upperBound)
+        return min(held, bound)
     }
 
     /// A stored or requested size at `vCPUs` vCPUs: on the nearest step in the

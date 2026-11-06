@@ -19,22 +19,30 @@ import UIKit
 struct AdbOverVsockTests {
     private static var enabled: Bool { ProcessInfo.processInfo.environment["ANDARIUM_ADB_TESTS"] == "1" }
 
-    /// The same code the screens run, for the key of this boot.
-    private func operations() throws -> AdbGuestOperations {
-        let identity = try AppEntry.fromArguments().adbKeyStore.loadOrCreate()
-        return AdbGuestOperations(identity: identity, clock: GuestRunClock(), device: "device")
-    }
-
-    /// Waits, up to 15 minutes, until Android has booted and adbd answers.
-    private func awaitAndroid(_ operations: AdbGuestOperations) async throws {
+    /// The same code the screens run, for the key of this boot, once Android
+    /// has booted and adbd answers (up to 15 minutes).
+    ///
+    /// The key is the guest's own: the application makes it as the start
+    /// begins, and Erase Guest, which an automation launch (`ANDARIUM_ERASE`)
+    /// runs first, deletes the one before it. A test that made a key of its
+    /// own, or read the old one, would hold a key the guest was not given and
+    /// be refused for as long as it kept it. So the key is read again on every
+    /// attempt and never made here; the one adbd accepts is the one returned.
+    private func readyOperations() async throws -> AdbGuestOperations {
+        let store = AppEntry.fromArguments().adbKeyStore
         let deadline = ContinuousClock.now + .seconds(15 * 60)
         var lastError = "none"
         var lastReport = ContinuousClock.now
         while ContinuousClock.now < deadline {
             do {
-                let booted = try await operations.shell("getprop sys.boot_completed")
-                if booted.text.hasPrefix("1") { return }
-                lastError = "boot_completed reads \(booted.text.debugDescription)"
+                if let identity = try store.existingIdentity() {
+                    let operations = AdbGuestOperations(identity: identity, clock: GuestRunClock(), device: "device")
+                    let booted = try await operations.shell("getprop sys.boot_completed")
+                    if booted.text.hasPrefix("1") { return operations }
+                    lastError = "boot_completed reads \(booted.text.debugDescription)"
+                } else {
+                    lastError = "the application has not made the guest's key yet"
+                }
             } catch {
                 lastError = String(describing: error)
             }
@@ -50,8 +58,7 @@ struct AdbOverVsockTests {
 
     @Test(.timeLimit(.minutes(20))) func theClientReachesAdbdAndRunsACommand() async throws {
         guard Self.enabled else { return }
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
         let result = try await operations.shell("getprop ro.build.version.sdk; echo done")
         #expect(result.exitCode == 0)
         #expect(result.text.hasSuffix("done\n"))
@@ -68,8 +75,7 @@ struct AdbOverVsockTests {
             ProcessInfo.processInfo.environment["ANDARIUM_OOBE_TESTS"] == "1"
         else { return }
         try #require(ProcessInfo.processInfo.environment["ANDARIUM_GUEST_INSTANCE"] == "recovery-display")
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
         let command = "getprop ro.setupwizard.mode; settings get global device_provisioned; settings get secure user_setup_complete; dumpsys activity activities | grep ResumedActivity"
         var state = try await operations.shell(command, limit: .seconds(10))
         // sys.boot_completed can precede the first resumed activity.
@@ -117,8 +123,7 @@ struct AdbOverVsockTests {
     @Test(.timeLimit(.minutes(20)))
     func androidAdvertisesMultitouchToApplications() async throws {
         guard Self.enabled else { return }
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
         let result = try await operations.shell("pm list features")
         #expect(result.exitCode == 0)
         let features = Set(result.text.split(separator: "\n").map(String.init))
@@ -131,9 +136,10 @@ struct AdbOverVsockTests {
         }
     }
 
-    /// A standalone storage gate: the Android framework test APK is copied
-    /// to tmp first. This opt-in run installs it, checks the public APIs,
-    /// removes it and powers Android off so an update can finish cleanly.
+    /// A standalone storage gate: the Android framework test APK, signed with
+    /// the AOSP test key, is copied to tmp first. This opt-in run installs it,
+    /// lets it call the one hidden API it uses (`hidden_api_policy` 1, put back
+    /// afterwards), checks the public APIs, removes it and powers Android off.
     @Test(.timeLimit(.minutes(20)))
     func androidReportsExactStorageSizes() async throws {
         guard Self.enabled,
@@ -142,10 +148,20 @@ struct AdbOverVsockTests {
         let apk = FileManager.default.temporaryDirectory.appendingPathComponent("AndariumStorageTests.apk")
         defer { try? FileManager.default.removeItem(at: apk) }
         let bytes = try #require(try apk.resourceValues(forKeys: [.fileSizeKey]).fileSize)
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
+        // The APK is test-key signed, so its one hidden API call needs the
+        // policy; the guest's own value (unset: "null") is put back.
+        let policy = try await operations.shell("settings get global hidden_api_policy").text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        func restorePolicy() async {
+            _ = try? await operations.shell(policy == "null" || policy.isEmpty
+                ? "settings delete global hidden_api_policy"
+                : "settings put global hidden_api_policy \(policy)")
+        }
         do {
             try await operations.installApk(at: apk, sizeBytes: bytes) { _ in }
+            let enabled = try await operations.shell("settings put global hidden_api_policy 1")
+            #expect(enabled.exitCode == 0, "\(enabled.text)")
             let result = try await operations.shell(
                 "am instrument -w -r -e class com.android.frameworks.andariumstorage.StorageAccountingTest#exactFilesystemBytes com.android.frameworks.andariumstorage.tests/androidx.test.runner.AndroidJUnitRunner",
                 limit: .seconds(180))
@@ -154,9 +170,11 @@ struct AdbOverVsockTests {
             #expect(result.text.contains("OK (1 test)"), "\(result.text)")
             #expect(result.text.contains("INSTRUMENTATION_CODE: -1"), "\(result.text)")
         } catch {
+            await restorePolicy()
             _ = try? await operations.shell("pm uninstall com.android.frameworks.andariumstorage.tests")
             throw error
         }
+        await restorePolicy()
         let removed = try await operations.shell("pm uninstall com.android.frameworks.andariumstorage.tests")
         #expect(removed.text.contains("Success"), "\(removed.text)")
         try await powerOffAndroid(operations)
@@ -170,8 +188,7 @@ struct AdbOverVsockTests {
         guard Self.enabled,
             ProcessInfo.processInfo.environment["ANDARIUM_STORAGE_TESTS"] == "1"
         else { return }
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
         _ = try await operations.shell("input keyevent KEYCODE_WAKEUP; wm dismiss-keyguard")
         let launchCommand = "am start -W -n 'com.android.settings/.Settings$StorageDashboardActivity'"
         let launched = try await operations.shell(launchCommand)
@@ -237,8 +254,7 @@ struct AdbOverVsockTests {
     @Test(.timeLimit(.minutes(20)))
     func twoRuntimeContactsReachAndroidInputReader() async throws {
         guard Self.enabled else { return }
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
         _ = try await operations.shell("input keyevent KEYCODE_WAKEUP")
         defer {
             kernarium_runtime_loader_send_touch(0, 6000, 16000, 0)
@@ -278,8 +294,7 @@ struct AdbOverVsockTests {
 
     @Test(.timeLimit(.minutes(30))) func aBugReportIsAZipOfMoreThanAMegabyte() async throws {
         guard Self.enabled else { return }
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
         let started = ContinuousClock.now
         let progress = Progress()
         let file = try await operations.createBugReport { progress.add($0) }
@@ -296,8 +311,7 @@ struct AdbOverVsockTests {
 
     @Test(.timeLimit(.minutes(20))) func cancellingABugReportStopsItAndLeavesNothing() async throws {
         guard Self.enabled else { return }
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
         let report = Task { try await operations.createBugReport { _ in } }
         try await Task.sleep(for: .seconds(15))
         report.cancel()
@@ -322,8 +336,7 @@ struct AdbOverVsockTests {
 
     @Test(.timeLimit(.minutes(20))) func usbDebuggingIsReadableThroughTheChannel() async throws {
         guard Self.enabled else { return }
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
         // Either answer is fine: what matters is that the channel works
         // whatever the setting is.
         let setting = await operations.usbDebugging()
@@ -336,8 +349,7 @@ struct AdbOverVsockTests {
     /// AUTH challenge, since the computer's key is not the host's.
     @Test(.timeLimit(.minutes(20))) func theBridgeCarriesAComputersConnectionToAdbd() async throws {
         guard Self.enabled else { return }
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
         let bridge = AdbNetworkBridge(port: 0, opener: VsockConnector())
         let port = try bridge.start()
         defer { bridge.stop() }
@@ -379,8 +391,7 @@ struct AdbOverVsockTests {
     /// signature again, and the client reports that it was refused.
     @Test(.timeLimit(.minutes(20))) func aForeignKeyIsRefused() async throws {
         guard Self.enabled else { return }
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
         var error: Unmanaged<CFError>?
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits as String: 2048,
@@ -400,8 +411,7 @@ struct AdbOverVsockTests {
     /// (adbd restarts once then).
     @Test(.timeLimit(.minutes(20))) func theChannelWorksWhateverUSBDebuggingIsSet() async throws {
         guard Self.enabled else { return }
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
         let initial = await operations.usbDebugging()
         print("ADBVSOCK: USB debugging starts as \(initial.map(String.init(describing:)) ?? "unreadable")")
         func set(_ on: Bool) async throws {
@@ -438,8 +448,7 @@ struct AdbOverVsockTests {
     /// while debugging is on.
     @Test(.timeLimit(.minutes(25))) func theKeyRuleHoldsWithDebuggingOffAndOn() async throws {
         guard Self.enabled else { return }
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
         let own = try #require(operations.identity).privateKey
         let foreign = try Self.ephemeralKey()
         let initial = await operations.usbDebugging()
@@ -515,8 +524,7 @@ struct AdbOverVsockTests {
             let text = ProcessInfo.processInfo.environment["ANDARIUM_ADB_NET_HOLD_SECONDS"],
             let seconds = Double(text), seconds > 0
         else { return }
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
         let identity = try #require(operations.identity)
         var error: Unmanaged<CFError>?
         let der = try #require(SecKeyCopyExternalRepresentation(identity.privateKey, &error) as Data?)
@@ -542,9 +550,11 @@ struct AdbOverVsockTests {
     /// The key the application made for this boot changes when the guest is
     /// erased. A first launch records its line in the file the run names; a
     /// launch that erased the guest first (ANDARIUM_ERASE=1) must differ.
-    @Test func eraseGuestMakesANewKey() throws {
+    @Test(.timeLimit(.minutes(20))) func eraseGuestMakesANewKey() async throws {
         guard Self.enabled, let path = ProcessInfo.processInfo.environment["ANDARIUM_ADB_KEY_FILE"] else { return }
-        let line = try AppEntry.fromArguments().adbKeyStore.loadOrCreate().publicKeyLine
+        // The key adbd accepts: the one this boot was given, not one an erase
+        // that is still running is about to delete.
+        let line = try #require(try await readyOperations().identity).publicKeyLine
         let file = URL(fileURLWithPath: path)
         if let previous = try? String(contentsOf: file, encoding: .utf8) {
             #expect(previous != line)
@@ -554,8 +564,7 @@ struct AdbOverVsockTests {
 
     @Test(.timeLimit(.minutes(20))) func aSystemApkPulledFromTheImageInstallsAndTheUninstallRestoresIt() async throws {
         guard Self.enabled else { return }
-        let operations = try operations()
-        try await awaitAndroid(operations)
+        let operations = try await readyOperations()
         // The smallest base APKs of system apps that are not privileged.
         let listing = try await operations.shell("pm list packages -s -f").text
         let apps = listing.split(separator: "\n").compactMap { line -> (path: String, package: String)? in

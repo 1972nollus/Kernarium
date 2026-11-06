@@ -141,12 +141,14 @@ published or accepted: `publish-release.py` and the release verifier refuse any
 other (`require_release_build_variant`). A `user` build keeps the stock shell
 privilege boundary: no `su`, no `adb root`, `ro.debuggable=0`, no permissive
 SELinux domain, and the verifier rejects the debug-only payload (`su`,
-`remount`, `procmem`). `userdebug` is the on-demand diagnostics variant: it
-carries `su`, is debuggable and may have the permissive `su` domain, and the
-verifier requires exactly that. Each variant builds in its own output directory
-(on the builder `out-andarium-user` and `out-andarium-userdebug`), so switching
-between them is incremental; `build-aosp.sh` records the variant in its output
-directory and refuses the other one. The variant also decides the keys: every
+`remount`, `procmem`), any application whose manifest sets
+`android:debuggable`, and the in-tree test probes by name. `userdebug` is the
+on-demand diagnostics variant: it carries `su`, is debuggable and may have the
+permissive `su` domain, and the verifier requires exactly that. Each variant
+builds in its own output directory (on the builder `out-andarium-user` and
+`out-andarium-userdebug`), so switching between them is incremental;
+`build-aosp.sh` records the variant in its output directory and refuses the
+other one. The variant also decides the keys: every
 `user` build, a release or a CTS candidate, is signed with the one release key
 set, and a `userdebug` build keeps the AOSP test keys of the build itself and
 is never re-signed
@@ -193,9 +195,40 @@ ExactCalculator, Camelot (PDF viewer) and Seedvault (backup). It has no browser
 app (the WebView stays, so that a user can install one), no app store of its
 own and no install restriction: Package Installer and every install path work.
 It has no Google or microG services. LineageOS Setup Wizard handles the first
-boot of a fresh guest; completing it provisions that guest, so subsequent boots
-go directly to the launcher. The LineageOS updater, Canvas, Aperture, Profiles,
-Recorder, QuickAccessWallet, the charger animation,
+boot of a fresh guest; completing it provisions that guest (both settings 1 and
+the wizard's HOME activity disabled), so subsequent boots go directly to the
+launcher. Until then HOME returns to the wizard. The image has no trade-in
+mode, and so adbd is one process through a first boot. AOSP's DeviceDiagnostics
+asks Android's trade-in mode to start from a boot receiver on a first boot that
+has not been set up, which turns USB debugging on, and the virtual Wi-Fi that
+is already connected stops it at once, which turns it off; the framework
+restarts adbd each time, twice a few seconds apart, some tens of seconds after
+`sys.boot_completed` (about 230 s into the first boot on the iPad), and an
+install or a bug report running over adbd was cut. TradeInModeService has no
+configuration switch and starts only for a package that holds
+`android.permission.ENTER_TRADE_IN_MODE`. DeviceDiagnostics is the one that
+asks at boot (the shell package holds the permission too, for what a person
+types over adb), so the product excludes DeviceDiagnostics
+(`KERNARIUM_REMOVED_PACKAGES`, asserted by `build-aosp.sh`). The verifier
+refuses its directory and any APK of the image partitions other than the
+shell's that requests the permission; a manifest that declares the permission,
+as framework-res.apk does, is not a request. A virtual device has no trade-in.
+A harness that erases
+a guest to measure it provisions the guest over adb after `sys.boot_completed`
+([`tools/android_provision.py`](../../tools/android_provision.py), through
+`tools/boot_android.py --provision`, `tests/perf/run_ios_device_android.py
+--erase` and `tests/perf/android_launch_suite.py`): it sets both settings and
+disables the wizard package for user 0 (the shell may not disable the wizard's
+own components), so HOME resolves to the launcher, and it changes nothing in
+the image. It returns only after adbd has stayed one process for six seconds
+with no trade-in mode pending, which costs those six seconds on this image and
+keeps a harness correct on an older release that still carries DeviceDiagnostics
+(r15 and earlier, where provisioning at `sys.boot_completed` also keeps the
+mode from starting: "Not starting trade-in mode, device is setup"). A measurement
+of the first-boot experience itself keeps the wizard.
+The `android-oobe` test completes the wizard through its pages and checks that
+the helper reaches the same observable state. The LineageOS updater, Canvas,
+Aperture, Profiles, Recorder, QuickAccessWallet, the charger animation,
 fastbootd, AudioFX and the Jelly browser are excluded, as are DeskClock and
 EmergencyInfo; the build and verifier assert both lists. SecureElement, the
 OMAPI service for readers the machine does not have (no eSE, no UICC), is kept
@@ -432,8 +465,14 @@ off starts that service with the switch on, so on macOS, which authorizes
 nothing, any local process that reaches the loopback ADB port can become root
 in a userdebug guest, an accepted property of a diagnostics host. On a `user`
 build the service is installed but built non-debuggable, so authorization off
-still gives an unauthenticated shell and `pm install`, never root. iOS keeps
-authorization and the default-off switch.
+still gives an unauthenticated shell and `pm install`, never root: the bypass
+topic (route `p0011`) turns the switch on only when the build is debuggable, so
+`adb root` is refused at once and the connection stays, where a switch that was
+on would make adbd announce a restart as root that no init trigger of a user
+build performs and leave the client waiting about 45 s. The target-files
+verifier requires the topic's log line in `adb_root`, and the adb debugging
+runner (`tests/integration/android/run_android_adb_debugging.py`) asks a user
+guest for root. iOS keeps authorization and the default-off switch.
 SELinux stays enforcing in both variants; only the host-owned kernel command
 line could change that. Android's wireless-debugging setting
 is the stock one: it trusts a Wi-Fi network by its SSID and publishes its mDNS
@@ -460,6 +499,14 @@ The platform policy gives a HAL domain no binder call to itself, so every stream
 open was denied (the audit rate limit hid how many).
 `overlay/sepolicy/vendor/hal_audio_default.te` allows the call, and the
 target-files verifier requires the rule.
+
+The example Wi-Fi HAL reads the platform's `persist.vendor.debug.wifi.*`
+properties at start-up, which its domain may not do, so every boot logged an
+`hal_wifi_default` to `persist_vendor_debug_wifi_prop` denial. The read is the
+AOSP HAL's own and harmless (an unset property reads as its default), so
+`overlay/sepolicy/vendor/hal_wifi_default.te` allows exactly that read, never a
+set and never a blanket `dontaudit`, and the target-files verifier requires the
+rule in the packaged vendor policy.
 
 The guest kernel has no ashmem, the product sets `sys.use_memfd`, and the
 vendor policy enables `memfd_class`, so the shared buffers an application
@@ -1411,9 +1458,12 @@ does not fit; the system disk packs the recovery image at its own size.
 `tools/verify-lineage-recovery.py` checks the image the assembler installs: a
 kernel-less v4 image whose LZ4 or gzip ramdisk holds only target ELFs aligned
 to 16 KiB or better, a closed dependency set, no loadable modules, the checked
-fstab, and the `eth0` interface policy. `build/assemble-image.sh` owns
-`init_boot` ramdisk composition, system disk assembly, and verification. It
-refuses unsafe paths, partition overflow, module payloads, or replacement of
+fstab, the `eth0` interface policy, and the checked `init.recovery.rc` as the
+ramdisk's `init.recovery.cutf_cvm.rc`, the script that publishes the display
+density before Recovery draws its UI (the inherited Cuttlefish script is kept
+as `init.recovery.cuttlefish.rc`, which it imports). `build/assemble-image.sh`
+owns `init_boot` ramdisk composition, system disk assembly, and verification.
+It refuses unsafe paths, partition overflow, module payloads, or replacement of
 an existing output.
 
 ## Release installation
@@ -1536,7 +1586,8 @@ the macOS script and the Andarium app, applies the same rules before each
 start; [`tools/android_instance.py`](../../tools/android_instance.py) is the
 reference implementation and
 [`support/instance/update-decisions.json`](support/instance/update-decisions.json)
-holds decision vectors that any other implementation must reproduce.
+holds decision vectors and the record's transitions that any other
+implementation must reproduce.
 
 `instance.json` (schema 1) holds: `data_layout`, the data disk layout version of
 the release's template; `release_id`, `build_fingerprint`, `build_incremental`
@@ -1545,10 +1596,11 @@ data disk was last started with; `created_with`, the release that created the
 instance; `last_booted`, the time of the last start (RFC 3339, UTC);
 `last_completed`, the last start that reached `sys.boot_completed` and shut down
 cleanly (`release_id`, `build_incremental`, `at`) or `null`; and
-`pending_update`, the update whose first start has not completed or `null`: the
-release it starts (`to_release_id`), its `snapshot` file, and the identity the
-disk was last started with before it (`from`). The release's identity comes from
-its manifest and layout, never from hashing the disk at launch.
+`pending_update`, the update whose first start has not reached
+`sys.boot_completed` or `null`: the release it starts (`to_release_id`), its
+`snapshot` file, and the identity the disk was last started with before it
+(`from`). The release's identity comes from its manifest and layout, never from
+hashing the disk at launch.
 
 The build number (`ro.build.version.incremental` of a release build) orders
 releases; the rules compare nothing else. Before a start:
@@ -1564,6 +1616,14 @@ releases; the rules compare nothing else. Before a start:
 | an unfinished update, same build | retry with its snapshot kept, restore, or reset |
 | an unfinished update, newer build | restore the pre-update snapshot, then update directly to the newer build |
 
+An update is finished at the moment the host first sees the guest reach
+`sys.boot_completed` (`booted`): `pending_update` becomes `null` and the
+snapshot is deleted, so an unfinished update is one whose start never got that
+far. Android has upgraded its own data by then, and the data is no longer what
+the update started from. A newer release after that updates from the data as it
+is, with a snapshot of its own, and nothing restores the old snapshot; the
+shutdown that follows (`last_completed`) does not change this.
+
 Any older build can update directly to any newer build; intermediate releases
 need not boot. When an earlier update is unfinished, the launcher restores its
 pre-update data before starting the newer release, which takes its own snapshot.
@@ -1571,16 +1631,16 @@ The existing snapshot must be available for that restoration.
 
 The snapshot, `data.img.pre-<release_id>`, is an APFS clone, so it is instant
 and costs only the blocks that later diverge; a volume without clones refuses
-the update. It is kept until the new release has reached `sys.boot_completed`
-and the guest has shut down cleanly (`last_completed`), and the old system disk
-is gone by then, so a restore puts back the data the new release started from;
-it does not boot the previous release. An update whose first start fails offers
-three ways out: start it again keeping the snapshot, restore the snapshot and
-update afresh, or reset the instance (delete it and create it anew), which is
-also the way out of a refused downgrade. A future data layout changes the
-partition table only inside the reserved gap, never moving `userdata`. The
-instance directory is one directory, so a backup of it is a copy of it; the
-app, not the host layer, decides whether to exclude it from backup.
+the update. It lives only while the update is unfinished, and the old system
+disk is gone by then, so a restore puts back the data the new release started
+from; it does not boot the previous release. An update whose first start fails
+offers three ways out: start it again keeping the snapshot, restore the
+snapshot and update afresh, or reset the instance (delete it and create it
+anew), which is also the way out of a refused downgrade. A future data layout
+changes the partition table only inside the reserved gap, never moving
+`userdata`. The instance directory is one directory, so a backup of it is a
+copy of it; the app, not the host layer, decides whether to exclude it from
+backup.
 
 ## Apple consumers and guest bundles
 

@@ -10,6 +10,7 @@ import functools
 import hashlib
 import io
 import re
+import stat
 import struct
 import sys
 import zipfile
@@ -286,7 +287,6 @@ REQUIRED_PREOPT_APKS = {
     "SYSTEM/priv-app/BlockedNumberProvider/BlockedNumberProvider.apk",
     "SYSTEM/priv-app/ContactsProvider/ContactsProvider.apk",
     "SYSTEM/priv-app/CredentialManager/CredentialManager.apk",
-    "SYSTEM/priv-app/DeviceDiagnostics/DeviceDiagnostics.apk",
     "SYSTEM/priv-app/E2eeContactKeysProvider/E2eeContactKeysProvider.apk",
     "SYSTEM/priv-app/IntentResolver/IntentResolver.apk",
     "SYSTEM/priv-app/LiveWallpapersPicker/LiveWallpapersPicker.apk",
@@ -433,6 +433,7 @@ FORBIDDEN_APP_DIRECTORIES = {
     "Contacts",
     "CuttlefishService",
     "DeskClock",
+    "DeviceDiagnostics",
     "Dialer",
     "DynamicSystemInstallationService",
     "EmergencyInfo",
@@ -440,6 +441,10 @@ FORBIDDEN_APP_DIRECTORIES = {
     "F-DroidPrivilegedExtension",
     "Gallery2",
     "Jelly",
+    # In-tree test probes (tests/integration/android/{motion,webgl}): debuggable
+    # applications that `m <probe>` installs into the shared product output.
+    "AndariumMotionProbe",
+    "AndariumWebGLProbe",
     "Profiles",
     # Setup Wizard owns provisioning; the AOSP auto-provisioner would bypass OOBE.
     "Provision",
@@ -568,6 +573,13 @@ AUDIO_HAL_SELF_BINDER = re.compile(
     rb"\(binder \([^)]*\bcall\b[^)]*\)\)\)$",
     re.MULTILINE,
 )
+# The Wi-Fi HAL reads the platform's persist.vendor.debug.wifi.* properties at start-up
+# (overlay/sepolicy/vendor/hal_wifi_default.te).
+WIFI_HAL_DEBUG_PROPERTY_READ = re.compile(
+    rb"^\(allow hal_wifi_default(?:_[0-9]+)? persist_vendor_debug_wifi_prop(?:_[0-9]+)? "
+    rb"\(file \([^)]*\bread\b[^)]*\)\)\)$",
+    re.MULTILINE,
+)
 # adbd reports its host in this property and init holds a userspace wakelock while
 # it is 1 (adbd's p0011 topic, overlay/config/init.vendor.rc,
 # overlay/sepolicy/system_ext/private). The property is system-owned: adbd is a core
@@ -590,6 +602,13 @@ ADBD_LAUNCH_PROPERTIES = ("ro.boot.kernarium.adb_key", "ro.boot.kernarium.adb_tc
 # is what only the guard topic adds, as stock adbd already holds the property names.
 ADBD_DEBUGGING_PROPERTIES = ("persist.sys.usb.config", "persist.adb.tls_server.enable")
 ADBD_REFUSAL_MARKER = b"kernarium: key refused, debugging is off"
+# A guest that boots without ADB authorization is an unattended test host, and the p0011 bypass
+# topic starts LineageOS's adb_root service with rooted debugging on for it. Only a debuggable
+# build can act on that: a user build has no init trigger that restarts adbd as root, so adbd would
+# announce a restart that never comes and `adb root` would hang. The topic leaves the switch off on
+# a build that is not debuggable and logs this line; it is what only the guarded topic adds.
+ADB_ROOT_BINARY = "SYSTEM_EXT/bin/adb_root"
+ADB_ROOT_GUARD_MARKER = b"kernarium: rooted debugging stays off, this build is not debuggable"
 CIL_PLATFORM_VERSION_SUFFIX = re.compile(r"_[0-9]{6}$")
 CIL_PROPERTY_SET_RULE = re.compile(
     rb"^\(allow (\S+) (\S+) \(property_service \(([^)]*)\)\)\)$", re.MULTILINE
@@ -1028,6 +1047,12 @@ PRODUCT_IDENTITY = {
 }
 
 
+# brand/name/device:release/id/incremental:type/tags, the form of ro.build.fingerprint.
+BUILD_FINGERPRINT = re.compile(
+    r"^[^/]+/[^/]+/[^:/]+:[^/]+/(?P<id>[^/]+)/(?P<incremental>[^:/]+):(?P<type>[^/]+)/(?P<tags>.+)$"
+)
+
+
 def check_product_identity(
     system_properties: dict[str, str],
     product_properties: dict[str, str],
@@ -1054,6 +1079,24 @@ def check_product_identity(
     )
     if not fingerprint.startswith(prefix) or f":{build_variant}/" not in fingerprint:
         fail(f"unexpected build fingerprint for a {build_variant} build: {fingerprint!r}")
+    # The vendor partition states its own build identity, which the guest reports as
+    # ro.vendor.build.*. It must be the build's, not the identity of an earlier or smaller build
+    # (a canary build leaves "eng.build" and a userdebug type there) that the partition kept.
+    parts = BUILD_FINGERPRINT.match(fingerprint)
+    if parts is None:
+        fail(f"the build fingerprint has no build identity: {fingerprint!r}")
+    for name, expected in (
+        ("ro.vendor.build.fingerprint", fingerprint),
+        ("ro.vendor.build.type", parts["type"]),
+        ("ro.vendor.build.tags", parts["tags"]),
+        ("ro.vendor.build.id", parts["id"]),
+        ("ro.vendor.build.version.incremental", parts["incremental"]),
+    ):
+        if vendor_properties.get(name) != expected:
+            fail(
+                f"the vendor partition does not carry the build's identity: {name} is "
+                f"{vendor_properties.get(name)!r}, expected {expected!r} from {fingerprint!r}"
+            )
 
 
 def check_debuggable_payload(infos: dict[str, zipfile.ZipInfo], build_variant: str) -> None:
@@ -1522,16 +1565,23 @@ def check_network_time(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInf
 PINNER_OVERLAY = "VENDOR/overlay/KernariumPinnerOverlay.apk"
 PINNER_OVERLAY_RESOURCE = b"config_pinnerHomePinBytes"
 PINNER_OVERLAY_MAX_TARGET_SDK = 28
-# The framework attribute android:targetSdkVersion, and the types a numeric attribute has in a
-# compiled manifest (TYPE_INT_DEC and TYPE_INT_HEX).
+# The framework attributes android:targetSdkVersion and android:debuggable, and the types a
+# compiled manifest gives them: a number (TYPE_INT_DEC and TYPE_INT_HEX) and a literal
+# boolean (TYPE_INT_BOOLEAN, all ones for true).
 ATTR_TARGET_SDK_VERSION = 0x01010270
+ATTR_DEBUGGABLE = 0x0101000F
+ATTR_NAME = 0x01010003
+AXML_STRING_POOL = 0x0001
 AXML_START_ELEMENT = 0x0102
 AXML_RESOURCE_MAP = 0x0180
+AXML_STRING_TYPE = 0x03
+AXML_UTF8_POOL = 0x100
 AXML_INTEGER_TYPES = (0x10, 0x11)
+AXML_BOOLEAN_TYPE = 0x12
 
 
-def manifest_target_sdk(manifest: bytes) -> int | None:
-    """The targetSdkVersion of a compiled manifest, or None when it has none or it is not a number."""
+def manifest_attribute(manifest: bytes, attribute: int) -> tuple[int, int] | None:
+    """The (type, data) of the first element attribute with this framework ID in a compiled manifest, or None."""
     if len(manifest) < 8 or struct.unpack_from("<HH", manifest, 0)[0] != 0x0003:
         raise ValueError("not a compiled XML file")
     resource_ids: list[int] = []
@@ -1548,10 +1598,103 @@ def manifest_target_sdk(manifest: bytes) -> int | None:
             for index in range(count):
                 position = body + attribute_start + index * attribute_size
                 name, _, _, data_type, data = struct.unpack_from("<IIHxBI", manifest, position + 4)
-                if name < len(resource_ids) and resource_ids[name] == ATTR_TARGET_SDK_VERSION:
-                    return data if data_type in AXML_INTEGER_TYPES else None
+                if name < len(resource_ids) and resource_ids[name] == attribute:
+                    return data_type, data
         offset += size
     return None
+
+
+def axml_strings(manifest: bytes, chunk: int) -> list[str]:
+    """The strings of the compiled XML string pool chunk at this offset."""
+    _, header, size, count, _, flags, strings_start, _ = struct.unpack_from("<HHIIIIII", manifest, chunk)
+
+    def length8(position: int) -> tuple[int, int]:
+        # One byte, or two when the high bit of the first is set.
+        (first,) = struct.unpack_from("B", manifest, position)
+        if first & 0x80:
+            (second,) = struct.unpack_from("B", manifest, position + 1)
+            return (first & 0x7F) << 8 | second, position + 2
+        return first, position + 1
+
+    strings = []
+    for index in range(count):
+        position = chunk + strings_start + struct.unpack_from("<I", manifest, chunk + header + 4 * index)[0]
+        if flags & AXML_UTF8_POOL:
+            _, position = length8(position)  # the character count, then the byte count
+            length, position = length8(position)
+            encoding = "utf-8"
+        else:
+            (length,) = struct.unpack_from("<H", manifest, position)
+            position += 2
+            if length & 0x8000:
+                length = (length & 0x7FFF) << 16 | struct.unpack_from("<H", manifest, position)[0]
+                position += 2
+            length *= 2
+            encoding = "utf-16-le"
+        text = manifest[position:position + length]
+        if position + length > chunk + size or len(text) != length:
+            raise ValueError("truncated compiled XML string")
+        strings.append(text.decode(encoding))
+    return strings
+
+
+# The manifest elements that request a permission.
+PERMISSION_REQUEST_ELEMENTS = {"uses-permission", "uses-permission-sdk-23", "uses-permission-sdk-m"}
+
+
+def manifest_requested_permissions(manifest: bytes) -> set[str]:
+    """The permissions a compiled manifest requests with <uses-permission>.
+
+    A manifest that declares a permission (framework-res.apk declares every platform permission)
+    or guards a component with it does not request it, and is not listed."""
+    if len(manifest) < 8 or struct.unpack_from("<HH", manifest, 0)[0] != 0x0003:
+        raise ValueError("not a compiled XML file")
+    strings: list[str] = []
+    resource_ids: list[int] = []
+    requested: set[str] = set()
+    offset = struct.unpack_from("<H", manifest, 2)[0]
+    while offset + 8 <= len(manifest):
+        kind, header, size = struct.unpack_from("<HHI", manifest, offset)
+        if size < 8 or offset + size > len(manifest):
+            raise ValueError("truncated compiled XML chunk")
+        if kind == AXML_STRING_POOL:
+            strings = axml_strings(manifest, offset)
+        elif kind == AXML_RESOURCE_MAP:
+            resource_ids = list(struct.unpack_from(f"<{(size - header) // 4}I", manifest, offset + header))
+        elif kind == AXML_START_ELEMENT:
+            body = offset + header
+            element = struct.unpack_from("<I", manifest, body + 4)[0]
+            if element < len(strings) and strings[element] in PERMISSION_REQUEST_ELEMENTS:
+                attribute_start, attribute_size, count = struct.unpack_from("<HHH", manifest, body + 8)
+                for index in range(count):
+                    position = body + attribute_start + index * attribute_size
+                    name, raw, _, data_type, data = struct.unpack_from("<IIHxBI", manifest, position + 4)
+                    if name < len(resource_ids) and resource_ids[name] == ATTR_NAME and data_type == AXML_STRING_TYPE:
+                        if data >= len(strings):
+                            raise ValueError("a permission name outside the string pool")
+                        requested.add(strings[data])
+        offset += size
+    return requested
+
+
+def manifest_target_sdk(manifest: bytes) -> int | None:
+    """The targetSdkVersion of a compiled manifest, or None when it has none or it is not a number."""
+    value = manifest_attribute(manifest, ATTR_TARGET_SDK_VERSION)
+    if value is None:
+        return None
+    data_type, data = value
+    return data if data_type in AXML_INTEGER_TYPES else None
+
+
+def manifest_debuggable(manifest: bytes) -> bool:
+    """Whether a compiled manifest sets android:debuggable to true; a value that is not a literal boolean is an error."""
+    value = manifest_attribute(manifest, ATTR_DEBUGGABLE)
+    if value is None:
+        return False
+    data_type, data = value
+    if data_type != AXML_BOOLEAN_TYPE:
+        raise ValueError("android:debuggable is not a literal boolean")
+    return data != 0
 
 
 def check_pinner_overlay(
@@ -1580,6 +1723,62 @@ def check_pinner_overlay(
     # Resource names sit in the table's key string pool as UTF-8 or UTF-16.
     if PINNER_OVERLAY_RESOURCE not in table and PINNER_OVERLAY_RESOURCE.decode().encode("utf-16-le") not in table:
         fail(f"{PINNER_OVERLAY} does not set {PINNER_OVERLAY_RESOURCE.decode()}")
+
+
+# The permission that lets an application start Android's trade-in mode (TradeInModeService in
+# system_server). An unprovisioned device enters it a few tens of seconds after boot when an
+# application asks, which turns USB debugging on and restarts adbd twice. A virtual device has no
+# use for it, and the service has no configuration switch, so the product carries no application
+# that asks at boot: AOSP's DeviceDiagnostics, whose boot receiver does, is excluded from the
+# product. The shell package holds the permission too, for the commands a person types over adb;
+# nothing in it starts the mode by itself. Any other APK of the image partitions that requests the
+# permission is refused.
+TRADE_IN_MODE_PERMISSION = "android.permission.ENTER_TRADE_IN_MODE"
+TRADE_IN_MODE_REQUESTERS = {"SYSTEM/priv-app/Shell/Shell.apk"}
+
+
+def check_application_manifests(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo], build_variant: str
+) -> None:
+    """No application opts in to debugging (a user build) or can start trade-in mode (every build).
+
+    A debuggable application is open to `run-as` and to a debugger whatever ro.debuggable says,
+    and release signing would not change that, so a test probe left in the shared product
+    output (or a prebuilt built with --debug-mode) must stop the build here. Only a user build
+    is checked for it: a userdebug build is the diagnostics variant. Trade-in mode can start only
+    for an application that requests ENTER_TRADE_IN_MODE, and the privapp allowlist's entry for
+    a package that is not installed grants nothing, so the request is what the check looks for,
+    in every variant (a userdebug build never enters it, but the product list is one list), in
+    every APK but the shell's (TRADE_IN_MODE_REQUESTERS). The
+    check reads every APK of the image partitions; APKs inside an APEX payload are compressed
+    EROFS and out of its reach.
+    """
+    for entry in sorted(infos):
+        info = infos[entry]
+        path = PurePosixPath(entry)
+        if (
+            info.is_dir()
+            or path.suffix != ".apk"
+            or path.parts[0] not in TARGET_PARTITIONS
+            # A symbolic link holds its target's path; the target is checked as its own entry.
+            or stat.S_ISLNK(info.external_attr >> 16)
+        ):
+            continue
+        try:
+            with zipfile.ZipFile(io.BytesIO(archive.read(info))) as apk:
+                manifest = apk.read("AndroidManifest.xml")
+            debuggable = build_variant == "user" and manifest_debuggable(manifest)
+            requested = manifest_requested_permissions(manifest)
+        except (KeyError, OSError, zipfile.BadZipFile, ValueError, struct.error) as error:
+            fail(f"{entry} has no readable manifest: {error}")
+        if debuggable:
+            fail(f"a user build must not carry a debuggable application: {entry}")
+        if TRADE_IN_MODE_PERMISSION in requested and entry not in TRADE_IN_MODE_REQUESTERS:
+            fail(
+                f"{entry} requests {TRADE_IN_MODE_PERMISSION}: trade-in mode would start on an "
+                "unprovisioned first boot and restart adbd twice; the product must not carry "
+                "an application that can start it (DeviceDiagnostics is excluded)"
+            )
 
 
 # The AOSP example HALs the product keeps, each packaged as the vendor APEX that Cuttlefish
@@ -1756,6 +1955,27 @@ def check_adbd_launch_properties(
             f"{ADBD_APEX} holds an adbd without the key rule of route p0011 "
             f"({ADBD_REFUSAL_MARKER.decode()!r} is not in bin/adbd): it would offer every "
             "key a prompt while debugging is off"
+        )
+
+
+def check_adb_root_service(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The adb_root service must not turn rooted debugging on for a build that is not debuggable.
+
+    Stock adb_root has no such rule and the bypass topic of route p0011 would otherwise enable it on
+    every build whose boot policy skips authorization, which makes `adb root` on a user build print
+    "restarting adbd as root" and wait for a restart that no init trigger performs. The service binary
+    is in the target files as a file, so the guarded topic's log line is in its bytes.
+    """
+    info = infos.get(ADB_ROOT_BINARY)
+    if info is None or info.is_dir():
+        fail(f"{ADB_ROOT_BINARY} is missing: the product needs LineageOS's adb_root service")
+    if ADB_ROOT_GUARD_MARKER not in read_small(archive, info, 64 << 20):
+        fail(
+            f"{ADB_ROOT_BINARY} does not hold the debuggable-build rule of route p0011 "
+            f"({ADB_ROOT_GUARD_MARKER.decode()!r} is not in it): it would enable rooted debugging on "
+            "a user build, whose `adb root` then waits for an adbd restart that never comes"
         )
 
 
@@ -1940,6 +2160,8 @@ def check_kernel_policy(
         fail("vendor policy does not let applications read vendor_security_patch_level_prop")
     if not AUDIO_HAL_SELF_BINDER.search(vendor_policy):
         fail("vendor policy does not let the audio HAL processes call each other's binder")
+    if not WIFI_HAL_DEBUG_PROPERTY_READ.search(vendor_policy):
+        fail("vendor policy does not let the Wi-Fi HAL read persist_vendor_debug_wifi_prop")
     check_clearkey_memfd_policy(vendor_policy)
     check_userdata_grow_policy(vendor_policy)
     check_network_setup_policy(
@@ -3136,10 +3358,12 @@ def main() -> None:
         check_setup_wizard_branding(archive, infos)
         check_network_time(archive, infos)
         check_pinner_overlay(archive, infos)
+        check_application_manifests(archive, infos, build_variant)
         check_thermal_hal(archive, infos)
         check_cas_hal(archive, infos)
         check_wifi_hals(archive, infos)
         check_adbd_launch_properties(archive, infos)
+        check_adb_root_service(archive, infos)
         check_services_jar(archive, infos)
         check_audio_policy(archive, infos)
         check_multilib_properties(archive, infos)

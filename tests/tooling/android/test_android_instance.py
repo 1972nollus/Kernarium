@@ -105,6 +105,41 @@ class DecisionVectors(unittest.TestCase):
         self.assertEqual(seen, set(android_instance.ACTIONS))
 
 
+class TransitionVectors(unittest.TestCase):
+    def test_every_transition_is_reproduced(self) -> None:
+        document = json.loads(VECTORS.read_text(encoding="utf-8"))
+        self.assertTrue(document["transitions"])
+        for case in document["transitions"]:
+            with self.subTest(case["name"]), tempfile.TemporaryDirectory(prefix="android-instance-") as temporary:
+                instance = Path(temporary) / "instance"
+                state = state_for(case["instance"])
+                if state is not None:
+                    android_instance.write_state(instance, state)
+                    (instance / "data.img").write_bytes(b"guest data")
+                if case["snapshot"]:
+                    (instance / "data.img.pre-rel-b").write_bytes(b"snapshot")
+                target = release(**{
+                    "release_id": case["release"]["release_id"],
+                    "build": case["release"]["build_number"],
+                    "sha": case["release"]["system_disk_sha256"],
+                    "layout": case["release"]["data_layout"],
+                })
+                expect = case["expect"]
+                if case["event"] == "boot_completed" and expect == "refused":
+                    with self.assertRaises(android_instance.InstanceError):
+                        android_instance.booted(instance, target)
+                    continue
+                if case["event"] == "boot_completed":
+                    android_instance.booted(instance, target)
+                after = android_instance.read_state(instance)
+                self.assertEqual(
+                    after.pending_update["to_release_id"] if after.pending_update else None,
+                    expect["pending_to_release_id"],
+                )
+                self.assertEqual((instance / "data.img.pre-rel-b").exists(), expect["snapshot"])
+                self.assertEqual((instance / "data.img").read_bytes(), b"guest data")
+
+
 class InstanceFiles(unittest.TestCase):
     def apply(self, instance: Path, target, **flags):
         state = android_instance.read_state(instance)
@@ -227,6 +262,65 @@ class InstanceFiles(unittest.TestCase):
             self.assertEqual(state.pending_update["to_release_id"], "rel-d")
             android_instance.complete(instance, release("rel-d", 10000, "d" * 64))
             self.assertFalse((instance / "data.img.pre-rel-d").exists())
+
+    def test_an_update_that_booted_is_not_rolled_back_by_the_next_release(self) -> None:
+        # The sequence that lost a week of user data: r13 settles, r15 updates
+        # and boots, the host is killed before Android powers off, r15 starts
+        # again, and r16 arrives.
+        r13, r15, r16 = (
+            release("r13", 13, "a" * 64), release("r15", 15, "b" * 64), release("r16", 16, "c" * 64),
+        )
+        with tempfile.TemporaryDirectory(prefix="android-instance-") as temporary:
+            instance = Path(temporary) / "instance"
+            self.assertEqual(self.apply(instance, r13)[0].action, "create")
+            (instance / "data.img").write_bytes(b"data written on r13")
+            android_instance.complete(instance, r13)
+            self.assertEqual(self.apply(instance, r15)[0].action, "update")
+            self.assertTrue((instance / "data.img.pre-r15").exists())
+            # r15 reaches boot_completed: the update is applied.
+            android_instance.booted(instance, r15)
+            self.assertIsNone(android_instance.read_state(instance).pending_update)
+            self.assertFalse((instance / "data.img.pre-r15").exists())
+            (instance / "data.img").write_bytes(b"r15 upgraded data and a week of user data")
+            # The host dies without a clean power-off; the next start is an
+            # ordinary one, not a retry.
+            self.assertEqual(self.apply(instance, r15)[0].action, "boot")
+            (instance / "data.img").write_bytes(b"r15 upgraded data and a month of user data")
+            decision, state = self.apply(instance, r16)
+            self.assertEqual(decision.action, "update")
+            self.assertEqual((instance / "data.img").read_bytes(), b"r15 upgraded data and a month of user data")
+            # r16 takes its own snapshot of the data as it is, and r15's is gone.
+            self.assertEqual(
+                (instance / "data.img.pre-r16").read_bytes(), b"r15 upgraded data and a month of user data"
+            )
+            self.assertFalse((instance / "data.img.pre-r15").exists())
+            self.assertEqual(state.pending_update["from"]["release_id"], "r15")
+
+    def test_an_update_that_never_booted_is_still_restored_by_the_next_release(self) -> None:
+        r13, r15, r16 = (
+            release("r13", 13, "a" * 64), release("r15", 15, "b" * 64), release("r16", 16, "c" * 64),
+        )
+        with tempfile.TemporaryDirectory(prefix="android-instance-") as temporary:
+            instance = Path(temporary) / "instance"
+            self.apply(instance, r13)
+            (instance / "data.img").write_bytes(b"data written on r13")
+            android_instance.complete(instance, r13)
+            self.apply(instance, r15)
+            (instance / "data.img").write_bytes(b"r15 half upgraded data")
+            decision, _ = self.apply(instance, r16)
+            self.assertEqual(decision.action, "update")
+            self.assertEqual((instance / "data.img").read_bytes(), b"data written on r13")
+
+    def test_a_clean_shutdown_after_boot_records_the_completion(self) -> None:
+        r13, r15 = release("r13", 13, "a" * 64), release("r15", 15, "b" * 64)
+        with tempfile.TemporaryDirectory(prefix="android-instance-") as temporary:
+            instance = Path(temporary) / "instance"
+            self.apply(instance, r13)
+            self.apply(instance, r15)
+            android_instance.booted(instance, r15)
+            state = android_instance.complete(instance, r15, now=lambda: NOW)
+            self.assertIsNone(state.pending_update)
+            self.assertEqual(state.last_completed["release_id"], "r15")
 
     def test_a_missing_snapshot_preserves_the_unfinished_updates_data(self) -> None:
         with tempfile.TemporaryDirectory(prefix="android-instance-") as temporary:

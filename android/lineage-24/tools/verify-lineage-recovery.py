@@ -33,6 +33,15 @@ REQUIRED_PATHS = {
     "system/lib64/librecovery_ui.so",
     "system/lib64/librecovery_ui_ext.so",
 }
+# The product overlay's recovery script (overlay/config/init.recovery.rc) replaces
+# Cuttlefish's init.recovery.cutf_cvm.rc, which would put the Cuttlefish script
+# back without a message; the Cuttlefish script is kept as the one it imports.
+RECOVERY_SCRIPT = "init.recovery.cutf_cvm.rc"
+RECOVERY_SCRIPT_IMPORT = "init.recovery.cuttlefish.rc"
+# Recovery draws its UI at the density it reads from ro.sf.lcd_density, and the
+# host's ro.boot.lcd_density is vendor-private, so the script publishes it.
+DENSITY_TRIGGER = "on early-init && property:ro.boot.lcd_density=*"
+DENSITY_COMMAND = "setprop ro.sf.lcd_density ${ro.boot.lcd_density}"
 
 
 # The product's own recovery artwork: the device overlay's recovery/res/images, which the build copies
@@ -199,13 +208,39 @@ def verify_art(entries: dict[str, android_image.NewcEntry], art: dict[str, bytes
         fail(f"recovery ramdisk carries progress animation frames the product does not supply: {foreign}")
 
 
+def check_recovery_script(script: bytes) -> None:
+    """The script imports Cuttlefish's and publishes the host density before the UI starts."""
+    imports: list[str] = []
+    sections: dict[str, list[str]] = {}
+    section = None
+    for raw in script.decode("utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if raw[0].isspace():
+            if section is not None:
+                sections[section].append(line)
+        elif line.startswith("import "):
+            imports.append(line.split(None, 1)[1].lstrip("/"))
+            section = None
+        else:
+            section = line
+            sections.setdefault(section, [])
+    if RECOVERY_SCRIPT_IMPORT not in imports:
+        fail(f"recovery script does not import {RECOVERY_SCRIPT_IMPORT}")
+    if DENSITY_COMMAND not in sections.get(DENSITY_TRIGGER, []):
+        fail(f"recovery script does not run '{DENSITY_COMMAND}' at '{DENSITY_TRIGGER}'")
+
+
 def verify_entries(
-    entries: dict[str, android_image.NewcEntry], expected_fstab: bytes,
+    entries: dict[str, android_image.NewcEntry], expected_fstab: bytes, expected_script: bytes,
     art: dict[str, bytes],
 ) -> int:
-    missing = sorted(REQUIRED_PATHS - entries.keys())
+    missing = sorted((REQUIRED_PATHS | {RECOVERY_SCRIPT, RECOVERY_SCRIPT_IMPORT}) - entries.keys())
     if missing:
         fail(f"recovery ramdisk is missing required paths: {missing}")
+    if entries[RECOVERY_SCRIPT].payload != expected_script:
+        fail(f"recovery {RECOVERY_SCRIPT} differs from the checked device tree")
     verify_art(entries, art)
     for name in ("system/bin/recovery", "system/bin/adbd"):
         entry = entries[name]
@@ -270,6 +305,10 @@ def main() -> None:
         android_root = args.android_root.resolve()
         fstab_path = android_root / "overlay/config/recovery.fstab"
         expected_fstab = regular_file(fstab_path, "checked recovery fstab").read_bytes()
+        expected_script = regular_file(
+            android_root / "overlay/config/init.recovery.rc", "checked recovery script"
+        ).read_bytes()
+        check_recovery_script(expected_script)
         art = product_art(android_root)
         if args.image is not None:
             if args.layout is not None:
@@ -298,7 +337,7 @@ def main() -> None:
             lambda name, mode: True,
             VerificationError,
         )
-        elf_count = verify_entries(entries, expected_fstab, art)
+        elf_count = verify_entries(entries, expected_fstab, expected_script, art)
     except (OSError, UnicodeError, struct.error, VerificationError) as error:
         raise SystemExit(f"LineageOS recovery: {error}") from error
     print(

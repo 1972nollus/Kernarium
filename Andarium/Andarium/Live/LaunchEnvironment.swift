@@ -13,10 +13,10 @@ extension LaunchOverrides {
         case .memoryMiB: "KERNARIUM_GUEST_MEMORY_MIB"
         case .diskGiB: "KERNARIUM_ANDROID_DISK_SIZE_GIB"
         case .retina: "KERNARIUM_RETINA_MODE"
-        case .followWindow: "KERNARIUM_GPU_AUTO_RESIZE"
         case .start: "ANDARIUM_START"
         case .bootMode: "KERNARIUM_ANDROID_BOOT_MODE"
         case .erase: "ANDARIUM_ERASE"
+        case .stats: "ANDARIUM_STATS"
         case .instance: "ANDARIUM_GUEST_INSTANCE"
         }
     }
