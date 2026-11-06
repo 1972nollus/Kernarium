@@ -71,10 +71,14 @@ def build(root: Path, name: str, source: str, extra: list[str] | None = None) ->
 
 def build_with_debug_map(root: Path, name: str) -> Path:
     """A library linked from an object compiled with -g: the linker keeps a
-    debug map whose N_OSO entry names the object file."""
-    source_path = root / f"{name}.c"
+    debug map whose N_OSO entry names the object file. The object sits in a
+    directory that looks like a mounted volume, so that the map names a
+    build-host path of the kind the check refuses elsewhere."""
+    work = root / "Users" / "NAME"
+    work.mkdir(parents=True, exist_ok=True)
+    source_path = work / f"{name}.c"
     source_path.write_text(CLEAN, encoding="utf-8")
-    objects = root / f"{name}.o"
+    objects = work / f"{name}.o"
     compiled = run([
         "xcrun", "--sdk", "iphoneos", "clang", "-target", "arm64-apple-ios27.0",
         "-g", "-c", str(source_path), "-o", str(objects),
@@ -85,9 +89,12 @@ def build_with_debug_map(root: Path, name: str) -> Path:
     linked = run([
         "xcrun", "--sdk", "iphoneos", "clang", "-target", "arm64-apple-ios27.0",
         "-dynamiclib", str(objects), "-o", str(output),
+        f"-Wl,-install_name,@rpath/{output.name}",
     ])
     if linked.returncode != 0:
         raise SystemExit(f"could not link {name}:\n{linked.stdout}")
+    if b"/Users/NAME/" not in output.read_bytes():
+        raise SystemExit(f"the debug map of {name} names no object under a home directory")
     return output
 
 
@@ -218,10 +225,18 @@ def main() -> int:
         stripped = strip_debug_map(mapped)
         homed = build(root, "homed", HOME_PATH)
         # Xcode strips the application's own executable when it archives, so
-        # only an embedded framework's debug map is the check's concern.
+        # only an embedded framework's debug map is the check's concern, and
+        # the object paths in the map of either are not searched for a path:
+        # the map is reported once, as the map.
         check(make_app(root, "app-debug-map", mapped, app_info()), passes=True)
         check(make_app(root, "framework-debug-map", clean, app_info(), framework=mapped),
               passes=False, expect="Runtime.framework/Runtime: carries the linker's debug map")
+        mapped_result = run([sys.executable, "-B", str(options.checker),
+                             str(root / "framework-debug-map" / "Fixture.app")])
+        if "home directory" in mapped_result.stdout:
+            failures.append(
+                "a debug map's object paths were reported as paths:\n"
+                + mapped_result.stdout)
         check(make_app(root, "stripped-debug-map", stripped, app_info(), framework=stripped),
               passes=True, expect="ready for the App Store")
         check(make_app(root, "app-home-path", homed, app_info()),

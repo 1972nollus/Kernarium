@@ -130,27 +130,59 @@ def harness_lines(path: Path) -> list[str]:
     return sorted({match.decode().strip() for match in HARNESS_LINES.findall(code[0])})
 
 
-def debug_stabs(data: bytes, base: int) -> tuple[int, int]:
-    """The debug stabs in a Mach-O's symbol table, and how many of them are
-    N_OSO, each of which names an object file."""
+def symbol_table(data: bytes, base: int) -> tuple[int, int, int, int] | None:
+    """The symbol table of a Mach-O: the offset and count of its struct
+    nlist_64 entries, and the offset and size of its string table."""
     count = struct.unpack_from("<I", data, base + 16)[0]
     position = base + 32
     for _ in range(count):
         command, size = struct.unpack_from("<II", data, position)
         if command == LC_SYMTAB:
-            offset, symbols = struct.unpack_from("<II", data, position + 8)
-            # struct nlist_64 is 16 bytes and n_type is its fifth.
-            kinds = data[base + offset + 4:base + offset + 16 * symbols:16]
-            return (sum(1 for kind in kinds if kind & N_STAB),
-                    kinds.count(N_OSO))
+            offset, symbols, strings, strings_size = struct.unpack_from(
+                "<IIII", data, position + 8)
+            return base + offset, symbols, base + strings, strings_size
         position += size
-    return 0, 0
+    return None
+
+
+def debug_stabs(data: bytes, base: int) -> tuple[int, int]:
+    """The debug stabs in a Mach-O's symbol table, and how many of them are
+    N_OSO, each of which names an object file."""
+    table = symbol_table(data, base)
+    if table is None:
+        return 0, 0
+    offset, symbols, _strings, _size = table
+    # struct nlist_64 is 16 bytes and n_type is its fifth.
+    kinds = data[offset + 4:offset + 16 * symbols:16]
+    return sum(1 for kind in kinds if kind & N_STAB), kinds.count(N_OSO)
+
+
+def without_debug_map(data: bytes, base: int) -> bytes:
+    """The Mach-O with the strings of its debug stabs blanked: the names of
+    the objects, sources and functions the linker recorded. A framework that
+    carries them fails for that, and Xcode strips them from the application's
+    own executable when it archives, so neither is a path the build host left
+    in the code."""
+    table = symbol_table(data, base)
+    if table is None:
+        return data
+    offset, symbols, strings, size = table
+    buffer = bytearray(data)
+    for entry in range(symbols):
+        string, kind = struct.unpack_from("<IB", data, offset + 16 * entry)
+        if kind & N_STAB and 0 < string < size:
+            end = data.find(b"\0", strings + string, strings + size)
+            if end > 0:
+                buffer[strings + string:end] = bytes(end - strings - string)
+    return bytes(buffer)
 
 
 def build_host_traces(path: Path, debug_map: bool = True) -> list[str]:
     """What one Mach-O file keeps of the machine that built it. `debug_map`
     says whether its debug stabs count: they do for a framework, whose binary
-    ships as linked."""
+    ships as linked. The strings of the stabs are never searched for a path:
+    a framework with a debug map fails on the map, and the application's own
+    executable loses it when Xcode archives."""
     code = host_code(path)
     if code is None:
         return []
@@ -161,6 +193,7 @@ def build_host_traces(path: Path, debug_map: bool = True) -> list[str]:
         found.append(
             f"carries the linker's debug map ({stabs} stabs, {objects} N_OSO "
             "object paths); strip -S it after dsymutil")
+    data = without_debug_map(data, base)
     paths = sorted({match.decode() for match in HOME_PATH.findall(data)})
     if paths:
         found.append(
