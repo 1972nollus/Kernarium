@@ -14,7 +14,7 @@ presentation_api	Metal
 renderer_features	core-profile,venus,render-server-thread,direct-vulkan-entrypoint,readback-scanout
 components	libepoxy,virglrenderer,mesa,vulkan-headers,venus-protocol
 source_manifest	dependencies/manifest.tsv
-common_recipe	apple-gpu-vulkan-experiment-v4
+common_recipe	apple-gpu-vulkan-experiment-v5
 kosmickrisp_linkage	dynamic-framework
 vulkan_entrypoint	direct-vkGetInstanceProcAddr
 venus_dynamic_loading	disabled

@@ -229,6 +229,7 @@ find_tool RSYNC rsync
 find_tool PKG_CONFIG pkg-config
 find_tool XCRUN xcrun
 find_tool INSTALL_NAME_TOOL install_name_tool
+find_tool OTOOL otool
 find_tool PLUTIL plutil
 find_tool PYTHON "${UML_MESA_PYTHON:-python3}"
 find_tool NINJA ninja
@@ -446,9 +447,8 @@ mesa_setup()
 }
 
 MESA_BUILD="$BUILDS/Mesa"
-MESA_STAGE="$BUILDS/Mesa-stage"
 MESA_PKG_CONFIG="$BUILDS/empty-mesa-pkgconfig"
-mkdir -p -- "$MESA_STAGE" "$MESA_PKG_CONFIG"
+mkdir -p -- "$MESA_PKG_CONFIG"
 MESA_TOOL_PATH="$(dirname -- "$PYTHON"):$(dirname -- "$MESON"):$(dirname -- "$NINJA"):$APPLE_GPU_TOOL_PATH"
 VENUS_PROTOCOL_GENERATED_SHA256=
 if [ "$SOFTWARE" -eq 0 ]; then
@@ -514,7 +514,7 @@ fi
 if [ "$SOFTWARE" -eq 0 ]; then
 	mesa_setup "$MESA_TOOL_PATH" \
 		"$MESON" setup "$MESA_BUILD" "$SOURCES/Mesa" \
-			--prefix "$MESA_STAGE" --libdir lib --buildtype release \
+			--prefix "$NO_HOST_PREFIX" --libdir lib --buildtype release \
 			-Ddebug=true \
 			--wrap-mode=nodownload --prefer-static \
 			$MESA_MACHINE_ARGS $MESA_PRECOMP_ARGS \
@@ -571,8 +571,14 @@ else
 	MESA_LLVM_ARGS="-Dllvm=enabled -Dshared-llvm=disabled -Ddraw-use-llvm=true"
 fi
 MESA_GL_BUILD="$BUILDS/Mesa-gl"
-MESA_GL_STAGE="$BUILDS/Mesa-gl-stage"
-mkdir -p -- "$MESA_GL_STAGE"
+# Mesa compiles the directories of its driver configuration (DATADIR and
+# SYSCONFDIR, where it looks for drirc) in from its prefix. The libraries are
+# built for the neutral prefix and installed into an image, which is where the
+# frameworks are taken from. libEGL names libgallium by its install name below
+# the neutral prefix, which is replaced with the framework's below.
+MESA_GL_IMAGE="$BUILDS/Mesa-gl-image"
+MESA_GL_STAGE="$MESA_GL_IMAGE$NO_HOST_PREFIX"
+mkdir -p -- "$MESA_GL_IMAGE"
 MESA_GL_TOOL_PATH="$MESA_TOOL_PATH"
 # Mesa's GLSL grammars use two Bison 3 declarations. Apple's toolchain
 # ships Bison 2, so an older generator is driven through a translation
@@ -592,7 +598,7 @@ case $BISON_VERSION in
 esac
 mesa_setup "$MESA_GL_TOOL_PATH" \
 	"$MESON" setup "$MESA_GL_BUILD" "$SOURCES/Mesa" \
-		--prefix "$MESA_GL_STAGE" --libdir lib --buildtype release \
+		--prefix "$NO_HOST_PREFIX" --libdir lib --buildtype release \
 		-Ddebug=true \
 		--wrap-mode=nodownload \
 		$MESA_MACHINE_ARGS $MESA_PRECOMP_ARGS \
@@ -601,18 +607,22 @@ mesa_setup "$MESA_GL_TOOL_PATH" \
 		-Dglx=disabled -Dgles1=disabled -Dgles2=disabled \
 		-Dzstd=disabled $MESA_LLVM_ARGS -Dspirv-tools=disabled
 mesa_run "$MESA_GL_TOOL_PATH" "$MESON" compile -C "$MESA_GL_BUILD" -j "$JOBS"
-mesa_run "$MESA_GL_TOOL_PATH" \
+mesa_run "$MESA_GL_TOOL_PATH" env DESTDIR="$MESA_GL_IMAGE" \
 	"$MESON" install --no-rebuild -C "$MESA_GL_BUILD" > /dev/null
 MESA_EGL_BINARY="$MESA_GL_STAGE/lib/libEGL.1.dylib"
 MESA_GALLIUM_BINARY="$MESA_GL_STAGE/lib/libgallium-$MESA_VERSION.dylib"
 [ -f "$MESA_EGL_BINARY" ] && [ -f "$MESA_GALLIUM_BINARY" ] ||
 	fail "Mesa did not produce the packaged OpenGL libraries"
+# libEGL records libgallium by the install name of the neutral prefix.
+MESA_GALLIUM_INSTALL_NAME="$NO_HOST_PREFIX/lib/libgallium-$MESA_VERSION.dylib"
+"$OTOOL" -L "$MESA_EGL_BINARY" | grep -q -F "$MESA_GALLIUM_INSTALL_NAME" ||
+	fail "libEGL does not name $MESA_GALLIUM_INSTALL_NAME"
 install_framework MesaGallium "$MESA_GALLIUM_BINARY" \
 	org.linux-um-darwin.mesa.Gallium "$MESA_VERSION"
 install_framework MesaEGL "$MESA_EGL_BINARY" \
 	org.linux-um-darwin.mesa.EGL "$MESA_VERSION"
 "$INSTALL_NAME_TOOL" -change \
-	"$MESA_GALLIUM_BINARY" "@rpath/MesaGallium.framework/MesaGallium" \
+	"$MESA_GALLIUM_INSTALL_NAME" "@rpath/MesaGallium.framework/MesaGallium" \
 	"$STAGE/Frameworks/MesaEGL.framework/MesaEGL"
 for headers in EGL GL KHR; do
 	mkdir -p -- "$STAGE/include/$headers"
@@ -653,13 +663,18 @@ if [ "$SOFTWARE" -eq 0 ]; then
 else
 	set -- "$@" -Dvenus=false
 fi
+# The renderer compiles the path of its render server executable in from its
+# prefix. The server runs as a thread of the host here and is never executed,
+# so the path is only the name it is called by: build for the neutral prefix.
 PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$STAGE/lib/pkgconfig" \
 PKG_CONFIG_SYSROOT_DIR= \
 	"$MESON" setup "$BUILDS/virglrenderer" "$SOURCES/virglrenderer" \
-	--prefix "$STAGE" --buildtype release --cross-file "$VIRGL_CROSS" \
+	--prefix "$NO_HOST_PREFIX" --buildtype release --cross-file "$VIRGL_CROSS" \
 	--wrap-mode=nodownload "$@"
 "$MESON" compile -C "$BUILDS/virglrenderer" -j "$JOBS"
-"$MESON" install -C "$BUILDS/virglrenderer"
+VIRGL_IMAGE="$BUILDS/virglrenderer-image"
+DESTDIR="$VIRGL_IMAGE" "$MESON" install -C "$BUILDS/virglrenderer"
+merge_neutral_image "$VIRGL_IMAGE" "$STAGE" "$STAGE"
 install -m 0644 "$SOURCES/virglrenderer/src/virgl_hw.h" \
 	"$STAGE/include/virgl/virgl_hw.h"
 

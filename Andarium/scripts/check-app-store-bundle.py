@@ -21,7 +21,9 @@ application that must:
     checkout and dependency trees; dsymutil has read it into the dSYM by then,
     and strip -S removes it and keeps the UUID). The strings of those stabs
     are not searched for a path. Xcode strips the application's own
-    executable when it archives, and strips nothing it embeds; and
+    executable when it archives, and strips nothing it embeds. A path that a
+    dependency compiles in from its prefix is the dependencies' to avoid
+    (dependencies/README.md, "No build-host paths"); and
   - pass scripts/check-privacy-manifests.py.
 
 The knob scan reads bytes, so it does not see a Swift string of up to 15 bytes
