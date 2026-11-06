@@ -78,14 +78,24 @@ LOCATIONS = (
         r"^android/lineage-24/third_party/[^/]+/soong-[^/]+\.toml$", {"MIT"},
         "the Mesa build files keep Mesa's licence"),
     location(
-        r"^android/lineage-24/(patches|third_party)/", {"Apache-2.0"},
-        "series and metadata of patches to projects in the Android tree are "
-        "Apache-2.0"),
+        r"^android/lineage-24/patches/projects\.tsv$", {"Apache-2.0"},
+        "the route table of the patches to AOSP and LineageOS projects; its "
+        "SHA-256 is recorded in accepted-release.env and in each release "
+        "manifest, so a changed byte re-opens the accepted release"),
     location(
-        r"^android/lineage-24/(build|tools|metadata|support)/",
-        {"Apache-2.0", GPL},
-        "host-side producer tooling is GPL-2.0-or-later; the files here that "
-        "still say Apache-2.0 predate the rule and stay until relabelled"),
+        r"^android/lineage-24/patches/", {"Apache-2.0"},
+        "the series manifests of the patches to AOSP and LineageOS projects; "
+        "regenerate-aosp-patches.py exports them as Apache-2.0"),
+    location(
+        r"^android/lineage-24/third_party/", {"Apache-2.0"},
+        "the pins and series manifests of the Mesa and meson2hermetic "
+        "sources built into the Android tree; pinned_source.py exports the "
+        "series as Apache-2.0"),
+    location(
+        r"^android/lineage-24/(build|tools|metadata|support)/", {GPL},
+        "build-host tooling and recorded metadata written in this project: "
+        "they run on the build host, link nothing from Android and import "
+        "GPL-2.0-or-later modules, so rule 3 applies"),
 )
 DEFAULT_LOCATION = location(
     r"", {GPL}, "everything else is GPL-2.0-or-later")
