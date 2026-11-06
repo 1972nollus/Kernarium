@@ -4420,6 +4420,7 @@ def synthetic_lineage_recovery_ramdisk(
     interface: bytes = b"eth0\0", compression: str = "lz4",
     module: str | None = None, no_memfd: bool = False,
     elf_edit: tuple[str, int, int] | None = None,
+    pixel_format: bytes = b"BGRX_8888",
 ) -> bytes:
     entries = [
         newc_entry(
@@ -4430,7 +4431,8 @@ def synthetic_lineage_recovery_ramdisk(
             0o100644,
             b"ro.product.system.device=andarium\n"
             b"persist.adb.tcp.port=5555\n"
-            + (b"" if no_memfd else b"sys.use_memfd=true\n"),
+            + (b"" if no_memfd else b"sys.use_memfd=true\n")
+            + b"ro.minui.pixel_format=" + pixel_format + b"\n",
             2,
         ),
         newc_entry(
@@ -4524,6 +4526,10 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
             (
                 "properties without sys.use_memfd",
                 synthetic_lineage_recovery_ramdisk(fstab, no_memfd=True),
+            ),
+            (
+                "the Cuttlefish ABGR_8888 pixel format",
+                synthetic_lineage_recovery_ramdisk(fstab, pixel_format=b"ABGR_8888"),
             ),
             (
                 "a changed fstab",

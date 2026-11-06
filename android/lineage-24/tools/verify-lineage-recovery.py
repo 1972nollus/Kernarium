@@ -180,6 +180,11 @@ def verify_entries(
     # (the mainline line) fails every ashmem_create_region caller in recovery.
     if b"sys.use_memfd=true" not in properties:
         fail("recovery properties omit sys.use_memfd, which the ashmem fallback needs")
+    # The display is a Virtio-GPU dumb buffer, always B8G8R8X8 on the wire. Any
+    # other minui format makes DRM declare a byte order nothing converts, and
+    # the screen shows red and blue swapped.
+    if b"ro.minui.pixel_format=BGRX_8888" not in properties:
+        fail("recovery properties omit ro.minui.pixel_format=BGRX_8888, the dumb buffer's byte order")
     interface = entries["system/lib64/librecovery_ui_ext.so"].payload
     if b"eth1" in interface or any(
         token not in interface for token in (b"eth0\0", b"10.0.2.15\0", b"255.255.255.0\0")

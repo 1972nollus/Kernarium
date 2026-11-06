@@ -1330,6 +1330,17 @@ product's properties, so `sys.use_memfd=true` reaches it and its ashmem users
 fall back to memfd on a kernel without `/dev/ashmem`. The verifier requires
 that line.
 
+Recovery draws into a DRM dumb buffer, and the Virtio-GPU driver always creates
+that buffer as `B8G8R8X8` whatever format the framebuffer declares afterwards.
+`TARGET_RECOVERY_PIXEL_FORMAT := BGRX_8888` makes minui declare `XRGB8888`, the
+buffer's own byte order, so every pixel appears exactly as stored. The
+Cuttlefish default `ABGR_8888` declares `RGBA8888` for bytes nothing converts
+and swaps red and blue; the kernel patch that offers the extra scanout formats
+is meant for Android's composer, which scans out blobs that carry their own
+format. The verifier requires `ro.minui.pixel_format=BGRX_8888` in the
+ramdisk's `prop.default`. The correction is guest-side, so the iOS display path
+(the same scanout code) needs none.
+
 The stock LineageOS recovery image measures 15.07 MiB (15,802,368 bytes). Its
 `BOARD_RECOVERYIMAGE_PARTITION_SIZE` of 20 MiB is the image builder's limit, 25%
 headroom rounded up to a 4 MiB multiple, and the build fails on an image that
