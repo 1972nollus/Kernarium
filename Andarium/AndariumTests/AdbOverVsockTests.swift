@@ -439,40 +439,10 @@ struct AdbOverVsockTests {
         let foreign = try Self.ephemeralKey()
         let initial = await operations.usbDebugging()
 
-        func setDebugging(_ on: Bool) async throws {
-            _ = try? await operations.shell(
-                "settings put global adb_enabled \(on ? 1 : 0); settings put global adb_wifi_enabled 0")
-            var read: Bool?
-            for _ in 0..<60 {
-                read = await operations.usbDebugging()
-                if read == on { break }
-                try await Task.sleep(for: .seconds(1))
-            }
-            #expect(read == on)
-            // adbd restarts once when both switches go off.
-            try await Task.sleep(for: .seconds(3))
-        }
-        func promptCount() async throws -> Int {
-            var text = ""
-            for _ in 0..<20 {
-                if let result = try? await operations.shell(
-                    "dumpsys activity activities | grep -c UsbDebuggingActivity")
-                {
-                    text = result.text
-                    break
-                }
-                try await Task.sleep(for: .seconds(1))
-            }
-            return Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) ?? -1
-        }
-        func dismissPrompt() async throws {
-            for _ in 0..<10 {
-                _ = try? await operations.shell("input keyevent KEYCODE_BACK")
-                try await Task.sleep(for: .seconds(1))
-                if try await promptCount() == 0 { return }
-            }
-            Issue.record("the debugging prompt did not go away")
-        }
+        let control = PromptControl(operations: operations)
+        func setDebugging(_ on: Bool) async throws { try await control.setDebugging(on) }
+        func promptCount() async throws -> Int { try await control.promptCount() }
+        func dismissPrompt() async throws { try await control.dismissPrompt() }
 
         // Debugging off: the application's key connects, a foreign key does
         // not even when it offers itself, and no prompt is raised or queued.
@@ -498,6 +468,51 @@ struct AdbOverVsockTests {
         #expect(try await Self.attempt(key: own, offer: false) == .accepted, "own key after the prompt")
 
         try await setDebugging(initial ?? false)
+    }
+
+    /// The "Allow USB debugging" dialog can vanish without ever being
+    /// answered: the process that shows it dies, or the system destroys its
+    /// task before that process has created the activity, as it does while
+    /// the guest is still busy starting up. Nothing then tells the framework,
+    /// so stock Android leaves adbd's prompt pending and every later offer is
+    /// skipped until adbd restarts. An image that raises the prompt again
+    /// shows the dialog for the next offer. This test kills the process that
+    /// shows it (SystemUI) while the dialog is up, so it needs such an image:
+    /// `ANDARIUM_ADB_REARM_TESTS=1`.
+    @Test(.timeLimit(.minutes(25))) func aPromptWhoseDialogDiedIsRaisedAgain() async throws {
+        guard Self.enabled, ProcessInfo.processInfo.environment["ANDARIUM_ADB_REARM_TESTS"] == "1" else { return }
+        let operations = try await readyOperations()
+        let foreign = try Self.ephemeralKey()
+        let initial = await operations.usbDebugging()
+        let control = PromptControl(operations: operations)
+
+        try await control.setDebugging(true)
+        try await Task.sleep(for: .seconds(5))
+        #expect(try await Self.attempt(key: foreign, offer: true) == .unauthorized, "foreign key offered")
+        #expect(try await control.awaitPrompt(seconds: 90), "no prompt for the first offer")
+
+        // The dialog dies with the process that shows it: no onStop, so no answer.
+        _ = try? await operations.shell("am crash com.android.systemui")
+        var gone = false
+        for _ in 0..<60 {
+            if try await control.promptCount() == 0,
+                let pid = try? await operations.shell("pidof com.android.systemui").text,
+                !pid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                gone = true
+                break
+            }
+            try await Task.sleep(for: .seconds(1))
+        }
+        #expect(gone, "the dialog did not go away with SystemUI")
+
+        // A new offer, as the same computer's adb makes it, must raise the dialog again.
+        #expect(try await Self.attempt(key: foreign, offer: true) == .unauthorized, "foreign key offered again")
+        let raised = try await control.awaitPrompt(seconds: 90)
+        #expect(raised, "the next offer raised no dialog: adbd's prompt is still pending for the dead one")
+        print("ADBVSOCK: prompt raised again after its dialog died: \(raised)")
+        try await control.dismissPrompt()
+        try await control.setDebugging(initial ?? false)
     }
 
     /// A real adb on the Mac against the bridge, for as long as the launch
@@ -609,6 +624,59 @@ struct AdbOverVsockTests {
                 try sync.receive(remote) { try sink.write($0) }
             }
         }
+    }
+}
+
+/// The guest's debugging setting and its "Allow USB debugging" prompt, as the
+/// debugging tests drive them.
+fileprivate struct PromptControl {
+    let operations: AdbGuestOperations
+
+    func setDebugging(_ on: Bool) async throws {
+        _ = try? await operations.shell(
+            "settings put global adb_enabled \(on ? 1 : 0); settings put global adb_wifi_enabled 0")
+        var read: Bool?
+        for _ in 0..<60 {
+            read = await operations.usbDebugging()
+            if read == on { break }
+            try await Task.sleep(for: .seconds(1))
+        }
+        #expect(read == on)
+        // adbd restarts once when both switches go off.
+        try await Task.sleep(for: .seconds(3))
+    }
+
+    /// The number of lines naming the dialog's activity in the guest's activity dump.
+    func promptCount() async throws -> Int {
+        var text = ""
+        for _ in 0..<20 {
+            if let result = try? await operations.shell(
+                "dumpsys activity activities | grep -c UsbDebuggingActivity")
+            {
+                text = result.text
+                break
+            }
+            try await Task.sleep(for: .seconds(1))
+        }
+        return Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) ?? -1
+    }
+
+    func dismissPrompt() async throws {
+        for _ in 0..<10 {
+            _ = try? await operations.shell("input keyevent KEYCODE_BACK")
+            try await Task.sleep(for: .seconds(1))
+            if try await promptCount() == 0 { return }
+        }
+        Issue.record("the debugging prompt did not go away")
+    }
+
+    /// Waits for the dialog's activity to exist.
+    func awaitPrompt(seconds: Int) async throws -> Bool {
+        for _ in 0..<seconds {
+            if try await promptCount() > 0 { return true }
+            try await Task.sleep(for: .seconds(1))
+        }
+        return false
     }
 }
 

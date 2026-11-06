@@ -932,7 +932,9 @@ foreign key refused with no prompt and nothing queued while debugging is off,
 and prompting while it is on), and the key after Erase Guest. The tests read the
 key the application made for the boot, again on every attempt until adbd accepts
 it, and never make one: a key made before an `ANDARIUM_ERASE=1` launch's erase
-deletes it would be one the guest was not given.
+deletes it would be one the guest was not given. `AdbOverVsockTests/aPromptWhoseDialogDiedIsRaisedAgain()` kills
+SystemUI while the dialog is up and offers the key again: stock Android leaves adbd's prompt pending, so it
+needs an image that raises the prompt again and runs only with `TEST_RUNNER_ANDARIUM_ADB_REARM_TESTS=1`.
 
 `AdbOverVsockTests/androidReportsExactStorageSizes()` is a standalone storage
 run with `TEST_RUNNER_ANDARIUM_STORAGE_TESTS=1` in addition to the ADB and normal
