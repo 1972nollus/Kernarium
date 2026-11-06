@@ -514,7 +514,7 @@ ANDARIUM_STATS=1                 show the statistics over the session and
 ANDARIUM_GUEST_INSTANCE=<name>   use Library/TestGuests/<name> instead of Library/Guest
 ANDARIUM_ADB_TESTS=1             let AdbOverVsockTests drive the running guest
 ANDARIUM_ADB_KEY_FILE=<path>     where eraseGuestMakesANewKey records the key
-ANDARIUM_ADB_REARM_TESTS=1      also run the test that needs an image raising a dead dialog's prompt again
+ANDARIUM_ADB_REARM_TESTS=1      also run the tests that need an image raising a dead dialog's prompt again
 ANDARIUM_ADB_NET_HOLD_SECONDS=<n> keep the bridge up for a real adb (and write the key
                                  as tmp/adbkey; tmp/adb-net-done ends the hold)
 ```

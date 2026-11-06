@@ -528,6 +528,31 @@ struct AdbOverVsockTests {
         try await control.setDebugging(initial ?? false)
     }
 
+    /// The framework's single look at the dialog, 15 s after it started it, must
+    /// find a dialog that is up and leave it alone: a second dialog for the
+    /// same prompt would stack on the first. The restarts of a missed dialog
+    /// come 15 s apart, so 50 s show whether one was made.
+    @Test(.timeLimit(.minutes(20))) func aPromptWhoseDialogIsUpIsNotRaisedTwice() async throws {
+        guard Self.enabled, ProcessInfo.processInfo.environment["ANDARIUM_ADB_REARM_TESTS"] == "1" else { return }
+        let operations = try await readyOperations()
+        let foreign = try Self.ephemeralKey()
+        let initial = await operations.usbDebugging()
+        let control = PromptControl(operations: operations)
+
+        try await control.setDebugging(true)
+        try await Task.sleep(for: .seconds(5))
+        #expect(try await Self.attempt(key: foreign, offer: true) == .unauthorized, "foreign key offered")
+        #expect(try await control.awaitPrompt(seconds: 90), "no prompt for the offer")
+        let before = try await control.distinctDialogs()
+        #expect(before == 1, "one dialog expected while the prompt is awaited, found \(before)")
+        try await Task.sleep(for: .seconds(50))
+        let after = try await control.distinctDialogs()
+        #expect(after == 1, "the dialog that stayed up was raised again: \(after) dialogs")
+        print("ADBVSOCK: dialogs before and after the look: \(before) \(after)")
+        try await control.dismissPrompt()
+        try await control.setDebugging(initial ?? false)
+    }
+
     /// A real adb on the Mac against the bridge, for as long as the launch
     /// asks (`ANDARIUM_ADB_NET_HOLD_SECONDS`, or until the file named
     /// `adb-net-done` appears in the printed folder). The application's own
@@ -665,6 +690,22 @@ fileprivate struct PromptControl {
         for _ in 0..<20 {
             if let result = try? await operations.shell(
                 "dumpsys activity activities | grep -c UsbDebuggingActivity")
+            {
+                text = result.text
+                break
+            }
+            try await Task.sleep(for: .seconds(1))
+        }
+        return Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) ?? -1
+    }
+
+    /// The number of distinct activity records of the dialog in the guest's
+    /// activity dump: a dialog raised again is a new record.
+    func distinctDialogs() async throws -> Int {
+        var text = ""
+        for _ in 0..<20 {
+            if let result = try? await operations.shell(
+                "dumpsys activity activities | grep -o 'ActivityRecord{[0-9a-f]* u[0-9]* [^ ]*UsbDebuggingActivity' | sort -u | wc -l")
             {
                 text = result.text
                 break

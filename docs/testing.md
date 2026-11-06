@@ -935,7 +935,8 @@ it, and never make one: a key made before an `ANDARIUM_ERASE=1` launch's erase
 deletes it would be one the guest was not given. `AdbOverVsockTests/aPromptWhoseDialogDiedIsRaisedAgain()` kills
 SystemUI while the dialog is up and waits for the dialog to come back without a new offer: stock Android leaves
 adbd's prompt pending, so it needs an image whose framework starts the dialog again and runs only with
-`TEST_RUNNER_ANDARIUM_ADB_REARM_TESTS=1`.
+`TEST_RUNNER_ANDARIUM_ADB_REARM_TESTS=1`. `aPromptWhoseDialogIsUpIsNotRaisedTwice()` holds a dialog
+up for 50 s and requires that the framework's look leaves it alone (one activity record throughout).
 
 `AdbOverVsockTests/androidReportsExactStorageSizes()` is a standalone storage
 run with `TEST_RUNNER_ANDARIUM_STORAGE_TESTS=1` in addition to the ADB and normal
