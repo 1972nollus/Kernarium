@@ -35,6 +35,8 @@ from pathlib import Path
 
 BUNDLE = "com.imxieyi.AndariumPreview"
 COMMAND_SECONDS = 60
+SETTLE_SECONDS = 15
+SETTLED_FRACTION = 0.003
 
 
 @dataclass(frozen=True)
@@ -176,6 +178,50 @@ def slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
 
 
+def differing_pixels(first: Path, second: Path) -> float:
+    """The fraction of pixels that differ between two screenshots (1.0 if unknown)."""
+    try:
+        result = run(["magick", "compare", "-metric", "AE", "-fuzz", "5%", str(first), str(second), "null:"], timeout=30)
+        width, height = png_size(first)
+        return float(result.stderr.split()[0]) / (width * height)
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return 1.0
+
+
+def blank(path: Path) -> bool:
+    """A plain white frame: an app that has not drawn yet."""
+    try:
+        result = run(["magick", str(path), "-format", "%[fx:mean] %[fx:standard_deviation]", "info:"], timeout=30)
+        mean, deviation = (float(value) for value in result.stdout.split())
+        return mean > 0.97 and deviation < 0.02
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+
+
+def settled_screenshot(udid: str, shot_id: str, out: Path) -> tuple[Path | None, bool]:
+    """Screenshot once the screen has stopped changing (a launch animation or a
+    scroll is over): two looks a second apart that differ in under 0.3% of
+    their pixels. After SETTLE_SECONDS the last look is taken as it is."""
+    temporary = out / f".{shot_id}.png"
+    previous = out / f".{shot_id}.previous.png"
+    deadline = time.monotonic() + SETTLE_SECONDS
+    settled = False
+    while True:
+        taken = simctl("io", udid, "screenshot", str(temporary))
+        if taken.returncode != 0 or not temporary.is_file():
+            print(f"  {shot_id}: screenshot failed: {taken.stderr.strip()}", file=sys.stderr)
+            return None, False
+        if previous.is_file() and differing_pixels(previous, temporary) < SETTLED_FRACTION and not blank(temporary):
+            settled = True
+            break
+        if time.monotonic() >= deadline:
+            break
+        temporary.replace(previous)
+        time.sleep(1.0)
+    previous.unlink(missing_ok=True)
+    return temporary, settled
+
+
 def capture(udid: str, name: str, shot: Shot, appearance: str, out: Path, wait: float) -> dict | None:
     simctl("terminate", udid, BUNDLE)
     launched = simctl("launch", udid, BUNDLE, *shot.launch_arguments())
@@ -183,11 +229,11 @@ def capture(udid: str, name: str, shot: Shot, appearance: str, out: Path, wait: 
         print(f"  {shot.id}: launch failed: {launched.stderr.strip()}", file=sys.stderr)
         return None
     time.sleep(max(wait, shot.wait))
-    temporary = out / f".{shot.id}.png"
-    taken = simctl("io", udid, "screenshot", str(temporary))
-    if taken.returncode != 0 or not temporary.is_file():
-        print(f"  {shot.id}: screenshot failed: {taken.stderr.strip()}", file=sys.stderr)
+    temporary, settled = settled_screenshot(udid, shot.id, out)
+    if temporary is None:
         return None
+    if not settled:
+        print(f"  {shot.id}: the screen kept changing; kept the last look", file=sys.stderr)
     width, height = png_size(temporary)
     orientation = "landscape" if width > height else "portrait"
     idiom = "iPad" if "iPad" in name else "iPhone"
@@ -204,6 +250,7 @@ def capture(udid: str, name: str, shot: Shot, appearance: str, out: Path, wait: 
         "screen": shot.screen,
         "launch_arguments": " ".join(shot.launch_arguments()),
         "pixels": [width, height],
+        "settled": settled,
         "description": shot.description,
     }
 
