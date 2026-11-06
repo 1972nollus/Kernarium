@@ -169,6 +169,29 @@ def adb(arguments: list[str]) -> int:
     return 0
 
 
+def fresh_guest() -> bool:
+    """FAKE_FRESH_GUEST: an erased guest, in Setup Wizard until provisioned."""
+    return os.environ.get("FAKE_FRESH_GUEST") == "1"
+
+
+def wizard_disabled() -> bool:
+    # FAKE_PROVISION=ignored: a guest that takes no change from the helper.
+    return (STATE / "wizard-disabled").exists() \
+        and os.environ.get("FAKE_PROVISION") != "ignored"
+
+
+def settings(words: list[str]) -> None:
+    """`settings get|put <namespace> <name> [value]`, 0 until put on a fresh guest."""
+    key = STATE / ("setting-" + "-".join(words[2:4]))
+    if words[1] == "put":
+        if os.environ.get("FAKE_PROVISION") != "ignored":
+            key.write_text(words[4])
+    elif key.exists():
+        print(key.read_text())
+    else:
+        print("0" if fresh_guest() else "1")
+
+
 def shell(text: str) -> int:
     if text == "getprop sys.boot_completed":
         polls = STATE / "boot-polls"
@@ -177,6 +200,17 @@ def shell(text: str) -> int:
         print("1" if count > 2 else "0")
     elif text == "echo ready":
         print("ready")
+    elif text == "pidof adbd":
+        print("500")
+    elif text.startswith("settings "):
+        settings(text.split())
+    elif text.startswith("pm disable-user --user 0 "):
+        (STATE / "wizard-disabled").write_text(text)
+    elif text.startswith("cmd package resolve-activity --brief"):
+        print("priority=0 preferredOrder=0 match=0x108000 specificIndex=-1")
+        print("org.lineageos.setupwizard/.SetupWizardActivity"
+              if fresh_guest() and not wizard_disabled()
+              else "com.android.launcher3/.uioverrides.QuickstepLauncher")
     elif text in ("reboot -p", "svc power shutdown"):
         (STATE / "poweroff").write_text(text)
     elif text.startswith("sh /data/local/tmp/"):

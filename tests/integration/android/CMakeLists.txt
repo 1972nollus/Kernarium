@@ -36,3 +36,22 @@ if(UML_ANDROID_ADB_DEBUGGING_RELEASE AND TARGET uml-darwin-android17)
         PROCESSORS 4
         RESOURCE_GROUPS cpus:4)
 endif()
+
+# A fresh guest starts in Setup Wizard; the runner completes the wizard through
+# its pages and checks that the harness helper (boot_android.py --provision)
+# reaches the same end state. It boots Android twice with the macOS launcher, so
+# it is opt-in: name the release under test.
+set(UML_ANDROID_OOBE_RELEASE "" CACHE PATH
+    "Installed Android release directory that the android-oobe test boots")
+if(UML_ANDROID_OOBE_RELEASE AND TARGET uml-darwin-android17)
+    uml_add_integration_test(
+        NAME android-oobe
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/run_android_oobe.py
+            --release ${UML_ANDROID_OOBE_RELEASE}
+            --emulator $<TARGET_FILE:uml-darwin-android17>
+        LABELS guest;boot;android
+        TIMEOUT 3600
+        PROCESSORS 4
+        RESOURCE_GROUPS cpus:4)
+endif()

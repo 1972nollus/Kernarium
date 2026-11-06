@@ -4,9 +4,11 @@
 An instance is a directory holding the guest's writable disk, `data.img`, and
 `instance.json`, which says which release the disk was last started with. A
 launcher decides before every start whether the release it carries may run on
-that disk (`decide`) and applies the decision (`apply`); after the guest has
-reached `sys.boot_completed` and shut down cleanly it calls `complete`. The
-rules are those of android/lineage-24/README.md#guest-instance-storage, and
+that disk (`decide`) and applies the decision (`apply`); the moment it sees the
+guest reach `sys.boot_completed` it calls `booted`, which counts a pending
+update as applied, and after the guest has shut down cleanly it calls
+`complete`. The rules are those of
+android/lineage-24/README.md#guest-instance-storage, and
 android/lineage-24/support/instance/update-decisions.json holds vectors that
 every implementation of them (this one, the Andarium app) must reproduce.
 """
@@ -138,8 +140,8 @@ class State:
     last_booted: str
     # The last start that reached boot_completed and shut down cleanly.
     last_completed: dict[str, str] | None = None
-    # An update whose first boot has not completed: the identity the data
-    # disk was last started with before it, and the snapshot taken then.
+    # An update whose first boot has not reached boot_completed: the identity
+    # the data disk was last started with before it, and the snapshot taken then.
     pending_update: dict[str, Any] | None = None
 
     @property
@@ -292,8 +294,8 @@ def decide(
             )
         return Decision(
             "refuse_pending",
-            f"the start of {pending['to_release_id']} never reached boot_completed "
-            "and shut down cleanly: retry it, restore its snapshot, or reset",
+            f"the start of {pending['to_release_id']} never reached boot_completed: "
+            "retry it, restore its snapshot, or reset",
         )
     if flags.retry or flags.restore_snapshot:
         return Decision("refuse_conflict", "no update is pending")
@@ -467,14 +469,35 @@ def apply(
     return updated
 
 
+def booted(instance: Path, release: Release) -> State:
+    """Record that a start of `release` reached boot_completed.
+
+    Call it at the moment the host first sees the guest boot. A pending update
+    counts as applied from then on: it ends, its snapshot is deleted, and a
+    newer release updates from the data as it is, with a snapshot of its own.
+    Restoring the snapshot is for an update that never booted. An instance with
+    no pending update is left as it is."""
+    state = read_state(instance)
+    if state is None or state.release_id != release.release_id:
+        raise InstanceError("the instance was not started with this release")
+    if state.pending_update is None:
+        return state
+    snapshot = state.pending_update["snapshot"]
+    updated = State(**{**state.__dict__, "pending_update": None})
+    write_state(instance, updated)
+    (instance / snapshot).unlink(missing_ok=True)
+    return updated
+
+
 def complete(
     instance: Path,
     release: Release,
     *,
     now: Callable[[], datetime.datetime] | None = None,
 ) -> State:
-    """Record that `release` reached boot_completed and shut down cleanly. A
-    pending update is over: its snapshot is deleted."""
+    """Record that `release` reached boot_completed and shut down cleanly
+    (`last_completed`). A pending update that `booted` did not end is over: its
+    snapshot is deleted."""
     state = read_state(instance)
     if state is None or state.release_id != release.release_id:
         raise InstanceError("the instance was not started with this release")

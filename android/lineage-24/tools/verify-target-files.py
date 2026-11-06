@@ -10,6 +10,7 @@ import functools
 import hashlib
 import io
 import re
+import stat
 import struct
 import sys
 import zipfile
@@ -286,7 +287,6 @@ REQUIRED_PREOPT_APKS = {
     "SYSTEM/priv-app/BlockedNumberProvider/BlockedNumberProvider.apk",
     "SYSTEM/priv-app/ContactsProvider/ContactsProvider.apk",
     "SYSTEM/priv-app/CredentialManager/CredentialManager.apk",
-    "SYSTEM/priv-app/DeviceDiagnostics/DeviceDiagnostics.apk",
     "SYSTEM/priv-app/E2eeContactKeysProvider/E2eeContactKeysProvider.apk",
     "SYSTEM/priv-app/IntentResolver/IntentResolver.apk",
     "SYSTEM/priv-app/LiveWallpapersPicker/LiveWallpapersPicker.apk",
@@ -433,6 +433,7 @@ FORBIDDEN_APP_DIRECTORIES = {
     "Contacts",
     "CuttlefishService",
     "DeskClock",
+    "DeviceDiagnostics",
     "Dialer",
     "DynamicSystemInstallationService",
     "EmergencyInfo",
@@ -440,6 +441,10 @@ FORBIDDEN_APP_DIRECTORIES = {
     "F-DroidPrivilegedExtension",
     "Gallery2",
     "Jelly",
+    # In-tree test probes (tests/integration/android/{motion,webgl}): debuggable
+    # applications that `m <probe>` installs into the shared product output.
+    "AndariumMotionProbe",
+    "AndariumWebGLProbe",
     "Profiles",
     # Setup Wizard owns provisioning; the AOSP auto-provisioner would bypass OOBE.
     "Provision",
@@ -568,6 +573,13 @@ AUDIO_HAL_SELF_BINDER = re.compile(
     rb"\(binder \([^)]*\bcall\b[^)]*\)\)\)$",
     re.MULTILINE,
 )
+# The Wi-Fi HAL reads the platform's persist.vendor.debug.wifi.* properties at start-up
+# (overlay/sepolicy/vendor/hal_wifi_default.te).
+WIFI_HAL_DEBUG_PROPERTY_READ = re.compile(
+    rb"^\(allow hal_wifi_default(?:_[0-9]+)? persist_vendor_debug_wifi_prop(?:_[0-9]+)? "
+    rb"\(file \([^)]*\bread\b[^)]*\)\)\)$",
+    re.MULTILINE,
+)
 # adbd reports its host in this property and init holds a userspace wakelock while
 # it is 1 (adbd's p0011 topic, overlay/config/init.vendor.rc,
 # overlay/sepolicy/system_ext/private). The property is system-owned: adbd is a core
@@ -590,6 +602,13 @@ ADBD_LAUNCH_PROPERTIES = ("ro.boot.kernarium.adb_key", "ro.boot.kernarium.adb_tc
 # is what only the guard topic adds, as stock adbd already holds the property names.
 ADBD_DEBUGGING_PROPERTIES = ("persist.sys.usb.config", "persist.adb.tls_server.enable")
 ADBD_REFUSAL_MARKER = b"kernarium: key refused, debugging is off"
+# A guest that boots without ADB authorization is an unattended test host, and the p0011 bypass
+# topic starts LineageOS's adb_root service with rooted debugging on for it. Only a debuggable
+# build can act on that: a user build has no init trigger that restarts adbd as root, so adbd would
+# announce a restart that never comes and `adb root` would hang. The topic leaves the switch off on
+# a build that is not debuggable and logs this line; it is what only the guarded topic adds.
+ADB_ROOT_BINARY = "SYSTEM_EXT/bin/adb_root"
+ADB_ROOT_GUARD_MARKER = b"kernarium: rooted debugging stays off, this build is not debuggable"
 CIL_PLATFORM_VERSION_SUFFIX = re.compile(r"_[0-9]{6}$")
 CIL_PROPERTY_SET_RULE = re.compile(
     rb"^\(allow (\S+) (\S+) \(property_service \(([^)]*)\)\)\)$", re.MULTILINE
@@ -1028,6 +1047,12 @@ PRODUCT_IDENTITY = {
 }
 
 
+# brand/name/device:release/id/incremental:type/tags, the form of ro.build.fingerprint.
+BUILD_FINGERPRINT = re.compile(
+    r"^[^/]+/[^/]+/[^:/]+:[^/]+/(?P<id>[^/]+)/(?P<incremental>[^:/]+):(?P<type>[^/]+)/(?P<tags>.+)$"
+)
+
+
 def check_product_identity(
     system_properties: dict[str, str],
     product_properties: dict[str, str],
@@ -1054,6 +1079,24 @@ def check_product_identity(
     )
     if not fingerprint.startswith(prefix) or f":{build_variant}/" not in fingerprint:
         fail(f"unexpected build fingerprint for a {build_variant} build: {fingerprint!r}")
+    # The vendor partition states its own build identity, which the guest reports as
+    # ro.vendor.build.*. It must be the build's, not the identity of an earlier or smaller build
+    # (a canary build leaves "eng.build" and a userdebug type there) that the partition kept.
+    parts = BUILD_FINGERPRINT.match(fingerprint)
+    if parts is None:
+        fail(f"the build fingerprint has no build identity: {fingerprint!r}")
+    for name, expected in (
+        ("ro.vendor.build.fingerprint", fingerprint),
+        ("ro.vendor.build.type", parts["type"]),
+        ("ro.vendor.build.tags", parts["tags"]),
+        ("ro.vendor.build.id", parts["id"]),
+        ("ro.vendor.build.version.incremental", parts["incremental"]),
+    ):
+        if vendor_properties.get(name) != expected:
+            fail(
+                f"the vendor partition does not carry the build's identity: {name} is "
+                f"{vendor_properties.get(name)!r}, expected {expected!r} from {fingerprint!r}"
+            )
 
 
 def check_debuggable_payload(infos: dict[str, zipfile.ZipInfo], build_variant: str) -> None:
@@ -1231,6 +1274,127 @@ def check_discrete_ops(
         )
 
 
+# LineageOS's anonymous statistics uploader posts the device name, build, country, carrier and a
+# hash of the Android ID to stats.lineageos.org once its setting is on, and the Setup Wizard asks
+# for that setting. The product removes both: the two applications carry no statistics
+# components, no endpoint and no switch for the setting, so nothing can post whatever the setting
+# says. Names are searched in the compiled manifest, resource table, layouts and every dex, as
+# UTF-8 and as UTF-16 (the two string-pool encodings).
+STATISTICS_APKS = (
+    "SYSTEM_EXT/priv-app/LineageParts/LineageParts.apk",
+    "SYSTEM_EXT/priv-app/LineageSetupWizard/LineageSetupWizard.apk",
+)
+STATISTICS_MARKERS = (
+    b"lineagestats",
+    b"stats.lineageos.org",
+    b"lineageos.org",
+    b"stats_collection",
+    b"send_metrics",
+    b"services_metrics",
+    b"anonymous_statistics",
+    b"StatsUploadJobService",
+    b"ReportingService",
+)
+STATISTICS_APK_LIMIT = 64 << 20
+
+
+def check_no_statistics_uploader(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """No application can post statistics to LineageOS, whatever the setting says."""
+    for entry in STATISTICS_APKS:
+        info = infos.get(entry)
+        if info is None:
+            fail(f"{entry} is missing")
+        try:
+            with zipfile.ZipFile(io.BytesIO(read_small(archive, info, STATISTICS_APK_LIMIT))) as apk:
+                for name in apk.namelist():
+                    if not (
+                        name in ("AndroidManifest.xml", "resources.arsc")
+                        or (name.startswith("classes") and name.endswith(".dex"))
+                        or (name.startswith("res/") and name.endswith(".xml"))
+                    ):
+                        continue
+                    payload = apk.read(name)
+                    for marker in STATISTICS_MARKERS:
+                        if marker in payload or marker.decode().encode("utf-16-le") in payload:
+                            fail(
+                                f"{entry} still carries LineageOS's statistics uploader: "
+                                f"{name} contains {marker.decode()}"
+                            )
+        except (OSError, zipfile.BadZipFile) as error:
+            fail(f"{entry} is not a readable application archive: {error}")
+
+
+# The Setup Wizard names the system Andarium. Its strings come from a runtime resource overlay that
+# the product's overlay directory contributes to Soong's one overlay for the application; the
+# resource table must hold the product's name and recovery strings and none of LineageOS's. The
+# table is searched as UTF-8 and as UTF-16, the two string-pool encodings.
+SETUP_WIZARD_OVERLAY = (
+    "PRODUCT/overlay/LineageSetupWizard__lineage_andarium__auto_generated_rro_product.apk"
+)
+SETUP_WIZARD_NAMES = (
+    b"Andarium features",
+    b"Update Andarium Recovery",
+    b"Updates Andarium Recovery on first boot subsequent to every update.",
+)
+
+
+# The Setup Wizard's two logos are the product's: the overlay replaces the vector drawable of the
+# Finish screen and the services page header, and the Lottie animation of the Welcome screen. The
+# animation is a raw file, which the overlay carries unchanged; the compiled vector keeps its path
+# data as strings, and a vector that holds every path of the tracked one is that vector.
+SETUP_WIZARD_ART = (
+    Path(__file__).resolve().parents[1]
+    / "overlay/overlay/packages/apps/SetupWizard/app/src/main/res"
+)
+SETUP_WIZARD_WELCOME = "res/raw/lottie_welcome.json"
+
+
+def check_setup_wizard_art(overlay: zipfile.ZipFile) -> None:
+    paths = re.findall(
+        r'android:pathData="([^"]+)"', (SETUP_WIZARD_ART / "drawable/logo.xml").read_text(encoding="utf-8")
+    )
+    if len(paths) < 2:
+        fail(f"{SETUP_WIZARD_ART}/drawable/logo.xml has fewer than two paths: the tracked logo is not the product's")
+    logos = [name for name in overlay.namelist() if re.fullmatch(r"res/drawable[^/]*/logo\.xml", name)]
+    if not any(
+        all(path.encode() in table or path.encode("utf-16-le") in table for path in paths)
+        for table in (overlay.read(name) for name in logos)
+    ):
+        fail(f"{SETUP_WIZARD_OVERLAY} has no res/drawable/logo.xml that holds the product's logo")
+    try:
+        welcome = overlay.read(SETUP_WIZARD_WELCOME)
+    except KeyError:
+        fail(f"{SETUP_WIZARD_OVERLAY} has no {SETUP_WIZARD_WELCOME}")
+    if welcome != (SETUP_WIZARD_ART / "raw/lottie_welcome.json").read_bytes():
+        fail(f"{SETUP_WIZARD_OVERLAY}'s {SETUP_WIZARD_WELCOME} is not the product's animation")
+
+
+def check_setup_wizard_branding(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The Setup Wizard's strings say Andarium, in the default locale, and carry no LineageOS name."""
+    info = infos.get(SETUP_WIZARD_OVERLAY)
+    if info is None:
+        fail(f"{SETUP_WIZARD_OVERLAY} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, 16 << 20))) as overlay:
+            table = overlay.read("resources.arsc")
+            check_setup_wizard_art(overlay)
+    except (KeyError, OSError, zipfile.BadZipFile) as error:
+        fail(f"{SETUP_WIZARD_OVERLAY} has no readable resource table: {error}")
+
+    def holds(text: bytes) -> bool:
+        return text in table or text.decode().encode("utf-16-le") in table
+
+    for text in SETUP_WIZARD_NAMES:
+        if not holds(text):
+            fail(f"{SETUP_WIZARD_OVERLAY} does not set the string {text.decode()!r}")
+    if holds(b"Lineage"):
+        fail(f"{SETUP_WIZARD_OVERLAY} still names LineageOS or Lineage")
+
+
 # The framework's runtime resource overlay holds the product's replacement for LineageOS's
 # default wallpaper. Its two tablet variants are what every display of 600dp and more draws, and
 # SystemUI sizes the wallpaper surface from the bitmap, so a variant of the default 1920 pixels
@@ -1273,6 +1437,126 @@ def check_default_wallpaper(
         fail(f"{FRAMEWORK_OVERLAY} is not a readable archive: {error}")
 
 
+# The guest's clock is the host's: the runtime hands the guest the host's wall clock at boot and at
+# resume, so the platform gets no network time. NetworkTimeUpdateService polls NTP whenever a default
+# network exists, whatever the time detector's origin priorities say, and NtpTrustedTime takes its
+# servers from config_ntpServers. The one value that leaves it without a server is a list whose
+# entries are not ntp:// URIs: the client rejects the list and refreshes nothing before any lookup,
+# whereas an empty list makes NtpConfig throw in system_server. The origin priorities then leave
+# the network out as well. An empty priority list means the platform default, which holds the
+# network, and a list of telephony alone, on a device without telephony, would make the platform
+# drop "Set time automatically"; "external" keeps automatic detection supported.
+NETWORK_TIME_SERVERS = "config_ntpServers"
+NETWORK_TIME_ORIGINS = "config_autoTimeSourcesPriority"
+
+
+def resource_string_pool(table: bytes, offset: int) -> list[str]:
+    """The strings of the ResStringPool chunk at offset."""
+    count, _styles, flags, strings_start = struct.unpack_from("<IIII", table, offset + 8)
+    offsets = struct.unpack_from(f"<{count}I", table, offset + 28)
+    strings = []
+    for start in offsets:
+        position = offset + strings_start + start
+        if flags & 0x100:
+            # UTF-8: the length in characters, then the length in bytes, each one or two bytes.
+            for _ in range(2):
+                length = table[position]
+                position += 1
+                if length & 0x80:
+                    length = ((length & 0x7F) << 8) | table[position]
+                    position += 1
+            strings.append(table[position:position + length].decode("utf-8", "replace"))
+        else:
+            length = struct.unpack_from("<H", table, position)[0]
+            position += 2
+            if length & 0x8000:
+                length = ((length & 0x7FFF) << 16) | struct.unpack_from("<H", table, position)[0]
+                position += 2
+            strings.append(table[position:position + 2 * length].decode("utf-16-le", "replace"))
+    return strings
+
+
+def resource_arrays(table: bytes) -> dict[str, list[list[str]]]:
+    """Every array resource of a compiled resource table, by name: one list of its items'
+    strings for each definition (an item that is not a string reads as "<type:data>")."""
+    arrays: dict[str, list[list[str]]] = {}
+    position = struct.unpack_from("<H", table, 2)[0]
+    chunk, _, size = struct.unpack_from("<HHI", table, position)
+    if chunk != 0x0001:
+        raise ValueError("the table does not start with a string pool")
+    values = resource_string_pool(table, position)
+    position += size
+    while position + 8 <= len(table):
+        chunk, header_size, size = struct.unpack_from("<HHI", table, position)
+        if size < 8:
+            break
+        if chunk == 0x0200:
+            type_pool, _, key_pool = struct.unpack_from("<III", table, position + 268)
+            types = resource_string_pool(table, position + type_pool)
+            keys = resource_string_pool(table, position + key_pool)
+            inner, end = position + header_size, position + size
+            while inner + 8 <= end:
+                inner_chunk, inner_header, inner_size = struct.unpack_from("<HHI", table, inner)
+                if inner_size < 8:
+                    break
+                if inner_chunk == 0x0201 and types[table[inner + 8] - 1] == "array":
+                    count, entries_start = struct.unpack_from("<II", table, inner + 12)
+                    kind = table[inner + 9]
+                    if kind & 0x01:  # sparse: (index, offset / 4) pairs of 16 bits
+                        offsets = [4 * pair[1] for pair in struct.iter_unpack("<HH", table[inner + inner_header:inner + inner_header + 4 * count])]
+                    elif kind & 0x02:  # 16-bit offsets in units of 4 bytes
+                        offsets = [0xFFFFFFFF if value == 0xFFFF else 4 * value
+                                   for value in struct.unpack_from(f"<{count}H", table, inner + inner_header)]
+                    else:
+                        offsets = struct.unpack_from(f"<{count}I", table, inner + inner_header)
+                    for entry_offset in offsets:
+                        if entry_offset == 0xFFFFFFFF:
+                            continue
+                        entry = inner + entries_start + entry_offset
+                        _, flags, key = struct.unpack_from("<HHI", table, entry)
+                        if not flags & 1:
+                            continue
+                        item_count = struct.unpack_from("<I", table, entry + 12)[0]
+                        items = []
+                        for index in range(item_count):
+                            _, _, data_type, data = struct.unpack_from(
+                                "<HBBI", table, entry + 16 + 12 * index + 4
+                            )
+                            items.append(values[data] if data_type == 3 else f"<{data_type}:{data}>")
+                        arrays.setdefault(keys[key], []).append(items)
+                inner += inner_size
+        position += size
+    return arrays
+
+
+def check_network_time(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    """The platform queries no NTP server and takes no time from the network."""
+    info = infos.get(FRAMEWORK_OVERLAY)
+    if info is None:
+        fail(f"{FRAMEWORK_OVERLAY} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, FRAMEWORK_OVERLAY_LIMIT))) as overlay:
+            arrays = resource_arrays(overlay.read("resources.arsc"))
+    except (KeyError, OSError, ValueError, struct.error, IndexError, zipfile.BadZipFile) as error:
+        fail(f"{FRAMEWORK_OVERLAY} has no readable resource table: {error}")
+    for name in (NETWORK_TIME_SERVERS, NETWORK_TIME_ORIGINS):
+        if name not in arrays:
+            fail(f"{FRAMEWORK_OVERLAY} does not set {name}: the platform would query time.android.com")
+    for items in arrays[NETWORK_TIME_SERVERS]:
+        if not items:
+            fail(f"{NETWORK_TIME_SERVERS} is empty in {FRAMEWORK_OVERLAY}: NtpConfig throws on an empty list in system_server")
+        for item in items:
+            if re.match(r"(?i)ntp:", item):
+                fail(f"{NETWORK_TIME_SERVERS} names the NTP server {item} in {FRAMEWORK_OVERLAY}: no NTP query may be left")
+    for items in arrays[NETWORK_TIME_ORIGINS]:
+        if not items:
+            fail(f"{NETWORK_TIME_ORIGINS} is empty in {FRAMEWORK_OVERLAY}: the platform default holds the network")
+        if "network" in items:
+            fail(f"{NETWORK_TIME_ORIGINS} lists the network in {FRAMEWORK_OVERLAY}: network time is not a time source")
+        if "external" not in items:
+            fail(f"{NETWORK_TIME_ORIGINS} in {FRAMEWORK_OVERLAY} lacks external: without it a device without telephony loses \"Set time automatically\"")
+
+
 # PinnerService's pin sizes are framework resources that the platform does not declare
 # overlayable. A runtime resource overlay may replace a resource its target has not declared
 # overlayable only when the overlay targets SDK 28 or lower; from Android 10 on the target's
@@ -1281,16 +1565,23 @@ def check_default_wallpaper(
 PINNER_OVERLAY = "VENDOR/overlay/KernariumPinnerOverlay.apk"
 PINNER_OVERLAY_RESOURCE = b"config_pinnerHomePinBytes"
 PINNER_OVERLAY_MAX_TARGET_SDK = 28
-# The framework attribute android:targetSdkVersion, and the types a numeric attribute has in a
-# compiled manifest (TYPE_INT_DEC and TYPE_INT_HEX).
+# The framework attributes android:targetSdkVersion and android:debuggable, and the types a
+# compiled manifest gives them: a number (TYPE_INT_DEC and TYPE_INT_HEX) and a literal
+# boolean (TYPE_INT_BOOLEAN, all ones for true).
 ATTR_TARGET_SDK_VERSION = 0x01010270
+ATTR_DEBUGGABLE = 0x0101000F
+ATTR_NAME = 0x01010003
+AXML_STRING_POOL = 0x0001
 AXML_START_ELEMENT = 0x0102
 AXML_RESOURCE_MAP = 0x0180
+AXML_STRING_TYPE = 0x03
+AXML_UTF8_POOL = 0x100
 AXML_INTEGER_TYPES = (0x10, 0x11)
+AXML_BOOLEAN_TYPE = 0x12
 
 
-def manifest_target_sdk(manifest: bytes) -> int | None:
-    """The targetSdkVersion of a compiled manifest, or None when it has none or it is not a number."""
+def manifest_attribute(manifest: bytes, attribute: int) -> tuple[int, int] | None:
+    """The (type, data) of the first element attribute with this framework ID in a compiled manifest, or None."""
     if len(manifest) < 8 or struct.unpack_from("<HH", manifest, 0)[0] != 0x0003:
         raise ValueError("not a compiled XML file")
     resource_ids: list[int] = []
@@ -1307,10 +1598,103 @@ def manifest_target_sdk(manifest: bytes) -> int | None:
             for index in range(count):
                 position = body + attribute_start + index * attribute_size
                 name, _, _, data_type, data = struct.unpack_from("<IIHxBI", manifest, position + 4)
-                if name < len(resource_ids) and resource_ids[name] == ATTR_TARGET_SDK_VERSION:
-                    return data if data_type in AXML_INTEGER_TYPES else None
+                if name < len(resource_ids) and resource_ids[name] == attribute:
+                    return data_type, data
         offset += size
     return None
+
+
+def axml_strings(manifest: bytes, chunk: int) -> list[str]:
+    """The strings of the compiled XML string pool chunk at this offset."""
+    _, header, size, count, _, flags, strings_start, _ = struct.unpack_from("<HHIIIIII", manifest, chunk)
+
+    def length8(position: int) -> tuple[int, int]:
+        # One byte, or two when the high bit of the first is set.
+        (first,) = struct.unpack_from("B", manifest, position)
+        if first & 0x80:
+            (second,) = struct.unpack_from("B", manifest, position + 1)
+            return (first & 0x7F) << 8 | second, position + 2
+        return first, position + 1
+
+    strings = []
+    for index in range(count):
+        position = chunk + strings_start + struct.unpack_from("<I", manifest, chunk + header + 4 * index)[0]
+        if flags & AXML_UTF8_POOL:
+            _, position = length8(position)  # the character count, then the byte count
+            length, position = length8(position)
+            encoding = "utf-8"
+        else:
+            (length,) = struct.unpack_from("<H", manifest, position)
+            position += 2
+            if length & 0x8000:
+                length = (length & 0x7FFF) << 16 | struct.unpack_from("<H", manifest, position)[0]
+                position += 2
+            length *= 2
+            encoding = "utf-16-le"
+        text = manifest[position:position + length]
+        if position + length > chunk + size or len(text) != length:
+            raise ValueError("truncated compiled XML string")
+        strings.append(text.decode(encoding))
+    return strings
+
+
+# The manifest elements that request a permission.
+PERMISSION_REQUEST_ELEMENTS = {"uses-permission", "uses-permission-sdk-23", "uses-permission-sdk-m"}
+
+
+def manifest_requested_permissions(manifest: bytes) -> set[str]:
+    """The permissions a compiled manifest requests with <uses-permission>.
+
+    A manifest that declares a permission (framework-res.apk declares every platform permission)
+    or guards a component with it does not request it, and is not listed."""
+    if len(manifest) < 8 or struct.unpack_from("<HH", manifest, 0)[0] != 0x0003:
+        raise ValueError("not a compiled XML file")
+    strings: list[str] = []
+    resource_ids: list[int] = []
+    requested: set[str] = set()
+    offset = struct.unpack_from("<H", manifest, 2)[0]
+    while offset + 8 <= len(manifest):
+        kind, header, size = struct.unpack_from("<HHI", manifest, offset)
+        if size < 8 or offset + size > len(manifest):
+            raise ValueError("truncated compiled XML chunk")
+        if kind == AXML_STRING_POOL:
+            strings = axml_strings(manifest, offset)
+        elif kind == AXML_RESOURCE_MAP:
+            resource_ids = list(struct.unpack_from(f"<{(size - header) // 4}I", manifest, offset + header))
+        elif kind == AXML_START_ELEMENT:
+            body = offset + header
+            element = struct.unpack_from("<I", manifest, body + 4)[0]
+            if element < len(strings) and strings[element] in PERMISSION_REQUEST_ELEMENTS:
+                attribute_start, attribute_size, count = struct.unpack_from("<HHH", manifest, body + 8)
+                for index in range(count):
+                    position = body + attribute_start + index * attribute_size
+                    name, raw, _, data_type, data = struct.unpack_from("<IIHxBI", manifest, position + 4)
+                    if name < len(resource_ids) and resource_ids[name] == ATTR_NAME and data_type == AXML_STRING_TYPE:
+                        if data >= len(strings):
+                            raise ValueError("a permission name outside the string pool")
+                        requested.add(strings[data])
+        offset += size
+    return requested
+
+
+def manifest_target_sdk(manifest: bytes) -> int | None:
+    """The targetSdkVersion of a compiled manifest, or None when it has none or it is not a number."""
+    value = manifest_attribute(manifest, ATTR_TARGET_SDK_VERSION)
+    if value is None:
+        return None
+    data_type, data = value
+    return data if data_type in AXML_INTEGER_TYPES else None
+
+
+def manifest_debuggable(manifest: bytes) -> bool:
+    """Whether a compiled manifest sets android:debuggable to true; a value that is not a literal boolean is an error."""
+    value = manifest_attribute(manifest, ATTR_DEBUGGABLE)
+    if value is None:
+        return False
+    data_type, data = value
+    if data_type != AXML_BOOLEAN_TYPE:
+        raise ValueError("android:debuggable is not a literal boolean")
+    return data != 0
 
 
 def check_pinner_overlay(
@@ -1339,6 +1723,62 @@ def check_pinner_overlay(
     # Resource names sit in the table's key string pool as UTF-8 or UTF-16.
     if PINNER_OVERLAY_RESOURCE not in table and PINNER_OVERLAY_RESOURCE.decode().encode("utf-16-le") not in table:
         fail(f"{PINNER_OVERLAY} does not set {PINNER_OVERLAY_RESOURCE.decode()}")
+
+
+# The permission that lets an application start Android's trade-in mode (TradeInModeService in
+# system_server). An unprovisioned device enters it a few tens of seconds after boot when an
+# application asks, which turns USB debugging on and restarts adbd twice. A virtual device has no
+# use for it, and the service has no configuration switch, so the product carries no application
+# that asks at boot: AOSP's DeviceDiagnostics, whose boot receiver does, is excluded from the
+# product. The shell package holds the permission too, for the commands a person types over adb;
+# nothing in it starts the mode by itself. Any other APK of the image partitions that requests the
+# permission is refused.
+TRADE_IN_MODE_PERMISSION = "android.permission.ENTER_TRADE_IN_MODE"
+TRADE_IN_MODE_REQUESTERS = {"SYSTEM/priv-app/Shell/Shell.apk"}
+
+
+def check_application_manifests(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo], build_variant: str
+) -> None:
+    """No application opts in to debugging (a user build) or can start trade-in mode (every build).
+
+    A debuggable application is open to `run-as` and to a debugger whatever ro.debuggable says,
+    and release signing would not change that, so a test probe left in the shared product
+    output (or a prebuilt built with --debug-mode) must stop the build here. Only a user build
+    is checked for it: a userdebug build is the diagnostics variant. Trade-in mode can start only
+    for an application that requests ENTER_TRADE_IN_MODE, and the privapp allowlist's entry for
+    a package that is not installed grants nothing, so the request is what the check looks for,
+    in every variant (a userdebug build never enters it, but the product list is one list), in
+    every APK but the shell's (TRADE_IN_MODE_REQUESTERS). The
+    check reads every APK of the image partitions; APKs inside an APEX payload are compressed
+    EROFS and out of its reach.
+    """
+    for entry in sorted(infos):
+        info = infos[entry]
+        path = PurePosixPath(entry)
+        if (
+            info.is_dir()
+            or path.suffix != ".apk"
+            or path.parts[0] not in TARGET_PARTITIONS
+            # A symbolic link holds its target's path; the target is checked as its own entry.
+            or stat.S_ISLNK(info.external_attr >> 16)
+        ):
+            continue
+        try:
+            with zipfile.ZipFile(io.BytesIO(archive.read(info))) as apk:
+                manifest = apk.read("AndroidManifest.xml")
+            debuggable = build_variant == "user" and manifest_debuggable(manifest)
+            requested = manifest_requested_permissions(manifest)
+        except (KeyError, OSError, zipfile.BadZipFile, ValueError, struct.error) as error:
+            fail(f"{entry} has no readable manifest: {error}")
+        if debuggable:
+            fail(f"a user build must not carry a debuggable application: {entry}")
+        if TRADE_IN_MODE_PERMISSION in requested and entry not in TRADE_IN_MODE_REQUESTERS:
+            fail(
+                f"{entry} requests {TRADE_IN_MODE_PERMISSION}: trade-in mode would start on an "
+                "unprovisioned first boot and restart adbd twice; the product must not carry "
+                "an application that can start it (DeviceDiagnostics is excluded)"
+            )
 
 
 # The AOSP example HALs the product keeps, each packaged as the vendor APEX that Cuttlefish
@@ -1515,6 +1955,27 @@ def check_adbd_launch_properties(
             f"{ADBD_APEX} holds an adbd without the key rule of route p0011 "
             f"({ADBD_REFUSAL_MARKER.decode()!r} is not in bin/adbd): it would offer every "
             "key a prompt while debugging is off"
+        )
+
+
+def check_adb_root_service(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The adb_root service must not turn rooted debugging on for a build that is not debuggable.
+
+    Stock adb_root has no such rule and the bypass topic of route p0011 would otherwise enable it on
+    every build whose boot policy skips authorization, which makes `adb root` on a user build print
+    "restarting adbd as root" and wait for a restart that no init trigger performs. The service binary
+    is in the target files as a file, so the guarded topic's log line is in its bytes.
+    """
+    info = infos.get(ADB_ROOT_BINARY)
+    if info is None or info.is_dir():
+        fail(f"{ADB_ROOT_BINARY} is missing: the product needs LineageOS's adb_root service")
+    if ADB_ROOT_GUARD_MARKER not in read_small(archive, info, 64 << 20):
+        fail(
+            f"{ADB_ROOT_BINARY} does not hold the debuggable-build rule of route p0011 "
+            f"({ADB_ROOT_GUARD_MARKER.decode()!r} is not in it): it would enable rooted debugging on "
+            "a user build, whose `adb root` then waits for an adbd restart that never comes"
         )
 
 
@@ -1699,6 +2160,8 @@ def check_kernel_policy(
         fail("vendor policy does not let applications read vendor_security_patch_level_prop")
     if not AUDIO_HAL_SELF_BINDER.search(vendor_policy):
         fail("vendor policy does not let the audio HAL processes call each other's binder")
+    if not WIFI_HAL_DEBUG_PROPERTY_READ.search(vendor_policy):
+        fail("vendor policy does not let the Wi-Fi HAL read persist_vendor_debug_wifi_prop")
     check_clearkey_memfd_policy(vendor_policy)
     check_userdata_grow_policy(vendor_policy)
     check_network_setup_policy(
@@ -2891,11 +3354,16 @@ def main() -> None:
         check_motion_sensors(archive, infos)
         check_discrete_ops(archive, infos)
         check_default_wallpaper(archive, infos)
+        check_no_statistics_uploader(archive, infos)
+        check_setup_wizard_branding(archive, infos)
+        check_network_time(archive, infos)
         check_pinner_overlay(archive, infos)
+        check_application_manifests(archive, infos, build_variant)
         check_thermal_hal(archive, infos)
         check_cas_hal(archive, infos)
         check_wifi_hals(archive, infos)
         check_adbd_launch_properties(archive, infos)
+        check_adb_root_service(archive, infos)
         check_services_jar(archive, infos)
         check_audio_policy(archive, infos)
         check_multilib_properties(archive, infos)

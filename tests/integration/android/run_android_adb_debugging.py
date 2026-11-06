@@ -17,6 +17,9 @@ is android/lineage-24/README.md (the p0007 and p0011 adb topics):
   restarting adbd once, and leaves adbd running for the host, which
   reconnects;
 - both settings survive a guest reboot;
+- `adb root` on the user variant is refused at once, whatever the guest's key policy: it
+  neither announces a restart of adbd nor waits for one, adbd stays the shell user, and
+  the connection stays;
 - when the guest checks keys (`ro.boot.kernarium.adb_auth` is 1, which the
   macOS launcher never sets, so only a guest the Kernarium runtime started),
   a second throwaway key stays unauthorized with no prompt while debugging is
@@ -46,6 +49,12 @@ from typing import Callable
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 LAUNCHER = REPOSITORY / "tools" / "boot_android.py"
 SETTLE_SECONDS = 30
+# `adb root` on a build that cannot run adbd as root answers in well under a second. A guest
+# that announces "restarting adbd as root" makes the client wait about 45 s for a restart
+# that never comes, so any answer slower than this is the defect.
+ROOT_ANSWER_SECONDS = 20
+ROOT_RESTART_LINE = "restarting adbd as root"
+SHELL_UID = "2000"
 RECONNECT_SECONDS = 90
 REFUSAL_LINE = "kernarium: key refused, debugging is off"
 USB_CONFIG = "persist.sys.usb.config"
@@ -170,6 +179,33 @@ def check_fresh(device: Device) -> None:
         raise Failure(f"Developer options are on ({developer!r}) on a fresh data partition")
     if device.getprop("init.svc.adbd") != "running":
         raise Failure("adbd is not running for the host")
+
+
+def check_root_refused(device: Device) -> None:
+    """A user build never runs adbd as root: `adb root` is refused at once and the connection stays.
+
+    Lineage's adbd asks its adb_root service whether rooted debugging is on; a guest whose boot
+    policy turned that on for a non-debuggable build made adbd say it was restarting as root,
+    set service.adb.root, and leave the client waiting for a restart no init trigger performs.
+    """
+    if device.getprop("ro.debuggable") != "0":
+        print("adb root: skipped, this is a debuggable build")
+        return
+    pid = device.adbd_pid()
+    try:
+        answer = device.run("-s", device.serial, "root", timeout=ROOT_ANSWER_SECONDS)
+    except subprocess.TimeoutExpired:
+        raise Failure(f"`adb root` did not answer within {ROOT_ANSWER_SECONDS} s: adbd announced a "
+                      f"restart as root that a {device.getprop('ro.build.type')} build never performs")
+    if ROOT_RESTART_LINE in answer.stdout:
+        raise Failure(f"`adb root` said {ROOT_RESTART_LINE!r} on a non-debuggable build: {answer.stdout.strip()!r}")
+    if device.devices_line() != "device":
+        raise Failure(f"`adb root` cost the connection: the guest is {device.devices_line()!r}")
+    if device.shell("id -u") != SHELL_UID:
+        raise Failure("adbd is not the shell user after `adb root` on a non-debuggable build")
+    if device.adbd_pid() != pid:
+        raise Failure("`adb root` restarted adbd on a non-debuggable build")
+    print(f"adb root: refused at once ({answer.stdout.strip()!r}), adbd untouched, connection kept")
 
 
 def check_toggle(device: Device) -> None:
@@ -307,6 +343,7 @@ def main() -> int:
             wait_booted(device, options.boot_timeout, guest)
             check_fresh(device)
             print("fresh data: debugging off, adbd serving the host")
+            check_root_refused(device)
             check_toggle(device)
             check_reboot(device, options.boot_timeout, guest)
             if device.getprop("ro.boot.kernarium.adb_auth") == "1":

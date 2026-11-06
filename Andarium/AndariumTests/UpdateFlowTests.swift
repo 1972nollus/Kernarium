@@ -36,8 +36,23 @@ final class StubDriver: RuntimeDriver {
     func setMotionSensors(_ on: Bool) { motionSensors = on }
     private(set) var geometryChanges = 0
     func sceneGeometryDidChange() { geometryChanges += 1 }
-    private(set) var microphoneCalls: [Bool] = []
-    func setMicrophone(_ on: Bool) { microphoneCalls.append(on) }
+
+    /// What the statistics readings answer, in turn, the last one repeating;
+    /// nothing until a test scripts them.
+    var samples: [StatsSample?] = []
+    var memories: [GuestMemorySample?] = []
+    private(set) var statisticsAsked = 0
+    private(set) var memoryAsked = 0
+    func readStatistics() async -> StatsSample? {
+        defer { statisticsAsked += 1 }
+        guard !samples.isEmpty else { return nil }
+        return samples[min(statisticsAsked, samples.count - 1)]
+    }
+    func readGuestMemory() async -> GuestMemorySample? {
+        defer { memoryAsked += 1 }
+        guard !memories.isEmpty else { return nil }
+        return memories[min(memoryAsked, memories.count - 1)]
+    }
 
     /// What a bug report or an install does when the model asks.
     var bugReport: (@Sendable (@Sendable (BusyUpdate) -> Void) async throws -> URL) = { _ in

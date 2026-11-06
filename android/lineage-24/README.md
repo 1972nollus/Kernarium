@@ -141,12 +141,14 @@ published or accepted: `publish-release.py` and the release verifier refuse any
 other (`require_release_build_variant`). A `user` build keeps the stock shell
 privilege boundary: no `su`, no `adb root`, `ro.debuggable=0`, no permissive
 SELinux domain, and the verifier rejects the debug-only payload (`su`,
-`remount`, `procmem`). `userdebug` is the on-demand diagnostics variant: it
-carries `su`, is debuggable and may have the permissive `su` domain, and the
-verifier requires exactly that. Each variant builds in its own output directory
-(on the builder `out-andarium-user` and `out-andarium-userdebug`), so switching
-between them is incremental; `build-aosp.sh` records the variant in its output
-directory and refuses the other one. The variant also decides the keys: every
+`remount`, `procmem`), any application whose manifest sets
+`android:debuggable`, and the in-tree test probes by name. `userdebug` is the
+on-demand diagnostics variant: it carries `su`, is debuggable and may have the
+permissive `su` domain, and the verifier requires exactly that. Each variant
+builds in its own output directory (on the builder `out-andarium-user` and
+`out-andarium-userdebug`), so switching between them is incremental;
+`build-aosp.sh` records the variant in its output directory and refuses the
+other one. The variant also decides the keys: every
 `user` build, a release or a CTS candidate, is signed with the one release key
 set, and a `userdebug` build keeps the AOSP test keys of the build itself and
 is never re-signed
@@ -193,9 +195,40 @@ ExactCalculator, Camelot (PDF viewer) and Seedvault (backup). It has no browser
 app (the WebView stays, so that a user can install one), no app store of its
 own and no install restriction: Package Installer and every install path work.
 It has no Google or microG services. LineageOS Setup Wizard handles the first
-boot of a fresh guest; completing it provisions that guest, so subsequent boots
-go directly to the launcher. The LineageOS updater, Canvas, Aperture, Profiles,
-Recorder, QuickAccessWallet, the charger animation,
+boot of a fresh guest; completing it provisions that guest (both settings 1 and
+the wizard's HOME activity disabled), so subsequent boots go directly to the
+launcher. Until then HOME returns to the wizard. The image has no trade-in
+mode, and so adbd is one process through a first boot. AOSP's DeviceDiagnostics
+asks Android's trade-in mode to start from a boot receiver on a first boot that
+has not been set up, which turns USB debugging on, and the virtual Wi-Fi that
+is already connected stops it at once, which turns it off; the framework
+restarts adbd each time, twice a few seconds apart, some tens of seconds after
+`sys.boot_completed` (about 230 s into the first boot on the iPad), and an
+install or a bug report running over adbd was cut. TradeInModeService has no
+configuration switch and starts only for a package that holds
+`android.permission.ENTER_TRADE_IN_MODE`. DeviceDiagnostics is the one that
+asks at boot (the shell package holds the permission too, for what a person
+types over adb), so the product excludes DeviceDiagnostics
+(`KERNARIUM_REMOVED_PACKAGES`, asserted by `build-aosp.sh`). The verifier
+refuses its directory and any APK of the image partitions other than the
+shell's that requests the permission; a manifest that declares the permission,
+as framework-res.apk does, is not a request. A virtual device has no trade-in.
+A harness that erases
+a guest to measure it provisions the guest over adb after `sys.boot_completed`
+([`tools/android_provision.py`](../../tools/android_provision.py), through
+`tools/boot_android.py --provision`, `tests/perf/run_ios_device_android.py
+--erase` and `tests/perf/android_launch_suite.py`): it sets both settings and
+disables the wizard package for user 0 (the shell may not disable the wizard's
+own components), so HOME resolves to the launcher, and it changes nothing in
+the image. It returns only after adbd has stayed one process for six seconds
+with no trade-in mode pending, which costs those six seconds on this image and
+keeps a harness correct on an older release that still carries DeviceDiagnostics
+(r15 and earlier, where provisioning at `sys.boot_completed` also keeps the
+mode from starting: "Not starting trade-in mode, device is setup"). A measurement
+of the first-boot experience itself keeps the wizard.
+The `android-oobe` test completes the wizard through its pages and checks that
+the helper reaches the same observable state. The LineageOS updater, Canvas,
+Aperture, Profiles, Recorder, QuickAccessWallet, the charger animation,
 fastbootd, AudioFX and the Jelly browser are excluded, as are DeskClock and
 EmergencyInfo; the build and verifier assert both lists. SecureElement, the
 OMAPI service for readers the machine does not have (no eSE, no UICC), is kept
@@ -415,6 +448,23 @@ user's setting meaningful:
   key, not by origin. Authorization off (`ro.boot.kernarium.adb_auth`) skips the
   check and so the rule. adbd listens on guest TCP only when the launch has a
   host forward.
+- The last `frameworks/base` topic keeps a dialog that dies unanswered from stranding adbd's
+  prompt. The dialog (`UsbDebuggingActivity` of SystemUI) answers the framework through its
+  buttons and through `onDestroy` when it is finishing. A process that dies under it, or a task
+  that the system destroys before SystemUI has created the activity (SystemUI needs many seconds
+  to do that in the first half minute after boot, and a foreground change such as the Setup
+  Wizard's next step or the launcher's first start trims the task), sends no answer, and
+  adbd's libadbd_auth then keeps that prompt dispatched, logging `prompt currently pending,
+  skipping` for every later offer. `AdbDebuggingManager` therefore looks for the dialog's
+  activity in the system's task list once, 15 s after each start of the dialog, and starts the
+  dialog again when it is gone while the prompt is still awaited: at most three restarts per
+  prompt, each but the last followed by one more look. A prompt stops being awaited at the user's allow or
+  deny, a request to clear the keys, USB debugging turned off, a new request and the adbd socket
+  closing. Nothing is scheduled while no prompt is awaited. A dialog that dies later than its
+  look is not raised again; the prompt stays pending until adbd restarts (USB debugging off, then
+  on in a separate command, because the restart ends the shell that asked for it).
+  `AdbOverVsockTests/aPromptWhoseDialogDiedIsRaisedAgain()` kills SystemUI under the dialog, and
+  `aPromptWhoseDialogIsUpIsNotRaisedTwice()` checks that a dialog that stays up is left alone.
 
 The target-files verifier requires the adbd APEX's `bin/adbd` to carry the
 launch property names, the debugging property names and the refusal line (the
@@ -432,8 +482,14 @@ off starts that service with the switch on, so on macOS, which authorizes
 nothing, any local process that reaches the loopback ADB port can become root
 in a userdebug guest, an accepted property of a diagnostics host. On a `user`
 build the service is installed but built non-debuggable, so authorization off
-still gives an unauthenticated shell and `pm install`, never root. iOS keeps
-authorization and the default-off switch.
+still gives an unauthenticated shell and `pm install`, never root: the bypass
+topic (route `p0011`) turns the switch on only when the build is debuggable, so
+`adb root` is refused at once and the connection stays, where a switch that was
+on would make adbd announce a restart as root that no init trigger of a user
+build performs and leave the client waiting about 45 s. The target-files
+verifier requires the topic's log line in `adb_root`, and the adb debugging
+runner (`tests/integration/android/run_android_adb_debugging.py`) asks a user
+guest for root. iOS keeps authorization and the default-off switch.
 SELinux stays enforcing in both variants; only the host-owned kernel command
 line could change that. Android's wireless-debugging setting
 is the stock one: it trusts a Wi-Fi network by its SSID and publishes its mDNS
@@ -460,6 +516,14 @@ The platform policy gives a HAL domain no binder call to itself, so every stream
 open was denied (the audit rate limit hid how many).
 `overlay/sepolicy/vendor/hal_audio_default.te` allows the call, and the
 target-files verifier requires the rule.
+
+The example Wi-Fi HAL reads the platform's `persist.vendor.debug.wifi.*`
+properties at start-up, which its domain may not do, so every boot logged an
+`hal_wifi_default` to `persist_vendor_debug_wifi_prop` denial. The read is the
+AOSP HAL's own and harmless (an unset property reads as its default), so
+`overlay/sepolicy/vendor/hal_wifi_default.te` allows exactly that read, never a
+set and never a blanket `dontaudit`, and the target-files verifier requires the
+rule in the packaged vendor policy.
 
 The guest kernel has no ashmem, the product sets `sys.use_memfd`, and the
 vendor policy enables `memfd_class`, so the shared buffers an application
@@ -734,6 +798,68 @@ package with no cached process; `kill-all` and `force-stop`, which cancel alarms
 and jobs, are never used. The list is a reviewed table in the script and in
 `tools/verify-target-files.py`, which require each other, and the script runs once
 per boot.
+
+### Time
+
+The guest's wall clock is the host's: the runtime gives the guest the host's
+wall clock at boot and its kernel then advances it with the host's monotonic
+clock, and a resume corrects it by what the suspend left. The platform
+therefore takes no network time. `NetworkTimeUpdateService` polls NTP whenever
+a default network exists, whatever `config_autoTimeSourcesPriority` says, and
+`NtpTrustedTime` reads its servers from `config_ntpServers`, so the overlay
+sets that list to one entry that is not an `ntp://` URI, the only value that
+leaves the client without a server (it rejects the list before any lookup; an
+empty list makes `NtpConfig` throw in `system_server`), and LineageOS's own
+list for mcc 460 is replaced in `overlay-priority`. The origin priorities drop
+the network too: `telephony` and `external`, because an empty list means the
+platform's default, which holds the network, and `telephony` alone would make a
+platform without telephony hide "Set time automatically". The setting stays,
+and a host clock step while the guest runs is corrected at its next resume or
+boot, not at once. The target-files verifier reads the built framework overlay
+and fails an NTP server, a network origin, an empty list or a missing list.
+
+### Branding and diagnostics
+
+The Setup Wizard names the system Andarium. The strings that carry the name
+(`os_name`, `setup_services`, `update_recovery_title`, `update_recovery_setting`
+and `update_recovery_description`) come from a runtime resource overlay in
+`overlay/overlay/packages/apps/SetupWizard/app/src/main/res`, one file per
+locale that translates them, because a locale that translates a string would
+otherwise show LineageOS's text over the default. The application's resources
+sit in a Gradle layout, which the overlay path follows. Settings, About, the
+boot animation, the fingerprint and the build properties keep LineageOS's names.
+Recovery's own text names no system. The target-files verifier requires the
+wizard overlay's resource table to hold the Andarium strings and no Lineage name.
+
+The artwork is the Andarium icon's three stacked tiles. In the Setup Wizard
+the same overlay replaces the vector drawable `logo.xml` (the Finish screen,
+and the services page header, where the layout tints it and only the three
+silhouettes remain) and the Lottie animation `lottie_welcome.json` of the
+Welcome screen. Recovery's header images (`logo_image.png`,
+`logo_image_switch.png` and `fastbootd.png`, 256 by 160) and its 30 progress
+frames (200 by 200) are mdpi pixel art in `overlay/recovery/res/images`: the
+build copies a device's `recovery/res` over the stock resources, and recovery
+scales the images to the host's density with nearest-neighbour sampling, so
+they are drawn on the 1x grid and in greys that no byte order changes. The
+recovery verifier requires each of those files byte for byte and no other
+progress frame, and the target-files verifier requires the wizard's animation
+byte for byte and every path of its vector.
+
+LineageOS reports device data to its statistics server from LineageParts
+(`ReportingService`, started by a boot receiver and a daily job) once
+`stats_collection` is on, and the Setup Wizard asks for it on its services page.
+The image has neither. Route `p0025` removes LineageParts' statistics feature
+whole: the receiver and services, the preview screen, the part in the catalogue
+that Settings lists and searches, the Trust entry, the endpoint and the strings.
+LineageParts runs in the system uid, so a manifest cannot take its network
+access away, and only removed code guarantees that nothing posts. Route `p0026`
+removes the wizard's diagnostic data row, its privacy paragraph and policy URL,
+and the code that wrote the answer to `stats_collection`, whose default stays
+off. What is left of the services page is the on-screen navigation keys row,
+which a device with a key disabler shows; this product has none, so the page
+skips itself and disables its own activity. The target-files verifier searches
+both applications' manifests, dex files and resources for the uploader's
+components, endpoint and setting, and fails the image that still carries one.
 
 ## Graphics
 
@@ -1330,6 +1456,17 @@ product's properties, so `sys.use_memfd=true` reaches it and its ashmem users
 fall back to memfd on a kernel without `/dev/ashmem`. The verifier requires
 that line.
 
+Recovery draws into a DRM dumb buffer, and the Virtio-GPU driver always creates
+that buffer as `B8G8R8X8` whatever format the framebuffer declares afterwards.
+`TARGET_RECOVERY_PIXEL_FORMAT := BGRX_8888` makes minui declare `XRGB8888`, the
+buffer's own byte order, so every pixel appears exactly as stored. The
+Cuttlefish default `ABGR_8888` declares `RGBA8888` for bytes nothing converts
+and swaps red and blue; the kernel patch that offers the extra scanout formats
+is meant for Android's composer, which scans out blobs that carry their own
+format. The verifier requires `ro.minui.pixel_format=BGRX_8888` in the
+ramdisk's `prop.default`. The correction is guest-side, so the iOS display path
+(the same scanout code) needs none.
+
 The stock LineageOS recovery image measures 15.07 MiB (15,802,368 bytes). Its
 `BOARD_RECOVERYIMAGE_PARTITION_SIZE` of 20 MiB is the image builder's limit, 25%
 headroom rounded up to a 4 MiB multiple, and the build fails on an image that
@@ -1338,9 +1475,12 @@ does not fit; the system disk packs the recovery image at its own size.
 `tools/verify-lineage-recovery.py` checks the image the assembler installs: a
 kernel-less v4 image whose LZ4 or gzip ramdisk holds only target ELFs aligned
 to 16 KiB or better, a closed dependency set, no loadable modules, the checked
-fstab, and the `eth0` interface policy. `build/assemble-image.sh` owns
-`init_boot` ramdisk composition, system disk assembly, and verification. It
-refuses unsafe paths, partition overflow, module payloads, or replacement of
+fstab, the `eth0` interface policy, and the checked `init.recovery.rc` as the
+ramdisk's `init.recovery.cutf_cvm.rc`, the script that publishes the display
+density before Recovery draws its UI (the inherited Cuttlefish script is kept
+as `init.recovery.cuttlefish.rc`, which it imports). `build/assemble-image.sh`
+owns `init_boot` ramdisk composition, system disk assembly, and verification.
+It refuses unsafe paths, partition overflow, module payloads, or replacement of
 an existing output.
 
 ## Release installation
@@ -1463,7 +1603,8 @@ the macOS script and the Andarium app, applies the same rules before each
 start; [`tools/android_instance.py`](../../tools/android_instance.py) is the
 reference implementation and
 [`support/instance/update-decisions.json`](support/instance/update-decisions.json)
-holds decision vectors that any other implementation must reproduce.
+holds decision vectors and the record's transitions that any other
+implementation must reproduce.
 
 `instance.json` (schema 1) holds: `data_layout`, the data disk layout version of
 the release's template; `release_id`, `build_fingerprint`, `build_incremental`
@@ -1472,10 +1613,11 @@ data disk was last started with; `created_with`, the release that created the
 instance; `last_booted`, the time of the last start (RFC 3339, UTC);
 `last_completed`, the last start that reached `sys.boot_completed` and shut down
 cleanly (`release_id`, `build_incremental`, `at`) or `null`; and
-`pending_update`, the update whose first start has not completed or `null`: the
-release it starts (`to_release_id`), its `snapshot` file, and the identity the
-disk was last started with before it (`from`). The release's identity comes from
-its manifest and layout, never from hashing the disk at launch.
+`pending_update`, the update whose first start has not reached
+`sys.boot_completed` or `null`: the release it starts (`to_release_id`), its
+`snapshot` file, and the identity the disk was last started with before it
+(`from`). The release's identity comes from its manifest and layout, never from
+hashing the disk at launch.
 
 The build number (`ro.build.version.incremental` of a release build) orders
 releases; the rules compare nothing else. Before a start:
@@ -1491,6 +1633,14 @@ releases; the rules compare nothing else. Before a start:
 | an unfinished update, same build | retry with its snapshot kept, restore, or reset |
 | an unfinished update, newer build | restore the pre-update snapshot, then update directly to the newer build |
 
+An update is finished at the moment the host first sees the guest reach
+`sys.boot_completed` (`booted`): `pending_update` becomes `null` and the
+snapshot is deleted, so an unfinished update is one whose start never got that
+far. Android has upgraded its own data by then, and the data is no longer what
+the update started from. A newer release after that updates from the data as it
+is, with a snapshot of its own, and nothing restores the old snapshot; the
+shutdown that follows (`last_completed`) does not change this.
+
 Any older build can update directly to any newer build; intermediate releases
 need not boot. When an earlier update is unfinished, the launcher restores its
 pre-update data before starting the newer release, which takes its own snapshot.
@@ -1498,16 +1648,16 @@ The existing snapshot must be available for that restoration.
 
 The snapshot, `data.img.pre-<release_id>`, is an APFS clone, so it is instant
 and costs only the blocks that later diverge; a volume without clones refuses
-the update. It is kept until the new release has reached `sys.boot_completed`
-and the guest has shut down cleanly (`last_completed`), and the old system disk
-is gone by then, so a restore puts back the data the new release started from;
-it does not boot the previous release. An update whose first start fails offers
-three ways out: start it again keeping the snapshot, restore the snapshot and
-update afresh, or reset the instance (delete it and create it anew), which is
-also the way out of a refused downgrade. A future data layout changes the
-partition table only inside the reserved gap, never moving `userdata`. The
-instance directory is one directory, so a backup of it is a copy of it; the
-app, not the host layer, decides whether to exclude it from backup.
+the update. It lives only while the update is unfinished, and the old system
+disk is gone by then, so a restore puts back the data the new release started
+from; it does not boot the previous release. An update whose first start fails
+offers three ways out: start it again keeping the snapshot, restore the
+snapshot and update afresh, or reset the instance (delete it and create it
+anew), which is also the way out of a refused downgrade. A future data layout
+changes the partition table only inside the reserved gap, never moving
+`userdata`. The instance directory is one directory, so a backup of it is a
+copy of it; the app, not the host layer, decides whether to exclude it from
+backup.
 
 ## Apple consumers and guest bundles
 

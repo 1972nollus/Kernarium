@@ -6,6 +6,7 @@
 #include <log/log.h>
 #include <linux/vm_sockets.h>
 #include <poll.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -13,6 +14,7 @@
 #include <cerrno>
 #include <cstring>
 #include <mutex>
+#include <stop_token>
 #include <thread>
 
 namespace {
@@ -40,7 +42,9 @@ struct SensorState {
 
 class MotionSubHal final : public V2_1::implementation::ISensorsSubHal {
 public:
-    MotionSubHal() : worker_([this](std::stop_token stop) { serve(stop); }) {}
+    MotionSubHal()
+        : wake_(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK)),
+          worker_([this](std::stop_token stop) { serve(stop); }) {}
 
     Return<void> getSensorsList_2_1(getSensorsList_2_1_cb callback) override {
         hidl_vec<V2_1::SensorInfo> sensors;
@@ -143,19 +147,24 @@ private:
         event.u.vec3.status = V1_0::SensorStatus::ACCURACY_HIGH;
         post(event);
     }
-    static bool readable(int fd, std::stop_token stop) {
-        while (!stop.stop_requested()) {
-            pollfd descriptor{fd, POLLIN, 0};
-            const auto result = poll(&descriptor, 1, 250);
-            if (result > 0) return (descriptor.revents & POLLIN) != 0;
-            if (result < 0 && errno != EINTR) return false;
+    // Blocks until fd is readable, with no timeout: the service is started at
+    // boot whether or not a host ever connects, so it must not wake to poll.
+    // Returns false when the descriptor failed or the wake descriptor, written
+    // when a stop is requested, became readable. Nothing drains the wake
+    // descriptor, so every later call returns false at once.
+    static bool readable(int fd, int wake) {
+        for (;;) {
+            pollfd descriptors[] = {{fd, POLLIN, 0}, {wake, POLLIN, 0}};
+            const auto result = poll(descriptors, 2, -1);
+            if (result < 0 && errno == EINTR) continue;
+            if (result < 0 || descriptors[1].revents != 0) return false;
+            return (descriptors[0].revents & POLLIN) != 0;
         }
-        return false;
     }
-    void receive(int fd, std::stop_token stop) {
+    void receive(int fd) {
         std::array<uint8_t, andarium::motion::record_size> record{};
         size_t used = 0;
-        while (readable(fd, stop)) {
+        while (readable(fd, wake_.get())) {
             const auto count = recv(fd, record.data() + used, record.size() - used, MSG_DONTWAIT);
             if (count < 0 && (errno == EINTR || errno == EAGAIN)) continue;
             if (count <= 0) return;
@@ -168,6 +177,12 @@ private:
         }
     }
     void serve(std::stop_token stop) {
+        if (wake_ < 0) {
+            ALOGE("Andarium motion: cannot create the wake descriptor: %s", strerror(errno));
+            return;
+        }
+        // A stop request wakes whichever poll the thread is blocked in.
+        const std::stop_callback wake_on_stop(stop, [this] { eventfd_write(wake_.get(), 1); });
         unique_fd listener(socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0));
         sockaddr_vm address{};
         address.svm_family = AF_VSOCK;
@@ -178,7 +193,7 @@ private:
             ALOGE("Andarium motion: cannot listen on vsock: %s", strerror(errno));
             return;
         }
-        while (readable(listener.get(), stop)) {
+        while (readable(listener.get(), wake_.get())) {
             sockaddr_vm peer{};
             socklen_t length = sizeof(peer);
             unique_fd stream(accept4(listener.get(), reinterpret_cast<sockaddr*>(&peer), &length,
@@ -186,13 +201,17 @@ private:
             if (stream < 0) continue;
             // Only the private host channel may supply hardware samples.
             if (peer.svm_cid != VMADDR_CID_HOST) continue;
-            receive(stream.get(), stop);
+            receive(stream.get());
         }
     }
     std::mutex mutex_;
     android::sp<IHalProxyCallback> callback_;
     std::array<SensorState, 2> states_{};
-    // Destroyed first; joins the bounded polling loop before state teardown.
+    // Declared before the worker, so it outlives the join in the worker's
+    // destructor, which requests a stop and so writes to it.
+    unique_fd wake_;
+    // Destroyed first; its stop request wakes the polling loop, which is then
+    // joined before state teardown.
     std::jthread worker_;
 };
 } // namespace

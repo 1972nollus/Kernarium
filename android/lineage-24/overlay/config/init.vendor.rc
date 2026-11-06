@@ -49,10 +49,10 @@ on boot
 
 # adbd is the host application's channel and has to keep running whatever the
 # debugging setting. AdbService restarts it where stock stops it; this starts it
-# again after any other stop (the trade-in mode failure, a USB configuration
-# rule). Only a stopped service raises the trigger: a crash is init's own
-# restart, and a restart passes through "stopping" and "restarting", never
-# "stopped". Shutdown runs no actions. start clears the stop's disabled flag.
+# again after any other stop (a USB configuration rule). Only a stopped service
+# raises the trigger: a crash is init's own restart, and a restart passes
+# through "stopping" and "restarting", never "stopped". Shutdown runs no
+# actions. start clears the stop's disabled flag.
 on property:init.svc.adbd=stopped
     start adbd
 

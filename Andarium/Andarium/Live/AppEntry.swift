@@ -92,6 +92,10 @@ struct AppEntry {
         )
         let options = DisplayOptionsStore.load()
         model.retina = launch.retina ?? options.retina
+        // A harness launch shows the statistics from the start of the run and
+        // prints each reading; an App Store build never has this setting.
+        model.session.showStats = launch.statistics
+        model.printsStatistics = launch.statistics
 
         let markerDirectory = launch.instance == nil ? Self.supportDirectory() : locations.directory
         let marker = PauseMarker(url: markerDirectory.appendingPathComponent("pause.json"))
@@ -105,7 +109,7 @@ struct AppEntry {
             model.refreshPlan()
             // Access the person took away while Andarium was closed takes the
             // Microphone choice with it.
-            runtime.refreshPermissions()
+            model.microphone?.refresh()
         }
         model.alert = problem.map { AppAlert(title: "Andarium Is Incomplete", message: $0) }
         return model

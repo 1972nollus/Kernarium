@@ -184,8 +184,16 @@ public struct TwoDiskStorage: GuestStorage {
         try files.apply(files.decide(for: release, flags: InstanceFlags(restoreSnapshot: true)), release: release)
     }
 
+    /// Records that the guest reached `sys.boot_completed`, at the moment the
+    /// application first sees it. A pending update counts as applied from then
+    /// on: its snapshot is dropped and a newer system updates from the data as
+    /// it is.
+    public func bootCompleted() throws {
+        try files.booted(release: release)
+    }
+
     /// Records that the guest reached `sys.boot_completed` and shut down
-    /// cleanly, which ends a pending update.
+    /// cleanly (`lastCompleted`).
     public func completeRun() throws {
         try files.complete(release: release)
     }

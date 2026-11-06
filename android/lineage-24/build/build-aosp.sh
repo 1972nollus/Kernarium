@@ -473,6 +473,7 @@ for package in \
 	Contacts \
 	CuttlefishService \
 	DeskClock \
+	DeviceDiagnostics \
 	Dialer \
 	DynamicSystemInstallationService \
 	Gallery2 \

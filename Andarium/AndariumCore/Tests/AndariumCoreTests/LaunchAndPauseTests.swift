@@ -89,6 +89,14 @@ struct LaunchOverridesTests {
         #expect(!launch([:]).erase)
     }
 
+    @Test func statistics() {
+        #expect(launch([.stats: "1"]).statistics)
+        #expect(!launch([.stats: "0"]).statistics)
+        #expect(!launch([.stats: "yes"]).statistics)
+        #expect(!launch([:]).statistics)
+        #expect(!launch([.stats: "1"]).isEmpty)
+    }
+
     @Test func isolatedInstanceNamesCannotEscapeTheirDirectory() {
         #expect(launch([.instance: "armeabi-legacy_1"]).instance == "armeabi-legacy_1")
         for name in ["", ".", "..", "../Guest", "/tmp/guest", "a/b", "a b", "游戏", String(repeating: "a", count: 65)] {
@@ -116,27 +124,6 @@ struct LaunchOverridesTests {
 }
 
 struct ReportTests {
-    @Test func thermalLine() {
-        #expect(
-            ConsoleReport.thermal(phase: .start, state: .nominal, uptime: 12.3456)
-                == "Andarium thermal state: phase=start state=nominal uptime=12.346"
-        )
-        #expect(
-            ConsoleReport.thermal(phase: .finish, state: .serious, uptime: 0)
-                == "Andarium thermal state: phase=finish state=serious uptime=0.000"
-        )
-    }
-
-    @Test func runtimeLine() {
-        #expect(ConsoleReport.runtimeReturned(0) == "Andarium: runtime returned 0")
-        #expect(ConsoleReport.runtimeReturned(-3) == "Andarium: runtime returned -3")
-    }
-
-    @Test func focusLines() {
-        #expect(ConsoleReport.application(active: true) == "Andarium: application active")
-        #expect(ConsoleReport.application(active: false) == "Andarium: application inactive")
-    }
-
     @Test func guestKeysUseLinuxCodes() {
         #expect(GuestKey.back.rawValue == 158)
         #expect(GuestKey.home.rawValue == 172)

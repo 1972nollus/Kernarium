@@ -75,5 +75,58 @@ class FreshPartitionTests(unittest.TestCase):
                 runner.check_fresh(device)
 
 
+class RootDevice:
+    """A guest as `check_root_refused` sees it: `adb root`'s answer and what follows it."""
+
+    serial = "127.0.0.1:1"
+
+    def __init__(self, answer: str = "adbd cannot run as root in production builds", *,
+                 debuggable: str = "0", hang: bool = False, state: str = "device",
+                 uid: str = "2000", pids: tuple[str, str] = ("500", "500")) -> None:
+        self.answer, self.debuggable, self.hang, self.state, self.uid = answer, debuggable, hang, state, uid
+        self.pids = list(pids)
+
+    def getprop(self, name: str) -> str:
+        return {"ro.debuggable": self.debuggable, "ro.build.type": "user"}[name]
+
+    def run(self, *arguments: str, timeout: int = 30):
+        assert arguments[-1] == "root"
+        if self.hang:
+            raise runner.subprocess.TimeoutExpired(arguments, timeout)
+        return runner.subprocess.CompletedProcess(arguments, 1, stdout=self.answer + "\n")
+
+    def devices_line(self) -> str:
+        return self.state
+
+    def shell(self, command: str) -> str:
+        assert command == "id -u"
+        return self.uid
+
+    def adbd_pid(self) -> str:
+        return self.pids.pop(0)
+
+
+class RootRefusedTests(unittest.TestCase):
+    def test_a_refusal_that_keeps_the_connection_passes(self) -> None:
+        for answer in ("adbd cannot run as root in production builds",
+                       "ADB Root access is disabled by system setting - enable in Settings"):
+            with self.subTest(answer=answer):
+                runner.check_root_refused(RootDevice(answer))
+
+    def test_an_announced_restart_that_never_comes_fails(self) -> None:
+        for device in (RootDevice("restarting adbd as root"), RootDevice(hang=True)):
+            with self.assertRaises(runner.Failure) as raised:
+                runner.check_root_refused(device)
+            self.assertIn("root", str(raised.exception))
+
+    def test_a_lost_connection_or_a_changed_adbd_fails(self) -> None:
+        for device in (RootDevice(state="offline"), RootDevice(uid="0"), RootDevice(pids=("500", "501"))):
+            with self.assertRaises(runner.Failure):
+                runner.check_root_refused(device)
+
+    def test_a_debuggable_build_is_not_asked(self) -> None:
+        runner.check_root_refused(RootDevice("restarting adbd as root", debuggable="1"))
+
+
 if __name__ == "__main__":
     unittest.main()

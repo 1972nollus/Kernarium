@@ -297,6 +297,59 @@ class AndroidRunnerTests(unittest.TestCase):
     ) -> None:
         self.assert_run_with_start_order("launch", "iproxy")
 
+    def provisioning_commands(self, outcome: Outcome) -> list[str]:
+        return [
+            call["args"][-1] for call in outcome.tool("adb")
+            if "shell" in call["args"]
+            and call["args"][-1].startswith(("settings put", "pm disable-user"))
+        ]
+
+    def test_an_erased_guest_is_provisioned_before_the_workload(self) -> None:
+        outcome = self.run_android(
+            "--erase", "--script", str(self.scratch.script),
+            "--launch-app", "settings",
+            environment={"FAKE_FRESH_GUEST": "1"},
+        )
+        self.assertEqual(outcome.status, 0, outcome.err)
+        self.assertTrue(outcome.summary["provisioned"])
+        commands = self.provisioning_commands(outcome)
+        self.assertEqual(
+            commands[:2],
+            ["settings put global device_provisioned 1",
+             "settings put secure user_setup_complete 1"])
+        self.assertEqual(commands[2:], ["pm disable-user --user 0 org.lineageos.setupwizard"])
+        shells = [c["args"][-1] for c in outcome.tool("adb") if "shell" in c["args"]]
+        first_work = min(i for i, s in enumerate(shells)
+                         if s.startswith(("sh /data/local/tmp/", "am start -W")))
+        self.assertLess(shells.index(commands[-1]), first_work)
+
+    def test_an_erased_guest_that_stays_in_the_wizard_fails_the_run(self) -> None:
+        outcome = self.run_android(
+            "--erase", "--script", str(self.scratch.script),
+            environment={"FAKE_FRESH_GUEST": "1", "FAKE_PROVISION": "ignored"},
+        )
+        self.assertEqual(outcome.status, 1)
+        self.assertIn("not provisioned", outcome.err)
+        self.assertIsNone(outcome.summary["workload"])
+
+    def test_the_wizard_can_be_kept_to_measure_the_first_boot(self) -> None:
+        outcome = self.run_android(
+            "--erase", "--keep-setup-wizard", "--script", str(self.scratch.script),
+            environment={"FAKE_FRESH_GUEST": "1"},
+        )
+        self.assertEqual(outcome.status, 0, outcome.err)
+        self.assertNotIn("provisioned", outcome.summary)
+        self.assertEqual(self.provisioning_commands(outcome), [])
+
+    def test_a_guest_that_is_not_erased_is_not_provisioned(self) -> None:
+        outcome = self.run_android(
+            "--script", str(self.scratch.script),
+            environment={"FAKE_FRESH_GUEST": "1"},
+        )
+        self.assertEqual(outcome.status, 0, outcome.err)
+        self.assertNotIn("provisioned", outcome.summary)
+        self.assertEqual(self.provisioning_commands(outcome), [])
+
     def test_a_push_that_fails_ends_the_workload_not_the_poweroff(
             self) -> None:
         outcome = self.run_android(
