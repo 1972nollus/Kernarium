@@ -289,7 +289,7 @@ final class AppModel {
         runBusy(
             BusyState(
                 title: "Creating Guest",
-                detail: "Setting up the system with \(Formats.size(gib: guest.effectiveCapacityGiB)).", progress: 0
+                detail: "Setting up Andarium with \(Formats.size(gib: guest.effectiveCapacityGiB)).", progress: 0
             ),
             failure: "The Guest Could Not Be Created"
         ) { progress in
@@ -655,7 +655,7 @@ final class AppModel {
         case .lowSpace: startBlocked = true
         case .unfinishedUpdate:
             alert = AppAlert(
-                title: "The System's Update Didn't Finish",
+                title: "Andarium's Update Didn't Finish",
                 message: plan.allowsStart
                     ? "Recovery starts only once the update has finished. Start tries the update again; Restore or Erase Guest goes back."
                     : "The guest starts only after its data is restored or the guest is erased."

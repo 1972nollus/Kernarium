@@ -57,8 +57,8 @@ struct BootView: View {
     private func shownSteps(guest: Guest) -> [Step] {
         var steps = Self.steps(kind, guest: guest, system: model.system)
         if model.preparingDisk {
-            let detail = model.diskProgress.map { "Preparing the system \u{00B7} \(Int(($0 * 100).rounded()))%" }
-                ?? "Preparing the system"
+            let detail = model.diskProgress.map { "Preparing Andarium \u{00B7} \(Int(($0 * 100).rounded()))%" }
+                ?? "Preparing Andarium"
             steps[0] = Step(title: steps[0].title, detail: detail, seconds: 0)
         }
         return steps
@@ -107,7 +107,7 @@ struct BootView: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(kind == .recovery ? "Recovery" : "System")
+                    Text(kind == .recovery ? "Recovery" : "Andarium")
                         .font(.largeTitle.weight(.bold))
                     Spacer()
                     Text("\(Int((progress * 100).rounded()))%")
@@ -219,7 +219,7 @@ struct BootView: View {
     }
 
     static func steps(_ kind: BootKind, guest: Guest, system info: SystemInfo) -> [Step] {
-        let system = Step(title: "System", detail: "\(info.release) · read-only", seconds: 0.7)
+        let system = Step(title: "Andarium", detail: "\(info.release) · read-only", seconds: 0.7)
         let kernel = Step(title: "Linux Kernel", detail: "\(info.kernel.replacingOccurrences(of: "Linux ", with: "")) · \(guest.cores) vCPUs · \(Formats.size(mib: guest.memoryMiB)) RAM", seconds: 0.9)
         let screen = Step(title: "Screen", detail: "Waiting for the first frame", seconds: 0.7)
         let used = "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(gib: guest.capacityGiB))"

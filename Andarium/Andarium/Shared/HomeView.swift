@@ -152,7 +152,7 @@ struct HomeView: View {
         case .update(_, let release):
             NoticeCard(
                 symbol: "arrow.down.circle.fill", color: .accentColor,
-                title: "System updated to \(release)",
+                title: "Andarium updated to \(release)",
                 text: "The next start finishes the update and takes a little longer. Your data is saved first, so a start that does not finish can be undone."
             )
         case .unfinishedUpdate(let release, let canRetry, let canRestore):
@@ -171,7 +171,7 @@ struct HomeView: View {
                 NoticeCard(
                     symbol: "sparkles", color: .accentColor,
                     title: "Guest erased",
-                    text: "The next start runs the system's setup.",
+                    text: "The next start runs Andarium's setup.",
                     onClose: { withAnimation { model.notice = nil } }
                 )
             case .closedInBackground:
@@ -270,7 +270,7 @@ struct WelcomeView: View {
                 .padding(.bottom, 34)
             Text("No Guest Yet")
                 .font(.title2.weight(.bold))
-            Text("The system (version \(model.system.version)) is built into Andarium. Set up a guest to run it.")
+            Text("Andarium is built in. Set up a guest to run it.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -457,7 +457,7 @@ struct UnfinishedUpdateCard: View {
                     .foregroundStyle(Color.orange)
                     .frame(width: 28)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("The system's update didn't finish").font(.subheadline.weight(.semibold))
+                    Text("Andarium's update didn't finish").font(.subheadline.weight(.semibold))
                     Text(text)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -483,7 +483,7 @@ struct UnfinishedUpdateCard: View {
         case (true, false):
             "The start that updates to \(release) did not reach its end. Start tries it again, or erase the guest to start over."
         case (false, true):
-            "This Andarium carries a different system than the update that did not finish. Restore puts back your data from before it, or erase the guest to start over."
+            "This Andarium carries a different release than the update that did not finish. Restore puts back your data from before it, or erase the guest to start over."
         case (false, false):
             "The start that updates to \(release) did not reach its end, and nothing from before it is left to put back. Erase the guest to start over."
         }

@@ -92,7 +92,7 @@ struct EraseSheet: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Erase Guest")
                                 .font(.title2.weight(.bold))
-                            Text("Deletes everything the guest has stored. The next start runs the system's setup.")
+                            Text("Deletes everything the guest has stored. The next start runs Andarium's setup.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -110,7 +110,7 @@ struct EraseSheet: View {
                     }
                 }
                 Section("Kept") {
-                    item("checkmark.seal", "System \(model.system.version), built in", nil, kept: true)
+                    item("checkmark.seal", "Andarium, built in", nil, kept: true)
                     item("slider.horizontal.3", "vCPUs, memory, storage size and options", nil, kept: true)
                 }
             }

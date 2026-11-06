@@ -103,7 +103,7 @@ struct AppEntry {
             model.driver = runtime
             model.refreshPlan()
         }
-        model.alert = problem.map { AppAlert(title: "The System Is Not Available", message: $0) }
+        model.alert = problem.map { AppAlert(title: "Andarium Is Incomplete", message: $0) }
         return model
     }
 
