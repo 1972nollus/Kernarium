@@ -59,12 +59,16 @@ COMPARED = (
     "descriptor", "thread", "port", "pthread_next_key", "sigaction", "itimer",
     "stdio", "termios", "cwd", "umask",
 )
-# A receive right with no kernel object behind it is a thread's reply port,
-# which a thread makes when it first calls the kernel. Which threads have done
-# so by the time the process is looked at varies by a port or two; every other
-# kind of port must be exactly the first boot's.
+# A receive right with no kernel object behind it is, for the most part, a
+# thread's reply port: a thread makes it when it first calls the kernel and
+# keeps it until it ends, so a thread has at most one. Which threads have
+# called by the time the process is looked at, and which of the short-lived
+# ones are still there, differs from one look to the next and with the load of
+# the host, so the number of these rights may differ by as many as there are
+# threads. The process also holds a few receive rights of its own that this
+# kind cannot tell apart; every other kind of port must be exactly the first
+# boot's, and so must the threads themselves, which is what bounds the count.
 REPLY_PORTS = "rights=0x20000 kobject=-1"
-REPLY_PORT_SLACK = 2
 # Thread scratch keeps one chunk of this many bytes for the thread's life
 # (memory/domain_heap.hpp, ScratchArena::kept_bytes).
 SCRATCH_CHUNK = 64 * 1024
@@ -131,6 +135,11 @@ def counted(lines: list[str]) -> dict[str, int]:
     return found
 
 
+def thread_total(dump: dict[str, list[str]]) -> int:
+    """The threads the audit counted in the process, its own excluded."""
+    return int(dump["threads"][0]) if dump.get("threads") else 0
+
+
 def differences(first: dict[str, list[str]],
                 other: dict[str, list[str]]) -> list[str]:
     """What the process shows now that it did not show at the first boot."""
@@ -138,7 +147,9 @@ def differences(first: dict[str, list[str]],
     for keyword in COMPARED:
         if keyword in ("descriptor", "thread", "port"):
             before, now = counted(first.get(keyword, [])), counted(other.get(keyword, []))
-            slack = {REPLY_PORTS: REPLY_PORT_SLACK} if keyword == "port" else {}
+            slack = {}
+            if keyword == "port":
+                slack[REPLY_PORTS] = max(thread_total(first), thread_total(other))
             for what in sorted(set(before) | set(now)):
                 if abs(before.get(what, 0) - now.get(what, 0)) > slack.get(what, 0):
                     found.append(

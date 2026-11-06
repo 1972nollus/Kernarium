@@ -132,6 +132,22 @@ if(IS_DIRECTORY "${PREFIX}/dSYMs")
         if(NOT _uuid_binary STREQUAL _uuid_symbols)
             message(FATAL_ERROR "${_framework} debug symbol UUID does not match")
         endif()
+        # dsymutil exits 0 for a binary built without debug information and
+        # writes a dSYM with the binary's UUID and no compile unit, so the UUID
+        # alone does not show that the symbols are any use.
+        execute_process(COMMAND xcrun otool -l
+            "${PREFIX}/dSYMs/${_framework}.dSYM/Contents/Resources/DWARF/${_name}"
+            RESULT_VARIABLE _sections_status OUTPUT_VARIABLE _sections_output
+            ERROR_QUIET TIMEOUT 60)
+        if(NOT _sections_status EQUAL 0)
+            message(FATAL_ERROR "Cannot read the debug symbols of ${_framework}")
+        endif()
+        if(NOT _sections_output MATCHES
+           "sectname __debug_info\n[ ]*segname __DWARF\n[ ]*addr 0x[0-9A-Fa-f]+\n[ ]*size 0x([0-9A-Fa-f]+)\n"
+           OR NOT "${CMAKE_MATCH_1}" MATCHES "[1-9A-Fa-f]")
+            message(FATAL_ERROR
+                "${_framework} debug symbols carry no debug information")
+        endif()
     endforeach()
     list(SORT _symbols)
     list(SORT _expected_symbols)

@@ -355,11 +355,8 @@ public:
 	~State()
 	{
 		workers_.stop();
-		if (fd_ >= 0) {
-			if (linked_)
-				(void)unlink(options_.path.c_str());
+		if (fd_ >= 0)
 			(void)close(fd_);
-		}
 	}
 
 	[[nodiscard]] bool open()
@@ -390,17 +387,11 @@ public:
 			O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
 		if (fd_ < 0)
 			return false;
-		linked_ = true;
-		if (options_.anonymous) {
-			/* A process suspended with a file lock is killed by iOS
-			 * (0xdead10cc). This image belongs only to this process, so an
-			 * unlinked file needs neither a lock nor stale-file cleanup. */
-			if (unlink(options_.path.c_str()) != 0)
-				return false;
-			linked_ = false;
-		} else if (flock(fd_, LOCK_EX | LOCK_NB) != 0) {
+		/* A process suspended with a file lock is killed by iOS
+		 * (0xdead10cc). This image belongs only to this process, so an
+		 * unlinked file needs neither a lock nor stale-file cleanup. */
+		if (unlink(options_.path.c_str()) != 0)
 			return false;
-		}
 		if (options_.bypass_cache)
 			(void)fcntl(fd_, F_NOCACHE, 1);
 		const std::uint64_t file_size =
@@ -507,10 +498,6 @@ public:
 		abort_.store(false, std::memory_order_release);
 	}
 
-	[[nodiscard]] const std::string &path() const noexcept
-	{
-		return options_.path;
-	}
 	[[nodiscard]] std::size_t chunk_bytes() const noexcept
 	{
 		return chunk_bytes_;
@@ -856,7 +843,6 @@ private:
 	GuestRamCommitment &ram_;
 	Options options_;
 	int fd_{-1};
-	bool linked_{false};
 	std::size_t page_size_{};
 	std::size_t chunk_bytes_{};
 	std::size_t chunk_count_{};
@@ -941,11 +927,6 @@ void GuestRamImage::clear_abort() noexcept
 	state_->clear_abort();
 }
 
-const std::string &GuestRamImage::path() const noexcept
-{
-	return state_->path();
-}
-
 std::size_t GuestRamImage::chunk_bytes() const noexcept
 {
 	return state_->chunk_bytes();
@@ -983,7 +964,7 @@ std::size_t remove_stale_guest_ram_images(const std::string &directory) noexcept
 			const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
 			if (fd < 0)
 				continue;
-			/* A live image's process holds its lock. */
+			/* A live image of an older version holds its process's lock. */
 			if (flock(fd, LOCK_EX | LOCK_NB) == 0 &&
 			    unlink(path.c_str()) == 0)
 				++removed;
