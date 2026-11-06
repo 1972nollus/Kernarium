@@ -930,10 +930,13 @@ and prompting while it is on), and the key after Erase Guest.
 
 `AdbOverVsockTests/androidReportsExactStorageSizes()` is a standalone storage
 run with `TEST_RUNNER_ANDARIUM_STORAGE_TESTS=1` in addition to the ADB and normal
-start settings. Build AOSP's `AndariumStorageTests`, sign the APK with the image's
-platform certificate, and copy it into the application's `tmp/AndariumStorageTests.apk`
+start settings. Build `AndariumStorageTests`
+([`tests/integration/android/storage`](../tests/integration/android/storage/README.md))
+as an explicit Soong module, which signs it with the AOSP test key (never a release
+key), and copy it into the application's `tmp/AndariumStorageTests.apk`
 before running only that method. It installs the APK through the application's
-client, runs `StorageAccountingTest#exactFilesystemBytes`,
+client, sets the guest's `hidden_api_policy` to 1 for the run (the test calls one
+hidden API) and restores it, runs `StorageAccountingTest#exactFilesystemBytes`,
 which checks both primary-storage helpers and `StorageStatsManager` against the
 mounted filesystem sizes, removes the APK and powers Android off cleanly.
 With the same ADB, storage and normal-start settings,
