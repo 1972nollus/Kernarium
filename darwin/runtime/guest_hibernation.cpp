@@ -23,8 +23,6 @@ using memory::GuestRamImage;
 using memory::ImageStats;
 
 constexpr std::uint64_t mib = 1024U * 1024U;
-/* The most the fence may spend finding a moment to stop every thread. */
-constexpr unsigned hold_budget_ms = 2000;
 constexpr unsigned image_threads = 4;
 
 [[nodiscard]] std::uint64_t now_ms() noexcept
@@ -131,7 +129,7 @@ public:
 	bool hold(HibernationReport &report) noexcept override
 	{
 		const std::uint64_t started = now_ms();
-		const bool held = fence_->hold(hold_budget_ms, &freeze_changes,
+		const bool held = fence_->hold(guest_hold_budget_ms, &freeze_changes,
 			image_.get());
 		const ThreadFence::Report &fence = fence_->report();
 		report.threads_held = fence.held;
@@ -217,15 +215,15 @@ void GuestHibernation::request_abort() noexcept
 	steps_->set_abort(true);
 }
 
-bool GuestHibernation::hibernate() noexcept
+HibernationHold GuestHibernation::hold() noexcept
 {
 	if (hibernated_)
-		return true;
+		return HibernationHold::held;
 	steps_->set_abort(false);
 	report_ = {};
 	if (!steps_->prepare())
-		return false;
-	const std::uint64_t started = now_ms();
+		return HibernationHold::unavailable;
+	held_at_ms_ = now_ms();
 	if (!steps_->hold(report_)) {
 		Line{}.text("uml: guest RAM stays in the process: ")
 			.text("could not hold the threads (reason ")
@@ -234,10 +232,19 @@ bool GuestHibernation::hibernate() noexcept
 			.number(report_.hold_deferred).text(" deferred, ")
 			.number(report_.hold_unsettled).text(" unsettled, ")
 			.number(report_.hold_ms).text(" ms)").emit();
-		return false;
+		return HibernationHold::failed;
 	}
 	/* From here the guest's RAM may leave, and restore has to run. */
 	hibernated_ = true;
+	written_ = false;
+	return HibernationHold::held;
+}
+
+void GuestHibernation::write() noexcept
+{
+	if (!hibernated_ || written_)
+		return;
+	written_ = true;
 	const bool complete = steps_->write(report_);
 	const memory::ImageStats &image = report_.written;
 	Line line;
@@ -253,7 +260,7 @@ bool GuestHibernation::hibernate() noexcept
 		.number(report_.threads_registered).text(" registered), hold ")
 		.number(report_.hold_ms).text(" ms, write ")
 		.number(report_.write_ms).text(" ms, total ")
-		.number(now_ms() - started).text(" ms, footprint ")
+		.number(now_ms() - held_at_ms_).text(" ms, footprint ")
 		.number(report_.footprint_before / mib).text(" -> ")
 		.number(report_.footprint_after / mib).text(" MiB");
 	if (image.chunks_failed != 0 || image.chunks_skipped != 0)
@@ -261,6 +268,13 @@ bool GuestHibernation::hibernate() noexcept
 			.number(image.chunks_skipped).text(" left (errno ")
 			.number(static_cast<std::uint64_t>(image.error)).text(")");
 	line.emit();
+}
+
+bool GuestHibernation::hibernate() noexcept
+{
+	if (hold() != HibernationHold::held)
+		return false;
+	write();
 	return true;
 }
 
@@ -280,6 +294,7 @@ bool GuestHibernation::restore() noexcept
 	}
 	steps_->release();
 	hibernated_ = false;
+	written_ = false;
 	const memory::ImageStats &image = report_.restored;
 	Line{}.text("uml: restored guest RAM: ")
 		.number(image.evicted_bytes / mib).text(" MiB read back (")

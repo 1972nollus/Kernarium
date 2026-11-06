@@ -11,8 +11,11 @@
 #include "guest_console.hpp"
 #include "guest_console_test_support.hpp"
 #include "guest_hibernation.hpp"
+#include "kernel_threads.hpp"
 #include "require.hpp"
 #include "testing.hpp"
+#include "thread_nap.hpp"
+#include "uml_darwin_host.h"
 #include "wait_until.hpp"
 
 #include <atomic>
@@ -20,13 +23,16 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <fcntl.h>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <pthread.h>
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 #include <utility>
@@ -268,6 +274,10 @@ std::atomic<int> restoreFailures {0};
 
 struct Steps final : uml::runtime::HibernationSteps {
 	bool restoreSucceeds {true};
+	bool holdSucceeds {true};
+	/* Called on the quiescing thread as the steps run. */
+	std::function<void()> atHold;
+	std::function<void()> atWrite;
 	/* The write waits for the abort request that resume sends. */
 	bool writeWaitsForAbort {false};
 	std::atomic<bool> aborted {false};
@@ -281,10 +291,14 @@ struct Steps final : uml::runtime::HibernationSteps {
 	bool hold(uml::runtime::HibernationReport &) noexcept override
 	{
 		hibernationLog.add("hold");
-		return true;
+		if (atHold)
+			atHold();
+		return holdSucceeds;
 	}
 	bool write(uml::runtime::HibernationReport &) noexcept override
 	{
+		if (atWrite)
+			atWrite();
 		writing = true;
 		if (writeWaitsForAbort) {
 			const bool abortedInTime = uml::testing::waitUntil(
@@ -523,6 +537,246 @@ void aStopBringsTheRamBack()
 	(void)console.requests(1U, [&] { uml_emulator_resume(emulator.get()); });
 }
 
+/* ---- The guest's disks while their locks are released. ---- */
+
+/* A disk the way the kernel has one: opened and locked through the host
+ * bridge, as os_lock_file locks it. */
+class GuestDisk final {
+public:
+	GuestDisk()
+	{
+		const char *const directory = std::getenv("TMPDIR");
+		require(directory != nullptr, "the test has a private directory");
+		path_ = std::string {directory} + "/guest-disk.img";
+		descriptor_ = darwin_uml_open(path_.c_str(),
+			O_RDWR | O_CREAT | O_TRUNC, 0600);
+		require(descriptor_ >= 0, "open the guest disk");
+		struct flock lock {};
+		lock.l_type = F_WRLCK;
+		lock.l_whence = SEEK_SET;
+		require(darwin_uml_fcntl(descriptor_, F_SETLK,
+			reinterpret_cast<long>(&lock)) == 0, "lock the guest disk");
+	}
+
+	GuestDisk(const GuestDisk &) = delete;
+	GuestDisk &operator=(const GuestDisk &) = delete;
+
+	~GuestDisk()
+	{
+		(void)::close(descriptor_);
+		(void)::unlink(path_.c_str());
+	}
+
+	[[nodiscard]] int descriptor() const noexcept { return descriptor_; }
+
+	/* Whether another process cannot lock the disk, as a second host would
+	 * find it: locks of one process never conflict with each other. */
+	[[nodiscard]] bool lockedByAnotherProcess() const
+	{
+		int result[2];
+		require(::pipe(result) == 0);
+		const pid_t child = ::fork();
+		require(child >= 0);
+		if (child == 0) {
+			(void)::close(result[0]);
+			struct flock query {};
+			query.l_type = F_WRLCK;
+			query.l_whence = SEEK_SET;
+			const char answer = ::fcntl(descriptor_, F_GETLK, &query) == 0 ?
+				(query.l_type == F_UNLCK ? 'n' : 'y') : 'e';
+			::_exit(::write(result[1], &answer, 1) == 1 ? 0 : 1);
+		}
+		(void)::close(result[1]);
+		char answer = 'e';
+		require(::read(result[0], &answer, 1) == 1);
+		(void)::close(result[0]);
+		int status = 0;
+		require(::waitpid(child, &status, 0) == child);
+		require(answer != 'e', "query the disk's lock");
+		return answer == 'y';
+	}
+
+private:
+	std::string path_;
+	int descriptor_ {-1};
+};
+
+/* A thread of the kernel that writes the guest's disk whenever it runs, as a
+ * guest does that its own wake source has woken. */
+class WakingGuest final {
+public:
+	explicit WakingGuest(int disk) : disk_{disk}
+	{
+		require(::uml::runtime::kernel_pthread_create(&thread_, nullptr,
+			&writeUntilStopped, this) == 0, "create the guest's thread");
+		require(runsAgain(), "the guest's thread must run");
+	}
+
+	WakingGuest(const WakingGuest &) = delete;
+	WakingGuest &operator=(const WakingGuest &) = delete;
+
+	~WakingGuest()
+	{
+		stop_.store(true);
+		require(::pthread_join(thread_, nullptr) == 0);
+	}
+
+	/* The guest writes again within a few seconds. */
+	[[nodiscard]] bool runsAgain() const
+	{
+		const auto before = writes_.load();
+		return uml::testing::waitUntil(
+			[&] { return writes_.load() > before + 2U; },
+			std::chrono::seconds {5}, std::chrono::milliseconds {2});
+	}
+
+	/* The guest wrote nothing for a while, which no thread that runs can
+	 * promise: it writes every few hundred microseconds. */
+	[[nodiscard]] bool stoodStill() const
+	{
+		const auto before = writes_.load();
+		std::this_thread::sleep_for(std::chrono::milliseconds {100});
+		return writes_.load() == before;
+	}
+
+private:
+	static void *writeUntilStopped(void *argument)
+	{
+		auto *const guest = static_cast<WakingGuest *>(argument);
+		while (!guest->stop_.load(std::memory_order_acquire)) {
+			if (::pwrite(guest->disk_, "w", 1, 0) == 1)
+				guest->writes_.fetch_add(1, std::memory_order_relaxed);
+			uml::testing::nap(300);
+		}
+		return nullptr;
+	}
+
+	int disk_;
+	pthread_t thread_ {};
+	std::atomic<std::uint64_t> writes_ {0};
+	std::atomic<bool> stop_ {false};
+};
+
+/* A confirmed system suspension ends at the guest's own wake sources (its RTC
+ * alarm, VNC input) as well as at the host's wake, so the guest can run, and
+ * write its disks, while the host holds no lock on them. Every thread that
+ * can run it is held from before the locks leave until the host has them back
+ * and verified the disks, whether or not the guest's RAM is hibernated. */
+void aGuestThatWakesItselfCannotWriteDisksItDoesNotLock()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	GuestDisk disk;
+	WakingGuest guest {disk.descriptor()};
+	require(disk.lockedByAnotherProcess(), "a running guest owns its disk");
+	require(console.requests(2U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend"});
+	require(!disk.lockedByAnotherProcess(),
+		"a suspended guest leaves its disk unlocked for the system");
+	require(guest.stoodStill(),
+		"the guest wrote its disk while the host held no lock on it");
+	require(console.requests(1U, [&] {
+		uml_emulator_resume(emulator.get());
+	}) == Requests {"wake"});
+	require(disk.lockedByAnotherProcess(), "the resume locks the disk again");
+	require(guest.runsAgain(), "the guest runs once it is woken");
+}
+
+/* A thread the fence cannot hold, here one inside the C library for as long
+ * as the test says, leaves the guest able to run. The locks then stay, as an
+ * unconfirmed suspension keeps them, and the resume has nothing to verify. */
+std::atomic<bool> serviceBlocked {true};
+
+int blockInComparator(const void *, const void *)
+{
+	while (serviceBlocked.load(std::memory_order_acquire))
+		uml::testing::nap(500);
+	return 0;
+}
+
+void aGuestThatCannotBeHeldKeepsItsLocks()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	GuestDisk disk;
+	WakingGuest guest {disk.descriptor()};
+	serviceBlocked.store(true);
+	std::atomic<bool> started {false};
+	std::thread service {[&] {
+		(void)::pthread_setname_np("uml-test-service");
+		int values[2] = {2, 1};
+		started.store(true);
+		(void)::heapsort(values, 2, sizeof values[0], &blockInComparator);
+	}};
+	require(uml::testing::waitUntil([&] { return started.load(); },
+		std::chrono::seconds {5}));
+	uml::testing::nap(50000);
+	require(console.requests(2U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend"});
+	require(disk.lockedByAnotherProcess(),
+		"locks may not leave while the guest's threads can run");
+	serviceBlocked.store(false);
+	service.join();
+	require(console.requests(1U, [&] {
+		uml_emulator_resume(emulator.get());
+	}) == Requests {"wake"});
+	require(disk.lockedByAnotherProcess());
+	require(guest.runsAgain(), "the guest runs once it is woken");
+}
+
+/* With the RAM hibernated the one hold covers both: the locks leave once the
+ * threads are held and before the write, which can take long enough for the
+ * system to suspend the process. */
+void theLocksLeaveBetweenTheHoldAndTheWrite()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	GuestDisk disk;
+	Steps *const steps = installSteps(emulator.get());
+	bool lockedAtHold {false};
+	bool lockedAtWrite {true};
+	steps->atHold = [&] { lockedAtHold = disk.lockedByAnotherProcess(); };
+	steps->atWrite = [&] { lockedAtWrite = disk.lockedByAnotherProcess(); };
+	(void)hibernationLog.take();
+	require(console.requests(2U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend"});
+	require(hibernationLog.take() == Entries {"prepare", "hold", "write"});
+	require(lockedAtHold, "the locks stay until the threads are held");
+	require(!lockedAtWrite, "the locks are gone before the image is written");
+	require(console.requests(1U, [&] {
+		uml_emulator_resume(emulator.get());
+	}) == Requests {"wake"});
+	require(disk.lockedByAnotherProcess(), "the resume locks the disk again");
+	(void)hibernationLog.take();
+}
+
+/* A hibernation that cannot hold the threads changes nothing, the locks
+ * included. */
+void aHibernationThatCannotHoldKeepsTheLocks()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	GuestDisk disk;
+	Steps *const steps = installSteps(emulator.get());
+	steps->holdSucceeds = false;
+	(void)hibernationLog.take();
+	require(console.requests(2U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend"});
+	require(hibernationLog.take() == Entries {"prepare", "hold"},
+		"nothing is written where nothing is held");
+	require(disk.lockedByAnotherProcess(),
+		"the locks stay where the threads are not held");
+	require(console.requests(1U, [&] {
+		uml_emulator_resume(emulator.get());
+	}) == Requests {"wake"});
+	require(disk.lockedByAnotherProcess());
+	(void)hibernationLog.take();
+}
+
 /* ---- The guest's memory figures. ---- */
 
 uml_emulator_guest_memory askedMemory()
@@ -712,6 +966,10 @@ int main(int argc, char **argv)
 		aSuspendThatNeverAnsweredIsWokenAtTheResume();
 		return EXIT_SUCCESS;
 	}
+	if (selected == "unheld-guest") {
+		aGuestThatCannotBeHeldKeepsItsLocks();
+		return EXIT_SUCCESS;
+	}
 	if (!selected.empty())
 		return EXIT_FAILURE;
 	const auto emulator = makeEmulator();
@@ -729,6 +987,9 @@ int main(int argc, char **argv)
 	aFailedRestoreWakesNothing();
 	aResumeDuringTheWriteStopsTheWrite();
 	aStopBringsTheRamBack();
+	aGuestThatWakesItselfCannotWriteDisksItDoesNotLock();
+	theLocksLeaveBetweenTheHoldAndTheWrite();
+	aHibernationThatCannotHoldKeepsTheLocks();
 	aQuiescedGuestIsNotAskedForItsMemory();
 	aLifecycleCallInProgressIsNotWaitedFor();
 	aQuiesceDoesNotWaitForAMemoryRequest();

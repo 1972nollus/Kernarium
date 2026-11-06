@@ -1475,10 +1475,20 @@ quiesces, with the runtime's `set_gpu_hold` (see the request gate under
 guest's rings stay disabled until the resume, and what it queued waits in them.
 
 Once the guest confirms system suspension and its host files are flushed,
-quiescing releases the kernel's whole-file disk locks. iOS terminates a process
-that retains a file lock when suspended. Resume and stop reacquire every lock
-before restoring guest RAM or waking a thread, and verify the disk's identity,
-size, modification time and change time against the state before unlocking.
+quiescing holds every thread that can run the guest and then releases the
+kernel's whole-file disk locks. iOS terminates a process that retains a file
+lock when suspended. The hold is what keeps the unlocked disks unwritten: the
+kernel's own wake sources, the RTC alarm and VNC input, end a suspend the host
+asked for, so a woken guest would otherwise write a disk nobody has locked
+and the resume would find it changed. The hibernation holds the threads where
+it applies; on every other host, and when hibernation is off or has given up,
+a [thread fence](#hibernation) of the handle's own does, and nothing is
+written. A hold that cannot be taken (the same two-second budget, so a
+service thread stuck in the allocator for that long) leaves the locks in
+place, as an unconfirmed suspension does, and the host logs it once per
+suspension. Resume and stop reacquire every lock before restoring guest RAM,
+releasing a thread or waking the guest, and verify the disk's identity, size,
+modification time and change time against the state before unlocking.
 Contention, a replaced descriptor or changed storage ends the process without
 resuming the guest. A finished run releases and retires its locks even if its
 descriptors remain open until hand-back. An unconfirmed suspension retains the
@@ -1597,6 +1607,13 @@ run reach the same code. The order is the contract:
 
 A quiesce whose guest did not confirm its suspend, a guest without a console,
 and a guest kept running (Picture in Picture, the job) never hibernate.
+
+The hold is not the hibernation's alone. A confirmed system suspension holds
+the same threads on every host whether or not the RAM is written, because the
+disk locks leave with it (see [guest lifecycle](#guest-lifecycle)); `off` and
+a host that does not wire only skip the write. The hold is taken first, the
+locks leave next, and the write follows, so that the locks are gone before the
+slow part.
 
 ## Tests and structural audit
 

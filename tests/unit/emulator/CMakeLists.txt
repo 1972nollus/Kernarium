@@ -25,7 +25,8 @@ target_link_libraries(uml_emulator_lifecycle_tests PRIVATE
     uml_emulator_test_variant)
 target_include_directories(uml_emulator_lifecycle_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/runtime
-    ${PROJECT_SOURCE_DIR}/tests/unit/mconsole)
+    ${PROJECT_SOURCE_DIR}/tests/unit/mconsole
+    ${PROJECT_SOURCE_DIR}/tests/unit/runtime)
 uml_add_unit_test(
     NAME emulator-lifecycle
     COMMAND uml_emulator_lifecycle_tests
@@ -39,6 +40,12 @@ uml_add_unit_test(
 uml_add_unit_test(
     NAME emulator-lifecycle-suspend-silent
     COMMAND uml_emulator_lifecycle_tests suspend-silent
+    LABELS console)
+# A guest whose threads the fence cannot hold keeps its disk locks; the fence
+# spends its whole two-second budget finding that out.
+uml_add_unit_test(
+    NAME emulator-lifecycle-unheld-guest
+    COMMAND uml_emulator_lifecycle_tests unheld-guest
     LABELS console)
 
 # How a run says its guest ended: the kernel's report, the host's stop, and
