@@ -16,6 +16,11 @@ struct GuestSyncResult final {
  */
 [[nodiscard]] GuestSyncResult sync_guest_files() noexcept;
 
+/* Whether no thread is inside the guest file registry. Asked with every
+ * thread of the guest stopped, it says that none of them owns the registry,
+ * which the release and the restore of the disk locks below need. */
+[[nodiscard]] bool guest_file_registry_idle() noexcept;
+
 [[nodiscard]] unsigned release_guest_file_locks(bool retiring = false) noexcept;
 /* Ends the process if a disk cannot be relocked unchanged: the guest must
  * never resume on storage another process modified during suspension. */

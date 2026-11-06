@@ -168,7 +168,8 @@ leaves out everything that exists for automation or only pretends:
 - It is not offered to Macs, and its Archive action uses it.
 - Its last build phase runs `scripts/check-app-store-bundle.py` on the
   application, which fails the build on a missing key in Info.plist,
-  an environment knob in the application or a framework,
+  an environment knob or a trace of the build host (the
+  linker's debug map, a home-directory path) in the application or a framework,
   or a privacy manifest that does not cover a binary
   ([`scripts/check-privacy-manifests.py`](../scripts/check-privacy-manifests.py)).
 

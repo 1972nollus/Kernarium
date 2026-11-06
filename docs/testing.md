@@ -726,7 +726,9 @@ packages for x86_64 unless `EXCLUDED_ARCHS=x86_64` is on the `xcodebuild`
 command line, which reaches package targets that a project setting does not.
 KosmicKrisp has a device slice alone, so the app targets embed it with a
 Run Script phase, `Kernarium/scripts/embed-device-framework.sh`, which embeds it
-for an `iphoneos` build and nothing for the Simulator. It also packages the
+for an `iphoneos` build and nothing for the Simulator, and leaves an unchanged
+embedded framework untouched so the application's seal stays valid
+(`kernarium-device-framework-embed`). It also packages the
 Apple battery provider's archive and the video encoder's, as the Android
 runtime links them, as `HostBattery.xcframework` and
 `HostVideoEncoder.xcframework`, with a slice for each packaged SDK; only
@@ -968,8 +970,10 @@ small libraries compiled with the iOS SDK.
 `Andarium/scripts/check-app-store-bundle.py`, the last build phase of the
 AppStore configuration (`Andarium/README.md#configurations`) and the check of
 `package-ios-frameworks.sh --app-store`: Info.plist keys,
-no environment knob in host code, and the privacy check. Its
-fixtures are compiled with the iOS SDK too. The configuration itself is
+no environment knob in host code, no trace of the build host in an
+executable (the linker's debug map, which `strip -S` removes, and a path under
+`/Users/<name>/`), and the privacy check. Its fixtures are compiled with the
+iOS SDK too. The configuration itself is
 validated by building it unsigned (`CODE_SIGNING_ALLOWED=NO`).
 
 `andarium-acknowledgements` (tooling) checks that the Acknowledgements
@@ -1516,21 +1520,21 @@ runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
   installed on a device that had none starts the preload, so the first launch
   after that install is the one to time.
 
-Legacy `armeabi` application smoke coverage has passed on the physical iPad
-with these unmodified F-Droid archive builds:
+Legacy `armeabi` application smoke coverage runs on the physical iPad with
+these unmodified F-Droid archive builds:
 
-| APK | Exercised behavior |
+| APK | Must exercise |
 | --- | --- |
 | [Simon Tatham's Puzzles 9561.1 (72)](https://f-droid.org/archive/name.boyle.chris.sgtpuzzles_72.apk) | Native Fifteen board generation, three moves, undo and redo. |
 | [Gears ES2 7](https://f-droid.org/archive/com.jeffboody.GearsES2eclair_7.apk) | Animated native OpenGL ES 2 gears and touch-controlled view rotation. |
-| [Gloomy Dungeons 2013.03.07.0416](https://f-droid.org/archive/zame.GloomyDungeons.opensource.game_1358421967.apk) | Native OpenGL ES 1 level rendering, forward movement, turning, opening a door and firing two shots (ammunition 20 to 18). |
+| [Gloomy Dungeons 2013.03.07.0416](https://f-droid.org/archive/zame.GloomyDungeons.opensource.game_1358421967.apk) | Native OpenGL ES 1 level rendering, forward movement, turning, opening a door and firing two shots, which lower the ammunition count by two. |
 
 Each APK's only ARM ABI is `armeabi` (Puzzles also contains x86), and its
 native libraries declare ARMv5TE. Install with the explicit
-`--bypass-low-target-sdk-block` option and no `--abi` override: all three
-selected `primaryCpuAbi=armeabi`, loaded their native libraries and ran as
-children of the 32-bit zygote. The run kept SELinux enforcing, left the native
-crash buffer empty and powered off with runtime result 0. Use
+`--bypass-low-target-sdk-block` option and no `--abi` override. Each must
+select `primaryCpuAbi=armeabi`, load its native libraries and run as a child
+of the 32-bit zygote. The run must keep SELinux enforcing, leave the native
+crash buffer empty and power off with runtime result 0. Use
 `ANDARIUM_GUEST_INSTANCE` for an isolated compatibility-test guest; full release
 qualification still uses the gates above.
 
