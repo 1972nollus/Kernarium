@@ -51,7 +51,7 @@ final class LiveRuntime: RuntimeDriver {
     /// Counts the time the guest runs, for the limits of adb operations: it
     /// stops while the application holds the guest paused.
     private let clock = GuestRunClock()
-    private let keyStore = AdbKeyStore()
+    private let keyStore: AdbKeyStore
     /// The guest's adb key, made before the start that boots with it.
     private var adbIdentity: AdbKeyStore.Identity?
     private let microphone = SystemMicrophonePermission()
@@ -89,9 +89,10 @@ final class LiveRuntime: RuntimeDriver {
     private var thermalObserver: NSObjectProtocol?
     private var console: ConsoleSink?
 
-    init(model: AppModel, storage: TwoDiskStorage, marker: PauseMarker) {
+    init(model: AppModel, storage: TwoDiskStorage, marker: PauseMarker, keyStore: AdbKeyStore = AdbKeyStore()) {
         self.model = model
         self.storage = storage
+        self.keyStore = keyStore
         pause = PauseController(effects: LivePauseEffects(), marker: marker, runClock: clock)
         model.microphoneState = Self.state(microphone.access)
         model.motionSensorsAvailable = motion.available

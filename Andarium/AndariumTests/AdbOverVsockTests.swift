@@ -21,7 +21,7 @@ struct AdbOverVsockTests {
 
     /// The same code the screens run, for the key of this boot.
     private func operations() throws -> AdbGuestOperations {
-        let identity = try AdbKeyStore().loadOrCreate()
+        let identity = try AppEntry.fromArguments().adbKeyStore.loadOrCreate()
         return AdbGuestOperations(identity: identity, clock: GuestRunClock(), device: "device")
     }
 
@@ -544,7 +544,7 @@ struct AdbOverVsockTests {
     /// launch that erased the guest first (ANDARIUM_ERASE=1) must differ.
     @Test func eraseGuestMakesANewKey() throws {
         guard Self.enabled, let path = ProcessInfo.processInfo.environment["ANDARIUM_ADB_KEY_FILE"] else { return }
-        let line = try AdbKeyStore().loadOrCreate().publicKeyLine
+        let line = try AppEntry.fromArguments().adbKeyStore.loadOrCreate().publicKeyLine
         let file = URL(fileURLWithPath: path)
         if let previous = try? String(contentsOf: file, encoding: .utf8) {
             #expect(previous != line)

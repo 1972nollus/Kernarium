@@ -354,7 +354,9 @@ thread while a start prepares, when none exists, and its public key goes in each
 boot request (`android_adb_public_key`), which adbd authorizes for that boot on
 the vsock port whatever the guest's USB debugging setting is, so no operation
 depends on it. Finding the key and making it is one locked step, so the start
-that prepares and any other caller get the same key. Erase Guest deletes it. The client signs adbd's AUTH token
+that prepares and any other caller get the same key. Erase Guest deletes it;
+an isolated instance has a key of its own, tagged with its name, which only its
+Erase Guest deletes. The client signs adbd's AUTH token
 and never offers its key: a second token means adbd refused it, and the
 operation says so.
 
@@ -446,8 +448,8 @@ ANDARIUM_ADB_NET_HOLD_SECONDS=<n> keep the bridge up for a real adb (and write t
 An isolated instance name contains 1–64 ASCII letters, digits, hyphens or
 underscores. Use it for compatibility tests that need a fresh guest while the
 ordinary guest or its pending update must be preserved. The instance keeps its
-own disks, settings and pause marker across launches. An invalid name cancels
-the automatic start and erase requests.
+own disks, settings, adb key and pause marker across launches. An invalid name
+cancels the automatic start and erase requests.
 
 For a Recovery display check, run only `AndariumTests/RecoveryDisplayTests`
 with `ANDARIUM_RECOVERY_TESTS=1`, `ANDARIUM_GUEST_INSTANCE=recovery-display`

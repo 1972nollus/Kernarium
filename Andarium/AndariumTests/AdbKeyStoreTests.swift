@@ -48,6 +48,26 @@ struct AdbKeyStoreTests {
         #expect(!lines.all.contains("failed"))
     }
 
+    /// Erasing an isolated instance must never delete the ordinary guest's
+    /// key. The tests use a base tag of their own, never the application's.
+    @Test func anIsolatedInstanceHasItsOwnKeyAndItsEraseLeavesTheOthers() throws {
+        let base = "com.imxieyi.andarium.adb-key.test-\(UUID().uuidString)"
+        let ordinary = AdbKeyStore(instance: nil, base: base)
+        let first = AdbKeyStore(instance: "retina-memory", base: base)
+        let second = AdbKeyStore(instance: "shutdown_flow-2", base: base)
+        defer { [ordinary, first, second].forEach { $0.delete() } }
+        #expect(AdbKeyStore(instance: nil).tag == AdbKeyStore.defaultTag)
+        #expect(Set([ordinary.tag, first.tag, second.tag]).count == 3)
+        let lines = try [ordinary, first, second].map { try $0.loadOrCreate().publicKeyLine }
+        #expect(Set(lines).count == 3)
+        #expect(first.delete())
+        #expect(try first.find() == nil)
+        #expect(try ordinary.loadOrCreate().publicKeyLine == lines[0])
+        #expect(try second.loadOrCreate().publicKeyLine == lines[2])
+        // An instance finds its own key again, and a new one after its erase.
+        #expect(try first.loadOrCreate().publicKeyLine != lines[1])
+    }
+
     @Test func theKeyIsRSA2048ThisDeviceOnlyAndNotSynchronized() throws {
         let store = store()
         defer { store.delete() }
