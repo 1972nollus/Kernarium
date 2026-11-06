@@ -195,9 +195,19 @@ ExactCalculator, Camelot (PDF viewer) and Seedvault (backup). It has no browser
 app (the WebView stays, so that a user can install one), no app store of its
 own and no install restriction: Package Installer and every install path work.
 It has no Google or microG services. LineageOS Setup Wizard handles the first
-boot of a fresh guest; completing it provisions that guest, so subsequent boots
-go directly to the launcher. The LineageOS updater, Canvas, Aperture, Profiles,
-Recorder, QuickAccessWallet, the charger animation,
+boot of a fresh guest; completing it provisions that guest (both settings 1 and
+the wizard's HOME activity disabled), so subsequent boots go directly to the
+launcher. Until then HOME returns to the wizard. A harness that erases a guest
+to measure it provisions the guest over adb after `sys.boot_completed`
+([`tools/android_provision.py`](../../tools/android_provision.py), through
+`tools/boot_android.py --provision`, `tests/perf/run_ios_device_android.py
+--erase` and `tests/perf/android_launch_suite.py`): it sets both settings and
+disables the wizard package for user 0 (the shell may not disable the wizard's
+own components), so HOME resolves to the launcher, and it changes nothing in
+the image; a measurement of the first-boot experience itself keeps the wizard.
+The `android-oobe` test completes the wizard through its pages and checks that
+the helper reaches the same observable state. The LineageOS updater, Canvas,
+Aperture, Profiles, Recorder, QuickAccessWallet, the charger animation,
 fastbootd, AudioFX and the Jelly browser are excluded, as are DeskClock and
 EmergencyInfo; the build and verifier assert both lists. SecureElement, the
 OMAPI service for readers the machine does not have (no eSE, no UICC), is kept

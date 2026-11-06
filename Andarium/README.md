@@ -455,6 +455,8 @@ through Recovery's own menu. Its rendered guest frame is saved as
 unprovisioned flags and setup welcome activity, captures `tmp/setup-welcome.png`,
 then powers off. Run it with `ANDARIUM_ADB_TESTS=1`, `ANDARIUM_OOBE_TESTS=1`,
 `ANDARIUM_START=normal` and the fresh isolated `recovery-display` instance.
+The product's first boot stays in the wizard; completing it, and harnesses that
+skip it, are checked by `android-oobe` (`docs/testing.md`).
 
 On an Apple silicon Mac, `xcodebuild test -scheme Andarium -destination
 'platform=macOS,variant=Designed for iPad' -only-testing:AndariumTests/AutomationHoldTests`

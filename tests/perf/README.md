@@ -96,7 +96,10 @@ Android guests on a device run through Andarium, not Kernarium.
 (`--app`; `package-ios-frameworks.sh --android-automation`) and launches the
 guest, which boots the system that build carries, without Home:
 `ANDARIUM_START=normal` (`--start recovery`), 2 vCPUs, 1536 MiB, a fresh data
-disk only with `--erase`. The
+disk only with `--erase`. A fresh guest starts in LineageOS Setup Wizard, where
+HOME returns to the wizard, so after the boot `--erase` provisions the guest
+over adb (`tools/android_provision.py`, recorded as `provisioned` in the
+summary); `--keep-setup-wizard` measures the first-boot experience itself. The
 guest's adbd is published on the device's loopback at the port of the guest
 slot (`GUEST_SLOT_PORT_BASE`, or `--host-port`; the runner stops with a message
 when neither is set), `iproxy` carries it over USB to the same port on the
@@ -298,7 +301,11 @@ napped emulator drops from 31 to 4 and launches several times slower), and the
 host load. A launch that misses its limit is recorded with no time and left out
 of the medians. The source instance's `instance.json` must name the release as
 a settled start (no unfinished update), because the launcher would otherwise
-update the clone. `--env KEY=VALUE` sets one
+update the clone. The launcher provisions the clone after its boot
+(`boot_android.py --provision`): a source prepared on an erased disk is
+otherwise still in Setup Wizard, which the launches and the idle memory
+would include; a provisioned source is left as it is, and `--keep-setup-wizard`
+measures a source in the wizard. `--env KEY=VALUE` sets one
 arm's emulator environment; `--engine gadgets|jit` selects the execution
 engine (gadgets by default); `--guest-samples PATH` profiles the boot with the
 guest code sampler below. Each record names the engine and carries the boot's

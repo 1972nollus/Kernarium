@@ -1563,6 +1563,18 @@ a blank instance:
 - starting a newer release on an instance of an older one keeps its apps and
   data and records the update, and starting the older release on the newer
   instance is refused.
+- `android-oobe` (integration, registered only when
+  `UML_ANDROID_OOBE_RELEASE` names the release and the Android macOS executable
+  is built) boots two fresh instances. On the first it checks that the guest
+  starts unprovisioned in LineageOS Setup Wizard, which HOME does not leave,
+  completes the wizard through its own pages and checks the end state: both
+  settings 1, the wizard's HOME activity and flow manager disabled, and HOME
+  reaching the launcher. The second is started with `boot_android.py
+  --provision`, the harness path of `tools/android_provision.py`, and must end
+  with both settings 1 and HOME on the launcher, the wizard package disabled
+  for user 0 (the shell may not disable its components), and nothing left for
+  the helper to do. Measurements on an erased guest use that helper, so they do
+  not land in the wizard.
 - `android-adb-debugging` (integration, registered only when
   `UML_ANDROID_ADB_DEBUGGING_RELEASE` names the release and the Android macOS
   executable is built) boots a blank instance and checks the adb topics of the

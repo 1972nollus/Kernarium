@@ -454,6 +454,48 @@ class BootAndroidTests(unittest.TestCase):
                 command,
             )
 
+    def test_provision_runs_after_boot_completed_only_when_asked(self) -> None:
+        # The product starts a fresh guest in Setup Wizard; only a harness that
+        # passes --provision gets the guest provisioned, and only once it has
+        # booted.
+        for extra, booted, calls in (
+            ([], True, 0),
+            (["--provision"], True, 1),
+            (["--provision"], False, 0),
+        ):
+            with self.subTest(extra=extra, booted=booted), tempfile.TemporaryDirectory(
+                prefix="android-launcher-"
+            ) as temporary:
+                root = Path(temporary)
+                release = self.installed_release(root / "releases")
+                with mock.patch.object(
+                    boot_android.android_provision, "provision", return_value=True
+                ) as provision:
+                    result, _, _ = self.run_main(
+                        root, release, root / "instance", extra, booted=booted
+                    )
+                self.assertEqual(result, 0)
+                self.assertEqual(provision.call_count, calls)
+
+    def test_a_guest_that_cannot_be_provisioned_ends_the_start(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary)
+            release = self.installed_release(root / "releases")
+            error = boot_android.android_provision.ProvisionError("HOME is the wizard")
+            with (
+                mock.patch.object(
+                    boot_android.android_provision, "provision", side_effect=error
+                ),
+                mock.patch.object(boot_android, "stop_guest") as stop,
+            ):
+                result, guest, _ = self.run_main(
+                    root, release, root / "instance", ["--provision"]
+                )
+            self.assertEqual(result, 1)
+            # The start ends: the guest is stopped instead of left to run.
+            stop.assert_called_once_with(guest)
+            self.assertEqual(guest.waits, 0)
+
     def test_a_restarting_guest_is_one_process_until_it_ends(self) -> None:
         # The emulator restarts the guest inside its process, so the launcher
         # starts it once and waits on that process alone. The wait returns the

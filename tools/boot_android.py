@@ -37,6 +37,7 @@ _TOOLS = str(REPO_ROOT / "tools")
 if _TOOLS not in sys.path:
     sys.path.insert(0, _TOOLS)
 import android_instance  # noqa: E402
+import android_provision  # noqa: E402
 _GUEST_SUPPORT = str(REPO_ROOT / "tests/integration/support")
 if _GUEST_SUPPORT not in sys.path:
     sys.path.insert(0, _GUEST_SUPPORT)
@@ -182,6 +183,16 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help=(
             "seconds after ADB to wait for sys.boot_completed before the start "
             "no longer counts as complete (default: 900)"
+        ),
+    )
+    parser.add_argument(
+        "--provision",
+        action="store_true",
+        help=(
+            "for harnesses that measure an erased guest: once the guest has "
+            "reached sys.boot_completed, provision it over adb the way Setup "
+            "Wizard's last step does (tools/android_provision.py). The product "
+            "starts a fresh guest in Setup Wizard, and does so without this"
         ),
     )
     parser.add_argument("--cpus", type=positive_integer, default=10)
@@ -552,6 +563,24 @@ def wait_for_boot_completed(
     return False
 
 
+def provision_guest(adb: Path, serial: str) -> None:
+    """Provision the booted guest (--provision); a failure ends the start."""
+    try:
+        changed = android_provision.provision(
+            android_provision.adb_shell(str(adb), serial)
+        )
+    except (
+        android_provision.ProvisionError,
+        subprocess.SubprocessError,
+        OSError,
+    ) as error:
+        raise LauncherError(f"cannot provision the guest: {error}") from error
+    print(
+        "Guest provisioned." if changed else "Guest was already provisioned.",
+        file=sys.stderr,
+    )
+
+
 def plan_start(
     options: argparse.Namespace,
     release: android_instance.Release,
@@ -643,6 +672,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 )
                 if booted:
                     print("Android reached sys.boot_completed.", file=sys.stderr)
+                    if options.provision:
+                        provision_guest(adb, serial)
                 else:
                     print("Android did not reach sys.boot_completed.",
                           file=sys.stderr)
