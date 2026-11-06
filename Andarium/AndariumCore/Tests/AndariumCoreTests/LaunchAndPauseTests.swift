@@ -41,7 +41,39 @@ struct LaunchOverridesTests {
         // The guest's display always follows the window: an earlier version's
         // stored choice is read past, not migrated.
         let old = Data(#"{"retina":true,"followWindow":false}"#.utf8)
-        #expect(try JSONDecoder().decode(DisplayOptions.self, from: old) == DisplayOptions(retina: true))
+        #expect(try JSONDecoder().decode(DisplayOptions.self, from: old) == DisplayOptions(chosenRetina: true))
+    }
+
+    @Test func retinaFollowsTheMemoryTheSystemLetsTheAppUse() {
+        let gib = UInt64(1) << 30
+        // An iPad mini 6 holds the application to 2,867 MiB.
+        #expect(!DisplayOptions.defaultRetina(memoryLimitBytes: 2867 << 20))
+        #expect(!DisplayOptions.defaultRetina(memoryLimitBytes: 4 * gib))
+        #expect(DisplayOptions.defaultRetina(memoryLimitBytes: 4 * gib + 1))
+        #expect(DisplayOptions.defaultRetina(memoryLimitBytes: 6 * gib))
+        // A Mac sets none.
+        #expect(DisplayOptions.defaultRetina(memoryLimitBytes: 0))
+    }
+
+    @Test func aChoiceOfRetinaIsNeverOverriddenByTheDefault() {
+        let gib = UInt64(1) << 30
+        #expect(DisplayOptions().retina(memoryLimitBytes: 8 * gib))
+        #expect(!DisplayOptions().retina(memoryLimitBytes: 2 * gib))
+        #expect(!DisplayOptions(chosenRetina: false).retina(memoryLimitBytes: 8 * gib))
+        #expect(DisplayOptions(chosenRetina: true).retina(memoryLimitBytes: 2 * gib))
+    }
+
+    @Test func aChosenValueSurvivesTheStoredForm() throws {
+        for options in [DisplayOptions(), DisplayOptions(chosenRetina: true), DisplayOptions(chosenRetina: false)] {
+            let data = try JSONEncoder().encode(options)
+            #expect(try JSONDecoder().decode(DisplayOptions.self, from: data) == options)
+        }
+    }
+
+    @Test func aStoredFalseFromBeforeTheDefaultIsNotAChoice() throws {
+        let old = Data(#"{"retina":false}"#.utf8)
+        #expect(try JSONDecoder().decode(DisplayOptions.self, from: old) == DisplayOptions())
+        #expect(try JSONDecoder().decode(DisplayOptions.self, from: Data("{}".utf8)) == DisplayOptions())
     }
 
     @Test func ignoresValuesOutOfRangeOrOffStep() {

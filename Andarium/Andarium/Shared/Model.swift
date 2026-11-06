@@ -102,6 +102,19 @@ final class SessionState {
 
     /// The file name's kind for the install: an app in one file, one in
     /// several, or not an app.
+    /// Whether the person has set Retina mode themselves. Until they do, it
+    /// follows the device (`DisplayOptions.defaultRetina`); once they have,
+    /// the default never replaces their choice.
+    var retinaChosen = false
+    /// The person's choice of Retina mode on Home.
+    func chooseRetina(_ on: Bool) {
+        retina = on
+        retinaChosen = true
+    }
+    /// What is kept of the display options across launches.
+    var displayOptions: DisplayOptions {
+        DisplayOptions(chosenRetina: retinaChosen ? retina : nil)
+    }
     static func installKind(of fileName: String) -> ApkInstall.State? {
         let name = fileName.lowercased()
         if name.hasSuffix(".apk") { return nil }

@@ -347,9 +347,18 @@ and other gestures. The shared [GuestHost input](../GuestHost/README.md) maps
 each finger independently onto the guest's visible display.
 
 Retina mode applies at the next start, because the runtime takes it at boot, so
-the session's Settings leaves it out (`Capabilities.liveDisplayOptions`). The
-guest's display always follows the window; there is no option for it, and a
-value an earlier version stored is ignored.
+it is set on Home only and the session's Settings has no Display section. It
+follows the device until the person sets it: on where the system lets the
+application use more than 4 GiB of memory, off where it does not
+(`DisplayOptions.defaultRetina`). That limit is what the system holds the
+process to, read as the footprint plus what the system lets it grow by
+(`MemoryLimit` in `Live/AppEntry.swift`, the figure of
+`uml::platform::os_memory_limit_bytes`), 2,867 MiB on an iPad mini 6 and none on
+a Mac. A choice made on Home is kept as made and the default never replaces
+it; a stored `false` from before the default counts as no choice, because it
+may only have been the old default. The guest's display always follows the
+window; there is no option for it, and a value an earlier version stored is
+ignored.
 
 Capabilities apply at once. Turning Microphone on asks iOS for access at that
 moment; if iOS refuses, the switch goes back off, the row dims with "Not allowed

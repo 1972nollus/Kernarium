@@ -594,11 +594,11 @@ final class LiveRuntime: RuntimeDriver {
     private func observeDisplayOptions() {
         guard let model else { return }
         withObservationTracking {
-            _ = (model.retina, model.hostDrivesGuestRotation)
+            _ = (model.retina, model.retinaChosen, model.hostDrivesGuestRotation)
         } onChange: {
             Task { @MainActor in
                 guard let model = self.model else { return }
-                DisplayOptionsStore.save(DisplayOptions(retina: model.retina))
+                DisplayOptionsStore.save(model.displayOptions)
                 self.updateGuestRotation()
                 self.observeDisplayOptions()
             }

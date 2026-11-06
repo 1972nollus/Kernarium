@@ -152,10 +152,13 @@ struct DisplaySection: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        @Bindable var model = model
         HomeSection(title: "Display") {
             OptionRow(title: "Retina mode", symbol: "rectangle.inset.filled") {
-                Toggle("Retina mode", isOn: $model.retina).labelsHidden()
+                Toggle("Retina mode", isOn: Binding(
+                    get: { model.retina },
+                    set: { model.chooseRetina($0) }
+                ))
+                .labelsHidden()
             }
         }
         .id("display")

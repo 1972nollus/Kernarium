@@ -93,7 +93,8 @@ struct AppEntry {
         // The rulers offer no size the carried system's data disk would refuse.
         model.releaseMaximumGiB = storage.release.maximumGiB
         let options = DisplayOptionsStore.load()
-        model.retina = launch.retina ?? options.retina
+        model.retina = launch.retina ?? options.retina(memoryLimitBytes: MemoryLimit.bytes())
+        model.retinaChosen = options.chosenRetina != nil
         // A harness launch shows the statistics from the start of the run and
         // prints each reading; an App Store build never has this setting.
         model.session.showStats = launch.statistics
@@ -232,6 +233,28 @@ enum DisplayOptionsStore {
         guard let data = UserDefaults.standard.data(forKey: key),
               let options = try? JSONDecoder().decode(DisplayOptions.self, from: data)
         else { return DisplayOptions() }
+/// What the system holds this application's memory to: the footprint plus what
+/// the system lets it grow by, which is the limit iOS enforces (jetsam) and
+/// 2,867 MiB on an iPad mini 6. Zero where the system sets none (a Mac, or an
+/// iOS application on one). The same figure as `uml::platform::
+/// os_memory_limit_bytes` (`darwin/platform/apple/os_memory_limit.hpp`), which
+/// the runtime holds the guest's memory to; this application does not link
+/// that header.
+enum MemoryLimit {
+    static func bytes() -> UInt64 {
+        var info = task_vm_info_data_t()
+        let words = MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size
+        var count = mach_msg_type_number_t(words)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: words) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS, Int(count) >= words, info.limit_bytes_remaining != 0 else { return 0 }
+        return info.phys_footprint + info.limit_bytes_remaining
+    }
+}
+
         return options
     }
 
