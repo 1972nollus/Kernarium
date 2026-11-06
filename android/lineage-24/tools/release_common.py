@@ -146,6 +146,10 @@ ANDROID_KEYS = {
     "product",
     "release_config",
 }
+# Releases published after the ABI list was added carry it; earlier ones do not,
+# and still validate. The host shows it as the architectures the image enables.
+ANDROID_OPTIONAL_KEYS = {"abi_list"}
+ABI_NAME_RE = re.compile(r"[a-z0-9_]+(?:-[a-z0-9_]+)*")
 SOURCE_KEYS = {
     "manifest_repository",
     "manifest_revision",
@@ -241,7 +245,24 @@ def validate_manifest(value: object) -> dict:
         fail("release is not marked accepted")
     require_string(manifest["published_at_utc"], "publication timestamp")
 
-    android = require_exact_keys(manifest["android"], ANDROID_KEYS, "android")
+    android = manifest["android"]
+    if isinstance(android, dict) and "abi_list" in android:
+        abi_list = android["abi_list"]
+        if (
+            not isinstance(abi_list, list)
+            or not 1 <= len(abi_list) <= 8
+            or any(
+                not isinstance(abi, str) or ABI_NAME_RE.fullmatch(abi) is None
+                for abi in abi_list
+            )
+            or len(set(abi_list)) != len(abi_list)
+        ):
+            fail("android.abi_list is not a list of distinct ABI names")
+        android = {
+            key: item for key, item in android.items()
+            if key not in ANDROID_OPTIONAL_KEYS
+        }
+    android = require_exact_keys(android, ANDROID_KEYS, "android")
     if require_integer(android["major"], "Android major") != 17:
         fail("Android major is not 17")
     if require_integer(android["sdk"], "Android SDK") < 37:

@@ -1491,7 +1491,11 @@ target-file support, and source provenance. The Android section records the
 security patch level (`ro.build.version.security_patch`) and the build number
 (`ro.build.version.incremental`), which a release must set numerically
 (`build-aosp.sh --build-number N`): the number is both the user-visible release
-number and the monotonic key by which the host refuses a downgrade. The checked
+number and the monotonic key by which the host refuses a downgrade. It also
+records the ABIs the image enables, in the image's own order
+(`android.abi_list`, from `ro.product.cpu.abilist`), which Andarium's Info
+sheet lists. The key is optional for validation: a release published before it
+existed has none, and the host then shows no list. The checked
 `metadata/accepted-release.env` selects one reviewed release without recording
 a builder path.
 

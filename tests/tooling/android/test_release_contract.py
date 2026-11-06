@@ -134,6 +134,7 @@ def main() -> None:
             "vendor_api_level": 202704,
             "product": aosp["LINEAGE24_PRODUCT"],
             "release_config": aosp["LINEAGE24_RELEASE_CONFIG"],
+            "abi_list": ["arm64-v8a", "armeabi-v7a", "armeabi"],
         },
         "source": {
             "manifest_repository": aosp["LINEAGE24_MANIFEST_REPOSITORY"],
@@ -383,6 +384,28 @@ def main() -> None:
                 lambda: verify_release(release_root, android_root, semantic=False),
                 f"a release without {key}",
             )
+        # The ABI list is optional, so a release published before it was added
+        # still verifies; when present it names distinct ABIs.
+        manifest = copy.deepcopy(original)
+        del manifest["android"]["abi_list"]
+        manifest_path.write_text(json.dumps(manifest))
+        verify_release(release_root, android_root, semantic=False)
+        for value, label in (
+            ([], "an empty ABI list"),
+            ("arm64-v8a", "a textual ABI list"),
+            (["arm64-v8a", "arm64-v8a"], "a repeated ABI"),
+            (["arm64-v8a", 7], "a numeric ABI"),
+            (["ARM64"], "an ABI with capitals"),
+            (["arm64-v8a,armeabi"], "a joined ABI list"),
+        ):
+            manifest = copy.deepcopy(original)
+            manifest["android"]["abi_list"] = value
+            manifest_path.write_text(json.dumps(manifest))
+            expect_failure(
+                lambda: verify_release(release_root, android_root, semantic=False),
+                label,
+            )
+        manifest_path.write_text(json.dumps(original))
         manifest = copy.deepcopy(original)
         manifest["source"]["aosp_tag"] = "android-0.0.0_r0"
         manifest_path.write_text(json.dumps(manifest))

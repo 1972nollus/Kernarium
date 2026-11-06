@@ -424,6 +424,16 @@ def main() -> None:
             ("ro.build.version.security_patch", "ro.system.build.version.security_patch"),
             "security patch level",
         )
+        # The ABIs the image enables, in its own preference order.
+        abi_list = [
+            abi.strip()
+            for abi in property_value(
+                system_properties,
+                ("ro.product.cpu.abilist", "ro.system.product.cpu.abilist"),
+                "ABI list",
+            ).split(",")
+            if abi.strip()
+        ]
 
         temporary_parent = Path(tempfile.mkdtemp(
             prefix=f".{directory_name}.", dir=release_root
@@ -527,6 +537,7 @@ def main() -> None:
                     "vendor_api_level": vendor_api_level,
                     "product": aosp_metadata["LINEAGE24_PRODUCT"],
                     "release_config": aosp_metadata["LINEAGE24_RELEASE_CONFIG"],
+                    "abi_list": abi_list,
                 },
                 "source": {**source, "routes": source_routes},
                 "kernel": {
