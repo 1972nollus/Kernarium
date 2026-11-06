@@ -196,6 +196,25 @@ for framework in KosmicKrisp MesaGallium MesaEGL; do
 		-o "$CASE_PREFIX/dSYMs/$framework.framework.dSYM"
 done
 verify "$CASE_PREFIX" >/dev/null
+# A framework linked from objects built without -g still gets a dSYM from
+# dsymutil, which exits 0 and keeps the UUID: the symbols are empty.
+cp -R "$CASE_PREFIX" "$TEST_ROOT/empty-symbols"
+xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=27.0 \
+	-c "$TEST_ROOT/kosmickrisp.c" -o "$TEST_ROOT/KosmicKrisp.nodebug.o"
+make_framework "$TEST_ROOT/empty-symbols" KosmicKrisp \
+	"$TEST_ROOT/KosmicKrisp.nodebug.o"
+rm -rf "$TEST_ROOT/empty-symbols/dSYMs/KosmicKrisp.framework.dSYM"
+xcrun dsymutil \
+	"$TEST_ROOT/empty-symbols/Frameworks/KosmicKrisp.framework/KosmicKrisp" \
+	-o "$TEST_ROOT/empty-symbols/dSYMs/KosmicKrisp.framework.dSYM" \
+	>/dev/null 2>&1
+KOSMICKRISP_BINARY=$TEST_ROOT/empty-symbols/Frameworks/KosmicKrisp.framework/KosmicKrisp
+KOSMICKRISP_SYMBOLS=$TEST_ROOT/empty-symbols/dSYMs/KosmicKrisp.framework.dSYM
+[ "$(xcrun dwarfdump --uuid "$KOSMICKRISP_BINARY" | awk '{ print $2 }')" = \
+	"$(xcrun dwarfdump --uuid "$KOSMICKRISP_SYMBOLS" | awk '{ print $2 }')" ] ||
+	fail "the empty-symbols fixture lost its matching UUID"
+expect_cmake_diagnostic "KosmicKrisp.framework debug symbols carry no debug information" \
+	verify "$TEST_ROOT/empty-symbols"
 cp -R "$CASE_PREFIX" "$TEST_ROOT/mismatched-symbols"
 rm -rf "$TEST_ROOT/mismatched-symbols/dSYMs/MesaEGL.framework.dSYM"
 cp -R "$CASE_PREFIX/dSYMs/MesaGallium.framework.dSYM" \

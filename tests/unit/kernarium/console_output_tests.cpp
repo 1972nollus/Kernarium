@@ -43,9 +43,12 @@ std::atomic<unsigned> deliveries {};
 
 void keepRelayingAfterStaticDestruction()
 {
+    // The detached publisher delivers about every millisecond, so a healthy
+    // relay passes at its first delivery; only a stuck one waits out the
+    // deadline, which a loaded host cannot reach.
     const auto before = deliveries.load();
-    std::this_thread::sleep_for(250ms);
-    if (deliveries.load() <= before)
+    if (!uml::testing::waitUntil([before] { return deliveries.load() > before; },
+            3s))
         std::_Exit(2);
 }
 
@@ -76,9 +79,10 @@ void relaySurvivesProcessExit()
         std::exit(0);
     }
     int status = 0;
+    // The child waits up to 2 s for its first deliveries and 3 s more at exit.
     const bool ended = uml::testing::waitUntil([&] {
         return waitpid(child, &status, WNOHANG) == child;
-    }, 5s);
+    }, 10s);
     if (!ended) {
         (void)kill(child, SIGKILL);
         (void)waitpid(child, &status, 0);

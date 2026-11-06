@@ -28,7 +28,6 @@ struct LaunchOverridesTests {
                 .memoryMiB: "1536",
                 .diskGiB: "32",
                 .retina: "1",
-                .followWindow: "0",
             ],
             processorCount: 6
         )
@@ -36,7 +35,13 @@ struct LaunchOverridesTests {
         #expect(overrides.memoryMiB == 1536)
         #expect(overrides.capacityGiB == 32)
         #expect(overrides.retina == true)
-        #expect(overrides.followWindow == false)
+    }
+
+    @Test func aStoredFollowWindowValueIsIgnored() throws {
+        // The guest's display always follows the window: an earlier version's
+        // stored choice is read past, not migrated.
+        let old = Data(#"{"retina":true,"followWindow":false}"#.utf8)
+        #expect(try JSONDecoder().decode(DisplayOptions.self, from: old) == DisplayOptions(retina: true))
     }
 
     @Test func ignoresValuesOutOfRangeOrOffStep() {
@@ -143,8 +148,19 @@ struct ReportTests {
         #expect(BootSteps.current(preparingDisk: false, milestone: .starting) == 1)
         #expect(BootSteps.current(preparingDisk: false, milestone: .kernelRunning) == 2)
         #expect(BootSteps.current(preparingDisk: false, milestone: .androidStarting) == 3)
-        #expect(BootSteps.current(preparingDisk: false, milestone: .screenStarting) == 4)
-        #expect(BootSteps.current(preparingDisk: false, milestone: .ready) == BootSteps.count)
+        // Recovery has a fifth step for its first frame.
+        #expect(BootSteps.current(preparingDisk: false, milestone: .screenStarting, recovery: true) == 4)
+        #expect(BootSteps.current(preparingDisk: false, milestone: .ready, recovery: true) == 5)
+        #expect(BootSteps.count(recovery: true) == 5)
+    }
+
+    @Test func aNormalBootStaysInStartupUntilBootCompleted() {
+        // Four steps: Startup is the last, and nothing before sys.boot_completed
+        // moves past it, the graphics service included.
+        #expect(BootSteps.count(recovery: false) == 4)
+        #expect(BootSteps.current(preparingDisk: false, milestone: .androidStarting) == 3)
+        #expect(BootSteps.current(preparingDisk: false, milestone: .screenStarting) == 3)
+        #expect(BootSteps.current(preparingDisk: false, milestone: .ready) == 4)
     }
 
     @Test func aTrackerIsReadyOnlyAtTheEnd() {

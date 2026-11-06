@@ -58,7 +58,9 @@ as general hardware capability.
 
 New GPU prefixes retain Release optimization while compiling the Mesa
 frameworks with debug information, and carry their matching dSYMs under
-`dSYMs/`. Prefix verification checks their UUIDs. An older prefix without
+`dSYMs/`. Prefix verification checks their UUIDs and that each dSYM holds
+debug information, since dsymutil writes an empty dSYM with the right UUID
+for a binary built without it. An older prefix without
 symbols remains usable by host builds, but iOS framework packaging requires
 the symbols: rebuild such a prefix before archiving an application.
 
