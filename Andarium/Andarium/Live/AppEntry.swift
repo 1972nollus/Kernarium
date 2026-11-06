@@ -29,6 +29,9 @@ struct AppEntry {
         #endif
     }
 
+    /// The adb key of the guest this launch runs.
+    var adbKeyStore: AdbKeyStore { AdbKeyStore(instance: overrides.instance) }
+
     func configureTips() {
         try? Tips.configure([.displayFrequency(.immediate)])
     }
@@ -103,7 +106,7 @@ struct AppEntry {
             print("Andarium: the previous process ended out of the foreground; the guest starts again from boot")
         }
         if carried != nil {
-            let runtime = LiveRuntime(model: model, storage: storage, marker: marker)
+            let runtime = LiveRuntime(model: model, storage: storage, marker: marker, keyStore: adbKeyStore)
             model.driver = runtime
             model.refreshPlan()
         }

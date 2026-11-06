@@ -67,6 +67,9 @@ protocol RuntimeDriver: AnyObject {
     func restoreUpdate() throws
     /// Enables or stops sharing motion with the guest.
     func setMotionSensors(_ on: Bool)
+    /// The scene's geometry changed, which may include its interface
+    /// orientation.
+    func sceneGeometryDidChange()
     /// Turns the guest's microphone on or off, asking the system for access
     /// when the person turns it on for the first time.
     func setMicrophone(_ on: Bool)
