@@ -1541,12 +1541,14 @@ one datagram answered from the console interrupt with
 the console `/proc/meminfo` does not matter, and a kernel without the command
 answers "Unknown command", which is unsupported. Like every console request it
 ends a suspend, so it is sent only under the handle's lifecycle mutex, taken
-with `try_lock`, and only while the host has not quiesced the guest. The wait
-for the reply, at most 500 ms, is outside the mutex, so a quiesce never waits
-for a memory request and a request never waits for a quiesce
-(`device/mconsole`'s `GuestMemoryQuery` is the two-step request). Whether the
-guest has suspended itself, as an Android guest does once its display is off,
-is the caller's to know.
+with `try_lock`, and only while the host has not quiesced the guest. That
+covers a quiesce under way, its suspend request included, and a suspend that
+gave no final answer, which may have slept; a suspend that failed leaves a
+guest that runs, and it is asked. The wait for the reply, at most 500 ms, is
+outside the mutex, so a quiesce never waits for a memory request and a request
+never waits for a quiesce (`device/mconsole`'s `GuestMemoryQuery` is the
+two-step request). Whether the guest has suspended itself, as an Android guest
+does once its display is off, is the caller's to know.
 
 The macOS launchers print the same figures with `--stats=<ms>` (at least
 100): a sampler thread, started only with the option, reads the running guest

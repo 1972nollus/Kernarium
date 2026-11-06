@@ -5,11 +5,11 @@ import Testing
 @testable import AndariumCore
 
 struct CapabilitiesTests {
-    @Test func theDeviceOffersWhatTheAdbChannelDoes() {
+    @Test func theDeviceOffersWhatTheRuntimeDoes() {
         let device = Capabilities.device
         #expect(device.bugReport && device.apkInstall && device.adbOverNetwork)
-        // The statistics have no runtime behind them yet.
-        #expect(!device.statistics)
+        // The statistics are the runtime's own readings.
+        #expect(device.statistics)
         #expect(!device.liveDisplayOptions)
     }
 

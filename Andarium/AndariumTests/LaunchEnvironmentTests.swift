@@ -23,6 +23,7 @@ struct LaunchEnvironmentTests {
                 "KERNARIUM_RETINA_MODE": "1",
                 "ANDARIUM_START": "recovery",
                 "ANDARIUM_ERASE": "1",
+                "ANDARIUM_STATS": "1",
                 "ANDARIUM_GUEST_INSTANCE": "legacy-test",
             ],
             processorCount: 6
@@ -33,6 +34,7 @@ struct LaunchEnvironmentTests {
         #expect(overrides.retina == true)
         #expect(overrides.start == .recovery)
         #expect(overrides.erase)
+        #expect(overrides.statistics)
         #expect(overrides.instance == "legacy-test")
     }
 

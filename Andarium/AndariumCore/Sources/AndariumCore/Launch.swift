@@ -17,6 +17,9 @@ public struct LaunchOverrides: Equatable, Sendable {
         case bootMode
         /// "1" erases the guest's data before the start.
         case erase
+        /// "1" opens the session with its statistics on screen and prints
+        /// each reading.
+        case stats
         /// A separate guest for a harness run, leaving the ordinary guest alone.
         case instance
     }
@@ -29,6 +32,8 @@ public struct LaunchOverrides: Equatable, Sendable {
     public var start: StartMode?
     /// Erase the guest's data before the start.
     public var erase = false
+    /// Show the statistics from the start of the run, and print them.
+    public var statistics = false
     public var instance: String?
 
     public init() {}
@@ -61,6 +66,7 @@ public struct LaunchOverrides: Equatable, Sendable {
             if value(.bootMode) == "recovery" { start = .recovery }
         }
         erase = value(.erase) == "1"
+        statistics = value(.stats) == "1"
         if let name = value(.instance), (1...64).contains(name.utf8.count),
            name.utf8.allSatisfy({
                (65...90).contains($0) || (97...122).contains($0) ||
@@ -105,39 +111,6 @@ public struct DisplayOptions: Codable, Equatable, Sendable {
 
     public init(retina: Bool = false) {
         self.retina = retina
-    }
-}
-
-/// The lines a run prints for the harness to read. Everything else on the
-/// console is the runtime's own `Kernarium:` output.
-public enum ConsoleReport {
-    public enum ThermalPhase: String, Sendable {
-        case start, change, finish
-    }
-
-    public static func thermalName(_ state: ProcessInfo.ThermalState) -> String {
-        switch state {
-        case .nominal: "nominal"
-        case .fair: "fair"
-        case .serious: "serious"
-        case .critical: "critical"
-        @unknown default: "unknown"
-        }
-    }
-
-    public static func thermal(phase: ThermalPhase, state: ProcessInfo.ThermalState, uptime: TimeInterval) -> String {
-        let seconds = String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), uptime)
-        return "Andarium thermal state: phase=\(phase.rawValue) state=\(thermalName(state)) uptime=\(seconds)"
-    }
-
-    public static func runtimeReturned(_ result: Int32) -> String {
-        "Andarium: runtime returned \(result)"
-    }
-
-    /// The application lost or regained focus (a system alert, such as iOS
-    /// asking for local network access, takes it until a person answers).
-    public static func application(active: Bool) -> String {
-        active ? "Andarium: application active" : "Andarium: application inactive"
     }
 }
 

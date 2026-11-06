@@ -953,7 +953,16 @@ With `TEST_RUNNER_ANDARIUM_ADB_NET_HOLD_SECONDS` one more test holds the bridge 
 a real adb on the Mac, in a Mac run or in an iPad run (`platform=iOS,id=<udid>`
 with `test-without-building`): it prints the address, and `tmp/adbkey` in the
 application's container is the key to give the Mac's adb (`devicectl device copy
-from` on an iPad). Give that adb its own server port and key home. A Mac launch of the guest
+from` on an iPad). Give that adb its own server port and key home.
+`StatisticsLoopTests` drive the statistics loop against a scripted runtime with
+the pause between readings held by the test: no reading without a viewer, the
+quarter-second then one-second cadence with the memory after every other
+reading, the loop stopping with the foreground, with a guest that is not
+running and with its last viewer, a memory the kernel does not give keeping the
+last figure, and a new boot starting the figures over. `ConsoleReport`, the
+harness's console lines, is in the application and tested there
+(`ConsoleReportTests`); `StatsMeter` and `StatsSampling` are in
+`andarium-core`. A Mac launch of the guest
 itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
 `TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
 ([`Andarium/README.md`](../Andarium/README.md#automation)). macOS asks once, per
@@ -976,10 +985,10 @@ small libraries compiled with the iOS SDK.
 `Andarium/scripts/check-app-store-bundle.py`, the last build phase of the
 AppStore configuration (`Andarium/README.md#configurations`) and the check of
 `package-ios-frameworks.sh --app-store`: Info.plist keys,
-no environment knob in host code, no trace of the build host in an
-executable (the linker's debug map, which `strip -S` removes, and a path under
-`/Users/<name>/`), and the privacy check. Its fixtures are compiled with the
-iOS SDK too. The configuration itself is
+no environment knob or harness console line in host code, no trace
+of the build host in an executable (the linker's debug map, which `strip -S`
+removes, and a path under `/Users/<name>/`), and the privacy check. Its
+fixtures are compiled with the iOS SDK too. The configuration itself is
 validated by building it unsigned (`CODE_SIGNING_ALLOWED=NO`).
 
 `andarium-acknowledgements` (tooling) checks that the Acknowledgements
@@ -1119,8 +1128,9 @@ per source: `runtime-guest-statistics` (the carriers' CPU time, found by name,
 and the RAM held), `guest-console-memory` (the `mem` reply parser and request
 against a fake console), `gpu-display-statistics` (the display counters through
 the service), `emulator-statistics` and `emulator-lifecycle` (the public calls
-and their gating: not while quiesced, not beside another lifecycle call, the
-wait outside the mutex), `kernarium-statistics` (the runtime's composition and
+and their gating: not while quiesced or when a suspend gave no final answer,
+not beside another lifecycle call, a suspend starting included, the wait
+outside the mutex), `kernarium-statistics` (the runtime's composition and
 its refusals: quiesced, display off, lifecycle busy), `emulator-statistics-report`
 (the line `--stats` prints) and the package consumers, which call both
 functions on an idle handle.
