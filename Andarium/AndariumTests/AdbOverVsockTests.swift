@@ -222,7 +222,8 @@ struct AdbOverVsockTests {
     }
 
     private func powerOffAndroid(_ operations: AdbGuestOperations) async throws {
-        let files = InstanceFiles(directory: AppEntry.guestDirectory())
+        // The guest the test runs on: an isolated instance has its own record.
+        let files = InstanceFiles(directory: AppEntry.guestDirectory(instance: AppEntry.fromArguments().overrides.instance))
         let before = try files.readState()?.lastCompleted?.at
         _ = try? await operations.shell("reboot -p", limit: .seconds(30))
         let deadline = ContinuousClock.now + .seconds(90)
