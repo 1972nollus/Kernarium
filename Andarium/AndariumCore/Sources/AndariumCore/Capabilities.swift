@@ -37,11 +37,12 @@ public struct Capabilities: Equatable, Sendable {
     )
 
     /// The device application: the session offers an app install, ADB over
-    /// the network and a bug report, all through the runtime's adb channel.
+    /// the network and a bug report, all through the runtime's adb channel,
+    /// and the statistics from the runtime's own readings.
     public static let device = Capabilities(
         adbOverNetwork: true,
         apkInstall: true,
         bugReport: true,
-        statistics: false, liveDisplayOptions: false
+        statistics: true, liveDisplayOptions: false
     )
 }

@@ -454,6 +454,48 @@ class BootAndroidTests(unittest.TestCase):
                 command,
             )
 
+    def test_provision_runs_after_boot_completed_only_when_asked(self) -> None:
+        # The product starts a fresh guest in Setup Wizard; only a harness that
+        # passes --provision gets the guest provisioned, and only once it has
+        # booted.
+        for extra, booted, calls in (
+            ([], True, 0),
+            (["--provision"], True, 1),
+            (["--provision"], False, 0),
+        ):
+            with self.subTest(extra=extra, booted=booted), tempfile.TemporaryDirectory(
+                prefix="android-launcher-"
+            ) as temporary:
+                root = Path(temporary)
+                release = self.installed_release(root / "releases")
+                with mock.patch.object(
+                    boot_android.android_provision, "provision", return_value=True
+                ) as provision:
+                    result, _, _ = self.run_main(
+                        root, release, root / "instance", extra, booted=booted
+                    )
+                self.assertEqual(result, 0)
+                self.assertEqual(provision.call_count, calls)
+
+    def test_a_guest_that_cannot_be_provisioned_ends_the_start(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary)
+            release = self.installed_release(root / "releases")
+            error = boot_android.android_provision.ProvisionError("HOME is the wizard")
+            with (
+                mock.patch.object(
+                    boot_android.android_provision, "provision", side_effect=error
+                ),
+                mock.patch.object(boot_android, "stop_guest") as stop,
+            ):
+                result, guest, _ = self.run_main(
+                    root, release, root / "instance", ["--provision"]
+                )
+            self.assertEqual(result, 1)
+            # The start ends: the guest is stopped instead of left to run.
+            stop.assert_called_once_with(guest)
+            self.assertEqual(guest.waits, 0)
+
     def test_a_restarting_guest_is_one_process_until_it_ends(self) -> None:
         # The emulator restarts the guest inside its process, so the launcher
         # starts it once and waits on that process alone. The wait returns the
@@ -545,6 +587,48 @@ class BootAndroidTests(unittest.TestCase):
             self.assertEqual(state["last_completed"]["release_id"], "rel-b")
             self.assertEqual((instance / "data.img").read_bytes(), b"guest data")
             self.assertFalse(snapshot.exists())
+
+    def test_an_update_that_booted_is_not_rolled_back_by_the_next_release(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary)
+            releases = root / "releases"
+            first = self.installed_release(releases, "rel-a", build=100)
+            second = self.installed_release(releases, "rel-b", build=200)
+            third = self.installed_release(releases, "rel-c", build=300)
+            instance = root / "instance"
+            self.run_main(root, first, instance)
+            (instance / "data.img").write_bytes(b"guest data")
+
+            # The update boots, then the run ends without a clean shutdown
+            # (the host application was killed): the update still counts.
+            result, _guest, _popen = self.run_main(
+                root, second, instance, guest=self.Guest(1)
+            )
+            self.assertEqual(result, 1)
+            state = json.loads((instance / "instance.json").read_text())
+            self.assertIsNone(state["pending_update"])
+            # Not a clean end: the last completed start is still rel-a's.
+            self.assertEqual(state["last_completed"]["release_id"], "rel-a")
+            self.assertFalse((instance / "data.img.pre-rel-b").exists())
+
+            # The data has moved on; the next release updates from it.
+            (instance / "data.img").write_bytes(b"data of the booted update")
+            result, _guest, _popen = self.run_main(
+                root, third, instance, booted=False
+            )
+            self.assertEqual(result, 0)
+            state = json.loads((instance / "instance.json").read_text())
+            self.assertEqual(state["pending_update"]["to_release_id"], "rel-c")
+            self.assertEqual(state["pending_update"]["from"]["release_id"], "rel-b")
+            self.assertEqual(
+                (instance / "data.img").read_bytes(), b"data of the booted update"
+            )
+            self.assertEqual(
+                (instance / "data.img.pre-rel-c").read_bytes(), b"data of the booted update"
+            )
+            self.assertFalse((instance / "data.img.pre-rel-b").exists())
 
     def test_retry_keeps_the_snapshot_until_a_clean_boot(self) -> None:
         with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:

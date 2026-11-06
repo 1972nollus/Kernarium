@@ -92,6 +92,10 @@ struct AppEntry {
         )
         let options = DisplayOptionsStore.load()
         model.retina = launch.retina ?? options.retina
+        // A harness launch shows the statistics from the start of the run and
+        // prints each reading; an App Store build never has this setting.
+        model.session.showStats = launch.statistics
+        model.printsStatistics = launch.statistics
 
         let markerDirectory = launch.instance == nil ? Self.supportDirectory() : locations.directory
         let marker = PauseMarker(url: markerDirectory.appendingPathComponent("pause.json"))

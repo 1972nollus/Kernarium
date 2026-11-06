@@ -195,6 +195,30 @@ def test_default_cpus(suite) -> None:
           "gadgets")
 
 
+def test_guest_is_provisioned_unless_the_wizard_is_kept(suite) -> None:
+    """The launcher provisions the guest after its boot (--provision)."""
+    for extra, provisioned in (([], True), (["--keep-setup-wizard"], False)):
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory) / "launches.jsonl"
+            arguments = [str(SUITE), "--emulator", "emulator", "--release",
+                         "release", "--source-instance", "source",
+                         "--work-instance", "work", "--output", str(output),
+                         *extra]
+            seen = []
+            with mock.patch.object(sys, "argv", arguments), \
+                    mock.patch.object(suite, "run",
+                                      side_effect=lambda a: seen.append(a) or 0):
+                check(suite.main() == 0, "the suite did not run")
+            console = pathlib.Path(directory) / "console.log"
+            with mock.patch.object(suite.subprocess, "Popen") as popen:
+                seen[0].console = console
+                suite.Guest(seen[0], {})
+            command = popen.call_args.args[0]
+            check(("--provision" in command) == provisioned,
+                  f"{command} with {extra}: --provision should be "
+                  f"{'present' if provisioned else 'absent'}")
+
+
 # A launcher that ignores SIGTERM, with an emulator stand-in that leads its own
 # session, as boot_android.py starts the real one.
 STUBBORN_LAUNCHER = """
@@ -256,6 +280,7 @@ def main() -> int:
     test_summary(suite)
     test_scenarios(suite)
     test_default_cpus(suite)
+    test_guest_is_provisioned_unless_the_wizard_is_kept(suite)
     test_power_off_kills_a_stubborn_launcher(suite)
     print("android launch suite contract: ok")
     return 0

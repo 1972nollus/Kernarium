@@ -11,4 +11,22 @@
     <bool name="config_disableLockscreenByDefault">false</bool>
     <integer name="config_audio_notif_vol_default">7</integer>
     <integer name="config_audio_ring_vol_default">7</integer>
+
+    <!-- The guest's clock is the host's, so the platform gets no network time.
+         NetworkTimeUpdateService polls NTP whenever a default network exists, whatever
+         config_autoTimeSourcesPriority says, and NtpTrustedTime takes its servers from
+         config_ntpServers. An entry that is not an ntp:// URI is the one value that leaves
+         it without a server: it rejects the list and refreshes nothing before any lookup.
+         (An empty list makes NtpConfig throw in system_server.) LineageOS also names servers
+         for mcc 460, which overlay-priority/.../values-mcc460 replaces. -->
+    <string-array name="config_ntpServers" translatable="false">
+        <item>none</item>
+    </string-array>
+    <!-- The origins drop the network too. An empty list means the platform default, which
+         holds the network, and telephony alone would make the platform drop "Set time
+         automatically" on a device without telephony; external keeps it supported. -->
+    <string-array name="config_autoTimeSourcesPriority" translatable="false">
+        <item>telephony</item>
+        <item>external</item>
+    </string-array>
 </resources>

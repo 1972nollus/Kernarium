@@ -224,33 +224,73 @@ def synthetic_arm_elf(
     return with_imports(bytes(payload), False, imports) if imports is not None else bytes(payload)
 
 
-def synthetic_compiled_manifest(target_sdk: int | None, *, string_value: bool = False) -> bytes:
-    """A compiled manifest with one element, <uses-sdk>, that carries targetSdkVersion when given.
+def synthetic_compiled_manifest(
+    target_sdk: int | None, *, string_value: bool = False, debuggable: bool | str | None = None,
+    permissions: tuple[str, ...] = (), declared: tuple[str, ...] = (), utf8: bool = False,
+) -> bytes:
+    """A compiled manifest with <uses-sdk>, which carries targetSdkVersion when given, and, when
+    debuggable is not None, an <application> that carries android:debuggable: a literal boolean,
+    or a resource reference when debuggable is "reference". It requests each of `permissions` with
+    <uses-permission> and declares each of `declared` with <permission>; the string pool is UTF-8
+    when `utf8` is set, UTF-16 as the platform's own compiled manifests are otherwise.
 
     It has the chunks the verifier reads and no more: a string pool, the resource map that gives
-    the attribute name its framework ID, and the element."""
-    strings = ["targetSdkVersion", "uses-sdk", "28"]
+    the attribute names their framework IDs, and the elements."""
+    strings = ["targetSdkVersion", "debuggable", "uses-sdk", "application", "28", "name",
+               "uses-permission", "permission", *permissions, *declared]
     pool_strings = b""
     offsets = []
     for text in strings:
         offsets.append(len(pool_strings))
-        pool_strings += struct.pack("<H", len(text)) + text.encode("utf-16-le") + b"\0\0"
+        if utf8:
+            pool_strings += bytes([len(text), len(text)]) + text.encode() + b"\0"
+        else:
+            pool_strings += struct.pack("<H", len(text)) + text.encode("utf-16-le") + b"\0\0"
     pool_strings += b"\0" * (-len(pool_strings) % 4)
     strings_start = 28 + 4 * len(strings)
     pool = struct.pack(
-        "<HHIIIIII", 0x0001, 28, strings_start + len(pool_strings), len(strings), 0, 0, strings_start, 0
+        "<HHIIIIII", 0x0001, 28, strings_start + len(pool_strings), len(strings),
+        0, 0x100 if utf8 else 0, strings_start, 0,
     ) + b"".join(struct.pack("<I", offset) for offset in offsets) + pool_strings
-    resource_map = struct.pack("<HHII", 0x0180, 8, 12, 0x01010270)
-    attributes = b""
+    # The attribute names (strings 0 and 1, and "name" at 5) carry their framework IDs.
+    ids = [0x01010270, 0x0101000F, 0, 0, 0, 0x01010003]
+    resource_map = struct.pack("<HHI", 0x0180, 8, 8 + 4 * len(ids)) + b"".join(
+        struct.pack("<I", value) for value in ids)
+
+    def element(name: int, attributes: bytes) -> bytes:
+        body = struct.pack(
+            "<IIHHHHHH", 0xFFFFFFFF, name, 20, 20, len(attributes) // 20, 0, 0, 0
+        ) + attributes
+        return struct.pack("<HHIII", 0x0102, 16, 16 + len(body), 1, 0xFFFFFFFF) + body
+
+    sdk_attributes = b""
     if target_sdk is not None:
-        attributes = struct.pack(
-            "<IIIHBBI", 0xFFFFFFFF, 0, 2 if string_value else 0xFFFFFFFF, 8, 0,
-            0x03 if string_value else 0x10, 2 if string_value else target_sdk,
+        sdk_attributes = struct.pack(
+            "<IIIHBBI", 0xFFFFFFFF, 0, 4 if string_value else 0xFFFFFFFF, 8, 0,
+            0x03 if string_value else 0x10, 4 if string_value else target_sdk,
         )
-    body = struct.pack("<IIHHHHHH", 0xFFFFFFFF, 1, 20, 20, 1 if attributes else 0, 0, 0, 0) + attributes
-    element = struct.pack("<HHIII", 0x0102, 16, 16 + len(body), 1, 0xFFFFFFFF) + body
-    payload = pool + resource_map + element
+    elements = element(2, sdk_attributes)
+    for index, element_name in enumerate([6] * len(permissions) + [7] * len(declared)):
+        permission = 8 + index
+        elements += element(element_name, struct.pack(
+            "<IIIHBBI", 0xFFFFFFFF, 5, permission, 8, 0, 0x03, permission))
+    if debuggable is not None:
+        value = (0x01, 0x7F010000) if debuggable == "reference" else (
+            0x12, 0xFFFFFFFF if debuggable else 0)
+        elements += element(3, struct.pack(
+            "<IIIHBBI", 0xFFFFFFFF, 1, 0xFFFFFFFF, 8, 0, *value))
+    payload = pool + resource_map + elements
     return struct.pack("<HHI", 0x0003, 8, 8 + len(payload)) + payload
+
+
+def synthetic_apk(debuggable: bool | str | None = None, permissions: tuple[str, ...] = (),
+                  declared: tuple[str, ...] = ()) -> bytes:
+    """An application archive whose compiled manifest is the one synthetic_compiled_manifest builds."""
+    package = io.BytesIO()
+    with zipfile.ZipFile(package, "w") as apk:
+        apk.writestr("AndroidManifest.xml", synthetic_compiled_manifest(
+            None, debuggable=debuggable, permissions=permissions, declared=declared))
+    return package.getvalue()
 
 
 def run_in_process(module, *arguments: object) -> subprocess.CompletedProcess[str]:
@@ -330,6 +370,50 @@ def tracked_erofs_parameters(android_root: Path) -> tuple[str, str]:
             fail(f"lineage_andarium.mk does not set {name} exactly once")
         found.append(values[0])
     return found[0], found[1]
+
+
+def synthetic_resource_table(arrays: list[tuple[str, list[str]]], *, utf8: bool = True) -> bytes:
+    """A compiled resource table whose one package holds the given string-array resources."""
+
+    def pool(strings: list[str]) -> bytes:
+        data, offsets = b"", []
+        for text in strings:
+            offsets.append(len(data))
+            if utf8:
+                raw = text.encode()
+                data += bytes([len(text), len(raw)]) + raw + b"\x00"
+            else:
+                data += struct.pack("<H", len(text)) + text.encode("utf-16-le") + b"\x00\x00"
+        data += b"\x00" * (-len(data) % 4)
+        start = 28 + 4 * len(strings)
+        return (struct.pack("<HHIIIIII", 1, 28, start + len(data), len(strings), 0,
+                            0x100 if utf8 else 0, start, 0)
+                + struct.pack(f"<{len(strings)}I", *offsets) + data)
+
+    values = sorted({item for _, items in arrays for item in items})
+    names = [name for name, _ in arrays]
+    entries = b""
+    offsets = []
+    for index, (_, items) in enumerate(arrays):
+        offsets.append(len(entries))
+        entries += struct.pack("<HHIII", 16, 1, index, 0, len(items))
+        for item in items:
+            entries += struct.pack("<IHBBI", 0x02000001, 8, 0, 3, values.index(item))
+    configuration = struct.pack("<I", 64) + b"\x00" * 60
+    type_header = 20 + len(configuration)
+    type_chunk = (struct.pack("<HHIBBHII", 0x0201, type_header,
+                              type_header + 4 * len(arrays) + len(entries), 1, 0, 0, len(arrays),
+                              type_header + 4 * len(arrays))
+                  + configuration + struct.pack(f"<{len(arrays)}I", *offsets) + entries)
+    type_pool, key_pool = pool(["array"]), pool(names)
+    package_header = 288
+    package = (struct.pack("<HHII", 0x0200, package_header,
+                           package_header + len(type_pool) + len(key_pool) + len(type_chunk), 0x7F)
+               + b"\x00" * 256
+               + struct.pack("<IIIII", package_header, 0, package_header + len(type_pool), 0, 0)
+               + type_pool + key_pool + type_chunk)
+    global_pool = pool(values)
+    return struct.pack("<HHII", 2, 12, 12 + len(global_pool) + len(package), 1) + global_pool + package
 
 
 def synthetic_apex(filesystem: str = "erofs", content: bytes = b"", **superblock) -> bytes:
@@ -437,6 +521,24 @@ def verify_target_files_fixtures(verifier: Path) -> None:
 
     tool = load_tool(verifier)
     pinner_overlay_entry = tool.PINNER_OVERLAY
+    statistics_apks = tool.STATISTICS_APKS
+    # The Setup Wizard overlay's artwork, as the build would carry it: the raw animation unchanged and
+    # the compiled vector holding its path data as strings.
+    wizard_art_root = verifier.parents[1] / "overlay/overlay/packages/apps/SetupWizard/app/src/main/res"
+    wizard_paths = re.findall(
+        r'android:pathData="([^"]+)"', (wizard_art_root / "drawable/logo.xml").read_text(encoding="utf-8")
+    )
+    wizard_welcome = (wizard_art_root / "raw/lottie_welcome.json").read_bytes()
+    # The reader of compiled array resources sees the same items through either string pool.
+    tables = [("config_ntpServers", ["none"]), ("config_autoTimeSourcesPriority", ["telephony", "external"]),
+              ("config_ntpServers", ["ntp://ntp.example", "x"]), ("empty", [])]
+    expected_arrays = {"config_ntpServers": [["none"], ["ntp://ntp.example", "x"]],
+                       "config_autoTimeSourcesPriority": [["telephony", "external"]], "empty": [[]]}
+    for utf8 in (True, False):
+        if tool.resource_arrays(synthetic_resource_table(tables, utf8=utf8)) != expected_arrays:
+            fail(f"the resource array reader misreads a {'UTF-8' if utf8 else 'UTF-16'} string pool")
+    release_manifest = synthetic_compiled_manifest(None, debuggable=False)
+    release_apk = synthetic_apk(debuggable=False)
     preopt_apks = sorted(tool.REQUIRED_PREOPT_APKS)
     plain_apks = sorted(
         entry for entry in tool.REQUIRED_ENTRIES
@@ -642,6 +744,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_adb_prop_policy: bool = False,
                           core_sets_vendor_prop: bool = False,
                           missing_audio_binder_policy: bool = False,
+                          missing_wifi_debug_policy: bool = False,
                           clearkey_memfd_variant: str | None = None,
                           oversize_platform_policy: bool = False,
                           media_codecs_variant: str | None = None,
@@ -667,6 +770,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_product_model: bool = False,
                           old_product_identity: bool = False,
                           wrong_vendor_identity: bool = False,
+                          vendor_build_identity: str | None = None,
                           fingerprint_variant: str | None = None,
                           user_permissive_su: bool = False,
                           usb_debugging_default: bool = False,
@@ -677,6 +781,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           userdata_grow_policy_variant: str | None = None,
                           discrete_ops_variant: str | None = None,
                           pinner_overlay_variant: str | None = None,
+                          statistics_variant: str | None = None,
+                          wizard_branding_variant: str | None = None,
+                          network_time_variant: str | None = None,
                           reclaim_variant: str | None = None,
                           wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
@@ -1405,6 +1512,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         else "(allow hal_audio_default hal_audio_default (binder (call transfer)))\n"
                     )
                     + (
+                        ""
+                        if missing_wifi_debug_policy
+                        else "(allow hal_wifi_default persist_vendor_debug_wifi_prop_202604 "
+                        "(file (read getattr map open)))\n"
+                    )
+                    + (
                         "(allow adbd_202604 virtual_face_hal_prop_202604 (property_service (set)))\n"
                         if core_sets_vendor_prop
                         else ""
@@ -1500,8 +1613,43 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     f"VENDOR/etc/vintf/manifest/{video_service}.xml",
                     '<manifest version="1.0" type="device"/>\n',
                 )
+                def application_payload(apk: str) -> bytes:
+                    # LineageParts and the Setup Wizard are real archives, so the check that
+                    # LineageOS's statistics uploader is gone has members to search; the other
+                    # applications stay the placeholder release archive.
+                    if apk not in statistics_apks:
+                        return release_apk
+                    parts = apk.endswith("/LineageParts.apk")
+                    marker = ""
+                    dex = b"dex\n035\0 neutral"
+                    table = b"\x00config_fixture\x00"
+                    catalogue = "parts_catalog"
+                    if statistics_variant == "parts-manifest" and parts:
+                        marker = "org.lineageos.lineageparts.lineagestats.ReportingServiceManager"
+                    if statistics_variant == "parts-dex" and parts:
+                        dex += b" Lorg/lineageos/lineageparts/lineagestats/AnonymousStats;"
+                    if statistics_variant == "parts-endpoint" and parts:
+                        table += b"https://stats.lineageos.org/api/v1/stats\x00"
+                    if statistics_variant == "parts-catalogue" and parts:
+                        catalogue += " lineagestats"
+                    if statistics_variant == "wizard-setting" and not parts:
+                        dex += b" stats_collection"
+                    payload = io.BytesIO()
+                    with zipfile.ZipFile(payload, "w") as application:
+                        # The compiled manifest's string pool is UTF-16, so a marker named there is
+                        # found in its UTF-16 form; the manifest is otherwise a release one.
+                        application.writestr(
+                            "AndroidManifest.xml",
+                            synthetic_compiled_manifest(None, debuggable=False, permissions=(marker,))
+                            if marker else release_manifest,
+                        )
+                        application.writestr("classes.dex", dex)
+                        application.writestr("resources.arsc", table)
+                        application.writestr("res/xml/parts_catalog.xml", catalogue.encode("utf-16-le"))
+                    return payload.getvalue()
+
                 for apk in preopt_apks:
-                    archive.writestr(apk, b"apk")
+                    archive.writestr(apk, application_payload(apk))
                     apk_path = Path(apk)
                     artifact = (
                         apk_path.parent / "oat" / "arm64" / apk_path.stem
@@ -1516,7 +1664,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         ):
                             archive.writestr(f"{artifact}.vdex", b"vdex")
                 for apk in plain_apks:
-                    archive.writestr(apk, b"apk")
+                    archive.writestr(apk, application_payload(apk))
                 # The overlay that releases the home app's pin: built for SDK 28, with the
                 # resource it sets in its table.
                 pinner_overlay = io.BytesIO()
@@ -1560,11 +1708,50 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         table += key + device_ops.encode() + b"\x00"
                     overlay_apk = io.BytesIO()
                     with zipfile.ZipFile(overlay_apk, "w") as overlay:
+                        overlay.writestr("AndroidManifest.xml", release_manifest)
                         overlay.writestr("resources.arsc", table)
                     archive.writestr(
                         "PRODUCT/overlay/"
                         "SimpleDeviceConfig__lineage_andarium__auto_generated_rro_product.apk",
                         overlay_apk.getvalue(),
+                    )
+                if wizard_branding_variant != "missing-overlay":
+                    # The Setup Wizard's overlay: the default-locale strings are in its table, as
+                    # UTF-16 when the build packs the pool that way.
+                    wizard_table = (
+                        b"\x00os_name\x00Andarium features\x00Update Andarium Recovery\x00"
+                        b"Updates Andarium Recovery on first boot subsequent to every update.\x00"
+                    )
+                    if wizard_branding_variant == "utf16-table":
+                        wizard_table = wizard_table.decode().encode("utf-16-le")
+                    if wizard_branding_variant == "lineage-name":
+                        wizard_table += b"LineageOS features\x00"
+                    if wizard_branding_variant == "lineage-name-utf16":
+                        wizard_table += "Update Lineage Recovery".encode("utf-16-le")
+                    if wizard_branding_variant == "no-recovery-strings":
+                        wizard_table = b"\x00os_name\x00Andarium features\x00"
+                    if wizard_branding_variant == "lineage-features":
+                        wizard_table = wizard_table.replace(b"Andarium features", b"Features")
+                    wizard_logo = b"\x00".join(path.encode() for path in wizard_paths)
+                    wizard_animation = wizard_welcome
+                    if wizard_branding_variant == "stock-logo":
+                        wizard_logo = b"\x00M0,0L1,1\x00"
+                    elif wizard_branding_variant == "logo-lacks-a-path":
+                        wizard_logo = b"\x00".join(path.encode() for path in wizard_paths[:-1])
+                    elif wizard_branding_variant == "stock-animation":
+                        wizard_animation = wizard_welcome.replace(b"Andarium", b"LineageOS", 1) + b" "
+                    wizard_apk = io.BytesIO()
+                    with zipfile.ZipFile(wizard_apk, "w") as overlay:
+                        overlay.writestr("AndroidManifest.xml", release_manifest)
+                        overlay.writestr("resources.arsc", wizard_table)
+                        if wizard_branding_variant != "no-logo":
+                            overlay.writestr("res/drawable-v24/logo.xml", wizard_logo)
+                        if wizard_branding_variant != "no-animation":
+                            overlay.writestr("res/raw/lottie_welcome.json", wizard_animation)
+                    archive.writestr(
+                        "PRODUCT/overlay/"
+                        "LineageSetupWizard__lineage_andarium__auto_generated_rro_product.apk",
+                        wizard_apk.getvalue(),
                     )
                 if wallpaper_variant != "missing-overlay":
                     # The framework's runtime resource overlay: Soong lists the tablet default
@@ -1587,9 +1774,37 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         wallpapers["res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"] = png_header(1024, 768)
                     elif wallpaper_variant == "not-png":
                         wallpapers["res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"] = b"not a png at all, just bytes"
+                    # The product's network time: no NTP server the client accepts, and no network origin.
+                    network_time = {
+                        "config_ntpServers": ["none"],
+                        "config_autoTimeSourcesPriority": ["telephony", "external"],
+                    }
+                    extra_definitions: list[tuple[str, list[str]]] = []
+                    if network_time_variant == "ntp-server":
+                        network_time["config_ntpServers"] = ["ntp://time.android.com"]
+                    elif network_time_variant == "ntp-server-in-a-qualified-table":
+                        extra_definitions.append(("config_ntpServers", ["ntp://ntp.aliyun.com"]))
+                    elif network_time_variant == "ntp-server-in-capitals":
+                        network_time["config_ntpServers"] = ["NTP://time.example"]
+                    elif network_time_variant == "ntp-empty":
+                        network_time["config_ntpServers"] = []
+                    elif network_time_variant == "ntp-missing":
+                        del network_time["config_ntpServers"]
+                    elif network_time_variant == "origin-network":
+                        network_time["config_autoTimeSourcesPriority"] = ["network", "telephony", "external"]
+                    elif network_time_variant == "origin-empty":
+                        network_time["config_autoTimeSourcesPriority"] = []
+                    elif network_time_variant == "origin-without-external":
+                        network_time["config_autoTimeSourcesPriority"] = ["telephony"]
+                    elif network_time_variant == "origin-missing":
+                        del network_time["config_autoTimeSourcesPriority"]
+                    network_table = synthetic_resource_table(
+                        [*network_time.items(), *extra_definitions], utf8=network_time_variant != "utf16-pool"
+                    )
                     framework_apk = io.BytesIO()
                     with zipfile.ZipFile(framework_apk, "w") as overlay:
-                        overlay.writestr("resources.arsc", b"\x00")
+                        overlay.writestr("AndroidManifest.xml", release_manifest)
+                        overlay.writestr("resources.arsc", network_table)
                         for name, payload in wallpapers.items():
                             overlay.writestr(name, payload)
                     archive.writestr(
@@ -1718,7 +1933,25 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     )
                 archive.writestr(
                     "VENDOR/build.prop",
-                    "ro.vendor.build.fingerprint=kernarium\n"
+                    # The vendor partition's own build identity: the build's, or (vendor_build_identity)
+                    # one that an earlier build left behind.
+                    {
+                        None: (
+                            f"ro.vendor.build.fingerprint={public_fingerprint}\n"
+                            f"ro.vendor.build.type={build_variant}\n"
+                            "ro.vendor.build.tags=release-keys\n"
+                            "ro.vendor.build.id=FIXTURE\n"
+                            "ro.vendor.build.version.incremental=7\n"
+                        ),
+                        "eng": (
+                            "ro.vendor.build.fingerprint=Andarium/lineage_andarium/andarium:17/FIXTURE/eng.build:userdebug/release-keys\n"
+                            "ro.vendor.build.type=userdebug\n"
+                            "ro.vendor.build.tags=release-keys\n"
+                            "ro.vendor.build.id=FIXTURE\n"
+                            "ro.vendor.build.version.incremental=eng.build\n"
+                        ),
+                        "missing": "",
+                    }[vendor_build_identity]
                     + "".join(
                         f"ro.product.vendor.{key}={value}\n"
                         for key, value in vendor_identity.items()
@@ -1815,6 +2048,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     adbd_content += b"persist.sys.usb.config\x00persist.adb.tls_server.enable\x00"
                 if adbd_variant != "no-key-rule":
                     adbd_content += b"kernarium: key refused, debugging is off\x00"
+                # The adb_root service of the same route: its log line for a build that is not debuggable.
+                if adbd_variant != "no-root-service":
+                    archive.writestr(
+                        "SYSTEM_EXT/bin/adb_root",
+                        b"\x00" * 8
+                        + (b"" if adbd_variant == "no-root-guard"
+                           else b"kernarium: rooted debugging stays off, this build is not debuggable\x00"),
+                    )
                 if adbd_variant != "missing-apex":
                     archive.writestr(
                         "SYSTEM/apex/com.android.adbd.apex",
@@ -1965,6 +2206,50 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 if (result.returncode == 0) != (variant == requested):
                     fail(
                         f"a {variant} build verified as {requested}: "
+                        f"{result.returncode} {result.stdout}"
+                    )
+
+        # Only a user build refuses a debuggable application: the diagnostics
+        # variant is debuggable as a whole.
+        for variant in BUILD_VARIANTS:
+            fixture = root / f"{variant}-with-a-debuggable-application.zip"
+            write_fixture(
+                fixture, build_variant=variant,
+                entries={"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable=True)},
+            )
+            result = run_tool(
+                verifier, "--target-files", fixture,
+                "--build-variant", variant, *kernel_options,
+            )
+            if (result.returncode == 0) != (variant != "user"):
+                fail(
+                    f"a {variant} build with a debuggable application verified wrongly: "
+                    f"{result.returncode} {result.stdout}"
+                )
+
+        # Every variant refuses an application that requests the trade-in permission, and only a
+        # request: an application that declares it (framework-res.apk declares every platform
+        # permission) is not an application that can start the mode, and the shell package holds
+        # the permission for what a person types over adb.
+        trade_in_permission = "android.permission.ENTER_TRADE_IN_MODE"
+        for variant in BUILD_VARIANTS:
+            for slug, description, entry, apk, accepted in (
+                ("requests", "an application that requests the permission",
+                 "SYSTEM/priv-app/Fixture/Fixture.apk", synthetic_apk(permissions=(trade_in_permission,)), False),
+                ("declares", "an application that declares the permission",
+                 "SYSTEM/priv-app/Fixture/Fixture.apk", synthetic_apk(declared=(trade_in_permission,)), True),
+                ("shell", "the shell package requesting the permission",
+                 "SYSTEM/priv-app/Shell/Shell.apk", synthetic_apk(permissions=(trade_in_permission,)), True),
+            ):
+                fixture = root / f"{variant}-with-trade-in-permission-{slug}.zip"
+                write_fixture(fixture, build_variant=variant, entries={entry: apk})
+                result = run_tool(
+                    verifier, "--target-files", fixture,
+                    "--build-variant", variant, *kernel_options,
+                )
+                if (result.returncode == 0) != accepted:
+                    fail(
+                        f"a {variant} build with {description} verified wrongly: "
                         f"{result.returncode} {result.stdout}"
                     )
 
@@ -2204,6 +2489,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("adb-prop-policy", {"missing_adb_prop_policy": True}),
             ("core-sets-vendor-prop", {"core_sets_vendor_prop": True}),
             ("audio-binder-policy", {"missing_audio_binder_policy": True}),
+            ("wifi-debug-property-policy", {"missing_wifi_debug_policy": True}),
             ("clearkey-memfd-missing", {"clearkey_memfd_variant": "missing"}),
             ("clearkey-memfd-no-write", {"clearkey_memfd_variant": "no-write"}),
             ("clearkey-memfd-isolated-apps", {"clearkey_memfd_variant": "all-apps"}),
@@ -2243,6 +2529,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("product-model", {"wrong_product_model": True}),
             ("old-product-identity", {"old_product_identity": True}),
             ("wrong-vendor-identity", {"wrong_vendor_identity": True}),
+            ("vendor-build-identity-of-an-eng-build", {"vendor_build_identity": "eng"}),
+            ("vendor-without-a-build-identity", {"vendor_build_identity": "missing"}),
             ("missing-public-fingerprint", {"fingerprint_variant": "missing"}),
             ("generic-system-fingerprint", {"fingerprint_variant": "generic-system"}),
             ("wrong-type-fingerprint", {"fingerprint_variant": "wrong-type"}),
@@ -2291,6 +2579,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("adbd-without-tcp-policy", {"adbd_variant": "no-tcp"}),
             ("adbd-without-debugging-setting", {"adbd_variant": "no-debugging-setting"}),
             ("adbd-without-key-rule", {"adbd_variant": "no-key-rule"}),
+            ("adb-root-service-without-the-debuggable-rule", {"adbd_variant": "no-root-guard"}),
+            ("missing-adb-root-service", {"adbd_variant": "no-root-service"}),
             ("services-jar-without-the-adb-topics", {"services_jar_variant": "no-marker"}),
             ("signed-with-the-test-key", {"signed": True, "ota_certificates": "build"}),
             ("signed-with-the-test-key-path", {"signed": True, "ota_certificates": "test-key-path"}),
@@ -2310,6 +2600,31 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("pinner-overlay-target-sdk-current", {"pinner_overlay_variant": "target-sdk-current"}),
             ("pinner-overlay-no-target-sdk", {"pinner_overlay_variant": "no-target-sdk"}),
             ("pinner-overlay-named-target-sdk", {"pinner_overlay_variant": "named-target-sdk"}),
+            ("missing-setup-wizard-overlay", {"wizard_branding_variant": "missing-overlay"}),
+            ("setup-wizard-names-lineageos", {"wizard_branding_variant": "lineage-name"}),
+            ("setup-wizard-names-lineage-in-utf16", {"wizard_branding_variant": "lineage-name-utf16"}),
+            ("setup-wizard-without-recovery-strings", {"wizard_branding_variant": "no-recovery-strings"}),
+            ("setup-wizard-without-andarium-features", {"wizard_branding_variant": "lineage-features"}),
+            ("setup-wizard-without-logo", {"wizard_branding_variant": "no-logo"}),
+            ("setup-wizard-with-another-logo", {"wizard_branding_variant": "stock-logo"}),
+            ("setup-wizard-logo-lacking-a-path", {"wizard_branding_variant": "logo-lacks-a-path"}),
+            ("setup-wizard-without-animation", {"wizard_branding_variant": "no-animation"}),
+            ("setup-wizard-with-another-animation", {"wizard_branding_variant": "stock-animation"}),
+            ("ntp-server-left", {"network_time_variant": "ntp-server"}),
+            ("ntp-server-left-in-a-qualified-definition",
+             {"network_time_variant": "ntp-server-in-a-qualified-table"}),
+            ("ntp-server-left-in-capitals", {"network_time_variant": "ntp-server-in-capitals"}),
+            ("ntp-server-list-empty", {"network_time_variant": "ntp-empty"}),
+            ("ntp-server-list-missing", {"network_time_variant": "ntp-missing"}),
+            ("network-time-origin-left", {"network_time_variant": "origin-network"}),
+            ("time-origin-list-empty", {"network_time_variant": "origin-empty"}),
+            ("time-origin-list-without-external", {"network_time_variant": "origin-without-external"}),
+            ("time-origin-list-missing", {"network_time_variant": "origin-missing"}),
+            ("statistics-uploader-in-parts-manifest", {"statistics_variant": "parts-manifest"}),
+            ("statistics-uploader-in-parts-dex", {"statistics_variant": "parts-dex"}),
+            ("statistics-endpoint-in-parts-resources", {"statistics_variant": "parts-endpoint"}),
+            ("statistics-part-in-parts-catalogue", {"statistics_variant": "parts-catalogue"}),
+            ("statistics-setting-in-setup-wizard", {"statistics_variant": "wizard-setting"}),
             ("pinner-overlay-no-resource", {"pinner_overlay_variant": "no-resource"}),
             ("missing-reclaim-script", {"reclaim_variant": "missing-script"}),
             ("missing-reclaim-rc", {"reclaim_variant": "missing-rc"}),
@@ -2353,6 +2668,23 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"SYSTEM_EXT/priv-app/LineageSetupWizard/LineageSetupWizard.apk": None}}),
             ("auto-provisioner-bypasses-setup",
              {"extra_entry": "SYSTEM/priv-app/Provision/Provision.apk"}),
+            ("motion-probe-left-in-the-image",
+             {"entries": {"SYSTEM/app/AndariumMotionProbe/AndariumMotionProbe.apk":
+                          synthetic_apk(debuggable=False)}}),
+            ("webgl-probe-left-in-the-image",
+             {"entries": {"SYSTEM/app/AndariumWebGLProbe/AndariumWebGLProbe.apk":
+                          synthetic_apk(debuggable=False)}}),
+            ("debuggable-application-in-a-user-build",
+             {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable=True)}}),
+            ("debuggable-application-by-reference",
+             {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable="reference")}}),
+            ("application-that-starts-trade-in-mode",
+             {"entries": {"SYSTEM/priv-app/Fixture/Fixture.apk":
+                          synthetic_apk(permissions=("android.permission.ENTER_TRADE_IN_MODE",))}}),
+            ("device-diagnostics-in-the-image",
+             {"extra_entry": "SYSTEM/priv-app/DeviceDiagnostics/DeviceDiagnostics.apk"}),
+            ("application-without-a-manifest",
+             {"entries": {"PRODUCT/app/Fixture/Fixture.apk": b"not an archive"}}),
             ("curated-out-canvas",
              {"extra_entry": "PRODUCT/app/Canvas/Canvas.apk"}),
             ("curated-out-updater",
@@ -2492,6 +2824,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "unexpected product identity ro.product.product.brand: 'Android'"),
             ("wrong-vendor-identity-cause", {"wrong_vendor_identity": True},
              "unexpected product identity ro.product.vendor.model: 'Android 17 on Andarium'"),
+            ("vendor-build-identity-of-an-eng-build-cause", {"vendor_build_identity": "eng"},
+             "the vendor partition does not carry the build's identity: ro.vendor.build.fingerprint"),
+            ("vendor-without-a-build-identity-cause", {"vendor_build_identity": "missing"},
+             "the vendor partition does not carry the build's identity: ro.vendor.build.fingerprint is None"),
             ("missing-public-fingerprint-cause", {"fingerprint_variant": "missing"},
              "unexpected build fingerprint for a .* build: ''"),
             ("generic-system-fingerprint-cause", {"fingerprint_variant": "generic-system"},
@@ -2646,6 +2982,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "SYSTEM/etc/selinux/plat_sepolicy.cil"),
             ("audio-binder-policy-cause", {"missing_audio_binder_policy": True},
              "audio HAL processes call each other's binder"),
+            ("wifi-debug-property-policy-cause", {"missing_wifi_debug_policy": True},
+             "Wi-Fi HAL read persist_vendor_debug_wifi_prop"),
             ("clearkey-memfd-missing-cause", {"clearkey_memfd_variant": "missing"},
              "ClearKey DRM HAL read, write and map the memfd files"),
             ("clearkey-memfd-no-write-cause", {"clearkey_memfd_variant": "no-write"},
@@ -2750,6 +3088,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "holds an adbd that does not read persist.sys.usb.config"),
             ("adbd-without-key-rule-cause", {"adbd_variant": "no-key-rule"},
              "holds an adbd without the key rule of route p0011"),
+            ("adb-root-service-without-the-debuggable-rule-cause", {"adbd_variant": "no-root-guard"},
+             "SYSTEM_EXT/bin/adb_root does not hold the debuggable-build rule of route p0011"),
+            ("missing-adb-root-service-cause", {"adbd_variant": "no-root-service"},
+             "SYSTEM_EXT/bin/adb_root is missing: the product needs LineageOS's adb_root service"),
             ("signed-with-the-test-key-cause", {"signed": True, "ota_certificates": "build"},
              "holds the members .* not only keys/releasekey.x509.pem: the target files are not "
              "signed with the release keys"),
@@ -2804,10 +3146,94 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-pinner-overlay-cause",
              {"entries": {"VENDOR/overlay/KernariumPinnerOverlay.apk": None}},
              "VENDOR/overlay/KernariumPinnerOverlay.apk"),
+            ("motion-probe-left-in-the-image-cause",
+             {"entries": {"SYSTEM/app/AndariumMotionProbe/AndariumMotionProbe.apk":
+                          synthetic_apk(debuggable=False)}},
+             "unneeded built-in application payload is forbidden: "
+             "SYSTEM/app/AndariumMotionProbe"),
+            ("webgl-probe-left-in-the-image-cause",
+             {"entries": {"SYSTEM/app/AndariumWebGLProbe/AndariumWebGLProbe.apk":
+                          synthetic_apk(debuggable=False)}},
+             "unneeded built-in application payload is forbidden: "
+             "SYSTEM/app/AndariumWebGLProbe"),
+            ("debuggable-application-in-a-user-build-cause",
+             {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable=True)}},
+             "a user build must not carry a debuggable application: "
+             "PRODUCT/app/Fixture/Fixture.apk"),
+            ("debuggable-application-by-reference-cause",
+             {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable="reference")}},
+             "PRODUCT/app/Fixture/Fixture.apk has no readable manifest: "
+             "android:debuggable is not a literal boolean"),
+            ("application-that-starts-trade-in-mode-cause",
+             {"entries": {"SYSTEM/priv-app/Fixture/Fixture.apk":
+                          synthetic_apk(permissions=("android.permission.ENTER_TRADE_IN_MODE",))}},
+             "SYSTEM/priv-app/Fixture/Fixture.apk requests android.permission.ENTER_TRADE_IN_MODE: "
+             "trade-in mode would start on an unprovisioned first boot"),
+            ("device-diagnostics-in-the-image-cause",
+             {"extra_entry": "SYSTEM/priv-app/DeviceDiagnostics/DeviceDiagnostics.apk"},
+             "unneeded built-in application payload is forbidden: "
+             "SYSTEM/priv-app/DeviceDiagnostics"),
+            ("application-without-a-manifest-cause",
+             {"entries": {"PRODUCT/app/Fixture/Fixture.apk": b"not an archive"}},
+             "PRODUCT/app/Fixture/Fixture.apk has no readable manifest: "),
             ("pinner-overlay-target-sdk-29-cause", {"pinner_overlay_variant": "target-sdk-29"},
              "KernariumPinnerOverlay.apk targets SDK 29: .* 28 or lower"),
             ("pinner-overlay-target-sdk-current-cause", {"pinner_overlay_variant": "target-sdk-current"},
              "KernariumPinnerOverlay.apk targets SDK 37: .* 28 or lower"),
+            ("missing-setup-wizard-overlay-cause", {"wizard_branding_variant": "missing-overlay"},
+             "LineageSetupWizard__lineage_andarium__auto_generated_rro_product.apk is missing"),
+            ("setup-wizard-names-lineageos-cause", {"wizard_branding_variant": "lineage-name"},
+             "still names LineageOS or Lineage"),
+            ("setup-wizard-names-lineage-in-utf16-cause", {"wizard_branding_variant": "lineage-name-utf16"},
+             "still names LineageOS or Lineage"),
+            ("setup-wizard-without-recovery-strings-cause", {"wizard_branding_variant": "no-recovery-strings"},
+             "does not set the string 'Update Andarium Recovery'"),
+            ("setup-wizard-without-andarium-features-cause", {"wizard_branding_variant": "lineage-features"},
+             "does not set the string 'Andarium features'"),
+            ("setup-wizard-without-logo-cause", {"wizard_branding_variant": "no-logo"},
+             "LineageSetupWizard.* has no res/drawable/logo.xml that holds the product's logo"),
+            ("setup-wizard-with-another-logo-cause", {"wizard_branding_variant": "stock-logo"},
+             "LineageSetupWizard.* has no res/drawable/logo.xml that holds the product's logo"),
+            ("setup-wizard-logo-lacking-a-path-cause", {"wizard_branding_variant": "logo-lacks-a-path"},
+             "LineageSetupWizard.* has no res/drawable/logo.xml that holds the product's logo"),
+            ("setup-wizard-without-animation-cause", {"wizard_branding_variant": "no-animation"},
+             "LineageSetupWizard.* has no res/raw/lottie_welcome.json"),
+            ("setup-wizard-with-another-animation-cause", {"wizard_branding_variant": "stock-animation"},
+             "res/raw/lottie_welcome.json is not the product's animation"),
+            ("ntp-server-left-cause", {"network_time_variant": "ntp-server"},
+             "config_ntpServers names the NTP server ntp://time.android.com in .*framework-res"),
+            ("ntp-server-left-in-a-qualified-definition-cause",
+             {"network_time_variant": "ntp-server-in-a-qualified-table"},
+             "config_ntpServers names the NTP server ntp://ntp.aliyun.com in .*framework-res"),
+            ("ntp-server-left-in-capitals-cause", {"network_time_variant": "ntp-server-in-capitals"},
+             "config_ntpServers names the NTP server NTP://time.example in .*framework-res"),
+            ("ntp-server-list-empty-cause", {"network_time_variant": "ntp-empty"},
+             "config_ntpServers is empty in .*framework-res.*NtpConfig throws"),
+            ("ntp-server-list-missing-cause", {"network_time_variant": "ntp-missing"},
+             "framework-res.* does not set config_ntpServers: the platform would query time.android.com"),
+            ("network-time-origin-left-cause", {"network_time_variant": "origin-network"},
+             "config_autoTimeSourcesPriority lists the network in .*framework-res"),
+            ("time-origin-list-empty-cause", {"network_time_variant": "origin-empty"},
+             "config_autoTimeSourcesPriority is empty in .*framework-res.*platform default holds the network"),
+            ("time-origin-list-without-external-cause", {"network_time_variant": "origin-without-external"},
+             "config_autoTimeSourcesPriority in .*framework-res.* lacks external"),
+            ("time-origin-list-missing-cause", {"network_time_variant": "origin-missing"},
+             "framework-res.* does not set config_autoTimeSourcesPriority"),
+            ("statistics-uploader-in-parts-manifest-cause", {"statistics_variant": "parts-manifest"},
+             "LineageParts.apk still carries LineageOS's statistics uploader: AndroidManifest.xml "
+             "contains lineagestats"),
+            ("statistics-uploader-in-parts-dex-cause", {"statistics_variant": "parts-dex"},
+             "LineageParts.apk still carries LineageOS's statistics uploader: classes.dex "
+             "contains lineagestats"),
+            ("statistics-endpoint-in-parts-resources-cause", {"statistics_variant": "parts-endpoint"},
+             "LineageParts.apk still carries LineageOS's statistics uploader: resources.arsc "
+             "contains stats.lineageos.org"),
+            ("statistics-part-in-parts-catalogue-cause", {"statistics_variant": "parts-catalogue"},
+             "LineageParts.apk still carries LineageOS's statistics uploader: "
+             "res/xml/parts_catalog.xml contains lineagestats"),
+            ("statistics-setting-in-setup-wizard-cause", {"statistics_variant": "wizard-setting"},
+             "LineageSetupWizard.apk still carries LineageOS's statistics uploader: classes.dex "
+             "contains stats_collection"),
             ("pinner-overlay-no-target-sdk-cause", {"pinner_overlay_variant": "no-target-sdk"},
              "KernariumPinnerOverlay.apk targets SDK None: .* 28 or lower"),
             ("pinner-overlay-named-target-sdk-cause", {"pinner_overlay_variant": "named-target-sdk"},
@@ -3327,7 +3753,17 @@ def verify_product_identity(android_root: Path) -> None:
             "Andarium/lineage_andarium/andarium:17/CP2A.260605.016/eng.build:user/test-keys",
     }
     product = {f"ro.product.product.{key}": value for key, value in identity.items()}
-    vendor = {f"ro.product.vendor.{key}": value for key, value in identity.items()}
+    # The vendor partition states the build's identity too (ro.vendor.build.*), the same as the
+    # public fingerprint: a vendor image that kept an earlier build's says so in these properties.
+    vendor_build = {
+        "ro.vendor.build.fingerprint": generic["ro.build.fingerprint"],
+        "ro.vendor.build.type": "user",
+        "ro.vendor.build.tags": "test-keys",
+        "ro.vendor.build.id": "CP2A.260605.016",
+        "ro.vendor.build.version.incremental": "eng.build",
+    }
+    vendor_product = {f"ro.product.vendor.{key}": value for key, value in identity.items()}
+    vendor = dict(vendor_product, **vendor_build)
     verifier.check_product_identity(generic, product, vendor, "user")
     # The generic system's own identity is not constrained: it may also carry the product's.
     verifier.check_product_identity(
@@ -3345,6 +3781,17 @@ def verify_product_identity(android_root: Path) -> None:
         ("a wrong vendor device", generic, product,
          dict(vendor, **{"ro.product.vendor.device": "generic"}), "user"),
         ("no vendor identity", generic, product, {}, "user"),
+        ("no vendor build identity", generic, product, vendor_product, "user"),
+        ("the vendor build identity of a canary build", generic, product, dict(vendor, **{
+            "ro.vendor.build.fingerprint":
+                "Andarium/lineage_andarium/andarium:17/CP2A.260605.016/eng.build:userdebug/test-keys",
+            "ro.vendor.build.type": "userdebug"}), "user"),
+        ("a vendor build id of another build", generic, product,
+         dict(vendor, **{"ro.vendor.build.id": "CP2A.250101.001"}), "user"),
+        ("a vendor build number of another build", generic, product,
+         dict(vendor, **{"ro.vendor.build.version.incremental": "2026110100"}), "user"),
+        ("a vendor build signed with other keys", generic, product,
+         dict(vendor, **{"ro.vendor.build.tags": "release-keys"}), "user"),
         ("the generic system's fingerprint", dict(generic, **{
             "ro.build.fingerprint": generic["ro.system.build.fingerprint"]}),
          product, vendor, "user"),
@@ -3401,17 +3848,30 @@ def verify_pinner_overlay(android_root: Path) -> None:
     ):
         if verifier.manifest_target_sdk(blob) != expected:
             fail(f"the manifest reader does not read {label} as {expected}")
+    request, declaration = ("android.permission.ENTER_TRADE_IN_MODE",), ("android.permission.BACKUP",)
+    for utf8 in (False, True):
+        encoding = "UTF-8" if utf8 else "UTF-16"
+        for label, blob, expected in (
+            ("none", synthetic_compiled_manifest(28, utf8=utf8), set()),
+            ("one", synthetic_compiled_manifest(28, permissions=request, utf8=utf8), set(request)),
+            ("two", synthetic_compiled_manifest(None, permissions=request + declaration, utf8=utf8),
+             set(request + declaration)),
+            ("a declaration", synthetic_compiled_manifest(28, declared=request, utf8=utf8), set()),
+        ):
+            if verifier.manifest_requested_permissions(blob) != expected:
+                fail(f"the manifest reader does not read {label} in a {encoding} pool as {expected}")
     good = synthetic_compiled_manifest(28)
     for label, blob in (
         ("empty", b""),
         ("not compiled XML", b"<manifest/>" + bytes(8)),
         ("truncated", good[:-6]),
     ):
-        try:
-            verifier.manifest_target_sdk(blob)
-        except (ValueError, struct.error):
-            continue
-        fail(f"the manifest reader accepts a {label} manifest")
+        for reader in (verifier.manifest_target_sdk, verifier.manifest_requested_permissions):
+            try:
+                reader(blob)
+            except (ValueError, struct.error):
+                continue
+            fail(f"the manifest reader accepts a {label} manifest")
 
 
 def secondary_zygote_preloader_problems(added: str) -> list[str]:
@@ -4415,11 +4875,15 @@ def lz4_legacy_frame(payload: bytes, block_size: int = 1 << 20) -> bytes:
     return bytes(frame)
 
 
-def synthetic_lineage_recovery_ramdisk(
+def synthetic_lineage_ramdisk_for(
     fstab: bytes, *, alignment: int = 16384, omit_dependency: bool = False,
     interface: bytes = b"eth0\0", compression: str = "lz4",
     module: str | None = None, no_memfd: bool = False,
     elf_edit: tuple[str, int, int] | None = None,
+    pixel_format: bytes = b"BGRX_8888",
+    art: dict[str, bytes] | None = None,
+    script: bytes = b"", imported: bytes | None = b"service console /system/bin/sh\n",
+    script_name: str = "init.recovery.cutf_cvm.rc",
 ) -> bytes:
     entries = [
         newc_entry(
@@ -4430,7 +4894,8 @@ def synthetic_lineage_recovery_ramdisk(
             0o100644,
             b"ro.product.system.device=andarium\n"
             b"persist.adb.tcp.port=5555\n"
-            + (b"" if no_memfd else b"sys.use_memfd=true\n"),
+            + (b"" if no_memfd else b"sys.use_memfd=true\n")
+            + b"ro.minui.pixel_format=" + pixel_format + b"\n",
             2,
         ),
         newc_entry(
@@ -4462,6 +4927,14 @@ def synthetic_lineage_recovery_ramdisk(
             )
         ]),
         *([newc_entry(f"lib/modules/{module}", 0o100644, b"module", 13)] if module else []),
+        *[
+            newc_entry(f"res/images/{name}", 0o100644, payload, 100 + index)
+            for index, (name, payload) in enumerate(sorted((art or {}).items()))
+        ],
+        # The product's recovery script, and the Cuttlefish one it imports.
+        *([newc_entry(script_name, 0o100644, script, 14)] if script_name else []),
+        *([newc_entry("init.recovery.cuttlefish.rc", 0o100644, imported, 15)]
+          if imported is not None else []),
     ]
     entries.append(newc_entry("TRAILER!!!", 0, b"", len(entries) + 1))
     archive = b"".join(entries)
@@ -4474,7 +4947,21 @@ def synthetic_lineage_recovery_ramdisk(
 
 def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None:
     fstab = (android_root / "overlay/config/recovery.fstab").read_bytes()
+    script = (android_root / "overlay/config/init.recovery.rc").read_bytes()
     module = load_tool(verifier)
+    # The product's recovery artwork, which the ramdisk of a good image carries.
+    art = {
+        path.name: path.read_bytes()
+        for path in sorted((android_root / module.ART_DIRECTORY).iterdir())
+    }
+    if len(art) != 33 or not set(module.ART_REQUIRED) <= art.keys():
+        fail(f"the product's recovery artwork is {len(art)} files, not the 33 of the design")
+
+    def ramdisk_for(fstab_bytes: bytes, **options: object) -> bytes:
+        return synthetic_lineage_ramdisk_for(
+            fstab_bytes, **{"script": script, "art": art, **options}
+        )
+
     # A match whose offset is shorter than its length repeats the pattern.
     if module.lz4_block(b"\x35abc\x03\x00\x20de", 1 << 20) != b"abcabcabcabcde":
         fail("LZ4 block decoder mis-decoded an overlapping match")
@@ -4490,9 +4977,9 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
             continue
         fail(f"LZ4 block decoder accepted {label}")
 
-    def run(image: Path) -> subprocess.CompletedProcess[str]:
+    def run(image: Path, root: Path = android_root) -> subprocess.CompletedProcess[str]:
         return run_tool(
-            verifier, "--android-root", android_root, "--image", image
+            verifier, "--android-root", root, "--image", image
         )
 
     with tempfile.TemporaryDirectory(prefix="android-lineage-recovery-") as temporary:
@@ -4501,37 +4988,61 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
             good = root / f"recovery-{compression}.img"
             good.write_bytes(
                 synthetic_boot_image(
-                    synthetic_lineage_recovery_ramdisk(fstab, compression=compression)
+                    ramdisk_for(fstab, compression=compression)
                 )
             )
             result = run(good)
             if result.returncode != 0:
                 fail(f"Lineage recovery verifier rejected a {compression} fixture: {result.stdout}")
         for label, ramdisk in (
-            ("a 4 KiB-only ELF", synthetic_lineage_recovery_ramdisk(fstab, alignment=4096)),
+            ("a 4 KiB-only ELF", ramdisk_for(fstab, alignment=4096)),
             (
                 "a missing ELF dependency",
-                synthetic_lineage_recovery_ramdisk(fstab, omit_dependency=True),
+                ramdisk_for(fstab, omit_dependency=True),
             ),
             (
                 "the Cuttlefish interface",
-                synthetic_lineage_recovery_ramdisk(fstab, interface=b"eth1\0"),
+                ramdisk_for(fstab, interface=b"eth1\0"),
             ),
             (
                 "a loadable module",
-                synthetic_lineage_recovery_ramdisk(fstab, module="fixture.ko"),
+                ramdisk_for(fstab, module="fixture.ko"),
             ),
             (
                 "properties without sys.use_memfd",
-                synthetic_lineage_recovery_ramdisk(fstab, no_memfd=True),
+                ramdisk_for(fstab, no_memfd=True),
+            ),
+            (
+                "the Cuttlefish ABGR_8888 pixel format",
+                ramdisk_for(fstab, pixel_format=b"ABGR_8888"),
             ),
             (
                 "a changed fstab",
-                synthetic_lineage_recovery_ramdisk(fstab + b"# changed\n"),
+                ramdisk_for(fstab + b"# changed\n"),
             ),
             (
                 "an uncompressed ramdisk",
-                synthetic_lineage_recovery_ramdisk(fstab, compression="none"),
+                ramdisk_for(fstab, compression="none"),
+            ),
+            (
+                "a ramdisk without the product's artwork",
+                ramdisk_for(fstab, art={}),
+            ),
+            (
+                "a ramdisk without the header image",
+                ramdisk_for(fstab, art={k: v for k, v in art.items() if k != "logo_image_switch.png"}),
+            ),
+            (
+                "LineageOS's header image",
+                ramdisk_for(fstab, art={**art, "logo_image_switch.png": b"the wire logo"}),
+            ),
+            (
+                "a missing progress frame",
+                ramdisk_for(fstab, art={k: v for k, v in art.items() if k != "loop00017.png"}),
+            ),
+            (
+                "a stock progress frame the product does not supply",
+                ramdisk_for(fstab, art={**art, "loop00030.png": b"stock"}),
             ),
         ):
             bad = root / "recovery-bad.img"
@@ -4553,6 +5064,12 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
                 {"module": "modules.builtin.alias.bin"},
                 "loadable-module payload",
             ),
+            ("a missing logo", {"art": {k: v for k, v in art.items() if k != "logo_image.png"}},
+             "lacks the product's artwork res/images/logo_image.png"),
+            ("a stock fastbootd image", {"art": {**art, "fastbootd.png": b"stock"}},
+             "res/images/fastbootd.png is not the product's artwork"),
+            ("a surplus frame", {"art": {**art, "loop00031.png": b"stock"}},
+             "animation frames the product does not supply: .*loop00031.png"),
             ("a 32-bit ELF", {"elf_edit": ("<B", 4, 1)}, "little-endian ELF64"),
             ("a big-endian ELF", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF64"),
             ("a foreign machine", {"elf_edit": ("<H", 18, 62)}, "not AArch64"),
@@ -4560,9 +5077,59 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
         ):
             bad = root / "recovery-bad.img"
             bad.write_bytes(
-                synthetic_boot_image(synthetic_lineage_recovery_ramdisk(fstab, **options))
+                synthetic_boot_image(ramdisk_for(fstab, **options))
             )
             result = run(bad)
+            if result.returncode == 0 or not re.search(reason, result.stdout):
+                fail(f"Lineage recovery verifier did not reject {label} for {reason!r}: {result.stdout}")
+        # The recovery script that publishes the display density: Cuttlefish's
+        # script back under the product's name, the product's without the
+        # density, and either script absent.
+        no_density = b"".join(
+            line for line in script.splitlines(keepends=True) if b"lcd_density" not in line
+        )
+        if no_density == script:
+            fail("the recovery script fixture did not remove the density publication")
+        changed = "differs from the checked device tree"
+        for label, options, reason in (
+            (
+                "Cuttlefish's recovery script", {"script": b"service console /system/bin/sh\n"},
+                changed,
+            ),
+            ("a recovery script without the density", {"script": no_density}, changed),
+            ("a changed recovery script", {"script": script + b"# changed\n"}, changed),
+            ("no recovery script", {"script_name": ""}, "missing required paths.*cutf_cvm"),
+            ("no imported Cuttlefish script", {"imported": None}, "missing required paths.*cuttlefish"),
+        ):
+            bad = root / "recovery-bad.img"
+            bad.write_bytes(synthetic_boot_image(ramdisk_for(fstab, **options)))
+            result = run(bad)
+            if result.returncode == 0 or not re.search(reason, result.stdout):
+                fail(f"Lineage recovery verifier did not reject {label} for {reason!r}: {result.stdout}")
+        # The checked script itself must import Cuttlefish's and publish the
+        # density, whatever a ramdisk holds.
+        tree = root / "tree"
+        (tree / "overlay/config").mkdir(parents=True)
+        (tree / "overlay/config/recovery.fstab").write_bytes(fstab)
+        for label, checked, reason in (
+            ("a checked script without the density", no_density, "does not run 'setprop ro.sf.lcd_density"),
+            (
+                "a checked script with the density under another trigger",
+                script.replace(b"on early-init &&", b"on init &&"),
+                "does not run 'setprop ro.sf.lcd_density .* at 'on early-init",
+            ),
+            (
+                "a checked script without the import",
+                script.replace(b"import /init.recovery.cuttlefish.rc", b"# no import"),
+                "does not import init.recovery.cuttlefish.rc",
+            ),
+        ):
+            if checked == script:
+                fail(f"the recovery script fixture for {label} did not change the script")
+            (tree / "overlay/config/init.recovery.rc").write_bytes(checked)
+            bad = root / "recovery-bad.img"
+            bad.write_bytes(synthetic_boot_image(synthetic_lineage_ramdisk_for(fstab, script=checked)))
+            result = run(bad, tree)
             if result.returncode == 0 or not re.search(reason, result.stdout):
                 fail(f"Lineage recovery verifier did not reject {label} for {reason!r}: {result.stdout}")
 
