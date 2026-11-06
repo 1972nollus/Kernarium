@@ -800,9 +800,11 @@ The iOS host's Virtio touchscreen supports ten independent contacts using Linux
 type-B slots and tracking IDs. The product declares the multitouch, distinct
 multitouch and jazzhand features, and target-files verification requires them.
 VNC remains a single pointer; the recovery UI also accepts that input. Recovery
-reads the host-supplied `ro.boot.lcd_density` for its layout and scales its
+reads the host-supplied display density for its layout and scales its
 fonts, localized text and graphic assets once at load time. Text stays readable
 at Retina resolution throughout the Recovery screens.
+Recovery init publishes `ro.boot.lcd_density` as the readable `ro.sf.lcd_density`,
+as vendor init does in normal Android; the boot property is vendor-private.
 The `recovery_minui_test` Soong target covers glyph boundaries and alpha/RGBA
 scaling, including padded rows and fractional display densities.
 

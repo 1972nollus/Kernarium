@@ -180,6 +180,17 @@ struct RecoveryDisplayTests {
         }
         try #require(model.phase == .running(.recovery), "\(model.runReport)")
         try await Task.sleep(for: .seconds(10))
+        // Check the guest property boundary too: a valid launch DPI alone
+        // does not mean Recovery can read it under its SELinux policy.
+        do {
+            let identity = try AdbKeyStore().loadOrCreate()
+            let operations = AdbGuestOperations(identity: identity, clock: GuestRunClock(), device: "device")
+            let density = try await operations.shell("getprop ro.sf.lcd_density", limit: .seconds(5))
+            let scale = model.retina ? scene.screen.nativeScale : 1
+            #expect(density.text.trimmingCharacters(in: .whitespacesAndNewlines) == String(Int((160 * scale).rounded())))
+        } catch {
+            Issue.record("Recovery display density could not be read: \(error)")
+        }
         print("RECOVERY_DISPLAY: ready retina=\(model.retina); capture the screen within 30 seconds")
         try await Task.sleep(for: .seconds(30))
         // End selects Advanced, then End selects Power off. Use Recovery's

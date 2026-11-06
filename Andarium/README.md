@@ -446,8 +446,9 @@ the automatic start and erase requests.
 
 For a Recovery display check, run only `AndariumTests/RecoveryDisplayTests`
 with `ANDARIUM_RECOVERY_TESTS=1`, `ANDARIUM_GUEST_INSTANCE=recovery-display`
-and `KERNARIUM_RETINA_MODE=0` or `1`, without `ANDARIUM_START`. It provides a
-30-second capture window, then powers off through Recovery's own menu.
+and `KERNARIUM_RETINA_MODE=0` or `1`, without `ANDARIUM_START`. It checks the
+guest's display density, provides a 30-second capture window, then powers off
+through Recovery's own menu.
 
 On an Apple silicon Mac, `xcodebuild test -scheme Andarium -destination
 'platform=macOS,variant=Designed for iPad' -only-testing:AndariumTests/AutomationHoldTests`
