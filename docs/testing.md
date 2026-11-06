@@ -1003,8 +1003,10 @@ AppStore configuration (`Andarium/README.md#configurations`) and the check of
 `package-ios-frameworks.sh --app-store`: Info.plist keys,
 no environment knob or harness console line in host code, no trace
 of the build host in an executable (the linker's debug map, which `strip -S`
-removes, and a path under `/Users/<name>/`), and the privacy check. Its
-fixtures are compiled with the iOS SDK too. The configuration itself is
+removes, and a path under `/Users/<name>/`; the application's own executable
+is unstripped until the archive strips it, so its debug stabs and the strings
+they name are ignored), and the privacy check. Its fixtures are compiled with
+the iOS SDK too. The configuration itself is
 validated by building it unsigned (`CODE_SIGNING_ALLOWED=NO`).
 
 `andarium-acknowledgements` (tooling) checks that the Acknowledgements

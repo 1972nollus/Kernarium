@@ -19,7 +19,8 @@ application that must:
     entries name the object files of the build host's checkout and dependency
     trees; dsymutil has read it into the dSYM by then, and strip -S removes it
     and keeps the UUID). Xcode strips the application's own executable when it
-    archives, and strips nothing it embeds; and
+    archives, and strips nothing it embeds, so the check ignores the debug
+    stabs of the application's own executable and the strings they name; and
   - pass scripts/check-privacy-manifests.py.
 
 The knob scan reads bytes, so it does not see a Swift string of up to 15 bytes
@@ -130,37 +131,73 @@ def harness_lines(path: Path) -> list[str]:
     return sorted({match.decode().strip() for match in HARNESS_LINES.findall(code[0])})
 
 
-def debug_stabs(data: bytes, base: int) -> tuple[int, int]:
-    """The debug stabs in a Mach-O's symbol table, and how many of them are
-    N_OSO, each of which names an object file."""
+def symbol_table(data: bytes, base: int) -> tuple[int, int, int, int] | None:
+    """The symbol table of a Mach-O: the file offsets of its nlist entries and
+    of its string table, the number of entries and the size of the strings."""
     count = struct.unpack_from("<I", data, base + 16)[0]
     position = base + 32
     for _ in range(count):
         command, size = struct.unpack_from("<II", data, position)
         if command == LC_SYMTAB:
-            offset, symbols = struct.unpack_from("<II", data, position + 8)
-            # struct nlist_64 is 16 bytes and n_type is its fifth.
-            kinds = data[base + offset + 4:base + offset + 16 * symbols:16]
-            return (sum(1 for kind in kinds if kind & N_STAB),
-                    kinds.count(N_OSO))
+            offset, symbols, strings, strings_size = struct.unpack_from(
+                "<IIII", data, position + 8)
+            return base + offset, symbols, base + strings, strings_size
         position += size
-    return 0, 0
+    return None
+
+
+def debug_stabs(data: bytes, base: int) -> tuple[int, int]:
+    """The debug stabs in a Mach-O's symbol table, and how many of them are
+    N_OSO, each of which names an object file."""
+    table = symbol_table(data, base)
+    if table is None:
+        return 0, 0
+    offset, symbols, _strings, _size = table
+    # struct nlist_64 is 16 bytes and n_type is its fifth.
+    kinds = data[offset + 4:offset + 16 * symbols:16]
+    return sum(1 for kind in kinds if kind & N_STAB), kinds.count(N_OSO)
+
+
+def without_stab_strings(data: bytes, base: int) -> bytes:
+    """The Mach-O with the strings its debug stabs name blanked: the source
+    directories (N_SO) and object files (N_OSO) of the build, which the
+    archive's strip removes and the home-path scan then does not see."""
+    table = symbol_table(data, base)
+    if table is None:
+        return data
+    offset, symbols, strings, size = table
+    buffer = bytearray(data)
+    for index in range(symbols):
+        entry = offset + 16 * index
+        name, kind = struct.unpack_from("<IB", data, entry)
+        if not kind & N_STAB or not 0 < name < size:
+            continue
+        start = strings + name
+        end = data.find(b"\0", start, strings + size)
+        end = strings + size if end < 0 else end
+        buffer[start:end] = bytes(end - start)
+    return bytes(buffer)
 
 
 def build_host_traces(path: Path, debug_map: bool = True) -> list[str]:
     """What one Mach-O file keeps of the machine that built it. `debug_map`
     says whether its debug stabs count: they do for a framework, whose binary
-    ships as linked."""
+    ships as linked. Without it the file is the application's own executable,
+    which Xcode strips when it archives, so the strings its stabs name are not
+    what ships either."""
     code = host_code(path)
     if code is None:
         return []
     data, base = code
     found = []
-    stabs, objects = debug_stabs(data, base) if debug_map else (0, 0)
-    if stabs:
-        found.append(
-            f"carries the linker's debug map ({stabs} stabs, {objects} N_OSO "
-            "object paths); strip -S it after dsymutil")
+    if debug_map:
+        stabs, objects = debug_stabs(data, base)
+        if stabs:
+            found.append(
+                f"carries the linker's debug map ({stabs} stabs, {objects} N_OSO "
+                "object paths); strip -S it after dsymutil")
+    else:
+        data = without_stab_strings(data, base)
     paths = sorted({match.decode() for match in HOME_PATH.findall(data)})
     if paths:
         found.append(

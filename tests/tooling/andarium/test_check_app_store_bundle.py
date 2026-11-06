@@ -44,9 +44,10 @@ MANIFEST = {
 }
 
 
-def run(command: list[str]) -> subprocess.CompletedProcess[str]:
+def run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
+        cwd=cwd,
         check=False,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
@@ -69,16 +70,20 @@ def build(root: Path, name: str, source: str, extra: list[str] | None = None) ->
     return output
 
 
-def build_with_debug_map(root: Path, name: str) -> Path:
+def build_with_debug_map(root: Path, name: str, directory: str | None = None) -> Path:
     """A library linked from an object compiled with -g: the linker keeps a
-    debug map whose N_OSO entry names the object file."""
+    debug map whose N_OSO entry names the object file. `directory` is the
+    compilation directory the debug map's N_SO entries name."""
     source_path = root / f"{name}.c"
     source_path.write_text(CLEAN, encoding="utf-8")
     objects = root / f"{name}.o"
+    # A source named relative to the compilation directory is what puts that
+    # directory in the debug map.
     compiled = run([
         "xcrun", "--sdk", "iphoneos", "clang", "-target", "arm64-apple-ios27.0",
-        "-g", "-c", str(source_path), "-o", str(objects),
-    ])
+        "-g", *([f"-fdebug-compilation-dir={directory}"] if directory else []),
+        "-c", source_path.name if directory else str(source_path), "-o", str(objects),
+    ], cwd=root)
     if compiled.returncode != 0:
         raise SystemExit(f"could not compile {name}:\n{compiled.stdout}")
     output = root / f"lib{name}.dylib"
@@ -217,9 +222,17 @@ def main() -> int:
         mapped = build_with_debug_map(root, "mapped")
         stripped = strip_debug_map(mapped)
         homed = build(root, "homed", HOME_PATH)
+        # A checkout under a home directory: the N_SO entries of the debug map
+        # name /Users/NAME/src.
+        mapped_home = build_with_debug_map(root, "mapped-home", "/Users/NAME/src")
         # Xcode strips the application's own executable when it archives, so
-        # only an embedded framework's debug map is the check's concern.
+        # only an embedded framework's debug map is the check's concern, and
+        # the home path its stabs name is none of the check's either.
         check(make_app(root, "app-debug-map", mapped, app_info()), passes=True)
+        check(make_app(root, "app-debug-map-home", mapped_home, app_info()),
+              passes=True, expect="ready for the App Store")
+        check(make_app(root, "framework-debug-map-home", clean, app_info(), framework=mapped_home),
+              passes=False, expect="Runtime.framework/Runtime: names a path under a home directory")
         check(make_app(root, "framework-debug-map", clean, app_info(), framework=mapped),
               passes=False, expect="Runtime.framework/Runtime: carries the linker's debug map")
         check(make_app(root, "stripped-debug-map", stripped, app_info(), framework=stripped),
