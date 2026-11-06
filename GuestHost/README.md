@@ -45,7 +45,9 @@ cp GuestHost/Config/Signing.local.xcconfig.example GuestHost/Config/Signing.loca
 ```
 
 Without that file a build for the iOS Simulator works unsigned and a build for
-a device stops with Xcode's "requires a development team" error. A worktree is
+a device stops with Xcode's "requires a development team" error. Name the team
+in that file, not in Xcode's Signing & Capabilities editor, which would write it
+into the tracked project. A worktree is
 a separate checkout and needs its own copy to build for a device.
 `Kernarium/scripts/audio-interrupter.py` reads the same file (or
 `UML_DEVELOPMENT_TEAM`). The team is never tracked: the
