@@ -19,14 +19,26 @@ namespace uml::video {
  * stderr shares the guest console and loses lines under load. Nothing is
  * opened, formatted, or written when the variable is unset.
  */
+#ifdef UML_APP_STORE_RUNTIME
+/* An App Store runtime has no activity log: it opens no file, and each line is
+ * nothing. */
+class ActivityLog final {
+public:
+    template<typename... Arguments> void advertised(const Arguments&...) noexcept {}
+    template<typename... Arguments> void opened(const Arguments&...) noexcept {}
+    template<typename... Arguments> void closed(const Arguments&...) noexcept {}
+    template<typename... Arguments> void encoderAdvertised(const Arguments&...) noexcept {}
+    template<typename... Arguments> void encoderOpened(const Arguments&...) noexcept {}
+    template<typename... Arguments> void encoderStarted(const Arguments&...) noexcept {}
+    template<typename... Arguments> void encoderClosed(const Arguments&...) noexcept {}
+};
+#else
 class ActivityLog final {
 public:
     ActivityLog()
     {
-#ifndef UML_APP_STORE_RUNTIME
         const char* path = std::getenv("UML_VIDEO_ACTIVITY_LOG");
         if (path != nullptr && path[0] != '\0') file_ = std::fopen(path, "ae");
-#endif
     }
     ~ActivityLog() { if (file_ != nullptr) std::fclose(file_); }
     ActivityLog(const ActivityLog&) = delete;
@@ -135,5 +147,6 @@ private:
     std::FILE* file_ {};
     std::chrono::steady_clock::time_point start_ {std::chrono::steady_clock::now()};
 };
+#endif
 
 } // namespace uml::video

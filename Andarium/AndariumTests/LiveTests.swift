@@ -272,8 +272,11 @@ struct RecoveryDisplayTests {
     }
 }
 
+/// Saves the guest's display as a PNG through the runtime's frame mirror. An
+/// App Store build has neither the mirror nor this.
 @MainActor
 func captureGuestFrame(named name: String) async throws {
+    #if !APP_STORE
     let capture = GuestFrameCapture()
     let result = kernarium_runtime_loader_set_frame_sink({ context, buffer in
         guard let context, let buffer else { return }
@@ -295,6 +298,7 @@ func captureGuestFrame(named name: String) async throws {
     let png = try #require(UIImage(cgImage: rendered).pngData())
     try png.write(to: FileManager.default.temporaryDirectory.appendingPathComponent(name))
     print("GUEST_FRAME: saved tmp/\(name)")
+    #endif
 }
 
 /// The system Andarium carries, written the way Create writes it: decoded

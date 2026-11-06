@@ -30,7 +30,13 @@ struct AppEntry {
     }
 
     /// The adb key of the guest this launch runs.
-    var adbKeyStore: AdbKeyStore { AdbKeyStore(instance: overrides.instance) }
+    var adbKeyStore: AdbKeyStore {
+        #if APP_STORE
+        return AdbKeyStore()
+        #else
+        return AdbKeyStore(instance: overrides.instance)
+        #endif
+    }
 
     func configureTips() {
         try? Tips.configure([.displayFrequency(.immediate)])
@@ -99,12 +105,18 @@ struct AppEntry {
         let options = DisplayOptionsStore.load()
         model.retina = launch.retina ?? options.retina(memoryLimitBytes: MemoryLimit.bytes())
         model.retinaChosen = options.chosenRetina != nil
+        #if !APP_STORE
         // A harness launch shows the statistics from the start of the run and
-        // prints each reading; an App Store build never has this setting.
+        // prints each reading.
         model.session.showStats = launch.statistics
         model.printsStatistics = launch.statistics
+        #endif
 
+        #if APP_STORE
+        let markerDirectory = Self.supportDirectory()
+        #else
         let markerDirectory = launch.instance == nil ? Self.supportDirectory() : locations.directory
+        #endif
         let marker = PauseMarker(url: markerDirectory.appendingPathComponent("pause.json"))
         if marker.consume(), guest != nil {
             model.notice = .closedInBackground
@@ -122,6 +134,7 @@ struct AppEntry {
         return model
     }
 
+    #if !APP_STORE
     /// An automation launch creates the guest if there is none, erases it
     /// when asked, and starts it; a normal launch stops at Home.
     @MainActor
@@ -166,6 +179,7 @@ struct AppEntry {
         }
         return model.alert == nil
     }
+    #endif
 
     // MARK: Device
 
@@ -178,14 +192,18 @@ struct AppEntry {
     /// `Library/Guest/`. The disk's path goes to Linux in a kernel argument
     /// that cannot carry a space, so the guest does not live in `Application
     /// Support`; the library directory's name is safe on a device and on a Mac.
+    /// A harness launch's isolated `instance` lives beside it; an App Store
+    /// build has only the one guest.
     static func guestDirectory(instance: String? = nil) -> URL {
         let library = (try? FileManager.default.url(
             for: .libraryDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         )) ?? FileManager.default.temporaryDirectory
+        #if !APP_STORE
         if let instance {
             return library.appendingPathComponent("TestGuests", isDirectory: true)
                 .appendingPathComponent(instance, isDirectory: true)
         }
+        #endif
         return library.appendingPathComponent("Guest", isDirectory: true)
     }
 

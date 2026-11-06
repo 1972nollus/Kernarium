@@ -1001,7 +1001,11 @@ small libraries compiled with the iOS SDK.
 `Andarium/scripts/check-app-store-bundle.py`, the last build phase of the
 AppStore configuration (`Andarium/README.md#configurations`) and the check of
 `package-ios-frameworks.sh --app-store`: Info.plist keys,
-no environment knob or harness console line in host code, no trace
+no environment knob, harness console line or debugging and
+automation support (the frame mirror, console input, the guest sampler, the
+footprint log, the activity logs and the automation entries; the symbols and
+log text are listed in the script) in host code, no test bundle and no XCTest
+or Testing framework in the application, no trace
 of the build host in an executable (the linker's debug map of a framework,
 which `strip -S` removes, and a path under `/Users/<name>/`,
 `/Volumes/<name>/` or `/var/folders/`, found outside the strings of the debug

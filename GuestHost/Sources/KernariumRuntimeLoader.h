@@ -9,6 +9,12 @@
 
 #include "../../Kernarium/Runtime/KernariumRuntime.h"
 
+/* UML_APP_STORE_APPLICATION is defined by the App Store configuration of the
+ * application that compiles this loader (Andarium/README.md#configurations).
+ * That configuration leaves out the loader's debugging and automation
+ * entries: the display mirror, console input and the automation lookups. The
+ * App Store runtime answers the first two with -ENOTSUP in any case. */
+
 NS_ASSUME_NONNULL_BEGIN
 
 typedef void (^KernariumConsoleOutputHandler)(NSData* data);
@@ -62,6 +68,7 @@ int kernarium_runtime_loader_read_guest_memory(
  * background policy; see kernarium_runtime_set_background_throttle_function.
  * Returns the number of threads changed, or -1 when no runtime is loaded. */
 int kernarium_runtime_loader_set_background_throttle(int enabled);
+#ifndef UML_APP_STORE_APPLICATION
 /* Mirrors the guest's display to `sink`, or stops the mirror for a null sink;
  * see kernarium_runtime_set_frame_sink_function. Returns the runtime's answer,
  * or -1 when no runtime is loaded. */
@@ -70,6 +77,7 @@ int kernarium_runtime_loader_set_frame_sink(
     void* _Nullable context,
     uint32_t maximum_width,
     uint32_t frames_per_second);
+#endif
 /* Turns periodic guest page-cache trimming on (nonzero) only while the guest
  * is kept running in the background, and off again on return to the
  * foreground. Returns 0 once the guest has applied it, a negative value
@@ -138,6 +146,7 @@ void kernarium_runtime_loader_set_console_output_handler(
  * It may be set before a runtime is selected. */
 void kernarium_runtime_loader_set_restart_handler(
     KernariumRestartHandler _Nullable handler);
+#ifndef UML_APP_STORE_APPLICATION
 /* Whether the selected runtime is an automation build and the launch asked it,
  * through the environment, to start the background job with the guest. Always
  * zero for a release runtime, which cannot be asked, and when none is loaded. */
@@ -150,6 +159,7 @@ int kernarium_runtime_loader_automation_hold_delay_ms(void);
 int kernarium_runtime_loader_send_console_input(
     const void* buffer,
     size_t length);
+#endif
 /* Opens a stream to the guest's vsock port; see
  * kernarium_runtime_connect_vsock_function. Returns a connected descriptor
  * the caller owns, or a negated errno: -ENODEV when no runtime is loaded or no

@@ -2674,6 +2674,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("webgl-probe-left-in-the-image",
              {"entries": {"SYSTEM/app/AndariumWebGLProbe/AndariumWebGLProbe.apk":
                           synthetic_apk(debuggable=False)}}),
+            ("storage-test-left-in-the-system-image",
+             {"entries": {"SYSTEM/app/AndariumStorageTests/AndariumStorageTests.apk":
+                          synthetic_apk(debuggable=False)}}),
+            ("storage-test-left-in-the-data-image",
+             {"entries": {"DATA/app/AndariumStorageTests/AndariumStorageTests.apk":
+                          synthetic_apk(debuggable=False)}}),
             ("debuggable-application-in-a-user-build",
              {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable=True)}}),
             ("debuggable-application-by-reference",
@@ -3156,6 +3162,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           synthetic_apk(debuggable=False)}},
              "unneeded built-in application payload is forbidden: "
              "SYSTEM/app/AndariumWebGLProbe"),
+            ("storage-test-left-in-the-system-image-cause",
+             {"entries": {"SYSTEM/app/AndariumStorageTests/AndariumStorageTests.apk":
+                          synthetic_apk(debuggable=False)}},
+             "unneeded built-in application payload is forbidden: "
+             "SYSTEM/app/AndariumStorageTests"),
+            ("storage-test-left-in-the-data-image-cause",
+             {"entries": {"DATA/app/AndariumStorageTests/AndariumStorageTests.apk":
+                          synthetic_apk(debuggable=False)}},
+             "unneeded built-in application payload is forbidden: "
+             "DATA/app/AndariumStorageTests"),
             ("debuggable-application-in-a-user-build-cause",
              {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable=True)}},
              "a user build must not carry a debuggable application: "

@@ -27,15 +27,26 @@ namespace uml::gpu {
  * A scanout flush repeats at the guest's frame rate, so an unchanged line is
  * counted instead of written, and the count is emitted when the line changes
  * or once a second, whichever comes first. */
+#ifdef UML_APP_STORE_RUNTIME
+/* An App Store runtime has no activity log: it opens no file, and a record is
+ * nothing. */
+class DisplayActivityLog final {
+public:
+    [[nodiscard]] static constexpr bool enabled() noexcept { return false; }
+
+    template<typename... Arguments>
+    static constexpr void record(const char*, const Arguments&...) noexcept
+    {
+    }
+};
+#else
 class DisplayActivityLog final {
 public:
     DisplayActivityLog() noexcept
     {
-#ifndef UML_APP_STORE_RUNTIME
         const char* path = std::getenv("UML_GPU_DISPLAY_ACTIVITY_LOG");
         if (path != nullptr && path[0] != '\0')
             file_ = std::fopen(path, "ae");
-#endif
     }
 
     ~DisplayActivityLog()
@@ -114,6 +125,7 @@ private:
     std::uint64_t repeats_ {};
     double reportedAt_ {};
 };
+#endif
 
 [[nodiscard]] inline DisplayActivityLog& displayActivityLog() noexcept
 {

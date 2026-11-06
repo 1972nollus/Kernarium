@@ -441,9 +441,11 @@ FORBIDDEN_APP_DIRECTORIES = {
     "F-DroidPrivilegedExtension",
     "Gallery2",
     "Jelly",
-    # In-tree test probes (tests/integration/android/{motion,webgl}): debuggable
-    # applications that `m <probe>` installs into the shared product output.
+    # In-tree test applications (tests/integration/android/{motion,webgl,storage}):
+    # `m <module>` leaves them in the shared product output, and none belongs
+    # in an image, whichever partition or DATA/app path it would reach.
     "AndariumMotionProbe",
+    "AndariumStorageTests",
     "AndariumWebGLProbe",
     "Profiles",
     # Setup Wizard owns provisioning; the AOSP auto-provisioner would bypass OOBE.

@@ -131,9 +131,11 @@ final class AppModel {
     /// Seconds the boot screen shows when it is held.
     var frozenElapsed = 9
 
+    #if !APP_STORE
     /// The launch's automation work (create, erase, start) has run; a scene
     /// that connects to this model again does not repeat it.
     var launchApplied = false
+    #endif
 
     /// The runtime and storage behind the screens; nil plays mock data.
     var driver: (any RuntimeDriver)?
@@ -188,8 +190,10 @@ final class AppModel {
     }
     /// The figures behind the screens, from the driver's readings.
     private(set) var statisticsMeter = StatsMeter()
+    #if !APP_STORE
     /// A launch for automation prints each reading.
     var printsStatistics = false
+    #endif
     /// Waits between readings; a test paces them by hand.
     @ObservationIgnored var statisticsSleep: @MainActor (Duration) async -> Void = { duration in
         try? await Task.sleep(for: duration)

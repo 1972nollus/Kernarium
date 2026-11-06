@@ -124,6 +124,15 @@ _uml_add_cpu_objects(uml_arm64_execution_helpers shared
 option(UML_GADGET_EXECUTION_HISTOGRAM
     "Count executed gadget entries (diagnostic builds only)"
     OFF)
+# An App Store runtime carries no diagnostic instrumentation, so it refuses the
+# two diagnostic builds instead of silently ignoring them.
+if(UML_APP_STORE_RUNTIME AND
+   (UML_GADGET_CACHE_CENSUS OR UML_GADGET_EXECUTION_HISTOGRAM))
+    message(FATAL_ERROR
+        "UML_APP_STORE_RUNTIME conflicts with UML_GADGET_CACHE_CENSUS and "
+        "UML_GADGET_EXECUTION_HISTOGRAM: an App Store runtime has no "
+        "diagnostic instrumentation")
+endif()
 # GadgetExecutor's layout follows this switch, so every consumer of the gadget
 # headers must see the value the library was built with, and
 # execution_histogram.hpp refuses to compile without one. The CPU contract
@@ -232,13 +241,20 @@ set(_uml_arm64_gadget_a32_sources
 # enough to be cut off by it rather than ending at a branch.
 set(UML_GADGET_BLOCK_INSTRUCTIONS "64" CACHE STRING
     "Guest instructions fetched per translation attempt")
+# The guest sampler suspends the vCPU carriers and reads their registers
+# (guest_sampler.hpp); an App Store runtime has the disabled stand-in.
+if(UML_APP_STORE_RUNTIME)
+    set(_uml_arm64_guest_sampler arm64/gadgets/guest_sampler_disabled.cpp)
+else()
+    set(_uml_arm64_guest_sampler arm64/gadgets/guest_sampler.cpp)
+endif()
 _uml_add_cpu_objects(uml_arm64_gadgets gadget
     arm64/gadgets/afp_twin.cpp
     arm64/gadgets/gadget_memory_selection.cpp
     arm64/gadgets/gadget_scalar_selection.cpp
     arm64/gadgets/gadget_simd_selection.cpp
     arm64/gadgets/execution_histogram.cpp
-    arm64/gadgets/guest_sampler.cpp
+    ${_uml_arm64_guest_sampler}
     arm64/gadgets/scalar_forwarding.cpp
     # program_builder.cpp textually composes the five decode families from
     # their *_impl.ipp fragments so the whole per-instruction decode chain
