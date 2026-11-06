@@ -30,7 +30,9 @@
 #include "battery/protocol.hpp"
 #include "console/in_process_service.hpp"
 #include "console/protocol.hpp"
+#ifndef UML_APP_STORE_RUNTIME
 #include "gpu/frame_tap.hpp"
+#endif
 #include "gpu/in_process_service.hpp"
 #include "gpu/protocol.hpp"
 #include "input/virtio/in_process_service.hpp"
@@ -2077,6 +2079,17 @@ int runtimeSetBackgroundThrottle(int enabled)
     return changed;
 }
 
+#ifdef UML_APP_STORE_RUNTIME
+/* An App Store runtime has no frame mirror; the table keeps the entry. */
+int runtimeSetFrameSink(
+    kernarium_runtime_frame_sink,
+    void*,
+    std::uint32_t,
+    std::uint32_t)
+{
+    return -ENOTSUP;
+}
+#else
 int runtimeSetFrameSink(
     kernarium_runtime_frame_sink sink,
     void* context,
@@ -2095,6 +2108,7 @@ int runtimeSetFrameSink(
         {.maximumWidth = maximumWidth, .framesPerSecond = framesPerSecond});
     return 0;
 }
+#endif
 
 void runtimeSetConsoleOutputCallback(
     kernarium_runtime_console_output_callback callback,
