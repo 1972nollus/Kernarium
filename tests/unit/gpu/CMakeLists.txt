@@ -505,7 +505,7 @@ if(TARGET uml_gpu_display)
     # The resize path's objects come from the shipped display library.
     uml_add_gpu_unit_test(gpu-display-resize
         uml_gpu_display_resize_tests display_resize_tests.cpp
-        LIBRARIES uml_gpu_display
+        LIBRARIES uml_gpu_display uml_test_allocation_failure
         UNIT_DIRECTORY)
 
     uml_add_gpu_unit_test(gpu-vnc-lifetime
