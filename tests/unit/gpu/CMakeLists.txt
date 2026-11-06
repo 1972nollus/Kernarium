@@ -76,6 +76,18 @@ if(TARGET uml_gpu_metal_shader_cache)
         LABELS gpu)
 endif()
 
+# The emulator places and bounds Mesa's disk shader cache through the process
+# environment; the test needs no Mesa and no Metal device.
+if(TARGET uml_gpu_mesa_shader_cache)
+    add_executable(uml_gpu_mesa_shader_cache_tests
+        mesa_shader_cache_tests.cpp)
+    target_link_libraries(uml_gpu_mesa_shader_cache_tests PRIVATE
+        UML::GpuMesaShaderCache)
+    uml_add_unit_test(NAME gpu-mesa-shader-cache
+        COMMAND uml_gpu_mesa_shader_cache_tests
+        LABELS gpu)
+endif()
+
 # Guest allocations and the host GPU driver's own share one reserving pool.
 if(TARGET uml_gpu_device_memory_pool)
     uml_add_gpu_unit_test(gpu-device-memory-pool

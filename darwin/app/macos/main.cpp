@@ -13,6 +13,7 @@
 #include "console/in_process_service.hpp"
 #include "console/protocol.hpp"
 #include "gpu/in_process_service.hpp"
+#include "gpu/mesa_shader_cache.hpp"
 #include "gpu/metal_shader_cache.hpp"
 #include "gpu/native_display_application.hpp"
 #include "gpu/protocol.hpp"
@@ -293,6 +294,21 @@ void bound_metal_shader_cache()
 				uml::gpu::metal_shader_cache_index_limit) /
 				1e6,
 			static_cast<double>(outcome->size.data) / 1e6);
+}
+
+/* Mesa reads its disk cache's location and limit from the environment when
+ * the host GPU's screen is created, on a worker thread. Place the cache below
+ * the process's own cache directory, and bound it, here, before any thread
+ * can read the environment. A line goes out only when the cache cannot be
+ * placed, since Mesa then runs without one. */
+void place_mesa_shader_cache()
+{
+	std::error_code error;
+	const auto outcome = uml::gpu::configure_own_mesa_shader_cache(error);
+	if (error)
+		std::fprintf(stderr,
+			"Unable to create the Mesa shader cache %s: %s\n",
+			outcome.directory.c_str(), error.message().c_str());
 }
 
 struct HostGpuOptions {
@@ -1325,8 +1341,10 @@ int uml::app::runEmbeddedKernel(
 	for (std::size_t index = 1; index < command_line.size(); ++index)
 		information_only |= informational_option(command_line[index]);
 	/* Before anything in the process can create a Metal device. */
-	if (prepared.gpu.enabled && !information_only)
+	if (prepared.gpu.enabled && !information_only) {
 		bound_metal_shader_cache();
+		place_mesa_shader_cache();
+	}
 	Launch launch{configuration, std::move(prepared), information_only, envp};
 	if (!launch.create())
 		return 1;

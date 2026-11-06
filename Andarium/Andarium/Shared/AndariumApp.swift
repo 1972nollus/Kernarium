@@ -5,7 +5,11 @@ import UIKit
 @main
 final class AndariumApp: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        true
+        // Mesa reads its disk cache's location and limit from the process
+        // environment when the runtime thread creates the guest's screen.
+        // Set them here, before any scene or runtime exists.
+        MesaShaderCache.configureBeforeFirstUse()
+        return true
     }
 
     func application(

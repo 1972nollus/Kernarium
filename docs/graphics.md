@@ -1517,9 +1517,8 @@ that call names in Designed for iPad mode. That layout is Metal's own and
 undocumented; if it moves, the application finds no cache, logs so, and
 removes nothing. The system log's `fopen failed for data file` from
 `libCoreFSCache` at launch is Metal opening an empty cache, not a failure. The
-application also sets `MESA_SHADER_CACHE_DISABLE`: Mesa's own disk cache would
-live below `$HOME/.cache`, which a device container does not let it create, so
-Metal's cache is the only one that outlives a launch.
+application also places Mesa's own disk cache, which is separate (see
+[Mesa shader cache](#mesa-shader-cache)).
 
 The macOS command-line emulators, `uml-darwin` and `uml-darwin-android17`,
 carry the bundle identifier `com.imxieyi.uml-darwin` in an Info.plist embedded
@@ -1549,6 +1548,52 @@ identifier, such as a script or a unit test, shares `com.apple.metal` with
 every other such process and is not bounded: the GPU unit tests keep their own
 cache for this reason (see [`testing.md`](testing.md)), and a shared cache that
 earlier emulators grew may simply be deleted.
+
+## Mesa shader cache
+
+Mesa keeps a disk cache of what Zink and KosmicKrisp compile, apart from
+Metal's, and finds it through the process environment when the host GPU's
+screen is created on a runtime thread. Left alone it lives below
+`$HOME/.cache`: a device container does not let Mesa create that directory, so
+the iOS applications ran with the cache disabled, and on a Mac every program of
+the user shared one cache with a limit of 1 GB.
+
+Each application and emulator therefore gives Mesa a home of its own and a
+size limit, once, at process start and before any thread can read the
+environment: `MESA_SHADER_CACHE_DIR` names `<user cache directory>/<bundle
+identifier>`, the directory Metal's cache is named after, and
+`MESA_SHADER_CACHE_MAX_SIZE` is 64 MiB. Mesa creates only the last component of
+a path, so the process creates the directory. The environment is not safe to
+change later: the terminal's libghostty copies it at its first initialization
+and the runtime thread reads it during boot. Kernarium and Andarium do this in
+`GuestHost/Sources/MesaShaderCache.swift` from their launch and the macOS
+emulators in `darwin/device/gpu/mesa_shader_cache.hpp` from
+`runEmbeddedKernel`; the two change together. A variable already in the
+environment is kept, so a harness or a test chooses its own cache, and
+`MESA_SHADER_CACHE_DISABLE` runs without one. A process with no cache directory
+or no bundle identifier runs without a cache instead of falling back to
+`$HOME/.cache`. The emulators' cache is
+`$(getconf DARWIN_USER_CACHE_DIR)com.imxieyi.uml-darwin/mesa_shader_cache`,
+beside Metal's.
+
+Mesa evicts entries when a write would pass the limit, and the limit counts the
+entries, not the 2 MiB `index` file that Mesa maps beside them. Entries are
+keyed by the Mach-O UUID of the Mesa frameworks that wrote them, so a rebuilt
+framework never reads another build's entries, which age out under the limit.
+The default format keeps one file per entry. The database format
+(`MESA_DISK_CACHE_DATABASE`) keeps the same bytes in a fixed 101 files beside
+the same index and saves nothing at this size; Mesa's single-file format has no
+limit at all and cannot bound the cache.
+
+The cache is only an accelerator. It lives in the system's cache directory,
+which is not backed up and which iOS may purge when storage runs low. A purged
+or missing cache costs recompilation and nothing else: no behavior depends on
+an entry surviving, and the next launch creates the directory again.
+
+Entries are small, about 2.5 KB on average. The ten-application Android
+workload of the iPad session tests leaves about 180 entries, under 0.5 MB, and
+reaches that within its second cycle, so the limit has two orders of magnitude
+of headroom and exists to bound what an unusual workload could add.
 
 ## Validation
 

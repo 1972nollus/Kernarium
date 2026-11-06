@@ -7,10 +7,10 @@ struct KernariumApp: App {
         // pipelines as they are created, and that reads the shader cache.
         MetalShaderCache.removeIfBloatedBeforeFirstUse()
         // Mesa would otherwise keep a disk cache of its own below
-        // $HOME/.cache. A device container does not let it create that
-        // directory, so Mesa reported the failure on every launch and ran
-        // without one; say so instead, here and on a Mac alike.
-        setenv("MESA_SHADER_CACHE_DISABLE", "true", 1)
+        // $HOME/.cache, which a device container does not let it create.
+        // Give it a bounded home in the application's cache directory, here
+        // and on a Mac alike.
+        MesaShaderCache.configureBeforeFirstUse()
         // The host GL provider selects its driver through the environment
         // when it creates its display, on a runtime thread during boot. The
         // terminal's libghostty copied the environment at its first
