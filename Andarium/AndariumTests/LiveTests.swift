@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import AndariumCore
+import CoreImage
+import CoreVideo
 import Foundation
 import Testing
+import UIKit
 @testable import Andarium
 
 /// The pieces of the device application that touch the host: the release it
@@ -149,6 +152,104 @@ struct RuntimeDisplayLifetimeTests {
         }
         #expect(display == nil, "A late layout must not retain a display while the guest is off")
     }
+}
+
+private final class GuestFrameCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var frame: CVPixelBuffer?
+
+    func receive(_ buffer: CVPixelBuffer) {
+        lock.withLock { if frame == nil { frame = buffer } }
+    }
+
+    var image: CVPixelBuffer? { lock.withLock { frame } }
+}
+
+/// Opt-in physical display check. Saves the guest's rendered frame with each
+/// KERNARIUM_RETINA_MODE value so their displayed text size can be compared.
+@MainActor
+struct RecoveryDisplayTests {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["ANDARIUM_RECOVERY_TESTS"] == "1"), .timeLimit(.minutes(5)))
+    func recoveryRendersAndItsMenuPowersOff() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        try #require(environment["ANDARIUM_GUEST_INSTANCE"] == "recovery-display")
+        try #require(environment["ANDARIUM_START"] == nil)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let model = try #require((scene.delegate as? AndariumSceneDelegate)?.model)
+        if model.guest == nil {
+            let entry = AppEntry.fromArguments()
+            model.create(entry.overrides.applied(to: Guest.fresh(on: model.host), on: model.host))
+            let deadline = ContinuousClock.now + .seconds(30)
+            while model.busy != nil, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(100))
+            }
+        }
+        try #require(model.guest != nil && model.busy == nil && model.alert == nil)
+        model.start(.recovery)
+        let readyDeadline = ContinuousClock.now + .seconds(120)
+        while model.phase != .running(.recovery), ContinuousClock.now < readyDeadline {
+            if case .failed = model.phase { break }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        try #require(model.phase == .running(.recovery), "\(model.runReport)")
+        try await Task.sleep(for: .seconds(10))
+        // Check the guest property boundary too: a valid launch DPI alone
+        // does not mean Recovery can read it under its SELinux policy.
+        do {
+            let identity = try AdbKeyStore().loadOrCreate()
+            let operations = AdbGuestOperations(identity: identity, clock: GuestRunClock(), device: "device")
+            let density = try await operations.shell("getprop ro.sf.lcd_density", limit: .seconds(5))
+            let scale = model.retina ? scene.screen.nativeScale : 1
+            #expect(density.text.trimmingCharacters(in: .whitespacesAndNewlines) == String(Int((160 * scale).rounded())))
+        } catch {
+            Issue.record("Recovery display density could not be read: \(error)")
+        }
+        do {
+            try await captureGuestFrame(named: model.retina ? "recovery-retina.png" : "recovery-points.png")
+        } catch {
+            Issue.record("Recovery frame could not be captured: \(error)")
+        }
+        print("RECOVERY_DISPLAY: ready retina=\(model.retina); capture the screen within 30 seconds")
+        try await Task.sleep(for: .seconds(30))
+        // End selects Advanced, then End selects Power off. Use Recovery's
+        // own menu so the run must report a clean guest power-off.
+        for code in [UInt16(107), 28, 107, 28] {
+            kernarium_runtime_loader_send_key(code, 1)
+            try await Task.sleep(for: .milliseconds(100))
+            kernarium_runtime_loader_send_key(code, 0)
+            try await Task.sleep(for: .seconds(1))
+        }
+        let offDeadline = ContinuousClock.now + .seconds(60)
+        while model.phase != .home, ContinuousClock.now < offDeadline {
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        try #require(model.phase == .home && model.runEnd.poweredOff, "\(model.runReport)")
+    }
+}
+
+@MainActor
+func captureGuestFrame(named name: String) async throws {
+    let capture = GuestFrameCapture()
+    let result = kernarium_runtime_loader_set_frame_sink({ context, buffer in
+        guard let context, let buffer else { return }
+        let capture = Unmanaged<GuestFrameCapture>.fromOpaque(context).takeUnretainedValue()
+        capture.receive(Unmanaged<CVPixelBuffer>.fromOpaque(buffer).takeUnretainedValue())
+    }, Unmanaged.passUnretained(capture).toOpaque(), 4096, 1)
+    defer {
+        _ = kernarium_runtime_loader_set_frame_sink(nil, nil, 0, 0)
+        withExtendedLifetime(capture) {}
+    }
+    try #require(result == 0)
+    let deadline = ContinuousClock.now + .seconds(5)
+    while capture.image == nil, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(100))
+    }
+    let buffer = try #require(capture.image)
+    let image = CIImage(cvPixelBuffer: buffer)
+    let rendered = try #require(CIContext().createCGImage(image, from: image.extent))
+    let png = try #require(UIImage(cgImage: rendered).pngData())
+    try png.write(to: FileManager.default.temporaryDirectory.appendingPathComponent(name))
+    print("GUEST_FRAME: saved tmp/\(name)")
 }
 
 /// The system Andarium carries, written the way Create writes it: decoded

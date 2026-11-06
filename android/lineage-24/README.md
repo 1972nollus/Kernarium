@@ -192,8 +192,10 @@ curated application set: Glimpse (gallery), Twelve (music), Etar (calendar),
 ExactCalculator, Camelot (PDF viewer) and Seedvault (backup). It has no browser
 app (the WebView stays, so that a user can install one), no app store of its
 own and no install restriction: Package Installer and every install path work.
-It has no Google or microG services. The LineageOS updater and setup wizard,
-Canvas, Aperture, Profiles, Recorder, QuickAccessWallet, the charger animation,
+It has no Google or microG services. LineageOS Setup Wizard handles the first
+boot of a fresh guest; completing it provisions that guest, so subsequent boots
+go directly to the launcher. The LineageOS updater, Canvas, Aperture, Profiles,
+Recorder, QuickAccessWallet, the charger animation,
 fastbootd, AudioFX and the Jelly browser are excluded, as are DeskClock and
 EmergencyInfo; the build and verifier assert both lists. SecureElement, the
 OMAPI service for readers the machine does not have (no eSE, no UICC), is kept
@@ -797,7 +799,14 @@ so touch stays exact at every size the display takes.
 The iOS host's Virtio touchscreen supports ten independent contacts using Linux
 type-B slots and tracking IDs. The product declares the multitouch, distinct
 multitouch and jazzhand features, and target-files verification requires them.
-VNC remains a single pointer; the recovery UI also accepts that input.
+VNC remains a single pointer; the recovery UI also accepts that input. Recovery
+reads the host-supplied display density for its layout and scales its
+fonts, localized text and graphic assets once at load time. Text stays readable
+at Retina resolution throughout the Recovery screens.
+Recovery init publishes `ro.boot.lcd_density` as the readable `ro.sf.lcd_density`,
+as vendor init does in normal Android; the boot property is vendor-private.
+The `recovery_minui_test` Soong target covers glyph boundaries and alpha/RGBA
+scaling, including padded rows and fractional display densities.
 
 `third_party/mesa-venus/` pins that source as three independent inputs: the
 upstream Mesa revision, the guest Vulkan series under

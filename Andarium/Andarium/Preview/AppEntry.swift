@@ -25,7 +25,7 @@ struct AppEntry {
 
     var hints: ScreenHints {
         ScreenHints(
-            scrollTarget: screen == "home-options" ? "erase" : nil,
+            scrollTarget: ["home-options", "home-restore", "start-recovery"].contains(screen) ? "erase" : nil,
             eraseConfirmed: screen == "erase-confirm",
             acknowledgements: screen == "info-acknowledgements"
         )
@@ -186,9 +186,6 @@ struct AppEntry {
             model.sheet = .erase
         case "info", "info-acknowledgements":
             model.sheet = .info
-        case "start-menu", "start-recovery":
-            try? await Task.sleep(for: .milliseconds(450))
-            model.startMenu = true
         case "start-low-space":
             model.start(.normal)
         case "bug-report":

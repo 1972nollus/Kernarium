@@ -56,6 +56,10 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
     -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' build
 ```
 
+Home has one Start button for a normal boot. The Restore section groups
+Start in Recovery and Erase Guest. A fresh guest opens the system's setup
+wizard on its first normal boot.
+
 ## Devices
 
 The guest is drawn with Metal 4, which the A14 and later chips have. No
@@ -439,6 +443,18 @@ underscores. Use it for compatibility tests that need a fresh guest while the
 ordinary guest or its pending update must be preserved. The instance keeps its
 own disks, settings and pause marker across launches. An invalid name cancels
 the automatic start and erase requests.
+
+For a Recovery display check, run only `AndariumTests/RecoveryDisplayTests`
+with `ANDARIUM_RECOVERY_TESTS=1`, `ANDARIUM_GUEST_INSTANCE=recovery-display`
+and `KERNARIUM_RETINA_MODE=0` or `1`, without `ANDARIUM_START`. It checks the
+guest's display density, provides a 30-second capture window, then powers off
+through Recovery's own menu. Its rendered guest frame is saved as
+`tmp/recovery-points.png` or `tmp/recovery-retina.png` in the app's container.
+
+`AdbOverVsockTests/aFreshGuestOpensTheSetupWizard()` checks a fresh guest's
+unprovisioned flags and setup welcome activity, captures `tmp/setup-welcome.png`,
+then powers off. Run it with `ANDARIUM_ADB_TESTS=1`, `ANDARIUM_OOBE_TESTS=1`,
+`ANDARIUM_START=normal` and the fresh isolated `recovery-display` instance.
 
 On an Apple silicon Mac, `xcodebuild test -scheme Andarium -destination
 'platform=macOS,variant=Designed for iPad' -only-testing:AndariumTests/AutomationHoldTests`

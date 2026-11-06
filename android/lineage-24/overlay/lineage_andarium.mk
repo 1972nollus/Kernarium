@@ -136,15 +136,14 @@ PRODUCT_MODEL := Andarium Virtual Device
 PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG :=
 
 # The LineageOS updater polls a server for a device this project does not
-# publish, the setup wizard would block automation, and the remaining apps
-# have nothing to work with: no recorder input, no NFC wallet, no fastboot
+# publish. The remaining apps have nothing to work with: no recorder input,
+# no NFC wallet, no fastboot
 # transport, and Canvas is the largest app for the least use. The Profiles app
 # has no hardware triggers to act on here. DeskClock and EmergencyInfo leave
 # with the other absent-hardware packages below.
 PRODUCT_PACKAGES_EXCLUDE += \
     Canvas \
     fastbootd \
-    LineageSetupWizard \
     Profiles \
     QuickAccessWallet \
     Recorder \
@@ -200,7 +199,12 @@ PRODUCT_PACKAGES_EXCLUDE += \
     device_google_cuttlefish_uml_config_ueventd_rc \
     fstab.uml \
     fstab.uml.vendor_ramdisk
+# The first source for a destination wins, including inherited copy entries.
+PRODUCT_COPY_FILES := \
+    device/kernarium/andarium/config/init.recovery.rc:$(TARGET_COPY_OUT_RECOVERY)/root/init.recovery.cutf_cvm.rc \
+    $(PRODUCT_COPY_FILES)
 PRODUCT_COPY_FILES += \
+    device/google/cuttlefish/shared/config/init.recovery.rc:$(TARGET_COPY_OUT_RECOVERY)/root/init.recovery.cuttlefish.rc \
     device/kernarium/andarium/config/init.vendor.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/init.kernarium.rc \
     device/kernarium/andarium/config/ueventd.rc:$(TARGET_COPY_OUT_VENDOR)/etc/ueventd.rc \
     device/kernarium/andarium/config/fstab.uml:$(TARGET_COPY_OUT_VENDOR)/etc/fstab.uml \

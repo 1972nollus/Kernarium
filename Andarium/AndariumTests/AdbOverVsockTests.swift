@@ -3,6 +3,7 @@ import AndariumCore
 import Foundation
 @preconcurrency import Security
 import Testing
+import UIKit
 @testable import Andarium
 
 /// The application's own adb client against a real Android guest, with
@@ -59,6 +60,58 @@ struct AdbOverVsockTests {
             connector: VsockConnector(), signer: operations.identity?.signer, clock: operations.clock)
         let banner = try session.run { $0.banner }
         #expect(banner.features.isSuperset(of: ["shell_v2", "cmd", "stat_v2", "abb_exec"]))
+    }
+
+    @MainActor
+    @Test(.timeLimit(.minutes(20))) func aFreshGuestOpensTheSetupWizard() async throws {
+        guard Self.enabled,
+            ProcessInfo.processInfo.environment["ANDARIUM_OOBE_TESTS"] == "1"
+        else { return }
+        try #require(ProcessInfo.processInfo.environment["ANDARIUM_GUEST_INSTANCE"] == "recovery-display")
+        let operations = try operations()
+        try await awaitAndroid(operations)
+        let command = "getprop ro.setupwizard.mode; settings get global device_provisioned; settings get secure user_setup_complete; dumpsys activity activities | grep ResumedActivity"
+        var state = try await operations.shell(command, limit: .seconds(10))
+        // sys.boot_completed can precede the first resumed activity.
+        let welcomeDeadline = ContinuousClock.now + .seconds(60)
+        while !state.text.contains("org.lineageos.setupwizard/.WelcomeActivity"), ContinuousClock.now < welcomeDeadline {
+            try await Task.sleep(for: .seconds(1))
+            state = try await operations.shell(command, limit: .seconds(10))
+        }
+        print("ANDROID_OOBE: \(state.text)")
+        #expect(state.text.hasPrefix("OPTIONAL\n0\n0\n"))
+        #expect(state.text.contains("org.lineageos.setupwizard/.WelcomeActivity"))
+        do {
+            var tree = ""
+            var lastError = "none"
+            let uiDeadline = ContinuousClock.now + .seconds(60)
+            // A user build restarts adbd when its trade-in initialization ends.
+            // Reconnect after that transient loss before reading the visible UI.
+            while !tree.contains("text=\"Start\""), ContinuousClock.now < uiDeadline {
+                do {
+                    tree = try await operations.shell(
+                        "rm -f /data/local/tmp/andarium-setup.xml; uiautomator dump /data/local/tmp/andarium-setup.xml; cat /data/local/tmp/andarium-setup.xml; rm -f /data/local/tmp/andarium-setup.xml",
+                        limit: .seconds(30)).text
+                } catch { lastError = String(describing: error) }
+                if !tree.contains("text=\"Start\"") { try await Task.sleep(for: .seconds(1)) }
+            }
+            print("ANDROID_OOBE_UI: \(tree)")
+            #expect(tree.contains("text=\"Start\""), "Last UI query error: \(lastError)")
+            #expect(tree.contains("package=\"org.lineageos.setupwizard\""))
+            try await captureGuestFrame(named: "setup-welcome.png")
+        } catch {
+            Issue.record("Setup welcome screen could not be captured: \(error)")
+        }
+
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let model = try #require((scene.delegate as? AndariumSceneDelegate)?.model)
+        // adbd can close the channel before replying to a successful shutdown.
+        _ = try? await operations.shell("reboot -p", limit: .seconds(10))
+        let deadline = ContinuousClock.now + .seconds(60)
+        while model.phase != .home, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        #expect(model.phase == .home && model.runEnd.poweredOff, "\(model.runReport)")
     }
 
     @Test(.timeLimit(.minutes(20)))
