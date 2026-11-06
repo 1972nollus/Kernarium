@@ -120,6 +120,14 @@ struct AppEntry {
             model.motionSensorsAvailable = false
         case "home-erased":
             model.erase()
+        case "busy-create":
+            model.busy = BusyState(title: "Creating Guest", detail: "Setting up Andarium with 16 GiB.", progress: 0.42)
+        case "busy-erase":
+            model.busy = BusyState(title: "Erasing Guest", detail: "Deleting everything the guest stored.", progress: 0.65)
+        case "alert-update-unfinished":
+            model.plan = .unfinishedUpdate(to: PreviewData.release, canRetry: false, canRestore: true)
+        case "alert-blocked":
+            model.plan = .blocked(.olderAndroid)
         case "boot":
             model.guest?.pendingCapacityGiB = 24
             boot(.normal, stage: 3, seconds: 9)
@@ -230,8 +238,13 @@ struct AppEntry {
             model.sheet = .erase
         case "info", "info-acknowledgements", "info-license", "info-license-gpl":
             model.sheet = .info
-        case "start-low-space":
+        case "start-low-space", "alert-update-unfinished", "alert-blocked":
             model.start(.normal)
+        case "alert-error":
+            model.alert = AppAlert(
+                title: "Settings Not Saved",
+                message: "The file couldn\u{2019}t be saved because there is no space left on the device."
+            )
         case "bug-report":
             try? await Task.sleep(for: .milliseconds(450))
             model.createBugReport()

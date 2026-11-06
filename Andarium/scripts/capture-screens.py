@@ -94,6 +94,11 @@ SHOTS: list[Shot] = [
     s("home-notice-closed", "Home", "home-closed", "The notice shown after iOS closed Andarium while it was paused."),
     s("home-notice-low-space", "Home", "home-low-space", "The low free space notice on Home."),
     s("home-erased", "Home", "home-erased", "Home right after Erase Guest: the erased notice and a fresh guest."),
+    s("busy-create", "Operations", "busy-create", "The overlay while the guest is created: title, detail and progress."),
+    s("busy-erase", "Operations", "busy-erase", "The overlay while the guest is erased."),
+    s("alert-update-unfinished", "Alerts", "alert-update-unfinished", "Start pressed while an unfinished update blocks it: the alert."),
+    s("alert-blocked", "Alerts", "alert-blocked", "Start pressed on a guest newer than the system in this app: the alert."),
+    s("alert-error", "Alerts", "alert-error", "An error alert (an operation that failed with the system's message)."),
     # Sheets and dialogs
     s("setup-new-guest", "Setup", "create", "The initial setup sheet: Storage and Backup only; vCPUs and memory are no longer asked.", dark=True),
     s("setup-new-guest-low-space", "Setup", "create-low-space", "The setup sheet when the device lacks the free space the first start needs: the notice and a disabled Create."),
