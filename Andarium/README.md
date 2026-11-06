@@ -84,7 +84,9 @@ preferences. The saved preferences live in the guest until restored, so an app
 termination or guest restart cannot replace them with the temporary override.
 Sensor axes stay fixed during each period of guest-driven rotation; entering
 that mode mounts them to the newly locked interface orientation and discards
-the previous stream's pending samples.
+the previous stream's pending samples. During host-driven rotation the guest
+is drawn upright in the window, so the axes follow the window's interface
+orientation and each change restarts the stream (`MotionMount`).
 
 `ITSAppUsesNonExemptEncryption` is NO in `Config/Info.plist`.
 

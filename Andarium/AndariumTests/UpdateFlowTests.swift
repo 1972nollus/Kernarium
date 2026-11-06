@@ -30,6 +30,8 @@ final class StubDriver: RuntimeDriver {
     var motionSensors = false
     var savedGuest: Guest?
     func setMotionSensors(_ on: Bool) { motionSensors = on }
+    private(set) var geometryChanges = 0
+    func sceneGeometryDidChange() { geometryChanges += 1 }
     func setMicrophone(_ on: Bool) {}
 
     /// What a bug report or an install does when the model asks.

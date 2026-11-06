@@ -51,6 +51,33 @@ struct SessionOrientationHostingTests {
         #expect(await eventually { !controller.prefersInterfaceOrientationLocked && !model.hostDrivesGuestRotation })
     }
 
+    @Test func theSceneRootTellsTheDriverWhenTheGeometryChanges() async throws {
+        let entry = AppEntry.fromArguments()
+        let model = entry.makeModel()
+        let driver = StubDriver(plan: nil)
+        model.driver = driver
+        try #require(await eventually {
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                .contains { $0.windows.contains { $0.isKeyWindow } }
+        })
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = try #require(scene.windows.first { $0.isKeyWindow })
+        let original = window.rootViewController
+        defer { window.rootViewController = original }
+        let controller = AndariumHostingController(rootView: Color.black, model: model)
+        window.rootViewController = controller
+        #expect(await eventually { driver.geometryChanges > 0 })
+        // Let the first layouts settle, then report a storm of geometry
+        // updates within one turn: the driver hears of it, and not once for
+        // each of them.
+        try await Task.sleep(for: .milliseconds(500))
+        let before = driver.geometryChanges
+        for _ in 0..<50 { controller.sceneGeometryDidChange() }
+        #expect(await eventually { driver.geometryChanges > before })
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(driver.geometryChanges - before <= 5)
+    }
+
     @Test func theBundleAllowsOnlyPortraitOnIPhone() throws {
         // Read the declarations themselves: Bundle's device-qualified lookup
         // resolves orientation keys for the iPad running this test.

@@ -38,6 +38,73 @@ struct MotionTests {
         }
     }
 
+    /// The restart answer of one update, taken outside `#expect`, which cannot
+    /// call a mutating member.
+    private func restarts(
+        _ mount: inout MotionMount, _ policy: GuestRotationPolicy, _ interface: MotionSample.Axes?
+    ) -> Bool {
+        mount.update(policy: policy, interface: interface)
+    }
+
+    @Test func theMountFollowsTheWindowWhileTheHostOwnsRotation() {
+        var mount = MotionMount()
+        mount.begin(interface: .landscapeLeft)
+        #expect(mount.axes == .landscapeLeft)
+        // A full-screen session starts guest-driven, then becomes a window.
+        var restart = restarts(&mount, .guest, .landscapeLeft)
+        #expect(restart)
+        restart = restarts(&mount, .guest, .landscapeLeft)
+        #expect(!restart)
+        restart = restarts(&mount, .host, .landscapeLeft)
+        #expect(restart)
+        // The iPad turns to portrait: the upright guest follows it at once.
+        restart = restarts(&mount, .host, .portrait)
+        #expect(restart && mount.axes == .portrait)
+        // A half turn keeps the size and changes the frame.
+        restart = restarts(&mount, .host, .portraitUpsideDown)
+        #expect(restart && mount.axes == .portraitUpsideDown)
+    }
+
+    @Test func aStormOfLayoutsAtOneOrientationNeverRestartsTheSensors() {
+        var mount = MotionMount()
+        mount.begin(interface: .landscapeRight)
+        let entering = restarts(&mount, .host, .landscapeRight)
+        #expect(entering)
+        for _ in 0..<100 {
+            let restart = restarts(&mount, .host, .landscapeRight)
+            #expect(!restart)
+        }
+        #expect(mount.axes == .landscapeRight)
+    }
+
+    @Test func theMountIsFixedWhileAndroidOwnsRotation() {
+        var mount = MotionMount()
+        mount.begin(interface: .portrait)
+        var restart = restarts(&mount, .guest, .landscapeLeft)
+        #expect(restart && mount.axes == .landscapeLeft)
+        // UIKit holds the locked orientation; a differing reading is ignored.
+        restart = restarts(&mount, .guest, .portrait)
+        #expect(!restart && mount.axes == .landscapeLeft)
+        // Returning to a locked scene mounts the orientation now held, once.
+        restart = restarts(&mount, .host, .portrait)
+        #expect(restart && mount.axes == .portrait)
+        restart = restarts(&mount, .guest, .landscapeRight)
+        #expect(restart && mount.axes == .landscapeRight)
+        restart = restarts(&mount, .guest, .landscapeRight)
+        #expect(!restart)
+    }
+
+    @Test func anUnreachableSceneLeavesTheMountAlone() {
+        var mount = MotionMount()
+        mount.begin(interface: .landscapeLeft)
+        mount.begin(interface: nil)
+        #expect(mount.axes == .landscapeLeft)
+        var restart = restarts(&mount, .host, nil)
+        #expect(restart)
+        restart = restarts(&mount, .host, nil)
+        #expect(!restart && mount.axes == .landscapeLeft)
+    }
+
     @Test func oldSettingsStayOffAndTheChoiceSurvivesEraseAndReload() throws {
         let old = Data(#"{"cores":2,"memoryMiB":1024,"capacityGiB":8,"microphone":false,"includeInBackups":false}"#.utf8)
         var guest = try JSONDecoder().decode(Guest.self, from: old)
