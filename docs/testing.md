@@ -895,6 +895,15 @@ two clean power-offs each return Home, three boots reuse the app process, and a
 host-stopped third run stays failed until relaunch. It deletes only that isolated
 test guest.
 
+The hosted tests share the application's one key window, and Swift Testing
+runs suites in parallel, each yielding wherever it awaits. A test that replaces
+the window's root view controller or connects a window of its own takes the
+window with `HostWindow.take()` (`Andarium/AndariumTests/HostWindow.swift`) for
+its whole body and gives it back with `defer`, so no test waits on a scene
+lock that another test's root has taken away. A test never opens the system's
+Settings or any other app: the scene applies an orientation lock only while
+the application is active.
+
 Run `ShutdownFlowTests/cleanShutdownMemorySnapshots()` alone with
 `TEST_RUNNER_ANDARIUM_MEMORY_SNAPSHOTS=1` and the same isolated guest setting,
 without `ANDARIUM_START`, for five clean boot/power-off cycles. It saves allocation
