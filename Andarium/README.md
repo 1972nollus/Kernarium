@@ -69,6 +69,19 @@ start. The Simulator draws on the CPU and always passes.
 iPhone and iPad are supported (`TARGETED_DEVICE_FAMILY` 1,2); the App Store
 configuration sets `SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD` to NO.
 
+The iPhone interface is portrait-only. On iPad, Home follows the host's
+orientation. During a guest session, the scene's root hosting controller
+requests an interface orientation lock while the scene fills its screen, so
+Android alone rotates its display. A window, or a full-screen scene whose
+lock iPadOS releases, uses host-driven rotation: the guest is held at display
+rotation zero and the existing Follow Window Size option controls its layout.
+Returning to a locked full-screen scene restores the guest's previous rotation
+preferences. The saved preferences live in the guest until restored, so an app
+termination or guest restart cannot replace them with the temporary override.
+Sensor axes stay fixed during each period of guest-driven rotation; entering
+that mode mounts them to the newly locked interface orientation and discards
+the previous stream's pending samples.
+
 `ITSAppUsesNonExemptEncryption` is NO in `Config/Info.plist`.
 
 ## Build

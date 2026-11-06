@@ -56,6 +56,24 @@ final class LiveRuntime: RuntimeDriver {
     private var adbIdentity: AdbKeyStore.Identity?
     private let microphone = SystemMicrophonePermission()
     private let motion = MotionSensors()
+    private lazy var rotation = GuestRotationController(
+        apply: { [weak self] policy in
+            guard let self else { throw CancellationError() }
+            let result = try await operations.shell(policy.command, limit: .seconds(15))
+            guard result.exitCode == 0 else {
+                print("Andarium: display rotation command failed: \(result.text)")
+                throw AdbFailure(message: "The guest’s screen could not follow this window. Close and reopen Andarium to try again.")
+            }
+        }, changed: { [weak self] in
+            self?.updateMotionSensors()
+        }, failure: { [weak self] error in
+            print("Andarium: display rotation unavailable: \(error)")
+            guard let model = self?.model, model.alert == nil else { return }
+            model.alert = AppAlert(
+                title: "Display Rotation Unavailable",
+                message: "The guest’s screen could not follow this window. Close and reopen Andarium to try again.")
+        })
+    private var lastRotationPolicy: GuestRotationPolicy?
     private var normalRun = false
     private var active = UIApplication.shared.applicationState == .active
     private var observers: [NSObjectProtocol] = []
@@ -212,12 +230,7 @@ final class LiveRuntime: RuntimeDriver {
         let dataGiB = storage.dataGiB(for: run.guest)
         reachedBootCompleted = false
         normalRun = run.mode == .normal
-        motion.axes = switch view.window?.windowScene?.effectiveGeometry.interfaceOrientation {
-        case .landscapeLeft: .landscapeLeft
-        case .landscapeRight: .landscapeRight
-        case .portraitUpsideDown: .portraitUpsideDown
-        default: .portrait
-        }
+        motion.axes = currentMotionAxes
         let bootMode: UInt32 = run.mode == .recovery ? 2 : 1
         let memoryMiB = UInt32(run.guest.memoryMiB)
         let processorCount = UInt32(run.guest.cores)
@@ -324,7 +337,7 @@ final class LiveRuntime: RuntimeDriver {
         let seconds = Int(Date().timeIntervalSince(bootStartedAt))
         if bootCompleted {
             reachedBootCompleted = true
-            updateMotionSensors()
+            updateGuestRotation()
         }
         for milestone in milestones where model.bootTracker.reach(milestone, atSeconds: seconds) {
             print("Andarium: boot reached \(milestone) at \(seconds) s")
@@ -338,6 +351,7 @@ final class LiveRuntime: RuntimeDriver {
         // reaching sys.boot_completed itself.
         reachedBootCompleted = false
         motion.stop()
+        updateGuestRotation()
         switch model.phase {
         case .running, .booting:
             bootStartedAt = Date()
@@ -350,6 +364,7 @@ final class LiveRuntime: RuntimeDriver {
     private func finished(result: Int32) {
         normalRun = false
         motion.stop()
+        updateGuestRotation()
         stopThermalObservation()
         kernarium_runtime_loader_set_console_output_handler(nil)
         console = nil
@@ -384,13 +399,41 @@ final class LiveRuntime: RuntimeDriver {
 
     // MARK: Motion sensors
 
+    private var currentMotionAxes: MotionSample.Axes {
+        switch view?.window?.windowScene?.effectiveGeometry.interfaceOrientation {
+        case .landscapeLeft: .landscapeLeft
+        case .landscapeRight: .landscapeRight
+        case .portraitUpsideDown: .portraitUpsideDown
+        default: .portrait
+        }
+    }
+
+    private var rotationPolicy: GuestRotationPolicy {
+        model?.hostDrivesGuestRotation == true ? .host : .guest
+    }
+
+    private func updateGuestRotation() {
+        let policy = rotationPolicy
+        if lastRotationPolicy != policy {
+            motion.stop()
+            // A new full-screen session mounts the virtual device to the
+            // orientation now locked by UIKit. Keep that frame until the
+            // host owns rotation again; never remap per sensor sample.
+            if policy == .guest { motion.axes = currentMotionAxes }
+            lastRotationPolicy = policy
+        }
+        rotation.update(policy: policy, ready: normalRun && reachedBootCompleted && active)
+        updateMotionSensors()
+    }
+
     func setMotionSensors(_ on: Bool) {
         model?.motionSensorsProblem = nil
         updateMotionSensors()
     }
 
     private func updateMotionSensors() {
-        if normalRun, reachedBootCompleted, active, model?.guest?.motionSensors == true {
+        if normalRun, reachedBootCompleted, active, rotation.applied == rotationPolicy,
+           model?.guest?.motionSensors == true {
             motion.start()
         } else {
             motion.stop()
@@ -470,6 +513,7 @@ final class LiveRuntime: RuntimeDriver {
                 print(ConsoleReport.application(active: false))
                 $0.active = false
                 $0.motion.stop()
+                $0.updateGuestRotation()
                 $0.pause.willResignActive()
             }),
             (UIApplication.didEnterBackgroundNotification, { $0.pause.didEnterBackground() }),
@@ -491,7 +535,7 @@ final class LiveRuntime: RuntimeDriver {
     private func didBecomeActive() {
         print(ConsoleReport.application(active: true))
         active = true
-        updateMotionSensors()
+        updateGuestRotation()
         guard let model else { return }
         model.host.freeStorageBytes = AppEntry.freeStorageBytes()
         model.microphoneState = Self.state(microphone.access)
@@ -501,11 +545,12 @@ final class LiveRuntime: RuntimeDriver {
     private func observeDisplayOptions() {
         guard let model else { return }
         withObservationTracking {
-            _ = (model.retina, model.followWindow)
+            _ = (model.retina, model.followWindow, model.hostDrivesGuestRotation)
         } onChange: {
             Task { @MainActor in
                 guard let model = self.model else { return }
                 DisplayOptionsStore.save(DisplayOptions(retina: model.retina, followWindow: model.followWindow))
+                self.updateGuestRotation()
                 self.observeDisplayOptions()
             }
         }

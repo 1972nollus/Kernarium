@@ -232,8 +232,11 @@ explicit virtual-device vsock classification, with only create, bind, listen,
 accept, read, getattr and getopt on its own sockets; no connect or ioctl access
 is granted. Each 20-byte record is little endian:
 `ANS1`, a uint32 Android sensor type (1 accelerometer or 4 gyroscope), then
-three float32 values in m/s² or rad/s. Axes match the host interface at guest startup (x right, y up, z out of
-the screen) and stay fixed for that boot, independent of later UI rotation. Core Motion acceleration is multiplied by −9.80665: a stationary,
+three float32 values in m/s² or rad/s. Axes match the mounted virtual display
+(x right, y up, z out of the screen). Andarium keeps them fixed while Android
+owns rotation; its [scene policy](../../Andarium/README.md#devices) describes
+windowed operation and returning to a locked full-screen scene.
+Core Motion acceleration is multiplied by −9.80665: a stationary,
 face-up device reports +9.80665 on z. Gyroscope units and signs carry through.
 Events use the guest’s CLOCK_BOOTTIME at receipt; this is a live input path,
 not a synchronized recording of host acquisition times. Invalid records close

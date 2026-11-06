@@ -849,6 +849,17 @@ encoder against moduli with the text `adb keygen` wrote for them, and the
 listener of ADB over Network on loopback against a fake guest (bytes both
 ways, backpressure each way, half close, a failed stream, the limit of
 computers, stopping, a port in use).
+The package also tests orientation ownership for phones, full-screen and
+windowed iPads, loss of a scene lock, coalesced guest commands, partial failures
+and stale completions after a guest restart. `SessionOrientationHostingTests`
+checks the real scene root's session lock and the built bundle's portrait-only
+iPhone declaration. The opt-in `RotationOverVsockTests`
+(`TEST_RUNNER_ANDARIUM_ROTATION_TESTS=1`, selecting only that suite) boots Android
+and verifies that the host override preserves and restores locked and unset
+guest rotation preferences. A hands-on iPad check additionally covers rotation
+with Control Center's lock off and transitions between a full-screen scene and
+a window (`TEST_RUNNER_ANDARIUM_ROTATION_VISUAL=1`, selecting
+`RotationOverVsockTests`); pure policy tests do not establish the visible result.
 `andarium-motion-protocol` (unit) decodes independent motion wire fixtures
 and rejects truncated records, unknown sensor types and non-finite values.
 The core package also checks SI conversion, default-off settings migration,
@@ -856,7 +867,11 @@ socket delivery, stop during connection and stale callbacks. Hosted
 `AndroidOperationTests` checks that the motion toggle persists and reaches
 the runtime driver. Physical sensor delivery requires a sensor-capable iOS
 device and a guest image carrying the motion sub-HAL; Simulator and Mac tests
-do not establish that path.
+do not establish that path. The opt-in `MotionOverVsockTests` drives the real
+model and runtime on the iPad and reads both sensors through Android's public
+SensorManager API in a foreground probe. Its automated mode checks sustained
+delivery and off/on/off; its separate `ANDARIUM_MOTION_INTERACTIVE=1` mode checks
+physical tilt and rotation ([probe and invocation](../tests/integration/android/motion/README.md)).
 `andarium-stage-system-image` (tooling) covers the system-image staging script
 and the option checks of `package-ios-frameworks.sh --runtimes android`. The
 application itself builds with Xcode: `AndariumPreview` is its Simulator build

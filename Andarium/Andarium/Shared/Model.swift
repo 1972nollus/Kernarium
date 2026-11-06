@@ -168,6 +168,9 @@ final class AppModel {
     // App-wide display options, set on the home screen.
     var retina = false
     var followWindow = true
+    /// The host window owns display rotation until iPadOS grants the
+    /// full-screen session's orientation lock. Never a saved guest setting.
+    var hostDrivesGuestRotation = false
 
     var sessionPreset = SessionPreset()
     var session = SessionState()
