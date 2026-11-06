@@ -1585,6 +1585,11 @@ The default format keeps one file per entry. The database format
 the same index and saves nothing at this size; Mesa's single-file format has no
 limit at all and cannot bound the cache.
 
+The cache is only an accelerator. It lives in the system's cache directory,
+which is not backed up and which iOS may purge when storage runs low. A purged
+or missing cache costs recompilation and nothing else: no behavior depends on
+an entry surviving, and the next launch creates the directory again.
+
 Entries are small, about 2.5 KB on average. The ten-application Android
 workload of the iPad session tests leaves about 180 entries, under 0.5 MB, and
 reaches that within its second cycle, so the limit has two orders of magnitude
