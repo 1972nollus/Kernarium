@@ -173,14 +173,26 @@ leaves out everything that exists for automation or only pretends:
   of each statistics reading and the isolated guest instance (its directory
   and adb key tag). `LaunchOverrides` stays in `AndariumCore` for its
   clamping, and an App Store build gives it no value.
+- It defines `UML_APP_STORE_APPLICATION` for the loader it compiles
+  (`GCC_PREPROCESSOR_DEFINITIONS[config=AppStore]`, which Swift's view of the
+  bridging header honors), so the loader leaves out the display mirror,
+  console input and the automation lookups that the application never calls
+  ([`GuestHost/README.md`](../GuestHost/README.md)).
 - It embeds the App Store runtime, packaged by
   `Kernarium/scripts/package-ios-frameworks.sh --app-store --runtimes android`
   from the `kernarium-ios-device-android-app-store` preset, which reads no
-  environment knob ([`Kernarium/README.md`](../Kernarium/README.md#automation-runs)).
+  environment knob and carries no debugging or automation support: no frame
+  mirror (screen capture), no console input, no sampler, no footprint log or
+  activity log
+  ([`Kernarium/README.md`](../Kernarium/README.md#automation-runs)). What the
+  third-party libraries read from the environment stays, and is unreachable on
+  an installed application.
 - It is not offered to Macs, and its Archive action uses it.
 - Its last build phase runs `scripts/check-app-store-bundle.py` on the
   application, which fails the build on a missing key in Info.plist,
-  an environment knob or a trace of the build host (the
+  an environment knob, a symbol or log text of the
+  debugging and automation support above, a test bundle or an XCTest or
+  Testing framework, or a trace of the build host (the
   linker's debug map, a home-directory path) in the application or a framework
   (the application's own executable is stripped when it is archived, so its
   debug stabs and the strings they name are not counted),
