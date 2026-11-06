@@ -89,7 +89,7 @@ struct UpdateFlowTests {
         )
         let model = AppModel(
             guest: Guest.fresh(on: host), host: host, system: system, capabilities: .device,
-            createRequirementBytes: 1, systemBytes: 1
+            createRequirementBytes: 1
         )
         let driver = StubDriver(plan: plan)
         model.driver = driver

@@ -5,29 +5,25 @@ import Foundation
 /// What the iPhone, iPad or Mac running Andarium offers.
 public struct HostDevice: Equatable, Sendable {
     public var name: String
-    /// The vCPUs a guest may have, and the count a new guest takes: every
-    /// processor of the device, at most the count the memory budget is
-    /// measured for. The application states it from the loader
-    /// (`GuestProcessorLimit`), so it is also the number of rows `memory` has
-    /// and of positions the processor ruler offers.
+    /// The vCPUs a guest may have, and the count a new guest takes:
+    /// `min(8, physical cores)`, every core of the device at most the count the
+    /// memory budget is measured for. The application states it from the
+    /// loader (`GuestProcessorLimit`), so it is also the number of rows
+    /// `memory` has and of positions the processor ruler offers.
     public var processorCount: Int
-    /// The processors the device itself has, which Info states.
-    public var physicalProcessorCount: Int
     public var memory: MemoryPolicy
     public var freeStorageBytes: UInt64
     /// Whether the device's GPU can draw the guest. The guest's graphics need
     /// Metal 4, which the A14 and later chips (and the M1 and later) have.
     public var runsGuestGraphics: Bool
 
-    /// `processorCount` is the vCPU limit; the device's own processors default
-    /// to it.
+    /// `processorCount` is the vCPU limit.
     public init(
         name: String, processorCount: Int, memory: MemoryPolicy, freeStorageBytes: UInt64,
-        physicalProcessorCount: Int? = nil, runsGuestGraphics: Bool = true
+        runsGuestGraphics: Bool = true
     ) {
         self.name = name
         self.processorCount = max(1, processorCount)
-        self.physicalProcessorCount = max(self.processorCount, physicalProcessorCount ?? 0)
         self.memory = memory
         self.freeStorageBytes = freeStorageBytes
         self.runsGuestGraphics = runsGuestGraphics

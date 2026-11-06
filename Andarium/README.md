@@ -210,8 +210,7 @@ runtime's adb channel provides.
 A guest has at most the shared
 [vCPU limit](../docs/architecture.md#memory-and-executable-code) (the device's
 processors, at most 8), which a new guest takes and the processor ruler and
-`KERNARIUM_VCPU_COUNT` stop at; a stored count above it comes down on load, and
-Info states the device's own processors.
+`KERNARIUM_VCPU_COUNT` stop at; a stored count above it comes down on load.
 
 Guest memory follows the shared vCPU-aware limit Kernarium uses
 (`runtime/guest_memory_budget.hpp`). The application asks the loader

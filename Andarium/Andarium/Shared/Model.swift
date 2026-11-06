@@ -152,8 +152,6 @@ final class AppModel {
     /// Free space a new guest needs, which the storage behind the screens
     /// decides.
     var createRequirementBytes: UInt64
-    /// What the system takes on this device.
-    var systemBytes: UInt64
     var sheet: SheetKind?
     var startBlocked = false
     /// What a start would be, from the guest's files: Home words Start and
@@ -226,14 +224,13 @@ final class AppModel {
 
     init(
         guest: Guest?, host: HostDevice, system: SystemInfo, capabilities: Capabilities,
-        createRequirementBytes: UInt64, systemBytes: UInt64
+        createRequirementBytes: UInt64
     ) {
         lifecycle = Lifecycle(guest: guest)
         self.host = host
         self.system = system
         self.capabilities = capabilities
         self.createRequirementBytes = createRequirementBytes
-        self.systemBytes = systemBytes
     }
 
     var guest: Guest? {

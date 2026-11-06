@@ -240,7 +240,7 @@ nonisolated struct EraseSheetSizing: PresentationSizing {
     }
 }
 
-/// What is installed and where the space goes. Read-only.
+/// The app, the system it carries and the notices for what is in it. Read-only.
 struct InfoSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -248,13 +248,6 @@ struct InfoSheet: View {
 
     init(acknowledgements: Bool) {
         _path = State(initialValue: acknowledgements ? ["ack"] : [])
-    }
-
-    /// The most memory a guest has at its vCPU count; a new guest takes every
-    /// vCPU the host offers.
-    private var memoryForAGuest: String {
-        let count = model.guest?.cores ?? model.host.processorCount
-        return Formats.memoryBound(model.host.memory.maximumMiB(vCPUs: count), vCPUs: count)
     }
 
     var body: some View {
@@ -273,47 +266,17 @@ struct InfoSheet: View {
                     }
                     .padding(.vertical, 6)
                 }
-                Section {
-                    LabeledContent("Version", value: model.system.version)
+                Section("System Info") {
+                    LabeledContent("Android Version", value: model.system.version)
                     LabeledContent("Build", value: model.system.release)
                     if let patch = model.system.securityPatch {
                         LabeledContent("Security Patch", value: patch)
                     }
                     LabeledContent("Kernel", value: model.system.kernel)
                     LabeledContent("Architecture", value: model.system.architecture)
-                } header: {
-                    Text("Built-in System")
-                } footer: {
-                    if model.capabilities.systemUpdate {
-                        Text("The system is read-only and updates with Andarium from the App Store.")
-                    } else {
-                        Text("A guest keeps the system it was created with. Erase the guest to start again with the system in this version of Andarium.")
-                    }
-                }
-                Section("Storage") {
-                    StorageBar(
-                        guestBytes: model.guest?.usedBytes ?? 0,
-                        systemBytes: model.systemBytes,
-                        freeBytes: model.host.freeStorageBytes
-                    )
-                    .padding(.vertical, 6)
-                    if let guest = model.guest {
-                        LabeledContent(
-                            "Guest Data",
-                            value: "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(bytes: guest.effectiveCapacityBytes))"
-                        )
-                    }
-                    LabeledContent("System", value: Formats.size(bytes: model.systemBytes))
-                    LabeledContent("Free on This \(model.host.name)", value: Formats.size(bytes: model.host.freeStorageBytes))
-                }
-                Section("This \(model.host.name)") {
-                    LabeledContent("Processor", value: "\(model.host.physicalProcessorCount) cores")
-                    LabeledContent("Memory for a Guest", value: memoryForAGuest)
                 }
                 Section {
                     NavigationLink("Acknowledgements", value: "ack")
-                } footer: {
-                    Text("The guest hears the microphone only while Microphone is on.")
                 }
             }
             .navigationTitle("Info")
@@ -324,44 +287,6 @@ struct InfoSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
-        }
-    }
-}
-
-struct StorageBar: View {
-    let guestBytes: UInt64
-    let systemBytes: UInt64
-    let freeBytes: UInt64
-
-    var body: some View {
-        let guest = Double(guestBytes), system = Double(systemBytes)
-        let total = max(guest + system + Double(freeBytes), 1)
-        VStack(alignment: .leading, spacing: 8) {
-            GeometryReader { geo in
-                HStack(spacing: 2) {
-                    Rectangle().fill(Color.accentColor)
-                        .frame(width: max(4, geo.size.width * guest / total))
-                    Rectangle().fill(Color.accentColor.opacity(0.45))
-                        .frame(width: max(4, geo.size.width * system / total))
-                    Rectangle().fill(Color(.systemFill))
-                }
-                .clipShape(.capsule)
-            }
-            .frame(height: 10)
-            HStack(spacing: 14) {
-                key(Color.accentColor, "Guest")
-                key(Color.accentColor.opacity(0.45), "System")
-                key(Color(.systemFill), "Free")
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-    }
-
-    private func key(_ color: Color, _ title: String) -> some View {
-        HStack(spacing: 5) {
-            Circle().fill(color).frame(width: 8, height: 8)
-            Text(title)
         }
     }
 }

@@ -39,7 +39,6 @@ struct SystemFolderTests {
         let release = try SystemFolder.release(in: url)
         #expect(release.identity.releaseID == "20261031-los24-r4")
         #expect(release.identity.buildNumber == 1_793_463_711)
-        #expect(release.systemDiskBytes == 4096)
     }
 
     @Test func aFileThatIsMissingIsNamed() throws {
@@ -105,13 +104,11 @@ struct HostDeviceTests {
         let host = AppEntry.hostDevice()
         #expect(host.processorCount >= 1)
         // A guest has every processor, at most the eight the memory budget is
-        // measured for; the device keeps its own count for Info.
-        #expect(host.physicalProcessorCount >= host.processorCount)
+        // measured for.
+        let physical = ProcessInfo.processInfo.activeProcessorCount
         #expect(host.processorCount <= 8)
-        #expect(host.processorCount == min(host.physicalProcessorCount, 8))
-        #expect(
-            host.processorCount
-                == GuestProcessorLimit.vCPUs(physicalProcessorCount: host.physicalProcessorCount))
+        #expect(host.processorCount == min(physical, 8))
+        #expect(host.processorCount == GuestProcessorLimit.vCPUs(physicalProcessorCount: physical))
         // The bound comes from the runtime's budget formula through the loader:
         // inside the runtime's range, never rising with the vCPU count, and the
         // largest size where the system sets no limit (a Mac).
@@ -174,7 +171,7 @@ struct RuntimeDisplayLifetimeTests {
         let model = AppModel(
             guest: nil, host: AppEntry.hostDevice(),
             system: SystemInfo(version: "17", release: "test", kernel: "Linux", architecture: "arm64", appVersion: "1"),
-            capabilities: .device, createRequirementBytes: storage.createRequirementBytes, systemBytes: release.systemDiskBytes
+            capabilities: .device, createRequirementBytes: storage.createRequirementBytes
         )
         let runtime = LiveRuntime(model: model, storage: storage, marker: PauseMarker(url: directory.appendingPathComponent("pause.json")))
         weak var display: GuestMetalView?

@@ -60,7 +60,7 @@ struct AppEntry {
         if ["welcome", "create", "create-low-space"].contains(screen) { guest = nil }
         let model = AppModel(
             guest: guest, host: host, system: PreviewData.system, capabilities: .preview,
-            createRequirementBytes: PreviewData.createRequirementBytes, systemBytes: PreviewData.systemBytes
+            createRequirementBytes: PreviewData.createRequirementBytes
         )
         let freeze = !play
 

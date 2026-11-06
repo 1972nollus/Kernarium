@@ -106,8 +106,8 @@ struct MemoryPolicyTests {
     }
 
     /// A ten-core device offers the eight vCPUs the memory budget is measured
-    /// for: a new guest takes eight, the memory policy has eight rows and the
-    /// ruler eight positions, while Info still states the ten cores.
+    /// for: a new guest takes eight, and the memory policy has eight rows and
+    /// the ruler eight positions.
     @Test func aHostWithMoreCoresThanTheLimitOffersTheLimit() {
         var asked: [Int] = []
         let memory = MemoryPolicy(processorCount: 8) { count in
@@ -115,12 +115,10 @@ struct MemoryPolicyTests {
             return 4096
         }
         let device = HostDevice(
-            name: "iPad", processorCount: 8, memory: memory, freeStorageBytes: 40_000_000_000,
-            physicalProcessorCount: 10
+            name: "iPad", processorCount: 8, memory: memory, freeStorageBytes: 40_000_000_000
         )
         #expect(asked == Array(1...8))
         #expect(device.processorCount == 8)
-        #expect(device.physicalProcessorCount == 10)
         #expect(Guest.fresh(on: device).cores == 8)
         // The overrides the application builds from the same limit reach
         // eight and no further.
@@ -139,7 +137,7 @@ struct MemoryPolicyTests {
         let device = HostDevice(
             name: "Mac", processorCount: 8,
             memory: MemoryPolicy(maximumsMiB: [4096, 4096, 4096, 4096, 4096, 4096, 3840, 3584]),
-            freeStorageBytes: 40_000_000_000, physicalProcessorCount: 20
+            freeStorageBytes: 40_000_000_000
         )
         let stored = Guest(cores: 10, memoryMiB: 4096, capacityGiB: 8)
         let loaded = LaunchOverrides().applied(to: stored, on: device)
@@ -149,13 +147,12 @@ struct MemoryPolicyTests {
         #expect(LaunchOverrides().applied(to: Guest(cores: 0, memoryMiB: 2048, capacityGiB: 8), on: device).cores == 1)
     }
 
-    @Test func aHostsOwnProcessorsDefaultToTheLimitAndNeverFallBelowIt() {
+    @Test func aNewGuestTakesTheHostsVCPULimit() {
         let six = host(roomy, processors: 6)
-        #expect(six.processorCount == 6 && six.physicalProcessorCount == 6)
-        let odd = HostDevice(
-            name: "iPad", processorCount: 6, memory: roomy, freeStorageBytes: 0, physicalProcessorCount: 2)
-        #expect(odd.physicalProcessorCount == 6)
+        #expect(six.processorCount == 6)
         #expect(Guest.fresh(on: six).cores == 6)
+        // A count below one is one.
+        #expect(host(roomy, processors: 0).processorCount == 1)
     }
 
     @Test func thePickerRunsFrom512ToTheBoundOfTheVCPUCountInSteps64() {
