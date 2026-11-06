@@ -48,6 +48,14 @@ enum MicrophoneState: Equatable {
     case notAsked, denied, granted
 }
 
+/// A question about a permission iOS has already refused, which only the
+/// person can change in Settings.
+enum PermissionPrompt: Identifiable, Equatable {
+    case microphone
+
+    var id: Self { self }
+}
+
 /// What the device application does behind the screens: the guest's files and
 /// its run. The Simulator preview has no driver, and the model then plays the
 /// same steps against mock data.
@@ -105,5 +113,5 @@ protocol RuntimeDriver: AnyObject {
 struct ScreenHints {
     var scrollTarget: String?
     var eraseConfirmed = false
-    var acknowledgements = false
+    var infoPage: InfoPage?
 }

@@ -267,29 +267,89 @@ void pixelConversionReusesTheLiveFramebuffer()
     }
 }
 
-void overlappingPixelConversionPreservesItsSource()
+/* The pixel a source pixel of `format` becomes in the framebuffer. */
+[[nodiscard]] std::array<std::uint8_t, 4> convertedPixel(
+    uml::gpu::protocol::GpuFormat format, const std::uint8_t* in)
 {
-    uml::gpu::ScanoutFramebuffer framebuffer {35, 4};
-    framebuffer.fillSelfTestPattern();
-    std::vector<std::uint8_t> before;
-    std::span<const std::uint8_t> source;
-    {
-        std::lock_guard lock(framebuffer);
-        source = framebuffer.pixels();
-        before.assign(source.begin(), source.end());
+    using uml::gpu::protocol::GpuFormat;
+    switch (format) {
+    case GpuFormat::b8g8r8a8Unorm:
+    case GpuFormat::b8g8r8x8Unorm:
+        return {in[0], in[1], in[2], in[3]};
+    case GpuFormat::a8r8g8b8Unorm:
+    case GpuFormat::x8r8g8b8Unorm:
+        return {in[3], in[2], in[1], in[0]};
+    case GpuFormat::r8g8b8a8Unorm:
+    case GpuFormat::r8g8b8x8Unorm:
+        return {in[2], in[1], in[0], in[3]};
+    case GpuFormat::x8b8g8r8Unorm:
+    case GpuFormat::a8b8g8r8Unorm:
+        return {in[1], in[2], in[3], in[0]};
     }
-    (void)framebuffer.update(source, 35, 4, 35 * 4,
-        uml::gpu::protocol::GpuFormat::r8g8b8a8Unorm, 0, 0, 1, 1, 34, 3);
-    std::lock_guard lock(framebuffer);
-    for (std::uint32_t y = 0; y < 4; ++y) {
-        for (std::uint32_t x = 0; x < 35; ++x) {
-            const auto offset = (y * 35U + x) * 4U;
-            auto expected = std::array<std::uint8_t, 4> {};
-            const auto input = x >= 1 && y >= 1 ? ((y - 1) * 35U + x - 1) * 4U : offset;
-            std::copy_n(before.data() + input, 4, expected.data());
-            if (x >= 1 && y >= 1) std::swap(expected[0], expected[2]);
-            require(std::equal(expected.begin(), expected.end(), framebuffer.pixels().begin() + offset),
-                "an overlapping conversion overwrote pixels before reading them");
+    require(false, "an unlisted pixel format");
+    return {};
+}
+
+/* A rectangle of the framebuffer updated from another rectangle of itself
+ * reads every pixel as it was before the update, whatever the format: rows
+ * and pixels written first must not feed the ones read later, down or up, and
+ * within a row to either side. */
+void overlappingUpdatePreservesItsSource()
+{
+    using uml::gpu::protocol::GpuFormat;
+    constexpr GpuFormat formats[] {
+        GpuFormat::b8g8r8a8Unorm, GpuFormat::b8g8r8x8Unorm,
+        GpuFormat::a8r8g8b8Unorm, GpuFormat::x8r8g8b8Unorm,
+        GpuFormat::r8g8b8a8Unorm, GpuFormat::r8g8b8x8Unorm,
+        GpuFormat::x8b8g8r8Unorm, GpuFormat::a8b8g8r8Unorm,
+    };
+    struct Move {
+        std::uint32_t sourceX, sourceY, destinationX, destinationY;
+        std::uint32_t width, height;
+    };
+    constexpr std::uint32_t width = 35, height = 4;
+    constexpr Move moves[] {
+        {0, 0, 1, 1, 34, 3}, // down and right
+        {1, 1, 0, 0, 34, 3}, // up and left
+        {0, 0, 1, 0, 34, 4}, // right, within every row
+        {1, 0, 0, 0, 34, 4}, // left, within every row
+    };
+    for (const auto format : formats) {
+        for (const auto& move : moves) {
+            uml::gpu::ScanoutFramebuffer framebuffer {width, height};
+            framebuffer.fillSelfTestPattern();
+            std::vector<std::uint8_t> before;
+            std::span<const std::uint8_t> source;
+            {
+                std::lock_guard lock(framebuffer);
+                source = framebuffer.pixels();
+                before.assign(source.begin(), source.end());
+            }
+            (void)framebuffer.update(source, width, height, width * 4U,
+                format, move.sourceX, move.sourceY, move.destinationX,
+                move.destinationY, move.width, move.height);
+            std::lock_guard lock(framebuffer);
+            for (std::uint32_t y = 0; y < height; ++y) {
+                for (std::uint32_t x = 0; x < width; ++x) {
+                    const auto offset = (y * width + x) * 4U;
+                    const bool inside = x >= move.destinationX &&
+                        x < move.destinationX + move.width &&
+                        y >= move.destinationY &&
+                        y < move.destinationY + move.height;
+                    auto expected = std::array<std::uint8_t, 4> {};
+                    if (inside) {
+                        const auto input = ((move.sourceY + y -
+                            move.destinationY) * width + move.sourceX + x -
+                            move.destinationX) * 4U;
+                        expected = convertedPixel(format, before.data() + input);
+                    } else {
+                        std::copy_n(before.data() + offset, 4, expected.data());
+                    }
+                    require(std::equal(expected.begin(), expected.end(),
+                            framebuffer.pixels().begin() + offset),
+                        "an overlapping update overwrote pixels before reading them");
+                }
+            }
         }
     }
 }
@@ -908,7 +968,7 @@ int main()
         framebufferResizePublishesOneClearedGeometry();
         retainedFramebufferKeepsItsStorage();
         pixelConversionReusesTheLiveFramebuffer();
-        overlappingPixelConversionPreservesItsSource();
+        overlappingUpdatePreservesItsSource();
         aspectFitCentersGuestContentWithoutDistortion();
         scanoutRectanglesSampleOnlyTheirOwnTexels();
         hostRotationSwapsPresentationAndMapsGuestInput();

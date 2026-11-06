@@ -52,7 +52,7 @@ final class MotionSensors {
             Task { @MainActor [weak self] in
                 guard let self, self.running, self.epoch == current else { return }
                 self.stop()
-                self.problem?("Motion sensors could not be read. Check Andarium’s Motion & Fitness access in Settings, then turn Motion Sensors on again.")
+                self.problem?("The device’s motion sensors could not be read. Turn Gyroscope off and on to try again.")
             }
         }
         if manager.isAccelerometerAvailable {

@@ -62,7 +62,7 @@ struct StatisticsLoopTests {
         )
         let model = AppModel(
             guest: Guest.fresh(on: host), host: host, system: system, capabilities: capabilities,
-            createRequirementBytes: 1, systemBytes: 1
+            createRequirementBytes: 1
         )
         model.driver = driver
         model.statisticsSleep = { duration in await gate.sleep(duration) }

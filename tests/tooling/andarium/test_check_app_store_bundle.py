@@ -33,6 +33,9 @@ REPORT_LINES = (
     ("Andarium: runtime returned", "Andarium: runtime returned 0"),
     ("Andarium: application", "Andarium: application active"),
 )
+HOME_PATH = (
+    "const char *fixture(void) { return \"/Users/NAME/work/project/file.c\"; }\n"
+)
 MANIFEST = {
     "NSPrivacyTracking": False,
     "NSPrivacyTrackingDomains": [],
@@ -64,6 +67,38 @@ def build(root: Path, name: str, source: str, extra: list[str] | None = None) ->
     if built.returncode != 0:
         raise SystemExit(f"could not build {name}:\n{built.stdout}")
     return output
+
+
+def build_with_debug_map(root: Path, name: str) -> Path:
+    """A library linked from an object compiled with -g: the linker keeps a
+    debug map whose N_OSO entry names the object file."""
+    source_path = root / f"{name}.c"
+    source_path.write_text(CLEAN, encoding="utf-8")
+    objects = root / f"{name}.o"
+    compiled = run([
+        "xcrun", "--sdk", "iphoneos", "clang", "-target", "arm64-apple-ios27.0",
+        "-g", "-c", str(source_path), "-o", str(objects),
+    ])
+    if compiled.returncode != 0:
+        raise SystemExit(f"could not compile {name}:\n{compiled.stdout}")
+    output = root / f"lib{name}.dylib"
+    linked = run([
+        "xcrun", "--sdk", "iphoneos", "clang", "-target", "arm64-apple-ios27.0",
+        "-dynamiclib", str(objects), "-o", str(output),
+    ])
+    if linked.returncode != 0:
+        raise SystemExit(f"could not link {name}:\n{linked.stdout}")
+    return output
+
+
+def strip_debug_map(library: Path) -> Path:
+    """The same library after `strip -S`, as the packaging leaves it."""
+    stripped = library.with_name(f"{library.stem}-stripped.dylib")
+    shutil.copyfile(library, stripped)
+    done = run(["xcrun", "--sdk", "iphoneos", "strip", "-S", str(stripped)])
+    if done.returncode != 0:
+        raise SystemExit(f"could not strip {library.name}:\n{done.stdout}")
+    return stripped
 
 
 def app_info(**overrides: object) -> dict:
@@ -138,7 +173,8 @@ def main() -> int:
         # The guest kernel image rides in a section of its own; a knob name in
         # it belongs to the guest.
         guest = root / "guest.bin"
-        guest.write_bytes(b"\0UML_ROOTFS\0KERNARIUM_GUEST_NOTE\0")
+        guest.write_bytes(
+            b"\0UML_ROOTFS\0KERNARIUM_GUEST_NOTE\0/Users/guest/built/here.c\0")
         carrier = build(
             root, "carrier", CLEAN,
             ["-Wl,-sectcreate,__TEXT,__uml_elf," + str(guest)])
@@ -175,10 +211,31 @@ def main() -> int:
             check(make_app(root, f"report-line-{index}", reports[index], app_info()),
                   passes=False, expect=f"'{name}'")
 
+        # What the build host leaves in a binary: the linker's debug map, whose
+        # N_OSO entries name the objects of the build, and a home-directory
+        # path. The same library stripped with `strip -S` passes.
+        mapped = build_with_debug_map(root, "mapped")
+        stripped = strip_debug_map(mapped)
+        homed = build(root, "homed", HOME_PATH)
+        # Xcode strips the application's own executable when it archives, so
+        # only an embedded framework's debug map is the check's concern.
+        check(make_app(root, "app-debug-map", mapped, app_info()), passes=True)
+        check(make_app(root, "framework-debug-map", clean, app_info(), framework=mapped),
+              passes=False, expect="Runtime.framework/Runtime: carries the linker's debug map")
+        check(make_app(root, "stripped-debug-map", stripped, app_info(), framework=stripped),
+              passes=True, expect="ready for the App Store")
+        check(make_app(root, "app-home-path", homed, app_info()),
+              passes=False, expect="/Users/NAME/work/project/file.c")
+        check(make_app(root, "framework-home-path", clean, app_info(), framework=homed),
+              passes=False, expect="names a path under a home directory")
+
         # A runtime framework alone (what package-ios-frameworks.sh --app-store
         # checks): its host code, and not the guest kernel image.
         for name, passes, expect in (
             ("framework-knob", False, "KERNARIUM_HOST_FORWARD"),
+            ("framework-debug-map", False, "debug map"),
+            ("framework-home-path", False, "home directory"),
+            ("stripped-debug-map", True, ""),
             ("guest-section", True, ""),
             ("ready", True, ""),
         ):
@@ -186,6 +243,19 @@ def main() -> int:
             result = run([sys.executable, "-B", str(options.checker), "--runtime", str(framework)])
             if (result.returncode == 0) != passes or expect not in result.stdout:
                 failures.append(f"--runtime {name}: unexpected result ({result.returncode}):\n{result.stdout}")
+
+        # The GPU frameworks are checked for the build host's traces alone: a
+        # knob-like name is no concern of theirs.
+        for name, passes, expect in (
+            ("framework-knob", True, ""),
+            ("framework-debug-map", False, "debug map"),
+            ("framework-home-path", False, "home directory"),
+            ("stripped-debug-map", True, ""),
+        ):
+            framework = root / name / "Fixture.app" / "Frameworks" / "Runtime.framework"
+            result = run([sys.executable, "-B", str(options.checker), "--host-traces", str(framework)])
+            if (result.returncode == 0) != passes or expect not in result.stdout:
+                failures.append(f"--host-traces {name}: unexpected result ({result.returncode}):\n{result.stdout}")
 
         # The privacy manifests are checked too.
         check(make_app(root, "no-manifest", clean, app_info(), manifest=False),

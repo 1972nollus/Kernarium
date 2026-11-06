@@ -12,7 +12,14 @@ application that must:
     framework (the guest kernel image inside a runtime is not host code);
   - carry none of the harness's console lines (ConsoleReport in the
     application: the statistics, thermal state, runtime and focus lines),
-    which the configuration compiles out; and
+    which the configuration compiles out;
+  - carry no trace of the machine that built it: no path under a user's home
+    directory (/Users/<name>/) in the host code of an executable, and no debug
+    stabs in an embedded framework (the linker's debug map, whose N_OSO
+    entries name the object files of the build host's checkout and dependency
+    trees; dsymutil has read it into the dSYM by then, and strip -S removes it
+    and keeps the UUID). Xcode strips the application's own executable when it
+    archives, and strips nothing it embeds; and
   - pass scripts/check-privacy-manifests.py.
 
 The knob scan reads bytes, so it does not see a Swift string of up to 15 bytes
@@ -43,6 +50,8 @@ KNOB = re.compile(rb"\b(?:ANDARIUM|KERNARIUM|DARWIN_UML|UML)_[A-Z][A-Z0-9_]{2,}\
 # the same in every line; the configuration compiles the type out.
 HARNESS_LINES = re.compile(
     rb"Andarium stats|Andarium thermal state|Andarium: runtime returned|Andarium: application ")
+# A path under a user's home directory names the account that built the code.
+HOME_PATH = re.compile(rb"/Users/[A-Za-z0-9._-]+/[\x21-\x7e]*")
 # Sections that hold the guest, not the host: the Linux kernel image a runtime
 # carries, and the boot files of a Linux runtime.
 GUEST_SECTIONS = {("__TEXT", "__uml_elf"), ("__TEXT", "__uml_boot_base"), ("__TEXT", "__uml_boot_init")}
@@ -51,6 +60,9 @@ MACHO_64 = 0xFEEDFACF
 FAT_MAGIC = 0xCAFEBABE
 CPU_TYPE_ARM64 = 0x0100000C
 LC_SEGMENT_64 = 0x19
+LC_SYMTAB = 0x2
+N_STAB = 0xE0
+N_OSO = 0x66
 CHECKER = Path(__file__).resolve().parents[2] / "scripts" / "check-privacy-manifests.py"
 
 
@@ -89,9 +101,9 @@ def guest_ranges(data: bytes, base: int) -> list[tuple[int, int]]:
     return found
 
 
-def host_code(path: Path) -> bytes | None:
-    """One Mach-O file with the sections that hold the guest zeroed; None for a
-    file that is not one."""
+def host_code(path: Path) -> tuple[bytes, int] | None:
+    """The bytes of one Mach-O file with the guest's sections blanked, and the
+    offset of its arm64 slice; None for a file that is not an arm64 Mach-O."""
     data = path.read_bytes()
     base = thin_offset(data[:4096])
     if base is None:
@@ -99,19 +111,62 @@ def host_code(path: Path) -> bytes | None:
     buffer = bytearray(data)
     for start, end in guest_ranges(data, base):
         buffer[start:end] = bytes(end - start)
-    return bytes(buffer)
+    return bytes(buffer), base
 
 
 def knobs(path: Path) -> list[str]:
     """The automation knob names in the host code of one Mach-O file."""
     code = host_code(path)
-    return [] if code is None else sorted({match.decode() for match in KNOB.findall(code)})
+    if code is None:
+        return []
+    return sorted({match.decode() for match in KNOB.findall(code[0])})
 
 
 def harness_lines(path: Path) -> list[str]:
     """The harness's console lines in the host code of one Mach-O file."""
     code = host_code(path)
-    return [] if code is None else sorted({match.decode().strip() for match in HARNESS_LINES.findall(code)})
+    if code is None:
+        return []
+    return sorted({match.decode().strip() for match in HARNESS_LINES.findall(code[0])})
+
+
+def debug_stabs(data: bytes, base: int) -> tuple[int, int]:
+    """The debug stabs in a Mach-O's symbol table, and how many of them are
+    N_OSO, each of which names an object file."""
+    count = struct.unpack_from("<I", data, base + 16)[0]
+    position = base + 32
+    for _ in range(count):
+        command, size = struct.unpack_from("<II", data, position)
+        if command == LC_SYMTAB:
+            offset, symbols = struct.unpack_from("<II", data, position + 8)
+            # struct nlist_64 is 16 bytes and n_type is its fifth.
+            kinds = data[base + offset + 4:base + offset + 16 * symbols:16]
+            return (sum(1 for kind in kinds if kind & N_STAB),
+                    kinds.count(N_OSO))
+        position += size
+    return 0, 0
+
+
+def build_host_traces(path: Path, debug_map: bool = True) -> list[str]:
+    """What one Mach-O file keeps of the machine that built it. `debug_map`
+    says whether its debug stabs count: they do for a framework, whose binary
+    ships as linked."""
+    code = host_code(path)
+    if code is None:
+        return []
+    data, base = code
+    found = []
+    stabs, objects = debug_stabs(data, base) if debug_map else (0, 0)
+    if stabs:
+        found.append(
+            f"carries the linker's debug map ({stabs} stabs, {objects} N_OSO "
+            "object paths); strip -S it after dsymutil")
+    paths = sorted({match.decode() for match in HOME_PATH.findall(data)})
+    if paths:
+        found.append(
+            f"names a path under a home directory ({len(paths)}): "
+            f"{paths[0][:80]}{' ...' if len(paths) > 1 else ''}")
+    return found
 
 
 def info_problems(info: dict) -> list[str]:
@@ -152,16 +207,23 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("app", type=Path)
     parser.add_argument("--privacy-checker", type=Path, default=CHECKER)
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--runtime", action="store_true",
-        help="the path is one runtime framework: check its automation knobs alone")
+        help="the path is one runtime framework: check its automation knobs "
+             "and the traces of its build host")
+    mode.add_argument(
+        "--host-traces", action="store_true",
+        help="the path is one framework: check the traces of its build host alone")
     options = parser.parse_args()
 
     app = options.app
-    if options.runtime:
+    if options.runtime or options.host_traces:
         found = []
         for binary in executables_of(app):
-            found.extend(f"{binary.name}: carries automation knob {name}" for name in knobs(binary))
+            if options.runtime:
+                found.extend(f"{binary.name}: carries automation knob {name}" for name in knobs(binary))
+            found.extend(f"{binary.name}: {trace}" for trace in build_host_traces(binary))
         for line in found:
             print(line, file=sys.stderr)
         return 1 if found else 0
@@ -185,6 +247,10 @@ def main() -> int:
             problems.append(
                 f"{binary.relative_to(app)}: carries the harness's console line(s) "
                 f"{', '.join(repr(line) for line in lines)}")
+        # The application's own executable is stripped when Xcode archives it.
+        problems.extend(
+            f"{binary.relative_to(app)}: {trace}"
+            for trace in build_host_traces(binary, debug_map=binary.parent != app))
 
     privacy = subprocess.run(
         [sys.executable, "-B", str(options.privacy_checker), str(app)],

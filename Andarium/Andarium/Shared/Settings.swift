@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 /// Settings while the guest runs, opened from the side keys. It slides up over
 /// the guest, which keeps running behind it: install an app from Files,
 /// connect a computer with adb, make a bug report, watch the stats, and
-/// change the options. An operation on the guest dismisses Settings and
+/// change the capabilities the guest may use. An operation on the guest dismisses Settings and
 /// shows the full-screen progress.
 struct SessionSettingsSheet: View {
     @Environment(AppModel.self) private var model
@@ -22,12 +22,20 @@ struct SessionSettingsSheet: View {
     var body: some View {
         let session = model.session
         NavigationStack {
-            List {
-                if normalSession, model.capabilities.apkInstall { apps(session) }
-                if normalSession, model.capabilities.adbOverNetwork { adb(session) }
-                if normalSession, model.capabilities.bugReport { bugReport }
-                if model.capabilities.statistics { stats(session) }
-                options
+            ScrollViewReader { proxy in
+                List {
+                    if normalSession, model.capabilities.apkInstall { apps(session) }
+                    if normalSession, model.capabilities.adbOverNetwork { adb(session) }
+                    if normalSession, model.capabilities.bugReport { bugReport }
+                    if model.capabilities.statistics { stats(session) }
+                    display
+                    capabilities
+                }
+                .task {
+                    guard let target = model.sessionPreset.settingsScroll else { return }
+                    try? await Task.sleep(for: .milliseconds(500))
+                    proxy.scrollTo(target, anchor: .top)
+                }
             }
             .listSectionSpacing(.compact)
             .navigationTitle("Settings")
@@ -38,6 +46,7 @@ struct SessionSettingsSheet: View {
                 }
             }
         }
+        .microphoneAccessAlert()
         .task { await model.watchSettings() }
         .presentationDetents([.medium, .large], selection: $detent)
         .presentationBackground(Color(.systemGroupedBackground))
@@ -185,7 +194,7 @@ struct SessionSettingsSheet: View {
 
     private func stats(_ session: SessionState) -> some View {
         @Bindable var session = session
-        let memoryMiB = model.guest?.memoryMiB ?? Limits.defaultMemoryMiB
+        let memoryMiB = model.guest?.memoryMiB ?? Limits.defaultMemoryRangeMiB.lowerBound
         return Section("Stats") {
             LabeledContent {
                 HStack(spacing: 10) {
@@ -216,50 +225,65 @@ struct SessionSettingsSheet: View {
                 rowLabel("Show on Screen", symbol: "rectangle.topthird.inset.filled")
             }
         }
+        .id("stats")
     }
 
-    // MARK: Options
+    // MARK: Display and capabilities
 
+    /// Retina mode where it can change while the guest runs (the preview);
+    /// on a device it applies at the next start and is set on Home.
     @ViewBuilder
-    private var options: some View {
+    private var display: some View {
         @Bindable var model = model
-        if let guest = model.guest {
-            Section {
-                if model.capabilities.liveDisplayOptions {
-                    LabeledContent {
-                        Picker("Resolution", selection: $model.retina) {
-                            Text("Points").tag(false)
-                            Text("Retina").tag(true)
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 150)
-                    } label: {
-                        rowLabel("Resolution", symbol: "rectangle.inset.filled")
-                    }
-                    Toggle(isOn: $model.followWindow) {
-                        rowLabel("Follow Window Size", symbol: "arrow.up.left.and.arrow.down.right")
-                    }
+        if model.guest != nil, model.capabilities.liveDisplayOptions {
+            Section("Display") {
+                Toggle(isOn: $model.retina) {
+                    rowLabel("Retina mode", symbol: "rectangle.inset.filled")
                 }
+            }
+            .id("display")
+        }
+    }
+
+    /// The microphone and the gyroscope, which apply at once. While iOS
+    /// refuses the microphone the row dims and says so; turning it on then
+    /// offers Settings.
+    @ViewBuilder
+    private var capabilities: some View {
+        if let guest = model.guest {
+            let denied = model.microphoneState == .denied
+            Section {
                 Toggle(isOn: Binding(
-                    get: { guest.microphone },
+                    get: { model.microphoneShownOn },
                     set: { model.setMicrophone($0) }
                 )) {
-                    rowLabel("Microphone", symbol: "mic.fill")
+                    HStack(spacing: 12) {
+                        IconTile(symbol: "mic.fill", color: denied ? .gray : .accentColor)
+                            .opacity(denied ? 0.55 : 1)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Microphone")
+                                .lineLimit(1)
+                                .opacity(denied ? 0.55 : 1)
+                            if denied {
+                                Text(CapabilityWords.microphoneDenied)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                 }
                 Toggle(isOn: Binding(
                     get: { guest.motionSensors }, set: { model.setMotionSensors($0) }
                 )) {
-                    rowLabel("Motion Sensors", symbol: "gyroscope")
+                    rowLabel("Gyroscope", symbol: "gyroscope")
                 }
                 .disabled(!model.motionSensorsAvailable && !guest.motionSensors)
             } header: {
-                Text("Options")
+                Text("Capabilities")
             } footer: {
-                if let problem = model.motionSensorsProblem { Text(problem) }
-                if guest.microphone && model.microphoneState == .denied {
-                    Text("iOS has not allowed Andarium to use the microphone, so the guest records silence. Allow it for Andarium in Settings.")
-                }
+                Text(model.motionSensorsProblem ?? CapabilitiesSection.gyroscopeNote(available: model.motionSensorsAvailable))
             }
+            .id("capabilities")
         }
     }
 

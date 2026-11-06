@@ -13,7 +13,7 @@ struct SessionView: View {
         Color.clear
             .overlay(alignment: .top) {
                 if model.session.showStats {
-                    StatsOverlay(memoryMiB: model.guest?.memoryMiB ?? Limits.defaultMemoryMiB, recovery: mode == .recovery)
+                    StatsOverlay(memoryMiB: model.guest?.memoryMiB ?? Limits.defaultMemoryRangeMiB.lowerBound, recovery: mode == .recovery)
                         .transition(.move(edge: .top).combined(with: .opacity))
                         .padding(.top, 36)
                         .allowsHitTesting(false)

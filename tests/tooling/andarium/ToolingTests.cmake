@@ -31,3 +31,12 @@ uml_add_tooling_test(
         --checker ${PROJECT_SOURCE_DIR}/Andarium/scripts/check-app-store-bundle.py
     LABELS andarium;package
     TIMEOUT 240)
+
+# The Acknowledgements resource names a project and its license text for each
+# framework the application embeds and each library of its iOS device prefixes.
+uml_add_tooling_test(
+    NAME andarium-acknowledgements
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/andarium/test_acknowledgements.py
+    LABELS andarium
+    TIMEOUT 60)

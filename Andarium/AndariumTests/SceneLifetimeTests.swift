@@ -56,7 +56,7 @@ struct SceneLifetimeTests {
         let model = AppModel(
             guest: Guest.fresh(on: host), host: host,
             system: SystemInfo(version: "17", release: "r2", kernel: "Linux 6.18", architecture: "arm64, 4 KiB pages", appVersion: "1"),
-            capabilities: .device, createRequirementBytes: 1, systemBytes: 1
+            capabilities: .device, createRequirementBytes: 1
         )
         let driver = StubDriver(plan: .normal)
         model.driver = driver

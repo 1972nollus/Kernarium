@@ -22,10 +22,14 @@
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
+#include <map>
 #include <mach/mach.h>
+#include <set>
 #include <string>
+#include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -265,6 +269,23 @@ private:
 	return path.string();
 }
 
+/* The descriptors of the process's regular files that no longer have a name.
+ * A RAM image is one: it is unlinked as it is created, so these tests reach
+ * its file through the descriptor the image holds. */
+[[nodiscard]] std::set<int> unnamed_files()
+{
+	std::set<int> found;
+	for (int descriptor = 3; descriptor < 1024; ++descriptor) {
+		struct stat details{};
+		if (fstat(descriptor, &details) == 0 && S_ISREG(details.st_mode) &&
+		    details.st_nlink == 0)
+			found.insert(descriptor);
+	}
+	return found;
+}
+
+std::map<const GuestRamImage *, int> image_files;
+
 [[nodiscard]] std::unique_ptr<GuestRamImage> make_image(TestRam &ram,
 	const char *name, bool compress = true, unsigned threads = 3)
 {
@@ -272,48 +293,55 @@ private:
 	options.path = image_path(name);
 	options.threads = threads;
 	options.compress = compress;
+	const std::set<int> before = unnamed_files();
 	auto image = GuestRamImage::create(ram.commitment(), options);
 	require(image != nullptr, "the image could not be created");
+	require(!std::filesystem::exists(options.path),
+		"the image shipped in production has no name once it exists");
+	std::set<int> created = unnamed_files();
+	for (const int descriptor : before)
+		created.erase(descriptor);
+	require(created.size() == 1, "the image holds exactly one unnamed file");
+	image_files[image.get()] = *created.begin();
 	return image;
 }
 
-[[nodiscard]] format::Header read_header(const std::string &path)
+/* The image's file, through the descriptor it holds. */
+[[nodiscard]] int image_file(const GuestRamImage &image)
 {
-	const int fd = open(path.c_str(), O_RDONLY);
-	require(fd >= 0, "cannot open the image");
+	const auto found = image_files.find(&image);
+	require(found != image_files.end(), "not an image made by make_image");
+	return found->second;
+}
+
+[[nodiscard]] format::Header read_header(const GuestRamImage &image)
+{
 	format::Header header{};
-	require(pread(fd, &header, sizeof header, 0) ==
+	require(pread(image_file(image), &header, sizeof header, 0) ==
 		static_cast<ssize_t>(sizeof header), "short header");
-	close(fd);
 	return header;
 }
 
-[[nodiscard]] std::vector<format::Entry> read_table(const std::string &path,
+[[nodiscard]] std::vector<format::Entry> read_table(const GuestRamImage &image,
 	std::size_t count)
 {
-	const int fd = open(path.c_str(), O_RDONLY);
-	require(fd >= 0, "cannot open the image");
 	std::vector<format::Entry> table(count);
-	require(pread(fd, table.data(), count * sizeof(format::Entry),
-		format::table_offset()) ==
+	require(pread(image_file(image), table.data(),
+		count * sizeof(format::Entry), format::table_offset()) ==
 		static_cast<ssize_t>(count * sizeof(format::Entry)), "short table");
-	close(fd);
 	return table;
 }
 
-/* Flips one byte of the file through a second descriptor. */
-void damage(const std::string &path, std::uint64_t offset)
+/* Flips one byte of the file. */
+void damage(const GuestRamImage &image, std::uint64_t offset)
 {
-	const int fd = open(path.c_str(), O_RDWR);
-	require(fd >= 0, "cannot open the image to damage it");
-	(void)fcntl(fd, F_NOCACHE, 1);
+	const int fd = image_file(image);
 	unsigned char byte = 0;
 	require(pread(fd, &byte, 1, static_cast<off_t>(offset)) == 1,
 		"cannot read the byte to damage");
 	byte ^= 0x5a;
 	require(pwrite(fd, &byte, 1, static_cast<off_t>(offset)) == 1,
 		"cannot damage the image");
-	close(fd);
 }
 
 void hibernate_now(GuestRamImage &image, ImageStats &stats,
@@ -367,7 +395,6 @@ void a_restore_returns_every_held_page_exactly_and_wired()
 {
 	TestRam ram;
 	auto image = make_image(ram, "round-trip");
-	const auto path = image->path();
 	require(image->chunk_count() == TestRam::chunks,
 		"the grid must cover the managed pages");
 	require(image->chunk_bytes() == 64 * ram.page(), "one chunk is 64 pages");
@@ -405,7 +432,7 @@ void a_restore_returns_every_held_page_exactly_and_wired()
 		"guest holds");
 
 	/* The file is the format the header says. */
-	const auto header = read_header(path);
+	const auto header = read_header(*image);
 	require(std::memcmp(header.magic, "UMLHIB01", 8) == 0, "magic");
 	require(header.version == format::version && header.page_size == ram.page() &&
 		header.chunk_pages == 64 && header.chunk_count == TestRam::chunks &&
@@ -413,7 +440,7 @@ void a_restore_returns_every_held_page_exactly_and_wired()
 		"header fields");
 	require(header.header_hash == format::hash(&header,
 		offsetof(format::Header, header_hash)), "header hash");
-	const auto table = read_table(path, TestRam::chunks);
+	const auto table = read_table(*image, TestRam::chunks);
 	require(header.table_hash == format::hash(table.data(),
 		table.size() * sizeof(format::Entry)), "table hash");
 	using format::Kind;
@@ -459,7 +486,7 @@ void without_compression_every_chunk_is_stored_raw()
 	auto image = make_image(ram, "raw", false);
 	ImageStats written;
 	hibernate_now(*image, written);
-	const auto table = read_table(image->path(), TestRam::chunks);
+	const auto table = read_table(*image, TestRam::chunks);
 	using format::Kind;
 	for (std::size_t chunk = 0; chunk < TestRam::chunks; ++chunk)
 		require(table[chunk].kind == (chunk == 3 ? Kind::zero :
@@ -550,7 +577,7 @@ void a_damaged_chunk_fails_the_restore_and_keeps_the_guest_stopped()
 	/* Chunk 1 is stored raw: one flipped byte in the middle of it. */
 	const std::uint64_t slot = format::data_offset(TestRam::chunks) +
 		1 * image->chunk_bytes();
-	damage(image->path(), slot + 1234);
+	damage(*image, slot + 1234);
 	ImageStats restored;
 	require(!image->restore(restored), "a damaged chunk must fail the restore");
 	require(restored.chunks_failed == 1 && restored.error == EILSEQ,
@@ -568,7 +595,7 @@ void a_damaged_compressed_chunk_fails_the_restore()
 	hibernate_now(*image, written);
 	const std::uint64_t slot = format::data_offset(TestRam::chunks) +
 		2 * image->chunk_bytes();
-	damage(image->path(), slot + 5);
+	damage(*image, slot + 5);
 	ImageStats restored;
 	require(!image->restore(restored), "a damaged chunk must fail the restore");
 	require(restored.chunks_failed >= 1, "the damaged chunk fails");
@@ -582,7 +609,7 @@ void a_damaged_header_or_table_fails_the_restore()
 		auto image = make_image(ram, "damaged-metadata");
 		ImageStats written;
 		hibernate_now(*image, written);
-		damage(image->path(), offset);
+		damage(*image, offset);
 		ImageStats restored;
 		require(!image->restore(restored),
 			"damaged metadata must fail the restore");
@@ -600,7 +627,7 @@ void a_short_image_fails_the_restore()
 	hibernate_now(*image, written);
 	const std::uint64_t slot = format::data_offset(TestRam::chunks) +
 		7 * image->chunk_bytes();
-	require(truncate(image->path().c_str(), static_cast<off_t>(slot + 4096)) == 0,
+	require(ftruncate(image_file(*image), static_cast<off_t>(slot + 4096)) == 0,
 		"cannot truncate the image");
 	ImageStats restored;
 	require(!image->restore(restored), "a short image must fail the restore");
@@ -720,16 +747,15 @@ void freeze_refuses_a_second_hibernate_and_a_missing_freeze()
 	require(ram.check().empty(), ram.check());
 }
 
-void an_anonymous_image_restores_without_owning_its_old_path()
+void an_image_restores_without_owning_its_old_path()
 {
 	TestRam ram;
 	GuestRamImage::Options options;
-	options.path = image_path("anonymous");
-	options.anonymous = true;
+	options.path = image_path("unlinked");
 	auto image = GuestRamImage::create(ram.commitment(), options);
-	require(image != nullptr, "the anonymous image could not be created");
+	require(image != nullptr, "the image could not be created");
 	require(!std::filesystem::exists(options.path),
-		"an anonymous image must be unlinked before it is used");
+		"an image must be unlinked before it is used");
 	/* Reusing the name must neither replace the RAM image's contents nor
 	 * let its destructor delete another file. */
 	const int replacement = open(options.path.c_str(),
@@ -758,6 +784,9 @@ void an_anonymous_image_restores_without_owning_its_old_path()
 	unlink(options.path.c_str());
 }
 
+/* An image has no name and no lock, so a process that ends leaves nothing.
+ * The images older versions left, named for their process and locked while
+ * it lived, are still removed once their lock is free. */
 void the_image_file_is_exclusive_and_stale_files_are_removed()
 {
 	const uml::testing::ScratchSubdirectory scratch{"stale.XXXXXX"};
@@ -778,23 +807,27 @@ void the_image_file_is_exclusive_and_stale_files_are_removed()
 		require(fd >= 0, "cannot create a bystander");
 		close(fd);
 	}
-	/* A live image holds its lock. */
+	/* The image of an older version's live process holds its lock. */
+	const std::string live = name(static_cast<int>(getpid()));
+	const int live_fd = open(live.c_str(), O_CREAT | O_RDWR, 0600);
+	require(live_fd >= 0, "cannot create the live image");
+	require(flock(live_fd, LOCK_EX | LOCK_NB) == 0, "cannot lock it");
+
+	/* An image never replaces a file: it is created exclusively. */
 	TestRam ram;
 	GuestRamImage::Options options;
-	options.path = name(static_cast<int>(getpid()));
+	options.path = live;
 	options.threads = 2;
-	auto live = GuestRamImage::create(ram.commitment(), options);
-	require(live != nullptr, "the live image could not be created");
-	/* Not twice: the file is created exclusively. */
 	errno = 0;
 	require(GuestRamImage::create(ram.commitment(), options) == nullptr &&
 		errno == EEXIST, "an image file is created exclusively");
+	require(std::filesystem::exists(live), "and the file in the way stays");
 
 	require(uml::memory::remove_stale_guest_ram_images(directory.string()) == 3,
 		"every leftover goes, and only those");
 	for (const int pid : {101, 102, 103})
 		require(!std::filesystem::exists(name(pid)), "a leftover remains");
-	require(std::filesystem::exists(options.path),
+	require(std::filesystem::exists(live),
 		"the image of a live process must stay");
 	for (const char *other : {"notes.txt", "uml-hibernation-.img",
 		     "uml-hibernation-1.img.bak", "kernarium-initrd-9.cpio"})
@@ -803,10 +836,19 @@ void the_image_file_is_exclusive_and_stale_files_are_removed()
 	require(uml::memory::remove_stale_guest_ram_images(
 		(directory / "missing").string()) == 0, "a missing directory is fine");
 
-	/* The image goes with its owner. */
-	live.reset();
-	require(!std::filesystem::exists(options.path),
-		"the image must be deleted with its owner");
+	/* Its process ends, and the lock with it. */
+	close(live_fd);
+	require(uml::memory::remove_stale_guest_ram_images(directory.string()) == 1,
+		"the image of an ended process goes");
+	require(!std::filesystem::exists(live), "it was removed");
+
+	/* An image made now leaves no file in the directory at all. */
+	options.path = live;
+	auto image = GuestRamImage::create(ram.commitment(), options);
+	require(image != nullptr, "an image in a clean directory");
+	require(!std::filesystem::exists(live),
+		"a live image has no directory entry for a successor to find");
+	image.reset();
 
 	GuestRamImage::Options bad;
 	bad.path = (directory / "missing" / "x.img").string();
@@ -845,8 +887,8 @@ int main()
 			freeze_refuses_a_second_hibernate_and_a_missing_freeze},
 		{"the image file is exclusive and stale files are removed",
 			the_image_file_is_exclusive_and_stale_files_are_removed},
-		{"an anonymous image restores without owning its old path",
-			an_anonymous_image_restores_without_owning_its_old_path},
+		{"an image restores without owning its old path",
+			an_image_restores_without_owning_its_old_path},
 	};
 	return uml::testing::runNamedTests(tests);
 }
