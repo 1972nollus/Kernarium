@@ -6,7 +6,7 @@ Android workspace (`m AndariumMotionProbe`); it is not a product package and
 is never installed in a release image. Place the temporary source copy at
 `test/andarium-motion` in that workspace. After exporting the APK, remove that
 copy and `system/app/AndariumMotionProbe` below the product output before a
-release build.
+release build; the target-files verifier rejects a release that still holds it.
 
 Copy its APK into Andarium's `Library/Caches/andarium-motion-probe.apk` with
 `devicectl device copy to`. From the repository root, run:

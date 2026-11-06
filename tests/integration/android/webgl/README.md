@@ -9,7 +9,8 @@ this is a stress workload, not an assertion of interactive performance.
 Build this directory as an explicit Soong module in the configured Android
 workspace (`m AndariumWebGLProbe`), with a temporary source copy at
 `test/andarium-webgl`. It is not a product package. Remove the source copy and
-any installed product-output copy after exporting the APK. Copy the APK to
+any installed product-output copy after exporting the APK; the target-files
+verifier rejects a release that still holds it. Copy the APK to
 Andarium's `Library/Caches/andarium-webgl-probe.apk` before each run.
 
 Run only `AndariumTests/RetinaMemoryTests` on a physical iPad using

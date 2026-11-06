@@ -10,6 +10,7 @@ import functools
 import hashlib
 import io
 import re
+import stat
 import struct
 import sys
 import zipfile
@@ -440,6 +441,10 @@ FORBIDDEN_APP_DIRECTORIES = {
     "F-DroidPrivilegedExtension",
     "Gallery2",
     "Jelly",
+    # In-tree test probes (tests/integration/android/{motion,webgl}): debuggable
+    # applications that `m <probe>` installs into the shared product output.
+    "AndariumMotionProbe",
+    "AndariumWebGLProbe",
     "Profiles",
     # Setup Wizard owns provisioning; the AOSP auto-provisioner would bypass OOBE.
     "Provision",
@@ -1281,16 +1286,19 @@ def check_default_wallpaper(
 PINNER_OVERLAY = "VENDOR/overlay/KernariumPinnerOverlay.apk"
 PINNER_OVERLAY_RESOURCE = b"config_pinnerHomePinBytes"
 PINNER_OVERLAY_MAX_TARGET_SDK = 28
-# The framework attribute android:targetSdkVersion, and the types a numeric attribute has in a
-# compiled manifest (TYPE_INT_DEC and TYPE_INT_HEX).
+# The framework attributes android:targetSdkVersion and android:debuggable, and the types a
+# compiled manifest gives them: a number (TYPE_INT_DEC and TYPE_INT_HEX) and a literal
+# boolean (TYPE_INT_BOOLEAN, all ones for true).
 ATTR_TARGET_SDK_VERSION = 0x01010270
+ATTR_DEBUGGABLE = 0x0101000F
 AXML_START_ELEMENT = 0x0102
 AXML_RESOURCE_MAP = 0x0180
 AXML_INTEGER_TYPES = (0x10, 0x11)
+AXML_BOOLEAN_TYPE = 0x12
 
 
-def manifest_target_sdk(manifest: bytes) -> int | None:
-    """The targetSdkVersion of a compiled manifest, or None when it has none or it is not a number."""
+def manifest_attribute(manifest: bytes, attribute: int) -> tuple[int, int] | None:
+    """The (type, data) of the first element attribute with this framework ID in a compiled manifest, or None."""
     if len(manifest) < 8 or struct.unpack_from("<HH", manifest, 0)[0] != 0x0003:
         raise ValueError("not a compiled XML file")
     resource_ids: list[int] = []
@@ -1307,10 +1315,30 @@ def manifest_target_sdk(manifest: bytes) -> int | None:
             for index in range(count):
                 position = body + attribute_start + index * attribute_size
                 name, _, _, data_type, data = struct.unpack_from("<IIHxBI", manifest, position + 4)
-                if name < len(resource_ids) and resource_ids[name] == ATTR_TARGET_SDK_VERSION:
-                    return data if data_type in AXML_INTEGER_TYPES else None
+                if name < len(resource_ids) and resource_ids[name] == attribute:
+                    return data_type, data
         offset += size
     return None
+
+
+def manifest_target_sdk(manifest: bytes) -> int | None:
+    """The targetSdkVersion of a compiled manifest, or None when it has none or it is not a number."""
+    value = manifest_attribute(manifest, ATTR_TARGET_SDK_VERSION)
+    if value is None:
+        return None
+    data_type, data = value
+    return data if data_type in AXML_INTEGER_TYPES else None
+
+
+def manifest_debuggable(manifest: bytes) -> bool:
+    """Whether a compiled manifest sets android:debuggable to true; a value that is not a literal boolean is an error."""
+    value = manifest_attribute(manifest, ATTR_DEBUGGABLE)
+    if value is None:
+        return False
+    data_type, data = value
+    if data_type != AXML_BOOLEAN_TYPE:
+        raise ValueError("android:debuggable is not a literal boolean")
+    return data != 0
 
 
 def check_pinner_overlay(
@@ -1339,6 +1367,39 @@ def check_pinner_overlay(
     # Resource names sit in the table's key string pool as UTF-8 or UTF-16.
     if PINNER_OVERLAY_RESOURCE not in table and PINNER_OVERLAY_RESOURCE.decode().encode("utf-16-le") not in table:
         fail(f"{PINNER_OVERLAY} does not set {PINNER_OVERLAY_RESOURCE.decode()}")
+
+
+def check_no_debuggable_applications(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo], build_variant: str
+) -> None:
+    """A user build holds no application that opts in to debugging.
+
+    A debuggable application is open to `run-as` and to a debugger whatever ro.debuggable says,
+    and release signing would not change that, so a test probe left in the shared product
+    output (or a prebuilt built with --debug-mode) must stop the build here. Only a user build
+    is checked: a userdebug build is the diagnostics variant. The check reads every APK of the
+    image partitions; APKs inside an APEX payload are compressed EROFS and out of its reach.
+    """
+    if build_variant != "user":
+        return
+    for entry in sorted(infos):
+        info = infos[entry]
+        path = PurePosixPath(entry)
+        if (
+            info.is_dir()
+            or path.suffix != ".apk"
+            or path.parts[0] not in TARGET_PARTITIONS
+            # A symbolic link holds its target's path; the target is checked as its own entry.
+            or stat.S_ISLNK(info.external_attr >> 16)
+        ):
+            continue
+        try:
+            with zipfile.ZipFile(io.BytesIO(archive.read(info))) as apk:
+                debuggable = manifest_debuggable(apk.read("AndroidManifest.xml"))
+        except (KeyError, OSError, zipfile.BadZipFile, ValueError, struct.error) as error:
+            fail(f"{entry} has no readable manifest: {error}")
+        if debuggable:
+            fail(f"a user build must not carry a debuggable application: {entry}")
 
 
 # The AOSP example HALs the product keeps, each packaged as the vendor APEX that Cuttlefish
@@ -2892,6 +2953,7 @@ def main() -> None:
         check_discrete_ops(archive, infos)
         check_default_wallpaper(archive, infos)
         check_pinner_overlay(archive, infos)
+        check_no_debuggable_applications(archive, infos, build_variant)
         check_thermal_hal(archive, infos)
         check_cas_hal(archive, infos)
         check_wifi_hals(archive, infos)

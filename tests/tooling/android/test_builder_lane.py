@@ -224,12 +224,16 @@ def synthetic_arm_elf(
     return with_imports(bytes(payload), False, imports) if imports is not None else bytes(payload)
 
 
-def synthetic_compiled_manifest(target_sdk: int | None, *, string_value: bool = False) -> bytes:
-    """A compiled manifest with one element, <uses-sdk>, that carries targetSdkVersion when given.
+def synthetic_compiled_manifest(
+    target_sdk: int | None, *, string_value: bool = False, debuggable: bool | str | None = None
+) -> bytes:
+    """A compiled manifest with <uses-sdk>, which carries targetSdkVersion when given, and, when
+    debuggable is not None, an <application> that carries android:debuggable: a literal boolean,
+    or a resource reference when debuggable is "reference".
 
     It has the chunks the verifier reads and no more: a string pool, the resource map that gives
-    the attribute name its framework ID, and the element."""
-    strings = ["targetSdkVersion", "uses-sdk", "28"]
+    the attribute names their framework IDs, and the elements."""
+    strings = ["targetSdkVersion", "debuggable", "uses-sdk", "application", "28"]
     pool_strings = b""
     offsets = []
     for text in strings:
@@ -240,17 +244,36 @@ def synthetic_compiled_manifest(target_sdk: int | None, *, string_value: bool = 
     pool = struct.pack(
         "<HHIIIIII", 0x0001, 28, strings_start + len(pool_strings), len(strings), 0, 0, strings_start, 0
     ) + b"".join(struct.pack("<I", offset) for offset in offsets) + pool_strings
-    resource_map = struct.pack("<HHII", 0x0180, 8, 12, 0x01010270)
-    attributes = b""
+    resource_map = struct.pack("<HHIII", 0x0180, 8, 16, 0x01010270, 0x0101000F)
+
+    def element(name: int, attributes: bytes) -> bytes:
+        body = struct.pack(
+            "<IIHHHHHH", 0xFFFFFFFF, name, 20, 20, len(attributes) // 20, 0, 0, 0
+        ) + attributes
+        return struct.pack("<HHIII", 0x0102, 16, 16 + len(body), 1, 0xFFFFFFFF) + body
+
+    sdk_attributes = b""
     if target_sdk is not None:
-        attributes = struct.pack(
-            "<IIIHBBI", 0xFFFFFFFF, 0, 2 if string_value else 0xFFFFFFFF, 8, 0,
-            0x03 if string_value else 0x10, 2 if string_value else target_sdk,
+        sdk_attributes = struct.pack(
+            "<IIIHBBI", 0xFFFFFFFF, 0, 4 if string_value else 0xFFFFFFFF, 8, 0,
+            0x03 if string_value else 0x10, 4 if string_value else target_sdk,
         )
-    body = struct.pack("<IIHHHHHH", 0xFFFFFFFF, 1, 20, 20, 1 if attributes else 0, 0, 0, 0) + attributes
-    element = struct.pack("<HHIII", 0x0102, 16, 16 + len(body), 1, 0xFFFFFFFF) + body
-    payload = pool + resource_map + element
+    elements = element(2, sdk_attributes)
+    if debuggable is not None:
+        value = (0x01, 0x7F010000) if debuggable == "reference" else (
+            0x12, 0xFFFFFFFF if debuggable else 0)
+        elements += element(3, struct.pack(
+            "<IIIHBBI", 0xFFFFFFFF, 1, 0xFFFFFFFF, 8, 0, *value))
+    payload = pool + resource_map + elements
     return struct.pack("<HHI", 0x0003, 8, 8 + len(payload)) + payload
+
+
+def synthetic_apk(debuggable: bool | str | None = None) -> bytes:
+    """An application archive whose compiled manifest is the one synthetic_compiled_manifest builds."""
+    package = io.BytesIO()
+    with zipfile.ZipFile(package, "w") as apk:
+        apk.writestr("AndroidManifest.xml", synthetic_compiled_manifest(None, debuggable=debuggable))
+    return package.getvalue()
 
 
 def run_in_process(module, *arguments: object) -> subprocess.CompletedProcess[str]:
@@ -437,6 +460,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
 
     tool = load_tool(verifier)
     pinner_overlay_entry = tool.PINNER_OVERLAY
+    release_manifest = synthetic_compiled_manifest(None, debuggable=False)
+    release_apk = synthetic_apk(debuggable=False)
     preopt_apks = sorted(tool.REQUIRED_PREOPT_APKS)
     plain_apks = sorted(
         entry for entry in tool.REQUIRED_ENTRIES
@@ -1501,7 +1526,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     '<manifest version="1.0" type="device"/>\n',
                 )
                 for apk in preopt_apks:
-                    archive.writestr(apk, b"apk")
+                    archive.writestr(apk, release_apk)
                     apk_path = Path(apk)
                     artifact = (
                         apk_path.parent / "oat" / "arm64" / apk_path.stem
@@ -1516,7 +1541,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         ):
                             archive.writestr(f"{artifact}.vdex", b"vdex")
                 for apk in plain_apks:
-                    archive.writestr(apk, b"apk")
+                    archive.writestr(apk, release_apk)
                 # The overlay that releases the home app's pin: built for SDK 28, with the
                 # resource it sets in its table.
                 pinner_overlay = io.BytesIO()
@@ -1560,6 +1585,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         table += key + device_ops.encode() + b"\x00"
                     overlay_apk = io.BytesIO()
                     with zipfile.ZipFile(overlay_apk, "w") as overlay:
+                        overlay.writestr("AndroidManifest.xml", release_manifest)
                         overlay.writestr("resources.arsc", table)
                     archive.writestr(
                         "PRODUCT/overlay/"
@@ -1589,6 +1615,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         wallpapers["res/drawable-sw720dp-nodpi-v13/default_wallpaper.png"] = b"not a png at all, just bytes"
                     framework_apk = io.BytesIO()
                     with zipfile.ZipFile(framework_apk, "w") as overlay:
+                        overlay.writestr("AndroidManifest.xml", release_manifest)
                         overlay.writestr("resources.arsc", b"\x00")
                         for name, payload in wallpapers.items():
                             overlay.writestr(name, payload)
@@ -1967,6 +1994,24 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         f"a {variant} build verified as {requested}: "
                         f"{result.returncode} {result.stdout}"
                     )
+
+        # Only a user build refuses a debuggable application: the diagnostics
+        # variant is debuggable as a whole.
+        for variant in BUILD_VARIANTS:
+            fixture = root / f"{variant}-with-a-debuggable-application.zip"
+            write_fixture(
+                fixture, build_variant=variant,
+                entries={"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable=True)},
+            )
+            result = run_tool(
+                verifier, "--target-files", fixture,
+                "--build-variant", variant, *kernel_options,
+            )
+            if (result.returncode == 0) != (variant != "user"):
+                fail(
+                    f"a {variant} build with a debuggable application verified wrongly: "
+                    f"{result.returncode} {result.stdout}"
+                )
 
         # A rejection fixture is built and verified once however many tables
         # state it: the cases whose options are the same share one run, which
@@ -2353,6 +2398,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"SYSTEM_EXT/priv-app/LineageSetupWizard/LineageSetupWizard.apk": None}}),
             ("auto-provisioner-bypasses-setup",
              {"extra_entry": "SYSTEM/priv-app/Provision/Provision.apk"}),
+            ("motion-probe-left-in-the-image",
+             {"entries": {"SYSTEM/app/AndariumMotionProbe/AndariumMotionProbe.apk":
+                          synthetic_apk(debuggable=False)}}),
+            ("webgl-probe-left-in-the-image",
+             {"entries": {"SYSTEM/app/AndariumWebGLProbe/AndariumWebGLProbe.apk":
+                          synthetic_apk(debuggable=False)}}),
+            ("debuggable-application-in-a-user-build",
+             {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable=True)}}),
+            ("debuggable-application-by-reference",
+             {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable="reference")}}),
+            ("application-without-a-manifest",
+             {"entries": {"PRODUCT/app/Fixture/Fixture.apk": b"not an archive"}}),
             ("curated-out-canvas",
              {"extra_entry": "PRODUCT/app/Canvas/Canvas.apk"}),
             ("curated-out-updater",
@@ -2804,6 +2861,27 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-pinner-overlay-cause",
              {"entries": {"VENDOR/overlay/KernariumPinnerOverlay.apk": None}},
              "VENDOR/overlay/KernariumPinnerOverlay.apk"),
+            ("motion-probe-left-in-the-image-cause",
+             {"entries": {"SYSTEM/app/AndariumMotionProbe/AndariumMotionProbe.apk":
+                          synthetic_apk(debuggable=False)}},
+             "unneeded built-in application payload is forbidden: "
+             "SYSTEM/app/AndariumMotionProbe"),
+            ("webgl-probe-left-in-the-image-cause",
+             {"entries": {"SYSTEM/app/AndariumWebGLProbe/AndariumWebGLProbe.apk":
+                          synthetic_apk(debuggable=False)}},
+             "unneeded built-in application payload is forbidden: "
+             "SYSTEM/app/AndariumWebGLProbe"),
+            ("debuggable-application-in-a-user-build-cause",
+             {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable=True)}},
+             "a user build must not carry a debuggable application: "
+             "PRODUCT/app/Fixture/Fixture.apk"),
+            ("debuggable-application-by-reference-cause",
+             {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable="reference")}},
+             "PRODUCT/app/Fixture/Fixture.apk has no readable manifest: "
+             "android:debuggable is not a literal boolean"),
+            ("application-without-a-manifest-cause",
+             {"entries": {"PRODUCT/app/Fixture/Fixture.apk": b"not an archive"}},
+             "PRODUCT/app/Fixture/Fixture.apk has no readable manifest: "),
             ("pinner-overlay-target-sdk-29-cause", {"pinner_overlay_variant": "target-sdk-29"},
              "KernariumPinnerOverlay.apk targets SDK 29: .* 28 or lower"),
             ("pinner-overlay-target-sdk-current-cause", {"pinner_overlay_variant": "target-sdk-current"},
