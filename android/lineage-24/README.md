@@ -754,6 +754,35 @@ and a host clock step while the guest runs is corrected at its next resume or
 boot, not at once. The target-files verifier reads the built framework overlay
 and fails an NTP server, a network origin, an empty list or a missing list.
 
+### Branding and diagnostics
+
+The Setup Wizard names the system Andarium. The strings that carry the name
+(`os_name`, `setup_services`, `update_recovery_title`, `update_recovery_setting`
+and `update_recovery_description`) come from a runtime resource overlay in
+`overlay/overlay/packages/apps/SetupWizard/app/src/main/res`, one file per
+locale that translates them, because a locale that translates a string would
+otherwise show LineageOS's text over the default. The application's resources
+sit in a Gradle layout, which the overlay path follows. Settings, About, the
+boot animation, the fingerprint and the build properties keep LineageOS's names.
+Recovery's own text names no system. The target-files verifier requires the
+wizard overlay's resource table to hold the Andarium strings and no Lineage name.
+
+LineageOS reports device data to its statistics server from LineageParts
+(`ReportingService`, started by a boot receiver and a daily job) once
+`stats_collection` is on, and the Setup Wizard asks for it on its services page.
+The image has neither. Route `p0025` removes LineageParts' statistics feature
+whole: the receiver and services, the preview screen, the part in the catalogue
+that Settings lists and searches, the Trust entry, the endpoint and the strings.
+LineageParts runs in the system uid, so a manifest cannot take its network
+access away, and only removed code guarantees that nothing posts. Route `p0026`
+removes the wizard's diagnostic data row, its privacy paragraph and policy URL,
+and the code that wrote the answer to `stats_collection`, whose default stays
+off. What is left of the services page is the on-screen navigation keys row,
+which a device with a key disabler shows; this product has none, so the page
+skips itself and disables its own activity. The target-files verifier searches
+both applications' manifests, dex files and resources for the uploader's
+components, endpoint and setting, and fails the image that still carries one.
+
 ## Graphics
 
 Both graphics APIs come from one Mesa build of this project's own guest Mesa
