@@ -129,7 +129,7 @@ index 496ce143324596b2d1616ed0b0a6a36eac2057f5..e44a8309fab17e73f55b7c478fb45f40
     }
  }
 diff --git a/src/kosmickrisp/vulkan/kk_image_view.c b/src/kosmickrisp/vulkan/kk_image_view.c
-index bb3602a78bb21ac793b671c329a37e743d99409e..daf70afca65a50a79a9c2d214b5ad65ff29e1564 100644
+index 682a65f74e339a2e50409a9c6e7f924a5b270070..2839fb35f7ebd2f921f2e3d318d71694e74fdcb0 100644
 --- a/src/kosmickrisp/vulkan/kk_image_view.c
 +++ b/src/kosmickrisp/vulkan/kk_image_view.c
 @@ -49,6 +49,22 @@ remove_1d_view_types(enum VkImageViewType type)
@@ -164,8 +164,8 @@ index bb3602a78bb21ac793b671c329a37e743d99409e..daf70afca65a50a79a9c2d214b5ad65f
           .sample_count_sa = plane->layout.sample_count_sa,
           .format = {.pipe = p_format,
                      .mtl = supported_format->mtl_pixel_format},
-@@ -159,6 +175,11 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
-          mtl_handle = image->planes[image_plane].mtl_handle_array;
+@@ -162,6 +178,11 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
+             mtl_handle = image->planes[image_plane].mtl_handle_array;
        }
  
 +      /* An unbound image has no texture, and neither has the 2D array alias
@@ -176,7 +176,7 @@ index bb3602a78bb21ac793b671c329a37e743d99409e..daf70afca65a50a79a9c2d214b5ad65f
        /* Block texel view requires subresource aliasing. We do it here to avoid
         * having to create a texture for every possible subresource up-front */
        if (util_format_is_compressed(plane->layout.format.pipe) &&
-@@ -179,6 +200,8 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
+@@ -182,6 +203,8 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
  
           mtl_handle = kk_image_plane_create_texture(plane, &subres_layout,
                                                      subres_offset_B);
@@ -185,8 +185,8 @@ index bb3602a78bb21ac793b671c329a37e743d99409e..daf70afca65a50a79a9c2d214b5ad65f
           view->planes[view_plane].mtl_handle_subres = mtl_handle;
  
           /* Adjust for new base texture pointing to subresource */
-@@ -192,6 +215,8 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
-           (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)) {
+@@ -196,6 +219,8 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
+            (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT))) {
           view->planes[view_plane].mtl_handle_sampled =
              mtl_new_texture_view_with(mtl_handle, &view_layout);
 +         if (!view->planes[view_plane].mtl_handle_sampled)
@@ -194,7 +194,7 @@ index bb3602a78bb21ac793b671c329a37e743d99409e..daf70afca65a50a79a9c2d214b5ad65f
           view->planes[view_plane].sampled_gpu_resource_id =
              mtl_texture_get_gpu_resource_id(
                 view->planes[view_plane].mtl_handle_sampled);
-@@ -203,10 +228,8 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
+@@ -207,10 +232,8 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
              array_layout.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
              view->planes[view_plane].mtl_handle_cube_array =
                 mtl_new_texture_view_with(mtl_handle, &array_layout);
@@ -207,7 +207,7 @@ index bb3602a78bb21ac793b671c329a37e743d99409e..daf70afca65a50a79a9c2d214b5ad65f
              view->planes[view_plane].cube_array_gpu_resource_id =
                 mtl_texture_get_gpu_resource_id(
                    view->planes[view_plane].mtl_handle_cube_array);
-@@ -221,6 +244,8 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
+@@ -225,6 +248,8 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
  
           view->planes[view_plane].mtl_handle_storage =
              mtl_new_texture_view_with(mtl_handle, &view_layout);
@@ -216,7 +216,7 @@ index bb3602a78bb21ac793b671c329a37e743d99409e..daf70afca65a50a79a9c2d214b5ad65f
           view->planes[view_plane].storage_gpu_resource_id =
              mtl_texture_get_gpu_resource_id(
                 view->planes[view_plane].mtl_handle_storage);
-@@ -248,6 +273,8 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
+@@ -254,6 +279,8 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
                                         : original_type;
              view->planes[view_plane].mtl_handle_input =
                 mtl_new_texture_view_with(mtl_handle, &view_layout);
@@ -224,8 +224,8 @@ index bb3602a78bb21ac793b671c329a37e743d99409e..daf70afca65a50a79a9c2d214b5ad65f
 +               goto fail_view;
           } else
              view->planes[view_plane].mtl_handle_input = mtl_retain(mtl_handle);
-          view->planes[view_plane].input_gpu_resource_id =
-@@ -281,10 +308,23 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
+          if (view->planes[view_plane].mtl_handle_input)
+@@ -288,10 +315,23 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
                 renders_as_3d ? image->planes[image_plane].mtl_handle
                               : mtl_handle);
           }

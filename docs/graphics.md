@@ -971,6 +971,18 @@ as the 2D or 2D-array texture the image is: Venus creates views without waiting
 for the result, so a refusal would surface later as a lost device. Metal still
 decides pixel-format compatibility.
 
+A 2D or 2D-array view of a 3D image renders through the image's own texture at
+every level, naming the slice with the render pass depth plane. It is sampled,
+stored and read as an input attachment through a 2D-array alias of the image,
+which Metal limits to the levels a 2D array of the image's width and height may
+have. A view of a deeper level, whose width and height are both one, is made for
+rendering alone and gives a descriptor no texture: core Vulkan only renders to
+such a view, and a `VK_EXT_image_2d_view_of_3d` view samples or stores only at
+the alias's levels. A refusal would end the process: virglrenderer clears every
+level of a texture it creates, and Zink clears a 3D level through such a view
+with no fallback. `kosmickrisp_3d_array_alias` renders every slice of every
+level of a 7x7x12 image through both kinds of view.
+
 Programmable primitive IDs cross the Metal vertex/fragment interface as flat
 user varyings. Layer and viewport indices use unsigned native Metal attributes
 without interpolation qualifiers.

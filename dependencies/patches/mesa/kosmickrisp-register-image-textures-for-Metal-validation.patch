@@ -266,7 +266,7 @@ index f5a849c8120e591bcfda885f31a8e24b2f82954b..18d2b818f332b5d16a883d508c97313b
  };
  
 diff --git a/src/kosmickrisp/vulkan/kk_image_view.c b/src/kosmickrisp/vulkan/kk_image_view.c
-index 857b69aaa0bf2c3ab13afb90a457603c875bed25..0ac3849bb16e22f1999cec5c6204e06af8513731 100644
+index 5e1fa330a9212010b3c33dd6e0a4b76ade8e8fc8..2dc3068c87bf41e09c4f33a8c340c96c683fd394 100644
 --- a/src/kosmickrisp/vulkan/kk_image_view.c
 +++ b/src/kosmickrisp/vulkan/kk_image_view.c
 @@ -65,6 +65,47 @@ kk_image_view_metal_type(const struct kk_image *image,
@@ -317,7 +317,7 @@ index 857b69aaa0bf2c3ab13afb90a457603c875bed25..0ac3849bb16e22f1999cec5c6204e06a
  VkResult
  kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
                     const VkImageViewCreateInfo *pCreateInfo)
-@@ -323,6 +364,7 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
+@@ -330,6 +371,7 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
        }
     }
  
@@ -325,7 +325,7 @@ index 857b69aaa0bf2c3ab13afb90a457603c875bed25..0ac3849bb16e22f1999cec5c6204e06a
     return VK_SUCCESS;
  
  fail_no_texture:
-@@ -341,6 +383,11 @@ void
+@@ -348,6 +390,11 @@ void
  kk_image_view_finish(struct kk_device *dev, struct kk_image_view *view)
  {
     for (uint8_t plane = 0; plane < view->plane_count; plane++) {
