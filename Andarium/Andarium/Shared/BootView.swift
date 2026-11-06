@@ -127,17 +127,12 @@ struct BootView: View {
     private func content(guest: Guest, system: SystemInfo, steps: [Step], current: Int, progress: Double) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(kind == .recovery ? "Recovery" : "Andarium")
-                        .font(.largeTitle.weight(.bold))
-                    Spacer()
-                    Text("\(Int((progress * 100).rounded()))%")
-                        .font(.system(.title3, design: .rounded).weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                        .contentTransition(.numericText())
-                }
+                Text(kind == .recovery ? "Recovery" : "Andarium")
+                    .font(.largeTitle.weight(.bold))
+                // The bar only marks the stage the boot has reached, and is not
+                // read out as a percentage.
                 ProgressBar(value: progress)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 4)
 
