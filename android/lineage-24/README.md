@@ -1340,9 +1340,12 @@ does not fit; the system disk packs the recovery image at its own size.
 `tools/verify-lineage-recovery.py` checks the image the assembler installs: a
 kernel-less v4 image whose LZ4 or gzip ramdisk holds only target ELFs aligned
 to 16 KiB or better, a closed dependency set, no loadable modules, the checked
-fstab, and the `eth0` interface policy. `build/assemble-image.sh` owns
-`init_boot` ramdisk composition, system disk assembly, and verification. It
-refuses unsafe paths, partition overflow, module payloads, or replacement of
+fstab, the `eth0` interface policy, and the checked `init.recovery.rc` as the
+ramdisk's `init.recovery.cutf_cvm.rc`, the script that publishes the display
+density before Recovery draws its UI (the inherited Cuttlefish script is kept
+as `init.recovery.cuttlefish.rc`, which it imports). `build/assemble-image.sh`
+owns `init_boot` ramdisk composition, system disk assembly, and verification.
+It refuses unsafe paths, partition overflow, module payloads, or replacement of
 an existing output.
 
 ## Release installation

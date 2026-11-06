@@ -4498,6 +4498,8 @@ def synthetic_lineage_recovery_ramdisk(
     interface: bytes = b"eth0\0", compression: str = "lz4",
     module: str | None = None, no_memfd: bool = False,
     elf_edit: tuple[str, int, int] | None = None,
+    script: bytes = b"", imported: bytes | None = b"service console /system/bin/sh\n",
+    script_name: str = "init.recovery.cutf_cvm.rc",
 ) -> bytes:
     entries = [
         newc_entry(
@@ -4540,6 +4542,10 @@ def synthetic_lineage_recovery_ramdisk(
             )
         ]),
         *([newc_entry(f"lib/modules/{module}", 0o100644, b"module", 13)] if module else []),
+        # The product's recovery script, and the Cuttlefish one it imports.
+        *([newc_entry(script_name, 0o100644, script, 14)] if script_name else []),
+        *([newc_entry("init.recovery.cuttlefish.rc", 0o100644, imported, 15)]
+          if imported is not None else []),
     ]
     entries.append(newc_entry("TRAILER!!!", 0, b"", len(entries) + 1))
     archive = b"".join(entries)
@@ -4552,7 +4558,12 @@ def synthetic_lineage_recovery_ramdisk(
 
 def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None:
     fstab = (android_root / "overlay/config/recovery.fstab").read_bytes()
+    script = (android_root / "overlay/config/init.recovery.rc").read_bytes()
     module = load_tool(verifier)
+
+    def ramdisk_for(fstab_bytes: bytes, **options: object) -> bytes:
+        return synthetic_lineage_recovery_ramdisk(fstab_bytes, **{"script": script, **options})
+
     # A match whose offset is shorter than its length repeats the pattern.
     if module.lz4_block(b"\x35abc\x03\x00\x20de", 1 << 20) != b"abcabcabcabcde":
         fail("LZ4 block decoder mis-decoded an overlapping match")
@@ -4568,9 +4579,9 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
             continue
         fail(f"LZ4 block decoder accepted {label}")
 
-    def run(image: Path) -> subprocess.CompletedProcess[str]:
+    def run(image: Path, root: Path = android_root) -> subprocess.CompletedProcess[str]:
         return run_tool(
-            verifier, "--android-root", android_root, "--image", image
+            verifier, "--android-root", root, "--image", image
         )
 
     with tempfile.TemporaryDirectory(prefix="android-lineage-recovery-") as temporary:
@@ -4579,37 +4590,37 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
             good = root / f"recovery-{compression}.img"
             good.write_bytes(
                 synthetic_boot_image(
-                    synthetic_lineage_recovery_ramdisk(fstab, compression=compression)
+                    ramdisk_for(fstab, compression=compression)
                 )
             )
             result = run(good)
             if result.returncode != 0:
                 fail(f"Lineage recovery verifier rejected a {compression} fixture: {result.stdout}")
         for label, ramdisk in (
-            ("a 4 KiB-only ELF", synthetic_lineage_recovery_ramdisk(fstab, alignment=4096)),
+            ("a 4 KiB-only ELF", ramdisk_for(fstab, alignment=4096)),
             (
                 "a missing ELF dependency",
-                synthetic_lineage_recovery_ramdisk(fstab, omit_dependency=True),
+                ramdisk_for(fstab, omit_dependency=True),
             ),
             (
                 "the Cuttlefish interface",
-                synthetic_lineage_recovery_ramdisk(fstab, interface=b"eth1\0"),
+                ramdisk_for(fstab, interface=b"eth1\0"),
             ),
             (
                 "a loadable module",
-                synthetic_lineage_recovery_ramdisk(fstab, module="fixture.ko"),
+                ramdisk_for(fstab, module="fixture.ko"),
             ),
             (
                 "properties without sys.use_memfd",
-                synthetic_lineage_recovery_ramdisk(fstab, no_memfd=True),
+                ramdisk_for(fstab, no_memfd=True),
             ),
             (
                 "a changed fstab",
-                synthetic_lineage_recovery_ramdisk(fstab + b"# changed\n"),
+                ramdisk_for(fstab + b"# changed\n"),
             ),
             (
                 "an uncompressed ramdisk",
-                synthetic_lineage_recovery_ramdisk(fstab, compression="none"),
+                ramdisk_for(fstab, compression="none"),
             ),
         ):
             bad = root / "recovery-bad.img"
@@ -4638,9 +4649,59 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
         ):
             bad = root / "recovery-bad.img"
             bad.write_bytes(
-                synthetic_boot_image(synthetic_lineage_recovery_ramdisk(fstab, **options))
+                synthetic_boot_image(ramdisk_for(fstab, **options))
             )
             result = run(bad)
+            if result.returncode == 0 or not re.search(reason, result.stdout):
+                fail(f"Lineage recovery verifier did not reject {label} for {reason!r}: {result.stdout}")
+        # The recovery script that publishes the display density: Cuttlefish's
+        # script back under the product's name, the product's without the
+        # density, and either script absent.
+        no_density = b"".join(
+            line for line in script.splitlines(keepends=True) if b"lcd_density" not in line
+        )
+        if no_density == script:
+            fail("the recovery script fixture did not remove the density publication")
+        changed = "differs from the checked device tree"
+        for label, options, reason in (
+            (
+                "Cuttlefish's recovery script", {"script": b"service console /system/bin/sh\n"},
+                changed,
+            ),
+            ("a recovery script without the density", {"script": no_density}, changed),
+            ("a changed recovery script", {"script": script + b"# changed\n"}, changed),
+            ("no recovery script", {"script_name": ""}, "missing required paths.*cutf_cvm"),
+            ("no imported Cuttlefish script", {"imported": None}, "missing required paths.*cuttlefish"),
+        ):
+            bad = root / "recovery-bad.img"
+            bad.write_bytes(synthetic_boot_image(ramdisk_for(fstab, **options)))
+            result = run(bad)
+            if result.returncode == 0 or not re.search(reason, result.stdout):
+                fail(f"Lineage recovery verifier did not reject {label} for {reason!r}: {result.stdout}")
+        # The checked script itself must import Cuttlefish's and publish the
+        # density, whatever a ramdisk holds.
+        tree = root / "tree"
+        (tree / "overlay/config").mkdir(parents=True)
+        (tree / "overlay/config/recovery.fstab").write_bytes(fstab)
+        for label, checked, reason in (
+            ("a checked script without the density", no_density, "does not run 'setprop ro.sf.lcd_density"),
+            (
+                "a checked script with the density under another trigger",
+                script.replace(b"on early-init &&", b"on init &&"),
+                "does not run 'setprop ro.sf.lcd_density .* at 'on early-init",
+            ),
+            (
+                "a checked script without the import",
+                script.replace(b"import /init.recovery.cuttlefish.rc", b"# no import"),
+                "does not import init.recovery.cuttlefish.rc",
+            ),
+        ):
+            if checked == script:
+                fail(f"the recovery script fixture for {label} did not change the script")
+            (tree / "overlay/config/init.recovery.rc").write_bytes(checked)
+            bad = root / "recovery-bad.img"
+            bad.write_bytes(synthetic_boot_image(synthetic_lineage_recovery_ramdisk(fstab, script=checked)))
+            result = run(bad, tree)
             if result.returncode == 0 or not re.search(reason, result.stdout):
                 fail(f"Lineage recovery verifier did not reject {label} for {reason!r}: {result.stdout}")
 
