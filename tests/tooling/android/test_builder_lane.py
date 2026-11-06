@@ -7,6 +7,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import contextlib
+import functools
 import gzip
 import importlib.util
 import io
@@ -482,6 +483,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
     tool = load_tool(verifier)
     pinner_overlay_entry = tool.PINNER_OVERLAY
     statistics_apks = tool.STATISTICS_APKS
+    # The Setup Wizard overlay's artwork, as the build would carry it: the raw animation unchanged and
+    # the compiled vector holding its path data as strings.
+    wizard_art_root = verifier.parents[1] / "overlay/overlay/packages/apps/SetupWizard/app/src/main/res"
+    wizard_paths = re.findall(
+        r'android:pathData="([^"]+)"', (wizard_art_root / "drawable/logo.xml").read_text(encoding="utf-8")
+    )
+    wizard_welcome = (wizard_art_root / "raw/lottie_welcome.json").read_bytes()
     # The reader of compiled array resources sees the same items through either string pool.
     tables = [("config_ntpServers", ["none"]), ("config_autoTimeSourcesPriority", ["telephony", "external"]),
               ("config_ntpServers", ["ntp://ntp.example", "x"]), ("empty", [])]
@@ -1669,9 +1677,21 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         wizard_table = b"\x00os_name\x00Andarium features\x00"
                     if wizard_branding_variant == "lineage-features":
                         wizard_table = wizard_table.replace(b"Andarium features", b"Features")
+                    wizard_logo = b"\x00".join(path.encode() for path in wizard_paths)
+                    wizard_animation = wizard_welcome
+                    if wizard_branding_variant == "stock-logo":
+                        wizard_logo = b"\x00M0,0L1,1\x00"
+                    elif wizard_branding_variant == "logo-lacks-a-path":
+                        wizard_logo = b"\x00".join(path.encode() for path in wizard_paths[:-1])
+                    elif wizard_branding_variant == "stock-animation":
+                        wizard_animation = wizard_welcome.replace(b"Andarium", b"LineageOS", 1) + b" "
                     wizard_apk = io.BytesIO()
                     with zipfile.ZipFile(wizard_apk, "w") as overlay:
                         overlay.writestr("resources.arsc", wizard_table)
+                        if wizard_branding_variant != "no-logo":
+                            overlay.writestr("res/drawable-v24/logo.xml", wizard_logo)
+                        if wizard_branding_variant != "no-animation":
+                            overlay.writestr("res/raw/lottie_welcome.json", wizard_animation)
                     archive.writestr(
                         "PRODUCT/overlay/"
                         "LineageSetupWizard__lineage_andarium__auto_generated_rro_product.apk",
@@ -2453,6 +2473,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("setup-wizard-names-lineage-in-utf16", {"wizard_branding_variant": "lineage-name-utf16"}),
             ("setup-wizard-without-recovery-strings", {"wizard_branding_variant": "no-recovery-strings"}),
             ("setup-wizard-without-andarium-features", {"wizard_branding_variant": "lineage-features"}),
+            ("setup-wizard-without-logo", {"wizard_branding_variant": "no-logo"}),
+            ("setup-wizard-with-another-logo", {"wizard_branding_variant": "stock-logo"}),
+            ("setup-wizard-logo-lacking-a-path", {"wizard_branding_variant": "logo-lacks-a-path"}),
+            ("setup-wizard-without-animation", {"wizard_branding_variant": "no-animation"}),
+            ("setup-wizard-with-another-animation", {"wizard_branding_variant": "stock-animation"}),
             ("ntp-server-left", {"network_time_variant": "ntp-server"}),
             ("ntp-server-left-in-a-qualified-definition",
              {"network_time_variant": "ntp-server-in-a-qualified-table"}),
@@ -2976,6 +3001,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not set the string 'Update Andarium Recovery'"),
             ("setup-wizard-without-andarium-features-cause", {"wizard_branding_variant": "lineage-features"},
              "does not set the string 'Andarium features'"),
+            ("setup-wizard-without-logo-cause", {"wizard_branding_variant": "no-logo"},
+             "LineageSetupWizard.* has no res/drawable/logo.xml that holds the product's logo"),
+            ("setup-wizard-with-another-logo-cause", {"wizard_branding_variant": "stock-logo"},
+             "LineageSetupWizard.* has no res/drawable/logo.xml that holds the product's logo"),
+            ("setup-wizard-logo-lacking-a-path-cause", {"wizard_branding_variant": "logo-lacks-a-path"},
+             "LineageSetupWizard.* has no res/drawable/logo.xml that holds the product's logo"),
+            ("setup-wizard-without-animation-cause", {"wizard_branding_variant": "no-animation"},
+             "LineageSetupWizard.* has no res/raw/lottie_welcome.json"),
+            ("setup-wizard-with-another-animation-cause", {"wizard_branding_variant": "stock-animation"},
+             "res/raw/lottie_welcome.json is not the product's animation"),
             ("ntp-server-left-cause", {"network_time_variant": "ntp-server"},
              "config_ntpServers names the NTP server ntp://time.android.com in .*framework-res"),
             ("ntp-server-left-in-a-qualified-definition-cause",
@@ -4623,6 +4658,7 @@ def synthetic_lineage_recovery_ramdisk(
     module: str | None = None, no_memfd: bool = False,
     elf_edit: tuple[str, int, int] | None = None,
     pixel_format: bytes = b"BGRX_8888",
+    art: dict[str, bytes] | None = None,
 ) -> bytes:
     entries = [
         newc_entry(
@@ -4666,6 +4702,10 @@ def synthetic_lineage_recovery_ramdisk(
             )
         ]),
         *([newc_entry(f"lib/modules/{module}", 0o100644, b"module", 13)] if module else []),
+        *[
+            newc_entry(f"res/images/{name}", 0o100644, payload, 100 + index)
+            for index, (name, payload) in enumerate(sorted((art or {}).items()))
+        ],
     ]
     entries.append(newc_entry("TRAILER!!!", 0, b"", len(entries) + 1))
     archive = b"".join(entries)
@@ -4679,6 +4719,14 @@ def synthetic_lineage_recovery_ramdisk(
 def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None:
     fstab = (android_root / "overlay/config/recovery.fstab").read_bytes()
     module = load_tool(verifier)
+    # The product's recovery artwork, which the ramdisk of a good image carries.
+    art = {
+        path.name: path.read_bytes()
+        for path in sorted((android_root / module.ART_DIRECTORY).iterdir())
+    }
+    if len(art) != 33 or not set(module.ART_REQUIRED) <= art.keys():
+        fail(f"the product's recovery artwork is {len(art)} files, not the 33 of the design")
+    recovery_ramdisk = functools.partial(synthetic_lineage_recovery_ramdisk, art=art)
     # A match whose offset is shorter than its length repeats the pattern.
     if module.lz4_block(b"\x35abc\x03\x00\x20de", 1 << 20) != b"abcabcabcabcde":
         fail("LZ4 block decoder mis-decoded an overlapping match")
@@ -4705,41 +4753,61 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
             good = root / f"recovery-{compression}.img"
             good.write_bytes(
                 synthetic_boot_image(
-                    synthetic_lineage_recovery_ramdisk(fstab, compression=compression)
+                    recovery_ramdisk(fstab, compression=compression)
                 )
             )
             result = run(good)
             if result.returncode != 0:
                 fail(f"Lineage recovery verifier rejected a {compression} fixture: {result.stdout}")
         for label, ramdisk in (
-            ("a 4 KiB-only ELF", synthetic_lineage_recovery_ramdisk(fstab, alignment=4096)),
+            ("a 4 KiB-only ELF", recovery_ramdisk(fstab, alignment=4096)),
             (
                 "a missing ELF dependency",
-                synthetic_lineage_recovery_ramdisk(fstab, omit_dependency=True),
+                recovery_ramdisk(fstab, omit_dependency=True),
             ),
             (
                 "the Cuttlefish interface",
-                synthetic_lineage_recovery_ramdisk(fstab, interface=b"eth1\0"),
+                recovery_ramdisk(fstab, interface=b"eth1\0"),
             ),
             (
                 "a loadable module",
-                synthetic_lineage_recovery_ramdisk(fstab, module="fixture.ko"),
+                recovery_ramdisk(fstab, module="fixture.ko"),
             ),
             (
                 "properties without sys.use_memfd",
-                synthetic_lineage_recovery_ramdisk(fstab, no_memfd=True),
+                recovery_ramdisk(fstab, no_memfd=True),
             ),
             (
                 "the Cuttlefish ABGR_8888 pixel format",
-                synthetic_lineage_recovery_ramdisk(fstab, pixel_format=b"ABGR_8888"),
+                recovery_ramdisk(fstab, pixel_format=b"ABGR_8888"),
             ),
             (
                 "a changed fstab",
-                synthetic_lineage_recovery_ramdisk(fstab + b"# changed\n"),
+                recovery_ramdisk(fstab + b"# changed\n"),
             ),
             (
                 "an uncompressed ramdisk",
-                synthetic_lineage_recovery_ramdisk(fstab, compression="none"),
+                recovery_ramdisk(fstab, compression="none"),
+            ),
+            (
+                "a ramdisk without the product's artwork",
+                recovery_ramdisk(fstab, art={}),
+            ),
+            (
+                "a ramdisk without the header image",
+                recovery_ramdisk(fstab, art={k: v for k, v in art.items() if k != "logo_image_switch.png"}),
+            ),
+            (
+                "LineageOS's header image",
+                recovery_ramdisk(fstab, art={**art, "logo_image_switch.png": b"the wire logo"}),
+            ),
+            (
+                "a missing progress frame",
+                recovery_ramdisk(fstab, art={k: v for k, v in art.items() if k != "loop00017.png"}),
+            ),
+            (
+                "a stock progress frame the product does not supply",
+                recovery_ramdisk(fstab, art={**art, "loop00030.png": b"stock"}),
             ),
         ):
             bad = root / "recovery-bad.img"
@@ -4761,6 +4829,12 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
                 {"module": "modules.builtin.alias.bin"},
                 "loadable-module payload",
             ),
+            ("a missing logo", {"art": {k: v for k, v in art.items() if k != "logo_image.png"}},
+             "lacks the product's artwork res/images/logo_image.png"),
+            ("a stock fastbootd image", {"art": {**art, "fastbootd.png": b"stock"}},
+             "res/images/fastbootd.png is not the product's artwork"),
+            ("a surplus frame", {"art": {**art, "loop00031.png": b"stock"}},
+             "animation frames the product does not supply: .*loop00031.png"),
             ("a 32-bit ELF", {"elf_edit": ("<B", 4, 1)}, "little-endian ELF64"),
             ("a big-endian ELF", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF64"),
             ("a foreign machine", {"elf_edit": ("<H", 18, 62)}, "not AArch64"),
@@ -4768,7 +4842,7 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
         ):
             bad = root / "recovery-bad.img"
             bad.write_bytes(
-                synthetic_boot_image(synthetic_lineage_recovery_ramdisk(fstab, **options))
+                synthetic_boot_image(recovery_ramdisk(fstab, **options))
             )
             result = run(bad)
             if result.returncode == 0 or not re.search(reason, result.stdout):

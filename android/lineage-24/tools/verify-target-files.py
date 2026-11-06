@@ -1297,6 +1297,37 @@ SETUP_WIZARD_NAMES = (
 )
 
 
+# The Setup Wizard's two logos are the product's: the overlay replaces the vector drawable of the
+# Finish screen and the services page header, and the Lottie animation of the Welcome screen. The
+# animation is a raw file, which the overlay carries unchanged; the compiled vector keeps its path
+# data as strings, and a vector that holds every path of the tracked one is that vector.
+SETUP_WIZARD_ART = (
+    Path(__file__).resolve().parents[1]
+    / "overlay/overlay/packages/apps/SetupWizard/app/src/main/res"
+)
+SETUP_WIZARD_WELCOME = "res/raw/lottie_welcome.json"
+
+
+def check_setup_wizard_art(overlay: zipfile.ZipFile) -> None:
+    paths = re.findall(
+        r'android:pathData="([^"]+)"', (SETUP_WIZARD_ART / "drawable/logo.xml").read_text(encoding="utf-8")
+    )
+    if len(paths) < 2:
+        fail(f"{SETUP_WIZARD_ART}/drawable/logo.xml has fewer than two paths: the tracked logo is not the product's")
+    logos = [name for name in overlay.namelist() if re.fullmatch(r"res/drawable[^/]*/logo\.xml", name)]
+    if not any(
+        all(path.encode() in table or path.encode("utf-16-le") in table for path in paths)
+        for table in (overlay.read(name) for name in logos)
+    ):
+        fail(f"{SETUP_WIZARD_OVERLAY} has no res/drawable/logo.xml that holds the product's logo")
+    try:
+        welcome = overlay.read(SETUP_WIZARD_WELCOME)
+    except KeyError:
+        fail(f"{SETUP_WIZARD_OVERLAY} has no {SETUP_WIZARD_WELCOME}")
+    if welcome != (SETUP_WIZARD_ART / "raw/lottie_welcome.json").read_bytes():
+        fail(f"{SETUP_WIZARD_OVERLAY}'s {SETUP_WIZARD_WELCOME} is not the product's animation")
+
+
 def check_setup_wizard_branding(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
 ) -> None:
@@ -1307,6 +1338,7 @@ def check_setup_wizard_branding(
     try:
         with zipfile.ZipFile(io.BytesIO(read_small(archive, info, 16 << 20))) as overlay:
             table = overlay.read("resources.arsc")
+            check_setup_wizard_art(overlay)
     except (KeyError, OSError, zipfile.BadZipFile) as error:
         fail(f"{SETUP_WIZARD_OVERLAY} has no readable resource table: {error}")
 

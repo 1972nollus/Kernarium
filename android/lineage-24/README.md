@@ -767,6 +767,20 @@ boot animation, the fingerprint and the build properties keep LineageOS's names.
 Recovery's own text names no system. The target-files verifier requires the
 wizard overlay's resource table to hold the Andarium strings and no Lineage name.
 
+The artwork is the Andarium icon's three stacked tiles. In the Setup Wizard
+the same overlay replaces the vector drawable `logo.xml` (the Finish screen,
+and the services page header, where the layout tints it and only the three
+silhouettes remain) and the Lottie animation `lottie_welcome.json` of the
+Welcome screen. Recovery's header images (`logo_image.png`,
+`logo_image_switch.png` and `fastbootd.png`, 256 by 160) and its 30 progress
+frames (200 by 200) are mdpi pixel art in `overlay/recovery/res/images`: the
+build copies a device's `recovery/res` over the stock resources, and recovery
+scales the images to the host's density with nearest-neighbour sampling, so
+they are drawn on the 1x grid and in greys that no byte order changes. The
+recovery verifier requires each of those files byte for byte and no other
+progress frame, and the target-files verifier requires the wizard's animation
+byte for byte and every path of its vector.
+
 LineageOS reports device data to its statistics server from LineageParts
 (`ReportingService`, started by a boot receiver and a daily job) once
 `stats_collection` is on, and the Setup Wizard asks for it on its services page.

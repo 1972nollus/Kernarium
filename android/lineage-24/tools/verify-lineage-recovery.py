@@ -9,6 +9,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import gzip
 import io
+import re
 import stat
 import struct
 from pathlib import Path, PurePosixPath
@@ -32,6 +33,14 @@ REQUIRED_PATHS = {
     "system/lib64/librecovery_ui.so",
     "system/lib64/librecovery_ui_ext.so",
 }
+
+
+# The product's own recovery artwork: the device overlay's recovery/res/images, which the build copies
+# over the stock resources of the ramdisk's /res/images. Every file there must reach the ramdisk
+# unchanged, and the ramdisk must hold no other progress animation frame than the product's.
+ART_DIRECTORY = "overlay/recovery/res/images"
+ART_REQUIRED = ("fastbootd.png", "logo_image.png", "logo_image_switch.png", "loop00000.png")
+ART_FRAME = re.compile(r"loop[0-9]{5}\.png")
 
 
 class VerificationError(ValueError):
@@ -160,12 +169,44 @@ def elf_needed(name: str, payload: bytes) -> set[str]:
     return needed
 
 
+def product_art(android_root: Path) -> dict[str, bytes]:
+    """The artwork the device overlay supplies to recovery, by file name."""
+    directory = android_root / ART_DIRECTORY
+    art = {}
+    if directory.is_dir():
+        for path in sorted(directory.iterdir()):
+            art[path.name] = regular_file(path, "product recovery artwork").read_bytes()
+    absent = [name for name in ART_REQUIRED if name not in art]
+    if absent:
+        fail(f"{ART_DIRECTORY} lacks the product's recovery artwork: {absent}")
+    return art
+
+
+def verify_art(entries: dict[str, android_image.NewcEntry], art: dict[str, bytes]) -> None:
+    for name, payload in art.items():
+        entry = entries.get(f"res/images/{name}")
+        if entry is None:
+            fail(f"recovery ramdisk lacks the product's artwork res/images/{name}")
+        if entry.payload != payload:
+            fail(f"recovery ramdisk's res/images/{name} is not the product's artwork")
+    frames = {
+        PurePosixPath(name).name
+        for name in entries
+        if name.startswith("res/images/") and ART_FRAME.fullmatch(name[len("res/images/"):])
+    }
+    foreign = sorted(frames - art.keys())
+    if foreign:
+        fail(f"recovery ramdisk carries progress animation frames the product does not supply: {foreign}")
+
+
 def verify_entries(
-    entries: dict[str, android_image.NewcEntry], expected_fstab: bytes
+    entries: dict[str, android_image.NewcEntry], expected_fstab: bytes,
+    art: dict[str, bytes],
 ) -> int:
     missing = sorted(REQUIRED_PATHS - entries.keys())
     if missing:
         fail(f"recovery ramdisk is missing required paths: {missing}")
+    verify_art(entries, art)
     for name in ("system/bin/recovery", "system/bin/adbd"):
         entry = entries[name]
         if not stat.S_ISREG(entry.mode) or not entry.mode & 0o111:
@@ -229,6 +270,7 @@ def main() -> None:
         android_root = args.android_root.resolve()
         fstab_path = android_root / "overlay/config/recovery.fstab"
         expected_fstab = regular_file(fstab_path, "checked recovery fstab").read_bytes()
+        art = product_art(android_root)
         if args.image is not None:
             if args.layout is not None:
                 fail("--layout is valid only with --disk")
@@ -256,7 +298,7 @@ def main() -> None:
             lambda name, mode: True,
             VerificationError,
         )
-        elf_count = verify_entries(entries, expected_fstab)
+        elf_count = verify_entries(entries, expected_fstab, art)
     except (OSError, UnicodeError, struct.error, VerificationError) as error:
         raise SystemExit(f"LineageOS recovery: {error}") from error
     print(
