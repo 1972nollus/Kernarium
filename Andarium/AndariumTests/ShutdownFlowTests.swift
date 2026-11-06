@@ -34,11 +34,9 @@ struct ShutdownFlowTests {
         let entry = AppEntry.fromArguments()
         let model = entry.makeModel()
         try #require(model.alert == nil, "\(String(describing: model.alert))")
-        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let keyWindow = scene.windows.first { $0.isKeyWindow }
-        let window = try #require(keyWindow)
-        let original = window.rootViewController
-        defer { window.rootViewController = original }
+        let lease = try await HostWindow.take()
+        defer { lease.give() }
+        let window = lease.window
         window.rootViewController = UIHostingController(rootView: RootView(entry: entry).environment(model))
         model.create(Guest(cores: 2, memoryMiB: 1536, capacityGiB: 8))
         let createDeadline = ContinuousClock.now + .seconds(30)
