@@ -105,5 +105,5 @@ protocol RuntimeDriver: AnyObject {
 struct ScreenHints {
     var scrollTarget: String?
     var eraseConfirmed = false
-    var acknowledgements = false
+    var infoPage: InfoPage?
 }

@@ -244,10 +244,10 @@ nonisolated struct EraseSheetSizing: PresentationSizing {
 struct InfoSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var path: [String]
+    @State private var path: [InfoPage]
 
-    init(acknowledgements: Bool) {
-        _path = State(initialValue: acknowledgements ? ["ack"] : [])
+    init(page: InfoPage?) {
+        _path = State(initialValue: page?.trail ?? [])
     }
 
     var body: some View {
@@ -276,45 +276,22 @@ struct InfoSheet: View {
                     LabeledContent("Architecture", value: model.system.architecture)
                 }
                 Section {
-                    NavigationLink("Acknowledgements", value: "ack")
+                    NavigationLink("Acknowledgements", value: InfoPage.acknowledgements)
                 }
             }
             .navigationTitle("Info")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: String.self) { _ in AcknowledgementsView() }
+            .navigationDestination(for: InfoPage.self) { page in
+                switch page {
+                case .acknowledgements: AcknowledgementsView()
+                case .license(let id): LicenseView(projectID: id)
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
         }
-    }
-}
-
-struct AcknowledgementsView: View {
-    private let items: [(String, String)] = [
-        ("LineageOS", "Apache License 2.0 and others"),
-        ("Android Open Source Project", "Apache License 2.0"),
-        ("Linux", "GNU General Public License v2"),
-        ("User-Mode Linux", "GNU General Public License v2"),
-        ("virglrenderer", "MIT License"),
-        ("Mesa", "MIT License"),
-    ]
-
-    var body: some View {
-        List {
-            Section {
-                ForEach(items, id: \.0) { item in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.0)
-                        Text(item.1).font(.footnote).foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 2)
-                }
-            } footer: {
-                Text("Source code for the built-in system is available as its licences require.\n\nAndroid, LineageOS, Linux and the other names and marks here belong to their owners. They identify the software built into Andarium and imply no endorsement.")
-            }
-        }
-        .navigationTitle("Acknowledgements")
     }
 }

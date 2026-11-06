@@ -58,7 +58,7 @@ struct HomeView: View {
             case .erase:
                 EraseSheet(confirmed: hints.eraseConfirmed)
                     .presentationSizing(EraseSheetSizing())
-            case .info: InfoSheet(acknowledgements: hints.acknowledgements)
+            case .info: InfoSheet(page: hints.infoPage)
             }
         }
         .microphoneAccessAlert()

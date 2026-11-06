@@ -32,11 +32,18 @@ struct AppEntry {
         "home-backup": "backup",
     ]
 
+    /// The page of Info a screen opens on.
+    private static let infoPages: [String: InfoPage] = [
+        "info-acknowledgements": .acknowledgements,
+        "info-license": .license("mesa"),
+        "info-license-gpl": .license("linux"),
+    ]
+
     var hints: ScreenHints {
         ScreenHints(
             scrollTarget: Self.scrollTargets[screen],
             eraseConfirmed: screen == "erase-confirm",
-            acknowledgements: screen == "info-acknowledgements"
+            infoPage: Self.infoPages[screen]
         )
     }
 
@@ -204,7 +211,7 @@ struct AppEntry {
             model.setMicrophone(true)
         case "erase", "erase-confirm":
             model.sheet = .erase
-        case "info", "info-acknowledgements":
+        case "info", "info-acknowledgements", "info-license", "info-license-gpl":
             model.sheet = .info
         case "start-low-space":
             model.start(.normal)
