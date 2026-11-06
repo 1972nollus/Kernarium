@@ -154,13 +154,15 @@ xcodebuild test -project Andarium/Andarium.xcodeproj -scheme Andarium \
 
 The project has Debug, Release and AppStore. Release is the development and
 harness build: it reads the automation environment below and prints the
-thermal reports the iPad harness reads. AppStore builds as Release does and
+console lines the iPad harness reads. AppStore builds as Release does and
 leaves out everything that exists for automation or only pretends:
 
 - `APP_STORE` is a Swift compilation condition of the configuration. It removes
   the launch environment (`Live/LaunchEnvironment.swift`, so no `ANDARIUM_` or
   `KERNARIUM_` name is in the application or in `AndariumCore`), and the
-  thermal and uptime console reports.
+  harness's console lines (`Shared/ConsoleReport.swift`, with every call to it,
+  and the thermal state and uptime reads behind them). The type is in the
+  application, so no such line is in `AndariumCore` either.
 - It embeds the App Store runtime, packaged by
   `Kernarium/scripts/package-ios-frameworks.sh --app-store --runtimes android`
   from the `kernarium-ios-device-android-app-store` preset, which reads no
@@ -170,7 +172,8 @@ leaves out everything that exists for automation or only pretends:
   application, which fails the build on a missing key in Info.plist,
   an environment knob or a trace of the build host (the
   linker's debug map, a home-directory path) in the application or a framework,
-  or a privacy manifest that does not cover a binary
+  a console line of the harness in the application's code, or a privacy
+  manifest that does not cover a binary
   ([`scripts/check-privacy-manifests.py`](../scripts/check-privacy-manifests.py)).
 
 ```sh
@@ -359,6 +362,29 @@ Recovery never captures motion. Only the newest samples are sent, at up to
 The system image must include the [motion sub-HAL](../android/lineage-24/README.md#motion-sensors);
 a missing service is reported in Capabilities and Settings.
 
+### Statistics
+
+The capsule over the session and the Stats rows of its Settings show the
+guest's CPU, memory and frame rate from the runtime's own readings
+(`kernarium_runtime_loader_read_statistics` and `..._read_guest_memory`,
+[`Kernarium/README.md`](../Kernarium/README.md#statistics)). `StatsMeter`
+(`AndariumCore`) turns them into figures and `AppModel` paces them:
+
+- Nothing is read unless a view shows the figures, the application is active,
+  the guest runs and the runtime offers statistics (`StatsSampling.isWanted`).
+  One loop serves both views. It takes two readings a quarter second apart, so
+  figures show within a third of a second, then one a second, and asks the
+  guest for its memory after the second reading and with every other one.
+  Leaving the foreground ends the loop; coming back starts a new baseline.
+- CPU is the share of the guest's vCPUs the readings' interval used, 0 to 100,
+  and the sparkline holds the last ten readings against the same 100%. Frame
+  rate is the frames the display presented. Memory is the guest's own memory in
+  use (`MemTotal` less `MemAvailable`, from its kernel), in the one size
+  formatter. A figure with no reading is an en dash. A memory the guest cannot
+  give, as when its display is off and it may be asleep, keeps its last value.
+- A restarted guest (a new boot index) starts all of them over. A guest whose
+  screen is off is not dimmed: its figures are as true as any.
+
 ## Android operations
 
 Andarium is the adb host for its one guest. The runtime opens a connected stream
@@ -483,6 +509,8 @@ KERNARIUM_HOST_FORWARD, KERNARIUM_FOOTPRINT_LOG_MS, KERNARIUM_EXECUTION_ENGINE,
 KERNARIUM_GUEST_HIBERNATION, KERNARIUM_ANDROID_ADB_AUTH
 ANDARIUM_START=normal|recovery   create the guest if there is none, then start
 ANDARIUM_ERASE=1                 erase the guest's data before the start
+ANDARIUM_STATS=1                 show the statistics over the session and
+                                 print each reading
 ANDARIUM_GUEST_INSTANCE=<name>   use Library/TestGuests/<name> instead of Library/Guest
 ANDARIUM_ADB_TESTS=1             let AdbOverVsockTests drive the running guest
 ANDARIUM_ADB_KEY_FILE=<path>     where eraseGuestMakesANewKey records the key
@@ -519,8 +547,11 @@ is the launcher, with each setting given as a `TEST_RUNNER_`-prefixed variable
 The console carries the runtime's own `Kernarium:` lines and these of
 Andarium's: `Andarium: runtime returned <n>` when the run ends (0 is a power
 off), `Andarium thermal state: phase=start|change|finish state=<state>
-uptime=<seconds>`, and `Andarium: application inactive|active` when a system
-alert takes the focus and gives it back. iOS asks to allow local network access
+uptime=<seconds>`, `Andarium: application inactive|active` when a system
+alert takes the focus and gives it back, and with `ANDARIUM_STATS=1` a line
+per reading, `Andarium stats: cpu=<n>% fps=<n> memory-used=<MiB> memory=<MiB>
+held=<MiB> boot=<n>` (`-` for a figure not read yet; `memory` is the guest's
+size, `held` what the device holds of it). iOS asks to allow local network access
 only when the guest itself reaches the local network, such as a connection to a
 host on the same network or a `.local` name; a boot and ordinary Internet use,
 guest DNS included, raise no alert. The question is asked once per installation

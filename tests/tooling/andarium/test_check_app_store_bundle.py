@@ -25,6 +25,14 @@ LAUNCH_KNOB = (
     "#include <stdlib.h>\n"
     'const char *fixture(void) { return getenv("ANDARIUM_START"); }\n'
 )
+# The harness's console lines (ConsoleReport), which the configuration
+# compiles out: what the check reports for each, and a full line.
+REPORT_LINES = (
+    ("Andarium stats", "Andarium stats: cpu=1% fps=2 memory-used=3 memory=4 held=5 boot=6"),
+    ("Andarium thermal state", "Andarium thermal state: phase=start state=nominal uptime=0.000"),
+    ("Andarium: runtime returned", "Andarium: runtime returned 0"),
+    ("Andarium: application", "Andarium: application active"),
+)
 HOME_PATH = (
     "const char *fixture(void) { return \"/Users/NAME/work/project/file.c\"; }\n"
 )
@@ -158,6 +166,10 @@ def main() -> int:
         clean = build(root, "clean", CLEAN)
         knob = build(root, "knob", KNOB)
         launch = build(root, "launch", LAUNCH_KNOB)
+        reports = {
+            index: build(root, f"report{index}", f'const char *fixture(void) {{ return "{line}"; }}\n')
+            for index, (_name, line) in enumerate(REPORT_LINES)
+        }
         # The guest kernel image rides in a section of its own; a knob name in
         # it belongs to the guest.
         guest = root / "guest.bin"
@@ -192,6 +204,12 @@ def main() -> int:
               passes=False, expect="ANDARIUM_START")
         knob_app = make_app(root, "framework-knob", clean, app_info(), framework=knob)
         check(knob_app, passes=False, expect="Runtime.framework/Runtime")
+
+        # The harness's console lines, in the application's own code, whether
+        # or not anything calls them.
+        for index, (name, _line) in enumerate(REPORT_LINES):
+            check(make_app(root, f"report-line-{index}", reports[index], app_info()),
+                  passes=False, expect=f"'{name}'")
 
         # What the build host leaves in a binary: the linker's debug map, whose
         # N_OSO entries name the objects of the build, and a home-directory
