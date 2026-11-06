@@ -14,12 +14,16 @@ application that must:
     application: the statistics, thermal state, runtime and focus lines),
     which the configuration compiles out;
   - carry no trace of the machine that built it: no path under a user's home
-    directory (/Users/<name>/) in the host code of an executable, and no debug
-    stabs in an embedded framework (the linker's debug map, whose N_OSO
-    entries name the object files of the build host's checkout and dependency
-    trees; dsymutil has read it into the dSYM by then, and strip -S removes it
-    and keeps the UUID). Xcode strips the application's own executable when it
-    archives, and strips nothing it embeds; and
+    directory (/Users/<name>/), on a mounted volume (/Volumes/<name>/) or in
+    the per-user temporary directories (/var/folders/) in the host code of an
+    executable, and no debug stabs in an embedded framework (the linker's
+    debug map, whose N_OSO entries name the object files of the build host's
+    checkout and dependency trees; dsymutil has read it into the dSYM by then,
+    and strip -S removes it and keeps the UUID). The strings of those stabs
+    are not searched for a path. Xcode strips the application's own
+    executable when it archives, and strips nothing it embeds. A path that a
+    dependency compiles in from its prefix is the dependencies' to avoid
+    (dependencies/README.md, "No build-host paths"); and
   - pass scripts/check-privacy-manifests.py.
 
 The knob scan reads bytes, so it does not see a Swift string of up to 15 bytes
@@ -50,8 +54,19 @@ KNOB = re.compile(rb"\b(?:ANDARIUM|KERNARIUM|DARWIN_UML|UML)_[A-Z][A-Z0-9_]{2,}\
 # the same in every line; the configuration compiles the type out.
 HARNESS_LINES = re.compile(
     rb"Andarium stats|Andarium thermal state|Andarium: runtime returned|Andarium: application ")
-# A path under a user's home directory names the account that built the code.
-HOME_PATH = re.compile(rb"/Users/[A-Za-z0-9._-]+/[\x21-\x7e]*")
+# What a path names about the machine that built the code: the account whose
+# home directory held the checkout, the volume that held the checkout or the
+# dependency prefixes, and the build's temporary directories. A bare
+# "/Volumes/" or a format such as "/Volumes/%s" is no path of a build and
+# does not match.
+HOST_PATHS = (
+    ("a path under a home directory",
+     re.compile(rb"/Users/[A-Za-z0-9._-]+/[\x21-\x7e]*")),
+    ("a path on a mounted volume",
+     re.compile(rb"/Volumes/[A-Za-z0-9._ -]+/[\x21-\x7e]*")),
+    ("a path in a temporary build directory",
+     re.compile(rb"/(?:private/)?var/folders/[\x21-\x7e]+")),
+)
 # Sections that hold the guest, not the host: the Linux kernel image a runtime
 # carries, and the boot files of a Linux runtime.
 GUEST_SECTIONS = {("__TEXT", "__uml_elf"), ("__TEXT", "__uml_boot_base"), ("__TEXT", "__uml_boot_init")}
@@ -130,27 +145,59 @@ def harness_lines(path: Path) -> list[str]:
     return sorted({match.decode().strip() for match in HARNESS_LINES.findall(code[0])})
 
 
-def debug_stabs(data: bytes, base: int) -> tuple[int, int]:
-    """The debug stabs in a Mach-O's symbol table, and how many of them are
-    N_OSO, each of which names an object file."""
+def symbol_table(data: bytes, base: int) -> tuple[int, int, int, int] | None:
+    """The symbol table of a Mach-O: the offset and count of its struct
+    nlist_64 entries, and the offset and size of its string table."""
     count = struct.unpack_from("<I", data, base + 16)[0]
     position = base + 32
     for _ in range(count):
         command, size = struct.unpack_from("<II", data, position)
         if command == LC_SYMTAB:
-            offset, symbols = struct.unpack_from("<II", data, position + 8)
-            # struct nlist_64 is 16 bytes and n_type is its fifth.
-            kinds = data[base + offset + 4:base + offset + 16 * symbols:16]
-            return (sum(1 for kind in kinds if kind & N_STAB),
-                    kinds.count(N_OSO))
+            offset, symbols, strings, strings_size = struct.unpack_from(
+                "<IIII", data, position + 8)
+            return base + offset, symbols, base + strings, strings_size
         position += size
-    return 0, 0
+    return None
+
+
+def debug_stabs(data: bytes, base: int) -> tuple[int, int]:
+    """The debug stabs in a Mach-O's symbol table, and how many of them are
+    N_OSO, each of which names an object file."""
+    table = symbol_table(data, base)
+    if table is None:
+        return 0, 0
+    offset, symbols, _strings, _size = table
+    # struct nlist_64 is 16 bytes and n_type is its fifth.
+    kinds = data[offset + 4:offset + 16 * symbols:16]
+    return sum(1 for kind in kinds if kind & N_STAB), kinds.count(N_OSO)
+
+
+def without_debug_map(data: bytes, base: int) -> bytes:
+    """The Mach-O with the strings of its debug stabs blanked: the names of
+    the objects, sources and functions the linker recorded. A framework that
+    carries them fails for that, and Xcode strips them from the application's
+    own executable when it archives, so neither is a path the build host left
+    in the code."""
+    table = symbol_table(data, base)
+    if table is None:
+        return data
+    offset, symbols, strings, size = table
+    buffer = bytearray(data)
+    for entry in range(symbols):
+        string, kind = struct.unpack_from("<IB", data, offset + 16 * entry)
+        if kind & N_STAB and 0 < string < size:
+            end = data.find(b"\0", strings + string, strings + size)
+            if end > 0:
+                buffer[strings + string:end] = bytes(end - strings - string)
+    return bytes(buffer)
 
 
 def build_host_traces(path: Path, debug_map: bool = True) -> list[str]:
     """What one Mach-O file keeps of the machine that built it. `debug_map`
     says whether its debug stabs count: they do for a framework, whose binary
-    ships as linked."""
+    ships as linked. The strings of the stabs are never searched for a path:
+    a framework with a debug map fails on the map, and the application's own
+    executable loses it when Xcode archives."""
     code = host_code(path)
     if code is None:
         return []
@@ -161,11 +208,13 @@ def build_host_traces(path: Path, debug_map: bool = True) -> list[str]:
         found.append(
             f"carries the linker's debug map ({stabs} stabs, {objects} N_OSO "
             "object paths); strip -S it after dsymutil")
-    paths = sorted({match.decode() for match in HOME_PATH.findall(data)})
-    if paths:
-        found.append(
-            f"names a path under a home directory ({len(paths)}): "
-            f"{paths[0][:80]}{' ...' if len(paths) > 1 else ''}")
+    data = without_debug_map(data, base)
+    for label, pattern in HOST_PATHS:
+        paths = sorted({match.decode() for match in pattern.findall(data)})
+        if paths:
+            found.append(
+                f"names {label} ({len(paths)}): "
+                f"{paths[0][:80]}{' ...' if len(paths) > 1 else ''}")
     return found
 
 

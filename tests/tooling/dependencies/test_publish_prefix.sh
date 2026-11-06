@@ -177,4 +177,77 @@ grep -q "could not publish fixture prefix: $HELPER_ROOT/absent/prefix" \
 [ "$(identity helper-second)" = helper-second ] ||
 	fail "a publisher failure moved its stage"
 
-printf '%s\n' "exclusive, swap and verified publication tests passed"
+# A dependency built for the neutral prefix and installed with DESTDIR is merged
+# into the stage by merge_neutral_image: its files land where a build for the
+# stage would have put them, its pkg-config files name the prefix the
+# dependants look under, and an image that holds anything outside the neutral
+# prefix, or no neutral prefix, is refused.
+MERGE_ROOT="$TEST_ROOT/merge-neutral"
+mkdir -p "$MERGE_ROOT"
+cat >"$MERGE_ROOT/run.sh" <<'EOF_MERGE'
+set -eu
+ROOT_DIR=$1
+RSYNC=rsync
+fail()
+{
+	printf '%s\n' "$*" >&2
+	exit 1
+}
+. "$ROOT_DIR/dependencies/build-common.sh"
+merge_neutral_image "$2" "$3" "$4"
+EOF_MERGE
+
+merge_status()
+{
+	status=0
+	sh "$MERGE_ROOT/run.sh" "$ROOT_DIR" "$1" "$2" "$3" \
+		>"$MERGE_ROOT/out" 2>"$MERGE_ROOT/err" || status=$?
+	printf '%s\n' "$status"
+}
+
+NEUTRAL=$(sh -c '. "$1/dependencies/build-common.sh"; printf "%s" "$NO_HOST_PREFIX"' \
+	sh "$ROOT_DIR")
+case $NEUTRAL in
+/*) ;;
+*) fail "the neutral prefix is not absolute: $NEUTRAL" ;;
+esac
+[ ! -e "$NEUTRAL" ] || fail "the neutral prefix exists on this machine: $NEUTRAL"
+
+IMAGE="$MERGE_ROOT/image"
+mkdir -p "$IMAGE$NEUTRAL/lib/pkgconfig" "$IMAGE$NEUTRAL/include/fixture" \
+	"$MERGE_ROOT/stage/lib"
+printf 'archive\n' >"$IMAGE$NEUTRAL/lib/libfixture.a"
+printf 'header\n' >"$IMAGE$NEUTRAL/include/fixture/fixture.h"
+printf 'existing\n' >"$MERGE_ROOT/stage/lib/libexisting.a"
+printf '%s\n' "prefix=$NEUTRAL" 'libdir=${prefix}/lib' \
+	"Cflags: -I$NEUTRAL/include" >"$IMAGE$NEUTRAL/lib/pkgconfig/fixture.pc"
+[ "$(merge_status "$IMAGE" "$MERGE_ROOT/stage" "$MERGE_ROOT/final")" = 0 ] ||
+	fail "merge_neutral_image refused a neutral image"
+[ "$(cat "$MERGE_ROOT/stage/lib/libfixture.a")" = archive ] &&
+	[ "$(cat "$MERGE_ROOT/stage/include/fixture/fixture.h")" = header ] &&
+	[ "$(cat "$MERGE_ROOT/stage/lib/libexisting.a")" = existing ] ||
+	fail "merge_neutral_image did not merge the image beside the stage's files"
+grep -qx "prefix=$MERGE_ROOT/final" "$MERGE_ROOT/stage/lib/pkgconfig/fixture.pc" ||
+	fail "the merged pkg-config file does not name the dependants' prefix"
+grep -qx 'libdir=${prefix}/lib' "$MERGE_ROOT/stage/lib/pkgconfig/fixture.pc" ||
+	fail "the merged pkg-config file lost a variable"
+grep -qx "Cflags: -I$NEUTRAL/include" "$MERGE_ROOT/stage/lib/pkgconfig/fixture.pc" ||
+	fail "the pkg-config rewrite touched more than the prefix"
+
+mkdir -p "$MERGE_ROOT/stray-image$NEUTRAL/lib" "$MERGE_ROOT/stray-image/usr"
+[ "$(merge_status "$MERGE_ROOT/stray-image" "$MERGE_ROOT/stray-stage" \
+	"$MERGE_ROOT/final")" != 0 ] ||
+	fail "merge_neutral_image accepted a file outside the neutral prefix"
+grep -q "outside $NEUTRAL" "$MERGE_ROOT/err" ||
+	fail "a file outside the neutral prefix had no diagnostic"
+[ ! -e "$MERGE_ROOT/stray-stage" ] ||
+	fail "merge_neutral_image merged an image it refused"
+
+mkdir -p "$MERGE_ROOT/misplaced-image/elsewhere/lib"
+[ "$(merge_status "$MERGE_ROOT/misplaced-image" "$MERGE_ROOT/misplaced-stage" \
+	"$MERGE_ROOT/final")" != 0 ] ||
+	fail "merge_neutral_image accepted an image installed for another prefix"
+grep -q "has no $NEUTRAL" "$MERGE_ROOT/err" ||
+	fail "an image for another prefix had no diagnostic"
+
+printf '%s\n' "exclusive, swap, verified publication and neutral image tests passed"
