@@ -109,7 +109,7 @@ struct AppEntry {
             model.refreshPlan()
             // Access the person took away while Andarium was closed takes the
             // Microphone choice with it.
-            runtime.refreshPermissions()
+            model.microphone?.refresh()
         }
         model.alert = problem.map { AppAlert(title: "Andarium Is Incomplete", message: $0) }
         return model
