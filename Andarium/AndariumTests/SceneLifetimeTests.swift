@@ -48,14 +48,6 @@ struct SceneLifetimeTests {
         #expect(second.model === launched)
     }
 
-    /// The Mac connects a scene for its menu bar next to the window, with a
-    /// system UI role; adopting it gave a second model and runtime.
-    @Test func onlyApplicationScenesAreAndariums() {
-        #expect(AndariumApp.adopts(role: .windowApplication))
-        #expect(!AndariumApp.adopts(role: UISceneSession.Role(rawValue: "FUWindowSceneSessionRoleSystemUI")))
-        #expect(!AndariumApp.adopts(role: .windowExternalDisplayNonInteractive))
-    }
-
     #if !APP_STORE
     @Test func theLaunchsWorkRunsOncePerModelWhateverTheSceneCount() async throws {
         let host = HostDevice(

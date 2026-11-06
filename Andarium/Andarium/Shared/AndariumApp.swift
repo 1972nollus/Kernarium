@@ -4,35 +4,8 @@ import UIKit
 
 @main
 final class AndariumApp: UIResponder, UIApplicationDelegate {
-    private var sceneConnection: NSObjectProtocol?
-
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Existing installations can restore the scene configuration saved
-        // by the former SwiftUI App entry point. Adopt those scenes too;
-        // their old delegate no longer has an App graph to create a window.
-        sceneConnection = NotificationCenter.default.addObserver(
-            forName: UIScene.willConnectNotification, object: nil, queue: .main
-        ) { notification in
-            guard let scene = notification.object as? UIWindowScene else { return }
-            Task { @MainActor in Self.adopt(scene) }
-        }
-        Task { @MainActor in
-            for case let scene as UIWindowScene in application.connectedScenes { Self.adopt(scene) }
-        }
-        return true
-    }
-
-    /// Only an application window is Andarium's: the Mac also connects a
-    /// system UI scene for its menu bar, which has no window to show.
-    static func adopts(role: UISceneSession.Role) -> Bool {
-        role == .windowApplication
-    }
-
-    private static func adopt(_ scene: UIWindowScene) {
-        guard adopts(role: scene.session.role), !(scene.delegate is AndariumSceneDelegate) else { return }
-        let delegate = AndariumSceneDelegate()
-        scene.delegate = delegate
-        delegate.connect(scene)
+        true
     }
 
     func application(

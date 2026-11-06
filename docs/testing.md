@@ -862,8 +862,8 @@ a window (`TEST_RUNNER_ANDARIUM_ROTATION_VISUAL=1`, selecting
 `RotationOverVsockTests`); pure policy tests do not establish the visible result.
 `andarium-motion-protocol` (unit) decodes independent motion wire fixtures
 and rejects truncated records, unknown sensor types and non-finite values.
-The core package also checks SI conversion, default-off settings migration,
-socket delivery, stop during connection and stale callbacks. Hosted
+The core package also checks SI conversion, the saved choice, socket delivery,
+stop during connection and stale callbacks. Hosted
 `AndroidOperationTests` checks that the motion toggle persists and reaches
 the runtime driver. Physical sensor delivery requires a sensor-capable iOS
 device and a guest image carrying the motion sub-HAL; Simulator and Mac tests

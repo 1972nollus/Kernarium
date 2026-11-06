@@ -44,8 +44,7 @@ paused Andarium shows a notice on the next launch. It runs one scene, because
 the runtime runs one guest at a time, and needs the increased memory limit
 and extended virtual addressing entitlements. The model and the runtime belong
 to the process (`AndariumProcess`): a scene that connects again shows the same
-ones, and only an application window is Andarium's, not the Mac's menu bar
-scene.
+ones.
 
 `AndariumPreview` is a Simulator-only target built from `Shared` and
 `Preview` with mock data. It embeds no runtime and boots nothing. Its launch
@@ -310,7 +309,7 @@ not bound Andarium's memory use.
 
 Motion Sensors is off by default. Its switch in Home’s Options (and the
 session’s Settings) shares the device’s accelerometer and gyroscope with the
-guest. The choice is saved with the guest; existing settings load it as off.
+guest. The choice is saved with the guest.
 A device with neither sensor leaves the switch unavailable. Capture starts
 after a normal boot finishes, while the app is active, and stops when the
 switch turns off, the app becomes inactive, or the guest ends or restarts.

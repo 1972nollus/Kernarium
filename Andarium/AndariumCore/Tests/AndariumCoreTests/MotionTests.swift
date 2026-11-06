@@ -105,10 +105,14 @@ struct MotionTests {
         #expect(!restart && mount.axes == .landscapeLeft)
     }
 
-    @Test func oldSettingsStayOffAndTheChoiceSurvivesEraseAndReload() throws {
-        let old = Data(#"{"cores":2,"memoryMiB":1024,"capacityGiB":8,"microphone":false,"includeInBackups":false}"#.utf8)
-        var guest = try JSONDecoder().decode(Guest.self, from: old)
+    @Test func theChoiceSurvivesEraseAndReloadAndIsRequiredLikeTheOthers() throws {
+        let complete = Data(
+            #"{"cores":2,"memoryMiB":1024,"capacityGiB":8,"microphone":false,"includeInBackups":false,"motionSensors":false}"#.utf8)
+        var guest = try JSONDecoder().decode(Guest.self, from: complete)
         #expect(!guest.motionSensors)
+        // Andarium carries no migration: a record without the field is not read.
+        let old = Data(#"{"cores":2,"memoryMiB":1024,"capacityGiB":8,"microphone":false,"includeInBackups":false}"#.utf8)
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(Guest.self, from: old) }
         guest.motionSensors = true
         let saved = try JSONEncoder().encode(guest.erased)
         #expect(try JSONDecoder().decode(Guest.self, from: saved).motionSensors)
