@@ -92,6 +92,8 @@ struct AppEntry {
         )
         // The rulers offer no size the carried system's data disk would refuse.
         model.releaseMaximumGiB = storage.release.maximumGiB
+        // Retina mode is the person's choice where they made one, else on when
+        // the system lets this application use more than 4 GiB.
         let options = DisplayOptionsStore.load()
         model.retina = launch.retina ?? options.retina(memoryLimitBytes: MemoryLimit.bytes())
         model.retinaChosen = options.chosenRetina != nil
@@ -131,14 +133,14 @@ struct AppEntry {
         if launch.erase {
             model.erase()
             guard await Self.idle(model) else { return }
-        }
-        if let mode = launch.start, model.alert == nil {
             // Erasing leaves no guest; a launch that starts one sets up a new
             // guest first.
             if launch.start != nil, model.guest == nil {
                 model.create(launch.applied(to: Guest.fresh(on: model.host), on: model.host))
                 guard await Self.idle(model) else { return }
             }
+        }
+        if let mode = launch.start, model.alert == nil {
             model.start(mode)
         }
     }
@@ -231,14 +233,6 @@ struct AppEntry {
     }
 }
 
-/// The display option, kept across launches.
-enum DisplayOptionsStore {
-    private static let key = "andarium.display"
-
-    static func load() -> DisplayOptions {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let options = try? JSONDecoder().decode(DisplayOptions.self, from: data)
-        else { return DisplayOptions() }
 /// What the system holds this application's memory to: the footprint plus what
 /// the system lets it grow by, which is the limit iOS enforces (jetsam) and
 /// 2,867 MiB on an iPad mini 6. Zero where the system sets none (a Mac, or an
@@ -261,6 +255,14 @@ enum MemoryLimit {
     }
 }
 
+/// The display option, kept across launches.
+enum DisplayOptionsStore {
+    private static let key = "andarium.display"
+
+    static func load() -> DisplayOptions {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let options = try? JSONDecoder().decode(DisplayOptions.self, from: data)
+        else { return DisplayOptions() }
         return options
     }
 

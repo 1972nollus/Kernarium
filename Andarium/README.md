@@ -402,16 +402,15 @@ apps can keep several such buffers. These host graphics allocations count
 against the same iOS process limit as guest RAM, so the RAM setting alone does
 not bound Andarium's memory use.
 
-Gyroscope is off by default. Its switch in Home's Capabilities (and the
-session's Settings) shares the device's accelerometer and gyroscope with the
-guest. The choice is saved with the guest.
+Gyroscope is off by default. Its switch in Home's Capabilities shares the
+device's accelerometer and gyroscope with the guest. The choice is saved with the guest.
 A device with neither sensor leaves the switch unavailable. Capture starts
 after a normal boot finishes, while the app is active, and stops when the
 switch turns off, the app becomes inactive, or the guest ends or restarts.
 Recovery never captures motion. Only the newest samples are sent, at up to
 100 Hz, over private vsock port 5556; nothing listens on the host’s network.
 The system image must include the [motion sub-HAL](../android/lineage-24/README.md#motion-sensors);
-a missing service is reported in Capabilities and Settings.
+a missing service is reported in Home's Capabilities.
 
 ### Statistics
 
@@ -477,9 +476,9 @@ Erase Guest deletes. The client signs adbd's AUTH token
 and never offers its key: a second token means adbd refused it, and the
 operation says so.
 
-**Create Bug Report** is in every build, in a normal session. Its row in
-Settings has a footer saying what a report holds, and a tap starts it at once.
-Settings dismisses and the full-screen overlay shows the guest's own progress
+**Create Bug Report** is in every build, in a normal session. Its row, alone in
+the Diagnostics section of Settings, starts it at once with a tap. Settings
+dismisses and the full-screen overlay shows the guest's own progress
 (nine tenths of the bar) and then the copy, with a Cancel button that stops the
 dump in the guest (`setprop ctl.stop dumpstatez`) and removes what it left. The
 zip is staged in `tmp/BugReports/` after a check of the free space
@@ -488,15 +487,18 @@ sheet (a centred popover on an iPad), and is deleted on every outcome of the
 sheet; each launch sweeps the folder. The guest's copy and any earlier ones are
 removed after a good pull.
 
-**Install App** is in every build, in a normal session: Settings, Apps,
-Install App... picks a single `.apk` in Files (a file of another kind is
-answered by a row, a `.apks`, `.xapk` or `.apkm` bundle by one of its own, and
-Settings stays open). For an `.apk` Settings dismisses and the overlay shows the
-file streamed in 256 KiB reads to `abb_exec:package install -r -t -S <size>` for
-the first eight tenths of the bar; the guest's own install holds it there, with
-the Cancel button gone, and a success closes the overlay and adds an Installed
-row. A failure is an alert and a Failed row, in the words of
-`PackageInstallMessages`.
+**Install APK** is in every build, in a normal session: Settings, Apps,
+Install APK... picks a file in Files, and Settings dismisses at once. Everything
+after that is on the full-screen overlay, which blocks input for the whole
+install and is the one the bug report uses. A file that is not a single `.apk`
+(`InstallRefusal`: another kind, or a `.apks`, `.xapk` or `.apkm` bundle) is
+refused on it at once, in words of its own. An `.apk` is streamed in 256 KiB
+reads to `abb_exec:package install -r -t -S <size>` for the first eight tenths
+of the bar; the guest's own install holds it there, with the Cancel button
+gone. The overlay then stays up with how it went, App Installed with Done or
+App Not Installed with OK and the error in the words of
+`PackageInstallMessages`, until it is closed; cancelling takes it away with
+nothing left behind, and the end of the run takes a finished result away.
 
 **ADB over Network** lets a computer on the same network use adb on the guest.
 It is off at every run, never persisted, and available only while the guest's

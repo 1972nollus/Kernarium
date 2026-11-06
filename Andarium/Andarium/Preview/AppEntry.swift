@@ -44,8 +44,7 @@ struct AppEntry {
 
     /// Where Settings scrolls to for a screen that shows a lower section.
     private static let settingsScrolls: [String: String] = [
-        "settings-stats": "stats", "settings-display": "display",
-        "settings-capabilities": "capabilities", "settings-mic-denied": "capabilities", "settings-mic-on": "capabilities",
+        "settings-stats": "stats",
     ]
 
     /// The page of Info a screen opens on.
@@ -69,7 +68,7 @@ struct AppEntry {
         if screen == "session-tip" {
             Tips.showAllTipsForTesting()
         } else if screen.hasPrefix("session") || screen.hasPrefix("settings") || screen.hasPrefix("recovery") || screen.hasPrefix("boot")
-            || screen == "bug-report" || screen == "install-apk" {
+            || Self.operationScreens.contains(screen) {
             Tips.hideAllTipsForTesting()
         }
         try? Tips.configure([.displayFrequency(.immediate)])
@@ -160,33 +159,10 @@ struct AppEntry {
                 }()
             )
             model.phase = .running(.normal)
-        case "settings", "settings-installing", "settings-installed", "settings-not-apk",
-             "settings-bundle", "install-apk",
-             "bug-report",
-             "settings-adb-off", "settings-adb-no-address",
-             "settings-install-failed", "settings-adb",
-             "settings-stats", "settings-display", "settings-capabilities", "settings-mic-denied", "settings-mic-on":
+        case "settings", "settings-adb-off", "settings-adb-no-address", "settings-adb", "settings-stats",
+             "install-apk", "install-done", "install-failed", "install-not-apk", "install-bundle", "bug-report":
             let session = model.session
-            let file = ApkInstall.sampleFile
-            let size = ApkInstall.sampleSizeBytes
             switch screen {
-            case "settings-installing":
-                session.installs = [ApkInstall(fileName: file, sizeBytes: size, state: play ? .installing(0) : .installing(0.62))]
-                if play {
-                    session.installs = []
-                    session.install(fileName: file, sizeBytes: size)
-                }
-            case "settings-installed":
-                session.installs = [ApkInstall(fileName: file, sizeBytes: size, state: .installed)]
-            case "settings-not-apk":
-                session.installs = [ApkInstall(fileName: "Trip photos.zip", sizeBytes: UInt64(212.4 * Double(Limits.bytesPerMiB)), state: .notApk)]
-            case "settings-bundle":
-                session.installs = [ApkInstall(fileName: "Trip Planner.xapk", sizeBytes: UInt64(84.6 * Double(Limits.bytesPerMiB)), state: .bundle)]
-            case "settings-install-failed":
-                session.installs = [ApkInstall(
-                    fileName: "Retro Racer 2.3 x86.apk", sizeBytes: 96 * Limits.bytesPerMiB,
-                    state: .failed("The guest couldn\u{2019}t install it: this app has no version for arm64 devices.")
-                )]
             case "settings-adb":
                 session.adb = true
                 session.adbAddress = SessionState.previewAddress
@@ -194,17 +170,12 @@ struct AppEntry {
                 session.adb = true
             case "settings-adb-off":
                 session.usbDebugging = false
-            case "settings-mic-denied":
-                model.microphoneState = .denied
-            case "settings-mic-on":
-                model.guest?.microphone = true
-                model.microphoneState = .granted
             default:
                 break
             }
-            // The two guest operations play on the full-screen overlay with
+            // The guest operations play on the full-screen overlay with
             // Settings already gone.
-            let operation = screen == "bug-report" || screen == "install-apk"
+            let operation = Self.operationScreens.contains(screen)
             model.sessionPreset = SessionPreset(
                 settings: !operation,
                 settingsLarge: Self.settingsScrolls.keys.contains(screen) || screen == "settings",
@@ -213,7 +184,11 @@ struct AppEntry {
             model.phase = .running(.normal)
             // The real operation lasts a few seconds, too short for a
             // screenshot to catch: hold its overlay part way unless `-play`.
-            if operation && freeze { model.busy = Self.operationOverlay(for: screen) }
+            // A result is what the real operation leaves up, so it always
+            // shows as it is.
+            if operation && (freeze || Self.resultScreens.contains(screen)) {
+                model.busy = Self.operationOverlay(for: screen, model: model)
+            }
         case "recovery", "recovery-open":
             model.sessionPreset = SessionPreset(keysOpen: screen == "recovery-open")
             model.phase = .running(.recovery)
@@ -227,22 +202,56 @@ struct AppEntry {
         return model
     }
 
-    /// A guest operation's overlay as it looks part way: what `createBugReport`
-    /// and `installPicked` show, held still.
-    private static func operationOverlay(for screen: String) -> BusyState {
+    /// The screens that show a guest operation on the full-screen overlay.
+    private static let operationScreens: Set<String> = [
+        "bug-report", "install-apk", "install-done", "install-failed", "install-not-apk", "install-bundle",
+    ]
+    /// The ones that show how an install ended.
+    private static let resultScreens: Set<String> = [
+        "install-done", "install-failed", "install-not-apk", "install-bundle",
+    ]
+
+    /// A guest operation's overlay as it looks part way, or at its end: what
+    /// `createBugReport` and `installPicked` show, held still.
+    private static func operationOverlay(for screen: String, model: AppModel) -> BusyState {
         let cancel = BusyCancel {}
-        if screen == "bug-report" {
+        let dismiss = BusyCancel { model.busy = nil }
+        let file = PreviewData.sampleApkName
+        switch screen {
+        case "bug-report":
             return BusyState(
                 title: "Creating Bug Report",
                 detail: "The guest is collecting its logs and state. This can take several minutes.",
                 progress: 0.6, cancel: cancel
             )
+        case "install-done":
+            return BusyState(
+                title: "App Installed", detail: "\(file) is installed in the guest.",
+                result: BusyResult(failed: false, dismiss: dismiss)
+            )
+        case "install-failed":
+            return BusyState(
+                title: AppModel.installFailure,
+                detail: "The guest couldn\u{2019}t install it: this app has no version for arm64 devices.",
+                result: BusyResult(failed: true, dismiss: dismiss)
+            )
+        case "install-not-apk":
+            return BusyState(
+                title: AppModel.installFailure, detail: InstallRefusal.notApk.message,
+                result: BusyResult(failed: true, dismiss: dismiss)
+            )
+        case "install-bundle":
+            return BusyState(
+                title: AppModel.installFailure, detail: InstallRefusal.bundle.message,
+                result: BusyResult(failed: true, dismiss: dismiss)
+            )
+        default:
+            return BusyState(
+                title: "Installing App",
+                detail: "\(file) \u{00B7} \(Formats.size(bytes: PreviewData.sampleApkSizeBytes))",
+                progress: 0.45, cancel: cancel
+            )
         }
-        return BusyState(
-            title: "Installing App",
-            detail: "\(ApkInstall.sampleFile) \u{00B7} \(Formats.size(bytes: ApkInstall.sampleSizeBytes))",
-            progress: 0.45, cancel: cancel
-        )
     }
 
     /// The device's microphone conversation against the Simulator's
@@ -286,7 +295,7 @@ struct AppEntry {
             model.createBugReport()
         case "install-apk" where play:
             try? await Task.sleep(for: .milliseconds(450))
-            _ = model.installPicked(PreviewData.sampleApk())
+            model.installPicked(PreviewData.sampleApk())
         default:
             break
         }

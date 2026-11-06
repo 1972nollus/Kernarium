@@ -926,7 +926,7 @@ process, guest and GPU memory. See the [WebGL workload](../tests/integration/and
 for invocation and snapshot collection.
 
 Its `AndroidOperationTests` and
-`AdbOverNetworkModelTests` play Create Bug Report, Install App and ADB over
+`AdbOverNetworkModelTests` play Create Bug Report, Install APK and ADB over
 Network the same way. `AdbOverVsockTests` drive a real Android guest with the
 application's own client and authorization on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1`
 with `TEST_RUNNER_ANDARIUM_START=normal`): a shell command, the multitouch

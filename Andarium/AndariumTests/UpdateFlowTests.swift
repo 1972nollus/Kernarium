@@ -20,7 +20,6 @@ final class StubDriver: RuntimeDriver {
     func erase(progress: @escaping @Sendable (Double) -> Void) async throws {
         if eraseFails { throw InstanceError.refused("Nothing could be deleted.") }
         erased += 1
-        return guest
     }
     func save(_ guest: Guest) throws { savedGuest = guest }
     func startPlan() -> StartPlan? { plan }
@@ -64,7 +63,9 @@ final class StubDriver: RuntimeDriver {
         try await bugReport(update)
     }
     var install: (@Sendable (@Sendable (BusyUpdate) -> Void) async throws -> Void) = { _ in }
+    private(set) var installed = 0
     func installApk(at url: URL, sizeBytes: Int, update: @escaping @Sendable (BusyUpdate) -> Void) async throws {
+        installed += 1
         try await install(update)
     }
 
@@ -155,17 +156,21 @@ struct UpdateFlowTests {
         #expect(model.plan == .unfinishedUpdate(to: "r2", canRetry: true, canRestore: true))
     }
 
-    @Test func anAndroidThatCannotRetryWaitsForRestoreOrErase() {
+    @Test func anAndroidThatCannotRetryWaitsForRestoreOrEraseWithoutAMessage() {
         let (model, driver) = model(plan: .unfinishedUpdate(to: "r2", canRetry: false, canRestore: true))
         #expect(!model.plan.allowsStart)
-        model.start(.normal)
+        for mode in [StartMode.normal, .recovery] {
+            #expect(!model.plan.allowsStart(mode))
+            model.start(mode)
+        }
         #expect(model.phase == .home)
         #expect(driver.begun.isEmpty)
-        #expect(model.alert?.title == "Andarium's Update Didn't Finish")
+        #expect(model.alert == nil)
     }
 
-    @Test func recoveryWaitsForTheUpdateToFinish() {
+    @Test func recoveryWaitsForTheUpdateToFinishWithoutAMessage() {
         let (model, driver) = model(plan: .unfinishedUpdate(to: "r2", canRetry: true, canRestore: true))
+        #expect(model.plan.allowsStart(.normal) && !model.plan.allowsStart(.recovery))
         model.start(.recovery)
         #expect(model.phase == .home)
         #expect(driver.begun.isEmpty)
@@ -265,7 +270,7 @@ struct UpdateFlowTests {
         model.start(.normal)
         model.finishBoot(.normal)
         let guest = model.guest
-        model.session.installs = [ApkInstall(fileName: "test.apk", sizeBytes: 10, state: .installed)]
+        model.session.usbDebugging = true
         model.session.showStats = true
         model.sessionPreset.settings = true
         model.sheet = .info
@@ -273,7 +278,7 @@ struct UpdateFlowTests {
         #expect(model.phase == .home)
         #expect(model.guest == guest)
         #expect(model.sheet == nil)
-        #expect(model.session.installs.isEmpty)
+        #expect(model.session.usbDebugging == nil)
         #expect(model.session.showStats)
         #expect(model.sessionPreset == SessionPreset())
         model.start(.recovery)

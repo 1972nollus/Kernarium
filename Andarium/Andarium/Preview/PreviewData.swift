@@ -48,13 +48,16 @@ enum PreviewData {
         )
     }
 
+    static let sampleApkName = "Signal-7.21.4.apk"
+    static let sampleApkSizeBytes = UInt64(38.2 * Double(Limits.bytesPerMiB))
+
     /// A sparse file named like the sample APK, for the preview's install.
     static func sampleApk() -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(ApkInstall.sampleFile)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(sampleApkName)
         if !FileManager.default.fileExists(atPath: url.path) {
             FileManager.default.createFile(atPath: url.path, contents: nil)
             if let handle = try? FileHandle(forWritingTo: url) {
-                try? handle.truncate(atOffset: ApkInstall.sampleSizeBytes)
+                try? handle.truncate(atOffset: sampleApkSizeBytes)
                 try? handle.close()
             }
         }
