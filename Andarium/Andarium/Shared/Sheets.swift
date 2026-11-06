@@ -27,7 +27,7 @@ struct NewGuestSheet: View {
                             text: "Setting up needs \(Formats.size(bytes: model.createRequirementBytes)) free for the guest's setup. This \(model.host.name) has \(Formats.size(bytes: model.host.freeStorageBytes)). Free up space in Settings › General › \(model.host.name) Storage."
                         )
                     }
-                    StoragePanel(guest: draftBinding, host: model.host, isNew: true)
+                    StoragePanel(guest: draftBinding, host: model.host, stops: model.capacityStopsGiB, isNew: true)
                     HomeSection(title: "Backup") {
                         BackupOption(isOn: Binding(
                             get: { draftBinding.wrappedValue.includeInBackups },
@@ -83,10 +83,7 @@ struct SystemSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 14) {
-                    SystemControls(guest: draftBinding, host: model.host)
-                    SectionNote("Changes apply the next time the guest starts.")
-                }
+                SystemControls(guest: draftBinding, host: model.host)
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 24)
@@ -117,129 +114,6 @@ struct SystemSheet: View {
     }
 }
 
-/// Erasing lists exactly what goes and what stays, and the red button stays
-/// locked until the loss is acknowledged.
-struct EraseSheet: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    @State private var understood: Bool
-
-    init(confirmed: Bool) {
-        _understood = State(initialValue: confirmed)
-    }
-
-    var body: some View {
-        let guest = model.guest ?? Guest.fresh(on: model.host)
-        NavigationStack {
-            List {
-                Section {
-                    HStack(alignment: .top, spacing: 14) {
-                        Image(systemName: "trash.fill")
-                            .font(.system(size: 22, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 48, height: 48)
-                            .background(Color.red.gradient, in: .circle)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Erase Guest")
-                                .font(.title2.weight(.bold))
-                            Text("Deletes everything the guest has stored. The next start runs Andarium's setup.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 4, trailing: 4))
-                    .listRowBackground(Color.clear)
-                }
-                Section("Erased") {
-                    item("person.crop.circle", "Accounts and settings", nil)
-                    item("photo.on.rectangle", "Photos, downloads and other files", nil)
-                    item("internaldrive", "Data on this \(model.host.name)", Formats.size(bytes: guest.usedBytes))
-                    if case .unfinishedUpdate(_, _, true) = model.plan {
-                        item("clock.arrow.circlepath", "The data saved before the update", nil)
-                    }
-                }
-                Section("Kept") {
-                    item("checkmark.seal", "Andarium, built in", nil, kept: true)
-                    item("slider.horizontal.3", "vCPUs, memory, storage size and options", nil, kept: true)
-                }
-            }
-            .contentMargins(.top, 0, for: .scrollContent)
-            .listSectionSpacing(.compact)
-            .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 12) {
-                    Button {
-                        withAnimation(.snappy) { understood.toggle() }
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: understood ? "checkmark.circle.fill" : "circle")
-                                .font(.title3)
-                                .foregroundStyle(understood ? Color.red : Color(.tertiaryLabel))
-                                .contentTransition(.symbolEffect(.replace))
-                            Text("I understand the erased data can't be recovered.")
-                                .font(.subheadline)
-                                .foregroundStyle(Color.primary)
-                                .multilineTextAlignment(.leading)
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.horizontal, 16)
-                        .frame(minHeight: 52)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 20))
-                    .sensoryFeedback(.selection, trigger: understood)
-
-                    Button(role: .destructive) {
-                        model.erase()
-                        dismiss()
-                    } label: {
-                        Text("Erase Guest")
-                            .font(.body.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 50)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .tint(.red)
-                    .disabled(!understood)
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-                .background(Color(.systemGroupedBackground).opacity(0.94))
-            }
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", role: .cancel) { dismiss() }
-                }
-            }
-        }
-    }
-
-    private func item(_ symbol: String, _ title: String, _ value: String?, kept: Bool = false) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: symbol)
-                .foregroundStyle(kept ? Color.secondary : Color.red)
-                .frame(width: 24)
-            Text(title)
-            Spacer()
-            if let value {
-                Text(value).foregroundStyle(.secondary)
-            }
-        }
-    }
-}
-
-/// On iPad, a form-width sheet tall enough to show what is erased and what is
-/// kept without scrolling. On iPhone the sheet is full height anyway.
-nonisolated struct EraseSheetSizing: PresentationSizing {
-    func proposedSize(for root: PresentationSizingRoot, context: PresentationSizingContext) -> ProposedViewSize {
-        ProposedViewSize(width: 560, height: 740)
-    }
-}
-
 /// The app, the system it carries and the notices for what is in it. Read-only.
 struct InfoSheet: View {
     @Environment(AppModel.self) private var model
@@ -267,13 +141,16 @@ struct InfoSheet: View {
                     .padding(.vertical, 6)
                 }
                 Section("System Info") {
-                    LabeledContent("Android Version", value: model.system.version)
                     LabeledContent("Build", value: model.system.release)
+                    LabeledContent("Android Version", value: model.system.version)
                     if let patch = model.system.securityPatch {
                         LabeledContent("Security Patch", value: patch)
                     }
                     LabeledContent("Kernel", value: model.system.kernel)
                     LabeledContent("Architecture", value: model.system.architecture)
+                    if !model.system.abis.isEmpty {
+                        LabeledContent("Supported architectures", value: model.system.abis.joined(separator: ", "))
+                    }
                 }
                 Section {
                     NavigationLink("Acknowledgements", value: InfoPage.acknowledgements)

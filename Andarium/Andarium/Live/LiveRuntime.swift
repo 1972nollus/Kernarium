@@ -111,13 +111,12 @@ final class LiveRuntime: RuntimeDriver {
         return try await storage.create(guest, progress: progress)
     }
 
-    func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest {
+    func erase(progress: @escaping @Sendable (Double) -> Void) async throws {
         defer { model?.host.freeStorageBytes = AppEntry.freeStorageBytes() }
-        let erased = try await storage.erase(guest, progress: progress)
+        try await storage.erase(progress: progress)
         // The next guest is a new one: it boots with a key of its own.
         keyStore.delete()
         adbIdentity = nil
-        return erased
     }
 
     func save(_ guest: Guest) throws {
@@ -594,11 +593,11 @@ final class LiveRuntime: RuntimeDriver {
     private func observeDisplayOptions() {
         guard let model else { return }
         withObservationTracking {
-            _ = (model.retina, model.hostDrivesGuestRotation)
+            _ = (model.retina, model.retinaChosen, model.hostDrivesGuestRotation)
         } onChange: {
             Task { @MainActor in
                 guard let model = self.model else { return }
-                DisplayOptionsStore.save(DisplayOptions(retina: model.retina))
+                DisplayOptionsStore.save(model.displayOptions)
                 self.updateGuestRotation()
                 self.observeDisplayOptions()
             }

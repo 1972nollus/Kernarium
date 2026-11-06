@@ -196,9 +196,7 @@ struct AndroidOperationTests {
         #expect(!BugReportOperation.dumpMayGoOn(after: BugReportStaging.NoRoom(bytes: 1 << 20, device: "iPad")))
     }
 
-    @Test func theNoticeIsOneLineAndTheFailuresHaveTheirWords() {
-        #expect(SessionSettingsSheet.bugReportNotice.contains("logs"))
-        #expect(!SessionSettingsSheet.bugReportNotice.contains("\n"))
+    @Test func theFailuresHaveTheirWords() {
         #expect(AdbFailure(.refused, activity: .bugReport).message
             == "The guest isn\u{2019}t ready to make a bug report. Try again in a moment.")
         #expect(AdbFailure(.notAnswering, activity: .installApp).message
@@ -240,7 +238,7 @@ struct AndroidOperationTests {
         return url
     }
 
-    @Test func anApkInstallsBehindTheOverlayAndLeavesAnInstalledRow() async throws {
+    @Test func anApkInstallsBehindTheOverlayAndTheResultStaysUntilItIsClosed() async throws {
         let (model, driver) = running()
         driver.install = { update in
             update(BusyUpdate(progress: 0.4))
@@ -248,11 +246,22 @@ struct AndroidOperationTests {
         }
         let url = try apk(named: "Signal-7.21.4.apk")
         defer { try? FileManager.default.removeItem(at: url) }
-        #expect(model.installPicked(url))
+        model.installPicked(url)
         #expect(model.busy?.title == "Installing App")
-        #expect(await eventually { model.busy == nil })
-        #expect(model.session.installs.first?.state == .installed)
+        #expect(model.busy?.result == nil)
+        #expect(await eventually { model.busy?.result != nil })
+        // The overlay is still up, and says how it went.
+        let busy = try #require(model.busy)
+        #expect(busy.title == "App Installed")
+        #expect(busy.detail.hasSuffix("Signal-7.21.4.apk is installed in the guest."))
+        #expect(busy.result?.failed == false)
+        #expect(busy.progress == nil && busy.cancel == nil)
         #expect(model.alert == nil)
+        // Nothing else may start while it is up.
+        model.createBugReport()
+        #expect(model.busy?.title == "App Installed")
+        busy.result?.dismiss.action()
+        #expect(model.busy == nil)
     }
 
     @Test func theCancelButtonGoesOnceTheLastByteIsSent() async throws {
@@ -264,56 +273,74 @@ struct AndroidOperationTests {
         }
         let url = try apk(named: "a.apk")
         defer { try? FileManager.default.removeItem(at: url) }
-        #expect(model.installPicked(url))
+        model.installPicked(url)
         #expect(model.busy?.cancel != nil)
         #expect(await eventually { model.busy?.cancel == nil })
         #expect(model.busy?.detail == "The guest is installing the app\u{2026}")
         gate.release()
-        #expect(await eventually { model.busy == nil })
+        #expect(await eventually { model.busy?.result != nil })
     }
 
-    @Test func cancellingTheInstallLeavesNoRowAndNoAlert() async throws {
+    @Test func cancellingTheInstallLeavesNoResultAndNoAlert() async throws {
         let (model, driver) = running()
         driver.install = { _ in
             while true { try await Task.sleep(for: .milliseconds(5)) }
         }
         let url = try apk(named: "a.apk")
         defer { try? FileManager.default.removeItem(at: url) }
-        #expect(model.installPicked(url))
+        model.installPicked(url)
         model.busy?.cancel?.action()
         #expect(await eventually { model.busy == nil })
-        #expect(model.session.installs.isEmpty && model.alert == nil)
+        #expect(model.alert == nil)
     }
 
-    @Test func aRefusalIsAnAlertAndAFailedRow() async throws {
+    @Test func aRefusalByTheGuestIsTheResultOnTheOverlayNotAnAlert() async throws {
         let (model, driver) = running()
         driver.install = { _ in
             throw AdbFailure(message: PackageInstallMessages.message(forCode: "FAILED_VERSION_DOWNGRADE"))
         }
         let url = try apk(named: "a.apk")
         defer { try? FileManager.default.removeItem(at: url) }
-        #expect(model.installPicked(url))
-        #expect(await eventually { model.alert != nil })
-        #expect(model.alert?.title == "App Not Installed")
-        #expect(model.alert?.message == "A newer version of this app is already installed.")
-        #expect(model.session.installs.first?.state == .failed("A newer version of this app is already installed."))
+        model.installPicked(url)
+        #expect(await eventually { model.busy?.result != nil })
+        #expect(model.busy?.title == "App Not Installed")
+        #expect(model.busy?.detail == "A newer version of this app is already installed.")
+        #expect(model.busy?.result?.failed == true)
+        #expect(model.alert == nil)
+        model.busy?.result?.dismiss.action()
         #expect(model.busy == nil)
     }
 
-    @Test func anythingButASingleApkIsAnsweredAtOnceAndSettingsStays() throws {
-        let (model, _) = running()
-        let expected: [(String, ApkInstall.State)] = [
+    @Test func anythingButASingleApkIsRefusedAtOnceOnTheSameOverlay() throws {
+        let (model, driver) = running()
+        let expected: [(String, InstallRefusal)] = [
             ("Trip.zip", .notApk), ("app.apks", .bundle), ("app.xapk", .bundle), ("app.apkm", .bundle),
             ("notes.txt", .notApk),
         ]
-        for (name, state) in expected {
+        for (name, refusal) in expected {
             let url = try apk(named: name)
             defer { try? FileManager.default.removeItem(at: url) }
-            #expect(!model.installPicked(url), "\(name)")
+            model.installPicked(url)
+            let busy = try #require(model.busy, "\(name)")
+            #expect(busy.title == "App Not Installed", "\(name)")
+            #expect(busy.detail == refusal.message, "\(name)")
+            #expect(busy.result?.failed == true && busy.cancel == nil && busy.progress == nil, "\(name)")
+            #expect(model.alert == nil)
+            busy.result?.dismiss.action()
             #expect(model.busy == nil)
-            #expect(model.session.installs.first?.state == state, "\(name)")
         }
-        #expect(model.session.installs.count == 5)
+        // Nothing was sent to the guest.
+        #expect(driver.installed == 0)
+    }
+
+    @Test func theEndOfTheRunTakesAFinishedResultAway() async throws {
+        let (model, _) = running()
+        let url = try apk(named: "a.apk")
+        defer { try? FileManager.default.removeItem(at: url) }
+        model.installPicked(url)
+        #expect(await eventually { model.busy?.result != nil })
+        model.runEnded(RunEnd(result: 0), uptimeSeconds: 60)
+        #expect(model.busy == nil)
     }
 }
 

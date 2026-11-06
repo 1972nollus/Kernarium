@@ -34,8 +34,29 @@ struct GuestTests {
         #expect(guest.effectiveCapacityGiB == 8)
 
         guest.setCapacity(500)
-        #expect(guest.pendingCapacityGiB == 64)
+        #expect(guest.pendingCapacityGiB == 128)
         #expect(!guest.canGrow)
+    }
+
+    @Test func theCarriedSystemsLargestDiskLimitsGrowth() {
+        var guest = Guest.fresh(on: ipad)
+        guest.setCapacity(500, maximum: 64)
+        #expect(guest.pendingCapacityGiB == 64)
+    }
+
+    @Test func theRulersOfferEveryFourGiBFromFourToOneHundredTwentyEight() {
+        let stops = Limits.capacityStopsGiB()
+        #expect(stops.first == 4 && stops.last == 128 && stops.count == 32)
+        #expect(zip(stops, stops.dropFirst()).allSatisfy { $1 - $0 == Limits.capacityStepGiB })
+        #expect(stops.contains(Limits.defaultCapacityGiB))
+    }
+
+    @Test func aSystemWhoseDiskStopsLowerCutsTheRulerThere() {
+        #expect(Limits.capacityStopsGiB(releaseMaximumGiB: 64).last == 64)
+        // Between steps, the last step below it.
+        #expect(Limits.capacityStopsGiB(releaseMaximumGiB: 70).last == 68)
+        #expect(Limits.capacityStopsGiB(releaseMaximumGiB: 500).last == 128)
+        #expect(Limits.capacityStopsGiB(releaseMaximumGiB: 2) == [4])
     }
 
     @Test func choosingTheCurrentCapacityCancelsAPendingGrowth() {
@@ -53,7 +74,7 @@ struct GuestTests {
         #expect(guest.pendingCapacityGiB == nil)
     }
 
-    @Test func eraseKeepsTheChoicesAndTheCapacityTheNextStartRunsWith() {
+    @Test func erasedKeepsTheChoicesAndTheCapacityTheNextStartRunsWith() {
         var guest = Guest.fresh(on: ipad)
         guest.microphone = true
         guest.includeInBackups = true
@@ -132,18 +153,27 @@ struct LifecycleTests {
         #expect(life.guest?.pendingCapacityGiB == 24)
     }
 
-    @Test func eraseLeavesAFreshGuestAndANotice() {
+    @Test func eraseLeavesNoGuestAndNoNotice() {
         var life = Lifecycle(guest: Guest.fresh(on: ipad))
+        life.notice = .closedInBackground
         life.erase()
-        #expect(life.notice == .erased)
-        life.create(Guest.fresh(on: ipad))
+        #expect(life.guest == nil)
         #expect(life.notice == nil)
+        #expect(life.phase == .home)
+        #expect(life.startVerdict(.normal, host: ipad) == .noGuest)
+        life.create(Guest.fresh(on: ipad))
+        #expect(life.guest != nil)
     }
 
-    @Test func aFactoryResetFromRecoveryErasesWithoutANotice() {
-        var life = Lifecycle(guest: Guest.fresh(on: ipad))
+    @Test func aFactoryResetFromRecoveryKeepsTheGuestAndItsChoices() {
+        var guest = Guest.fresh(on: ipad)
+        guest.memoryMiB = 2048
+        guest.usedBytes = 4_000_000_000
+        var life = Lifecycle(guest: guest)
         life.factoryReset()
         #expect(life.notice == nil)
+        #expect(life.guest?.memoryMiB == 2048)
+        #expect(life.guest?.usedBytes == 0)
     }
 
     @Test func theRunEndsInOneOfThreeWays() {

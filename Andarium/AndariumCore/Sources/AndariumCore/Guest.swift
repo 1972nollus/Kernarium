@@ -84,8 +84,10 @@ public struct Guest: Equatable, Codable, Sendable {
 
     /// Resize: storage only grows, and the growth waits for the next start.
     /// Choosing the current capacity again cancels a growth not yet applied.
-    public mutating func setCapacity(_ value: Int) {
-        let value = min(max(value, capacityGiB), Limits.capacityRangeGiB.upperBound)
+    /// `maximum` is the largest the carried system accepts, when that is
+    /// below the range's.
+    public mutating func setCapacity(_ value: Int, maximum: Int = Limits.capacityRangeGiB.upperBound) {
+        let value = min(max(value, capacityGiB), min(maximum, Limits.capacityRangeGiB.upperBound))
         pendingCapacityGiB = value > capacityGiB ? value : nil
     }
 
@@ -97,7 +99,8 @@ public struct Guest: Equatable, Codable, Sendable {
         }
     }
 
-    /// The same choices with nothing in it: what Erase leaves behind.
+    /// The same choices with nothing in it: what Android's own factory reset
+    /// leaves behind.
     public var erased: Guest {
         var guest = self
         guest.capacityGiB = effectiveCapacityGiB

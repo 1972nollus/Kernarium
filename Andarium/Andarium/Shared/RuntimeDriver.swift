@@ -10,6 +10,15 @@ struct BusyCancel: Equatable {
     static func == (lhs: BusyCancel, rhs: BusyCancel) -> Bool { lhs.id == rhs.id }
 }
 
+/// How an operation ended, when its overlay stays up to say so until the
+/// person closes it.
+struct BusyResult: Equatable {
+    /// The operation did not do what was asked.
+    var failed: Bool
+    /// Closes the overlay.
+    let dismiss: BusyCancel
+}
+
 /// A long task the screens wait for: creating or erasing a guest, or one of
 /// the guest's own operations.
 struct BusyState: Equatable {
@@ -19,6 +28,9 @@ struct BusyState: Equatable {
     var progress: Double?
     /// Shows a Cancel button that does this; nil for a task that cannot stop.
     var cancel: BusyCancel?
+    /// Set once the task is over: the overlay then shows how it ended and a
+    /// button that closes it, in place of the progress and Cancel.
+    var result: BusyResult?
 }
 
 /// What a running operation tells the overlay: any part may be left out.
@@ -62,7 +74,8 @@ enum PermissionPrompt: Identifiable, Equatable {
 @MainActor
 protocol RuntimeDriver: AnyObject {
     func create(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest
-    func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest
+    /// Deletes the guest and everything it stored, its choices included.
+    func erase(progress: @escaping @Sendable (Double) -> Void) async throws
     func save(_ guest: Guest) throws
     /// What a start would be, from the guest's files; nil when they cannot be
     /// read, which a start then reports.
@@ -109,6 +122,5 @@ protocol RuntimeDriver: AnyObject {
 /// What a screen needs from its launch arguments to open a state directly.
 struct ScreenHints {
     var scrollTarget: String?
-    var eraseConfirmed = false
     var infoPage: InfoPage?
 }
