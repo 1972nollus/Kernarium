@@ -59,7 +59,7 @@ struct MesaShaderCacheTests {
         let root = try makeScratchDirectory("mesa-shader-cache")
         defer { try? FileManager.default.removeItem(at: root) }
         let directory = root.appendingPathComponent("Caches/com.example.Guest", isDirectory: true)
-        try Self.withCleanEnvironment {
+        Self.withCleanEnvironment {
             #expect(MesaShaderCache.configure(directory: directory) == .configured(directory))
             #expect(Self.value("MESA_SHADER_CACHE_DIR") == directory.path)
             #expect(Self.value("MESA_SHADER_CACHE_MAX_SIZE") == "\(MesaShaderCache.limitMiB)M")
