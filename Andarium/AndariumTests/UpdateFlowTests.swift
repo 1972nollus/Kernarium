@@ -178,12 +178,11 @@ struct UpdateFlowTests {
         model.session.installs = [ApkInstall(fileName: "test.apk", sizeBytes: 10, state: .installed)]
         model.session.showStats = true
         model.sessionPreset.settings = true
-        model.startMenu = true
         model.sheet = .info
         model.runEnded(RunEnd(result: 0), uptimeSeconds: 60)
         #expect(model.phase == .home)
         #expect(model.guest == guest)
-        #expect(model.sheet == nil && !model.startMenu)
+        #expect(model.sheet == nil)
         #expect(model.session.installs.isEmpty)
         #expect(model.session.showStats)
         #expect(model.sessionPreset == SessionPreset())

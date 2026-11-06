@@ -74,7 +74,7 @@ struct HomeView: View {
             notices
             panel(large: false)
             OptionsPanel()
-            EraseRow()
+            RestorePanel()
                 .id("erase")
         }
         .padding(.horizontal, 16)
@@ -83,13 +83,13 @@ struct HomeView: View {
     }
 
     /// iPad in portrait or a tall window: the controls across the top, the
-    /// options and Erase beneath.
+    /// options and Restore beneath.
     private var tallLayout: some View {
         VStack(spacing: 28) {
             notices
             panel(large: true)
             OptionsPanel()
-            EraseRow()
+            RestorePanel()
                 .id("erase")
         }
         .frame(maxWidth: 680)
@@ -108,7 +108,7 @@ struct HomeView: View {
             .frame(maxWidth: 520)
             VStack(spacing: 22) {
                 OptionsPanel()
-                EraseRow()
+                RestorePanel()
                     .id("erase")
             }
             .frame(maxWidth: 400)
@@ -187,8 +187,7 @@ struct HomeView: View {
 
     // MARK: Start
 
-    /// One split capsule: Start starts normally, and its arrow opens the two
-    /// ways to start.
+    /// The main action always starts Android normally.
     private func startBar(wide: Bool) -> some View {
         StartButton()
             .frame(maxWidth: wide ? 520 : .infinity)
@@ -212,50 +211,24 @@ struct HomeView: View {
     }
 }
 
-/// Start, split: the main part starts normally; the arrow opens Start and
-/// Start in Recovery, each with its one line.
+/// The main action starts Android normally. Recovery lives in Restore.
 struct StartButton: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        @Bindable var model = model
-        HStack(spacing: 0) {
-            Button {
-                model.start(.normal)
-            } label: {
-                Label(title, systemImage: "play.fill")
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            Rectangle()
-                .fill(.white.opacity(0.4))
-                .frame(width: 1, height: 24)
-            Button {
-                model.startMenu = true
-            } label: {
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 15, weight: .bold))
-                    .frame(width: 62, height: 52)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Start Options")
-            .popover(isPresented: $model.startMenu, arrowEdge: .bottom) {
-                StartMenu { mode in
-                    model.startMenu = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { model.start(mode) }
-                }
-                .presentationCompactAdaptation(.popover)
-            }
+        Button {
+            model.start(.normal)
+        } label: {
+            Label(title, systemImage: "play.fill")
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .contentShape(Capsule())
         }
+        .buttonStyle(.plain)
         .font(.body.weight(.semibold))
         .foregroundStyle(.white)
         .background(Capsule().fill(Color.accentColor))
         .glassEffect(.regular.tint(Color.accentColor).interactive(), in: .capsule)
-        // A guest that cannot start with this Android starts again only after
-        // it is erased, or its data is restored.
         .opacity(blocked ? 0.4 : 1)
         .disabled(blocked)
     }
@@ -269,52 +242,6 @@ struct StartButton: View {
         case .upgrade: return "Update and Start"
         default: return "Start"
         }
-    }
-}
-
-/// The two ways to start. Choosing one starts at once: the menu is the
-/// only step on the way into Recovery.
-struct StartMenu: View {
-    @Environment(AppModel.self) private var model
-    let start: (StartMode) -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            row("Start", detail: detail, symbol: "play.fill", tint: .accentColor) { start(.normal) }
-            Divider().padding(.leading, 60)
-            row("Start in Recovery", detail: "Factory reset, reboot or power off", symbol: "wrench.adjustable.fill", tint: .gray) { start(.recovery) }
-        }
-        .padding(.vertical, 6)
-        .frame(width: 310)
-        .foregroundStyle(Color.primary)
-        .font(.body)
-    }
-
-    private var detail: String {
-        guard model.guest != nil else { return "" }
-        if case .unfinishedUpdate = model.plan { return "The system tries its update again" }
-        switch model.bootKind(.normal) {
-        case .firstStart: return "First start: the system sets up"
-        case .upgrade: return "The system finishes its update"
-        default: return "System \(model.system.version)"
-        }
-    }
-
-    private func row(_ title: String, detail: String, symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                IconTile(symbol: symbol, color: tint)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.body.weight(.semibold))
-                    Text(detail).font(.footnote).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 62)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -563,29 +490,55 @@ struct UnfinishedUpdateCard: View {
     }
 }
 
-/// Erase lives apart from everything else, in red.
-struct EraseRow: View {
+/// Recovery and erasing the guest share one Restore section.
+struct RestorePanel: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        Button {
-            model.sheet = .erase
-        } label: {
-            HStack(spacing: 12) {
-                IconTile(symbol: "trash.fill", color: .red)
-                Text("Erase Guest…")
-                    .foregroundStyle(.red)
-                Spacer()
-                if let guest = model.guest {
-                    Text(Formats.size(bytes: guest.usedBytes))
-                        .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Restore")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 18)
+            VStack(spacing: 0) {
+                Button {
+                    model.start(.recovery)
+                } label: {
+                    HStack(spacing: 12) {
+                        IconTile(symbol: "wrench.adjustable.fill", color: .gray)
+                        Text("Start in Recovery")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 54)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .disabled(!model.plan.allowsStart || !model.host.runsGuestGraphics)
+                Divider().padding(.leading, 58)
+                Button {
+                    model.sheet = .erase
+                } label: {
+                    HStack(spacing: 12) {
+                        IconTile(symbol: "trash.fill", color: .red)
+                        Text("Erase Guest…")
+                            .foregroundStyle(.red)
+                        Spacer()
+                        if let guest = model.guest {
+                            Text(Formats.size(bytes: guest.usedBytes))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 54)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 16)
-            .frame(minHeight: 54)
-            .contentShape(Rectangle())
+            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 26))
         }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 26))
     }
 }

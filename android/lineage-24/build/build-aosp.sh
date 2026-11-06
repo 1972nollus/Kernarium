@@ -399,6 +399,7 @@ for package in \
 	LatinIME \
 	Launcher3QuickStep \
 	LineageParts \
+	LineageSetupWizard \
 	LineageSettingsProvider \
 	resize2fs \
 	Seedvault \
@@ -407,10 +408,10 @@ for package in \
 	[[ "$PRODUCT_PACKAGES" == *" $package "* ]] ||
 		fail "required UML product package is absent: $package"
 done
-# The curated LineageOS application set leaves out the updater, the setup
-# wizard and the apps for hardware this machine lacks. LineageOS's own
-# switches (no camera, no AudioFX, no charger, no fastbootd) keep most of them
-# out of the package set; the rest are excluded by name.
+# The curated LineageOS application set leaves out the updater and the apps
+# for hardware this machine lacks. LineageOS's switches (no camera, no AudioFX,
+# no charger, no fastbootd) keep most out of the package set; the rest are
+# excluded by name.
 for package in \
 	Aperture \
 	AudioFX \
@@ -421,7 +422,6 @@ for package in \
 	Jelly \
 	lineage_charger_animation \
 	lineage_charger_animation_vendor \
-	LineageSetupWizard \
 	Profiles \
 	QuickAccessWallet \
 	Recorder \

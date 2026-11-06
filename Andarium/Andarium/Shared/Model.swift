@@ -155,7 +155,6 @@ final class AppModel {
     /// What the system takes on this device.
     var systemBytes: UInt64
     var sheet: SheetKind?
-    var startMenu = false
     var startBlocked = false
     /// What a start would be, from the guest's files: Home words Start and
     /// shows the update notices by it.
@@ -642,7 +641,6 @@ final class AppModel {
     /// Starts the guest in `mode`. Start on an update that did not finish
     /// tries the update again.
     func start(_ mode: StartMode) {
-        startMenu = false
         switch lifecycle.start(mode, host: host, plan: plan) {
         case let .allowed(kind):
             frozenBootStage = nil
@@ -706,7 +704,6 @@ final class AppModel {
         runUptimeSeconds = uptimeSeconds
         if end.poweredOff {
             sheet = nil
-            startMenu = false
             sessionPreset = SessionPreset()
             let showStats = session.showStats
             session = SessionState()

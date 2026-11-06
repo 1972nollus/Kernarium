@@ -136,15 +136,14 @@ PRODUCT_MODEL := Andarium Virtual Device
 PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG :=
 
 # The LineageOS updater polls a server for a device this project does not
-# publish, the setup wizard would block automation, and the remaining apps
-# have nothing to work with: no recorder input, no NFC wallet, no fastboot
+# publish. The remaining apps have nothing to work with: no recorder input,
+# no NFC wallet, no fastboot
 # transport, and Canvas is the largest app for the least use. The Profiles app
 # has no hardware triggers to act on here. DeskClock and EmergencyInfo leave
 # with the other absent-hardware packages below.
 PRODUCT_PACKAGES_EXCLUDE += \
     Canvas \
     fastbootd \
-    LineageSetupWizard \
     Profiles \
     QuickAccessWallet \
     Recorder \
