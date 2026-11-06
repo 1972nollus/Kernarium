@@ -415,6 +415,15 @@ user's setting meaningful:
   key, not by origin. Authorization off (`ro.boot.kernarium.adb_auth`) skips the
   check and so the rule. adbd listens on guest TCP only when the launch has a
   host forward.
+- Stock Android leaves a prompt pending when its dialog dies unanswered. The dialog
+  (`UsbDebuggingActivity` of SystemUI) answers the framework through its buttons or its own
+  `onStop`, so a process that dies under it, or a task that the system destroys before SystemUI has
+  created the activity (SystemUI needs many seconds to do that in the first half minute after
+  boot, and a foreground change such as the Setup Wizard's next step or the launcher's
+  first start trims the task), sends no answer. adbd's libadbd_auth keeps that prompt
+  dispatched and logs `prompt currently pending, skipping` for every later offer, so a
+  computer sees `unauthorized` with no dialog until adbd restarts (USB debugging off, and
+  then on in a separate command, because the restart ends the shell that asked for it).
 
 The target-files verifier requires the adbd APEX's `bin/adbd` to carry the
 launch property names, the debugging property names and the refusal line (the
