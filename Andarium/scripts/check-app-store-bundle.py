@@ -10,11 +10,13 @@ application that must:
   - carry no automation knob: no ANDARIUM_, KERNARIUM_, UML_ or DARWIN_UML_
     environment name in the host code of the application or of any embedded
     framework (the guest kernel image inside a runtime is not host code);
-  - carry no trace of the machine that built it in an executable: no debug
-    stabs (the linker's debug map, whose N_OSO entries name the object files
-    of the build host's checkout and dependency trees; dsymutil has read it
-    into the dSYM by then, and strip -S removes it and keeps the UUID), and no
-    path under a user's home directory (/Users/<name>/) in host code; and
+  - carry no trace of the machine that built it: no path under a user's home
+    directory (/Users/<name>/) in the host code of an executable, and no debug
+    stabs in an embedded framework (the linker's debug map, whose N_OSO
+    entries name the object files of the build host's checkout and dependency
+    trees; dsymutil has read it into the dSYM by then, and strip -S removes it
+    and keeps the UUID). Xcode strips the application's own executable when it
+    archives, and strips nothing it embeds; and
   - pass scripts/check-privacy-manifests.py.
 
 The knob scan reads bytes, so it does not see a Swift string of up to 15 bytes
@@ -128,14 +130,16 @@ def debug_stabs(data: bytes, base: int) -> tuple[int, int]:
     return 0, 0
 
 
-def build_host_traces(path: Path) -> list[str]:
-    """What one Mach-O file keeps of the machine that built it."""
+def build_host_traces(path: Path, debug_map: bool = True) -> list[str]:
+    """What one Mach-O file keeps of the machine that built it. `debug_map`
+    says whether its debug stabs count: they do for a framework, whose binary
+    ships as linked."""
     code = host_code(path)
     if code is None:
         return []
     data, base = code
     found = []
-    stabs, objects = debug_stabs(data, base)
+    stabs, objects = debug_stabs(data, base) if debug_map else (0, 0)
     if stabs:
         found.append(
             f"carries the linker's debug map ({stabs} stabs, {objects} N_OSO "
@@ -221,8 +225,10 @@ def main() -> int:
             problems.append(
                 f"{binary.relative_to(app)}: carries automation knob(s) "
                 f"{', '.join(names[:6])}{' ...' if len(names) > 6 else ''}")
+        # The application's own executable is stripped when Xcode archives it.
         problems.extend(
-            f"{binary.relative_to(app)}: {trace}" for trace in build_host_traces(binary))
+            f"{binary.relative_to(app)}: {trace}"
+            for trace in build_host_traces(binary, debug_map=binary.parent != app))
 
     privacy = subprocess.run(
         [sys.executable, "-B", str(options.privacy_checker), str(app)],

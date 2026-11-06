@@ -199,8 +199,9 @@ def main() -> int:
         mapped = build_with_debug_map(root, "mapped")
         stripped = strip_debug_map(mapped)
         homed = build(root, "homed", HOME_PATH)
-        check(make_app(root, "app-debug-map", mapped, app_info()),
-              passes=False, expect="debug map")
+        # Xcode strips the application's own executable when it archives, so
+        # only an embedded framework's debug map is the check's concern.
+        check(make_app(root, "app-debug-map", mapped, app_info()), passes=True)
         check(make_app(root, "framework-debug-map", clean, app_info(), framework=mapped),
               passes=False, expect="Runtime.framework/Runtime: carries the linker's debug map")
         check(make_app(root, "stripped-debug-map", stripped, app_info(), framework=stripped),
