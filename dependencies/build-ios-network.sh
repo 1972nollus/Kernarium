@@ -282,9 +282,13 @@ meson_setup()
 		"$MESON" setup "$@" --cross-file "$CROSS_FILE"
 }
 
+# GLib compiles its locale, character-set alias, module, libexec and state
+# directories in from its prefix, so it is configured with the neutral one and
+# installed into an image that is merged into the stage. The libraries that
+# are linked into the runtime hold no path of this build.
 printf '%s\n' "building GLib 2.90.1 for $PLATFORM"
 meson_setup "$BUILDS/glib" "$GLIB_SOURCE" \
-	--prefix "$STAGE" --libdir=lib --buildtype=release \
+	--prefix "$NO_HOST_PREFIX" --libdir=lib --buildtype=release \
 	--default-library=static --wrap-mode=nodownload \
 	--force-fallback-for=intl \
 	-Dtests=false -Dinstalled_tests=false -Dnls=disabled \
@@ -293,7 +297,9 @@ meson_setup "$BUILDS/glib" "$GLIB_SOURCE" \
 	-Dxattr=false -Ddtrace=disabled -Dsystemtap=disabled \
 	-Dlibelf=disabled -Dglib_debug=disabled -Dbsymbolic_functions=false
 "$MESON" compile -C "$BUILDS/glib" -j "$JOBS"
-"$MESON" install -C "$BUILDS/glib"
+GLIB_IMAGE="$TEMP_ROOT/glib-image"
+DESTDIR="$GLIB_IMAGE" "$MESON" install -C "$BUILDS/glib"
+merge_neutral_image "$GLIB_IMAGE" "$STAGE" "$STAGE"
 
 printf '%s\n' "building libslirp 4.9.7 for $PLATFORM"
 meson_setup "$BUILDS/libslirp" "$SOURCE_ROOT/libslirp" \

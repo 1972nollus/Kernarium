@@ -201,6 +201,35 @@ Every macOS and iOS product prefix builds and verifies at a 27.0 deployment
 target; the kernel host tools, which run only on the build host, are the
 exception.
 
+## No build-host paths
+
+A library compiles in directories it derives from its installation prefix:
+GLib's locale, character-set alias and module directories, virglrenderer's
+render server path, Mesa's `drirc` directories, FEXCore's thunk directories.
+Configured for a staging directory, or for the final prefix, they put the build
+machine's layout into every binary the prefixes feed into an application, and
+the checkout and prefixes of a developer machine into an App Store upload.
+The builders therefore configure each library whose code ships (GLib in both
+static builders; Mesa's OpenGL libraries and virglrenderer in the Apple GPU
+builder; FEXCore) for `NO_HOST_PREFIX`, the `/nonexistent` of
+[`build-common.sh`](build-common.sh), and install it with `DESTDIR` into an
+image that `merge_neutral_image` merges into the stage; the pkg-config files
+of the stage name the stage, where the dependants of the same build look. No
+Apple product has the directory, so the code that reads one finds nothing, as
+it found nothing under a staging directory that was deleted when the build
+ended, or under a final prefix that never held a locale, alias, configuration
+or thunk file. The renderer's server is a thread that is never executed, and
+GLib is built without translations. A binary holds no path of its prefix, so a
+prefix can be built beside another and renamed into its place.
+
+`Andarium/scripts/check-app-store-bundle.py` refuses a path under a home
+directory, on a mounted volume or in a temporary directory in the host code of
+the application and its frameworks, which catches a library whose build does
+not follow this. The platform contracts' `common_recipe` is the identity of the
+build recipe a prefix was made with; the Apple GPU and iOS network prefixes
+made before this rule fail verification, and the macOS static prefix, which
+records no recipe, keeps its paths until it is rebuilt.
+
 Every prefix installs the manifest it was built from and compares only the
 rows its product consumes, ignoring the products column, which records only
 which prefixes share a row. Adding, removing, or sharing another product's

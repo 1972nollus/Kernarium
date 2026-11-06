@@ -1006,11 +1006,12 @@ automation support (the frame mirror, console input, the guest sampler, the
 footprint log, the activity logs and the automation entries; the symbols and
 log text are listed in the script) in host code, no test bundle and no XCTest
 or Testing framework in the application, no trace
-of the build host in an executable (the linker's debug map, which `strip -S`
-removes, and a path under `/Users/<name>/`; the application's own executable
-is unstripped until the archive strips it, so its debug stabs and the strings
-they name are ignored), and the privacy check. Its fixtures are compiled with
-the iOS SDK too. The configuration itself is
+of the build host in an executable (the linker's debug map of a framework,
+which `strip -S` removes, and a path under `/Users/<name>/`,
+`/Volumes/<name>/` or `/var/folders/`, found outside the strings of the debug
+map, which Xcode strips from the application's own executable when it
+archives), and the privacy check. Its fixtures are compiled with the iOS SDK
+too. The configuration itself is
 validated by building it unsigned (`CODE_SIGNING_ALLOWED=NO`).
 
 `andarium-acknowledgements` (tooling) checks that the Acknowledgements

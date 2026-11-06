@@ -7,3 +7,4 @@ deployment_target	27.0
 linkage	static
 components	pcre2,libffi,proxy-libintl,glib-ios,gvdb,libslirp
 source_manifest	dependencies/manifest.tsv
+common_recipe	ios-network-v1

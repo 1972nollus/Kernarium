@@ -192,10 +192,9 @@ leaves out everything that exists for automation or only pretends:
   application, which fails the build on a missing key in Info.plist,
   an environment knob, a symbol or log text of the
   debugging and automation support above, a test bundle or an XCTest or
-  Testing framework, or a trace of the build host (the
-  linker's debug map, a home-directory path) in the application or a framework
-  (the application's own executable is stripped when it is archived, so its
-  debug stabs and the strings they name are not counted),
+  Testing framework, or a trace of the build host (the linker's debug map, a
+  path under a home directory, on a mounted volume or in a temporary
+  directory) in the application or a framework,
   a console line of the harness in the application's code, or a privacy
   manifest that does not cover a binary
   ([`scripts/check-privacy-manifests.py`](../scripts/check-privacy-manifests.py)).
