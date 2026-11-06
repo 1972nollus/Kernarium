@@ -908,7 +908,8 @@ may remain in the process. `RuntimeDisplayLifetimeTests` also checks that a late
 layout cannot retain a retired display while Home is showing.
 
 The opt-in `RetinaMemoryTests` compares repeated system-app launches at Retina
-and point resolution with 1.5 GiB of guest RAM. Its optional full-resolution
+and point resolution at the guest memory and vCPU count the launch states,
+which every snapshot records. Its optional full-resolution
 WebGL Aquarium workload records actual renderer, frames and FPS alongside
 process, guest and GPU memory. See the [WebGL workload](../tests/integration/android/webgl/README.md)
 for invocation and snapshot collection.
