@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import AndariumCore
+import CoreImage
+import CoreVideo
 import Foundation
 import Testing
 import UIKit
@@ -152,8 +154,19 @@ struct RuntimeDisplayLifetimeTests {
     }
 }
 
-/// Opt-in physical display check. Capture the screen during the ready window
-/// with each KERNARIUM_RETINA_MODE value, then compare the displayed text size.
+private final class GuestFrameCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var frame: CVPixelBuffer?
+
+    func receive(_ buffer: CVPixelBuffer) {
+        lock.withLock { if frame == nil { frame = buffer } }
+    }
+
+    var image: CVPixelBuffer? { lock.withLock { frame } }
+}
+
+/// Opt-in physical display check. Saves the guest's rendered frame with each
+/// KERNARIUM_RETINA_MODE value so their displayed text size can be compared.
 @MainActor
 struct RecoveryDisplayTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["ANDARIUM_RECOVERY_TESTS"] == "1"), .timeLimit(.minutes(5)))
@@ -191,6 +204,11 @@ struct RecoveryDisplayTests {
         } catch {
             Issue.record("Recovery display density could not be read: \(error)")
         }
+        do {
+            try await captureGuestFrame(named: model.retina ? "recovery-retina.png" : "recovery-points.png")
+        } catch {
+            Issue.record("Recovery frame could not be captured: \(error)")
+        }
         print("RECOVERY_DISPLAY: ready retina=\(model.retina); capture the screen within 30 seconds")
         try await Task.sleep(for: .seconds(30))
         // End selects Advanced, then End selects Power off. Use Recovery's
@@ -207,6 +225,31 @@ struct RecoveryDisplayTests {
         }
         try #require(model.phase == .home && model.runEnd.poweredOff, "\(model.runReport)")
     }
+}
+
+@MainActor
+func captureGuestFrame(named name: String) async throws {
+    let capture = GuestFrameCapture()
+    let result = kernarium_runtime_loader_set_frame_sink({ context, buffer in
+        guard let context, let buffer else { return }
+        let capture = Unmanaged<GuestFrameCapture>.fromOpaque(context).takeUnretainedValue()
+        capture.receive(Unmanaged<CVPixelBuffer>.fromOpaque(buffer).takeUnretainedValue())
+    }, Unmanaged.passUnretained(capture).toOpaque(), 4096, 1)
+    defer {
+        _ = kernarium_runtime_loader_set_frame_sink(nil, nil, 0, 0)
+        withExtendedLifetime(capture) {}
+    }
+    try #require(result == 0)
+    let deadline = ContinuousClock.now + .seconds(5)
+    while capture.image == nil, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(100))
+    }
+    let buffer = try #require(capture.image)
+    let image = CIImage(cvPixelBuffer: buffer)
+    let rendered = try #require(CIContext().createCGImage(image, from: image.extent))
+    let png = try #require(UIImage(cgImage: rendered).pngData())
+    try png.write(to: FileManager.default.temporaryDirectory.appendingPathComponent(name))
+    print("GUEST_FRAME: saved tmp/\(name)")
 }
 
 /// The system Andarium carries, written the way Create writes it: decoded
