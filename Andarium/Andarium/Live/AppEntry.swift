@@ -90,7 +90,6 @@ struct AppEntry {
         )
         let options = DisplayOptionsStore.load()
         model.retina = launch.retina ?? options.retina
-        model.followWindow = launch.followWindow ?? options.followWindow
 
         let markerDirectory = launch.instance == nil ? Self.supportDirectory() : locations.directory
         let marker = PauseMarker(url: markerDirectory.appendingPathComponent("pause.json"))
@@ -215,7 +214,7 @@ struct AppEntry {
     }
 }
 
-/// The two display options, kept across launches.
+/// The display option, kept across launches.
 enum DisplayOptionsStore {
     private static let key = "andarium.display"
 

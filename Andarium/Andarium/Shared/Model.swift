@@ -3,7 +3,7 @@ import Observation
 import SwiftUI
 
 enum SheetKind: String, Identifiable, Hashable {
-    case create, resize, erase, info
+    case create, resize, erase, info, system
 
     var id: String { rawValue }
 }
@@ -164,9 +164,9 @@ final class AppModel {
     /// The preview's plan after Restore; a device reads it from the files.
     var planAfterRestore: StartPlan?
 
-    // App-wide display options, set on the home screen.
+    // App-wide display option, set on the home screen: the guest draws at the
+    // screen's pixel density. The guest's display always follows the window.
     var retina = false
-    var followWindow = true
     /// The host window owns display rotation until iPadOS grants the
     /// full-screen session's orientation lock. Never a saved guest setting.
     var hostDrivesGuestRotation = false

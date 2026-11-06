@@ -54,6 +54,7 @@ struct HomeView: View {
             switch kind {
             case .create: NewGuestSheet()
             case .resize: ResizeSheet()
+            case .system: SystemSheet()
             case .erase:
                 EraseSheet(confirmed: hints.eraseConfirmed)
                     .presentationSizing(EraseSheetSizing())
@@ -73,7 +74,8 @@ struct HomeView: View {
         VStack(spacing: 22) {
             notices
             panel(large: false)
-            OptionsPanel()
+            SystemSection()
+            guestSections
             RestorePanel()
                 .id("erase")
         }
@@ -88,7 +90,8 @@ struct HomeView: View {
         VStack(spacing: 28) {
             notices
             panel(large: true)
-            OptionsPanel()
+            SystemSection()
+            guestSections
             RestorePanel()
                 .id("erase")
         }
@@ -104,10 +107,11 @@ struct HomeView: View {
             VStack(spacing: 22) {
                 notices
                 panel(large: true)
+                SystemSection()
             }
             .frame(maxWidth: 520)
             VStack(spacing: 22) {
-                OptionsPanel()
+                guestSections
                 RestorePanel()
                     .id("erase")
             }
@@ -123,12 +127,20 @@ struct HomeView: View {
     private func panel(large: Bool) -> some View {
         @Bindable var model = model
         if model.guest != nil {
-            ControlsPanel(
+            StoragePanel(
                 guest: Binding(get: { model.guest! }, set: { model.guest = $0 }),
                 host: model.host,
                 resize: { model.sheet = .resize }
             )
         }
+    }
+
+    /// Display, Capabilities and Backup: what the guest shows and may use.
+    @ViewBuilder
+    private var guestSections: some View {
+        DisplaySection()
+        CapabilitiesSection()
+        BackupSection()
     }
 
     @ViewBuilder
@@ -341,103 +353,6 @@ struct NoticeCard: View {
         }
         .padding(14)
         .glassEffect(.regular, in: .rect(cornerRadius: 22))
-    }
-}
-
-/// Display, input and backup options: plain rows in one glass panel.
-struct OptionsPanel: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        @Bindable var model = model
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Options")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.leading, 18)
-            VStack(spacing: 0) {
-                row("Resolution", symbol: "rectangle.inset.filled") {
-                    Picker("Resolution", selection: $model.retina) {
-                        Text("Points").tag(false)
-                        Text("Retina").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 150)
-                }
-                divider
-                row("Follow Window Size", symbol: "arrow.up.left.and.arrow.down.right") {
-                    Toggle("Follow Window Size", isOn: $model.followWindow).labelsHidden()
-                }
-                if let guest = model.guest {
-                    divider
-                    row("Microphone", symbol: "mic.fill") {
-                        Toggle("Microphone", isOn: Binding(
-                            get: { guest.microphone },
-                            set: { model.setMicrophone($0) }
-                        ))
-                        .labelsHidden()
-                    }
-                    divider
-                    row("Motion Sensors", symbol: "gyroscope") {
-                        Toggle("Motion Sensors", isOn: Binding(
-                            get: { guest.motionSensors },
-                            set: { model.setMotionSensors($0) }
-                        ))
-                        .labelsHidden()
-                        .disabled(!model.motionSensorsAvailable && !guest.motionSensors)
-                        .accessibilityHint("Shares this device's accelerometer and gyroscope with the guest.")
-                    }
-                    divider
-                    row("Include in Backups", symbol: "icloud.fill") {
-                        Toggle("Include in Backups", isOn: Binding(
-                            get: { guest.includeInBackups },
-                            set: { model.guest?.includeInBackups = $0 }
-                        ))
-                        .labelsHidden()
-                    }
-                }
-            }
-            .glassEffect(.regular, in: .rect(cornerRadius: 26))
-            if model.guest != nil {
-                Text(model.motionSensorsProblem ?? (model.motionSensorsAvailable
-                     ? "Motion Sensors shares this device’s acceleration and rotation with the guest while Andarium is active."
-                     : "Motion sensors aren’t available on this device."))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 18)
-                BackupNote(host: model.host)
-            }
-        }
-        .id("options")
-    }
-
-    private var divider: some View {
-        Divider().padding(.leading, 58)
-    }
-
-    private func row<C: View>(_ title: String, symbol: String, @ViewBuilder control: () -> C) -> some View {
-        HStack(spacing: 12) {
-            IconTile(symbol: symbol)
-            Text(title)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-            Spacer(minLength: 8)
-            control()
-        }
-        .padding(.horizontal, 16)
-        .frame(minHeight: 54)
-    }
-}
-
-/// What Include in Backups does to iCloud and computer backups.
-struct BackupNote: View {
-    let host: HostDevice
-
-    var body: some View {
-        Text("iCloud and computer backups of this \(host.name) leave the guest out, because the system can set itself up again and its files take several GiB. Turn on Include in Backups to keep them.")
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 18)
     }
 }
 

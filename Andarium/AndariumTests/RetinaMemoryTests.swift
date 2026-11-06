@@ -17,10 +17,9 @@ struct RetinaMemoryTests {
             || environment["ANDARIUM_PROFILE_EXISTING_GUEST"] == "1")
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let model = try #require((scene.delegate as? AndariumSceneDelegate)?.model)
-        let original = DisplayOptions(retina: model.retina, followWindow: model.followWindow)
-        defer { model.retina = original.retina; model.followWindow = original.followWindow }
+        let original = DisplayOptions(retina: model.retina)
+        defer { model.retina = original.retina }
         model.retina = environment["ANDARIUM_RETINA_PROFILE"] == "1"
-        model.followWindow = true
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("RetinaMemory")
         if FileManager.default.fileExists(atPath: directory.path) {
             try FileManager.default.removeItem(at: directory)

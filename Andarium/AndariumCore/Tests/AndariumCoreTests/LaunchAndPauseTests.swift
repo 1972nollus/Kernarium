@@ -28,7 +28,6 @@ struct LaunchOverridesTests {
                 .memoryMiB: "1536",
                 .diskGiB: "32",
                 .retina: "1",
-                .followWindow: "0",
             ],
             processorCount: 6
         )
@@ -36,7 +35,14 @@ struct LaunchOverridesTests {
         #expect(overrides.memoryMiB == 1536)
         #expect(overrides.capacityGiB == 32)
         #expect(overrides.retina == true)
-        #expect(overrides.followWindow == false)
+    }
+
+    @Test func aStoredFollowWindowValueIsIgnored() throws {
+        // The guest's display always follows the window: an earlier version's
+        // stored choice is read past, not migrated.
+        let old = Data(#"{"retina":true,"followWindow":false}"#.utf8)
+        #expect(try JSONDecoder().decode(DisplayOptions.self, from: old) == DisplayOptions(retina: true))
+        #expect(try JSONDecoder().decode(DisplayOptions.self, from: Data("{}".utf8)) == DisplayOptions())
     }
 
     @Test func ignoresValuesOutOfRangeOrOffStep() {

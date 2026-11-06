@@ -95,8 +95,8 @@ struct DisplayOptionsStoreTests {
     @Test func optionsSurviveTheStore() {
         let saved = DisplayOptionsStore.load()
         defer { DisplayOptionsStore.save(saved) }
-        DisplayOptionsStore.save(DisplayOptions(retina: true, followWindow: false))
-        #expect(DisplayOptionsStore.load() == DisplayOptions(retina: true, followWindow: false))
+        DisplayOptionsStore.save(DisplayOptions(retina: true))
+        #expect(DisplayOptionsStore.load() == DisplayOptions(retina: true))
     }
 }
 

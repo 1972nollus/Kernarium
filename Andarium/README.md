@@ -56,9 +56,12 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
     -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' build
 ```
 
-Home has one Start button for a normal boot. The Restore section groups
-Start in Recovery and Erase Guest. A fresh guest opens the system's setup
-wizard on its first normal boot.
+Home has one Start button for a normal boot. Below its Storage card come the
+System section (vCPUs and RAM as a summary; Edit opens the sheet that changes
+them), Display (Retina mode), Capabilities (Microphone, Gyroscope) and Backup
+(Back Up Guest Data); the Restore section groups Start in Recovery and Erase
+Guest. Setting a guest up asks only for its storage and backups. A fresh guest
+opens the system's setup wizard on its first normal boot.
 
 ## Devices
 
@@ -78,7 +81,7 @@ orientation. During a guest session, the scene's root hosting controller
 requests an interface orientation lock while the scene fills its screen, so
 Android alone rotates its display. A window, or a full-screen scene whose
 lock iPadOS releases, uses host-driven rotation: the guest is held at display
-rotation zero and the existing Follow Window Size option controls its layout.
+rotation zero and the guest's display always follows the window.
 Returning to a locked full-screen scene restores the guest's previous rotation
 preferences. The saved preferences live in the guest until restored, so an app
 termination or guest restart cannot replace them with the temporary override.
@@ -273,8 +276,8 @@ decimal gigabytes of iOS Settings (1 GiB is 1.074 GB). The first start needs
 3 GiB free and later starts 1.5 GiB (`Limits`).
 
 The guest is left out of iCloud and computer backups unless the user turns on
-Include in Backups for it: Android can set itself up again, and the files take
-several GiB.
+Back Up Guest Data (Home's Backup section): Android can set itself up again,
+and the files take several GiB.
 
 ## Runtime
 
@@ -300,10 +303,11 @@ The guest display supports up to ten simultaneous fingers, including pinch
 and other gestures. The shared [GuestHost input](../GuestHost/README.md) maps
 each finger independently onto the guest's visible display.
 
-Resolution and Follow Window Size apply at the next start, because the runtime
-takes them at boot, so the session's Settings leaves them out
-(`Capabilities.liveDisplayOptions`). Microphone applies at once and asks iOS
-for access when it is turned on.
+Retina mode applies at the next start, because the runtime takes it at boot, so
+the session's Settings leaves it out (`Capabilities.liveDisplayOptions`). The
+guest's display always follows the window; there is no option for it, and a
+value an earlier version stored is ignored. Microphone applies at once and
+asks iOS for access when it is turned on.
 
 Retina uses the screen's native pixels. On a 2× display, that makes each
 full-screen colour or depth buffer four times the size at point resolution;
@@ -311,8 +315,8 @@ apps can keep several such buffers. These host graphics allocations count
 against the same iOS process limit as guest RAM, so the RAM setting alone does
 not bound Andarium's memory use.
 
-Motion Sensors is off by default. Its switch in Home’s Options (and the
-session’s Settings) shares the device’s accelerometer and gyroscope with the
+Gyroscope is off by default. Its switch in Home's Capabilities (and the
+session's Settings) shares the device's accelerometer and gyroscope with the
 guest. The choice is saved with the guest; existing settings load it as off.
 A device with neither sensor leaves the switch unavailable. Capture starts
 after a normal boot finishes, while the app is active, and stops when the
@@ -320,7 +324,7 @@ switch turns off, the app becomes inactive, or the guest ends or restarts.
 Recovery never captures motion. Only the newest samples are sent, at up to
 100 Hz, over private vsock port 5556; nothing listens on the host’s network.
 The system image must include the [motion sub-HAL](../android/lineage-24/README.md#motion-sensors);
-a missing service is reported in Options and Settings.
+a missing service is reported in Capabilities and Settings.
 
 ## Android operations
 
@@ -433,8 +437,7 @@ Android runtime (`package-ios-frameworks.sh --runtimes android
 
 ```text
 KERNARIUM_VCPU_COUNT, KERNARIUM_GUEST_MEMORY_MIB, KERNARIUM_RETINA_MODE,
-KERNARIUM_GPU_AUTO_RESIZE, KERNARIUM_ANDROID_BOOT_MODE (recovery starts
-Recovery), KERNARIUM_ANDROID_DISK_SIZE_GIB (the guest's storage in GiB),
+KERNARIUM_ANDROID_BOOT_MODE (recovery starts Recovery), KERNARIUM_ANDROID_DISK_SIZE_GIB (the guest's storage in GiB),
 KERNARIUM_HOST_FORWARD, KERNARIUM_FOOTPRINT_LOG_MS, KERNARIUM_EXECUTION_ENGINE,
 KERNARIUM_GUEST_HIBERNATION, KERNARIUM_ANDROID_ADB_AUTH
 ANDARIUM_START=normal|recovery   create the guest if there is none, then start

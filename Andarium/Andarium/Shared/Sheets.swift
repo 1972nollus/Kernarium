@@ -27,21 +27,13 @@ struct NewGuestSheet: View {
                             text: "Setting up needs \(Formats.size(bytes: model.createRequirementBytes)) free for the guest's setup. This \(model.host.name) has \(Formats.size(bytes: model.host.freeStorageBytes)). Free up space in Settings › General › \(model.host.name) Storage."
                         )
                     }
-                    ControlsPanel(guest: draftBinding, host: model.host, isNew: true, showsCompute: false)
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 12) {
-                            IconTile(symbol: "icloud.fill")
-                            Text("Include in Backups")
-                            Spacer(minLength: 8)
-                            Toggle("Include in Backups", isOn: Binding(
-                                get: { draftBinding.wrappedValue.includeInBackups },
-                                set: { draftBinding.wrappedValue.includeInBackups = $0 }
-                            ))
-                            .labelsHidden()
-                        }
-                        .padding(.horizontal, 16)
-                        .frame(minHeight: 54)
-                        .glassEffect(.regular, in: .rect(cornerRadius: 26))
+                    StoragePanel(guest: draftBinding, host: model.host, isNew: true)
+                    HomeSection(title: "Backup") {
+                        BackupOption(isOn: Binding(
+                            get: { draftBinding.wrappedValue.includeInBackups },
+                            set: { draftBinding.wrappedValue.includeInBackups = $0 }
+                        ))
+                    } footer: {
                         BackupNote(host: model.host)
                     }
                 }
@@ -66,6 +58,62 @@ struct NewGuestSheet: View {
                 }
             }
         }
+    }
+}
+
+/// Edit on Home's System section: the guest's vCPUs and memory on their
+/// rulers, with the limits of the device. Save applies them; they take effect
+/// when the guest next starts.
+struct SystemSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: Guest?
+
+    private var current: Guest { model.guest ?? Guest.fresh(on: model.host) }
+
+    private var draftBinding: Binding<Guest> {
+        Binding(get: { draft ?? current }, set: { draft = $0 })
+    }
+
+    private var changed: Bool {
+        guard let draft else { return false }
+        return draft.cores != current.cores || draft.memoryMiB != current.memoryMiB
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 14) {
+                    SystemControls(guest: draftBinding, host: model.host)
+                    SectionNote("Changes apply the next time the guest starts.")
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 24)
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("System")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", role: .cancel) { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        if let draft {
+                            model.guest?.cores = draft.cores
+                            model.guest?.memoryMiB = draft.memoryMiB
+                        }
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(!changed)
+                }
+            }
+        }
+        .presentationDetents([.height(450)])
+        .presentationSizing(FixedSheetSizing(width: 540, height: 460))
+        .onAppear { draft = model.guest }
     }
 }
 

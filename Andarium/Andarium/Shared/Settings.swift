@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 /// Settings while the guest runs, opened from the side keys. It slides up over
 /// the guest, which keeps running behind it: install an app from Files,
 /// connect a computer with adb, make a bug report, watch the stats, and
-/// change the options. An operation on the guest dismisses Settings and
+/// change the capabilities the guest may use. An operation on the guest dismisses Settings and
 /// shows the full-screen progress.
 struct SessionSettingsSheet: View {
     @Environment(AppModel.self) private var model
@@ -27,7 +27,8 @@ struct SessionSettingsSheet: View {
                 if normalSession, model.capabilities.adbOverNetwork { adb(session) }
                 if normalSession, model.capabilities.bugReport { bugReport }
                 if model.capabilities.statistics { stats(session) }
-                options
+                display
+                capabilities
             }
             .listSectionSpacing(.compact)
             .navigationTitle("Settings")
@@ -213,28 +214,27 @@ struct SessionSettingsSheet: View {
         }
     }
 
-    // MARK: Options
+    // MARK: Display and capabilities
 
+    /// Retina mode where it can change while the guest runs (the preview);
+    /// on a device it applies at the next start and is set on Home.
     @ViewBuilder
-    private var options: some View {
+    private var display: some View {
         @Bindable var model = model
+        if model.guest != nil, model.capabilities.liveDisplayOptions {
+            Section("Display") {
+                Toggle(isOn: $model.retina) {
+                    rowLabel("Retina mode", symbol: "rectangle.inset.filled")
+                }
+            }
+        }
+    }
+
+    /// The microphone and the gyroscope, which apply at once.
+    @ViewBuilder
+    private var capabilities: some View {
         if let guest = model.guest {
             Section {
-                if model.capabilities.liveDisplayOptions {
-                    LabeledContent {
-                        Picker("Resolution", selection: $model.retina) {
-                            Text("Points").tag(false)
-                            Text("Retina").tag(true)
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 150)
-                    } label: {
-                        rowLabel("Resolution", symbol: "rectangle.inset.filled")
-                    }
-                    Toggle(isOn: $model.followWindow) {
-                        rowLabel("Follow Window Size", symbol: "arrow.up.left.and.arrow.down.right")
-                    }
-                }
                 Toggle(isOn: Binding(
                     get: { guest.microphone },
                     set: { model.setMicrophone($0) }
@@ -244,11 +244,11 @@ struct SessionSettingsSheet: View {
                 Toggle(isOn: Binding(
                     get: { guest.motionSensors }, set: { model.setMotionSensors($0) }
                 )) {
-                    rowLabel("Motion Sensors", symbol: "gyroscope")
+                    rowLabel("Gyroscope", symbol: "gyroscope")
                 }
                 .disabled(!model.motionSensorsAvailable && !guest.motionSensors)
             } header: {
-                Text("Options")
+                Text("Capabilities")
             } footer: {
                 if let problem = model.motionSensorsProblem { Text(problem) }
                 if guest.microphone && model.microphoneState == .denied {

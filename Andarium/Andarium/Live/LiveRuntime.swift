@@ -242,7 +242,6 @@ final class LiveRuntime: RuntimeDriver {
         let memoryMiB = UInt32(run.guest.memoryMiB)
         let processorCount = UInt32(run.guest.cores)
         let dotsPerInch = geometry.dotsPerInch
-        let autoResize = model?.followWindow ?? true
         let adbKeyLine = adbIdentity?.publicKeyLine
         // The run occupies its thread for the guest's whole life and the GPU
         // service reaches the main queue while it starts, so it must not be
@@ -252,7 +251,7 @@ final class LiveRuntime: RuntimeDriver {
             let result = Self.runGuest(
                 view: view, dataDiskPath: dataDiskPath, releasePath: releasePath, dataGiB: dataGiB, bootMode: bootMode,
                 width: width, height: height, dotsPerInch: dotsPerInch, memoryMiB: memoryMiB,
-                processorCount: processorCount, autoResize: autoResize, adbKeyLine: adbKeyLine
+                processorCount: processorCount, adbKeyLine: adbKeyLine
             )
             Task { @MainActor in self.finished(result: result) }
         }
@@ -263,7 +262,7 @@ final class LiveRuntime: RuntimeDriver {
     private nonisolated static func runGuest(
         view: GuestMetalView, dataDiskPath: String, releasePath: String, dataGiB: UInt32, bootMode: UInt32,
         width: UInt32, height: UInt32, dotsPerInch: UInt32, memoryMiB: UInt32,
-        processorCount: UInt32, autoResize: Bool, adbKeyLine: String?
+        processorCount: UInt32, adbKeyLine: String?
     ) -> Int32 {
         dataDiskPath.withCString { dataDisk in
             releasePath.withCString { release in
@@ -276,7 +275,8 @@ final class LiveRuntime: RuntimeDriver {
                     request.guest_memory_mib = memoryMiB
                     request.guest_processor_count = processorCount
                     request.android_boot_mode = bootMode
-                    request.auto_resize_guest = autoResize ? 1 : 0
+                    // The guest's display always follows the window.
+                    request.auto_resize_guest = 1
                     request.android_data_disk_path = dataDisk
                     request.android_release_path = release
                     request.android_data_gib = dataGiB
@@ -557,11 +557,11 @@ final class LiveRuntime: RuntimeDriver {
     private func observeDisplayOptions() {
         guard let model else { return }
         withObservationTracking {
-            _ = (model.retina, model.followWindow, model.hostDrivesGuestRotation)
+            _ = (model.retina, model.hostDrivesGuestRotation)
         } onChange: {
             Task { @MainActor in
                 guard let model = self.model else { return }
-                DisplayOptionsStore.save(DisplayOptions(retina: model.retina, followWindow: model.followWindow))
+                DisplayOptionsStore.save(DisplayOptions(retina: model.retina))
                 self.updateGuestRotation()
                 self.observeDisplayOptions()
             }

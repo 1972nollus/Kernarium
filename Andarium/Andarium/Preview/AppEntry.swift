@@ -23,9 +23,17 @@ struct AppEntry {
         )
     }
 
+    /// Where Home scrolls to for a screen that shows a lower section.
+    private static let scrollTargets: [String: String] = [
+        "home-options": "erase", "home-restore": "erase", "start-recovery": "erase",
+        "home-display": "display",
+        "home-capabilities": "capabilities", "home-gyroscope-unavailable": "capabilities",
+        "home-backup": "backup",
+    ]
+
     var hints: ScreenHints {
         ScreenHints(
-            scrollTarget: ["home-options", "home-restore", "start-recovery"].contains(screen) ? "erase" : nil,
+            scrollTarget: Self.scrollTargets[screen],
             eraseConfirmed: screen == "erase-confirm",
             acknowledgements: screen == "info-acknowledgements"
         )
@@ -83,8 +91,10 @@ struct AppEntry {
             model.plan = .blocked(.olderAndroid)
         case "home-closed":
             model.notice = .closedInBackground
-        case "home-options":
+        case "home-options", "home-display", "home-capabilities", "home-backup", "system-edit":
             break
+        case "home-gyroscope-unavailable":
+            model.motionSensorsAvailable = false
         case "home-erased":
             model.erase()
         case "boot":
@@ -182,6 +192,8 @@ struct AppEntry {
             model.sheet = .create
         case "resize":
             model.sheet = .resize
+        case "system-edit":
+            model.sheet = .system
         case "erase", "erase-confirm":
             model.sheet = .erase
         case "info", "info-acknowledgements":
