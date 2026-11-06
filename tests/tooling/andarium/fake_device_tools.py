@@ -200,6 +200,8 @@ def shell(text: str) -> int:
         print("1" if count > 2 else "0")
     elif text == "echo ready":
         print("ready")
+    elif text == "pidof adbd":
+        print("500")
     elif text.startswith("settings "):
         settings(text.split())
     elif text.startswith("pm disable-user --user 0 "):

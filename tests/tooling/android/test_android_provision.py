@@ -17,6 +17,7 @@ __import__("sys").dont_write_bytecode = True
 import importlib.util
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -43,12 +44,20 @@ class FakeGuest:
     """The parts of a guest the helper reads and writes."""
 
     def __init__(self, provisioned: str = "0", setup_complete: str = "0",
-                 disabled: tuple[str, ...] = (), ignores_disable: bool = False) -> None:
+                 disabled: tuple[str, ...] = (), ignores_disable: bool = False,
+                 adbd: list[str] | None = None, trade_in_log: list[str] | None = None) -> None:
         self.settings = {("global", "device_provisioned"): provisioned,
                          ("secure", "user_setup_complete"): setup_complete}
         self.disabled = set(disabled)
         self.ignores_disable = ignores_disable
         self.commands: list[str] = []
+        # What `pidof adbd` answers on each call (the last one repeats), and what the log shows on each call.
+        self.adbd = adbd if adbd is not None else ["500"]
+        self.trade_in_log = trade_in_log if trade_in_log is not None else [""]
+        self.polls = 0
+        # The first calls of the shell fail as they do while adbd restarts: an adb error, or an exception.
+        self.unreachable = 0
+        self.raises = False
 
     def writes(self) -> list[str]:
         return [command for command in self.commands
@@ -56,6 +65,11 @@ class FakeGuest:
 
     def __call__(self, command: str) -> str:
         self.commands.append(command)
+        if self.unreachable > 0:
+            self.unreachable -= 1
+            if self.raises:
+                raise subprocess.TimeoutExpired(command, 1)
+            return "adb: device offline\n"
         words = command.split()
         if words[:2] == ["settings", "get"]:
             return self.settings.get((words[2], words[3]), "null") + "\n"
@@ -70,6 +84,12 @@ class FakeGuest:
         if words[:2] == ["pm", "disable"]:
             # The shell may not change another package's component state.
             return "java.lang.SecurityException: Shell cannot change component state\n"
+        if command == "pidof adbd":
+            self.polls += 1
+            answer = self.adbd[min(self.polls - 1, len(self.adbd) - 1)]
+            return answer + "\n"
+        if command.startswith("logcat -d -b all -s TradeInModeService"):
+            return self.trade_in_log[min(self.polls - 1, len(self.trade_in_log) - 1)]
         if command.startswith("cmd package resolve-activity --brief"):
             wizard = android_provision.SETUP_WIZARD
             return LAUNCHER_HOME if wizard in self.disabled else WIZARD_HOME
@@ -79,7 +99,7 @@ class FakeGuest:
 class ProvisionTests(unittest.TestCase):
     def test_a_fresh_guest_is_provisioned_and_its_home_is_the_launcher(self) -> None:
         guest = FakeGuest()
-        self.assertTrue(android_provision.provision(guest))
+        self.assertTrue(android_provision.provision(guest, settle_adbd=False))
         self.assertEqual(guest.settings[("global", "device_provisioned")], "1")
         self.assertEqual(guest.settings[("secure", "user_setup_complete")], "1")
         self.assertEqual(guest.disabled, {android_provision.SETUP_WIZARD})
@@ -94,18 +114,18 @@ class ProvisionTests(unittest.TestCase):
 
     def test_a_provisioned_guest_is_left_alone(self) -> None:
         guest = FakeGuest("1", "1", (android_provision.SETUP_WIZARD,))
-        self.assertFalse(android_provision.provision(guest))
+        self.assertFalse(android_provision.provision(guest, settle_adbd=False))
         self.assertEqual(guest.writes(), [])
         self.assertTrue(android_provision.is_provisioned(guest))
 
     def test_a_guest_whose_wizard_still_owns_home_is_completed(self) -> None:
         guest = FakeGuest("1", "1")
-        self.assertTrue(android_provision.provision(guest))
+        self.assertTrue(android_provision.provision(guest, settle_adbd=False))
         self.assertEqual(guest.disabled, {android_provision.SETUP_WIZARD})
 
     def test_a_guest_missing_one_setting_gets_it(self) -> None:
         guest = FakeGuest("1", "0", (android_provision.SETUP_WIZARD,))
-        self.assertTrue(android_provision.provision(guest))
+        self.assertTrue(android_provision.provision(guest, settle_adbd=False))
         self.assertEqual(guest.settings[("secure", "user_setup_complete")], "1")
 
     def test_a_guest_that_stays_unprovisioned_is_an_error(self) -> None:
@@ -122,6 +142,108 @@ class ProvisionTests(unittest.TestCase):
         self.assertEqual(android_provision.home_package(lambda _: LAUNCHER_HOME), "com.android.launcher3")
         self.assertEqual(android_provision.home_package(lambda _: "No activity found\n"), "")
         self.assertEqual(android_provision.home_package(lambda _: ""), "")
+
+    def test_a_provisioned_guest_is_not_waited_for(self) -> None:
+        guest = FakeGuest("1", "1", (android_provision.SETUP_WIZARD,))
+        android_provision.provision(guest)
+        self.assertEqual(guest.polls, 0)
+
+
+class Clock:
+    """Time that only `sleep` advances, so the settle loop runs without waiting."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class SettleTests(unittest.TestCase):
+    def provision(self, guest: FakeGuest, **options) -> Clock:
+        clock = Clock()
+        android_provision.provision(guest, sleep=clock.sleep, clock=clock, **options)
+        return clock
+
+    def test_a_steady_adbd_settles_after_the_stable_period(self) -> None:
+        guest = FakeGuest()
+        clock = self.provision(guest)
+        self.assertGreaterEqual(clock.now, android_provision.SETTLE_STABLE_SECONDS)
+        self.assertLess(clock.now, android_provision.SETTLE_STABLE_SECONDS + 3)
+
+    def test_adbd_restarts_in_flight_are_waited_out(self) -> None:
+        # Two restarts a few seconds apart, with adbd absent between them: the second pid has to stay.
+        absent = ["", "", "", "", ""]
+        guest = FakeGuest(adbd=["500", "500", "1900", *absent, "2000"],
+                          trade_in_log=["", "Enabling trade-in mode.\n", "Enabling trade-in mode.\nStopping trade-in mode.\n"])
+        clock = self.provision(guest)
+        # The loop saw the last process come up (poll 9) and held it for the stable period.
+        self.assertGreaterEqual(clock.now, 8 + android_provision.SETTLE_STABLE_SECONDS)
+        self.assertGreaterEqual(guest.polls, 8 + android_provision.SETTLE_STABLE_SECONDS)
+
+    def test_a_pending_trade_in_mode_holds_the_wait_even_with_a_steady_adbd(self) -> None:
+        entered = "Enabling trade-in mode.\n"
+        guest = FakeGuest(trade_in_log=[entered] * 10 + [entered + "Stopping trade-in mode.\n"])
+        clock = self.provision(guest)
+        self.assertGreaterEqual(clock.now, 9 + android_provision.SETTLE_STABLE_SECONDS)
+
+    def test_a_shell_that_cannot_reach_adbd_is_retried(self) -> None:
+        for raises in (False, True):
+            with self.subTest(raises=raises):
+                guest = FakeGuest()
+                guest.unreachable, guest.raises = 7, raises
+                clock = self.provision(guest)
+                self.assertEqual(guest.settings[("global", "device_provisioned")], "1")
+                self.assertEqual(guest.disabled, {android_provision.SETUP_WIZARD})
+                # The retries slept (2 s each) before the helper went on to settle.
+                self.assertGreaterEqual(clock.now, 2 * 7)
+
+    def test_a_restart_under_the_commands_asks_again_whether_they_took(self) -> None:
+        guest = FakeGuest()
+        # The connection drops right after the first write, as a restart of adbd does.
+        original = guest.__call__
+
+        def shell(command: str) -> str:
+            if command == "pm disable-user --user 0 " + android_provision.SETUP_WIZARD and not guest.settings.get(("x", "dropped")):
+                guest.settings[("x", "dropped")] = "1"
+                guest.unreachable = 4
+                return "adb: device offline\n"
+            return original(command)
+
+        clock = Clock()
+        self.assertTrue(android_provision.provision(shell, sleep=clock.sleep, clock=clock))
+        self.assertEqual(guest.settings[("global", "device_provisioned")], "1")
+
+    def test_a_guest_whose_shell_never_answers_is_an_error(self) -> None:
+        guest = FakeGuest()
+        guest.unreachable = 10_000
+        with self.assertRaisesRegex(android_provision.ProvisionError, "did not answer"):
+            self.provision(guest)
+
+    def test_an_adb_error_is_not_a_process_id(self) -> None:
+        self.assertEqual(android_provision.adbd_pid(lambda _: "adb: device offline\n"), "")
+        self.assertEqual(android_provision.adbd_pid(lambda _: "error: closed\n"), "")
+        self.assertEqual(android_provision.adbd_pid(lambda _: "534\n"), "534")
+
+    def test_trade_in_pending_reads_the_last_of_the_two_lines(self) -> None:
+        enter, stop = "I TradeInModeService: Enabling trade-in mode.\n", "I TradeInModeService: Stopping trade-in mode.\n"
+        for log, expected in (("", False), (enter, True), (enter + stop, False), (enter + stop + enter, True),
+                              (stop + enter, True)):
+            with self.subTest(log=log):
+                self.assertEqual(android_provision.trade_in_pending(lambda _: log), expected)
+
+    def test_a_guest_that_never_settles_is_an_error(self) -> None:
+        guest = FakeGuest(adbd=[str(n) for n in range(1000, 1300)])
+        with self.assertRaisesRegex(android_provision.ProvisionError, "did not settle"):
+            self.provision(guest)
+
+    def test_settling_can_be_skipped(self) -> None:
+        guest = FakeGuest()
+        self.provision(guest, settle_adbd=False)
+        self.assertEqual(guest.polls, 0)
 
     def test_the_adb_shell_passes_the_command_to_the_guest_and_returns_its_output(self) -> None:
         with tempfile.TemporaryDirectory(prefix="android-provision-") as scratch:

@@ -99,7 +99,10 @@ guest, which boots the system that build carries, without Home:
 disk only with `--erase`. A fresh guest starts in LineageOS Setup Wizard, where
 HOME returns to the wizard, so after the boot `--erase` provisions the guest
 over adb (`tools/android_provision.py`, recorded as `provisioned` in the
-summary); `--keep-setup-wizard` measures the first-boot experience itself. The
+summary). Provisioning also keeps Android's trade-in mode from restarting adbd
+twice some 230 s into an unprovisioned first boot, which killed a warm-up shell;
+the helper returns once adbd has settled. `--keep-setup-wizard` measures the
+first-boot experience itself and meets those restarts. The
 guest's adbd is published on the device's loopback at the port of the guest
 slot (`GUEST_SLOT_PORT_BASE`, or `--host-port`; the runner stops with a message
 when neither is set), `iproxy` carries it over USB to the same port on the

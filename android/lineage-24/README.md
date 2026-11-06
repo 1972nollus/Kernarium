@@ -197,14 +197,27 @@ own and no install restriction: Package Installer and every install path work.
 It has no Google or microG services. LineageOS Setup Wizard handles the first
 boot of a fresh guest; completing it provisions that guest (both settings 1 and
 the wizard's HOME activity disabled), so subsequent boots go directly to the
-launcher. Until then HOME returns to the wizard. A harness that erases a guest
-to measure it provisions the guest over adb after `sys.boot_completed`
+launcher. Until then HOME returns to the wizard. An unprovisioned guest also
+restarts adbd twice, a few seconds apart, some tens of seconds after
+`sys.boot_completed` (about 230 s into the first boot on the iPad): DeviceDiagnostics' boot receiver
+asks Android's trade-in mode to start, which turns USB debugging on, and the
+virtual Wi-Fi that is already connected stops it at once, which turns it off,
+and the framework restarts adbd where stock stops it. Android does not enter
+trade-in mode once the device is set up, so the restarts happen only on the
+first boot of an erased guest. A client connecting in that window retries
+(Andarium's session waits up to 20 s for adbd); an operation already running
+over adbd, an install or a bug report, is cut and fails. A harness that erases
+a guest to measure it provisions the guest over adb after `sys.boot_completed`
 ([`tools/android_provision.py`](../../tools/android_provision.py), through
 `tools/boot_android.py --provision`, `tests/perf/run_ios_device_android.py
 --erase` and `tests/perf/android_launch_suite.py`): it sets both settings and
 disables the wizard package for user 0 (the shell may not disable the wizard's
 own components), so HOME resolves to the launcher, and it changes nothing in
-the image; a measurement of the first-boot experience itself keeps the wizard.
+the image. Set at `sys.boot_completed`, the settings keep trade-in mode from
+starting at all ("Not starting trade-in mode, device is setup"); a helper that
+comes late finds the restarts under way, and it returns only after adbd has
+stayed one process for six seconds with no trade-in mode pending. A measurement
+of the first-boot experience itself keeps the wizard.
 The `android-oobe` test completes the wizard through its pages and checks that
 the helper reaches the same observable state. The LineageOS updater, Canvas,
 Aperture, Profiles, Recorder, QuickAccessWallet, the charger animation,
