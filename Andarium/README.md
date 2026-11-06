@@ -237,8 +237,9 @@ Home shows of it before Start (`GuestStorage.startPlan`, which changes
 nothing): first start, ordinary start, update, an update that did not finish,
 or a start that is blocked. An update first clones `data.img` to
 `data.img.pre-<release id>` (an APFS clone), and an update counts as finished
-only after Android itself reported `sys.boot_completed` in that run and the
-run ended cleanly; Recovery never does.
+the moment Android itself reports `sys.boot_completed` in that run, which
+deletes the snapshot; Recovery never reaches it. A newer release after that
+updates from the data as it is, and nothing restores the old snapshot.
 
 Start on an update that did not finish tries it again: the same update, the
 snapshot kept. Home's one other way back is Restore, shown only while the

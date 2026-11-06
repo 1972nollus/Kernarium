@@ -58,13 +58,104 @@ struct DecisionVectorTests {
         }
     }
 
-    private struct Document: Decodable { var cases: [Vector] }
+    /// What a start's `sys.boot_completed` records on the instance.
+    private struct Transition: Decodable {
+        struct Expectation: Decodable {
+            var pendingToReleaseID: String?
+            var snapshot: Bool
+            enum CodingKeys: String, CodingKey {
+                case pendingToReleaseID = "pending_to_release_id", snapshot
+            }
+        }
+        var name: String
+        var event: String
+        var instance: Vector.Instance?
+        var snapshot: Bool
+        var release: Vector.Release
+        var expect: Expectation?
+        var refused: Bool
+        enum CodingKeys: String, CodingKey { case name, event, instance, snapshot, release, expect }
 
-    private static func vectors() throws -> [Vector] {
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            name = try values.decode(String.self, forKey: .name)
+            event = try values.decode(String.self, forKey: .event)
+            instance = try values.decodeIfPresent(Vector.Instance.self, forKey: .instance)
+            snapshot = try values.decode(Bool.self, forKey: .snapshot)
+            release = try values.decode(Vector.Release.self, forKey: .release)
+            // The expectation is the word "refused" or the state afterwards.
+            if (try? values.decode(String.self, forKey: .expect)) == "refused" {
+                refused = true
+                expect = nil
+            } else {
+                refused = false
+                expect = try values.decode(Expectation.self, forKey: .expect)
+            }
+        }
+    }
+
+    private struct Document: Decodable {
+        var cases: [Vector]
+        var transitions: [Transition]
+    }
+
+    private static func document() throws -> Document {
         var url = URL(fileURLWithPath: #filePath)
         for _ in 0..<5 { url.deleteLastPathComponent() }
         url.append(path: "android/lineage-24/support/instance/update-decisions.json")
-        return try JSONDecoder().decode(Document.self, from: Data(contentsOf: url)).cases
+        return try JSONDecoder().decode(Document.self, from: Data(contentsOf: url))
+    }
+
+    private static func vectors() throws -> [Vector] { try document().cases }
+
+    @Test func everyTransitionIsReproduced() throws {
+        let transitions = try Self.document().transitions
+        #expect(transitions.count == 5)
+        for transition in transitions {
+            let root = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let files = InstanceFiles(directory: root.appendingPathComponent("Guest"))
+            if let instance = transition.instance {
+                var state = InstanceState(
+                    dataLayout: instance.dataLayout, releaseID: instance.releaseID, buildFingerprint: "fp",
+                    buildIncremental: String(instance.buildNumber), systemDiskSHA256: instance.systemDiskSHA256,
+                    createdWith: "rel-0", lastBooted: "2026-10-02T00:00:00Z"
+                )
+                if let target = instance.pendingToReleaseID {
+                    state.pendingUpdate = InstanceState.Pending(
+                        toReleaseID: target, snapshot: "data.img.pre-\(target)",
+                        from: InstanceState.Origin(
+                            releaseID: "rel-0", buildFingerprint: "fp", buildIncremental: "50",
+                            systemDiskSHA256: String(repeating: "0", count: 64), dataLayout: 1,
+                            lastBooted: "2026-10-01T00:00:00Z"
+                        )
+                    )
+                }
+                try files.write(state)
+                try Data("guest data".utf8).write(to: files.data)
+            }
+            if transition.snapshot {
+                try FileManager.default.createDirectory(at: files.directory, withIntermediateDirectories: true)
+                try Data("snapshot".utf8).write(to: files.snapshot(for: "rel-b"))
+            }
+            let target = release(
+                transition.release.releaseID, build: transition.release.buildNumber,
+                layout: transition.release.dataLayout, sha: transition.release.systemDiskSHA256
+            )
+            if transition.refused {
+                #expect(throws: InstanceError.self, "\(transition.name)") { try files.booted(release: target) }
+                continue
+            }
+            if transition.event == "boot_completed" { try files.booted(release: target) }
+            let expected = try #require(transition.expect)
+            let after = try #require(try files.readState())
+            #expect(after.pendingUpdate?.toReleaseID == expected.pendingToReleaseID, "\(transition.name)")
+            #expect(
+                FileManager.default.fileExists(atPath: files.snapshot(for: "rel-b").path) == expected.snapshot,
+                "\(transition.name)"
+            )
+            #expect(try Data(contentsOf: files.data) == Data("guest data".utf8), "\(transition.name)")
+        }
     }
 
     @Test func everyVectorIsReproduced() throws {
@@ -155,6 +246,47 @@ struct InstanceFileTests {
         #expect(done.pendingUpdate == nil && done.lastCompleted?.releaseID == "rel-b")
         #expect(!FileManager.default.fileExists(atPath: snapshot.path))
         #expect(try files.decide(for: second).action == .boot)
+    }
+
+    /// The sequence that lost a week of user data: r13 settles, r15 updates and
+    /// boots, the host is killed before Android powers off, r15 starts again,
+    /// and r16 arrives.
+    @Test func anUpdateThatBootedIsNotRolledBackByTheNextRelease() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = InstanceFiles(directory: root.appendingPathComponent("Guest"))
+        let r13 = release("r13", build: 13, sha: String(repeating: "a", count: 64))
+        let r15 = release("r15", build: 15, sha: String(repeating: "b", count: 64))
+        let r16 = release("r16", build: 16, sha: String(repeating: "c", count: 64))
+        try files.apply(try files.decide(for: r13), release: r13)
+        try Data("data written on r13".utf8).write(to: files.data)
+        try files.complete(release: r13)
+
+        let update = try files.decide(for: r15)
+        #expect(update.action == .update)
+        try files.apply(update, release: r15)
+        #expect(FileManager.default.fileExists(atPath: files.snapshot(for: "r15").path))
+        // r15 reaches boot_completed: the update is applied.
+        let booted = try files.booted(release: r15)
+        #expect(booted.pendingUpdate == nil)
+        #expect(!FileManager.default.fileExists(atPath: files.snapshot(for: "r15").path))
+        try Data("r15 upgraded data and a week of user data".utf8).write(to: files.data)
+        // The host dies without a clean power-off; the next start is an
+        // ordinary one, not a retry.
+        let next = try files.decide(for: r15)
+        #expect(next.action == .boot)
+        try files.apply(next, release: r15)
+        try Data("r15 upgraded data and a month of user data".utf8).write(to: files.data)
+
+        let newer = try files.decide(for: r16)
+        #expect(newer.action == .update)
+        let updated = try files.apply(newer, release: r16)
+        let month = Data("r15 upgraded data and a month of user data".utf8)
+        #expect(try Data(contentsOf: files.data) == month)
+        #expect(try Data(contentsOf: files.snapshot(for: "r16")) == month)
+        #expect(updated.pendingUpdate?.from.releaseID == "r15" && updated.pendingUpdate?.toReleaseID == "r16")
+        // The update to r16 is now the pending one, with a snapshot of its own.
+        #expect(try files.startPlan(for: r16) == .unfinishedUpdate(to: "r16", canRetry: true, canRestore: true))
     }
 
     @Test func aFailedUpdateCanBeRetriedOrRestored() throws {

@@ -1478,7 +1478,8 @@ the macOS script and the Andarium app, applies the same rules before each
 start; [`tools/android_instance.py`](../../tools/android_instance.py) is the
 reference implementation and
 [`support/instance/update-decisions.json`](support/instance/update-decisions.json)
-holds decision vectors that any other implementation must reproduce.
+holds decision vectors and the record's transitions that any other
+implementation must reproduce.
 
 `instance.json` (schema 1) holds: `data_layout`, the data disk layout version of
 the release's template; `release_id`, `build_fingerprint`, `build_incremental`
@@ -1487,10 +1488,11 @@ data disk was last started with; `created_with`, the release that created the
 instance; `last_booted`, the time of the last start (RFC 3339, UTC);
 `last_completed`, the last start that reached `sys.boot_completed` and shut down
 cleanly (`release_id`, `build_incremental`, `at`) or `null`; and
-`pending_update`, the update whose first start has not completed or `null`: the
-release it starts (`to_release_id`), its `snapshot` file, and the identity the
-disk was last started with before it (`from`). The release's identity comes from
-its manifest and layout, never from hashing the disk at launch.
+`pending_update`, the update whose first start has not reached
+`sys.boot_completed` or `null`: the release it starts (`to_release_id`), its
+`snapshot` file, and the identity the disk was last started with before it
+(`from`). The release's identity comes from its manifest and layout, never from
+hashing the disk at launch.
 
 The build number (`ro.build.version.incremental` of a release build) orders
 releases; the rules compare nothing else. Before a start:
@@ -1506,6 +1508,14 @@ releases; the rules compare nothing else. Before a start:
 | an unfinished update, same build | retry with its snapshot kept, restore, or reset |
 | an unfinished update, newer build | restore the pre-update snapshot, then update directly to the newer build |
 
+An update is finished at the moment the host first sees the guest reach
+`sys.boot_completed` (`booted`): `pending_update` becomes `null` and the
+snapshot is deleted, so an unfinished update is one whose start never got that
+far. Android has upgraded its own data by then, and the data is no longer what
+the update started from. A newer release after that updates from the data as it
+is, with a snapshot of its own, and nothing restores the old snapshot; the
+shutdown that follows (`last_completed`) does not change this.
+
 Any older build can update directly to any newer build; intermediate releases
 need not boot. When an earlier update is unfinished, the launcher restores its
 pre-update data before starting the newer release, which takes its own snapshot.
@@ -1513,16 +1523,16 @@ The existing snapshot must be available for that restoration.
 
 The snapshot, `data.img.pre-<release_id>`, is an APFS clone, so it is instant
 and costs only the blocks that later diverge; a volume without clones refuses
-the update. It is kept until the new release has reached `sys.boot_completed`
-and the guest has shut down cleanly (`last_completed`), and the old system disk
-is gone by then, so a restore puts back the data the new release started from;
-it does not boot the previous release. An update whose first start fails offers
-three ways out: start it again keeping the snapshot, restore the snapshot and
-update afresh, or reset the instance (delete it and create it anew), which is
-also the way out of a refused downgrade. A future data layout changes the
-partition table only inside the reserved gap, never moving `userdata`. The
-instance directory is one directory, so a backup of it is a copy of it; the
-app, not the host layer, decides whether to exclude it from backup.
+the update. It lives only while the update is unfinished, and the old system
+disk is gone by then, so a restore puts back the data the new release started
+from; it does not boot the previous release. An update whose first start fails
+offers three ways out: start it again keeping the snapshot, restore the
+snapshot and update afresh, or reset the instance (delete it and create it
+anew), which is also the way out of a refused downgrade. A future data layout
+changes the partition table only inside the reserved gap, never moving
+`userdata`. The instance directory is one directory, so a backup of it is a
+copy of it; the app, not the host layer, decides whether to exclude it from
+backup.
 
 ## Apple consumers and guest bundles
 

@@ -1541,7 +1541,8 @@ tests cover them without an Android build:
   and the bootloader message.
 - `android17-instance-rules` and `android17-macos-launcher-options` cover the
   instance rules (create, update with a snapshot, refused downgrade, an
-  unfinished update) over the shared vectors in
+  unfinished update, an update that boots counting as applied) over the shared
+  vectors and transitions in
   `android/lineage-24/support/instance/update-decisions.json`, and the macOS
   launcher built on them.
 - `guest-android-disks` (integration) boots the Linux test guest on that

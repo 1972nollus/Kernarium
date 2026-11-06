@@ -588,6 +588,48 @@ class BootAndroidTests(unittest.TestCase):
             self.assertEqual((instance / "data.img").read_bytes(), b"guest data")
             self.assertFalse(snapshot.exists())
 
+    def test_an_update_that_booted_is_not_rolled_back_by_the_next_release(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary)
+            releases = root / "releases"
+            first = self.installed_release(releases, "rel-a", build=100)
+            second = self.installed_release(releases, "rel-b", build=200)
+            third = self.installed_release(releases, "rel-c", build=300)
+            instance = root / "instance"
+            self.run_main(root, first, instance)
+            (instance / "data.img").write_bytes(b"guest data")
+
+            # The update boots, then the run ends without a clean shutdown
+            # (the host application was killed): the update still counts.
+            result, _guest, _popen = self.run_main(
+                root, second, instance, guest=self.Guest(1)
+            )
+            self.assertEqual(result, 1)
+            state = json.loads((instance / "instance.json").read_text())
+            self.assertIsNone(state["pending_update"])
+            # Not a clean end: the last completed start is still rel-a's.
+            self.assertEqual(state["last_completed"]["release_id"], "rel-a")
+            self.assertFalse((instance / "data.img.pre-rel-b").exists())
+
+            # The data has moved on; the next release updates from it.
+            (instance / "data.img").write_bytes(b"data of the booted update")
+            result, _guest, _popen = self.run_main(
+                root, third, instance, booted=False
+            )
+            self.assertEqual(result, 0)
+            state = json.loads((instance / "instance.json").read_text())
+            self.assertEqual(state["pending_update"]["to_release_id"], "rel-c")
+            self.assertEqual(state["pending_update"]["from"]["release_id"], "rel-b")
+            self.assertEqual(
+                (instance / "data.img").read_bytes(), b"data of the booted update"
+            )
+            self.assertEqual(
+                (instance / "data.img.pre-rel-c").read_bytes(), b"data of the booted update"
+            )
+            self.assertFalse((instance / "data.img.pre-rel-b").exists())
+
     def test_retry_keeps_the_snapshot_until_a_clean_boot(self) -> None:
         with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
             root = Path(temporary)

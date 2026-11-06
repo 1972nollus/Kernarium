@@ -47,8 +47,3 @@ The foreground application is necessary for sustained validation: Android can
 disable a plain shell UID's sensor subscription after that UID becomes idle,
 independently of host delivery. Each run consumes the cached APK, so copy it
 again before a later run.
-
-The separate `ANDARIUM_COMPLETE_UPDATE_ONLY=1` test (passed as
-`TEST_RUNNER_ANDARIUM_COMPLETE_UPDATE_ONLY=1` to `xcodebuild`) boots and cleanly
-powers off the current image without testing sensors; it can finish an update
-interrupted by a terminated test host.

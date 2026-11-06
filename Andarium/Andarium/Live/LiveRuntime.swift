@@ -345,6 +345,9 @@ final class LiveRuntime: RuntimeDriver {
         if bootCompleted {
             reachedBootCompleted = true
             updateGuestRotation()
+            // An update counts as applied once its start has booted, whatever
+            // happens to the application after that.
+            do { try storage.bootCompleted() } catch { print("Andarium: the guest's record was not updated: \(error.localizedDescription)") }
         }
         for milestone in milestones where model.bootTracker.reach(milestone, atSeconds: seconds) {
             print("Andarium: boot reached \(milestone) at \(seconds) s")
@@ -383,7 +386,8 @@ final class LiveRuntime: RuntimeDriver {
         UIApplication.shared.isIdleTimerDisabled = false
         print(ConsoleReport.runtimeReturned(result))
         // A start that reached sys.boot_completed and ended with Android's own
-        // power-off is the one that ends a pending update.
+        // power-off is a completed one (`lastCompleted`); the pending update it
+        // may have started ended when the start booted.
         if result == 0, reachedBootCompleted {
             do { try storage.completeRun() } catch { print("Andarium: the guest's record was not updated: \(error.localizedDescription)") }
         }

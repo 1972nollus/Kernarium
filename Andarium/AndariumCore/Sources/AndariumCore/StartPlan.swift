@@ -41,7 +41,8 @@ public enum StartPlan: Equatable, Sendable {
     /// A newer Android on the same data layout. An unfinished update's data
     /// is restored first; the data is snapshotted before Android upgrades it.
     case update(from: String, to: String)
-    /// An update started and did not reach a clean end. Start tries the
+    /// An update started and did not reach `sys.boot_completed`; one that did
+    /// counts as applied and is not this. Start tries the
     /// update again when this Android is the one that was updating
     /// (`canRetry`); Restore puts back the data the update started from
     /// (`canRestore`, only while that copy exists); erasing the guest starts

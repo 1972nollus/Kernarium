@@ -134,7 +134,7 @@ public struct InstanceState: Equatable, Sendable {
         }
     }
 
-    /// An update whose first start has not completed.
+    /// An update whose first start has not reached `sys.boot_completed`.
     public struct Pending: Equatable, Sendable, Codable {
         public var toReleaseID: String
         public var snapshot: String
@@ -509,8 +509,27 @@ public struct InstanceFiles: Sendable {
         return updated
     }
 
+    /// Records that a start of `release` reached `sys.boot_completed`. Call it
+    /// at the moment the host first sees the guest boot. A pending update
+    /// counts as applied from then on: it ends, its snapshot is deleted, and a
+    /// newer system updates from the data as it is, with a snapshot of its
+    /// own. Restoring the snapshot is for an update that never booted. An
+    /// instance with no pending update is left as it is.
+    @discardableResult
+    public func booted(release: ReleaseIdentity) throws -> InstanceState {
+        guard var current = try readState(), current.releaseID == release.releaseID else {
+            throw InstanceError.state("The guest was not started with this system.")
+        }
+        guard let snapshot = current.pendingUpdate?.snapshot else { return current }
+        current.pendingUpdate = nil
+        try write(current)
+        try? FileManager.default.removeItem(at: directory.appendingPathComponent(snapshot))
+        return current
+    }
+
     /// Records that `release` reached `sys.boot_completed` and the guest shut
-    /// down cleanly. A pending update is over: its snapshot is deleted.
+    /// down cleanly (`lastCompleted`). A pending update that `booted` did not
+    /// end is over: its snapshot is deleted.
     @discardableResult
     public func complete(release: ReleaseIdentity, now: Date = Date()) throws -> InstanceState {
         guard var current = try readState(), current.releaseID == release.releaseID else {
