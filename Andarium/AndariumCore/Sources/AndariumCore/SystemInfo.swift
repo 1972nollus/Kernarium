@@ -17,11 +17,16 @@ public struct SystemInfo: Equatable, Sendable {
     public var securityPatch: String?
     public var kernel: String
     public var architecture: String
+    /// The application binary interfaces the image enables ("arm64-v8a",
+    /// "armeabi-v7a", "armeabi"), as the release records them
+    /// (`android.abi_list`); empty for a release that records none.
+    public var abis: [String]
     public var appVersion: String
 
     public init(
         version: String, release: String, buildID: String? = nil,
-        securityPatch: String? = nil, kernel: String, architecture: String, appVersion: String
+        securityPatch: String? = nil, kernel: String, architecture: String,
+        abis: [String] = [], appVersion: String
     ) {
         self.version = version
         self.release = release
@@ -29,6 +34,7 @@ public struct SystemInfo: Equatable, Sendable {
         self.securityPatch = securityPatch
         self.kernel = kernel
         self.architecture = architecture
+        self.abis = abis
         self.appVersion = appVersion
     }
 
@@ -80,6 +86,7 @@ public struct SystemInfo: Equatable, Sendable {
             buildID: android?["build_id"] as? String,
             securityPatch: (android?["security_patch"] as? String).flatMap(Self.patchLevel),
             kernel: "Linux \(version)", architecture: "arm64, \(pageSize / 1024) KiB pages",
+            abis: (android?["abi_list"] as? [Any])?.compactMap { $0 as? String }.filter { !$0.isEmpty } ?? [],
             appVersion: appVersion
         )
     }

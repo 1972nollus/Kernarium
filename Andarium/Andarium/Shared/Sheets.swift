@@ -141,13 +141,16 @@ struct InfoSheet: View {
                     .padding(.vertical, 6)
                 }
                 Section("System Info") {
-                    LabeledContent("Android Version", value: model.system.version)
                     LabeledContent("Build", value: model.system.release)
+                    LabeledContent("Android Version", value: model.system.version)
                     if let patch = model.system.securityPatch {
                         LabeledContent("Security Patch", value: patch)
                     }
                     LabeledContent("Kernel", value: model.system.kernel)
                     LabeledContent("Architecture", value: model.system.architecture)
+                    if !model.system.abis.isEmpty {
+                        LabeledContent("Supported architectures", value: model.system.abis.joined(separator: ", "))
+                    }
                 }
                 Section {
                     NavigationLink("Acknowledgements", value: InfoPage.acknowledgements)

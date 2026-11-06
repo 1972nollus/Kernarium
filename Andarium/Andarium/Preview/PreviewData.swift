@@ -11,7 +11,8 @@ enum PreviewData {
     static let system = SystemInfo(
         version: "17", release: release,
         securityPatch: "5 October 2026", kernel: "Linux 6.18.54",
-        architecture: "arm64, 4 KiB pages", appVersion: "1.0 (1)"
+        architecture: "arm64, 4 KiB pages", abis: ["arm64-v8a", "armeabi-v7a", "armeabi"],
+        appVersion: "1.0 (1)"
     )
 
     /// An iPad Pro or an iPhone, by idiom. The memory bounds are made-up ones

@@ -117,6 +117,16 @@ orientation and each change restarts the stream (`MotionMount`).
 
 `ITSAppUsesNonExemptEncryption` is NO in `Config/Info.plist`.
 
+## Info
+
+Info names the application's version and the system it carries, from the
+release manifest the packaging step stages beside the image: the build
+(release), the Android version, the security patch, the kernel, the kernel's
+architecture and the architectures the image enables (`android.abi_list`, from
+`ro.product.cpu.abilist`, for example arm64-v8a, armeabi-v7a and armeabi). A
+release published before the list was recorded has none, and the row is then
+left out.
+
 ## Acknowledgements
 
 Info lists every project the application carries, and a tap shows the
