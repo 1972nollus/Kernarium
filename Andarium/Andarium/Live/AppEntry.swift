@@ -90,6 +90,8 @@ struct AppEntry {
             guest: guest, host: host, system: system, capabilities: .device,
             createRequirementBytes: storage.createRequirementBytes
         )
+        // The rulers offer no size the carried system's data disk would refuse.
+        model.releaseMaximumGiB = storage.release.maximumGiB
         let options = DisplayOptionsStore.load()
         model.retina = launch.retina ?? options.retina
         // A harness launch shows the statistics from the start of the run and

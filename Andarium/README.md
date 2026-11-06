@@ -269,6 +269,12 @@ system disk and the data disk, creates `data.img` at the first start sized by
 the guest's capacity, and only grows it afterwards. Create and Erase therefore
 write no disk and take no time.
 
+Every storage ruler (a new guest, Resize Storage) moves in 4 GiB steps from
+4 GiB to at most 128 GiB (`Limits.capacityStopsGiB`); the default stays 8 GiB.
+The top is also bounded by the largest data disk the carried release's layout
+allows (`ReleaseIdentity.maximumGiB`), which the model keeps as
+`releaseMaximumGiB`, so a release that allows less offers less.
+
 `InstanceRules.decide` (`Instance.swift`, the rules and vectors of the
 [Android README](../android/lineage-24/README.md#guest-instance-storage))
 chooses what a start does with the carried release, and `StartPlan` is what

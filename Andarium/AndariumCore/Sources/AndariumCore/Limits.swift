@@ -4,9 +4,20 @@ import Foundation
 
 /// The ranges, defaults and reserves the application offers.
 public enum Limits {
-    /// A guest's storage capacity, in whole gibibytes. Storage only grows.
-    public static let capacityRangeGiB = 4...64
+    /// A guest's storage capacity, in whole gibibytes, which the rulers offer
+    /// in steps of `capacityStepGiB`. Storage only grows.
+    public static let capacityRangeGiB = 4...128
+    public static let capacityStepGiB = 4
     public static let defaultCapacityGiB = 8
+
+    /// The sizes the storage rulers offer: 4, 8, 12 GiB and on in steps of
+    /// `capacityStepGiB`, through the largest the system the application
+    /// carries accepts (its data disk's maximum), and never above the range.
+    public static func capacityStopsGiB(releaseMaximumGiB: Int = capacityRangeGiB.upperBound) -> [Int] {
+        let top = min(releaseMaximumGiB, capacityRangeGiB.upperBound)
+        guard top >= capacityRangeGiB.lowerBound else { return [capacityRangeGiB.lowerBound] }
+        return Array(stride(from: capacityRangeGiB.lowerBound, through: top, by: capacityStepGiB))
+    }
 
     /// What the runtime accepts for a guest's memory, in steps of 64 MiB. The
     /// memory ruler starts at the bottom of it and counts in the same steps;

@@ -131,6 +131,7 @@ struct HomeView: View {
             StoragePanel(
                 guest: Binding(get: { model.guest! }, set: { model.guest = $0 }),
                 host: model.host,
+                stops: model.capacityStopsGiB,
                 resize: { model.sheet = .resize }
             )
         }

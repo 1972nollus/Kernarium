@@ -166,6 +166,11 @@ final class AppModel {
     /// Free space a new guest needs, which the storage behind the screens
     /// decides.
     var createRequirementBytes: UInt64
+    /// The largest data disk the carried system accepts, in GiB; the storage
+    /// rulers stop there when it is below `Limits.capacityRangeGiB`.
+    var releaseMaximumGiB = Limits.capacityRangeGiB.upperBound
+    /// The sizes the storage rulers offer, in steps of 4 GiB.
+    var capacityStopsGiB: [Int] { Limits.capacityStopsGiB(releaseMaximumGiB: releaseMaximumGiB) }
     var sheet: SheetKind?
     var startBlocked = false
     /// What a start would be, from the guest's files: Home words Start and

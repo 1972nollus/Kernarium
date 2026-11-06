@@ -84,8 +84,10 @@ public struct Guest: Equatable, Codable, Sendable {
 
     /// Resize: storage only grows, and the growth waits for the next start.
     /// Choosing the current capacity again cancels a growth not yet applied.
-    public mutating func setCapacity(_ value: Int) {
-        let value = min(max(value, capacityGiB), Limits.capacityRangeGiB.upperBound)
+    /// `maximum` is the largest the carried system accepts, when that is
+    /// below the range's.
+    public mutating func setCapacity(_ value: Int, maximum: Int = Limits.capacityRangeGiB.upperBound) {
+        let value = min(max(value, capacityGiB), min(maximum, Limits.capacityRangeGiB.upperBound))
         pendingCapacityGiB = value > capacityGiB ? value : nil
     }
 

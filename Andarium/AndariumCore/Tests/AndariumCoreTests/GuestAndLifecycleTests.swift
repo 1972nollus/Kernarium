@@ -34,8 +34,29 @@ struct GuestTests {
         #expect(guest.effectiveCapacityGiB == 8)
 
         guest.setCapacity(500)
-        #expect(guest.pendingCapacityGiB == 64)
+        #expect(guest.pendingCapacityGiB == 128)
         #expect(!guest.canGrow)
+    }
+
+    @Test func theCarriedSystemsLargestDiskLimitsGrowth() {
+        var guest = Guest.fresh(on: ipad)
+        guest.setCapacity(500, maximum: 64)
+        #expect(guest.pendingCapacityGiB == 64)
+    }
+
+    @Test func theRulersOfferEveryFourGiBFromFourToOneHundredTwentyEight() {
+        let stops = Limits.capacityStopsGiB()
+        #expect(stops.first == 4 && stops.last == 128 && stops.count == 32)
+        #expect(zip(stops, stops.dropFirst()).allSatisfy { $1 - $0 == Limits.capacityStepGiB })
+        #expect(stops.contains(Limits.defaultCapacityGiB))
+    }
+
+    @Test func aSystemWhoseDiskStopsLowerCutsTheRulerThere() {
+        #expect(Limits.capacityStopsGiB(releaseMaximumGiB: 64).last == 64)
+        // Between steps, the last step below it.
+        #expect(Limits.capacityStopsGiB(releaseMaximumGiB: 70).last == 68)
+        #expect(Limits.capacityStopsGiB(releaseMaximumGiB: 500).last == 128)
+        #expect(Limits.capacityStopsGiB(releaseMaximumGiB: 2) == [4])
     }
 
     @Test func choosingTheCurrentCapacityCancelsAPendingGrowth() {
