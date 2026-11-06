@@ -61,6 +61,7 @@ struct HomeView: View {
             case .info: InfoSheet(acknowledgements: hints.acknowledgements)
             }
         }
+        .microphoneAccessAlert()
         .alert("Not Enough Free Space", isPresented: $model.startBlocked) {
             Button("OK", role: .cancel) {}
         } message: {

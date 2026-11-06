@@ -39,6 +39,7 @@ struct SessionSettingsSheet: View {
                 }
             }
         }
+        .microphoneAccessAlert()
         .task { await model.watchSettings() }
         .presentationDetents([.medium, .large], selection: $detent)
         .presentationBackground(Color(.systemGroupedBackground))
@@ -230,16 +231,32 @@ struct SessionSettingsSheet: View {
         }
     }
 
-    /// The microphone and the gyroscope, which apply at once.
+    /// The microphone and the gyroscope, which apply at once. While iOS
+    /// refuses the microphone the row dims and says so; turning it on then
+    /// offers Settings.
     @ViewBuilder
     private var capabilities: some View {
         if let guest = model.guest {
+            let denied = model.microphoneState == .denied
             Section {
                 Toggle(isOn: Binding(
-                    get: { guest.microphone },
+                    get: { model.microphoneShownOn },
                     set: { model.setMicrophone($0) }
                 )) {
-                    rowLabel("Microphone", symbol: "mic.fill")
+                    HStack(spacing: 12) {
+                        IconTile(symbol: "mic.fill", color: denied ? .gray : .accentColor)
+                            .opacity(denied ? 0.55 : 1)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Microphone")
+                                .lineLimit(1)
+                                .opacity(denied ? 0.55 : 1)
+                            if denied {
+                                Text(CapabilityWords.microphoneDenied)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                 }
                 Toggle(isOn: Binding(
                     get: { guest.motionSensors }, set: { model.setMotionSensors($0) }
@@ -250,10 +267,7 @@ struct SessionSettingsSheet: View {
             } header: {
                 Text("Capabilities")
             } footer: {
-                if let problem = model.motionSensorsProblem { Text(problem) }
-                if guest.microphone && model.microphoneState == .denied {
-                    Text("iOS has not allowed Andarium to use the microphone, so the guest records silence. Allow it for Andarium in Settings.")
-                }
+                Text(model.motionSensorsProblem ?? CapabilitiesSection.gyroscopeNote(available: model.motionSensorsAvailable))
             }
         }
     }

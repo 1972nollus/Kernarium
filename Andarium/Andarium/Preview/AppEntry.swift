@@ -27,7 +27,8 @@ struct AppEntry {
     private static let scrollTargets: [String: String] = [
         "home-options": "erase", "home-recovery-erase": "erase", "start-recovery": "erase",
         "home-display": "display",
-        "home-capabilities": "capabilities", "home-gyroscope-unavailable": "capabilities",
+        "home-capabilities": "capabilities", "home-mic-on": "capabilities", "home-mic-denied": "capabilities",
+        "home-mic-alert": "capabilities", "home-gyroscope-unavailable": "capabilities",
         "home-backup": "backup",
     ]
 
@@ -93,6 +94,11 @@ struct AppEntry {
             model.notice = .closedInBackground
         case "home-options", "home-display", "home-capabilities", "home-backup", "system-edit":
             break
+        case "home-mic-on":
+            model.guest?.microphone = true
+            model.microphoneState = .granted
+        case "home-mic-denied", "home-mic-alert":
+            model.microphoneState = .denied
         case "home-gyroscope-unavailable":
             model.motionSensorsAvailable = false
         case "home-erased":
@@ -194,6 +200,8 @@ struct AppEntry {
             model.sheet = .resize
         case "system-edit":
             model.sheet = .system
+        case "home-mic-alert":
+            model.setMicrophone(true)
         case "erase", "erase-confirm":
             model.sheet = .erase
         case "info", "info-acknowledgements":

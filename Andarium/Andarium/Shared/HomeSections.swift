@@ -165,7 +165,8 @@ struct DisplaySection: View {
 
 // MARK: Capabilities
 
-/// What the guest may use of this device: the microphone and the gyroscope.
+/// What the guest may use of this device: the microphone, which iOS asks
+/// about when it is turned on, and the gyroscope.
 struct CapabilitiesSection: View {
     @Environment(AppModel.self) private var model
 
@@ -190,17 +191,27 @@ struct CapabilitiesSection: View {
     }
 }
 
+/// The words under Microphone while iOS refuses access.
+enum CapabilityWords {
+    static let microphoneDenied = "Not allowed in Settings"
+}
+
 struct MicrophoneRow: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        OptionRow(title: "Microphone", symbol: "mic.fill") {
+        let denied = model.microphoneState == .denied
+        OptionRow(
+            title: "Microphone", symbol: "mic.fill",
+            detail: denied ? CapabilityWords.microphoneDenied : nil, dimmed: denied
+        ) {
             Toggle("Microphone", isOn: Binding(
-                get: { model.guest?.microphone == true },
+                get: { model.microphoneShownOn },
                 set: { model.setMicrophone($0) }
             ))
             .labelsHidden()
         }
+        .accessibilityHint(denied ? "Andarium is not allowed to use the microphone. Turning this on offers to open Settings." : "")
     }
 }
 
@@ -218,6 +229,31 @@ struct GyroscopeRow: View {
             .disabled(!model.motionSensorsAvailable && !on)
         }
     }
+}
+
+/// When iOS has refused the microphone there is nothing to ask again: say so,
+/// and offer Andarium's page in Settings.
+struct MicrophoneAccessAlert: ViewModifier {
+    @Environment(AppModel.self) private var model
+
+    func body(content: Content) -> some View {
+        @Bindable var model = model
+        content.alert(
+            "Allow Microphone Access", isPresented: Binding(
+                get: { model.permissionPrompt == .microphone },
+                set: { if !$0 { model.permissionPrompt = nil } }
+            )
+        ) {
+            Button("Open Settings") { model.openMicrophoneSettings() }
+            Button("Not Now", role: .cancel) {}
+        } message: {
+            Text("iOS is not allowing Andarium to use the microphone. Turn on Microphone for Andarium in Settings, then come back to use it.")
+        }
+    }
+}
+
+extension View {
+    func microphoneAccessAlert() -> some View { modifier(MicrophoneAccessAlert()) }
 }
 
 // MARK: Backup

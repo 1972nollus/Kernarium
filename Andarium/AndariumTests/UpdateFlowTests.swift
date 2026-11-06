@@ -36,7 +36,8 @@ final class StubDriver: RuntimeDriver {
     func setMotionSensors(_ on: Bool) { motionSensors = on }
     private(set) var geometryChanges = 0
     func sceneGeometryDidChange() { geometryChanges += 1 }
-    func setMicrophone(_ on: Bool) {}
+    private(set) var microphoneCalls: [Bool] = []
+    func setMicrophone(_ on: Bool) { microphoneCalls.append(on) }
 
     /// What a bug report or an install does when the model asks.
     var bugReport: (@Sendable (@Sendable (BusyUpdate) -> Void) async throws -> URL) = { _ in

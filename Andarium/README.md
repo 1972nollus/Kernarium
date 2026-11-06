@@ -310,8 +310,17 @@ each finger independently onto the guest's visible display.
 Retina mode applies at the next start, because the runtime takes it at boot, so
 the session's Settings leaves it out (`Capabilities.liveDisplayOptions`). The
 guest's display always follows the window; there is no option for it, and a
-value an earlier version stored is ignored. Microphone applies at once and
-asks iOS for access when it is turned on.
+value an earlier version stored is ignored.
+
+Capabilities apply at once. Turning Microphone on asks iOS for access at that
+moment; if iOS refuses, the switch goes back off, the row dims with "Not allowed
+in Settings", and turning it on again says so and offers Andarium's page in
+Settings. The same happens when access is taken away in Settings, which Andarium
+sees whenever it becomes active (and at launch), and the guest hears nothing
+while access is out of reach; allowing it in Settings after being offered the
+page turns the switch on. Gyroscope has no permission: raw accelerometer and
+gyroscope updates (`CMMotionManager`) need no iOS access and no purpose string,
+so it is a plain switch.
 
 Retina uses the screen's native pixels. On a 2× display, that makes each
 full-screen colour or depth buffer four times the size at point resolution;

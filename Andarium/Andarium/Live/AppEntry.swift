@@ -104,6 +104,9 @@ struct AppEntry {
             let runtime = LiveRuntime(model: model, storage: storage, marker: marker, keyStore: adbKeyStore)
             model.driver = runtime
             model.refreshPlan()
+            // Access the person took away while Andarium was closed takes the
+            // Microphone choice with it.
+            runtime.refreshPermissions()
         }
         model.alert = problem.map { AppAlert(title: "Andarium Is Incomplete", message: $0) }
         return model

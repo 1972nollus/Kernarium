@@ -200,6 +200,17 @@ final class AppModel {
     var motionSensorsAvailable = true
     var motionSensorsProblem: String?
     var microphoneState = MicrophoneState.notAsked
+    /// The question about a permission the person is being asked, if any.
+    var permissionPrompt: PermissionPrompt?
+    /// The person went to Settings to allow the microphone: when Andarium is
+    /// active again with access, the switch they tapped turns on.
+    var microphoneAwaitsSettings = false
+    /// Opens Andarium's page in the system's Settings. A test puts its own here.
+    @ObservationIgnored var openSettings: @MainActor () -> Void = {
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
+        }
+    }
     private var persistTask: Task<Void, Never>?
     /// The Android operation under way (a bug report, an install), which the
     /// overlay's Cancel stops, and the run it belongs to.
@@ -747,12 +758,65 @@ final class AppModel {
         driver?.setMotionSensors(on)
     }
 
-    /// The microphone switch: the guest's choice, then the system's answer.
+    /// The Microphone switch as the screens show it: the guest's choice is on
+    /// and iOS lets Andarium record. Access that was refused or taken away
+    /// shows it off, and the guest hears nothing then.
+    var microphoneShownOn: Bool { guest?.microphone == true && microphoneState != .denied }
+
+    /// The Microphone switch. Turning it on asks iOS for access at once, the
+    /// first time. After a refusal there is nothing to ask: the person is told
+    /// and offered Andarium's page in Settings.
     func setMicrophone(_ on: Bool) {
         guard guest != nil else { return }
-        guest?.microphone = on
-        persistNow()
-        driver?.setMicrophone(on)
+        guard on else {
+            microphoneAwaitsSettings = false
+            guest?.microphone = false
+            persistNow()
+            driver?.setMicrophone(false)
+            return
+        }
+        switch microphoneState {
+        case .denied:
+            permissionPrompt = .microphone
+        case .notAsked:
+            guest?.microphone = true
+            persistNow()
+            // The device asks iOS and reports the answer to `microphoneAccessChanged`.
+            // The preview has no system prompt to show and takes it as given.
+            if let driver { driver.setMicrophone(true) } else { microphoneAccessChanged(.granted) }
+        case .granted:
+            guest?.microphone = true
+            persistNow()
+            driver?.setMicrophone(true)
+        }
+    }
+
+    /// iOS answered the microphone question, or the person changed Andarium's
+    /// access in Settings. A refusal takes the choice back with it; access the
+    /// person went to Settings to give turns the switch they tapped on.
+    func microphoneAccessChanged(_ state: MicrophoneState) {
+        microphoneState = state
+        switch state {
+        case .denied:
+            if guest?.microphone == true {
+                guest?.microphone = false
+                persistNow()
+            }
+        case .granted:
+            if microphoneAwaitsSettings, guest != nil, guest?.microphone != true {
+                guest?.microphone = true
+                persistNow()
+            }
+        case .notAsked:
+            break
+        }
+        if state != .notAsked { microphoneAwaitsSettings = false }
+    }
+
+    /// The alert's Open Settings.
+    func openMicrophoneSettings() {
+        microphoneAwaitsSettings = true
+        openSettings()
     }
 
     /// The step of the boot under way, from the runtime's milestones.
