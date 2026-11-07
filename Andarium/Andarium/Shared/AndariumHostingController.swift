@@ -69,7 +69,7 @@ final class AndariumHostingController<Content: View>: UIHostingController<Conten
         withObservationTracking {
             _ = model.phase
         } onChange: { [weak self] in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.observePhase()
                 self?.scheduleUpdate()
             }
