@@ -24,8 +24,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def git(repository: Path, *arguments: str) -> str:
     return subprocess.run(
-        ["git", "-C", str(repository), "-c", "user.name=fixture",
-         "-c", "user.email=fixture@example.invalid", *arguments],
+        ["git", "-C", str(repository), *arguments],
         check=True, stdin=subprocess.DEVNULL, capture_output=True, text=True,
     ).stdout.strip()
 
