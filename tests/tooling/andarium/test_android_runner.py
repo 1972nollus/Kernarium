@@ -325,6 +325,8 @@ class AndroidRunnerTests(unittest.TestCase):
         first_work = min(i for i, s in enumerate(shells)
                          if s.startswith(("sh /data/local/tmp/", "am start -W")))
         self.assertLess(shells.index(commands[-1]), first_work)
+        # The helper changes nothing until user 0 is unlocked and the wizard has bound.
+        self.assertLess(shells.index("am get-started-user-state 0"), shells.index(commands[0]))
 
     def test_an_erased_guest_that_stays_in_the_wizard_fails_the_run(self) -> None:
         outcome = self.run_android(
