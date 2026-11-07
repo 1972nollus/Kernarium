@@ -246,6 +246,23 @@ keeps a harness correct on an older release that still carries DeviceDiagnostics
 (r15 and earlier, where provisioning at `sys.boot_completed` also keeps the
 mode from starting: "Not starting trade-in mode, device is setup"). A measurement
 of the first-boot experience itself keeps the wizard.
+
+The home screen's first page holds the six applications of the image that have
+a launcher activity: Settings, Calendar (Etar), Gallery (Glimpse), Music
+(Twelve), Calculator and Files, row by row from the top left. The dock and the
+other pages are empty and no widget is placed. Launcher3's stock layouts name
+Google applications and widgets that the image does not ship, so a fresh guest
+dropped most of the items (the launcher logs each one) and showed what was left
+on the second page. The layouts are part of the launcher's runtime resource
+overlay, `overlay/overlay/packages/apps/Launcher3/res/xml/default_workspace_<columns>x<rows>.xml`
+for each grid the launcher can choose from the display's size (4x5, 5x5, 5x6,
+5x7, 6x5 and 6x6), and name each application by package and class. The
+target-files verifier requires every one of those layouts in the overlay with
+exactly the six, on the first page and inside the grid, and the image to ship
+each application. The launcher reads its default layout once, when it creates its
+database, so a guest created before a release keeps the home screen it has; a
+new layout shows on a new data partition. `android-oobe` reads the launcher's
+data model on both guests.
 The `android-oobe` test completes the wizard through its pages and checks that
 the helper reaches the same observable state. The LineageOS updater, Canvas,
 Aperture, Profiles, Recorder, QuickAccessWallet, the charger animation,

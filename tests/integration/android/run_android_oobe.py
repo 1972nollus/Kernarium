@@ -16,13 +16,16 @@ a fresh instance, and checks the contract in android/lineage-24/README.md:
   resolving to, and pressed back to, the launcher, three-button navigation
   (`navigation_mode` 0, the gestural overlay off and both mode overlays
   present), no screen lock, location on as it was before the wizard, Wi-Fi
-  connected to VirtWifi, and no status bar lock held by the wizard;
+  connected to VirtWifi, no status bar lock held by the wizard, and a home
+  screen whose first page holds the six applications of the default layout
+  (Settings, Calendar, Gallery, Music, Calculator, Files) with an empty dock,
+  none of them dropped while the launcher read its layout;
 - helper: the guest is started with `--provision`, the harness path of
   tools/android_provision.py, and reaches the same observable state without a
   person: both settings 1 and HOME on the launcher. The shell may not disable
   the wizard's components, so the helper disables the wizard package for user 0
   instead, and stops its process, which holds a status bar lock until it dies.
-  The helper then finds nothing left to do.
+  The helper then finds nothing left to do. Its home screen is checked the same.
 
 The flow is the contract of release r17 and later: a release that still shows
 LineageOS's other pages fails at the first page that is not in the list.
@@ -66,6 +69,17 @@ FLOW = (WELCOME_ACTIVITY, LOCALE_ACTIVITY, DATETIME_ACTIVITY, THEME_ACTIVITY, FI
 NAVBAR_GESTURAL = "com.android.internal.systemui.navbar.gestural"
 NAVBAR_3BUTTON = "com.android.internal.systemui.navbar.threebutton"
 WIFI_NETWORK = "VirtWifi"
+LAUNCHER_ACTIVITY = f"{LAUNCHER_PACKAGE}/.uioverrides.QuickstepLauncher"
+# The applications of the launcher's default layout (android/lineage-24/overlay/overlay/packages/apps/Launcher3).
+HOME_APPS = frozenset({
+    ("com.android.settings", "com.android.settings.Settings"),
+    ("org.lineageos.etar", "com.android.calendar.AllInOneActivity"),
+    ("org.lineageos.glimpse", "org.lineageos.glimpse.MainActivity"),
+    ("org.lineageos.twelve", "org.lineageos.twelve.MainActivity"),
+    ("com.android.calculator2", "com.android.calculator2.Calculator"),
+    ("com.android.documentsui", "com.android.documentsui.LauncherActivity"),
+})
+LAUNCHER_LOAD_SECONDS = 60
 UI_DUMP = "/data/local/tmp/andarium-oobe-ui.xml"
 BOUNDS = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 RESUMED = re.compile(r"ResumedActivity: ActivityRecord\{\S+ u\d+ (\S+) t\d+\}")
@@ -166,6 +180,74 @@ def wifi_network(dumpsys_wifi: str) -> tuple[str, str] | None:
     """The connected network's name and supplicant state from `dumpsys wifi`, or None."""
     match = WIFI_INFO.search(dumpsys_wifi)
     return (match.group("ssid"), match.group("state")) if match else None
+
+
+LAUNCHER_ITEM = re.compile(
+    r"^ *\tItemInfo\(id=(?P<id>-?\d+) type=(?P<type>\w+) container=[^\n]*\n(?P<body>.*?)"
+    r"(?=^ *\tItemInfo\(id=|^\s*---- extra items|\Z)", re.MULTILINE | re.DOTALL)
+LAUNCHER_CONTAINER = re.compile(r"(?P<kind>\w+) \{(?P<fields>[^}]*)\}")
+LAUNCHER_COMPONENT = re.compile(r"targetComponent=ComponentInfo\{(?P<package>[^/}]+)/(?P<class>[^}]+)\}")
+LAUNCHER_LOG = re.compile(r"^\d\d-\d\d \d\d:\d\d:\d\d\.\d+ (?P<level>[VDIWEF])/(?P<tag>[^\s(]+)\s*\(\s*\d+\): (?P<message>.*)$",
+                          re.MULTILINE)
+LAUNCHER_LAYOUT_LOADED = "loading default workspace"
+LAUNCHER_LAYOUT_TAGS = ("DefaultLayoutParser", "AutoInstalls")
+
+
+def launcher_items(dump: str) -> list[dict]:
+    """The items of the launcher's `Data Model` in a dump of its activity, without the predictions.
+
+    The dump prints a container as protobuf text, which leaves a zero field out: an item on the
+    first page has no `page_index`."""
+    section = dump.partition("Data Model:")[2].partition("---- extra items")[0]
+    items = []
+    for match in LAUNCHER_ITEM.finditer(section):
+        if int(match.group("id")) < 0:
+            continue
+        body = match.group("body")
+        container = LAUNCHER_CONTAINER.match(body)
+        page = re.search(r"page_index: (\d+)", container.group("fields")) if container else None
+        component = LAUNCHER_COMPONENT.search(body)
+        items.append({
+            "id": int(match.group("id")), "type": match.group("type"),
+            "container": container.group("kind") if container else "?",
+            "page": int(page.group(1)) if page else 0,
+            "component": (component.group("package"), component.group("class")) if component else None,
+        })
+    return items
+
+
+def launcher_problems(items: list[dict]) -> list[str]:
+    """What is wrong with the workspace: it holds the six applications on the first page and nothing else."""
+    problems = []
+    if len(items) != len(HOME_APPS):
+        problems.append(f"{len(items)} items, expected {len(HOME_APPS)}")
+    for item in items:
+        name = "/".join(item["component"]) if item["component"] else f"item {item['id']}"
+        if item["type"] != "APP" or item["component"] not in HOME_APPS:
+            problems.append(f"{name} ({item['type']}) is not one of the six applications")
+        if item["container"] != "workspace":
+            problems.append(f"{name} is in the {item['container']}, not on the workspace")
+        elif item["page"] != 0:
+            problems.append(f"{name} is on page {item['page']}, not the first")
+    for package, class_name in sorted(HOME_APPS - {item["component"] for item in items}):
+        problems.append(f"{package}/{class_name} is missing")
+    return problems
+
+
+def launcher_layout_drops(log: str) -> list[str] | None:
+    """The layout parser's complaints from the launcher's last load of its default layout.
+
+    None when the log no longer holds that load. An item the layout names that the image lacks
+    is logged by the parser and dropped; the layout names no widget, so the widget lookup failing is a drop too."""
+    start = log.rfind(LAUNCHER_LAYOUT_LOADED)
+    if start < 0:
+        return None
+    drops = []
+    for match in LAUNCHER_LOG.finditer(log[start:]):
+        if match.group("tag") in LAUNCHER_LAYOUT_TAGS and (
+                match.group("level") in "WE" or "Can't find" in match.group("message")):
+            drops.append(f"{match.group('tag')}: {match.group('message')}")
+    return drops
 
 
 def disabled_components(dumpsys_package: str) -> set[str]:
@@ -390,6 +472,30 @@ def check_wizard_released(device: Device, *, by_wizard: bool) -> None:
     print("the wizard holds no status bar lock")
 
 
+def check_launcher(device: Device) -> None:
+    """The home screen holds the six applications of the default layout on its first page, and the dock is empty.
+
+    The launcher reads its layout when it first starts, and a guest keeps what it built, so this is
+    a fresh guest's check. A release whose layout names an application the image lacks drops it and
+    the parser says so in the log."""
+    deadline = time.monotonic() + LAUNCHER_LOAD_SECONDS
+    while True:
+        items = launcher_items(device.shell(f"dumpsys activity {LAUNCHER_ACTIVITY}", timeout=60))
+        if len(items) >= len(HOME_APPS) or time.monotonic() >= deadline:
+            break
+        time.sleep(2)
+    problems = launcher_problems(items)
+    if problems:
+        raise Failure("the launcher's workspace is not the default layout: " + "; ".join(problems))
+    log = device.shell("logcat -d -v time -s ModelDbController:D " + " ".join(f"{tag}:D" for tag in LAUNCHER_LAYOUT_TAGS),
+                       timeout=60)
+    drops = launcher_layout_drops(log)
+    if drops:
+        raise Failure("the launcher dropped items of its default layout: " + "; ".join(drops[:5]))
+    print("home screen: the six applications on the first page, the dock empty"
+          + ("" if drops is not None else " (the log no longer holds the layout load: drops not checked)"))
+
+
 def check_provisioned(device: Device, *, by_wizard: bool, before: dict[str, str] | None = None) -> None:
     """The end state: both settings 1, and HOME the launcher, pressed or not.
 
@@ -420,6 +526,7 @@ def check_provisioned(device: Device, *, by_wizard: bool, before: dict[str, str]
           + ("disabled its HOME activity and manager" if by_wizard else "package is disabled"))
     check_wizard_released(device, by_wizard=by_wizard)
     check_defaults(device, before)
+    check_launcher(device)
 
 
 # --- the runner -----------------------------------------------------------------

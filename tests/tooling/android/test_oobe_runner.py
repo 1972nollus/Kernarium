@@ -375,5 +375,200 @@ class WizardReleasedTests(unittest.TestCase):
             self.check(self.Guest(False, ["1445"]), by_wizard=False)
 
 
+# The launcher's `Data Model` as `dumpsys activity com.android.launcher3/.uioverrides.QuickstepLauncher`
+# prints it: protobuf text for the container, which leaves a zero field out.
+DUMP_HEAD = """\
+    ContextTracker:
+    \tmCurrentContext=com.android.launcher3.uioverrides.QuickstepLauncher@c03d938
+    Data Model:
+     ---- items id map
+    \tItemInfo(id=-103 type=APP container=# com.android.launcher3.logger.LauncherAtom$ContainerInfo@19f79dd
+predicted_hotseat_container {
+  index: -1
+} targetComponent=null ResolvedTargetInfo=ResolvedTargetInfo(targetActivityComponentName=null, componentName=null, user=UserHandle{0}) screen=-1 cell(-1,-1) span(1,1) title=null, items: [])
+    \tItemInfo(id=-102 type=APP container=# com.android.launcher3.logger.LauncherAtom$ContainerInfo@1a1bf6a
+prediction_container {
+} targetComponent=null ResolvedTargetInfo=ResolvedTargetInfo(targetActivityComponentName=null, componentName=null, user=UserHandle{0}) screen=-1 cell(-1,-1) span(1,1) title=null, items: [])
+"""
+DUMP_TAIL = """\
+     ---- extra items
+    Default MSDL player implementation.
+"""
+
+
+def dump_item(item_id: int, kind: str, package: str, class_name: str, *, page: int = 0, x: int = 0, y: int = 0,
+              type_name: str = "APP", index: int | None = None) -> str:
+    fields = []
+    if kind == "hotseat":
+        fields = [f"index: {item_id}"] if index is None else [f"index: {index}"]
+    else:
+        fields += [f"grid_x: {x}"] if x else []
+        fields += [f"grid_y: {y}"] if y else []
+        fields += [f"page_index: {page}"] if page else []
+    body = "".join(f"  {field}\n" for field in fields)
+    return (f"    \tItemInfo(id={item_id} type={type_name} container=# com.android.launcher3.logger.LauncherAtom"
+            f"$ContainerInfo@21c970c\n{kind} {{\n{body}}} targetComponent=ComponentInfo{{{package}/{class_name}}} "
+            f"ResolvedTargetInfo=ResolvedTargetInfo(componentName=ComponentInfo{{{package}/{class_name}}}) "
+            f"screen={page} cell({x},{y}) span(1,1) title=null, items: [])\n")
+
+
+def home_dump(*, columns: int = 5, **changes) -> str:
+    apps = sorted(runner.HOME_APPS)
+    order = [("com.android.settings", "com.android.settings.Settings")] + [app for app in apps if app[0] != "com.android.settings"]
+    items = []
+    for index, (package, class_name) in enumerate(order):
+        items.append(dump_item(index + 2, "workspace", package, class_name, x=index % columns, y=index // columns))
+    return DUMP_HEAD + "".join(items) + DUMP_TAIL
+
+
+class LauncherWorkspaceTests(unittest.TestCase):
+    def test_the_six_applications_on_the_first_page_are_the_default_layout(self) -> None:
+        items = runner.launcher_items(home_dump())
+        self.assertEqual(len(items), 6)
+        self.assertEqual({item["component"] for item in items}, runner.HOME_APPS)
+        self.assertEqual({item["page"] for item in items}, {0})
+        self.assertEqual({item["container"] for item in items}, {"workspace"})
+        self.assertEqual(runner.launcher_problems(items), [])
+
+    def test_a_grid_with_other_columns_is_the_same_layout(self) -> None:
+        for columns in (4, 5, 6):
+            with self.subTest(columns=columns):
+                self.assertEqual(runner.launcher_problems(runner.launcher_items(home_dump(columns=columns))), [])
+
+    def test_the_prediction_items_are_not_items(self) -> None:
+        items = runner.launcher_items(DUMP_HEAD + DUMP_TAIL)
+        self.assertEqual(items, [])
+
+    def test_a_dump_without_a_data_model_has_no_items(self) -> None:
+        self.assertEqual(runner.launcher_items("nothing here"), [])
+        self.assertEqual(len(runner.launcher_problems([])), 7)
+
+    def test_the_old_layout_is_a_failure_on_every_count(self) -> None:
+        # What r16 showed: a widget and three applications on the second page.
+        old = (DUMP_HEAD
+               + dump_item(2, "workspace", "org.lineageos.twelve", "org.lineageos.twelve.ui.widgets.NowPlayingAppWidgetProvider",
+                           page=1, type_name="WIDGET")
+               + dump_item(3, "workspace", "org.lineageos.glimpse", "org.lineageos.glimpse.MainActivity", page=1, x=1, y=4)
+               + dump_item(4, "workspace", "org.lineageos.twelve", "org.lineageos.twelve.MainActivity", page=1, x=2, y=4)
+               + dump_item(5, "workspace", "com.android.settings", "com.android.settings.Settings", page=1, x=3, y=4)
+               + DUMP_TAIL)
+        problems = runner.launcher_problems(runner.launcher_items(old))
+        text = "; ".join(problems)
+        self.assertIn("4 items, expected 6", text)
+        self.assertIn("(WIDGET) is not one of the six applications", text)
+        self.assertIn("org.lineageos.glimpse/org.lineageos.glimpse.MainActivity is on page 1, not the first", text)
+        self.assertIn("com.android.calculator2/com.android.calculator2.Calculator is missing", text)
+
+    def test_an_item_in_the_dock_is_a_failure(self) -> None:
+        dump = home_dump().replace(
+            "    \tItemInfo(id=2 type=APP container=# com.android.launcher3.logger.LauncherAtom$ContainerInfo@21c970c\nworkspace {",
+            "    \tItemInfo(id=2 type=APP container=# com.android.launcher3.logger.LauncherAtom$ContainerInfo@21c970c\nhotseat {\n  index: 0\n",
+            1)
+        problems = runner.launcher_problems(runner.launcher_items(dump))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("is in the hotseat, not on the workspace", problems[0])
+
+    def test_a_seventh_item_is_a_failure(self) -> None:
+        dump = home_dump().replace(DUMP_TAIL, dump_item(9, "workspace", "com.android.deskclock", "com.android.deskclock.DeskClock",
+                                                      x=0, y=4) + DUMP_TAIL)
+        problems = runner.launcher_problems(runner.launcher_items(dump))
+        self.assertTrue(any("7 items, expected 6" in problem for problem in problems), problems)
+        self.assertTrue(any("com.android.deskclock" in problem for problem in problems), problems)
+
+    def test_a_missing_application_is_named(self) -> None:
+        dump = home_dump()
+        start = dump.index("    \tItemInfo(id=7 ")
+        end = dump.index(DUMP_TAIL)
+        problems = runner.launcher_problems(runner.launcher_items(dump[:start] + dump[end:]))
+        self.assertEqual(len(problems), 2, problems)
+        self.assertIn("5 items, expected 6", problems[0])
+        self.assertIn("is missing", problems[1])
+
+
+DROPS = """\
+--------- beginning of main
+11-07 03:59:00.310 D/ModelDbController( 1080): loading default workspace
+11-07 03:59:00.496 W/DefaultLayoutParser( 1080): No preference or single system activity found for Intent { act=android.intent.action.DIAL }
+11-07 03:59:00.878 D/DefaultLayoutParser( 1080): Can't find widget provider: com.google.android.googlequicksearchbox.SearchWidgetProvider
+11-07 03:59:01.110 E/AutoInstalls( 1080): Favorite not found: com.google.android.gm/com.google.android.gm.ConversationListActivityGmail
+"""
+CLEAN = """\
+--------- beginning of main
+11-07 03:40:00.100 W/DefaultLayoutParser( 900): left over from an older load
+11-07 03:59:00.310 D/ModelDbController( 1080): loading default workspace
+11-07 03:59:00.500 D/DefaultLayoutParser( 1080): parsed favorites
+"""
+
+
+class LauncherLayoutLogTests(unittest.TestCase):
+    def test_the_parsers_complaints_after_the_layout_load_are_the_drops(self) -> None:
+        drops = runner.launcher_layout_drops(DROPS)
+        self.assertEqual(len(drops), 3)
+        self.assertTrue(drops[0].startswith("DefaultLayoutParser: No preference"))
+        self.assertIn("Can't find widget provider", drops[1])
+        self.assertIn("AutoInstalls: Favorite not found", drops[2])
+
+    def test_a_clean_load_has_no_drops_and_older_lines_do_not_count(self) -> None:
+        self.assertEqual(runner.launcher_layout_drops(CLEAN), [])
+
+    def test_a_log_that_rotated_past_the_load_is_not_checked(self) -> None:
+        self.assertIsNone(runner.launcher_layout_drops("11-07 03:59:01.110 E/AutoInstalls( 1080): Favorite not found: x/y\n"))
+
+    def test_the_last_load_is_the_one_that_counts(self) -> None:
+        self.assertEqual(runner.launcher_layout_drops(DROPS + CLEAN), [])
+
+
+class FakeLauncher:
+    def __init__(self, dump: str, log: str) -> None:
+        self.dump = dump
+        self.log = log
+        self.dumps = 0
+
+    def shell(self, command: str, timeout: int = 30) -> str:
+        if command.startswith("dumpsys activity"):
+            self.dumps += 1
+            return self.dump
+        if command.startswith("logcat"):
+            return self.log
+        raise AssertionError(command)
+
+
+class CheckLauncherTests(unittest.TestCase):
+    def check(self, guest: FakeLauncher) -> None:
+        with mock.patch.object(runner, "LAUNCHER_LOAD_SECONDS", 0), mock.patch.object(runner.time, "sleep"):
+            runner.check_launcher(guest)
+
+    def test_the_default_layout_passes(self) -> None:
+        guest = FakeLauncher(home_dump(), CLEAN)
+        self.check(guest)
+        self.assertEqual(guest.dumps, 1)
+
+    def test_a_rotated_log_passes_with_a_note(self) -> None:
+        with mock.patch("builtins.print") as printed:
+            self.check(FakeLauncher(home_dump(), "--------- beginning of main\n"))
+        self.assertIn("drops not checked", printed.call_args.args[0])
+
+    def test_the_wrong_workspace_is_a_failure_naming_the_problem(self) -> None:
+        with self.assertRaisesRegex(runner.Failure, "not the default layout: 0 items, expected 6"):
+            self.check(FakeLauncher(DUMP_HEAD + DUMP_TAIL, CLEAN))
+
+    def test_a_dropped_item_is_a_failure_even_when_the_workspace_looks_right(self) -> None:
+        with self.assertRaisesRegex(runner.Failure, "dropped items of its default layout: DefaultLayoutParser"):
+            self.check(FakeLauncher(home_dump(), DROPS))
+
+    def test_the_launcher_may_load_after_the_check_starts(self) -> None:
+        class Slow(FakeLauncher):
+            def shell(self, command: str, timeout: int = 30) -> str:
+                if command.startswith("dumpsys activity") and self.dumps < 2:
+                    self.dumps += 1
+                    return DUMP_HEAD + DUMP_TAIL
+                return super().shell(command, timeout)
+
+        guest = Slow(home_dump(), CLEAN)
+        with mock.patch.object(runner, "LAUNCHER_LOAD_SECONDS", 60), mock.patch.object(runner.time, "sleep"):
+            runner.check_launcher(guest)
+        self.assertEqual(guest.dumps, 3)
+
+
 if __name__ == "__main__":
     unittest.main()
