@@ -3,7 +3,7 @@
 
 .macro vector_map2_misc_write width, descriptor
 	and x9, x\descriptor, #0xffff
-	add x9, _cpu, x9
+	add x9, _vcpu, x9
 	str q4, [x9]
 	.if \width == 256
 	str q5, [x9, #16]
@@ -110,7 +110,7 @@ gadget vector_map2_permute_\symbol\()_\width\()_rm
 	mov x25, x7
 	vector_memory_source (\width / 8), Lx86_vector_map2_permute_cross_fault\@
 	and x10, x26, #0xffff
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldr q0, [x10]
 	.if \width == 256
 	ldr q2, [x10, #16]
@@ -194,7 +194,7 @@ gadget vector_map2_shift_\symbol\()_\element\()_\width\()_rm
 	mov x25, x7
 	vector_memory_source (\width / 8), Lx86_vector_map2_shift_cross_fault\@
 	and x10, x26, #0xffff
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldr q0, [x10]
 	.if \width == 256
 	ldr q2, [x10, #16]
@@ -244,7 +244,7 @@ vector_map2_shift_family \operation, 0x\operation, 64, 256
 gadget vector_map2_broadcast_\element\()_\width\()_r
 	ldr x8, [_stream], #8
 	ubfx x10, x8, #16, #16
-	ldr q1, [_cpu, x10]
+	ldr q1, [_vcpu, x10]
 	vector_map2_broadcast_body \element, \width
 	vector_map2_misc_write \width, 8
 	retire_and_next
@@ -294,7 +294,7 @@ vector_map2_broadcast_family 128, 256
 gadget vector_map2_half_\width\()_r
 	ldr x8, [_stream], #8
 	ubfx x10, x8, #16, #16
-	ldr q1, [_cpu, x10]
+	ldr q1, [_vcpu, x10]
 	vector_map2_half_body \width
 	vector_map2_misc_write \width, 8
 	retire_and_next

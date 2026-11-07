@@ -6,8 +6,8 @@ gadget \name
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	add x9, _cpu, x9
-	add x10, _cpu, x10
+	add x9, _vcpu, x9
+	add x10, _vcpu, x10
 	.if \width == 16
 	ldr q0, [x10]
 	str q0, [x9]
@@ -33,8 +33,8 @@ gadget \name
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	add x9, _cpu, x9
-	add x10, _cpu, x10
+	add x9, _vcpu, x9
+	add x10, _vcpu, x10
 	ldr d0, [x10]
 	str q0, [x9]
 	.if \zero_upper
@@ -62,7 +62,7 @@ gadget \name
 	.endif
 Lx86_vector_load_write\@:
 	and x8, x23, #0xffff
-	add x8, _cpu, x8
+	add x8, _vcpu, x8
 	.if \width == 16
 	str q0, [x8]
 	.if \zero_upper
@@ -77,13 +77,13 @@ Lx86_vector_load_cross\@:
 	mov x0, _context
 	mov x1, x25
 	and x8, x23, #0xffff
-	add x2, _cpu, x8
+	add x2, _vcpu, x8
 	mov w3, #\width
 	helper_call uml_x86_64_gadget_cross_page_vector_load
 	cbz w0, Lx86_memory_fault
 	.if \zero_upper
 	and x8, x23, #0xffff
-	add x8, _cpu, x8
+	add x8, _vcpu, x8
 	movi v1.16b, #0
 	str q1, [x8, #16]
 	.endif
@@ -103,7 +103,7 @@ gadget \name
 	page_cross_check (\width), Lx86_vector_store_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, \width
 	and x8, x23, #0xffff
-	add x8, _cpu, x8
+	add x8, _vcpu, x8
 	.if \width == 16
 	ldr q0, [x8]
 	str q0, [x7]
@@ -116,7 +116,7 @@ Lx86_vector_store_cross\@:
 	mov x0, _context
 	mov x1, x25
 	and x8, x23, #0xffff
-	add x2, _cpu, x8
+	add x2, _vcpu, x8
 	mov w3, #\width
 	helper_call uml_x86_64_gadget_cross_page_vector_store
 	cbz w0, Lx86_memory_fault
@@ -129,11 +129,11 @@ vector_move_store vector_move_256_mr, 32
 .purgem vector_move_store
 
 .macro zero_vector_upper index
-	str q0, [_cpu, #(UML_X86_64_CPU_VECTORS + \index * 32 + 16)]
+	str q0, [_vcpu, #(UML_X86_64_CPU_VECTORS + \index * 32 + 16)]
 .endm
 
 .macro zero_vector index
-	str q0, [_cpu, #(UML_X86_64_CPU_VECTORS + \index * 32)]
+	str q0, [_vcpu, #(UML_X86_64_CPU_VECTORS + \index * 32)]
 	zero_vector_upper \index
 .endm
 
@@ -201,9 +201,9 @@ gadget \name
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	add x9, _cpu, x9
-	add x10, _cpu, x10
-	add x11, _cpu, x11
+	add x9, _vcpu, x9
+	add x10, _vcpu, x10
+	add x11, _vcpu, x11
 	ldr q0, [x10]
 	ldr q2, [x11]
 	vector_bitwise_compute \operation, v0, v0, v2
@@ -262,8 +262,8 @@ Lx86_vector_bitwise_cross_loaded\@:
 Lx86_vector_bitwise_compute\@:
 	and x8, x23, #0xffff
 	and x9, x24, #0xffff
-	add x8, _cpu, x8
-	add x9, _cpu, x9
+	add x8, _vcpu, x8
+	add x9, _vcpu, x9
 	ldr q0, [x9]
 	vector_bitwise_compute \operation, v0, v0, v2
 	str q0, [x8]

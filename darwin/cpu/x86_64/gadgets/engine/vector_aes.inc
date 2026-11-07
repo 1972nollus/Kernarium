@@ -40,7 +40,7 @@
 
 .macro vector_aes_write width, descriptor
 	and x9, x\descriptor, #0xffff
-	add x9, _cpu, x9
+	add x9, _vcpu, x9
 	str q4, [x9]
 	.if \width == 256
 	str q5, [x9, #16]
@@ -68,7 +68,7 @@ gadget vector_aes_\opcode\()_\width\()_rm
 	mov x25, x7
 	vector_memory_source (\width / 8), Lx86_vector_aes_cross_fault\@
 	and x10, x26, #0xffff
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldr q0, [x10]
 	.if \width == 256
 	ldr q2, [x10, #16]

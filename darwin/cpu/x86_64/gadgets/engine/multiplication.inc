@@ -69,40 +69,40 @@
  * than materializing it: the next materialization applies the overlay after
  * that producer's flags, exactly as the eager write did. */
 .macro multiply_flags
-	ldrh w8, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
-	ldrh w9, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
+	ldrh w8, [_vcpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
 	mov w10, #0x801
 	orr w8, w8, w10
 	bic w9, w9, w10
 	cbz w19, Lx86_multiply_flags_done\@
 	orr w9, w9, w10
 Lx86_multiply_flags_done\@:
-	strh w8, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
-	strh w9, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
+	strh w8, [_vcpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	strh w9, [_vcpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
 .endm
 
 .macro multiply_write_pair width
 	.if \width == 8
-	strh w27, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	strh w27, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	.elseif \width == 16
-	strh w27, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	strh w16, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	strh w27, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	strh w16, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	.elseif \width == 32
 	mov w8, w27
-	str x8, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	str x8, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	mov w8, w16
-	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	str x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	.else
-	str x27, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	str x16, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	str x27, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	str x16, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	.endif
 .endm
 
 .macro multiply_implicit_register name, signed, width, load, host_register
 gadget \name\()_\width\()_r
 	ldr x8, [_stream], #8
-	\load \host_register\()15, [_cpu, x8]
-	\load \host_register\()24, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	\load \host_register\()15, [_vcpu, x8]
+	\load \host_register\()24, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	multiply_compute \signed, \width
 	multiply_write_pair \width
 	multiply_flags
@@ -114,7 +114,7 @@ gadget \name\()_\width\()_m
 	effective_address
 	mov x25, x7
 	read_operand (\width / 8), \load, \host_register, 15
-	\load \host_register\()24, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	\load \host_register\()24, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	multiply_compute \signed, \width
 	multiply_write_pair \width
 	multiply_flags
@@ -141,13 +141,13 @@ gadget imul_\width\()_rr
 	ldr x8, [_stream], #8
 	and x25, x8, #0xffff
 	ubfx x9, x8, #16, #16
-	\load \host_register\()24, [_cpu, x25]
-	\load \host_register\()15, [_cpu, x9]
+	\load \host_register\()24, [_vcpu, x25]
+	\load \host_register\()15, [_vcpu, x9]
 	multiply_compute 1, \width
 	.if \width == 32
 	mov w27, w27
 	.endif
-	\store \store_register\()27, [_cpu, x25]
+	\store \store_register\()27, [_vcpu, x25]
 	multiply_flags
 	retire_and_next
 
@@ -155,12 +155,12 @@ gadget imul_\width\()_rri
 	ldp x8, x15, [_stream], #16
 	and x25, x8, #0xffff
 	ubfx x9, x8, #16, #16
-	\load \host_register\()24, [_cpu, x9]
+	\load \host_register\()24, [_vcpu, x9]
 	multiply_compute 1, \width
 	.if \width == 32
 	mov w27, w27
 	.endif
-	\store \store_register\()27, [_cpu, x25]
+	\store \store_register\()27, [_vcpu, x25]
 	multiply_flags
 	retire_and_next
 .endm
@@ -173,7 +173,7 @@ gadget imul_\width\()_rm\form
 	and x8, x23, #0xffff
 	mov x25, x8
 	.ifc \form,r
-	\load \host_register\()15, [_cpu, x25]
+	\load \host_register\()15, [_vcpu, x25]
 	.else
 	ldr x15, [_stream], #8
 	.endif
@@ -181,7 +181,7 @@ gadget imul_\width\()_rm\form
 	.if \width == 32
 	mov w27, w27
 	.endif
-	\store \store_register\()27, [_cpu, x25]
+	\store \store_register\()27, [_vcpu, x25]
 	multiply_flags
 	retire_and_next
 .endm

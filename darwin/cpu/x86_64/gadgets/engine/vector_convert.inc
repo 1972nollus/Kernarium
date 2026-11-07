@@ -36,7 +36,7 @@
 .macro vector_convert_check_range element, checked, truncate
 	.if \element == 64 || \checked
 	.if \element == 32
-	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	ldrb w14, [_vcpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 	tbz w14, #1, Lx86_vector_convert_in_range\@
 	.endif
 	uminv s18, v7.4s
@@ -102,7 +102,7 @@ Lx86_vector_convert_in_range\@:
 /* MXCSR.DAZ flushes a conversion's denormal inputs, v1 and for a 32-byte
  * input v3, `element` bits wide. Sets w12 to MXCSR. */
 .macro vector_convert_inputs element, input_size
-	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldr w12, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_convert_inputs_ready\@
 	.if \input_size == 32
 	simd_flush_denormals_each \element, 1, 3
@@ -311,11 +311,11 @@ gadget vector_convert_\name\()_rr
 	ldr x8, [_stream], #8
 	.if \scalar
 	ubfx x10, x8, #16, #16
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldr q0, [x10]
 	.endif
 	ubfx x11, x8, #32, #16
-	add x11, _cpu, x11
+	add x11, _vcpu, x11
 	ldr q1, [x11]
 	.if \input_size == 32
 	ldr q3, [x11, #16]
@@ -333,7 +333,7 @@ gadget vector_convert_\name\()_rm
 	vector_memory_source \input_size, Lx86_vector_convert_cross_fault\@, scalar=1, single=1
 	.if \scalar
 	and x10, x26, #0xffff
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldr q0, [x10]
 	.endif
 	vector_convert_body \operation, \output_width, \input_size, \scalar, \truncate

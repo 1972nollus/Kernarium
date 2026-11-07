@@ -33,7 +33,7 @@ scalar_entry logical_immediate_inplace_\suffix\()_\reg, \forward, 12, Lipl\@, Li
 	.if \forward & 1
 	mov x15, x0
 	.else
-	ldr x15, [_cpu, #(\reg * 8)]
+	ldr x15, [_vcpu, #(\reg * 8)]
 	.endif
 	.if \bits64
 		.if \operation == 0
@@ -59,7 +59,7 @@ scalar_entry logical_immediate_inplace_\suffix\()_\reg, \forward, 12, Lipl\@, Li
 	.if \operation == 3
 	mrs x27, nzcv
 	.endif
-	str _scalar_x16, [_cpu, #(\reg * 8)]
+	str _scalar_x16, [_vcpu, #(\reg * 8)]
 	next_gadget
 .endm
 
@@ -92,14 +92,14 @@ scalar_entry move_wide_keep_inplace_\suffix\()_\reg, \forward, 0, Lipm\@, Lipm\@
 	.if \forward & 1
 	mov _scalar_x14, x0
 	.else
-	ldr _scalar_x14, [_cpu, #(\reg * 8)]
+	ldr _scalar_x14, [_vcpu, #(\reg * 8)]
 	.endif
 	.if \bits64
 	bfi _scalar_x14, x11, #\shift, #16
 	.else
 	bfi _scalar_w14, w11, #\shift, #16
 	.endif
-	str _scalar_x14, [_cpu, #(\reg * 8)]
+	str _scalar_x14, [_vcpu, #(\reg * 8)]
 	next_gadget
 .endm
 
@@ -132,13 +132,13 @@ scalar_entry add_sub_register_inplace_\suffix\()_\reg, \forward, 2, Lipr\@, Lipr
 	.if \forward & 1
 	mov x15, x0
 	.else
-	ldr x15, [_cpu, #(\reg * 8)]
+	ldr x15, [_vcpu, #(\reg * 8)]
 	.endif
 	.if \forward & 2
 	mov x16, x0
 	.else
 	ubfx x11, x8, #32, #16
-	ldr x16, [_cpu, x11]
+	ldr x16, [_vcpu, x11]
 	.endif
 	.if \bits64
 	add_sub_op \subtract, \flags, _scalar_x7, x15, x16
@@ -148,7 +148,7 @@ scalar_entry add_sub_register_inplace_\suffix\()_\reg, \forward, 2, Lipr\@, Lipr
 	.if \flags
 	mrs x27, nzcv
 	.endif
-	str _scalar_x7, [_cpu, #(\reg * 8)]
+	str _scalar_x7, [_vcpu, #(\reg * 8)]
 	next_gadget
 .endm
 
@@ -185,15 +185,15 @@ vector_entry simd_fused_inplace_\name\()_\vec, \forward, Lipv\@, Lscalar_offset1
 	ldr x11, [_stream], #8
 	ubfx x9, x11, #16, #16
 	lsr x10, x11, #32
-	vector_read \forward, 1, q0, [_cpu, x9]
-	vector_read \forward, 2, q1, [_cpu, x10]
+	vector_read \forward, 1, q0, [_vcpu, x9]
+	vector_read \forward, 2, q1, [_vcpu, x10]
 	.if \forward & 4
-	vector_read \forward, 4, q2, [_cpu, #(UML_GADGET_CPU_V0 + \vec * 16)]
+	vector_read \forward, 4, q2, [_vcpu, #(UML_GADGET_CPU_V0 + \vec * 16)]
 	.else
-	ldr q2, [_cpu, #(UML_GADGET_CPU_V0 + \vec * 16)]
+	ldr q2, [_vcpu, #(UML_GADGET_CPU_V0 + \vec * 16)]
 	.endif
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
-	str q2, [_cpu, #(UML_GADGET_CPU_V0 + \vec * 16)]
+	str q2, [_vcpu, #(UML_GADGET_CPU_V0 + \vec * 16)]
 	next_gadget
 .endm
 
@@ -229,12 +229,12 @@ simd_fused_inplace_shapes fmls, fmls
 /* ---- selection tables --------------------------------------------------- */
 .macro inplace_row_31 stem
 	.irp reg, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30
-	.quad NAME(uml_arm64_gadget_\stem\()_\reg)
+	.quad CSYM(uml_arm64_gadget_\stem\()_\reg)
 	.endr
 .endm
 .macro inplace_row_32 stem
 	.irp vec, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
-	.quad NAME(uml_arm64_gadget_\stem\()_\vec)
+	.quad CSYM(uml_arm64_gadget_\stem\()_\vec)
 	.endr
 .endm
 
@@ -242,8 +242,8 @@ simd_fused_inplace_shapes fmls, fmls
 .p2align 3
 
 /* index = ((bits64 * 2 + operation) ... ) see the C++ selectors. */
-.globl NAME(uml_arm64_gadget_logical_immediate_inplace_table)
-NAME(uml_arm64_gadget_logical_immediate_inplace_table):
+.globl CSYM(uml_arm64_gadget_logical_immediate_inplace_table)
+CSYM(uml_arm64_gadget_logical_immediate_inplace_table):
 inplace_row_31 logical_immediate_inplace_w_and
 inplace_row_31 logical_immediate_inplace_w_orr
 inplace_row_31 logical_immediate_inplace_w_eor
@@ -253,8 +253,8 @@ inplace_row_31 logical_immediate_inplace_x_orr
 inplace_row_31 logical_immediate_inplace_x_eor
 inplace_row_31 logical_immediate_inplace_x_ands
 
-.globl NAME(uml_arm64_gadget_move_wide_keep_inplace_table)
-NAME(uml_arm64_gadget_move_wide_keep_inplace_table):
+.globl CSYM(uml_arm64_gadget_move_wide_keep_inplace_table)
+CSYM(uml_arm64_gadget_move_wide_keep_inplace_table):
 inplace_row_31 move_wide_keep_inplace_w0
 inplace_row_31 move_wide_keep_inplace_w1
 inplace_row_31 move_wide_keep_inplace_x0
@@ -262,8 +262,8 @@ inplace_row_31 move_wide_keep_inplace_x1
 inplace_row_31 move_wide_keep_inplace_x2
 inplace_row_31 move_wide_keep_inplace_x3
 
-.globl NAME(uml_arm64_gadget_add_sub_register_inplace_table)
-NAME(uml_arm64_gadget_add_sub_register_inplace_table):
+.globl CSYM(uml_arm64_gadget_add_sub_register_inplace_table)
+CSYM(uml_arm64_gadget_add_sub_register_inplace_table):
 inplace_row_31 add_sub_register_inplace_w_add_n
 inplace_row_31 add_sub_register_inplace_w_add_s
 inplace_row_31 add_sub_register_inplace_w_sub_n
@@ -273,8 +273,8 @@ inplace_row_31 add_sub_register_inplace_x_add_s
 inplace_row_31 add_sub_register_inplace_x_sub_n
 inplace_row_31 add_sub_register_inplace_x_sub_s
 
-.globl NAME(uml_arm64_gadget_simd_fused_inplace_table)
-NAME(uml_arm64_gadget_simd_fused_inplace_table):
+.globl CSYM(uml_arm64_gadget_simd_fused_inplace_table)
+CSYM(uml_arm64_gadget_simd_fused_inplace_table):
 inplace_row_32 simd_fused_inplace_fmla_4h
 inplace_row_32 simd_fused_inplace_fmla_8h
 inplace_row_32 simd_fused_inplace_fmla_2s

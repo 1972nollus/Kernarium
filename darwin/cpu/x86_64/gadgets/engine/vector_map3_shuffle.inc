@@ -180,7 +180,7 @@ Lx86_vector_map3_insert_done\@:
 	lsr w14, w13, #4
 	and w14, w14, #0xf
 	lsl x14, x14, #5
-	add x14, _cpu, x14
+	add x14, _vcpu, x14
 	add x14, x14, #UML_X86_64_CPU_VECTORS
 	ldr q6, [x14]
 	.if \opcode == 0x4a
@@ -217,11 +217,11 @@ gadget vector_map3_shuffle_\symbol\()_\width\()_rr
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
 	.if \width == 64
-	ldr d0, [_cpu, x10]
-	ldr d1, [_cpu, x11]
+	ldr d0, [_vcpu, x10]
+	ldr d1, [_vcpu, x11]
 	.else
-	add x10, _cpu, x10
-	add x11, _cpu, x11
+	add x10, _vcpu, x10
+	add x11, _vcpu, x11
 	ldr q0, [x10]
 	ldr q1, [x11]
 	.if \width == 256
