@@ -20,7 +20,6 @@ enum SheetKind: String, Identifiable, Hashable {
 
 /// What a launch argument asks the session to show first.
 struct SessionPreset: Equatable {
-    var keysOpen = false
     /// Android's volume panel, as after a volume key press.
     var volumePanel = false
     var settings = false
@@ -45,8 +44,8 @@ enum GuestScreen: Equatable {
     case off
 }
 
-/// What the running guest offers through Settings: ADB and the stats
-/// overlay. It lasts for one run.
+/// What the running guest offers through Settings (ADB and the stats
+/// overlay) and whether its side keys are open. It lasts for one run.
 @Observable
 final class SessionState {
     /// ADB over network is on: the listener runs.
@@ -61,9 +60,19 @@ final class SessionState {
     var usbDebugging: Bool?
     var showStats = false
     var readout = Readout()
+    /// The side keys are open. The session owns it because a touch on the
+    /// guest's display, which is another view, closes them.
+    var sideKeysOpen = false
 
     /// The address the preview shows, from the range reserved for examples.
     static let previewAddress = "198.51.100.23"
+
+    /// Puts the side keys away. A touch that begins on the guest's display
+    /// calls it, so the touch both reaches Android and closes the keys.
+    func closeSideKeys() {
+        guard sideKeysOpen else { return }
+        withAnimation(SideKeysOverlay.motion) { sideKeysOpen = false }
+    }
 }
 
 /// What the screens read and change. The guest's life (create, start, boot,

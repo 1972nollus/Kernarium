@@ -70,7 +70,10 @@ guest rectangle releases only that contact. A contact the host takes away
 cancelled in the guest instead of released (`GuestTouchPath.cancel()` and
 `GuestTouchContacts.cancelAll()`, which call the runtime's `cancel_touch`), so
 no tap or click follows; the guest-side contract is in
-[`Kernarium/README.md`](../Kernarium/README.md#devices-and-display).
+[`Kernarium/README.md`](../Kernarium/README.md#devices-and-display). An
+application that draws controls over the display passes `touchDidBegin`, which
+the display calls after it has sent the contacts of each touch that begins on
+it; Kernarium passes none.
 
 - A file here depends only on the system frameworks, the runtime header, and
   the prebuilt `LibZstd` XCFramework. It names neither application's views,

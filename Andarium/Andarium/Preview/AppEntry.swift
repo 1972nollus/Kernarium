@@ -152,8 +152,8 @@ struct AppEntry {
         case "session", "session-tip", "session-open", "session-keyboard", "session-stats",
              "session-power", "session-setup", "session-off", "session-left", "session-volume":
             model.session.showStats = screen == "session-stats"
+            model.session.sideKeysOpen = ["session-open", "session-off", "session-left", "session-volume"].contains(screen)
             model.sessionPreset = SessionPreset(
-                keysOpen: ["session-open", "session-off", "session-left", "session-volume"].contains(screen),
                 volumePanel: screen == "session-volume",
                 powerMenu: screen == "session-power",
                 leftEdge: ["session-left", "session-volume"].contains(screen),
@@ -208,7 +208,7 @@ struct AppEntry {
             default: SpacePause(freeBytes: 820 * Limits.bytesPerMiB)
             }
         case "recovery", "recovery-open":
-            model.sessionPreset = SessionPreset(keysOpen: screen == "recovery-open")
+            model.session.sideKeysOpen = screen == "recovery-open"
             model.phase = .running(.recovery)
         case "failed":
             // The failure path a real run takes: a crash after 42 minutes.

@@ -282,8 +282,9 @@ The opt-in suites each need a `TEST_RUNNER_ANDARIUM_*` switch that the suite's
 header names: rotation, motion compatibility and over-vsock, shutdown flow,
 low-space pause (a real guest paused through a free-space number the test
 sets, its CPU time standing still), Retina memory, the ADB-over-vsock guest
-tests (including Android storage and the touch-cancel path) and the
-ADB-over-network hold. The storage test signs
+tests (including Android storage and the touch-cancel path), the side keys'
+pass-through of touches to Android and the ADB-over-network hold. The storage
+test signs
 its helper APK with the AOSP test key, never a release key. When derived data is
 on a removable volume, macOS prompts once for access and the launch hangs until
 answered; build to the internal disk instead.
