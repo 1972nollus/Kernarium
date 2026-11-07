@@ -1930,6 +1930,15 @@ void runtimeSendTouch(
     }
 }
 
+void runtimeCancelTouch(uint32_t slot)
+{
+    std::lock_guard lock(activeInputMutex);
+    if (activeTouchscreen != nullptr) {
+        const auto report = touchscreenContacts.cancel(slot);
+        activeTouchscreen->send(report.span());
+    }
+}
+
 void runtimeSendKey(uint16_t code, int pressed)
 {
     namespace input = uml::input::virtio::protocol;
@@ -2206,6 +2215,7 @@ const kernarium_runtime_api runtimeApi {
     .connect_vsock = runtimeConnectVsock,
     .read_statistics = runtimeReadStatistics,
     .read_guest_memory = runtimeReadGuestMemory,
+    .cancel_touch = runtimeCancelTouch,
 };
 
 } // namespace
@@ -2258,7 +2268,7 @@ kernarium_runtime_automation_hold_delay_ms(void)
 }
 #endif
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v22(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v24(void)
 {
     return &runtimeApi;
 }
