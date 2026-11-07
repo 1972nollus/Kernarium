@@ -6550,7 +6550,7 @@ def verify_ubd_disk_fixtures(tool: Path, production_policy: Path) -> None:
                 fail("userdata is not zero")
         if data_disk.stat().st_blocks * 512 > 1 << 20:
             fail("the data disk is not sparse")
-        for capacity in ("3", "65"):
+        for capacity in ("3", "129"):
             if run_tool(
                 tool, "data", "--layout", layout_path, "--capacity-gib", capacity,
                 "--output", root / f"data-{capacity}.img",
