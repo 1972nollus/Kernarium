@@ -260,6 +260,17 @@ struct UpdateFlowTests {
         #expect(model.plan == .normal)
     }
 
+    @Test func homeOffersRecoveryOnceTheFirstStartHasHappened() {
+        let (model, driver) = model(plan: .firstStart)
+        #expect(!model.plan.offersRecovery)
+        model.start(.normal)
+        model.finishBoot(.firstStart)
+        // The runtime created the data disk during the start.
+        driver.plan = .normal
+        model.runEnded(RunEnd(result: 0), uptimeSeconds: 60)
+        #expect(model.plan.offersRecovery)
+    }
+
     @Test func cleanShutdownReturnsHomeAndStartsANewSession() {
         let (model, driver) = model(plan: .normal)
         model.start(.normal)
