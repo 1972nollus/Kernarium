@@ -56,6 +56,15 @@ unselected, because removing them would move every later entry. A RET through
 X30 is the gadget pointer and its indirect site; any other register keeps the
 operand that names it.
 
+## Entry frame
+
+`uml_arm64_gadget_enter` saves the callee-saved registers in the frame that
+[`gadget_host_frame.inc`](../../gadget_host_frame.inc) lays out for both gadget
+engines, and `uml_arm64_gadget_leave` restores them from it and returns the
+event in `w0` and the retired count in `x1`. A build that counts executed
+instructions adds a slot after the saved registers for the counter table
+(`UML_GADGET_FRAME_HISTOGRAM` in `engine/core_integer.inc`).
+
 ## Return ring and target table
 
 A cached return consults a private per-carrier ring of return records that

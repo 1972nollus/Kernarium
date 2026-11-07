@@ -7,7 +7,7 @@ gadget x87_\name
 	mov w13, #0
 	x87_load_stack w13, x9, w10
 	x87_store_value sp, x9, w10
-	mov x0, _cpu
+	mov x0, _vcpu
 	mov x1, sp
 	add x2, sp, #16
 	helper_call uml_x86_64_x87_\helper
@@ -56,7 +56,7 @@ gadget x87_tangent
 	mov w13, #0
 	x87_load_stack w13, x9, w10
 	x87_store_value sp, x9, w10
-	mov x0, _cpu
+	mov x0, _vcpu
 	mov x1, sp
 	add x2, sp, #16
 	add x3, sp, #32
@@ -70,7 +70,7 @@ gadget x87_tangent
 	x87_load_value x11, x9, w10
 	add sp, sp, #48
 	/* C2: an operand too large to reduce, which stays as it was. */
-	ldrh w11, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	ldrh w11, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	tbnz w11, #10, Lx86_x87_tangent_unreduced
 	x87_push x9, w10, 1
 Lx86_x87_tangent_unreduced:
@@ -91,7 +91,7 @@ gadget x87_extract
 	mov w13, #0
 	x87_load_stack w13, x9, w10
 	x87_store_value sp, x9, w10
-	mov x0, _cpu
+	mov x0, _vcpu
 	mov x1, sp
 	add x2, sp, #16
 	add x3, sp, #32
@@ -113,7 +113,7 @@ gadget x87_sincos
 	mov w13, #0
 	x87_load_stack w13, x9, w10
 	x87_store_value sp, x9, w10
-	mov x0, _cpu
+	mov x0, _vcpu
 	mov x1, sp
 	add x2, sp, #16
 	add x3, sp, #32
@@ -127,7 +127,7 @@ gadget x87_sincos
 	x87_load_value x11, x9, w10
 	add sp, sp, #48
 	/* C2: an operand too large to reduce, which stays as it was. */
-	ldrh w11, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	ldrh w11, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	tbnz w11, #10, Lx86_x87_sincos_unreduced
 	x87_push x9, w10, 1
 Lx86_x87_sincos_unreduced:
@@ -136,9 +136,9 @@ Lx86_x87_sincos_unreduced:
 /* FPREM and FPREM1, whose helper sets C0 to C3: C2 for a partial remainder,
  * else the quotient's low three bits in C0, C3 and C1. */
 .macro x87_remainder name
-	.globl NAME(uml_x86_64_gadget_x87_\name\()_with_flags)
+	.globl CSYM(uml_x86_64_gadget_x87_\name\()_with_flags)
 	.p2align 4
-NAME(uml_x86_64_gadget_x87_\name\()_with_flags):
+CSYM(uml_x86_64_gadget_x87_\name\()_with_flags):
 	sub sp, sp, #48
 	mov w13, #0
 	x87_load_stack w13, x9, w10
@@ -147,7 +147,7 @@ NAME(uml_x86_64_gadget_x87_\name\()_with_flags):
 	x87_load_stack w13, x9, w10
 	add x11, sp, #16
 	x87_store_value x11, x9, w10
-	mov x0, _cpu
+	mov x0, _vcpu
 	mov x1, sp
 	add x2, sp, #16
 	add x3, sp, #32

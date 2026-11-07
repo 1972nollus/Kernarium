@@ -31,11 +31,11 @@ gadget vector_gather_d\data\()_i\index\()_r\register_bytes
 	ldr x26, [_stream], #8
 	mov x25, x7
 	and x19, x23, #0xffff
-	add x19, _cpu, x19
+	add x19, _vcpu, x19
 	and x24, x26, #0xffff
-	add x24, _cpu, x24
+	add x24, _vcpu, x24
 	ubfx x27, x26, #16, #16
-	add x27, _cpu, x27
+	add x27, _vcpu, x27
 	mov x26, #0
 Lx86_vector_gather_loop\@:
 	cmp x26, #Lx86_vector_gather_count

@@ -7,7 +7,9 @@ translation cache, and `native_memory.cpp` is the C++ side of the software
 TLB. The guest CPU state, the decoder, CPUID, the software TLB entry, the
 code-page registry and the split-operand lock are not the engine's own: they
 are `uml_x86_64_target` in the parent directory, which every x86 engine links.
-This file records the contracts that are not obvious from the code.
+This file records the contracts that are not obvious from the code. The design
+credit for both gadget engines is
+[`NOTICE.md`](../../arm64/gadgets/NOTICE.md).
 
 Private labels take the Mach-O assembler-temporary prefix `L`, as the arm64
 region's do ([`docs/architecture.md`](../../../../docs/architecture.md) states
@@ -593,9 +595,13 @@ may also round the other way in a directed mode.
 `uml_x86_64_gadget_leave` restores round-to-nearest by clearing FPCR's mode
 field, so entry needs no slot for the caller's copy. Every path into it has the
 stack pointer back at the entry frame, from which it restores the callee-saved
-registers. No gadget keeps a value in x18: Darwin clears that platform
-register when it interrupts the thread, so a value there is lost at a random
-preemption, and `architecture-audit` rejects one.
+registers. [`gadget_host_frame.inc`](../../gadget_host_frame.inc) lays out that
+frame for both gadget engines; the x86-64 engine adds the saved halves of
+v8-v15 and the string gadgets' repeat budget after it, at the offsets
+`UML_X86_64_FRAME_*` in `engine/common.inc` names. No gadget keeps a value in
+x18: Darwin clears that platform register when it interrupts the thread, so a
+value there is lost at a random preemption, and `architecture-audit` rejects
+one.
 
 ## Exceptions the guest enables
 

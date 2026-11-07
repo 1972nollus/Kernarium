@@ -415,6 +415,11 @@ def marker_status(match: re.Match[bytes]) -> int:
 # return, so `exec sudo -n /bin/sh` timed out with the prompt already on screen.
 # Accept a lone `\r` as a line start as well.
 LINE_START = rb"(?:^|\r?\n|\r)"
+# The prompt of the session's root shell, which is the image's own /bin/sh: dash
+# prints `# ` alone, and BusyBox's ash puts the working directory before it
+# (`~ # `, `/ # `). A prompt ends the transcript so far, and the search starts
+# after the session's ready marker, so only the shell's own lines can precede it.
+ROOT_PROMPT = LINE_START + rb"[^\r\n]*# $"
 
 # The watchdog behind every emulator the harness starts. It holds only the
 # read end of the harness's lifeline and waits for whichever comes first: the
@@ -915,7 +920,7 @@ class Guest(ConsoleProcess):
         # The search starts on the marker's line feed: a pattern's ``^`` does
         # not match where a search starts.
         self._read_until(
-            re.compile(LINE_START + rb"# $"), timeout_seconds, ready.end() - 1
+            re.compile(ROOT_PROMPT), timeout_seconds, ready.end() - 1
         )
         # Every vCPU's carrier has come up by the time the session runs.
         require_host_fast_paths(self.output())
@@ -945,7 +950,7 @@ class Guest(ConsoleProcess):
             start,
         )
         self._read_until(
-            re.compile(LINE_START + rb"# $"), timeout_seconds, ready.end() - 1
+            re.compile(ROOT_PROMPT), timeout_seconds, ready.end() - 1
         )
 
     def shutdown(self, timeout_seconds: float = 30) -> bool:

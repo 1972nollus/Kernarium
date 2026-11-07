@@ -62,7 +62,7 @@ scalar_entry \name, \forward, (17 - 1), Lsd\@, Lscalar_none, Lscalar_none, Lscal
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward
 	\instruction \host_register\()0, [x7]
 	.if !\discard
-	str x0, [_cpu, x19]
+	str x0, [_vcpu, x19]
 	.endif
 	add _stream, _stream, #8
 	next_gadget
@@ -81,7 +81,7 @@ scalar_entry \name, \forward, (17 - 1), Lsd\@, Lscalar_none, Lscalar_none, Lscal
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \forward, fault=uml_arm64_gadget_memory_fault_indexed
 	\instruction \host_register\()0, [x7]
 	.if !\discard
-	str x0, [_cpu, x19]
+	str x0, [_vcpu, x19]
 	.endif
 	next_gadget
 
@@ -97,7 +97,7 @@ Lliteral_integer_fast_cross\@:
 	sxtw x0, w0
 	.endif
 	.if !\discard
-	str x0, [_cpu, x19]
+	str x0, [_vcpu, x19]
 	.endif
 	.if \far
 	add _stream, _stream, #8
@@ -134,14 +134,14 @@ gadget \name
 	add _stream, _stream, #8
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()0, [x7]
-	str q0, [_cpu, x19]
+	str q0, [_vcpu, x19]
 	add _stream, _stream, #8
 	next_gadget
 
 Lliteral_vector_fast_cross\@:
 	add _stream, _stream, #8
 	transfer_slow 0, x7, \bytes
-	str q0, [_cpu, x19]
+	str q0, [_vcpu, x19]
 	add _stream, _stream, #8
 	next_gadget
 	.else
@@ -151,12 +151,12 @@ Lliteral_vector_fast_cross\@:
 	branch_if_cross_page x7, \bytes, x11, Lliteral_vector_fast_cross\@
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	\instruction \host_register\()0, [x7]
-	str q0, [_cpu, x19, lsl #4]
+	str q0, [_vcpu, x19, lsl #4]
 	next_gadget
 
 Lliteral_vector_fast_cross\@:
 	transfer_slow 0, x7, \bytes, fault=uml_arm64_gadget_memory_fault_indexed
-	str q0, [_cpu, x19, lsl #4]
+	str q0, [_vcpu, x19, lsl #4]
 	next_gadget
 	.endif
 .endm
@@ -210,7 +210,7 @@ scalar_entry \suffix, \forward, (17 - \load), Lsd\@, Lsn\@, Lsm\@, Lscalar_none,
 	add x7, x7, x21
 	.if !\base_sp
 	/* Top-byte ignore: the TLB is keyed by the untagged address. */
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, Lscalar_unsigned_untagged\@
 	ubfx x7, x7, #0, #56
 Lscalar_unsigned_untagged\@:
@@ -228,9 +228,9 @@ Lscalar_unsigned_untagged\@:
 		.endif
 		.if !\transfer_zero
 	.if \baked
-	str x0, [_cpu, #(\baked & 0x7fff)]
+	str x0, [_vcpu, #(\baked & 0x7fff)]
 	.else
-	str x0, [_cpu, x19]
+	str x0, [_vcpu, x19]
 	.endif
 		.endif
 	.else
@@ -240,9 +240,9 @@ Lscalar_unsigned_untagged\@:
 		.else
 	.if !(\forward & 2)
 	.if \baked
-	ldr x0, [_cpu, #(\baked & 0x7fff)]
+	ldr x0, [_vcpu, #(\baked & 0x7fff)]
 	.else
-	ldr x0, [_cpu, x19]
+	ldr x0, [_vcpu, x19]
 	.endif
 	.endif
 		.endif
@@ -295,9 +295,9 @@ Lscalar_unsigned_cross\@:
 		.endif
 		.if !\transfer_zero
 	.if \baked
-	str x0, [_cpu, #(\baked & 0x7fff)]
+	str x0, [_vcpu, #(\baked & 0x7fff)]
 	.else
-	str x0, [_cpu, x19]
+	str x0, [_vcpu, x19]
 	.endif
 		.endif
 	.else
@@ -306,9 +306,9 @@ Lscalar_unsigned_cross\@:
 		.else
 	.if !(\forward & 2)
 	.if \baked
-	ldr x0, [_cpu, #(\baked & 0x7fff)]
+	ldr x0, [_vcpu, #(\baked & 0x7fff)]
 	.else
-	ldr x0, [_cpu, x19]
+	ldr x0, [_vcpu, x19]
 	.endif
 	.endif
 		.endif
@@ -371,7 +371,7 @@ scalar_entry \name, \forward, (17 - 1), Lsd\@, Lsn\@, Lscalar_none, Lscalar_none
 	add x7, x7, x21
 	.if !\base_sp
 	/* Top-byte ignore: the TLB is keyed by the untagged address. */
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, Lscalar_unsigned_narrow_load_untagged\@
 	ubfx x7, x7, #0, #56
 Lscalar_unsigned_narrow_load_untagged\@:
@@ -379,7 +379,7 @@ Lscalar_unsigned_narrow_load_untagged\@:
 	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, Ltt_cold\@, Ltt_resume\@, Lscalar_unsigned_narrow_load_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
 	\instruction \host_register\()0, [x7]
 	.if !\transfer_zero
-	str x0, [_cpu, x19]
+	str x0, [_vcpu, x19]
 	.endif
 	next_gadget
 	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, Ltt_cold\@, Ltt_resume\@, Lscalar_unsigned_narrow_load_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
@@ -404,7 +404,7 @@ Lscalar_unsigned_narrow_load_cross\@:
 	sxtw x0, w0
 	.endif
 	.if !\transfer_zero
-	str x0, [_cpu, x19]
+	str x0, [_vcpu, x19]
 	.endif
 	next_gadget
 	.endif
@@ -454,7 +454,7 @@ scalar_entry \name, \forward, (17 - 0), Lscalar_none, Lsn\@, Lsm\@, Lscalar_none
 	add x7, x7, x21
 	.if !\base_sp
 	/* Top-byte ignore: the TLB is keyed by the untagged address. */
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, Lscalar_unsigned_narrow_store_untagged\@
 	ubfx x7, x7, #0, #56
 Lscalar_unsigned_narrow_store_untagged\@:
@@ -464,7 +464,7 @@ Lscalar_unsigned_narrow_store_untagged\@:
 	mov x0, xzr
 	.else
 	.if !(\forward & 2)
-	ldr x0, [_cpu, x19]
+	ldr x0, [_vcpu, x19]
 	.endif
 	.endif
 	scalar_memory_transfer 0, \forward, 2, \instruction, w
@@ -477,7 +477,7 @@ Lscalar_unsigned_narrow_store_cross\@:
 	mov x0, xzr
 	.else
 	.if !(\forward & 2)
-	ldr x0, [_cpu, x19]
+	ldr x0, [_vcpu, x19]
 	.endif
 	.endif
 	scalar_store_vector \forward, 2, 1
@@ -521,17 +521,17 @@ scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lscalar_none, L
 	.endif
 	add x7, x7, x21
 	.if !\base_sp
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w9, Lvector_unsigned_tagged\@
 Lvector_unsigned_translate\@:
 	.endif
 	.if \load
 	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, Ltt_cold\@, Ltt_resume\@, Lvector_unsigned_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
 	\instruction \host_register\()0, [x7]
-	str q0, [_cpu, x19]
+	str q0, [_vcpu, x19]
 	.else
 	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, Ltt_cold\@, Ltt_resume\@, Lvector_unsigned_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
-	ldr q0, [_cpu, x19]
+	ldr q0, [_vcpu, x19]
 	\instruction \host_register\()0, [x7]
 	.endif
 	next_gadget
@@ -544,9 +544,9 @@ Lvector_unsigned_translate\@:
 Lvector_unsigned_cross\@:
 	.if \load
 	transfer_slow 0, x7, \bytes, fault=uml_arm64_gadget_memory_fault_indexed
-	str q0, [_cpu, x19]
+	str q0, [_vcpu, x19]
 	.else
-	ldr q0, [_cpu, x19]
+	ldr q0, [_vcpu, x19]
 	transfer_slow 1, x7, \bytes, fault=uml_arm64_gadget_memory_fault_indexed
 	.endif
 	next_gadget
@@ -623,7 +623,7 @@ scalar_entry \name, \forward, (17 - \load), Lsd\@, Lsn\@, Lsm\@, Lscalar_none, 1
 	.endif
 	.if !\base_sp
 	/* Top-byte ignore: the TLB is keyed by the untagged address. */
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, Lscalar_other_immediate_untagged\@
 	ubfx x26, x26, #0, #56
 Lscalar_other_immediate_untagged\@:
@@ -633,7 +633,7 @@ Lscalar_other_immediate_untagged\@:
 	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, Ltt_cold\@, Ltt_resume\@, Lscalar_other_immediate_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
 	scalar_memory_transfer \load, \forward, 2, \instruction, \host_register
 		.if !\transfer_zero
-	str x0, [_cpu, x19]
+	str x0, [_vcpu, x19]
 		.endif
 	.else
 	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, Ltt_cold\@, Ltt_resume\@, Lscalar_other_immediate_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
@@ -641,13 +641,13 @@ Lscalar_other_immediate_untagged\@:
 	mov x0, xzr
 		.else
 	.if !(\forward & 2)
-	ldr x0, [_cpu, x19]
+	ldr x0, [_vcpu, x19]
 	.endif
 		.endif
 	scalar_memory_transfer \load, \forward, 2, \instruction, \host_register
 	.endif
 	.if \mode == 1 || \mode == 2
-	str x25, [_cpu, x20]
+	str x25, [_vcpu, x20]
 	.endif
 	next_gadget
 	.if \load
@@ -679,21 +679,21 @@ Lscalar_other_immediate_cross\@:
 	sxtw x0, w0
 		.endif
 		.if !\transfer_zero
-	str x0, [_cpu, x19]
+	str x0, [_vcpu, x19]
 		.endif
 	.else
 		.if \transfer_zero
 	mov x0, xzr
 		.else
 	.if !(\forward & 2)
-	ldr x0, [_cpu, x19]
+	ldr x0, [_vcpu, x19]
 	.endif
 		.endif
 	scalar_store_vector \forward, 2, 1
 	transfer_slow 1, x26, \bytes, fault=uml_arm64_gadget_memory_fault_indexed
 	.endif
 	.if \mode == 1 || \mode == 2
-	str x25, [_cpu, x20]
+	str x25, [_vcpu, x20]
 	.endif
 	next_gadget
 	.endif
@@ -753,7 +753,7 @@ scalar_other_immediate_operation load64u, 1, ldr, x, 8, 0
 Lscalar_alignment_fault_read_indexed:
 	stp x1, x2, [sp, #-16]!
 	mov x0, x2
-	ldr x1, [_cpu, #UML_GADGET_CPU_SP]
+	ldr x1, [_vcpu, #UML_GADGET_CPU_SP]
 	mov w2, #0
 	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
@@ -763,7 +763,7 @@ Lscalar_alignment_fault_read_indexed:
 Lscalar_alignment_fault_write_indexed:
 	stp x1, x2, [sp, #-16]!
 	mov x0, x2
-	ldr x1, [_cpu, #UML_GADGET_CPU_SP]
+	ldr x1, [_vcpu, #UML_GADGET_CPU_SP]
 	mov w2, #1
 	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
@@ -813,7 +813,7 @@ scalar_entry \name, \forward, (17 - \load), Lsd\@, Lsn\@, Lsm\@, Lsa\@, 1
 	add x26, x24, x26
 	.if !\base_sp
 	/* Top-byte ignore: the TLB is keyed by the untagged address. */
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, Lscalar_other_register_untagged\@
 	ubfx x26, x26, #0, #56
 Lscalar_other_register_untagged\@:
@@ -823,7 +823,7 @@ Lscalar_other_register_untagged\@:
 	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, Ltt_cold\@, Ltt_resume\@, Lscalar_other_register_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
 	scalar_memory_transfer \load, \forward, 4, \instruction, \host_register
 		.if !\transfer_zero
-	str x0, [_cpu, x19]
+	str x0, [_vcpu, x19]
 		.endif
 	.else
 	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, Ltt_cold\@, Ltt_resume\@, Lscalar_other_register_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
@@ -831,7 +831,7 @@ Lscalar_other_register_untagged\@:
 	mov x0, xzr
 		.else
 	.if !(\forward & 4)
-	ldr x0, [_cpu, x19]
+	ldr x0, [_vcpu, x19]
 	.endif
 		.endif
 	scalar_memory_transfer \load, \forward, 4, \instruction, \host_register
@@ -866,14 +866,14 @@ Lscalar_other_register_cross\@:
 	sxtw x0, w0
 		.endif
 		.if !\transfer_zero
-	str x0, [_cpu, x19]
+	str x0, [_vcpu, x19]
 		.endif
 	.else
 		.if \transfer_zero
 	mov x0, xzr
 		.else
 	.if !(\forward & 4)
-	ldr x0, [_cpu, x19]
+	ldr x0, [_vcpu, x19]
 	.endif
 		.endif
 	scalar_store_vector \forward, 4, 1
@@ -950,7 +950,7 @@ scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lscalar_none, L
 	mov x26, x25
 	.endif
 	.if !\base_sp || \mode != 0
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w9, Lvector_other_immediate_tagged\@
 	.endif
 Lvector_other_immediate_translate\@:
@@ -958,14 +958,14 @@ Lvector_other_immediate_translate\@:
 	.if \load
 	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, Ltt_cold\@, Ltt_resume\@, Lvector_other_immediate_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
 	\instruction \host_register\()0, [x7]
-	str q0, [_cpu, x19]
+	str q0, [_vcpu, x19]
 	.else
 	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, Ltt_cold\@, Ltt_resume\@, Lvector_other_immediate_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
-	ldr q0, [_cpu, x19]
+	ldr q0, [_vcpu, x19]
 	\instruction \host_register\()0, [x7]
 	.endif
 	.if \mode == 1 || \mode == 2
-	str x25, [_cpu, x20]
+	str x25, [_vcpu, x20]
 	.endif
 	next_gadget
 	.if \load
@@ -977,13 +977,13 @@ Lvector_other_immediate_translate\@:
 Lvector_other_immediate_cross\@:
 	.if \load
 	transfer_slow 0, x26, \bytes, fault=uml_arm64_gadget_memory_fault_indexed
-	str q0, [_cpu, x19]
+	str q0, [_vcpu, x19]
 	.else
-	ldr q0, [_cpu, x19]
+	ldr q0, [_vcpu, x19]
 	transfer_slow 1, x26, \bytes, fault=uml_arm64_gadget_memory_fault_indexed
 	.endif
 	.if \mode == 1 || \mode == 2
-	str x25, [_cpu, x20]
+	str x25, [_vcpu, x20]
 	.endif
 	next_gadget
 
@@ -1043,17 +1043,17 @@ scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lsm\@, Lscalar_
 		.endif
 	.endif
 	add x26, x24, x26
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w9, Lvector_other_register_tagged\@
 Lvector_other_register_translate\@:
 	mov x7, x26
 	.if \load
 	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, Ltt_cold\@, Ltt_resume\@, Lvector_other_register_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
 	\instruction \host_register\()0, [x7]
-	str q0, [_cpu, x19]
+	str q0, [_vcpu, x19]
 	.else
 	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, Ltt_cold\@, Ltt_resume\@, Lvector_other_register_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
-	ldr q0, [_cpu, x19]
+	ldr q0, [_vcpu, x19]
 	\instruction \host_register\()0, [x7]
 	.endif
 	next_gadget
@@ -1066,9 +1066,9 @@ Lvector_other_register_translate\@:
 Lvector_other_register_cross\@:
 	.if \load
 	transfer_slow 0, x26, \bytes, fault=uml_arm64_gadget_memory_fault_indexed
-	str q0, [_cpu, x19]
+	str q0, [_vcpu, x19]
 	.else
-	ldr q0, [_cpu, x19]
+	ldr q0, [_vcpu, x19]
 	transfer_slow 1, x26, \bytes, fault=uml_arm64_gadget_memory_fault_indexed
 	.endif
 	next_gadget
@@ -1152,7 +1152,7 @@ scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lscalar_none, L
 	/* TBI keeps the ordinary pair fast path after stripping the logical
 	 * tag from the effective address. An SP base keeps its tag here and the
 	 * TLB entry is keyed by it (Tlb::translate_tagged). */
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, Linteger_pair_untagged\@
 	ubfx x19, x19, #0, #56
 Linteger_pair_untagged\@:
@@ -1163,27 +1163,27 @@ Linteger_pair_untagged\@:
 	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, (2 * \bytes), x19, Ltt_cold\@, Ltt_resume\@, Linteger_pair_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
 	\instruction \host_register\()6, \host_register\()7, [x19]
 		.if !\first_zero
-	str x6, [_cpu, x22]
+	str x6, [_vcpu, x22]
 		.endif
 		.if !\second_zero
-	str x7, [_cpu, x23]
+	str x7, [_vcpu, x23]
 		.endif
 	.else
 	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, (2 * \bytes), x19, Ltt_cold\@, Ltt_resume\@, Linteger_pair_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
 		.if \first_zero
 	mov x6, xzr
 		.else
-	ldr x6, [_cpu, x22]
+	ldr x6, [_vcpu, x22]
 		.endif
 		.if \second_zero
 	mov x7, xzr
 		.else
-	ldr x7, [_cpu, x23]
+	ldr x7, [_vcpu, x23]
 		.endif
 	\instruction \host_register\()6, \host_register\()7, [x19]
 	.endif
 	.if \mode == 1 || \mode == 2
-	str x21, [_cpu, x24]
+	str x21, [_vcpu, x24]
 	.endif
 	next_gadget
 	.if \load
@@ -1218,21 +1218,21 @@ Linteger_pair_cross\@:
 #endif
 		.endif
 		.if !\first_zero
-	str x6, [_cpu, x22]
+	str x6, [_vcpu, x22]
 		.endif
 		.if !\second_zero
-	str x7, [_cpu, x23]
+	str x7, [_vcpu, x23]
 		.endif
 	.else
 		.if \first_zero
 	mov x6, xzr
 		.else
-	ldr x6, [_cpu, x22]
+	ldr x6, [_vcpu, x22]
 		.endif
 		.if \second_zero
 	mov x7, xzr
 		.else
-	ldr x7, [_cpu, x23]
+	ldr x7, [_vcpu, x23]
 		.endif
 		.if \bytes == 4
 #if UML_GADGET_SME_TWIN
@@ -1254,7 +1254,7 @@ Linteger_pair_cross\@:
 	transfer_slow 1, x19, (\bytes * 2), fault=uml_arm64_gadget_memory_fault_indexed
 	.endif
 	.if \mode == 1 || \mode == 2
-	str x21, [_cpu, x24]
+	str x21, [_vcpu, x24]
 	.endif
 	next_gadget
 
@@ -1331,23 +1331,23 @@ scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lscalar_none, L
 	mov x19, x21
 	.endif
 	.if !\sp_base || \mode != 0
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w9, Lvector_pair_tagged\@
 Lvector_pair_translate\@:
 	.endif
 	.if \load
 	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, (2 * \bytes), x19, Ltt_cold\@, Ltt_resume\@, Lvector_pair_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
 	\instruction \host_register\()0, \host_register\()1, [x19]
-	str q0, [_cpu, x22]
-	str q1, [_cpu, x23]
+	str q0, [_vcpu, x22]
+	str q1, [_vcpu, x23]
 	.else
 	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, (2 * \bytes), x19, Ltt_cold\@, Ltt_resume\@, Lvector_pair_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
-	ldr q0, [_cpu, x22]
-	ldr q1, [_cpu, x23]
+	ldr q0, [_vcpu, x22]
+	ldr q1, [_vcpu, x23]
 	\instruction \host_register\()0, \host_register\()1, [x19]
 	.endif
 	.if \mode == 1 || \mode == 2
-	str x21, [_cpu, x24]
+	str x21, [_vcpu, x24]
 	.endif
 	next_gadget
 	.if \load
@@ -1372,11 +1372,11 @@ Lvector_pair_cross\@:
 	mov v2.d[0], v0.d[0]
 	mov v0.16b, v2.16b
 		.endif
-	str q0, [_cpu, x22]
-	str q1, [_cpu, x23]
+	str q0, [_vcpu, x22]
+	str q1, [_vcpu, x23]
 	.else
-	ldr q0, [_cpu, x22]
-	ldr q1, [_cpu, x23]
+	ldr q0, [_vcpu, x22]
+	ldr q1, [_vcpu, x23]
 		.if \bytes == 4
 	mov v0.s[1], v1.s[0]
 		.elseif \bytes == 8
@@ -1385,7 +1385,7 @@ Lvector_pair_cross\@:
 	transfer_slow 1, x19, (\bytes * 2), fault=uml_arm64_gadget_memory_fault_indexed
 	.endif
 	.if \mode == 1 || \mode == 2
-	str x21, [_cpu, x24]
+	str x21, [_vcpu, x24]
 	.endif
 	next_gadget
 
@@ -1450,8 +1450,8 @@ uml_arm64_gadget_pair_alignment_fault_write_indexed:
 
 uml_arm64_gadget_memory_fault:
 	ldr x8, [_stream]
-	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str _stream, [_vcpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, #UML_GADGET_EVENT_MEMORY_FAULT
 	b uml_arm64_gadget_leave
 
@@ -1465,7 +1465,7 @@ uml_arm64_gadget_memory_fault_indexed:
 	lsr x8, x8, #56
 	lsl x8, x8, #2
 	orr x8, x8, #1
-	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str _stream, [_vcpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, #UML_GADGET_EVENT_MEMORY_FAULT
 	b uml_arm64_gadget_leave

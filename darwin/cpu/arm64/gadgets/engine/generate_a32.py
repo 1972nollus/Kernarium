@@ -391,14 +391,14 @@ def dp_shape_body(op: str, s: bool, shape: str) -> str:
     logical = op in LOGICAL
     carry_out = s and logical and shape not in ("imm", "reg")
     if has_rn:
-        lines += ["ubfx x9, x8, #8, #8", "ldr w9, [_cpu, x9]"]
+        lines += ["ubfx x9, x8, #8, #8", "ldr w9, [_vcpu, x9]"]
     op2 = "w12"
     if shape in ("imm", "imc"):
         lines.append("lsr x12, x8, #32")
         if shape == "imc":
             lines.append("ubfx x13, x8, #16, #1")
     else:
-        lines += ["ubfx x10, x8, #16, #8", "ldr w10, [_cpu, x10]"]
+        lines += ["ubfx x10, x8, #16, #8", "ldr w10, [_vcpu, x10]"]
         if shape == "reg":
             op2 = "w10"
         elif shape in ("lsl", "lsr", "asr", "ror", "rrx"):
@@ -420,7 +420,7 @@ def dp_shape_body(op: str, s: bool, shape: str) -> str:
                           "and w13, w13, #1"]
         else:
             kind = shape[1:]
-            lines += ["ubfx x14, x8, #24, #8", "ldr w14, [_cpu, x14]",
+            lines += ["ubfx x14, x8, #24, #8", "ldr w14, [_vcpu, x14]",
                       "and w14, w14, #0xff"]
             if carry_out:
                 lines.append("ubfx x17, x27, #29, #1")
@@ -506,7 +506,7 @@ def dp_shape_body(op: str, s: bool, shape: str) -> str:
         else:
             lines.append("mrs x27, nzcv")
     if has_rd:
-        lines += ["and x8, x8, #0xff", "str w11, [_cpu, x8]"]
+        lines += ["and x8, x8, #0xff", "str w11, [_vcpu, x8]"]
     lines.append("next_gadget")
     return "\n".join(lines)
 
@@ -514,7 +514,7 @@ def dp_shape_body(op: str, s: bool, shape: str) -> str:
 # In-place ADD and SUB of an immediate (Rd == Rn, an ordinary register) with
 # the CpuState displacement baked into the gadget, one gadget per register.
 # The ordinary gadget reads and writes the register through a byte offset the
-# stream word carries, "ldr w9, [_cpu, x9]" and "str w11, [_cpu, x8]", and
+# stream word carries, "ldr w9, [_vcpu, x9]" and "str w11, [_vcpu, x8]", and
 # the core forwards a dependent store-to-load pair at rename only when both
 # accesses name a base register and a constant displacement; the induction
 # variables and accumulators this shape is are what waits. The stream word
@@ -525,11 +525,11 @@ INPLACE_REGISTERS = 15
 def dp_inplace_body(subtract: bool, s: bool, register: int) -> str:
     operation = ("sub" if subtract else "add") + ("s" if s else "")
     lines = ["ldr x8, [_stream], #8",
-             f"ldr w9, [_cpu, #{8 * register}]", "lsr x12, x8, #32",
+             f"ldr w9, [_vcpu, #{8 * register}]", "lsr x12, x8, #32",
              f"{operation} w11, w9, w12"]
     if s:
         lines.append("mrs x27, nzcv")
-    lines += [f"str w11, [_cpu, #{8 * register}]", "next_gadget"]
+    lines += [f"str w11, [_vcpu, #{8 * register}]", "next_gadget"]
     return "\n".join(lines)
 
 
@@ -585,20 +585,20 @@ def select_name(op: str, shape: str) -> str:
 def select_body(op: str, shape: str) -> str:
     lines = ["ldr x8, [_stream], #8"]
     if op not in UNARY:
-        lines += ["ubfx x9, x8, #24, #8", "ldr w9, [_cpu, x9]"]
+        lines += ["ubfx x9, x8, #24, #8", "ldr w9, [_vcpu, x9]"]
     if shape == "imm":
         lines.append("lsr x12, x8, #32")
     else:
-        lines += ["ubfx x12, x8, #32, #8", "ldr w12, [_cpu, x12]"]
+        lines += ["ubfx x12, x8, #32, #8", "ldr w12, [_vcpu, x12]"]
     a, b = "w9", "w12"
     lines.append({"mov": f"mov w11, {b}", "mvn": f"mvn w11, {b}",
                   "add": f"add w11, {a}, {b}", "sub": f"sub w11, {a}, {b}",
                   "rsb": f"sub w11, {b}, {a}", "and": f"and w11, {a}, {b}",
                   "orr": f"orr w11, {a}, {b}", "eor": f"eor w11, {a}, {b}",
                   "bic": f"bic w11, {a}, {b}"}[op])
-    lines += ["ubfx x10, x8, #16, #8", "ldr w13, [_cpu, x10]",
+    lines += ["ubfx x10, x8, #16, #8", "ldr w13, [_vcpu, x10]",
               "lsr w14, w27, #28", "lsr x15, x8, x14", "tst x15, #1",
-              "csel w11, w11, w13, ne", "str w11, [_cpu, x10]",
+              "csel w11, w11, w13, ne", "str w11, [_vcpu, x10]",
               "next_gadget"]
     return "\n".join(lines)
 
@@ -630,7 +630,7 @@ def address_lines(mode: str) -> tuple[list[str], bool]:
     """
     if mode == "abs":
         return (["lsr x7, x19, #32"], False)
-    lines = ["ubfx x9, x19, #8, #8", "ldr w9, [_cpu, x9]"]
+    lines = ["ubfx x9, x19, #8, #8", "ldr w9, [_vcpu, x9]"]
     if mode.startswith("i"):
         lines.append("lsr x10, x19, #32")
         if mode == "i":
@@ -641,7 +641,7 @@ def address_lines(mode: str) -> tuple[list[str], bool]:
         else:
             lines += ["mov w7, w9", "add w20, w9, w10"]
         return (lines, True)
-    lines += ["ubfx x10, x19, #16, #8", "ldr w10, [_cpu, x10]",
+    lines += ["ubfx x10, x19, #16, #8", "ldr w10, [_vcpu, x10]",
               "ubfx x11, x19, #32, #6", "lsl w10, w10, w11"]
     operation = "add" if mode[1] == "a" else "sub"
     if mode in ("ra", "rs"):
@@ -655,7 +655,7 @@ def address_lines(mode: str) -> tuple[list[str], bool]:
 
 
 def writeback_lines() -> list[str]:
-    return ["ubfx x9, x19, #8, #8", "str w20, [_cpu, x9]"]
+    return ["ubfx x9, x19, #8, #8", "str w20, [_vcpu, x9]"]
 
 
 LOAD_SIZES = {
@@ -681,7 +681,7 @@ def load_single(name: str, size: str, mode: str) -> str:
         f"a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, {byte_count},"
         f" x7, Lcold_{label}, Lresume_{label}, Lcross_{label}, 0,"
         f" fault=La32_position_fault")
-    lines += [load, "and x8, x19, #0xff", "str w0, [_cpu, x8]"]
+    lines += [load, "and x8, x19, #0xff", "str w0, [_vcpu, x8]"]
     if writes_back:
         lines += writeback_lines()
     lines.append("next_gadget")
@@ -696,7 +696,7 @@ def load_single(name: str, size: str, mode: str) -> str:
         lines.append(cross_extract)
         if extend:
             lines.append(extend)
-        lines += ["and x8, x19, #0xff", "str w0, [_cpu, x8]"]
+        lines += ["and x8, x19, #0xff", "str w0, [_vcpu, x8]"]
         if writes_back:
             lines += writeback_lines()
         lines.append("next_gadget")
@@ -712,7 +712,7 @@ def store_single(name: str, size: str, mode: str) -> str:
         f"a32_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE,"
         f" {byte_count}, x7, Lcold_{label}, Lresume_{label}, Lcross_{label},"
         f" 0, fault=La32_position_fault")
-    lines += ["and x8, x19, #0xff", "ldr w0, [_cpu, x8]", store]
+    lines += ["and x8, x19, #0xff", "ldr w0, [_vcpu, x8]", store]
     if writes_back:
         lines += writeback_lines()
     lines.append("next_gadget")
@@ -722,7 +722,7 @@ def store_single(name: str, size: str, mode: str) -> str:
         f" 0, fault=La32_position_fault")
     if byte_count > 1:
         lines.append(f"Lcross_{label}:")
-        lines += ["and x8, x19, #0xff", "ldr w0, [_cpu, x8]", cross_pack,
+        lines += ["and x8, x19, #0xff", "ldr w0, [_vcpu, x8]", cross_pack,
                   f"transfer_slow 1, x7, {byte_count},"
                   f" fault=La32_position_fault"]
         if writes_back:
@@ -758,7 +758,7 @@ def double_address_lines(mode: str) -> tuple[list[str], bool]:
     """
     if mode == "abs":
         return (["lsr x7, x19, #32"], False)
-    lines = ["ubfx x9, x19, #16, #8", "ldr w9, [_cpu, x9]"]
+    lines = ["ubfx x9, x19, #16, #8", "ldr w9, [_vcpu, x9]"]
     if mode.startswith("i"):
         lines.append("lsr x10, x19, #32")
         if mode == "i":
@@ -769,7 +769,7 @@ def double_address_lines(mode: str) -> tuple[list[str], bool]:
         else:
             lines += ["mov w7, w9", "add w20, w9, w10"]
         return (lines, True)
-    lines += ["ubfx x10, x19, #32, #8", "ldr w10, [_cpu, x10]"]
+    lines += ["ubfx x10, x19, #32, #8", "ldr w10, [_vcpu, x10]"]
     operation = "add" if mode[1] == "a" else "sub"
     if mode in ("ra", "rs"):
         lines.append(f"{operation} w7, w9, w10")
@@ -782,7 +782,7 @@ def double_address_lines(mode: str) -> tuple[list[str], bool]:
 
 
 def double_writeback() -> list[str]:
-    return ["ubfx x9, x19, #16, #8", "str w20, [_cpu, x9]"]
+    return ["ubfx x9, x19, #16, #8", "str w20, [_vcpu, x9]"]
 
 
 def load_double(name: str, mode: str) -> str:
@@ -794,8 +794,8 @@ def load_double(name: str, mode: str) -> str:
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
         f" fault=La32_position_fault")
     lines += ["ldp w0, w15, [x7]", "and x8, x19, #0xff",
-              "ubfx x9, x19, #8, #8", "str w0, [_cpu, x8]",
-              "str w15, [_cpu, x9]"]
+              "ubfx x9, x19, #8, #8", "str w0, [_vcpu, x8]",
+              "str w15, [_vcpu, x9]"]
     if writes_back:
         lines += double_writeback()
     lines.append("next_gadget")
@@ -806,8 +806,8 @@ def load_double(name: str, mode: str) -> str:
     lines.append(f"Lcross_{name}:")
     lines += ["transfer_slow 0, x7, 8, fault=La32_position_fault",
               "umov x15, v0.d[0]", "and x8, x19, #0xff",
-              "ubfx x9, x19, #8, #8", "str w15, [_cpu, x8]",
-              "lsr x15, x15, #32", "str w15, [_cpu, x9]"]
+              "ubfx x9, x19, #8, #8", "str w15, [_vcpu, x8]",
+              "lsr x15, x15, #32", "str w15, [_vcpu, x9]"]
     if writes_back:
         lines += double_writeback()
     lines.append("next_gadget")
@@ -824,7 +824,7 @@ def store_double(name: str, mode: str) -> str:
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
         f" fault=La32_position_fault")
     lines += ["and x8, x19, #0xff", "ubfx x9, x19, #8, #8",
-              "ldr w0, [_cpu, x8]", "ldr w15, [_cpu, x9]",
+              "ldr w0, [_vcpu, x8]", "ldr w15, [_vcpu, x9]",
               "stp w0, w15, [x7]"]
     if writes_back:
         lines += double_writeback()
@@ -835,7 +835,7 @@ def store_double(name: str, mode: str) -> str:
         f" fault=La32_position_fault")
     lines.append(f"Lcross_{name}:")
     lines += ["and x8, x19, #0xff", "ubfx x9, x19, #8, #8",
-              "ldr w0, [_cpu, x8]", "ldr w15, [_cpu, x9]",
+              "ldr w0, [_vcpu, x8]", "ldr w15, [_vcpu, x9]",
               "bfi x0, x15, #32, #32", "fmov d0, x0",
               "transfer_slow 1, x7, 8, fault=La32_position_fault"]
     if writes_back:
@@ -888,16 +888,16 @@ def block_registers(count: int, access_load: bool, base: str) -> list[str]:
         lines.append(f"ubfx x17, {source}, #{low}, #5")
         if access_load:
             lines += [f"ldr w0, [{base}, #{4 * index}]",
-                      "str w0, [_cpu, x17, lsl #2]"]
+                      "str w0, [_vcpu, x17, lsl #2]"]
         else:
-            lines += ["ldr w0, [_cpu, x17, lsl #2]",
+            lines += ["ldr w0, [_vcpu, x17, lsl #2]",
                       f"str w0, [{base}, #{4 * index}]"]
     return lines
 
 
 def block_prologue(label: str) -> list[str]:
     return ["ldr x19, [_stream], #8",
-            "ubfx x9, x19, #0, #5", "ldr w9, [_cpu, x9, lsl #2]",
+            "ubfx x9, x19, #0, #5", "ldr w9, [_vcpu, x9, lsl #2]",
             "sbfx x10, x19, #8, #8", "add w7, w9, w10",
             "sbfx x11, x19, #16, #8", "add w22, w9, w11",
             "tst w7, #3", "b.ne Lalign_" + label]
@@ -909,7 +909,7 @@ def block_epilogue(count: int) -> list[str]:
     words = block_rest_words(count) + 1
     return [f"add _stream, _stream, #{8 * words}",
             "tbz x19, #5, 1f", "ubfx x9, x19, #0, #5",
-            "str w22, [_cpu, x9, lsl #2]", "1:", "next_gadget"]
+            "str w22, [_vcpu, x9, lsl #2]", "1:", "next_gadget"]
 
 
 def block_gadget(count: int, access_load: bool) -> str:
@@ -953,9 +953,9 @@ def emit_blocks(asm: Assembly) -> None:
 # Multiplies, division, bit manipulation and the other short integer forms
 
 Q_UPDATE = """
-        ldrb w14, [_cpu, #UML_ARM64_CPU_A32_Q]
+        ldrb w14, [_vcpu, #UML_ARM64_CPU_A32_Q]
         orr w14, w14, {flag}
-        strb w14, [_cpu, #UML_ARM64_CPU_A32_Q]
+        strb w14, [_vcpu, #UML_ARM64_CPU_A32_Q]
 """
 
 
@@ -965,7 +965,7 @@ def load_regs(*fields: tuple[str, str, int]) -> list[str]:
     lines = []
     for register, _, low in fields:
         lines += [f"ubfx x{register[1:]}, x8, #{low}, #8",
-                  f"ldr {register}, [_cpu, x{register[1:]}]"]
+                  f"ldr {register}, [_vcpu, x{register[1:]}]"]
     return lines
 
 
@@ -981,7 +981,7 @@ def mul_gadget(kind: str, s: bool) -> str:
                      else "msub w11, w9, w10, w12")
     if s:
         lines.append(nz_update("w11"))
-    lines += ["and x8, x8, #0xff", "str w11, [_cpu, x8]", "next_gadget"]
+    lines += ["and x8, x8, #0xff", "str w11, [_vcpu, x8]", "next_gadget"]
     return "\n".join(lines)
 
 
@@ -992,8 +992,8 @@ def mull_gadget(kind: str, s: bool) -> str:
     lines.append("smull x11, w9, w10" if kind in ("smull", "smlal")
                  else "umull x11, w9, w10")
     if kind in ("umlal", "smlal", "umaal"):
-        lines += ["ubfx x12, x8, #0, #8", "ldr w12, [_cpu, x12]",
-                  "ubfx x13, x8, #8, #8", "ldr w13, [_cpu, x13]"]
+        lines += ["ubfx x12, x8, #0, #8", "ldr w12, [_vcpu, x12]",
+                  "ubfx x13, x8, #8, #8", "ldr w13, [_vcpu, x13]"]
         if kind == "umaal":
             lines += ["add x11, x11, x12", "add x11, x11, x13"]
         else:
@@ -1003,8 +1003,8 @@ def mull_gadget(kind: str, s: bool) -> str:
         lines += ["mrs x14, nzcv", "and w14, w14, #0xc0000000",
                   "and w27, w27, #0x30000000", "orr w27, w27, w14"]
     lines += ["ubfx x12, x8, #0, #8", "ubfx x13, x8, #8, #8",
-              "str w11, [_cpu, x12]", "lsr x11, x11, #32",
-              "str w11, [_cpu, x13]", "next_gadget"]
+              "str w11, [_vcpu, x12]", "lsr x11, x11, #32",
+              "str w11, [_vcpu, x13]", "next_gadget"]
     return "\n".join(lines)
 
 
@@ -1025,7 +1025,7 @@ def mulh_gadget(index: int) -> str:
     if rounding:
         lines += ["mov x13, #0x80000000", "add x11, x11, x13"]
     lines += ["lsr x11, x11, #32", "and x8, x8, #0xff",
-              "str w11, [_cpu, x8]", "next_gadget"]
+              "str w11, [_vcpu, x8]", "next_gadget"]
     return "\n".join(lines)
 
 
@@ -1050,18 +1050,18 @@ def mulxy_gadget(index: int) -> str:
         lines.append("asr w10, w10, #16" if m_top else "sxth w10, w10")
         lines.append("smull x11, w9, w10")
     if long_form:
-        lines += ["ubfx x12, x8, #0, #8", "ldr w12, [_cpu, x12]",
-                  "ubfx x13, x8, #8, #8", "ldr w13, [_cpu, x13]",
+        lines += ["ubfx x12, x8, #0, #8", "ldr w12, [_vcpu, x12]",
+                  "ubfx x13, x8, #8, #8", "ldr w13, [_vcpu, x13]",
                   "orr x12, x12, x13, lsl #32", "add x11, x11, x12",
                   "ubfx x12, x8, #0, #8", "ubfx x13, x8, #8, #8",
-                  "str w11, [_cpu, x12]", "lsr x11, x11, #32",
-                  "str w11, [_cpu, x13]", "next_gadget"]
+                  "str w11, [_vcpu, x12]", "lsr x11, x11, #32",
+                  "str w11, [_vcpu, x13]", "next_gadget"]
         return "\n".join(lines)
     if mnemonic.startswith(("SMLA", "SMLAW")):
         lines += load_regs(("w12", "", 24))
         lines += ["adds w11, w11, w12", "cset w13, vs"]
         lines.append(Q_UPDATE.format(flag="w13"))
-    lines += ["and x8, x8, #0xff", "str w11, [_cpu, x8]", "next_gadget"]
+    lines += ["and x8, x8, #0xff", "str w11, [_vcpu, x8]", "next_gadget"]
     return "\n".join(lines)
 
 
@@ -1070,7 +1070,7 @@ def div_gadget(signed: bool) -> str:
     lines = ["ldr x8, [_stream], #8"]
     lines += load_regs(("w9", "", 8), ("w10", "", 16))
     lines.append("sdiv w11, w9, w10" if signed else "udiv w11, w9, w10")
-    lines += ["and x8, x8, #0xff", "str w11, [_cpu, x8]", "next_gadget"]
+    lines += ["and x8, x8, #0xff", "str w11, [_vcpu, x8]", "next_gadget"]
     return "\n".join(lines)
 
 
@@ -1087,7 +1087,7 @@ def extend_gadget(kind: str, accumulate: bool) -> str:
     if accumulate:
         lines += load_regs(("w9", "", 8))
         lines.append("add w10, w9, w10")
-    lines += ["and x8, x8, #0xff", "str w10, [_cpu, x8]", "next_gadget"]
+    lines += ["and x8, x8, #0xff", "str w10, [_vcpu, x8]", "next_gadget"]
     return "\n".join(lines)
 
 
@@ -1101,7 +1101,7 @@ def bits_gadget(kind: str) -> str:
     lines = ["ldr x8, [_stream], #8"]
     lines += load_regs(("w10", "", 16))
     lines += BIT_OPS[kind]
-    lines += ["and x8, x8, #0xff", "str w11, [_cpu, x8]", "next_gadget"]
+    lines += ["and x8, x8, #0xff", "str w11, [_vcpu, x8]", "next_gadget"]
     return "\n".join(lines)
 
 
@@ -1123,12 +1123,12 @@ def field_gadget(kind: str) -> str:
         lines += load_regs(("w9", "", 8))
         lines += ["ubfx x11, x8, #16, #8", "lsl w9, w9, w11",
                   "lsr x12, x8, #32", "and w9, w9, w12",
-                  "and x13, x8, #0xff", "ldr w11, [_cpu, x13]",
+                  "and x13, x8, #0xff", "ldr w11, [_vcpu, x13]",
                   "bic w11, w11, w12", "orr w11, w11, w9"]
     else:
         lines += ["lsr x12, x8, #32", "and x13, x8, #0xff",
-                  "ldr w11, [_cpu, x13]", "bic w11, w11, w12"]
-    lines += ["and x8, x8, #0xff", "str w11, [_cpu, x8]", "next_gadget"]
+                  "ldr w11, [_vcpu, x13]", "bic w11, w11, w12"]
+    lines += ["and x8, x8, #0xff", "str w11, [_vcpu, x8]", "next_gadget"]
     return "\n".join(lines)
 
 
@@ -1145,7 +1145,7 @@ def sat_gadget(unsigned: bool, shift: str) -> str:
     lines += ["lsr x15, x13, #32", "cmp w9, w13", "csel w11, w13, w9, gt",
               "cmp w11, w15", "csel w11, w15, w11, lt", "cmp w11, w9",
               "cset w12, ne", Q_UPDATE.format(flag="w12"),
-              "and x8, x8, #0xff", "str w11, [_cpu, x8]", "next_gadget"]
+              "and x8, x8, #0xff", "str w11, [_vcpu, x8]", "next_gadget"]
     return "\n".join(lines)
 
 
@@ -1161,7 +1161,7 @@ def pkh_gadget(top_bottom: bool) -> str:
         lines += ["sxtw x10, w10", "asr x10, x10, x14",
                   "and w10, w10, #0xffff", "and w9, w9, #0xffff0000"]
     lines += ["orr w11, w9, w10", "and x8, x8, #0xff",
-              "str w11, [_cpu, x8]", "next_gadget"]
+              "str w11, [_vcpu, x8]", "next_gadget"]
     return "\n".join(lines)
 
 
@@ -1198,10 +1198,10 @@ def emit_integer(asm: Assembly) -> None:
     asm.gadget("movt", """
         ldr x8, [_stream], #8
         and x9, x8, #0xff
-        ldr w10, [_cpu, x9]
+        ldr w10, [_vcpu, x9]
         lsr x11, x8, #48
         bfi w10, w11, #16, #16
-        str w10, [_cpu, x9]
+        str w10, [_vcpu, x9]
         next_gadget
     """)
 
@@ -1267,10 +1267,10 @@ def write_assembly(path: Path, asm: Assembly, hand: list[str]) -> None:
            ".arch_extension fp16fml", ""]
     out += asm.text
     out += [".pushsection __DATA_CONST,__gadget_a32", ".p2align 3",
-            ".globl NAME(uml_arm64_a32_gadgets)",
-            "NAME(uml_arm64_a32_gadgets):"]
+            ".globl CSYM(uml_arm64_a32_gadgets)",
+            "CSYM(uml_arm64_a32_gadgets):"]
     for name in hand + asm.names:
-        out.append(f"\t.quad NAME(uml_arm64_gadget_a32_{name})")
+        out.append(f"\t.quad CSYM(uml_arm64_gadget_a32_{name})")
     out += [".popsection", ""]
     path.write_text("\n".join(out))
 

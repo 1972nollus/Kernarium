@@ -117,11 +117,14 @@ def fit(arguments: argparse.Namespace) -> list[tuple]:
     cut = text.index("\t.set Lx86_groups, 0")
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
-        # engine/common.inc reaches ../../layout from its own directory.
+        # engine/common.inc reaches ../../layout, and the frame both engines
+        # share at ../../../gadget_host_frame.inc, from its own directory.
         gadgets = root / "x86_64/gadgets"
         shutil.copytree(GADGETS, gadgets, ignore=shutil.ignore_patterns(
             "*.cpp", "*.hpp", "*.md", "*.py", "CMakeLists.txt"))
         (root / "x86_64/layout").symlink_to(GADGETS.parent / "layout")
+        (root / "gadget_host_frame.inc").symlink_to(
+            GADGETS.parents[1] / "gadget_host_frame.inc")
         (gadgets / "engine/region.inc").write_text(text[:cut] + PACKED)
         command = compile_command(arguments.build_dir, arguments.ninja)
         source = str(GADGETS / "engine.S")

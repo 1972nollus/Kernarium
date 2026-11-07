@@ -24,7 +24,7 @@
 
 .macro vector_duplicate_write width, descriptor
 	and x9, x\descriptor, #0xffff
-	add x9, _cpu, x9
+	add x9, _vcpu, x9
 	str q2, [x9]
 	.if \width == 256
 	str q3, [x9, #16]
@@ -40,7 +40,7 @@ Lx86_vector_duplicate_done\@:
 gadget vector_duplicate_\kind\()_\width\()_rr
 	ldr x8, [_stream], #8
 	ubfx x10, x8, #16, #16
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldr q0, [x10]
 	.if \width == 256
 	ldr q1, [x10, #16]
@@ -88,9 +88,9 @@ gadget vector_lane_merge_rr
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	add x9, _cpu, x9
-	add x10, _cpu, x10
-	add x11, _cpu, x11
+	add x9, _vcpu, x9
+	add x10, _vcpu, x10
+	add x11, _vcpu, x11
 	ldr q0, [x10]
 	tbz x8, #49, Lx86_vector_lane_merge_rr_source_ready
 	add x11, x11, #8
@@ -106,7 +106,7 @@ Lx86_vector_lane_merge_rr_store:
 	str x12, [x9]
 	tbz x8, #50, Lx86_vector_lane_merge_rr_done
 	and x9, x8, #0xffff
-	add x9, _cpu, x9
+	add x9, _vcpu, x9
 	movi v0.16b, #0
 	str q0, [x9, #16]
 Lx86_vector_lane_merge_rr_done:
@@ -122,8 +122,8 @@ gadget vector_lane_merge_rm
 	read_operand 8, ldr, x, 24
 	and x9, x23, #0xffff
 	and x10, x26, #0xffff
-	add x9, _cpu, x9
-	add x10, _cpu, x10
+	add x9, _vcpu, x9
+	add x10, _vcpu, x10
 	ldr q0, [x10]
 	str q0, [x9]
 	tbz x26, #16, Lx86_vector_lane_merge_rm_store
@@ -132,7 +132,7 @@ Lx86_vector_lane_merge_rm_store:
 	str x24, [x9]
 	tbz x26, #17, Lx86_vector_lane_merge_rm_done
 	and x9, x23, #0xffff
-	add x9, _cpu, x9
+	add x9, _vcpu, x9
 	movi v0.16b, #0
 	str q0, [x9, #16]
 Lx86_vector_lane_merge_rm_done:

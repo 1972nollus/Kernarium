@@ -11,8 +11,8 @@
  * fixed-point table, to its twin. */
 .pushsection __DATA_CONST,__gadget_afp
 .p2align 3
-.globl NAME(uml_arm64_afp_twin_begin)
-NAME(uml_arm64_afp_twin_begin):
+.globl CSYM(uml_arm64_afp_twin_begin)
+CSYM(uml_arm64_afp_twin_begin):
 .popsection
 
 .macro afp_twins_begin
@@ -34,7 +34,7 @@ NAME(uml_arm64_afp_twin_begin):
  * names exactly one. */
 .macro afp_gadget name
 	gadget \name\()_afp
-	afp_twin_row NAME(uml_arm64_gadget_\name), NAME(uml_arm64_gadget_\name) + 4, NAME(uml_arm64_gadget_\name\()_afp), NAME(uml_arm64_gadget_\name\()_afp) + 4
+	afp_twin_row CSYM(uml_arm64_gadget_\name), CSYM(uml_arm64_gadget_\name) + 4, CSYM(uml_arm64_gadget_\name\()_afp), CSYM(uml_arm64_gadget_\name\()_afp) + 4
 .endm
 
 /* The gadget \name, or with \afp its twin. */
@@ -48,12 +48,12 @@ NAME(uml_arm64_afp_twin_begin):
 
 /* The row of a fixed-point table whose twin is \name\()_afp. */
 .macro afp_table_row name
-	afp_twin_row NAME(uml_arm64_gadget_\name), NAME(uml_arm64_gadget_\name\()_end), NAME(uml_arm64_gadget_\name\()_afp), NAME(uml_arm64_gadget_\name\()_afp_end)
+	afp_twin_row CSYM(uml_arm64_gadget_\name), CSYM(uml_arm64_gadget_\name\()_end), CSYM(uml_arm64_gadget_\name\()_afp), CSYM(uml_arm64_gadget_\name\()_afp_end)
 .endm
 
 .macro afp_twin_table_end
 	.pushsection __DATA_CONST,__gadget_afp
-	.globl NAME(uml_arm64_afp_twin_end)
-NAME(uml_arm64_afp_twin_end):
+	.globl CSYM(uml_arm64_afp_twin_end)
+CSYM(uml_arm64_afp_twin_end):
 	.popsection
 .endm

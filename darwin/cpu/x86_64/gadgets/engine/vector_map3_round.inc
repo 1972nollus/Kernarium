@@ -4,7 +4,7 @@
 .macro vector_map3_round_apply element, output, input, scalar
 	and w14, w13, #3
 	tbz w13, #2, Lx86_vector_map3_round_mode_ready\@
-	ldr w14, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldr w14, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	ubfx w14, w14, #13, #2
 Lx86_vector_map3_round_mode_ready\@:
 	cmp w14, #1
@@ -87,7 +87,7 @@ Lx86_vector_map3_round_done\@:
  * where MXCSR.DAZ makes a denormal input zero and the SIMD checks run;
  * neither result can be tiny, and F16C ignores FTZ. */
 .macro vector_map3_round_inputs element, width
-	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldr w12, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_map3_round_inputs_ready\@
 	.if \width == 256
 	simd_flush_denormals_each \element, 1, 3
@@ -105,7 +105,7 @@ Lx86_vector_map3_round_inputs_ready\@:
  * raises no precision. Uses v16 to v18 and w14. */
 .macro vector_map3_round_precision element, width, scalar
 	tbnz w13, #3, Lx86_vector_map3_round_precise\@
-	ldr w14, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldr w14, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	tbnz w14, #5, Lx86_vector_map3_round_precise\@
 	.if \scalar
 	.if \element == 32
@@ -203,8 +203,8 @@ gadget vector_map3_round_\symbol\()_\width\()_rr
 	ldp x8, x13, [_stream], #16
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	add x10, _cpu, x10
-	add x11, _cpu, x11
+	add x10, _vcpu, x10
+	add x11, _vcpu, x11
 	ldr q0, [x10]
 	ldr q1, [x11]
 	.if \width == 256
@@ -223,7 +223,7 @@ gadget vector_map3_round_\symbol\()_\width\()_rm
 	vector_memory_source \input_size, Lx86_vector_map3_round_cross_fault\@, scalar=1, single=1
 	mov w13, w27
 	and x10, x26, #0xffff
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldr q0, [x10]
 	vector_map3_round_body \opcode, \width
 	vector_write_xmm \width, 23
@@ -263,7 +263,7 @@ vector_map3_round_memory 0b, 0x0b, 128, 8
 	.endif
 	and w14, w13, #3
 	tbz w13, #2, Lx86_vector_map3_half_mode_ready\@
-	ldr w14, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldr w14, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	ubfx w14, w14, #13, #2
 Lx86_vector_map3_half_mode_ready\@:
 	and w15, w14, #1
@@ -301,14 +301,14 @@ Lx86_vector_map3_half_done\@:
 gadget vector_map3_half_\width\()_r
 	ldp x8, x13, [_stream], #16
 	ubfx x10, x8, #16, #16
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldr q1, [x10]
 	.if \width == 256
 	ldr q3, [x10, #16]
 	.endif
 	vector_map3_half_body \width
 	and x9, x8, #0xffff
-	add x9, _cpu, x9
+	add x9, _vcpu, x9
 	str q4, [x9]
 	movi v5.16b, #0
 	str q5, [x9, #16]
@@ -321,7 +321,7 @@ gadget vector_map3_half_\width\()_m
 	ldr x13, [_stream], #8
 	mov x25, x7
 	and x10, x23, #0xffff
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldr q1, [x10]
 	.if \width == 256
 	ldr q3, [x10, #16]

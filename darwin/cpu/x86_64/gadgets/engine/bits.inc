@@ -8,18 +8,18 @@
 	 * does: the next materialization applies it after that producer's
 	 * flags. RFLAGS takes the bit as well for the case where nothing is
 	 * pending. */
-	ldrh w8, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
-	ldrh w9, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
+	ldrh w8, [_vcpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
 	orr w8, w8, #1
 	bic w9, w9, #1
 	orr w9, w9, w19
-	strh w8, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
-	strh w9, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
-	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	strh w8, [_vcpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	strh w9, [_vcpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
+	ldr x8, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	bic x8, x8, #1
 	orr x8, x8, x19
 	orr x8, x8, #0x2
-	str x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	str x8, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 .endm
 
 /* x24 is the input value and w26 the already-masked bit number. */
@@ -51,13 +51,13 @@ gadget \operation\()_\width\()_r\form
 	ldr x8, [_stream], #8
 	and x25, x8, #0xffff
 	ubfx x9, x8, #16, #16
-	\load \host_register\()26, [_cpu, x9]
+	\load \host_register\()26, [_vcpu, x9]
 	.endif
-	\load \host_register\()24, [_cpu, x25]
+	\load \host_register\()24, [_vcpu, x25]
 	and w26, w26, #(\width - 1)
 	bit_compute \operation, \width, \host_register
 	.ifnc \operation,bt
-	\store \store_register\()27, [_cpu, x25]
+	\store \store_register\()27, [_vcpu, x25]
 	.endif
 	bit_update_carry
 	retire_and_next
@@ -75,7 +75,7 @@ gadget \operation\()_\width\()_m\form
 	and w26, w26, #(\width - 1)
 	.else
 	and x8, x23, #0xffff
-	\load \host_register\()26, [_cpu, x8]
+	\load \host_register\()26, [_vcpu, x8]
 	.if \width == 16
 	sxth x9, w26
 	.elseif \width == 32
@@ -214,8 +214,8 @@ Lx86_bit_count_ready\@:
 	 * gadget records lie inside the same set. Discard it rather than
 	 * materializing a value this macro immediately clears.
 	 */
-	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	str xzr, [_vcpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	ldr x8, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	.ifc \operation,bsf
 	bic x8, x8, #0x40
 	cbnz \host_register\()24, Lx86_bit_count_flags_done\@
@@ -244,7 +244,7 @@ Lx86_bit_count_source_nonzero\@:
 	.endif
 Lx86_bit_count_flags_done\@:
 	orr x8, x8, #0x2
-	str x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	str x8, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 .endm
 
 .macro bit_count_finish operation, width, store, host_register, store_register
@@ -254,7 +254,7 @@ Lx86_bit_count_flags_done\@:
 	.ifc \operation,bsr
 	cbz \host_register\()24, Lx86_bit_count_no_write\@
 	.endif
-	\store \store_register\()27, [_cpu, x25]
+	\store \store_register\()27, [_vcpu, x25]
 Lx86_bit_count_no_write\@:
 	bit_count_flags \operation, \host_register
 	retire_and_next
@@ -265,7 +265,7 @@ gadget \operation\()_\width\()_rr
 	ldr x8, [_stream], #8
 	and x25, x8, #0xffff
 	ubfx x9, x8, #16, #16
-	\load \host_register\()24, [_cpu, x9]
+	\load \host_register\()24, [_vcpu, x9]
 	bit_count_compute \operation, \width, \host_register
 	bit_count_finish \operation, \width, \store, \host_register, \store_register
 .endm

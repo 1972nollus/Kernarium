@@ -34,8 +34,8 @@ Lx86_vector_test_loop\@:
 	 * records lie inside that same set, so a pending record has nothing left
 	 * to contribute: discard it instead of materializing a value this
 	 * gadget immediately overwrites. */
-	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	str xzr, [_vcpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	ldr x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	mov x10, #0x8d5
 	bic x9, x9, x10
 	orr x9, x9, #2
@@ -45,7 +45,7 @@ Lx86_vector_test_not_zero\@:
 	cbz w25, Lx86_vector_test_not_carry\@
 	orr x9, x9, #1
 Lx86_vector_test_not_carry\@:
-	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	str x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	retire_and_next
 .endm
 
@@ -59,8 +59,8 @@ gadget vector_test_\width\()_\stride\()_rr
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	add x24, _cpu, x9
-	add x25, _cpu, x10
+	add x24, _vcpu, x9
+	add x25, _vcpu, x10
 	vector_test_flags \width, \stride
 .endm
 
@@ -90,7 +90,7 @@ Lx86_vector_test_loaded\@:
 	mov w27, wzr
 Lx86_vector_test_pointers\@:
 	and x8, x23, #0xffff
-	add x24, _cpu, x8
+	add x24, _vcpu, x8
 	vector_test_reduce \width, \stride
 	cbz w27, Lx86_vector_test_memory_stack_ready\@
 	add sp, sp, #32
