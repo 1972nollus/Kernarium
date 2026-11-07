@@ -313,9 +313,11 @@ process stays until the system reclaims it, and nothing restarts it; a client
 still connects, which CTS's OMAPI version test needs. The OMAPI features are not declared. QuickSearchBox and its
 home-screen search surface are deliberately omitted. Bluetooth
 device implementations and feature declarations are also omitted. Settings is
-the stock application apart from its Bluetooth parts (a `packages/apps/Settings`
-topic, route `p0009`): the Connected devices entry, which holds only Bluetooth,
-the Bluetooth developer option and the media output switcher are gone. The
+the stock application apart from the pages for hardware the product lacks (two
+`packages/apps/Settings` topics, route `p0009`): the Connected devices entry,
+which holds only Bluetooth, the Bluetooth developer option, the media output
+switcher, the hearing devices row, and the hearing-device, Bluetooth pairing,
+telephony, biometric and USB pages are gone. The
 Network page is the stock one with its Wi-Fi page. The Wi-Fi hotspot and
 wireless display pages are hidden, because the virtual Wi-Fi interface is a
 station only, and so is System update, because the synced AOSP tree has no
