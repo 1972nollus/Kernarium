@@ -128,7 +128,10 @@ BOOT_HAL_SELECTIONS = {
 # The OpenGL ES claim. The product init script copies the boot command line's
 # androidboot.opengles.version into ro.opengles.version at early-init, the
 # version the framework reports and the CTS gates its dEQP lists on; 0x30002
-# is OpenGL ES 3.2. A declared dEQP level makes the CTS run every EGL and GLES
+# is OpenGL ES 3.2. Every ES 3.1 or later context of the driver lists
+# GL_ANDROID_extension_pack_es31a, and the CTS requires the
+# android.hardware.opengles.aep feature exactly when a device that reports 3.1
+# or later lists it. A declared dEQP level makes the CTS run every EGL and GLES
 # list dated up to it, so the level is pinned to the one whose lists passed
 # whole: a platform update that moves the "latest" file fails here instead of
 # raising the claim unqualified.
@@ -513,6 +516,7 @@ REQUIRED_FEATURE_NAMES = {
     "android.hardware.microphone",
     "android.hardware.wifi",
     "android.software.companion_device_setup",
+    "android.hardware.opengles.aep",
 }
 FORBIDDEN_FEATURE_NAMES = {
     "android.hardware.bluetooth",

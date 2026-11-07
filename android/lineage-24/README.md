@@ -1206,14 +1206,18 @@ colour the two halves of the picture apart.
 The product declares OpenGL ES 3.2. The boot command line's
 `androidboot.opengles.version=196610` (0x30002) is the one writer of
 `ro.opengles.version`, which the vendor init script copies at early-init and
-the framework reports to applications; the Virgl driver makes ES 3.2 contexts
-over the host's Zink on KosmicKrisp.
+the framework reports to applications. The Virgl driver makes ES 3.2 contexts
+over the host's Zink on KosmicKrisp and lists
+`GL_ANDROID_extension_pack_es31a` on every ES 3.1 or later context, on a Mac
+and on an A15 iPad alike, so the product also declares
+`android.hardware.opengles.aep`: the CTS requires the feature exactly when a
+device that reports 3.1 or later lists the extension.
 `android.software.opengles.deqp.level` is 132776705 (2026-03-01), the level at
 which every GLES2, GLES3 and GLES31 dEQP list of the Android 17 CTS passed whole
 on both ABIs. A declared level makes the CTS run every list dated up to it, so
-the target-files verifier pins the level and the builder lane pins the command
-line's version: a platform update that moves the `latest` level file fails
-verification until its new lists pass.
+the target-files verifier pins the level and requires the extension pack, and
+the builder lane pins the command line's version: a platform update that moves
+the `latest` level file fails verification until its new lists pass.
 
 The product declares `android.hardware.vulkan.version` 1.4, `level` 1 and
 `compute` 0, and deliberately declares no `android.software.vulkan.deqp.level`:

@@ -432,13 +432,16 @@ PRODUCT_PACKAGES += \
 # system hands it. The module is a same-process HAL like the driver above,
 # selected through ro.hardware.gralloc by androidboot.hardware.gralloc.
 PRODUCT_PACKAGES += gralloc.minigbm
-# The boot command line declares OpenGL ES 3.2 (androidboot.opengles.version),
-# and the dEQP level is the one whose GLES lists passed whole; the target-files
-# verifier pins it.
+# The boot command line declares OpenGL ES 3.2 (androidboot.opengles.version).
+# The driver lists GL_ANDROID_extension_pack_es31a on every ES 3.1 or later
+# context, so the product declares the extension pack with it, and the dEQP
+# level is the one whose GLES lists passed whole; the target-files verifier
+# pins both.
 PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.hardware.vulkan.level-1.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.vulkan.level-1.xml \
     frameworks/native/data/etc/android.hardware.vulkan.compute-0.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.vulkan.compute-0.xml \
     frameworks/native/data/etc/android.hardware.vulkan.version-1_4.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.vulkan.version-1_4.xml \
+    frameworks/native/data/etc/android.hardware.opengles.aep.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.opengles.aep.xml \
     frameworks/native/data/etc/android.software.opengles.deqp.level-latest.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.opengles.deqp.level-latest.xml
 
 # A Vulkan window-system smoke test for this product. It owns a

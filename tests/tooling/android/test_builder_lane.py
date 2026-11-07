@@ -2064,7 +2064,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         f"VENDOR/etc/permissions/{wifi_feature_file}.xml",
                         f'<permissions><feature name="{wifi_feature_file}"/></permissions>',
                     )
-                # The GLES claim's qualified dEQP level.
+                # The GLES claim's two platform files: the extension pack and
+                # the qualified dEQP level.
+                archive.writestr(
+                    "VENDOR/etc/permissions/android.hardware.opengles.aep.xml",
+                    '<permissions><feature name="android.hardware.opengles.aep"/></permissions>',
+                )
                 archive.writestr(
                     "VENDOR/etc/permissions/android.software.opengles.deqp.level-latest.xml",
                     '<permissions><feature name="android.software.opengles.deqp.level" '
@@ -3268,6 +3273,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "required feature is not declared: android.hardware.wifi"),
             ("missing-gles-copy-cause", {"init_variant": "missing-gles-copy"},
              "does not copy the OpenGL ES version at early-init"),
+            ("missing-aep-feature-cause",
+             {"entries": {"VENDOR/etc/permissions/android.hardware.opengles.aep.xml": None}},
+             "required feature is not declared: android.hardware.opengles.aep"),
             ("missing-gles-deqp-level-cause",
              {"entries": {"VENDOR/etc/permissions/"
                           "android.software.opengles.deqp.level-latest.xml": None}},
