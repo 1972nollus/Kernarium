@@ -391,6 +391,24 @@ displayId=0
 """
 
 
+class WizardProcessesTests(unittest.TestCase):
+    def test_a_missing_process_is_an_empty_answer_not_a_shell_error(self) -> None:
+        commands: list[str] = []
+
+        class Recording(runner.Device):
+            def shell(self, command: str, timeout: int = 30) -> str:
+                commands.append(command)
+                return self.answer
+
+        device = Recording("adb", "serial", {})
+        device.answer = ""
+        self.assertEqual(device.wizard_processes(), [])
+        device.answer = "1445 1450"
+        self.assertEqual(device.wizard_processes(), ["1445", "1450"])
+        # `pidof` exits 1 for no process, which the strict shell would raise.
+        self.assertTrue(all(command.endswith("; true") for command in commands), commands)
+
+
 class StatusBarLockTests(unittest.TestCase):
     def test_a_finished_wizards_zero_record_is_not_a_lock(self) -> None:
         self.assertIs(runner.wizard_holds_status_bar(STATUS_BAR_AFTER_WIZARD), False)

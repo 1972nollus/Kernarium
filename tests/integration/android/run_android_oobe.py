@@ -420,7 +420,8 @@ class Device:
         return wizard_holds_status_bar(self.shell("dumpsys statusbar"))
 
     def wizard_processes(self) -> list[str] | None:
-        return android_provision.wizard_processes(self.shell)
+        # pidof exits 1 when no process has the name; that is the answer (an empty list), not an error of the shell.
+        return android_provision.wizard_processes(lambda command: self.shell(f"{command}; true"))
 
 
 def wait_for(description: str, probe: Callable[[], bool], seconds: int,
