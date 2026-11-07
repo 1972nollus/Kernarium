@@ -136,6 +136,18 @@ uml_declare_architecture_target(uml_guest_files platform)
 target_link_libraries(uml_guest_files PRIVATE UML::PlatformContract)
 target_include_directories(uml_guest_files PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
+if(UML_BUILD_UNIT_TESTS)
+    # The same source under the iOS family's disk-lock policy, which takes no
+    # host file lock, for its tests on a macOS host.
+    add_library(uml_guest_files_process_locks OBJECT guest_files.cpp)
+    uml_declare_architecture_target(uml_guest_files_process_locks platform)
+    target_link_libraries(uml_guest_files_process_locks PRIVATE
+        UML::PlatformContract)
+    target_include_directories(uml_guest_files_process_locks PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(uml_guest_files_process_locks PRIVATE
+        UML_GUEST_FILES_PROCESS_LOCKS=1)
+endif()
 
 add_library(uml_platform_component INTERFACE)
 add_library(UML::PlatformComponent ALIAS uml_platform_component)

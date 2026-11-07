@@ -2,6 +2,7 @@
 
 #include "guest_files.hpp"
 
+#include <TargetConditionals.h>
 #include <cerrno>
 #include <cstddef>
 #include <fcntl.h>
@@ -13,6 +14,22 @@
 namespace uml::platform {
 
 namespace {
+
+/* Whether a disk lock the kernel takes is also taken on the host file. The iOS
+ * family (device, Simulator, Designed for iPad) keeps it in this registry
+ * alone, because iOS ends a process it suspends while the process holds a file
+ * lock, and a guest that refuses or outlasts its suspend is left running with
+ * its disks open. The kernel is answered as before: a POSIX lock never
+ * conflicts with its own process. A macOS host locks the file, which keeps a
+ * second process off a disk in use, with an open file description lock: the
+ * lock then belongs to the description the kernel locked, and closing another
+ * descriptor of the disk (the kernel opens one to read its size) does not end
+ * it. */
+#if TARGET_OS_IPHONE || UML_GUEST_FILES_PROCESS_LOCKS
+constexpr bool hostDiskLocks = false;
+#else
+constexpr bool hostDiskLocks = true;
+#endif
 
 struct Record final {
 	dev_t device;
@@ -53,12 +70,22 @@ bool locksSuspended{};
 		a.st_ctimespec.tv_nsec == b.st_ctimespec.tv_nsec;
 }
 
+[[nodiscard]] int lockHostFile(int descriptor, struct flock lock) noexcept
+{
+	if (!hostDiskLocks)
+		return 0;
+	/* An open file description lock has no owning process: F_OFD_SETLK
+	 * fails unless l_pid is zero. */
+	lock.l_pid = 0;
+	return ::fcntl(descriptor, F_OFD_SETLK, &lock);
+}
+
 [[nodiscard]] int unlock(int descriptor) noexcept
 {
 	struct flock lock {};
 	lock.l_type = F_UNLCK;
 	lock.l_whence = SEEK_SET;
-	return ::fcntl(descriptor, F_SETLK, &lock);
+	return lockHostFile(descriptor, lock);
 }
 
 /* A failed restore gives back the locks it took and leaves the others as they
@@ -170,8 +197,7 @@ int set_guest_file_lock(int descriptor, int command,
 		errno = ENOMEM;
 		return -1;
 	}
-	struct flock lock = requested;
-	if (::fcntl(descriptor, command, &lock) != 0)
+	if (lockHostFile(descriptor, requested) != 0)
 		return -1;
 	diskLocks[index] = {identity, requested, requested.l_type != F_UNLCK,
 		false};
@@ -233,8 +259,7 @@ bool restore_guest_file_locks() noexcept
 			error = ESTALE;
 			break;
 		}
-		struct flock lock = record.lock;
-		if (::fcntl(descriptor, F_SETLK, &lock) != 0) {
+		if (lockHostFile(descriptor, record.lock) != 0) {
 			error = errno;
 			break;
 		}

@@ -40,7 +40,14 @@ struct GuestFileSyncResult final {
  * non-blocking whole-file lock F_SETLK is accepted (EINVAL otherwise): a wait
  * would hold the registry's mutex, which every flush and every quiesce needs,
  * and a restore takes the lock again without waiting. Lock acquisition is
- * refused while the guest is quiesced. */
+ * refused while the guest is quiesced. On macOS the host file is locked with an
+ * open file description lock, which belongs to the descriptor's description:
+ * closing another descriptor of the file leaves it, and another description,
+ * this process's own included, finds the file locked. On the iOS family
+ * (device, Simulator, Designed for iPad) the lock is the registry's alone and
+ * no host file is locked, so the process holds no file lock whenever iOS can
+ * suspend it, whether or not the guest suspended; the release and the restore
+ * below keep their bookkeeping and the restore its checks. */
 int set_guest_file_lock(int descriptor, int command,
 	const struct flock &lock) noexcept;
 
@@ -57,11 +64,11 @@ int set_guest_file_lock(int descriptor, int command,
  */
 [[nodiscard]] bool guest_file_registry_idle() noexcept;
 
-/* A suspended iOS process must hold no file locks. Release the disk locks
- * after guest writeback; remember their file metadata for resume. Retiring
- * a run drops the lock records instead. Returns the number of locks that
- * could not be released: they stay held, and a later release tries them again;
- * a restore leaves them alone. */
+/* Release the disk locks after guest writeback, so that a suspended process
+ * holds none, and remember their file metadata for resume. Retiring a run
+ * drops the lock records instead. Returns the number of locks that could not
+ * be released: they stay held, and a later release tries them again; a
+ * restore leaves them alone. */
 [[nodiscard]] unsigned release_guest_file_locks(bool retiring = false) noexcept;
 
 /* Reacquire every released disk lock and verify that no disk changed while

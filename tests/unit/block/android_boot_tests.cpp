@@ -613,6 +613,22 @@ void testDataDiskGrow(const Fixture &fixture, const fs::path &directory)
 		requireThrows<std::runtime_error>([&] { android::growDataDisk(layout, path, 9); });
 		require(android::validateDataDisk(layout, path) == 7);
 	}
+	/* The kernel's lock is an open file description lock, so a guest in this
+	 * process holds the disk as well, and the probe's own descriptor, opened
+	 * and closed by each look, does not end it. */
+	{
+		const int held = open(path.c_str(), O_RDWR);
+		require(held >= 0);
+		struct flock lock {};
+		lock.l_type = F_WRLCK;
+		lock.l_whence = SEEK_SET;
+		require(fcntl(held, F_OFD_SETLK, &lock) == 0);
+		require(android::lockedByAnotherProcess(path));
+		require(android::lockedByAnotherProcess(path),
+			"the probe ended the lock it looked for");
+		requireThrows<std::runtime_error>([&] { android::growDataDisk(layout, path, 9); });
+		require(close(held) == 0);
+	}
 	require(!android::lockedByAnotherProcess(path));
 	android::growDataDisk(layout, path, 64);
 	require(android::validateDataDisk(layout, path) == 64);
