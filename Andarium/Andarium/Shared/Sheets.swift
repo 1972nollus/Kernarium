@@ -162,7 +162,7 @@ struct InfoSheet: View {
                         HStack(spacing: 12) {
                             IconTile(asset: "GitHubMark")
                                 .accessibilityHidden(true)
-                            Text("Kernarium on GitHub")
+                            Text("Project on GitHub")
                             Spacer()
                             Image(systemName: "arrow.up.right")
                                 .font(.footnote.weight(.semibold))

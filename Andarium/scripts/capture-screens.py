@@ -153,7 +153,7 @@ SHOTS: list[Shot] = [
     s("system-edit", "Sheets", "system-edit", "The System sheet, opened from Edit: vCPUs and memory with the device's limits. A guest at the default memory shows no warning.", dark=True),
     s("system-edit-memory-high", "Sheets", "system-memory-warning", "The System sheet with memory above what a new guest gets: the ticks past the default are orange and the line beneath the ruler says iOS is likely to close Andarium above it.", dark=True),
     s("erase-alert", "Alerts", "erase", "Erase guest: the standard destructive confirmation over Home. Confirming returns to the first-launch screen (home-welcome).", dark=True),
-    s("info", "Info", "info", "Info: the app and version, System info (Build, Android version, Security patch, Kernel, Architecture, Supported architectures), Kernarium on GitHub and Acknowledgements.", dark=True),
+    s("info", "Info", "info", "Info: the app and version, System info (Build, Android version, Security patch, Kernel, Architecture, Supported architectures), Project on GitHub and Acknowledgements.", dark=True),
     s("info-acknowledgements", "Info", "info-acknowledgements", "Acknowledgements: projects by group; the names and marks line is at the bottom.", dark=True),
     s("info-license", "Info", "info-license", "A project's page: copyright holders, the license name and the license text (Mesa, MIT).", dark=True),
     s("info-license-long", "Info", "info-license-gpl", "A page with a long license text (Linux: syscall exception and GPL v2)."),
