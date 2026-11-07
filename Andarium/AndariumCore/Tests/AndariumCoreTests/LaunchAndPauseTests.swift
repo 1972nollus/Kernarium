@@ -341,6 +341,137 @@ struct PauseControllerTests {
         #expect(clock.isPaused)
     }
 
+    @Test func pausingForSpaceSuspendsWithoutWaitingOrHoldingTheGPU() throws {
+        let clock = GuestRunClock()
+        let (controller, effects, marker) = try makeController(runClock: clock)
+        controller.guestDidStart()
+        #expect(controller.pauseForSpace())
+        #expect(effects.calls == ["quiesce(low space,nowait)"])
+        #expect(controller.isPausedForSpace)
+        #expect(clock.isPaused)
+        // The application is in the foreground: nothing says it was left.
+        #expect(controller.phase == .foreground)
+        #expect(!FileManager.default.fileExists(atPath: marker.url.path))
+    }
+
+    @Test func aGuestIsPausedForSpaceOnceAndOnlyWhileItRuns() throws {
+        let (idle, idleEffects, _) = try makeController()
+        #expect(!idle.pauseForSpace())
+        #expect(idleEffects.calls.isEmpty)
+
+        let (controller, effects, _) = try makeController()
+        controller.guestDidStart()
+        #expect(controller.pauseForSpace())
+        #expect(!controller.pauseForSpace())
+        #expect(effects.calls == ["quiesce(low space,nowait)"])
+
+        let (background, backgroundEffects, _) = try makeController()
+        background.guestDidStart()
+        background.didEnterBackground()
+        backgroundEffects.calls.removeAll()
+        #expect(!background.pauseForSpace())
+        #expect(backgroundEffects.calls.isEmpty)
+    }
+
+    @Test func noEdgeWakesAGuestPausedForSpace() throws {
+        let (controller, effects, _) = try makeController()
+        controller.guestDidStart()
+        controller.pauseForSpace()
+        effects.calls.removeAll()
+        // A flush is a console request, which would end the suspension.
+        controller.willResignActive()
+        #expect(effects.calls.isEmpty)
+        controller.didEnterBackground()
+        // The guest is suspended already: the edge holds the GPU and says
+        // the application left, and writes nothing.
+        #expect(effects.calls == ["hold"])
+        #expect(controller.phase == .paused)
+        controller.willEnterForeground()
+        #expect(effects.calls == ["hold", "release"])
+        #expect(controller.phase == .foreground)
+        #expect(controller.isPausedForSpace)
+    }
+
+    @Test func resumingFromTheSpacePauseWakesTheGuestAndRestartsTheClock() throws {
+        let clock = GuestRunClock()
+        let (controller, effects, marker) = try makeController(runClock: clock)
+        controller.guestDidStart()
+        controller.pauseForSpace()
+        effects.calls.removeAll()
+        var finished = false
+        controller.resumeFromSpacePause { finished = true }
+        #expect(effects.calls == ["resume"])
+        // The guest is not back until the resume has finished.
+        #expect(clock.isPaused)
+        #expect(!finished)
+        effects.pendingResume?()
+        #expect(finished)
+        #expect(!clock.isPaused)
+        #expect(!controller.isPausedForSpace)
+        #expect(!FileManager.default.fileExists(atPath: marker.url.path))
+        // An edge treats the guest as any running one again.
+        controller.willResignActive()
+        #expect(effects.calls == ["resume", "flush"])
+    }
+
+    @Test func aSpacePauseIsResumedOnlyOnce() throws {
+        let (controller, effects, _) = try makeController()
+        controller.guestDidStart()
+        controller.resumeFromSpacePause {}
+        #expect(effects.calls.isEmpty)
+        controller.pauseForSpace()
+        controller.resumeFromSpacePause {}
+        controller.resumeFromSpacePause {}
+        #expect(effects.calls == ["quiesce(low space,nowait)", "resume"])
+    }
+
+    @Test func aGuestPausedForSpaceIsNotResumedOutOfTheForeground() throws {
+        let (controller, effects, _) = try makeController()
+        controller.guestDidStart()
+        controller.pauseForSpace()
+        controller.didEnterBackground()
+        effects.calls.removeAll()
+        controller.resumeFromSpacePause {}
+        #expect(effects.calls.isEmpty)
+        #expect(controller.isPausedForSpace)
+    }
+
+    @Test func theMarkerSaysTheApplicationLeftAGuestPausedForSpace() throws {
+        let (controller, effects, marker) = try makeController()
+        controller.guestDidStart()
+        controller.pauseForSpace()
+        controller.didEnterBackground()
+        #expect(FileManager.default.fileExists(atPath: marker.url.path))
+        controller.willEnterForeground()
+        #expect(!FileManager.default.fileExists(atPath: marker.url.path))
+        _ = effects
+    }
+
+    @Test func aGuestThatEndsWhilePausedForSpaceLeavesNothingPaused() throws {
+        let clock = GuestRunClock()
+        let (controller, effects, _) = try makeController(runClock: clock)
+        controller.guestDidStart()
+        controller.pauseForSpace()
+        controller.guestDidEnd()
+        #expect(!controller.isPausedForSpace)
+        #expect(!clock.isPaused)
+        // The next run pauses and resumes as any.
+        controller.guestDidStart()
+        effects.calls.removeAll()
+        #expect(controller.pauseForSpace())
+        #expect(effects.calls == ["quiesce(low space,nowait)"])
+    }
+
+    @Test func terminatingWhilePausedForSpaceWritesNothingMore() throws {
+        let (controller, effects, marker) = try makeController()
+        controller.guestDidStart()
+        controller.pauseForSpace()
+        effects.calls.removeAll()
+        controller.willTerminate()
+        #expect(effects.calls.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: marker.url.path))
+    }
+
     @Test func endedGuestIsNotPaused() throws {
         let (controller, effects, _) = try makeController()
         controller.guestDidStart()

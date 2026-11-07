@@ -77,6 +77,11 @@ public protocol PauseEffects: AnyObject {
 /// background mode, so a guest runs in the foreground only. The edge holds
 /// the GPU first and releases it only once the guest is running again, which
 /// keeps the GPU safe.
+///
+/// A guest can also be paused in the foreground, for want of space on the
+/// device (`RunSpaceWatch`). It stays paused until the person resumes it: a
+/// lifecycle edge never wakes it, and none writes its storage again, because
+/// writing it back would end the suspension.
 @MainActor
 public final class PauseController {
     public enum Phase: Equatable, Sendable {
@@ -90,6 +95,7 @@ public final class PauseController {
     public static let edgeBudget = DispatchTimeInterval.seconds(4)
 
     public private(set) var phase = Phase.foreground
+    public var isPausedForSpace: Bool { spacePaused }
     private let effects: any PauseEffects
     private let marker: PauseMarker
     /// Stops while the guest is paused, so timers on the guest's running time
@@ -98,6 +104,8 @@ public final class PauseController {
     private var guestRunning = false
     private var gpuHeld = false
     private var guestPaused = false
+    /// The guest is paused for want of space, which only the person ends.
+    private var spacePaused = false
     private var inForeground = true
     /// Resumes that have started and not returned.
     private var resumesInFlight = 0
@@ -117,13 +125,19 @@ public final class PauseController {
 
     public func guestDidEnd() {
         guestRunning = false
+        // The pause went with the guest: nothing is left to resume.
+        if spacePaused {
+            spacePaused = false
+            guestPaused = false
+            if resumesInFlight == 0 { runClock?.resume() }
+        }
     }
 
     /// Focus is lost but the process runs on: storage is written back and
     /// the guest keeps running, because stalling a user about to come straight
     /// back helps nothing.
     public func willResignActive() {
-        guard guestRunning, phase == .foreground else { return }
+        guard guestRunning, phase == .foreground, !guestPaused else { return }
         effects.flushGuest(until: nil)
     }
 
@@ -133,9 +147,13 @@ public final class PauseController {
         let deadline = DispatchTime.now() + Self.edgeBudget
         effects.holdGuestGPU()
         gpuHeld = true
-        effects.quiesceGuest(reason: "background", until: deadline)
-        guestPaused = true
-        runClock?.pause()
+        // A guest already paused for space has written everything back and
+        // is suspended: only the application's own state needs saying.
+        if !spacePaused {
+            effects.quiesceGuest(reason: "background", until: deadline)
+            guestPaused = true
+            runClock?.pause()
+        }
         phase = .paused
         marker.arm()
     }
@@ -149,13 +167,44 @@ public final class PauseController {
             effects.releaseGuestGPU()
             gpuHeld = false
         }
-        if guestPaused {
+        if guestPaused, !spacePaused {
             guestPaused = false
             resumesInFlight += 1
             effects.resumeGuest { [weak self] in self?.resumeFinished() }
         }
         phase = .foreground
         disarmWhenSettled()
+    }
+
+    /// The device is nearly out of space: the guest's storage is written back
+    /// and the guest suspended, without waiting for either, and it stays so
+    /// until `resumeFromSpacePause`. Returns whether it paused: not for a
+    /// guest that is not running, is already paused, or whose application is
+    /// out of the foreground. The GPU is not held, because a suspended guest
+    /// makes no request and the foreground's GPU is valid.
+    @discardableResult
+    public func pauseForSpace() -> Bool {
+        guard guestRunning, phase == .foreground, !guestPaused else { return false }
+        effects.quiesceGuest(reason: "low space", until: nil)
+        guestPaused = true
+        spacePaused = true
+        runClock?.pause()
+        return true
+    }
+
+    /// The person resumes a guest paused for space. `finished` runs on the
+    /// main actor once the guest is back; it does not run when no pause is
+    /// held or the application is out of the foreground. The marker needs no change: it is armed only by a background
+    /// edge, which a foreground resume does not follow.
+    public func resumeFromSpacePause(finished: @escaping @MainActor () -> Void) {
+        guard spacePaused, inForeground else { return }
+        spacePaused = false
+        guestPaused = false
+        resumesInFlight += 1
+        effects.resumeGuest { [weak self] in
+            self?.resumeFinished()
+            finished()
+        }
     }
 
     /// The application will exit: the marker goes, since the next launch is
