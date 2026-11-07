@@ -27,41 +27,13 @@ shorter than the negotiated one whenever the pitch is padded (a packed
 32-bit frame of a width that is not a multiple of 4), and the driver
 refuses a buffer shorter than its negotiated size.
 ---
- README.md                                     | 16 +++++++++++++++
  components/VideoFrame.cpp                     | 14 +++++++++++++
  .../v4l2_codec2/components/VideoFrame.h       |  5 +++++
  v4l2/V4L2Decoder.cpp                          | 14 +++++++++++++
  v4l2/V4L2Encoder.cpp                          | 20 +++++++++++++++++--
  v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h   |  2 ++
- 6 files changed, 69 insertions(+), 2 deletions(-)
+ 5 files changed, 53 insertions(+), 2 deletions(-)
 
-diff --git a/README.md b/README.md
-index e9b7d501a5219113ec5eb9d728cfb9b04ed5c00c..0de91967e2e3e683b29d72285e514072aeec0b49 100644
---- a/README.md
-+++ b/README.md
-@@ -509,6 +509,22 @@ chooses the size of its own blocks, and the component copies a block smaller
- than the maximum input size into a block of a pool it creates on first use, and
- queues that one. A secure block is never copied.
- 
-+### Buffer Pitch
-+
-+The device states the distance between the rows of every plane of a picture
-+buffer in the format it negotiates (*bytesperline*), and writes a decoded
-+picture and reads an encoder input frame at it. The graphic buffers of the
-+block pools come from the product's allocator, which lays rows out at its own
-+pitch: the guest's minigbm pads the rows of NV12, P010 and packed RGB buffers
-+to 16 bytes, because the host's GPU reads them at no other pitch, and the
-+device states the same pitch for the same width. The decoder compares the
-+pitch of each output buffer with the one it negotiated, and the encoder the
-+stride of each plane of an input frame with the one the device reports, and
-+either one stops with an error that names both numbers if they differ, rather
-+than showing a skewed picture that nothing else reports. An encoder input frame
-+held in one buffer is queued at the size the device negotiated, which is longer
-+than a tight picture when the rows are padded.
-+
- ### Picture Size
- 
- *C2_PARAMKEY_PICTURE_SIZE* takes any even width and height from 16 up, the
 diff --git a/components/VideoFrame.cpp b/components/VideoFrame.cpp
 index 54d4f5a50906f6ec28f6965d8c3c8b9e544d36f3..fe600171fc6721cf881e0f8ecb5e877f4f8fe3a2 100644
 --- a/components/VideoFrame.cpp
