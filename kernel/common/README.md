@@ -10,7 +10,9 @@ contracts every product shares:
   after it, which lists only where that product differs;
 - `artifacts/`: the prebuilt-kernel bundle schema, the local read-only verifier
   (source/ABI identity, page and module policy, ELF geometry, payload inventory,
-  exact bridge imports), and the shared `KEY='value'` metadata parser;
+  exact bridge imports), and the shared `KEY='value'` metadata parser. A
+  release build of an application compares the accepted descriptors with the
+  tracked final tree (see the [mainline README](../mainline-6.18/README.md));
 - `patches/`: the generated topic series every maintained line applies first;
 - `tooling/kernel_series.py`: replay, verification, and regeneration of a
   line's ordered series;

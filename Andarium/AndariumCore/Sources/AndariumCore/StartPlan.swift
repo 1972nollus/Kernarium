@@ -72,6 +72,18 @@ public enum StartPlan: Equatable, Sendable {
         }
     }
 
+    /// Whether Home offers Start in recovery. Until the guest has started
+    /// once, which is when the runtime creates its data disk (`firstStart`),
+    /// Recovery has nothing to work on and the control is disabled, not left
+    /// out; erasing the guest and setting up a new one returns to that state.
+    /// It decides only what Home offers: a start that arrives another way, as
+    /// an automation launch does, is the lifecycle's to allow
+    /// (`allowsStart(_:)`).
+    public var offersRecovery: Bool {
+        if case .firstStart = self { return false }
+        return allowsStart(.recovery)
+    }
+
     /// What a start in `mode` is, for the words and steps of the boot.
     public func bootKind(_ mode: StartMode) -> BootKind {
         if mode == .recovery { return .recovery }

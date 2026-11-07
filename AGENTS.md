@@ -141,6 +141,27 @@ only the affected domain's `identity.env`.
 - Use `kernel/common/abi/sync.sh --verify` for ordinary verification.
 - Rebuild C, C++, and Objective-C consumers after public API changes.
 
+## Release builds
+
+A change to an embedded artifact's inputs reaches users only through a rebuilt
+and accepted artifact. The Android release is selected by
+`android/lineage-24/metadata/accepted-release.env`, and a kernel bundle by
+`kernel/*/artifacts/accepted-*.env`. Its inputs are the overlay, product
+configuration, support files and patch series, or a kernel patch series and
+configuration. Until an accepted artifact carries such a change, it is
+pending, and its hand-back names the artifact it waits for.
+
+Before archiving a release build of an application:
+
+- check each artifact it embeds against the commit being archived; Andarium's
+  AppStore configuration enforces it with `scripts/check-embedded-artifacts.py`.
+  When an input changed after the source revision or tree that the artifact's
+  descriptor records, build and accept a new artifact first. Otherwise, name
+  the changes the archive will not carry and wait for the user's decision;
+- package the frameworks and stage the system image from those accepted
+  artifacts in the same run, from a clean tree at that commit;
+- give the archive a build number above every earlier archive's.
+
 ## Validation
 
 Run the narrowest relevant test first, then the single canonical workflow that

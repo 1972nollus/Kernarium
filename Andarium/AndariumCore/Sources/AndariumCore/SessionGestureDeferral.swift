@@ -25,9 +25,10 @@ public struct ScreenEdges: OptionSet, Hashable, Sendable {
 /// reaches Android (its notification shade, its navigation gestures) or shows
 /// the system's indicator instead of leaving Andarium or opening Control
 /// Center. The guest's display stays inside the safe area: only the
-/// preference changes, not the layout. Outside a normal run, and in a window
-/// that does not fill the screen, the session takes no part and the screen
-/// keeps its own preference.
+/// preference changes, not the layout. The bottom edge holds only while the
+/// home indicator is visible, which the session's view leaves so. Outside a
+/// normal run, and in a window that does not fill the screen, the session
+/// takes no part and the screen keeps its own preference.
 public struct SessionGestureDeferral: Equatable, Sendable {
     /// The edges to defer, or nil where the session does not decide.
     public let deferredEdges: ScreenEdges?

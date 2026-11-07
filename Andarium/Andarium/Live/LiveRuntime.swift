@@ -131,6 +131,10 @@ final class LiveRuntime: RuntimeDriver {
         storage.startPlan()
     }
 
+    func measuredUsedBytes() -> UInt64 {
+        storage.measuredUsedBytes()
+    }
+
     func restoreUpdate() throws {
         defer { model?.host.freeStorageBytes = AppEntry.freeStorageBytes() }
         try storage.restoreUpdate()
@@ -409,6 +413,9 @@ final class LiveRuntime: RuntimeDriver {
         }
         let uptime = runStartedAt.map { Int(Date().timeIntervalSince($0)) }
         runStartedAt = nil
+        // The run wrote to the data disk, so the device has less free space
+        // than before it.
+        model?.host.freeStorageBytes = AppEntry.freeStorageBytes()
         let loop = result == Int32(KERNARIUM_RUNTIME_RESULT_RESTART_LOOP)
         model?.runEnded(RunEnd(result: result, restartedInALoop: loop), uptimeSeconds: uptime)
     }

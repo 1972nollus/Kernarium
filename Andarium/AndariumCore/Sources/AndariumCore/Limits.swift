@@ -19,12 +19,17 @@ public enum Limits {
         return Array(stride(from: capacityRangeGiB.lowerBound, through: top, by: capacityStepGiB))
     }
 
-    /// What the runtime accepts for a guest's memory, in steps of 64 MiB. The
-    /// memory ruler starts at the bottom of it and counts in the same steps;
-    /// its top at a vCPU count comes from `MemoryPolicy`.
+    /// What the runtime accepts for a guest's memory, in steps of 64 MiB. It
+    /// is the runtime Kernarium's guests use too, so the range is the
+    /// runtime's and Andarium narrows it only below.
     public static let runtimeMemoryRangeMiB = 512...4096
     public static let runtimeMemoryStepMiB = 64
-    public static let minimumMemoryMiB = runtimeMemoryRangeMiB.lowerBound
+    /// The least memory the application offers Android, the size below which
+    /// Android is not usable. The memory ruler starts here and counts in
+    /// `memoryStepMiB`; its top at a vCPU count comes from `MemoryPolicy`,
+    /// which also takes the bottom down to that top on a device that cannot
+    /// give this much.
+    public static let minimumMemoryMiB = 1536
     public static let memoryStepMiB = runtimeMemoryStepMiB
     /// The range a new guest's memory is held within, in half gibibytes:
     /// `MemoryPolicy.defaultMemoryMiB` states the figure, from the runtime's
