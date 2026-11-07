@@ -357,7 +357,9 @@ relocatable code only, links are scoped to an address space, and no persistent
 executor survives its runtime memory domain. The gadget cache tags slots and
 links by address space and reuses a same-generation stale program only after
 exact page-bounded word validation. Sweeping, renewal and the process byte
-budget are in [`../darwin/README.md`](../darwin/README.md).
+budget are in the header comments of `darwin/cpu/gadget_cache_geometry.hpp`,
+`gadget_shared_space.hpp` and `gadget_cache_budget.hpp`, summarized in
+[`../darwin/README.md`](../darwin/README.md).
 
 To single-step a task, Linux sets the architectural step bit in the entry
 registers (arm64 PSTATE.SS, x86 RFLAGS.TF); every engine then retires exactly
