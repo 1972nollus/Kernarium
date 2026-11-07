@@ -86,7 +86,7 @@ boot emptied until the system reclaims them, and its in-use bytes stay flat
 across hand-backs. The hand-back reports what the heaps still hold
 (`heaps=<n> (<bytes> bytes) leases=<n>` on its console line) and the
 `guest-restart` test requires it to be nothing but the scratch each thread
-keeps. See [ADR 0002](decisions/0002-emulator-handle-lifetime.md).
+keeps.
 
 Runs on different handles serialize through a process address-space gate,
 because an embedded kernel's fixed host mappings cannot be shared. A stop
@@ -1396,6 +1396,9 @@ a repeat of the report it holds, and keeps the kind and at most 255 bytes of
 the command in the run's `Context`, which `begin_run()` clears and `end_run()`
 leaves for the handle's owner to read. A panic aborts the process and reports
 nothing.
+
+A guest that restarts itself boots again in the same process, because iOS can
+neither re-exec nor respawn an application.
 
 The macOS launchers (`darwin/app/macos`) restart a guest in the same process.
 The machine is made once: the emulator handle, the SLiRP provider with its

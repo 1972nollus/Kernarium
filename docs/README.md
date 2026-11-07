@@ -48,9 +48,9 @@ that goes into the Android image and the licence of the patched project for a
 patch to another project. The root [`LICENSE`](../LICENSE) is the GPL-2.0 text
 and [`../LICENSES/`](../LICENSES/README.md) holds the rest.
 
-Short accepted decisions remain under [`decisions/`](decisions/). Machine-
-readable manifests, identities, and test inventories are the source of truth
-for exact lists and counts.
+Decisions live as current contracts in the document that owns the subject,
+not in a separate decision log. Machine-readable manifests, identities, and
+test inventories are the source of truth for exact lists and counts.
 
 The repository intentionally has no handoff, progress, evidence-index, or
 dated investigation documents. Durable results belong in the owner above;
