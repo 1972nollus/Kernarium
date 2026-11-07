@@ -9,7 +9,7 @@ import Security
 /// key is a software key the Keychain protects. Its public half goes to the
 /// guest in each boot request, where adbd takes it as authorized for that
 /// boot; its private half signs adbd's AUTH tokens. It is made before the
-/// first start that has none, and Erase Guest deletes it. A harness
+/// first start that has none, and Erase guest deletes it. A harness
 /// launch's isolated instance has a key of its own.
 nonisolated struct AdbKeyStore {
     static let defaultTag = "com.imxieyi.andarium.adb-key"

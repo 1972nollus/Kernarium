@@ -202,9 +202,9 @@ struct BootView: View {
     static func status(_ kind: BootKind) -> String {
         switch kind {
         case .normal: "Starting"
-        case .firstStart: "First Start"
+        case .firstStart: "First start"
         case .upgrade: "Updating"
-        case .recovery: "Starting Recovery"
+        case .recovery: "Starting recovery"
         case .restart: "Restarting"
         }
     }
@@ -234,7 +234,7 @@ struct BootView: View {
         case .recovery:
             return [system, kernel,
                     Step(title: "Storage", detail: used, seconds: 0.6),
-                    Step(title: "Recovery", detail: "Loading Recovery", seconds: 1.4)]
+                    Step(title: "Recovery", detail: "Loading recovery", seconds: 1.4)]
         case .firstStart:
             return [system, kernel,
                     Step(title: "Storage", detail: "Preparing \(Formats.size(gib: guest.effectiveCapacityGiB)) for first use", seconds: 0.9),

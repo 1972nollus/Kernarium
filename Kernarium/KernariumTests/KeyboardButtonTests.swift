@@ -64,15 +64,15 @@ extension SerialConsoleTests {
     /// Back to the framebuffer, the application's first mode, with no
     /// keyboard up.
     fileprivate func restore(_ app: Application) async throws {
-        if app.label(of: "displayModeButton") == "Show Framebuffer" {
+        if app.label(of: "displayModeButton") == "Show framebuffer" {
             try app.press("displayModeButton")
             #expect(
                 try await eventually {
-                    app.label(of: "displayModeButton") == "Show Serial Console"
+                    app.label(of: "displayModeButton") == "Show serial console"
                 }
             )
         }
-        if app.label(of: "keyboardButton") == "Hide Keyboard" {
+        if app.label(of: "keyboardButton") == "Hide keyboard" {
             try app.press("keyboardButton")
         }
         #expect(try await eventually { app.firstResponders.isEmpty })
@@ -109,21 +109,21 @@ extension SerialConsoleTests {
             },
             "the framebuffer did not take the keyboard: \(app.firstResponders)"
         )
-        #expect(app.label(of: "keyboardButton") == "Hide Keyboard")
+        #expect(app.label(of: "keyboardButton") == "Hide keyboard")
 
         // A mode switch puts the keyboard away; the view that had it is
         // hidden.
         try app.press("displayModeButton")
         #expect(
             try await eventually {
-                app.label(of: "displayModeButton") == "Show Framebuffer"
+                app.label(of: "displayModeButton") == "Show framebuffer"
             }
         )
         #expect(
             try await eventually { focused(nil) },
             "a hidden view kept the keyboard: \(responders)"
         )
-        #expect(app.label(of: "keyboardButton") == "Show Keyboard")
+        #expect(app.label(of: "keyboardButton") == "Show keyboard")
 
         // On the console, the button focuses the console's terminal, which
         // raises its keyboard and key bar, and puts them away again.
@@ -134,7 +134,7 @@ extension SerialConsoleTests {
         )
         #expect(
             try await eventually {
-                app.label(of: "keyboardButton") == "Hide Keyboard"
+                app.label(of: "keyboardButton") == "Hide keyboard"
             }
         )
         try app.press("keyboardButton")
@@ -144,7 +144,7 @@ extension SerialConsoleTests {
         )
         #expect(
             try await eventually {
-                app.label(of: "keyboardButton") == "Show Keyboard"
+                app.label(of: "keyboardButton") == "Show keyboard"
             }
         )
 
@@ -153,20 +153,20 @@ extension SerialConsoleTests {
         #expect(app.terminal.becomeFirstResponder())
         #expect(
             try await eventually {
-                app.label(of: "keyboardButton") == "Hide Keyboard"
+                app.label(of: "keyboardButton") == "Hide keyboard"
             },
             "the button does not show the console's keyboard"
         )
         try app.press("displayModeButton")
         #expect(
             try await eventually {
-                app.label(of: "displayModeButton") == "Show Serial Console"
+                app.label(of: "displayModeButton") == "Show serial console"
             }
         )
         #expect(
             try await eventually { focused(nil) },
             "a hidden view kept the keyboard: \(responders)"
         )
-        #expect(app.label(of: "keyboardButton") == "Show Keyboard")
+        #expect(app.label(of: "keyboardButton") == "Show keyboard")
     }
 }

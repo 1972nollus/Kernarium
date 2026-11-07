@@ -117,14 +117,14 @@ public struct MemoryPolicy: Equatable, Sendable {
 /// the guest runs. Home and the memory picker use these words, so they say the
 /// same thing.
 public enum MemoryWarning {
-    public static let title = "Guest Memory Is High"
+    public static let title = "Guest memory is high"
 
     /// Home's notice: the guest's size, the size that is safer, and where to
     /// lower it.
     public static func explanation(memoryMiB: Int, safeMiB: Int, deviceName: String) -> String {
         "iOS is likely to close Andarium with \(Formats.size(mib: memoryMiB)) of guest memory on this "
             + "\(deviceName). \(Formats.size(mib: safeMiB)) or less is safer. "
-            + "Lower it with Edit under Guest System."
+            + "Lower it with Edit under Guest system."
     }
 
     /// The line beneath the memory picker.

@@ -73,7 +73,7 @@ final class LiveRuntime: RuntimeDriver {
             print("Andarium: display rotation unavailable: \(error)")
             guard let model = self?.model, model.alert == nil else { return }
             model.alert = AppAlert(
-                title: "Display Rotation Unavailable",
+                title: "Display rotation unavailable",
                 message: "The guest’s screen could not follow this window. Close and reopen Andarium to try again.")
         })
     private var normalRun = false

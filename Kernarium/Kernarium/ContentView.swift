@@ -199,9 +199,9 @@ struct ContentView: View {
 
     private var keepRunningLabel: String {
         switch backgroundJob.state {
-        case .idle: "Keep the Guest Running in the Background"
-        case .submitted: "Starting to Keep the Guest Running"
-        case .running: "Stop Keeping the Guest Running"
+        case .idle: "Keep the guest running in the background"
+        case .submitted: "Starting to keep the guest running"
+        case .running: "Stop keeping the guest running"
         }
     }
 
@@ -217,8 +217,8 @@ struct ContentView: View {
         floatingIconButton(
             systemName: guestViewMode == .framebuffer ? "terminal" : "display",
             accessibilityLabel: guestViewMode == .framebuffer
-                ? "Show Serial Console"
-                : "Show Framebuffer",
+                ? "Show serial console"
+                : "Show framebuffer",
             identifier: "displayModeButton",
             action: toggleGuestViewMode
         )
@@ -227,7 +227,7 @@ struct ContentView: View {
     private var settingsButton: some View {
         floatingIconButton(
             systemName: "gearshape",
-            accessibilityLabel: "Emulator Settings",
+            accessibilityLabel: "Emulator settings",
             identifier: "settingsButton"
         ) {
             settingsPresented = true
@@ -248,8 +248,8 @@ struct ContentView: View {
                 ? "keyboard.chevron.compact.down"
                 : "keyboard",
             accessibilityLabel: keyboardVisible
-                ? "Hide Keyboard"
-                : "Show Keyboard",
+                ? "Hide keyboard"
+                : "Show keyboard",
             identifier: "keyboardButton",
             action: toggleKeyboard
         )
@@ -268,8 +268,8 @@ struct ContentView: View {
                     ? "chevron.right"
                     : "chevron.left",
                 accessibilityLabel: specialKeysExpanded
-                    ? "Hide Special Keys"
-                    : "Show Special Keys",
+                    ? "Hide special keys"
+                    : "Show special keys",
                 identifier: "specialKeysButton"
             ) {
                 withAnimation {
@@ -363,8 +363,8 @@ struct GuestRunEnd: Equatable {
     }
 
     var title: String {
-        if restartedInALoop { return "Guest Kept Restarting" }
-        return result == 0 ? "Guest Shut Down" : "Guest Stopped with an Error"
+        if restartedInALoop { return "Guest kept restarting" }
+        return result == 0 ? "Guest shut down" : "Guest stopped with an error"
     }
 
     var message: String {
@@ -444,7 +444,7 @@ struct GPUBudgetWarning: Equatable {
         floorMiB = mebibytes(plan.budget_bytes)
     }
 
-    var title: String { "Memory May Run Short" }
+    var title: String { "Memory may run short" }
 
     var message: String {
         "The system lets Kernarium use \(limitMiB) MiB. After the guest's " +
@@ -573,8 +573,8 @@ enum GuestSpecialKey: UInt16, CaseIterable, Identifiable {
     var accessibilityLabel: String {
         switch self {
         case .power: "Power"
-        case .volumeUp: "Volume Up"
-        case .volumeDown: "Volume Down"
+        case .volumeUp: "Volume up"
+        case .volumeDown: "Volume down"
         case .escape: "Escape"
         case .tab: "Tab"
         case .home: "Home"

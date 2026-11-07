@@ -183,7 +183,7 @@ control out.
 - **Updates.** `InstanceRules.decide` applies the rules of the
   [Android README](../android/lineage-24/README.md#guest-instance-storage) and
   `StartPlan` is what Home shows of them before Start. An update clones
-  `data.img` first, and Erase Guest deletes everything the guest has stored,
+  `data.img` first, and Erase guest deletes everything the guest has stored,
   the snapshot and the adb key included.
 - **Backup.** The guest is left out of iCloud and computer backups unless the
   user turns on Back up guest data.

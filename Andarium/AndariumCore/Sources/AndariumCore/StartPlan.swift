@@ -16,7 +16,7 @@ public enum StartBlock: Equatable, Sendable {
 }
 
 extension StartBlock {
-    public var title: String { "This Guest Cannot Start" }
+    public var title: String { "This guest cannot start" }
 
     /// What Home says; erasing the guest is the way out of each.
     public var explanation: String {

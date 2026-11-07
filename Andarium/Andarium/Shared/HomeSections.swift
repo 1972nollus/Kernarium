@@ -96,11 +96,11 @@ struct SystemSection: View {
 
     var body: some View {
         if let guest = model.guest {
-            HomeSection(title: "Guest System") {
+            HomeSection(title: "Guest system") {
                 SystemRow(
                     symbol: "cpu", title: "CPU and memory", subtitle: Self.summary(of: guest),
                     button: SystemRowButton(
-                        title: "Edit", identifier: "home-system-edit", accessibilityName: "Edit System",
+                        title: "Edit", identifier: "home-system-edit", accessibilityName: "Edit system",
                         action: { model.sheet = .system }
                     )
                 )
@@ -116,7 +116,7 @@ struct SystemSection: View {
     }
 }
 
-/// The button at the end of a Guest System row.
+/// The button at the end of a Guest system row.
 struct SystemRowButton {
     let title: String
     let identifier: String
@@ -141,7 +141,7 @@ extension VerticalAlignment {
     fileprivate static let headerCenter = VerticalAlignment(HeaderCenterID.self)
 }
 
-/// One row of the Guest System section: the icon tile, the title with one
+/// One row of the Guest system section: the icon tile, the title with one
 /// line under it, anything further under that line in the same column (a bar,
 /// a note), and the row's button at the end. The text column reads as one
 /// accessibility element; the button is the other. At accessibility text
@@ -332,13 +332,13 @@ struct MicrophoneAccessAlert: ViewModifier {
     func body(content: Content) -> some View {
         @Bindable var model = model
         content.alert(
-            "Allow Microphone Access", isPresented: Binding(
+            "Allow microphone access", isPresented: Binding(
                 get: { model.permissionPrompt == .microphone },
                 set: { if !$0 { model.permissionPrompt = nil } }
             )
         ) {
             Button("Open Settings") { model.openMicrophoneSettings() }
-            Button("Not Now", role: .cancel) {}
+            Button("Not now", role: .cancel) {}
         } message: {
             Text("iOS is not allowing Andarium to use the microphone. Turn on Microphone for Andarium in Settings, then come back to use it.")
         }

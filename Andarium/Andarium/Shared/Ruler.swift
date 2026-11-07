@@ -248,7 +248,7 @@ struct StoragePanel: View {
     }
 }
 
-/// An existing guest's storage, the second row of Home's Guest System
+/// An existing guest's storage, the second row of Home's Guest system
 /// section: what the guest holds of its capacity, as words and on a bar, a
 /// pending growth or the largest size as a note under the bar, and Resize.
 struct StorageRow: View {
@@ -416,7 +416,7 @@ struct ResizeSheet: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 18)
-            .navigationTitle("Resize Storage")
+            .navigationTitle("Resize storage")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

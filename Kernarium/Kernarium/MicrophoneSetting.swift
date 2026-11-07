@@ -5,7 +5,7 @@ import Foundation
 
 /// The user's Microphone setting: whether programs in the guest may record
 /// from the device's microphone. It is off until the user turns it on in
-/// Emulator Settings, and while it is off, or iOS has not granted access, the
+/// Emulator settings, and while it is off, or iOS has not granted access, the
 /// guest records silence and nothing opens the microphone.
 ///
 /// The setting applies at once, not at the next launch like the rest of the

@@ -100,7 +100,7 @@ struct AndroidOperationTests {
             return true
         }
         model.createBugReport()
-        #expect(model.busy?.title == "Creating Bug Report")
+        #expect(model.busy?.title == "Creating bug report")
         #expect(model.busy?.cancel != nil)
         #expect(await eventually { offered != nil })
         #expect(offered == file)
@@ -153,7 +153,7 @@ struct AndroidOperationTests {
         driver.bugReport = { _ in throw AdbFailure(.remote("There is an existing bugreport in progress"), activity: .bugReport) }
         model.createBugReport()
         #expect(await eventually { model.alert != nil })
-        #expect(model.alert?.title == "Bug Report Not Created")
+        #expect(model.alert?.title == "Bug report not created")
         #expect(model.alert?.message == "The guest is already making a bug report.")
         #expect(model.busy == nil)
     }
@@ -257,19 +257,19 @@ struct AndroidOperationTests {
         let url = try apk(named: "Signal-7.21.4.apk")
         defer { try? FileManager.default.removeItem(at: url) }
         model.installPicked(url)
-        #expect(model.busy?.title == "Installing App")
+        #expect(model.busy?.title == "Installing app")
         #expect(model.busy?.result == nil)
         #expect(await eventually { model.busy?.result != nil })
         // The overlay is still up, and says how it went.
         let busy = try #require(model.busy)
-        #expect(busy.title == "App Installed")
+        #expect(busy.title == "App installed")
         #expect(busy.detail.hasSuffix("Signal-7.21.4.apk is installed in the guest."))
         #expect(busy.result?.failed == false)
         #expect(busy.progress == nil && busy.cancel == nil)
         #expect(model.alert == nil)
         // Nothing else may start while it is up.
         model.createBugReport()
-        #expect(model.busy?.title == "App Installed")
+        #expect(model.busy?.title == "App installed")
         busy.result?.dismiss.action()
         #expect(model.busy == nil)
     }
@@ -313,7 +313,7 @@ struct AndroidOperationTests {
         defer { try? FileManager.default.removeItem(at: url) }
         model.installPicked(url)
         #expect(await eventually { model.busy?.result != nil })
-        #expect(model.busy?.title == "App Not Installed")
+        #expect(model.busy?.title == "App not installed")
         #expect(model.busy?.detail == "A newer version of this app is already installed.")
         #expect(model.busy?.result?.failed == true)
         #expect(model.alert == nil)
@@ -332,7 +332,7 @@ struct AndroidOperationTests {
             defer { try? FileManager.default.removeItem(at: url) }
             model.installPicked(url)
             let busy = try #require(model.busy, "\(name)")
-            #expect(busy.title == "App Not Installed", "\(name)")
+            #expect(busy.title == "App not installed", "\(name)")
             #expect(busy.detail == refusal.message, "\(name)")
             #expect(busy.result?.failed == true && busy.cancel == nil && busy.progress == nil, "\(name)")
             #expect(model.alert == nil)

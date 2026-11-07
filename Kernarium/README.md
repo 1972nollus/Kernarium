@@ -219,7 +219,7 @@ scene manifest does not support multiple scenes.
 
 ### Microphone
 
-The Microphone switch in Emulator Settings is off by default; while it is off,
+The Microphone switch in Emulator settings is off by default; while it is off,
 or iOS has not granted access, a guest that records gets silence and nothing
 opens the microphone. Turning it on is the one place iOS is asked for access
 (`MicrophoneSetting`); the application then tells the runtime

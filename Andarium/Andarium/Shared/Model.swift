@@ -91,7 +91,7 @@ final class AppModel {
     var capacityStopsGiB: [Int] { Limits.capacityStopsGiB(releaseMaximumGiB: releaseMaximumGiB) }
     var sheet: SheetKind?
     var startBlocked = false
-    /// Erase Guest is asking to be confirmed.
+    /// Erase guest is asking to be confirmed.
     var confirmingErase = false
     /// What a start would be, from the guest's files: Home words Start and
     /// shows the update notices by it.
@@ -270,7 +270,7 @@ final class AppModel {
         do {
             try driver.save(guest)
         } catch {
-            alert = AppAlert(title: "Settings Not Saved", message: error.localizedDescription)
+            alert = AppAlert(title: "Settings not saved", message: error.localizedDescription)
         }
     }
 
@@ -282,10 +282,10 @@ final class AppModel {
         }
         runBusy(
             BusyState(
-                title: "Creating Guest",
+                title: "Creating guest",
                 detail: "Setting up Andarium with \(Formats.size(gib: guest.effectiveCapacityGiB)).", progress: 0
             ),
-            failure: "The Guest Could Not Be Created"
+            failure: "The guest could not be created"
         ) { progress in
             let made = try await driver.create(guest, progress: progress)
             self.lifecycle.create(made)
@@ -304,12 +304,12 @@ final class AppModel {
         do {
             try driver.restoreUpdate()
         } catch {
-            alert = AppAlert(title: "The Guest Could Not Be Restored", message: error.localizedDescription)
+            alert = AppAlert(title: "The guest could not be restored", message: error.localizedDescription)
         }
         refreshPlan()
     }
 
-    /// Erase Guest: everything the guest stored is deleted, its choices
+    /// Erase guest: everything the guest stored is deleted, its choices
     /// included, and Andarium returns to the first-launch screen.
     func erase() {
         guard let driver, guest != nil else {
@@ -318,8 +318,8 @@ final class AppModel {
             return
         }
         runBusy(
-            BusyState(title: "Erasing Guest", detail: "Deleting everything the guest stored.", progress: 0),
-            failure: "The Guest Could Not Be Erased"
+            BusyState(title: "Erasing guest", detail: "Deleting everything the guest stored.", progress: 0),
+            failure: "The guest could not be erased"
         ) { progress in
             // A choice saved a moment after the last change must not come
             // back after the files are gone.
@@ -561,10 +561,10 @@ final class AppModel {
         guard capabilities.bugReport, case .running(.normal) = phase else { return }
         runOperation(
             BusyState(
-                title: "Creating Bug Report",
+                title: "Creating bug report",
                 detail: "The guest is collecting its logs and state. This can take several minutes.", progress: 0
             ),
-            failure: "Bug Report Not Created",
+            failure: "Bug report not created",
             { [driver] update in
                 if let driver { return try await driver.createBugReport(update: update) }
                 return try await Self.playBugReport(update)
@@ -621,11 +621,11 @@ final class AppModel {
         let size = UInt64(max(bytes, 0))
         runOperation(
             BusyState(
-                title: "Installing App",
+                title: "Installing app",
                 detail: "\(name) \u{00B7} \(Formats.size(bytes: size))", progress: 0
             ),
             failure: Self.installFailure,
-            ending: { _ in (title: "App Installed", detail: "\(name) is installed in the guest.") },
+            ending: { _ in (title: "App installed", detail: "\(name) is installed in the guest.") },
             { [driver] update in
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                 if let driver {
@@ -641,7 +641,7 @@ final class AppModel {
     }
 
     /// The title of an install that did not happen.
-    static let installFailure = "App Not Installed"
+    static let installFailure = "App not installed"
 
     /// The preview's install: the file goes over, the guest takes its time.
     private static func playInstall(_ update: @Sendable (BusyUpdate) -> Void) async throws {

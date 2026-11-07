@@ -257,7 +257,7 @@ struct EmulatorSettingsView: View {
                     Text("Changes take effect the next time the app launches.")
                 }
             }
-            .navigationTitle("Emulator Settings")
+            .navigationTitle("Emulator settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

@@ -61,13 +61,13 @@ struct HomeView: View {
             }
         }
         .microphoneAccessAlert()
-        .alert("Erase Guest?", isPresented: $model.confirmingErase) {
-            Button("Erase Guest", role: .destructive) { model.erase() }
+        .alert("Erase guest?", isPresented: $model.confirmingErase) {
+            Button("Erase guest", role: .destructive) { model.erase() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Everything the guest has stored is deleted. This can\u{2019}t be undone.")
         }
-        .alert("Not Enough Free Space", isPresented: $model.startBlocked) {
+        .alert("Not enough free space", isPresented: $model.startBlocked) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Starting needs \(Formats.size(bytes: Limits.startReserveBytes)) free for the guest's own writes. This \(model.host.name) has \(Formats.size(bytes: model.host.freeStorageBytes)) free.")
@@ -90,7 +90,7 @@ struct HomeView: View {
     }
 
     /// iPad in portrait or a tall window: the controls across the top, the
-    /// options and Recovery and Erase beneath.
+    /// options and Recovery and erase beneath.
     private var tallLayout: some View {
         VStack(spacing: 28) {
             notices
@@ -246,8 +246,8 @@ struct StartButton: View {
     private var title: String {
         guard model.guest != nil, model.plan.allowsStart else { return "Start" }
         switch model.bootKind(.normal) {
-        case .firstStart: return "Start and Set Up"
-        case .upgrade: return "Update and Start"
+        case .firstStart: return "Start and set up"
+        case .upgrade: return "Update and start"
         default: return "Start"
         }
     }
@@ -305,7 +305,7 @@ struct WelcomeView: View {
             Spacer(minLength: 20)
             StackMark(lit: false, width: 150)
                 .padding(.bottom, 34)
-            Text("No Guest Yet")
+            Text("No guest yet")
                 .font(.title2.weight(.bold))
             if !model.host.runsGuestGraphics {
                 NoticeCard(
@@ -319,7 +319,7 @@ struct WelcomeView: View {
             Button {
                 model.sheet = .create
             } label: {
-                Text("Set Up Guest")
+                Text("Set up guest")
                     .font(.body.weight(.semibold))
                     .frame(width: 220, height: 50)
             }
@@ -431,7 +431,7 @@ struct RecoveryErasePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Recovery and Erase")
+            Text("Recovery and erase")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .padding(.leading, 18)

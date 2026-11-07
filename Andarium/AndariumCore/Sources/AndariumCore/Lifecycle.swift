@@ -51,7 +51,7 @@ public struct Lifecycle: Equatable, Sendable {
         notice = nil
     }
 
-    /// Erase Guest: nothing is left of the guest, its choices included, and
+    /// Erase guest: nothing is left of the guest, its choices included, and
     /// the application is where it was before the first one was set up.
     public mutating func erase() {
         guest = nil

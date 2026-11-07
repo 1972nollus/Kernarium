@@ -48,10 +48,10 @@ DEVICE_CONTRACTS = (
 SCHEMA = 1
 
 GROUPS = [
-    {"id": "system", "title": "Operating System"},
+    {"id": "system", "title": "Operating system"},
     {"id": "graphics", "title": "Graphics"},
     {"id": "libraries", "title": "Libraries"},
-    {"id": "inspiration", "title": "Design Inspiration"},
+    {"id": "inspiration", "title": "Design inspiration"},
 ]
 
 # Where each license text comes from: (source, path). A source is a directory
