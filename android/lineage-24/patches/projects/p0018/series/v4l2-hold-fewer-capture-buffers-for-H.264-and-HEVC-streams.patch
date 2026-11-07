@@ -47,54 +47,35 @@ tests of the outer repository compile and run.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- README.md                                     | 28 ++++++
+ README.md                                     |  9 ++
  components/DecodeInterface.cpp                | 90 +++++++++++++++----
  .../v4l2_codec2/components/DecodeDelays.h     | 68 ++++++++++++++
  .../v4l2_codec2/components/DecodeInterface.h  | 18 +++-
  v4l2/V4L2ComponentFactory.cpp                 |  7 +-
  v4l2/V4L2DecodeComponent.cpp                  |  7 +-
- 6 files changed, 194 insertions(+), 24 deletions(-)
+ 6 files changed, 175 insertions(+), 24 deletions(-)
  create mode 100644 components/include/v4l2_codec2/components/DecodeDelays.h
 
 diff --git a/README.md b/README.md
-index 0de91967e2e3e683b29d72285e514072aeec0b49..33de2c1e5d8d243ef7056db69a79b6dbcba7f816 100644
+index 2192544d390053520b6dc2daad5ffd128090100d..13cdf745c36132570fe5c7c31e27529afc79e460 100644
 --- a/README.md
 +++ b/README.md
-@@ -479,6 +479,34 @@ are still in use against the number of V4L2 buffers, and the decoder lets a free
- V4L2 buffer stand for a block it has not met, since the picture buffer is passed
- again with every queue operation.
+@@ -437,6 +437,15 @@ component reads the largest such size from the device and sizes its input blocks
+ from the picture size up to it (1 MiB to 16 MiB), and copies a block that a
+ client of the block model sized smaller into a pool block.
  
-+The output and pipeline delays of an H.264 or HEVC stream add up to 13 frames, and the
-+picture size the client configures decides the split (`DecodeDelays.h`). The
-+framework adds 4 of its own to each, reads them once when it starts, and sizes the
-+capture buffer queue from the output delay and the input buffer queue from the
-+pipeline delay. A picture above 1080p (1920x1088 luma samples) takes an output
-+delay of 4 and a pipeline delay of 9: a 4K stream holds 8 capture buffers of
-+11.87 MiB in the guest and again on the host (where the stock decoder's 16 would
-+hold 20) and 13 input slots of 4 MiB. A picture of 1080p or less takes 8 and 5:
-+12 capture buffers and 9 input slots, because a 60 fps stream is bound by the
-+pictures the decoder can have in flight when the guest is busy, and 8 capture
-+buffers decoded 10 to 13 percent fewer frames there than 14, where 12 decoded as many.
-+The device reorders pictures on the host and its capture buffers hold none that
-+wait for their display order, so the delays only keep the framework feeding the
-+decoder until the host releases a picture: a stream does not stall while its
-+reorder depth is at most the pipeline delay plus the output delay plus 3, which
-+is 16, and no H.264 or HEVC stream is deeper than 16. The stall limit is the
-+same 17 works that an output delay of 10 with a pipeline delay of 3 gave, bought
-+with input blocks instead of capture buffers because a capture buffer costs six
-+times as much at 4K. A work that is done is the only way to tell the framework
-+another delay, and a stream that needs the whole limit completes none before it
-+has it, so the sum is the same for every stream and set at the start, and the
-+framework reads both delays in one query. The picture size the device later
-+states for the stream (its SPS) changes neither: a stream configured at 1080p
-+whose SPS declares 4K keeps the 12 capture buffers it was sized for, and one
-+configured at 4K whose SPS declares 1080p keeps 8, and neither can stall. A
-+device that keeps the pictures it reorders in its capture buffers needs an output
-+delay of 16.
++### Output and Pipeline Delays
 +
- ### Input Blocks
++The output and pipeline delays of an H.264 or HEVC stream add up to 13 frames,
++and the picture size the client configures decides the split (*DecodeDelays.h*).
++The framework reads them once when it starts, so the size the device later states
++for the stream (its SPS) changes neither: a stream configured at 1080p whose SPS
++declares 4K keeps the 12 capture buffers it was sized for, and one configured at
++4K whose SPS declares 1080p keeps 8.
++
+ ### Picture Size
  
- The device takes a coded buffer in a dma-buf at least as large as the buffer
+ *C2_PARAMKEY_PICTURE_SIZE* takes any even width and height from 16 up and
 diff --git a/components/DecodeInterface.cpp b/components/DecodeInterface.cpp
 index d2b322b00edd8f59c95e25e5cee85338e452a6d7..81fa9f0935efebc48f6909450ca5ef0f461463a8 100644
 --- a/components/DecodeInterface.cpp

@@ -37,7 +37,6 @@ component's own, and the setter reads it and the picture size. A sample
 larger than the blocks is the client's to split or refuse. The decoder
 logs a device that needs more than the blocks it has.
 ---
- README.md                                     | 32 +++++--
  common/include/v4l2_codec2/common/Common.h    |  4 +
  components/DecodeInterface.cpp                | 96 +++++++++++--------
  .../v4l2_codec2/components/DecodeInterface.h  | 26 ++++-
@@ -46,51 +45,8 @@ logs a device that needs more than the blocks it has.
  v4l2/V4L2Device.cpp                           | 24 +++++
  v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h   | 10 +-
  v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |  4 +
- 9 files changed, 177 insertions(+), 68 deletions(-)
+ 8 files changed, 151 insertions(+), 62 deletions(-)
 
-diff --git a/README.md b/README.md
-index c2a99109d9d6663be009d810586dfe1d90b6613a..e9b7d501a5219113ec5eb9d728cfb9b04ed5c00c 100644
---- a/README.md
-+++ b/README.md
-@@ -482,12 +482,32 @@ again with every queue operation.
- ### Input Blocks
- 
- The device takes a coded buffer in a dma-buf at least as large as the buffer
--size it negotiated, and refuses a smaller one. The input blocks the framework
--allocates for the component are as large as the maximum input size and are
--queued as they are. A client of the block model chooses the size of its own
--blocks, and the component copies a block smaller than the maximum input size
--into a block of a pool it creates on first use, and queues that one. A secure
--block is never copied.
-+size it negotiated, and refuses a smaller one. The component reads the largest
-+such size from the device when it lists the codec (the size the input queue
-+reports for the codec before any is requested), within 1 MiB and 16 MiB; a
-+device that states none gets 16 MiB. The default maximum input size follows the
-+picture size up to it: 1 MiB up to 1280x720, 2 MiB up to 1920x1088, 4 MiB up to
-+4096x2304 and the device's size above that, which are the sizes the device
-+itself asks for once a client states the picture size. A client may state a
-+larger maximum, but never a smaller one: the parameter is raised to that size,
-+since a client states the largest sample of the clip it starts with and an
-+adaptive stream carries larger ones later. The size follows the picture because
-+the framework allocates every input block at the maximum input size and a
-+stream keeps several of them: blocks of 64 MiB held about 0.9 GB for one 4K
-+stream, and blocks of the device's largest packet (8 MiB) are 64 MiB for any
-+picture size, while the component copies only the bytes a frame uses. A sample
-+larger than the blocks is the client's to split or refuse. The decoder states the
-+same picture size with the coded format it sets on the device, because the
-+device sizes its coded buffers by the size it is told: a size left out reads as
-+the largest picture the device decodes (the default `ui::Size()` is -1 x -1),
-+for which the device asks for its largest packet, 8 MiB, which no block of 1 MiB
-+holds. The decoder logs a device that needs more than the block size.
-+
-+The input blocks the framework allocates for the component are as large as the
-+maximum input size and are queued as they are. A client of the block model
-+chooses the size of its own blocks, and the component copies a block smaller
-+than the maximum input size into a block of a pool it creates on first use, and
-+queues that one. A secure block is never copied.
- 
- ### Picture Size
- 
 diff --git a/common/include/v4l2_codec2/common/Common.h b/common/include/v4l2_codec2/common/Common.h
 index 167828b1384fe1c61f2a9206c8d05f392e7219d0..0f95c832e8c0e1e95e4cc65c86fca4a1894e6049 100644
 --- a/common/include/v4l2_codec2/common/Common.h

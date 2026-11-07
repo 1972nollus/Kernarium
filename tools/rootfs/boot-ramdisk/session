@@ -4,9 +4,10 @@
 # per-run /init installs this file at /usr/local/libexec/uml-session with its
 # parameters at /etc/uml-session.env and switches root into it; it prepares
 # what the parameters ask for and replaces itself, as PID 1, with the entry,
-# or runs a workload entry and powers the guest off after it. README.md beside
-# this file owns the contract. It runs under the image's own shell, so any
-# failure is reported and ends the run.
+# or runs a workload entry and powers the guest off after it. The assignments
+# below and the parameter loop are the /etc/uml-session.env keys and their
+# defaults. It runs under the image's own shell, so any failure is reported
+# and ends the run.
 
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH

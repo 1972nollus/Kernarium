@@ -2,7 +2,8 @@
 /*
  * Runs the generated A64 instruction corpus through the production gadget
  * and JIT engines in one process. tests/unit/arm64/corpus/README.md owns the
- * pack format, the state encoding, and the named validator relations.
+ * pack format and the named validator relations; tools/arm64-tests/
+ * build-unit-corpus.py defines the state fields, option bits and fills.
  */
 #include "a64_register_operands.hpp"
 #include "architecture_difference.hpp"

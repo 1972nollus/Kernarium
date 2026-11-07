@@ -3,12 +3,13 @@
 """Capture every screen and state of Andarium from the Simulator preview.
 
 AndariumPreview opens any screen with mock data from a launch argument
-(`-screen <name>`, see Andarium/README.md). This script launches each screen in
-the build already installed on a Simulator and saves a labelled PNG for it,
-plus a manifest.json that says, per file, the device, orientation, appearance,
-screen and what to look at. It installs nothing and rotates nothing: build and
-install AndariumPreview first, rotate an iPad (Simulator: Device > Rotate, or a
-UI driver) between runs, and the orientation is read from each image.
+(`-screen <name>`, see Preview/AppEntry.swift). This script launches each
+screen in the build already installed on a Simulator and saves a labelled PNG
+for it, plus a manifest.json that says, per file, the device, orientation,
+appearance, screen and what to look at. It installs nothing and rotates
+nothing: build and install AndariumPreview first, rotate an iPad (Simulator:
+Device > Rotate, or a UI driver) between runs, and the orientation is read
+from each image.
 
     capture-screens.py --out DIR --device <udid> [--device <udid> ...]
     capture-screens.py --list

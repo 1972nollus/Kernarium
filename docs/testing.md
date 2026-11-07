@@ -227,8 +227,9 @@ unsigned.
 Apple builds validate the kernel bridge ABI, page profile, product family and
 `6.18` series of an accepted kernel bundle. They never prepare sources or
 invoke a kernel or Android build, and rootfs bundles are launch inputs.
-Kernarium's defaults, bundles and scripts are in
-[`../Kernarium/README.md`](../Kernarium/README.md).
+Kernarium's bundles and scripts are in
+[`../Kernarium/README.md`](../Kernarium/README.md); its launch defaults are
+`EmulatorConfiguration.swift`'s.
 
 `Kernarium/scripts/run-ios-mac.sh` and `Kernarium/scripts/make-guest-bundle.py`
 launch and assemble a bundle on an Apple silicon Mac (`--help`). Xcode's local

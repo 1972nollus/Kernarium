@@ -243,7 +243,14 @@ if(TARGET uml_gpu_service)
         UNIT_DIRECTORY
         TIMEOUT 120)
 
-    # Contexts that draw, flush and trim at once on one driver screen.
+    # Contexts that draw, flush and trim at once on one driver screen. It is
+    # also the program for a ThreadSanitizer pass over the trim and the flush
+    # queue's reset of the screen's batch-state lists: build the Zink and EGL
+    # stack with -Db_sanitize=thread and compile this test and
+    # host_gl_provider.cpp with -fsanitize=thread. Zink's own unsynchronized
+    # scalars (the screen's last finished batch, a state's submit count, the
+    # context's state count) are reported there with or without a trim; no
+    # report involves a state list or a state's link.
     uml_add_gpu_unit_test(gpu-host-context-trim-concurrent
         uml_gpu_host_context_trim_concurrent_tests
         host_gl_context_trim_concurrent_tests.cpp

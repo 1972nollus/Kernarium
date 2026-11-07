@@ -18,8 +18,8 @@
 #define UML_VIRTIO_VIDEO_V4L2_IDS_H
 
 /*
- * Control IDs (V4L2_CID_*). The control table in darwin/device/video/README.md
- * says which of them an encoder publishes, and when.
+ * Control IDs (V4L2_CID_*). darwin/device/video/encoder_controls.cpp says which
+ * of them an encoder publishes, and when.
  */
 #define UML_V4L2_CID_MIN_BUFFERS_FOR_OUTPUT 0x00980928u
 #define UML_V4L2_CID_MPEG_VIDEO_B_FRAMES 0x009909cau

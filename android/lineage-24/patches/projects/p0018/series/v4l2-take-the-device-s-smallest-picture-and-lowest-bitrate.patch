@@ -14,35 +14,9 @@ and the bitrate range at the device's lowest value. Both are raised to a
 floor of 64 samples and 20000 bit/s: the device lists the same floors,
 and these only guard a host that lists less.
 ---
- README.md                      |  7 +++++--
  components/EncodeInterface.cpp | 21 ++++++++++++++++++---
- 2 files changed, 23 insertions(+), 5 deletions(-)
+ 1 file changed, 18 insertions(+), 3 deletions(-)
 
-diff --git a/README.md b/README.md
-index 28ecce2211ae74dd626a9ea167b0bd60d7a17a1f..c2a99109d9d6663be009d810586dfe1d90b6613a 100644
---- a/README.md
-+++ b/README.md
-@@ -307,7 +307,9 @@ Codec selection can be done by selecting the encoder with the appropriate name.
- The following parameters are static and can not be changed at run-time:
- 
- - *C2_PARAMKEY_PICTURE_SIZE*: This parameter can be used to configure the
--resolution of the encoded video stream.
-+resolution of the encoded video stream. It takes any even width and height from
-+the smallest picture the device lists, and from 64 at least, to the largest:
-+below that the host's encoders make streams that fail Android's quality bar.
- - *C2_PARAMKEY_PROFILE_LEVEL*: This parameter can be used to adjust the desired
- profile level. The device is configured with that level, or with the lowest
- level the encoder offers that holds the picture size, the framerate and the
-@@ -331,7 +333,8 @@ them, and are static:
- *V4L2_CID_MPEG_VIDEO_BITRATE_MODE* menu. The constant quality mode
- (*C2Config::BITRATE_IGNORE*) takes its quality, 1 to 100, from
- *C2_PARAMKEY_QUALITY* and can be changed at run-time.
--- *C2_PARAMKEY_BITRATE* is limited to the range of the device's bitrate control.
-+- *C2_PARAMKEY_BITRATE* is limited to the range of the device's bitrate control,
-+and to 20000 bit/s or more.
- - *C2_PARAMKEY_PICTURE_QUANTIZATION* sets the lowest and highest quantization
- parameter, the tightest of the bounds for any picture type, within the range of
- the device's minimum and maximum QP controls.
 diff --git a/components/EncodeInterface.cpp b/components/EncodeInterface.cpp
 index 8a2b8b7df330d39eabc6928b7412ac5156a8bb86..430a91c7ace00084824b7cfb84a0cd8eecb87fda 100644
 --- a/components/EncodeInterface.cpp

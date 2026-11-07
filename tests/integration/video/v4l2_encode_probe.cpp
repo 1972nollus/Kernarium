@@ -1507,7 +1507,7 @@ std::vector<unsigned> discover(const std::string& path)
 std::vector<std::string> failures;
 
 /*
- * The controls the host table publishes (darwin/device/video/README.md), by what
+ * The controls the host table publishes (darwin/device/video/encoder_controls.cpp), by what
  * makes the host publish each. The guest driver registers exactly what the
  * host publishes, so a control missing here is one the driver dropped, and
  * a control of another type is one it registered as something else. A control

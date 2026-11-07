@@ -3,10 +3,10 @@
 """The AArch32 instruction corpus: source tables to pack.
 
 tests/unit/arm64/aarch32_corpus/README.md owns the source format and the
-pack. This module reads the source tables listed by an index (kind
-"aarch32"), checks every row, and writes the pack the unit runner reads. It
-runs no engine and no oracle: the tables hold the architectural inputs and
-what the oracle observed.
+case model; this module owns the pack layout. It reads the source tables
+listed by an index (kind "aarch32"), checks every row, and writes the pack the
+unit runner reads. It runs no engine and no oracle: the tables hold the
+architectural inputs and what the oracle observed.
 """
 
 from __future__ import annotations

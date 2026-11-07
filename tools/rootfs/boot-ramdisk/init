@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # The per-run /init of a Linux guest. A launcher appends it, with /boot.env
 # and any /payload files, to the base archive, whose static BusyBox ash runs
-# it. README.md beside this file owns the contract. The base ash has no
-# `command` builtin, so nothing here probes for programs.
+# it. The assignments below and read_parameters are the /boot.env keys and
+# their defaults. The base ash has no `command` builtin, so nothing here
+# probes for programs.
 
 PATH=/bin:/sbin
 export PATH

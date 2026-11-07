@@ -16,36 +16,26 @@ accepted only with a new release derived from it.
 
 ## What each image carries
 
-- [`setup/kde`](setup/kde): the `uml` user's device groups, getty masks on
-  the display manager's VTs (SDDM already conflicts with `getty@tty1`), XDG
-  and Trash directories, SDDM autologin into Plasma, the Folder View default,
-  the disabled idle lock, and no Lavapipe ICD. The macOS KDE launcher also
-  runs this file at boot on the unified image and its sealed ext4
-  derivatives, which predate it.
-- [`setup/phrog`](setup/phrog): user 1000's device groups, empty Phrog and
-  Phosh `phoc.ini` files, so the compositor takes the Virtio-GPU's preferred
-  mode and density, and no development `phosh.service` beside the
-  display-manager path to greetd and Phrog.
-- [`setup/postmarketos`](setup/postmarketos): udev coldplug under UML, which
-  OpenRC otherwise counts among containers, the Kernarium `deviceinfo`, udev
-  classification of the Kernarium and VNC input devices, and an OpenRC
-  service granting the display and input nodes to the desktop's groups.
+Each setup script holds its own policy in its header and body:
+
+- [`setup/kde`](setup/kde): device groups, getty masks and SDDM autologin into
+  Plasma, and the session defaults. The macOS KDE launcher also runs it at boot
+  on the unified image and its sealed ext4 derivatives, which predate it.
+- [`setup/phrog`](setup/phrog): device groups and compositor defaults for Phosh
+  behind greetd and Phrog.
+- [`setup/postmarketos`](setup/postmarketos): udev classification and device
+  access for the Kernarium and VNC devices under UML.
 
 The KDE image also carries the [Virtio video VA-API
-driver](../../video/va-v4l2/README.md): the derivation installs the driver it
-is given with `--driver` as `uml_drv_video.so` beside Mesa's drivers, the gbm
-module it is given with `--gbm-module` as `virtio_gpu_gbm.so` beside Mesa's gbm
-backend (Chromium's encode needs the planar buffers it allocates), and the
-`/etc/chromium.d` file that makes Chromium use the driver, then checks that
-both resolve every library the image has. Build them on arm64 Debian 13, whose
-libva and libdrm the image carries, with `cmake --preset guest` in
+driver](../../video/va-v4l2/README.md): the derivation installs the driver it is
+given with `--driver`, the gbm module it is given with `--gbm-module`, and the
+`/etc/chromium.d` file that makes Chromium use them, then checks that both
+resolve every library the image has. Build them on arm64 Debian 13, whose libva
+and libdrm the image carries, with `cmake --preset guest` in
 `tools/video/va-v4l2`; the receipt records their digests.
 
-The derivation also removes the machine ID each source was built with, so
-every guest generates its own at first boot and keeps it in its writable
-root. A systemd image carries an empty `/etc/machine-id`; an OpenRC image
-carries none, because `dbus-uuidgen --ensure` rejects an empty file. D-Bus's
-`/var/lib/dbus/machine-id` links to `/etc/machine-id`.
+The derivation also removes the machine ID each source was built with, so every
+guest generates its own at first boot and keeps it in its writable root.
 
 Each image keeps its own init, network, resolver, accounts and session;
 Kernarium boots it through the generic per-run `/init` into `/sbin/init`
@@ -57,11 +47,9 @@ KDE image is the one Kernarium selects while its settings name none
 
 ## Deriving
 
-The derivation runs as root on arm64 Linux with erofs-utils: it extracts the
-source with owners, modes and extended attributes (file capabilities such as
-KWin's), runs the setup in a chroot of the extracted tree with `/proc` and
-`/dev` mounted, and writes the new image with the recorded compressor beside
-a receipt naming the source, the setup and the output:
+The derivation runs as root on arm64 Linux with erofs-utils and writes the new
+image with the recorded compressor beside a receipt naming the source, the
+setup and the output:
 
 ```sh
 sudo tools/rootfs/desktop/derive.py --image kde --driver /path/to/uml_drv_video.so \

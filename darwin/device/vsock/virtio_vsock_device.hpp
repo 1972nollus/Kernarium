@@ -15,8 +15,21 @@ namespace uml::vsock {
 
 /* The host end of the guest's virtio-vsock device. The guest is CID 3 and the
  * host CID 2; the host only opens connections (Endpoint), and every
- * connection a guest tries to open is refused. See README.md for the
- * contract, which the comments here only point at. */
+ * connection a guest tries to open is refused. README.md has the rules the
+ * device keeps; how a connection ends:
+ *
+ *   - an RST before the answer fails the open with ECONNREFUSED; an opener
+ *     that gives up before the REQUEST is sent drops it quietly, afterwards an
+ *     RST goes at once and a late RESPONSE finds no connection and is reset;
+ *   - more than the credit granted, or RW after SHUTDOWN SEND, is an RST;
+ *   - SHUTDOWN SEND becomes shutdown(SHUT_WR) on the host's end after the held
+ *     data, SHUTDOWN RCV stops reading it, and its end of stream sends
+ *     SHUTDOWN SEND to the guest;
+ *   - a broken host end (EPIPE, ECONNRESET) is an RST, as is a guest that is
+ *     done sending and (done receiving or the host's end at end of stream),
+ *     which also frees the entry;
+ *   - a device reset, guest restart or service stop closes every host end and
+ *     fails opens in flight with ECONNRESET. */
 class VirtioVsockDevice final : public uml::virtio::VhostUserDevice {
 public:
     explicit VirtioVsockDevice(std::shared_ptr<Gateway> gateway);

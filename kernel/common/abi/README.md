@@ -41,20 +41,9 @@ Every arm64 task's register tail is its FP registers, then its SME registers,
 tail is its FP registers alone. The host requires exactly the slice's size on
 every entry.
 
-An AArch32 task of an arm64 kernel uses the same register image, which
-`struct darwin_uml_guest_registers` documents field by field, with TPIDRURO in
-its last field, `tpidrro`. The arm64-only imports
-`darwin_uml_guest_compat_hwcap()` and `darwin_uml_guest_compat_hwcap2()` give
-the task's AT_HWCAP words. The first is zero exactly when the run's engine
-does not execute AArch32, so no separate query exists, and the kernel then
-refuses 32-bit ELF files; both engines execute it, so it is non-zero in every
-arm64 product. The x86_64 slice neither imports them nor builds AArch32.
-
-The arm64-only import `darwin_uml_guest_top_byte_ignore()` is 1 when the
-run's engines ignore the top byte of a data address, which is every run unless
-the host passes `--guest-no-top-byte-ignore`, and 0 otherwise, and is fixed for
-the run. The kernel offers the tagged-address ABI only while it is 1. The x86_64
-slice does not import it.
+The semantics of the bridge fields and imports (the AArch32 register image,
+`darwin_uml_guest_compat_hwcap()`, `darwin_uml_guest_top_byte_ignore()`, the SME
+vector length, and the shutdown report) are the comments in the headers.
 
 For an intentional bridge declaration change:
 

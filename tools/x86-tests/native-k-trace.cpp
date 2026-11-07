@@ -1,6 +1,16 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Native Linux/x86-64 oracle for the x86 unit-corpus producer: it traces K
- * programs one instruction at a time and runs repository cases to their HLT. */
+ * programs one instruction at a time and runs repository cases to their HLT.
+ *
+ * Build it freestanding for an Intel Linux host (tests/unit/x86_64/corpus/
+ * README.md has the workflow):
+ *
+ *   clang++ --target=x86_64-unknown-linux-gnu -std=c++20 -O2 \
+ *     -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector \
+ *     -fno-builtin -fno-pie -mno-red-zone -nostdlib -static -fuse-ld=lld \
+ *     -Wl,-e,_start -Wl,--build-id=none -Wall -Wextra -Werror \
+ *     tools/x86-tests/native-k-trace.cpp -o native-k-trace
+ */
 
 namespace {
 

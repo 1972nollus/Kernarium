@@ -523,7 +523,7 @@ final class LiveRuntime: RuntimeDriver {
     // MARK: Thermal state
 
     // The thermal state and uptime go to the console for the iPad harness
-    // (`Andarium/README.md#automation`); an App Store build prints neither and
+    // (`Shared/ConsoleReport.swift`); an App Store build prints neither and
     // reads neither the system uptime nor the thermal state.
 
     #if !APP_STORE

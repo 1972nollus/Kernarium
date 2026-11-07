@@ -42,9 +42,9 @@ set_property(TARGET uml_drv_video APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_
 # The gbm backend module for the virtio-gpu DRM driver: libgbm loads
 # virtio_gpu_gbm.so by that driver name and the module adds the planar buffers
 # (NV12, P010 and the three-plane layouts) that Debian's libgbm cannot allocate,
-# on the device Mesa's own DRI backend makes. gbm/README in ../README.md owns
-# the contract. It is loaded into every process that uses gbm, so it needs no
-# C++ runtime and exports one symbol.
+# on the device Mesa's own DRI backend makes. The gbm module section of
+# README.md owns the contract. It is loaded into every process that uses gbm,
+# so it needs no C++ runtime and exports one symbol.
 add_library(uml_gbm_planar OBJECT gbm/planar.cpp)
 target_compile_features(uml_gbm_planar PUBLIC cxx_std_20)
 target_compile_options(uml_gbm_planar PUBLIC -Wall -Wextra -Werror -fno-exceptions -fno-rtti)

@@ -1,986 +1,254 @@
 # x86-64 gadget engine
 
-The engine executes x86-64 userspace as data-only streams of pointers to
-handwritten arm64 gadgets (`engine.S` and `engine/*.inc`). `native_builder.cpp`
-turns decoded instructions into those streams, `executor.cpp` owns the
-translation cache, and `native_memory.cpp` is the C++ side of the software
-TLB. The guest CPU state, the decoder, CPUID, the software TLB entry, the
-code-page registry and the split-operand lock are not the engine's own: they
-are `uml_x86_64_target` in the parent directory, which every x86 engine links.
-This file records the contracts that are not obvious from the code. The design
-credit for both gadget engines is
-[`NOTICE.md`](../../arm64/gadgets/NOTICE.md).
+The engine runs x86-64 userspace, long64 and compat32, as data-only streams of
+pointers to handwritten arm64 gadgets. It is the x86-64 product's default
+engine and the only one on every other product that runs x86 code. This file
+records the contracts that are not obvious from the code; the design credit for
+both gadget engines is [`NOTICE.md`](../../arm64/gadgets/NOTICE.md).
 
-Private labels take the Mach-O assembler-temporary prefix `L`, as the arm64
-region's do ([`docs/architecture.md`](../../../../docs/architecture.md) states
-the 8 MiB bound on a branch to one from another section); the cold part names
-only its start and is 0.7 MB. A named local symbol ahead of a target fixes an
-addend the assembler rejects.
+## Ownership
+
+| Path | Role |
+| --- | --- |
+| `engine.S`, `engine/*.inc` | The gadgets. `engine/region.inc` places every group. |
+| `engine/generate_baked.py` | Writes the register-baked scalar bank (`baked_scalar.inc`) at build time. |
+| `engine/fit_slots.py` | Reports the groups that no longer fit their slot. |
+| `native_builder.cpp`, `native_baked.hpp`, `native_entry.hpp` | Turn decoded instructions into streams. |
+| `executor.cpp`, `program.cpp`, `translation_body.hpp`, `translation_space.*` | The translation cache, its sharing and its budget. |
+| `native_memory.cpp` | The C++ side of the software TLB. |
+| `exception_checks.*` | Checked execution of the exceptions a guest enables. |
+| `x87_math.*` | Bounded software primitives for x87 formats. |
+
+The target is `uml_x86_64_gadgets`. The guest CPU state, decoder, CPUID,
+software TLB entry, code-page registry, split-operand lock, segment model and
+SIMD floating-point model are not the engine's own: they are
+`uml_x86_64_target` in the parent directory, which every x86 engine links.
+Gadget streams are data. Executable memory has one owner,
+`darwin/cpu/jit_memory/executable_memory.cpp`, and this engine never allocates
+or publishes code
+([architecture](../../../../docs/architecture.md#cpu-execution-and-scheduling)).
+
+## Engine selection
+
+The gadget engine is selected by name and is the default. On macOS
+`--execution-engine jit` sends long64 and compat32 tasks to the
+[x86-64 JIT](../jit/README.md) instead; the runtime chooses per dispatch, so
+neither engine depends on the other.
 
 ## Region layout
 
 The engine's code is a pinned region, a bank and a cold part, each a run of
-fixed slots from the table in `engine/region.inc`; the contract is in
-[`docs/architecture.md`](../../../../docs/architecture.md). A group is the
-common entry code, the veneer island, one baked family or one `engine/*.inc`
-file. What a change moves:
+fixed slots from the table in `engine/region.inc`
+([architecture](../../../../docs/architecture.md#cpu-execution-and-scheduling)
+has the contract). Private labels take the Mach-O assembler-temporary prefix
+`L`; a named local symbol ahead of a target fixes an addend the assembler
+rejects.
 
-- A group that grows or shrinks within its slot moves nothing outside itself:
-  every other group keeps its offset and its bytes, so a measurement against
-  the base sees the change's code and the shift of that group's own later
-  gadgets.
-- A group that outgrows its slot fails assembly at
-  `.org Lx86_bank_end_<group>` or `.org Lx86_cold_end_<group>`, and every
-  group after it fails too. `engine/fit_slots.py --build-dir <tree>` lists
-  each group that no longer fits with the slot it needs, its phase and new
-  size plus 1 KiB rounded up to a 128-byte line; set those rows' slots to
-  it. Every later group then moves by whole lines and keeps its phase, which
-  is neutral ([optimization history](../../../../docs/optimization-history.md):
-  pin the x86-64 gadget region). Such a change needs no pad control, but its
-  commit says which slots grew.
-- A phase never changes; it is what keeps the measured layout.
-- A new group takes a new row with phase 0, a new `engine/*.inc` file's at
-  the end of the table and a new baked family's after the last baked one, and
-  moves only the groups after it, by whole lines.
+- A group (the common entry code, the veneer island, one baked family or one
+  `engine/*.inc` file) that changes size within its slot moves no other group.
+- A group that outgrows its slot fails assembly at `.org Lx86_bank_end_<group>`
+  or `.org Lx86_cold_end_<group>`, and every later group fails too.
+  `engine/fit_slots.py --build-dir <tree>` lists each group that no longer fits
+  with the slot it needs: its phase and new size plus 1 KiB, rounded up to a
+  128-byte line. Setting those rows' slots moves later groups by whole lines
+  and keeps their phase, so the commit says which slots grew and needs no pad
+  control ([optimization history](../../../../docs/optimization-history.md)).
+- A phase never changes. A new group takes a new row with phase 0: a new
+  `engine/*.inc` file's at the end of the table, a new baked family's after the
+  last baked one.
 - A call to a helper outside the engine is a `helper_call`, and a new helper
   is appended to the island's list in `engine/common.inc`.
 
-Within the group a change edits, the gadgets after the change still move by
-its size. To separate its code from that shift, a pad of unreachable bytes
-after the changed gadget's last branch that restores the next gadget's offset
-modulo 128 is the control, for that group alone.
-
-## Engine selection
-
-This engine is the x86-64 product's default, by name, and the only engine of
-every other product that runs x86 code. On macOS, `--execution-engine jit`
-sends long64 and compat32 tasks to the [x86-64 JIT](../jit/README.md)
-instead. The runtime chooses per dispatch from the selection, so neither
-engine depends on the other.
-
 ## Gadget banks
 
-Two banks implement the scalar integer instructions.
+The ordinary bank decodes its operands from stream words and covers every shape
+the decoder produces. The register-baked bank has every register offset as an
+immediate in its entry; `engine/generate_baked.py` enumerates it,
+`native_baked.hpp` declares the tables, and their enumeration order must change
+together. The builder takes a baked entry for every 64-bit-mode instruction the
+bank enumerates that has no segment override, address-size override or LOCK
+prefix, and the ordinary bank for everything else.
+`UML_X86_64_GADGET_BAKED=0` keeps the ordinary bank for every instruction, for
+comparison. The descriptor bit `UML_X86_64_MEMORY_PLAIN_ADDRESS` is only ever
+an optimization: a descriptor that leaves it clear takes the general address
+tail and resolves the same address.
 
-- The ordinary bank decodes its operands from stream words: a register form
-  reads register offsets and accesses the CPU state register-indexed, and a
-  memory form resolves a descriptor. It covers every shape the decoder
-  produces.
-- The register-baked bank is generated at build time by
-  `engine/generate_baked.py` into `baked_scalar.inc`, one entry per operand
-  combination: MOV, ADD, SUB, AND, OR, XOR, CMP and TEST in their
-  register-register, register-immediate, register-memory, memory-register and
-  memory-immediate forms, the widening moves, INC, DEC, NEG and NOT on a
-  register, LEA, and 64-bit PUSH and POP of a register. Every register offset
-  is an immediate in the entry, so the host forwards the CPU-state stores into
-  the loads. A `[base + displacement]` address is fused into the entry; an
-  indexed address is one shared address entry followed by the access entry.
-  An access carries its displacement and the facts only its cold exits read
-  in one stream word: the sign-extended displacement in bits 31:0, the
-  instruction's position in its block (its address less the program's first
-  address) in bits 41:32, the length in bits 59:56, and bit 60, which
-  publication sets. The fault and overlap exits rebuild the RIP from the
-  context's program begin and the position, as every instruction's do
-  (below). A memory operation with an immediate carries a 14-bit immediate in
-  bits 55:42 when the value, sign-extended from the operation width, fits; the
-  other immediates take the ordinary bank. RIP-relative and absolute addresses
-  have no 32-bit displacement and keep the address as a word of their own
-  ahead of the access word. PUSH and POP of a register have no stream word:
-  their entry is their whole stream (below).
-  INC and DEC are enumerated a second time by the carry their producer left,
-  because they preserve the carry flag: a borrow, carry or cleared source
-  reaches RFLAGS with at most one condition, a settled one inherits the
-  pending bit, and an unknown one takes the lazy prologue described under
-  deferred flags instead of a call to the carry materializer.
-  `native_baked.hpp` declares the tables. Their enumeration order (registers
-  in offset order, the four high-byte registers after the sixteen low ones,
-  the sixteen bases followed by "none") is shared with the generator and must
-  change with it.
+## Stream and block contracts
 
-The builder takes a baked entry for every 64-bit-mode instruction the bank
-enumerates that has no segment override, address-size override or LOCK
-prefix, and the ordinary bank for everything else. `UML_X86_64_GADGET_BAKED=0`
-in the environment keeps the ordinary bank for every instruction, for
-comparison.
+- An instruction whose gadget can fault, trap or leave carries its position
+  (its address less the block's first address, `program_begin`) in ten bits,
+  not its address. A cold exit rebuilds the RIP with `instruction_rip`, so a
+  block ends before the first instruction 1024 bytes or more past its start. A
+  baked PUSH or POP of a register carries nothing: `execute` recovers the
+  instruction from the stream pointer on a fault.
+- A block ends at an unconditional transfer or at the 64-instruction fetch
+  window, not at its first conditional branch. A cached link names its target
+  by a stream pointer and an instruction count, one aligned pair that a single
+  paired store replaces; the guest bounds of a stream sit in the two words in
+  front of it, loaded at `[stream, #-16]`. `x86-64-gadget-link-layout` holds the
+  layout.
+- A dispatch's instruction budget bounds how long it runs, not where a block
+  stops: the block that crosses it runs to its end. Only a single step and the
+  instruction a POPF or IRET setting TF leaves before its trap ask for an exact
+  budget, and that replays the block from its saved source, never from guest
+  memory.
+- A repeated string instruction retires once however many elements it moves.
+  It yields between elements after `UML_X86_64_STRING_REPEAT_BUDGET` of work
+  with RIP still naming it, and the dispatch charges the same work to its
+  budget. A step is one iteration. A repeated CMPS or SCAS commits its flags
+  when it finishes.
+- RF is state only: `execute` clears it as it enters the engine and no gadget
+  reads or clears it. The runtime reports RF set for a fault exit and the live
+  flags for a trap, as hardware does.
+- The deferred-flag record (`DeferredFlagOperation`, `CpuState::carry_slot`) is
+  read by assembly and C++ materializers that must agree. A producer that
+  leaves host NZCV lets the next SETcc, CMOVcc or Jcc read it, and the deferred
+  record is always written as well.
 
-The ordinary bank's memory descriptor resolves base, index, scale, segment and
-address size. A segment base is not free: it is reached through a computed
-address rather than a constant offset from the CPU state, a form the host
-cannot disambiguate against the CPU-state stores every gadget makes, and it is
-the most expensive instruction of the generic address path. The builder
-therefore proves the absence of a segment override, an address-size override
-and compatibility mode from the operand and sets one descriptor bit
-(`UML_X86_64_MEMORY_PLAIN_ADDRESS`), on which the gadget stops once base,
-scaled index and displacement are summed. The bit is only ever an optimization:
-a descriptor that leaves it clear takes the general tail and resolves the same
-address. That tail, in the cold section, truncates the sum to the address size
-and adds a base only for a segment the descriptor names: FS or GS, at full
-width in long mode and, in compatibility mode, after the segment's limit
-check (below); or the ES, CS, SS or DS of an instruction the runtime steps
-through the segment model, which has checked its accesses already.
+## Guest-visible model
 
-## Instruction position
-
-An instruction whose gadget can fault, trap or leave does not carry its
-address. It carries its position: its address less the block's first address,
-which the execution context names as `program_begin`, in ten bits. The word
-that holds it is one the gadget reads anyway: bits 45:36 of an ordinary memory
-descriptor (the baked access word's own are 41:32), and the same bits of the
-operand word of an ordinary push or pop, string, division, ENTER, LEAVE,
-return, privileged, RDTSC, segment-guard and write-segment-base gadget; the
-length in bits 59:56 serves an exit that retires the instruction. A direct
-CALL of five bytes carries nothing: the return address it pushes is its
-address plus five. One with a prefix has its own gadgets, which keep the
-position in a word of their own. AAM, AAD, the instructions the segment model
-runs and IRET keep the address in a word of their own, and INTO and INT 4 the
-address after them.
-
-A cold exit rebuilds the RIP with `instruction_rip` from `program_begin` and
-the position, wrapping the sum at 4 GiB in compatibility mode, so no hot path
-loads or keeps an address. A stream built from part of a block (a
-budget-limited replay, a checked single instruction) takes the block's own
-first address as that base. The block ends before the first instruction 1024
-bytes or more past its start, so a block of the default 64 instructions (at
-most 945 bytes) never reaches it.
-
-### Stack instructions
-
-A baked PUSH or POP of a register carries nothing, not even a position: its
-entry is its whole stream. Its fault, and a store of a PUSH that lands in the
-running block, leave with the stream pointer in the context's exception
-stream (`UML_X86_64_EVENT_STREAM_FAULT` and `UML_X86_64_EVENT_STREAM_RETIRED`),
-and `execute` recovers the instruction as it does for an exception the guest
-unmasked. It takes the program that holds the stream word before the pointer:
-the one the run entered, or the cached block the context's `program_begin`
-names after a link. It decodes that block back out of its saved bytes without
-keeping the decode, and builds its instructions until `instruction_at_word`
-finds the one whose words include the stream word. The fault then reports that
-instruction's address and the overlap the address after it.
-
-Only a block's own stream (`StreamKind::block`), the one a program holds, has
-these entries. A stream built for one run from part of a block, a
-budget-limited replay or one checked instruction, is a fragment and takes the
-ordinary PUSH and POP, which carry their position. The recovery costs about a
-translation of its block and runs only on a fault or an overlap. The baked bank
-serves long mode only, and a compatibility-mode PUSH or POP always carries its
-position.
-
-## Host-flag fusion
-
-A producer that computes with a flag-setting host instruction leaves NZCV
-describing the x86 flags it defined, and the builder lets the immediately
-following SETcc, CMOVcc or Jcc read them instead of materializing the deferred
-record. The deferred record is always written as well, so any later consumer
-stays correct.
-
-| Producer | Conditions read from NZCV |
-| --- | --- |
-| CMP, SUB at 32 and 64 bits; every width in the baked bank | all but parity |
-| ADD at 32 and 64 bits; every width in the baked bank | all but parity, BE and A; B and AE read the swapped host condition, because host C after an addition is the carry out rather than the inverted borrow |
-| TEST, AND at 32 and 64 bits; every width in the baked bank | all but parity and the four carry conditions |
-| INC, DEC, NEG on a 32- or 64-bit register | as TEST and AND: N, Z and V describe the operation, C does not |
-| memory forms | the baked bank's register-destination forms and its non-writing CMP and TEST; a store's epilogue compares addresses and clobbers NZCV |
-
-The narrow widths qualify through a compare of the two operands shifted to
-the top of a 32-bit register, which sets NZCV exactly as the guest-width
-operation would. The ordinary bank, which carries all compat32 code, computes
-on zero-extended operands instead, so its narrow producers transfer only what
-survives that: CMP and SUB leave the zero and the four unsigned-order
-conditions, TEST and AND leave zero alone, and ADD, whose carry lands in bit 8
-or 16 of the host result, and the narrow INC, DEC and NEG keep the deferred
-path. Register CMOVE and CMOVNE read the deferred zero result directly when no
-producer is fused, without materializing the other flags.
-
-A transfer that defines no flags does not end a fusion. MOV, MOVZX and MOVSX,
-LEA, PUSH and POP in the baked bank pass the producer's host flags through to
-the next consumer, which is what lets a compare reach a CMOVcc or a Jcc that a
-register copy, a load or a store sits between. The bank's translation tests
-the TLB tag without touching NZCV, its store epilogue orders addresses by the
-sign of a difference, and its miss tails save NZCV around the calls they make.
-The ordinary bank's transfers still end a fusion.
-
-## Vector result forwarding
-
-A vector integer register form writes its result to the state and leaves it in
-v4, and in v5 with it at 256 bits. When the gadget immediately after it reads
-exactly that register at exactly that width as its left operand, the builder
-sets bit 62 of the descriptor and the gadget takes the operand from those
-registers instead of reading the slot back, which would wait on the store.
-Only register forms qualify on either side: v4 and v5 are call-clobbered, so a
-memory form's miss or page-crossing path would destroy them. The builder
-starts each block with nothing available, so a consumer is never the first
-gadget of a block and a budget-limited replay cannot inherit a stale register.
-The map2 and floating-point families keep the load; see X50.
-
-## Deferred flags
-
-Every flag-defining scalar operation records left operand, right operand,
-result, operation and width, and consumers materialize on demand. SHL, SHR and
-SAR record the original value, the masked nonzero count and the result
-(operations 8 to 10 of `DeferredFlagOperation`); the materializer derives the
-shifted-out carry from them, defines overflow only for a count of one and
-leaves the auxiliary flag alone. IMUL and MUL overlay carry and overflow on
-whatever producer is pending instead of materializing it. Rotates keep the
-eager overlay.
-
-INC and DEC preserve the carry flag. When the builder cannot see the producer
-that defined it, the gadget copies that producer's record into the carry slot
-(`CpuState::carry_slot`) and records its own with the pending bit set, rather
-than settling the carry through the materializer; a second INC or DEC inherits
-the bit, and a carry override riding on such a record is settled through the
-materializer.
-Only a reader of the carry through an INC or DEC record pays for the slot: the
-materializers compute that one flag from the slot record through the same
-operation-and-width table, and the C++ materializer does the same. Every
-record write clears the bit, so a producer that follows leaves nothing
-pending.
-
-Only a record defines a carry, so only a record is parked. An empty record
-means the carry is already settled in RFLAGS, which is what every gadget that
-materializes and republishes the flags leaves behind -- ADCX and ADOX, the
-flag writers, and any consumer that had to materialize -- and the slot's table
-would answer a carry of zero for it. INC and DEC therefore take an empty
-record the way they take another INC or DEC record: nothing to park, and only
-a carry override on it is settled through the materializer.
-
-An operation that defines every arithmetic flag it does not leave undefined --
-COMISS and UCOMISS, PTEST, the packed string compares, the bit scans and
-counts, and the BMI flag writers -- discards the pending record instead of
-materializing it, because nothing of it survives. BT and its siblings leave
-ZF alone, so they keep the record and write their carry into its override.
-
-## Blocks and branches
-
-A block ends at an unconditional transfer or at the 64-instruction fetch
-window, not at its first conditional branch. The fall-through is translated
-into the same stream, so not taking the branch costs one dispatch rather than
-a link follow, and the taken edge keeps its link. A build with no
-link resolver -- the budget-limited replay of a cached block -- keeps the
-terminal form instead and leaves the translated tail unreachable.
-
-Only a block that the fetch window cut short ends in a terminator, which
-follows the link to the next instruction or leaves with its RIP. Every gadget
-a branch selects leaves or follows a link on each of its paths -- a
-conditional branch that ends a block takes its two-exit form -- so a block
-that ended at a branch carries none. See X82.
-
-A cached link names its target by a stream pointer and an instruction count,
-one aligned pair that a single paired store replaces. The guest bounds of the
-target's code, which a followed link hands to the context so that a store into
-the running block is recognized, are not in the link: every stream carries them
-in the two words in front of its first, and the engine loads them at
-`[stream, #-16]` after the pair. A link that names no block names its record's
-own link_exit word, behind a `{RIP, RIP}` pair, so a reader can never see the
-bounds of one stream with the count of another. `x86-64-gadget-link-layout`
-holds the layout.
-
-A dispatch's instruction budget bounds how long it runs, not where a block
-may stop: the block that crosses the budget runs to its end, as the arm64
-engines' blocks do, so a dispatch can retire up to one block more than its
-budget. Only a single step, and the instruction that a POPF or IRET setting TF
-leaves before its trap, asks for an exact budget. That is the one case where a
-block is replayed: its first few instructions are assembled into a stream of
-their own, which ends where the budget does. What that replay decodes from is
-the block's saved source, not guest memory, so it recovers exactly the
-instructions the block was built from however the guest's own bytes have moved
-since. A translation is therefore built with no decoded instructions in it at
-all; the first replay of a block keeps what it decoded, in a third allocation
-that only a stepped block has. See X73.
-
-A repeated string instruction retires once however many elements it moves.
-Its gadget stops between elements after `UML_X86_64_STRING_REPEAT_BUDGET` of
-work -- elements, or 64-byte blocks of a page-bounded run -- with RIP still
-naming it, and `execute` reports that yield. The dispatch charges the same
-amount to its instruction budget, so a loop of long REP strings returns to the
-kernel about as often as ordinary code does; the kernel services its
-cooperative timer only there. A step keeps its exact budget. A repeated CMPS
-or SCAS commits its flags when it finishes: a stop between elements, whether
-for an interrupt, a fault or a step, shows the flags it was entered with, as
-x86 does.
-
-A step of a repeated string instruction is one iteration, as x86 raises #DB
-after each. `execute` given `single_step` enters the instruction through its
-`_step` entry, which sets a repeat budget of one and joins the gadget's element
-loop: the iteration stops between elements with RIP naming the instruction and
-RF set, or retires the instruction when it ends it. The entries follow the
-string gadgets and leave their layout alone.
-
-The retirement counter carries the dispatch's instruction budget as a negative
-bias, so an edge that follows a link tests the sign of one addition instead of
-loading the limit and comparing against it. `uml_x86_64_gadget_leave` takes
-the bias back out before it reports what the dispatch retired.
-
-## Resume flag
-
-RF suppresses instruction breakpoints for one instruction and is cleared as
-that instruction starts, so nothing the instruction stores or reports shows it:
-a SYSCALL right after an IRET that loaded RF leaves R11 without it, as a native
-run of the corpus case `iret-resume-flag-clears-at-next-instruction.s` shows.
-The engine models no instruction breakpoints, so RF is only state to carry and
-clear. It arrives in two ways: IRET loads it from its image at CPL 3, and the
-kernel's flags carry it after a signal return or a tracer's write. IRET always
-leaves the engine and the kernel's flags always start a dispatch, so `execute`
-clears RF as it enters the engine and no gadget reads or clears it. An exit
-before the engine runs an instruction, for a pending interrupt or a zero
-budget, keeps RF, as an interrupt taken before that instruction does.
-
-Hardware also sets RF in the flags it saves for every fault but an instruction
-breakpoint, so the resumed instruction does not break again, and saves a
-trap's flags as they are. The runtime does the same in the registers it hands
-the kernel: a page fault, #UD, #SS, #GP, #AC, #DE, #MF or #XM exit reports RF
-set, and a breakpoint, INT 4 or single-step exit reports the live flags, in
-which RF is clear. Hardware sets RF as well when an interrupt stops a repeated
-string instruction between elements, so the string gadgets set it at the
-repeat budget's exit, the one place they stop with elements done and elements
-left; `execute` clears it again when the instruction resumes. Signal frames
-and a tracer therefore see what native Linux shows.
-
-## System instructions
-
-User code sees the system instructions as it does under Linux at CPL 3 with
-UMIP. LTR, LLDT, LGDT, LIDT, LMSW, INVLPG, XSETBV, SWAPGS, SYSRET and MOV
-with a control register raise #GP before they touch memory; SWAPGS and SYSRET
-are undefined in compatibility mode, and so is a move with CR1, CR5 to CR7 or
-CR9 to CR15, before the privilege check. SGDT, SIDT and SMSW store
-the values Linux's UMIP emulation reports; SGDT and SIDT store six bytes in
-compatibility mode. SLDT and STR store what Linux's UMIP emulation stores:
-the LDT selector 0x50 once the task's mm has an LDT and 0 before, and the TSS
-selector 0x40, a register form writing only its operand size. LAR, LSL, VERR
-and VERW read the descriptors below; the per-CPU entry's limit is the
-processor number RDPID reports. A guest vCPU has no processor numbering:
-RDPID, RDTSCP's ECX and that limit all report processor 0 of node 0 on both
-engines. CMPXCHG16B raises `#GP(0)` for an operand not aligned to 16 bytes,
-locked or not, as x86 does.
-
-## Segments
-
-Both engines share one model of x86 segmentation as Linux user code sees it
-on an x86-64 kernel ([`segments.hpp`](../segments.hpp)): the GDT entries Linux
-gives every task (code 0x23 and 0x33, data 0x2b, the per-CPU entry 0x7b), the
-i386 TLS entries 12 to 14, the LDT the task installs with `modify_ldt()`,
-which the guest kernel hands over through the bridge (ABI 20), and a
-descriptor cache per segment register. MOV and POP to a segment register,
-LDS, LES, LSS, LFS and LGS, far CALL, JMP and RET, direct and indirect, an
-IRET that changes CS or SS, LAR, LSL, VERR, VERW, SLDT and STR leave the
-engine unretired for `execute_segment_instruction`, which checks the
-descriptor as x86 does at CPL 3 and completes the instruction or raises
-`#GP`, `#NP` or `#SS` with the selector's error code. The execution mode
-follows CS: 0x33 runs long64 and 0x23 or a 32-bit code segment compat32, so
-Wine's WoW64 switches between them with far jumps and IRETQ, and a switch
-ends the dispatch. At every entry from the guest kernel the caches are loaded
-again from the selectors, as Linux's return to user mode does: CS and SS must
-name segments IRET would load, or the entry raises that fault first, and a
-DS, ES, FS or GS that no longer names a usable segment becomes null. Code
-segments are flat: a code segment with a base or a limit raises `#GP` when
-loaded, and the kernel refuses 16-bit segments, so neither Win16 nor DOS code
-runs.
-
-In compatibility mode every access through a segment checks its limit. An
-access through FS or GS compares its offset with a low bound and a span the
-model derives from the limit, with room for the widest access, in the
-general tail; one that fails, and a string instruction, XLAT, gather, masked
-store, extended-state image or store through CS, which a guard gadget stops,
-leave unretired for the model's exact check. That check raises the fault the
-first failing access raises, completes the instruction itself (a string
-instruction element by element, yielding after a bounded number as an
-interrupt would), or runs it alone with every check passing. A 4 GiB
-expand-up segment checks nothing, as glibc's i386 TLS offsets just below 4
-GiB need. While ES, SS or DS is anything but flat writable data (base 0,
-limit 4 GiB), a null selector included, the task is segmented: the runtime
-steps it one instruction at a time through the exact check, and each operand
-adds its segment's base. Long-mode code pays
-for none of this; only an FS or GS operand in compatibility mode reaches the
-check.
-
-## Software TLB
-
-`Executor::prepare` enters an address-space generation, and it must not leave
-behind a translation of a page whose mapping has changed. The address space
-describes the mapping ranges a reader has not yet seen, so a reader only a few
-changes behind replays exactly those ranges and retires just the entries they
-cover. The whole table is cleared only when the address space cannot describe
-the span, when the span covers more than a quarter of the entries, or when the
-memory or the generation changed. The table is direct-mapped with 32768
-entries, 1 MiB, indexed by the page number folded once at that width;
-`native_tlb_entry_count` in `../software_tlb.hpp` is the one constant, and the
-three assembly copies of the index (`translate` and `translate_plain` in
-engine/common.inc, and the baked entries' translation in
-engine/generate_baked.py) must change with it.
-
-A translation may miss, and a miss is a call. Nothing saves the host vector
-registers around it, so a gadget may not hold a guest value in one across its
-own translation: a stored value is read out of the state after the destination
-is settled, and a page-crossing helper is handed the state's address rather
-than a copy made before the call. The same rule is why only register forms
-take part in vector result forwarding.
-
-PUSH, POP, CALL and RET re-check the entry the last stack access translated
-through, which the execution context carries, before hashing an address of
-their own. A tag equal to the page, with no code bit and, for a write, no
-publication left pending by an earlier store, hands back the host address; a
-store still joins its epilogue at the overlap test, because the write can land
-in the block that is running. Anything else takes the ordinary translation,
-which records the new entry for the next access.
-
-## Memory ordering
-
-x86 promises total store order, and a LOCK-prefixed instruction or an XCHG
-against memory is in addition a full fence. Guest code relies on both without
-saying so; the host promises neither, and an exclusive loop orders only its own
-operand. With several vCPUs an unordered engine fails multi-threaded guests
-outright: a work-stealing deque hands one task to two threads, which shows up
-as a wild pointer, a wakeup that never comes, or a spin that never ends.
-
-Every gadget that touches guest memory therefore leaves through a `dmb ish`.
-`translate`, `stack_fast` and the bulk helper macros mark the gadget they
-expand in (`x86_marks_guest_memory`), and `x86_memory_order_boundary`, which
-sits on every retiring exit, emits the barrier for a marked gadget. A gadget
-that works on registers alone pays nothing, a locked gadget is fenced like any
-other store, and the accesses inside one instruction keep the order the gadget
-gives them. The mark is textual, so a new guest memory path that bypasses those
-macros has to mark itself, and a memory form that joins another gadget's tail,
-as DIV and IDIV do, runs the boundary before it branches. Leaving the engine
-always carries the barrier.
-
-## Locked operands
-
-A LOCK-prefixed read-modify-write, XCHG against memory, CMPXCHG and XADD update
-their operand in an exclusive loop, which the host accepts only inside one
-16-byte granule. x86 accepts a locked operand anywhere, and guests do use
-unaligned ones, in packed structures above all.
-
-- The engine runs only on hosts with FEAT_LSE2, which take an exclusive access
-  at any alignment inside one 16-byte granule, so an unaligned operand that
-  fits in a granule keeps the exclusive path. Every Apple-silicon Mac has the
-  feature; the runtime checks it once and refuses to run x86 code without it.
-- Every other operand, one across a granule or a page, runs the gadget's
-  ordinary load and store under one process-wide lock (`split_operand`,
-  `split_lock_leave`). A fault in between releases the lock in the fault
-  tail. A CMPXCHG16B operand off its 16-byte alignment raises `#GP(0)`
-  instead, as on x86.
-
-The lock makes such an operand atomic against every other operand on that
-path, which covers the same instruction running on the other vCPUs. It is
-`split_operand_lock` in `../split_operand_lock.hpp`, one lock for every x86
-engine. It is not atomic against an exclusive loop or a plain store that
-overlaps it; nothing the host offers covers two granules at once.
+- System instructions behave as at CPL 3 on Linux with UMIP: the privileged
+  ones raise `#GP` before they touch memory, and SGDT, SIDT, SMSW, SLDT and STR
+  store what Linux's UMIP emulation stores. RDPID, RDTSCP's ECX and the per-CPU
+  segment limit report processor 0 of node 0. CMPXCHG16B raises `#GP(0)` off
+  16-byte alignment, locked or not.
+- Both x86 engines share one segmentation model
+  ([`segments.hpp`](../segments.hpp)): Linux's GDT, the i386 TLS entries and the
+  task's `modify_ldt()` LDT. Segment loads, far transfers, an IRET that changes
+  CS or SS, and LAR, LSL, VERR, VERW, SLDT and STR leave the engine unretired
+  for `execute_segment_instruction`. The execution mode follows CS, code
+  segments are flat, and 16-bit segments are refused, so Win16 and DOS code do
+  not run. In compatibility mode FS and GS accesses check their limit, and a
+  task whose ES, SS or DS is not flat writable data steps one instruction at a
+  time; long-mode code pays for none of it.
+- The engine runs only on hosts with FEAT_LSE2, which the runtime checks once.
+  A locked operand inside one 16-byte granule keeps the exclusive loop; one
+  across a granule or a page runs under the process-wide `split_operand_lock`
+  (`../split_operand_lock.hpp`), which is atomic only against other operands on
+  that path.
+- Every gadget that touches guest memory leaves through a `dmb ish`, because
+  x86 promises total store order and full-fence LOCK and XCHG. `translate`,
+  `stack_fast` and the bulk-helper macros mark their gadget
+  (`x86_marks_guest_memory`); the mark is textual, so a new guest-memory path
+  that bypasses them must mark itself.
+- A translation may miss and a miss is a call that does not save host vector
+  registers, so a gadget may not hold a guest value in one across its own
+  translation. This is also why vector result forwarding takes register forms
+  only.
+- The software TLB is direct-mapped. `native_tlb_entry_count` in
+  `../software_tlb.hpp` is the one constant; the three assembly copies of the
+  index (`translate` and `translate_plain` in `engine/common.inc`, and the
+  baked entries in `engine/generate_baked.py`) must change with it.
 
 ## Floating-point environment
 
-A dispatch runs in the guest's rounding mode. Entry maps MXCSR's two-bit
-field onto FPCR's, which numbers the directed modes the other way round, and
-every write to MXCSR republishes it; FPCR is written only when the mode would
-change, which for a guest that never leaves round-to-nearest is never. The
-rounding gadgets therefore round with the host's current mode instead of
-branching on MXCSR, and the arithmetic honours the guest's mode as well.
-
-SSE and AVX arithmetic and FMA return x86's values where the host's differ. A
-NaN result is the first source quieted when that is a NaN, else the second,
-else the negative indefinite; for an FMA the first of a, b and c in x86's
-a * b + c, with its own sign whatever the form negates. Where the elements come
-from one source, x86 hardware's order decides, as the SDM ranks only distinct
-sources: HADD and HSUB return a pair's lower NaN, and each DPPS or DPPD result
-lane sums in its own order, DPPS lane i p[i ^ 1] + p[i] and then the other
-pair, DPPD lane i p[i] + p[i ^ 1]. MXCSR.DAZ flushes denormal inputs, those of
-comparisons, rounding and conversions included, and a dot product's
-intermediates; MXCSR.FTZ flushes a result that is tiny after rounding: below
-the smallest normal when rounded as if the exponent were unbounded, which a
-product, quotient, fused result or narrowed double the host rounds up to the
-smallest normal may be, so that one is run again scaled into the normal range.
-MIN and MAX return a source unchanged. RCP and RSQRT ignore MXCSR, take a
-denormal input as zero and return zero for RCP's tiny results; elsewhere the
-host's exact quotient lies within x86's estimate error. These repairs live in
-the cold section, which a gadget enters only for a special result, an
-estimate's special input, or under FTZ a result no larger than the smallest
-normal. Conversions, rounding, F16C's narrowing, HADD, HSUB, ADDSUB, DPPS,
-DPPD and FMA instead keep a common path that assumes DAZ and FTZ clear and no
-SIMD check, and run an exact path while `exception_checks` holds
-`exception_check_simd_exact`: with `exception_check_simd`, or while DAZ or FTZ
-is set, in every run; LDMXCSR, FXRSTOR and XRSTOR keep it current. One load
-and branch thus serve all three, and the common path adds only a NaN test
-where x86's NaN differs from the host's. The arithmetic gadgets test the same
-bit before they read MXCSR for DAZ and FTZ.
-Applications set DAZ and FTZ for good as often as not -- Geekbench's image
-workloads and embree do -- so the exact path is a common path too: it follows
-the gadget inline (FMA's after the gadget's tail), and only its repairs, and
-DPPS and DPPD's whole exact path, live in the cold section. Its flush of a
-denormal input passes the value through two dependent instructions, as scalar
-code waits on it.
-
-MXCSR's exception flags are sticky, and the gadgets keep them while the guest
-masks the exceptions. The host's cumulative FPSR flags hold them through a
-run: IOC, DZC, OFC, UFC and IXC are x86's invalid operation, division by
-zero, overflow, underflow and precision. A run clears them as it starts and
-adds them to MXCSR as it ends; STMXCSR, FXSAVE and XSAVE add them to the
-MXCSR they store, and LDMXCSR, FXRSTOR and XRSTOR clear them with the flags
-they load. IDC is never a denormal operand: it reports an input FPCR.FZ
-flushed, and the engine never sets FZ. Where the host's flags are not x86's,
-the gadget chooses another host instruction. CMP has a gadget for each of
-x86's 32 predicates: FCMEQ is quiet and FCMGE and FCMGT signal, as x86's
-relations do in predicates 0 to 15; VEX's quiet orderings compare the ordered
-lanes with their NaNs made zeros, and FALSE, TRUE and VEX's signalling
-equalities run a comparison for its flags alone. COMIS compares with FCMPE
-and UCOMIS with FCMP, and MIN and MAX with FCMGT. Conversions to integers
-round with FRINTX, or truncate with FCVTZS of the source after a DAZ flush;
-a double outside the int32 range, which may have a fraction, goes through
-neither, so it raises invalid operation alone, as on x86. Where x86 raises
-a flag the host does not, the gadget raises it in software, into MXCSR, on a
-path it already takes, after any exception-check leave: an FTZ flush raises
-underflow and precision, from the mask the flush itself uses, and ROUND
-raises precision for a lane it changed unless its immediate suppresses it
-or MXCSR holds precision already.
-Where the host computes something x86 does not, the gadget keeps FPSR around
-it: the FTZ test's scaled recomputation, an estimate's special inputs and its
-quotient, which raises only precision and runs unguarded once MXCSR or FPSR
-holds precision anyway -- found in FPSR, it goes into MXCSR at once, so the
-next estimate need not read FPSR.
-The x87 gadgets compute in software and raise no host flag.
-
-Three flags stay inexact, as `x86-64-masked-flags` names them: the denormal
-operand while DAZ is clear, which no host flag shows and which a software
-test of every source would cost 2.5 to 23% of SIMD arithmetic in the default
-MXCSR, so it is raised only where the runtime runs an instruction checked;
-underflow for an inexact product, quotient, FMA, narrowing or dot-product
-step that rounds up to the smallest normal, which the host raises, detecting
-tininess before rounding, and x86 does not; and invalid operation for an FMA
-of infinity times zero plus a quiet NaN, which the host raises and x86 does
-not. Removing the last two would take FPSR from before every such
-instruction, an MRS on the hottest path.
-
-x87 arithmetic, conversions and transcendentals run in SoftFloat helpers, in
-the control word's rounding mode and precision. As on x86, C1 after a result
-says whether rounding increased its magnitude -- FPTAN reports the tangent's
-rounding and FSINCOS the cosine's -- and an invalid operation clears it. An
-instruction that rounds nothing clears C1: the loads, a store to a register or
-to an 80-bit operand, FXCH, FCHS, FABS, FFREE, FFREEP, the compares into the
-status word and the stack-pointer instructions; FCOMI, FUCOMI and their
-popping forms, FCMOVcc and FNOP keep it.
-FIST, FISTP and FISTTP raise precision for a value they round, and a sine,
-cosine, tangent or arctangent of a finite nonzero operand raises precision
-even where its 128-bit value rounds to the operand or to 1, and underflow for
-a denormal result. FPTAN, FSINCOS and FXTRACT check the register of their
-second result first: on a full stack they compute nothing and leave the QNaN
-indefinite in both registers, raising only the stack overflow. FPREM and
-FPREM1 divide the significands as integers (SoftFloat's `extF80_x87Rem`,
-which the JIT shares): operands whose exponents differ by 64 or more get a
-partial remainder and C2, as on an Intel host, and a complete remainder sets
-C0, C3 and C1 to the quotient's low three bits. While the control word
-unmasks overflow or underflow, SoftFloat rebiases an extended result out of
-range (`softfloat_rebias_*`): its significand rounds as if the exponent were
-unbounded and the exponent moves back into range by 24576, as x87 delivers
-to a register; an exact tiny result raises an unmasked underflow too.
-Conversions to a single, double or integer never rebias, so a store still
-stores nothing. FSCALE adds the truncated scale to the exponent and rounds
-once (`extF80_scale`), so a result in range is exact however large the
-scale.
-
-FSIN, FCOS, FPTAN, FSINCOS, F2XM1, FYL2X and FYL2XP1 compute as an Intel core
-does, in FEX's `cephes/X87Math.cpp`, which the JIT's interpreter fallbacks
-share. The trigonometric functions reduce an operand below 2^63 by pi/2 taken
-to 66 bits, so the sine of the 64-bit pi is the sine of a remainder from a
-slightly wrong pi; an odd quadrant's tangent is minus the cotangent of the
-remainder, and a magnitude below 2^-68 is returned as it is. F2XM1 returns an
-operand outside -1 to 1 unchanged, and a tiny operand of F2XM1 and FYL2XP1
-keeps every bit of its result. PE is set for every computed result, exact
-ones included. FPTAN and FSINCOS push the NaN of an operand without a tangent
-or sine in place of 1.0 or the cosine, FCMOVcc with an empty register is a
-stack fault whichever way its condition goes, and FBSTP stores the packed BCD
-indefinite for an operand of 10^18 or more, a NaN or an infinity. The Xeon's
-microcode rounding noise, which does not depend on the operand, is not
-reproduced: a few percent of the results of F2XM1, FYL2X, FYL2XP1 and FPTAN,
-and fewer of FSIN's and FCOS's, differ in the last bit, and about 1% in C1
-alone. A result within 2^-113 of a 64-bit number, the cosine of 2^-30 for one,
-may also round the other way in a directed mode.
+A dispatch runs in the guest's rounding mode: entry maps MXCSR's rounding field
+onto FPCR's and every MXCSR write republishes it. SSE, AVX and FMA arithmetic
+return x86's values where the host's differ (NaN selection, DAZ and FTZ, the
+estimate instructions), and MXCSR's exception flags are sticky through the
+host's cumulative FPSR flags. Three flags stay inexact, as
+`x86-64-masked-flags` names them: the denormal operand while DAZ is clear,
+which no host flag shows, and two the host raises and x86 does not, the
+underflow of a product, quotient, FMA, narrowing or dot-product step that
+rounds up to the smallest normal and the invalid operation of an FMA of
+infinity times zero plus a quiet NaN. x87 arithmetic computes in SoftFloat
+helpers and raises no host flag; the transcendentals follow an Intel core, in
+FEX's `cephes/X87Math.cpp`, which the JIT shares, and do not reproduce its
+microcode rounding noise. The model of the exact SIMD flags is
+[`../fp_model.hpp`](../fp_model.hpp).
 
 `uml_x86_64_gadget_leave` restores round-to-nearest by clearing FPCR's mode
-field, so entry needs no slot for the caller's copy. Every path into it has the
-stack pointer back at the entry frame, from which it restores the callee-saved
-registers. [`gadget_host_frame.inc`](../../gadget_host_frame.inc) lays out that
-frame for both gadget engines; the x86-64 engine adds the saved halves of
-v8-v15 and the string gadgets' repeat budget after it, at the offsets
-`UML_X86_64_FRAME_*` in `engine/common.inc` names. No gadget keeps a value in
-x18: Darwin clears that platform register when it interrupts the thread, so a
-value there is lost at a random preemption, and `architecture-audit` rejects
-one.
+field. [`gadget_host_frame.inc`](../../gadget_host_frame.inc) lays out the entry
+frame for both gadget engines. No gadget keeps a value in x18: Darwin clears
+that platform register when it interrupts the thread, and `architecture-audit`
+rejects one.
 
 ## Exceptions the guest enables
 
-x86 raises #XM for a SIMD floating-point exception that MXCSR unmasks, #MF at
-the next waiting x87 instruction after an exception that the control word
-unmasks, and #AC for a misaligned access while RFLAGS.AC is set. Most guests
-enable none of them and a dispatch then runs as it always has, but a Delphi or
-C++Builder program runs with its default control word $1332 and MXCSR $1900,
-which unmask invalid operation, division by zero and overflow.
+x86 raises `#XM` for a SIMD floating-point exception MXCSR unmasks, `#MF` at
+the next waiting x87 instruction after an unmasked one, and `#AC` for a
+misaligned access while RFLAGS.AC is set. A guest that enables none runs
+unchecked. Otherwise a gadget leaves before it stores anything, with
+`UML_X86_64_EVENT_EXCEPTION_CHECK` and the stream position, and the runtime
+runs that instruction again alone and checked. When RFLAGS.AC, MXCSR unmasking
+underflow, precision or a denormal operand, or a pending unmasked x87
+exception makes every such instruction a candidate, the runtime dispatches
+through an executor whose blocks end before each one (a check head that no link
+enters, run by `execute_checked`). An instruction that could change what a run
+checks, such as POPF setting AC or LDMXCSR and FLDCW unmasking, retires and
+leaves the engine, so linked code never runs past it unchecked. Code under
+these settings runs much slower than unchecked code.
 
-The gadgets check themselves for x87 exceptions, and for SIMD ones while MXCSR
-masks underflow, precision and a denormal operand. While the guest unmasks such
-an exception, each run sets `exception_checks` in CpuState (`gadget_checks`),
-and:
+Known deviations from x86 that remain:
 
-- x87: a softfloat helper that raises an unmasked exception records it in
-  `exception_raised` instead of the status word, and the gadget tests that
-  after each helper call. Stack faults, and control word loads that unmask a
-  flag already set, leave the same way.
-- SIMD: the gadget tests its values for anything that could have raised an
-  unmasked exception -- a result whose exponent is all ones or one below (a
-  NaN, an infinity, or the largest finite value an overflow rounds to), a NaN
-  input to a comparison, minimum or maximum, or a conversion to an integer out
-  of its range. A dot product, whose intermediate results no test of its
-  result sees, always leaves. These tests sit on the exact path where a
-  gadget has one. The run adds its host flags to MXCSR before the runtime
-  runs the instruction again, so a gadget that leaves after computing what
-  x86 might not -- the other lanes of a packed instruction that faults before
-  its computation, an inexact result beside an unmasked overflow x86
-  rebiases exactly, the host's underflow before rounding or an FMA's invalid
-  operation -- saves FPSR first, on its exact path or behind the same test,
-  and its leave puts it back (`simd_save_status_branch`). A leave whose host
-  flags so far are x86's -- a NaN input test, a comparison's own flags, a
-  scalar conversion -- keeps FPSR.
+- The faulting address of a partly mapped FXSAVE, XSAVE, XSAVEOPT or XRSTOR
+  area is the first inaccessible byte or the operand's base, where an Intel
+  core reports the last byte of the extent first.
+- Neither engine raises the `#GP` x86 raises for a misaligned operand of an
+  aligned SSE form such as MOVAPS, MOVNTPS or a legacy SSE 16-byte memory
+  source.
+- The gadget engine checks only an instruction's first access for `#AC`; the
+  JIT checks every one.
 
-Either leaves before it stores anything, with
-`UML_X86_64_EVENT_EXCEPTION_CHECK` and the stream position. The runtime finds
-the instruction, in the entered stream or in the cached block a link reached,
-and runs it again alone and checked: that raises #XM, leaves the x87 exception
-pending, or completes an instruction whose special value raised nothing. The
-x87 test costs a load and a branch per helper call, and most SIMD tests sit on
-a path the gadget already took only for a NaN, so code under $1332 and $1900
-runs within about 3% of the masked speed. An instruction the test sends to the
-runtime that raises nothing, such as an addition to an infinity, costs about
-140 ns. The flags of masked exceptions accumulate as they do while MXCSR masks
-every exception.
+## Code pages and cached translations
 
-The other checks split blocks. While `checked_exceptions` finds one enabled --
-RFLAGS.AC, MXCSR unmasking underflow, precision or a denormal operand, which no
-value shows, or an unmasked x87 exception pending -- the runtime dispatches
-through an executor built for that set, whose blocks end before every
-instruction that could raise one. Such an instruction is a block of its own, a
-check head, that no link enters; `execute_checked` runs it alone, with its
-checks, and runs every other block, linked, as `execute` does:
+- [`../code_page_registry.hpp`](../code_page_registry.hpp) keeps, per
+  address-space generation, the set of pages in which any executor holds a
+  translation. A store publishes a code change only when its page is in that
+  set, which keeps publication precise under READ_IMPLIES_EXEC. A participant
+  with another TLB layout, such as the x86-64 JIT, joins with a function that
+  retires its own entry for a page. A page enters the set before any
+  translation built from it is handed out, and every participating executor's
+  write-side TLB entry for it is retired before the registration returns.
+- Every store to a page that holds cached code owes a publication of its own,
+  and the program performs it before its next store: another vCPU may
+  revalidate the page between two stores, so a program that patches a page
+  store by store pays one publication per store.
 
-- #MF: a waiting instruction -- every x87 instruction but FNINIT, FNCLEX,
-  FNSTSW, FNSTCW, FNSTENV and FNSAVE, and FWAIT, EMMS and every MMX
-  instruction -- faults before it runs while an unmasked exception is pending.
-- #AC: an access of two, four or eight bytes off its alignment faults before it
-  runs: memory operands at their width or x87 operand size, stack accesses,
-  and a string instruction's first element. 16- and 32-byte vector accesses,
-  gathers and the extended-state images are exempt, as on x86.
-- #XM, run checked: the flags x86 raises are not the host's -- it detects
-  underflow before rounding, shows no denormal operand, and differs in
-  precision and invalid operation -- so the SIMD floating-point model the JIT
-  also runs (`../fp_model.hpp`) computes them from the instruction's sources,
-  which `simd_fp_steps` reads before the instruction can overwrite them. The
-  model gives, per step, the flags x86 raises before the computation (invalid
-  operation, denormal operand, division by zero) and after it (overflow,
-  underflow, precision), in integers and SoftFloat; DPPS and DPPD take three
-  steps across both halves of a 256-bit operand. `x86_fp_settle` faults at the
-  first step whose flags MXCSR unmasks, and raises the flags up to it. The
-  results stay the gadgets' own. A conversion from an integer keeps the host's
-  flags, which are x86's: CVTSI2SS, CVTSI2SD and CVTPI2PS round, and CVTPI2PD
-  and CVTDQ2PD are exact. An unmasked exception faults before the instruction
-  runs and leaves everything as it was; one that stores to memory (VCVTPS2PH)
-  or keeps the host's flags runs first, and the fault restores its state and
-  its store. MXCSR then holds only the flags checked before the computation
-  when one of those was unmasked. Masked flags accumulate.
-- x87, run checked: the softfloat helpers set the status word's flags, a
-  denormal operand's included. An unmasked invalid operation, denormal
-  operand or division by zero restores the registers, the stack and memory
-  and drops the result's own exceptions, except that FLD of a single or
-  double completes beside a denormal operand and a comparison keeps its
-  condition codes or flags. An unmasked overflow or underflow of a store
-  stores nothing and raises no precision. Any unmasked exception sets ES and
-  B for the next waiting instruction.
-
-An instruction that could change what a run checks retires and leaves the
-engine, so linked code never runs past it unchecked: POPF setting AC; LDMXCSR,
-FXRSTOR or XRSTOR unmasking a SIMD exception while the gadgets do not check
-them, or unmasking underflow, precision or a denormal operand; and FLDCW,
-FLDENV, FRSTOR, FXRSTOR or XRSTOR unmasking an x87 exception while the gadgets
-are not checking or unmasking one whose flag is set. That costs POPF one branch
-and FLDCW and LDMXCSR three instructions when nothing is unmasked. LDMXCSR
-keeps the masks and flags the guest loads.
-
-FXSAVE and FXRSTOR raise #GP for an image not aligned to 16 bytes, and XSAVE,
-XSAVEOPT and XRSTOR for one not aligned to 64, before they access it and
-whatever RFLAGS.AC holds, as the JIT does. Neither engine raises the #GP x86
-raises for a misaligned operand of an aligned SSE form, such as MOVAPS,
-MOVNTPS or a legacy SSE operation's 16-byte memory source.
-
-LDMXCSR, VLDMXCSR, FXRSTOR and XRSTOR raise #GP(0) for an MXCSR with a
-reserved bit, 31 to 16, before they change any state. XRSTOR loads MXCSR from
-its image whenever RFBM selects the SSE or the AVX component, whatever
-XSTATE_BV holds, and XSAVE and XSAVEOPT store MXCSR and MXCSR_MASK under the
-same condition; XSAVE adds RFBM to XSTATE_BV and leaves the rest of the header
-as it found it. XSAVE, XSAVEOPT and XRSTOR access the legacy area and the
-header, and the AVX component only when RFBM selects it; a compat32 segment's
-limit is checked against that extent, 576 bytes or 832 with the AVX component
-(FXSAVE and FXRSTOR: 512), as the Xeon does. Beside a page that is not mapped,
-an Intel core reports the last byte of the extent first -- XRSTOR reads the
-header's XCOMP_BV before that -- and the engines report the first inaccessible
-byte or the operand's base, the gadget engine as a read for XSAVE, which loads
-the image it updates. That deviation in the faulting address of a partly
-mapped area remains.
-
-CLFLUSH, CLFLUSHOPT and CLWB raise #PF for a read at the operand's own
-address when its page is unmapped or unreadable. CLDEMOTE and the prefetches
-are hints and never fault.
-
-A masked store writes nothing when it faults. VMASKMOV and VPMASKMOV probe
-the first byte of the lowest enabled lane and then the last byte of the
-highest before they write, and report the first to miss, as an Intel core
-does; a mask with no enabled lane accesses nothing. MASKMOVDQU and MASKMOVQ
-fault on any page their operand touches, whatever the mask selects, and
-MASKMOVDQU checks its high quadword before its low one, each quadword's first
-byte before its last.
-
-A check head costs a dispatch, about 100 ns on an M-series Mac, so SSE
-arithmetic runs about 25 times slower while MXCSR unmasks underflow, precision
-or a denormal operand. Memory access while AC is set runs about 25 times slower
-too, and stays so: programs rarely set AC. Code without such instructions keeps
-its speed.
-
-## Code pages
-
-`../code_page_registry.hpp` keeps, per address-space generation, the set of
-pages in which any executor of that generation holds a cached translation. A
-store publishes a code change only when its page is in that set, which is what
-makes publication precise under READ_IMPLIES_EXEC, where every readable page
-is executable. A gadget executor's write translations are a table of
-`NativeTlbEntry` indexed by `native_tlb_index`, which is what a registration
-retires; a participant with another TLB layout, such as the x86-64 JIT, joins
-with a function that retires its own entry for a page. The registry
-guarantees:
-
-- membership is exact. A bit per hashed page answers "no" with one load, and
-  a set bit is confirmed against a count per page, because the hash keeps
-  neighbouring pages adjacent and a run of code pages would otherwise mark a
-  run of data pages, such as a thread's stack, as holding code;
-- a page enters the set before any translation built from it is handed out
-  (`CodePageHold` covers the build), and leaves it when the last cached
-  translation of the page in every executor is unlinked or invalidated;
-- when a page enters the set, every participating executor's write-side TLB
-  entry for it is retired before the registration returns, and an executor
-  inside the engine is waited for until it leaves the engine, bounded at
-  200 ms, so no executor keeps a stale "publishes nothing" entry;
-- a TLB fill that raced a registration retries: the fill re-reads the
-  registry's change counter after publishing its entry;
-- counting a page in or out never sleeps: the counts are guarded in 64 stripes
-  by the word-sized lock the MMU uses.
-
-Every store to a page that holds cached code owes a publication of its own,
-and the program performs it before its next store. The record a publication
-leaves is the whole page's -- the page stamp moves, and the code-change range
-is the page -- but a stamp certifies only the bytes read after it was taken.
-Another vCPU may revalidate a block of the page between two stores of one
-program, and a second store that moved no stamp would leave it running the
-bytes it read between them: a thread that patches two instructions of a
-function and then flags that it is done would find the other vCPUs on the
-first patch only. A program that patches a page store by store therefore pays
-one publication per store. A store spanning a page boundary owes both pages
-its record, and the writer cools its own overlapping cached blocks by exact
-range on every executable store.
-
-A store translation settles whether the store owes a record while it resolves
-the address, because reading the context after the guest store costs a
-memory-disambiguation stall. Only the common answer stays in the hot
-instruction stream: `write_code` is none, pending or published and only
-pending is work, so its low bit answers for it and joins the TLB entry's
-cached-code bit in a single test, while the arm that takes a record for a page
-some executor holds a translation of sits in the cold section and marks every
-such store pending.
-
-`finish_store` performs the guest store before its publication call, and
-`GuestAddressSpace::invalidate_code` moves the page stamp before publishing the
-range, which is the writer's order that
-[Keeping a cached translation](#keeping-a-cached-translation) relies on.
-
-## Keeping a cached translation
+### Keeping a cached translation
 
 A cached program is reused while the guest bytes it was translated from are
-still there. Two things answer that: the stamp of each page it covers, which
-any code-change publication on that page moves, and the program's saved source
-bytes, compared whenever a stamp has moved.
+still there. The stamp of each page it covers, which any code-change
+publication on that page moves, and the program's saved source bytes, compared
+whenever a stamp has moved, answer that. A stamp certifies only the bytes read
+after it was taken, so a stamp is always taken before the source it stands for,
+and a new translation reads its block once. A writer stores the bytes, then
+moves the page stamp, then moves the code-change sequence; a reader observes
+the sequence before it looks. A store still in flight reaches the vCPU at its
+next code-change checkpoint (a system call, CPUID or IRET), which leaves the
+native run so the runtime revalidates what it selects next. A moved mapping
+sequence or a raised execution interrupt abandons a validation.
 
-A page stamp certifies only the bytes read after it was taken, so a stamp is
-always taken before the source it stands for, and a successful validation
-records that same stamp. A new translation reads its block once: the registry
-holds and stamps every page the block can span before the decoder starts, and
-the saved source is the bytes the decoder consumed, so the program and its
-source are one observation of guest memory. A write landing during the decode
-moves the page's stamp, and the next validation compares the decoder's own
-bytes against guest memory. A page the block could have spanned but did not is
-never consulted, and a block longer than the cache's own length limit is used
-once and not cached. A revalidation likewise takes the stamps before it
-compares the source.
+### Sharing and budget
 
-The address space's code-change sequence says when to revalidate, not whether
-a program survives the revalidation: a publication that touched a program moved
-the stamp of its page, and one that did not leaves the program alone. A store
-is not the only publication: the static MMU publishes a page that stops
-granting execute, goes away or holds other bytes, and moves its stamp with the
-publication, because a page without execute sees no store that could, and a
-program of it must then compare its saved source before it runs again. A
-mapping change that keeps execute and the bytes publishes nothing. A vCPU
-publishing at speed -- a JIT heap, or a trampoline sharing a page with hot data
--- costs the other vCPUs of its address space a revalidation per block, not a
-translation per block.
+- Executors that run one address space share its translations, unless
+  `DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private. A shared space is
+  made for an address-space generation and the exceptions its blocks are built
+  for, and an executor built for other exceptions never shares with it.
+- A body is unpublished when a slot lets go of it but stays in limbo until every
+  executor seen inside translated code has left, which `run_x86_gadgets`
+  announces with `begin_run` and `end_run`. A shared space is never swept: it
+  is closed and replaced once its arenas hold as much freed space as live
+  bodies, and dies with its last executor.
+- Each executor lets go of the address spaces the MMU reports destroyed at the
+  start of every run (`Executor::leave_gone_generations`); the kernel never
+  reuses a generation number.
+- Each address space charges an account in the gadget engines' process-wide
+  byte budget (`cpu/gadget_cache_budget.hpp`,
+  [`darwin/README.md`](../../../README.md)); an account asked to shed is let go
+  of at the executor's next run.
 
-A writer stores the bytes, then moves the page stamp, then moves the sequence,
-and a reader observes the sequence before it looks. A kept program therefore
-matched guest memory at an instant inside the validation, and every change
-published up to the sequence the cache was prepared with had landed before
-that instant. A store still in flight reaches the vCPU at its next code-change
-checkpoint, which is where the x86 cross-modifying-code protocol requires an
-executing processor to look: a system call, CPUID, or an IRET, each of which
-leaves the native run so that the runtime revalidates what it selects next. A moved mapping sequence or a raised execution
-interrupt still abandons the validation: those say the memory being read
-through is being replaced, or that this vCPU has been asked to leave, and no
-page stamp describes either.
+`UML_GADGET_CACHE_CENSUS=ON` builds record what each cache holds in the arm64
+engine's format
+([`tests/perf/README.md`](../../../../tests/perf/README.md#cache-census)).
 
-## Where a translation lives
+## Build and test
 
-A cached translation is a body (`translation_body.hpp`) in its address space's
-arena, the native stream directly behind it and the guest bounds in front of
-the stream. The saved source is cold and lives in a second arena, so that
-streams stay dense. The body holds the translation's program, its page stamps,
-its places in the lists of translations per page and the instruction limit it
-was built under; a slot, which exists whether or not it holds a translation,
-keeps a tag, the body and a few words. The program a body holds is a view of
-the stream and source it sits beside and frees only what a replay decoded.
-That decode is published once by a compare-and-swap, so a program replayed on
-several threads keeps one decode. `x86-64-gadget-bodies` holds the layout and
-the replay.
+```sh
+cmake --workflow --preset check-unit
+```
 
-The arenas, the link records and indirect sites the streams name, the
-target link tables and the index of bodies per page of one address space are
-its `Space` (`translation_space.hpp`). A space is charged to one account in the
-byte budget. It belongs to the executors running the address space when they
-share their translations, and to one executor otherwise; the sweep of records
-nothing names is the private owner's to ask for, since it reads the owner's
-slots.
-
-## Sharing translations
-
-Executors that run one address space share its translations, unless
-`DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them to themselves. A space is made
-for an address space generation and the exceptions its blocks are built for
-(`check_exceptions`), because a block is built so that no instruction of it
-needs a check the runtime makes itself; an executor built for other exceptions
-never shares with this one. The space holds the bodies, the link records and
-indirect sites their streams name, the target link tables and a page index; each
-executor keeps its slots, which decide what it holds. A body lives while any
-slot holds it, so the address space costs the union of what its executors hold
-rather than their sum, and the link records, a fifth of a private cache, are
-held once.
-
-A lookup that misses in an executor's slots asks the space for the body indexed
-for the address. The body is validated as a stale slot is, by page stamps and
-then by the saved source, and taken into a slot with no copy or relocation;
-otherwise the executor builds. A build finds the equal body already stored if
-another executor stored it first.
-
-A link is one aligned pair that a single paired store retargets, and a block's
-guest bounds are in front of its stream, so an executor follows a link another
-executor armed and a reader sees one stream with its own count. That needs
-FEAT_LSE2, which the x86 engine requires of the host in any case. A link is armed
-only at the code-change sequence the executor validated the block at.
-
-Code changes reach every executor's links in two ways.
-
-- Whatever the address space publishes -- a mapping, a store the kernel made, a
-  JIT's, another vCPU's -- moves the code-change sequence. The first executor
-  to prepare at the new sequence raises the space's gate and resets the links
-  of the bodies the changed ranges cover, or every live link when the history
-  cannot describe the span; an activation validated before the gate moved is
-  refused. The executors revalidate by stamps and bytes as they do privately.
-  The writer, which found only its own publications in the sequence at a branch,
-  moves the gate without resetting anything: its stores reset what they
-  overlapped.
-- A store by an executor is also seen by the others running the block. The
-  engine checks a vCPU's own code stores only at link boundaries and against
-  the block it is running, so a link another executor armed must never take
-  the writer into bytes from before its own store. A store counts against each
-  page of the space it lands on, and for each body its range overlaps it sets
-  the body stale and resets the record naming it, under the lock of the body's
-  page. A build pins the pages it can cover in the page index before it reads
-  a byte, and its body is not kept if a store landed on one of them since: the
-  program runs once. No link is armed to a stale body, a stale body is never
-  adopted, and a slot that revalidates finds it stale and lets go.
-  Owner-private spaces keep revalidating by stamps and bytes as always.
-
-A body a slot let go of is unpublished at once, but an executor that loaded the
-record before may still be running it. It waits in limbo until every executor
-seen inside translated code has left, which the executors' announcements tell:
-`run_x86_gadgets` brackets a run, and the handling of its exits, with
-`begin_run` and `end_run`. An executor that never brackets keeps the bodies of
-its address space for as long as it lives. Running out of memory only delays
-this, and neither queueing nor reclaiming throws: a reclaim that cannot take
-its snapshot of the executors leaves the bodies for the next, and a body that
-cannot be queued stays unreachable until its arena goes with the space. A fault
-inside a block entered through a link is attributed through the arena's map of
-live bodies, since the block need not be in any slot of the executor that ran
-it. A shared space is never swept; it dies with its last executor, and its
-arenas go whole.
-
-What bounds a shared space is renewal. It counts the bytes its arenas hold and
-the bytes of the bodies some slot holds, and once the arenas hold at least as
-much freed space as bodies, and at least two mebibytes, it is closed: it leaves
-the registry, so the next executor to want its address space gets a new one,
-and every executor attached lets go of it before it next enters translated
-code. The old space dies with its last executor, taking its arenas, link
-records and freed bodies with it. A cache closes the space it stores into
-after a store, and a space it lets go of whole (a destroyed address space, or
-its own end) before it detaches, since a mostly dead space receives no
-stores. The byte budget closes a space the same way when it asks it to shed.
-Freed blocks that new bodies fit are reused, so steady churn of equal blocks
-renews nothing; fragmentation and processes that end do.
-
-`x86-64-gadget-shared-bodies`, `x86-64-gadget-shared-store` and
-`x86-64-gadget-shared-concurrent` hold this, `x86-64-gadget-shared-bound` holds
-renewal and the budget, and `x86-64-gadget-bootstrap` runs the bootstrap suite
-with the executors sharing.
-
-## Address spaces the kernel destroyed
-
-The cache keeps the translations of the eight most recently run address
-spaces. The kernel never reuses a generation number and destroys the
-generation when its mm's last reference goes, after which the MMU refuses to
-run it. At the start of every run, `run_x86_gadgets` gives each of its
-executors the MMU's count of destroyed generations and the MMU's answer for a
-generation (`Executor::leave_gone_generations`); an executor whose count moved
-lets go of each address space the MMU reports destroyed, and one the MMU
-cannot answer for keeps it. The number keeps its place in the order the
-window retires in, a tombstone that holds nothing and that the
-least-recently-used rule drops when it reaches it, so the cache keeps the live
-address spaces it would have kept; letting go of the place too would be a
-larger window for live spaces. Letting go of one first makes room for its
-recycled id, so out of memory it stays held, and the executor asks again at its
-next run. Without the rule a destroyed generation's translations, link records
-and indirect sites stay until eight newer generations displace them, which a
-long-running benchmark process never does.
-
-## The byte budget
-
-Each address space an executor keeps charges an account in the gadget engines'
-process-wide byte budget (`cpu/gadget_cache_budget.hpp`; see
-[`darwin/README.md`](../../../README.md)) with its resident translations --
-their bodies, each with its native stream and the bounds in front of it, and
-their saved source apart, in two arenas that charge the account as they carve
-and release chunks -- and its link and indirect records and target link
-tables. A store that takes the open accounts
-past the budget asks the largest to shed, which sets a flag on the cache that
-keeps it; `leave_gone_generations` lets go of every such address space at the
-start of the next run, as of a destroyed one but without a tombstone, and the
-address space starts again in a new account. A private cache's address space is
-charged to that cache, so the same address space on four vCPUs is charged four
-times. A shared space owns its account, as an arm64 space does: it charges its
-translations once, its executors let go of it at their next run when it is
-asked to shed, and the registry no longer hands it out.
-
-## Measuring what the cache costs
-
-A `UML_GADGET_CACHE_CENSUS=ON` build makes every executor append what its
-cache holds and how it came to hold it, in the arm64 engine's records, so one
-analyzer reads a capture from either
-([`tests/perf/README.md`](../../../../tests/perf/README.md#cache-census)). An
-x86 translation's allocations are its body and native stream, its saved
-source, and the decoded instructions only a replayed block holds.
+Focused tests: `ctest -R '^x86-64-gadget-'` (cache, link layout, sharing,
+bootstrap, pinned region), `x86-64-masked-flags` and `x86-64-sse-exactness`.
+The instruction corpus, which is the acceptance gate, and the FEX campaign are
+in [`docs/testing.md`](../../../../docs/testing.md#x86-instruction-conformance).
