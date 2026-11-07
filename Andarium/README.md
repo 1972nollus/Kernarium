@@ -217,7 +217,10 @@ requires reopening Andarium.
   ([Android README](../android/lineage-24/README.md#time-zone)).
 - **Input.** The shared [GuestHost input](../GuestHost/README.md) maps up to
   ten fingers onto the guest's display. A touch the system takes over reaches
-  Android as a cancelled touch, not a lift, so no tap follows.
+  Android as a cancelled touch, not a lift, so no tap follows. Only the side
+  keys take touches: while they are open, a touch that begins anywhere else
+  reaches Android from its first event and closes the keys
+  (`SessionState.closeSideKeys`, called by the display's `touchDidBegin`).
 - **Retina.** Retina mode applies at the next start and uses the screen's
   native pixels, whose host allocations count against the same iOS process
   limit as guest RAM (`DisplayOptions`).

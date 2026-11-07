@@ -14,6 +14,10 @@ struct GuestDisplayGeometry {
 struct GuestDisplayView: UIViewControllerRepresentable {
     @Binding var keyboardVisible: Bool
     let retinaMode: Bool
+    /// Told each time touches begin on the display, after their contacts have
+    /// gone to the guest. An application that draws controls over the display
+    /// uses it to put them away when a touch lands on the guest instead.
+    var touchDidBegin: (@MainActor () -> Void)?
     let viewDidLayout: @MainActor (
         GuestMetalView,
         GuestDisplayGeometry
@@ -22,6 +26,7 @@ struct GuestDisplayView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> GuestDisplayViewController {
         let view = GuestMetalView(frame: .zero, device: MTLCreateSystemDefaultDevice())
         view.viewDidLayout = viewDidLayout
+        view.touchDidBegin = touchDidBegin
         view.retinaMode = retinaMode
         view.isPaused = true
         view.enableSetNeedsDisplay = true
@@ -35,6 +40,7 @@ struct GuestDisplayView: UIViewControllerRepresentable {
         context: Context
     ) {
         let view = controller.metalView
+        view.touchDidBegin = touchDidBegin
         view.retinaMode = retinaMode
         view.setKeyboardVisible(keyboardVisible)
         view.reportLayout()
@@ -127,6 +133,7 @@ final class GuestMetalView: MTKView, UIKeyInput {
         GuestMetalView,
         GuestDisplayGeometry
     ) -> Void)?
+    var touchDidBegin: (@MainActor () -> Void)?
     var retinaMode = false
     @objc private(set) var umlGuestResizeInProgress = false
     private var touchContacts = GuestTouchContacts<ObjectIdentifier>()
@@ -246,6 +253,7 @@ final class GuestMetalView: MTKView, UIKeyInput {
                 geometry: touchGeometry()
             ))
         }
+        touchDidBegin?()
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
