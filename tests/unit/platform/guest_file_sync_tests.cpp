@@ -243,6 +243,69 @@ void diskLocksLeaveBeforeSuspensionAndReturnBeforeResume()
 	close(disk);
 }
 
+/* The kernel opens a disk again to read its size or its identity, and closes
+ * that descriptor while the guest runs. The lock belongs to the open file
+ * description that took it, so no such close may end it; a POSIX lock ends with
+ * the first close of any descriptor of the file in the process. */
+void closingAnotherDescriptorOfALockedDiskKeepsTheLock()
+{
+	(void)uml::platform::forget_guest_files();
+	const auto path = scratchDirectory() / "close-another";
+	const int disk = openScratch("close-another", O_RDWR);
+	lockDisk(disk);
+	const auto openAndClose = [&] {
+		const int other = ::open(path.c_str(), O_RDONLY);
+		require(other >= 0);
+		require(::close(other) == 0);
+	};
+	openAndClose();
+	require(anotherProcessSeesALock(disk),
+		"closing another descriptor released the disk lock");
+	/* The lock the resume takes again is the description's, too. */
+	require(uml::platform::release_guest_file_locks() == 0);
+	require(uml::platform::restore_guest_file_locks());
+	openAndClose();
+	require(anotherProcessSeesALock(disk),
+		"closing another descriptor released the restored disk lock");
+	require(uml::platform::release_guest_file_locks(true) == 0);
+	require(!anotherProcessSeesALock(disk));
+	close(disk);
+	(void)uml::platform::forget_guest_files();
+}
+
+/* Locks of one open file description conflict with every other description,
+ * the process's own included. */
+void aSecondDescriptionCannotLockALockedDisk()
+{
+	(void)uml::platform::forget_guest_files();
+	const auto path = scratchDirectory() / "second-description";
+	const int disk = openScratch("second-description", O_RDWR);
+	lockDisk(disk);
+	const int second = ::open(path.c_str(), O_RDWR);
+	require(second >= 0);
+	for (const short type : {F_WRLCK, F_RDLCK}) {
+		struct flock requested {};
+		requested.l_type = type;
+		requested.l_whence = SEEK_SET;
+		errno = 0;
+		require(uml::platform::set_guest_file_lock(second, F_SETLK, requested) == -1 &&
+			(errno == EAGAIN || errno == EACCES),
+			"a second description locked a locked disk");
+	}
+	/* The refusals left nothing for the registry to release or restore. */
+	require(uml::platform::release_guest_file_locks() == 0);
+	require(!anotherProcessSeesALock(disk), "a refused lock request took a lock");
+	require(uml::platform::restore_guest_file_locks());
+	require(anotherProcessSeesALock(disk));
+	/* The lock ends with its description, and then the other may take it. */
+	close(disk);
+	lockDisk(second);
+	require(anotherProcessSeesALock(second));
+	require(uml::platform::release_guest_file_locks(true) == 0);
+	close(second);
+	(void)uml::platform::forget_guest_files();
+}
+
 void aReadOnlyDiskLockIsReleasedToo()
 {
 	const int disk = openScratch("locked-read-only", O_RDONLY);
@@ -433,6 +496,8 @@ int main()
 	anUnflushableDescriptorIsReportedWithoutStoppingTheRest();
 	forgottenRecordsAreNeitherFlushedNorRetired();
 	diskLocksLeaveBeforeSuspensionAndReturnBeforeResume();
+	closingAnotherDescriptorOfALockedDiskKeepsTheLock();
+	aSecondDescriptionCannotLockALockedDisk();
 	aReadOnlyDiskLockIsReleasedToo();
 	aChangedDiskRefusesResumeAndReleasesEarlierLocks();
 	aReusedDiskDescriptorMustNotBeRelocked();

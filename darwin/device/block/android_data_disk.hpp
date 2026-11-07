@@ -53,8 +53,10 @@ PreparedDataDisk prepareDataDisk(const Layout &layout,
 				 const std::filesystem::path &path,
 				 std::uint32_t gib);
 
-/* Whether another process holds a lock on the file, as a running guest does
- * on its writable disk. */
+/* Whether another process, or another open file description of this one,
+ * holds a lock on the file, as a running guest does on its writable disk: the
+ * kernel's disk lock is an open file description lock, so a guest in this
+ * process counts. The probe's own descriptor takes and ends no lock. */
 bool lockedByAnotherProcess(const std::filesystem::path &path);
 
 } // namespace uml::android

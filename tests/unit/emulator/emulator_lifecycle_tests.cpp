@@ -655,7 +655,9 @@ public:
 	[[nodiscard]] int descriptor() const noexcept { return descriptor_; }
 
 	/* Whether another process cannot lock the disk, as a second host would
-	 * find it: locks of one process never conflict with each other. */
+	 * find it. A forked child asks, through the descriptor it inherits: the
+	 * kernel's lock belongs to the open file description, which the child
+	 * shares, and conflicts with a lock query from any other process. */
 	[[nodiscard]] bool lockedByAnotherProcess() const
 	{
 		int result[2];
