@@ -248,7 +248,7 @@ struct StoragePanel: View {
     }
 }
 
-/// An existing guest's storage, the first row of Home's Guest System
+/// An existing guest's storage, the last row of Home's Guest System
 /// section: what the guest holds of its capacity, a pending growth or the
 /// largest size, and Resize.
 struct StorageRow: View {
