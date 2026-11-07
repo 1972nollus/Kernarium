@@ -27,10 +27,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  1 file changed, 29 insertions(+)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 96ca149a8777d321f0ee4c8ca94aac1b5bf74f25..d61bc84cfcbd51ee0c854941c170e405108657d4 100644
+index 63cb62d7cdeeb76a02868e3c22d54cda1b58fbbe..3e2d06cd1bc78eae59de5fddb26afba880d79e07 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -9378,6 +9378,33 @@ vrend_resource_create(const struct vrend_renderer_resource_create_args *args)
+@@ -9446,6 +9446,33 @@ vrend_resource_create(const struct vrend_renderer_resource_create_args *args)
     return gr;
  }
  
@@ -64,7 +64,7 @@ index 96ca149a8777d321f0ee4c8ca94aac1b5bf74f25..d61bc84cfcbd51ee0c854941c170e405
  struct pipe_resource *
  vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args *args,
                                 void *image_oes)
-@@ -9394,6 +9421,8 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
+@@ -9462,6 +9489,8 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
     } else {
        const enum virgl_formats format = gr->base.format;
        ret = vrend_resource_alloc_texture(gr, format, image_oes);

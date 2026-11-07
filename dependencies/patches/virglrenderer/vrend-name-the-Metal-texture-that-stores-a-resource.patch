@@ -66,10 +66,10 @@ index f6b570dbcccfaba5bc963e4b43c94aeaedae6e43..4a4b28791803a38f358d88f499f6caba
        return vrend_winsys_get_attrs_for_texture(info_ext->base.tex_id,
                                                  info_ext->base.virgl_format,
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index fe7f886d17c3be46d1403e496c292e0b952dd898..bec8b28f9cd5ca9b8a09a88cda7cefa46b19e8e5 100644
+index e054b58333fb818ca4c80be53ba7bfbacd9c245b..79d420d61a0c3240e78998fbf18b2f43aa310c30 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -13929,6 +13929,42 @@ vrend_renderer_resource_d3d11_texture2d(struct pipe_resource *pres, void **d3d_t
+@@ -14026,6 +14026,42 @@ vrend_renderer_resource_d3d11_texture2d(struct pipe_resource *pres, void **d3d_t
  #endif
  }
  
@@ -113,10 +113,10 @@ index fe7f886d17c3be46d1403e496c292e0b952dd898..bec8b28f9cd5ca9b8a09a88cda7cefa4
                                  uint32_t *max_size)
  {
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
-index 81b09b32b19124d16a504edfad97d1eb115e24ba..3cc9d9ca608130cba64734a5ec401c63bc872647 100644
+index 726ffc2e0ad49a57f458c1d79972fdabebe59781..d6465e1f4ba53d2671151aecf6e647f66bb330a9 100644
 --- a/src/vrend/vrend_renderer.h
 +++ b/src/vrend/vrend_renderer.h
-@@ -685,6 +685,11 @@ struct vrend_video_context *vrend_context_get_video_ctx(struct vrend_context *ct
+@@ -681,6 +681,11 @@ struct vrend_video_context *vrend_context_get_video_ctx(struct vrend_context *ct
  int
  vrend_renderer_resource_d3d11_texture2d(struct pipe_resource *res, void **handle);
  
