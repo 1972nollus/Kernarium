@@ -2,6 +2,7 @@
 
 #include "launcher.hpp"
 #include "block/android_boot.hpp"
+#include "options.hpp"
 
 #include <array>
 #include <charconv>
@@ -93,6 +94,9 @@ AndroidOptions parse_options(int argc, char *const argv[])
 		if (argument.starts_with(uml::android::lcdDensityPrefix))
 			throw std::invalid_argument(
 				"the Android density follows --gpu-dpi");
+		if (argument.starts_with(uml::android::hwTimeoutMultiplierPrefix))
+			throw std::invalid_argument(
+				"the Android timeout multiplier follows ncpus=");
 		if (argument.starts_with(dpi_option))
 			options.dots_per_inch = uml::android::parseDotsPerInch(
 				argument.substr(dpi_option.size()));
@@ -211,6 +215,8 @@ void print_usage()
 			"      existing one; a disk never shrinks)\n"
 			"  --android-boot-mode=auto|normal|recovery\n"
 			"  --gpu-dpi=N (also the guest density; 213 without it)\n"
+			"  ncpus=N (also the guest's timeout multiplier: 3 from six vCPUs,\n"
+			"      5 below)\n"
 			"  --virtio-console-socket=/absolute/console.sock\n"
 			"The same values may be supplied through UML_ANDROID17_RELEASE, "
 			"UML_ANDROID17_DATA_DISK, "
@@ -235,7 +241,8 @@ std::vector<std::string> boot_command_line(
 		forwarded.push_back(std::move(argument));
 	constexpr std::array launcher_prefixes{
 		adb_authorization_prefix,
-		uml::android::lcdDensityPrefix};
+		uml::android::lcdDensityPrefix,
+		uml::android::hwTimeoutMultiplierPrefix};
 	for (auto &argument : uml::android::readKernelCommandLine(
 		     storage.release() / uml::android::releaseCommandLine,
 		     launcher_prefixes))
@@ -244,6 +251,12 @@ std::vector<std::string> boot_command_line(
 	 * init script publishes as ro.sf.lcd_density: a guest without it has an
 	 * empty property. */
 	forwarded.emplace_back(uml::android::lcdDensityArgument(dots_per_inch));
+	/* The framework scales its ANR, watchdog and input timeouts by this: the
+	 * vendor init script publishes it as ro.hw_timeout_multiplier. It follows
+	 * the vCPU count the launch boots with, which main.cpp defaults when the
+	 * host states none. */
+	forwarded.emplace_back(uml::android::hwTimeoutMultiplierArgument(
+		uml::emulator::launch_guest_cpu_count(host_arguments)));
 	forwarded.emplace_back(std::string{adb_authorization_prefix} + "0");
 	std::fprintf(
 		stderr,

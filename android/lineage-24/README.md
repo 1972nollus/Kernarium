@@ -230,6 +230,12 @@ outcomes are known and not defects of the image:
 - The boot animation is off, and boot runs with expedited RCU grace periods that
   the vendor init script turns off at `sys.boot_completed`. The Mac launcher and
   Kernarium read the release's one command line file.
+- The launcher sets `androidboot.hw_timeout_multiplier`, which scales the
+  framework's ANR, watchdog and input timeouts, from the guest's vCPU count: 3 at
+  six or more, 5 below, where the gadget engines are slower than a phone
+  (`darwin/device/block/android_boot.hpp`). The launchers refuse any value of it
+  in a release's command line except the `=5` that earlier releases carry, which
+  they drop.
 - The guest has a compressed swap of half its RAM (one zram entry in
   `fstab.uml`), enabled at `sys.boot_completed`. PinnerService does not lock the
   home app's files, and `kernarium_reclaim_boot_apps.sh` kills only the cached
@@ -274,8 +280,7 @@ presentation is `VK_ANDROID_native_buffer`. The host side of this stack is in
 [`../../docs/graphics.md`](../../docs/graphics.md#android-guest-requirements).
 
 The boot command line is the only writer of the three graphics HAL selections,
-the OpenGL ES version, `androidboot.hw_timeout_multiplier=5` (the gadget engines
-are slower than a phone) and `androidboot.lcd_density`; every launcher passes the
+the OpenGL ES version and `androidboot.lcd_density`; every launcher passes the
 density and a release's command line may not set it. The verifier refuses a
 vendor `ro.hardware.egl`, `ro.hardware.vulkan` or `ro.hardware.gralloc`. The
 display follows the host view
@@ -550,8 +555,9 @@ Kernarium represents one Android guest as a `.kern` directory containing:
 
 The kernel is supplied by the runtime framework and is not bundle payload. The
 manifest is provenance rather than a runtime compatibility token. Android
-appends the host-owned display density, ADB authorization policy, ADB host key,
-ADB TCP policy, and tagged-pointer option at launch, and launches write
+appends the host-owned display density, hardware timeout multiplier, ADB
+authorization policy, ADB host key, ADB TCP policy, and tagged-pointer option at
+launch, and launches write
 persistent guest changes only to `guest/data.img`. How Kernarium keeps,
 relaunches, and copies a bundle is in
 [`../../Kernarium/README.md`](../../Kernarium/README.md#guest-storage).

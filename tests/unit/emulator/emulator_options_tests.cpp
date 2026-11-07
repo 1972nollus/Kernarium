@@ -651,6 +651,35 @@ void test_application_default_cpu_count_is_the_physical_cores_at_most_eight()
 		"an explicit ncpus=12 was limited to the application maximum");
 }
 
+/* A launcher sizes what depends on the vCPU count, such as the Android
+ * timeout multiplier, from the count its boot ends with: the launcher's own
+ * default when the command line states none, and the kernel's reading of
+ * ncpus= when it does. */
+void test_launch_guest_cpu_count_is_the_count_the_launch_boots_with()
+{
+	require(uml::emulator::launch_guest_cpu_count(
+			{"uml-test", "mem=4G", "quiet"}) ==
+			uml::emulator::default_application_guest_cpu_count(),
+		"a launch with no ncpus= did not take the application default");
+	require(uml::emulator::launch_guest_cpu_count(
+			{"uml-test", "ncpus=4", "mem=4G"}) == 4,
+		"an explicit ncpus=4 was not the launch count");
+	require(uml::emulator::launch_guest_cpu_count(
+			{"uml-test", "ncpus=4", "ncpus=bad"}) == 4,
+		"a malformed later ncpus= replaced the valid one");
+	require(uml::emulator::launch_guest_cpu_count(
+			{"uml-test", "ncpus=bad"}) ==
+			uml::runtime::default_guest_cpu_count(),
+		"a malformed ncpus= did not leave the kernel default");
+	require(uml::emulator::launch_guest_cpu_count(
+			{"uml-test", "ncpus=100"}) ==
+			uml::runtime::maximum_guest_cpu_count,
+		"ncpus=100 was not clamped to the guest maximum");
+	require(uml::emulator::launch_guest_cpu_count({}) ==
+			uml::emulator::default_application_guest_cpu_count(),
+		"an empty command line did not take the application default");
+}
+
 void test_invalid_and_informational_inputs()
 {
 	const char *invalid_engine[]{"--execution-engine=unknown"};
@@ -703,6 +732,7 @@ int main()
 		test_process_native_window_is_one_reservation();
 		test_guest_cpu_count_matches_kernel_policy();
 		test_application_default_cpu_count_is_the_physical_cores_at_most_eight();
+		test_launch_guest_cpu_count_is_the_count_the_launch_boots_with();
 		test_invalid_and_informational_inputs();
 		return EXIT_SUCCESS;
 	} catch (const std::exception &error) {

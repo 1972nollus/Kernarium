@@ -80,6 +80,14 @@ struct EmulatorOptions final {
  * the applications share). An explicit ncpus= keeps the guest maximum. */
 [[nodiscard]] unsigned default_application_guest_cpu_count() noexcept;
 
+/* The vCPU count a standalone launcher boots with: the last valid ncpus=
+ * argument's, as configured_guest_cpu_count(), and
+ * default_application_guest_cpu_count() when the command line has no ncpus=
+ * argument, which the launcher then appends. A launcher sizes what depends
+ * on the count, such as the Android timeout multiplier, from it. */
+[[nodiscard]] unsigned launch_guest_cpu_count(
+	const std::vector<std::string> &arguments) noexcept;
+
 [[nodiscard]] EmulatorOptions prepare_emulator_options(
 	int argc, const char *const argv[], std::string_view rootfs);
 
