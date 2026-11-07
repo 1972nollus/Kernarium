@@ -130,7 +130,7 @@ struct AcknowledgementsView: View {
                     Text(group.title)
                 } footer: {
                     if group.id == acknowledgements.groups.last?.id {
-                        Text("Android, LineageOS, Linux and the other names and marks here belong to their owners. They identify the software built into Andarium and the work that inspired its design, and imply no endorsement.")
+                        Text("Android, LineageOS, Linux and the other names and marks here belong to their owners. They identify the software built into Andarium and imply no endorsement.")
                             .padding(.top, 8)
                     }
                 }
