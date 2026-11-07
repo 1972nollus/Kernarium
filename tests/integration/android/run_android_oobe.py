@@ -9,14 +9,23 @@ a fresh instance, and checks the contract in android/lineage-24/README.md:
 - wizard: the guest is unprovisioned (`ro.setupwizard.mode` OPTIONAL,
   `device_provisioned` and `user_setup_complete` 0), HOME resolves to the
   wizard and stays there when pressed, and the wizard's first page is on
-  screen. The runner then completes the wizard through its own pages. Setup
-  ends with both settings 1, the wizard's HOME activity and flow manager
-  disabled, and HOME resolving to, and pressed back to, the launcher;
+  screen. The runner then completes the wizard through the pages the product
+  shows, exactly these and in this order: Welcome, Language, Date and time,
+  Theme, Finish. Setup ends in the state the product defines for a fresh guest:
+  both settings 1, the wizard's HOME activity and flow manager disabled, HOME
+  resolving to, and pressed back to, the launcher, three-button navigation
+  (`navigation_mode` 0, the gestural overlay off and both mode overlays
+  present), no screen lock, location on as it was before the wizard, Wi-Fi
+  connected to VirtWifi, and no status bar lock held by the wizard;
 - helper: the guest is started with `--provision`, the harness path of
   tools/android_provision.py, and reaches the same observable state without a
   person: both settings 1 and HOME on the launcher. The shell may not disable
   the wizard's components, so the helper disables the wizard package for user 0
-  instead. The helper then finds nothing left to do.
+  instead, and stops its process, which holds a status bar lock until it dies.
+  The helper then finds nothing left to do.
+
+The flow is the contract of release r17 and later: a release that still shows
+LineageOS's other pages fails at the first page that is not in the list.
 
 Every wait has a deadline; the guest's launcher is stopped through its own
 process on any exit.
@@ -48,6 +57,15 @@ import android_provision  # noqa: E402
 WIZARD = android_provision.SETUP_WIZARD
 LAUNCHER_PACKAGE = "com.android.launcher3"
 WELCOME_ACTIVITY = f"{WIZARD}/.WelcomeActivity"
+LOCALE_ACTIVITY = f"{WIZARD}/.locale.LocaleActivity"
+DATETIME_ACTIVITY = f"{WIZARD}/.time.DateTimeActivity"
+THEME_ACTIVITY = f"{WIZARD}/.settings.ThemeSettingsActivity"
+FINISH_ACTIVITY = f"{WIZARD}/.FinishActivity"
+# The reviewed flow: the pages the wizard shows, in order.
+FLOW = (WELCOME_ACTIVITY, LOCALE_ACTIVITY, DATETIME_ACTIVITY, THEME_ACTIVITY, FINISH_ACTIVITY)
+NAVBAR_GESTURAL = "com.android.internal.systemui.navbar.gestural"
+NAVBAR_3BUTTON = "com.android.internal.systemui.navbar.threebutton"
+WIFI_NETWORK = "VirtWifi"
 UI_DUMP = "/data/local/tmp/andarium-oobe-ui.xml"
 BOUNDS = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 RESUMED = re.compile(r"ResumedActivity: ActivityRecord\{\S+ u\d+ (\S+) t\d+\}")
@@ -55,8 +73,7 @@ ADB_LOST = re.compile(r"offline|device not found|no devices|closed|unauthorized"
 RECONNECT_ATTEMPTS = 8
 # What the wizard disables itself when its last page finishes.
 WIZARD_DISABLES = ("SetupWizardActivity", "wizardmanager.WizardManager")
-WIZARD_STEPS = 40
-STEP_SECONDS = 45
+WIZARD_STEPS = 20
 
 
 class Failure(RuntimeError):
@@ -92,36 +109,26 @@ def center(bounds: str) -> tuple[int, int]:
     return (left + right) // 2, (top + bottom) // 2
 
 
-# What each page of the wizard is asked: the text of its button, the id of its
-# button, its first list item, or a swipe up from the bottom edge.
+# What each page of the wizard is asked: the id of its button, the text of its
+# button, its first list item, or the page's home affordance (in three-button
+# navigation the Finish page's icon is the control that goes home).
 PAGES: dict[str, tuple[str, str]] = {
     WELCOME_ACTIVITY: ("id", f"{WIZARD}:id/start"),
-    f"{WIZARD}/.locale.LocaleActivity": ("item", "sud_items_title"),
-    "com.android.settings/.network.NetworkSetupActivity": ("text", "Next"),
-    f"{WIZARD}/.time.DateTimeActivity": ("text", "Next"),
-    f"{WIZARD}/.backup.RestoreIntroActivity": ("text", "Skip"),
-    f"{WIZARD}/.privacy.LocationSettingsActivity": ("text", "Next"),
-    f"{WIZARD}/.settings.LineageSettingsActivity": ("text", "Next"),
-    "com.android.settings/.password.SetupChooseLockGeneric": ("text", "Not now"),
-    f"{WIZARD}/.settings.ThemeSettingsActivity": ("text", "Next"),
-    f"{WIZARD}/.settings.NavigationSettingsActivity": ("text", "Finish"),
-    f"{WIZARD}/.FinishActivity": ("swipe", "up"),
+    LOCALE_ACTIVITY: ("item", "sud_items_title"),
+    DATETIME_ACTIVITY: ("text", "Next"),
+    # The last page before Finish: its button reads Finish.
+    THEME_ACTIVITY: ("text", "Finish"),
+    FINISH_ACTIVITY: ("id", f"{WIZARD}:id/swipe_hint_icon"),
 }
-# A confirmation that can sit over any page; it is answered before the page.
-CONFIRMATIONS = ("Skip anyway",)
+assert tuple(PAGES) == FLOW
 
 
-def wizard_action(activity: str, nodes: list[dict[str, str]]) -> tuple[str, int, int] | tuple[str]:
-    """What to do on this page: ("tap", x, y) or ("swipe",)."""
-    for node in nodes:
-        if node.get("text") in CONFIRMATIONS and node.get("resource-id") == "android:id/button1":
-            return ("tap", *center(node["bounds"]))
+def wizard_action(activity: str, nodes: list[dict[str, str]]) -> tuple[str, int, int]:
+    """What to do on this page: ("tap", x, y)."""
     rule = PAGES.get(activity)
     if rule is None:
         raise Failure(f"the wizard shows a page this runner does not know: {activity!r}")
     kind, target = rule
-    if kind == "swipe":
-        return ("swipe",)
     for node in nodes:
         if kind == "id" and node.get("resource-id") == target:
             return ("tap", *center(node["bounds"]))
@@ -130,6 +137,35 @@ def wizard_action(activity: str, nodes: list[dict[str, str]]) -> tuple[str, int,
         if kind == "item" and node.get("resource-id", "").endswith(target):
             return ("tap", *center(node["bounds"]))
     raise Failure(f"{activity} has no {kind} {target!r} to tap")
+
+
+def next_page(position: int, activity: str) -> int:
+    """The index in FLOW after seeing `activity` while the flow stands at `position`.
+
+    The flow is strict: the page on screen is the one expected, or the one after
+    it (the tap went through). Any other page, a hidden one or a reviewed one out
+    of order, is a failure."""
+    if activity == FLOW[position]:
+        return position
+    if position + 1 < len(FLOW) and activity == FLOW[position + 1]:
+        return position + 1
+    expected = FLOW[position] if position + 1 >= len(FLOW) else f"{FLOW[position]} or {FLOW[position + 1]}"
+    raise Failure(f"the wizard shows {activity!r}, expected {expected}")
+
+
+OVERLAY_LINE = re.compile(r"^(?:\[(?P<state>[ x])\]|(?P<missing>---)) (?P<package>\S+)$", re.MULTILINE)
+WIFI_INFO = re.compile(r'mWifiInfo SSID: "(?P<ssid>[^"]*)".*Supplicant state: (?P<state>[A-Z_]+)')
+
+
+def overlay_states(listing: str) -> dict[str, str]:
+    """`cmd overlay list` as package -> "x" (enabled), " " (disabled) or "-" (not usable)."""
+    return {match.group("package"): match.group("state") or "-" for match in OVERLAY_LINE.finditer(listing)}
+
+
+def wifi_network(dumpsys_wifi: str) -> tuple[str, str] | None:
+    """The connected network's name and supplicant state from `dumpsys wifi`, or None."""
+    match = WIFI_INFO.search(dumpsys_wifi)
+    return (match.group("ssid"), match.group("state")) if match else None
 
 
 def disabled_components(dumpsys_package: str) -> set[str]:
@@ -199,11 +235,11 @@ class Device:
             f"rm -f {UI_DUMP}; uiautomator dump {UI_DUMP} >/dev/null 2>&1; cat {UI_DUMP}; rm -f {UI_DUMP}",
             timeout=60))
 
-    def screen_size(self) -> tuple[int, int]:
-        match = re.search(r"(\d+)x(\d+)", self.shell("wm size"))
-        if match is None:
-            raise Failure("wm size gives no size")
-        return int(match.group(1)), int(match.group(2))
+    def wizard_status_bar_record(self) -> bool | None:
+        return android_provision.wizard_status_bar_record(self.shell)
+
+    def wizard_processes(self) -> list[str] | None:
+        return android_provision.wizard_processes(self.shell)
 
 
 def wait_for(description: str, probe: Callable[[], bool], seconds: int,
@@ -247,8 +283,17 @@ def stop_launcher(guest: subprocess.Popen) -> None:
 # --- the checks -----------------------------------------------------------------
 
 
-def check_unprovisioned(device: Device) -> None:
-    """A fresh guest is in Setup Wizard, which HOME does not leave."""
+# What the wizard's Location page used to write and the product's flow no longer shows:
+# the platform's values stay as they were before the wizard ran.
+LOCATION_SETTINGS = (("secure", "location_mode"), ("global", "assisted_gps_enabled"))
+
+
+def location_state(device: Device) -> dict[str, str]:
+    return {f"{namespace} {name}": device.setting(namespace, name) for namespace, name in LOCATION_SETTINGS}
+
+
+def check_unprovisioned(device: Device) -> dict[str, str]:
+    """A fresh guest is in Setup Wizard, which HOME does not leave; returns its location settings."""
     mode = device.shell("getprop ro.setupwizard.mode")
     if mode != "OPTIONAL":
         raise Failure(f"ro.setupwizard.mode is {mode!r}, expected OPTIONAL")
@@ -264,6 +309,7 @@ def check_unprovisioned(device: Device) -> None:
     if device.resumed() != WELCOME_ACTIVITY:
         raise Failure(f"HOME left the wizard for {device.resumed()!r} on an unprovisioned guest")
     print("fresh guest: unprovisioned, HOME stays in the wizard")
+    return location_state(device)
 
 
 def ui_nodes(device: Device) -> list[dict[str, str]]:
@@ -279,42 +325,78 @@ def ui_nodes(device: Device) -> list[dict[str, str]]:
 
 
 def complete_wizard(device: Device) -> None:
-    """Answer the wizard's pages until the launcher is on screen."""
-    width, height = device.screen_size()
+    """Answer the wizard's pages until the launcher is on screen, and only these pages, in order."""
+    position = 0
     unknown = 0
-    for step in range(WIZARD_STEPS):
+    answered: set[int] = set()
+    for _ in range(WIZARD_STEPS):
         activity = device.resumed()
         if activity.startswith(f"{LAUNCHER_PACKAGE}/"):
-            print(f"wizard completed in {step} steps")
+            if position != len(FLOW) - 1 or position not in answered:
+                raise Failure(f"the wizard ended at the launcher after {FLOW[position]}, before the whole flow "
+                              f"{' > '.join(page.split('/')[-1] for page in FLOW)}")
+            print(f"wizard completed through {len(FLOW)} pages")
             return
-        # A page that is not in the table may be a transition: look again
-        # before calling it unknown.
-        if activity not in PAGES:
+        # A page that is not in the flow may be a transition: look again before
+        # calling it unexpected.
+        if activity not in FLOW:
             unknown += 1
             if unknown > 3:
-                raise Failure(f"the wizard shows a page this runner does not know: {activity!r}")
+                raise Failure(f"the wizard shows a page the product does not: {activity!r}")
             time.sleep(3)
             continue
         unknown = 0
-        nodes = [] if PAGES[activity][0] == "swipe" else ui_nodes(device)
-        action = wizard_action(activity, nodes)
-        if action[0] == "swipe":
-            # The finish page asks for a swipe up from the bottom edge.
-            device.shell(f"input swipe {width // 2} {height - 5} {width // 2} {height // 2} 400")
-        else:
-            device.shell(f"input tap {action[1]} {action[2]}")
-        # A confirmation dialog is part of the same activity, so wait a fixed
-        # moment and read the page again.
+        position = next_page(position, activity)
+        action = wizard_action(activity, ui_nodes(device))
+        device.shell(f"input tap {action[1]} {action[2]}")
+        answered.add(position)
+        # Give the page time to change before the next look.
         time.sleep(4)
     raise Failure(f"the wizard did not finish in {WIZARD_STEPS} steps; at {device.resumed()!r}")
 
 
-def check_provisioned(device: Device, *, by_wizard: bool) -> None:
+def check_defaults(device: Device, before: dict[str, str] | None) -> None:
+    """The platform's defaults of a fresh guest, which the shortened flow leaves alone."""
+    mode = device.setting("secure", "navigation_mode")
+    if mode != "0":
+        raise Failure(f"navigation_mode is {mode!r}, expected 0 (three buttons): the wizard may not choose the mode")
+    states = overlay_states(device.shell("cmd overlay list android"))
+    for package in (NAVBAR_GESTURAL, NAVBAR_3BUTTON):
+        if package not in states:
+            raise Failure(f"the navigation mode overlay {package} is not installed: {states}")
+    if states[NAVBAR_GESTURAL] == "x":
+        raise Failure(f"the gestural navigation overlay is enabled: {states}")
+    disabled = device.shell("locksettings get-disabled")
+    if disabled != "true":
+        raise Failure(f"locksettings get-disabled is {disabled!r}, expected true (no screen lock)")
+    location = location_state(device)
+    if location["secure location_mode"] != "3":
+        raise Failure(f"location is not on: {location}")
+    if before is not None and location != before:
+        raise Failure(f"the wizard changed the location settings: before {before}, after {location}")
+    wait_for(f"Wi-Fi connected to {WIFI_NETWORK}",
+             lambda: wifi_network(device.shell("dumpsys wifi | grep 'mWifiInfo SSID'")) == (WIFI_NETWORK, "COMPLETED"), 60)
+    print(f"defaults: three buttons, no screen lock, location {location}, Wi-Fi on {WIFI_NETWORK}")
+
+
+def check_wizard_released(device: Device, *, by_wizard: bool) -> None:
+    """The wizard holds no status bar lock: no disable record, and for the helper no process either.
+
+    A wizard that ran to its last page may take a moment to let go; a lock that stays is
+    the empty status bar and the single Back key of a guest nobody can use."""
+    wait_for("the wizard to hold no status bar disable record", lambda: device.wizard_status_bar_record() is False, 30)
+    if not by_wizard and device.wizard_processes() != []:
+        raise Failure(f"the setup wizard still runs after the helper: {device.wizard_processes()}")
+    print("the wizard holds no status bar lock")
+
+
+def check_provisioned(device: Device, *, by_wizard: bool, before: dict[str, str] | None = None) -> None:
     """The end state: both settings 1, and HOME the launcher, pressed or not.
 
     The wizard ends by disabling its HOME activity and its flow manager, and
     leaves the package enabled. The shell may not change another package's
     component state, so the helper disables the wizard package for user 0.
+    `before` is the wizard guest's location settings from before the wizard.
     """
     for namespace, name in (("global", "device_provisioned"), ("secure", "user_setup_complete")):
         value = device.setting(namespace, name)
@@ -336,6 +418,8 @@ def check_provisioned(device: Device, *, by_wizard: bool) -> None:
         raise Failure("the helper left the wizard package enabled")
     print("provisioned: settings 1, HOME is the launcher, the wizard "
           + ("disabled its HOME activity and manager" if by_wizard else "package is disabled"))
+    check_wizard_released(device, by_wizard=by_wizard)
+    check_defaults(device, before)
 
 
 # --- the runner -----------------------------------------------------------------
@@ -376,9 +460,9 @@ def run_guest(options: argparse.Namespace, scratch: pathlib.Path, name: str, adb
 
 
 def wizard_guest(device: Device, _log: pathlib.Path) -> None:
-    check_unprovisioned(device)
+    before = check_unprovisioned(device)
     complete_wizard(device)
-    check_provisioned(device, by_wizard=True)
+    check_provisioned(device, by_wizard=True, before=before)
 
 
 def helper_guest(device: Device, log: pathlib.Path) -> None:
