@@ -333,7 +333,7 @@ final class LiveRuntime: RuntimeDriver {
         await operations.usbDebugging()
     }
 
-    // MARK: ADB over Network
+    // MARK: ADB over network
 
     /// The listener on the network addresses, whose every connection is
     /// joined to a fresh stream to the guest's adbd.

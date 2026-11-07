@@ -87,8 +87,8 @@ struct RowDivider: View {
 
 // MARK: System
 
-/// The guest's system in one section, as two rows of one shape: Processor and
-/// Memory states the vCPUs and RAM, with Edit opening the sheet that changes
+/// The guest's system in one section, as two rows of one shape: CPU and
+/// memory states the vCPUs and RAM, with Edit opening the sheet that changes
 /// them; Storage states what the guest holds of its capacity under a bar,
 /// with Resize.
 struct SystemSection: View {
@@ -98,7 +98,7 @@ struct SystemSection: View {
         if let guest = model.guest {
             HomeSection(title: "Guest System") {
                 SystemRow(
-                    symbol: "cpu", title: "Processor and Memory", subtitle: Self.summary(of: guest),
+                    symbol: "cpu", title: "CPU and memory", subtitle: Self.summary(of: guest),
                     button: SystemRowButton(
                         title: "Edit", identifier: "home-system-edit", accessibilityName: "Edit System",
                         action: { model.sheet = .system }
@@ -356,13 +356,13 @@ struct BackupOption: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        OptionRow(title: "Back Up Guest Data", symbol: "icloud.fill") {
-            Toggle("Back Up Guest Data", isOn: $isOn).labelsHidden()
+        OptionRow(title: "Back up guest data", symbol: "icloud.fill") {
+            Toggle("Back up guest data", isOn: $isOn).labelsHidden()
         }
     }
 }
 
-/// What Back Up Guest Data does to iCloud and computer backups.
+/// What the Back up guest data row does to iCloud and computer backups.
 struct BackupNote: View {
     let host: HostDevice
 

@@ -122,7 +122,7 @@ def boot_stages(prefix: str, screen: str, names: list[str], what: str, dark_step
 
 SHOTS: list[Shot] = [
     # Home
-    s("home", "Home", "home", "Home with a configured guest: Guest System (two matched rows: Processor and Memory with Edit, then Storage with its usage bar and Resize), Display, Capabilities, Backup, Recovery and Erase, and the Start bar.", dark=True),
+    s("home", "Home", "home", "Home with a configured guest: Guest System (two matched rows: CPU and memory with Edit, then Storage with its usage bar and Resize), Display, Capabilities, Backup, Recovery and Erase, and the Start bar.", dark=True),
     s("home-welcome", "Home", "welcome", "Home before any guest exists: the welcome and Set Up Guest. First screen of the initial setup."),
     s("home-first-start", "Home", "home-new", "A guest just created and not yet started: Home as it is before the first start."),
     s("home-display", "Home", "home-display", "Home scrolled to Display: the Retina mode toggle.", dark=True),
@@ -132,7 +132,7 @@ SHOTS: list[Shot] = [
     s("home-capabilities-mic-alert", "Home", "home-mic-alert", "Turning Microphone on while iOS refuses it: the alert that offers Settings."),
     s("home-capabilities-gyroscope-unavailable", "Home", "home-gyroscope-unavailable", "Capabilities on a device without a gyroscope or accelerometer: Gyroscope is disabled and the footnote says why."),
     s("home-backup", "Home", "home-backup", "Home scrolled to Backup: the guest-data backup toggle and a one-line note."),
-    s("home-recovery-erase", "Home", "home-recovery-erase", "Home scrolled to Recovery and Erase: Start in Recovery and Erase Guest."),
+    s("home-recovery-erase", "Home", "home-recovery-erase", "Home scrolled to Recovery and Erase: Start in recovery and Erase guest."),
     s("home-storage-grow", "Home", "home-grow", "Guest System with a larger storage size chosen: the Storage row's bar outlines the new size and the note under it says the growth takes effect at the next start.", dark=True),
     s("home-storage-max", "Home", "home-max", "Guest System with storage at its largest size (128 GiB, in 4 GiB steps): the note under the Storage bar says so and Resize is dimmed.", dark=True),
     s("home-update", "Home", "home-update", "A system update waiting: the card above the Start bar."),
@@ -153,17 +153,17 @@ SHOTS: list[Shot] = [
     s("system-edit", "Sheets", "system-edit", "The System sheet, opened from Edit: vCPUs and memory with the device's limits. A guest at the default memory shows no warning.", dark=True),
     s("system-edit-memory-high", "Sheets", "system-memory-warning", "The System sheet with memory above what a new guest gets: the ticks past the default are orange and the line beneath the ruler says iOS is likely to close Andarium above it.", dark=True),
     s("erase-alert", "Alerts", "erase", "Erase Guest: the standard destructive confirmation over Home. Confirming returns to the first-launch screen (home-welcome).", dark=True),
-    s("info", "Info", "info", "Info: the app and version, System Info (Build, Android Version, Security Patch, Kernel, Architecture, Supported architectures), Kernarium on GitHub and Acknowledgements.", dark=True),
+    s("info", "Info", "info", "Info: the app and version, System Info (Build, Android version, Security patch, Kernel, Architecture, Supported architectures), Kernarium on GitHub and Acknowledgements.", dark=True),
     s("info-acknowledgements", "Info", "info-acknowledgements", "Acknowledgements: projects by group; the names and marks line is at the bottom.", dark=True),
     s("info-license", "Info", "info-license", "A project's page: copyright holders, the license name and the license text (Mesa, MIT).", dark=True),
     s("info-license-long", "Info", "info-license-gpl", "A page with a long license text (Linux: syscall exception and GPL v2)."),
     # Boot
-    *boot_stages("boot", "boot", ["System image", "Linux Kernel", "Storage", "Startup"], "Normal boot over the dimmed guest display, no progress bar"),
-    s("boot-single-vcpu", "Boot", "boot-single-vcpu", "Normal boot of a guest with a single vCPU: the Linux Kernel line says \"1 vCPU\"."),
+    *boot_stages("boot", "boot", ["System image", "Linux kernel", "Storage", "Startup"], "Normal boot over the dimmed guest display, no progress bar"),
+    s("boot-single-vcpu", "Boot", "boot-single-vcpu", "Normal boot of a guest with a single vCPU: the Linux kernel line says \"1 vCPU\"."),
     s("boot-first-start", "Boot", "boot-first", "First start: Storage prepares the disk and Startup sets up for the first time."),
     s("boot-update", "Boot", "boot-upgrade", "The first start after an update: Startup updates the apps."),
     s("boot-restart", "Boot", "boot-restart", "The guest restarting."),
-    *boot_stages("boot-recovery", "boot-recovery", ["System image", "Linux Kernel", "Storage", "Recovery"], "Recovery boot (opaque, own stage list, no progress bar)", dark_step=3),
+    *boot_stages("boot-recovery", "boot-recovery", ["System image", "Linux kernel", "Storage", "Recovery"], "Recovery boot (opaque, own stage list, no progress bar)", dark_step=3),
     # Running guest
     s("session", "Guest", "session", "The running guest with the side keys closed."),
     s("session-tip", "Guest", "session-tip", "The side-keys tip over the running guest.", "-resetTips", "YES"),
@@ -185,9 +185,9 @@ SHOTS: list[Shot] = [
     system_mic("home-mic-system-refused", "Capabilities", "home-capabilities", "Microphone after iOS refused it: the row is dimmed and says it is not allowed in Settings.", "revoke"),
     system_mic("home-mic-system-settings-prompt", "Capabilities", "home-mic-alert", "Turning Microphone on after a refusal: Andarium explains and offers Settings.", "revoke"),
     system_mic("home-mic-system-revoked", "Capabilities", "home-mic-on", "Microphone on, access taken away in Settings while Andarium was in the background, Andarium active again: the switch is off and dimmed.", "grant", "background", "revoke", "foreground"),
-    s("settings-adb", "Settings", "settings-adb", "Developer: ADB over Network on, the address a computer connects to."),
-    s("settings-adb-no-address", "Settings", "settings-adb-no-address", "Developer: ADB over Network on with no network address."),
-    s("settings-adb-off", "Settings", "settings-adb-off", "Developer: ADB over Network unavailable because USB debugging is off."),
+    s("settings-adb", "Settings", "settings-adb", "Developer: ADB over network on, the address a computer connects to."),
+    s("settings-adb-no-address", "Settings", "settings-adb-no-address", "Developer: ADB over network on with no network address."),
+    s("settings-adb-off", "Settings", "settings-adb-off", "Developer: ADB over network unavailable because USB debugging is off."),
     # Operations on the guest
     s("overlay-bug-report", "Operations", "bug-report", "The full-screen progress while a bug report is made.", wait=2.0),
     s("overlay-install-apk", "Operations", "install-apk", "The full-screen progress while an app installs from Files.", wait=2.0),

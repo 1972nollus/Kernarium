@@ -4,7 +4,7 @@ import Foundation
 import Testing
 @testable import Andarium
 
-/// Create Bug Report and Install App as the model plays them: Settings has
+/// Create bug report and Install App as the model plays them: Settings has
 /// dismissed, the overlay covers the screens, a Cancel stops the work, and the
 /// result is a share sheet, a row or an alert. A stub stands for the runtime.
 /// The tests share the staging folder, which one of them sweeps, so they run
@@ -354,7 +354,7 @@ struct AndroidOperationTests {
     }
 }
 
-/// ADB over Network as the model plays it: the toggle, the guest's USB
+/// ADB over network as the model plays it: the toggle, the guest's USB
 /// debugging setting, the address, and the end of a run.
 @MainActor
 struct AdbOverNetworkModelTests {
@@ -460,7 +460,7 @@ struct AdbOverNetworkModelTests {
         #expect(model.session.adbProblem == "Port 5555 is already in use on this device.")
         driver.startError = POSIXError(.EPERM)
         model.setAdbOverNetwork(true)
-        #expect(model.session.adbProblem == "ADB over Network could not start.")
+        #expect(model.session.adbProblem == "ADB over network could not start.")
         driver.startError = nil
         model.setAdbOverNetwork(true)
         #expect(model.session.adb && model.session.adbProblem == nil)

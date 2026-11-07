@@ -441,7 +441,7 @@ struct RecoveryErasePanel: View {
                 } label: {
                     HStack(spacing: 12) {
                         IconTile(symbol: "wrench.adjustable.fill", color: .gray)
-                        Text("Start in Recovery")
+                        Text("Start in recovery")
                         Spacer()
                         Image(systemName: "chevron.right")
                             .font(.footnote.weight(.semibold))
@@ -459,7 +459,7 @@ struct RecoveryErasePanel: View {
                 } label: {
                     HStack(spacing: 12) {
                         IconTile(symbol: "trash.fill", color: .red)
-                        Text("Erase Guest…")
+                        Text("Erase guest…")
                             .foregroundStyle(.red)
                         Spacer()
                         if let guest = model.guest {

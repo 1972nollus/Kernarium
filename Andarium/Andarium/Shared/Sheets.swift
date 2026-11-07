@@ -147,9 +147,9 @@ struct InfoSheet: View {
                 }
                 Section("System Info") {
                     LabeledContent("Build", value: model.system.release)
-                    LabeledContent("Android Version", value: model.system.version)
+                    LabeledContent("Android version", value: model.system.version)
                     if let patch = model.system.securityPatch {
-                        LabeledContent("Security Patch", value: patch)
+                        LabeledContent("Security patch", value: patch)
                     }
                     LabeledContent("Kernel", value: model.system.kernel)
                     LabeledContent("Architecture", value: model.system.architecture)

@@ -105,7 +105,7 @@ public struct BootTracker: Equatable, Sendable {
 }
 
 /// Which of the boot screen's steps is under way, as the boot reaches its
-/// milestones. Every boot has four: System image, Linux Kernel, Storage and
+/// milestones. Every boot has four: System image, Linux kernel, Storage and
 /// the last (Startup, or Recovery), which stays under way from Android's init
 /// until Android reports `sys.boot_completed` (or Recovery is up). `count` is
 /// past the last. Preparing the guest's disk is the first step: it writes the

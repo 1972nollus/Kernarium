@@ -49,15 +49,15 @@ enum GuestScreen: Equatable {
 /// overlay. It lasts for one run.
 @Observable
 final class SessionState {
-    /// ADB over Network is on: the listener runs.
+    /// ADB over network is on: the listener runs.
     var adb = false
     /// The device's address on the local network while `adb` is on; nil
     /// without one.
     var adbAddress: String?
-    /// Why ADB over Network did not start, in words.
+    /// Why ADB over network did not start, in words.
     var adbProblem: String?
     /// The guest's USB debugging setting as last read; nil until it has
-    /// been. ADB over Network needs it on.
+    /// been. ADB over network needs it on.
     var usbDebugging: Bool?
     var showStats = false
     var readout = Readout()
@@ -173,10 +173,10 @@ final class AppModel {
     private var operation: Task<Void, Never>?
     private var operationEpoch = 0
     private var operationCancelled = false
-    /// Looks after ADB over Network while it is on.
+    /// Looks after ADB over network while it is on.
     private var adbWatcher: Task<Void, Never>?
     private var readingUsbDebugging = false
-    /// How often the watcher looks while ADB over Network is on: the address
+    /// How often the watcher looks while ADB over network is on: the address
     /// every time, the USB debugging setting every fifth. A test shortens it.
     var adbWatchInterval = Duration.seconds(2)
 
@@ -352,9 +352,9 @@ final class AppModel {
         }
     }
 
-    // MARK: ADB over Network
+    // MARK: ADB over network
 
-    /// ADB over Network may be switched on: the guest's USB debugging is on.
+    /// ADB over network may be switched on: the guest's USB debugging is on.
     /// The preview has no guest to ask and says yes unless a screen says no.
     var adbOverNetworkAvailable: Bool {
         driver == nil ? session.usbDebugging != false : session.usbDebugging == true
@@ -413,7 +413,7 @@ final class AppModel {
         if session.adbAddress != address { session.adbAddress = address }
     }
 
-    /// Reads the guest's USB debugging setting. ADB over Network ends when
+    /// Reads the guest's USB debugging setting. ADB over network ends when
     /// it is off.
     func refreshUsbDebugging() async {
         guard capabilities.adbOverNetwork, let driver, case .running(.normal) = phase,
@@ -437,7 +437,7 @@ final class AppModel {
         }
     }
 
-    /// While ADB over Network is on and Settings is closed, the address is
+    /// While ADB over network is on and Settings is closed, the address is
     /// read every few seconds and the setting every ten, so that turning
     /// USB debugging off in the guest turns this off too.
     private func watchAdbOverNetwork() {
@@ -554,7 +554,7 @@ final class AppModel {
         busy = nil
     }
 
-    /// Create Bug Report: Settings has dismissed. Android collects its report
+    /// Create bug report: Settings has dismissed. Android collects its report
     /// (minutes, under emulation) and the finished zip goes to the share
     /// sheet, where Save to Files is one of the actions.
     func createBugReport() {
