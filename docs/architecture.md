@@ -193,21 +193,20 @@ provides no Virtio balloon device: the guest keeps the `mem=` it was given,
 less what it releases through page reporting above, and the GPU's share of the
 process's memory is the fixed budget below.
 
-The process's memory limit, L, is the figure the memory budgets derive from;
-the gadget-cache budget takes at most an eighth of it, and where a limit is set
-no more than the cap of the guest's vCPU count (below). iOS enforces one per
+The process's memory limit, L, is the figure the memory budgets derive from; the
+gadget-cache budget takes at most an eighth of it, and where a limit is set no
+more than the cap of the guest's vCPU count (below). iOS enforces one per
 application and reports it (`platform::process_memory_limit_bytes()`: the
-footprint plus the limit remaining, 2,867 MiB on the iPad mini 6). macOS
-enforces none, so a measurement run states it with `--memory-limit=2867M` or
-`UML_MEMORY_LIMIT_MIB=2867`, and every budget that derives from it computes on
-the Mac as it does on the device; the option wins over the variable and the
-host's own limit over both, and a run that states nothing is unchanged. A run
-that states a limit says so on stderr when it starts, with the gadget-cache
-budget derived from it, and a sampler writes one `virtual Jetsam` line, with
-the footprint, the limit and the lifetime peak, each time the footprint rises
-above it or the peak shows that it did between two samples
-(`runtime/virtual_jetsam.hpp`). Nothing is killed: the line marks where iOS
-would have ended the process.
+footprint plus the limit remaining). macOS enforces none, so a measurement run
+states it with `--memory-limit=` or `UML_MEMORY_LIMIT_MIB`, and every budget
+that derives from it computes on the Mac as it does on the device; the option
+wins over the variable and the host's own limit over both, and a run that states
+nothing is unchanged. A run that states a limit says so on stderr when it
+starts, with the gadget-cache budget derived from it, and a sampler writes one
+`virtual Jetsam` line, with the footprint, the limit and the lifetime peak, each
+time the footprint rises above it or the peak shows that it did between two
+samples (`runtime/virtual_jetsam.hpp`). Nothing is killed: the line marks where
+iOS would have ended the process.
 
 The host GPU's budget, B, is computed once at launch and fixed for the run
 (`platform/gpu_budget.hpp`, planned by `emulator/src/gpu_budget_plan.*` for both
@@ -261,17 +260,15 @@ explicit `--gadget-cache-budget=` is used as stated and is not capped. The run
 below all evaluate this header; none states the formula itself.
 
 The largest guest RAM a limit leaves, `G_max(v)`, is the largest G of 512 to
-4096 MiB in 64 MiB steps for which L - G - A - E(v, G) - S is at least the
-384 MiB floor; with no limit (macOS, and an iOS application running on a Mac)
-it is 4096, and where even 512 MiB leaves less than the floor it is 512 and the
-launch warns as above. On the iPad mini 6 (L = 2,867 MiB) and with A, E_rest and
-S at zero it is 2304, 2304, 2240, 2240, 2176, 2176, 2176 and 2176 MiB for 1 to 8
-vCPUs. Kernarium's settings offer no more than `G_max(v)` for the chosen vCPU
-count; the application reads the limit itself and evaluates the header through
-its loader, because the runtime framework is loaded once per process, for the
-flavour chosen at launch, and cannot be asked before that
-([Kernarium](../Kernarium/README.md)). The launch does not
-refuse a larger value that automation states.
+4096 MiB in 64 MiB steps for which L - G - A - E(v, G) - S is at least the 384
+MiB floor; with no limit (macOS, and an iOS application running on a Mac) it is
+4096, and where even 512 MiB leaves less than the floor it is 512 and the launch
+warns as above. Kernarium's settings offer no more than `G_max(v)` for the
+chosen vCPU count; the application reads the limit itself and evaluates the
+header through its loader, because the runtime framework is loaded once per
+process, for the flavour chosen at launch, and cannot be asked before that
+([Kernarium](../Kernarium/README.md)). The launch does not refuse a larger value
+that automation states.
 
 The applications' vCPU limit is the one rule `application_vcpu_limit` in the
 same header: the host's physical cores, at most 8, the count `cap(v)` and

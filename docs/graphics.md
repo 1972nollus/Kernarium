@@ -1443,26 +1443,11 @@ rules are the comment above
 `KK_HEAP_START_MIB` in `src/kosmickrisp/vulkan/kk_cmd_draw.c` and
 `kk_device_memory_pool.h`, in this project's Mesa series.
 
-An uninterrupted released mustpass fraction runs about 200,000 cases in one
-`deqp-vk` process, and a 1536 MiB guest cannot hold every group in that
-traversal. The cost has two parts: a baseline that grows through the fraction,
-from the released case hierarchy the enumeration builds to about 1 GB near its
-end, and per-group transients on top of it, such as `dEQP-VK.reconvergence`,
-whose tests simulate each subgroup's control flow on the CPU. The guest reaper
-takes `deqp-vk` where the two meet. Raising
-guest RAM is not available, and a 1024 MiB guest is killed earlier still.
-
-Two further consequences. The already-transported `results.qpa` stays in the
-guest's `/run` tmpfs, which is guest RAM, and holds nearly a fifth of the guest
-by the time the reaper fires. And a killed `deqp-vk` takes the whole service cgroup
-with it, so the guest prints no further progress line and sends no artifact
-frames: the run goes silent rather than reporting a stall, and its verdicts
-survive only as the result frames already on the console. The device lane ends a
-run within three minutes of the reaper's own line rather than waiting out its
-stall guard, and writes whatever the console carried.
-
-A baked device campaign therefore leaves out the groups its guest memory cannot
-hold, under the exclusion contract in [`testing.md`](testing.md).
+A 1536 MiB guest on the A15 cannot hold a whole mustpass fraction in one
+`deqp-vk` process, and a killed `deqp-vk` takes the service cgroup and its
+artifact frames with it, so a baked device campaign leaves out the groups its
+guest memory cannot hold, under the exclusion contract in
+[`testing.md`](testing.md).
 
 ## Metal shader cache
 
