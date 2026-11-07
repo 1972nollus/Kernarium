@@ -17,12 +17,14 @@ a fresh instance, and checks the contract in android/lineage-24/README.md:
   (`navigation_mode` 0, the gestural overlay off and both mode overlays
   present), no screen lock, location on as it was before the wizard, Wi-Fi
   connected to VirtWifi, no status bar lock held by the wizard, and a home
-  screen whose first page holds the six applications of the default layout
-  (Settings, Calendar, Gallery, Music, Calculator, Files) with an empty dock,
-  none of them dropped while the launcher read its layout. The drop check
-  reads the guest's log, so the runner raises the log buffers as soon as adb
-  answers, before the wizard runs, and a log without the launcher's layout
-  load is a failure, not a skipped check;
+  screen that is one page holding the six applications of the default layout
+  (Settings, Calendar, Gallery, Music, Calculator, Files), no widget and an
+  empty dock, none of them dropped while the launcher read its layout. The
+  drop check reads the guest's log, so the runner raises the log buffers as
+  soon as adb answers, before the wizard runs, and a log without the
+  launcher's layout load is a failure, not a skipped check. `--width`,
+  `--height` and `--dpi` pick the display, so a phone and a tablet density
+  each get their own grid;
 - helper: the guest is started with `--provision`, the harness path of
   tools/android_provision.py, and reaches the same observable state without a
   person: both settings 1 and HOME on the launcher. The shell may not disable
@@ -249,6 +251,57 @@ def launcher_problems(items: list[dict]) -> list[str]:
             problems.append(f"{name} is on page {item['page']}, not the first")
     for package, class_name in sorted(HOME_APPS - {item["component"] for item in items}):
         problems.append(f"{package}/{class_name} is missing")
+    return problems
+
+
+# What release r16 showed on the second page of its home screen, besides the music widget and
+# behind an empty first page: Gallery, Music and Settings. Each stays on the home screen.
+R16_SECOND_PAGE_APPS = frozenset({
+    ("org.lineageos.glimpse", "org.lineageos.glimpse.MainActivity"),
+    ("org.lineageos.twelve", "org.lineageos.twelve.MainActivity"),
+    ("com.android.settings", "com.android.settings.Settings"),
+})
+WORKSPACE_VIEW = re.compile(r"^(?P<indent> *)com\.android\.launcher3\.Workspace\{")
+
+
+def workspace_view(dump: str) -> tuple[int, list[str]] | None:
+    """The workspace's pages and widget views in the launcher's view hierarchy, or None without one.
+
+    A page is a `CellLayout` child of the `Workspace`; a widget is an app widget host view anywhere
+    below it. The hierarchy comes in the same dump as the data model, indented by depth."""
+    lines = dump.splitlines()
+    for start, line in enumerate(lines):
+        header = WORKSPACE_VIEW.match(line)
+        if header is None:
+            continue
+        depth = len(header.group("indent"))
+        subtree = []
+        for below in lines[start + 1:]:
+            if below.strip() and len(below) - len(below.lstrip()) <= depth:
+                break
+            subtree.append(below)
+        children = [len(below) - len(below.lstrip()) for below in subtree if below.strip()]
+        if not children:
+            return 0, []
+        child_depth = min(children)
+        pages = sum(1 for below in subtree
+                    if len(below) - len(below.lstrip()) == child_depth
+                    and below.lstrip().startswith("com.android.launcher3.CellLayout{"))
+        widgets = [below.strip().split("{")[0] for below in subtree if "AppWidgetHostView{" in below]
+        return pages, widgets
+    return None
+
+
+def workspace_view_problems(view: tuple[int, list[str]] | None) -> list[str]:
+    """What is wrong with the workspace's views: one page, and no widget on it."""
+    if view is None:
+        return ["the dump has no workspace view, so the page count and the widgets cannot be read"]
+    pages, widgets = view
+    problems = []
+    if pages != 1:
+        problems.append(f"{pages} workspace pages, expected exactly one")
+    if widgets:
+        problems.append(f"{len(widgets)} app widget view(s) on the workspace: {', '.join(sorted(set(widgets)))}")
     return problems
 
 
@@ -539,7 +592,7 @@ def check_wizard_did_not_crash(device: Device) -> None:
 
 
 def check_launcher(device: Device) -> None:
-    """The home screen holds the six applications of the default layout on its first page, and the dock is empty.
+    """The home screen is one page of the six applications of the default layout, with no widget and an empty dock.
 
     The launcher reads its layout when it first starts, and a guest keeps what it built, so this is
     a fresh guest's check. A release whose layout names an application the image lacks drops it and
@@ -547,13 +600,20 @@ def check_launcher(device: Device) -> None:
     buffers were raised before the wizard ran (wait_booted): a log without it is a failure."""
     deadline = time.monotonic() + LAUNCHER_LOAD_SECONDS
     while True:
-        items = launcher_items(device.shell(f"dumpsys activity {LAUNCHER_ACTIVITY}", timeout=60))
-        if len(items) >= len(HOME_APPS) or time.monotonic() >= deadline:
+        dump = device.shell(f"dumpsys activity {LAUNCHER_ACTIVITY}", timeout=60)
+        items = launcher_items(dump)
+        view = workspace_view(dump)
+        # The model lists the items before the workspace binds them to a page.
+        if (len(items) >= len(HOME_APPS) and view is not None and view[0] >= 1) or time.monotonic() >= deadline:
             break
         time.sleep(2)
-    problems = launcher_problems(items)
+    problems = launcher_problems(items) + workspace_view_problems(view)
     if problems:
         raise Failure("the launcher's workspace is not the default layout: " + "; ".join(problems))
+    gone = R16_SECOND_PAGE_APPS - {item["component"] for item in items}
+    if gone:
+        raise Failure("an application release r16 showed on its second page is not on the home screen: "
+                      + ", ".join(sorted("/".join(component) for component in gone)))
     log = device.shell("logcat -b main -d -v time -s ModelDbController:D "
                        + " ".join(f"{tag}:D" for tag in LAUNCHER_LAYOUT_TAGS), timeout=60)
     drops = launcher_layout_drops(log)
@@ -563,7 +623,7 @@ def check_launcher(device: Device) -> None:
                       "or the drops cannot be checked")
     if drops:
         raise Failure("the launcher dropped items of its default layout: " + "; ".join(drops[:5]))
-    print("home screen: the six applications on the first page, the dock empty, no item dropped")
+    print("home screen: one page, the six applications, no widget, the dock empty, no item dropped")
 
 
 def check_provisioned(device: Device, *, by_wizard: bool, before: dict[str, str] | None = None) -> None:
@@ -610,6 +670,9 @@ def launch(options: argparse.Namespace, scratch: pathlib.Path, name: str, adb: s
     command = [sys.executable, str(LAUNCHER), "--instance", str(scratch / f"{name}-instance"),
                "--adb", adb, "--adb-port", str(serial_port), "--display", "offscreen",
                "--cpus", str(options.cpus), "--boot-timeout", str(options.boot_timeout), *extra]
+    for name in ("width", "height", "dpi"):
+        if getattr(options, name):
+            command += [f"--{name}", str(getattr(options, name))]
     if options.release:
         command += ["--release", str(options.release)]
     if options.emulator:
@@ -660,6 +723,9 @@ def main() -> int:
     parser.add_argument("--emulator", type=pathlib.Path, help="the Android macOS executable (the launcher's default)")
     parser.add_argument("--adb-port", type=int, default=5576, help="loopback port the launcher forwards adbd to")
     parser.add_argument("--cpus", type=int, default=4)
+    parser.add_argument("--width", type=int, help="guest display width in pixels (the launcher's default)")
+    parser.add_argument("--height", type=int, help="guest display height in pixels (the launcher's default)")
+    parser.add_argument("--dpi", type=int, help="guest display density: with the size it picks the launcher's grid")
     parser.add_argument("--boot-timeout", type=int, default=900)
     parser.add_argument("--only", choices=("wizard", "helper"), help="run one of the two guests")
     options = parser.parse_args()

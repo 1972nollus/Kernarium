@@ -13,8 +13,10 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
+import argparse
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 from unittest import mock
 
@@ -480,13 +482,29 @@ def dump_item(item_id: int, kind: str, package: str, class_name: str, *, page: i
             f"screen={page} cell({x},{y}) span(1,1) title=null, items: [])\n")
 
 
-def home_dump(*, columns: int = 5, **changes) -> str:
+def workspace_tree(*, pages: int = 1, widgets: int = 0) -> str:
+    """The launcher's view hierarchy as the activity dump prints it: a page is a CellLayout below the Workspace."""
+    lines = ["                com.android.launcher3.Workspace{b549cbe V.ED..... ........ 0,0-720,1280 #7f0903fa app:id/workspace}"]
+    for page in range(pages):
+        lines.append(f"                  com.android.launcher3.CellLayout{{8b2995{page} V.ED..... ........ 0,37-720,1140}}")
+        lines.append("                    com.android.launcher3.ShortcutAndWidgetContainer{d47add7 V.E...... ........ 13,14-707,1089}")
+        if page == pages - 1:
+            for widget in range(widgets):
+                lines.append("                      com.android.launcher3.widget.LauncherAppWidgetHostView{ed1f61%d VFE....L. "
+                             "R.....ID 0,0-695,215 #%d}" % (widget, widget + 2))
+                lines.append("                        android.widget.LinearLayout{56f4e2 VFE...C.. ......ID 0,0-695,215}")
+            lines.append("                      com.android.launcher3.views.DoubleShadowBubbleTextView{1e5369 VFED..CL. ......ID 139,860-278,1075 #3}")
+    lines.append("                com.android.launcher3.Hotseat{3bcd11f V.ED..... ........ 0,1158-720,1280 #7f0901c2 app:id/hotseat}")
+    return "\n".join(lines) + "\n"
+
+
+def home_dump(*, columns: int = 5, pages: int = 1, widgets: int = 0, **changes) -> str:
     apps = sorted(runner.HOME_APPS)
     order = [("com.android.settings", "com.android.settings.Settings")] + [app for app in apps if app[0] != "com.android.settings"]
     items = []
     for index, (package, class_name) in enumerate(order):
         items.append(dump_item(index + 2, "workspace", package, class_name, x=index % columns, y=index // columns))
-    return DUMP_HEAD + "".join(items) + DUMP_TAIL
+    return workspace_tree(pages=pages, widgets=widgets) + DUMP_HEAD + "".join(items) + DUMP_TAIL
 
 
 class LauncherWorkspaceTests(unittest.TestCase):
@@ -587,6 +605,46 @@ class LauncherLayoutLogTests(unittest.TestCase):
         self.assertEqual(runner.launcher_layout_drops(DROPS + CLEAN), [])
 
 
+class WorkspaceViewTests(unittest.TestCase):
+    def test_one_page_and_no_widget_is_the_home_screen(self) -> None:
+        self.assertEqual(runner.workspace_view(home_dump()), (1, []))
+        self.assertEqual(runner.workspace_view_problems(runner.workspace_view(home_dump())), [])
+
+    def test_a_second_page_is_a_problem(self) -> None:
+        # Release r16 showed an empty first page and the items on a second one.
+        self.assertEqual(runner.workspace_view(home_dump(pages=2)), (2, []))
+        self.assertEqual(runner.workspace_view_problems(runner.workspace_view(home_dump(pages=2))),
+                         ["2 workspace pages, expected exactly one"])
+
+    def test_no_page_is_a_problem(self) -> None:
+        self.assertEqual(runner.workspace_view_problems(runner.workspace_view(home_dump(pages=0))),
+                         ["0 workspace pages, expected exactly one"])
+
+    def test_a_widget_is_a_problem_wherever_it_sits(self) -> None:
+        # The music widget of release r16 was a LauncherAppWidgetHostView on the second page.
+        problems = runner.workspace_view_problems(runner.workspace_view(home_dump(widgets=1)))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("1 app widget view(s)", problems[0])
+        self.assertIn("com.android.launcher3.widget.LauncherAppWidgetHostView", problems[0])
+        both = runner.workspace_view_problems(runner.workspace_view(home_dump(pages=2, widgets=2)))
+        self.assertEqual(len(both), 2)
+
+    def test_a_dump_without_the_workspace_view_cannot_pass(self) -> None:
+        for dump in ("", DUMP_HEAD + DUMP_TAIL):
+            self.assertIsNone(runner.workspace_view(dump))
+            self.assertIn("no workspace view", runner.workspace_view_problems(runner.workspace_view(dump))[0])
+
+    def test_the_dock_and_other_views_are_not_pages(self) -> None:
+        dump = home_dump() + "                  com.android.launcher3.CellLayout{99 V.E 0,0-1,1}\n"
+        # Outside the workspace's subtree (the same depth as the Hotseat, not below the Workspace).
+        self.assertEqual(runner.workspace_view(dump)[0], 1)
+
+    def test_the_applications_of_r16s_second_page_are_on_the_home_screen(self) -> None:
+        self.assertLessEqual(runner.R16_SECOND_PAGE_APPS, runner.HOME_APPS)
+        self.assertEqual({package for package, _ in runner.R16_SECOND_PAGE_APPS},
+                         {"org.lineageos.glimpse", "org.lineageos.twelve", "com.android.settings"})
+
+
 class FakeLauncher:
     def __init__(self, dump: str, log: str) -> None:
         self.dump = dump
@@ -611,6 +669,27 @@ class CheckLauncherTests(unittest.TestCase):
         guest = FakeLauncher(home_dump(), CLEAN)
         self.check(guest)
         self.assertEqual(guest.dumps, 1)
+
+    def test_a_second_page_is_a_failure(self) -> None:
+        with self.assertRaisesRegex(runner.Failure, "2 workspace pages, expected exactly one"):
+            self.check(FakeLauncher(home_dump(pages=2), CLEAN))
+
+    def test_a_widget_is_a_failure(self) -> None:
+        with self.assertRaisesRegex(runner.Failure, "app widget view"):
+            self.check(FakeLauncher(home_dump(widgets=1), CLEAN))
+
+    def test_the_workspace_may_bind_after_the_model_lists_its_items(self) -> None:
+        class Binding(FakeLauncher):
+            def shell(self, command: str, timeout: int = 30) -> str:
+                if command.startswith("dumpsys activity") and self.dumps < 1:
+                    self.dumps += 1
+                    return home_dump(pages=0)
+                return super().shell(command, timeout)
+
+        guest = Binding(home_dump(), CLEAN)
+        with mock.patch.object(runner, "LAUNCHER_LOAD_SECONDS", 60), mock.patch.object(runner.time, "sleep"):
+            runner.check_launcher(guest)
+        self.assertEqual(guest.dumps, 2)
 
     def test_a_log_without_the_layout_load_is_a_failure(self) -> None:
         # The check must not skip itself: it fails when the line is missing, rotated out or never logged.
@@ -792,6 +871,24 @@ class WaitBootedTests(unittest.TestCase):
                 mock.patch.object(runner, "wait_booted", side_effect=lambda *args: order.append("sized and booted")):
             runner.run_guest(options, Path("."), "wizard", "adb", {}, [], lambda *args: order.append("exercise"))
         self.assertEqual(order, ["sized and booted", "exercise"])
+
+
+class LaunchCommandTests(unittest.TestCase):
+    def command(self, **display) -> list[str]:
+        options = argparse.Namespace(adb_port=5576, cpus=4, boot_timeout=100, release=None, emulator=None,
+                                     **{"width": None, "height": None, "dpi": None, **display})
+        with mock.patch.object(runner.subprocess, "Popen") as popen, tempfile.TemporaryDirectory() as scratch:
+            runner.launch(options, Path(scratch), "wizard", "adb", [])
+        return popen.call_args.args[0]
+
+    def test_the_display_is_the_launchers_default_unless_stated(self) -> None:
+        command = self.command()
+        self.assertFalse(any(value in command for value in ("--width", "--height", "--dpi")))
+
+    def test_a_display_profile_reaches_the_launcher(self) -> None:
+        command = self.command(width=1179, height=2400, dpi=480)
+        for name, value in (("--width", "1179"), ("--height", "2400"), ("--dpi", "480")):
+            self.assertEqual(command[command.index(name) + 1], value)
 
 
 if __name__ == "__main__":
