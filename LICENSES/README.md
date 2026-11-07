@@ -40,8 +40,8 @@ These keep the licence they came with, under their own notices:
   Android route table and series under `android/lineage-24/patches` and
   `third_party`, which their regenerators export as Apache-2.0, stay
   Apache-2.0, and everything else is GPL-2.0-or-later.
-- `tests/unit/x86_64/corpus/LICENSE.*` and `darwin/cpu/arm64/gadgets/NOTICE.md`:
-  the notices of the third-party material beside them.
+- `tests/unit/x86_64/corpus/LICENSE.*`: the notice of the third-party material
+  beside it.
 - The Khronos must-pass lists under `tests/integration/gpu/`, which state their
   own licence.
 - Third-party notices for the applications are the Acknowledgements of

@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * Derived from iSH Asbestos' ARM64 guest gadgets. Runtime blocks contain only
- * pointers to these precompiled routines and inline integer operands.
+ * The arm64 guest gadgets. Runtime blocks contain only pointers to these
+ * precompiled routines and inline integer operands; NOTICE.md beside the
+ * engine credits the design that inspired this arrangement.
  */
 #include "../../layout/assembly_offsets.h"
 #include "../../../gadget_host_frame.inc"
@@ -93,7 +94,7 @@ CSYM(uml_arm64_gadget_\name):
 	msr fpsr, x16
 .endm
 
-/* Translate guest address x7 through the persistent iSH-style TLB of 16,384
+/* Translate guest address x7 through the persistent software TLB of 16,384
  * direct-mapped entries. On success x7 is the host address. The miss helper
  * updates the entry.
  */

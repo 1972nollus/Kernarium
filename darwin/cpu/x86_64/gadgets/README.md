@@ -7,7 +7,9 @@ translation cache, and `native_memory.cpp` is the C++ side of the software
 TLB. The guest CPU state, the decoder, CPUID, the software TLB entry, the
 code-page registry and the split-operand lock are not the engine's own: they
 are `uml_x86_64_target` in the parent directory, which every x86 engine links.
-This file records the contracts that are not obvious from the code.
+This file records the contracts that are not obvious from the code. The design
+credit for both gadget engines is
+[`NOTICE.md`](../../arm64/gadgets/NOTICE.md).
 
 Private labels take the Mach-O assembler-temporary prefix `L`, as the arm64
 region's do ([`docs/architecture.md`](../../../../docs/architecture.md) states
