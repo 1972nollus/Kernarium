@@ -19,7 +19,7 @@
     "inventory"
   ],
   "properties": {
-    "schema_version": { "const": 6 },
+    "schema_version": { "enum": [6, 7] },
     "release_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
     "directory_name": { "type": "string" },
     "product_family": { "const": "lineage-24-mainline-6.18-4k" },
@@ -28,8 +28,24 @@
     "android": { "type": "object" },
     "source": { "type": "object" },
     "kernel": { "type": "object" },
-    "outer": { "type": "object" },
+    "outer": {
+      "type": "object",
+      "required": ["revision", "dirty"],
+      "properties": {
+        "revision": { "type": "string" },
+        "dirty": { "const": false },
+        "input_trees": {
+          "description": "Git object ID of each path in support/release/input-paths.tsv marked input, as of the commit the release was built from; schema 7 and later.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+        }
+      },
+      "additionalProperties": false
+    },
     "producer": { "type": "object" },
     "inventory": { "type": "array" }
-  }
+  },
+  "if": { "properties": { "schema_version": { "const": 7 } } },
+  "then": { "properties": { "outer": { "required": ["input_trees"] } } }
 }

@@ -425,6 +425,19 @@ both the user-visible release number and the monotonic key by which the host
 refuses a downgrade. The checked `metadata/accepted-release.env` selects one
 reviewed release without recording a builder path.
 
+The manifest also records, as `outer.input_trees`, the Git object ID of every
+path that [`support/release/input-paths.tsv`](support/release/input-paths.tsv)
+marks `input`: the overlay, product configuration, patch series, route table,
+support files, base manifest and the producing tools, each with its reason in
+the list. An object ID follows content, so it survives a history rewrite and a
+builder that works from an exported snapshot; the publisher takes it from the
+clean checkout it runs in. The accepted descriptor repeats the IDs
+(`LINEAGE24_ACCEPTED_INPUT_TREES`), and `install-release.py --print-acceptance`
+prints the whole descriptor for a candidate. Verifier-only tools, documentation
+and tests are excluded, and a tracked file under this directory that the list
+does not classify fails `lineage24-release-inputs`. A release of schema 6
+predates the IDs and records none.
+
 After copying a reviewed candidate to the workstation, install it with:
 
 ```sh
