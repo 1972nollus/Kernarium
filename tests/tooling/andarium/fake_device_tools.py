@@ -180,6 +180,20 @@ def wizard_disabled() -> bool:
         and os.environ.get("FAKE_PROVISION") != "ignored"
 
 
+def wizard_running() -> bool:
+    """The wizard's process lives on a fresh guest until something force-stops it."""
+    return fresh_guest() and not (STATE / "wizard-stopped").exists()
+
+
+STATUS_BAR = """\
+    mDisabled1={disabled}
+  mDisableRecords.size=2
+{wizard}    [0] userId=0 what1=0x00000000 what2=0x00000000 pkg=com.android.systemui token=android.os.BinderProxy@d59b6af
+"""
+WIZARD_BAR_RECORD = ("    [1] userId=0 what1=0x03A50000 what2=0x00000000 "
+                     "pkg=org.lineageos.setupwizard token=android.os.BinderProxy@2065e8e\n")
+
+
 def settings(words: list[str]) -> None:
     """`settings get|put <namespace> <name> [value]`, 0 until put on a fresh guest."""
     key = STATE / ("setting-" + "-".join(words[2:4]))
@@ -206,6 +220,15 @@ def shell(text: str) -> int:
         settings(text.split())
     elif text.startswith("pm disable-user --user 0 "):
         (STATE / "wizard-disabled").write_text(text)
+    elif text == "am force-stop org.lineageos.setupwizard":
+        # The wizard's process holds a status bar disable record until it dies.
+        (STATE / "wizard-stopped").write_text(text)
+    elif text == "pidof org.lineageos.setupwizard":
+        if wizard_running():
+            print("1445")
+    elif text == "dumpsys statusbar":
+        print(STATUS_BAR.format(disabled="0x3a50000" if wizard_running() else "0x0",
+                                wizard=WIZARD_BAR_RECORD if wizard_running() else ""))
     elif text.startswith("cmd package resolve-activity --brief"):
         print("priority=0 preferredOrder=0 match=0x108000 specificIndex=-1")
         print("org.lineageos.setupwizard/.SetupWizardActivity"
