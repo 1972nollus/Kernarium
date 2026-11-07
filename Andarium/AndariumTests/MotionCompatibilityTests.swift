@@ -73,10 +73,38 @@ struct MotionCompatibilityTests {
         func finish() { timer?.cancel() }
     }
 
+    /// Which of the guest's own users keep a sensor active: Android's
+    /// auto-rotation setting, the window manager's rotation mode and the
+    /// sensor service's active connections, with host-driven rotation (as in a
+    /// window) and then with free rotation and auto-rotate on (as in a locked
+    /// full-screen scene, where Android alone rotates its display).
+    private func report(_ operations: AdbGuestOperations) async throws {
+        func show(_ title: String, _ command: String) async throws {
+            let result = try await operations.shell(command, limit: .seconds(30))
+            print("MOTION diag [\(title)]\n\(result.text)")
+        }
+        let activity = "dumpsys sensorservice | grep -E -i 'Host (Accelerometer|Gyroscope)|active|Connection|rate'"
+        try await show("auto-rotate setting", "settings get system accelerometer_rotation")
+        try await show("window manager rotation", "wm user-rotation; wm fixed-to-user-rotation")
+        try await show("sensors in use, host rotation", activity)
+        try await show("free rotation", "wm fixed-to-user-rotation disabled; wm user-rotation free; sleep 3; \(activity)")
+        try await show("a rotatable app in front", "am start -a android.settings.SETTINGS >/dev/null; sleep 4; \(activity)")
+        try await show("the face-down detector",
+                       "dumpsys power | grep -i -B1 -A8 facedown; device_config list attention_manager_service; "
+                       + "settings list secure | grep -i -E 'flip|face'")
+        try await show("face-down detector off",
+                       "device_config put attention_manager_service enable_flip_to_screen_off false; sleep 4; "
+                       + "\(activity); device_config delete attention_manager_service enable_flip_to_screen_off")
+        try await show("restore", "wm user-rotation lock 0; wm fixed-to-user-rotation enabled; input keyevent KEYCODE_HOME")
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["ANDARIUM_MOTION_COMPAT"] == "1"), .timeLimit(.minutes(20)))
     func theSessionAndTheGuestsSensorServiceAgree() async throws {
         let expectation = ProcessInfo.processInfo.environment["ANDARIUM_MOTION_EXPECT"] ?? "legacy"
-        try await withAndroidGuest { _, _ in
+        try await withAndroidGuest { _, operations in
+            if ProcessInfo.processInfo.environment["ANDARIUM_MOTION_DIAG"] == "1" {
+                try await report(operations)
+            }
             let device = SyntheticDevice()
             device.run()
             defer { device.finish() }

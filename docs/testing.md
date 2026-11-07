@@ -896,7 +896,10 @@ the runtime driver. The opt-in `MotionCompatibilityTests`
 or an iPad) drives the session with a synthetic device against the guest's own
 sensor service in a real boot: an image whose service sends no control frame
 is read continuously (`TEST_RUNNER_ANDARIUM_MOTION_EXPECT=legacy`, the
-default), and one that sends them is read as they say (`ondemand`). Physical sensor delivery requires a sensor-capable iOS
+default), and one that sends them is read as they say (`ondemand`).
+`TEST_RUNNER_ANDARIUM_MOTION_DIAG=1` also prints which of the guest's own
+users keep a sensor active (`dumpsys sensorservice`) with host-driven and with
+free rotation. Physical sensor delivery requires a sensor-capable iOS
 device and a guest image carrying the motion sub-HAL; Simulator and Mac tests
 do not establish that path. The opt-in `MotionOverVsockTests` drives the real
 model and runtime on the iPad and reads both sensors through Android's public
