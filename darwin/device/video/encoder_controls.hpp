@@ -14,9 +14,9 @@ namespace uml::video {
 
 /* What the encoder device publishes as V4L2 controls, and how a stream's
  * values become the platform encoder's settings. The control table in
- * darwin/device/video/README.md is the contract; this is its implementation,
- * and it is a pure function of the platform's capabilities so that a test can
- * check it without a device. */
+ * darwin/device/video/README.md#encoder-controls summarizes the contract; this
+ * is its implementation, and it is a pure function of the platform's
+ * capabilities so that a test can check it without a device. */
 
 /* The fractional frame interval and the colorimetry of the raw frames, in V4L2
  * enum values, as VIRTIO_VIDEO_CMD_SET_STREAM_INFO carries them. */

@@ -1,455 +1,156 @@
 # Darwin UML host runtime
 
+The arm64 Apple host that boots User-Mode Linux kernels: platform
+capabilities, guest address spaces, the CPU engines, the devices, and the
+products that compose them. [`../docs/architecture.md`](../docs/architecture.md)
+owns the dependency direction and the runtime contracts that cross modules.
+
 ## Ownership
 
 ```text
 api/       installed C API and ABI identity
 include/   host copies of the host/Linux bridge and host-only guest contracts
-platform/  Apple capabilities, VM, files, signals, and sockets
+platform/  Apple capabilities, VM, files, signals, sockets, and the hardware
+           video encoder and decoder
 memory/    guest address spaces, software MMU, and TLBs
 cpu/       gadgets, JIT, executable memory, shared decode, and neutral
            engine selection
 runtime/   guest-entry composition
-device/    block, console, GPU, input, audio, and network providers, and the
-           vhost-user transport they share
+device/    block, console, GPU, input, audio, video, vsock, and network
+           providers, and the vhost-user transport they share
 emulator/  options and product composition
 app/macos/ standalone process adapter
 app/initramfs/ host tool that writes a guest's per-run initramfs
 ```
 
-Targets and source lists belong to these directories. See
-[`../docs/architecture.md`](../docs/architecture.md) for dependency direction.
+Targets and source lists belong to these directories; `CMakeLists.txt` here
+only composes them. Subsystem contracts are in the README beside the code:
+[platform](platform/README.md), the CPU engines
+([arm64 gadgets](cpu/arm64/gadgets/README.md),
+[arm64 JIT](cpu/arm64/jit/README.md),
+[AArch32](cpu/arm64/aarch32/README.md),
+[x86_64 gadgets](cpu/x86_64/gadgets/README.md),
+[x86_64 JIT](cpu/x86_64/jit/README.md)), and the devices
+([audio](device/audio/README.md), [block](device/block/README.md),
+[video](device/video/README.md), [vsock](device/vsock/README.md)).
 
 ## Products and defaults
 
-The standalone macOS application supports the normal arm64-userspace Linux
-kernel and the separate x86_64-userspace kernel, both with 4 KiB guest pages.
-When omitted, `mem=` defaults to 8 GiB and `ncpus=` to the
-[applications' vCPU limit](../docs/architecture.md#memory-and-executable-code), the
-host's physical cores at most 8; explicit kernel arguments override either
-value independently, `ncpus=` up to the runtime's 64.
-`cmake --preset macos-x86_64` selects the dedicated x86_64 artifact and host
-gadget backend; the other presets select arm64 userspace. The
-x86_64 product defaults to `cgroup.memory=nokmem`: userspace memory-controller
-accounting remains available, while kernel-object charging is outside this
-compatibility slice. An explicit `cgroup.memory=` argument overrides the
-default.
+The standalone macOS application supports the arm64-userspace Linux kernel and
+the separate x86_64-userspace kernel, both with 4 KiB guest pages, and the
+Android composition. `cmake --preset macos-x86_64` selects the x86_64 artifact
+and host gadget backend; the other presets select arm64 userspace. The launcher
+defaults for `mem=` and `ncpus=` are in `app/macos`; `ncpus=` follows the
+[applications' vCPU limit](../docs/architecture.md#memory-and-executable-code),
+and an explicit kernel argument overrides either. The x86_64 product defaults to
+`cgroup.memory=nokmem`: kernel-object charging is outside that compatibility
+slice, and an explicit `cgroup.memory=` overrides it.
 
-Each macOS executable, Linux and Android alike, embeds an Info.plist
-(`app/macos/Info.plist.in`) that names the bundle identifier
-`com.imxieyi.uml-darwin`. Metal places the process's shader cache by that
-identifier ([Metal shader cache](../docs/graphics.md#metal-shader-cache)).
-Nothing else follows it: privacy permissions are requested under the
-code-signing identifier `uml-darwin` and attributed to the terminal or
-application that launched the emulator, and the process and menu names are
-the executable's. Signing the executable again with `codesign` binds the
-property list and makes the bundle identifier its code-signing identifier.
+Each macOS executable embeds an Info.plist (`app/macos/Info.plist.in`) that
+names its bundle identifier, by which Metal places the process's shader cache
+([Metal shader cache](../docs/graphics.md#metal-shader-cache)). Privacy
+permissions are requested under the code-signing identifier `uml-darwin` and
+attributed to the terminal or application that launched the emulator. Signing
+the executable again with `codesign` binds the property list and makes the
+bundle identifier its code-signing identifier.
 
-The emulator library chooses no guest init and configures no guest network;
-the image owns both. Each Linux product embeds the boot base archive for its
-userspace architecture. Unless the command line names `init=` or `initrd=`, the
-launcher boots that base with a per-run initramfs: by default the EROFS image
-under a tmpfs overlay and then the image's own init, and with `--guest-init=`
-or `--guest-file=` whatever those supply. An explicit `init=/bin/sh` still
-starts a raw shell on the image. The
+The emulator library chooses no guest init and configures no guest network; the
+image owns both. Each Linux product embeds the boot base archive for its
+userspace architecture, and unless the command line names `init=` or `initrd=`
+the launcher boots it with a per-run initramfs (an explicit `init=/bin/sh`
+starts a raw shell on the image). The
 [boot ramdisk contract](../tools/rootfs/boot-ramdisk/README.md) owns the
 archive, its parameters and the host-side `uml-initramfs` tool.
 
-Kernarium's runtime frameworks, defaults, and one run per launch are described
-in [`../Kernarium/README.md`](../Kernarium/README.md).
-
-The Android macOS composition is a separate product. Its build consumes a
-compatible Android kernel artifact; launch accepts a rootfs directory and
-one directly writable GPT image without comparing rootfs release identity, and
-it does not search for the Linux desktop image.
+The Android macOS composition is a separate product: it consumes a compatible
+Android kernel artifact, accepts a rootfs directory and one directly writable
+GPT image without comparing rootfs release identity, and never searches for the
+Linux desktop image. Kernarium's runtime frameworks and defaults are in
+[`../Kernarium/README.md`](../Kernarium/README.md).
 
 ## Runtime, memory, and kernel loading
 
 Handle and run ownership, the vCPU carriers and host signal ownership, the
 native kernel window, guest RAM commitment, accepted-artifact sharing, and the
-signed kernel loader are cross-module contracts owned by the architecture: see
-its
+signed kernel loader are owned by the architecture: see
 [runtime ownership](../docs/architecture.md#runtime-ownership),
 [memory and executable code](../docs/architecture.md#memory-and-executable-code),
-and [CPU execution and scheduling](../docs/architecture.md#cpu-execution-and-scheduling)
-sections.
+and [CPU execution and scheduling](../docs/architecture.md#cpu-execution-and-scheduling).
 
 ## CPU engines
 
-Engine selection, executable-memory ownership, the JIT's semantic slow path,
-the x86_64 slice's userspace profile, and the gadget cache's address-space tags
-are in the
-[architecture](../docs/architecture.md#cpu-execution-and-scheduling). Each
-engine's lowering is in the README beside it, for the arm64
-[gadgets](cpu/arm64/gadgets/README.md) and [JIT](cpu/arm64/jit/README.md) as
-for the x86_64 engines; this section owns the rest of the engines' internal
-detail.
+Engine selection, executable-memory ownership, the JIT's semantic slow path
+and the x86_64 userspace profile are in the
+[architecture](../docs/architecture.md#cpu-execution-and-scheduling); each
+engine's lowering is in the README beside it. The cache contracts the engines
+share:
 
-The x86_64 backend's CPUID advertises ERMS: a repeated string operation moves
-whole page-bounded blocks, so the REP MOVSB that ERMS steers libc onto is this
-engine's fastest copy rather than its slowest.
-
-It advertises AVX-VNNI too: VPDPBUSD and its three relatives are one gadget
-(`engine/vector_dot.inc`), where the AVX2 sequence a program falls back to is
-three, so the VNNI kernels of ggml and similar libraries run ahead of their AVX2
-ones on this engine as well as on the JIT.
-
-The x86_64 gadget engine assembles against ARMv8.2-A with the CRC and
-cryptography extensions. The arm64 engine keeps its own, higher, ARMv8.6-A
-declaration.
-
-A gadget cache slot indexes a translation rather than holding one. Each stored
-program is a single exact-sized allocation carrying its stream and the guest
-words it is validated against, taken from its address space's arena in
-sixteen-byte granules, and the program refers to those words rather than
-owning a second copy. An arena reuses freed space by best fit and merges a
-freed block with its free neighbours, so the hole an evicted translation
-leaves serves translations of any size; it unmaps a 64 KiB chunk once the
-chunk's last translation leaves. An arena maps its chunks a few at a time (four,
-doubling to sixteen), and an address space that dies unmaps what remains
-without freeing a translation of it. A mapping can take addresses that the
-arena's earlier mappings gave back, so their ranges interleave; a chunk is
-accounted to the mapping that holds it, and a dying arena unmaps only chunks
-it still holds, never an address another mapping has taken since. A build
-assembles its stream in a scratch buffer that the next build rewinds, so a
-translation allocates only when it is stored. The arena marks where every
-live translation starts, one bit per granule, and that map is how a terminal
-exit inside a linked successor is attributed to the successor's program; the
-cache keeps no index keyed by stream address and maintains nothing per store
-for that lookup.
-
-A slot is three words on arm64 and four on x86: a tag, the translation, and a
-memo. The tag packs the translation's key (an A64 PC below the guest address
-limit, an AArch32 address under its ISA flags, or an x86 address and execution
-mode) under the 16-bit id the cache gives each resident address space, so a
-lookup is one comparison and an empty slot, whose tag is zero, matches nothing.
-The memo packs the link record the slot publishes through with a 16-bit
-validation epoch. An address space's epoch advances when its code-change number
-moves, a slot whose epoch is the current one has matched guest memory since,
-and a sweep of the space's slots when the epoch wraps keeps that exact. An
-arm64 body header is 16 bytes, its build's stop kept in a tail only for a block
-that stopped early or holds no instruction, and an x86 body is 128 bytes, its
-stream behind it in the arena and its saved source apart in a second one. Hit
-rates and victims are unchanged by this packing: the set still hashes the
-guest's address-space number. The sizes hold with shared bodies too, where
-every executor keeps its own slots and a body's header is paid once however
-many slots hold it.
-
-The x86 cache takes a translation's set from one multiply of its address
-space, byte-granular RIP and execution mode
-(`x86_64/gadgets/program_cache_index.hpp`), so clustered code loads the sets as
-a uniform spread would, where two xor folds of the address left far more full
-sets than that.
-
-The arm64 and x86 private gadget caches use the same `UML_GADGET_CACHE_SLOTS`
-and `UML_GADGET_RESIDENT_GENERATIONS` controls: eight ways, 256-slot lazy slabs,
-and eight resident address spaces. The slot count defaults to 262,144 on every
-product, so that macOS behaves like iOS, and a slot is committed whether or not
-it is occupied; an explicit `-DUML_GADGET_CACHE_SLOTS` selects another power
-of two. Their payloads and mutable branch links remain ISA-specific. Cached
-x86 programs release spare decoder and native-stream capacity before
-publication. The resident address spaces themselves, with the ids a slot's tag
-names its owner by, the epochs that validate a slot and the order that retires
-the least recently current, are one template shared by both caches
-(`cpu/gadget_generation_window.hpp`); the engines keep the slot layout, lookup
-and what retiring an address space releases.
-
-Unless `DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private, arm64 gadget
-executors running one address space with the same build options and SVCR mode
-share its translations: the bodies, link records, indirect sites and target
-table belong to one process-wide space, and each executor's private slots only
-point into it. A body lives while any executor's slot holds it, so an address
-space costs the union of what its executors hold. A miss with no
-slot for its PC adopts the body the space indexes for it after the same exact
-word validation a stale slot gets, without copying or relocating it. Links and
-indirect-site cells are retargeted with one sixteen-byte store, single-copy
-atomic with FEAT_LSE2, which sharing requires; a site takes the space's lock
-only to enrol on its first training, and translated code fills only a site's
-empty cells, so vCPUs sharing a polymorphic site do not keep rewriting it. A
-code change raises the space's gate before it resets the live links, so an
-executor still validating at an older sequence cannot relink. A body no slot
-holds is freed once every other executor attached to the space has left
-translated code since it was unpublished, and the last executor to retire a
-space frees it with its arena. A code change one vCPU publishes resets the
-space's links before that vCPU continues, so every other executor of the space
-leaves translated code at its next block transition. Sharing is the default
-on a host that retargets a link pair in one access (FEAT_LSE2, which every
-Apple Silicon product has), and renewal, below, keeps a shared space from
-accumulating the freed arena and link records that process churn leaves in it.
-A private cache sweeps away
-the link records and indirect sites that nothing it holds names any more, once
-they number half again what its last sweep kept and enough of its translations
-have left the cache to have left some unnamed: a record no resident
-translation's stream names and no resident block owns is released for reuse,
-and the site cells and target-table entries naming it are emptied, so link
-state follows what the cache holds rather than all the code the address space
-ever ran. A shared space is never swept, and renewal replaces it instead. The
-parts of this that do not depend on an engine's record types are
-engine-independent headers in `cpu/`: the body arena
-(`gadget_body_arena.hpp`), and what each executor announces, the executors
-attached to a space, the limbo a body waits in, the renewal counts and the
-registry that hands a space out (`gadget_shared_space.hpp`). The arm64 engine
-builds its space from them.
-
-A shared space bounds its freed arena by renewal. It counts the bytes of its
-arena and of the bodies some slot holds; once it holds at least two mebibytes
-no body uses, and more than its bodies use, the executor that let go of a body
-or stored one closes it. A closed space leaves the registry, so the next
-executor to run its address space gets a new one, and every executor attached
-lets go of it, as the window lets go of the least recently used space, at the
-start of its next entry into translated code. The old space then dies with its
-last executor, taking its arena, link records and freed bodies, and the
-executors translate again what they still run.
-
-The kernel numbers every Linux mm it creates (fork, exec and the first process
-each get a new one), never reuses a number, and destroys the generation when
-the mm's last reference goes; the MMU counts destroyed generations. An arm64
-gadget executor loads that count at the start of every entry into translated
-code and, when it moved, lets go of each address space it holds, in every SVCR
-mode cache, whose generation the MMU reports destroyed, as it lets go of a
-closed one. A generation that was destroyed can never run again, so nothing it
-held can be looked up again. Its number keeps its place in the executor's
-window order as a tombstone that the least-recently-used rule retires with no
-work, so a window keeps exactly the live address spaces it kept before. A
-shared space dies with the last executor attached to it, which lets go at its
-own next entry; a vCPU that is idle keeps it until then.
-
-Slots bound how many translations a cache holds, not their bytes, so both
-gadget engines also keep a process-wide byte budget
-(`cpu/gadget_cache_budget.hpp`). Each address space as an engine keeps it
-charges an account with what it holds: an arm64 space its arena chunks with
-their maps, blocks too large for a chunk, link and indirect records and target
-table, once however many executors share it; an x86 address space its
-translation arenas (bodies with their streams, and saved source, as chunks are
-carved and released), records and target tables, once however many executors
-share it, and in each executor that keeps it to itself. Slots and per-space
-slot lists are not charged. A store that finds the open accounts above the
-budget asks the largest to shed until the rest hold seven eighths of it,
-waiting its turn while another thread holds the ledger. An arm64 space asked to
-shed is closed and let go of as a renewed one is, and is never attached again;
-an x86 executor lets go of such an address space at the start of its next run,
-as of a destroyed one. Either way the address space starts afresh in a new
-account, and whatever the shed one charges or refunds until it goes counts
-apart from the open ones. The open accounts therefore stay within the budget,
-give or take one store for each vCPU storing at the time, and a shed space that
-an idle vCPU still holds was part of what was open, so the whole stays within
-twice the budget.
-
-The emulator sets the budget before the run's first executor: a quarter of
-guest memory, at least 128 MiB, and at most an eighth of the footprint the
-host lets the process reach where it sets one (iOS; on macOS the launch states
-it with `--memory-limit=` or `UML_MEMORY_LIMIT_MIB`, and otherwise there is
-none), or the size `--gadget-cache-budget=` gives. A process that never sets one, such as a
-unit test, keeps 1 GiB. Where a limit is stated
-the vCPU count's cap (`runtime/guest_memory_budget.hpp`,
-[architecture](../docs/architecture.md#memory-and-executable-code)) lowers the
-budget further, and the Android and KDE loads at their worst ceilings do shed
-under it. A census build reports the budget, the bytes charged and the reliefs
-on every `E` record.
-
-The budget in effect is also the gadget-cache term of the host GPU's budget
-([architecture](../docs/architecture.md#memory-and-executable-code)): the
-cache and the GPU's memory are planned from the same process limit.
-
-x86 gadget executors share an address space's translations the same way, and
-`DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private. A link's pair and the
-guest bounds in front of every stream let one paired store retarget a link
-another executor follows, and a store over a block's source marks it stale for
-every executor. They let go of the address spaces of destroyed generations the
-same way, at the start of each run
-([`cpu/x86_64/gadgets/README.md`](cpu/x86_64/gadgets/README.md)).
-
-In both arm64 engines, code another vCPU changed and synchronized takes effect
-at this vCPU's next context synchronization point. Every run publishes in
-`CpuState` the address of its address space's code-change sequence and the
-value its translations and links were validated at. An ISB, the A64, A32 or
-CP15 one, compares the two after its native ISB, one load and a compare, and
-when they differ leaves translated code at its fall-through, so the next run
-revalidates and relinks first. The gadget A64 ISB leaves from inside its block
-and gives back the instructions after it; a gadget A32 block ends at its ISB.
-A kernel write into a guest-code page, such as a system call's output that a
-uaccess copies back from the kernel's alias, likewise reaches arm64 code only
-through the guest's own IC IVAU or `cacheflush()`, as on hardware that
-advertises neither DIC nor IDC. It publishes a code change
-of its own only once x86 code is about to run in the process, since x86 fetch
-sees every store; otherwise a process with an executable stack would publish
-one, and revalidate every translation, for each system call that writes its
-result there.
-
-Scalar forwarding keeps one write-through scalar result in host `x0` between
-adjacent declared gadgets. Assembly templates emit
-both immutable operand contracts and precompiled source-mask variants; the
-builder selects a variant from the actual decoded entry, not an opcode-pair
-whitelist. Canonical GPR/SP stores remain unchanged. Arithmetic, logical,
-bitfield, select, shift, ordinary scalar loads, and scalar memory inputs share
-this contract. Store data crosses translation helpers in a callee-saved host
-register. Unsupported entries, fused decoder groups, branches, and block
-boundaries end the chain. Pair results and writeback-load results are not
-exported. There are no runtime register tags or executable-memory writes.
-
-Vector forwarding applies the same template-owned selection to SIMD/FP results
-naturally produced in host `v2`. Arithmetic, logic, comparisons,
-widening/narrowing, reductions, and accumulator templates declare their source
-masks. Consumers capture all
-forwarded inputs before overwriting `v2`; narrow reads retain architectural
-upper-bit clearing, and canonical vector stores remain write-through. Declared
-software fallbacks restore the complete result in `v2` on their cold return
-path. Undeclared entries and block/link boundaries invalidate residency. Vector
-memory values and templates producing results in other scratch registers are
-not exported. This is not a persistent guest-vector register cache.
-
-`BuildOptions` can disable either kind per program, which is how tests and the
-scalar ceiling bench compare forwarding in one binary. Forwarding does not imply
-a general application speedup: measured gains are workload-dependent and the
-forwarding bank is larger.
-
-`UML_GADGET_EXECUTION_HISTOGRAM` is a default-off diagnostic build. A threaded
-counter gadget indexes a table keyed by the exact (predecessor, entry) pair the
-translator selected, so executed entries, executed adjacent pairs, and entered
-guest words are exact. Its dump also reports why each linked chain returned to
-the executor and how many distinct targets the missing indirect sites had.
-Instrumented streams carry one extra dispatch per guest instruction, so the
-build is evidence for instruction mix and static cost, never for speed.
-
-The JIT derives private and shared cache geometry from one process budget,
-defaulting to half of guest RAM. A managed run keeps at most one executor per
-guest CPU, with up to 256 MiB of private cache per executor; the shared tier
-receives the remainder. Smaller total budgets reduce private geometry.
-Exhausted executor borrowers receive FIFO handoffs. A contended return
-synchronizes notification with the queue mutex so a borrower cannot miss the
-transition to an available executor; uncontended returns remain lock-free.
-Shared translations own immutable code and validation identity. Bounded
-replacement admits new working sets after the shared tier fills, retaining
-entries whose code or validation words are still in use. The shared index
-retains its high-water allocation charge.
-
-Direct and indirect links live in executor-private writable data, outside
-executable mappings. Links are tagged by address space, and each executor
-retains activation contexts for up to 64 address spaces. Switching back to an
-unchanged context preserves trained links; code publication or context
-eviction deactivates that context before reuse. Link records outlive their
-address space and are reclaimed only with the executor's private cache, so a
-full direct or indirect table recycles that cache as a full code arena does,
-rather than publishing unlinked blocks. Stale blocks still require
-exact guest-word validation. Native compilation is one lowering pass; there is
-no speculative GPR residency recompilation.
-
-On a private miss, executors first try an exact shared translation, then
-compile eagerly.
-
-Native stores publish per-vCPU state on separate 128-byte host cache lines.
-Bounded load/compare/conditional-branch/store-exclusive retry regions use host
-exclusives after checking both mappings and permissions. Unsupported shapes
-and tagged accesses take the JIT's semantic slow path, which performs each
-atomic, exclusive and ordered access as one host access on the translated
-page, with LSE atomics or CASP for a read-modify-write. Those accesses are
-therefore single-copy atomic against native code on other vCPUs and against
-host threads that share the page. Only an exclusive load, or an instruction
-run while its software reservation is held, waits out other vCPUs' native
-store blocks. Native and semantic stores share the JIT's software reservation
-table: every data store, including a pair or structure store that leaves its
-native lowering, invalidates the granules it writes through any alias of the
-same backing, even when the stored value is unchanged.
+- **Gadget translation cache.** A cache slot indexes a translation held in its
+  address space's arena, tagged by the id the cache gives each resident address
+  space, so retiring an address space drops its state as a unit. Slot geometry
+  is one build-time setting for both ISAs
+  (`cpu/gadget_cache_geometry.hpp`).
+- **Shared bodies.** Executors running one address space share its bodies, link
+  records and indirect sites unless `DARWIN_UML_GADGET_SHARED_BODIES=0`; a code
+  change one vCPU publishes reaches the others at their next block transition.
+  The machinery is `cpu/gadget_shared_space.hpp`, `gadget_body_arena.hpp` and
+  `gadget_generation_window.hpp`.
+- **Bounded growth.** A shared space is renewed once its arena is mostly freed,
+  a private cache sweeps link state nothing names, an address space the kernel
+  destroyed is let go of at the executor's next entry, and a process-wide byte
+  budget (`cpu/gadget_cache_budget.hpp`) caps the whole. The emulator sets the
+  budget before the first executor, from guest memory and the process memory
+  limit or `--gadget-cache-budget=`; it is also the gadget-cache term of the
+  host GPU's budget ([architecture](../docs/architecture.md#memory-and-executable-code)).
+- **Code writes.** In both arm64 engines, code another vCPU changed and
+  synchronized takes effect at this vCPU's next context synchronization point.
+  A kernel write into a guest-code page reaches arm64 code only through the
+  guest's own `IC IVAU` or `cacheflush()`, as on hardware that advertises
+  neither DIC nor IDC.
+- **Forwarding and diagnostics.** Scalar and vector result forwarding are
+  template-owned and can be disabled per program through `BuildOptions`.
+  `UML_GADGET_EXECUTION_HISTOGRAM` is a default-off diagnostic build whose
+  streams measure instruction mix, never speed.
+- **JIT.** Private and shared translation caches derive from one process
+  budget (`cpu/arm64/jit/jit_cache_geometry.hpp`). Links live in
+  executor-private writable data outside executable mappings and are scoped to
+  an address space. The semantic slow path performs each atomic, exclusive and
+  ordered access as one host access, so it is single-copy atomic against native
+  code on other vCPUs and host threads.
 
 ## Devices
 
 The vhost-user transport and the Apple graphics stack are in the
 [architecture](../docs/architecture.md#devices-and-graphics) and
-[`../docs/graphics.md`](../docs/graphics.md). The Venus route's host side
-fails closed on an invalid memory type, range, ownership, acknowledgement, or
-reconnect state, and keeps an aperture page owned through pending map and unmap
-acknowledgements; a completed teardown or a failed map releases it for reuse.
+[`../docs/graphics.md`](../docs/graphics.md). The Venus route's host side fails
+closed on an invalid memory type, range, ownership, acknowledgement, or
+reconnect state. The devices Kernarium attaches and its display geometry are
+listed in [`../Kernarium/README.md`](../Kernarium/README.md#devices-and-display).
 
-The devices Kernarium attaches and its display geometry are listed in
-[`../Kernarium/README.md`](../Kernarium/README.md#devices-and-display).
+### User network
 
-The audio device is described in
-[`device/audio/README.md`](device/audio/README.md): a bounded period/completion
-ring whose callback path does not allocate or lock, playback completions paced
-on the device's own clock when the host output cannot play, a null output, and
-a capture stream that delivers silence in real time unless the user turns on
-the microphone setting. iOS owns AVAudioSession interruption and route
-recovery. Mixer controls are not exposed.
+The SLiRP provider owns the user network. libslirp comes from the maintained
+series in [`../dependencies/README.md`](../dependencies/README.md), whose
+patches provide the behaviors the `slirp-network-*` tests check.
 
-SLiRP host forwards are owned by the provider so they survive provider reopen.
-An unavailable individual host port is reported without removing the guest's
-network interface. Filesystem socket paths are removed only by their owning
-guards or the common termination cleanup.
-
-libslirp comes from the maintained series in
-[`../dependencies/README.md`](../dependencies/README.md). A forward's listening
-socket queues up to the host's `SOMAXCONN` pending connections, so each of a
-burst of concurrent host connects reaches the guest
-(`slirp-network-forward-backlog`, and through a booted guest in
-`guest-slirp-network`). The receive window SLiRP advertises never exceeds its
-free buffer (`slirp-network-tcp-window`). SLiRP closes the host end of a
-connection whose guest end stops answering within about ten minutes, whether
-it was retransmitting to the guest or probing a window the guest closed
-(`slirp-network-tcp-liveness`). An idle connection has no keep-alive, the
-RFC 1122 default, and stays open until one side closes it. A guest connect
-the host stack refuses at once is answered with ICMP net-unreachable, except
-a connect to port 0: Darwin refuses it before sending anything, where Linux
-sends the SYN, so SLiRP leaves it unanswered and the guest connect times out,
-or resets it when the destination is the host's gateway address, as the host's
-own stack would (`slirp-network-connect-failure`).
-
-SLiRP forwards a guest's ICMP echo the way a router would
-(`slirp-network-icmp`). An echo answered by SLiRP itself, to the gateway
-address, carries a TTL of 255. An echo whose TTL expires at the SLiRP hop is
-answered with ICMP time exceeded from the gateway and sends nothing to the
-host. Any other leaves on a host ICMP socket with the guest's TTL less one
-(a raw socket when the process may open one, the datagram socket otherwise),
-and its reply reaches the guest with the TTL it arrived with. SLiRP drops a
-packet whose source or destination no network carries: loopback, class E
-other than the limited broadcast, the unspecified address as a destination,
-a multicast source. A DHCP DISCOVER from the unspecified address to the
-limited broadcast is none of these and is answered.
-
-The provider answers the guest's name server itself, through the host's system
-resolver (mDNSResponder, `dns_sd`), over UDP and TCP, at the name server
-address and at the gateway address on port 53. SLiRP's own DNS proxy is off: it
-would send each query from the application to the host's first configured
-server, usually a local-network router, which on iOS and macOS needs the user's
-Local Network permission; the system resolver's traffic does not, and the guest
-follows the device's own resolver configuration. The name server serves
-nothing but DNS: a TCP connect to another of its ports is reset, so Android's
-private-DNS probe of port 853 fails at once and it stays on cleartext DNS, and
-any other datagram is dropped, so nothing addressed to it leaves the host. A
-record of any type passes through unchanged and a CNAME chain keeps its
-aliases. The system resolver reports a name that does not exist and a name
-without the asked type alike, so the guest gets NOERROR with no records for
-both, never NXDOMAIN, and an answer has no authority section. A query
-unanswered after 10 s gets SERVFAIL. A UDP answer longer than the guest's EDNS
-size (512 bytes without EDNS, at most one 1500-byte frame) is truncated so the
-guest retries over TCP.
-
-DNS over TCP runs through a guest forward to a Unix socket in `$TMPDIR` when
-its path fits `sun_path`, else in the user temporary directory, else in `/tmp`
-(an iOS Simulator container's tmp does not fit); where none binds, port 53 is
-reset like any other and the log says so. The socket is named `dns-<pid>`, the
-same across a guest restart; it goes with the run, and the next run in that
-directory removes one a killed run left. A client that shuts down its sending
-side after its query still gets the answer. Stopping the link ends every query
-in flight (`slirp-network-dns`, and `network-dns-rules` for the wire rules).
-
-Guest IPv4 multicast is dropped on the virtual link: an mDNS advertisement or
-SSDP search would be the application addressing the local network, an iOS app
-may send multicast only with an Apple entitlement the apps do not hold, and the
-guest could only name addresses behind SLiRP's NAT. A guest therefore neither
-discovers nor is discovered by multicast on the host's network; its `.local`
-names still resolve through the name server. Booting a guest and using the
-Internet address no host on the local network and no DNS server. The Local
-Network permission is asked for only when the guest itself reaches the local
-network: a connection, datagram or ICMP echo to an on-link host, or a `.local`
-name asked of the name server, which mDNSResponder resolves by multicast on the
-application's behalf.
-
-The guest network driver has no transmit flow control, so a frame the provider
-refuses is lost and TCP must retransmit it. A guest transmit into a full
-transmit ring therefore waits, up to 500 ms, for the SLiRP event loop to free a
-slot; the loop never waits on the guest. `guest-slirp-network-transfer` checks
-that bulk, paced, concurrent, reader-stalled and request/response uploads reach
-a host listener intact, promptly and without a dropped frame.
+- Host forwards belong to the provider and survive provider reopen; an
+  unavailable host port is reported without removing the guest's network
+  interface. Filesystem socket paths are removed only by their owning guards or
+  the common termination cleanup.
+- A forward queues up to the host's `SOMAXCONN` pending connections; the
+  advertised receive window never exceeds the free buffer; a connection whose
+  guest end stops answering is closed; a connect the host stack refuses is
+  answered with ICMP net-unreachable (port 0 excepted); ICMP echo is forwarded
+  as a router would.
+- The provider answers the guest's name server itself, through the host's system
+  resolver, and SLiRP's own DNS proxy is off: the proxy would send queries from
+  the application to a local-network router, which needs the Local Network
+  permission, and the guest follows the device's own resolver configuration.
+  The wire rules are `network-dns-rules`.
+- Guest IPv4 multicast is dropped on the virtual link. The Local Network
+  permission is asked for only when the guest itself reaches the local network.
+- The guest network driver has no transmit flow control, so a guest transmit
+  into a full ring waits briefly for the SLiRP loop (`guest-slirp-network-transfer`).
 
 ## Guest storage and lifecycle
 

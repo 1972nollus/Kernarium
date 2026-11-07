@@ -17,6 +17,11 @@ struct alignas(32) NativeTlbEntry final {
 	std::uintptr_t write_data_minus_address{};
 };
 
+/* The table is direct-mapped. The index below is also written out in the
+ * gadget engine's assembly (`translate` and `translate_plain` in
+ * gadgets/engine/common.inc, and the baked entries in
+ * gadgets/engine/generate_baked.py), so a change to this count or to the fold
+ * changes all three. */
 inline constexpr std::size_t native_tlb_entry_count = 1U << 15U;
 
 /* The executor retires a write translation when a page gains cached code, so
