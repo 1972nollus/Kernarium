@@ -417,11 +417,11 @@ struct PauseControllerTests {
     @Test func aSpacePauseIsResumedOnlyOnce() throws {
         let (controller, effects, _) = try makeController()
         controller.guestDidStart()
-        controller.resumeFromSpacePause {}
+        #expect(!controller.resumeFromSpacePause {})
         #expect(effects.calls.isEmpty)
         controller.pauseForSpace()
-        controller.resumeFromSpacePause {}
-        controller.resumeFromSpacePause {}
+        #expect(controller.resumeFromSpacePause {})
+        #expect(!controller.resumeFromSpacePause {})
         #expect(effects.calls == ["quiesce(low space,nowait)", "resume"])
     }
 
@@ -431,7 +431,7 @@ struct PauseControllerTests {
         controller.pauseForSpace()
         controller.didEnterBackground()
         effects.calls.removeAll()
-        controller.resumeFromSpacePause {}
+        #expect(!controller.resumeFromSpacePause {})
         #expect(effects.calls.isEmpty)
         #expect(controller.isPausedForSpace)
     }

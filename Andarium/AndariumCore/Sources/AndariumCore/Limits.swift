@@ -42,7 +42,7 @@ public enum Limits {
     public static let firstStartReserveBytes: UInt64 = 3 * bytesPerGiB
     /// Free space any start needs for Android's own writes.
     public static let startReserveBytes: UInt64 = bytesPerGiB * 3 / 2
-    /// Free space below which a running guest is paused (`RunSpaceWatch`):
+    /// Free space below which a running guest is paused (`RunSpace`):
     /// what the data disk may still grow by before it cannot, less what the
     /// pause itself writes. The write-back of a guest's dirty pages and the
     /// writes of one check interval come out of it.

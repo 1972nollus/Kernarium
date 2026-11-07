@@ -79,7 +79,7 @@ public protocol PauseEffects: AnyObject {
 /// keeps the GPU safe.
 ///
 /// A guest can also be paused in the foreground, for want of space on the
-/// device (`RunSpaceWatch`). It stays paused until the person resumes it: a
+/// device (`RunSpace`). It stays paused until the person resumes it: a
 /// lifecycle edge never wakes it, and none writes its storage again, because
 /// writing it back would end the suspension.
 @MainActor
@@ -193,11 +193,13 @@ public final class PauseController {
     }
 
     /// The person resumes a guest paused for space. `finished` runs on the
-    /// main actor once the guest is back; it does not run when no pause is
-    /// held or the application is out of the foreground. The marker needs no change: it is armed only by a background
-    /// edge, which a foreground resume does not follow.
-    public func resumeFromSpacePause(finished: @escaping @MainActor () -> Void) {
-        guard spacePaused, inForeground else { return }
+    /// main actor once the guest is back. Returns whether a resume began: not
+    /// when no pause is held or the application is out of the foreground,
+    /// and `finished` does not run then. The marker needs no change, because
+    /// only a background edge arms it and a foreground resume follows none.
+    @discardableResult
+    public func resumeFromSpacePause(finished: @escaping @MainActor () -> Void) -> Bool {
+        guard spacePaused, inForeground else { return false }
         spacePaused = false
         guestPaused = false
         resumesInFlight += 1
@@ -205,6 +207,7 @@ public final class PauseController {
             self?.resumeFinished()
             finished()
         }
+        return true
     }
 
     /// The application will exit: the marker goes, since the next launch is
