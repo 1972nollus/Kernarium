@@ -278,8 +278,10 @@ opens the system's Settings or another app.
 
 The opt-in suites each need a `TEST_RUNNER_ANDARIUM_*` switch that the suite's
 header names: rotation, motion compatibility and over-vsock, shutdown flow,
-Retina memory, the ADB-over-vsock guest tests (including Android storage and
-the touch-cancel path) and the ADB-over-network hold. The storage test signs
+low-space pause (a real guest paused through a free-space number the test
+sets, its CPU time standing still), Retina memory, the ADB-over-vsock guest
+tests (including Android storage and the touch-cancel path) and the
+ADB-over-network hold. The storage test signs
 its helper APK with the AOSP test key, never a release key. When derived data is
 on a removable volume, macOS prompts once for access and the launch hangs until
 answered; build to the internal disk instead.
@@ -327,8 +329,10 @@ minutes) and read its console (`xcrun devicectl device process launch
 rendering, and no `virtio_gpu` response errors, Metal errors, RCU stalls or
 watchdog lines; on a device it must also show guest RAM hibernated and
 restored. A hold count of `0` means a request was still running after a second:
-a finding, not a pass. The unit tests (`runtime-thread-fence`,
-`runtime-guest-hibernation`, `emulator-lifecycle`, `memory-guest-ram-image`)
+a finding, not a pass. Andarium's low-space pause adds a cycle: pause the
+guest, send the application to the background and back, then Resume; the
+guest must stay suspended until Resume, then wake as above. The unit tests
+(`runtime-thread-fence`, `runtime-guest-hibernation`, `emulator-lifecycle`, `memory-guest-ram-image`)
 cover the order on any host, and `--guest-hibernation=on` forces the same code
 on a Mac. The Picture in Picture and keep-running-job modes
 (`KERNARIUM_BACKGROUND_MODE`) and the restart notice after a terminated

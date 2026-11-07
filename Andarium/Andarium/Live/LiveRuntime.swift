@@ -663,6 +663,10 @@ final class LiveRuntime: RuntimeDriver {
     func shutDownAfterSpacePause() async throws {
         shuttingDown = true
         await wakeGuest()
+        guard !pause.isPausedForSpace else {
+            shuttingDown = false
+            throw AdbFailure(message: "Android is still paused.")
+        }
         do {
             let result = try await operations.shell("reboot -p", limit: .seconds(30))
             if let code = result.exitCode, code != 0 {

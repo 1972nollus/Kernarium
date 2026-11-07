@@ -225,6 +225,20 @@ requires reopening Andarium.
   a guest application uses it and sends samples over private vsock port 5556;
   the system image must include the
   [motion sub-HAL](../android/lineage-24/README.md#motion-sensors).
+- **Free space.** Once Android has booted a normal start, the application
+  reads the device's free space (`RunSpace.nextCheck`: every 2 s near the
+  limit, every 30 s on a roomy device) and pauses the guest below 1 GiB
+  (`Limits.pauseBelowBytes`), before the data disk, which Android mounts so
+  that a failed write panics, can fail to grow. The pause is the runtime's
+  suspension, with the storage written back first
+  ([lifecycle](../docs/architecture.md#guest-lifecycle)); on a device it
+  hibernates the guest's RAM as the background does. A paused guest is asked
+  nothing and no lifecycle edge wakes it; Settings closes and an adb
+  operation and ADB over network end. A screen over the session offers Resume,
+  which reads the space again and wakes the guest at 1.5 GiB (a start's
+  reserve, `Limits.resumeAtBytes`) or more, and Shut down, which wakes the
+  guest and has Android power off. The reading comes from
+  `AppEntry.makeModel(freeSpace:)`, which a test replaces.
 - **Statistics.** The session's capsule and Settings' Stats rows show the
   runtime's readings ([`Kernarium/README.md`](../Kernarium/README.md#statistics)),
   read only while a view shows them, the application is active and the guest

@@ -71,7 +71,7 @@ struct AppEntry {
         if screen == "session-tip" {
             Tips.showAllTipsForTesting()
         } else if screen.hasPrefix("session") || screen.hasPrefix("settings") || screen.hasPrefix("recovery") || screen.hasPrefix("boot")
-            || Self.operationScreens.contains(screen) {
+            || screen.hasPrefix("space-pause") || Self.operationScreens.contains(screen) {
             Tips.hideAllTipsForTesting()
         }
         try? Tips.configure([.displayFrequency(.immediate)])

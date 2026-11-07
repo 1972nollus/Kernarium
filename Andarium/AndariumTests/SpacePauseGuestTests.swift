@@ -65,9 +65,14 @@ struct SpacePauseGuestTests {
         print("SPACE_PAUSE: Android booted; free space \(Formats.size(bytes: free.value))")
         #expect(model.spacePause == nil)
 
-        // Work for the guest to do, so its CPU time visibly runs.
-        _ = try await operations.shell(
-            "(i=0; while [ $i -lt 400000000 ]; do i=$((i+1)); done) >/dev/null 2>&1 &", limit: .seconds(20))
+        // Work for the guest to do, so its CPU time visibly runs: a shell that
+        // loops until the guest goes (a background job would hold adb's
+        // streams open).
+        let load = Task {
+            _ = try? await operations.shell("while :; do :; done", limit: .seconds(900))
+        }
+        defer { load.cancel() }
+        try await Task.sleep(for: .seconds(3))
         let running = try await cpuAdvance(driver, over: .seconds(3))
         print("SPACE_PAUSE: guest CPU while running: \(running / 1_000_000) ms in 3 s")
         try #require(running > 200_000_000, "the guest's CPU time does not run: \(running) ns")
