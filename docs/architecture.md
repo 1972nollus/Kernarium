@@ -71,29 +71,27 @@ constants (`runtime/native_kernel_layout.hpp`). The window is a reservation that
 never returns address space while the process lives: the first run reserves it
 once (`runtime::reserve_process_native_window`) and every later run takes the
 same window. Guest pages are mapped over it with `MAP_FIXED`, and releasing one
-hands its range back as a reservation, never with `munmap`, because a freed gap
-is preferred by an unrelated `mmap(NULL)` and the two owners then destroy each
-other's mappings in silence. Guest RAM that a host-service view still borrows
-stays mapped until the last view is released. The linear physical window is the
-anonymous RAM root; consumers borrow it or create non-copying Mach aliases, and
-disks stay file-backed.
+hands its range back as a reservation, never with `munmap`, which would let an
+unrelated `mmap(NULL)` take the gap. Guest RAM that a host-service view still
+borrows stays mapped until the last view is released. The linear physical window
+is the anonymous RAM root; consumers borrow it or create non-copying Mach
+aliases, and disks stay file-backed.
 
 `mem=` is a ceiling, not a reservation: the guest commits RAM before using it
-and releases what it frees through `darwin_uml_physmem_commit` and
-`darwin_uml_physmem_release` (`memory/guest_ram_commitment.cpp`), and released
-pages leave the process footprint. Physical iOS also wires a page when it is
-committed and unwires it when released; the one window with a held page unwired
-is a [hibernation](#hibernation). The kernel trims its page cache only at the
-host's request (`uml_emulator_set_page_cache_trimming()`,
-`uml_emulator_trim_page_cache()`, every quiesce). The host GPU's memory is not
-carved out of the guest's RAM, and the host provides no Virtio balloon device.
+and releases what it frees (`darwin_uml_physmem_commit`/`_release`,
+`memory/guest_ram_commitment.cpp`), and released pages leave the process
+footprint. Physical iOS also wires a page while it is committed; the one window
+with a held page unwired is a [hibernation](#hibernation). The kernel trims its
+page cache only at the host's request (`uml_emulator_trim_page_cache()`, every
+quiesce). The host GPU's memory is not carved out of the guest's RAM, and the
+host provides no Virtio balloon device.
 
 **Budgets.** The process's memory limit, L, is the figure the memory budgets
 derive from. iOS enforces one per application
 (`platform::process_memory_limit_bytes()`); macOS enforces none, so a
-measurement run states it with `--memory-limit=` or `UML_MEMORY_LIMIT_MIB` and
-every budget computes on the Mac as on the device (a `virtual Jetsam` line,
-`runtime/virtual_jetsam.hpp`, marks where iOS would have ended the process). The
+measurement run states it (`--memory-limit=`) and every budget computes on the
+Mac as on the device (`runtime/virtual_jetsam.hpp` marks where iOS would have
+ended the process). The
 host GPU's budget, B, is computed once at launch and fixed for the run
 (`platform/gpu_budget.hpp`, planned by `emulator/src/gpu_budget_plan.*`):
 
@@ -116,28 +114,24 @@ E(v, G) = c(v, G) + 4 MiB * v + E_rest
 c(v, G) = min(derive_budget(G, L), cap(v))      where L is set; derive_budget(G, L) alone otherwise
 ```
 
-`cap(v)` is a measured table of the gadget cache's ceiling per vCPU count, and
-the 4 MiB per vCPU are slot tags the cache ledger does not charge. The largest
-guest RAM a limit leaves, `G_max(v)`, is the largest G of 512 to 4096 MiB in
-64 MiB steps with L - G - A - E(v, G) - S at least the 384 MiB floor (4096 with
-no limit; 512, with a launch warning, where even that leaves less); Kernarium's
+`cap(v)` is a table of the gadget cache's ceiling per vCPU count. The largest
+guest RAM a limit leaves, `G_max(v)`, is the largest G (in 64 MiB steps, within
+the bounds in the header) that keeps B at its floor or above; Kernarium's
 settings offer no more than it ([Kernarium](../Kernarium/README.md)). The
 applications' vCPU limit is the rule `application_vcpu_limit` in the same
-header: the host's physical cores, at most 8, the count `cap(v)` and `G_max(v)`
-are measured for. It is the default and the maximum of Kernarium, Andarium and
-the macOS launchers (`emulator/src/options.hpp`); an explicit `ncpus=` on a
-launcher keeps the runtime's own range. Every iOS memory control carries its
-macOS path, or records here why none can exist, so a Mac run stays an accurate
-ground for measuring the device.
+header: the host's physical cores, at most 8. It is the default and the maximum
+of Kernarium, Andarium and the macOS launchers (`emulator/src/options.hpp`); an
+explicit `ncpus=` on a launcher keeps the runtime's own range. Every iOS memory
+control has a macOS counterpart, so a Mac run stays an accurate ground for
+measuring the device.
 
 A kernel-range flush completes or the kernel stops: `flush_cache_vmap()` and
 `flush_cache_vunmap()` are both `flush_tlb_kernel_range()`, its result is never
-discarded and a persistent host failure panics, because freed addresses are
-reused at once and nothing faults on a mapping that should not exist.
-Software-MMU mappings are published only by a page-table walker's batch, which is
-rejected (`DARWIN_UML_VM_BATCH_REJECTED`) when an invalidation arrives before it
-ends; a 16 KiB host slot is a shared host page only when its four PTEs name one
-aligned run of a single backing (`arch_vmap_group_order()`).
+discarded and a persistent host failure panics, because nothing faults on a
+mapping that should not exist. Software-MMU mappings are published only by a
+page-table walker's batch, which is rejected when an invalidation arrives before
+it ends; a 16 KiB host slot is a shared host page only when its four PTEs name
+one aligned run of a single backing (`arch_vmap_group_order()`).
 
 ### Domain heaps
 
@@ -204,16 +198,14 @@ MMU's thread-slot and domain state, and the console relay's and loader's output
 registrations and locks (`arm64-gadget-exit`).
 
 Darwin signals wake carriers but do not execute Linux IPIs asynchronously;
-IRQ-enabled spin checkpoints service pending IPIs. Descriptor IRQs preserve
-Linux UML's edge-triggered epoll contract on both kernels. Early UML calibration
-uses process-directed `SIGALRM`, which application and launcher threads keep
-blocked and only the vCPU0 carrier unmasks; Kernarium runs the guest on its
+IRQ-enabled spin checkpoints service pending IPIs. Early UML calibration uses
+process-directed `SIGALRM`, which application and launcher threads keep blocked
+and only the vCPU0 carrier unmasks; Kernarium runs the guest on its
 `uml-launcher` thread, never the main thread. The embedded kernel's signal
 handlers and interval timer outlive its entry, and Darwin never moves a
-process-directed signal off the thread it chose, so the loader takes them back
-before it releases the image: it disarms `ITIMER_REAL`, discards pending
-instances of every signal whose handler lies in the image, and reinstalls the
-host's dispositions and the launcher's mask.
+process-directed signal off the thread it chose, so before it releases the image
+the loader disarms `ITIMER_REAL`, discards pending instances of every signal
+whose handler lies in the image, and reinstalls the host's dispositions and mask.
 
 The product has two selectable engines: the gadget engine executes arrays of
 precompiled function pointers and data, and the JIT emits native blocks through
@@ -414,16 +406,13 @@ closes to hold the device's requests back: a closed gate lets no request reach
 the device, waits a bounded time for the one the device is running, and leaves
 later requests in their rings. Kernarium closes the GPU's gate as it enters the
 background, because a request that reached Metal after iOS revokes the host GPU
-would make the renderer's Vulkan device lost for good; an Android guest whose
-screen is to be off for the stay is put to sleep first
-(`InProcessGpuService::guestScanoutActive()`). A guest that ends cannot wait
-behind a held gate, because its shutdown drains the GPU's rings: the kernel
-reports its end through `darwin_uml_guest_shutdown()`, the devices in the
-guest-end registry (`darwin/device/guest_end/guest_end.hpp`) are told, and the
-GPU service turns a closed gate to discarding, so the server completes every
-request with the device's answer for a request that did not run
-(`VhostUserDevice::discardedResponse`). `startNextConnection()` returns the gate
-to a plain hold for the next guest.
+would make the renderer's Vulkan device lost for good. A guest that ends cannot
+wait behind a held gate: the kernel reports its end through
+`darwin_uml_guest_shutdown()`, the devices in the guest-end registry
+(`darwin/device/guest_end/guest_end.hpp`) are told, and the GPU service turns a
+closed gate to discarding, so every request completes with the device's answer
+for a request that did not run. `startNextConnection()` returns the gate to a
+plain hold for the next guest.
 
 The [Virtio video devices](../darwin/device/video/README.md) bridge the shared
 V4L2 drivers to the platform VideoToolbox decoder and encoder over their own
@@ -437,21 +426,18 @@ stream, that reports end of file or an error other than would-block means the
 backend is gone. The guest stops that interrupt source at once, reports it once
 per queue, and hands the device to the connection-broken path, which breaks its
 virtqueues and unregisters it so that pending and later requests fail instead of
-waiting (`guest-vhost-user-backend-gone`). Recovery ends there: virtio-gpu has no
-broken-device handling of its own, so a lost GPU backend kills the guest's
-Vulkan client within seconds, but a client waiting on a full control queue stays
-blocked until Mesa's own ring timeout, on the order of fifteen minutes.
+waiting (`guest-vhost-user-backend-gone`). Recovery ends there: a lost GPU
+backend kills the guest's Vulkan client within seconds, but a client waiting on
+a full control queue stays blocked until Mesa's own ring timeout.
 
-**Control socket.** In-band notifications are always negotiated, so a queue is
-kicked by a synchronous request on the control socket, and the backend answers
-only after it has run the queue. The guest endpoint is blocking with no
-deadline, because `virtqueue_notify()` latches a virtqueue broken for good when a
-notification reports failure; a backend whose answer never comes, or is
-malformed, is gone and retired by the lost-backend path. Every request has a
-reply and only their order pairs them, so the guest holds the socket from a
-request until it has read the reply, and it serves the backend request stream
-during every synchronous wait (`guest-vhost-user-round-trips`, `-suspend-drain`,
-`-config-crossing`).
+**Control socket.** A queue is kicked by a synchronous request on the control
+socket, and the backend answers only after it has run the queue. The guest
+endpoint is blocking with no deadline, because `virtqueue_notify()` latches a
+virtqueue broken for good when a notification reports failure; a backend whose
+answer never comes, or is malformed, is gone and retired by the lost-backend
+path. Every request has a reply and only their order pairs them, so the guest
+holds the socket from a request until it has read the reply and serves the
+backend request stream during every synchronous wait.
 
 The default Apple graphics path, from guest Mesa through Virgl and virglrenderer
 to Zink on KosmicKrisp and the shared Metal presentation, is in
@@ -478,24 +464,22 @@ and only a second expiry retires the fence without its renderer work, so a
 wedged submission fails the workload that owns it while the guest can finish and
 power off.
 
-Venus keeps shareable Zink scanouts in their renderer-optimal Metal layout; an
-unlinked identity descriptor reconnects each guest dma-buf with its in-process
-MTLHeap and MTLTexture and never stores pixel data. For a guest whose buffer
-allocator is not the Vulkan driver, the renderer gives an imported GL resource a
-host shared-memory segment of its linear layout and hands out the descriptor; a
-row is padded to a multiple of 16 bytes (the pitch Metal reads a texture over a
-buffer at), the guest allocator pads by the same rule, and ordering between the
-consumers is the guest's own fences.
+Venus keeps shareable Zink scanouts in their renderer-optimal Metal layout. For
+a guest whose buffer allocator is not the Vulkan driver, the renderer gives an
+imported GL resource a host shared-memory segment of its linear layout and hands
+out the descriptor; a row is padded to a multiple of 16 bytes, the guest
+allocator pads by the same rule, and ordering between the consumers is the
+guest's own fences.
 
 The in-process GPU service keeps the display apart from the guest's GPU
-connection. The display (the VNC listener and its clients, or the native window
-or Kernarium view) lasts until the service stops; the connection (the Virtio-GPU
-device, the renderer, and every context and resource the guest created) lasts as
-long as one guest. A guest that restarts itself is a new guest on the same
-machine, so `startNextConnection()` ends the connection, resets the display to
-its idle picture and opens a fresh one, while clients stay connected. The request
-gate belongs to the service, not the connection. Nothing enforces that a new
-guest's host-visible blob starts zeroed.
+connection. The display (the VNC listener, the native window or Kernarium view)
+lasts until the service stops; the connection (the Virtio-GPU device, the
+renderer, and every context and resource the guest created) lasts as long as one
+guest. A guest that restarts itself is a new guest on the same machine, so
+`startNextConnection()` ends the connection, resets the display to its idle
+picture and opens a fresh one, while clients stay connected. The request gate
+belongs to the service, not the connection. Nothing enforces that a new guest's
+host-visible blob starts zeroed.
 
 ### Local stream sockets
 
@@ -514,100 +498,76 @@ first, which is safe.
 
 The platform layer tracks every writable host descriptor opened for the guest.
 `uml_emulator_sync()` asks the guest to write back through its management
-console, then flushes those descriptors. `uml_emulator_quiesce()` first has the
-guest trim its cold page cache and hand its free memory to the host, then enters
-full Linux system suspend and waits until devices, secondary CPUs, interrupts and
-timekeeping have reached the platform sleep boundary before flushing the host.
-`uml_emulator_resume()` sends the console wake edge, and `uml_emulator_wake()`
-sends it to a guest that is not quiesced, as a phone's power key does. Every
-console request ends the suspend; the
-[shared kernel README](../kernel/common/README.md) gives the kernel's side,
-including which wake sources end a suspend the host asked for.
+console, then flushes those descriptors. `uml_emulator_quiesce()` has the guest
+trim its cold page cache and hand its free memory to the host, enters full Linux
+system suspend and waits for the platform sleep boundary before flushing the
+host. `uml_emulator_resume()` sends the console wake edge, and
+`uml_emulator_wake()` sends it to a guest that is not quiesced, as a phone's
+power key does. Every console request ends the suspend; the
+[shared kernel README](../kernel/common/README.md) gives the kernel's side.
 
-The suspend request has one bounded deadline, busy answers are retried within
-it, and any other refusal or a guest that stays busy is not frozen: the host
-keeps it running and treats it as not suspended. A request with no reply at the
-deadline is aborted, since silence proves nothing: the host sends the wake edge
-and reads the final reply, and only a "suspended" reply that arrived before the
-wake counts as suspended; otherwise the suspension is unconfirmed, never
+The suspend request has one bounded deadline; a refusal, or a guest that stays
+busy, is not frozen and the host treats it as not suspended. A request with no
+reply at the deadline is aborted: only a "suspended" reply that arrived before
+the wake edge counts, otherwise the suspension is unconfirmed, never
 hibernated, and woken at the resume. The management console's own stop is no
-fallback, because it halts only the vCPU that takes it; a process freeze, as on
-iOS, halts every vCPU. Guests that need write-back boot with magic SysRq enabled;
-if the physical iOS sandbox cannot bind the console, host-file flushing still
-runs but guest write-back and freeze are unavailable.
+fallback, because it halts only one vCPU. Guests that need write-back boot with
+magic SysRq enabled; if the physical iOS sandbox cannot bind the console,
+host-file flushing still runs but guest write-back and freeze are unavailable.
 
 The kernel says how the guest ends before it shuts its drivers down, with the
 bridge import `darwin_uml_guest_shutdown()`: power-off, halt, or restart with the
 command the guest passed. The runtime keeps the kind and a bounded copy of the
-command in the run's `Context`, which `begin_run()` clears and `end_run()` leaves
-for the handle's owner. A panic aborts the process and reports nothing.
+command in the run's `Context`. A panic aborts the process and reports nothing.
 
 A guest that restarts itself boots again in the same process, because iOS can
 neither re-exec nor respawn an application. The macOS launchers
 (`darwin/app/macos`) make the machine once (the emulator handle, the SLiRP
 provider, the GPU service with its display) and make the services and command
-line of each boot afresh; after a restart they reset the SLiRP link so no
-connection of the old guest survives, ask the GPU service for its next
-connection, and run the handle again, and the exit status is the last guest's. A
-guest that does not boot is not restarted for ever
-(`emulator/src/restart_loop_guard.hpp` owns the policy), and a stop request ends
-the loop at once. The launcher ignores `SIGPIPE` and the SLiRP provider marks
-every socket it polls `SO_NOSIGPIPE`, so a write to a reset socket cannot end the
-process. Android's boot control block is part of the loop: every restart reads
-the misc partition again (see the
-[Android boot contract](../android/lineage-24/README.md)).
-
-The Kernarium runtime (`Kernarium/Runtime`) runs the same loop inside its one
-`run` call; `Kernarium/Runtime/KernariumRestartLoop.hpp` owns the order of the
-steps and the host test `kernarium-restart-loop` checks it. It checks the stop
-request before every boot (a stop that arrives as the guest restarts wins), holds
-the next boot while the guest is paused or the GPU service's request gate is held
-(a guest that booted behind a closed gate would run without 3D), reports a
-restart twice (`KERNARIUM_RUNTIME_RESTART_BEGAN`, `KERNARIUM_RUNTIME_RESTART_BOOTED`)
-so the application can re-apply what belongs to a kernel, and reports a guard
-stop as `KERNARIUM_RUNTIME_RESULT_RESTART_LOOP`. A guest that restarts itself
-behind a closed gate finishes stopping through the discarding gate (see
-[devices](#devices-and-graphics)). After Android powers off cleanly the runtime
-stops all device services, releases the guest through
-`uml_emulator_release_guest`, and returns success only once another run can
-start. An application that can be backgrounded holds the guest's GPU requests
-(`set_gpu_hold`) before it quiesces and releases them before it resumes.
+line of each boot afresh; after a restart they reset the SLiRP link, ask the GPU
+service for its next connection and run the handle again, and the exit status
+is the last guest's. A guest that does not boot is not restarted for ever
+(`emulator/src/restart_loop_guard.hpp`), and a stop request ends the loop at
+once. Android's boot control block is part of the loop: every restart reads the
+misc partition again (see the
+[Android boot contract](../android/lineage-24/README.md)). The Kernarium runtime
+runs the same loop inside its one `run` call
+(`Kernarium/Runtime/KernariumRestartLoop.hpp`, `kernarium-restart-loop`): a stop
+that arrives as the guest restarts wins, the next boot waits while the guest is
+paused or the GPU request gate is held, and a restart is reported twice so the
+application can re-apply what belongs to a kernel. After Android powers off
+cleanly the runtime releases the guest through `uml_emulator_release_guest` and
+returns success only once another run can start. An application that can be
+backgrounded holds the guest's GPU requests (`set_gpu_hold`) before it quiesces
+and releases them before it resumes.
 
 Once the guest confirms system suspension and its host files are flushed,
-quiescing holds every thread that can run the guest and then releases the
-kernel's whole-file disk locks, because iOS terminates a process that retains a
-file lock when suspended. The hold keeps the unlocked disks unwritten, since the
-kernel's own wake sources would otherwise let a woken guest write a disk nobody
-has locked; the [hibernation](#hibernation) holds the threads where it applies,
-and a thread fence of the handle's own does everywhere else. A hold that cannot
-be taken leaves the locks in place, as an unconfirmed suspension does. Resume and
-stop reacquire every lock before restoring guest RAM, releasing a thread or
-waking the guest, and verify the disk's identity, size and times against the
-state before unlocking; contention, a replaced descriptor or changed storage ends
-the process without resuming the guest.
+quiescing holds every thread that can run the guest and releases the kernel's
+whole-file disk locks, because iOS terminates a process that retains a file lock
+when suspended. The hold keeps the unlocked disks unwritten; a hold that cannot
+be taken leaves the locks in place. Resume and stop reacquire every lock before
+restoring guest RAM, releasing a thread or waking the guest, and verify the
+disk's identity, size and times; contention, a replaced descriptor or changed
+storage ends the process without resuming the guest.
 
-The guest binds the management console as a Unix datagram socket and replies to
-each request's own bound socket, which the host places beside it, in a directory
-the host passes as `uml_dir=` under short fixed names, never loose in the shared
-`/tmp`. Each run makes its own `uml-kern<pid>` directory (mode 0700) and removes
-it when it returns and on every terminating signal the process observes; only a
-process killed outright leaves it, and the next run removes the directories of
-runs that have exited. Every such path must fit Darwin's 104-byte `sun_path` and
-is refused, not truncated, when it does not. `guest-host-residue` ends guests by
-poweroff, SIGTERM, SIGHUP, a panic and SIGKILL and finds nothing left.
+The guest binds the management console as a Unix datagram socket under a
+per-run `uml-kern<pid>` directory (mode 0700) that the host passes as `uml_dir=`.
+The run removes it when it returns and on every terminating signal it observes;
+the next run removes the directories of runs that have exited. Every such path
+must fit Darwin's `sun_path` and is refused, not truncated, when it does not
+(`guest-host-residue`).
 
 ### Statistics
 
 An application that shows a running guest's load reads it from the host, and
 nothing runs between reads: there is no sampler, timer or counter of its own.
 `uml_emulator_get_statistics()` sums the user and system time of the process's
-`uml-vcpu-N-carrier` threads and reports the guest RAM the host holds from the
-commitment's own count of released pages (`runtime/guest_statistics`).
+`uml-vcpu-N-carrier` threads and reports the guest RAM the host holds.
 `uml_emulator_get_guest_memory()` asks the kernel through the management
 console's `mem` command; like every console request it ends a suspend, so it is
-sent only under the handle's lifecycle mutex, taken with `try_lock`, and only
-while the host has not quiesced the guest. The macOS launchers print the same
-figures with `--stats=<ms>`, measurement tooling with no UI.
+sent only under the handle's lifecycle mutex (taken with `try_lock`) and only
+while the guest is not quiesced. The macOS launchers print the same figures with
+`--stats=<ms>`.
 
 ### Hibernation
 
@@ -615,29 +575,25 @@ On a physical iOS device, where guest RAM is wired and so neither compressible
 nor reclaimable, a quiesce that entered system suspension also hibernates the
 guest's RAM (`runtime/guest_hibernation.*`), so that the paused application is
 small enough for the system to keep. `--guest-hibernation=auto|off|on` selects
-it: `auto` is the host that wires, `off` keeps the RAM wired and resident, and
-`on` forces it on any host, which is how tests reach the same code. The order is
-the contract:
+it; `on` forces it on any host, which is how tests reach the same code. The
+order is the contract:
 
 - **Hold.** Every thread that can touch guest RAM is Mach-suspended first: the
-  host's `uml-*` services and every thread the kernel creates (the loader
-  resolves the kernel's `pthread_create` to `runtime/kernel_threads`). A thread
-  is held only when neither its program counter nor any frame return address is
-  in the allocator, the C library, the dynamic loader, the Objective-C runtime or
-  the C++ ABI library, so it holds none of their locks; otherwise it is let go
-  and tried again. If every thread is not held within a bounded time, nothing is
-  held or written and the guest stays wired and resident.
+  host's `uml-*` services and every thread the kernel creates
+  (`runtime/kernel_threads`). A thread is held only where it holds none of the
+  allocator's, C library's or runtime's locks; otherwise it is let go and tried
+  again. If every thread is not held within a bounded time, nothing is held or
+  written and the guest stays wired and resident.
 - **Write.** The held pages go to an unlinked image in the application's
-  `$TMPDIR`, never Documents, in hashed chunks, each taken off the footprint once
-  written. The file holds no lock, because iOS terminates an application that
-  holds a file lock during suspension.
-- **Restore.** `uml_emulator_resume()` restores and verifies every chunk, releases
-  the threads, and only then wakes the guest; `uml_emulator_request_stop()`
+  `$TMPDIR` in hashed chunks, each taken off the footprint once written. The
+  file holds no lock, because iOS terminates an application that holds a file
+  lock during suspension.
+- **Restore.** `uml_emulator_resume()` restores and verifies every chunk,
+  releases the threads, and only then wakes the guest; `uml_emulator_request_stop()`
   restores first, since a held thread cannot see a stop.
 - **Failure.** A restore that cannot bring every page back verified wakes
-  nothing, releases nothing and ends the process with a diagnostic, so the next
-  launch boots the guest again and Kernarium reports the restart notice. Memory a
-  guest ran on while part of it was missing would be corrupt.
+  nothing and ends the process with a diagnostic, so the next launch boots the
+  guest again and Kernarium reports the restart notice.
 
 A quiesce whose guest did not confirm its suspend, a guest without a console,
 and a guest kept running (Picture in Picture, the job) never hibernate. A
@@ -651,15 +607,13 @@ Test suites and workflows are in [`testing.md`](testing.md).
 `architecture-audit` checks the CMake File API graph, dependency cycles,
 implementation includes, source ownership, and test registration. Only a
 darwin/ source's owner compiles it: no other CMake file and no Xcode project
-names one. Xcode, not CMake, compiles the sources of Andarium/ and the
-GuestHost/ folder the apps share, and the C-source, implementation-include,
-test-registration, compile-definition, `cd` and x18 rules cover them as they
-cover Kernarium/. No compile definition names a source or build directory. No
-host source under darwin/, Kernarium/, Andarium/ or GuestHost/ names x18 outside
-a comment, because Darwin clears that platform register when it interrupts a
-thread; `arm64-emitted-registers` and `x86-64-jit-emitted-registers` hold the
-emitted code to the same rule. The audit does not prove performance, generated
-code shape, a kernel boot, or guest behavior.
+names one, and Xcode, not CMake, compiles the sources of Andarium/ and
+GuestHost/. No host source under darwin/, Kernarium/, Andarium/ or GuestHost/
+names x18 outside a comment, because Darwin clears that platform register when it
+interrupts a thread (`arm64-emitted-registers` and
+`x86-64-jit-emitted-registers` hold emitted code to the same rule). The audit
+does not prove performance, generated code shape, a kernel boot, or guest
+behavior.
 
 The host/kernel ABI source is [`../kernel/common/abi`](../kernel/common/abi/).
 Version, fingerprint, generated-copy, layout, and import checks fail closed on
