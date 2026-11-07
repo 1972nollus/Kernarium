@@ -131,6 +131,14 @@ everything that exists for automation or only pretends:
   preset, packaged with `package-ios-frameworks.sh --app-store --runtimes
   android`; [`Kernarium/README.md`](../Kernarium/README.md#automation-runs)).
 - It is not offered to Macs, and its Archive action uses it.
+- It refuses an embedded artifact that is behind the archived commit: a build
+  phase runs [`scripts/check-embedded-artifacts.py`](../scripts/check-embedded-artifacts.py),
+  which compares the accepted Android release and kernel descriptors with the
+  commit's inputs, and the staged and packaged system and runtime with the
+  descriptors, and fails naming the changed paths and commits. A release that
+  records no input trees, a dirty input, or a staged or packaged artifact that is
+  not the accepted one stops the build; only the user decides to ship pending
+  changes, by naming the release ID in `PENDING_INPUTS_DECISION`.
 - Its last build phase runs `scripts/check-app-store-bundle.py`, which fails the
   build on a missing Info.plist key, an environment knob, a symbol or log text
   of the debugging and automation support, a test bundle or XCTest framework, a

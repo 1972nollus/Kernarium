@@ -433,10 +433,13 @@ the list. An object ID follows content, so it survives a history rewrite and a
 builder that works from an exported snapshot; the publisher takes it from the
 clean checkout it runs in. The accepted descriptor repeats the IDs
 (`LINEAGE24_ACCEPTED_INPUT_TREES`), and `install-release.py --print-acceptance`
-prints the whole descriptor for a candidate. Verifier-only tools, documentation
-and tests are excluded, and a tracked file under this directory that the list
-does not classify fails `lineage24-release-inputs`. A release of schema 6
-predates the IDs and records none.
+prints the whole descriptor for a candidate. The AppStore configuration of
+Andarium compares them with the commit it archives
+([`scripts/check-embedded-artifacts.py`](../../scripts/check-embedded-artifacts.py)).
+Verifier-only tools, documentation and tests are excluded, and a tracked file
+under this directory that the list does not classify fails
+`lineage24-release-inputs`. A release of schema 6 predates the IDs and records
+none, so the check refuses it as unverifiable.
 
 After copying a reviewed candidate to the workstation, install it with:
 

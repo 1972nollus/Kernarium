@@ -271,6 +271,15 @@ kernel must not rebuild or rename the rootfs release or invalidate its
 persistent disk. Apple products validate the whole selected bundle and derive
 paths from its manifest; they do not inspect source or Kbuild state.
 
+A release build of an application also checks the descriptor against the commit
+it archives
+([`scripts/check-embedded-artifacts.py`](../../scripts/check-embedded-artifacts.py)):
+the tracked `UML_KERNEL_FINAL_TREE` of the line (and of the x86_64 slice) must
+equal the descriptor's final tree, which covers every patch, and the kernel in
+the packaged runtime must be the descriptor's release and hold every symbol the
+configuration fragments request. The manifest records no identity for the
+configuration, so a symbol removed from a fragment is not caught.
+
 ## Toolchain
 
 `build/toolchain/darwin.env` owns the portable compiler and linker defaults and

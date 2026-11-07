@@ -78,6 +78,16 @@
           "script": "\"$SRCROOT/../Kernarium/scripts/embed-device-framework.sh\" \"$SRCROOT/../.build/kernarium-xcframeworks/KosmicKrisp.xcframework\"\n",
         }, {
           "kind": "script",
+          "name": "Check embedded artifacts",
+          "run-on-every-build": true,
+          "shell": "/bin/sh",
+          "script": [
+            "[ \"$CONFIGURATION\" = AppStore ] || exit 0",
+            "/usr/bin/env python3 -B \"$SRCROOT/../scripts/check-embedded-artifacts.py\" --app \"$TARGET_BUILD_DIR/$WRAPPER_NAME\" --android-release --kernel android",
+            "",
+          ],
+        }, {
+          "kind": "script",
           "name": "Check App Store bundle",
           "run-on-every-build": true,
           "shell": "/bin/sh",
