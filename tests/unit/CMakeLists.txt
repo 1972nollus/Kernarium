@@ -24,6 +24,7 @@ add_subdirectory(mconsole)
 add_subdirectory(kernarium)
 # Swift package tests need the macOS host toolchain, not an iOS configure.
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    add_subdirectory(guesthost)
     add_subdirectory(andarium)
 endif()
 add_subdirectory(input/vnc)

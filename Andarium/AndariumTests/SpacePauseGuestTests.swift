@@ -13,7 +13,8 @@ import UIKit
 /// is filled. It deletes only that isolated test guest.
 ///
 /// The run is paused when the number falls below the threshold, and what
-/// proves it is the guest's own CPU time standing still; Resume refuses
+/// proves it is the guest's own CPU time standing still, with no image of
+/// its RAM written to the temporary directory; Resume refuses
 /// while the number is short and wakes the guest once it is not, which
 /// answers adb again and whose CPU time runs on; Shut down wakes it and
 /// ends the run at Home.
@@ -43,7 +44,7 @@ struct SpacePauseGuestTests {
         }
         defer { try? FileManager.default.removeItem(at: directory) }
         // Just above the pause: the space is read every few seconds.
-        let free = FreeSpace(Limits.resumeAtBytes + 100 * mib)
+        let free = FreeSpace(RunSpace.resumeAtBytes + 100 * mib)
         let entry = AppEntry.fromArguments()
         let model = entry.makeModel(freeSpace: { free.value })
         try #require(model.alert == nil, "\(String(describing: model.alert))")
@@ -77,10 +78,19 @@ struct SpacePauseGuestTests {
         print("SPACE_PAUSE: guest CPU while running: \(running / 1_000_000) ms in 3 s")
         try #require(running > 200_000_000, "the guest's CPU time does not run: \(running) ns")
 
-        // The device runs short: the guest pauses at the next reading.
+        // The device runs short: the guest pauses at the next reading, and the
+        // screen offers Resume once the suspension is confirmed.
+        let temporaryBefore = Self.temporaryBytes()
         free.value = 900 * mib
         try #require(await eventually(.seconds(90)) { model.spacePause != nil }, "no pause: \(model.runReport)")
+        try #require(await eventually(.seconds(60)) { model.spacePause?.stage == .paused },
+            "the pause was not confirmed: \(String(describing: model.spacePause))")
         #expect(model.spacePause == SpacePause(freeBytes: 900 * mib))
+        // The device is short of space: no image of the guest's RAM went to it.
+        let temporaryAfter = Self.temporaryBytes()
+        let written = temporaryAfter > temporaryBefore ? temporaryAfter - temporaryBefore : 0
+        print("SPACE_PAUSE: the temporary directory grew by \(written / 1_000_000) MB")
+        #expect(written < 64 * mib, "the pause wrote \(written) bytes to the temporary directory")
         #expect(model.phase == .running(.normal))
         try await expectStopped(driver, "paused")
 
@@ -136,6 +146,19 @@ struct SpacePauseGuestTests {
             try? await Task.sleep(for: .milliseconds(200))
         }
         return condition()
+    }
+
+    /// What the regular files of the temporary directory take now.
+    private static func temporaryBytes() -> UInt64 {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileAllocatedSizeKey]
+        guard let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys) else { return 0 }
+        var total: UInt64 = 0
+        for case let url as URL in files {
+            guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
+            total += UInt64(values.fileAllocatedSize ?? 0)
+        }
+        return total
     }
 
     /// The CPU time the guest's vCPU threads used over `interval`.

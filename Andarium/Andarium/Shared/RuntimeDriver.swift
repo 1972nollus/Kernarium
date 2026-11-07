@@ -92,9 +92,14 @@ protocol RuntimeDriver: AnyObject {
     /// from; the guest does not start.
     func restoreUpdate() throws
     /// The person resumes a guest paused for want of space. Reads the space
-    /// again and wakes the guest when it is at least `Limits.resumeAtBytes`;
+    /// again and wakes the guest when it is at least `RunSpace.resumeAtBytes`;
     /// returns whether it did. The guest stays paused otherwise.
     func resumeAfterSpacePause() async -> Bool
+    /// The person asks to check again over a guest that could not be paused:
+    /// reads the space, and returns true when there is enough for the guest
+    /// to run on; otherwise pauses the guest again, and the model hears how
+    /// that came out.
+    func checkSpaceAfterPauseFailed() async -> Bool
     /// The person shuts down a guest paused for want of space: wakes it
     /// without watching the space again and asks Android to power off, which
     /// ends the run. Throws when Android cannot be asked; the guest runs on

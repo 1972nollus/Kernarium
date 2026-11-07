@@ -106,7 +106,8 @@ struct RootView: View {
             if let pause = model.spacePause {
                 LowSpaceOverlay(
                     pause: pause, resume: { model.resumeAfterSpacePause() },
-                    shutDown: { model.shutDownAfterSpacePause() })
+                    shutDown: { model.shutDownAfterSpacePause() },
+                    checkAgain: { model.checkSpaceAfterPauseFailed() })
             }
         }
         // Toggles take the jade accent too, not the system green.

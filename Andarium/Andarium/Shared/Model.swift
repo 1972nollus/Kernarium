@@ -357,21 +357,56 @@ final class AppModel {
 
     // MARK: Low space
 
-    /// The runtime paused the guest: the device is down to `freeBytes`. What
-    /// needs the guest is let go (an operation, ADB over network), the
-    /// session closes its Settings, and the screen over it offers Resume and
-    /// Shut down.
-    func guestPausedForSpace(freeBytes: UInt64) {
+    /// The device is down to `freeBytes` and the runtime is pausing the guest.
+    /// What needs the guest is let go (an operation, ADB over network), the
+    /// session closes its Settings, and the screen over it says Android is
+    /// being paused, offering nothing until it is.
+    func guestPausingForSpace(freeBytes: UInt64) {
         host.freeStorageBytes = freeBytes
         abandonOperation()
         stopAdbOverNetwork()
-        spacePause = SpacePause(freeBytes: freeBytes)
+        spacePause = SpacePause(freeBytes: freeBytes, stage: .pausing)
+    }
+
+    /// The guest holds still: the screen offers Resume and Shut down.
+    func guestPausedForSpace() {
+        guard var pause = spacePause, pause.stage == .pausing else { return }
+        pause.stage = .paused
+        pause.freeBytes = host.freeStorageBytes
+        spacePause = pause
+    }
+
+    /// The guest did not hold still after every attempt and runs on: the
+    /// screen says so, and offers Shut down and a new attempt.
+    func guestNotPausedForSpace() {
+        guard var pause = spacePause, pause.stage == .pausing else { return }
+        pause.stage = .notPaused
+        pause.freeBytes = host.freeStorageBytes
+        spacePause = pause
+    }
+
+    /// Check again, over a guest that did not pause: the driver reads the
+    /// space and pauses the guest again, or lets the screen go when there is
+    /// room for the guest to run on.
+    func checkSpaceAfterPauseFailed() {
+        guard var pause = spacePause, pause.stage == .notPaused, pause.working == nil else { return }
+        guard let driver else {
+            spacePause = nil
+            return
+        }
+        pause.stage = .pausing
+        spacePause = pause
+        Task { [weak self] in
+            let enough = await driver.checkSpaceAfterPauseFailed()
+            guard let self, self.spacePause?.stage == .pausing, enough else { return }
+            self.spacePause = nil
+        }
     }
 
     /// Resume: the driver reads the space again and wakes the guest when
     /// there is enough; otherwise the screen says what is free now.
     func resumeAfterSpacePause() {
-        guard var pause = spacePause, pause.working == nil else { return }
+        guard var pause = spacePause, pause.stage == .paused, pause.working == nil else { return }
         guard let driver else {
             // The preview plays the pause away.
             spacePause = nil
@@ -397,7 +432,7 @@ final class AppModel {
     /// Shut down: Android is woken and asked to power off, which writes what
     /// it has and ends the run. The run ending takes the screen away.
     func shutDownAfterSpacePause() {
-        guard var pause = spacePause, pause.working == nil else { return }
+        guard var pause = spacePause, pause.stage != .pausing, pause.working == nil else { return }
         guard let driver else {
             powerOff()
             return

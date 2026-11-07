@@ -89,6 +89,10 @@ final class LiveRuntime: RuntimeDriver {
     /// The person asked to shut a guest paused for space down: Android is
     /// not asked anything else, and the space is not watched, as it goes.
     private var shuttingDown = false
+    /// The screen over the session says the space is short, whether Android
+    /// is paused or still runs behind it: the space is not watched, and the
+    /// guest is asked nothing, until the person answers it.
+    private var spaceAlertOpen = false
     private var observers: [NSObjectProtocol] = []
 
     private var pending: PendingRun?
@@ -109,7 +113,9 @@ final class LiveRuntime: RuntimeDriver {
         self.storage = storage
         self.keyStore = keyStore
         self.freeSpace = freeSpace
-        pause = PauseController(effects: LivePauseEffects(), marker: marker, runClock: clock)
+        let effects = LivePauseEffects()
+        pause = PauseController(effects: effects, marker: marker, runClock: clock)
+        effects.statistics = { [weak self] in await self?.readStatistics() }
         model.microphone = MicrophoneController(model: model, source: SystemMicrophoneSource()) {
             // The runtime is told the setting and never asks the system
             // itself; a guest records silence while access is out of reach.
@@ -396,6 +402,7 @@ final class LiveRuntime: RuntimeDriver {
         // The boot that follows is another one: it ends an update only by
         // reaching sys.boot_completed itself.
         reachedBootCompleted = false
+        spaceAlertOpen = false
         motion.stop()
         updateGuestRotation()
         updateSpaceWatch()
@@ -412,6 +419,7 @@ final class LiveRuntime: RuntimeDriver {
         normalRun = false
         runActive = false
         shuttingDown = false
+        spaceAlertOpen = false
         motion.stop()
         updateGuestRotation()
         updateSpaceWatch()
@@ -591,8 +599,9 @@ final class LiveRuntime: RuntimeDriver {
     // MARK: Free space
 
     /// A guest paused for space, or going down after it, is asked nothing: a
-    /// request to it would wait, or fail as it goes.
-    private var holdsGuestStill: Bool { pause.isPausedForSpace || shuttingDown }
+    /// request to it would wait, or fail as it goes. Nor is one the screen
+    /// says the space is short for: the person decides what happens to it.
+    private var holdsGuestStill: Bool { pause.isPausedForSpace || shuttingDown || spaceAlertOpen }
 
     /// The space is watched while Android runs a normal start it has booted
     /// and the application holds it in the foreground: before it has booted
@@ -634,11 +643,44 @@ final class LiveRuntime: RuntimeDriver {
     }
 
     private func pauseForSpace(freeBytes: UInt64) {
-        guard pause.pauseForSpace() else { return }
-        print("Andarium: the guest is paused: \(Formats.size(bytes: freeBytes)) of the device's space is free")
+        guard pause.beginSpacePause() else { return }
+        print("Andarium: the guest is pausing: \(Formats.size(bytes: freeBytes)) of the device's space is free")
+        spaceAlertOpen = true
         motion.stop()
         updateGuestRotation()
-        model?.guestPausedForSpace(freeBytes: freeBytes)
+        model?.guestPausingForSpace(freeBytes: freeBytes)
+        Task { [weak self] in await self?.settleSpacePause() }
+    }
+
+    /// Suspends the guest and says what came of it: the screen offers Resume
+    /// over a guest that holds still, and Shut down over one that did not.
+    private func settleSpacePause() async {
+        guard let outcome = await pause.settleSpacePause() else { return }
+        switch outcome {
+        case .held:
+            print("Andarium: the guest is paused")
+            model?.guestPausedForSpace()
+        case .running:
+            print("Andarium: the guest could not be paused")
+            model?.guestNotPausedForSpace()
+        }
+    }
+
+    /// The person asks to check the space and pause again, over a guest that
+    /// did not pause. Returns whether there is enough space for it to run on,
+    /// which takes the screen away; otherwise the guest is paused again.
+    func checkSpaceAfterPauseFailed() async -> Bool {
+        let free = await readFreeSpace()
+        model?.host.freeStorageBytes = free
+        guard !RunSpace.allowsResume(freeBytes: free) else {
+            spaceAlertOpen = false
+            updateGuestRotation()
+            updateSpaceWatch()
+            return true
+        }
+        guard pause.beginSpacePause() else { return false }
+        await settleSpacePause()
+        return false
     }
 
     /// One reading, off the main thread: the system works the figure out
@@ -655,6 +697,7 @@ final class LiveRuntime: RuntimeDriver {
         await wakeGuest()
         guard !pause.isPausedForSpace else { return false }
         print("Andarium: the guest resumes: \(Formats.size(bytes: free)) of the device's space is free")
+        spaceAlertOpen = false
         updateGuestRotation()
         updateSpaceWatch()
         return true
@@ -681,6 +724,7 @@ final class LiveRuntime: RuntimeDriver {
             if runActive { try? await waitForRunToEnd(.seconds(5)) }
             guard runActive else { return }
             shuttingDown = false
+            spaceAlertOpen = false
             updateGuestRotation()
             updateSpaceWatch()
             throw error
@@ -801,6 +845,28 @@ final class LivePauseEffects: PauseEffects {
             kernarium_runtime_loader_resume()
             Task { @MainActor in finished() }
         }
+    }
+
+    /// Writes the guest's storage back and suspends it with its RAM left in
+    /// the process: the device is short of the space an image of it takes.
+    func suspendGuestResident(reason: String, finished: @escaping @MainActor () -> Void) {
+        let assertion = PauseTaskAssertion(named: "guest-sync")
+        queue.async {
+            let unflushed = kernarium_runtime_loader_quiesce_resident()
+            Task { @MainActor in
+                print("Andarium: guest storage settled on \(reason), RAM kept (\(unflushed) unflushed)")
+                assertion.end()
+                finished()
+            }
+        }
+    }
+
+    /// Set by the runtime that owns this: where the guest's statistics come
+    /// from, on their own queue.
+    var statistics: (@MainActor () async -> StatsSample?)?
+
+    func guestProcessorTime() async -> UInt64? {
+        await statistics?()?.processorTimeNanoseconds
     }
 
     /// Writes the guest's storage back, and suspends the guest when asked,

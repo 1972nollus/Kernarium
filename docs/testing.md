@@ -264,6 +264,8 @@ automation host.
 
 ### Andarium
 
+`guest-host-core` (unit, macOS) runs the Swift package `GuestHost/Core`, the
+free-space thresholds, suspension check and pause both applications share, and
 `andarium-core` (unit, macOS) runs the Swift package `Andarium/AndariumCore`
 with `swift test`; `andarium-motion-protocol` (unit), `andarium-stage-system-image`
 and `andarium-capture-screens` (tooling) cover the motion wire format, system
@@ -329,9 +331,11 @@ minutes) and read its console (`xcrun devicectl device process launch
 rendering, and no `virtio_gpu` response errors, Metal errors, RCU stalls or
 watchdog lines; on a device it must also show guest RAM hibernated and
 restored. A hold count of `0` means a request was still running after a second:
-a finding, not a pass. Andarium's low-space pause adds a cycle: pause the
-guest, send the application to the background and back, then Resume; the
-guest must stay suspended until Resume, then wake as above. The unit tests
+a finding, not a pass. The low-space pause adds a cycle: pause the guest
+(on a device no hibernation image appears in the temporary directory, and the
+guest's processor time stands still), send the application to the background
+and back, then Resume; the guest must stay suspended and resident until
+Resume, then wake as above. The unit tests
 (`runtime-thread-fence`, `runtime-guest-hibernation`, `emulator-lifecycle`, `memory-guest-ram-image`)
 cover the order on any host, and `--guest-hibernation=on` forces the same code
 on a Mac. The Picture in Picture and keep-running-job modes

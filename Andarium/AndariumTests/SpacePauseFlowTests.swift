@@ -30,6 +30,12 @@ struct SpacePauseFlowTests {
         return (model, driver)
     }
 
+    /// The guest paused and holding still, as the runtime reports it.
+    private func pause(_ model: AppModel, freeBytes: UInt64) {
+        model.guestPausingForSpace(freeBytes: freeBytes)
+        model.guestPausedForSpace()
+    }
+
     private func eventually(_ condition: () -> Bool) async -> Bool {
         let deadline = ContinuousClock.now + .seconds(10)
         while ContinuousClock.now < deadline {
@@ -52,7 +58,7 @@ struct SpacePauseFlowTests {
         model.createBugReport()
         #expect(model.busy != nil)
 
-        model.guestPausedForSpace(freeBytes: 800 << 20)
+        pause(model, freeBytes: 800 << 20)
 
         #expect(model.spacePause == SpacePause(freeBytes: 800 << 20))
         #expect(model.host.freeStorageBytes == 800 << 20)
@@ -62,17 +68,74 @@ struct SpacePauseFlowTests {
         #expect(model.busy == nil)
     }
 
+    @Test func aGuestBeingPausedOffersNothingYet() async {
+        let (model, driver) = running()
+        model.guestPausingForSpace(freeBytes: 800 << 20)
+        #expect(model.spacePause?.stage == .pausing)
+        model.resumeAfterSpacePause()
+        model.shutDownAfterSpacePause()
+        model.checkSpaceAfterPauseFailed()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(model.spacePause?.stage == .pausing && model.spacePause?.working == nil)
+        #expect(driver.spaceResumes == 0 && driver.spaceShutDowns == 0 && driver.spaceChecks == 0)
+        model.guestPausedForSpace()
+        #expect(model.spacePause?.stage == .paused)
+    }
+
+    @Test func aGuestThatDidNotPauseIsNeverResumedOnlyShutDownOrChecked() async {
+        let (model, driver) = running()
+        model.guestPausingForSpace(freeBytes: 800 << 20)
+        model.guestNotPausedForSpace()
+        #expect(model.spacePause?.stage == .notPaused)
+        #expect(model.spacePause?.title == "Android is still running")
+        model.resumeAfterSpacePause()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(driver.spaceResumes == 0)
+        #expect(model.spacePause?.working == nil)
+        // Shut down is offered: the guest is running and can be asked.
+        model.shutDownAfterSpacePause()
+        #expect(model.spacePause?.working == .shuttingDown)
+        #expect(await eventually { driver.spaceShutDowns == 1 })
+    }
+
+    @Test func checkingAgainWithRoomLetsTheScreenGo() async {
+        let (model, driver) = running()
+        model.guestPausingForSpace(freeBytes: 800 << 20)
+        model.guestNotPausedForSpace()
+        driver.checkAnswers = true
+        model.checkSpaceAfterPauseFailed()
+        #expect(model.spacePause?.stage == .pausing)
+        #expect(await eventually { model.spacePause == nil })
+        #expect(driver.spaceChecks == 1)
+    }
+
+    @Test func checkingAgainWithoutRoomPausesTheGuestAgainAndTheRuntimeSaysHow() async {
+        let (model, driver) = running()
+        model.guestPausingForSpace(freeBytes: 800 << 20)
+        model.guestNotPausedForSpace()
+        driver.checkAnswers = false
+        model.checkSpaceAfterPauseFailed()
+        #expect(await eventually { driver.spaceChecks == 1 })
+        // The screen waits for what the runtime reports of the new attempt.
+        #expect(model.spacePause?.stage == .pausing)
+        model.guestPausedForSpace()
+        #expect(model.spacePause?.stage == .paused)
+        // Nothing to check over a guest that holds still.
+        model.checkSpaceAfterPauseFailed()
+        #expect(driver.spaceChecks == 1)
+    }
+
     @Test func aPausedGuestIsNotAskedItsUsbDebugging() async {
         let (model, driver) = running()
         driver.debugging = false
-        model.guestPausedForSpace(freeBytes: 800 << 20)
+        pause(model, freeBytes: 800 << 20)
         await model.refreshUsbDebugging()
         #expect(model.session.usbDebugging == nil)
     }
 
     @Test func resumeWithRoomClearsThePause() async {
         let (model, driver) = running()
-        model.guestPausedForSpace(freeBytes: 800 << 20)
+        pause(model, freeBytes: 800 << 20)
         driver.resumeAnswers = true
         model.resumeAfterSpacePause()
         #expect(model.spacePause?.working == .resuming)
@@ -82,7 +145,7 @@ struct SpacePauseFlowTests {
 
     @Test func resumeWithoutRoomStaysPausedAndStatesTheSpaceNow() async {
         let (model, driver) = running()
-        model.guestPausedForSpace(freeBytes: 800 << 20)
+        pause(model, freeBytes: 800 << 20)
         driver.resumeAnswers = false
         // The driver reads the space again and leaves it with the model.
         model.host.freeStorageBytes = 1_200 << 20
@@ -98,7 +161,7 @@ struct SpacePauseFlowTests {
 
     @Test func aSecondResumeWhileOneIsUnderWayIsIgnored() async {
         let (model, driver) = running()
-        model.guestPausedForSpace(freeBytes: 800 << 20)
+        pause(model, freeBytes: 800 << 20)
         model.resumeAfterSpacePause()
         model.resumeAfterSpacePause()
         model.shutDownAfterSpacePause()
@@ -109,7 +172,7 @@ struct SpacePauseFlowTests {
 
     @Test func shutDownAsksTheRuntimeAndWaitsForTheRunToEnd() async {
         let (model, driver) = running()
-        model.guestPausedForSpace(freeBytes: 800 << 20)
+        pause(model, freeBytes: 800 << 20)
         model.shutDownAfterSpacePause()
         #expect(model.spacePause?.working == .shuttingDown)
         #expect(await eventually { driver.spaceShutDowns == 1 })
@@ -123,7 +186,7 @@ struct SpacePauseFlowTests {
     @Test func aShutDownThatFailsLeavesAnAlertAndNoPause() async {
         let (model, driver) = running()
         driver.shutDownError = AdbFailure(message: "Nothing answered.")
-        model.guestPausedForSpace(freeBytes: 800 << 20)
+        pause(model, freeBytes: 800 << 20)
         model.shutDownAfterSpacePause()
         #expect(await eventually { model.alert != nil })
         #expect(model.alert?.title == "Android could not be shut down")
@@ -134,7 +197,7 @@ struct SpacePauseFlowTests {
 
     @Test func aGuestThatPausesAgainKeepsItsNewScreen() async {
         let (model, driver) = running()
-        model.guestPausedForSpace(freeBytes: 800 << 20)
+        pause(model, freeBytes: 800 << 20)
         driver.resumeAnswers = true
         model.resumeAfterSpacePause()
         // The runtime resumed and paused again before the model heard back.
@@ -145,10 +208,10 @@ struct SpacePauseFlowTests {
 
     @Test func theRunEndingOrRestartingTakesThePauseAway() {
         let (model, _) = running()
-        model.guestPausedForSpace(freeBytes: 800 << 20)
+        pause(model, freeBytes: 800 << 20)
         model.restart()
         #expect(model.spacePause == nil)
-        model.guestPausedForSpace(freeBytes: 800 << 20)
+        pause(model, freeBytes: 800 << 20)
         model.runEnded(RunEnd(result: -11), uptimeSeconds: 10)
         #expect(model.spacePause == nil)
     }
@@ -162,7 +225,7 @@ struct SpacePauseFlowTests {
             capabilities: .device, createRequirementBytes: 1
         )
         model.phase = .running(.normal)
-        model.guestPausedForSpace(freeBytes: 800 << 20)
+        pause(model, freeBytes: 800 << 20)
         model.resumeAfterSpacePause()
         #expect(model.spacePause == nil)
     }

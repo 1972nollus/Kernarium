@@ -80,6 +80,14 @@ final class StubDriver: RuntimeDriver {
         spaceResumes += 1
         return resumeAnswers
     }
+    /// What checking again over a guest that did not pause answers: whether
+    /// the space is enough now.
+    var checkAnswers = false
+    private(set) var spaceChecks = 0
+    func checkSpaceAfterPauseFailed() async -> Bool {
+        spaceChecks += 1
+        return checkAnswers
+    }
     var shutDownError: Error?
     private(set) var spaceShutDowns = 0
     func shutDownAfterSpacePause() async throws {

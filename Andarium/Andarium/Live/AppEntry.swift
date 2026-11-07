@@ -125,8 +125,18 @@ struct AppEntry {
             print("Andarium: the previous process ended out of the foreground; the guest starts again from boot")
         }
         if carried != nil {
+            #if APP_STORE
+            let watched = freeSpace
+            #else
+            // A harness launch of an isolated instance may state the free space.
+            let watched = launch.instance == nil
+                ? freeSpace : Self.harnessFreeSpace(in: locations.directory, fallback: freeSpace)
+            if launch.instance != nil {
+                Self.answerSpaceScreenFromHarness(model: model, directory: locations.directory)
+            }
+            #endif
             let runtime = LiveRuntime(
-                model: model, storage: storage, marker: marker, keyStore: adbKeyStore, freeSpace: freeSpace)
+                model: model, storage: storage, marker: marker, keyStore: adbKeyStore, freeSpace: watched)
             model.driver = runtime
             model.refreshPlan()
             // Access the person took away while Andarium was closed takes the
