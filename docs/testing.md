@@ -547,7 +547,26 @@ A behaviour that one program checks inside the guest runs through
 `python3`, and a `.cpp` probe is built in the guest with the registration's
 `--cxxflags`. The probe's exit status is its failure count, and the test also
 fails on a console line that the registration's `--console-failure` pattern
-matches.
+matches. `--probe-input` runs a host executable once before the guest boots and
+installs its output beside the probe as `probe-input`, for a probe whose data a
+host model produces.
+
+`guest-touch-cancel` checks what the host's touchscreen model sends when it
+cancels a contact. The test-support executable `uml-touchscreen-reports`
+prints the Virtio touchscreen's capabilities, read from the device's own
+configuration, and the reports `Touchscreen` sends for a few contact
+sequences; the probe (`tests/integration/input/touch_cancel_probe.py`) builds a
+uinput device with those capabilities in the integration image, replays the
+reports and reads them back from evdev and through the image's libinput. A
+cancel must reach evdev as written (the palm in one report with the tracking ID
+kept, the lift in the next) and libinput as a cancelled touch with no touch up,
+also for one finger of two while the other moves on and lifts, and a slot that
+held a palm must take a finger again. uinput and the virtio-input driver both
+register through `input_mt_init_slots`, so the guest's input core treats the
+two alike; the macOS emulator attaches no Virtio touchscreen. Android's input
+reader is checked by the opt-in Andarium tests below. X11 has no per-touch
+cancel, so an X11 client under Xwayland is not covered
+([Kernarium](../Kernarium/README.md#devices-and-display)).
 
 A guest that ends behind a closed GPU request gate must still be able to stop:
 `gpu-service-fd-ownership` completes the requests of a held gate with their
@@ -914,9 +933,16 @@ with mock data, and `Andarium` is the device application
 hosted in `Andarium` and runs on an iPad, in the iOS Simulator and, as an iPad
 app, on an Apple silicon Mac (`xcodebuild test -scheme Andarium`); its
 `MultitouchTests` cover independent finger paths and slots, cancellation,
-viewport crossings, the ten-contact limit and releasing all contacts. The host
-`virtio-input-protocol` test covers the advertised multitouch axes, tracking-ID
-lifetimes and wraparound, and legacy primary-finger coordinates. Its
+viewport crossings, the ten-contact limit and cancelling all contacts. The
+touch path itself (a cancel ends the contact where it was, a contact off the
+display has nothing to cancel, and ending or clipping a contact stays a
+release) is covered by `KernariumTests`, which runs in the iOS Simulator
+(`Kernarium/scripts/run-ios-simulator-tests.sh`). The host
+`virtio-input-protocol` test covers the advertised multitouch axes and tool
+type, tracking-ID lifetimes and wraparound, a finger tool type before every
+new tracking ID, a cancel's two reports for any slot (and none for a slot
+without a contact), legacy primary-finger coordinates and the reports' order on
+the device's event queue. Its
 `UpdateFlowTests` drive
 the update, interrupted-update (Start retries, Restore, Erase) and blocked-start flows
 against a stub runtime, including a clean shutdown returning Home with a fresh
@@ -965,7 +991,10 @@ application's own client and authorization on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1
 with `TEST_RUNNER_ANDARIUM_START=normal`): a shell command, the multitouch
 features Android advertises to applications, two runtime touch
 contacts reaching Android's input reader through movement and independent
-release, the USB debugging setting and the channel with it on and off, a
+release, a contact the runtime cancels (`getevent -p` shows the tool type
+axis; a raw read of the touchscreen node shows the palm report and then the
+tracking ID ending, InputReader logs the palm cancel, and `dumpsys input` shows
+no pointer; with two contacts the other stays down), the USB debugging setting and the channel with it on and off, a
 computer's connection through the
 bridge, a bug report (a zip above 1 MB, and its time), a cancel, a system APK
 pulled from the image and installed as an update (and its time), the image's

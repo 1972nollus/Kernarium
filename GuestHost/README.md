@@ -58,9 +58,17 @@ a separate checkout and needs its own copy to build for a device.
 The display forwards up to ten simultaneous UIKit contacts through the runtime
 API. Each finger keeps an independent path and slot until it ends or is
 cancelled. Clipping a path to the visible guest rectangle releases and restarts
-only that contact. Display mode changes and removal of the view release every
-contact. The Virtio device uses Linux type-B slots and tracking IDs; its legacy
-`ABS_X/Y` coordinates follow the primary finger until that finger lifts.
+only that contact: a finger that leaves the display lifts, as it did. A contact
+that UIKit cancels (`touchesCancelled`, as when the system takes a touch over
+for a gesture), and every contact when the display mode changes or the view
+leaves its window, is cancelled in the guest instead of released
+(`GuestTouchPath.cancel()` and `GuestTouchContacts.cancelAll()`, which call
+the runtime's `cancel_touch`): the guest sees the contact turn into a palm and
+then lift, so no tap or click follows. A contact with nothing in the guest,
+because it began or has been clipped outside the display, has nothing to
+cancel. The Virtio device uses Linux type-B slots and tracking IDs, sets a
+finger tool type before every new tracking ID, and its legacy `ABS_X/Y`
+coordinates follow the primary finger until that finger lifts.
 
 - A file here depends only on the system frameworks, the runtime header, and
   the prebuilt `LibZstd` XCFramework. It names neither application's views,

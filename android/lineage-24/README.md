@@ -957,7 +957,13 @@ so touch stays exact at every size the display takes.
 The iOS host's Virtio touchscreen supports ten independent contacts using Linux
 type-B slots and tracking IDs. The product declares the multitouch, distinct
 multitouch and jazzhand features, and target-files verification requires them.
-VNC remains a single pointer; the recovery UI also accepts that input. Recovery
+A touch the host cancels reaches Android as a palm tool type (`ABS_MT_TOOL_TYPE`,
+which the touchscreen advertises) in one report and the lift in the next:
+`InputReader` cancels the gesture, as it does for a palm on any touchscreen, and
+the image needs no change for it. VNC remains a single pointer; the recovery UI
+also accepts that input. Recovery reads one contact and ignores the tool type,
+so a cancelled touch there ends as a release: a still tap selects the menu item
+under it, and a swipe does not. Recovery
 reads the host-supplied display density for its layout and scales its
 fonts, localized text and graphic assets once at load time. Text stays readable
 at Retina resolution throughout the Recovery screens.
