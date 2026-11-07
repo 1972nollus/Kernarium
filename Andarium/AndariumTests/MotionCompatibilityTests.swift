@@ -16,6 +16,10 @@ import Testing
 /// as long as the connection holds. `ondemand` is an image whose service
 /// sends them: a frame arrives on connect, and the sensors the guest does not
 /// use are not read.
+///
+/// `ANDARIUM_MOTION_DIAG=1` also prints which of the guest's own users keep a
+/// sensor active (`dumpsys sensorservice`) with host-driven and with free
+/// rotation.
 @Suite(.serialized)
 @MainActor
 struct MotionCompatibilityTests {

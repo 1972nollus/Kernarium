@@ -8,6 +8,11 @@ import Testing
 /// The host side of the guest's `MotionDemand` frames: the wire format, the
 /// state machine that turns them into what the device's sensors do, and the
 /// session that drives a fake device through a fake guest connection.
+///
+/// The session's cases: a guest that never sends a frame is read continuously,
+/// sensors are started, stopped and retimed as the guest says, the switch is
+/// off, the guest is in the background, a new mounting, a lost connection and
+/// a failing device.
 struct MotionDemandTests {
     // Independent wire fixtures, little endian.
     private func frame(mask: UInt8, accelerometer: [UInt8], gyroscope: [UInt8]) -> Data {

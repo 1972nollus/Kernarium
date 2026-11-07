@@ -7,6 +7,9 @@ import Testing
 import UIKit
 @testable import Andarium
 
+/// The real scene root's session lock and deferred edges, and the built
+/// bundle's portrait-only iPhone declaration. Only a device shows how the
+/// system answers the swipes (docs/testing.md, "Edge gestures").
 @MainActor
 @Suite(.serialized)
 struct SessionOrientationHostingTests {

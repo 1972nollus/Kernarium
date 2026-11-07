@@ -9,6 +9,9 @@ import Testing
 /// result is a share sheet, a row or an alert. A stub stands for the runtime.
 /// The tests share the staging folder, which one of them sweeps, so they run
 /// one at a time.
+///
+/// The motion toggle persists and reaches the runtime driver
+/// (`motionSensorsAreOnUntilChosenOffAndTheChoiceIsPersisted`).
 @Suite(.serialized)
 @MainActor
 struct AndroidOperationTests {

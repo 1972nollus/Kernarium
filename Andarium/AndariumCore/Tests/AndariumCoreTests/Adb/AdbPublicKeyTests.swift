@@ -6,6 +6,8 @@ import Testing
 
 @testable import AndariumCore
 
+/// The key encoder against moduli and the text `adb keygen` wrote for them
+/// (AdbKeyVectors.swift).
 struct AdbPublicKeyTests {
     /// PKCS#1 `RSAPublicKey` DER for a big-endian modulus and an exponent.
     private func der(modulus: [UInt8], exponent: [UInt8] = [1, 0, 1]) -> Data {

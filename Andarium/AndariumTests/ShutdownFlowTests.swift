@@ -9,6 +9,21 @@ import UIKit
 /// Real guest sessions through the production Home and boot views. Runs alone
 /// with ANDARIUM_SHUTDOWN_TESTS=1 and ANDARIUM_GUEST_INSTANCE=shutdown-flow,
 /// without ANDARIUM_START. The ordinary guest directory is never opened.
+///
+/// `cleanPowerOffReturnsHomeAndAnUncleanEndRequiresRelaunch`: two clean
+/// power-offs each return Home, three boots reuse the app process, and a
+/// host-stopped third run stays failed until relaunch. It deletes only that
+/// isolated test guest. ANDARIUM_END_HOLD_SECONDS keeps the third run's End
+/// screen up for that long, for a look at it.
+///
+/// `cleanShutdownMemorySnapshots` (ANDARIUM_MEMORY_SNAPSHOTS=1) runs five clean
+/// boot/power-off cycles. It saves allocation totals, thread names and
+/// VM-region metadata (no memory contents) to the app's `tmp/ShutdownMemory/`
+/// before boot, while running, and immediately and ten seconds after each
+/// return Home. Each settled snapshot requires zero wired memory and zero
+/// dirty or swapped pages in the guest-domain and scratch heaps, and the
+/// retired guest display must also deallocate. The initial thirty-second pause
+/// allows Instruments Allocations and VM Tracker to attach.
 @MainActor
 struct ShutdownFlowTests {
     @Test(.timeLimit(.minutes(20)))

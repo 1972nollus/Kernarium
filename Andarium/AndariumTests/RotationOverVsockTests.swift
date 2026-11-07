@@ -6,6 +6,12 @@ import Testing
 import UIKit
 @testable import Andarium
 
+/// Opt-in (`ANDARIUM_ROTATION_TESTS=1`, selecting only this suite): boots
+/// Android and verifies that the host override preserves and restores locked
+/// and unset guest rotation preferences. With `ANDARIUM_ROTATION_VISUAL=1` a
+/// hands-on iPad check also covers rotation with Control Center's lock off and
+/// transitions between a full-screen scene and a window; pure policy tests do
+/// not establish the visible result.
 @MainActor
 struct RotationOverVsockTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["ANDARIUM_ROTATION_VISUAL"] == "1"), .timeLimit(.minutes(20)))

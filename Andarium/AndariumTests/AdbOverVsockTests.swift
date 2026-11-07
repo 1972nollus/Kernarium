@@ -15,6 +15,39 @@ import UIKit
 ///
 /// The application boots the guest as it launches; the tests wait for Android
 /// and use the key the application made for that boot.
+///
+/// It checks a shell command, the multitouch features Android advertises to
+/// applications, two runtime touch contacts reaching Android's input reader
+/// through movement and independent release, the USB debugging setting and the
+/// channel with it on and off, a computer's connection through the bridge, a
+/// bug report (a zip above 1 MB, and its time), a cancel, a system APK pulled
+/// from the image and installed as an update (and its time), the image's key
+/// rule (the application's key accepted whatever the debugging setting; a
+/// foreign key refused with no prompt and nothing queued while debugging is
+/// off, and prompting while it is on), and the key after Erase Guest. The tests
+/// read the key the application made for the boot, again on every attempt until
+/// adbd accepts it, and never make one: a key made before an `ANDARIUM_ERASE=1`
+/// launch's erase deletes it would be one the guest was not given.
+///
+/// `aPromptWhoseDialogDiedIsRaisedAgain` kills SystemUI while the dialog is up
+/// and waits for the dialog to come back without a new offer: stock Android
+/// leaves adbd's prompt pending, so it needs an image whose framework starts
+/// the dialog again. `aPromptWhoseDialogIsUpIsNotRaisedTwice` holds a dialog
+/// up for 50 s and requires that the framework's look leaves it alone (one
+/// activity record throughout). Both run only with
+/// `ANDARIUM_ADB_REARM_TESTS=1`.
+///
+/// `androidReportsExactStorageSizes` (`ANDARIUM_STORAGE_TESTS=1`) installs the
+/// storage test APK through the application's client, sets the guest's
+/// `hidden_api_policy` to 1 for the run (the test calls one hidden API) and
+/// restores it, runs `StorageAccountingTest#exactFilesystemBytes`, which checks
+/// both primary-storage helpers and `StorageStatsManager` against the mounted
+/// filesystem sizes, removes the APK and powers Android off cleanly.
+/// `storageSettingsShowNonnegativeUsage` opens Android's internal Storage
+/// settings, waits for the summary, checks for negative displayed values while
+/// scrolling through the category rows, saves PNG screenshots and UI
+/// hierarchies to the application's `tmp/StorageSettings/`, and powers Android
+/// off.
 @Suite(.serialized)
 struct AdbOverVsockTests {
     private static var enabled: Bool { ProcessInfo.processInfo.environment["ANDARIUM_ADB_TESTS"] == "1" }
