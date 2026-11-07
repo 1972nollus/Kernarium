@@ -112,19 +112,19 @@ def boot_stages(prefix: str, screen: str, names: list[str], what: str, dark_step
 
 SHOTS: list[Shot] = [
     # Home
-    s("home", "Home", "home", "Home with a configured guest: Storage with Resize, Guest System (vCPUs, RAM) with Edit, Display, Capabilities, Backup, Recovery and Erase, and the Start bar.", dark=True),
+    s("home", "Home", "home", "Home with a configured guest: Guest System (Storage with Resize, then vCPUs and RAM with Edit), Display, Capabilities, Backup, Recovery and Erase, and the Start bar.", dark=True),
     s("home-welcome", "Home", "welcome", "Home before any guest exists: the welcome and Set Up Guest. First screen of the initial setup."),
     s("home-first-start", "Home", "home-new", "A guest just created and not yet started: Home as it is before the first start."),
     s("home-display", "Home", "home-display", "Home scrolled to Display: the Retina mode toggle.", dark=True),
-    s("home-capabilities", "Home", "home-capabilities", "Home scrolled to Capabilities: Microphone and Gyroscope toggles, both off, no notes.", dark=True),
+    s("home-capabilities", "Home", "home-capabilities", "Home scrolled to Capabilities: Microphone off and Gyroscope on (its default), no notes.", dark=True),
     s("home-capabilities-mic-on", "Home", "home-mic-on", "Capabilities with Microphone on, iOS having allowed it."),
     s("home-capabilities-mic-denied", "Home", "home-mic-denied", "Capabilities after iOS refused the microphone or its app permission was removed: the row is dimmed and says it is not allowed in Settings.", dark=True),
     s("home-capabilities-mic-alert", "Home", "home-mic-alert", "Turning Microphone on while iOS refuses it: the alert that offers Settings."),
     s("home-capabilities-gyroscope-unavailable", "Home", "home-gyroscope-unavailable", "Capabilities on a device without a gyroscope or accelerometer: Gyroscope is disabled and the footnote says why."),
     s("home-backup", "Home", "home-backup", "Home scrolled to Backup: the guest-data backup toggle and a one-line note."),
     s("home-recovery-erase", "Home", "home-recovery-erase", "Home scrolled to Recovery and Erase: Start in Recovery and Erase Guest."),
-    s("home-storage-grow", "Home", "home-grow", "Storage with a larger size chosen, taking effect at the next start."),
-    s("home-storage-max", "Home", "home-max", "Storage at its largest size (128 GiB, in 4 GiB steps)."),
+    s("home-storage-grow", "Home", "home-grow", "Guest System with a larger storage size chosen, taking effect at the next start."),
+    s("home-storage-max", "Home", "home-max", "Guest System with storage at its largest size (128 GiB, in 4 GiB steps)."),
     s("home-update", "Home", "home-update", "A system update waiting: the card above the Start bar."),
     s("home-update-unfinished", "Home", "home-update-failed", "An update that did not finish: the card offers retry or restoring the saved data."),
     s("home-update-unfinished-restore-only", "Home", "home-update-failed-restore", "An unfinished update that can only be restored."),
@@ -143,7 +143,7 @@ SHOTS: list[Shot] = [
     s("erase-alert", "Alerts", "erase", "Erase Guest: the standard destructive confirmation over Home. Confirming returns to the first-launch screen (home-welcome).", dark=True),
     s("info", "Info", "info", "Info: the app and version, System Info (Build, Android Version, Security Patch, Kernel, Architecture, Supported architectures) and Acknowledgements.", dark=True),
     s("info-acknowledgements", "Info", "info-acknowledgements", "Acknowledgements: projects by group; the names and marks line is at the bottom.", dark=True),
-    s("info-license", "Info", "info-license", "A project's page: copyright holders, license and the license text (Mesa, MIT).", dark=True),
+    s("info-license", "Info", "info-license", "A project's page: copyright holders, the license name and the license text (Mesa, MIT).", dark=True),
     s("info-license-long", "Info", "info-license-gpl", "A page with a long license text (Linux: syscall exception and GPL v2)."),
     # Boot
     *boot_stages("boot", "boot", ["System image", "Linux Kernel", "Storage", "Startup"], "Normal boot over the dimmed guest display, no progress bar"),

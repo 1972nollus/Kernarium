@@ -87,14 +87,17 @@ struct RowDivider: View {
 
 // MARK: System
 
-/// The guest's processors and memory as a summary, with Edit opening the sheet
-/// that changes them.
+/// The guest's system in one section: its storage first, with Resize, then
+/// its processors and memory as a summary, with Edit opening the sheet that
+/// changes them.
 struct SystemSection: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         if let guest = model.guest {
             HomeSection(title: "Guest System") {
+                StorageRow(guest: guest, stops: model.capacityStopsGiB, resize: { model.sheet = .resize })
+                Divider().padding(.horizontal, 16)
                 HStack(spacing: 12) {
                     stat(symbol: "cpu", value: "\(guest.cores)", unit: guest.cores == 1 ? "vCPU" : "vCPUs")
                     stat(symbol: "memorychip", value: memory(guest).value, unit: "\(memory(guest).unit) RAM")
@@ -223,14 +226,13 @@ struct GyroscopeRow: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let on = model.guest?.motionSensors == true
         OptionRow(title: "Gyroscope", symbol: "gyroscope") {
             Toggle("Gyroscope", isOn: Binding(
-                get: { on },
+                get: { model.motionSensorsOn },
                 set: { model.setMotionSensors($0) }
             ))
             .labelsHidden()
-            .disabled(!model.motionSensorsAvailable && !on)
+            .disabled(!model.motionSensorsAvailable)
         }
     }
 }
