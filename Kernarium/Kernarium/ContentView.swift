@@ -452,7 +452,7 @@ struct GPUBudgetWarning: Equatable {
             "\(availableMiB) MiB are left for graphics, and graphics are " +
             "given \(floorMiB) MiB at least. The guest starts anyway, and " +
             "the system is likely to end Kernarium. Giving the guest less " +
-            "memory in Settings avoids it."
+            "memory in Emulator settings avoids it."
     }
 
     var systemName: String { "exclamationmark.triangle" }
