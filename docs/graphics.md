@@ -54,15 +54,8 @@ Presentation:
   blocks the guest's flush timeline, and flushes retire without readback while
   no client is connected.
 - The native presenter can mirror the display to the application
-  (`darwin/device/gpu/frame_tap.hpp`), as the Picture in Picture window that
-  keeps an iOS guest running in the background needs.
-- `--gpu-display=offscreen` is the macOS mode for memory measurements: it
-  reproduces the presentation memory an iPad allocates without a window,
-  input, or VNC server.
-- The macOS native display holds a user-initiated activity while it runs, so
-  App Nap cannot demote the vCPU threads of an occluded window.
+  (`darwin/device/gpu/frame_tap.hpp`), as the Picture in Picture window needs.
 - A guest cannot tell a presented frame from a discarded one.
-  `UML_GPU_DISPLAY_ACTIVITY_LOG` records the outcome of every flush.
 
 Guest-visible guarantees:
 
@@ -89,13 +82,10 @@ guest Mesa -> Virtio-GPU/Virgl -> vhost-user -> virglrenderer
     -> Mesa llvmpipe over surfaceless EGL -> readback -> UIKit
 ```
 
-- Its `apple-gpu-vulkan-experiment` prefix (`ios-simulator-arm64`, contract
-  `ios-simulator-gpu-software-arm64.tsv`) holds libepoxy, virglrenderer built
-  without Venus, and Mesa's llvmpipe and softpipe Gallium drivers; it has no
-  KosmicKrisp, Vulkan header or Venus protocol.
-  `dependencies/build-apple-gpu.sh --platform ios-simulator` builds it, and
-  `dependencies/build-apple-gpu-llvm.sh` builds the pinned LLVM that Mesa
-  links statically.
+- Its `apple-gpu-vulkan-experiment` prefix (`ios-simulator-arm64`) holds
+  libepoxy, virglrenderer built without Venus, and Mesa's llvmpipe and softpipe
+  drivers; it has no KosmicKrisp, Vulkan header or Venus protocol
+  ([dependencies](../dependencies/README.md)).
 - llvmpipe's JIT is Mesa's own: it maps and publishes code itself and does not
   go through `darwin/cpu/jit_memory`. It is the one exception to the
   [executable-memory rule](architecture.md), granted for this test-only
@@ -191,24 +181,13 @@ point and Retina geometry is in
   classic resource or a blob shown through its Metal texture. macOS resizes its
   window to the applied size; iOS aspect-fits every mode in its view and VNC in
   its fixed framebuffer. With automatic resizing off, host changes leave the
-  guest mode alone and aspect-fit it. EDID-backed dimensions are limited to
-  4095 pixels per axis, the non-EDID Virtio-GPU path to the DRM limit of 8192.
-- The macOS Display menu rotates presentation in 90-degree steps without
-  changing the scanout; resize and pointer coordinates are translated back
-  into guest orientation.
-- Only the CPU path keeps host copies of a mode's pixels (a framebuffer, the
-  Metal texture it uploads into, and the readback staging for a Virgl scanout).
-  Each is allocated on first use and released on a mode change or clear; an
-  allocation failure is reported to the flush that needed it as an
-  out-of-memory response. The device memory pool counts the process's Metal and
-  graphics memory against the GPU budget, while the framebuffer and the staging
-  add to the footprint.
-- Rendering and input share one centred aspect-fit rectangle, mapped into the
-  device's fixed absolute range of 0 through 32767 on both axes. A mouse in a
-  letterbox or pillarbox bar reaches the guest only while dragging buttons first
-  pressed inside. A touch that begins in a bar stays outside until its path
-  enters the rectangle, where a new contact begins at the exact edge; crossing
-  back out releases the contact. A guest mode change releases held buttons and
+  guest mode alone and aspect-fit it.
+- Only the CPU path keeps host copies of a mode's pixels; they are allocated on
+  first use, released on a mode change or clear, and an allocation failure
+  reaches the flush that needed it as an out-of-memory response.
+- Rendering and input share one centred aspect-fit rectangle. A pointer or
+  touch in a letterbox bar reaches the guest only as part of a gesture begun
+  inside the rectangle, and a guest mode change releases held buttons and
   contacts.
 
 ## Vulkan
@@ -251,13 +230,10 @@ one fixed guest-physical region of `protocol::hostVisibleSharedMemoryRegionSize`
 That constant and the kernel's `UML_VHOST_USER_SHMEM_SIZE` are one value, so
 changing it is a change to the kernel as well as to the host.
 
-The aperture, not host memory, bounds host-visible memory, and the renderer
-advertises it that way: the host-visible memory type gets its own heap sized to
-the aperture. Because the guest releases an aperture node only after the host
-retires the resource, an allocate-map-free loop needs more than one mapping's
-space at a time, so a mapping near the aperture's size can fail at
-`vkMapMemory` with `VK_ERROR_OUT_OF_DEVICE_MEMORY` and succeed once the
-aperture has room.
+The aperture, not host memory, bounds host-visible memory: the host-visible
+memory type gets its own heap sized to it. A mapping near the aperture's size
+can fail at `vkMapMemory` with `VK_ERROR_OUT_OF_DEVICE_MEMORY` until the guest's
+released nodes retire.
 
 ### Device memory budget
 
@@ -270,13 +246,11 @@ the process. The renderer shrinks every advertised heap to B and bounds every
 heap budget it reports by the pool's headroom, so a guest sizes its allocations
 from B less what the host already holds.
 
-KosmicKrisp is the one place every allocation passes. The host owner hands the
-pool to the renderer, which states it to the driver for the whole process
-(`kk_set_device_memory_pool`), so every device the process creates, Venus
-guests' and host GL's alike, reserves a heap under one lock before Metal makes
-it, and allocations that each fit alone never together take the process past B.
-A reservation that does not fit first frees what the host GL driver caches and
-is decided again.
+KosmicKrisp is the one place every allocation passes: every device the process
+creates, Venus guests' and host GL's alike, reserves a heap from the pool before
+Metal makes it, so allocations that each fit alone never together take the
+process past B. A reservation that does not fit first frees what the host GL
+driver caches and is decided again.
 
 - `vkAllocateMemory` of any type is refused with
   `VK_ERROR_OUT_OF_DEVICE_MEMORY` when the pool cannot hold it. That covers
@@ -286,24 +260,18 @@ is decided again.
   surface and decoder surfaces are counted once Metal does and never refused.
 - OpenGL: a refused texture or buffer fails the creation with `ENOMEM` but the
   guest kernel's creation ioctl does not read that answer, so the guest gets a
-  texture with no storage and no error, and the host logs `couldn't allocate
-  memory`. The context, the renderer and every resource made within the budget
-  stay as they were. `gpu-host-gl-device-memory-budget` drives this without a
-  guest.
+  texture with no storage and no error. The context, the renderer and every
+  resource made within the budget stay as they were
+  (`gpu-host-gl-device-memory-budget`).
 - Venus: the guest driver submits `vkAllocateMemory` asynchronously, so a
   refusal reaches the guest as a failed context at the next command naming the
-  allocation, and that guest process aborts. The host, the budget and every
-  other guest process are untouched. `VN_PERF=no_async_mem_alloc` makes the
-  call wait and return `VK_ERROR_OUT_OF_DEVICE_MEMORY` instead.
+  allocation, and only that guest process aborts.
 - A device's first geometry heap is made at its floor size even when the pool
-  refuses it, because a device with none would silently drop whole command
-  buffers; a full pool can therefore leave the process one floor per device
-  past B. Growth past the floor stays within the pool.
+  refuses it, so a full pool can leave the process one floor per device past B.
 
-The counter includes memory the guest has already freed while its blob resource
-is still referenced, so a loop that frees and reallocates large images can be
-refused while its live memory is below B. The pool writes one `uml: the GPU
-budget is full` line to stderr the first time it refuses an allocation.
+The counter includes memory the guest has freed while its blob resource is still
+referenced, so a loop that reallocates large images can be refused while its
+live memory is below B.
 
 ### Android guest requirements
 
@@ -339,12 +307,7 @@ loader's work, not an ICD's.
 The guest driver and the renderer generate their halves of the encoder from one
 pinned venus-protocol and its maintained series
 ([`../dependencies/README.md`](../dependencies/README.md)), so the two change
-together, and an extension the protocol does not name is refused by the guest
-however the other layers are configured. Two of the extensions the series adds
-are advertised honestly rather than completely, because Metal does not express
-what they describe: every image compression query reports no compression, and
-an address binding report reaches no application, since the protocol carries
-nothing from the renderer to a guest debug callback.
+together, and an extension the protocol does not name is refused by the guest.
 
 ### KosmicKrisp driver contracts
 
@@ -372,19 +335,17 @@ project's Mesa series patches it; the series and its regression suites are in
   access, barrier, or termination, because Metal issues an atomic whose result
   is unused without waiting for it.
 - A vertex or tessellation evaluation shader that writes memory and contains a
-  loop runs as compute: Apple GPUs kill a vertex invocation that runs for about
-  10 ms, and each kill discards the in-flight work of every process on the GPU.
-- A buffer load never covers more than sixteen bytes: Apple's backend compiler
-  can crash on a wider vector, so a 32-byte load is emitted as two halves.
+  loop runs as compute, because Apple GPUs kill a long vertex invocation along
+  with the in-flight work of every process on the GPU.
+- A buffer load never covers more than sixteen bytes, because Apple's backend
+  compiler can crash on a wider vector.
 
 ### Apple8 (A15) device behaviour
 
-The physical iOS device the Vulkan route has been exercised on is an iPad
-mini 6: an A15, Metal family Apple8, 4 GiB, under iOS 27. It differs from the
-Apple7 Macs in ways that change results, not only speed. Only
-`supportsBCTextureCompression` and `supports32BitFloatFiltering` differ among
-the Metal capabilities the driver keys on (both false), and the driver takes
-both from the device.
+The physical iOS device the Vulkan route has been exercised on is an A15 iPad
+(Metal family Apple8). It differs from the Apple7 Macs in ways that change
+results, not only speed; the driver takes the capabilities that differ
+(`supportsBCTextureCompression`, `supports32BitFloatFiltering`) from the device.
 
 - **A GPU fault is reported as a timeout.** Metal 4 cannot tell a fault from a
   timeout, so "timeout" on this device is a label, not a diagnosis, and must
@@ -398,8 +359,7 @@ both from the device.
   completes what a failure destroyed, and the renderer bounds a stuck fence, so
   no loss can wedge a guest forever.
 - **A rejecting queue drops a bare signal in silence.** A waiter on an overdue
-  signal gives the queue an empty command buffer to report on (`kk_queue_probe`);
-  a queue that rejects it reports a failure and is retired.
+  signal probes the queue, and a queue that rejects the probe is retired.
 - **Some GPU work faults the device, and the driver cannot remove it.**
   Enough fragment-stage store work, render-stage 3D or array texture sampling,
   or a long run of small render passes kills a submission. Conformance cases
@@ -411,65 +371,37 @@ both from the device.
 
 #### Memory budget
 
-iOS ends the app at a physical footprint of about 3 GB on this device, and a
-1536 MiB guest already leaves the host side within a few hundred megabytes of
-it, so guest RAM cannot be raised to make room for a workload.
-
-- The per-device geometry heap starts small and grows within the pool, and a
-  grown heap is freed once nothing holds it; a draw whose reservation only the
-  GPU can size loses its output when it does not fit, while the command buffer
-  completes. The rules are
-  the comment above `KK_HEAP_START_MIB` in
-  `src/kosmickrisp/vulkan/kk_cmd_draw.c` and `kk_device_memory_pool.h` in this
-  project's Mesa series.
-- Zink's cache of freed buffers is bounded and reaped when idle.
-- An idle Virgl context is trimmed (`EGL_MESA_context_trim`) so a quiet or
-  closed guest application returns what its last batches held.
-  `UML_GPU_IDLE_TRIM_MS` replaces the interval and zero turns it off.
-- KosmicKrisp reports physical memory as its one host heap;
-  `MESA_KK_SYSMEM_HEAP_MIB` replaces the figure for measurement runs.
-- virglrenderer's shared-memory segments are unlinked container files on iOS,
-  outside the application's footprint, and POSIX shared memory on macOS, inside
-  it. `VIRGL_ANON_FILE_UNLINKED=1` makes a macOS measurement run take the file
-  so it reads what the device would.
-- A 1536 MiB guest cannot hold a whole mustpass fraction in one `deqp-vk`
-  process, so a baked device campaign leaves out the groups its guest memory
-  cannot hold, under the exclusion contract in [`testing.md`](testing.md).
+iOS ends the app at its footprint limit, and a 1536 MiB guest already leaves the
+host side little headroom, so guest RAM cannot be raised to make room for a
+workload. The per-device geometry heap starts small and grows within the pool, a
+grown heap is freed once nothing holds it, Zink's buffer cache is bounded and an
+idle Virgl context is trimmed. virglrenderer's shared-memory segments are
+unlinked container files outside the footprint on iOS and POSIX shared memory
+inside it on macOS. A baked device campaign leaves out the groups its guest
+memory cannot hold ([`testing.md`](testing.md)).
 
 ## Metal shader cache
 
-Metal keeps one shader cache per process identity, shared by every pipeline the
-process builds. The first compile reads the whole index into memory, so the
-footprint grows with the index, and Metal's public API has no call that clears,
-bounds, or bypasses the cache. Conformance campaigns fill it.
-
-Kernarium, Andarium, and the macOS emulators therefore bound it themselves: at
-start, before anything can create a Metal device, the process removes the whole
-cache when its `.list` index files together exceed a small limit and logs what
-it found (`GuestHost/Sources/MetalShaderCache.swift`,
-`darwin/device/gpu/metal_shader_cache.hpp`; the limit lives in the code). Real
-workloads stay far below it because their keys are stable. The cache sits at
-`<bundle identifier>/com.apple.metal` in the Darwin user cache directory, which
-is Metal's own undocumented layout: if it moves, the application finds no cache,
-logs so, and removes nothing. The emulators carry the bundle identifier of their
-embedded Info.plist ([Darwin
-README](../darwin/README.md#products-and-defaults)). A process with no bundle
-identifier shares `com.apple.metal` with every other such process and is not
-bounded; the GPU unit tests keep their own cache for this reason (see
-[`testing.md`](testing.md)).
+Metal keeps one shader cache per process identity, and its first compile reads
+the whole index into memory; the public API cannot clear, bound or bypass it,
+and conformance campaigns fill it. Kernarium, Andarium and the macOS emulators
+therefore remove the cache at start, before anything creates a Metal device,
+when its index exceeds a small limit
+(`GuestHost/Sources/MetalShaderCache.swift`,
+`darwin/device/gpu/metal_shader_cache.hpp`). The emulators carry the bundle
+identifier of their embedded Info.plist
+([Darwin README](../darwin/README.md#products-and-defaults)); a process with no
+bundle identifier shares Metal's cache with every other such process and is not
+bounded, so the GPU unit tests keep their own cache.
 
 ## Mesa shader cache
 
-Mesa keeps a disk cache of what Zink and KosmicKrisp compile, apart from
-Metal's. Each application and emulator gives Mesa a home of its own and a size
-limit, once, at process start and before any thread can read the environment
-(`GuestHost/Sources/MesaShaderCache.swift` for Kernarium and Andarium,
-`darwin/device/gpu/mesa_shader_cache.hpp` for the macOS emulators; the two
-change together). A variable already in the environment is kept, so a harness
-or a test chooses its own cache, and a process with no cache directory or
-bundle identifier runs without a cache rather than falling back to
-`$HOME/.cache`. The cache is only an accelerator: the system may purge it, and
-no behavior depends on an entry surviving.
+Each application and emulator gives Mesa's disk cache a home of its own and a
+size limit, once, at process start and before any thread can read the
+environment (`GuestHost/Sources/MesaShaderCache.swift`,
+`darwin/device/gpu/mesa_shader_cache.hpp`; the two change together). A variable
+already in the environment is kept, and a process with no cache directory runs
+without a cache. No behavior depends on a cache entry surviving.
 
 ## Validation
 
