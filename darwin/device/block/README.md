@@ -43,8 +43,8 @@ disk; `validateDataDisk` checks it.
   a file and a failure leaves nothing behind. A disk only grows, on an APFS
   clone renamed over the disk (a failure leaves the old disk); a volume without
   clones grows it in place, where a crash can leave a disk that fails
-  validation. The grow is refused while another process holds a lock on the
-  disk, as a running guest does.
+  validation. The grow is refused while another process, or another open file
+  description of this one, holds a lock on the disk, as a running guest does.
 - `prepareDataDisk` is the single entry point of both products: create when
   absent, grow when asked for more, leave it otherwise, refuse less.
 

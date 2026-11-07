@@ -21,7 +21,10 @@ namespace {
  * lock, and a guest that refuses or outlasts its suspend is left running with
  * its disks open. The kernel is answered as before: a POSIX lock never
  * conflicts with its own process. A macOS host locks the file, which keeps a
- * second process off a disk in use. */
+ * second process off a disk in use, with an open file description lock: the
+ * lock then belongs to the description the kernel locked, and closing another
+ * descriptor of the disk (the kernel opens one to read its size) does not end
+ * it. */
 #if TARGET_OS_IPHONE || UML_GUEST_FILES_PROCESS_LOCKS
 constexpr bool hostDiskLocks = false;
 #else
@@ -71,7 +74,10 @@ bool locksSuspended{};
 {
 	if (!hostDiskLocks)
 		return 0;
-	return ::fcntl(descriptor, F_SETLK, &lock);
+	/* An open file description lock has no owning process: F_OFD_SETLK
+	 * fails unless l_pid is zero. */
+	lock.l_pid = 0;
+	return ::fcntl(descriptor, F_OFD_SETLK, &lock);
 }
 
 [[nodiscard]] int unlock(int descriptor) noexcept
