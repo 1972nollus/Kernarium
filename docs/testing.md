@@ -914,7 +914,10 @@ SensorManager API in a foreground probe. Its automated mode checks sustained
 delivery and off/on/off; its separate `ANDARIUM_MOTION_INTERACTIVE=1` mode checks
 physical tilt and rotation ([probe and invocation](../tests/integration/android/motion/README.md)).
 `andarium-stage-system-image` (tooling) covers the system-image staging script
-and the option checks of `package-ios-frameworks.sh --runtimes android`. The
+and the option checks of `package-ios-frameworks.sh --runtimes android`.
+`andarium-capture-screens` (tooling) checks that the screenshot script's
+`--out` directory takes one run at a time, with a second run refused at once
+and the lock released however a run ends, without a Simulator. The
 application itself builds with Xcode: `AndariumPreview` is its Simulator build
 with mock data, and `Andarium` is the device application
 ([`Andarium/README.md`](../Andarium/README.md#targets)). `AndariumTests` is

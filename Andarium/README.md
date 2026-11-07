@@ -64,7 +64,11 @@ caches (process, screen, and whether the app is active), which
 `scripts/capture-screens.py` launches every screen on a Simulator made for the
 run (not one another session or test uses) and saves a labelled PNG set with a
 `manifest.json` (device, orientation, appearance, screen and what to look at;
-`--list` prints the screens):
+`--list` prints the screens). A
+directory takes one capture run at a time: a second run into the same `--out`
+refuses at once and names the first (a lock file in the directory, released
+when the run ends however it ends), so name several `--device` options in one
+run or give each run its own directory:
 
 ```sh
 xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
