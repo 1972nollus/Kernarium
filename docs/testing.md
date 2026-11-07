@@ -925,7 +925,8 @@ production views and runtime with `TEST_RUNNER_ANDARIUM_SHUTDOWN_TESTS=1` and
 `TEST_RUNNER_ANDARIUM_GUEST_INSTANCE=shutdown-flow`, without `ANDARIUM_START`:
 two clean power-offs each return Home, three boots reuse the app process, and a
 host-stopped third run stays failed until relaunch. It deletes only that isolated
-test guest.
+test guest. `TEST_RUNNER_ANDARIUM_END_HOLD_SECONDS` keeps the third run's End
+screen up for that long, for a look at it.
 
 The hosted tests share the application's one key window, and Swift Testing
 runs suites in parallel, each yielding wherever it awaits. A test that replaces

@@ -100,6 +100,11 @@ struct ShutdownFlowTests {
                 #expect(!model.runEnd.poweredOff)
                 model.start(.normal)
                 #expect(model.phase == .failed)
+                // An inspection of the End screen asks for it to stay up.
+                if let text = ProcessInfo.processInfo.environment["ANDARIUM_END_HOLD_SECONDS"],
+                    let seconds = Double(text), seconds > 0 {
+                    try await Task.sleep(for: .seconds(seconds))
+                }
             }
         }
     }
