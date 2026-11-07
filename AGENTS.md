@@ -206,14 +206,50 @@ outcomes. Git history is the worklog.
 Update documentation in the same change whenever its current contract changes.
 `CLAUDE.md` must remain exactly one line containing `@AGENTS.md`.
 
+## Privacy
+
+The repository and its whole history are public. Tracked files, commit
+messages, patch headers and generated series are all published, and the rules
+below apply to each of them.
+
+- Never record a person's or a site's own values:
+  - account names, home paths, and machine, volume and build-host names.
+    Write a placeholder (`/Users/<user>`, `/Volumes/<volume>`) or a role
+    ("the x86-64 build host");
+  - device, simulator, app-container and CoreDevice identifiers. Tests
+    synthesize their own;
+  - email addresses other than the configured Git identity, which commits
+    and exported patches carry;
+  - the Apple Team ID and signing identities. They belong in the ignored
+    `GuestHost/Config/Signing.local.xcconfig`, from its tracked `.example`;
+  - private network addresses and ssh endpoints;
+  - the names and paths of local agent tooling that lives outside the
+    repository: wrappers, leases and scratch directories.
+- Never link a coding session. A `Claude-Session:` trailer never enters a
+  commit message or a patch, and `scripts/patch_series.py` drops it on export.
+- Never record benchmark result links or result IDs. Record the scores and
+  the run's conditions instead.
+- For third-party software the repository does not distribute, such as
+  benchmark payloads, record only what the tooling expects: name, version and
+  digest. Never record where a copy came from, and never publish an image
+  that contains one.
+- Keep material written for App Store Connect outside the repository.
+- Never commit build logs, captured command output or machine snapshots.
+  They carry paths and identifiers.
+- A value a site needs comes from a flag, an environment variable, or an
+  ignored local file with a tracked `.example`.
+- `repository-environment-portability` checks tracked and new files against
+  generic rules, plus a private denylist of the site's own values kept outside
+  the repository (`--list-rules` describes both). Add a newly found private
+  value to that denylist. The check does not read commit messages, so review
+  each message against these rules before committing.
+
 ## Workspace and commit hygiene
 
 - Do not commit build trees, kernel replay checkouts, rootfs images, caches,
   IDE state, temporary reports, or generated runtime output.
-- Keep host-, user-, device-, and site-specific values out of tracked files.
-  They live outside the repository: a flag, an environment variable, or an
-  ignored local file with a tracked `.example`.
-  `repository-environment-portability` enforces this.
+- Keep host-, user-, device-, and site-specific values out of tracked files
+  and commit messages, as [Privacy](#privacy) describes.
 - After validating a replacement Android release, remove the superseded
   artifacts that
   [`android/lineage-24/README.md`](android/lineage-24/README.md#superseded-releases)
