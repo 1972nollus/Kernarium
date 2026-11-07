@@ -78,9 +78,10 @@ UML implementation. `Build.SOC_MANUFACTURER` and `SOC_MODEL` are `Kernarium` and
   LineageOS cloud services are excluded by name in the product makefile, and the
   build and the verifier assert that list.
 - **Settings.** Settings is the stock application apart from route `p0009`,
-  which removes its Bluetooth parts (the Connected devices entry, the Bluetooth
-  developer option and the media output switcher) and hides the Wi-Fi hotspot,
-  wireless display and System update pages.
+  which removes the pages for hardware the product lacks (the Connected devices
+  entry, the Bluetooth developer option, the media output switcher, and the
+  hearing, Bluetooth pairing, telephony, biometric and USB pages) and hides the
+  Wi-Fi hotspot, wireless display and System update pages.
 - **Hardware not advertised.** Telephony, GNSS, NFC, UWB, Thread, camera,
   biometric, vibrator, secure element, USB, Bluetooth and Trusty. SecureElement
   is kept but not persistent (route `p0024`): nothing starts it at boot, and the
@@ -111,9 +112,11 @@ process through a first boot.
 
 A harness that erases a guest provisions it over adb with
 [`tools/android_provision.py`](../../tools/android_provision.py): it sets both
-settings, disables the wizard package for user 0, changes nothing in the image,
-and returns only after adbd has been stable with no trade-in mode pending. A
-measurement of the first-boot experience itself keeps the wizard.
+settings, waits until the wizard is bound, then disables the wizard package for
+user 0 and stops it, and changes nothing in the image. It returns only after the
+wizard has no process and no status bar record and adbd has been stable with no
+trade-in mode pending. A measurement of the first-boot experience itself keeps
+the wizard.
 
 The wizard shows Welcome, Language, Date and time and Theme, then Finish (a
 secondary user sees Welcome and Theme, then Finish); the verifier requires the
@@ -214,6 +217,10 @@ outcomes are known and not defects of the image:
 - HEVC 4K decoding at 60 frames per second and 32-bit encoding at the largest
   sizes miss the published point
   ([hardware video](#hardware-video-encoding-and-decoding)).
+- DocumentsUI (Files) on a smallest width of 720 dp or more can throw an
+  `IllegalStateException` from AppCompat's `CascadingMenuPopup` while its
+  overflow menu changes during the popup's exit transition; real tablets share
+  this upstream defect, and there is no product fix.
 
 ### Boot, memory and time
 
