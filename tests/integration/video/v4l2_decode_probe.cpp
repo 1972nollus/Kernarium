@@ -47,7 +47,7 @@
 //   block fails them with `page allocation failure: order:4`.
 //
 // The test, `guest-v4l2-decode` or `guest-v4l2-decode-gpu`, also fails on a
-// kernel fault or a failed shutdown (docs/testing.md).
+// kernel fault or a failed shutdown.
 #include <linux/videodev2.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>

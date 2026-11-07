@@ -53,8 +53,9 @@ that goes into the Android image and the licence of the patched project for a
 patch to another project. The root [`LICENSE`](../LICENSE) is the GPL-2.0 text
 and [`../LICENSES/`](../LICENSES/README.md) holds the rest.
 
-Decisions live as current contracts in the document that owns the subject,
-not in a separate decision log. Machine-readable manifests, identities, and
+A document states the current contract of the subject it owns; rationale and
+decisions stay out of tracked files (the documentation policy in
+[`../AGENTS.md`](../AGENTS.md)). Machine-readable manifests, identities, and
 test inventories are the source of truth for exact lists and counts.
 
 The repository intentionally has no handoff, progress, evidence-index, or
