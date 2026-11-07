@@ -874,7 +874,8 @@ windowed iPads, loss of a scene lock, coalesced guest commands, partial failures
 and stale completions after a guest restart, and which screen edges a run
 defers. `SessionOrientationHostingTests` checks the real scene root's session
 lock and deferred edges, and the built bundle's portrait-only iPhone
-declaration; only a device shows how the system answers the swipes. The opt-in `RotationOverVsockTests`
+declaration; only a device shows how the system answers the swipes
+([Edge gestures](#edge-gestures-device-only)). The opt-in `RotationOverVsockTests`
 (`TEST_RUNNER_ANDARIUM_ROTATION_TESTS=1`, selecting only that suite) boots Android
 and verifies that the host override preserves and restores locked and unset
 guest rotation preferences. A hands-on iPad check additionally covers rotation
@@ -1052,6 +1053,24 @@ device with a passcode needs the owner's approval at the device. Its commands,
 approval rules, and failure modes are in
 `Kernarium/scripts/ipad-automation.py --help`. Keep all automation code in the
 test targets.
+
+### Edge gestures (device only)
+
+The Simulator shows which edges a run defers: `AndariumPreview -screen session`
+with edge swipes within 4 pt of the screen edge shows the deferral tab on a
+first swipe from the top and the system's gesture on the second. It does not
+show what a device does, which needs an iPad lease, the automation host and a
+guest with Android's 3-button navigation and Developer options > Pointer
+location on:
+
+- whether the host's synthesized edge swipes start system gestures at all
+  (down from the top right, up from the bottom centre, on Andarium's Home);
+- for each edge in a run, against a build without the deferral, what iOS does
+  (tab, Control Center, Notification Center, Home) and whether Android's trace
+  is whole or cut short;
+- the bottom edge with the home indicator hidden, as a run has it, and with it
+  visible. The Simulator honours the bottom edge only with the indicator
+  visible.
 
 ### Window layout (device only)
 

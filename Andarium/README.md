@@ -393,13 +393,18 @@ each finger independently onto the guest's visible display.
 In a normal run whose scene fills the screen, the scene's root defers the
 system's edge gestures on all four edges, on an iPhone and an iPad alike
 (`SessionGestureDeferral`). The guest's display stays inside the safe area, so
-only the preference changes: the first swipe from an edge reaches Android (its
-notification shade, its 3-button bar's swipe-ups, its gesture navigation) while
-iOS shows its tab, and a second swipe while the tab shows reaches the system.
-Home, boot, Recovery, the failure screen and an open sheet keep SwiftUI's own
-preference, which defers the sides, and so does a window that does not fill the
-screen. While the guest has the keyboard focus, three-finger touches are the
-guest's, not UIKit's editing gestures.
+only the preference changes: the first swipe from an edge goes to Android
+(its notification shade, its navigation gestures) while iOS shows its tab, and
+a second swipe while the tab shows reaches the system. Home, boot, Recovery,
+the failure screen and an open sheet keep SwiftUI's own preference, which
+defers the sides, and so does a window that does not fill the screen. While
+the guest has the keyboard focus, three-finger touches are the guest's, not
+UIKit's editing gestures.
+
+The Simulator honours the bottom edge only while the home indicator shows, and
+a run hides it (`persistentSystemOverlays(.hidden)`), so there one swipe from
+the bottom still leaves the application. What a device does is not
+established ([Edge gestures](../docs/testing.md#edge-gestures-device-only)).
 
 Retina mode applies at the next start, because the runtime takes it at boot, so
 it is set on Home only and the session's Settings has no Display section. It
