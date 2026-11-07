@@ -573,7 +573,9 @@ public:
 		process_address_space_changed.notify_all();
 	}
 
-	[[nodiscard]] int quiesce() noexcept
+	/* `resident` keeps the guest's RAM in the process: nothing is hibernated,
+	 * and the threads are held by the handle's own fence. */
+	[[nodiscard]] int quiesce(bool resident = false) noexcept
 	{
 		std::lock_guard lock{guest_lifecycle_mutex_};
 		if (guest_suspension_ == ::uml::device::GuestSuspension::none) {
@@ -585,7 +587,7 @@ public:
 		const auto result = ::uml::runtime::sync_guest_files();
 		/* Last, with the guest asleep and its files on disk. */
 		if (guest_suspension_ == ::uml::device::GuestSuspension::system)
-			settle_suspended_guest();
+			settle_suspended_guest(resident);
 		/* The files the host could not flush, as the API reports them. A
 		 * lock it could not release is no file left unflushed, and is
 		 * logged where it happens. */
@@ -913,9 +915,9 @@ private:
 	 * writing them before the resume has locked them again and found them
 	 * unchanged. The locks therefore leave only with the threads held, and
 	 * stay where they cannot be. */
-	void settle_suspended_guest() noexcept
+	void settle_suspended_guest(bool resident) noexcept
 	{
-		if (!hold_guest_threads()) {
+		if (!hold_guest_threads(resident)) {
 			if (!std::exchange(guest_hold_failure_logged_, true))
 				write_line("Darwin: the guest's disk locks stay held: "
 					"its threads could not be held (reason ",
@@ -936,14 +938,15 @@ private:
 
 	/* Holds every thread that can touch the guest's RAM or disks until
 	 * `release_guest_hold`. The hibernation does it where the RAM is wired
-	 * (or a mode forces it), and goes on to write the RAM out; elsewhere a
-	 * fence of the handle's own does, and nothing is written. False, with
-	 * everything running, when the threads could not be held. */
-	[[nodiscard]] bool hold_guest_threads() noexcept
+	 * (or a mode forces it), and goes on to write the RAM out; elsewhere, or
+	 * for a `resident` quiesce, a fence of the handle's own does, and nothing
+	 * is written. False, with everything running, when the threads could not
+	 * be held. */
+	[[nodiscard]] bool hold_guest_threads(bool resident) noexcept
 	{
 		if (guest_hold_ != GuestHold::none)
 			return true;
-		if (hibernation_ == nullptr &&
+		if (!resident && hibernation_ == nullptr &&
 		    hibernation_mode_ != ::uml::runtime::HibernationMode::off) {
 			try {
 				hibernation_ = ::uml::runtime::GuestHibernation::create(
@@ -954,7 +957,7 @@ private:
 			}
 			publish_hibernation(hibernation_.get());
 		}
-		if (hibernation_ != nullptr) {
+		if (!resident && hibernation_ != nullptr) {
 			switch (hibernation_->hold(
 				&::uml::runtime::guest_file_registry_idle)) {
 			case ::uml::runtime::HibernationHold::held:
@@ -1234,6 +1237,13 @@ extern "C" int uml_emulator_quiesce(uml_emulator *emulator)
 	if (emulator == nullptr)
 		return -UML_EMULATOR_INVALID_ARGUMENT;
 	return emulator->implementation.quiesce();
+}
+
+extern "C" int uml_emulator_quiesce_resident(uml_emulator *emulator)
+{
+	if (emulator == nullptr)
+		return -UML_EMULATOR_INVALID_ARGUMENT;
+	return emulator->implementation.quiesce(true);
 }
 
 extern "C" void uml_emulator_resume(uml_emulator *emulator)

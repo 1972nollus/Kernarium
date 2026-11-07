@@ -510,7 +510,10 @@ The platform layer tracks every writable host descriptor opened for the guest.
 console, then flushes those descriptors. `uml_emulator_quiesce()` has the guest
 trim its cold page cache and hand its free memory to the host, enters full Linux
 system suspend and waits for the platform sleep boundary before flushing the
-host. `uml_emulator_resume()` sends the console wake edge, and
+host. `uml_emulator_quiesce_resident()` does the same and keeps the guest's RAM
+in the process where a quiesce would [hibernate](#hibernation) it, for a host
+short of the space an image takes. `uml_emulator_resume()` sends the console
+wake edge, and
 `uml_emulator_wake()` sends it to a guest that is not quiesced, as a phone's
 power key does. Every console request ends the suspend; the
 [shared kernel README](../kernel/common/README.md) gives the kernel's side.
@@ -610,8 +613,9 @@ order is the contract:
   guest again and Kernarium reports the restart notice.
 
 A quiesce whose guest did not confirm its suspend, a guest without a console,
-and a guest kept running (Picture in Picture, the job) never hibernate. A
-confirmed system suspension holds the same threads on every host whether or not
+a resident quiesce, and a guest kept running (Picture in Picture, the job) never
+hibernate. The first hold stands: a hibernated guest is not made resident by a
+later quiesce, nor a resident one hibernated. A confirmed system suspension holds the same threads on every host whether or not
 the RAM is written, because the disk locks leave with it (see
 [guest lifecycle](#guest-lifecycle)).
 

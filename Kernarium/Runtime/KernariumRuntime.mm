@@ -1894,7 +1894,7 @@ int runtimeSync(void)
  * just written back. Freezing it as well means the disk it leaves behind is
  * the disk that was flushed.
  */
-int runtimeQuiesce(void)
+int quiesceGuest(bool resident)
 {
     /* A guest that restarts between the quiesce and the resume waits for the
      * resume before it boots: the library's quiesce of an idle handle only
@@ -1904,7 +1904,20 @@ int runtimeQuiesce(void)
     std::lock_guard lock(emulatorLifecycleMutex);
     if (activeEmulator == nullptr)
         return 0;
-    return uml_emulator_quiesce(activeEmulator);
+    return resident ? uml_emulator_quiesce_resident(activeEmulator)
+                    : uml_emulator_quiesce(activeEmulator);
+}
+
+int runtimeQuiesce(void)
+{
+    return quiesceGuest(false);
+}
+
+/* The quiesce that keeps the guest's RAM in the process, for a host short of
+ * the space a hibernation image takes. */
+int runtimeQuiesceResident(void)
+{
+    return quiesceGuest(true);
 }
 
 void runtimeResume(void)
@@ -2260,6 +2273,7 @@ const kernarium_runtime_api runtimeApi {
     .read_statistics = runtimeReadStatistics,
     .read_guest_memory = runtimeReadGuestMemory,
     .cancel_touch = runtimeCancelTouch,
+    .quiesce_resident = runtimeQuiesceResident,
 };
 
 } // namespace
@@ -2312,7 +2326,7 @@ kernarium_runtime_automation_hold_delay_ms(void)
 }
 #endif
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v24(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v25(void)
 {
     return &runtimeApi;
 }

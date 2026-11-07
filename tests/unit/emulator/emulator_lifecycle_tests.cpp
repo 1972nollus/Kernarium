@@ -245,6 +245,8 @@ void withoutAConsoleNothingWaits(uml_emulator *emulator)
 		-UML_EMULATOR_INVALID_ARGUMENT);
 	require(uml_emulator_trim_page_cache(nullptr) ==
 		-UML_EMULATOR_INVALID_ARGUMENT);
+	require(uml_emulator_quiesce_resident(nullptr) ==
+		-UML_EMULATOR_INVALID_ARGUMENT);
 }
 
 /* ---- Hibernating the guest's RAM around a quiesce. ---- */
@@ -388,6 +390,75 @@ void aSecondQuiesceKeepsTheHibernation()
 	}).empty());
 	require(hibernationLog.take() == Entries {"prepare", "hold", "write"},
 		"a guest that is already hibernated is not hibernated again");
+	require(console.requests(1U, [&] {
+		uml_emulator_resume(emulator.get());
+	}) == Requests {"wake"});
+	(void)hibernationLog.take();
+}
+
+/* A host short of the space an image takes quiesces resident: the guest
+ * sleeps and its threads are held, and not a byte of RAM is written. */
+void aResidentQuiesceWritesNoRam()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	console.onRequest = [](const std::string &command) {
+		hibernationLog.add("console:" + command);
+	};
+	(void)installSteps(emulator.get());
+	(void)hibernationLog.take();
+	require(console.requests(2U, [&] {
+		require(uml_emulator_quiesce_resident(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend"},
+		"the guest is trimmed and suspended as by any quiesce");
+	require(hibernationLog.take() == Entries {"console:trim once",
+		"console:suspend"}, "the hibernation is not prepared, held or written");
+	require(console.requests(1U, [&] {
+		uml_emulator_resume(emulator.get());
+	}) == Requests {"wake"});
+	require(hibernationLog.take() == Entries {"abort", "console:wake"},
+		"nothing was taken out of the RAM, so nothing is restored");
+	/* The next quiesce is the host's own choice again. */
+	require(console.requests(2U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend"});
+	require(hibernationLog.take() == Entries {"console:trim once",
+		"console:suspend", "prepare", "hold", "write"},
+		"a quiesce after a resident one hibernates");
+	require(console.requests(1U, [&] {
+		uml_emulator_resume(emulator.get());
+	}) == Requests {"wake"});
+	(void)hibernationLog.take();
+}
+
+/* The first hold stands: a guest already hibernated is not made resident, and
+ * one held resident is not hibernated behind its holder's back. */
+void aQuiesceKeepsWhateverHoldsTheGuest()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	(void)installSteps(emulator.get());
+	(void)hibernationLog.take();
+	require(console.requests(2U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend"});
+	require(console.requests(0U, [&] {
+		require(uml_emulator_quiesce_resident(emulator.get()) == 0);
+	}).empty());
+	require(hibernationLog.take() == Entries {"prepare", "hold", "write"},
+		"a hibernated guest stays hibernated");
+	require(console.requests(1U, [&] {
+		uml_emulator_resume(emulator.get());
+	}) == Requests {"wake"});
+	(void)hibernationLog.take();
+	require(console.requests(2U, [&] {
+		require(uml_emulator_quiesce_resident(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend"});
+	require(console.requests(0U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}).empty());
+	require(hibernationLog.take().empty(),
+		"a guest held resident is not hibernated by a later quiesce");
 	require(console.requests(1U, [&] {
 		uml_emulator_resume(emulator.get());
 	}) == Requests {"wake"});
@@ -1089,6 +1160,8 @@ int main(int argc, char **argv)
 	anAnswerThatIsNotTheFiguresIsNoReading(emulator.get(), console);
 	aHibernatedGuestIsWholeBeforeItIsWoken();
 	aSecondQuiesceKeepsTheHibernation();
+	aResidentQuiesceWritesNoRam();
+	aQuiesceKeepsWhateverHoldsTheGuest();
 	aGuestThatCouldNotSuspendIsNotHibernated();
 	aGuestWithoutAConsoleIsNotHibernated();
 	aFailedRestoreWakesNothing();

@@ -233,6 +233,12 @@ int uml_emulator_sync(struct uml_emulator *emulator);
  * uml_emulator_resume; a guest with no management console is only flushed,
  * exactly as uml_emulator_sync would. */
 int uml_emulator_quiesce(struct uml_emulator *emulator);
+/* uml_emulator_quiesce for a host that must not write what it is short of:
+ * the same order and the same result, but the guest's RAM stays in the
+ * process and no hibernation image is made, where a quiesce would have
+ * hibernated it. A guest an earlier quiesce already hibernated stays so.
+ * Pair it with uml_emulator_resume. */
+int uml_emulator_quiesce_resident(struct uml_emulator *emulator);
 /* Wakes a quiesced guest. Harmless on a guest that is already running. */
 void uml_emulator_resume(struct uml_emulator *emulator);
 /* Does what a phone's power key does: ends a system suspend the guest entered

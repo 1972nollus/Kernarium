@@ -236,7 +236,8 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->connect_vsock == nullptr ||
         api->read_statistics == nullptr ||
         api->read_guest_memory == nullptr ||
-        api->cancel_touch == nullptr) {
+        api->cancel_touch == nullptr ||
+        api->quiesce_resident == nullptr) {
         std::fputs("Kernarium: runtime API validation failed\n", stderr);
         return false;
     }
@@ -267,12 +268,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v24");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v25");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v24: %s\n",
+            "Kernarium: selected runtime lacks API v25: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;
@@ -360,6 +361,12 @@ extern "C" int kernarium_runtime_loader_quiesce(void)
 {
     const kernarium_runtime_api* runtime = api();
     return runtime == nullptr ? -1 : runtime->quiesce();
+}
+
+extern "C" int kernarium_runtime_loader_quiesce_resident(void)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ? -1 : runtime->quiesce_resident();
 }
 
 extern "C" void kernarium_runtime_loader_resume(void)
