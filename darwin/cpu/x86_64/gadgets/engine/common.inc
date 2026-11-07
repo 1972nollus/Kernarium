@@ -1472,11 +1472,15 @@ Lx86_indirect_follow\@:
 .endm
 
 /* The entry frame's own slots, after the registers gadget_host_frame.inc
- * saves: the callee-saved halves of v8-v15, which the gadgets overwrite along
- * with the rest of the vector file and AAPCS64 makes the caller's, and the
- * string gadgets' repeat budget (a word, padded to a pair of words). */
-#define UML_X86_64_FRAME_VECTORS GADGET_HOST_FRAME_SAVED
-#define UML_X86_64_FRAME_STRING_BUDGET (GADGET_HOST_FRAME_SAVED + 0x40)
+ * saves, from GADGET_HOST_FRAME_SAVED:
+ *   0x00  spare
+ *   0x08  the string gadgets' repeat budget, a word
+ *   0x10  the callee-saved halves of v8-v15, which the gadgets overwrite along
+ *         with the rest of the vector file and AAPCS64 makes the caller's
+ * The budget keeps the offset the string gadgets have always encoded, so
+ * their bytes stay as they were. */
+#define UML_X86_64_FRAME_STRING_BUDGET (GADGET_HOST_FRAME_SAVED + 0x08)
+#define UML_X86_64_FRAME_VECTORS (GADGET_HOST_FRAME_SAVED + 0x10)
 #define UML_X86_64_FRAME_SLOTS 0x50
 
 /* Runs a threaded stream until a gadget leaves the engine.
