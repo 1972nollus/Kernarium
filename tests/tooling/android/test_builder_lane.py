@@ -785,6 +785,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wizard_branding_variant: str | None = None,
                           network_time_variant: str | None = None,
                           reclaim_variant: str | None = None,
+                          time_zone_variant: str | None = None,
                           wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
                           cas_hal_variant: str | None = None,
@@ -1326,6 +1327,46 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         reclaim_rc = reclaim_rc.replace(old, new)
                 if reclaim_variant != "missing-rc":
                     archive.writestr("SYSTEM_EXT/etc/init/kernarium_reclaim_boot_apps.rc", reclaim_rc)
+                # The script that applies the host's time zone, with its init file: the tracked ones,
+                # and the ways each can go wrong.
+                time_zone_script = (
+                    verifier.parents[1] / "overlay/tools/kernarium_time_zone.sh"
+                ).read_text()
+                time_zone_rc = (
+                    verifier.parents[1] / "overlay/tools/kernarium_time_zone.rc"
+                ).read_text()
+                for variant, (old, new) in {
+                    "no-property": ("getprop ro.boot.kernarium.timezone", "getprop ro.boot.other"),
+                    "no-auto-read": ("cmd settings get global auto_time_zone", "true"),
+                    "no-set": ('cmd alarm set-timezone "$zone"', "true"),
+                    "no-marker": ('setprop "$marker" "$zone"', "true"),
+                    "writes-setting": ("tag=kernarium_time_zone\n",
+                                       "tag=kernarium_time_zone\ncmd settings put global auto_time_zone 0\n"),
+                    "setprop-zone": ("tag=kernarium_time_zone\n",
+                                     "tag=kernarium_time_zone\nsetprop persist.sys.timezone GMT\n"),
+                    "detector": ("tag=kernarium_time_zone\n",
+                                 "tag=kernarium_time_zone\n"
+                                 "cmd time_zone_detector set_auto_detection_enabled true\n"),
+                }.items():
+                    if time_zone_variant == variant:
+                        if old not in time_zone_script:
+                            fail(f"the time zone script lacks '{old}' for the {variant} variant")
+                        time_zone_script = time_zone_script.replace(old, new)
+                if time_zone_variant != "missing-script":
+                    archive.writestr("SYSTEM_EXT/bin/kernarium_time_zone.sh", time_zone_script)
+                for variant, (old, new) in {
+                    "missing-service": ("service kernarium_time_zone ", "service other_service "),
+                    "not-oneshot": ("    oneshot\n", ""),
+                    "not-disabled": ("    disabled\n", ""),
+                    "started-at-boot": ("on property:sys.boot_completed=1", "on boot"),
+                    "no-start": ("    start kernarium_time_zone\n", ""),
+                }.items():
+                    if time_zone_variant == variant:
+                        if old not in time_zone_rc:
+                            fail(f"the time zone init file lacks '{old}' for the {variant} variant")
+                        time_zone_rc = time_zone_rc.replace(old, new)
+                if time_zone_variant != "missing-rc":
+                    archive.writestr("SYSTEM_EXT/etc/init/kernarium_time_zone.rc", time_zone_rc)
                 archive.writestr(
                     "SYSTEM_EXT/etc/selinux/system_ext_file_contexts",
                     "/(system_ext|system/system_ext)/bin/other\\.sh  u:object_r:system_file:s0\n"
@@ -1340,6 +1381,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         if reclaim_variant == "missing-label"
                         else "/(system_ext|system/system_ext)/bin/kernarium_reclaim_boot_apps\\.sh  "
                         "u:object_r:kernarium_reclaim_boot_apps_exec:s0\n"
+                    )
+                    + (
+                        ""
+                        if time_zone_variant == "missing-label"
+                        else "/(system_ext|system/system_ext)/bin/kernarium_time_zone\\.sh  "
+                        "u:object_r:kernarium_time_zone_exec:s0\n"
                     ),
                 )
                 # Platform, vendor and system_ext policy as the builder emits them: the
@@ -1393,6 +1440,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         if wifi_network_variant == "missing-marker-context"
                         else "persist.sys.kernarium.virtwifi_saved    "
                         "u:object_r:kernarium_wifi_network_prop:s0 exact bool\n"
+                    )
+                    + (
+                        ""
+                        if time_zone_variant == "missing-marker-context"
+                        else "persist.sys.kernarium.timezone_applied    "
+                        "u:object_r:kernarium_time_zone_prop:s0 exact string\n"
                     ),
                 )
                 archive.writestr(
@@ -1431,6 +1484,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     + ("" if adb_prop_not_system else "kernarium_adb_host_prop ")
                     + ("" if wifi_network_variant == "marker-not-system"
                        else "kernarium_wifi_network_prop ")
+                    + ("" if time_zone_variant == "marker-not-system"
+                       else "kernarium_time_zone_prop ")
                     + "))\n"
                     + (
                         ""
@@ -1474,6 +1529,41 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                              "(fifo_file (read write getattr)))\n"),
                         )
                         if reclaim_variant != variant
+                    )
+                    + "".join(
+                        rule
+                        for variant, rule in (
+                            ("missing-transition",
+                             "(typetransition init kernarium_time_zone_exec process "
+                             "kernarium_time_zone)\n"),
+                            ("missing-settings-find",
+                             "(allow kernarium_time_zone settings_service "
+                             "(service_manager (find)))\n"),
+                            ("missing-alarm-find",
+                             "(allow kernarium_time_zone alarm_service "
+                             "(service_manager (find)))\n"),
+                            ("missing-transfer",
+                             "(allow kernarium_time_zone system_server (binder (transfer)))\n"),
+                            ("missing-call",
+                             "(allow system_server kernarium_time_zone (binder (call)))\n"),
+                            ("missing-fd",
+                             "(allow system_server kernarium_time_zone (fd (use)))\n"),
+                            ("missing-fifo",
+                             "(allow system_server kernarium_time_zone "
+                             "(fifo_file (read write getattr)))\n"),
+                        )
+                        if time_zone_variant != variant
+                    )
+                    + (
+                        ""
+                        if time_zone_variant == "missing-marker-rule"
+                        else "(allow kernarium_time_zone kernarium_time_zone_prop "
+                        "(property_service (set)))\n"
+                    )
+                    + (
+                        "(allow kernarium_time_zone timezone_prop (property_service (set)))\n"
+                        if time_zone_variant == "sets-zone-property"
+                        else ""
                     )
                     + (
                         ""
@@ -2704,6 +2794,32 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("reclaim-missing-call", {"reclaim_variant": "missing-call"}),
             ("reclaim-missing-fd", {"reclaim_variant": "missing-fd"}),
             ("reclaim-missing-fifo", {"reclaim_variant": "missing-fifo"}),
+            ("missing-time-zone-script", {"time_zone_variant": "missing-script"}),
+            ("missing-time-zone-rc", {"time_zone_variant": "missing-rc"}),
+            ("time-zone-missing-service", {"time_zone_variant": "missing-service"}),
+            ("time-zone-not-oneshot", {"time_zone_variant": "not-oneshot"}),
+            ("time-zone-not-disabled", {"time_zone_variant": "not-disabled"}),
+            ("time-zone-started-at-boot", {"time_zone_variant": "started-at-boot"}),
+            ("time-zone-no-start", {"time_zone_variant": "no-start"}),
+            ("time-zone-no-property", {"time_zone_variant": "no-property"}),
+            ("time-zone-no-auto-read", {"time_zone_variant": "no-auto-read"}),
+            ("time-zone-no-set", {"time_zone_variant": "no-set"}),
+            ("time-zone-no-marker", {"time_zone_variant": "no-marker"}),
+            ("time-zone-writes-setting", {"time_zone_variant": "writes-setting"}),
+            ("time-zone-setprop-zone", {"time_zone_variant": "setprop-zone"}),
+            ("time-zone-detector", {"time_zone_variant": "detector"}),
+            ("time-zone-missing-label", {"time_zone_variant": "missing-label"}),
+            ("time-zone-missing-transition", {"time_zone_variant": "missing-transition"}),
+            ("time-zone-missing-settings-find", {"time_zone_variant": "missing-settings-find"}),
+            ("time-zone-missing-alarm-find", {"time_zone_variant": "missing-alarm-find"}),
+            ("time-zone-missing-transfer", {"time_zone_variant": "missing-transfer"}),
+            ("time-zone-missing-call", {"time_zone_variant": "missing-call"}),
+            ("time-zone-missing-fd", {"time_zone_variant": "missing-fd"}),
+            ("time-zone-missing-fifo", {"time_zone_variant": "missing-fifo"}),
+            ("time-zone-sets-zone-property", {"time_zone_variant": "sets-zone-property"}),
+            ("time-zone-missing-marker-rule", {"time_zone_variant": "missing-marker-rule"}),
+            ("time-zone-marker-not-system", {"time_zone_variant": "marker-not-system"}),
+            ("time-zone-missing-marker-context", {"time_zone_variant": "missing-marker-context"}),
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
@@ -3390,6 +3506,58 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not allow system_server kernarium_reclaim_boot_apps fd use"),
             ("reclaim-missing-fifo-cause", {"reclaim_variant": "missing-fifo"},
              "does not allow system_server kernarium_reclaim_boot_apps fifo_file write"),
+            ("missing-time-zone-script-cause", {"time_zone_variant": "missing-script"},
+             "required entries are missing: .*SYSTEM_EXT/bin/kernarium_time_zone.sh"),
+            ("missing-time-zone-rc-cause", {"time_zone_variant": "missing-rc"},
+             "required entries are missing: .*SYSTEM_EXT/etc/init/kernarium_time_zone.rc"),
+            ("time-zone-missing-service-cause", {"time_zone_variant": "missing-service"},
+             "does not declare the kernarium_time_zone service"),
+            ("time-zone-not-oneshot-cause", {"time_zone_variant": "not-oneshot"},
+             "does not declare kernarium_time_zone as oneshot"),
+            ("time-zone-not-disabled-cause", {"time_zone_variant": "not-disabled"},
+             "does not declare kernarium_time_zone as disabled"),
+            ("time-zone-started-at-boot-cause", {"time_zone_variant": "started-at-boot"},
+             "starts kernarium_time_zone under 'boot'"),
+            ("time-zone-no-start-cause", {"time_zone_variant": "no-start"},
+             "does not start kernarium_time_zone when boot completes"),
+            ("time-zone-no-property-cause", {"time_zone_variant": "no-property"},
+             "does not contain 'ro.boot.kernarium.timezone'"),
+            ("time-zone-no-auto-read-cause", {"time_zone_variant": "no-auto-read"},
+             "does not contain 'cmd settings get global auto_time_zone'"),
+            ("time-zone-no-set-cause", {"time_zone_variant": "no-set"},
+             "does not contain 'cmd alarm set-timezone \"\\$zone\"'"),
+            ("time-zone-no-marker-cause", {"time_zone_variant": "no-marker"},
+             "does not contain 'setprop \"\\$marker\" \"\\$zone\"'"),
+            ("time-zone-writes-setting-cause", {"time_zone_variant": "writes-setting"},
+             "contains 'settings put': it may only read the user's automatic time zone setting"),
+            ("time-zone-setprop-zone-cause", {"time_zone_variant": "setprop-zone"},
+             "contains 'setprop persist.sys.timezone': it may only read"),
+            ("time-zone-detector-cause", {"time_zone_variant": "detector"},
+             "contains 'time_zone_detector': it may only read the user's automatic time zone setting"),
+            ("time-zone-missing-label-cause", {"time_zone_variant": "missing-label"},
+             "system_ext file contexts do not label /system_ext/bin/kernarium_time_zone.sh"),
+            ("time-zone-missing-transition-cause", {"time_zone_variant": "missing-transition"},
+             "does not move init into the time zone domain"),
+            ("time-zone-missing-settings-find-cause", {"time_zone_variant": "missing-settings-find"},
+             "does not allow kernarium_time_zone settings_service service_manager find"),
+            ("time-zone-missing-alarm-find-cause", {"time_zone_variant": "missing-alarm-find"},
+             "does not allow kernarium_time_zone alarm_service service_manager find"),
+            ("time-zone-missing-transfer-cause", {"time_zone_variant": "missing-transfer"},
+             "does not allow kernarium_time_zone system_server binder transfer"),
+            ("time-zone-missing-call-cause", {"time_zone_variant": "missing-call"},
+             "does not allow system_server kernarium_time_zone binder call"),
+            ("time-zone-missing-fd-cause", {"time_zone_variant": "missing-fd"},
+             "does not allow system_server kernarium_time_zone fd use"),
+            ("time-zone-missing-fifo-cause", {"time_zone_variant": "missing-fifo"},
+             "does not allow system_server kernarium_time_zone fifo_file write"),
+            ("time-zone-sets-zone-property-cause", {"time_zone_variant": "sets-zone-property"},
+             "lets the time zone domain set .*timezone_prop.*not only its own marker"),
+            ("time-zone-missing-marker-rule-cause", {"time_zone_variant": "missing-marker-rule"},
+             "does not let the time zone domain set persist.sys.kernarium.timezone_applied"),
+            ("time-zone-marker-not-system-cause", {"time_zone_variant": "marker-not-system"},
+             "does not define the system-owned kernarium_time_zone_prop"),
+            ("time-zone-missing-marker-context-cause", {"time_zone_variant": "missing-marker-context"},
+             "do not label persist.sys.kernarium.timezone_applied"),
             ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
              "userdata entry lacks the fs_mgr quota flag"),
             ("wrong-apex-filesystem-cause", {"wrong_apex_filesystem": True},
@@ -4572,6 +4740,188 @@ def verify_reclaim_boot_apps(android_root: Path) -> None:
             fail("the reclaim script acts without a process list")
 
 
+def verify_time_zone(android_root: Path) -> None:
+    """The time zone script follows the host only while nobody in the guest has chosen a zone.
+
+    The script runs with stub tools: getprop and setprop read and write a table of properties,
+    `cmd settings get` prints the automatic time zone setting, `cmd alarm set-timezone` records the
+    call and, as the platform does, takes a name its tzdata has and refuses any other, and log
+    records what the script says."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    tools = android_root / "overlay/tools"
+    script = tools / "kernarium_time_zone.sh"
+    # The sepolicy sources hold what the built-policy check looks for.
+    policy = (android_root / "overlay/sepolicy/system_ext/private/kernarium_time_zone.te").read_text()
+    for needle in (
+        "init_daemon_domain(kernarium_time_zone)",
+        "allow kernarium_time_zone settings_service:service_manager find;",
+        "allow kernarium_time_zone alarm_service:service_manager find;",
+        "allow kernarium_time_zone system_server:binder transfer;",
+        "allow system_server kernarium_time_zone:binder call;",
+        "allow system_server kernarium_time_zone:fd use;",
+        "allow system_server kernarium_time_zone:fifo_file { getattr read write };",
+        "allow kernarium_time_zone system_file:file execute_no_trans;",
+        "system_internal_prop(kernarium_time_zone_prop)",
+        "set_prop(kernarium_time_zone, kernarium_time_zone_prop)",
+    ):
+        if needle not in policy:
+            fail(f"the time zone domain lacks '{needle}'")
+    if len(re.findall(r"^set_prop\(", policy, re.M)) != 1:
+        fail("the time zone domain sets a property besides its marker")
+    contexts = (android_root / "overlay/sepolicy/system_ext/private/file_contexts").read_text()
+    if (
+        r"/(system_ext|system/system_ext)/bin/kernarium_time_zone\.sh  "
+        "u:object_r:kernarium_time_zone_exec:s0"
+    ) not in contexts:
+        fail("the system_ext file contexts do not label the time zone script")
+    properties = (android_root / "overlay/sepolicy/system_ext/private/property_contexts").read_text()
+    if (
+        "persist.sys.kernarium.timezone_applied    u:object_r:kernarium_time_zone_prop:s0 exact string"
+    ) not in properties:
+        fail("the system_ext property contexts do not label the time zone marker")
+    blueprint = (tools / "Android.bp").read_text()
+    for needle in (
+        'name: "kernarium_time_zone_script"',
+        'src: "kernarium_time_zone.sh"',
+        'init_rc: ["kernarium_time_zone.rc"]',
+    ):
+        if needle not in blueprint:
+            fail(f"overlay/tools/Android.bp lacks {needle}")
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
+    if len(re.findall(r"^PRODUCT_PACKAGES \+= kernarium_time_zone_script$", product, re.M)) != 1:
+        fail("lineage_andarium.mk does not add the time zone script to PRODUCT_PACKAGES exactly once")
+    verifier.check_time_zone((tools / "kernarium_time_zone.rc").read_text(), script.read_bytes())
+
+    # What the guest's tzdata knows.
+    known = ("GMT", "Asia/Tokyo", "Europe/Paris", "Europe/Berlin", "America/Argentina/Buenos_Aires", "Etc/GMT+5")
+    marker = "persist.sys.kernarium.timezone_applied"
+
+    def run(zone: str | None, auto: str, current: str, applied: str = "") -> tuple[
+        subprocess.CompletedProcess, list[str], str, str
+    ]:
+        """Runs the script once; returns the process, the recorded calls, the final zone and marker."""
+        with tempfile.TemporaryDirectory(prefix="time-zone-script-") as temporary:
+            stubs = Path(temporary)
+            calls = stubs / "calls"
+            properties = stubs / "properties"
+            properties.mkdir()
+            (properties / "ro.boot.kernarium.timezone").write_text((zone or "") + "\n")
+            (properties / "persist.sys.timezone").write_text(current + "\n")
+            (properties / marker).write_text(applied + "\n")
+            for name, body in {
+                "getprop": f'cat {properties}/"$1" 2>/dev/null || echo\n',
+                "setprop": f'echo "setprop $*" >> {calls}\necho "$2" > {properties}/"$1"\n',
+                "cmd": (
+                    f'echo "cmd $*" >> {calls}\n'
+                    'if [ "$1 $2 $3 $4" = "settings get global auto_time_zone" ]; then\n'
+                    f'    [ -z "{auto}" ] || echo "{auto}"\n'
+                    'elif [ "$1 $2" = "alarm set-timezone" ]; then\n'
+                    f'    case " {" ".join(known)} " in\n'
+                    f'        *" $3 "*) echo "$3" > {properties}/persist.sys.timezone ;;\n'
+                    "    esac\n"
+                    "else\n    exit 2\nfi\n"
+                ),
+                "log": f'echo "log $*" >> {calls}\n',
+                "sleep": f'echo "sleep $*" >> {calls}\n',
+            }.items():
+                (stubs / name).write_text("#!/bin/sh\n" + body)
+                (stubs / name).chmod(0o755)
+            env = {"PATH": f"{stubs}:/usr/bin:/bin"}
+            result = subprocess.run(["/bin/sh", str(script)], env=env, capture_output=True, text=True)
+            recorded = calls.read_text().splitlines() if calls.exists() else []
+            return (
+                result,
+                recorded,
+                (properties / "persist.sys.timezone").read_text().strip(),
+                (properties / marker).read_text().strip(),
+            )
+
+    def sets(recorded: list[str]) -> list[str]:
+        return [line for line in recorded if line.startswith("cmd alarm set-timezone")]
+
+    def notes(recorded: list[str]) -> list[str]:
+        return [line for line in recorded if line.startswith("log ")]
+
+    # A new guest (GMT, or no zone yet, and no marker) takes the host's zone once, with the setting
+    # on or unset, and records it; the script says so in one line.
+    for current in ("GMT", ""):
+        for auto in ("1", "null"):
+            result, recorded, final, applied = run("Asia/Tokyo", auto, current)
+            if (
+                result.returncode != 0
+                or final != "Asia/Tokyo"
+                or applied != "Asia/Tokyo"
+                or sets(recorded) != ["cmd alarm set-timezone Asia/Tokyo"]
+                or len(notes(recorded)) != 1
+            ):
+                fail(f"the time zone script (auto {auto}, was {current!r}) did not take Asia/Tokyo: "
+                     f"{recorded} {final} {applied}")
+    # It follows a changed host zone while the zone is still the one it applied, and takes every
+    # character a name may have.
+    for zone in ("Europe/Paris", "America/Argentina/Buenos_Aires", "Etc/GMT+5"):
+        result, recorded, final, applied = run(zone, "1", "Asia/Tokyo", "Asia/Tokyo")
+        if result.returncode != 0 or final != zone or applied != zone:
+            fail(f"the time zone script did not follow the host to {zone}: {recorded} {final} {applied}")
+    # A zone the user picked (Settings' or the wizard's picker, which leave the setting on) is
+    # never replaced, whether the script had applied one before or the guest predates the marker.
+    for applied in ("Asia/Tokyo", ""):
+        result, recorded, final, marker_value = run("Europe/Paris", "1", "Europe/Berlin", applied)
+        if (
+            result.returncode != 0
+            or final != "Europe/Berlin"
+            or marker_value != applied
+            or sets(recorded)
+            or len(notes(recorded)) != 1
+        ):
+            fail(f"the time zone script replaced a chosen zone (marker {applied!r}): "
+                 f"{recorded} {final} {marker_value}")
+    # With the automatic time zone off nothing is touched, whatever the zone is.
+    for applied, current in (("Asia/Tokyo", "Asia/Tokyo"), ("", "GMT"), ("Asia/Tokyo", "Europe/Berlin")):
+        result, recorded, final, marker_value = run("Europe/Paris", "0", current, applied)
+        if (
+            result.returncode != 0
+            or final != current
+            or marker_value != applied
+            or sets(recorded)
+            or any(line.startswith("setprop") for line in recorded)
+            or len(notes(recorded)) != 1
+        ):
+            fail(f"the time zone script touched the guest with the setting off: {recorded} {final}")
+    # A zone that is already the host's is not set again, and the marker follows it, so a guest whose
+    # user picked the host's zone follows the host again.
+    for applied in ("", "Asia/Tokyo", "Europe/Berlin"):
+        result, recorded, final, marker_value = run("Asia/Tokyo", "1", "Asia/Tokyo", applied)
+        if result.returncode != 0 or sets(recorded) or final != "Asia/Tokyo" or marker_value != "Asia/Tokyo":
+            fail(f"the time zone script mishandled the host's own zone (marker {applied!r}): "
+                 f"{recorded} {final} {marker_value}")
+    # A name the guest's tzdata lacks is refused by the platform: the zone and the marker stay, one
+    # line says so, and the boot goes on.
+    result, recorded, final, applied = run("Pacific/Coyhaique", "1", "Europe/Paris", "Europe/Paris")
+    if (
+        result.returncode != 0
+        or final != "Europe/Paris"
+        or applied != "Europe/Paris"
+        or sets(recorded) != ["cmd alarm set-timezone Pacific/Coyhaique"]
+        or len(notes(recorded)) != 1
+        or "Pacific/Coyhaique" not in notes(recorded)[0]
+    ):
+        fail(f"the time zone script did not keep the zone for an unknown name: {recorded} {final} {applied}")
+    # No zone from the host (the standalone launcher, an older application): nothing is read or set.
+    result, recorded, final, applied = run(None, "1", "Asia/Tokyo")
+    if result.returncode != 0 or recorded or final != "Asia/Tokyo":
+        fail(f"the time zone script acted without a host zone: {recorded}")
+    # A setting that cannot be read leaves the zone alone and says so.
+    result, recorded, final, applied = run("Europe/Paris", "", "GMT")
+    if result.returncode == 0 or sets(recorded) or final != "GMT":
+        fail(f"the time zone script acted on an unreadable setting: {recorded} {final}")
+    # A name that is not a time zone name never reaches cmd.
+    for bad in ("Asia/Tokyo;reboot", "../etc", "/Asia/Tokyo", "Asia//Tokyo", "Asia/Tokyo/", "a b", "$(id)",
+                "Asia/To`id`"):
+        result, recorded, final, applied = run(bad, "1", "GMT")
+        if result.returncode != 0 or any(line.startswith("cmd ") for line in recorded) or final != "GMT":
+            fail(f"the time zone script passed {bad!r} to cmd: {recorded}")
+
+
 def verify_default_wallpaper(android_root: Path) -> None:
     """The overlay replaces LineageOS's 1920 pixel tablet wallpaper with a bounded square.
 
@@ -4800,6 +5150,7 @@ def verify_package_assertions(android_root: Path) -> None:
         "kernarium_net_setup",
         "kernarium_wifi_network_script",
         "kernarium_reclaim_boot_apps_script",
+        "kernarium_time_zone_script",
     ):
         if package not in present:
             fail(f"build-aosp.sh does not assert that {package} is present")
@@ -5841,6 +6192,7 @@ def main() -> None:
     verify_decoder_output_delay_topic(android_root)
     verify_secure_element_topic(android_root)
     verify_reclaim_boot_apps(android_root)
+    verify_time_zone(android_root)
     verify_default_wallpaper(android_root)
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)
