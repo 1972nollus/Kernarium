@@ -1,374 +1,185 @@
 # Mainline Linux 6.18 source policy
 
-This directory owns the maintained stable Linux 6.18 source identity, local
-Darwin UML patch series, kernel configuration overlays, standalone build
-policy, and accepted artifact descriptors.
+This directory owns the maintained stable Linux 6.18 source identity, the local
+Darwin UML patch series, the kernel configuration overlays, the standalone build
+policy, and the accepted artifact descriptors.
 
-Exact upstream commit/tree, the ordered series, and the final tree they
+The exact upstream commit and tree, the ordered series, and the final tree they
 produce live in [`patches/metadata.env`](patches/metadata.env); the bridge ABI
 identity is [`../common/abi/identity.env`](../common/abi/identity.env). The
-normal arm64 slices apply the shared
-[`kernel/common/patches`](../common/patches) series and then this line's
-overlay in `patches/series`. The dedicated x86_64 userspace slice applies after
-them and owns only its config and patch overlay under
-[`slices/x86_64`](slices/x86_64). Its metadata names no upstream identity: the
-slice takes this line's, and the series tooling rejects a copy. Those
-machine-readable files are the source of truth; the final tree is the identity
-an artifact is accepted by, and replay commit IDs and binary hashes are
-observations.
+arm64 slices apply the shared [`kernel/common/patches`](../common/patches)
+series and then this line's overlay in `patches/series`. The x86_64 userspace
+slice applies after them and owns only its config and patch overlay under
+[`slices/x86_64`](slices/x86_64); its metadata names no upstream identity, since
+the slice takes this line's. Those machine-readable files are the source of
+truth: the final tree is the identity an artifact is accepted by, and replay
+commit IDs and binary hashes are observations.
 
 The line builds two products from one tree. The Linux product is the desktop
-kernel, with its arm64 kernel and the x86_64 userspace slice. The
+kernel: the arm64 kernel and the x86_64 userspace slice. The
 [Android product](#android-product) is the arm64 kernel of the LineageOS 24
-(Android 17) guest. It differs from the Linux product only in its configuration
-overlay: both build the same tree, including ten overlay topics that matter
-only to Android. Every guest page is 4 KiB. The Darwin host's page is 16 KiB,
-which the congruent-slot and aperture rules of the [shared kernel
-README](../common/README.md) account for.
+(Android 17) guest, which differs from the Linux product only in its
+configuration overlay. Every guest page is 4 KiB; the Darwin host page is
+16 KiB. The Virtio video decoder and encoder are built into every product
+([wire contract](../common/video/README.md)).
 
-The shared stateful Virtio video decoder and encoder are built in for every
-product in this line. Their [wire contract](../common/video/README.md) is
-synchronized from the canonical header and their implementations are topics in
-the shared series; the encoder is the Virtio device with ID 30, which the
-driver binds only when it negotiates `VIRTIO_VIDEO_F_V4L2_CONTROLS`, and it
-registers the controls its device lists. The host exposes hardware decoding and
-encoding through V4L2 independently of the GPU.
-
-The shared series also carries topics Android relies on: an initrd read from a
-byte range of a host file (`initrd_offset=` and `initrd_size=`), arm64 kernel
-API header generation, arm64 Rust target flags, the arm64 system-mapping
-sealing capability, and the Kernarium Virtio battery driver. The Linux product
-leaves Rust, `MSEAL_SYSTEM_MAPPINGS` (which `CHECKPOINT_RESTORE` excludes), and
-the battery driver disabled; the Android product enables the last two and
-leaves Rust disabled.
-
-The contracts every product shares, which the shared series carries, are in the
-[shared kernel README](../common/README.md): the native window, the vhost-user
-aperture, RAM commitment, TLB and page-table replay, scheduling, suspend and the
-management console, and the device and file system topics. This README keeps
-the line's policy, its overlays, the x86_64 slice and the build.
+The contracts every product shares are in the
+[shared kernel README](../common/README.md). This README keeps the line's
+policy, its overlays, the x86_64 slice, and the build.
 
 ## Source preparation and replay
 
 Linux must be checked out on a case-sensitive filesystem. Copy
-`source-location.conf.example` to the ignored `source-location.conf` and set
-its single absolute `UML_KERNEL_SOURCE_DIR` value.
+`source-location.conf.example` to the ignored `source-location.conf` and set its
+single absolute `UML_KERNEL_SOURCE_DIR` value.
 
 ```sh
 kernel/mainline-6.18/scripts/prepare-source.sh
 kernel/mainline-6.18/scripts/prepare-source.sh --verify
 kernel/mainline-6.18/scripts/prepare-source.sh --slice x86_64
-kernel/mainline-6.18/scripts/verify-replay.sh \
-  --work-root /case-sensitive/path
+kernel/mainline-6.18/scripts/verify-replay.sh --work-root /case-sensitive/path
 ```
 
 Preparation uses the pinned Git cache and creates the managed replay branch.
-`--no-fetch` requires the exact commit to exist locally. `--recreate` may
-replace only a clean stale managed replay; it never replaces an arbitrary
-checkout.
+`--recreate` may replace only a clean stale managed replay, never an arbitrary
+checkout. `verify-replay.sh` verifies the shared series and the x86_64 overlay
+from the pinned upstream commit and by default builds all three kernels (see
+`--help`).
 
 Replay, rebase, and next-base commits keep each topic's author and are
-committed by whoever Git resolves for the caller; that committer never reaches
-a patch file. A patch's only identity is its topic's author, so
+committed by whoever Git resolves for the caller; that committer never reaches a
+patch file. A patch's only identity is its topic's author, so
 `scripts/patch_series.py export` refuses a placeholder author or one Git
-invented from the host name, such as a `localhost`, `.local`, `.invalid`, or
-`example.com` address. The topic's owner fixes it with an ordinary amend such
-as `git commit --amend --reset-author`. Tools never name or rewrite an
-identity. Export also leaves out a `Claude-Session:` trailer line: it links a
-private session and describes no change, and the series' tree does not depend
-on a message.
-
-`verify-replay.sh` starts from the pinned upstream commit, verifies the shared
-series, branches and verifies the x86_64 overlay, and by default builds the
-arm64, Android and x86_64-userspace kernels. Use `--skip-build` only when
-source replay is the intended scope. Kernel builds use all online
-processors unless `UML_KERNEL_JOBS` or `--jobs` supplies a limit.
+invented from the host name (`localhost`, `.local`, `.invalid`, `example.com`).
+The topic's owner fixes it with an ordinary amend such as
+`git commit --amend --reset-author`; tools never name or rewrite an identity.
+Export also leaves out a `Claude-Session:` trailer, which describes no change.
 
 ## Patch maintenance
 
 The shared series and this line's overlay are generated by
 [`kernel_series.py`](../common/tooling/kernel_series.py) from the managed
-replay: shared topics end at `codex/linux-6.18-common`, and mainline-only
-topics follow up to `codex/linux-6.18-darwin`. Amend, reorder, add, or drop
-commits there, then run:
+replay: shared topics end at `codex/linux-6.18-common`, and mainline-only topics
+follow up to `codex/linux-6.18-darwin`. Amend, reorder, add, or drop commits
+there, then run:
 
 ```sh
 kernel/mainline-6.18/scripts/rebase-patches.sh
 kernel/mainline-6.18/scripts/rebase-patches.sh --slice x86_64
 ```
 
-Each run exports its slice's series, named by topic subject, and records the
-final tree. The arm64 run exports the shared series too. The x86_64 run first
-rebases its overlay onto the current arm64 branch. The slice replaces the arm64 port's ptrace, signal, TLS, syscall and
-ELF files wholesale, so a shared topic that edits them is resolved against the
-slice's own versions in the same change, and the slice's artifact is rebuilt. A
-patch file changes only when its own topic does. Never edit patch
-files, `series.tsv`, or the final tree by hand.
+Each run exports its slice's series and records the final tree; the arm64 run
+exports the shared series too. The x86_64 run first rebases its overlay onto the
+current arm64 branch. The slice replaces the arm64 port's ptrace, signal, TLS,
+syscall, and ELF files wholesale, so a shared topic that edits them is resolved
+against the slice's versions in the same change, and the slice's artifact is
+rebuilt. A patch file changes only when its own topic does; never edit patch
+files, `series.tsv`, or the final tree by hand. `check-next-version.sh` (see
+`--help`) rebases a replay onto a development ref and reports the topics that
+need a port. The series is maintained locally; no tooling submits or pushes it.
 
-`check-next-version.sh --work-root PATH --ref REF` (see `--help`) rebases a
-replay onto a development ref and reports the topics that need a port, then the
-`git range-diff` of the rest.
-The series is maintained locally; no tooling submits or pushes it.
+A topic stays in this overlay rather than the shared series only when it
+depends on the guest OS or the target product does not exist; the lists under
+[Android product](#android-product) and [x86_64 userspace
+slice](#x86_64-userspace-slice) give each reason.
 
 ## Kernel configuration
 
 The shipped policy is the shared
 [`kernel/common/config/darwin-uml.fragment`](../common/config/darwin-uml.fragment)
-plus the overlay of the product, `config/mainline.fragment` for Linux or
+plus the product overlay, `config/mainline.fragment` for Linux or
 `config/android.fragment` for [Android](#android-product). The build copies the
 shared policy as the starting `.config`, applies the overlay, runs
 `olddefconfig`, and verifies that every requested symbol resolved as declared.
-The Linux overlay holds only what differs from the Android product:
+Each fragment's comments give the reason for its settings; the Linux overlay
+holds only what differs from Android. Loadable modules and hostfs are disabled,
+kernel IP autoconfiguration is disabled (guest images start their own DHCP
+client), and zswap allocates no pool until the guest activates backing swap, so
+launchers must not count it as guest memory. Every product builds the Virtio
+vsock transport in, so a stream to CID 2 goes to the host while CID 1 still
+loops back. `guest-kernel-config` checks these settings in Linux and Android
+guests.
 
-- `CHECKPOINT_RESTORE` stays on for Linux guests. Its Kconfig dependency
-  excludes `MSEAL_SYSTEM_MAPPINGS`, which Android enables instead.
-- Smack is the exclusive LSM, with the matching `CONFIG_LSM` order, because
-  the recorded LTP results depend on it. Android uses SELinux.
-- Auxiliary POSIX clocks (`CONFIG_POSIX_AUX_CLOCKS`), which Linux 6.17
-  added and LTP's `timer_create02` covers (see the Android overlay below).
-- SysV IPC, the NFS client and SCTP, which desktop software and NFS mounts
-  use and Android forbids or has no use for (see the Android overlay below).
-  SCTP creates no listener and the SLiRP network never forwards it, so it
-  joins endpoints inside the guest.
-  The NFS client keeps Kerberos (`RPCSEC_GSS_KRB5`) at its default, which
-  selects the kernel Kerberos crypto library (`CRYPTO_KRB5`, about 86 KB).
-- No wakelock interface: `CONFIG_PM_WAKELOCKS` and its `/sys/power/wake_lock`
-  stay off. Sxmo, which postmarketOS guests run, suspends the guest on its own
-  whenever that file exists, and a desktop guest has no wakelock service to
-  hold it awake. The Android product turns it on (see below).
-- No static usermode helper: `CONFIG_STATIC_USERMODEHELPER` stays off.
-  systemd-coredump is a piped `core_pattern`, and the NFS idmapper's
-  `/sbin/request-key` and `/sbin/bridge-stp` are upcalls, so a static path
-  would turn each into a silent no-op. The Android product turns it on (see
-  below).
-
-Every product has IPv4 multicast, which Kconfig leaves off and mDNS and SSDP
-discovery need, SafeSetID, which restricts only the IDs a policy written to
-securityfs names, and macvlan, a second MAC address on one NIC (12 KB of code
-and data). No product has RDS: its TCP transport opens a kernel listener on
-port 16385 in every network namespace for any local user to reach, and
-nothing in a guest uses it, so the LTP case that needs it, `recvmsg03`, is in
-`disabled-tests.tsv`. `guest-kernel-config` checks these settings in a Linux
-guest, and the same probe checks an Android guest.
-
-Every product builds the Virtio vsock transport in (`CONFIG_VIRTIO_VSOCKETS`)
-beside the vsock loopback transport. The driver binds only to a Virtio vsock
-device the host offers, so a guest without one differs in a single way: with
-the transport registered, a stream to CID 2 goes to the host and no longer
-loops back, while CID 1 (`VMADDR_CID_LOCAL`) still does. The Android product
-lists the transport among its required built-ins. `guest-kernel-config` checks
-that the driver is registered, that no balloon driver is, and that a stream on
-CID 1 carries a byte.
+`build/build-kernel.sh --lockdep` also applies `config/lockdep.fragment` last
+for a lock-checking probe. Publish such a kernel only to a scratch output root
+and select it through `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; it is never an
+accepted artifact.
 
 ### Kernel self-protection
 
-Every product builds the kernel with `CONFIG_STACKPROTECTOR_STRONG` and
-`CONFIG_HARDENED_USERCOPY`, as Debian and the Android GKI do. The stack
-protector uses one global canary, `__stack_chk_guard`, which
-`boot_init_stack_canary()` draws before the first protected frame; the
-host-facing objects (`USER_CFLAGS`) are built without it. Hardened usercopy
-checks every variable-size `copy_to_user()` and `copy_from_user()` against its
-slab object, page allocation, kernel text and stack, and a failure is a
-panic. UML arm64 has no `HAVE_ARCH_WITHIN_STACK_FRAMES`, so a stack copy is
-checked against the whole stack, not the frame. LKDTM confirms the canary
-check and the slab, page, kernel-text and stack-bounds cases. An overrun of
-one stack frame into the next goes unseen here; an overrun of a whole task
-stack does not (see Kernel stacks).
+Every product builds with `CONFIG_STACKPROTECTOR_STRONG` and
+`CONFIG_HARDENED_USERCOPY`, as Debian and the Android GKI do. UML arm64 has no
+`HAVE_ARCH_WITHIN_STACK_FRAMES`, so a stack copy is checked against the whole
+stack, not the frame; LKDTM confirms the canary and bounds checks.
 
-The Android CTS `KernelConfigTest` also asks for three symbols that arch/um
-does not have. Each protection is either provided by the design under another
-mechanism or has nothing to protect, so the product keeps the three tests as
-documented deviations:
+The Android CTS `KernelConfigTest` also asks for three symbols arch/um does not
+have. The product keeps the three tests as documented deviations:
 
-- `CONFIG_ARM64_SW_TTBR0_PAN` (PAN): the kernel is native host code, and guest
-  user memory is a software MMU that it reaches only through the uaccess page
-  walk. A kernel access to a guest user address outside uaccess faults, and
-  `segv()` panics with "Kernel tried to access user memory" (LKDTM
-  `ACCESS_USERSPACE` and `EXEC_USERSPACE`), which is what PAN enforces. There
-  is no `PSTATE.PAN` or TTBR0 switch to emulate.
-- `CONFIG_UNMAP_KERNEL_AT_EL0` (KPTI): guest user code runs in the engine, and
-  the software MMU maps no kernel memory into any guest address; the native
-  window is a hole in the guest range. EL0 therefore cannot name a kernel
-  address, and there is no shared page table to split. The test's other way
-  out, `meltdown` and `spectre_v2` entries in
-  `/sys/devices/system/cpu/vulnerabilities` that do not say "Vulnerable", is
-  not offered: the guest and its kernel share the host core's predictors, and
-  the host cannot promise Spectre v2 immunity.
-- `CONFIG_RANDOMIZE_BASE` (KASLR): the macOS native window starts at the
-  fixed `DARWIN_UML_MACOS_NATIVE_ADDRESS`, so the kernel sits at the same
-  address on every boot (iOS lets the host choose it). The kernel takes the
-  window from the host at runtime, so randomising the macOS base is a change
-  to the host's `prepare_native_kernel_layout()`, not a kernel option; it is
-  not done.
+- `CONFIG_ARM64_SW_TTBR0_PAN`: the kernel is native host code, and guest user
+  memory is a software MMU reached only through uaccess; a kernel access to a
+  guest user address outside uaccess faults and `segv()` panics.
+- `CONFIG_UNMAP_KERNEL_AT_EL0`: the software MMU maps no kernel memory into any
+  guest address, so EL0 cannot name one. The `meltdown`/`spectre_v2` alternative
+  is not offered, because guest and kernel share the host core's predictors.
+- `CONFIG_RANDOMIZE_BASE`: the macOS native window starts at the fixed
+  `DARWIN_UML_MACOS_NATIVE_ADDRESS`. Randomising it is a change to the host's
+  `prepare_native_kernel_layout()`, not a kernel option, and is not done.
 
 ### Kernel stacks
 
-Every product uses 64 KiB task stacks (`CONFIG_KERNEL_STACK_ORDER=4` with
-4 KiB pages), virtually mapped with an unmapped guard region around each, and
-`CONFIG_SCHED_STACK_END_CHECK`. The deepest use measured under the heaviest
-workload of each product, with `CONFIG_DEBUG_STACK_USAGE`, was about 26 KiB, a
-margin of 2.5x or more.
-
-The signal stack the host gives each vCPU carrier is separate: 128 KiB from
-`malloc`, whatever `THREAD_SIZE` is, with the deepest use measured at
-3.8 KiB. There is no per-CPU array in the image for it.
-
-An overrun is caught, not silent. A write below the lowest stack page or above
-the highest faults on the guard region and ends in
-`Kernel panic - not syncing: Kernel mode signal 10`, which names the faulting
-pc and address (LKDTM `STACK_GUARD_PAGE_LEADING`, `STACK_GUARD_PAGE_TRAILING`
-and `EXHAUST_STACK`). A clobbered end-of-stack word ends in
-`corrupted stack end detected inside scheduler` (LKDTM `CORRUPT_STACK_END`).
-`guest-kernel-config` checks the order, `VMAP_STACK` and the end check.
-
-### Kernel build policy
-
-DWARF stays uncompressed in both products, in the shared policy, for the Darwin
-host's pahole, whose elfutils is built without zstd.
-
-`build/build-kernel.sh --lockdep` also applies `config/lockdep.fragment`
-last, for a lock-checking probe with lockdep, its hardirq-state tracking,
-`DEBUG_ATOMIC_SLEEP`, and `DEBUG_VM`. Publish such a kernel only to a scratch output root and select it
-through `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; it is never an accepted
-artifact.
-
-Loadable modules remain disabled. The required guest filesystems, networking,
-Virtio devices, cgroups, BPF interpreter, zram, zswap/zstd, and supported LSM
-policy are built in. Hostfs is disabled. Deliberately unsupported kernel
-features are reflected in the LTP disabled manifest rather than enabled solely
-for test count.
-
-Kernel IP autoconfiguration is disabled. Writable guest images start their own
-DHCP client and DNS resolver after init begins; launchers do not need kernel
-`ip=` configuration for those images.
-
-The framebuffer console uses standard VT/fbcon on Virtio-GPU. Host logs use
-`ttyS0`; four serial lines and the standard Virtio-console driver are built in.
-The legacy UML stdio console, DRM log client, legacy BSD PTYs, and loadable
-module path remain disabled.
-
-Zswap is built in and enabled with zstd but allocates no pool until the guest
-activates backing swap. Normal desktop launchers do not create backing swap and
-must not count zswap as guest memory.
+Every product uses 64 KiB task stacks (`CONFIG_KERNEL_STACK_ORDER=4` with 4 KiB
+pages), virtually mapped with an unmapped guard region around each, and
+`CONFIG_SCHED_STACK_END_CHECK`. The deepest use measured under each product's
+heaviest workload was about 26 KiB, a margin of 2.5x or more. An overrun faults
+on the guard region or trips the end check and panics; it never corrupts
+silently. The signal stack the host gives each vCPU carrier is separate: 128 KiB
+from `malloc`.
 
 ## x86_64 userspace slice
 
-Every kernel has 4 KiB pages, from the shared policy. The separate
-x86_64-userspace slice's `slices/x86_64/config/userspace.fragment` follows the
-shared policy and the Linux overlay, and it applies only the patches in
-`slices/x86_64/patches`. The kernel still executes its UML kernel mode as
-native arm64, but its userspace ABI is
-fixed to the x86 family: it accepts x86_64 and i386 tasks and never arm64
-userspace. Signal delivery exposes the native x86 XSAVE layout for x87, SSE,
-and AVX state and restores user edits through the matching ABI's signal-return
-path. User RFLAGS follow Linux x86 for both ABIs: `execve()` starts a task with
-0x202 (IF and bit 1), a signal return restores only `FIX_EFLAGS` (CF, PF, AF,
-ZF, SF, TF, DF, OF, RF and AC), and a tracer may change those bits and NT.
-IOPL, VM, VIF, VIP and ID stay the task's and IF stays set; the Darwin host
-also sets IF and bit 1 on every entry to the task. POPF at CPL 3 loads only
-CF, PF, AF, ZF, SF, TF, DF, OF, NT, AC and ID, a 16-bit POPF only those in the
-low half, and IRET those and RF; PUSHF stores RF and VM as zero. RF, which
-IRET at CPL 3 and a signal return may set, is gone when the next instruction
-starts, so a system call that instruction makes, and its signal frame, never
-show it. A fault's signal frame and a tracer's view at its stop show RF set, as
-the flags x86 saves for a fault do, and so does the frame of a signal that
-interrupts a repeated string instruction between elements; a trap's show it
-clear.
-`tests/integration/x86_64/run_guest_x86_64_rflags.py` checks this.
-
-x86 exceptions reach the task with x86 Linux's signal, code, trap number and
-error code. ICEBP delivers `SIGTRAP` with `TRAP_BRKPT` after itself, and a
-single step of a repeated string instruction traps after each iteration. `#UD`
-is `SIGILL` with `ILL_ILLOPN`, and `#DE`, from a zero divisor or a quotient
-too wide for its destination, `SIGFPE` with `FPE_INTDIV` at the instruction,
-which has written nothing. `#OF` from INT 4 or INTO, `#BR` from an i386
-BOUND outside its bounds and `#GP` reach the task as `SIGSEGV` with `SI_KERNEL`
-and no address, `#OF` after the instruction and the two faults at it; INT n of
-a vector user mode may not use names that vector's IDT entry, `(n << 3) | 2`,
-in the error code. A long-mode access to a non-canonical address raises `#GP`,
-or `#SS`, `SIGBUS` with `SI_KERNEL`, when the stack segment forms the address.
-A page fault's error code carries the user bit, and the present bit when the
-task has the page mapped and present and the access broke its protection: 7
-for a store to a read-only page and 0x15 for a fetch from one without execute
-permission, against 6 and 0x14 for a page that is not there, a PROT_NONE one
-included. With RFLAGS.AC set a misaligned
-access raises `#AC`, `SIGBUS` with `BUS_ADRALN` and no address. An unmasked
-SIMD floating-point exception raises `#XM` at its instruction, and an unmasked
-x87 exception `#MF` at the next waiting instruction; both are `SIGFPE` with the
-code of the highest-priority unmasked flag, which the slice derives from MXCSR
-or the x87 status and control words the host reports as the error code, as
-Linux does. The host's limits on these are the gadget engine's
-([README](../../darwin/cpu/x86_64/gadgets/README.md)). A branch to a
-non-canonical target faults at the target rather than at the branch.
-
-An i386 tracer's register requests use the i386 layouts, as on Linux, with
-`PTRACE_GETFPREGS` and `NT_PRFPREG` the i387 FSAVE image, and a tracer of
-either ABI reaches the task's i386 TLS entries through the thread-area
-requests. i386 `set_thread_area()` allocates GDT entries 12 to 14, selectors
-0x63, 0x6b and 0x73, as an x86-64 kernel does; the host finds the numbering in
-the entries the kernel hands it. A tracer reads DR6 as x86 Linux shows it,
-0xffff0ff0 with BS set after a single step, and DR0 to DR3 and DR7 with x86's
-checks on the addresses and lengths it writes. The slice has no hardware
-breakpoints, so a DR7 write that enables one fails with `EINVAL`: gdb then
-reports "Couldn't write debug register" for a hardware watchpoint or `hbreak`,
-while its software watchpoints (`set can-use-hw-watchpoints 0`), breakpoints
-and single steps work. A tracer's `orig_ax` (`orig_eax`) is the number of the
-system call the task is in and -1 at any other stop; writing it at a system
-call's entry stop runs that call instead, and -1 skips the call and leaves AX
-as the tracer set it.
-
-x86 tasks have an LDT, which `modify_ldt()` reads and writes as an x86-64
-kernel does: function 0 reads the entries in use, 2 gives 128 zero bytes,
-and 1 and 0x11 write one entry in the old and the new mode, with Linux's
-checks and `fill_ldt()`'s descriptor; a fork child gets a copy and `execve()`
-starts without one. 16-bit segments are refused, as an x86-64 kernel built
-without `CONFIG_X86_16BIT` refuses them, because the Darwin host runs no
-16-bit code. Wine's i386 `NtSetLdtEntries()` is the user. Every guest entry
-hands the table to the host as the common README's bridge ABI 20 states, and
-the host's segment model raises the faults selector loads, far transfers and
-segment limits raise: `#GP` as `SIGSEGV` with `SI_KERNEL` and the selector in
-the error code, and `#NP` and `#SS` as `SIGBUS` with `SI_KERNEL`, trap numbers
-11 and 12, as on x86 Linux. `execve()` starts a task with x86 Linux's
-selectors, and a 64-bit task that runs 32-bit code, as Wine's WoW64 does with
-CS 0x23, keeps that CS and SS through its signals: the frame records them,
-`UC_STRICT_RESTORE_SS` is set only for a signal that interrupted 64-bit code,
-and `rt_sigreturn()` takes the frame's CS and SS with RPL 3, which the host
-checks as IRET would. These topics live only in the slice overlay: only x86
-tasks have an LDT, selectors or `modify_ldt()`, so the arm64 kernels and
-Android build none of them.
-`tests/integration/x86_64/run_guest_x86_64_exceptions.py` checks these. Host
-instruction execution is qualified against the pinned FEX handwritten x86-64
-corpus; distribution and complete Linux syscall compatibility require separate
-guest qualification. The slice accepts no AArch32 executable (its
-`UML_ARM64_AARCH32` is off); the arm64 kernels accept `EM_AARCH64` and
-32-bit ARM EABI executables, and run stock armhf userspace ([shared README](../common/README.md)).
-Android does not consume the x86_64 overlay. The slice's overlay turns off
-`UML_ARM64_SME`, so it builds none of the shared SME task state,
-which x86 tasks do not have; the shared mm-shared mark stays, for the x86-64
+The slice's `slices/x86_64/config/userspace.fragment` follows the shared policy
+and the Linux overlay, and only `slices/x86_64/patches` apply. The kernel still
+runs UML kernel mode as native arm64, but its userspace ABI is the x86 family:
+it accepts x86_64 and i386 tasks and never arm64 userspace or AArch32. Android
+does not consume the slice's overlay. The slice turns off `UML_ARM64_SME`, since
+x86 tasks have no SME state, and keeps the shared mm-shared mark for the x86-64
 JIT.
 
-The x86-family syscall dispatch is generated from the pinned Linux 6.18
-`syscall_64.tbl` and `syscall_32.tbl` files. Both ABIs retain every table slot
-through 469, including upstream `sys_ni_syscall` holes; generic compat handlers
-and slice-owned adapters provide the i386 structure, argument-order, TLS, and
-signal-frame ABIs. The UML entry path also provides syscall-user-dispatch so
-Wine can interpose its NT syscall range before Linux syscall dispatch. Guest
-qualification remains separate from structural table coverage. The slice
-inherits the shared eBPF syscall, verifier, and cgroup BPF policy without a
-product-specific configuration override.
+Signals, `RFLAGS`, exceptions, ptrace registers, and debug registers follow x86
+Linux for both ABIs; `tests/integration/x86_64/run_guest_x86_64_rflags.py` and
+`run_guest_x86_64_exceptions.py` compare them with native values. The
+deliberate differences are:
 
-Both use a 64 KiB virtually mapped task stack, a 128 TiB software-MMU task
-range, a relocatable ET_DYN image, 100 Hz plus `NO_HZ_IDLE` with
-high-resolution timers, built-in-only drivers, and the same host/kernel ABI. There is no platform-specific image or
-address-space configuration axis.
+- A task always runs with `RFLAGS.IF` set: `execve()` starts it with 0x202, the
+  host sets IF on every entry, and a signal return restores only `FIX_EFLAGS`.
+- There are no hardware breakpoints: a DR7 write that enables one fails with
+  `EINVAL`, so gdb's hardware watchpoints and `hbreak` fail while software
+  watchpoints, breakpoints, and single steps work.
+- `modify_ldt()` refuses 16-bit segments, as an x86-64 kernel without
+  `CONFIG_X86_16BIT` does, because the host runs no 16-bit code. Every guest
+  entry hands the LDT and the i386 TLS descriptors to the host (bridge ABI 20,
+  see the [common README](../common/README.md)), whose segment model raises the
+  selector and limit faults.
+- Host instruction execution is qualified against the pinned FEX handwritten
+  x86-64 corpus; distribution and complete Linux syscall compatibility need
+  separate guest qualification. The host's limits on exceptions are the gadget
+  engine's ([README](../../darwin/cpu/x86_64/gadgets/README.md)).
+
+The x86-family syscall dispatch is generated from the pinned Linux 6.18
+`syscall_64.tbl` and `syscall_32.tbl`, retaining every slot through 469, and the
+entry path provides syscall-user-dispatch so Wine can interpose its NT syscall
+range. The slice's topics (the dedicated slice, i386 tasks, `/proc/cpuinfo`
+for the emulated CPU, `modify_ldt()`, CS/SS through signals, `RFLAGS.TF`
+single-step, x86 ptrace layouts, and the page-fault P bit) live only in its
+overlay because only x86 tasks have an LDT, selectors, or those layouts; the
+arm64 kernels and Android build none of them.
 
 ## Android product
 
-The kernel of the LineageOS 24 (Android 17) guest is this line's arm64 tree
-with the Android overlay, `config/android.fragment`, in place of
-`config/mainline.fragment`. It is built-in-only (`CONFIG_MODULES=n`, no `.ko`
-or DLKM payloads). Android's 32-bit libraries are 4 KiB aligned, while its
-64-bit userspace stays page-agnostic. The product is owned by
+The kernel of the LineageOS 24 (Android 17) guest is this line's arm64 tree with
+`config/android.fragment` in place of `config/mainline.fragment`. It is
+built-in-only (`CONFIG_MODULES=n`, no `.ko` or DLKM payloads), and Android's
+32-bit libraries are 4 KiB aligned. The product is owned by
 [`../../android/lineage-24`](../../android/lineage-24/README.md); the kernel and
 the rootfs release are selected independently.
 
@@ -376,287 +187,51 @@ The kernel build (`--product android`) and the release verifier require every
 symbol of [`config/android-required-builtins.txt`](config/android-required-builtins.txt)
 to be `y` and every symbol of
 [`config/android-forbidden-options.txt`](config/android-forbidden-options.txt)
-to be absent. `CONFIG_COMPAT` and `CONFIG_KUSER_HELPERS` are required
-builtins: the shared AArch32 task support described in
-[`kernel/common`](../common/README.md) lets an armeabi-v7a process run once the
-host's engine implements AArch32.
+to be absent. `CONFIG_COMPAT` and `CONFIG_KUSER_HELPERS` are required builtins,
+so an armeabi-v7a process runs once the host's engine implements AArch32. The
+overlay carries every option of Android's 6.12 base list that arch/um can
+provide, and `android.fragment`'s comments give each setting that differs from
+the Linux overlay. The product carries none of ACK's other out-of-tree features
+(ashmem, dm-default-key, per-UID I/O statistics, Binder real-time priority
+inheritance, wakeup reasons): native code that opens `/dev/ashmem` fails, since
+the product sets `sys.use_memfd`, and the recovery image must set it itself.
+Boot keeps RCU grace periods expedited until it completes, as the
+[LineageOS README](../../android/lineage-24/README.md#android-product) states.
 
-The overlay holds only what differs from the Linux product:
+Ten topics in this line's overlay change behavior only when the Android overlay
+switches them on, or only under Android's SELinux policy. Each stays out of the
+shared series because it depends on the guest OS:
 
-- SELinux with audit syscall records is the exclusive LSM, with the matching
-  `CONFIG_LSM` order, because Android owns the SELinux policy. Linux uses
-  Smack.
-- `CHECKPOINT_RESTORE` is off, as in GKI, so that `MSEAL_SYSTEM_MAPPINGS` can
-  seal userspace's system mappings.
-- Android's own facilities: Binder and binderfs, the DMA-BUF heaps and udmabuf,
-  bootconfig, the inline-encryption fallback with fscrypt, PF_KEY for
-  the network statistics path, socket destruction for netd, further xtables
-  matches and targets, IPsec transforms, traffic control for BPF, the
-  gpu_mem tracepoints, the Kernarium battery, hvc for the single-port Virtio
-  console, uhid, hidraw and the PlayStation HID driver, and
-  `CONFIG_PM_WAKELOCKS`. Android's
-  SystemSuspend service ends a suspend that is under way by writing
-  `userspace-abort` to `/sys/power/wake_lock`, so without the file a wakelock
-  taken while the system is entering a suspend cannot stop it. The Linux
-  product leaves the file out for the guest-OS reason given above.
-- The HCTR2 filename-encryption transform (`CONFIG_CRYPTO_HCTR2`) is absent.
-  The product's userdata is unencrypted and no shipped fstab names
-  `fileencryption=`. None of Android 17's kernel configuration lists, its
-  framework compatibility matrices or its VTS tests names HCTR2, and the one
-  CTS test that does, the file-based encryption policy test, accepts
-  AES-256-CTS filenames in its place. A product that encrypts userdata with
-  HCTR2 filenames builds the transform back in.
-- Android's CTS requires that SysV IPC (`CONFIG_SYSVIPC`, whose system calls
-  must answer `ENOSYS`) and the NFS client (`CONFIG_NFS_FS`) are absent, so
-  the overlay leaves both out, and SCTP too, which Android has no use for. The
-  forbidden list also names RDS, so that no overlay brings back its
-  listener.
-- XFS, Btrfs and the SMB client (`CONFIG_XFS_FS`, `CONFIG_BTRFS_FS`,
-  `CONFIG_CIFS`) are absent. Android mounts ext4 and erofs partitions, shared
-  storage is FUSE, and vold mounts removable media as vfat or exfat, so the
-  filesystems are never used and the guest need not carry their code,
-  caches and `cifsiod` and `smb3decryptd` workers. The forbidden list names
-  them, so that no overlay brings them back. The desktop product keeps all
-  three.
-- `CONFIG_STATIC_USERMODEHELPER` with an empty
-  `CONFIG_STATIC_USERMODEHELPER_PATH`, which the CTS requires. Every
-  `call_usermodehelper()` then returns without starting a program, so a
-  piped `core_pattern`, a key upcall or an orderly poweroff cannot make the
-  kernel run a program as root. Android's tombstones come from debuggerd's
-  signal handler and its boot needs no helper; a piped `core_pattern` logs
-  "Core dump to |... disabled". The Linux product keeps the helpers its
-  distribution uses (see above).
-- Auxiliary POSIX clocks are off, as in GKI. With them, clock IDs 16 to 23
-  name the auxiliary clocks, which have no timers, so `timer_create()` on
-  clock 16 fails with `EOPNOTSUPP` where Bionic's `time.timer_create_EINVAL`
-  and the CTS expect `EINVAL`.
-- Settings the shared policy leaves to their Kconfig defaults, which the
-  overlay pins: seccomp, delay accounting, utilization clamping (off), policy
-  routing, XFRM interfaces and statistics, conntrack events and netlink, and
-  Unicode.
-- The two presentation options below.
+- `CONFIG_UML_VNC_INPUT_TOUCHSCREEN`: Android and its recovery treat an absolute
+  pointer that reports mouse buttons as a mouse; a desktop guest needs the
+  tablet's buttons, hover, and wheel.
+- `CONFIG_DRM_VIRTIO_GPU_STANDARD_FORMATS`: Android's composer scans out RGBA
+  and RGBX buffers directly; a Linux compositor chooses its scanout format from
+  the plane's list, so Linux keeps XRGB8888 and ARGB8888.
+- The SELinux `memfd_class` policy capability: Android 17's policy needs it and
+  only SELinux implements the hook.
+- The PSI trigger privilege: system_server registers triggers without
+  `CAP_SYS_RESOURCE`; the topic counts every writer as privileged when SELinux
+  is the default module, and Linux keeps the capability check.
+- `CONFIG_CGROUP_V1_ATTACH_SYS_NICE`: system_server moves apps between v1
+  groups without being root; Linux keeps upstream's check.
+- `CONFIG_FUSE_CANONICAL_PATH`: an app's `FileObserver` on shared storage needs
+  FUSE to name the underlying file; desktop FUSE servers do not implement it.
+- `CONFIG_NETFILTER_XT_MATCH_QUOTA2` and its alert option: netd's bandwidth
+  controller; Linux has the per-CPU `quota` match.
+- `CONFIG_NETFILTER_XT_TARGET_IDLETIMER_NL_MSG`: netd passes `--send_nl_msg`,
+  which upstream refuses.
+- `CONFIG_INCREMENTAL_FS`: the Android common kernel's Incremental file system
+  that the package manager mounts; upstream Linux has none.
+- `CONFIG_CFG80211` and `CONFIG_VIRT_WIFI`: Android's Wi-Fi framework needs an
+  nl80211 interface; a desktop guest has no Wi-Fi manager, and the code adds
+  about 1.5 MB to `vmlinux` and a phy nothing uses.
 
-The current rootfs uses unencrypted ext4 userdata. The fscrypt and
-inline-encryption fallback stay built in for ordinary application and framework
-compatibility. Android's Ethernet IpClient acquires the SLiRP lease, default
-route, and DNS configuration after init starts, so the kernel does not perform
-IP autoconfiguration. Recovery independently assigns its fixed local endpoint
-for the host-forwarded ADB contract; external recovery routing is not a
-product requirement.
-
-Ten topics in this line's patch overlay change behaviour only when the Android
-overlay switches them on, or only under Android's SELinux policy. Each stays
-out of the shared series because it depends on the guest OS:
-
-- `CONFIG_UML_VNC_INPUT_TOUCHSCREEN` presents the display's absolute pointer as
-  a pure direct touchscreen (`BTN_TOUCH`, `ABS_X`, `ABS_Y`). Android and its
-  recovery enter pointer mode for an input device that also reports mouse
-  buttons, while a desktop guest needs the tablet's buttons, hover and wheel.
-  Legacy `BTN_LEFT` events from an older frontend still become touches.
-- `CONFIG_DRM_VIRTIO_GPU_STANDARD_FORMATS` adds BGRX8888, BGRA8888, RGBX8888,
-  RGBA8888, XBGR8888 and ABGR8888 to the Virtio-GPU primary plane, and
-  framebuffer creation then accepts exactly the formats the plane lists.
-  Android's composer scans out its RGBA and RGBX buffers (the
-  `hwcomposer.display_framebuffer_format=rgba` ABGR8888 and XBGR8888)
-  directly, so without the option every framebuffer is refused and the display
-  stays black. A Linux compositor chooses its scanout format from the plane's
-  list, so the Linux product keeps XRGB8888 and ARGB8888.
-- The SELinux `memfd_class` policy capability, a backport of a selinux.git
-  change that 6.18.y lacks. Android 17's policy labels memfds with the
-  `memfd_file` class (VSR-3.5.2-004) and grants audio and media clients the
-  shared-memory queues they build on memfds only through it. Only SELinux
-  implements the hook, so a Smack guest is unchanged.
-- The PSI trigger privilege: system_server's low-memory detector registers 1 s
-  windows without `CAP_SYS_RESOURCE`, which upstream refuses with `EINVAL`.
-  `psi_trigger_create()` counts every writer as privileged when SELinux is the
-  default security module (`CONFIG_DEFAULT_SECURITY_SELINUX`), and the policy
-  decides who may write `/proc/pressure`. The Linux product keeps the
-  capability check.
-- `CONFIG_CGROUP_V1_ATTACH_SYS_NICE` lets a process whose file credentials hold
-  `CAP_SYS_NICE` in a task's user namespace move that task between the groups
-  of a v1 hierarchy. Android's system_server moves apps between the cpu, cpuset
-  and blkio groups of its scheduling classes without being root, so without
-  the option every move after an app's start fails with `EACCES` and a
-  background app keeps its foreground groups. Upstream lets only root and the
-  task's own user do it, which the Linux product keeps. The Android common
-  kernel tests the writer's capability; this topic tests the opener's, like
-  the user ID checks beside it.
-- `CONFIG_FUSE_CANONICAL_PATH`, which selects `CONFIG_DCACHE_CANONICAL_PATH`,
-  lets a FUSE server name the file of another filesystem that a FUSE path
-  stands for (`FUSE_CANONICAL_PATH`). inotify then watches that file and an
-  open of the FUSE file reaches its watchers, so an app's `FileObserver` on
-  shared storage sees what MediaProvider and other writers change below the
-  FUSE mount. Without it the watcher misses those writes. Desktop FUSE servers
-  do not implement the request, so the Linux product keeps FUSE unchanged.
-  The option takes two patches (the VFS operation and its FUSE server).
-- `CONFIG_NETFILTER_XT_MATCH_QUOTA2` and its alert option
-  `CONFIG_NETFILTER_XT_MATCH_QUOTA2_LOG` add the `quota2` match, which netd's
-  bandwidth controller uses for data-usage limits and alerts: a counter that
-  IPv4 and IPv6 rules share, named in `/proc/net/xt_quota`, and that sends its
-  alert on the `NETLINK_NFLOG` socket. The Linux product has the per-CPU
-  `quota` match and does without it.
-- `CONFIG_NETFILTER_XT_TARGET_IDLETIMER_NL_MSG` lets the `IDLETIMER` target
-  take `--send_nl_msg`, which netd passes for every interface idle timer, and
-  sends the uevents that report an interface going idle or active again.
-  Upstream refuses the argument, so the Linux product keeps its `IDLETIMER`
-  as is.
-- `CONFIG_INCREMENTAL_FS` is the Incremental file system (`fs/incfs`) of the
-  Android common kernel: a read-only filesystem whose files fill in block by
-  block while an app installs, so that the app can start before its download
-  ends. Android's package manager is its only user. system_server's
-  IncrementalService mounts it under `/data/incremental`, and advertises
-  `android.software.incremental_delivery` only when `/proc/filesystems` lists
-  `incremental-fs` and `/sys/fs/incremental-fs/features` exists. Upstream
-  Linux has no such filesystem, so the Linux product leaves it out. The
-  import is ACK's code at its android17-6.18 revision with two changes: it no
-  longer calls `SetPageError()`, which 6.18 removed, and `notify_unlink()` locks
-  the root directory when the file it names was just completed. `FS_VERITY`
-  stays built in because the filesystem's own verity support needs it, and the
-  filesystem selects `DECOMPRESS_LZ4`, `DECOMPRESS_ZSTD` and `CRYPTO_LIB_SHA256`
-  for its compressed blocks and hash trees.
-- `CONFIG_CFG80211` and `CONFIG_VIRT_WIFI` give the guest Wi-Fi without a
-  radio. Android's Wi-Fi framework (wificond, the supplicant and the Wi-Fi
-  HAL) drives an nl80211 interface, and virt_wifi provides a station interface
-  over an Ethernet device with one fake open access point, `VirtWifi`. The
-  product creates it on a macvlan child of the guest's only NIC, so that the
-  address adb reaches the guest on stays the NIC's own (`CONFIG_MACVLAN` is in
-  the shared policy). A signed regulatory database needs the host's OpenSSL
-  for Kbuild's `certs/extract-cert` and the product ships none, so
-  `CFG80211_CERTIFICATION_ONUS` is on with `CFG80211_REQUIRE_SIGNED_REGDB` and
-  `CFG80211_CRDA_SUPPORT` off, and cfg80211 stays on the world domain. The
-  Linux product leaves both out: only Android's Wi-Fi framework uses an
-  802.11 interface, since a desktop guest manages its NIC with networkd and
-  has no Wi-Fi manager, and the code adds about 1.5 MB to `vmlinux` (+4% on
-  Linux arm64) and registers a phy that nothing uses, with a "failed to load
-  regulatory.db" message every boot. The recipe needs no `CONFIG_IP_PNP`,
-  which stays off.
-
-The cgroup, FUSE, `quota2`, `IDLETIMER` and Incremental file system topics come
-from the Android common kernel.
-
-The shared series carries topics that only the Android product exercises. Each
-is inert in a Linux guest:
-
-- `CONFIG_XFRM_SPI_PER_DESTINATION` (a Kconfig option, off by default and
-  required built-in for Android) makes an IPsec SPI unique per destination
-  address again. Linux 6.17 made it unique per protocol across all
-  destinations (94f39804d891, CVE-2025-39797), so the second allocation of a
-  value for another address fails. Android's IKE daemon and the CTS's
-  `IpSecManagerTunnelTest` reserve one SPI for the local and the remote outer
-  address of a tunnel, so every tunnel test failed in its setup. The Android
-  common kernel reverts that change and the zero-SPI commit after it
-  (cd8ae32e4e46); the option restores the pre-6.17 allocator for the Android
-  product only, and two concurrent allocations of one SPI for one destination
-  can then both succeed, as before 6.17. The Linux product keeps upstream's
-  check. The topic belongs in the shared series because nothing in it depends
-  on the guest OS; only the option does. `guest-kernel-config` checks the
-  second allocation in both products.
-- The per-device autoconf route table, the Android common kernel's
-  `accept_ra_rt_table` sysctl (20599bae2f44). With a value other than 0, the
-  routes that router advertisements install (prefix, route information and
-  default router) go into the device's own table instead of `main`: a
-  positive value names the table, a negative one adds its absolute value to
-  the device's ifindex. Android's netd writes -1000 for every network it
-  manages, so that the table its rules select holds the network's routes;
-  without the sysctl a network that has no IpClient to copy the kernel's
-  routes into netd (the CTS's TAP test networks) has no IPv6 route and its
-  `connect()` fails `ENETUNREACH`. The sysctl is 0 by default, which is
-  mainline's behaviour, so the topic needs no option and a Linux guest never
-  writes it; and without `CONFIG_IPV6_MULTIPLE_TABLES`, which only the
-  Android configuration enables, there is one table and the value changes
-  nothing. Mainline's default-router purge already walks every table that
-  holds a default router, so the Android common kernel's rewrite of it is not
-  taken. `guest-kernel-config` checks the default and the table that a prefix
-  route lands in.
-- virt_wifi's off-channel operation. The virtual radio lists the channels of
-  a phone's chip (2.4 GHz channels 1 to 13, 5 GHz channels 36 to 48 and 149 to
-  165; the access point stays on 5240 MHz), tunes to one with
-  `remain_on_channel` for at most 5 s, and takes Action frames with
-  `mgmt_tx`, which are never acknowledged because no peer exists. With them a
-  supplicant starts Easy Connect (DPP) from a URI that names channels the
-  radio did not list, finds nobody, and the framework's own 40 s timer
-  reports a timeout, as it does on a real chip; before, the supplicant
-  refused to start and the framework reported a generic failure at once.
-  The same path serves ANQP and GAS queries. Only the Android configuration
-  builds virt_wifi. `guest-kernel-config` remains on 2412 MHz and sends an
-  Action frame there.
-- virt_wifi passes its unicast and multicast lists, and `IFF_ALLMULTI` and
-  `IFF_PROMISC`, on to its lower device. A macvlan delivers a multicast frame
-  only to the groups its own filter lists, and the product puts virt_wifi on a
-  macvlan, so without it wlan0's solicited-node groups never reached the
-  filter and a neighbour solicitation for its IPv6 address was dropped.
-  `guest-kernel-config` joins a group on a virt_wifi link and looks for it on
-  the macvlan.
-
-The product leaves out these ACK features:
-
-- `/dev/ashmem` and its `ASHMEM_*` ioctls on memfds. The product sets
-  `sys.use_memfd`, so libcutils' `ashmem_create_region()` creates a memfd;
-  native code that opens the device itself, or issues ashmem ioctls on a memfd,
-  fails (a memfd answers `ENOTTY`). Recovery loads no product properties, so
-  the recovery image must set `sys.use_memfd` itself. Only apps that target
-  SDK 27 or lower can reach the device at all, since SELinux denies it to
-  later targets on ACK too. Fennec 66, for one, loses its ashmem IPC path
-  but renders and runs, so the product carries no ashmem shim.
-- dm-default-key (metadata encryption), which the unencrypted userdata does not
-  use.
-- Per-UID I/O statistics (`/proc/uid_io/stats`), which storaged does without.
-- Binder real-time priority inheritance and `/sys/kernel/wakeup_reasons`.
-- ACK's 20 s expedited-RCU window at boot, which mainline ends when init
-  starts. The product's boot command line and init script keep grace periods
-  expedited until boot completes instead (see the
-  [LineageOS README](../../android/lineage-24/README.md#android-product)).
-
-### Android base configuration
-
-Android 17's framework compatibility matrices list no kernel options for 6.18
-(`kernel/configs/c/android-6.18` and `d/android-6.18` are empty, and the only
-requirement is the LTS floor), so the newest option list is the 6.12 one,
-`kernel/configs/b/android-6.12/android-base.config` with its conditional XML,
-which GKI's `gki_defconfig` follows. The overlay carries every option of that
-list that arch/um can provide. The product leaves the rest out, each for a
-reason that holds for the guest:
-
-- Modules (`MODULES`, `MODULE_UNLOAD`, `MODVERSIONS`, `STRICT_MODULE_RWX`):
-  the kernel is native host code in one signed executable, and iOS loads no
-  modules.
-- Hardware the guest does not have: USB and the gadget stack (`USB`,
-  `USB_GADGET`, `USB_CONFIGFS*`; adb reaches the guest over the
-  host-forwarded network port), the controller drivers that need USB
-  (`HID_SONY`, `JOYSTICK_XPAD`), `INPUT_JOYSTICK` (which Kconfig denies to UML
-  altogether), cpufreq (`CPU_FREQ`, `CPU_FREQ_STAT`), and Device Tree or ACPI
-  (the conditional XML asks for one of them; devices attach as Virtio
-  devices named on the command line).
-- Facilities arch/um does not provide: `PREEMPT` (`ARCH_NO_PREEMPT`),
-  `BPF_JIT` and `BPF_JIT_ALWAYS_ON` (no eBPF JIT, and the CPU engine alone
-  owns executable memory, so BPF programs run in the interpreter),
-  `CFI_CLANG`, `SHADOW_CALL_STACK` (which also needs x18, a register the
-  Apple arm64 ABI reserves), `KFENCE`, `HAVE_MOVE_PMD` and `HAVE_MOVE_PUD`
-  (the guest's page tables are software), and `STAGING` (the only staging
-  driver Android used is ashmem).
-- ACK-only features, listed above: `ASHMEM`, `DM_DEFAULT_KEY`,
-  `UID_SYS_STATS`, `CPU_FREQ_TIMES`.
-- The hardening documented under Kernel self-protection: PAN, KPTI and KASLR.
-- The AArch32 compatibility options of the arm64 port (`ARMV8_DEPRECATED`,
-  `SWP_EMULATION`, `CP15_BARRIER_EMULATION`, `SETEND_EMULATION`) do not exist
-  on arch/um. SWP and CP15 barriers work (`abi.swp` and `abi.cp15_barrier`);
-  SETEND decodes as unallocated (see the AArch32 documentation).
-- Options that 6.18 no longer has: `SCHED_DEBUG` and `NF_CT_PROTO_DCCP`.
-
-Two items of the list cost nothing to meet. `CONFIG_NO_HZ` is the legacy symbol
-for dynticks idle, which the shared policy already runs as `NO_HZ_IDLE`, and
-`CONFIG_PROFILING` is the hook that profilers attach to.
-
-The list asks for `CONFIG_BUG_ON_DATA_CORRUPTION`, which selects
-`CONFIG_LIST_HARDENED`: a list operation whose neighbours do not point back
-panics instead of carrying on with a corrupted list. It costs about 2% on
-system-call microbenchmarks. Only Android's list asks for it, so the Linux
-product does not set it; moving the symbol to the shared policy would put the
-same cost on every product.
-
-GKI also turns on hardening and memory options that no list requires
-(`INIT_ON_ALLOC_DEFAULT_ON`, `FORTIFY_SOURCE`, `SLAB_FREELIST_HARDENED`,
-`LRU_GEN` and others); the product does not carry them.
+The cgroup, FUSE, `quota2`, `IDLETIMER`, and Incremental file system topics come
+from the Android common kernel. The shared series also carries topics only the
+Android product exercises, each inert in a Linux guest: the `XFRM_SPI_PER_DESTINATION`
+option, the per-device autoconf route table (`accept_ra_rt_table`), and
+virt_wifi's off-channel operation and address-list propagation.
 
 The iOS runtime framework for this product is `KRuntime_Android_6_18_4K`;
 [Kernarium](../../Kernarium/README.md#runtimes-and-runs) owns its packaging.
@@ -675,74 +250,49 @@ kernel/mainline-6.18/build/build-kernel.sh \
   --product android --build /case-sensitive/build-android
 ```
 
-Publish each completed build with
-`build/publish-artifact.py`; the Android build takes `--product android`. The
-publisher requires a clean replay at the
-tracked final tree, validates resolved policy and ELF/ABI geometry, and copies
-only the compact runtime/support bundle, with the kernel image's DWARF
-stripped (see [Toolchain](#toolchain)). It never builds, fetches, or changes a
-source checkout. Use the script's `--help` for output and release options.
+Publish each completed build with `build/publish-artifact.py` (the Android build
+takes `--product android`; see `--help`). The publisher requires a clean replay
+at the tracked final tree, validates the resolved policy and ELF/ABI geometry,
+and copies only the compact runtime/support bundle, with the kernel image's
+DWARF stripped (see [Toolchain](#toolchain)). It never builds, fetches, or
+changes a source checkout.
 
-`artifacts/accepted-4k.env` selects the reviewed arm64 local publication below
-`.build/kernel/artifacts`.
-`slices/x86_64/artifacts/accepted-4k.env` independently selects the x86_64
-userspace publication. `artifacts/accepted-android-4k.env` selects the Android
-product's publication. A descriptor also records the identity of its bundle
-(schema, release ID, family, slice, release, page size, final tree and bridge
-ABI) for the commit that accepts it. Configure names the bundle by directory
-and fails, with both values, when the bundle's manifest differs in any field;
-a bundle pinned under another directory name is not the descriptor's, so it is
-not compared. Artifact identity includes the family and the slice, so
-a Linux 4 KiB kernel cannot satisfy an Android selection, nor an arm64 4 KiB
-kernel an x86_64 one. The Android kernel keeps the `android-6.18` family name:
-the Apple CMake graph and Kernarium key Android mode on it. They validate the
-bridge ABI, the 4 KiB page profile, the family, and the `6.18` series at build
-time; patch releases and commit identities are provenance, not runtime gates.
-Advancing the accepted Android kernel must not rebuild or rename the rootfs
-release, recreate a `.kern` bundle, or invalidate its persistent disk. Apple products validate the whole
-selected bundle and derive paths from its manifest; they do not inspect source
-or Kbuild state.
+`artifacts/accepted-4k.env`, `slices/x86_64/artifacts/accepted-4k.env`, and
+`artifacts/accepted-android-4k.env` independently select the arm64, x86_64, and
+Android publications below `.build/kernel/artifacts`. A descriptor records its
+bundle's identity (schema, release ID, family, slice, release, page size, final
+tree, bridge ABI), and configure fails when the manifest differs in any field,
+so no kernel can satisfy another family or slice's selection. The Android
+kernel keeps the `android-6.18` family name, which the Apple CMake graph and
+Kernarium key Android mode on; they validate the bridge ABI, the 4 KiB page
+profile, the family, and the `6.18` series, while patch releases and commit
+identities are provenance, not runtime gates. Advancing the accepted Android
+kernel must not rebuild or rename the rootfs release or invalidate its
+persistent disk. Apple products validate the whole selected bundle and derive
+paths from its manifest; they do not inspect source or Kbuild state.
 
 ## Toolchain
 
-`build/toolchain/darwin.env` owns portable compiler/linker defaults and the
-project compatibility headers used by Darwin host tools. Linux 6.18 requires a
-compiler with `__counted_by` type-expression support; the preflight checks this
-before Kbuild. Select a compatible upstream LLVM toolchain explicitly when the
-default Apple compiler lacks the feature.
+`build/toolchain/darwin.env` owns the portable compiler and linker defaults and
+the compatibility headers Darwin host tools use. Linux 6.18 requires a compiler
+with `__counted_by` type-expression support, which the preflight checks before
+Kbuild; select a compatible upstream LLVM through the documented `UML_KERNEL_*`
+variables when Apple's compiler lacks it (companion LLVM tools must match its
+family).
 
-The documented `UML_KERNEL_*` variables may override compiler, host compiler, linker, binutils, make, cross prefix, and job
-count. Companion LLVM tools must match the selected compiler family.
+Every kernel generates BTF, so the build needs pahole (v1.29 or newer) and a
+static libelf from the `kernel-host-tools` dependency product
+([dependencies README](../../dependencies/README.md)). The build never searches
+`PATH` for either: `UML_KERNEL_HOST_TOOLS_PREFIX` selects the prefix and
+`UML_KERNEL_PAHOLE` may select a different pahole, and the preflight fails
+before Kbuild when either is missing.
 
-Every kernel generates BTF, so the build also needs pahole and a static
-libelf. Both come from the `kernel-host-tools` dependency product, built from
-pinned elfutils, dwarves, and libbpf sources; the
-[dependencies README](../../dependencies/README.md) has its commands.
-
-`UML_KERNEL_HOST_TOOLS_PREFIX` selects the prefix (default
-`.build/dependencies/kernel-host-tools`) and `UML_KERNEL_PAHOLE` may select a
-different pahole. The build never searches `PATH` for either: the preflight
-fails before Kbuild when pahole is missing or older than v1.29, the first
-release whose parallel encoding is always ordered, or when the prefix lacks
-libelf. Kbuild's pkg-config lookups see only the prefix, whose real `elf.h`,
-`libelf.h`, and `libelf.a` serve every host tool, including `resolve_btfids`.
-`build/toolchain/darwin-host` supplies only the Linux host APIs Darwin lacks;
-the Linux system calls that libbpf reaches there fail with `ENOSYS`, because a
-host tool never drives a running Linux kernel.
-
-Host objects are compiled without debug information whenever BTF is enabled.
-They describe host C library types under the kernel's type names, and pahole
-would otherwise encode those definitions into vmlinux BTF.
-
-The kernel links with full DWARF 5, which is only pahole's input. Frame
-pointers are on for the stack walker, as the
-[common README](../common/README.md) describes. The publisher's `--objcopy`,
-the build's own `llvm-objcopy`, strips every `.debug_*` section from the
-published `vmlinux`; the artifact verifier rejects DWARF and requires an
-allocated `.BTF` section. Stripping drops only the
-`STT_FILE` symbols and the locals that describe debug sections. Every function
-and data symbol, `.dynsym`, and `System.map` stay, so crash symbolization is
-unchanged.
+The kernel links with full DWARF 5, which is only pahole's input, and with frame
+pointers for the stack walker ([common README](../common/README.md)). The
+publisher strips every `.debug_*` section from the published `vmlinux`; the
+artifact verifier rejects DWARF and requires an allocated `.BTF` section. Every
+function and data symbol, `.dynsym`, and `System.map` stay, so crash
+symbolization is unchanged.
 
 The canonical bridge lives under [`../common/abi`](../common/abi/). Ordinary
 build and replay verification use `kernel/common/abi/sync.sh --verify`; only an
