@@ -5,9 +5,8 @@ import Foundation
 
 #if !APP_STORE
 
-/// The lines a run prints for the harness to read
-/// (`Andarium/README.md#automation`). Everything else on the console is the
-/// runtime's own `Kernarium:` output. An App Store build compiles this file
+/// The lines a run prints for the harness to read. Everything else on the
+/// console is the runtime's own `Kernarium:` output. An App Store build compiles this file
 /// and every call to it out, and its bundle check fails on a binary that
 /// carries one of these lines.
 enum ConsoleReport {

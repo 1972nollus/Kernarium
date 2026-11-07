@@ -8,7 +8,7 @@ import UIKit
 
 /// The Simulator preview's entry. `-screen <name>` opens any screen or state
 /// directly with mock data, so a simulator driven only by `simctl` reaches
-/// every flow. The list is in the README.
+/// every flow. The arguments are the keys `fromArguments()` reads.
 struct AppEntry {
     var screen: String
     /// Boot screens animate and continue into the session instead of holding.

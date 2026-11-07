@@ -47,8 +47,8 @@ cp GuestHost/Config/Signing.local.xcconfig.example GuestHost/Config/Signing.loca
 Without that file a build for the iOS Simulator works unsigned and a build for
 a device stops with Xcode's "requires a development team" error. Name the team
 in that file, not in Xcode's Signing & Capabilities editor, which would write it
-into the tracked project. A worktree is
-a separate checkout and needs its own copy to build for a device.
+into the tracked project. A worktree is a separate checkout and needs its own
+copy to build for a device.
 `Kernarium/scripts/audio-interrupter.py` reads the same file (or
 `UML_DEVELOPMENT_TEAM`). The team is never tracked: the
 `repository-environment-portability` test fails on a literal one.
@@ -56,19 +56,13 @@ a separate checkout and needs its own copy to build for a device.
 ## Rules
 
 The display forwards up to ten simultaneous UIKit contacts through the runtime
-API. Each finger keeps an independent path and slot until it ends or is
-cancelled. Clipping a path to the visible guest rectangle releases and restarts
-only that contact: a finger that leaves the display lifts, as it did. A contact
-that UIKit cancels (`touchesCancelled`, as when the system takes a touch over
-for a gesture), and every contact when the display mode changes or the view
-leaves its window, is cancelled in the guest instead of released
-(`GuestTouchPath.cancel()` and `GuestTouchContacts.cancelAll()`, which call
-the runtime's `cancel_touch`): the guest sees the contact turn into a palm and
-then lift, so no tap or click follows. A contact with nothing in the guest,
-because it began or has been clipped outside the display, has nothing to
-cancel. The Virtio device uses Linux type-B slots and tracking IDs, sets a
-finger tool type before every new tracking ID, and its legacy `ABS_X/Y`
-coordinates follow the primary finger until that finger lifts.
+API, each with an independent path and slot. Clipping a path to the visible
+guest rectangle releases only that contact. A contact the host takes away
+(`touchesCancelled`, a display mode change, the view leaving its window) is
+cancelled in the guest instead of released (`GuestTouchPath.cancel()` and
+`GuestTouchContacts.cancelAll()`, which call the runtime's `cancel_touch`), so
+no tap or click follows; the guest-side contract is in
+[`Kernarium/README.md`](../Kernarium/README.md#devices-and-display).
 
 - A file here depends only on the system frameworks, the runtime header, and
   the prebuilt `LibZstd` XCFramework. It names neither application's views,
