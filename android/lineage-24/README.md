@@ -247,6 +247,38 @@ keeps a harness correct on an older release that still carries DeviceDiagnostics
 mode from starting: "Not starting trade-in mode, device is setup"). A measurement
 of the first-boot experience itself keeps the wizard.
 
+The wizard shows Welcome, Language, Date and time and Theme, then Finish. A
+secondary user sees Welcome and Theme, then Finish; the managed-profile script
+is LineageOS's. The product leaves out the other pages of LineageOS's flow
+because a default answers the question or the page cannot apply to a virtual
+device:
+
+- Network: the guest's virtual Wi-Fi is on and connected before the first page.
+- Restore, and Andarium features (the LineageOS services page): not useful here.
+- Location: location stays on, with the mode and assisted GPS the platform sets.
+- Screen lock: a fresh guest has none (`ro.lockscreen.disable.default`, whose
+  paragraph below covers secondary users); a person turns one on in Settings.
+- Navigation: three buttons, the platform's own default
+  (`config_navBarInteractionMode` 0 in the framework, which no overlay of the
+  image changes). Both mode overlays stay installed and Settings switches.
+- Bluetooth, the missing SIM page, the device-specific page, biometrics and the
+  recovery update, which a guest with none of that hardware or script skips.
+
+The flow is two scripts, `lineage_wizard_script.xml` (the owner) and
+`lineage_wizard_script_user.xml`, under the wizard overlay's `res/raw` in
+`overlay/overlay/packages/apps/SetupWizard/app/src/main/res`. The wizard loads
+a script through an `android.resource://` URI, so the runtime resource overlay
+replaces it, and aapt2 copies a raw XML resource into the overlay APK as it is.
+Hiding the Navigation page alone would not change the mode, because the wizard
+switched a device with no app-switch key to gestures when it started, before
+its first page. Route `p0026` removes that call (a topic, "SetupWizard: leave
+the navigation mode to the platform"), and the Finish page reads the platform's
+mode for its hint. The target-files verifier requires both scripts in the
+overlay byte for byte as tracked, walks each from its first action and fails a
+flow that is not the reviewed one or defines a hidden page, requires the
+wizard's code to lack the forcing, both navigation overlays to be present and
+no overlay configuration to enable one, and refuses `ro.boot.vendor.overlay.theme`.
+
 The home screen's first page holds the six applications of the image that have
 a launcher activity: Settings, Calendar (Etar), Gallery (Glimpse), Music
 (Twelve), Calculator and Files, row by row from the top left. The dock and the
@@ -628,7 +660,8 @@ repeats the checks on the built policy (a user build has no permissive
 domain; a userdebug build may have only `su`).
 
 The guest boots straight to the home screen, and its swipe lock screen can be
-turned on. `LockPatternUtils.isLockScreenDisabled` ORs
+turned on; the Setup Wizard's screen lock page is hidden, so a fresh guest keeps
+this default. `LockPatternUtils.isLockScreenDisabled` ORs
 `config_disableLockscreenByDefault` with the stored `lockscreen.disabled`
 value, so the overlay sets the flag false: a true flag keeps the lock screen off
 whatever `locksettings set-disabled false` or the Settings app sets, and the CTS
@@ -894,7 +927,8 @@ removes the wizard's diagnostic data row, its privacy paragraph and policy URL,
 and the code that wrote the answer to `stats_collection`, whose default stays
 off. What is left of the services page is the on-screen navigation keys row,
 which a device with a key disabler shows; this product has none, so the page
-skips itself and disables its own activity. The target-files verifier searches
+would skip itself and disable its own activity, and the product's flow no
+longer lists it. The target-files verifier searches
 both applications' manifests, dex files and resources for the uploader's
 components, endpoint and setting, and fails the image that still carries one.
 

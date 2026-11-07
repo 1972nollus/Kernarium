@@ -617,6 +617,8 @@ PRODUCT_SYSTEM_EXT_PROPERTIES += \
 # can then be changed with `locksettings set-disabled` or the Settings app.
 # config_disableLockscreenByDefault is false for that reason (the overlay's
 # core/res config.xml). The standalone launcher gives every release a new /data.
+# The Setup Wizard's screen lock page is hidden, so a fresh guest keeps this
+# default until a person sets a lock in Settings.
 PRODUCT_PRODUCT_PROPERTIES += \
     ro.lockscreen.disable.default=true
 

@@ -3441,7 +3441,8 @@ def check_audio_policy(
         "ro.config.system_vol_default": "7",
         "ro.config.assistant_vol_default": "15",
         # The guest boots without a lock screen, and `locksettings set-disabled` can turn
-        # it on: LockSettingsService stores this default when it creates its database.
+        # it on: LockSettingsService stores this default when it creates its database. The
+        # Setup Wizard's screen lock page is hidden, so this is the lock a fresh guest keeps.
         "ro.lockscreen.disable.default": "true",
         # Userdata is a plain ext4 mount of its partition, which the mount holds exclusively:
         # apexd's pinned APEX images (a dm-linear table over that partition) fail with EBUSY,

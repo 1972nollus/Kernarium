@@ -1644,14 +1644,25 @@ a blank instance:
   `UML_ANDROID_OOBE_RELEASE` names the release and the Android macOS executable
   is built) boots two fresh instances. On the first it checks that the guest
   starts unprovisioned in LineageOS Setup Wizard, which HOME does not leave,
-  completes the wizard through its own pages and checks the end state: both
-  settings 1, the wizard's HOME activity and flow manager disabled, and HOME
-  reaching the launcher. The second is started with `boot_android.py
-  --provision`, the harness path of `tools/android_provision.py`, and must end
-  with both settings 1 and HOME on the launcher, the wizard package disabled
-  for user 0 (the shell may not disable its components), and nothing left for
-  the helper to do. Measurements on an erased guest use that helper, so they do
-  not land in the wizard.
+  and completes the wizard through the pages the product shows, exactly
+  Welcome, Language, Date and time, Theme and Finish in that order (a hidden
+  page or another order fails; the flow is the contract of release r17 and
+  later). It then checks the end state: both settings 1, the wizard's HOME
+  activity and flow manager disabled, HOME reaching the launcher, and the
+  defaults the shortened flow leaves to the platform: three-button navigation
+  (`navigation_mode` 0, the gestural overlay off, both mode overlays present),
+  no screen lock, location on with the settings it had before the wizard, Wi-Fi
+  connected to VirtWifi, and no status bar disable record held by the wizard.
+  The second is started with `boot_android.py --provision`, the harness path of
+  `tools/android_provision.py`, and must end with both settings 1 and HOME on
+  the launcher, the wizard package disabled for user 0 (the shell may not
+  disable its components), no wizard process and no status bar record (the
+  helper stops the process that holds it), the same defaults, and nothing left
+  for the helper to do. On both guests the launcher's data model holds exactly
+  the six applications of the default layout on the first page, none in the
+  dock, and the log shows no item dropped while the launcher read its layout.
+  Measurements on an erased guest use that helper, so they do not land in the
+  wizard.
 - `android-adb-debugging` (integration, registered only when
   `UML_ANDROID_ADB_DEBUGGING_RELEASE` names the release and the Android macOS
   executable is built) boots a blank instance and checks the adb topics of the
