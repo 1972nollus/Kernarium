@@ -127,8 +127,9 @@ system, baseboard, chassis, BIOS, processor and memory vendor is `Kernarium`,
 the product, family and board are `Virtual Machine`, the BIOS version is the
 kernel release, the chassis type is Other, and the BIOS characteristics mark a
 virtual machine, so `systemd-detect-virt` reports `vm-other`. The processor is
-the virtual CPU the host names for `/proc/cpuinfo`, with the possible CPUs as
-its cores and threads, and one memory device is the RAM the guest was given.
+the virtual CPU the host names for `/proc/cpuinfo` (`Kernarium Virtual CPU`),
+with the possible CPUs as its cores and threads, and one memory device is the
+RAM the guest was given.
 No serial number, UUID, speed or firmware date is claimed. The tables sit
 behind an SMBIOS 3.0 entry point in guest RAM, which the kernel writes before
 the DMI core scans for it. No kernel has `/dev/mem`: UML's physical address 0
@@ -360,7 +361,10 @@ with it llvmpipe and `-mcpu=native`, reads the `Features` line.
 `guest-gadgets-smoke` and `guest-jit-smoke` compare the file with the
 auxiliary vector, MRS and the kernel's `CONFIG_HZ`, and require LLVM to see the
 host's NEON. The x86_64-userspace slice describes its emulated x86 CPU
-instead.
+instead: its `model name` is the name the host gives the virtual CPU,
+`Kernarium Virtual CPU` (`darwin/cpu/guest_identity.hpp`), which is also the
+CPUID brand string of both x86 engines and the SMBIOS processor version of
+every kernel.
 
 The normal arm64 kernels run AArch32 tasks, armhf (the hard-float EABI) and
 Android's armeabi-v7a (the softfp EABI), both ARMv7-A and Armv8 AArch32 with

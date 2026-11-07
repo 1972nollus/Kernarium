@@ -158,9 +158,9 @@ Lx86_cpuid_brand_two:
 	/* "ariu" */
 	mov w7, #0x7261
 	movk w7, #0x7569, lsl #16
-	/* "m vi" */
+	/* "m Vi" */
 	mov w8, #0x206d
-	movk w8, #0x6976, lsl #16
+	movk w8, #0x6956, lsl #16
 	/* "rtua" */
 	mov w9, #0x7472
 	movk w9, #0x6175, lsl #16
