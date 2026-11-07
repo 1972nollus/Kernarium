@@ -37,7 +37,9 @@ struct MultitouchTests {
         )])
         #expect(contacts.cancel(1) == [GuestTouchContactEvent(
             slot: first.slot,
-            event: GuestTouchEvent(x: 100, y: 500, pressed: false)
+            event: GuestTouchEvent(
+                x: 100, y: 500, pressed: false, cancelled: true
+            )
         )])
         #expect(contacts.move(
             2, through: [CGPoint(x: 140, y: 50)], geometry: geometry
@@ -49,9 +51,9 @@ struct MultitouchTests {
             3, at: CGPoint(x: 90, y: 40), geometry: geometry
         ).first)
         #expect(third.slot == first.slot)
-        #expect(contacts.releaseAll().map(\.slot).sorted() ==
+        #expect(contacts.cancelAll().map(\.slot).sorted() ==
             [second.slot, third.slot].sorted())
-        #expect(contacts.releaseAll().isEmpty)
+        #expect(contacts.cancelAll().isEmpty)
         #expect(contacts.move(
             2, through: [CGPoint(x: 100, y: 50)], geometry: geometry
         ).isEmpty)
@@ -70,11 +72,11 @@ struct MultitouchTests {
         )
         #expect(crossing.map(\.event.pressed) == [false, true, true])
         #expect(Set(crossing.map(\.slot)).count == 1)
-        // Cancellation releases at the last delivered point, even if the
-        // display geometry has disappeared; it synthesizes no new motion.
+        // Cancellation ends the contact at the last delivered point, even if
+        // the display geometry has disappeared; it synthesizes no new motion.
         let cancelled = contacts.cancel(1)
         #expect(cancelled.map(\.event) == [
-            GuestTouchEvent(x: 300, y: 500, pressed: false)
+            GuestTouchEvent(x: 300, y: 500, pressed: false, cancelled: true)
         ])
         #expect(contacts.cancel(1).isEmpty)
         let ended = contacts.end(
@@ -83,7 +85,7 @@ struct MultitouchTests {
         #expect(ended.map(\.event) == [
             GuestTouchEvent(x: 700, y: 500, pressed: false)
         ])
-        #expect(contacts.releaseAll().isEmpty)
+        #expect(contacts.cancelAll().isEmpty)
     }
 
     @Test
@@ -108,9 +110,9 @@ struct MultitouchTests {
         #expect(contacts.begin(
             11, at: CGPoint(x: 100, y: 50), geometry: geometry
         ).count == 1)
-        let releases = contacts.releaseAll()
-        #expect(releases.count == 10)
-        #expect(Set(releases.map(\.slot)).count == 10)
-        #expect(releases.allSatisfy { !$0.event.pressed })
+        let cancels = contacts.cancelAll()
+        #expect(cancels.count == 10)
+        #expect(Set(cancels.map(\.slot)).count == 10)
+        #expect(cancels.allSatisfy { !$0.event.pressed && $0.event.cancelled })
     }
 }
