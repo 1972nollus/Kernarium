@@ -25,7 +25,9 @@ struct SessionView: View {
                 SideKeysOverlay(mode: mode, lit: true, actions: actions)
             }
             .statusBarHidden(true)
-            .persistentSystemOverlays(.hidden)
+            // The system honours the bottom edge's deferral only while the
+            // home indicator is visible: with it hidden, one swipe goes Home.
+            .persistentSystemOverlays(.visible)
             .sheet(isPresented: $settings) {
                 SessionSettingsSheet(large: false)
                     .environment(model)
