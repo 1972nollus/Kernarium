@@ -2,24 +2,27 @@
 #pragma once
 
 /* What the guest side of the process holds besides the guest's RAM, as a
- * function of the vCPU count, and the most RAM a process limit leaves a guest.
- * The gadget-cache budget a run sets, the E of the host GPU's budget
- * (platform/gpu_budget.hpp), and the bound the application's settings put on
- * the guest's RAM all come from here, so none of them states the formula
- * itself. The vCPU count the applications default to and offer comes from here
- * too (application_vcpu_limit), since this header holds the count the budget is
+ * function of the vCPU count, the most RAM a process limit leaves a guest, and
+ * the RAM a new guest gets. The gadget-cache budget a run sets, the E of the
+ * host GPU's budget (platform/gpu_budget.hpp), the bound the application's
+ * settings put on the guest's RAM and the default it starts from all come from
+ * here, so none of them states the formula itself. The vCPU count the
+ * applications default to and offer comes from here too
+ * (application_vcpu_limit), since this header holds the count the budget is
  * measured for.
  *
  *     E(v, G) = c(v, G) + t * v + E_rest
  *     c(v, G) = min(derive_budget(G, L), cap(v))      (the cap only where L != 0)
  *     G_max(v) = the largest G in {512, 576, ..., 4096} MiB with
  *                L - G - A - E(v, G) - S >= 384 MiB
+ *     default(v) = G_max(v) under the launch set, in 512 MiB steps and within
+ *                  1536...4096 MiB, and never above G_max(v) under the
+ *                  maximum set
  *
  * L is the process's memory limit (platform::process_memory_limit_bytes), zero
  * for none. cap(v) is seven eighths of the cache's measured worst ceiling at v
  * vCPUs, rounded up to 16 MiB. t is the slot tags each executor keeps outside
- * the cache's ledger. A, E_rest and S are the launch parameters
- * (launch_memory_set).
+ * the cache's ledger. A, E_rest and S come from a LaunchMemorySet.
  *
  * Header-only and standard library only, so the application's loader includes
  * it too and answers the settings without the runtime, which is loaded once
@@ -44,6 +47,12 @@ inline constexpr std::uint64_t mebibyte = std::uint64_t{1} << 20;
 inline constexpr std::uint32_t guest_memory_minimum_mib = 512;
 inline constexpr std::uint32_t guest_memory_maximum_mib = 4096;
 inline constexpr std::uint32_t guest_memory_step_mib = 64;
+
+/* The default guest RAM of a new guest: a multiple of 512 MiB within this
+ * range (default_guest_memory_mib). */
+inline constexpr std::uint32_t default_guest_memory_minimum_mib = 1536;
+inline constexpr std::uint32_t default_guest_memory_maximum_mib = 4096;
+inline constexpr std::uint32_t default_guest_memory_step_mib = 512;
 
 /* The most the arm64 gadget cache may hold at 1 through 8 vCPUs: seven eighths
  * of the worst ceiling any session reached in the Android and KDE loads that
@@ -141,22 +150,36 @@ struct LaunchMemorySet final {
 		headroom * mebibyte};
 }
 
-/* The set every launch states unless it states its own: the one place the
- * product owner's choice goes. Candidates, as (A, E_rest, S) in MiB:
- *   Measured            (56, 563, 64)
- *   Measured + growth   (64, 604, 128)
- *   Conservative        (80, 644, 192)
- * None is chosen yet, so each term adds nothing. */
-inline constexpr LaunchMemorySet launch_memory_set = launch_memory_mib(0, 0, 0);
+/* The two sets of A, E_rest and S, in MiB, and which uses which:
+ *
+ *   launch_memory_set   conservative: the default guest RAM of a new guest
+ *                       (default_guest_memory_mib) and the host GPU's budget B
+ *                       of every launch that states no set of its own.
+ *   maximum_memory_set  counts none of them: only the most RAM a person may
+ *                       choose (maximum_guest_memory_mib). A guest above the
+ *                       default but within this maximum is allowed; the
+ *                       applications warn that the process is then likely to
+ *                       be ended.
+ *
+ * A is the application's own ceiling. E_rest is the guest side's memory beyond
+ * the cache and the slot tags at its worst. S is the headroom: the largest
+ * transient (45), B's overshoot past its pool (40) and a long session's growth
+ * (64). */
+inline constexpr LaunchMemorySet launch_memory_set =
+	launch_memory_mib(64, 320, 45 + 40 + 64);
+inline constexpr LaunchMemorySet maximum_memory_set =
+	launch_memory_mib(0, 0, 0);
 
 /* G_max(v), in MiB: the largest guest RAM of the offered range for which
  * `memory_limit` bytes (zero for none) leave the host GPU at least its floor
- * once the guest, A, E(v, G) and S are counted. Where the host sets no limit it
- * is the whole range. Where even the smallest guest leaves less than the floor
- * it is the smallest, and the launch says the process is likely to be ended. */
+ * once the guest, A, E(v, G) and S of `set` are counted. Where the host sets no
+ * limit it is the whole range. Where even the smallest guest leaves less than
+ * the floor it is the smallest, and the launch says the process is likely to be
+ * ended. Without a set it is the most a person may choose
+ * (maximum_memory_set). */
 [[nodiscard]] constexpr std::uint32_t maximum_guest_memory_mib(
 	std::uint64_t memory_limit, unsigned executors,
-	const LaunchMemorySet &set = launch_memory_set) noexcept
+	const LaunchMemorySet &set = maximum_memory_set) noexcept
 {
 	if (memory_limit == 0)
 		return guest_memory_maximum_mib;
@@ -177,6 +200,26 @@ inline constexpr LaunchMemorySet launch_memory_set = launch_memory_mib(0, 0, 0);
 			return mib;
 	}
 	return guest_memory_minimum_mib;
+}
+
+/* The RAM a new guest gets: G_max(v) under `set`, taken down to a multiple of
+ * 512 MiB and held within 1536 to 4096 MiB. A limit that leaves less than the
+ * lower bound does not take the default above what the settings offer
+ * (G_max(v) under maximum_memory_set), so it stays on the picker's steps and
+ * inside its range. Without a set it is the conservative launch set, the one
+ * the host GPU's budget uses. A guest above this is likely to be ended by the
+ * system. */
+[[nodiscard]] constexpr std::uint32_t default_guest_memory_mib(
+	std::uint64_t memory_limit, unsigned executors,
+	const LaunchMemorySet &set = launch_memory_set) noexcept
+{
+	const auto safe = maximum_guest_memory_mib(memory_limit, executors, set);
+	const auto stepped = safe / default_guest_memory_step_mib *
+		default_guest_memory_step_mib;
+	const auto held = std::clamp(stepped, default_guest_memory_minimum_mib,
+		default_guest_memory_maximum_mib);
+	return std::min(held,
+		maximum_guest_memory_mib(memory_limit, executors));
 }
 
 } // namespace uml::runtime::guest_memory

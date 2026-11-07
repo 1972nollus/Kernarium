@@ -290,7 +290,7 @@ final class LiveRuntime: RuntimeDriver {
                         request.android_data_disk_path = dataDisk
                         request.android_release_path = release
                         request.android_data_gib = dataGiB
-                        // The launch parameters the picker's bound was computed with.
+                        // The conservative launch parameters the default memory was computed with.
                         let parameters = kernarium_runtime_loader_launch_memory_set()
                         request.gpu_budget_application_mib = parameters.application_mib
                         request.gpu_budget_engine_mib = parameters.engine_mib

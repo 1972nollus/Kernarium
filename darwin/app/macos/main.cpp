@@ -658,8 +658,9 @@ PreparedArguments prepare_host_arguments(
 		throw std::invalid_argument(
 			"--virtio-console-socket and --virtio-serial-socket are "
 			"mutually exclusive");
-	append_default_kernel_argument(
-		prepared.kernel, "mem=", configuration.default_guest_memory);
+	append_default_kernel_argument(prepared.kernel, "mem=",
+		uml::emulator::default_guest_memory_argument(
+			prepared.kernel, configuration.default_guest_memory));
 	append_default_kernel_argument(prepared.kernel, "ncpus=",
 		"ncpus=" + std::to_string(
 			uml::emulator::default_application_guest_cpu_count()));

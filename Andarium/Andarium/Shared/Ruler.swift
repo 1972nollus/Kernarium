@@ -189,6 +189,11 @@ struct SystemControls: View {
         // process's memory, so the top of the ruler falls as the count rises.
         let stops = host.memory.stops(vCPUs: guest.cores)
         let steps = (1024 - Limits.minimumMemoryMiB) / Limits.memoryStepMiB
+        // Sizes past what a new guest gets turn orange, and the line beneath
+        // says why while the chosen size is one of them. The default follows
+        // the vCPU count as the top does.
+        let safeMiB = host.memory.defaultMemoryMiB(vCPUs: guest.cores)
+        let above = host.memory.isAboveDefault(guest.memoryMiB, vCPUs: guest.cores)
         return ControlRow(title: "Memory", symbol: "memorychip", value: Formats.size(mib: guest.memoryMiB)) {
             Ruler(
                 index: Binding(
@@ -201,10 +206,14 @@ struct SystemControls: View {
                 minorEvery: 256 / Limits.memoryStepMiB,
                 label: { Formats.gibibytes(mib: stops[$0]) },
                 valueText: { Formats.size(mib: stops[$0]) },
+                warnFrom: stops.firstIndex { $0 > safeMiB },
                 accessibilityName: "Memory"
             )
         } note: {
-            EmptyView()
+            if above {
+                Label(MemoryWarning.note(safeMiB: safeMiB), systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            }
         }
     }
 }

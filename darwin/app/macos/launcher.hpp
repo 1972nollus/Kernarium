@@ -13,6 +13,9 @@ enum class DisplayInput { mouse, touchscreen };
 
 struct LaunchConfiguration {
 	const char *rootfs_path {};
+	/* The mem= argument a launch takes when it gives none and states no
+	 * process memory limit; with a limit (--memory-limit= or
+	 * UML_MEMORY_LIMIT_MIB) it takes the default guest RAM for that limit. */
 	std::string_view default_guest_memory;
 	bool top_byte_ignore{};
 	DisplayInput input_mode{DisplayInput::mouse};

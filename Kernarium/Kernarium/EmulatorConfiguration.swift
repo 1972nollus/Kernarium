@@ -50,13 +50,16 @@ struct EmulatorConfiguration: Equatable {
         "KERNARIUM_GPU_BUDGET_ENGINE_MIB"
     static let gpuBudgetHeadroomEnvironmentKey =
         "KERNARIUM_GPU_BUDGET_HEADROOM_MIB"
-    // They default to the launch set of runtime/guest_memory_budget.hpp, which
-    // the loader answers without a runtime. Its values are pending the user's
-    // decision, so each adds nothing to the sum: the budget is then half the
-    // guest's memory, except where the application's memory limit leaves the
-    // guest less than that.
+    // They default to the conservative launch set of
+    // runtime/guest_memory_budget.hpp, which the loader answers without a
+    // runtime: the set the default guest RAM is measured with, so the budget a
+    // launch gets is the one that default leaves.
     private static let launchMemorySet =
         kernarium_runtime_loader_launch_memory_set()
+    // The set the most guest RAM the settings offer is measured with: it
+    // counts none of A, E_rest and S, whatever a launch states for them.
+    private static let maximumMemorySet =
+        kernarium_runtime_loader_maximum_memory_set()
     static var defaultGPUBudgetApplicationMiB: Int {
         Int(launchMemorySet.application_mib)
     }
@@ -73,21 +76,20 @@ struct EmulatorConfiguration: Equatable {
     // The release's data disk template allows 4 through 64 GiB; the setting
     // keeps its established floor.
     static let androidDiskSizeRangeGiB = 6...64
-    // A real iPhone or iPad enforces a jetsam limit that a 4 GiB guest would
-    // cross. iOS killed a 2048 MiB guest on the 4 GiB iPad mini 6 in a
-    // nine-application budget run, so a device defaults to 1536 MiB until the
-    // graphics-memory reductions land, when the value is revisited. A value
-    // the user stored is kept. The same slice running on an Apple silicon Mac
-    // in Designed for iPad mode is given the host's memory instead and keeps
-    // the full guest.
-    static var defaultGuestMemoryMiB: Int {
-        defaultGuestMemoryMiB(
-            appRunsOnMac: ProcessInfo.processInfo.isiOSAppOnMac
-        )
-    }
+    /// The guest RAM a new configuration takes at `vCPUCount` vCPUs, as the
+    /// runtime's own rule gives it, read through the loader against the memory
+    /// limit the system sets this process: the most the conservative launch
+    /// set leaves the host GPU its floor for, in half-gibibyte steps within
+    /// 1536...4096 MiB and never above the maximum the settings offer. A
+    /// device takes less than a Mac, which sets no limit and has 4096. A value
+    /// the user stored is kept.
+    typealias DefaultGuestMemory = (_ vCPUCount: Int) -> Int
 
-    static func defaultGuestMemoryMiB(appRunsOnMac: Bool) -> Int {
-        appRunsOnMac ? 4096 : 1536
+    static let systemDefaultGuestMemory: DefaultGuestMemory = { vCPUCount in
+        Int(kernarium_runtime_loader_default_guest_memory_mib(
+            UInt32(clamping: max(vCPUCount, 1)),
+            launchMemorySet
+        ))
     }
     static let defaultOverlaySizeGiB = 8
     static let defaultAndroidDiskSizeGiB = 8
@@ -107,27 +109,16 @@ struct EmulatorConfiguration: Equatable {
     var gpuBudgetEngineMiB = defaultGPUBudgetEngineMiB
     var gpuBudgetHeadroomMiB = defaultGPUBudgetHeadroomMiB
 
-    /// The most guest RAM, in MiB, for a vCPU count under A, E_rest and S in
-    /// MiB (the three that follow the count).
-    typealias GuestMemoryBound = (
-        _ vCPUCount: Int,
-        _ application: Int,
-        _ engine: Int,
-        _ headroom: Int
-    ) -> Int
+    /// The most guest RAM, in MiB, for a vCPU count.
+    typealias GuestMemoryBound = (_ vCPUCount: Int) -> Int
 
-    /// What the system allows: the runtime's own budget formula, read through
-    /// the loader against the memory limit the system sets this process, 4096
-    /// where it sets none (a Mac).
-    static let systemGuestMemoryBound: GuestMemoryBound = {
-        vCPUCount, application, engine, headroom in
+    /// What the system allows: the runtime's own budget formula with the
+    /// maximum set, read through the loader against the memory limit the
+    /// system sets this process, 4096 where it sets none (a Mac).
+    static let systemGuestMemoryBound: GuestMemoryBound = { vCPUCount in
         Int(kernarium_runtime_loader_maximum_guest_memory_mib(
             UInt32(clamping: max(vCPUCount, 1)),
-            kernarium_launch_memory_set(
-                application_mib: UInt32(clamping: application),
-                engine_mib: UInt32(clamping: engine),
-                headroom_mib: UInt32(clamping: headroom)
-            )
+            maximumMemorySet
         ))
     }
 
@@ -139,15 +130,7 @@ struct EmulatorConfiguration: Equatable {
         vCPUCount: Int,
         bound: GuestMemoryBound = EmulatorConfiguration.systemGuestMemoryBound
     ) -> Int {
-        Self.steppedGuestMemoryMiB(
-            bound(
-                vCPUCount,
-                gpuBudgetApplicationMiB,
-                gpuBudgetEngineMiB,
-                gpuBudgetHeadroomMiB
-            ),
-            rounding: .down
-        )
+        Self.steppedGuestMemoryMiB(bound(vCPUCount), rounding: .down)
     }
 
     /// Takes guest RAM down to the bound of the vCPU count after the count
@@ -197,7 +180,9 @@ struct EmulatorConfiguration: Equatable {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         documentsDirectory: URL = RootfsImage.documentsDirectory,
         guestMemoryBound: GuestMemoryBound =
-            EmulatorConfiguration.systemGuestMemoryBound
+            EmulatorConfiguration.systemGuestMemoryBound,
+        defaultGuestMemory: DefaultGuestMemory =
+            EmulatorConfiguration.systemDefaultGuestMemory
     ) -> Self {
         let maximumVCPUCount = Self.maximumVCPUCount(
             physicalProcessorCount: physicalProcessorCount
@@ -213,9 +198,6 @@ struct EmulatorConfiguration: Equatable {
                 : defaults.bool(forKey: key)
         }
         let storedVCPUCount = stored(Key.vCPUCount, maximumVCPUCount)
-        let storedGuestMemoryMiB = stored(
-            Key.guestMemoryMiB, defaultGuestMemoryMiB
-        )
         let storedOverlaySizeGiB = stored(
             Key.overlaySizeGiB, defaultOverlaySizeGiB
         )
@@ -273,6 +255,9 @@ struct EmulatorConfiguration: Equatable {
         let vCPUCount = environmentVCPUCount ?? min(
             max(storedVCPUCount, 1), maximumVCPUCount
         )
+        let storedGuestMemoryMiB = stored(
+            Key.guestMemoryMiB, defaultGuestMemory(vCPUCount)
+        )
         let gpuBudgetApplicationMiB = environmentInteger(
             environment[gpuBudgetApplicationEnvironmentKey],
             in: gpuBudgetParameterRangeMiB
@@ -286,12 +271,7 @@ struct EmulatorConfiguration: Equatable {
             in: gpuBudgetParameterRangeMiB
         ) ?? defaultGPUBudgetHeadroomMiB
         let maximumGuestMemoryMiB = steppedGuestMemoryMiB(
-            guestMemoryBound(
-                vCPUCount,
-                gpuBudgetApplicationMiB,
-                gpuBudgetEngineMiB,
-                gpuBudgetHeadroomMiB
-            ),
+            guestMemoryBound(vCPUCount),
             rounding: .down
         )
 

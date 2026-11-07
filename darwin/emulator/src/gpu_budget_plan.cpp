@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <limits>
+#include <string>
 
 namespace uml::emulator {
 
@@ -26,6 +27,20 @@ std::size_t configured_option_bytes(
 			bytes = ::uml::runtime::parse_translation_cache_quantity(
 				argument.c_str() + option.size());
 	return bytes;
+}
+
+std::string default_guest_memory_argument(
+	const std::vector<std::string> &arguments, std::string_view fallback)
+{
+	auto limit = configured_option_bytes(arguments, "--memory-limit=");
+	if (limit == 0)
+		limit = static_cast<std::size_t>(
+			::uml::platform::configured_process_memory_limit_bytes());
+	if (limit == 0)
+		return std::string{fallback};
+	return "mem=" + std::to_string(
+		::uml::runtime::guest_memory::default_guest_memory_mib(
+			limit, launch_guest_cpu_count(arguments))) + "M";
 }
 
 bool parse_gpu_budget_bytes(

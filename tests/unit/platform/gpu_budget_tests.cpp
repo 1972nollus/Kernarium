@@ -79,9 +79,9 @@ void noLimitIsHalfTheGuest()
 	require(budgetOf(0, 0).bytes == 0);
 }
 
-/* A, E and S at zero leave today's limit, except where the limit leaves the
- * guest less than half of its RAM. */
-void zeroParametersKeepTodaysLimit()
+/* A, E and S at zero leave the limit, the guest and the cache in the sum,
+ * except where the limit leaves the guest less than half of its RAM. */
+void zeroParametersLeaveOnlyTheGuestAndTheCache()
 {
 	require(budgetOf(4096, 2048).bytes == 1024 * mib);
 	require(budgetOf(2867, 2048).bytes == 819 * mib,
@@ -91,6 +91,25 @@ void zeroParametersKeepTodaysLimit()
 		"the guest alone passes the limit");
 	require(budgetOf(2867, 4096).short_of_floor);
 	require(budgetOf(2867, 4096).available == 0);
+}
+
+/* The conservative launch set (runtime/guest_memory_budget.hpp) on an iPad
+ * mini 6: 64 MiB for the application, 320 for the rest of the engine and 149
+ * of headroom, with the default guest of 1536 MiB and six vCPUs' cache (240
+ * MiB) and slot tags (24 MiB). The GPU gets what is left, 534 MiB, well under
+ * the half of the guest that caps it at 768 MiB with no terms counted. */
+void theConservativeSumLeavesTheGPUWhatIsLeft()
+{
+	const auto conservative = budgetOf(2867, 1536, 64, 240 + 24 + 320, 149);
+	require(conservative.available == 534 * mib);
+	require(conservative.bytes == 534 * mib);
+	require(!conservative.short_of_floor);
+	require(budgetOf(2867, 1536, 0, 240 + 24, 0).bytes == 768 * mib);
+	/* A guest of 2048 MiB with the same terms is short of the floor. */
+	const auto above = budgetOf(2867, 2048, 64, 240 + 24 + 320, 149);
+	require(above.available == 22 * mib);
+	require(above.bytes == 384 * mib);
+	require(above.short_of_floor);
 }
 
 void theSumSaturates()
@@ -117,7 +136,10 @@ int main()
 			theRemainderIsTheBudgetBetweenTheBounds},
 		{"half-the-guest-wins-over-the-floor", halfTheGuestWinsOverTheFloor},
 		{"no-limit-is-half-the-guest", noLimitIsHalfTheGuest},
-		{"zero-parameters-keep-todays-limit", zeroParametersKeepTodaysLimit},
+		{"zero-parameters-leave-only-the-guest-and-the-cache",
+			zeroParametersLeaveOnlyTheGuestAndTheCache},
+		{"the-conservative-sum-leaves-the-gpu-what-is-left",
+			theConservativeSumLeavesTheGPUWhatIsLeft},
 		{"the-sum-saturates", theSumSaturates},
 	};
 	return uml::testing::runNamedTests(tests);

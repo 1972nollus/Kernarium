@@ -421,6 +421,33 @@ extern "C" int kernarium_runtime_loader_plan_gpu_budget(
             plan);
 }
 
+namespace {
+
+kernarium_launch_memory_set launchMemorySet(
+    const uml::runtime::guest_memory::LaunchMemorySet& set)
+{
+    namespace budget = uml::runtime::guest_memory;
+    return {
+        .application_mib =
+            static_cast<uint32_t>(set.application / budget::mebibyte),
+        .engine_mib =
+            static_cast<uint32_t>(set.engine_rest / budget::mebibyte),
+        .headroom_mib =
+            static_cast<uint32_t>(set.headroom / budget::mebibyte),
+    };
+}
+
+uml::runtime::guest_memory::LaunchMemorySet launchMemorySet(
+    kernarium_launch_memory_set parameters)
+{
+    return uml::runtime::guest_memory::launch_memory_mib(
+        parameters.application_mib,
+        parameters.engine_mib,
+        parameters.headroom_mib);
+}
+
+} // namespace
+
 extern "C" kernarium_launch_memory_set
 kernarium_runtime_loader_launch_memory_set(void)
 {
@@ -430,14 +457,14 @@ kernarium_runtime_loader_launch_memory_set(void)
             budget::launch_memory_set.engine_rest % budget::mebibyte == 0 &&
             budget::launch_memory_set.headroom % budget::mebibyte == 0,
         "the launch set is whole mebibytes");
-    return {
-        .application_mib = static_cast<uint32_t>(
-            budget::launch_memory_set.application / budget::mebibyte),
-        .engine_mib = static_cast<uint32_t>(
-            budget::launch_memory_set.engine_rest / budget::mebibyte),
-        .headroom_mib = static_cast<uint32_t>(
-            budget::launch_memory_set.headroom / budget::mebibyte),
-    };
+    return launchMemorySet(budget::launch_memory_set);
+}
+
+extern "C" kernarium_launch_memory_set
+kernarium_runtime_loader_maximum_memory_set(void)
+{
+    return launchMemorySet(
+        uml::runtime::guest_memory::maximum_memory_set);
 }
 
 extern "C" uint32_t kernarium_runtime_loader_application_vcpu_limit(
@@ -452,14 +479,8 @@ extern "C" uint32_t kernarium_runtime_loader_maximum_guest_memory_mib_for_limit(
     uint32_t guestProcessorCount,
     kernarium_launch_memory_set parameters)
 {
-    namespace budget = uml::runtime::guest_memory;
-    return budget::maximum_guest_memory_mib(
-        limitBytes,
-        guestProcessorCount,
-        budget::launch_memory_mib(
-            parameters.application_mib,
-            parameters.engine_mib,
-            parameters.headroom_mib));
+    return uml::runtime::guest_memory::maximum_guest_memory_mib(
+        limitBytes, guestProcessorCount, launchMemorySet(parameters));
 }
 
 extern "C" uint32_t kernarium_runtime_loader_maximum_guest_memory_mib(
@@ -467,6 +488,25 @@ extern "C" uint32_t kernarium_runtime_loader_maximum_guest_memory_mib(
     kernarium_launch_memory_set parameters)
 {
     return kernarium_runtime_loader_maximum_guest_memory_mib_for_limit(
+        uml::platform::os_memory_limit_bytes(),
+        guestProcessorCount,
+        parameters);
+}
+
+extern "C" uint32_t kernarium_runtime_loader_default_guest_memory_mib_for_limit(
+    uint64_t limitBytes,
+    uint32_t guestProcessorCount,
+    kernarium_launch_memory_set parameters)
+{
+    return uml::runtime::guest_memory::default_guest_memory_mib(
+        limitBytes, guestProcessorCount, launchMemorySet(parameters));
+}
+
+extern "C" uint32_t kernarium_runtime_loader_default_guest_memory_mib(
+    uint32_t guestProcessorCount,
+    kernarium_launch_memory_set parameters)
+{
+    return kernarium_runtime_loader_default_guest_memory_mib_for_limit(
         uml::platform::os_memory_limit_bytes(),
         guestProcessorCount,
         parameters);
