@@ -1555,7 +1555,11 @@ adapt the stock recovery to the virtual hardware:
   `10.0.2.15/24` itself (init cannot run `ifconfig` from recovery's SELinux
   domain), keeps Cuttlefish's always-connected USB policy, and removes the
   menu items for the bootloader, fastboot, and an ADB toggle that have no
-  meaning here.
+  meaning here. The stock policy gives the recovery domain no UDP socket, so
+  `overlay/sepolicy/vendor/recovery.te` grants that socket and the two address
+  ioctls (`SIOCSIFADDR`, `SIOCSIFNETMASK`) and nothing else; without it the
+  socket fails with EACCES, the screen shows "Failed to open socket: Permission
+  denied", and `eth0` has no IPv4 address.
 - The `bootable/recovery` route `p0016` lets the UI read the virtual
   touchscreen, a direct single-touch device (`BTN_TOUCH` with `ABS_X` and
   `ABS_Y`) that the stock UI, which reads only multi-touch axes, ignores.
@@ -1589,10 +1593,12 @@ does not fit; the system disk packs the recovery image at its own size.
 `tools/verify-lineage-recovery.py` checks the image the assembler installs: a
 kernel-less v4 image whose LZ4 or gzip ramdisk holds only target ELFs aligned
 to 16 KiB or better, a closed dependency set, no loadable modules, the checked
-fstab, the `eth0` interface policy, and the checked `init.recovery.rc` as the
-ramdisk's `init.recovery.cutf_cvm.rc`, the script that publishes the display
-density before Recovery draws its UI (the inherited Cuttlefish script is kept
-as `init.recovery.cuttlefish.rc`, which it imports). `build/assemble-image.sh`
+fstab, the `eth0` interface policy, the recovery domain's UDP socket and
+address ioctls in the ramdisk's `/sepolicy` (read by `tools/selinux_policy.py`),
+and the checked `init.recovery.rc` as the ramdisk's
+`init.recovery.cutf_cvm.rc`, the script that publishes the display density
+before Recovery draws its UI (the inherited Cuttlefish script is kept as
+`init.recovery.cuttlefish.rc`, which it imports). `build/assemble-image.sh`
 owns `init_boot` ramdisk composition, system disk assembly, and verification.
 It refuses unsafe paths, partition overflow, module payloads, or replacement of
 an existing output.
