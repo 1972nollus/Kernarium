@@ -23,7 +23,7 @@ struct BackgroundSessionTests {
 
         let relaunched = BackgroundSession(marker: marker)
         #expect(relaunched.restart?.enteredBackgroundAt == entered)
-        #expect(relaunched.restart?.title == "Guest Restarted")
+        #expect(relaunched.restart?.title == "Guest restarted")
         #expect(relaunched.restart?.message.contains("closed") == true)
 
         // Reported once: the launch after it starts clean.

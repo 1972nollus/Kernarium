@@ -76,7 +76,7 @@ struct SessionSettingsSheet: View {
             } label: {
                 HStack(spacing: 12) {
                     IconTile(symbol: "ladybug.fill")
-                    Text("Create Bug Report\u{2026}")
+                    Text("Create bug report\u{2026}")
                         .foregroundStyle(Color.accentColor)
                     Spacer()
                 }
@@ -111,7 +111,7 @@ struct SessionSettingsSheet: View {
             Toggle(isOn: Binding(get: { session.adb }, set: { model.setAdbOverNetwork($0) })) {
                 HStack(spacing: 12) {
                     IconTile(symbol: "terminal.fill", color: session.adb ? .accentColor : .gray)
-                    Text("ADB over Network")
+                    Text("ADB over network")
                 }
             }
             .disabled(!session.adb && !model.adbOverNetworkAvailable)
@@ -133,7 +133,7 @@ struct SessionSettingsSheet: View {
             } else if session.adb {
                 Text("The guest asks to allow the computer the first time it connects. ADB turns off when the guest stops or USB debugging is turned off.")
             } else if !model.adbOverNetworkAvailable {
-                Text("Turn on USB debugging in the guest\u{2019}s Developer options to use ADB over Network.")
+                Text("Turn on USB debugging in the guest\u{2019}s Developer options to use ADB over network.")
             } else {
                 Text("Lets a computer on the same network connect to the guest with adb.")
             }
@@ -206,10 +206,10 @@ struct SessionSettingsSheet: View {
             LabeledContent {
                 value(session.readout.fpsText)
             } label: {
-                rowLabel("Frame Rate", symbol: "speedometer")
+                rowLabel("Frame rate", symbol: "speedometer")
             }
             Toggle(isOn: $session.showStats.animation(.snappy)) {
-                rowLabel("Show on Screen", symbol: "rectangle.topthird.inset.filled")
+                rowLabel("Show on screen", symbol: "rectangle.topthird.inset.filled")
             }
         }
         .id("stats")

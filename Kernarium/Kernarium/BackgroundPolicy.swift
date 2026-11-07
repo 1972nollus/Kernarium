@@ -101,13 +101,13 @@ struct BackgroundSettings {
             stored : Self.defaultLimitMinutes
     }
 
-    /// A time limit as its owner reads it: "1 hour", "2 hours" or
-    /// "90 minutes".
+    /// A time limit as its owner reads it: "1 hour", "2 hours", "90 minutes"
+    /// or "1 minute".
     static func limitTitle(minutes: Int) -> String {
         if minutes % 60 == 0 {
             return minutes == 60 ? "1 hour" : "\(minutes / 60) hours"
         }
-        return "\(minutes) minutes"
+        return minutes == 1 ? "1 minute" : "\(minutes) minutes"
     }
 
     func setLimitMinutes(_ minutes: Int, forGuest guest: String) {

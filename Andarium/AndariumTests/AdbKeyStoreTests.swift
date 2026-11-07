@@ -58,7 +58,7 @@ struct AdbKeyStoreTests {
         #expect(try store.find() == nil, "reading the key must not make one")
         let first = try store.loadOrCreate()
         #expect(try store.existingIdentity()?.publicKeyLine == first.publicKeyLine)
-        // Erase Guest deletes the key and the next start makes another.
+        // Erase guest deletes the key and the next start makes another.
         #expect(store.delete())
         #expect(try store.existingIdentity() == nil)
         let second = try store.loadOrCreate()

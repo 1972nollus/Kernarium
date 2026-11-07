@@ -13,7 +13,7 @@ struct EndView: View {
             Spacer(minLength: 24)
             StackMark(lit: false, width: 140, fault: true)
                 .padding(.bottom, 36)
-            Text("The Guest Stopped Unexpectedly")
+            Text("The guest stopped unexpectedly")
                 .font(.title2.weight(.bold))
                 .multilineTextAlignment(.center)
             Text("To start it again, close Andarium and open it again.")
@@ -37,7 +37,7 @@ struct EndView: View {
                 UIPasteboard.general.string = report
                 withAnimation { copied = true }
             } label: {
-                Label(copied ? "Copied" : "Copy Report", systemImage: copied ? "checkmark" : "doc.on.doc")
+                Label(copied ? "Copied" : "Copy report", systemImage: copied ? "checkmark" : "doc.on.doc")
                     .font(.body.weight(.semibold))
                     .frame(height: 44)
                     .padding(.horizontal, 10)

@@ -49,15 +49,15 @@ enum GuestScreen: Equatable {
 /// overlay. It lasts for one run.
 @Observable
 final class SessionState {
-    /// ADB over Network is on: the listener runs.
+    /// ADB over network is on: the listener runs.
     var adb = false
     /// The device's address on the local network while `adb` is on; nil
     /// without one.
     var adbAddress: String?
-    /// Why ADB over Network did not start, in words.
+    /// Why ADB over network did not start, in words.
     var adbProblem: String?
     /// The guest's USB debugging setting as last read; nil until it has
-    /// been. ADB over Network needs it on.
+    /// been. ADB over network needs it on.
     var usbDebugging: Bool?
     var showStats = false
     var readout = Readout()
@@ -91,7 +91,7 @@ final class AppModel {
     var capacityStopsGiB: [Int] { Limits.capacityStopsGiB(releaseMaximumGiB: releaseMaximumGiB) }
     var sheet: SheetKind?
     var startBlocked = false
-    /// Erase Guest is asking to be confirmed.
+    /// Erase guest is asking to be confirmed.
     var confirmingErase = false
     /// What a start would be, from the guest's files: Home words Start and
     /// shows the update notices by it.
@@ -173,10 +173,10 @@ final class AppModel {
     private var operation: Task<Void, Never>?
     private var operationEpoch = 0
     private var operationCancelled = false
-    /// Looks after ADB over Network while it is on.
+    /// Looks after ADB over network while it is on.
     private var adbWatcher: Task<Void, Never>?
     private var readingUsbDebugging = false
-    /// How often the watcher looks while ADB over Network is on: the address
+    /// How often the watcher looks while ADB over network is on: the address
     /// every time, the USB debugging setting every fifth. A test shortens it.
     var adbWatchInterval = Duration.seconds(2)
 
@@ -270,7 +270,7 @@ final class AppModel {
         do {
             try driver.save(guest)
         } catch {
-            alert = AppAlert(title: "Settings Not Saved", message: error.localizedDescription)
+            alert = AppAlert(title: "Settings not saved", message: error.localizedDescription)
         }
     }
 
@@ -282,10 +282,10 @@ final class AppModel {
         }
         runBusy(
             BusyState(
-                title: "Creating Guest",
+                title: "Creating guest",
                 detail: "Setting up Andarium with \(Formats.size(gib: guest.effectiveCapacityGiB)).", progress: 0
             ),
-            failure: "The Guest Could Not Be Created"
+            failure: "The guest could not be created"
         ) { progress in
             let made = try await driver.create(guest, progress: progress)
             self.lifecycle.create(made)
@@ -304,12 +304,12 @@ final class AppModel {
         do {
             try driver.restoreUpdate()
         } catch {
-            alert = AppAlert(title: "The Guest Could Not Be Restored", message: error.localizedDescription)
+            alert = AppAlert(title: "The guest could not be restored", message: error.localizedDescription)
         }
         refreshPlan()
     }
 
-    /// Erase Guest: everything the guest stored is deleted, its choices
+    /// Erase guest: everything the guest stored is deleted, its choices
     /// included, and Andarium returns to the first-launch screen.
     func erase() {
         guard let driver, guest != nil else {
@@ -318,8 +318,8 @@ final class AppModel {
             return
         }
         runBusy(
-            BusyState(title: "Erasing Guest", detail: "Deleting everything the guest stored.", progress: 0),
-            failure: "The Guest Could Not Be Erased"
+            BusyState(title: "Erasing guest", detail: "Deleting everything the guest stored.", progress: 0),
+            failure: "The guest could not be erased"
         ) { progress in
             // A choice saved a moment after the last change must not come
             // back after the files are gone.
@@ -352,9 +352,9 @@ final class AppModel {
         }
     }
 
-    // MARK: ADB over Network
+    // MARK: ADB over network
 
-    /// ADB over Network may be switched on: the guest's USB debugging is on.
+    /// ADB over network may be switched on: the guest's USB debugging is on.
     /// The preview has no guest to ask and says yes unless a screen says no.
     var adbOverNetworkAvailable: Bool {
         driver == nil ? session.usbDebugging != false : session.usbDebugging == true
@@ -413,7 +413,7 @@ final class AppModel {
         if session.adbAddress != address { session.adbAddress = address }
     }
 
-    /// Reads the guest's USB debugging setting. ADB over Network ends when
+    /// Reads the guest's USB debugging setting. ADB over network ends when
     /// it is off.
     func refreshUsbDebugging() async {
         guard capabilities.adbOverNetwork, let driver, case .running(.normal) = phase,
@@ -437,7 +437,7 @@ final class AppModel {
         }
     }
 
-    /// While ADB over Network is on and Settings is closed, the address is
+    /// While ADB over network is on and Settings is closed, the address is
     /// read every few seconds and the setting every ten, so that turning
     /// USB debugging off in the guest turns this off too.
     private func watchAdbOverNetwork() {
@@ -554,17 +554,17 @@ final class AppModel {
         busy = nil
     }
 
-    /// Create Bug Report: Settings has dismissed. Android collects its report
+    /// Create bug report: Settings has dismissed. Android collects its report
     /// (minutes, under emulation) and the finished zip goes to the share
     /// sheet, where Save to Files is one of the actions.
     func createBugReport() {
         guard capabilities.bugReport, case .running(.normal) = phase else { return }
         runOperation(
             BusyState(
-                title: "Creating Bug Report",
+                title: "Creating bug report",
                 detail: "The guest is collecting its logs and state. This can take several minutes.", progress: 0
             ),
-            failure: "Bug Report Not Created",
+            failure: "Bug report not created",
             { [driver] update in
                 if let driver { return try await driver.createBugReport(update: update) }
                 return try await Self.playBugReport(update)
@@ -621,11 +621,11 @@ final class AppModel {
         let size = UInt64(max(bytes, 0))
         runOperation(
             BusyState(
-                title: "Installing App",
+                title: "Installing app",
                 detail: "\(name) \u{00B7} \(Formats.size(bytes: size))", progress: 0
             ),
             failure: Self.installFailure,
-            ending: { _ in (title: "App Installed", detail: "\(name) is installed in the guest.") },
+            ending: { _ in (title: "App installed", detail: "\(name) is installed in the guest.") },
             { [driver] update in
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                 if let driver {
@@ -641,7 +641,7 @@ final class AppModel {
     }
 
     /// The title of an install that did not happen.
-    static let installFailure = "App Not Installed"
+    static let installFailure = "App not installed"
 
     /// The preview's install: the file goes over, the guest takes its time.
     private static func playInstall(_ update: @Sendable (BusyUpdate) -> Void) async throws {

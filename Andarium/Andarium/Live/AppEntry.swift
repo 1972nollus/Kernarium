@@ -130,7 +130,7 @@ struct AppEntry {
             // Microphone choice with it.
             model.microphone?.refresh()
         }
-        model.alert = problem.map { AppAlert(title: "Andarium Is Incomplete", message: $0) }
+        model.alert = problem.map { AppAlert(title: "Andarium is incomplete", message: $0) }
         return model
     }
 

@@ -51,7 +51,7 @@ public struct Lifecycle: Equatable, Sendable {
         notice = nil
     }
 
-    /// Erase Guest: nothing is left of the guest, its choices included, and
+    /// Erase guest: nothing is left of the guest, its choices included, and
     /// the application is where it was before the first one was set up.
     public mutating func erase() {
         guest = nil
@@ -141,7 +141,7 @@ public struct RunEnd: Equatable, Sendable {
     ) -> String {
         var lines = [
             "Andarium \(appVersion) · \(system.release)",
-            "\(system.kernel) · \(guest?.cores ?? 0) vCPUs · \(Formats.size(mib: guest?.memoryMiB ?? 0))",
+            "\(system.kernel) · \(Formats.vcpus(guest?.cores ?? 0)) · \(Formats.size(mib: guest?.memoryMiB ?? 0))",
         ]
         let reason = if let startFailure {
             "it could not start (\(startFailure))"

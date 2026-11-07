@@ -26,7 +26,7 @@ import UIKit
 /// foreign key refused with no prompt and nothing queued while debugging is
 /// off, and prompting while it is on), the host's time zone in the boot request
 /// (`theGuestIsGivenTheHostsTimeZone`; `ANDARIUM_TIME_ZONE_APPLIED=1` also
-/// waits for the guest to apply it), and the key after Erase Guest. The tests
+/// waits for the guest to apply it), and the key after Erase guest. The tests
 /// read the key the application made for the boot, again on every attempt until
 /// adbd accepts it, and never make one: a key made before an `ANDARIUM_ERASE=1`
 /// launch's erase deletes it would be one the guest was not given.
@@ -58,7 +58,7 @@ struct AdbOverVsockTests {
     /// has booted and adbd answers (up to 15 minutes).
     ///
     /// The key is the guest's own: the application makes it as the start
-    /// begins, and Erase Guest, which an automation launch (`ANDARIUM_ERASE`)
+    /// begins, and Erase guest, which an automation launch (`ANDARIUM_ERASE`)
     /// runs first, deletes the one before it. A test that made a key of its
     /// own, or read the old one, would hold a key the guest was not given and
     /// be refused for as long as it kept it. So the key is read again on every

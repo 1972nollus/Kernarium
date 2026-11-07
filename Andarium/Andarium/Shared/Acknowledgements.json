@@ -3,7 +3,7 @@
  "groups": [
   {
    "id": "system",
-   "title": "Operating System"
+   "title": "Operating system"
   },
   {
    "id": "graphics",
@@ -15,7 +15,7 @@
   },
   {
    "id": "inspiration",
-   "title": "Design Inspiration"
+   "title": "Design inspiration"
   }
  ],
  "licenses": {

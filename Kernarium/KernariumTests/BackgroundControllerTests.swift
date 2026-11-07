@@ -862,7 +862,7 @@ struct BackgroundControllerTests {
     func aLimitIsTitledInWholeHoursWhereItIsOne() {
         for (minutes, title) in [
             (15, "15 minutes"), (30, "30 minutes"), (60, "1 hour"),
-            (120, "2 hours"), (90, "90 minutes"), (1, "1 minutes"),
+            (120, "2 hours"), (90, "90 minutes"), (1, "1 minute"),
             (24 * 60, "24 hours"),
         ] {
             #expect(BackgroundSettings.limitTitle(minutes: minutes) == title)

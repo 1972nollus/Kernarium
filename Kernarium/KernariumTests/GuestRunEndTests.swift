@@ -12,11 +12,11 @@ struct GuestRunEndTests {
     @Test
     func theNoticeTellsAShutdownFromAnError() {
         let shutDown = GuestRunEnd(result: 0)
-        #expect(shutDown.title == "Guest Shut Down")
+        #expect(shutDown.title == "Guest shut down")
         #expect(shutDown.message == "Relaunch Kernarium to start it again.")
 
         let failed = GuestRunEnd(result: -5)
-        #expect(failed.title == "Guest Stopped with an Error")
+        #expect(failed.title == "Guest stopped with an error")
         #expect(failed.message.contains("-5"))
         #expect(
             failed.message.hasSuffix("Relaunch Kernarium to start it again.")
@@ -33,7 +33,7 @@ struct GuestRunEndTests {
             result: Int32(KERNARIUM_RUNTIME_RESULT_RESTART_LOOP)
         )
         #expect(looping.restartedInALoop)
-        #expect(looping.title == "Guest Kept Restarting")
+        #expect(looping.title == "Guest kept restarting")
         #expect(looping.message.contains("restarted itself"))
         #expect(!looping.message.contains("returned"))
         #expect(

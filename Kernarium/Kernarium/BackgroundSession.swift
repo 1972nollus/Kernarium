@@ -79,7 +79,7 @@ struct BackgroundMarker {
 struct GuestRestart: Equatable {
     let enteredBackgroundAt: Date
 
-    var title: String { "Guest Restarted" }
+    var title: String { "Guest restarted" }
 
     var message: String {
         "Kernarium was closed while it was in the background, so the guest " +

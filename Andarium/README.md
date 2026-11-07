@@ -183,10 +183,10 @@ control out.
 - **Updates.** `InstanceRules.decide` applies the rules of the
   [Android README](../android/lineage-24/README.md#guest-instance-storage) and
   `StartPlan` is what Home shows of them before Start. An update clones
-  `data.img` first, and Erase Guest deletes everything the guest has stored,
+  `data.img` first, and Erase guest deletes everything the guest has stored,
   the snapshot and the adb key included.
 - **Backup.** The guest is left out of iCloud and computer backups unless the
-  user turns on Back Up Guest Data.
+  user turns on Back up guest data.
 
 ## Runtime
 
@@ -221,15 +221,15 @@ the failure screen and requires reopening Andarium.
 Andarium is the adb host for its one guest. The runtime opens a connected
 stream socket to the guest's vsock port 5555
 (`kernarium_runtime_loader_connect_vsock`), so adbd is reached by no other
-process and through no listening socket of the device's unless ADB over Network
+process and through no listening socket of the device's unless ADB over network
 is on. `AndariumCore/Adb` speaks the protocol.
 
 - **Key.** `AdbKeyStore` keeps one RSA-2048 key per guest in the Keychain, this
   device only and not synchronized. Its public key goes in each boot request
   (`android_adb_public_key`), which adbd authorizes for that boot.
-- **Create Bug Report and Install APK** are in every build, in a normal
+- **Create bug report and Install APK** are in every build, in a normal
   session.
-- **ADB over Network** is off at every run and never persisted, and is
+- **ADB over network** is off at every run and never persisted, and is
   available only while the guest's USB debugging is on. `AdbNetworkBridge`
   listens on TCP 5555 and relays each computer to a fresh vsock stream, serving
   at most 8 at once; it understands no byte of adb, so the guest's adbd

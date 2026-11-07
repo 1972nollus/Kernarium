@@ -169,7 +169,7 @@ struct LicenseView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 16)
             } else {
-                ContentUnavailableView("No License", systemImage: "doc.text")
+                ContentUnavailableView("No license", systemImage: "doc.text")
             }
         }
         .background(Color(.systemGroupedBackground))

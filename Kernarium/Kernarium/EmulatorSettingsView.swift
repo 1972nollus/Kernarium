@@ -126,7 +126,7 @@ struct EmulatorSettingsView: View {
                     if maximumGuestMemoryMiB <
                         EmulatorConfiguration.guestMemoryRangeMiB.upperBound {
                         Text(
-                            "With \(configuration.vCPUCount) vCPUs the " +
+                            "With \(configuration.vCPUCount) \(configuration.vCPUCount == 1 ? "vCPU" : "vCPUs") the " +
                                 "system leaves room for at most " +
                                 "\(maximumGuestMemoryMiB) MiB of guest RAM " +
                                 "beside graphics and the emulator. More " +
@@ -257,7 +257,7 @@ struct EmulatorSettingsView: View {
                     Text("Changes take effect the next time the app launches.")
                 }
             }
-            .navigationTitle("Emulator Settings")
+            .navigationTitle("Emulator settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

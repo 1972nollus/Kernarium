@@ -79,15 +79,15 @@ nonisolated struct AdbFailure: LocalizedError, Equatable {
     }
 }
 
-/// Why ADB over Network did not start, and what its row says without an
+/// Why ADB over network did not start, and what its row says without an
 /// address.
 nonisolated enum AdbNetworkMessages {
     static func cannotStart(_ error: Error) -> String {
         if let adb = error as? AdbError, adb == .io(EADDRINUSE) {
             return "Port \(AdbNetworkBridge.defaultPort) is already in use on this device."
         }
-        return "ADB over Network could not start."
+        return "ADB over network could not start."
     }
 
-    static let noAddress = "This device has no Wi-Fi address. Connect to Wi-Fi to use ADB over Network."
+    static let noAddress = "This device has no Wi-Fi address. Connect to Wi-Fi to use ADB over network."
 }

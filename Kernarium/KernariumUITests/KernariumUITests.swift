@@ -69,13 +69,13 @@ final class KernariumUITests: XCTestCase {
 
         let displayModeButton = app.buttons["displayModeButton"]
         XCTAssertTrue(displayModeButton.waitForExistence(timeout: 10))
-        XCTAssertEqual(displayModeButton.label, "Show Serial Console")
+        XCTAssertEqual(displayModeButton.label, "Show serial console")
 
         displayModeButton.tap()
-        XCTAssertEqual(displayModeButton.label, "Show Framebuffer")
+        XCTAssertEqual(displayModeButton.label, "Show framebuffer")
 
         displayModeButton.tap()
-        XCTAssertEqual(displayModeButton.label, "Show Serial Console")
+        XCTAssertEqual(displayModeButton.label, "Show serial console")
     }
 
     /// Tapping the serial console raises the software keyboard with the

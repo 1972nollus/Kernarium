@@ -73,7 +73,7 @@ final class LiveRuntime: RuntimeDriver {
             print("Andarium: display rotation unavailable: \(error)")
             guard let model = self?.model, model.alert == nil else { return }
             model.alert = AppAlert(
-                title: "Display Rotation Unavailable",
+                title: "Display rotation unavailable",
                 message: "The guest’s screen could not follow this window. Close and reopen Andarium to try again.")
         })
     private var normalRun = false
@@ -333,7 +333,7 @@ final class LiveRuntime: RuntimeDriver {
         await operations.usbDebugging()
     }
 
-    // MARK: ADB over Network
+    // MARK: ADB over network
 
     /// The listener on the network addresses, whose every connection is
     /// joined to a fresh stream to the guest's adbd.

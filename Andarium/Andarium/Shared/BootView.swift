@@ -202,9 +202,9 @@ struct BootView: View {
     static func status(_ kind: BootKind) -> String {
         switch kind {
         case .normal: "Starting"
-        case .firstStart: "First Start"
+        case .firstStart: "First start"
         case .upgrade: "Updating"
-        case .recovery: "Starting Recovery"
+        case .recovery: "Starting recovery"
         case .restart: "Restarting"
         }
     }
@@ -228,13 +228,13 @@ struct BootView: View {
 
     static func steps(_ kind: BootKind, guest: Guest, system info: SystemInfo) -> [Step] {
         let system = Step(title: "System image", detail: "\(info.release) · read-only", seconds: 0.7)
-        let kernel = Step(title: "Linux Kernel", detail: "\(info.kernel.replacingOccurrences(of: "Linux ", with: "")) · \(guest.cores) vCPUs · \(Formats.size(mib: guest.memoryMiB)) RAM", seconds: 0.9)
+        let kernel = Step(title: "Linux kernel", detail: "\(info.kernel.replacingOccurrences(of: "Linux ", with: "")) · \(Formats.vcpus(guest.cores)) · \(Formats.size(mib: guest.memoryMiB)) RAM", seconds: 0.9)
         let used = "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(gib: guest.capacityGiB))"
         switch kind {
         case .recovery:
             return [system, kernel,
                     Step(title: "Storage", detail: used, seconds: 0.6),
-                    Step(title: "Recovery", detail: "Loading Recovery", seconds: 1.4)]
+                    Step(title: "Recovery", detail: "Loading recovery", seconds: 1.4)]
         case .firstStart:
             return [system, kernel,
                     Step(title: "Storage", detail: "Preparing \(Formats.size(gib: guest.effectiveCapacityGiB)) for first use", seconds: 0.9),

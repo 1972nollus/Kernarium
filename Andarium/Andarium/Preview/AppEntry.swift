@@ -128,11 +128,14 @@ struct AppEntry {
         case "home-gyroscope-unavailable":
             model.motionSensorsAvailable = false
         case "busy-create":
-            model.busy = BusyState(title: "Creating Guest", detail: "Setting up Andarium with 16 GiB.", progress: 0.42)
+            model.busy = BusyState(title: "Creating guest", detail: "Setting up Andarium with 16 GiB.", progress: 0.42)
         case "busy-erase":
-            model.busy = BusyState(title: "Erasing Guest", detail: "Deleting everything the guest stored.", progress: 0.65)
+            model.busy = BusyState(title: "Erasing guest", detail: "Deleting everything the guest stored.", progress: 0.65)
         case "boot":
             model.guest?.pendingCapacityGiB = 24
+            boot(.normal, stage: 3, seconds: 9)
+        case "boot-single-vcpu":
+            model.guest?.cores = 1
             boot(.normal, stage: 3, seconds: 9)
         case "boot-first":
             model.guest = model.guest?.erased
@@ -224,13 +227,13 @@ struct AppEntry {
         switch screen {
         case "bug-report":
             return BusyState(
-                title: "Creating Bug Report",
+                title: "Creating bug report",
                 detail: "The guest is collecting its logs and state. This can take several minutes.",
                 progress: 0.6, cancel: cancel
             )
         case "install-done":
             return BusyState(
-                title: "App Installed", detail: "\(file) is installed in the guest.",
+                title: "App installed", detail: "\(file) is installed in the guest.",
                 result: BusyResult(failed: false, dismiss: dismiss)
             )
         case "install-failed":
@@ -251,7 +254,7 @@ struct AppEntry {
             )
         default:
             return BusyState(
-                title: "Installing App",
+                title: "Installing app",
                 detail: "\(file) \u{00B7} \(Formats.size(bytes: PreviewData.sampleApkSizeBytes))",
                 progress: 0.45, cancel: cancel
             )
@@ -291,7 +294,7 @@ struct AppEntry {
             model.start(.normal)
         case "alert-error":
             model.alert = AppAlert(
-                title: "Settings Not Saved",
+                title: "Settings not saved",
                 message: "The file couldn\u{2019}t be saved because there is no space left on the device."
             )
         case "bug-report" where play:

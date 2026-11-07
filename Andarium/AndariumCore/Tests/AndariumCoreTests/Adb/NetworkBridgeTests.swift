@@ -204,7 +204,7 @@ func eventually(_ seconds: Double = 10, _ condition: () -> Bool) -> Bool {
     return condition()
 }
 
-/// The listener of ADB over Network on loopback against a fake guest: bytes
+/// The listener of ADB over network on loopback against a fake guest: bytes
 /// both ways, backpressure each way, half close, a failed stream, the limit of
 /// computers, stopping and a port in use.
 @Suite(.timeLimit(.minutes(1)))

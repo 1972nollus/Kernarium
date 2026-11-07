@@ -87,8 +87,8 @@ struct RowDivider: View {
 
 // MARK: System
 
-/// The guest's system in one section, as two rows of one shape: Processor and
-/// Memory states the vCPUs and RAM, with Edit opening the sheet that changes
+/// The guest's system in one section, as two rows of one shape: CPU and
+/// memory states the vCPUs and RAM, with Edit opening the sheet that changes
 /// them; Storage states what the guest holds of its capacity under a bar,
 /// with Resize.
 struct SystemSection: View {
@@ -96,11 +96,11 @@ struct SystemSection: View {
 
     var body: some View {
         if let guest = model.guest {
-            HomeSection(title: "Guest System") {
+            HomeSection(title: "Guest system") {
                 SystemRow(
-                    symbol: "cpu", title: "Processor and Memory", subtitle: Self.summary(of: guest),
+                    symbol: "cpu", title: "CPU and memory", subtitle: Self.summary(of: guest),
                     button: SystemRowButton(
-                        title: "Edit", identifier: "home-system-edit", accessibilityName: "Edit System",
+                        title: "Edit", identifier: "home-system-edit", accessibilityName: "Edit system",
                         action: { model.sheet = .system }
                     )
                 )
@@ -112,11 +112,11 @@ struct SystemSection: View {
 
     /// "6 vCPUs · 2.5 GiB".
     static func summary(of guest: Guest) -> String {
-        "\(guest.cores) \(guest.cores == 1 ? "vCPU" : "vCPUs") · \(Formats.size(mib: guest.memoryMiB))"
+        "\(Formats.vcpus(guest.cores)) · \(Formats.size(mib: guest.memoryMiB))"
     }
 }
 
-/// The button at the end of a Guest System row.
+/// The button at the end of a Guest system row.
 struct SystemRowButton {
     let title: String
     let identifier: String
@@ -141,7 +141,7 @@ extension VerticalAlignment {
     fileprivate static let headerCenter = VerticalAlignment(HeaderCenterID.self)
 }
 
-/// One row of the Guest System section: the icon tile, the title with one
+/// One row of the Guest system section: the icon tile, the title with one
 /// line under it, anything further under that line in the same column (a bar,
 /// a note), and the row's button at the end. The text column reads as one
 /// accessibility element; the button is the other. At accessibility text
@@ -332,13 +332,13 @@ struct MicrophoneAccessAlert: ViewModifier {
     func body(content: Content) -> some View {
         @Bindable var model = model
         content.alert(
-            "Allow Microphone Access", isPresented: Binding(
+            "Allow microphone access", isPresented: Binding(
                 get: { model.permissionPrompt == .microphone },
                 set: { if !$0 { model.permissionPrompt = nil } }
             )
         ) {
             Button("Open Settings") { model.openMicrophoneSettings() }
-            Button("Not Now", role: .cancel) {}
+            Button("Not now", role: .cancel) {}
         } message: {
             Text("iOS is not allowing Andarium to use the microphone. Turn on Microphone for Andarium in Settings, then come back to use it.")
         }
@@ -356,13 +356,13 @@ struct BackupOption: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        OptionRow(title: "Back Up Guest Data", symbol: "icloud.fill") {
-            Toggle("Back Up Guest Data", isOn: $isOn).labelsHidden()
+        OptionRow(title: "Back up guest data", symbol: "icloud.fill") {
+            Toggle("Back up guest data", isOn: $isOn).labelsHidden()
         }
     }
 }
 
-/// What Back Up Guest Data does to iCloud and computer backups.
+/// What the Back up guest data row does to iCloud and computer backups.
 struct BackupNote: View {
     let host: HostDevice
 
