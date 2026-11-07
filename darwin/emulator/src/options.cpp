@@ -204,6 +204,15 @@ unsigned default_application_guest_cpu_count() noexcept
 		::uml::platform::physical_processor_count());
 }
 
+unsigned launch_guest_cpu_count(
+	const std::vector<std::string> &arguments) noexcept
+{
+	for (const auto &argument : arguments)
+		if (argument.starts_with("ncpus="))
+			return guest_cpu_count(arguments);
+	return default_application_guest_cpu_count();
+}
+
 std::size_t configured_guest_memory_bytes(
 	const std::vector<std::string> &arguments)
 {

@@ -878,16 +878,16 @@ void appendKernelCommandLine(
     std::vector<std::string>& arguments,
     const uml::android::Storage& storage,
     uint32_t dotsPerInch,
+    uint32_t guestProcessorCount,
     std::string_view adbPublicKey,
     std::string_view timeZone)
 {
     const auto path = storage.release() / uml::android::releaseCommandLine;
-    constexpr std::string_view densityPrefix {
-        "androidboot.lcd_density="};
     constexpr std::string_view adbAuthorizationPrefix {
         "androidboot.kernarium.adb_auth="};
     constexpr std::array launcherPrefixes {
-        densityPrefix,
+        uml::android::lcdDensityPrefix,
+        uml::android::hwTimeoutMultiplierPrefix,
         adbAuthorizationPrefix,
         kernarium::adb::keyPrefix,
         kernarium::adb::tcpPrefix,
@@ -901,7 +901,14 @@ void appendKernelCommandLine(
      * framework's logical density aligned with the per-launch EDID. Swift has
      * already scaled dotsPerInch by nativeScale when Retina mode is active. */
     arguments.emplace_back(
-        std::string {densityPrefix} + std::to_string(dotsPerInch));
+        std::string {uml::android::lcdDensityPrefix} +
+        std::to_string(dotsPerInch));
+    /* Android init imports this as ro.boot.hw_timeout_multiplier, which the
+     * vendor init publishes as ro.hw_timeout_multiplier: the framework scales
+     * its ANR, watchdog and input timeouts by it. It follows the guest's vCPU
+     * count. */
+    arguments.emplace_back(
+        uml::android::hwTimeoutMultiplierArgument(guestProcessorCount));
     /* androidboot properties become immutable ro.boot properties. iOS always
      * keeps the stock authorization prompt for a previously unseen ADB host.
      * Only the automation runtime lets a launch turn it off, as the macOS
@@ -1387,6 +1394,7 @@ private:
             arguments,
             *request_.androidStorage,
             request_.dotsPerInch,
+            request_.guestProcessorCount,
             request_.adbPublicKey,
             request_.timeZone);
 #else
