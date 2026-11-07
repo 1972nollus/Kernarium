@@ -94,8 +94,6 @@ struct AppEntry {
             launch.applied(to: $0, on: host, capacityMaximumGiB: storage.release.maximumGiB)
         }
 
-        // A report staged for sharing by a process that ended is of no use.
-        BugReportStaging.sweep()
         let model = AppModel(
             guest: guest, host: host, system: system, capabilities: .device,
             createRequirementBytes: storage.createRequirementBytes
