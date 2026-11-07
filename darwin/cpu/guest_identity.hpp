@@ -17,7 +17,9 @@ namespace uml::cpu {
  * one of its own. The kernels also print it as the SMBIOS processor version.
  * The x86-64 gadget engine's CPUID gadget (gadgets/engine/system.inc) spells
  * the bytes out in assembly, and `x86-64-gadget-bootstrap` requires them to
- * match.
+ * match. The Android image names the same CPU as `ro.soc.manufacturer` and
+ * `ro.soc.model`, which a space joins, and a tooling test requires that to
+ * match too.
  *
  * The array is the definition so the bridge can hand the kernel a plain
  * NUL-terminated pointer into it; the view is what host code reads.

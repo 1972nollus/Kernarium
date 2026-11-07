@@ -364,7 +364,9 @@ host's NEON. The x86_64-userspace slice describes its emulated x86 CPU
 instead: its `model name` is the name the host gives the virtual CPU,
 `Kernarium Virtual CPU` (`darwin/cpu/guest_identity.hpp`), which is also the
 CPUID brand string of both x86 engines and the SMBIOS processor version of
-every kernel.
+every kernel. The Android image names the same CPU as `ro.soc.manufacturer`
+and `ro.soc.model`, which a space joins, and a tooling test requires the two
+to agree.
 
 The normal arm64 kernels run AArch32 tasks, armhf (the hard-float EABI) and
 Android's armeabi-v7a (the softfp EABI), both ARMv7-A and Armv8 AArch32 with

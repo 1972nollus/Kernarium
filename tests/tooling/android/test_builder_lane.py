@@ -4008,6 +4008,30 @@ def verify_hardware_identity(android_root: Path) -> None:
         verifier.SOC_IDENTITY = original
 
 
+def verify_host_cpu_name(root: Path, android_root: Path) -> None:
+    """The image and the host name the same virtual CPU.
+
+    The host gives its CPU one name (darwin/cpu/guest_identity.hpp): an x86-64 guest reads it as
+    the CPUID brand string and the /proc/cpuinfo model name, and every kernel's SMBIOS tables
+    carry it. The Android image states it the way a chip vendor does, as a maker and a chip
+    (ro.soc.manufacturer and ro.soc.model), which a space joins; the pair must not drift from the
+    host's name."""
+    header = (root / "darwin/cpu/guest_identity.hpp").read_text()
+    names = re.findall(r'guest_cpu_model_name_storage\[\]\s*=\s*"([^"\\]*)"\s*;', header)
+    if len(names) != 1:
+        fail(f"guest_identity.hpp does not define the CPU name exactly once: {names}")
+    host = names[0]
+    if not host or len(host) >= 48:
+        fail(f"the host CPU name {host!r} does not fit a CPUID brand string")
+    soc = odm_properties(android_root)
+    image = soc["ro.soc.manufacturer"] + " " + soc["ro.soc.model"]
+    if image != host:
+        fail(f"the image names its CPU {image!r} (overlay/config/odm.prop), the host {host!r}")
+    expected = load_tool(android_root / "tools/verify-target-files.py").SOC_IDENTITY
+    if expected["ro.soc.manufacturer"] + " " + expected["ro.soc.model"] != host:
+        fail(f"the verifier expects a CPU other than the host's {host!r}: {expected}")
+
+
 def verify_pinner_overlay(android_root: Path) -> None:
     """The product releases the home app's memory pin with an overlay built for SDK 28.
 
@@ -5811,6 +5835,7 @@ def main() -> None:
     verify_zram_fstab(android_root)
     verify_product_identity(android_root)
     verify_hardware_identity(android_root)
+    verify_host_cpu_name(root, android_root)
     verify_pinner_overlay(android_root)
     verify_secondary_zygote_topic(android_root)
     verify_decoder_output_delay_topic(android_root)
