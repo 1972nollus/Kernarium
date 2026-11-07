@@ -38,14 +38,9 @@ std::string default_guest_memory_argument(
 			::uml::platform::configured_process_memory_limit_bytes());
 	if (limit == 0)
 		return std::string{fallback};
-	bool states_cpus = false;
-	for (const auto &argument : arguments)
-		states_cpus |= argument.starts_with("ncpus=");
-	const unsigned cpus = states_cpus ? configured_guest_cpu_count(arguments) :
-		default_application_guest_cpu_count();
 	return "mem=" + std::to_string(
-		::uml::runtime::guest_memory::default_guest_memory_mib(limit, cpus)) +
-		"M";
+		::uml::runtime::guest_memory::default_guest_memory_mib(
+			limit, launch_guest_cpu_count(arguments))) + "M";
 }
 
 bool parse_gpu_budget_bytes(
