@@ -12,12 +12,9 @@ private nonisolated struct MotionConnector: GuestStreamOpener {
     }
 }
 
-/// Core Motion is opened only for an opted-in, booted, foreground guest.
-/// The axes are set before a start and never change per sample (`MotionMount`
-/// decides when they move). No samples are retained across backgrounding,
-/// power-off, or a guest restart.
-@MainActor
-final class MotionSensors {
+/// The device's accelerometer and gyroscope. Core Motion needs no iOS
+/// permission for raw readings.
+private final class CoreMotionDevice: MotionDevice, @unchecked Sendable {
     private let manager = CMMotionManager()
     private let queue: OperationQueue = {
         let queue = OperationQueue()
@@ -25,62 +22,78 @@ final class MotionSensors {
         queue.maxConcurrentOperationCount = 1
         return queue
     }()
-    private lazy var stream = MotionStream(opener: MotionConnector()) { [weak self] connected in
-        Task { @MainActor [weak self] in
-            guard let self, self.running else { return }
-            self.problem?(connected ? nil : "The guest’s motion sensor service is unavailable. Use a system image with motion sensor support.")
-        }
-    }
-    private var running = false
-    private var epoch: UInt64 = 0
-    var problem: ((String?) -> Void)?
-    var axes = MotionSample.Axes.portrait
 
-    var available: Bool { manager.isAccelerometerAvailable || manager.isGyroAvailable }
+    var hasAccelerometer: Bool { manager.isAccelerometerAvailable }
+    var hasGyroscope: Bool { manager.isGyroAvailable }
 
-    func start() {
-        guard !running, available else { return }
-        running = true
-        epoch &+= 1
-        let current = epoch
-        problem?(nil)
-        let streamEpoch = stream.start()
-        let stream = stream
-        let axes = axes
-        let failed: @Sendable (Error?) -> Void = { [weak self] error in
-            guard error != nil else { return }
-            Task { @MainActor [weak self] in
-                guard let self, self.running, self.epoch == current else { return }
-                self.stop()
-                self.problem?("The device’s motion sensors could not be read. Turn Gyroscope off and on to try again.")
-            }
-        }
-        if manager.isAccelerometerAvailable {
-            manager.accelerometerUpdateInterval = 0.01
+    func start(
+        _ sensor: MotionSample.Sensor, interval: TimeInterval,
+        handler: @escaping @Sendable (Double, Double, Double) -> Void,
+        failure: @escaping @Sendable () -> Void
+    ) {
+        stop(sensor)
+        switch sensor {
+        case .accelerometer:
+            guard manager.isAccelerometerAvailable else { return }
+            manager.accelerometerUpdateInterval = interval
             manager.startAccelerometerUpdates(to: queue) { data, error in
-                failed(error)
-                guard let data else { return }
-                let a = data.acceleration
-                stream.submit(MotionSample(sensor: .accelerometer, x: a.x, y: a.y, z: a.z, axes: axes), epoch: streamEpoch)
+                if error != nil { failure() }
+                guard let a = data?.acceleration else { return }
+                handler(a.x, a.y, a.z)
             }
-        }
-        if manager.isGyroAvailable {
-            manager.gyroUpdateInterval = 0.01
+        case .gyroscope:
+            guard manager.isGyroAvailable else { return }
+            manager.gyroUpdateInterval = interval
             manager.startGyroUpdates(to: queue) { data, error in
-                failed(error)
-                guard let data else { return }
-                let g = data.rotationRate
-                stream.submit(MotionSample(sensor: .gyroscope, x: g.x, y: g.y, z: g.z, axes: axes), epoch: streamEpoch)
+                if error != nil { failure() }
+                guard let g = data?.rotationRate else { return }
+                handler(g.x, g.y, g.z)
             }
         }
     }
 
-    func stop() {
-        running = false
-        epoch &+= 1
-        manager.stopAccelerometerUpdates()
-        manager.stopGyroUpdates()
-        queue.cancelAllOperations()
-        stream.stop()
+    func stop(_ sensor: MotionSample.Sensor) {
+        switch sensor {
+        case .accelerometer: manager.stopAccelerometerUpdates()
+        case .gyroscope: manager.stopGyroUpdates()
+        }
     }
+}
+
+/// The device's motion for the running guest. Core Motion runs only for an
+/// enabled, booted, foreground guest, and then only for the sensors an
+/// application in the guest has active (`MotionSession`). The axes are set
+/// when a run begins and never change per sample (`MotionMount` decides when
+/// they move). No samples are retained across backgrounding, power-off, or a
+/// guest restart.
+@MainActor
+final class MotionSensors {
+    private let device = CoreMotionDevice()
+    private lazy var session = MotionSession(opener: MotionConnector(), device: device) { [weak self] problem in
+        let text: String? = switch problem {
+        case nil: nil
+        case .guestUnavailable?:
+            "The guest’s motion sensor service is unavailable. Use a system image with motion sensor support."
+        case .deviceFailed?:
+            "The device’s motion sensors could not be read. Turn Gyroscope off and on to try again."
+        }
+        Task { @MainActor [weak self] in self?.problem?(text) }
+    }
+    var problem: ((String?) -> Void)?
+    private var axes = MotionSample.Axes.portrait
+
+    var available: Bool { device.hasAccelerometer || device.hasGyroscope }
+
+    /// What is wanted now: the person's switch, the guest being in front, and
+    /// the axes the sensors are mounted to.
+    func update(enabled: Bool, foreground: Bool, axes: MotionSample.Axes) {
+        self.axes = axes
+        session.update(enabled: enabled, foreground: foreground, axes: axes)
+    }
+
+    /// The period the readings belong to is over (the mount or the rotation
+    /// policy changed); the next update begins a new run.
+    func restart() { session.restart() }
+
+    func stop() { session.update(enabled: false, foreground: false, axes: axes) }
 }

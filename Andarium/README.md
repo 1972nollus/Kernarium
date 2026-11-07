@@ -424,15 +424,30 @@ apps can keep several such buffers. These host graphics allocations count
 against the same iOS process limit as guest RAM, so the RAM setting alone does
 not bound Andarium's memory use.
 
-Gyroscope is off by default. Its switch in Home's Capabilities shares the
-device's accelerometer and gyroscope with the guest. The choice is saved with the guest.
-A device with neither sensor leaves the switch unavailable. Capture starts
-after a normal boot finishes, while the app is active, and stops when the
-switch turns off, the app becomes inactive, or the guest ends or restarts.
-Recovery never captures motion. Only the newest samples are sent, at up to
-100 Hz, over private vsock port 5556; nothing listens on the host’s network.
-The system image must include the [motion sub-HAL](../android/lineage-24/README.md#motion-sensors);
-a missing service is reported in Home's Capabilities.
+Gyroscope is on by default wherever the device has an accelerometer or a
+gyroscope. It asks for no permission. Its switch in Home's Capabilities shares
+the device's sensors with the guest. A choice made there (on or off) is saved
+with the guest and the default never replaces it (`Guest.motionChoice`); a
+device with neither sensor shows the switch off and unavailable.
+
+The host reads a sensor only while an application in the guest uses it. The
+guest's sensor service says which sensors are active, and the period each was
+asked for, in a 16-byte control frame (`MotionDemand`) that it sends on the
+motion connection when the host connects and at every change.
+`MotionSampling` turns that into what Core Motion does: each active sensor is
+read at half its requested period (never faster than 100 Hz, so the guest's
+own pacing sets the rate an application sees), and nothing is read while
+nothing is in use. The connection is held while the switch is on and the guest
+is in front, since the frames arrive on it, and it has no timer while it is
+idle. A service that sends no frame (an older image) is read continuously at
+100 Hz, both sensors, until it sends one, and a new connection starts from
+that again. Reading starts after a normal boot finishes, while the app is
+active, and stops when the switch turns off, the app becomes inactive, or the
+guest ends or restarts. Recovery never captures motion. Each sample is sent as
+it is read, newest only, over private vsock port 5556; nothing listens on the
+host's network. The system image must include the
+[motion sub-HAL](../android/lineage-24/README.md#motion-sensors); a missing
+service is reported in Home's Capabilities.
 
 ### Statistics
 

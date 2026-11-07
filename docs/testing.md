@@ -882,10 +882,20 @@ a window (`TEST_RUNNER_ANDARIUM_ROTATION_VISUAL=1`, selecting
 `RotationOverVsockTests`); pure policy tests do not establish the visible result.
 `andarium-motion-protocol` (unit) decodes independent motion wire fixtures
 and rejects truncated records, unknown sensor types and non-finite values.
-The core package also checks SI conversion, the saved choice, socket delivery,
-stop during connection and stale callbacks. Hosted
+The core package also checks SI conversion, the saved choice (unset follows the
+device, on and off stick), socket delivery, stop during connection and stale
+callbacks, the host's reading of the guest's control frames, and the state
+machine and session that turn them into what the sensors do against a fake
+device and guest: a guest that never sends a frame read continuously, sensors
+started, stopped and retimed as it says, the switch off, the guest in the
+background, a new mounting, a lost connection and a failing device. Hosted
 `AndroidOperationTests` checks that the motion toggle persists and reaches
-the runtime driver. Physical sensor delivery requires a sensor-capable iOS
+the runtime driver. The opt-in `MotionCompatibilityTests`
+(`TEST_RUNNER_ANDARIUM_MOTION_COMPAT=1`, an isolated guest instance, on a Mac
+or an iPad) drives the session with a synthetic device against the guest's own
+sensor service in a real boot: an image whose service sends no control frame
+is read continuously (`TEST_RUNNER_ANDARIUM_MOTION_EXPECT=legacy`, the
+default), and one that sends them is read as they say (`ondemand`). Physical sensor delivery requires a sensor-capable iOS
 device and a guest image carrying the motion sub-HAL; Simulator and Mac tests
 do not establish that path. The opt-in `MotionOverVsockTests` drives the real
 model and runtime on the iPad and reads both sensors through Android's public

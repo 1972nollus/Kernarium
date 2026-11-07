@@ -226,14 +226,13 @@ struct GyroscopeRow: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let on = model.guest?.motionSensors == true
         OptionRow(title: "Gyroscope", symbol: "gyroscope") {
             Toggle("Gyroscope", isOn: Binding(
-                get: { on },
+                get: { model.motionSensorsOn },
                 set: { model.setMotionSensors($0) }
             ))
             .labelsHidden()
-            .disabled(!model.motionSensorsAvailable && !on)
+            .disabled(!model.motionSensorsAvailable)
         }
     }
 }

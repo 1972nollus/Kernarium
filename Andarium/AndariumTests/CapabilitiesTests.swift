@@ -232,23 +232,29 @@ struct CapabilitiesFlowTests {
         #expect(s.model.microphoneShownOn)
     }
 
-    @Test func gyroscopeAsksForNothing() {
+    @Test func gyroscopeIsOnByDefaultAndAsksForNothing() {
         let s = setup()
-        s.model.setMotionSensors(true)
-        #expect(s.model.guest?.motionSensors == true)
-        #expect(s.driver.motionSensors)
+        #expect(s.model.guest?.motionChoice == nil)
+        #expect(s.model.motionSensorsOn)
         #expect(s.model.permissionPrompt == nil)
         #expect(s.model.microphoneState == .notAsked)
         #expect(s.system.asked == 0)
         s.model.setMotionSensors(false)
-        #expect(s.model.guest?.motionSensors == false)
+        #expect(s.model.guest?.motionChoice == false)
+        #expect(!s.model.motionSensorsOn)
+        #expect(!s.driver.motionSensors)
+        s.model.setMotionSensors(true)
+        #expect(s.model.guest?.motionChoice == true)
+        #expect(s.driver.motionSensors)
+        #expect(s.system.asked == 0)
     }
 
-    @Test func gyroscopeStaysOffOnADeviceWithNoSensors() {
+    @Test func gyroscopeShowsOffOnADeviceWithNoSensors() {
         let s = setup()
         s.model.motionSensorsAvailable = false
+        #expect(!s.model.motionSensorsOn)
         s.model.setMotionSensors(true)
-        #expect(s.model.guest?.motionSensors == false)
+        #expect(s.model.guest?.motionChoice == nil)
         #expect(!s.driver.motionSensors)
     }
 }
