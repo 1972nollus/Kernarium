@@ -566,6 +566,9 @@ grammar, which accepts a loopback address only, and the listeners that attach
 each accepted connection to a guest port. `kernarium-adb-channel` covers the
 kernel arguments that carry an Android guest's adb key and the request that adbd
 not listen on TCP, and the limit on the whole kernel command line.
+`kernarium-guest-time-zone` covers the time zone names the runtime lets onto
+that command line (the IANA names, never a space, a quotation mark or an empty
+component).
 
 `guest-vsock-stream` (integration) runs the device against a Linux guest's
 driver through the launcher's loopback forward, with a Python `AF_VSOCK` server
@@ -869,6 +872,8 @@ encoder against moduli with the text `adb keygen` wrote for them, and the
 listener of ADB over Network on loopback against a fake guest (bytes both
 ways, backpressure each way, half close, a failed stream, the limit of
 computers, stopping, a port in use).
+`GuestTimeZoneTests` holds the same name vectors as the runtime and accepts
+every zone Foundation knows.
 The package also tests orientation ownership for phones, full-screen and
 windowed iPads, loss of a scene lock, coalesced guest commands, partial failures
 and stale completions after a guest restart, and which screen edges a run
@@ -976,7 +981,11 @@ foreign key refused with no prompt and nothing queued while debugging is off,
 and prompting while it is on), and the key after Erase Guest. The tests read the
 key the application made for the boot, again on every attempt until adbd accepts
 it, and never make one: a key made before an `ANDARIUM_ERASE=1` launch's erase
-deletes it would be one the guest was not given. `AdbOverVsockTests/aPromptWhoseDialogDiedIsRaisedAgain()` kills
+deletes it would be one the guest was not given. `AdbOverVsockTests/theGuestIsGivenTheHostsTimeZone()` reads `ro.boot.kernarium.timezone`
+and requires the host's zone; with `TEST_RUNNER_ANDARIUM_TIME_ZONE_APPLIED=1` (an
+image with the time zone script) it also waits for `persist.sys.timezone` to
+take it.
+`AdbOverVsockTests/aPromptWhoseDialogDiedIsRaisedAgain()` kills
 SystemUI while the dialog is up and waits for the dialog to come back without a new offer: stock Android leaves
 adbd's prompt pending, so it needs an image whose framework starts the dialog again and runs only with
 `TEST_RUNNER_ANDARIUM_ADB_REARM_TESTS=1`. `aPromptWhoseDialogIsUpIsNotRaisedTwice()` holds a dialog
@@ -1554,7 +1563,9 @@ suspend blocker with the adb host-connected property it follows, the adb daemon'
 TCP-policy launch properties (read from its APEX payload, with adbd's right to read their labels), the network
 setup tool with the ARP policy init sets before it, its library, label and domain
 transition, the script that saves the virtual Wi-Fi network once, after boot and
-without touching the user's Wi-Fi switch, with its core domain, its binder transfer to the Wi-Fi service's process and the call back, and its marker, the Wi-Fi
+without touching the user's Wi-Fi switch, with its core domain, its binder transfer to the Wi-Fi service's process and the call back, and its marker, the script that
+applies the host's time zone after boot (its domain, its marker, and that it writes no setting and not the zone property;
+`lineage24-builder-lane` runs it against stub tools for a new guest, a followed change, a zone the user chose, the setting off, an unknown name and bad names), the Wi-Fi
 HAL and supplicant with their manifest fragments and services, the Wi-Fi feature
 declaration and the absent Ethernet, Aware, RTT, Direct and Passpoint ones, the built-in macvlan, cfg80211 and virt_wifi
 options of the packaged kernel configuration, the absent wificond, the ClearKey HAL's access to the memfd files of applications, the
