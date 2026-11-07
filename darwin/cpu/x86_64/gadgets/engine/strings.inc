@@ -252,7 +252,7 @@ gadget string_\operation\()_\width
 	 * MMU mapping-change interrupt can release its execution read gate, and
 	 * so the dispatch can charge the work to its instruction budget. */
 	mov w9, #UML_X86_64_STRING_REPEAT_BUDGET
-	str w9, [sp, #0x68]
+	str w9, [sp, #UML_X86_64_FRAME_STRING_BUDGET]
 	tbnz x23, #3, Lx86_string_count_16\@
 	tbz x23, #0, Lx86_string_count_64\@
 	ldr w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
@@ -344,9 +344,9 @@ Lx86_string_repeat_equal\@:
 	cbz w19, Lx86_string_finish\@
 	.endif
 	Lx86_string_repeat_continue\@:
-	ldr w9, [sp, #0x68]
+	ldr w9, [sp, #UML_X86_64_FRAME_STRING_BUDGET]
 	subs w9, w9, #1
-	str w9, [sp, #0x68]
+	str w9, [sp, #UML_X86_64_FRAME_STRING_BUDGET]
 	b.eq Lx86_string_budget_spent\@
 	/* Whatever sent this element to the element loop -- a short tail, an
 	 * element straddling a page, a destination that can publish code -- need
@@ -531,11 +531,11 @@ Lx86_string_bulk_destination_wide\@:
 	 * long copy still returns to the executor often enough to release its
 	 * execution read gate for a mapping change.
 	 */
-	ldr w9, [sp, #0x68]
+	ldr w9, [sp, #UML_X86_64_FRAME_STRING_BUDGET]
 	lsr w10, w19, #6
 	add w10, w10, #1
 	subs w9, w9, w10
-	str w9, [sp, #0x68]
+	str w9, [sp, #UML_X86_64_FRAME_STRING_BUDGET]
 	b.gt Lx86_string_bulk_run\@
 	/* The instruction stops between elements with RIP still naming it, which
 	 * is where an interrupt finds it. Hardware then saves RF, so that the
@@ -570,7 +570,7 @@ Lx86_string_continue\@:
 gadget string_\operation\()_\width\()_step
 	ldr x23, [_stream], #8
 	mov w9, #1
-	str w9, [sp, #0x68]
+	str w9, [sp, #UML_X86_64_FRAME_STRING_BUDGET]
 	tbnz x23, #3, Lx86_string_step_count_16\@
 	tbz x23, #0, Lx86_string_step_count_64\@
 	ldr w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "../../layout/assembly_offsets.h"
+#include "../../../gadget_host_frame.inc"
 
 .arch armv8.2-a
 
@@ -1470,27 +1471,26 @@ Lx86_indirect_follow\@:
 	follow_block_link x8
 .endm
 
+/* The entry frame's own slots, after the registers gadget_host_frame.inc
+ * saves: the callee-saved halves of v8-v15, which the gadgets overwrite along
+ * with the rest of the vector file and AAPCS64 makes the caller's, and the
+ * string gadgets' repeat budget (a word, padded to a pair of words). */
+#define UML_X86_64_FRAME_VECTORS GADGET_HOST_FRAME_SAVED
+#define UML_X86_64_FRAME_STRING_BUDGET (GADGET_HOST_FRAME_SAVED + 0x40)
+#define UML_X86_64_FRAME_SLOTS 0x50
+
+/* Runs a threaded stream until a gadget leaves the engine.
+ *   in:  x0 stream, x1 CpuState, x2 execution context
+ *   out: w0 the event, x1 the instructions retired
+ */
 .p2align 4
 .globl NAME(uml_x86_64_gadget_enter)
 NAME(uml_x86_64_gadget_enter):
-	/* x0 = immutable threaded stream, x1 = CpuState, x2 = execution
-	 * context. Darwin reserves x18 and clears it when it interrupts the
-	 * thread, so the engine neither uses, saves nor restores it: x19's
-	 * pair partner is the zero register.
-	 */
-	stp xzr, x19, [sp, #-0xb0]!
-	stp x20, x21, [sp, #0x10]
-	stp x22, x23, [sp, #0x20]
-	stp x24, x25, [sp, #0x30]
-	stp x26, x27, [sp, #0x40]
-	stp x28, x29, [sp, #0x50]
-	str lr, [sp, #0x60]
-	/* Gadgets use the whole vector file, and the procedure call standard
-	 * makes the low halves of v8 to v15 the callee's to preserve. */
-	stp d8, d9, [sp, #0x70]
-	stp d10, d11, [sp, #0x80]
-	stp d12, d13, [sp, #0x90]
-	stp d14, d15, [sp, #0xa0]
+	gadget_host_frame_push UML_X86_64_FRAME_SLOTS
+	stp d8, d9, [sp, #(UML_X86_64_FRAME_VECTORS + 0x00)]
+	stp d10, d11, [sp, #(UML_X86_64_FRAME_VECTORS + 0x10)]
+	stp d12, d13, [sp, #(UML_X86_64_FRAME_VECTORS + 0x20)]
+	stp d14, d15, [sp, #(UML_X86_64_FRAME_VECTORS + 0x30)]
 	mov _stream, x0
 	mov _cpu, x1
 	mov _context, x2
@@ -1542,17 +1542,11 @@ uml_x86_64_gadget_leave:
 Lx86_leave_rounding_ready:
 	ldr x9, [_context, #UML_X86_64_CONTEXT_INSTRUCTION_LIMIT]
 	add x1, _executed, x9
-	ldp d14, d15, [sp, #0xa0]
-	ldp d12, d13, [sp, #0x90]
-	ldp d10, d11, [sp, #0x80]
-	ldp d8, d9, [sp, #0x70]
-	ldr lr, [sp, #0x60]
-	ldp x28, x29, [sp, #0x50]
-	ldp x26, x27, [sp, #0x40]
-	ldp x24, x25, [sp, #0x30]
-	ldp x22, x23, [sp, #0x20]
-	ldp x20, x21, [sp, #0x10]
-	ldp xzr, x19, [sp], #0xb0
+	ldp d8, d9, [sp, #(UML_X86_64_FRAME_VECTORS + 0x00)]
+	ldp d10, d11, [sp, #(UML_X86_64_FRAME_VECTORS + 0x10)]
+	ldp d12, d13, [sp, #(UML_X86_64_FRAME_VECTORS + 0x20)]
+	ldp d14, d15, [sp, #(UML_X86_64_FRAME_VECTORS + 0x30)]
+	gadget_host_frame_pop UML_X86_64_FRAME_SLOTS
 	ret
 
 /* Materialize the lazy x86 arithmetic flags without entering C++. Common

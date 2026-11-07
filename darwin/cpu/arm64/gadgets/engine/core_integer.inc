@@ -4,6 +4,7 @@
  * pointers to these precompiled routines and inline integer operands.
  */
 #include "../../layout/assembly_offsets.h"
+#include "../../../gadget_host_frame.inc"
 
 /* Apple Silicon exposes the Armv8 CRC and cryptographic extensions. Keep the
  * assembler aware of them so extension-backed gadgets can use native ops. */
@@ -263,26 +264,29 @@ uml_arm64_gadget_activate_native_fp_environment:
 	msr fpsr, x6
 	ret
 
+/* The entry frame's own slots, after the registers gadget_host_frame.inc
+ * saves. A build that counts executed instructions keeps the caller's counter
+ * pointer in one, which execution_count reads. */
+#if UML_GADGET_EXECUTION_HISTOGRAM
+#define UML_GADGET_FRAME_HISTOGRAM GADGET_HOST_FRAME_SAVED
+#define UML_GADGET_FRAME_SLOTS 16
+#else
+#define UML_GADGET_FRAME_SLOTS 0
+#endif
+
+/* Runs a data-only stream until a gadget leaves the engine.
+ *   in:  x0 stream, x1 CpuState, x2 TLB, x3 instructions already retired
+ *        (x4 the counter table, in a histogram build)
+ *   out: w0 the event, x1 the instructions retired
+ * Inside, x28 walks the stream, x29 holds the retirement count and x27 the
+ * guest's flags; the frame keeps the caller's copies of all three. The result
+ * pair is returned in registers, so the hot boundary stores nothing. */
 .globl NAME(uml_arm64_gadget_enter)
 .p2align 4
 NAME(uml_arm64_gadget_enter):
-	/* x0 = data-only program stream, x1 = CpuState, x2 = TLB,
-	 * x3 = initial guest instruction count. x29 is otherwise unused by the
-	 * engine and remains live across helper calls. The two-register result
-	 * returns the event in w0 and completed count in x1 without a hot-boundary
-	 * memory store. Darwin reserves x18 and clears it when it interrupts the
-	 * thread, so the engine neither uses, saves nor restores it: x19's pair
-	 * partner is the zero register.
-	 */
-	stp xzr, x19, [sp, #-0x80]!
-	stp x20, x21, [sp, #0x10]
-	stp x22, x23, [sp, #0x20]
-	stp x24, x25, [sp, #0x30]
-	stp x26, x27, [sp, #0x40]
-	stp x28, x29, [sp, #0x50]
-	str lr, [sp, #0x60]
+	gadget_host_frame_push UML_GADGET_FRAME_SLOTS
 #if UML_GADGET_EXECUTION_HISTOGRAM
-	str x4, [sp, #0x70]
+	str x4, [sp, #UML_GADGET_FRAME_HISTOGRAM]
 #endif
 	mov _stream, x0
 	/* Bias the retirement accumulator by the linked-chain limit. This lets
@@ -299,13 +303,7 @@ NAME(uml_arm64_gadget_enter):
 uml_arm64_gadget_leave:
 	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	add x1, x29, #1, lsl #12
-	ldr lr, [sp, #0x60]
-	ldp x28, x29, [sp, #0x50]
-	ldp x26, x27, [sp, #0x40]
-	ldp x24, x25, [sp, #0x30]
-	ldp x22, x23, [sp, #0x20]
-	ldp x20, x21, [sp, #0x10]
-	ldp xzr, x19, [sp], #0x80
+	gadget_host_frame_pop UML_GADGET_FRAME_SLOTS
 	ret
 
 /* MOVZ/MOVN are folded to a full constant by the translator.  Rd==XZR is
