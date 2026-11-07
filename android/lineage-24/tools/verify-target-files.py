@@ -125,6 +125,17 @@ BOOT_HAL_SELECTIONS = {
     "vulkan": "virtio",
     "gralloc": "minigbm",
 }
+# The OpenGL ES claim. The product init script copies the boot command line's
+# androidboot.opengles.version into ro.opengles.version at early-init, the
+# version the framework reports and the CTS gates its dEQP lists on; 0x30002
+# is OpenGL ES 3.2. A declared dEQP level makes the CTS run every EGL and GLES
+# list dated up to it, so the level is pinned to the one whose lists passed
+# whole: a platform update that moves the "latest" file fails here instead of
+# raising the claim unqualified.
+BOOT_OPENGLES_VERSION = 0x30002
+OPENGLES_DEQP_LEVEL_FEATURE = "android.software.opengles.deqp.level"
+OPENGLES_DEQP_LEVEL = 132776705  # 2026-03-01
+UML_INIT_OPENGLES_COPY = "setprop ro.opengles.version ${ro.boot.opengles.version}"
 # The retired AOSP external/mesa3d stack: its EGL and GLES libraries, and the
 # directory it loaded its driver from.
 RETIRED_EGL_ENTRIES = {
@@ -1181,6 +1192,8 @@ def check_boot_policy(
         copy = f"setprop ro.hardware.{name} ${{ro.boot.hardware.{name}}}"
         if copy not in early_init:
             fail(f"UML init policy does not copy the {name} HAL selection at early-init")
+    if UML_INIT_OPENGLES_COPY not in early_init:
+        fail("UML init policy does not copy the OpenGL ES version at early-init")
     for trigger, commands in actions.items():
         if UML_INIT_DENSITY_COPY in commands and trigger != UML_INIT_DENSITY_TRIGGER:
             fail(f"UML init policy copies the display density under '{trigger}'")
@@ -2035,6 +2048,7 @@ def check_hardware_features(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
 ) -> None:
     declared: set[str] = set()
+    deqp_levels: list[str | None] = []
     for name, info in infos.items():
         path = PurePosixPath(name)
         if (
@@ -2053,10 +2067,19 @@ def check_hardware_features(
             feature = element.attrib.get("name")
             if feature in FORBIDDEN_FEATURE_NAMES:
                 fail(f"absent hardware feature is advertised in {name}: {feature}")
+            if feature == "android.software.vulkan.deqp.level":
+                fail(f"a Vulkan dEQP level is declared in {name}: the Vulkan lists are not qualified")
+            if feature == OPENGLES_DEQP_LEVEL_FEATURE:
+                deqp_levels.append(element.attrib.get("version"))
             if feature:
                 declared.add(feature)
     for feature in sorted(REQUIRED_FEATURE_NAMES - declared):
         fail(f"required feature is not declared: {feature}")
+    if deqp_levels != [str(OPENGLES_DEQP_LEVEL)]:
+        fail(
+            f"{OPENGLES_DEQP_LEVEL_FEATURE} must be declared once at the qualified "
+            f"level {OPENGLES_DEQP_LEVEL}: {deqp_levels}"
+        )
 
 
 def app_preopt_paths(apk: str, isa: str = "arm64") -> tuple[str, str]:

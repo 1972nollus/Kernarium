@@ -265,7 +265,9 @@ own conformance standing is whatever its recorded campaigns show.
 
 GLES reaches the guest over the same path and from the same capsets: the
 guest's Mesa derives its GLES version from what Virgl advertises, so nothing
-targets GLES separately and no GLES-only host provider exists.
+targets GLES separately and no GLES-only host provider exists. On macOS that is
+OpenGL ES 3.2 with every extension of the Android extension pack, and the
+Android guest declares OpenGL ES 3.2.
 
 The formats Virgl advertises are the formats the host really stores. A sized
 depth internal format is only a request in OpenGL -- the host may satisfy
@@ -820,7 +822,8 @@ the Virgl gallium driver behind the `kernarium` EGL and GLES libraries, and
 Mesa's Venus driver installed as the Vulkan HAL `vulkan.virtio.so`, with
 gralloc buffers from minigbm and presentation through
 `VK_ANDROID_native_buffer`. That contract, including which guest epoch the
-hardware-buffer path needs and why no dEQP level is declared, lives in
+hardware-buffer path needs, why no Vulkan dEQP level is declared, and the
+OpenGL ES 3.2 claim with the dEQP level its lists qualified, lives in
 [`../android/lineage-24/README.md`](../android/lineage-24/README.md#graphics).
 
 Khronos publishes Android's mandatory Vulkan functionality as the

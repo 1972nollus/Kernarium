@@ -1071,11 +1071,24 @@ unless that config has no depth plane, and a pbuffer of it must stencil: a draw
 that writes only stencil and a draw that passes only where the stencil matches
 colour the two halves of the picture apart.
 
+The product declares OpenGL ES 3.2. The boot command line's
+`androidboot.opengles.version=196610` (0x30002) is the one writer of
+`ro.opengles.version`, which the vendor init script copies at early-init and
+the framework reports to applications; the Virgl driver makes ES 3.2 contexts
+over the host's Zink on KosmicKrisp.
+`android.software.opengles.deqp.level` is 132776705 (2026-03-01), the level at
+which every GLES2, GLES3 and GLES31 dEQP list of the Android 17 CTS passed whole
+on both ABIs. A declared level makes the CTS run every list dated up to it, so
+the target-files verifier pins the level and the builder lane pins the command
+line's version: a platform update that moves the `latest` level file fails
+verification until its new lists pass.
+
 The product declares `android.hardware.vulkan.version` 1.4, `level` 1 and
 `compute` 0, and deliberately declares no `android.software.vulkan.deqp.level`:
 this driver has not been qualified against Android's Vulkan dEQP must-pass list.
 A declared level makes the CTS run every list dated up to it, so a declaration
-waits for those lists to pass whole. One gap is known in this
+waits for those lists to pass whole, and the target-files verifier refuses one
+until then. One gap is known in this
 stack: `vkMapMemory` of host-visible memory exported as a hardware buffer fails
 with `VK_ERROR_MEMORY_MAP_FAILED`, because gralloc backs such a buffer with a
 classic 3D resource, which Venus refuses to map by design (its contents reach

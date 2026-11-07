@@ -519,7 +519,7 @@ count how often it is taken before assuming its cost is the thing to reduce.
 | Attempt | Disposition and lesson |
 | --- | --- |
 | Separate CGL/OpenGL and mobile renderer paths | Replaced by one authenticated host GL provider across Apple products; that provider is now Mesa Zink over KosmicKrisp. |
-| Complete GLES 3.2 through existing APIs | Not viable as a single current Apple/Virgl path; the product claims only the qualified GLES boundary in [`graphics.md`](graphics.md). |
+| Complete GLES 3.2 through existing APIs | Accepted once the host provider became Zink over KosmicKrisp: Virgl on its desktop GL 4.6 context gives the guest OpenGL ES 3.2 and the whole Android extension pack through existing Metal APIs, and the Android guest declares OpenGL ES 3.2 after its GLES dEQP lists passed whole ([`../android/lineage-24/README.md`](../android/lineage-24/README.md#graphics)). The earlier per-API providers could not reach it. |
 | Add Vulkan by pairing Venus with MoltenVK | Not implemented. MoltenVK does not supply the missing Virtio-GPU blob/shared-memory protocol, synchronization, or lifetime model. |
 | CPU readback as native presentation | Retained only as a diagnostic fallback; sustained native qualification requires the Metal texture path. |
 | Profile Chromium H.264 playback | Accepted. Host sampling showed fence polling and VNC scanout readback dominating the GPU thread while decode was a small share; packed damage readback, persistent staging, predicate-aware fence polling, reusable codec buffers and NV12 IOSurface/Metal copies raised Chromium's delivered frames by about half and halved dropped frames. Polling shared syncs from the active guest context was rejected because the host provider retired them more slowly. |
