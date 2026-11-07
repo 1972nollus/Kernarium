@@ -1443,6 +1443,87 @@ def check_setup_wizard_art(overlay: zipfile.ZipFile) -> None:
         fail(f"{SETUP_WIZARD_OVERLAY} has no {SETUP_WIZARD_WELCOME}")
     if welcome != (SETUP_WIZARD_ART / "raw/lottie_welcome.json").read_bytes():
         fail(f"{SETUP_WIZARD_OVERLAY}'s {SETUP_WIZARD_WELCOME} is not the product's animation")
+    check_setup_wizard_flow(overlay)
+
+
+# The Setup Wizard shows the pages the product has reviewed and no others. LineageOS's flow lists
+# eleven more: each is either decided against or can never apply to this product (the README of the
+# release names the reason for every one). The overlay carries two scripts, which are raw files and
+# so reach the overlay unchanged: the owner's flow, and the one a secondary user runs. A script is
+# reviewed as the flow its first action reaches, in order, and it may define nothing else.
+SETUP_WIZARD_NAMESPACE = "http://schemas.android.com/apk/res/com.google.android.setupwizard"
+SETUP_WIZARD_FLOWS = {
+    "lineage_wizard_script.xml": ("welcome", "locale", "datetime", "theme_settings", "finish"),
+    "lineage_wizard_script_user.xml": ("welcome", "theme_settings", "finish"),
+}
+SETUP_WIZARD_HIDDEN = (
+    "bluetooth_setup",
+    "network_setup",
+    "sim_missing",
+    "restore",
+    "location_settings",
+    "device_specific",
+    "recovery_update",
+    "lineage_settings",
+    "biometric_settings",
+    "lockscreen_settings",
+    "navigation_settings",
+)
+
+
+def check_setup_wizard_script(source: str, text: str, reviewed: tuple[str, ...]) -> None:
+    """The script's flow is the reviewed pages in order, and no hidden page is defined or reached."""
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as error:
+        fail(f"{source} is not well-formed XML: {error}")
+    if root.tag != "WizardScript":
+        fail(f"{source} is not a WizardScript")
+    first = root.get(f"{{{SETUP_WIZARD_NAMESPACE}}}firstAction")
+    if first is None:
+        fail(f"{source} names no firstAction")
+    actions: dict[str, list[str]] = {}
+    for action in root.findall("WizardAction"):
+        identifier = action.get("id")
+        if identifier is None or identifier in actions:
+            fail(f"{source} has a WizardAction without a unique id: {identifier!r}")
+        actions[identifier] = [
+            target
+            for result in action.findall("result")
+            if (target := result.get(f"{{{SETUP_WIZARD_NAMESPACE}}}action")) is not None
+        ]
+    reached: list[str] = []
+    pending = [first]
+    while pending:
+        identifier = pending.pop(0)
+        if identifier in reached:
+            continue
+        if identifier not in actions:
+            fail(f"{source}: the flow reaches {identifier!r}, which the script does not define")
+        reached.append(identifier)
+        pending.extend(actions[identifier])
+    hidden = [page for page in SETUP_WIZARD_HIDDEN if page in actions]
+    if hidden:
+        fail(f"{source} defines pages the product hides: {', '.join(hidden)}")
+    if tuple(reached) != reviewed:
+        fail(f"{source} reaches {' > '.join(reached)}, not the reviewed {' > '.join(reviewed)}")
+    unreached = sorted(set(actions) - set(reached))
+    if unreached:
+        fail(f"{source} defines pages its flow never reaches: {', '.join(unreached)}")
+
+
+def check_setup_wizard_flow(overlay: zipfile.ZipFile) -> None:
+    """The overlay's scripts are the tracked ones, and the tracked ones are the reviewed flows."""
+    for name, reviewed in SETUP_WIZARD_FLOWS.items():
+        tracked = SETUP_WIZARD_ART / "raw" / name
+        check_setup_wizard_script(str(tracked), tracked.read_text(encoding="utf-8"), reviewed)
+        member = f"res/raw/{name}"
+        try:
+            shipped = overlay.read(member)
+        except KeyError:
+            fail(f"{SETUP_WIZARD_OVERLAY} has no {member}")
+        if shipped != tracked.read_bytes():
+            fail(f"{SETUP_WIZARD_OVERLAY}'s {member} is not the product's script")
 
 
 def check_setup_wizard_branding(
@@ -1467,6 +1548,54 @@ def check_setup_wizard_branding(
             fail(f"{SETUP_WIZARD_OVERLAY} does not set the string {text.decode()!r}")
     if holds(b"Lineage"):
         fail(f"{SETUP_WIZARD_OVERLAY} still names LineageOS or Lineage")
+
+
+# The navigation mode is the platform's. LineageOS's Setup Wizard switched a device without an
+# app-switch key to gestural navigation when it started, before its first page; the product's
+# wizard topic (route p0026) removes that call, so a fresh guest runs the framework's default,
+# three buttons, and Settings can switch it either way: both mode overlays stay in the image. The
+# wizard's dex no longer names the function (R8 keeps method names), no overlay configuration
+# enables a mode overlay, and no property enables one at boot, which would override the default.
+SETUP_WIZARD_APK = "SYSTEM_EXT/priv-app/LineageSetupWizard/LineageSetupWizard.apk"
+GESTURAL_FORCING = b"enableGesturalNavigation"
+NAVIGATION_OVERLAY_DIRECTORIES = (
+    "PRODUCT/overlay/NavigationBarMode3Button/",
+    "PRODUCT/overlay/NavigationBarModeGestural/",
+)
+NAVIGATION_OVERLAY_PACKAGES = "com.android.internal.systemui.navbar."
+OVERLAY_CONFIGURATION = re.compile(r"[A-Z_]+/overlay/config/[^/]+\.xml")
+OVERLAY_THEME_PROPERTY = "ro.boot.vendor.overlay.theme"
+
+
+def check_navigation_mode(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    """The wizard leaves the navigation mode alone, and both modes stay available."""
+    info = infos.get(SETUP_WIZARD_APK)
+    if info is None:
+        fail(f"{SETUP_WIZARD_APK} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, STATISTICS_APK_LIMIT))) as apk:
+            for name in apk.namelist():
+                if name.startswith("classes") and name.endswith(".dex") and GESTURAL_FORCING in apk.read(name):
+                    fail(
+                        f"{SETUP_WIZARD_APK} still forces gestural navigation: "
+                        f"{name} contains {GESTURAL_FORCING.decode()}"
+                    )
+    except (OSError, zipfile.BadZipFile) as error:
+        fail(f"{SETUP_WIZARD_APK} is not a readable application archive: {error}")
+    for directory in NAVIGATION_OVERLAY_DIRECTORIES:
+        if not any(name.startswith(directory) and name.endswith(".apk") for name in infos):
+            fail(f"the navigation mode overlay under {directory} is missing: Settings could not switch modes")
+    for name in sorted(infos):
+        if OVERLAY_CONFIGURATION.fullmatch(name) is None:
+            continue
+        try:
+            configuration = ET.fromstring(read_small(archive, infos[name], 1 << 20))
+        except ET.ParseError as error:
+            fail(f"{name} is not well-formed XML: {error}")
+        for element in configuration.iter():
+            package = element.get("package", "")
+            if package.startswith(NAVIGATION_OVERLAY_PACKAGES) and element.get("enabled") != "false":
+                fail(f"{name} enables the navigation mode overlay {package}: the mode is the platform's")
 
 
 # The framework's runtime resource overlay holds the product's replacement for LineageOS's
@@ -2795,6 +2924,11 @@ def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None
                 fail(f"unexpected ABI in {info.filename}: {key}={value!r}, not {expected!r}")
         if key == "ro.zygote" and value != VENDOR_MULTILIB_PROPERTIES["ro.zygote"]:
             fail(f"unexpected zygote in {info.filename}: {value}")
+        if key == OVERLAY_THEME_PROPERTY:
+            fail(
+                f"{info.filename} sets {key}={value}: a vendor overlay theme enables overlays at "
+                "boot, and the navigation mode overlays are the platform's to choose"
+            )
         if key == "persist.sys.usb.config":
             fail(
                 f"{info.filename} sets {key}={value}: USB debugging is off on a fresh data "
@@ -3430,6 +3564,7 @@ def main() -> None:
         check_default_wallpaper(archive, infos)
         check_no_statistics_uploader(archive, infos)
         check_setup_wizard_branding(archive, infos)
+        check_navigation_mode(archive, infos)
         check_network_time(archive, infos)
         check_pinner_overlay(archive, infos)
         check_application_manifests(archive, infos, build_variant)
