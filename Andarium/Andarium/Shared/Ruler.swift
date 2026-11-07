@@ -248,9 +248,9 @@ struct StoragePanel: View {
     }
 }
 
-/// An existing guest's storage, the last row of Home's Guest System
-/// section: what the guest holds of its capacity, a pending growth or the
-/// largest size, and Resize.
+/// An existing guest's storage, the second row of Home's Guest System
+/// section: what the guest holds of its capacity, as words and on a bar, a
+/// pending growth or the largest size as a note under the bar, and Resize.
 struct StorageRow: View {
     let guest: Guest
     /// The sizes Resize offers (`AppModel.capacityStopsGiB`).
@@ -263,35 +263,32 @@ struct StorageRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ControlHeader(title: "Storage", symbol: "internaldrive", value: "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(gib: guest.capacityGiB))")
-            UsageBar(used: guest.usedGiB, capacity: Double(guest.capacityGiB), pending: guest.pendingCapacityGiB.map(Double.init))
-            HStack(spacing: 8) {
-                if let pending = guest.pendingCapacityGiB {
-                    Label("Grows to \(Formats.size(gib: pending)) at the next start", systemImage: "arrow.up.circle.fill")
-                        .foregroundStyle(Color.accentColor)
-                } else if atMaximum {
-                    Text("\(Formats.size(gib: stops.last ?? guest.capacityGiB)) is the largest size")
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 4)
-                Button(action: resize) {
-                    Text("Resize")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(atMaximum ? Color(.tertiaryLabel) : Color.accentColor)
-                        .padding(.horizontal, 16)
-                        .frame(height: 34)
-                        .background(atMaximum ? Color(.quaternarySystemFill) : Color.accentColor.opacity(0.13), in: .capsule)
-                        .contentShape(.capsule)
-                }
-                .buttonStyle(.plain)
-                .disabled(atMaximum)
-                .accessibilityIdentifier("home-storage-resize")
-            }
-            .font(.footnote)
+        SystemRow(
+            symbol: "internaldrive", title: "Storage",
+            subtitle: "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(gib: guest.capacityGiB))",
+            button: SystemRowButton(
+                title: "Resize", identifier: "home-storage-resize", isEnabled: !atMaximum, action: resize
+            )
+        ) {
+            UsageBar(
+                used: guest.usedGiB, capacity: Double(guest.capacityGiB),
+                pending: guest.pendingCapacityGiB.map(Double.init), height: 8
+            )
+            note
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+    }
+
+    @ViewBuilder
+    private var note: some View {
+        if let pending = guest.pendingCapacityGiB {
+            Label("Grows to \(Formats.size(gib: pending)) at the next start", systemImage: "arrow.up.circle.fill")
+                .font(.footnote)
+                .foregroundStyle(Color.accentColor)
+        } else if atMaximum {
+            Text("\(Formats.size(gib: stops.last ?? guest.capacityGiB)) is the largest size")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -347,6 +344,7 @@ struct UsageBar: View {
     let used: Double
     let capacity: Double
     var pending: Double?
+    var height: CGFloat = 10
 
     var body: some View {
         GeometryReader { geo in
@@ -366,7 +364,7 @@ struct UsageBar: View {
                 }
             }
         }
-        .frame(height: 10)
+        .frame(height: height)
         .accessibilityHidden(true)
     }
 }

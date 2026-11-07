@@ -87,8 +87,9 @@ struct RowDivider: View {
 
 // MARK: System
 
-/// The guest's system in one section: its processors and memory as a
-/// summary, with Edit opening the sheet that changes them, then its storage,
+/// The guest's system in one section, as two rows of one shape: Processor and
+/// Memory states the vCPUs and RAM, with Edit opening the sheet that changes
+/// them; Storage states what the guest holds of its capacity under a bar,
 /// with Resize.
 struct SystemSection: View {
     @Environment(AppModel.self) private var model
@@ -96,56 +97,142 @@ struct SystemSection: View {
     var body: some View {
         if let guest = model.guest {
             HomeSection(title: "Guest System") {
-                HStack(spacing: 12) {
-                    stat(symbol: "cpu", value: "\(guest.cores)", unit: guest.cores == 1 ? "vCPU" : "vCPUs")
-                    stat(symbol: "memorychip", value: memory(guest).value, unit: "\(memory(guest).unit) RAM")
-                    Spacer(minLength: 4)
-                    Button {
-                        model.sheet = .system
-                    } label: {
-                        Text("Edit")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.accentColor)
-                            .padding(.horizontal, 18)
-                            .frame(height: 34)
-                            .background(Color.accentColor.opacity(0.13), in: .capsule)
-                            .contentShape(.capsule)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("home-system-edit")
-                    .accessibilityLabel("Edit System")
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-                .accessibilityElement(children: .contain)
-                Divider().padding(.horizontal, 16)
+                SystemRow(
+                    symbol: "cpu", title: "Processor and Memory", subtitle: Self.summary(of: guest),
+                    button: SystemRowButton(
+                        title: "Edit", identifier: "home-system-edit", accessibilityName: "Edit System",
+                        action: { model.sheet = .system }
+                    )
+                )
+                RowDivider()
                 StorageRow(guest: guest, stops: model.capacityStopsGiB, resize: { model.sheet = .resize })
             }
         }
     }
 
-    /// "2.75 GiB" as the number and its unit.
-    private func memory(_ guest: Guest) -> (value: String, unit: String) {
-        let parts = Formats.size(mib: guest.memoryMiB).split(separator: " ", maxSplits: 1).map(String.init)
-        return (parts.first ?? "", parts.count > 1 ? parts[1] : "")
+    /// "6 vCPUs · 2.5 GiB".
+    static func summary(of guest: Guest) -> String {
+        "\(guest.cores) \(guest.cores == 1 ? "vCPU" : "vCPUs") · \(Formats.size(mib: guest.memoryMiB))"
+    }
+}
+
+/// The button at the end of a Guest System row.
+struct SystemRowButton {
+    let title: String
+    let identifier: String
+    /// What VoiceOver says when the title alone is not enough.
+    var accessibilityName: String?
+    var isEnabled = true
+    let action: () -> Void
+
+    /// The longest title: every button is as wide as this word, at any text
+    /// size, so the buttons of the rows share one width and one edge.
+    static let widestTitle = "Resize"
+}
+
+extension VerticalAlignment {
+    private struct HeaderCenterID: AlignmentID {
+        static func defaultValue(in context: ViewDimensions) -> CGFloat { context[VerticalAlignment.center] }
     }
 
-    private func stat(symbol: String, value: String, unit: String) -> some View {
-        HStack(spacing: 10) {
-            IconTile(symbol: symbol)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(value)
-                    .font(.system(size: 24, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                Text(unit)
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+    /// The middle of a row's title and the line under it. The icon tile and
+    /// the button centre on it, so what hangs below the text (a bar and a
+    /// note) never moves them off the words they belong to.
+    fileprivate static let headerCenter = VerticalAlignment(HeaderCenterID.self)
+}
+
+/// One row of the Guest System section: the icon tile, the title with one
+/// line under it, anything further under that line in the same column (a bar,
+/// a note), and the row's button at the end. The text column reads as one
+/// accessibility element; the button is the other. At accessibility text
+/// sizes the button moves under the text, which then has the whole width.
+struct SystemRow<Below: View>: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    let symbol: String
+    let title: String
+    let subtitle: String
+    let button: SystemRowButton
+    @ViewBuilder var below: Below
+
+    var body: some View {
+        Group {
+            if typeSize.isAccessibilitySize { stacked } else { inline }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(value) \(unit)")
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private var inline: some View {
+        HStack(alignment: .headerCenter, spacing: 12) {
+            tile
+            VStack(alignment: .leading, spacing: 8) {
+                heading.alignmentGuide(.headerCenter) { $0[VerticalAlignment.center] }
+                below
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            capsule
+        }
+    }
+
+    private var stacked: some View {
+        HStack(alignment: .top, spacing: 12) {
+            tile
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    heading
+                    below
+                }
+                .accessibilityElement(children: .combine)
+                capsule
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var tile: some View {
+        IconTile(symbol: symbol).accessibilityHidden(true)
+    }
+
+    private var heading: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title)
+            Text(subtitle)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var capsule: some View {
+        Button(action: button.action) {
+            ZStack {
+                Text(SystemRowButton.widestTitle).hidden()
+                Text(button.title)
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(button.isEnabled ? Color.accentColor : Color(.tertiaryLabel))
+            .padding(.horizontal, 16)
+            .frame(minHeight: 34)
+            .background(
+                button.isEnabled ? Color.accentColor.opacity(0.13) : Color(.quaternarySystemFill),
+                in: .capsule
+            )
+            .contentShape(.capsule)
+            .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .disabled(!button.isEnabled)
+        .accessibilityIdentifier(button.identifier)
+        .accessibilityLabel(button.accessibilityName ?? button.title)
+    }
+}
+
+extension SystemRow where Below == EmptyView {
+    init(symbol: String, title: String, subtitle: String, button: SystemRowButton) {
+        self.init(symbol: symbol, title: title, subtitle: subtitle, button: button, below: { EmptyView() })
     }
 }
 

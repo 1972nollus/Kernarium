@@ -122,7 +122,7 @@ def boot_stages(prefix: str, screen: str, names: list[str], what: str, dark_step
 
 SHOTS: list[Shot] = [
     # Home
-    s("home", "Home", "home", "Home with a configured guest: Guest System (vCPUs and RAM with Edit, then Storage with Resize), Display, Capabilities, Backup, Recovery and Erase, and the Start bar.", dark=True),
+    s("home", "Home", "home", "Home with a configured guest: Guest System (two matched rows: Processor and Memory with Edit, then Storage with its usage bar and Resize), Display, Capabilities, Backup, Recovery and Erase, and the Start bar.", dark=True),
     s("home-welcome", "Home", "welcome", "Home before any guest exists: the welcome and Set Up Guest. First screen of the initial setup."),
     s("home-first-start", "Home", "home-new", "A guest just created and not yet started: Home as it is before the first start."),
     s("home-display", "Home", "home-display", "Home scrolled to Display: the Retina mode toggle.", dark=True),
@@ -133,8 +133,8 @@ SHOTS: list[Shot] = [
     s("home-capabilities-gyroscope-unavailable", "Home", "home-gyroscope-unavailable", "Capabilities on a device without a gyroscope or accelerometer: Gyroscope is disabled and the footnote says why."),
     s("home-backup", "Home", "home-backup", "Home scrolled to Backup: the guest-data backup toggle and a one-line note."),
     s("home-recovery-erase", "Home", "home-recovery-erase", "Home scrolled to Recovery and Erase: Start in Recovery and Erase Guest."),
-    s("home-storage-grow", "Home", "home-grow", "Guest System with a larger storage size chosen, taking effect at the next start."),
-    s("home-storage-max", "Home", "home-max", "Guest System with storage at its largest size (128 GiB, in 4 GiB steps)."),
+    s("home-storage-grow", "Home", "home-grow", "Guest System with a larger storage size chosen: the Storage row's bar outlines the new size and the note under it says the growth takes effect at the next start.", dark=True),
+    s("home-storage-max", "Home", "home-max", "Guest System with storage at its largest size (128 GiB, in 4 GiB steps): the note under the Storage bar says so and Resize is dimmed.", dark=True),
     s("home-update", "Home", "home-update", "A system update waiting: the card above the Start bar."),
     s("home-update-unfinished", "Home", "home-update-failed", "An update that did not finish: the card offers retry or restoring the saved data."),
     s("home-update-unfinished-restore-only", "Home", "home-update-failed-restore", "An unfinished update that can only be restored."),
