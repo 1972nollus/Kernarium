@@ -509,11 +509,16 @@ sheet; each launch sweeps the folder. The guest's copy and any earlier ones are
 removed after a good pull.
 
 **Install APK** is in every build, in a normal session: Settings, Apps,
-Install APK... picks a file in Files, and Settings dismisses at once. Everything
+Install APK... picks a file in Files, and Settings dismisses at once. The
+picker offers only the type the system gives a file that ends in `.apk`
+(`InstallRefusal.pickerType`, built at run time: no Info.plist declaration),
+and dims `.apks`, `.xapk`, `.apkm`, `.zip` and a file
+with no extension. Everything
 after that is on the full-screen overlay, which blocks input for the whole
 install and is the one the bug report uses. A file that is not a single `.apk`
-(`InstallRefusal`: another kind, or a `.apks`, `.xapk` or `.apkm` bundle) is
-refused on it at once, in words of its own. An `.apk` is streamed in 256 KiB
+(`InstallRefusal`: another kind, or a `.apks`, `.xapk` or `.apkm` bundle, which
+a picker could still hand over if a system or another application types its
+extension as an apk) is refused on it at once, in words of its own. An `.apk` is streamed in 256 KiB
 reads to `abb_exec:package install -r -t -S <size>` for the first eight tenths
 of the bar; the guest's own install holds it there, with the Cancel button
 gone. The overlay then stays up with how it went, App Installed with Done or
