@@ -150,7 +150,7 @@ SHOTS: list[Shot] = [
     s("storage-resize", "Sheets", "resize", "The Resize sheet for the guest's storage."),
     s("system-edit", "Sheets", "system-edit", "The System sheet, opened from Edit: vCPUs and memory with the device's limits.", dark=True),
     s("erase-alert", "Alerts", "erase", "Erase Guest: the standard destructive confirmation over Home. Confirming returns to the first-launch screen (home-welcome).", dark=True),
-    s("info", "Info", "info", "Info: the app and version, System Info (Build, Android Version, Security Patch, Kernel, Architecture, Supported architectures) and Acknowledgements.", dark=True),
+    s("info", "Info", "info", "Info: the app and version, System Info (Build, Android Version, Security Patch, Kernel, Architecture, Supported architectures), Kernarium on GitHub and Acknowledgements.", dark=True),
     s("info-acknowledgements", "Info", "info-acknowledgements", "Acknowledgements: projects by group; the names and marks line is at the bottom.", dark=True),
     s("info-license", "Info", "info-license", "A project's page: copyright holders, the license name and the license text (Mesa, MIT).", dark=True),
     s("info-license-long", "Info", "info-license-gpl", "A page with a long license text (Linux: syscall exception and GPL v2)."),
