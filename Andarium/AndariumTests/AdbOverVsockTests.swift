@@ -24,7 +24,9 @@ import UIKit
 /// from the image and installed as an update (and its time), the image's key
 /// rule (the application's key accepted whatever the debugging setting; a
 /// foreign key refused with no prompt and nothing queued while debugging is
-/// off, and prompting while it is on), and the key after Erase Guest. The tests
+/// off, and prompting while it is on), the host's time zone in the boot request
+/// (`theGuestIsGivenTheHostsTimeZone`; `ANDARIUM_TIME_ZONE_APPLIED=1` also
+/// waits for the guest to apply it), and the key after Erase Guest. The tests
 /// read the key the application made for the boot, again on every attempt until
 /// adbd accepts it, and never make one: a key made before an `ANDARIUM_ERASE=1`
 /// launch's erase deletes it would be one the guest was not given.
@@ -100,6 +102,28 @@ struct AdbOverVsockTests {
             connector: VsockConnector(), signer: operations.identity?.signer, clock: operations.clock)
         let banner = try session.run { $0.banner }
         #expect(banner.features.isSuperset(of: ["shell_v2", "cmd", "stat_v2", "abb_exec"]))
+    }
+
+    /// The boot request carries the host's time zone. With
+    /// `ANDARIUM_TIME_ZONE_APPLIED=1` (an image whose time zone script is
+    /// there) the guest has also taken it, with "Set time zone automatically"
+    /// at its default.
+    @Test(.timeLimit(.minutes(20))) func theGuestIsGivenTheHostsTimeZone() async throws {
+        guard Self.enabled else { return }
+        let operations = try await readyOperations()
+        let expected = try #require(GuestTimeZone.current())
+        let given = try await operations.shell("getprop ro.boot.kernarium.timezone", limit: .seconds(10))
+        #expect(given.text.trimmingCharacters(in: .whitespacesAndNewlines) == expected)
+        guard ProcessInfo.processInfo.environment["ANDARIUM_TIME_ZONE_APPLIED"] == "1" else { return }
+        var applied = ""
+        let deadline = ContinuousClock.now + .seconds(90)
+        while applied != expected, ContinuousClock.now < deadline {
+            applied = try await operations.shell("getprop persist.sys.timezone", limit: .seconds(10))
+                .text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if applied != expected { try await Task.sleep(for: .seconds(2)) }
+        }
+        print("ADBVSOCK: time zone given=\(expected) applied=\(applied)")
+        #expect(applied == expected)
     }
 
     @MainActor

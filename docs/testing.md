@@ -515,6 +515,9 @@ grammar, which accepts a loopback address only, and the listeners that attach
 each accepted connection to a guest port. `kernarium-adb-channel` covers the
 kernel arguments that carry an Android guest's adb key and the request that adbd
 not listen on TCP, and the limit on the whole kernel command line.
+`kernarium-guest-time-zone` covers the time zone names the runtime lets onto
+that command line (the IANA names, never a space, a quotation mark or an empty
+component).
 
 `guest-vsock-stream` (integration) runs the device against a Linux guest's
 driver through the launcher's loopback forward, with a Python `AF_VSOCK` server
@@ -816,6 +819,9 @@ unknown sensor types and non-finite values, and checks the guest's control frame
 (the sensors in use and their periods) against independent bytes.
 `andarium-stage-system-image` (tooling) covers the system-image staging script
 and the option checks of `package-ios-frameworks.sh --runtimes android`.
+`andarium-capture-screens` (tooling) checks that the screenshot script's
+`--out` directory takes one run at a time, with a second run refused at once
+and the lock released however a run ends, without a Simulator.
 
 The application itself builds with Xcode: `AndariumPreview` is its Simulator
 build with mock data, and `Andarium` is the device application
@@ -878,6 +884,9 @@ on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1` with
 `TEST_RUNNER_ANDARIUM_START=normal`); two of them need an image whose framework
 starts the debugging prompt again and run only with
 `TEST_RUNNER_ANDARIUM_ADB_REARM_TESTS=1`.
+`theGuestIsGivenTheHostsTimeZone()` also waits for the guest to apply the zone
+with `TEST_RUNNER_ANDARIUM_TIME_ZONE_APPLIED=1`, for an image with the time zone
+script.
 
 `AdbOverVsockTests/androidReportsExactStorageSizes()` is a standalone storage
 run with `TEST_RUNNER_ANDARIUM_STORAGE_TESTS=1` in addition to the ADB and normal
@@ -1399,7 +1408,9 @@ suspend blocker with the adb host-connected property it follows, the adb daemon'
 TCP-policy launch properties (read from its APEX payload, with adbd's right to read their labels), the network
 setup tool with the ARP policy init sets before it, its library, label and domain
 transition, the script that saves the virtual Wi-Fi network once, after boot and
-without touching the user's Wi-Fi switch, with its core domain, its binder transfer to the Wi-Fi service's process and the call back, and its marker, the Wi-Fi
+without touching the user's Wi-Fi switch, with its core domain, its binder transfer to the Wi-Fi service's process and the call back, and its marker, the script that
+applies the host's time zone after boot (its domain, its marker, and that it writes no setting and not the zone property;
+`lineage24-builder-lane` runs it against stub tools for a new guest, a followed change, a zone the user chose, the setting off, an unknown name and bad names), the Wi-Fi
 HAL and supplicant with their manifest fragments and services, the Wi-Fi feature
 declaration and the absent Ethernet, Aware, RTT, Direct and Passpoint ones, the built-in macvlan, cfg80211 and virt_wifi
 options of the packaged kernel configuration, the absent wificond, the ClearKey HAL's access to the memfd files of applications, the
@@ -1541,6 +1552,9 @@ a blank instance:
   for the helper to do. On both guests the launcher's data model holds exactly
   the six applications of the default layout on the first page, none in the
   dock, and the log shows no item dropped while the launcher read its layout.
+  The runner raises the guest's log buffers to 64 MiB (`logcat -G`, read back)
+  the first time adb answers, before the wizard runs, so the launcher's layout
+  load line cannot rotate out; a log without that line fails the run.
   Measurements on an erased guest use that helper, so they do not land in the
   wizard.
 - `android-adb-debugging` (integration, registered only when

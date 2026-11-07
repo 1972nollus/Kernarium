@@ -353,7 +353,11 @@ shuts the connection down, so the host connects again and is told afresh; a
 host that never receives a frame is served continuously. The sensor
 framework’s own users decide what is active: auto-rotation keeps the
 accelerometer active while an application that can rotate is in front and the
-screen is on. Each 20-byte sample record is little endian:
+screen is on. The power manager's flip-to-screen-off feature would hold it for
+the whole time the screen is on, so the product's framework overlay sets
+`config_flipToScreenOffEnabled` to false and the target-files verifier requires
+that; with auto-rotation off and no application using a sensor, none is active.
+Each 20-byte sample record is little endian:
 `ANS1`, a uint32 Android sensor type (1 accelerometer or 4 gyroscope), then
 three float32 values in m/s² or rad/s. Axes match the mounted virtual display
 (x right, y up, z out of the screen). Andarium keeps them fixed while Android
@@ -913,6 +917,37 @@ platform without telephony hide "Set time automatically". The setting stays,
 and a host clock step while the guest runs is corrected at its next resume or
 boot, not at once. The target-files verifier reads the built framework overlay
 and fails an NTP server, a network origin, an empty list or a missing list.
+
+### Time zone
+
+A new guest starts on GMT, and this platform has no automatic time zone: with
+no telephony and no location provider the time zone detector reports auto
+detection unsupported, so Settings shows no "Set time zone automatically"
+switch, and its zone picker and the Setup Wizard's Date & time page set the zone
+directly without turning `auto_time_zone` off. The host application therefore
+passes the zone it is in at every start (`androidboot.kernarium.timezone`, the
+`ro.boot.kernarium.timezone` property: an IANA name the runtime has checked,
+which a release's command line file cannot set; the standalone macOS launcher
+passes none).
+
+`kernarium_time_zone.sh` (`overlay/tools`, installed on `system_ext` and run
+when boot completes in a core domain of its own, as the Wi-Fi network script
+is, because it drives the framework through `cmd`) applies it with
+`cmd alarm set-timezone`, the platform's own setter: the framework persists it
+as `persist.sys.timezone` and broadcasts the change, so running apps and the
+wizard's page show it. The guest follows the host only while nobody in the guest
+has chosen a zone: the script does nothing when `auto_time_zone` is 0, and it
+replaces a zone only if that is the one it applied last, recorded in the marker
+`persist.sys.kernarium.timezone_applied` that only the script sets (or the
+factory GMT of a guest with no marker). Any other zone was picked by the user
+and stays; picking the host's own zone, or erasing the guest, makes the guest
+follow the host again. The platform refuses a name its tzdata lacks and leaves
+the zone, and the script logs one line (tag `kernarium_time_zone`). Its domain
+reads the setting through `cmd settings`, calls the alarm service, and sets only
+its marker, which is a `system_internal_prop`. The target-files verifier
+requires the script, its service and trigger, the label, transition, rules and
+the marker's type and label, and refuses a script that writes a setting, the
+zone property or the detector.
 
 ### Branding and diagnostics
 
@@ -1537,7 +1572,11 @@ adapt the stock recovery to the virtual hardware:
   `10.0.2.15/24` itself (init cannot run `ifconfig` from recovery's SELinux
   domain), keeps Cuttlefish's always-connected USB policy, and removes the
   menu items for the bootloader, fastboot, and an ADB toggle that have no
-  meaning here.
+  meaning here. The stock policy gives the recovery domain no UDP socket, so
+  `overlay/sepolicy/vendor/recovery.te` grants that socket and the two address
+  ioctls (`SIOCSIFADDR`, `SIOCSIFNETMASK`) and nothing else; without it the
+  socket fails with EACCES, the screen shows "Failed to open socket: Permission
+  denied", and `eth0` has no IPv4 address.
 - The `bootable/recovery` route `p0016` lets the UI read the virtual
   touchscreen, a direct single-touch device (`BTN_TOUCH` with `ABS_X` and
   `ABS_Y`) that the stock UI, which reads only multi-touch axes, ignores.
@@ -1571,10 +1610,12 @@ does not fit; the system disk packs the recovery image at its own size.
 `tools/verify-lineage-recovery.py` checks the image the assembler installs: a
 kernel-less v4 image whose LZ4 or gzip ramdisk holds only target ELFs aligned
 to 16 KiB or better, a closed dependency set, no loadable modules, the checked
-fstab, the `eth0` interface policy, and the checked `init.recovery.rc` as the
-ramdisk's `init.recovery.cutf_cvm.rc`, the script that publishes the display
-density before Recovery draws its UI (the inherited Cuttlefish script is kept
-as `init.recovery.cuttlefish.rc`, which it imports). `build/assemble-image.sh`
+fstab, the `eth0` interface policy, the recovery domain's UDP socket and
+address ioctls in the ramdisk's `/sepolicy` (read by `tools/selinux_policy.py`),
+and the checked `init.recovery.rc` as the ramdisk's
+`init.recovery.cutf_cvm.rc`, the script that publishes the display density
+before Recovery draws its UI (the inherited Cuttlefish script is kept as
+`init.recovery.cuttlefish.rc`, which it imports). `build/assemble-image.sh`
 owns `init_boot` ramdisk composition, system disk assembly, and verification.
 It refuses unsafe paths, partition overflow, module payloads, or replacement of
 an existing output.

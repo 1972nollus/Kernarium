@@ -372,8 +372,12 @@ def tracked_erofs_parameters(android_root: Path) -> tuple[str, str]:
     return found[0], found[1]
 
 
-def synthetic_resource_table(arrays: list[tuple[str, list[str]]], *, utf8: bool = True) -> bytes:
-    """A compiled resource table whose one package holds the given string-array resources."""
+def synthetic_resource_table(
+    arrays: list[tuple[str, list[str]]], *, utf8: bool = True,
+    booleans: list[tuple[str, bool]] = (), compact: bool = False,
+) -> bytes:
+    """A compiled resource table whose one package holds the given string-array resources and
+    bool resources (as compact entries when `compact` is set, as a recent aapt2 writes them)."""
 
     def pool(strings: list[str]) -> bytes:
         data, offsets = b"", []
@@ -391,27 +395,41 @@ def synthetic_resource_table(arrays: list[tuple[str, list[str]]], *, utf8: bool 
                 + struct.pack(f"<{len(strings)}I", *offsets) + data)
 
     values = sorted({item for _, items in arrays for item in items})
-    names = [name for name, _ in arrays]
-    entries = b""
-    offsets = []
-    for index, (_, items) in enumerate(arrays):
-        offsets.append(len(entries))
-        entries += struct.pack("<HHIII", 16, 1, index, 0, len(items))
-        for item in items:
-            entries += struct.pack("<IHBBI", 0x02000001, 8, 0, 3, values.index(item))
+    names = [name for name, _ in arrays] + [name for name, _ in booleans]
     configuration = struct.pack("<I", 64) + b"\x00" * 60
     type_header = 20 + len(configuration)
-    type_chunk = (struct.pack("<HHIBBHII", 0x0201, type_header,
-                              type_header + 4 * len(arrays) + len(entries), 1, 0, 0, len(arrays),
-                              type_header + 4 * len(arrays))
-                  + configuration + struct.pack(f"<{len(arrays)}I", *offsets) + entries)
-    type_pool, key_pool = pool(["array"]), pool(names)
+
+    def type_chunk(type_id: int, entries: list[bytes]) -> bytes:
+        offsets, body = [], b""
+        for entry in entries:
+            offsets.append(len(body))
+            body += entry
+        return (struct.pack("<HHIBBHII", 0x0201, type_header,
+                            type_header + 4 * len(entries) + len(body), type_id, 0, 0, len(entries),
+                            type_header + 4 * len(entries))
+                + configuration + struct.pack(f"<{len(entries)}I", *offsets) + body)
+
+    array_entries = []
+    for index, (_, items) in enumerate(arrays):
+        entry = struct.pack("<HHIII", 16, 1, index, 0, len(items))
+        for item in items:
+            entry += struct.pack("<IHBBI", 0x02000001, 8, 0, 3, values.index(item))
+        array_entries.append(entry)
+    bool_entries = []
+    for index, (_, value) in enumerate(booleans, start=len(arrays)):
+        data = 0xFFFFFFFF if value else 0
+        if compact:  # key in the size field; the value type in the flags' high byte; the data
+            bool_entries.append(struct.pack("<HHI", index, 0x1200 | 0x08, data))
+        else:
+            bool_entries.append(struct.pack("<HHI", 8, 0, index) + struct.pack("<HBBI", 8, 0, 0x12, data))
+    chunks = type_chunk(1, array_entries) + (type_chunk(2, bool_entries) if booleans else b"")
+    type_pool, key_pool = pool(["array", "bool"] if booleans else ["array"]), pool(names)
     package_header = 288
     package = (struct.pack("<HHII", 0x0200, package_header,
-                           package_header + len(type_pool) + len(key_pool) + len(type_chunk), 0x7F)
+                           package_header + len(type_pool) + len(key_pool) + len(chunks), 0x7F)
                + b"\x00" * 256
                + struct.pack("<IIIII", package_header, 0, package_header + len(type_pool), 0, 0)
-               + type_pool + key_pool + type_chunk)
+               + type_pool + key_pool + chunks)
     global_pool = pool(values)
     return struct.pack("<HHII", 2, 12, 12 + len(global_pool) + len(package), 1) + global_pool + package
 
@@ -545,6 +563,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
     for utf8 in (True, False):
         if tool.resource_arrays(synthetic_resource_table(tables, utf8=utf8)) != expected_arrays:
             fail(f"the resource array reader misreads a {'UTF-8' if utf8 else 'UTF-16'} string pool")
+    # ... and a bool resource, whether the table keeps it as a full or as a compact entry.
+    flags = [("config_flipToScreenOffEnabled", False), ("other", True), ("config_flipToScreenOffEnabled", True)]
+    for compact in (False, True):
+        table = synthetic_resource_table(tables, booleans=flags, compact=compact)
+        if tool.resource_booleans(table) != {"config_flipToScreenOffEnabled": [False, True], "other": [True]}:
+            fail(f"the resource bool reader misreads {'compact' if compact else 'full'} entries")
+        if tool.resource_arrays(table) != expected_arrays:
+            fail(f"the resource array reader misreads a table that also holds {'compact' if compact else 'full'} bools")
     release_manifest = synthetic_compiled_manifest(None, debuggable=False)
     release_apk = synthetic_apk(debuggable=False)
     preopt_apks = sorted(tool.REQUIRED_PREOPT_APKS)
@@ -794,7 +820,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           navigation_variant: str | None = None,
                           launcher_variant: str | None = None,
                           network_time_variant: str | None = None,
+                          flip_variant: str | None = None,
                           reclaim_variant: str | None = None,
+                          time_zone_variant: str | None = None,
                           wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
                           cas_hal_variant: str | None = None,
@@ -1338,6 +1366,46 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         reclaim_rc = reclaim_rc.replace(old, new)
                 if reclaim_variant != "missing-rc":
                     archive.writestr("SYSTEM_EXT/etc/init/kernarium_reclaim_boot_apps.rc", reclaim_rc)
+                # The script that applies the host's time zone, with its init file: the tracked ones,
+                # and the ways each can go wrong.
+                time_zone_script = (
+                    verifier.parents[1] / "overlay/tools/kernarium_time_zone.sh"
+                ).read_text()
+                time_zone_rc = (
+                    verifier.parents[1] / "overlay/tools/kernarium_time_zone.rc"
+                ).read_text()
+                for variant, (old, new) in {
+                    "no-property": ("getprop ro.boot.kernarium.timezone", "getprop ro.boot.other"),
+                    "no-auto-read": ("cmd settings get global auto_time_zone", "true"),
+                    "no-set": ('cmd alarm set-timezone "$zone"', "true"),
+                    "no-marker": ('setprop "$marker" "$zone"', "true"),
+                    "writes-setting": ("tag=kernarium_time_zone\n",
+                                       "tag=kernarium_time_zone\ncmd settings put global auto_time_zone 0\n"),
+                    "setprop-zone": ("tag=kernarium_time_zone\n",
+                                     "tag=kernarium_time_zone\nsetprop persist.sys.timezone GMT\n"),
+                    "detector": ("tag=kernarium_time_zone\n",
+                                 "tag=kernarium_time_zone\n"
+                                 "cmd time_zone_detector set_auto_detection_enabled true\n"),
+                }.items():
+                    if time_zone_variant == variant:
+                        if old not in time_zone_script:
+                            fail(f"the time zone script lacks '{old}' for the {variant} variant")
+                        time_zone_script = time_zone_script.replace(old, new)
+                if time_zone_variant != "missing-script":
+                    archive.writestr("SYSTEM_EXT/bin/kernarium_time_zone.sh", time_zone_script)
+                for variant, (old, new) in {
+                    "missing-service": ("service kernarium_time_zone ", "service other_service "),
+                    "not-oneshot": ("    oneshot\n", ""),
+                    "not-disabled": ("    disabled\n", ""),
+                    "started-at-boot": ("on property:sys.boot_completed=1", "on boot"),
+                    "no-start": ("    start kernarium_time_zone\n", ""),
+                }.items():
+                    if time_zone_variant == variant:
+                        if old not in time_zone_rc:
+                            fail(f"the time zone init file lacks '{old}' for the {variant} variant")
+                        time_zone_rc = time_zone_rc.replace(old, new)
+                if time_zone_variant != "missing-rc":
+                    archive.writestr("SYSTEM_EXT/etc/init/kernarium_time_zone.rc", time_zone_rc)
                 archive.writestr(
                     "SYSTEM_EXT/etc/selinux/system_ext_file_contexts",
                     "/(system_ext|system/system_ext)/bin/other\\.sh  u:object_r:system_file:s0\n"
@@ -1352,6 +1420,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         if reclaim_variant == "missing-label"
                         else "/(system_ext|system/system_ext)/bin/kernarium_reclaim_boot_apps\\.sh  "
                         "u:object_r:kernarium_reclaim_boot_apps_exec:s0\n"
+                    )
+                    + (
+                        ""
+                        if time_zone_variant == "missing-label"
+                        else "/(system_ext|system/system_ext)/bin/kernarium_time_zone\\.sh  "
+                        "u:object_r:kernarium_time_zone_exec:s0\n"
                     ),
                 )
                 # Platform, vendor and system_ext policy as the builder emits them: the
@@ -1405,6 +1479,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         if wifi_network_variant == "missing-marker-context"
                         else "persist.sys.kernarium.virtwifi_saved    "
                         "u:object_r:kernarium_wifi_network_prop:s0 exact bool\n"
+                    )
+                    + (
+                        ""
+                        if time_zone_variant == "missing-marker-context"
+                        else "persist.sys.kernarium.timezone_applied    "
+                        "u:object_r:kernarium_time_zone_prop:s0 exact string\n"
                     ),
                 )
                 archive.writestr(
@@ -1443,6 +1523,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     + ("" if adb_prop_not_system else "kernarium_adb_host_prop ")
                     + ("" if wifi_network_variant == "marker-not-system"
                        else "kernarium_wifi_network_prop ")
+                    + ("" if time_zone_variant == "marker-not-system"
+                       else "kernarium_time_zone_prop ")
                     + "))\n"
                     + (
                         ""
@@ -1486,6 +1568,41 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                              "(fifo_file (read write getattr)))\n"),
                         )
                         if reclaim_variant != variant
+                    )
+                    + "".join(
+                        rule
+                        for variant, rule in (
+                            ("missing-transition",
+                             "(typetransition init kernarium_time_zone_exec process "
+                             "kernarium_time_zone)\n"),
+                            ("missing-settings-find",
+                             "(allow kernarium_time_zone settings_service "
+                             "(service_manager (find)))\n"),
+                            ("missing-alarm-find",
+                             "(allow kernarium_time_zone alarm_service "
+                             "(service_manager (find)))\n"),
+                            ("missing-transfer",
+                             "(allow kernarium_time_zone system_server (binder (transfer)))\n"),
+                            ("missing-call",
+                             "(allow system_server kernarium_time_zone (binder (call)))\n"),
+                            ("missing-fd",
+                             "(allow system_server kernarium_time_zone (fd (use)))\n"),
+                            ("missing-fifo",
+                             "(allow system_server kernarium_time_zone "
+                             "(fifo_file (read write getattr)))\n"),
+                        )
+                        if time_zone_variant != variant
+                    )
+                    + (
+                        ""
+                        if time_zone_variant == "missing-marker-rule"
+                        else "(allow kernarium_time_zone kernarium_time_zone_prop "
+                        "(property_service (set)))\n"
+                    )
+                    + (
+                        "(allow kernarium_time_zone timezone_prop (property_service (set)))\n"
+                        if time_zone_variant == "sets-zone-property"
+                        else ""
                     )
                     + (
                         ""
@@ -1878,8 +1995,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         network_time["config_autoTimeSourcesPriority"] = ["telephony"]
                     elif network_time_variant == "origin-missing":
                         del network_time["config_autoTimeSourcesPriority"]
+                    # The product's flip-to-screen-off switch, off in the default configuration.
+                    flip_values = [False]
+                    if flip_variant == "enabled":
+                        flip_values = [True]
+                    elif flip_variant == "enabled-in-a-qualified-table":
+                        flip_values = [False, True]
+                    elif flip_variant == "missing":
+                        flip_values = []
                     network_table = synthetic_resource_table(
-                        [*network_time.items(), *extra_definitions], utf8=network_time_variant != "utf16-pool"
+                        [*network_time.items(), *extra_definitions], utf8=network_time_variant != "utf16-pool",
+                        booleans=[("config_flipToScreenOffEnabled", value) for value in flip_values],
+                        compact=flip_variant == "compact",
                     )
                     framework_apk = io.BytesIO()
                     with zipfile.ZipFile(framework_apk, "w") as overlay:
@@ -2293,6 +2420,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         good = root / "good.zip"
         write_fixture(good)
         run_tool(verifier, "--target-files", good, *kernel_options, check=True)
+        # A recent aapt2 writes a resource that holds one value as a compact entry.
+        compact_good = root / "compact-good.zip"
+        write_fixture(compact_good, flip_variant="compact")
+        run_tool(verifier, "--target-files", compact_good, *kernel_options, check=True)
         # Signed target files are checked with --signed: the release certificate alone is trusted,
         # and only a user build is signed. The unsigned fixtures above hold the test certificate's
         # member, which each variant's unsigned build writes.
@@ -2777,6 +2908,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("time-origin-list-empty", {"network_time_variant": "origin-empty"}),
             ("time-origin-list-without-external", {"network_time_variant": "origin-without-external"}),
             ("time-origin-list-missing", {"network_time_variant": "origin-missing"}),
+            ("flip-to-screen-off-enabled", {"flip_variant": "enabled"}),
+            ("flip-to-screen-off-enabled-in-a-qualified-definition",
+             {"flip_variant": "enabled-in-a-qualified-table"}),
+            ("flip-to-screen-off-missing", {"flip_variant": "missing"}),
             ("statistics-uploader-in-parts-manifest", {"statistics_variant": "parts-manifest"}),
             ("statistics-uploader-in-parts-dex", {"statistics_variant": "parts-dex"}),
             ("statistics-endpoint-in-parts-resources", {"statistics_variant": "parts-endpoint"}),
@@ -2807,6 +2942,32 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("reclaim-missing-call", {"reclaim_variant": "missing-call"}),
             ("reclaim-missing-fd", {"reclaim_variant": "missing-fd"}),
             ("reclaim-missing-fifo", {"reclaim_variant": "missing-fifo"}),
+            ("missing-time-zone-script", {"time_zone_variant": "missing-script"}),
+            ("missing-time-zone-rc", {"time_zone_variant": "missing-rc"}),
+            ("time-zone-missing-service", {"time_zone_variant": "missing-service"}),
+            ("time-zone-not-oneshot", {"time_zone_variant": "not-oneshot"}),
+            ("time-zone-not-disabled", {"time_zone_variant": "not-disabled"}),
+            ("time-zone-started-at-boot", {"time_zone_variant": "started-at-boot"}),
+            ("time-zone-no-start", {"time_zone_variant": "no-start"}),
+            ("time-zone-no-property", {"time_zone_variant": "no-property"}),
+            ("time-zone-no-auto-read", {"time_zone_variant": "no-auto-read"}),
+            ("time-zone-no-set", {"time_zone_variant": "no-set"}),
+            ("time-zone-no-marker", {"time_zone_variant": "no-marker"}),
+            ("time-zone-writes-setting", {"time_zone_variant": "writes-setting"}),
+            ("time-zone-setprop-zone", {"time_zone_variant": "setprop-zone"}),
+            ("time-zone-detector", {"time_zone_variant": "detector"}),
+            ("time-zone-missing-label", {"time_zone_variant": "missing-label"}),
+            ("time-zone-missing-transition", {"time_zone_variant": "missing-transition"}),
+            ("time-zone-missing-settings-find", {"time_zone_variant": "missing-settings-find"}),
+            ("time-zone-missing-alarm-find", {"time_zone_variant": "missing-alarm-find"}),
+            ("time-zone-missing-transfer", {"time_zone_variant": "missing-transfer"}),
+            ("time-zone-missing-call", {"time_zone_variant": "missing-call"}),
+            ("time-zone-missing-fd", {"time_zone_variant": "missing-fd"}),
+            ("time-zone-missing-fifo", {"time_zone_variant": "missing-fifo"}),
+            ("time-zone-sets-zone-property", {"time_zone_variant": "sets-zone-property"}),
+            ("time-zone-missing-marker-rule", {"time_zone_variant": "missing-marker-rule"}),
+            ("time-zone-marker-not-system", {"time_zone_variant": "marker-not-system"}),
+            ("time-zone-missing-marker-context", {"time_zone_variant": "missing-marker-context"}),
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
@@ -3456,6 +3617,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "config_autoTimeSourcesPriority in .*framework-res.* lacks external"),
             ("time-origin-list-missing-cause", {"network_time_variant": "origin-missing"},
              "framework-res.* does not set config_autoTimeSourcesPriority"),
+            ("flip-to-screen-off-enabled-cause", {"flip_variant": "enabled"},
+             "config_flipToScreenOffEnabled is true in .*framework-res.*FaceDownDetector"),
+            ("flip-to-screen-off-enabled-in-a-qualified-definition-cause",
+             {"flip_variant": "enabled-in-a-qualified-table"},
+             "config_flipToScreenOffEnabled is true in .*framework-res.*FaceDownDetector"),
+            ("flip-to-screen-off-missing-cause", {"flip_variant": "missing"},
+             "framework-res.* does not set config_flipToScreenOffEnabled: .*FaceDownDetector"),
             ("statistics-uploader-in-parts-manifest-cause", {"statistics_variant": "parts-manifest"},
              "LineageParts.apk still carries LineageOS's statistics uploader: AndroidManifest.xml "
              "contains lineagestats"),
@@ -3529,6 +3697,58 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not allow system_server kernarium_reclaim_boot_apps fd use"),
             ("reclaim-missing-fifo-cause", {"reclaim_variant": "missing-fifo"},
              "does not allow system_server kernarium_reclaim_boot_apps fifo_file write"),
+            ("missing-time-zone-script-cause", {"time_zone_variant": "missing-script"},
+             "required entries are missing: .*SYSTEM_EXT/bin/kernarium_time_zone.sh"),
+            ("missing-time-zone-rc-cause", {"time_zone_variant": "missing-rc"},
+             "required entries are missing: .*SYSTEM_EXT/etc/init/kernarium_time_zone.rc"),
+            ("time-zone-missing-service-cause", {"time_zone_variant": "missing-service"},
+             "does not declare the kernarium_time_zone service"),
+            ("time-zone-not-oneshot-cause", {"time_zone_variant": "not-oneshot"},
+             "does not declare kernarium_time_zone as oneshot"),
+            ("time-zone-not-disabled-cause", {"time_zone_variant": "not-disabled"},
+             "does not declare kernarium_time_zone as disabled"),
+            ("time-zone-started-at-boot-cause", {"time_zone_variant": "started-at-boot"},
+             "starts kernarium_time_zone under 'boot'"),
+            ("time-zone-no-start-cause", {"time_zone_variant": "no-start"},
+             "does not start kernarium_time_zone when boot completes"),
+            ("time-zone-no-property-cause", {"time_zone_variant": "no-property"},
+             "does not contain 'ro.boot.kernarium.timezone'"),
+            ("time-zone-no-auto-read-cause", {"time_zone_variant": "no-auto-read"},
+             "does not contain 'cmd settings get global auto_time_zone'"),
+            ("time-zone-no-set-cause", {"time_zone_variant": "no-set"},
+             "does not contain 'cmd alarm set-timezone \"\\$zone\"'"),
+            ("time-zone-no-marker-cause", {"time_zone_variant": "no-marker"},
+             "does not contain 'setprop \"\\$marker\" \"\\$zone\"'"),
+            ("time-zone-writes-setting-cause", {"time_zone_variant": "writes-setting"},
+             "contains 'settings put': it may only read the user's automatic time zone setting"),
+            ("time-zone-setprop-zone-cause", {"time_zone_variant": "setprop-zone"},
+             "contains 'setprop persist.sys.timezone': it may only read"),
+            ("time-zone-detector-cause", {"time_zone_variant": "detector"},
+             "contains 'time_zone_detector': it may only read the user's automatic time zone setting"),
+            ("time-zone-missing-label-cause", {"time_zone_variant": "missing-label"},
+             "system_ext file contexts do not label /system_ext/bin/kernarium_time_zone.sh"),
+            ("time-zone-missing-transition-cause", {"time_zone_variant": "missing-transition"},
+             "does not move init into the time zone domain"),
+            ("time-zone-missing-settings-find-cause", {"time_zone_variant": "missing-settings-find"},
+             "does not allow kernarium_time_zone settings_service service_manager find"),
+            ("time-zone-missing-alarm-find-cause", {"time_zone_variant": "missing-alarm-find"},
+             "does not allow kernarium_time_zone alarm_service service_manager find"),
+            ("time-zone-missing-transfer-cause", {"time_zone_variant": "missing-transfer"},
+             "does not allow kernarium_time_zone system_server binder transfer"),
+            ("time-zone-missing-call-cause", {"time_zone_variant": "missing-call"},
+             "does not allow system_server kernarium_time_zone binder call"),
+            ("time-zone-missing-fd-cause", {"time_zone_variant": "missing-fd"},
+             "does not allow system_server kernarium_time_zone fd use"),
+            ("time-zone-missing-fifo-cause", {"time_zone_variant": "missing-fifo"},
+             "does not allow system_server kernarium_time_zone fifo_file write"),
+            ("time-zone-sets-zone-property-cause", {"time_zone_variant": "sets-zone-property"},
+             "lets the time zone domain set .*timezone_prop.*not only its own marker"),
+            ("time-zone-missing-marker-rule-cause", {"time_zone_variant": "missing-marker-rule"},
+             "does not let the time zone domain set persist.sys.kernarium.timezone_applied"),
+            ("time-zone-marker-not-system-cause", {"time_zone_variant": "marker-not-system"},
+             "does not define the system-owned kernarium_time_zone_prop"),
+            ("time-zone-missing-marker-context-cause", {"time_zone_variant": "missing-marker-context"},
+             "do not label persist.sys.kernarium.timezone_applied"),
             ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
              "userdata entry lacks the fs_mgr quota flag"),
             ("wrong-apex-filesystem-cause", {"wrong_apex_filesystem": True},
@@ -4711,6 +4931,188 @@ def verify_reclaim_boot_apps(android_root: Path) -> None:
             fail("the reclaim script acts without a process list")
 
 
+def verify_time_zone(android_root: Path) -> None:
+    """The time zone script follows the host only while nobody in the guest has chosen a zone.
+
+    The script runs with stub tools: getprop and setprop read and write a table of properties,
+    `cmd settings get` prints the automatic time zone setting, `cmd alarm set-timezone` records the
+    call and, as the platform does, takes a name its tzdata has and refuses any other, and log
+    records what the script says."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    tools = android_root / "overlay/tools"
+    script = tools / "kernarium_time_zone.sh"
+    # The sepolicy sources hold what the built-policy check looks for.
+    policy = (android_root / "overlay/sepolicy/system_ext/private/kernarium_time_zone.te").read_text()
+    for needle in (
+        "init_daemon_domain(kernarium_time_zone)",
+        "allow kernarium_time_zone settings_service:service_manager find;",
+        "allow kernarium_time_zone alarm_service:service_manager find;",
+        "allow kernarium_time_zone system_server:binder transfer;",
+        "allow system_server kernarium_time_zone:binder call;",
+        "allow system_server kernarium_time_zone:fd use;",
+        "allow system_server kernarium_time_zone:fifo_file { getattr read write };",
+        "allow kernarium_time_zone system_file:file execute_no_trans;",
+        "system_internal_prop(kernarium_time_zone_prop)",
+        "set_prop(kernarium_time_zone, kernarium_time_zone_prop)",
+    ):
+        if needle not in policy:
+            fail(f"the time zone domain lacks '{needle}'")
+    if len(re.findall(r"^set_prop\(", policy, re.M)) != 1:
+        fail("the time zone domain sets a property besides its marker")
+    contexts = (android_root / "overlay/sepolicy/system_ext/private/file_contexts").read_text()
+    if (
+        r"/(system_ext|system/system_ext)/bin/kernarium_time_zone\.sh  "
+        "u:object_r:kernarium_time_zone_exec:s0"
+    ) not in contexts:
+        fail("the system_ext file contexts do not label the time zone script")
+    properties = (android_root / "overlay/sepolicy/system_ext/private/property_contexts").read_text()
+    if (
+        "persist.sys.kernarium.timezone_applied    u:object_r:kernarium_time_zone_prop:s0 exact string"
+    ) not in properties:
+        fail("the system_ext property contexts do not label the time zone marker")
+    blueprint = (tools / "Android.bp").read_text()
+    for needle in (
+        'name: "kernarium_time_zone_script"',
+        'src: "kernarium_time_zone.sh"',
+        'init_rc: ["kernarium_time_zone.rc"]',
+    ):
+        if needle not in blueprint:
+            fail(f"overlay/tools/Android.bp lacks {needle}")
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
+    if len(re.findall(r"^PRODUCT_PACKAGES \+= kernarium_time_zone_script$", product, re.M)) != 1:
+        fail("lineage_andarium.mk does not add the time zone script to PRODUCT_PACKAGES exactly once")
+    verifier.check_time_zone((tools / "kernarium_time_zone.rc").read_text(), script.read_bytes())
+
+    # What the guest's tzdata knows.
+    known = ("GMT", "Asia/Tokyo", "Europe/Paris", "Europe/Berlin", "America/Argentina/Buenos_Aires", "Etc/GMT+5")
+    marker = "persist.sys.kernarium.timezone_applied"
+
+    def run(zone: str | None, auto: str, current: str, applied: str = "") -> tuple[
+        subprocess.CompletedProcess, list[str], str, str
+    ]:
+        """Runs the script once; returns the process, the recorded calls, the final zone and marker."""
+        with tempfile.TemporaryDirectory(prefix="time-zone-script-") as temporary:
+            stubs = Path(temporary)
+            calls = stubs / "calls"
+            properties = stubs / "properties"
+            properties.mkdir()
+            (properties / "ro.boot.kernarium.timezone").write_text((zone or "") + "\n")
+            (properties / "persist.sys.timezone").write_text(current + "\n")
+            (properties / marker).write_text(applied + "\n")
+            for name, body in {
+                "getprop": f'cat {properties}/"$1" 2>/dev/null || echo\n',
+                "setprop": f'echo "setprop $*" >> {calls}\necho "$2" > {properties}/"$1"\n',
+                "cmd": (
+                    f'echo "cmd $*" >> {calls}\n'
+                    'if [ "$1 $2 $3 $4" = "settings get global auto_time_zone" ]; then\n'
+                    f'    [ -z "{auto}" ] || echo "{auto}"\n'
+                    'elif [ "$1 $2" = "alarm set-timezone" ]; then\n'
+                    f'    case " {" ".join(known)} " in\n'
+                    f'        *" $3 "*) echo "$3" > {properties}/persist.sys.timezone ;;\n'
+                    "    esac\n"
+                    "else\n    exit 2\nfi\n"
+                ),
+                "log": f'echo "log $*" >> {calls}\n',
+                "sleep": f'echo "sleep $*" >> {calls}\n',
+            }.items():
+                (stubs / name).write_text("#!/bin/sh\n" + body)
+                (stubs / name).chmod(0o755)
+            env = {"PATH": f"{stubs}:/usr/bin:/bin"}
+            result = subprocess.run(["/bin/sh", str(script)], env=env, capture_output=True, text=True)
+            recorded = calls.read_text().splitlines() if calls.exists() else []
+            return (
+                result,
+                recorded,
+                (properties / "persist.sys.timezone").read_text().strip(),
+                (properties / marker).read_text().strip(),
+            )
+
+    def sets(recorded: list[str]) -> list[str]:
+        return [line for line in recorded if line.startswith("cmd alarm set-timezone")]
+
+    def notes(recorded: list[str]) -> list[str]:
+        return [line for line in recorded if line.startswith("log ")]
+
+    # A new guest (GMT, or no zone yet, and no marker) takes the host's zone once, with the setting
+    # on or unset, and records it; the script says so in one line.
+    for current in ("GMT", ""):
+        for auto in ("1", "null"):
+            result, recorded, final, applied = run("Asia/Tokyo", auto, current)
+            if (
+                result.returncode != 0
+                or final != "Asia/Tokyo"
+                or applied != "Asia/Tokyo"
+                or sets(recorded) != ["cmd alarm set-timezone Asia/Tokyo"]
+                or len(notes(recorded)) != 1
+            ):
+                fail(f"the time zone script (auto {auto}, was {current!r}) did not take Asia/Tokyo: "
+                     f"{recorded} {final} {applied}")
+    # It follows a changed host zone while the zone is still the one it applied, and takes every
+    # character a name may have.
+    for zone in ("Europe/Paris", "America/Argentina/Buenos_Aires", "Etc/GMT+5"):
+        result, recorded, final, applied = run(zone, "1", "Asia/Tokyo", "Asia/Tokyo")
+        if result.returncode != 0 or final != zone or applied != zone:
+            fail(f"the time zone script did not follow the host to {zone}: {recorded} {final} {applied}")
+    # A zone the user picked (Settings' or the wizard's picker, which leave the setting on) is
+    # never replaced, whether the script had applied one before or the guest predates the marker.
+    for applied in ("Asia/Tokyo", ""):
+        result, recorded, final, marker_value = run("Europe/Paris", "1", "Europe/Berlin", applied)
+        if (
+            result.returncode != 0
+            or final != "Europe/Berlin"
+            or marker_value != applied
+            or sets(recorded)
+            or len(notes(recorded)) != 1
+        ):
+            fail(f"the time zone script replaced a chosen zone (marker {applied!r}): "
+                 f"{recorded} {final} {marker_value}")
+    # With the automatic time zone off nothing is touched, whatever the zone is.
+    for applied, current in (("Asia/Tokyo", "Asia/Tokyo"), ("", "GMT"), ("Asia/Tokyo", "Europe/Berlin")):
+        result, recorded, final, marker_value = run("Europe/Paris", "0", current, applied)
+        if (
+            result.returncode != 0
+            or final != current
+            or marker_value != applied
+            or sets(recorded)
+            or any(line.startswith("setprop") for line in recorded)
+            or len(notes(recorded)) != 1
+        ):
+            fail(f"the time zone script touched the guest with the setting off: {recorded} {final}")
+    # A zone that is already the host's is not set again, and the marker follows it, so a guest whose
+    # user picked the host's zone follows the host again.
+    for applied in ("", "Asia/Tokyo", "Europe/Berlin"):
+        result, recorded, final, marker_value = run("Asia/Tokyo", "1", "Asia/Tokyo", applied)
+        if result.returncode != 0 or sets(recorded) or final != "Asia/Tokyo" or marker_value != "Asia/Tokyo":
+            fail(f"the time zone script mishandled the host's own zone (marker {applied!r}): "
+                 f"{recorded} {final} {marker_value}")
+    # A name the guest's tzdata lacks is refused by the platform: the zone and the marker stay, one
+    # line says so, and the boot goes on.
+    result, recorded, final, applied = run("Pacific/Coyhaique", "1", "Europe/Paris", "Europe/Paris")
+    if (
+        result.returncode != 0
+        or final != "Europe/Paris"
+        or applied != "Europe/Paris"
+        or sets(recorded) != ["cmd alarm set-timezone Pacific/Coyhaique"]
+        or len(notes(recorded)) != 1
+        or "Pacific/Coyhaique" not in notes(recorded)[0]
+    ):
+        fail(f"the time zone script did not keep the zone for an unknown name: {recorded} {final} {applied}")
+    # No zone from the host (the standalone launcher, an older application): nothing is read or set.
+    result, recorded, final, applied = run(None, "1", "Asia/Tokyo")
+    if result.returncode != 0 or recorded or final != "Asia/Tokyo":
+        fail(f"the time zone script acted without a host zone: {recorded}")
+    # A setting that cannot be read leaves the zone alone and says so.
+    result, recorded, final, applied = run("Europe/Paris", "", "GMT")
+    if result.returncode == 0 or sets(recorded) or final != "GMT":
+        fail(f"the time zone script acted on an unreadable setting: {recorded} {final}")
+    # A name that is not a time zone name never reaches cmd.
+    for bad in ("Asia/Tokyo;reboot", "../etc", "/Asia/Tokyo", "Asia//Tokyo", "Asia/Tokyo/", "a b", "$(id)",
+                "Asia/To`id`"):
+        result, recorded, final, applied = run(bad, "1", "GMT")
+        if result.returncode != 0 or any(line.startswith("cmd ") for line in recorded) or final != "GMT":
+            fail(f"the time zone script passed {bad!r} to cmd: {recorded}")
+
+
 def verify_setup_wizard_flow(android_root: Path) -> None:
     """A wizard script is the reviewed flow in order, and no page the product hides is in it.
 
@@ -5096,6 +5498,7 @@ def verify_package_assertions(android_root: Path) -> None:
         "kernarium_net_setup",
         "kernarium_wifi_network_script",
         "kernarium_reclaim_boot_apps_script",
+        "kernarium_time_zone_script",
     ):
         if package not in present:
             fail(f"build-aosp.sh does not assert that {package} is present")
@@ -5396,6 +5799,80 @@ def lz4_legacy_frame(payload: bytes, block_size: int = 1 << 20) -> bytes:
     return bytes(frame)
 
 
+def synthetic_selinux_policy(
+    *, udp: tuple[str, ...] = ("create", "ioctl"), ioctls: tuple[int, ...] = (0x8916, 0x891C),
+    capabilities: tuple[str, ...] = ("net_admin",), domain: str = "recovery", version: int = 30,
+) -> bytes:
+    """A kernel binary policy (version 30) with two types, a capability class and a UDP socket
+    class that inherits the socket class's permissions, and the given rules of `domain` on itself."""
+
+    def word(*values: int) -> bytes:
+        return struct.pack(f"<{len(values)}I", *values)
+
+    def named(text: str) -> bytes:
+        return text.encode()
+
+    empty_bitmap = word(64, 0, 0)
+    one_bit_bitmap = word(64, 1, 1) + word(0) + struct.pack("<Q", 2)
+    table_header = lambda count: word(count, count)  # noqa: E731 - primary names, elements
+    common_permissions = {"ioctl": 1, "read": 2, "write": 3, "create": 4}
+    udp_permissions = {"name_bind": 5}
+    capability_permissions = {"chown": 1, "net_admin": 13}
+
+    def permissions(table: dict[str, int]) -> bytes:
+        return b"".join(word(len(name), value) + named(name) for name, value in table.items())
+
+    # One constraint with an attribute comparison and a name list, so that the reader skips both.
+    constraint = (
+        word(1, 2) + word(4, 1, 1) + word(5, 2, 1) + one_bit_bitmap + empty_bitmap + empty_bitmap + word(0)
+    )
+    commons = table_header(1) + word(6, 1, 4, 4) + named("socket") + permissions(common_permissions)
+    classes = table_header(2) + (
+        word(10, 0, 1, 2, 2, 0) + named("capability") + permissions(capability_permissions)
+        + word(0) + word(0, 0, 0, 0)
+        + word(10, 6, 2, 5, 1, 1) + named("udp_socket") + named("socket")
+        + permissions(udp_permissions) + constraint + word(0) + word(0, 0, 0, 0)
+    )
+    roles = table_header(1) + word(8, 1, 0) + named("object_r") + empty_bitmap + one_bit_bitmap
+    types = table_header(2) + word(8, 1, 1, 0) + named("recovery") + word(5, 2, 1, 0) + named("other")
+    users = (
+        table_header(1) + word(8, 1, 0) + named("system_u") + one_bit_bitmap
+        + word(1) + word(1) + empty_bitmap + word(1) + empty_bitmap
+    )
+    booleans = table_header(1) + word(1, 0, 6) + named("a_bool")
+    sensitivities = table_header(1) + word(2, 0) + named("s0") + word(1) + empty_bitmap
+    categories = table_header(1) + word(2, 1, 0) + named("c0")
+
+    type_ids = {"recovery": 1, "other": 2}
+    source = type_ids[domain]
+    class_ids = {"capability": 1, "udp_socket": 2}
+
+    def allow(klass: str, target: int, mask: int) -> bytes:
+        return struct.pack("<4H", source, target, class_ids[klass], 0x0001) + word(mask)
+
+    rules = [
+        # The domain's own rules, and a decoy that grants another type's access to it.
+        allow("capability", source, sum(1 << (capability_permissions[name] - 1) for name in capabilities)),
+        allow("udp_socket", source, sum(1 << ({**common_permissions, **udp_permissions}[name] - 1) for name in udp)),
+        struct.pack("<4H", 2, source, 2, 0x0001) + word(0xFF),
+    ]
+    by_driver: dict[int, int] = {}
+    for command in ioctls:
+        by_driver[command >> 8] = by_driver.get(command >> 8, 0) | 1 << (command & 0xFF)
+    for driver, bits in sorted(by_driver.items()):
+        rules.append(
+            struct.pack("<4H", source, source, class_ids["udp_socket"], 0x0100)
+            + struct.pack("<BB", 1, driver) + bits.to_bytes(32, "little")
+        )
+    return (
+        word(0xF97CFF8C, 8) + b"SE Linux" + word(version, 1, 8, 0) + empty_bitmap + empty_bitmap
+        + commons + classes + roles + types + users + booleans + sensitivities + categories
+        + word(len(rules)) + b"".join(rules)
+        # What follows the rules is never read.
+        + word(0, 0)
+    )
+
+
 def synthetic_lineage_ramdisk_for(
     fstab: bytes, *, alignment: int = 16384, omit_dependency: bool = False,
     interface: bytes = b"eth0\0", compression: str = "lz4",
@@ -5404,7 +5881,8 @@ def synthetic_lineage_ramdisk_for(
     pixel_format: bytes = b"BGRX_8888",
     art: dict[str, bytes] | None = None,
     script: bytes = b"", imported: bytes | None = b"service console /system/bin/sh\n",
-    script_name: str = "init.recovery.cutf_cvm.rc",
+    script_name: str = "init.recovery.cutf_cvm.rc", policy: bytes | None = None,
+    no_policy: bool = False,
 ) -> bytes:
     entries = [
         newc_entry(
@@ -5423,6 +5901,9 @@ def synthetic_lineage_ramdisk_for(
             "system/bin/adbd", 0o100755,
             synthetic_aarch64_elf(alignment, needed=("libfixture.so",)), 3,
         ),
+        *([] if no_policy else [
+            newc_entry("sepolicy", 0o100644, policy if policy is not None else synthetic_selinux_policy(), 16)
+        ]),
         newc_entry("system/bin/e2fsck", 0o100755, b"tool", 4),
         newc_entry("system/bin/mke2fs", 0o100755, b"tool", 5),
         newc_entry(
@@ -5591,6 +6072,35 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
              "res/images/fastbootd.png is not the product's artwork"),
             ("a surplus frame", {"art": {**art, "loop00031.png": b"stock"}},
              "animation frames the product does not supply: .*loop00031.png"),
+            ("a ramdisk without a policy", {"no_policy": True},
+             "missing required paths.*sepolicy"),
+            ("a policy that is not a policy", {"policy": b"not a policy at all"},
+             "not a readable kernel policy: not a kernel binary SELinux policy"),
+            ("a policy of an unsupported version", {"policy": synthetic_selinux_policy(version=29)},
+             "not a readable kernel policy: policy version 29"),
+            ("a truncated policy", {"policy": synthetic_selinux_policy()[:300]},
+             "not a readable kernel policy: the policy ends inside a record"),
+            ("a recovery domain without the UDP socket", {"policy": synthetic_selinux_policy(udp=())},
+             r"does not let the recovery domain \['create', 'ioctl'\] on udp_socket"),
+            ("a recovery domain that cannot create the UDP socket",
+             {"policy": synthetic_selinux_policy(udp=("ioctl",))},
+             r"does not let the recovery domain \['create'\] on udp_socket"),
+            ("a recovery domain that cannot issue ioctls on the UDP socket",
+             {"policy": synthetic_selinux_policy(udp=("create",))},
+             r"does not let the recovery domain \['ioctl'\] on udp_socket"),
+            ("a UDP socket with no extended ioctl rule", {"policy": synthetic_selinux_policy(ioctls=())},
+             r"issue the ioctls \[\] on a UDP socket, not exactly \['0x8916', '0x891c'\]"),
+            ("a UDP socket that lacks the netmask ioctl",
+             {"policy": synthetic_selinux_policy(ioctls=(0x8916,))},
+             r"issue the ioctls \['0x8916'\] on a UDP socket"),
+            ("a UDP socket that allows another ioctl",
+             {"policy": synthetic_selinux_policy(ioctls=(0x8916, 0x891C, 0x8927))},
+             r"issue the ioctls \['0x8916', '0x891c', '0x8927'\] on a UDP socket"),
+            ("a recovery domain without CAP_NET_ADMIN", {"policy": synthetic_selinux_policy(capabilities=())},
+             r"does not let the recovery domain \['net_admin'\] on capability"),
+            ("a policy that grants another domain the socket",
+             {"policy": synthetic_selinux_policy(domain="other")},
+             r"does not let the recovery domain \['create', 'ioctl'\] on udp_socket"),
             ("a 32-bit ELF", {"elf_edit": ("<B", 4, 1)}, "little-endian ELF64"),
             ("a big-endian ELF", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF64"),
             ("a foreign machine", {"elf_edit": ("<H", 18, 62)}, "not AArch64"),
@@ -6137,6 +6647,7 @@ def main() -> None:
     verify_decoder_output_delay_topic(android_root)
     verify_secure_element_topic(android_root)
     verify_reclaim_boot_apps(android_root)
+    verify_time_zone(android_root)
     verify_default_wallpaper(android_root)
     verify_setup_wizard_flow(android_root)
     verify_launcher_layouts(android_root)

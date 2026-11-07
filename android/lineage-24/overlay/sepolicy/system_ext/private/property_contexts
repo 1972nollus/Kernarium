@@ -5,3 +5,7 @@ sys.kernarium.adb.host_connected    u:object_r:kernarium_adb_host_prop:s0 exact 
 # Set once the product has saved its virtual Wi-Fi network, so a network the user
 # forgets stays forgotten.
 persist.sys.kernarium.virtwifi_saved    u:object_r:kernarium_wifi_network_prop:s0 exact bool
+
+# The time zone the product applied last from the host's, so a zone the user
+# chose in the guest is told from it and never replaced.
+persist.sys.kernarium.timezone_applied    u:object_r:kernarium_time_zone_prop:s0 exact string

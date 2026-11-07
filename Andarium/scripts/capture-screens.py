@@ -13,6 +13,12 @@ UI driver) between runs, and the orientation is read from each image.
     capture-screens.py --out DIR --device <udid> [--device <udid> ...]
     capture-screens.py --list
 
+One run at a time captures into a directory: the runs would share the
+screenshots' working files and read and write manifest.json. A second run into
+the same --out refuses at once and names the first; the lock is released when
+the run ends, however it ends. Name several --device options for one run, or
+give each run its own --out.
+
 Capture on a Simulator made for the run (`simctl create`, deleted afterwards),
 never one another session or test uses: any other app that comes to the front
 spoils a picture. The script keeps a picture only when the Preview reports
@@ -42,6 +48,8 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -59,6 +67,7 @@ SETTLED_FRACTION = 0.003
 # How long the Preview has, after a launch, to report that it is the app in front.
 FRONT_SECONDS = 10
 STATE_FILE = "capture-state.json"
+LOCK_FILE = ".capture.lock"
 
 
 @dataclass(frozen=True)
@@ -438,6 +447,32 @@ def preflight(udid: str, name: str, out: Path) -> str | None:
     return None
 
 
+class OutputBusy(Exception):
+    """Another run holds the output directory."""
+
+
+@contextlib.contextmanager
+def output_lock(out: Path):
+    """Hold the output directory for this run, or raise OutputBusy at once.
+
+    The lock is an exclusive flock on LOCK_FILE in the directory: the kernel drops it when the process ends
+    however it ends, so a killed run never leaves the directory locked. The file records the holder's pid for the
+    message of a refused run and stays in the directory.
+    """
+    descriptor = os.open(out / LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            holder = os.pread(descriptor, 32, 0).decode(errors="replace").strip()
+            raise OutputBusy(holder or "unknown") from None
+        os.ftruncate(descriptor, 0)
+        os.pwrite(descriptor, f"{os.getpid()}\n".encode(), 0)
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def write_manifest(path: Path, entries: dict[str, dict]) -> None:
     manifest = {"schema": 1, "shots": sorted(entries.values(), key=lambda entry: entry["file"])}
     path.write_text(json.dumps(manifest, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -462,6 +497,19 @@ def main(argv: list[str] | None = None) -> int:
     if len(ids) != len(set(ids)):
         sys.exit("capture-screens.py: duplicate shot ids")
     args.out.mkdir(parents=True, exist_ok=True)
+    try:
+        with output_lock(args.out):
+            return capture_all(args)
+    except OutputBusy as busy:
+        print(
+            f"capture-screens.py: another capture is running into {args.out} (pid {busy}); a directory takes one run "
+            "at a time, so wait for it, name several --device options in one run, or use another --out",
+            file=sys.stderr,
+        )
+        return 1
+
+
+def capture_all(args: argparse.Namespace) -> int:
     manifest_path = args.out / "manifest.json"
     entries: dict[str, dict] = {}
     if manifest_path.is_file():

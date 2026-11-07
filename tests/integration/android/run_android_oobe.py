@@ -19,7 +19,10 @@ a fresh instance, and checks the contract in android/lineage-24/README.md:
   connected to VirtWifi, no status bar lock held by the wizard, and a home
   screen whose first page holds the six applications of the default layout
   (Settings, Calendar, Gallery, Music, Calculator, Files) with an empty dock,
-  none of them dropped while the launcher read its layout;
+  none of them dropped while the launcher read its layout. The drop check
+  reads the guest's log, so the runner raises the log buffers as soon as adb
+  answers, before the wizard runs, and a log without the launcher's layout
+  load is a failure, not a skipped check;
 - helper: the guest is started with `--provision`, the harness path of
   tools/android_provision.py, and reaches the same observable state without a
   person: both settings 1 and HOME on the launcher. The shell may not disable
@@ -191,6 +194,15 @@ LAUNCHER_LOG = re.compile(r"^\d\d-\d\d \d\d:\d\d:\d\d\.\d+ (?P<level>[VDIWEF])/(
                           re.MULTILINE)
 LAUNCHER_LAYOUT_LOADED = "loading default workspace"
 LAUNCHER_LAYOUT_TAGS = ("DefaultLayoutParser", "AutoInstalls")
+# The launcher logs through android.util.Log, which lands in `main`. A guest's default buffer is
+# 256 KiB and a boot fills it in seconds, so the runner raises the buffers a plain `logcat` reads
+# as soon as adb answers: from then on the load line, which comes with the launcher's first
+# activity, cannot rotate out before the check reads it.
+LOG_BUFFERS = ("main", "system", "crash")
+LOG_BUFFER_MIB = 64
+LOG_BUFFER_SIZE = re.compile(r"^(?P<buffer>\w+): ring buffer is (?P<size>\d+(?:\.\d+)?) ?(?P<unit>[KMG]?)i?[Bb]\b",
+                             re.MULTILINE)
+LOG_UNITS = {"": 1, "K": 1 << 10, "M": 1 << 20, "G": 1 << 30}
 
 
 def launcher_items(dump: str) -> list[dict]:
@@ -234,11 +246,17 @@ def launcher_problems(items: list[dict]) -> list[str]:
     return problems
 
 
+def log_buffer_sizes(logcat_g: str) -> dict[str, int]:
+    """Each buffer's capacity in bytes from `logcat -g`, whose lines read `main: ring buffer is 64 MiB (...)`."""
+    return {match.group("buffer"): int(float(match.group("size")) * LOG_UNITS[match.group("unit")])
+            for match in LOG_BUFFER_SIZE.finditer(logcat_g)}
+
+
 def launcher_layout_drops(log: str) -> list[str] | None:
     """The layout parser's complaints from the launcher's last load of its default layout.
 
-    None when the log no longer holds that load. An item the layout names that the image lacks
-    is logged by the parser and dropped; the layout names no widget, so the widget lookup failing is a drop too."""
+    None when the log holds no such load, which the caller refuses. An item the layout names that the image
+    lacks is logged by the parser and dropped; the layout names no widget, so the widget lookup failing is a drop too."""
     start = log.rfind(LAUNCHER_LAYOUT_LOADED)
     if start < 0:
         return None
@@ -340,10 +358,36 @@ def wait_for(description: str, probe: Callable[[], bool], seconds: int,
     raise Failure(f"{description}: not within {seconds} s")
 
 
+def size_log_buffers(device: Device) -> None:
+    """Raise the guest's log buffers and read the sizes back: a buffer that kept its size is a failure.
+
+    The shell user may resize the buffers (it is in the log group), and the sizes last until the
+    guest stops, which is what a run needs. Nothing in the image changes."""
+    selection = " ".join(f"-b {name}" for name in LOG_BUFFERS)
+    device.shell(f"logcat {selection} -G {LOG_BUFFER_MIB}M")
+    sizes = log_buffer_sizes(device.shell(f"logcat {selection} -g"))
+    wanted = LOG_BUFFER_MIB << 20
+    short = {name: sizes.get(name) for name in LOG_BUFFERS if sizes.get(name, 0) < wanted}
+    if short:
+        raise Failure(f"the log buffers are not {LOG_BUFFER_MIB} MiB after logcat -G: {short} "
+                      "(None: the buffer is not in `logcat -g`); the launcher's layout load could rotate out")
+
+
 def wait_booted(device: Device, seconds: int, guest: subprocess.Popen | None) -> None:
-    wait_for("the guest to be booted",
-             lambda: device.connect() and device.shell("getprop sys.boot_completed") == "1",
-             seconds, guest)
+    """Return once the guest has booted; its log buffers are raised the moment adb first answers."""
+    deadline = time.monotonic() + seconds
+
+    def answers() -> bool:
+        # sys.boot_completed is unset until the boot ends, so any answer is an answer.
+        if not device.connect():
+            return False
+        device.shell("getprop sys.boot_completed")
+        return True
+
+    wait_for("the guest's adb to answer", answers, seconds, guest)
+    size_log_buffers(device)
+    wait_for("the guest to be booted", lambda: device.shell("getprop sys.boot_completed") == "1",
+             max(1, int(deadline - time.monotonic())), guest)
 
 
 def free_loopback_port() -> int:
@@ -477,7 +521,8 @@ def check_launcher(device: Device) -> None:
 
     The launcher reads its layout when it first starts, and a guest keeps what it built, so this is
     a fresh guest's check. A release whose layout names an application the image lacks drops it and
-    the parser says so in the log."""
+    the parser says so in the log. The load line is in the log of every fresh guest, because the
+    buffers were raised before the wizard ran (wait_booted): a log without it is a failure."""
     deadline = time.monotonic() + LAUNCHER_LOAD_SECONDS
     while True:
         items = launcher_items(device.shell(f"dumpsys activity {LAUNCHER_ACTIVITY}", timeout=60))
@@ -487,13 +532,16 @@ def check_launcher(device: Device) -> None:
     problems = launcher_problems(items)
     if problems:
         raise Failure("the launcher's workspace is not the default layout: " + "; ".join(problems))
-    log = device.shell("logcat -d -v time -s ModelDbController:D " + " ".join(f"{tag}:D" for tag in LAUNCHER_LAYOUT_TAGS),
-                       timeout=60)
+    log = device.shell("logcat -b main -d -v time -s ModelDbController:D "
+                       + " ".join(f"{tag}:D" for tag in LAUNCHER_LAYOUT_TAGS), timeout=60)
     drops = launcher_layout_drops(log)
+    if drops is None:
+        raise Failure(f"the guest's log has no '{LAUNCHER_LAYOUT_LOADED}' line, though the log buffers were raised to "
+                      f"{LOG_BUFFER_MIB} MiB before the wizard ran: the launcher did not load its default layout, "
+                      "or the drops cannot be checked")
     if drops:
         raise Failure("the launcher dropped items of its default layout: " + "; ".join(drops[:5]))
-    print("home screen: the six applications on the first page, the dock empty"
-          + ("" if drops is not None else " (the log no longer holds the layout load: drops not checked)"))
+    print("home screen: the six applications on the first page, the dock empty, no item dropped")
 
 
 def check_provisioned(device: Device, *, by_wizard: bool, before: dict[str, str] | None = None) -> None:

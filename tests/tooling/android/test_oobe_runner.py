@@ -511,7 +511,8 @@ class LauncherLayoutLogTests(unittest.TestCase):
     def test_a_clean_load_has_no_drops_and_older_lines_do_not_count(self) -> None:
         self.assertEqual(runner.launcher_layout_drops(CLEAN), [])
 
-    def test_a_log_that_rotated_past_the_load_is_not_checked(self) -> None:
+    def test_a_log_without_the_load_has_no_answer(self) -> None:
+        # None is not "no drops": the caller refuses it.
         self.assertIsNone(runner.launcher_layout_drops("11-07 03:59:01.110 E/AutoInstalls( 1080): Favorite not found: x/y\n"))
 
     def test_the_last_load_is_the_one_that_counts(self) -> None:
@@ -543,10 +544,26 @@ class CheckLauncherTests(unittest.TestCase):
         self.check(guest)
         self.assertEqual(guest.dumps, 1)
 
-    def test_a_rotated_log_passes_with_a_note(self) -> None:
-        with mock.patch("builtins.print") as printed:
-            self.check(FakeLauncher(home_dump(), "--------- beginning of main\n"))
-        self.assertIn("drops not checked", printed.call_args.args[0])
+    def test_a_log_without_the_layout_load_is_a_failure(self) -> None:
+        # The check must not skip itself: it fails when the line is missing, rotated out or never logged.
+        for log in ("--------- beginning of main\n", "",
+                    "11-07 03:59:01.110 E/AutoInstalls( 1080): Favorite not found: x/y\n"):
+            with self.subTest(log=log), self.assertRaisesRegex(
+                    runner.Failure, "no 'loading default workspace' line, though the log buffers were raised to 64 MiB"):
+                self.check(FakeLauncher(home_dump(), log))
+
+    def test_the_log_is_read_from_the_main_buffer(self) -> None:
+        commands: list[str] = []
+
+        class Recording(FakeLauncher):
+            def shell(self, command: str, timeout: int = 30) -> str:
+                commands.append(command)
+                return super().shell(command, timeout)
+
+        self.check(Recording(home_dump(), CLEAN))
+        log_commands = [command for command in commands if command.startswith("logcat")]
+        self.assertEqual(len(log_commands), 1)
+        self.assertIn("-b main", log_commands[0])
 
     def test_the_wrong_workspace_is_a_failure_naming_the_problem(self) -> None:
         with self.assertRaisesRegex(runner.Failure, "not the default layout: 0 items, expected 6"):
@@ -568,6 +585,145 @@ class CheckLauncherTests(unittest.TestCase):
         with mock.patch.object(runner, "LAUNCHER_LOAD_SECONDS", 60), mock.patch.object(runner.time, "sleep"):
             runner.check_launcher(guest)
         self.assertEqual(guest.dumps, 3)
+
+
+# `logcat -b main -b system -b crash -g` on a guest whose buffers were raised.
+LOG_SIZES_RAISED = """\
+main: ring buffer is 64 MiB (3 MiB consumed), max entry is 5120 B, max payload is 4068 B
+system: ring buffer is 64 MiB (1 MiB consumed), max entry is 5120 B, max payload is 4068 B
+crash: ring buffer is 64 MiB (0 B consumed), max entry is 5120 B, max payload is 4068 B
+"""
+LOG_SIZES_DEFAULT = LOG_SIZES_RAISED.replace("64 MiB", "256 KiB")
+
+
+class FakeLogDevice:
+    """A guest's shell for the log buffer commands; `-G` takes effect when `accepts` is true."""
+
+    def __init__(self, accepts: bool = True, failure: str | None = None) -> None:
+        self.sizes = LOG_SIZES_DEFAULT
+        self.accepts = accepts
+        self.failure = failure
+        self.commands: list[str] = []
+
+    def shell(self, command: str, timeout: int = 30) -> str:
+        self.commands.append(command)
+        if " -G " in command:
+            if self.failure:
+                raise runner.Failure(f"'{command}' exited 1: {self.failure}")
+            if self.accepts:
+                self.sizes = LOG_SIZES_RAISED
+            return ""
+        if command.endswith(" -g"):
+            return self.sizes
+        raise AssertionError(command)
+
+
+class LogBufferTests(unittest.TestCase):
+    def test_sizes_are_read_in_bytes_whatever_the_unit(self) -> None:
+        self.assertEqual(
+            runner.log_buffer_sizes(LOG_SIZES_RAISED), {"main": 64 << 20, "system": 64 << 20, "crash": 64 << 20})
+        self.assertEqual(runner.log_buffer_sizes(LOG_SIZES_DEFAULT)["main"], 256 << 10)
+        self.assertEqual(runner.log_buffer_sizes("main: ring buffer is 256Kb (4Kb consumed)")["main"], 256 << 10)
+        self.assertEqual(runner.log_buffer_sizes("events: ring buffer is 1.5 MiB (0 B consumed)")["events"], 3 << 19)
+        self.assertEqual(runner.log_buffer_sizes("crash: ring buffer is 512 B (0 B consumed)")["crash"], 512)
+        self.assertEqual(runner.log_buffer_sizes("logcat: unable to open the log"), {})
+
+    def test_the_buffers_a_plain_logcat_reads_are_raised_and_read_back(self) -> None:
+        guest = FakeLogDevice()
+        runner.size_log_buffers(guest)
+        self.assertEqual(guest.commands, [
+            "logcat -b main -b system -b crash -G 64M", "logcat -b main -b system -b crash -g"])
+        self.assertIn("main", runner.LOG_BUFFERS)
+        self.assertGreaterEqual(runner.LOG_BUFFER_MIB, 64)
+
+    def test_a_buffer_that_kept_its_size_is_a_failure_naming_it(self) -> None:
+        guest = FakeLogDevice(accepts=False)
+        with self.assertRaisesRegex(runner.Failure, r"not 64 MiB after logcat -G: \{'main': 262144, 'system': 262144, "):
+            runner.size_log_buffers(guest)
+
+    def test_a_buffer_the_guest_does_not_report_is_a_failure(self) -> None:
+        guest = FakeLogDevice()
+        guest.shell = lambda command, timeout=30: (  # type: ignore[method-assign]
+            "" if " -G " in command else LOG_SIZES_RAISED.replace("crash:", "kernel:"))
+        with self.assertRaisesRegex(runner.Failure, r"'crash': None"):
+            runner.size_log_buffers(guest)
+
+    def test_a_refused_resize_is_a_failure_with_the_guests_answer(self) -> None:
+        with self.assertRaisesRegex(runner.Failure, "failed to set the buffer size"):
+            runner.size_log_buffers(FakeLogDevice(failure="failed to set the buffer size to 64M"))
+
+
+class FakeBootingGuest:
+    """A guest whose adb answers after `silent` connects and whose boot completes after `polls` reads."""
+
+    def __init__(self, silent: int = 0, polls: int = 0, sizing: FakeLogDevice | None = None) -> None:
+        self.silent = silent
+        self.polls = polls
+        self.log = sizing or FakeLogDevice()
+        self.events: list[str] = []
+        self.reads = 0
+
+    def connect(self) -> bool:
+        self.events.append("connect")
+        if self.silent > 0:
+            self.silent -= 1
+            return False
+        return True
+
+    def shell(self, command: str, timeout: int = 30) -> str:
+        if command == "getprop sys.boot_completed":
+            self.reads += 1
+            # The property is unset, so empty, until the boot ends.
+            value = "1" if self.reads > self.polls else ""
+            self.events.append(f"boot={value}")
+            return value
+        self.events.append("resize" if " -G " in command else "read-sizes")
+        return self.log.shell(command, timeout)
+
+
+class WaitBootedTests(unittest.TestCase):
+    def wait(self, guest: FakeBootingGuest, seconds: int = 100) -> None:
+        with mock.patch.object(runner.time, "sleep"):
+            runner.wait_booted(guest, seconds, None)
+
+    def test_the_buffers_are_raised_when_adb_first_answers_and_before_the_boot_completes(self) -> None:
+        guest = FakeBootingGuest(silent=2, polls=3)
+        self.wait(guest)
+        self.assertEqual(guest.events[:3], ["connect", "connect", "connect"])
+        resize = guest.events.index("resize")
+        self.assertEqual(guest.events[3], "boot=")  # the empty answer that told adb was up
+        self.assertEqual(guest.events[resize:resize + 2], ["resize", "read-sizes"])
+        self.assertLess(resize, guest.events.index("boot=1"))
+        self.assertEqual(guest.events.count("resize"), 1)
+
+    def test_a_guest_that_booted_before_adb_answered_is_still_raised_once(self) -> None:
+        guest = FakeBootingGuest(silent=1, polls=0)
+        self.wait(guest)
+        self.assertEqual(guest.events.count("resize"), 1)
+        self.assertLess(guest.events.index("resize"), guest.events.index("boot=1", guest.events.index("resize")))
+
+    def test_a_resize_that_did_not_take_ends_the_wait_with_its_own_failure(self) -> None:
+        guest = FakeBootingGuest(polls=3, sizing=FakeLogDevice(accepts=False))
+        with self.assertRaisesRegex(runner.Failure, "not 64 MiB after logcat -G"):
+            self.wait(guest)
+        self.assertNotIn("boot=1", guest.events)
+
+    def test_adb_that_never_answers_is_a_failure_at_the_deadline(self) -> None:
+        guest = FakeBootingGuest(silent=10**6)
+        with self.assertRaisesRegex(runner.Failure, "the guest's adb to answer: not within 0 s"):
+            self.wait(guest, seconds=0)
+        self.assertNotIn("resize", guest.events)
+
+    def test_the_guest_is_sized_before_the_exercise_starts(self) -> None:
+        order: list[str] = []
+        guest = mock.Mock()
+        guest.poll.return_value = 0
+        options = mock.Mock(adb_port=5576, boot_timeout=100)
+        with mock.patch.object(runner, "launch", return_value=(guest, Path("launcher.log"))), \
+                mock.patch.object(runner, "stop_launcher"), \
+                mock.patch.object(runner, "wait_booted", side_effect=lambda *args: order.append("sized and booted")):
+            runner.run_guest(options, Path("."), "wizard", "adb", {}, [], lambda *args: order.append("exercise"))
+        self.assertEqual(order, ["sized and booted", "exercise"])
 
 
 if __name__ == "__main__":

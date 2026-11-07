@@ -222,6 +222,8 @@ REQUIRED_ENTRIES = {
     "SYSTEM_EXT/etc/init/kernarium_wifi_network.rc",
     "SYSTEM_EXT/bin/kernarium_reclaim_boot_apps.sh",
     "SYSTEM_EXT/etc/init/kernarium_reclaim_boot_apps.rc",
+    "SYSTEM_EXT/bin/kernarium_time_zone.sh",
+    "SYSTEM_EXT/etc/init/kernarium_time_zone.rc",
     "SYSTEM_EXT/etc/selinux/system_ext_file_contexts",
     "SYSTEM_EXT/etc/selinux/system_ext_property_contexts",
     "SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil",
@@ -725,6 +727,39 @@ RECLAIM_LIST = re.compile(r"^reclaim_list='\n(.*?)^'$", re.MULTILINE | re.DOTALL
 RECLAIM_TRANSITION = re.compile(
     rb"^\(typetransition init(?:_[0-9]+)? kernarium_reclaim_boot_apps_exec process "
     rb"kernarium_reclaim_boot_apps\)$",
+    re.MULTILINE,
+)
+# Once boot completes a script applies the host's time zone, which the host application passes
+# at every start (ro.boot.kernarium.timezone), through the platform's own setter, in a core domain
+# of its own on system_ext (overlay/tools/kernarium_time_zone.sh, overlay/sepolicy/system_ext/
+# private). The guest follows the host only while nobody in the guest has chosen a zone: the
+# user's "Set time zone automatically" (Settings.Global.auto_time_zone, which the script reads and
+# never writes) is not off, and the zone is still the one the script applied last, which it
+# records in a marker property of its own. The platform has no automatic time zone here, so
+# Settings has no switch and the zone pickers (Settings', the setup wizard's) are the only
+# choices, neither of which turns the setting off. The domain sets no time zone property:
+# system_server writes persist.sys.timezone.
+TIME_ZONE_SERVICE = ("kernarium_time_zone", "/system_ext/bin/kernarium_time_zone.sh")
+TIME_ZONE_TRIGGER = "property:sys.boot_completed=1"
+TIME_ZONE_MARKER = "persist.sys.kernarium.timezone_applied"
+TIME_ZONE_MARKER_TYPE = "kernarium_time_zone_prop"
+TIME_ZONE_SCRIPT_REQUIRED = (
+    "ro.boot.kernarium.timezone",
+    "cmd settings get global auto_time_zone",
+    'cmd alarm set-timezone "$zone"',
+    TIME_ZONE_MARKER,
+    'setprop "$marker" "$zone"',
+)
+TIME_ZONE_SCRIPT_FORBIDDEN = (
+    "settings put",
+    "setprop persist.sys.timezone",
+    "time_zone_detector",
+    "set_auto_detection",
+    "svc ",
+)
+TIME_ZONE_TRANSITION = re.compile(
+    rb"^\(typetransition init(?:_[0-9]+)? kernarium_time_zone_exec process "
+    rb"kernarium_time_zone\)$",
     re.MULTILINE,
 )
 # The partition the host grew is filled on every boot, once /data is mounted
@@ -1283,6 +1318,12 @@ def check_boot_policy(
         ),
         read_small(archive, infos["SYSTEM_EXT/bin/kernarium_reclaim_boot_apps.sh"]),
     )
+    check_time_zone(
+        read_small(archive, infos["SYSTEM_EXT/etc/init/kernarium_time_zone.rc"]).decode(
+            "utf-8", errors="strict"
+        ),
+        read_small(archive, infos["SYSTEM_EXT/bin/kernarium_time_zone.sh"]),
+    )
     check_media_codecs_c2(read_small(archive, infos["VENDOR/etc/media_codecs_c2.xml"]))
 
     ueventd_payload = read_small(
@@ -1795,15 +1836,14 @@ def resource_string_pool(table: bytes, offset: int) -> list[str]:
     return strings
 
 
-def resource_arrays(table: bytes) -> dict[str, list[list[str]]]:
-    """Every array resource of a compiled resource table, by name: one list of its items'
-    strings for each definition (an item that is not a string reads as "<type:data>")."""
-    arrays: dict[str, list[list[str]]] = {}
+def resource_entries(table: bytes, type_name: str):
+    """The (name, position, flags) of every entry of one resource type in a compiled resource
+    table, in each of its configurations. The position is that of the ResTable_entry, or of the
+    compact entry whose key sits where a full entry keeps its size."""
     position = struct.unpack_from("<H", table, 2)[0]
     chunk, _, size = struct.unpack_from("<HHI", table, position)
     if chunk != 0x0001:
         raise ValueError("the table does not start with a string pool")
-    values = resource_string_pool(table, position)
     position += size
     while position + 8 <= len(table):
         chunk, header_size, size = struct.unpack_from("<HHI", table, position)
@@ -1818,7 +1858,7 @@ def resource_arrays(table: bytes) -> dict[str, list[list[str]]]:
                 inner_chunk, inner_header, inner_size = struct.unpack_from("<HHI", table, inner)
                 if inner_size < 8:
                     break
-                if inner_chunk == 0x0201 and types[table[inner + 8] - 1] == "array":
+                if inner_chunk == 0x0201 and types[table[inner + 8] - 1] == type_name:
                     count, entries_start = struct.unpack_from("<II", table, inner + 12)
                     kind = table[inner + 9]
                     if kind & 0x01:  # sparse: (index, offset / 4) pairs of 16 bits
@@ -1832,20 +1872,45 @@ def resource_arrays(table: bytes) -> dict[str, list[list[str]]]:
                         if entry_offset == 0xFFFFFFFF:
                             continue
                         entry = inner + entries_start + entry_offset
-                        _, flags, key = struct.unpack_from("<HHI", table, entry)
-                        if not flags & 1:
-                            continue
-                        item_count = struct.unpack_from("<I", table, entry + 12)[0]
-                        items = []
-                        for index in range(item_count):
-                            _, _, data_type, data = struct.unpack_from(
-                                "<HBBI", table, entry + 16 + 12 * index + 4
-                            )
-                            items.append(values[data] if data_type == 3 else f"<{data_type}:{data}>")
-                        arrays.setdefault(keys[key], []).append(items)
+                        key, flags = struct.unpack_from("<HH", table, entry)
+                        if not flags & 0x08:  # a full entry: size, flags, then a 32-bit key
+                            key = struct.unpack_from("<I", table, entry + 4)[0]
+                        yield keys[key], entry, flags
                 inner += inner_size
         position += size
+
+
+def resource_arrays(table: bytes) -> dict[str, list[list[str]]]:
+    """Every array resource of a compiled resource table, by name: one list of its items'
+    strings for each definition (an item that is not a string reads as "<type:data>")."""
+    arrays: dict[str, list[list[str]]] = {}
+    values = resource_string_pool(table, struct.unpack_from("<H", table, 2)[0])
+    for name, entry, flags in resource_entries(table, "array"):
+        if not flags & 1:
+            continue
+        item_count = struct.unpack_from("<I", table, entry + 12)[0]
+        items = []
+        for index in range(item_count):
+            _, _, data_type, data = struct.unpack_from("<HBBI", table, entry + 16 + 12 * index + 4)
+            items.append(values[data] if data_type == 3 else f"<{data_type}:{data}>")
+        arrays.setdefault(name, []).append(items)
     return arrays
+
+
+def resource_booleans(table: bytes) -> dict[str, list[bool]]:
+    """Every bool resource of a compiled resource table, by name: its value in each definition."""
+    booleans: dict[str, list[bool]] = {}
+    for name, entry, flags in resource_entries(table, "bool"):
+        if flags & 0x08:  # compact: the value type is the flags' high byte, the data follows
+            data_type, data = flags >> 8, struct.unpack_from("<I", table, entry + 4)[0]
+        elif flags & 0x01:
+            continue
+        else:
+            size = struct.unpack_from("<H", table, entry)[0]
+            _, _, data_type, data = struct.unpack_from("<HBBI", table, entry + size)
+        if data_type == 0x12:  # TYPE_INT_BOOLEAN
+            booleans.setdefault(name, []).append(data != 0)
+    return booleans
 
 
 def check_network_time(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
@@ -1874,6 +1939,37 @@ def check_network_time(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInf
             fail(f"{NETWORK_TIME_ORIGINS} lists the network in {FRAMEWORK_OVERLAY}: network time is not a time source")
         if "external" not in items:
             fail(f"{NETWORK_TIME_ORIGINS} in {FRAMEWORK_OVERLAY} lacks external: without it a device without telephony loses \"Set time automatically\"")
+
+
+# The power manager's FaceDownDetector turns the screen off when the device lies face down. While
+# it is enabled it holds an accelerometer connection (every 200 ms, batched over 2 s) for as long
+# as the screen is on, so the host's motion sensor stays running although no application asked for
+# a reading, and a virtual device that is never "face down" gains nothing from it. The detector is
+# enabled only when the framework resource is true (and the attention_manager_service flag the
+# platform leaves on), so the product's framework overlay turns it off for every boot.
+FLIP_TO_SCREEN_OFF = "config_flipToScreenOffEnabled"
+
+
+def check_flip_to_screen_off(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    """The framework overlay disables flip-to-screen-off, which would hold the accelerometer."""
+    info = infos.get(FRAMEWORK_OVERLAY)
+    if info is None:
+        fail(f"{FRAMEWORK_OVERLAY} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, FRAMEWORK_OVERLAY_LIMIT))) as overlay:
+            booleans = resource_booleans(overlay.read("resources.arsc"))
+    except (KeyError, OSError, ValueError, struct.error, IndexError, zipfile.BadZipFile) as error:
+        fail(f"{FRAMEWORK_OVERLAY} has no readable resource table: {error}")
+    if FLIP_TO_SCREEN_OFF not in booleans:
+        fail(
+            f"{FRAMEWORK_OVERLAY} does not set {FLIP_TO_SCREEN_OFF}: the power manager's "
+            "FaceDownDetector would hold an accelerometer connection while the screen is on"
+        )
+    if any(booleans[FLIP_TO_SCREEN_OFF]):
+        fail(
+            f"{FLIP_TO_SCREEN_OFF} is true in {FRAMEWORK_OVERLAY}: the power manager's "
+            "FaceDownDetector would hold an accelerometer connection while the screen is on"
+        )
 
 
 # PinnerService's pin sizes are framework resources that the platform does not declare
@@ -2501,6 +2597,13 @@ def check_kernel_policy(
         system_ext_policy,
         read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_file_contexts"]),
     )
+    check_time_zone_policy(
+        system_ext_policy,
+        read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_file_contexts"]),
+        read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_property_contexts"]).decode(
+            "utf-8", errors="strict"
+        ),
+    )
     check_property_writers(
         platform_policy,
         vendor_policy,
@@ -2844,6 +2947,100 @@ def check_reclaim_boot_apps_policy(system_ext_policy: bytes, system_ext_file_con
                 f"system_ext policy does not allow {source} {target} {object_class.decode()} "
                 f"{permission.decode()}: {why}"
             )
+
+
+def check_time_zone(rc_payload: str, script: bytes) -> None:
+    """The script that applies the host's time zone runs once after boot and never writes a setting."""
+    name, executable = TIME_ZONE_SERVICE
+    service = init_services(rc_payload).get(name)
+    if service is None or service[0] != executable:
+        fail(f"system_ext init policy does not declare the {name} service at {executable}")
+    for option in ("oneshot", "disabled"):
+        if option not in service[1]:
+            fail(f"system_ext init policy does not declare {name} as {option}")
+    actions = init_actions(rc_payload)
+    for trigger, commands in actions.items():
+        if f"start {name}" in commands and trigger != TIME_ZONE_TRIGGER:
+            fail(f"system_ext init policy starts {name} under '{trigger}'")
+    if f"start {name}" not in actions.get(TIME_ZONE_TRIGGER, []):
+        fail(f"system_ext init policy does not start {name} when boot completes")
+    code = "\n".join(
+        line
+        for line in script.decode("utf-8", errors="strict").splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    for token in TIME_ZONE_SCRIPT_REQUIRED:
+        if token not in code:
+            fail(f"{executable} does not contain '{token}'")
+    for token in TIME_ZONE_SCRIPT_FORBIDDEN:
+        if token in code:
+            fail(
+                f"{executable} contains '{token}': it may only read the user's automatic time "
+                "zone setting and set the zone through the platform's setter"
+            )
+
+
+def check_time_zone_policy(
+    system_ext_policy: bytes, system_ext_file_contexts: bytes, system_ext_property_contexts: str
+) -> None:
+    """The script runs in its own core domain, uses only the settings and alarm services, sets only its marker."""
+    domain = TIME_ZONE_SERVICE[0]
+    if file_context_label(system_ext_file_contexts, TIME_ZONE_SERVICE[1]) != (
+        f"u:object_r:{domain}_exec:s0"
+    ):
+        fail(f"system_ext file contexts do not label {TIME_ZONE_SERVICE[1]}")
+    if not TIME_ZONE_TRANSITION.search(system_ext_policy):
+        fail("system_ext policy does not move init into the time zone domain")
+
+    def has(source: str, target: str, object_class: bytes, permission: bytes) -> bool:
+        return any(
+            CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()) == source
+            and CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode()) == target
+            and match.group(3) == object_class
+            and permission in match.group(4).split()
+            for match in CIL_ALLOW_RULE.finditer(system_ext_policy)
+        )
+
+    for source, target, object_class, permission, why in (
+        (domain, "settings_service", b"service_manager", b"find",
+         "cmd finds the settings service to read the automatic time zone setting"),
+        (domain, "alarm_service", b"service_manager", b"find",
+         "cmd finds the alarm service, the platform's time zone setter"),
+        (domain, "system_server", b"binder", b"transfer",
+         "cmd hands both services the receiver of its result"),
+        ("system_server", domain, b"binder", b"call",
+         "cmd waits for the receiver of its result"),
+        ("system_server", domain, b"fd", b"use",
+         "the services write to the descriptors cmd passes"),
+        ("system_server", domain, b"fifo_file", b"write",
+         "the settings service writes the setting it reads to a pipe"),
+    ):
+        if not has(source, target, object_class, permission):
+            fail(
+                f"system_ext policy does not allow {source} {target} {object_class.decode()} "
+                f"{permission.decode()}: {why}"
+            )
+    if TIME_ZONE_MARKER_TYPE not in cil_attribute_members(system_ext_policy, "system_property_type"):
+        fail(f"system_ext policy does not define the system-owned {TIME_ZONE_MARKER_TYPE}")
+    settable = {
+        CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode())
+        for match in CIL_PROPERTY_SET_RULE.finditer(system_ext_policy)
+        if CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()) == domain
+        and b"set" in match.group(3).split()
+    }
+    if TIME_ZONE_MARKER_TYPE not in settable:
+        fail(f"system_ext policy does not let the time zone domain set {TIME_ZONE_MARKER}")
+    if settable != {TIME_ZONE_MARKER_TYPE}:
+        fail(
+            f"system_ext policy lets the time zone domain set {sorted(settable)}, not only its "
+            f"own marker {TIME_ZONE_MARKER_TYPE}: system_server writes persist.sys.timezone"
+        )
+    if not any(
+        line.split()[:2] == [TIME_ZONE_MARKER, f"u:object_r:{TIME_ZONE_MARKER_TYPE}:s0"]
+        for line in system_ext_property_contexts.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ):
+        fail(f"system_ext property contexts do not label {TIME_ZONE_MARKER}")
 
 
 def check_policy_relaxations(policies: tuple[bytes, ...], build_variant: str) -> None:
@@ -3684,6 +3881,7 @@ def main() -> None:
         check_navigation_mode(archive, infos)
         check_launcher_workspace(archive, infos)
         check_network_time(archive, infos)
+        check_flip_to_screen_off(archive, infos)
         check_pinner_overlay(archive, infos)
         check_application_manifests(archive, infos, build_variant)
         check_thermal_hal(archive, infos)
