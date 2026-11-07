@@ -122,10 +122,22 @@ enum GuestDisplayViewport {
     }
 }
 
+/// A contact's state at a point of the guest's touchscreen range. A
+/// `cancelled` event ends the contact where it was last reported without
+/// lifting it: the guest sees a palm in place of a release, so no tap or
+/// click follows. It is never pressed.
 struct GuestTouchEvent: Equatable {
     let x: UInt32
     let y: UInt32
     let pressed: Bool
+    let cancelled: Bool
+
+    init(x: UInt32, y: UInt32, pressed: Bool, cancelled: Bool = false) {
+        self.x = x
+        self.y = y
+        self.pressed = pressed
+        self.cancelled = cancelled
+    }
 }
 
 struct GuestTouchContactEvent: Equatable {
@@ -136,6 +148,9 @@ struct GuestTouchContactEvent: Equatable {
 /// Each UIKit contact owns a path and a stable slot, including while it is
 /// outside the guest's visible rectangle. Excess fingers stay ignored until
 /// they lift, so freeing a slot cannot turn a held finger into a new gesture.
+/// A contact UIKit takes away, and every contact when the display mode changes
+/// or the view leaves its window, is cancelled rather than released: the guest
+/// must not read the end as the user's lift.
 struct GuestTouchContacts<Identifier: Hashable> {
     private struct Contact {
         let slot: UInt32
@@ -185,12 +200,12 @@ struct GuestTouchContacts<Identifier: Hashable> {
 
     mutating func cancel(_ id: Identifier) -> [GuestTouchContactEvent] {
         guard var contact = contacts.removeValue(forKey: id) else { return [] }
-        return contact.path.release().map {
+        return contact.path.cancel().map {
             GuestTouchContactEvent(slot: contact.slot, event: $0)
         }
     }
 
-    mutating func releaseAll() -> [GuestTouchContactEvent] {
+    mutating func cancelAll() -> [GuestTouchContactEvent] {
         let ids = contacts.keys.sorted {
             contacts[$0]!.slot < contacts[$1]!.slot
         }
@@ -449,9 +464,22 @@ struct GuestTouchPath {
         return events
     }
 
-    mutating func release() -> [GuestTouchEvent] {
+    /// Withdraws the guest's contact where it was last reported, with no
+    /// movement. A path with no contact in the guest, because it began or
+    /// has been clipped outside the visible rectangle, has nothing to cancel:
+    /// its clipped exit already released it.
+    mutating func cancel() -> [GuestTouchEvent] {
         var events: [GuestTouchEvent] = []
-        appendLastRelease(to: &events)
+        if guestContactActive, let lastGuestEvent {
+            events.append(GuestTouchEvent(
+                x: lastGuestEvent.x,
+                y: lastGuestEvent.y,
+                pressed: false,
+                cancelled: true
+            ))
+        }
+        guestContactActive = false
+        lastGuestEvent = nil
         previousPoint = nil
         return events
     }

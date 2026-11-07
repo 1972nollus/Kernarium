@@ -78,11 +78,17 @@ class ProbeRunnerTests(unittest.TestCase):
         *options: str,
         return_code: int = 0,
         console: str = "",
+        tool: str | None = None,
     ) -> tuple[FakeGuest, str, Exception | None]:
         guest = FakeGuest(return_code, console)
         with tempfile.TemporaryDirectory() as directory:
             source = pathlib.Path(directory) / probe
             source.write_bytes(b"probe source")
+            if tool is not None:
+                executable = pathlib.Path(directory) / "input-tool"
+                executable.write_text(tool)
+                executable.chmod(0o755)
+                options += ("--probe-input", str(executable))
             arguments = [
                 "run_guest_probe.py",
                 "--emulator", "/emulator/uml-darwin",
@@ -163,6 +169,32 @@ class ProbeRunnerTests(unittest.TestCase):
         guest, _, failure = self.run_probe("probe_b.cpp", return_code=2)
         self.assertIn("probe_b.cpp reported 2 failure(s)", str(failure))
         self.assertNotIn(ALIVE, guest.events)
+
+    def test_a_probe_input_tool_runs_first_and_its_output_is_installed(
+            self) -> None:
+        guest, _, failure = self.run_probe(
+            "probe_a.py", tool="#!/bin/sh\nprintf 'device\\nreports'\n")
+        self.assertIsNone(failure)
+        installed = guest.constructed["payloads"]
+        self.assertEqual(list(installed), [
+            f"{GUEST_DIRECTORY}/probe.py",
+            f"{GUEST_DIRECTORY}/probe-input",
+        ])
+        self.assertEqual(
+            installed[f"{GUEST_DIRECTORY}/probe-input"].contents,
+            b"device\nreports")
+        self.assertEqual(
+            installed[f"{GUEST_DIRECTORY}/probe.py"].contents,
+            b"probe source")
+
+    def test_a_failing_probe_input_tool_ends_the_run_before_a_boot(
+            self) -> None:
+        guest, _, failure = self.run_probe(
+            "probe_a.py", tool="#!/bin/sh\necho 'no model' >&2\nexit 3\n")
+        self.assertEqual(
+            str(failure), "input-tool failed (3): no model")
+        self.assertEqual(guest.constructed, {})
+        self.assertEqual(guest.events, [])
 
     def test_flags_belong_to_a_cpp_probe(self) -> None:
         errors = io.StringIO()

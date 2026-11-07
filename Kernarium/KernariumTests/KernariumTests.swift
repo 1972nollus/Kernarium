@@ -410,6 +410,174 @@ struct KernariumTests {
         ])
     }
 
+    /// The guest square spans bounds x 125...375 of a 500 x 250 view, and
+    /// maps onto a 400 x 800 touchscreen.
+    @MainActor
+    private func cancelGeometry() throws -> GuestTouchGeometry {
+        try #require(GuestTouchGeometry(
+            coordinateSpace: GuestInputCoordinateSpace(
+                size: CGSize(width: 400, height: 800)
+            ),
+            boundsSize: CGSize(width: 500, height: 250),
+            drawableSize: CGSize(width: 1000, height: 500),
+            contentSize: CGSize(width: 800, height: 800)
+        ))
+    }
+
+    @Test
+    @MainActor
+    func cancellingATouchEndsItWhereItWasAndMovesNothing() throws {
+        let geometry = try cancelGeometry()
+        var path = GuestTouchPath()
+
+        #expect(path.begin(
+            at: CGPoint(x: 200, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 120, y: 400, pressed: true),
+        ])
+        #expect(path.move(
+            to: CGPoint(x: 250, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 200, y: 400, pressed: true),
+        ])
+        // The cancel states the last point the guest was given, and the
+        // contact is no longer there: a second one has nothing to cancel.
+        #expect(path.cancel() == [
+            GuestTouchEvent(x: 200, y: 400, pressed: false, cancelled: true),
+        ])
+        #expect(path.cancel().isEmpty)
+        // UIKit may still report the cancelled touch; the path ignores it
+        // until a new touch begins, which starts a contact like any other.
+        #expect(path.begin(
+            at: CGPoint(x: 200, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 120, y: 400, pressed: true),
+        ])
+        // It ends as a release, with the final position before it.
+        #expect(path.end(
+            at: CGPoint(x: 200, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 120, y: 400, pressed: true),
+            GuestTouchEvent(x: 120, y: 400, pressed: false),
+        ])
+    }
+
+    @Test
+    @MainActor
+    func aTouchOffTheDisplayHasNothingToCancel() throws {
+        let geometry = try cancelGeometry()
+        var path = GuestTouchPath()
+
+        // It began outside the guest's square: the guest has no contact.
+        #expect(path.begin(
+            at: CGPoint(x: 50, y: 125),
+            geometry: geometry
+        ).isEmpty)
+        #expect(path.cancel().isEmpty)
+
+        // It left the square: leaving released it, as a real release, and
+        // the cancel that follows has nothing left to withdraw.
+        #expect(path.begin(
+            at: CGPoint(x: 200, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 120, y: 400, pressed: true),
+        ])
+        let leaving = path.move(
+            to: CGPoint(x: 450, y: 125),
+            geometry: geometry
+        )
+        #expect(leaving == [
+            GuestTouchEvent(x: 399, y: 400, pressed: false),
+        ])
+        #expect(path.cancel().isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func endingAndClippingAContactAreReleasesNotCancels() throws {
+        let geometry = try cancelGeometry()
+        var path = GuestTouchPath()
+        var events = path.begin(
+            at: CGPoint(x: 200, y: 125),
+            geometry: geometry
+        )
+        // Out of the square and back in, and the finger lifts there.
+        events += path.move(
+            through: [
+                CGPoint(x: 450, y: 125),
+                CGPoint(x: 300, y: 125),
+                CGPoint(x: 450, y: 125),
+            ],
+            geometry: geometry
+        )
+        events += path.end(at: CGPoint(x: 300, y: 125), geometry: geometry)
+        #expect(events.map(\.pressed) ==
+            [true, false, true, true, false, true, true, false])
+        #expect(events.allSatisfy { !$0.cancelled })
+        #expect(path.cancel().isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func cancellingContactsCancelsEveryOneInItsSlot() throws {
+        let geometry = try cancelGeometry()
+        var contacts = GuestTouchContacts<Int>()
+        let first = try #require(contacts.begin(
+            1, at: CGPoint(x: 200, y: 125), geometry: geometry
+        ).first)
+        let second = try #require(contacts.begin(
+            2, at: CGPoint(x: 300, y: 125), geometry: geometry
+        ).first)
+        // A finger that began outside the guest's square holds a slot and
+        // gives the guest nothing, to start or to cancel.
+        #expect(contacts.begin(
+            3, at: CGPoint(x: 50, y: 125), geometry: geometry
+        ).isEmpty)
+        #expect(first.slot != second.slot)
+
+        #expect(contacts.cancel(2) == [GuestTouchContactEvent(
+            slot: second.slot,
+            event: GuestTouchEvent(
+                x: 280, y: 400, pressed: false, cancelled: true
+            )
+        )])
+        // A cancelled finger is gone: UIKit's later phases for it do nothing.
+        #expect(contacts.move(
+            2, through: [CGPoint(x: 310, y: 125)], geometry: geometry
+        ).isEmpty)
+        #expect(contacts.end(
+            2, at: CGPoint(x: 310, y: 125), geometry: geometry
+        ).isEmpty)
+        #expect(contacts.cancel(2).isEmpty)
+
+        // The display mode changes: what the guest still holds is cancelled,
+        // in slot order, and the finger outside has nothing to cancel.
+        #expect(contacts.cancelAll() == [GuestTouchContactEvent(
+            slot: first.slot,
+            event: GuestTouchEvent(
+                x: 120, y: 400, pressed: false, cancelled: true
+            )
+        )])
+        #expect(contacts.cancelAll().isEmpty)
+
+        // The slots are free again.
+        let third = try #require(contacts.begin(
+            4, at: CGPoint(x: 200, y: 125), geometry: geometry
+        ).first)
+        #expect(third.slot == first.slot)
+        #expect(contacts.end(
+            4, at: CGPoint(x: 200, y: 125), geometry: geometry
+        ).map(\.event) == [
+            GuestTouchEvent(x: 120, y: 400, pressed: true),
+            GuestTouchEvent(x: 120, y: 400, pressed: false),
+        ])
+    }
+
     @Test
     @MainActor
     func theApplicationHasOneSceneBecauseItRunsOneGuest() throws {

@@ -44,7 +44,7 @@ struct GuestDisplayView: UIViewControllerRepresentable {
         _ controller: GuestDisplayViewController,
         coordinator: ()
     ) {
-        controller.metalView.releaseTrackedTouches()
+        controller.metalView.cancelTrackedTouches()
         controller.metalView.finishHostResize()
         controller.metalView.resignFirstResponder()
     }
@@ -196,7 +196,7 @@ final class GuestMetalView: MTKView, UIKeyInput {
 
     @objc(umlSetGuestDisplayWidth:height:)
     func setGuestDisplay(width: UInt32, height: UInt32) {
-        releaseTrackedTouches()
+        cancelTrackedTouches()
         guard width > 0, height > 0 else {
             guestContentSize = nil
             return
@@ -297,6 +297,10 @@ final class GuestMetalView: MTKView, UIKeyInput {
 
     private func sendTouchEvents(_ events: [GuestTouchContactEvent]) {
         for contact in events {
+            if contact.event.cancelled {
+                kernarium_runtime_loader_cancel_touch(contact.slot)
+                continue
+            }
             kernarium_runtime_loader_send_touch(
                 contact.slot,
                 contact.event.x,
@@ -306,13 +310,13 @@ final class GuestMetalView: MTKView, UIKeyInput {
         }
     }
 
-    func releaseTrackedTouches() {
-        sendTouchEvents(touchContacts.releaseAll())
+    func cancelTrackedTouches() {
+        sendTouchEvents(touchContacts.cancelAll())
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window == nil { releaseTrackedTouches() }
+        if window == nil { cancelTrackedTouches() }
     }
 
     private func sendKey(code: UInt16, pressed: Bool) {

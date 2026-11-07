@@ -496,7 +496,26 @@ A behaviour that one program checks inside the guest runs through
 `python3`, and a `.cpp` probe is built in the guest with the registration's
 `--cxxflags`. The probe's exit status is its failure count, and the test also
 fails on a console line that the registration's `--console-failure` pattern
-matches.
+matches. `--probe-input` runs a host executable once before the guest boots and
+installs its output beside the probe as `probe-input`, for a probe whose data a
+host model produces.
+
+`guest-touch-cancel` checks what the host's touchscreen model sends when it
+cancels a contact. The test-support executable `uml-touchscreen-reports`
+prints the Virtio touchscreen's capabilities, read from the device's own
+configuration, and the reports `Touchscreen` sends for a few contact
+sequences; the probe (`tests/integration/input/touch_cancel_probe.py`) builds a
+uinput device with those capabilities in the integration image, replays the
+reports and reads them back from evdev and through the image's libinput. A
+cancel must reach evdev as written (the palm in one report with the tracking ID
+kept, the lift in the next) and libinput as a cancelled touch with no touch up,
+also for one finger of two while the other moves on and lifts, and a slot that
+held a palm must take a finger again. uinput and the virtio-input driver both
+register through `input_mt_init_slots`, so the guest's input core treats the
+two alike; the macOS emulator attaches no Virtio touchscreen. Android's input
+reader is checked by the opt-in Andarium tests below. X11 has no per-touch
+cancel, so an X11 client under Xwayland is not covered
+([Kernarium](../Kernarium/README.md#devices-and-display)).
 
 A guest that ends behind a closed GPU request gate must still be able to stop:
 `gpu-service-fd-ownership` completes the requests of a held gate with their
@@ -835,6 +854,11 @@ opens the system's Settings or any other app, because the scene applies an
 orientation lock only while the application is active. Only a device shows how
 the system answers the edge swipes `SessionOrientationHostingTests` defers
 ([Edge gestures](#edge-gestures-device-only)).
+The touch path's cancel is covered where the contact is made: `MultitouchTests`
+(cancellation and cancelling every contact), `KernariumTests` in the iOS Simulator
+(a cancel ends the contact where it was; ending or clipping one stays a release)
+and the host `virtio-input-protocol` test (the tool type, and a cancel's two
+reports for any slot).
 
 The opt-in suites each need a switch, and the test's header says what it checks:
 
@@ -887,6 +911,10 @@ starts the debugging prompt again and run only with
 `theGuestIsGivenTheHostsTimeZone()` also waits for the guest to apply the zone
 with `TEST_RUNNER_ANDARIUM_TIME_ZONE_APPLIED=1`, for an image with the time zone
 script.
+`AdbOverVsockTests` also cancels runtime contacts: `getevent -p` shows the tool
+type axis, a raw read of the touchscreen node shows the palm report and then the
+tracking ID ending, InputReader logs the palm cancel, and `dumpsys input` shows
+no pointer (with two contacts the other stays down).
 
 `AdbOverVsockTests/androidReportsExactStorageSizes()` is a standalone storage
 run with `TEST_RUNNER_ANDARIUM_STORAGE_TESTS=1` in addition to the ADB and normal

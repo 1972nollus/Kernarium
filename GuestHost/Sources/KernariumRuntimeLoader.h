@@ -138,6 +138,9 @@ void kernarium_runtime_loader_send_touch(
     uint32_t x,
     uint32_t y,
     int pressed);
+/* Withdraws the contact in `slot` instead of releasing it, as
+ * kernarium_runtime_cancel_touch_function does. */
+void kernarium_runtime_loader_cancel_touch(uint32_t slot);
 void kernarium_runtime_loader_send_key(uint16_t code, int pressed);
 void kernarium_runtime_loader_set_console_output_handler(
     KernariumConsoleOutputHandler _Nullable handler);

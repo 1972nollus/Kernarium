@@ -271,6 +271,7 @@ protocol::InputConfig VirtioInputDevice::selectedConfiguration() const
                 setBit(config.value.bitmap, protocol::absoluteMtSlot);
                 setBit(config.value.bitmap, protocol::absoluteMtPositionX);
                 setBit(config.value.bitmap, protocol::absoluteMtPositionY);
+                setBit(config.value.bitmap, protocol::absoluteMtToolType);
                 setBit(config.value.bitmap, protocol::absoluteMtTrackingId);
             }
         } else if (subselect_ == protocol::eventKey) {
@@ -294,9 +295,12 @@ protocol::InputConfig VirtioInputDevice::selectedConfiguration() const
              subselect_ == protocol::absoluteMtPositionX ||
              subselect_ == protocol::absoluteMtPositionY ||
              subselect_ == protocol::absoluteMtSlot ||
+             subselect_ == protocol::absoluteMtToolType ||
              subselect_ == protocol::absoluteMtTrackingId)) {
             const auto maximum = subselect_ == protocol::absoluteMtSlot ?
                 protocol::touchscreenContactCount - 1 :
+                subselect_ == protocol::absoluteMtToolType ?
+                    static_cast<std::uint32_t>(protocol::toolTypePalm) :
                 subselect_ == protocol::absoluteMtTrackingId ?
                     static_cast<std::uint32_t>(
                         protocol::touchscreenTrackingIdMaximum) :

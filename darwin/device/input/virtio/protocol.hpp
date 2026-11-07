@@ -31,7 +31,13 @@ inline constexpr std::uint16_t absoluteY = 0x01;
 inline constexpr std::uint16_t absoluteMtSlot = 0x2f;
 inline constexpr std::uint16_t absoluteMtPositionX = 0x35;
 inline constexpr std::uint16_t absoluteMtPositionY = 0x36;
+inline constexpr std::uint16_t absoluteMtToolType = 0x37;
 inline constexpr std::uint16_t absoluteMtTrackingId = 0x39;
+/* ABS_MT_TOOL_TYPE values (MT_TOOL_FINGER, MT_TOOL_PEN, MT_TOOL_PALM). The
+ * touchscreen sends a finger and, for a cancelled contact, a palm, which the
+ * guest's input stack reads as a contact to disregard rather than lift. */
+inline constexpr std::int32_t toolTypeFinger = 0;
+inline constexpr std::int32_t toolTypePalm = 2;
 inline constexpr std::uint32_t touchscreenContactCount = 10;
 inline constexpr std::int32_t touchscreenTrackingIdMaximum = 65535;
 inline constexpr std::uint16_t buttonTouch = 0x14a;

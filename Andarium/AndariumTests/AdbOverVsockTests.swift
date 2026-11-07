@@ -308,6 +308,29 @@ struct AdbOverVsockTests {
         Issue.record("Android did not finish its clean shutdown")
     }
 
+    /// Waits until Android's input reader holds `count` contacts at the
+    /// touchscreen, at the positions given, as `dumpsys input` reads them.
+    private func awaitPointers(
+        _ operations: AdbGuestOperations, _ count: Int, positions: [String]
+    ) async throws {
+        let deadline = ContinuousClock.now + .seconds(15)
+        var state = ""
+        while ContinuousClock.now < deadline {
+            let dump = try await operations.shell("dumpsys input", limit: .seconds(15)).text
+            if let name = dump.range(of: "Kernarium Touchscreen", options: .backwards) {
+                state = String(dump[name.upperBound...])
+                    .components(separatedBy: "\n  Device ")[0]
+                if state.contains("Last Cooked Touch: pointerCount=\(count)") &&
+                    positions.allSatisfy({ state.contains($0) }) {
+                    return
+                }
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        Issue.record("Android did not read \(count) contacts: \(state)")
+        throw CancellationError()
+    }
+
     @Test(.timeLimit(.minutes(20)))
     func twoRuntimeContactsReachAndroidInputReader() async throws {
         guard Self.enabled else { return }
@@ -318,35 +341,198 @@ struct AdbOverVsockTests {
             kernarium_runtime_loader_send_touch(1, 26000, 16000, 0)
         }
 
-        func awaitPointers(_ count: Int, positions: [String]) async throws {
-            let deadline = ContinuousClock.now + .seconds(15)
-            var state = ""
-            while ContinuousClock.now < deadline {
-                let dump = try await operations.shell("dumpsys input", limit: .seconds(15)).text
-                if let name = dump.range(of: "Kernarium Touchscreen", options: .backwards) {
-                    state = String(dump[name.upperBound...])
-                        .components(separatedBy: "\n  Device ")[0]
-                    if state.contains("Last Cooked Touch: pointerCount=\(count)") &&
-                        positions.allSatisfy({ state.contains($0) }) {
-                        return
-                    }
-                }
-                try await Task.sleep(for: .milliseconds(100))
-            }
-            Issue.record("Android did not read \(count) contacts: \(state)")
-            throw CancellationError()
-        }
-
         kernarium_runtime_loader_send_touch(0, 10000, 16000, 1)
         kernarium_runtime_loader_send_touch(1, 22000, 16000, 1)
-        try await awaitPointers(2, positions: ["x=10000, y=16000", "x=22000, y=16000"])
+        try await awaitPointers(operations, 2, positions: ["x=10000, y=16000", "x=22000, y=16000"])
         kernarium_runtime_loader_send_touch(0, 6000, 16000, 1)
         kernarium_runtime_loader_send_touch(1, 26000, 16000, 1)
-        try await awaitPointers(2, positions: ["x=6000, y=16000", "x=26000, y=16000"])
+        try await awaitPointers(operations, 2, positions: ["x=6000, y=16000", "x=26000, y=16000"])
         kernarium_runtime_loader_send_touch(0, 6000, 16000, 0)
-        try await awaitPointers(1, positions: ["x=26000, y=16000"])
+        try await awaitPointers(operations, 1, positions: ["x=26000, y=16000"])
         kernarium_runtime_loader_send_touch(1, 26000, 16000, 0)
-        try await awaitPointers(0, positions: [])
+        try await awaitPointers(operations, 0, positions: [])
+    }
+
+    /// What the guest's touchscreen node delivered, from a raw read of it.
+    /// `getevent -l` buffers its output when it writes to a file or a pipe
+    /// and loses it when stopped, so the node is read as a stream of
+    /// `struct input_event` records instead: what `getevent` prints, as
+    /// numbers.
+    private struct EvdevEvent: Equatable {
+        static let synchronize = EvdevEvent(type: 0, code: 0, value: 0)
+        let type: UInt16
+        let code: UInt16
+        let value: Int32
+
+        static func decode(_ data: Data) -> [EvdevEvent] {
+            // 64-bit struct timeval, then type, code and value.
+            let size = 24
+            return stride(from: 0, to: data.count - size + 1, by: size).map { offset in
+                let record = data.subdata(in: offset..<offset + size)
+                return EvdevEvent(
+                    type: record.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 16, as: UInt16.self) },
+                    code: record.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 18, as: UInt16.self) },
+                    value: record.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 20, as: Int32.self) })
+            }
+        }
+
+        /// The events of each report, which ends at a SYN_REPORT.
+        static func reports(_ events: [EvdevEvent]) -> [[EvdevEvent]] {
+            var reports: [[EvdevEvent]] = []
+            var current: [EvdevEvent] = []
+            for event in events {
+                if event == synchronize {
+                    reports.append(current)
+                    current = []
+                } else {
+                    current.append(event)
+                }
+            }
+            return reports
+        }
+
+        static let touchButton = EvdevEvent(type: 1, code: 0x14a, value: 0)
+        static func absolute(_ code: UInt16, _ value: Int32) -> EvdevEvent {
+            EvdevEvent(type: 3, code: code, value: value)
+        }
+        static let toolType: UInt16 = 0x37
+        static let trackingId: UInt16 = 0x39
+        static let palm: Int32 = 2
+
+        func isAbsolute(_ code: UInt16) -> Bool { type == 3 && self.code == code }
+    }
+
+    /// The touchscreen's event node as `getevent -p` lists it, with the
+    /// listing of what it advertises.
+    private func touchscreenNode(_ operations: AdbGuestOperations) async throws -> (node: String, listing: String) {
+        let text = try await operations.shell("getevent -p -l", limit: .seconds(15)).text
+        let device = try #require(
+            text.components(separatedBy: "add device ").dropFirst()
+                .first { $0.contains("\"Kernarium Touchscreen\"") },
+            "getevent lists no Kernarium Touchscreen: \(text)")
+        let line = try #require(device.split(separator: "\n").first)
+        let path = try #require(line.split(separator: ":").last).trimmingCharacters(in: .whitespaces)
+        try #require(path.hasPrefix("/dev/input/event"), "\(line)")
+        return (path, device)
+    }
+
+    private static let evdevCapture = "/data/local/tmp/andarium-touch-cancel.evdev"
+
+    /// Starts reading the node into a file in the guest, bounded to two
+    /// minutes, and returns the reader's process.
+    private func startReadingTouchscreen(_ operations: AdbGuestOperations, node: String) async throws -> Int {
+        let started = try await operations.shell(
+            "rm -f \(Self.evdevCapture); nohup timeout 120 cat \(node) > \(Self.evdevCapture) 2>/dev/null </dev/null & echo $!",
+            limit: .seconds(15)).text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return try #require(Int(started), "no reader process: \(started)")
+    }
+
+    private func stopReadingTouchscreen(_ operations: AdbGuestOperations, process: Int) async throws -> [EvdevEvent] {
+        let data = try await operations.shell("kill \(process); cat \(Self.evdevCapture); rm -f \(Self.evdevCapture)",
+            limit: .seconds(15)).stdout
+        return EvdevEvent.decode(data)
+    }
+
+    /// The lines InputReader logged since the last `logcat -c`, once one says
+    /// a contact was cancelled for a palm (up to 15 seconds).
+    private func inputReaderLog(_ operations: AdbGuestOperations) async throws -> String {
+        let deadline = ContinuousClock.now + .seconds(15)
+        var log = ""
+        while ContinuousClock.now < deadline {
+            log = try await operations.shell("logcat -d -s InputReader", limit: .seconds(15)).text
+            if log.contains("for the palm event was detected") { break }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        return log
+    }
+
+    /// A contact the runtime cancels reaches Android's input reader as a
+    /// palm and then a lift: the guest's node reports MT_TOOL_PALM with the
+    /// tracking ID kept and then the tracking ID ending (-1, `ffffffff` in
+    /// `getevent`), InputReader logs the palm cancel, and the contact is gone
+    /// from `dumpsys input` with no further touch.
+    @Test(.timeLimit(.minutes(20)))
+    func aCancelledContactReachesAndroidAsAPalmThenALift() async throws {
+        guard Self.enabled else { return }
+        let operations = try await readyOperations()
+        _ = try await operations.shell("input keyevent KEYCODE_WAKEUP")
+        defer {
+            kernarium_runtime_loader_send_touch(0, 10000, 16000, 0)
+            kernarium_runtime_loader_send_touch(1, 22000, 16000, 0)
+        }
+        let touchscreen = try await touchscreenNode(operations)
+        // Android sees the tool type axis the host advertises: finger through palm.
+        #expect(touchscreen.listing.contains("ABS_MT_TOOL_TYPE"), "\(touchscreen.listing)")
+        let tool = try #require(touchscreen.listing.components(separatedBy: "\n")
+            .first { $0.contains("ABS_MT_TOOL_TYPE") })
+        #expect(tool.contains("min 0, max 2"), "\(tool)")
+
+        _ = try await operations.shell("logcat -c")
+        let reader = try await startReadingTouchscreen(operations, node: touchscreen.node)
+        try await Task.sleep(for: .seconds(1))
+        kernarium_runtime_loader_send_touch(0, 10000, 16000, 1)
+        try await awaitPointers(operations, 1, positions: ["x=10000, y=16000"])
+        kernarium_runtime_loader_cancel_touch(0)
+        try await awaitPointers(operations, 0, positions: [])
+        let events = try await stopReadingTouchscreen(operations, process: reader)
+        let reports = EvdevEvent.reports(events)
+        print("ANDROID_TOUCH_CANCEL: reports \(reports)")
+
+        // The report that makes the contact a palm keeps its tracking ID; the
+        // next one ends it and lifts BTN_TOUCH.
+        let palm = try #require(reports.firstIndex { $0.contains(.absolute(EvdevEvent.toolType, EvdevEvent.palm)) },
+            "no palm report: \(reports)")
+        #expect(!reports[palm].contains { $0.isAbsolute(EvdevEvent.trackingId) }, "\(reports[palm])")
+        #expect(reports.index(after: palm) < reports.count, "no report follows the palm: \(reports)")
+        if reports.index(after: palm) < reports.count {
+            let lift = reports[reports.index(after: palm)]
+            #expect(lift.contains(.absolute(EvdevEvent.trackingId, -1)), "\(lift)")
+            #expect(lift.contains(.touchButton), "\(lift)")
+        }
+        // The contact began before the palm, and nothing started another.
+        #expect(reports[..<palm].contains {
+            $0.contains { $0.isAbsolute(EvdevEvent.trackingId) && $0.value >= 0 }
+        })
+        #expect(!reports[reports.index(after: palm)...].contains {
+            $0.contains { $0.isAbsolute(EvdevEvent.trackingId) && $0.value >= 0 }
+        })
+
+        let log = try await inputReaderLog(operations)
+        print("ANDROID_TOUCH_CANCEL: InputReader \(log)")
+        #expect(log.contains("Canceling pointer 0 for the palm event was detected"), "\(log)")
+    }
+
+    /// One finger of two cancelled leaves the other one down: Android's
+    /// reader keeps one pointer, at the position it had.
+    @Test(.timeLimit(.minutes(20)))
+    func cancellingOneOfTwoContactsLeavesTheOtherDown() async throws {
+        guard Self.enabled else { return }
+        let operations = try await readyOperations()
+        _ = try await operations.shell("input keyevent KEYCODE_WAKEUP")
+        defer {
+            kernarium_runtime_loader_send_touch(0, 10000, 16000, 0)
+            kernarium_runtime_loader_send_touch(1, 22000, 16000, 0)
+        }
+        _ = try await operations.shell("logcat -c")
+        kernarium_runtime_loader_send_touch(0, 10000, 16000, 1)
+        kernarium_runtime_loader_send_touch(1, 22000, 16000, 1)
+        try await awaitPointers(operations, 2, positions: ["x=10000, y=16000", "x=22000, y=16000"])
+        kernarium_runtime_loader_cancel_touch(0)
+        try await awaitPointers(operations, 1, positions: ["x=22000, y=16000"])
+        let log = try await inputReaderLog(operations)
+        #expect(log.contains("Canceling pointer 0 for the palm event was detected"), "\(log)")
+        // The finger that was not cancelled moves and lifts as an ordinary one.
+        kernarium_runtime_loader_send_touch(1, 24000, 16000, 1)
+        try await awaitPointers(operations, 1, positions: ["x=24000, y=16000"])
+        kernarium_runtime_loader_send_touch(1, 24000, 16000, 0)
+        try await awaitPointers(operations, 0, positions: [])
+        // A cancel of a contact that is not down changes nothing, and the
+        // cancelled slot takes a finger again.
+        kernarium_runtime_loader_cancel_touch(0)
+        kernarium_runtime_loader_send_touch(0, 10000, 16000, 1)
+        try await awaitPointers(operations, 1, positions: ["x=10000, y=16000"])
+        kernarium_runtime_loader_send_touch(0, 10000, 16000, 0)
+        try await awaitPointers(operations, 0, positions: [])
     }
 
     @Test(.timeLimit(.minutes(30))) func aBugReportIsAZipOfMoreThanAMegabyte() async throws {

@@ -631,6 +631,27 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# Test support only: the Virtio touchscreen's capabilities and the reports its
+# Touchscreen model sends for a few contact sequences, as JSON.
+add_executable(uml-touchscreen-reports input/touchscreen_reports.cpp)
+target_link_libraries(uml-touchscreen-reports PRIVATE UML::VirtioInput)
+add_dependencies(integration-test-binaries uml-touchscreen-reports)
+
+# A contact the host cancels is a palm and then a lift, which the guest's input
+# core passes on as written and libinput turns into a cancelled touch with no
+# touch up, for one finger of two as well, and a slot that held a palm takes a
+# finger again. The guest builds an input device with the touchscreen's own
+# capabilities and replays the reports of the host's model.
+uml_add_guest_integration_test(
+    NAME guest-touch-cancel
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/input/touch_cancel_probe.py
+        --probe-input $<TARGET_FILE:uml-touchscreen-reports>
+        --ncpus 2 --probe-timeout 120
+    LABELS guest;input;smoke
+    TIMEOUT 300
+    CPUS 2)
+
 # The kernel describes the virtual machine in SMBIOS tables that userspace
 # reads from sysfs, and provides no /dev/mem.
 uml_add_guest_integration_test(

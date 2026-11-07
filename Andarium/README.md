@@ -402,7 +402,13 @@ power menu), volume 115 and 114, Back 158 and Home 172.
 
 The guest display supports up to ten simultaneous fingers, including pinch
 and other gestures. The shared [GuestHost input](../GuestHost/README.md) maps
-each finger independently onto the guest's visible display.
+each finger independently onto the guest's visible display. A touch the system
+takes over, such as one that begins a system gesture, reaches Android as a
+cancelled touch (`ACTION_CANCEL`, or a cancelled pointer-up while other
+fingers stay down), not as the user lifting a finger, so a tap does not follow
+it; a display change cancels the touches that are down the same way. Android's
+Recovery ignores the cancel and still selects the item under a cancelled still
+tap ([`android/lineage-24/README.md`](../android/lineage-24/README.md)).
 
 In a normal run whose scene fills the screen, the scene's root defers the
 system's edge gestures on all four edges, on an iPhone and an iPad alike

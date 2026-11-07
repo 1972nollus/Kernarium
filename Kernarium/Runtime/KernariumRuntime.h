@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 23U
+#define KERNARIUM_RUNTIME_API_VERSION 24U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -30,7 +30,17 @@ enum {
  * is and however it is sized. The host maps its view onto that range, so the
  * range never has to follow a mode change. Each simultaneous host contact
  * keeps a slot in 0..<TOUCH_CONTACTS until it ends. A release affects only
- * that slot; invalid slots and out-of-range coordinates are ignored. */
+ * that slot; invalid slots and out-of-range coordinates are ignored.
+ *
+ * A contact the host did not end itself, such as a touch the system takes
+ * over, ends with cancel_touch instead of a release. The guest sees the
+ * contact turn into a palm and then lift, which Android reports to
+ * applications as ACTION_CANCEL (or a cancelled pointer-up while other
+ * fingers stay down) and Linux readers as a cancelled touch, so no tap or
+ * click follows. The contact stays at the last position it reported, a
+ * slot that holds no contact is ignored, and the slot is free for a new
+ * contact at once. Android's recovery menu still treats such a still tap as
+ * a selection. */
 enum {
     KERNARIUM_RUNTIME_TOUCH_MAXIMUM = 32767,
     KERNARIUM_RUNTIME_TOUCH_CONTACTS = 10,
@@ -171,6 +181,9 @@ typedef void (*kernarium_runtime_send_touch_function)(
     uint32_t x,
     uint32_t y,
     int pressed);
+/* Withdraws the contact in `slot`, as the comment above the touch constants
+ * describes: a cancel in place of the release send_touch would give it. */
+typedef void (*kernarium_runtime_cancel_touch_function)(uint32_t slot);
 typedef void (*kernarium_runtime_send_key_function)(
     uint16_t code,
     int pressed);
@@ -410,6 +423,7 @@ typedef struct kernarium_runtime_api {
     kernarium_runtime_connect_vsock_function connect_vsock;
     kernarium_runtime_read_statistics_function read_statistics;
     kernarium_runtime_read_guest_memory_function read_guest_memory;
+    kernarium_runtime_cancel_touch_function cancel_touch;
 } kernarium_runtime_api;
 
 #if defined(__GNUC__)
@@ -419,7 +433,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v22(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v24(void);
 
 /* An automation-only extension, outside the versioned table: only a runtime
  * built for automation exports this symbol, and the application looks it up

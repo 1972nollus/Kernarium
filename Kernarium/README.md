@@ -372,8 +372,26 @@ mode multiplies both geometry and density by `nativeScale`. The GPU's EDID and
 Android's logical density on the kernel command line use that launch geometry.
 The touchscreen's absolute range is fixed at 0 through 32767 on both axes, as
 the VNC touchscreen's is, and Kernarium maps the guest's visible rectangle in
-the view onto it, so touch resolution does not depend on the launch size. The
-Metal and Mesa shader cache policies are in
+the view onto it, so touch resolution does not depend on the launch size.
+
+A contact the host takes away, rather than ends, is cancelled, not released:
+UIKit's cancelled touches (the system took the touch over for a gesture), a
+display mode change and the view leaving its window all call `cancel_touch`
+(runtime API 24). The touchscreen advertises `ABS_MT_TOOL_TYPE` (0 through
+`MT_TOOL_PALM`) and sets `MT_TOOL_FINGER` before every new tracking ID; a
+cancel is a report that turns the slot into a palm while it keeps its
+tracking ID, then the ordinary lift in a report of its own. Android's input
+reader then reports `ACTION_CANCEL` (a cancelled pointer-up while other
+fingers stay down) and libinput reports a cancelled touch with no touch up,
+so no tap or click follows; `guest-touch-cancel` checks the second on the
+integration image ([`docs/testing.md`](../docs/testing.md)).
+A contact that left the display lifts as before. Known limits: X11 has no
+per-touch cancel, so an X11 application under Xwayland can still read a
+cancelled touch as a click, and Android's Recovery menu ignores the tool
+type, so a cancelled still tap there still selects the item under it
+([`android/lineage-24/README.md`](../android/lineage-24/README.md)).
+
+The Metal and Mesa shader cache policies are in
 [`graphics.md`](../docs/graphics.md#metal-shader-cache).
 
 The guest view lies within the content the system leaves clear of the window

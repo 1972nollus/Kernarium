@@ -64,6 +64,13 @@ TouchscreenReport Touchscreen::touch(
     append(protocol::eventAbsolute, protocol::absoluteMtSlot,
            static_cast<std::int32_t>(slot));
     if (changed) {
+        if (pressed) {
+            // The tool type comes first: a slot that last held a palm still
+            // has that tool type, and a reader that sees the tracking ID
+            // before it treats the new contact as the palm.
+            append(protocol::eventAbsolute, protocol::absoluteMtToolType,
+                   protocol::toolTypeFinger);
+        }
         append(protocol::eventAbsolute, protocol::absoluteMtTrackingId,
                contact.trackingId);
     }
@@ -79,6 +86,38 @@ TouchscreenReport Touchscreen::touch(
     append(protocol::eventAbsolute, protocol::absoluteY,
            static_cast<std::int32_t>(primary.y));
     append(protocol::eventSynchronize, protocol::synchronizeReport, 0);
+    return report;
+}
+
+TouchscreenReport Touchscreen::cancel(std::uint32_t slot) noexcept
+{
+    TouchscreenReport report;
+    if (slot >= contacts_.size() || contacts_[slot].trackingId < 0)
+        return report;
+    const auto contact = contacts_[slot];
+    // The slot keeps its tracking ID and BTN_TOUCH stays down: Android's
+    // input reader skips a slot that is not in use, and takes a device whose
+    // BTN_TOUCH is up for hovering.
+    const auto& primary = contacts_[primary_];
+    const auto append = [&](std::uint16_t type, std::uint16_t code,
+                            std::int32_t value) {
+        report.events[report.count++] = {type, code, value};
+    };
+    append(protocol::eventKey, protocol::buttonTouch, 1);
+    append(protocol::eventAbsolute, protocol::absoluteMtSlot,
+           static_cast<std::int32_t>(slot));
+    append(protocol::eventAbsolute, protocol::absoluteMtToolType,
+           protocol::toolTypePalm);
+    append(protocol::eventAbsolute, protocol::absoluteX,
+           static_cast<std::int32_t>(primary.x));
+    append(protocol::eventAbsolute, protocol::absoluteY,
+           static_cast<std::int32_t>(primary.y));
+    append(protocol::eventSynchronize, protocol::synchronizeReport, 0);
+
+    // The ordinary lift, where the contact was, in a report of its own.
+    const auto lift = touch(slot, contact.x, contact.y, false);
+    for (const auto& event : lift.span())
+        report.events[report.count++] = event;
     return report;
 }
 
