@@ -210,7 +210,7 @@ outcomes are known and not defects of the image:
 - Tests that reboot the device cannot pass where reboots are disabled, as they
   must be when the emulator exits on reboot.
 - `JobSchedulingTest#testAnr_*` and `SurfaceSyncGroupTests#testProcessCrash`
-  assume a smaller `hw_timeout_multiplier` than the command line's 5.
+  assume a smaller `hw_timeout_multiplier` than a multiplier of 5.
 - dEQP's `deqp:testercore` can abort at exit on a destroyed mutex (an upstream
   exit race with no effect on any result), and the EGL `get_frame_timestamps`
   cases need a quiet host.
