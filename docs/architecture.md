@@ -555,11 +555,15 @@ returns success only once another run can start. An application that can be
 backgrounded holds the guest's GPU requests (`set_gpu_hold`) before it quiesces
 and releases them before it resumes.
 
-Once the guest confirms system suspension and its host files are flushed,
-quiescing holds every thread that can run the guest and releases the kernel's
-whole-file disk locks, because iOS terminates a process that retains a file lock
-when suspended. The hold keeps the unlocked disks unwritten; a hold that cannot
-be taken leaves the locks in place. Resume and stop reacquire every lock before
+The kernel's whole-file disk locks pass through the host's guest-file registry
+(`platform/guest_files`). On iOS, iPadOS, the Simulator and in Designed for
+iPad the registry keeps them itself and locks no host file, because iOS
+terminates a process that holds a file lock when it suspends it, and a guest
+that refuses or outlasts its suspend is still running then; macOS locks the
+files. Once the guest confirms system suspension and its host files are
+flushed, quiescing holds every thread that can run the guest and releases the
+disk locks. The hold keeps the unlocked disks unwritten; a hold that cannot be
+taken leaves the locks in place. Resume and stop reacquire every lock before
 restoring guest RAM, releasing a thread or waking the guest, and verify the
 disk's identity, size and times; contention, a replaced descriptor or changed
 storage ends the process without resuming the guest.

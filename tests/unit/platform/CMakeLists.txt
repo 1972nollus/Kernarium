@@ -5,6 +5,15 @@ target_link_libraries(uml_guest_file_sync_tests PRIVATE UML::GuestFiles)
 uml_add_unit_test(NAME platform-guest-file-sync
     COMMAND uml_guest_file_sync_tests)
 
+# The iOS family's disk locks: the kernel's locks stay in the registry and no
+# host file is locked at any step of a guest's life.
+add_executable(uml_guest_file_process_lock_tests
+    guest_file_process_lock_tests.cpp)
+target_link_libraries(uml_guest_file_process_lock_tests PRIVATE
+    uml_guest_files_process_locks)
+uml_add_unit_test(NAME platform-guest-file-process-locks
+    COMMAND uml_guest_file_process_lock_tests)
+
 add_executable(uml_video_decoder_tests video_decoder_tests.cpp)
 target_link_libraries(uml_video_decoder_tests PRIVATE UML::VideoDecoder)
 uml_add_unit_test(NAME platform-video-decoder
