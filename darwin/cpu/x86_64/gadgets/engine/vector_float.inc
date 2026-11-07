@@ -521,7 +521,7 @@ Lx86_vector_fp_estimate_kept\@:
  * so that the next estimate need not read FPSR. The special inputs' path
  * keeps FPSR in any case. Uses w14, MXCSR from here. */
 .macro vector_fp_estimate_sticky unsticky
-	ldr w14, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldr w14, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	tbz w14, #5, \unsticky
 .endm
 
@@ -582,7 +582,7 @@ Lx86_vector_fp_estimate_unsticky\@:
 	mrs x15, fpsr
 	tbz x15, #4, Lx86_vector_fp_estimate_guarded\@
 	orr w14, w14, #0x20
-	str w14, [_cpu, #UML_X86_64_CPU_MXCSR]
+	str w14, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	b Lx86_vector_fp_estimate_plain\@
 Lx86_vector_fp_estimate_guarded\@:
 	vector_fp_estimate_regular \operation, \width, \scalar
@@ -664,9 +664,9 @@ Lx86_vector_fp_estimate_special\@:
 	.else
 	/* `exception_check_simd_exact` (w13) gates MXCSR.DAZ and FTZ and the
 	 * SIMD checks, and so FPSR's save; w12 is MXCSR only while it is set. */
-	ldrb w13, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	ldrb w13, [_vcpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 	tbz w13, #2, Lx86_vector_fp_inputs_ready\@
-	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldr w12, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	vector_fp_saving \operation
 	.if Lx86_vector_fp_saving
 	simd_save_status_branch \save, 13
@@ -739,7 +739,7 @@ gadget vector_fp_\name\()_\element\()_\shape\()_rm
 	.endif
 	vector_memory_source Lx86_vector_fp_input_size\@, Lx86_vector_fp_cross_fault\@, scalar=\scalar, single=1
 	and x10, x26, #0xffff
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldr q0, [x10]
 	.if \width == 256
 	ldr q2, [x10, #16]

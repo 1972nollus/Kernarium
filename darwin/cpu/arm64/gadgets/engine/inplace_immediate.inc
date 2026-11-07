@@ -42,7 +42,7 @@ scalar_entry add_sub_immediate_inplace_\suffix\()_\reg, \forward, 1, Lipd\@, Lip
 	.if \forward & 1
 	mov x15, x0
 	.else
-	ldr x15, [_cpu, #(\reg * 8)]
+	ldr x15, [_vcpu, #(\reg * 8)]
 	.endif
 	lsr x11, x8, #16
 	.if \bits64
@@ -53,7 +53,7 @@ scalar_entry add_sub_immediate_inplace_\suffix\()_\reg, \forward, 1, Lipd\@, Lip
 	.if \flags
 	mrs x27, nzcv
 	.endif
-	str _scalar_x16, [_cpu, #(\reg * 8)]
+	str _scalar_x16, [_vcpu, #(\reg * 8)]
 	br x14
 .endm
 
@@ -85,14 +85,14 @@ add_sub_immediate_inplace_modes 1, 1, 1, x_sub_s
  * through the ordinary scalar contract. */
 .macro add_sub_immediate_inplace_row prefix
 	.irp reg, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30
-	.quad NAME(uml_arm64_gadget_add_sub_immediate_inplace_\prefix\()_\reg)
+	.quad CSYM(uml_arm64_gadget_add_sub_immediate_inplace_\prefix\()_\reg)
 	.endr
 .endm
 
 .pushsection __DATA_CONST,__gadget_inplace
 .p2align 3
-.globl NAME(uml_arm64_gadget_add_sub_immediate_inplace_table)
-NAME(uml_arm64_gadget_add_sub_immediate_inplace_table):
+.globl CSYM(uml_arm64_gadget_add_sub_immediate_inplace_table)
+CSYM(uml_arm64_gadget_add_sub_immediate_inplace_table):
 add_sub_immediate_inplace_row w_add_n
 add_sub_immediate_inplace_row w_add_s
 add_sub_immediate_inplace_row w_sub_n

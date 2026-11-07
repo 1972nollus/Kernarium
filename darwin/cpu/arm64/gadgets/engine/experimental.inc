@@ -11,7 +11,7 @@
  */
 gadget simd_destination_resident_load
 	ldr x8, [_stream], #8
-	ldr q24, [_cpu, x8]
+	ldr q24, [_vcpu, x8]
 	next_gadget
 
 .macro simd_destination_resident_mla name, arrangement
@@ -19,8 +19,8 @@ gadget simd_destination_resident_mla_\name
 	ldr x8, [_stream], #8
 	and x10, x8, #0xffff
 	lsr x11, x8, #16
-	ldr q0, [_cpu, x10]
-	ldr q1, [_cpu, x11]
+	ldr q0, [_vcpu, x10]
+	ldr q1, [_vcpu, x11]
 	mla v24.\arrangement, v0.\arrangement, v1.\arrangement
 	next_gadget
 .endm
@@ -36,5 +36,5 @@ simd_destination_resident_mla 4s, 4s
 
 gadget simd_destination_resident_flush
 	ldr x8, [_stream], #8
-	str q24, [_cpu, x8]
+	str q24, [_vcpu, x8]
 	next_gadget

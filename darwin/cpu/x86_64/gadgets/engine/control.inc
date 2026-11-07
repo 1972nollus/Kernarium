@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Condition evaluation and direct conditional/unconditional control flow. */
 .macro evaluate_condition condition
-	ldr x10, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x10, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	.ifc \condition,o
 	ubfx w11, w10, #11, #1
 	.endif
@@ -77,18 +77,18 @@
 .endm
 
 .macro evaluate_deferred_zero condition
-	ldrh w10, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	ldrh w10, [_vcpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
 	tbz w10, #6, Lx86_zero_from_deferred\@
-	ldrh w10, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
+	ldrh w10, [_vcpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
 	ubfx w11, w10, #6, #1
 	.ifc \condition,ne
 	eor w11, w11, #1
 	.endif
 	b Lx86_zero_ready\@
 Lx86_zero_from_deferred\@:
-	ldrb w10, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	ldrb w10, [_vcpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	cbz w10, Lx86_zero_from_flags\@
-	ldr x10, [_cpu, #UML_X86_64_CPU_DEFERRED_RESULT]
+	ldr x10, [_vcpu, #UML_X86_64_CPU_DEFERRED_RESULT]
 	cmp x10, #0
 	.ifc \condition,e
 	cset w11, eq
@@ -97,7 +97,7 @@ Lx86_zero_from_deferred\@:
 	.endif
 	b Lx86_zero_ready\@
 Lx86_zero_from_flags\@:
-	ldr x10, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x10, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	ubfx w11, w10, #6, #1
 	.ifc \condition,ne
 	eor w11, w11, #1
@@ -124,7 +124,7 @@ Lx86_zero_ready\@:
  * of that BlockLink, so the RIP is the BlockLink's own. */
 gadget link_exit
 	ldr x9, [_stream, #16]
-	str x9, [_cpu, #UML_X86_64_CPU_RIP]
+	str x9, [_vcpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 
@@ -133,7 +133,7 @@ gadget set_\condition
 	bl uml_x86_64_gadget_materialize_flags
 	ldr x8, [_stream], #8
 	evaluate_condition \condition
-	strb w11, [_cpu, x8]
+	strb w11, [_vcpu, x8]
 	retire_and_next
 .endm
 
@@ -159,11 +159,11 @@ gadget cmov_\condition\()_\width\()_rr
 	 * not take as well. Selecting the destination's own value and storing
 	 * it unconditionally is that write, and costs a load in place of a
 	 * branch. */
-	\load \load_register\()12, [_cpu, x13]
-	\load \load_register\()14, [_cpu, x9]
+	\load \load_register\()12, [_vcpu, x13]
+	\load \load_register\()14, [_vcpu, x9]
 	cmp w11, #0
 	csel x12, x12, x14, ne
-	\store \store_register\()12, [_cpu, x9]
+	\store \store_register\()12, [_vcpu, x9]
 	retire_and_next
 .endm
 
@@ -175,10 +175,10 @@ gadget cmov_\condition\()_\width\()_rm
 	bl uml_x86_64_gadget_materialize_flags
 	evaluate_condition \condition
 	and x8, x23, #0xffff
-	\load \host_register\()13, [_cpu, x8]
+	\load \host_register\()13, [_vcpu, x8]
 	cmp w11, #0
 	csel x24, x24, x13, ne
-	\store \store_register\()24, [_cpu, x8]
+	\store \store_register\()24, [_vcpu, x8]
 	retire_and_next
 .endm
 
@@ -188,7 +188,7 @@ gadget jump_\condition
 	ldp x12, x13, [_stream], #16
 	cmp w11, #0
 	csel x8, x12, x13, ne
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	str x8, [_vcpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
@@ -274,7 +274,7 @@ condition_family g
 gadget set_\condition\()_nzcv
 	ldr x8, [_stream], #8
 	cset w11, \host
-	strb w11, [_cpu, x8]
+	strb w11, [_vcpu, x8]
 	retire_and_next
 .endm
 
@@ -286,10 +286,10 @@ gadget cmov_\condition\()_\width\()_rr_nzcv
 	/* As the ordinary form: the destination is written either way, which a
 	 * 32-bit move must do to clear the upper half. Selecting on the
 	 * producer's own condition keeps NZCV as it found it. */
-	\load \load_register\()12, [_cpu, x13]
-	\load \load_register\()14, [_cpu, x9]
+	\load \load_register\()12, [_vcpu, x13]
+	\load \load_register\()14, [_vcpu, x9]
 	csel x12, x12, x14, \host
-	\store \store_register\()12, [_cpu, x9]
+	\store \store_register\()12, [_vcpu, x9]
 	retire_and_next
 .endm
 
@@ -297,7 +297,7 @@ gadget cmov_\condition\()_\width\()_rr_nzcv
 gadget jump_\condition\()_nzcv
 	ldp x12, x13, [_stream], #16
 	csel x8, x12, x13, \host
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	str x8, [_vcpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
@@ -372,7 +372,7 @@ condition_family_nzcv g, gt
 
 gadget jump
 	ldr x8, [_stream]
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	str x8, [_vcpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
@@ -392,9 +392,9 @@ gadget jump_linked
 gadget loop_\opcode\()_\width
 	ldp x26, x27, [_stream]
 	.if \width == 16
-	ldrh w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	ldrh w24, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	.else
-	ldr \host_register\()24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	ldr \host_register\()24, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	.endif
 	.ifc \opcode,e3
 	cbz \host_register\()24, Lx86_loop_taken\@
@@ -402,11 +402,11 @@ gadget loop_\opcode\()_\width
 	.else
 	sub \host_register\()24, \host_register\()24, #1
 	.if \width == 16
-	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	ldr x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	bfi x8, x24, #0, #16
-	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	str x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	.else
-	str x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	str x24, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	.endif
 	.ifc \opcode,e2
 	cbnz \host_register\()24, Lx86_loop_taken\@
@@ -414,7 +414,7 @@ gadget loop_\opcode\()_\width
 	.else
 	bl uml_x86_64_gadget_materialize_flags
 	cbz \host_register\()24, Lx86_loop_fallthrough\@
-	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x8, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	.ifc \opcode,e1
 	tbz x8, #6, Lx86_loop_fallthrough\@
 	.else
@@ -424,10 +424,10 @@ gadget loop_\opcode\()_\width
 	.endif
 	.endif
 Lx86_loop_taken\@:
-	str x26, [_cpu, #UML_X86_64_CPU_RIP]
+	str x26, [_vcpu, #UML_X86_64_CPU_RIP]
 	b Lx86_loop_leave\@
 Lx86_loop_fallthrough\@:
-	str x27, [_cpu, #UML_X86_64_CPU_RIP]
+	str x27, [_vcpu, #UML_X86_64_CPU_RIP]
 Lx86_loop_leave\@:
 	add _executed, _executed, #1
 	x86_memory_order_boundary

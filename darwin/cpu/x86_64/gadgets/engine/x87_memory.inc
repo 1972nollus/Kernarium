@@ -7,7 +7,7 @@ gadget x87_load_\name
 	x87_scalar_load \size, x9
 	sub sp, sp, #16
 	.if \has_cpu
-	mov x0, _cpu
+	mov x0, _vcpu
 		.if \size == 4
 	mov w1, w9
 		.else
@@ -58,7 +58,7 @@ gadget x87_load_bcd
 	mov x25, x7
 	sub sp, sp, #32
 	x87_bulk_load 10, sp, Lx86_x87_load_bcd_fault
-	mov x0, _cpu
+	mov x0, _vcpu
 	mov x1, sp
 	add x2, sp, #16
 	helper_call uml_x86_64_x87_from_bcd
@@ -81,7 +81,7 @@ gadget x87_store_\name
 	mov w13, #0
 	x87_load_stack w13, x9, w10
 	x87_store_value sp, x9, w10
-	mov x0, _cpu
+	mov x0, _vcpu
 	mov x1, sp
 	.ifnb \truncate
 	mov w2, #\truncate
@@ -134,7 +134,7 @@ gadget x87_store_bcd_pop
 	mov w13, #0
 	x87_load_stack w13, x9, w10
 	x87_store_value sp, x9, w10
-	mov x0, _cpu
+	mov x0, _vcpu
 	mov x1, sp
 	add x2, sp, #16
 	helper_call uml_x86_64_x87_to_bcd
@@ -151,22 +151,22 @@ Lx86_x87_store_bcd_fault:
 gadget x87_load_control
 	effective_address
 	x87_scalar_load 2, x9
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_CONTROL]
 	retire_unless_x87_unchecked w9
 
 gadget x87_store_control
 	effective_address
 	mov x25, x7
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_CONTROL]
 	x87_scalar_store 2, x9
 	finish_store 2
 
 gadget x87_store_status
 	effective_address
 	mov x25, x7
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	bic w9, w9, #0x3800
-	ldrb w10, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	ldrb w10, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	orr w9, w9, w10, lsl #11
 	x87_scalar_store 2, x9
 	finish_store 2
@@ -185,7 +185,7 @@ gadget x87_environment_restore_\name
 	x87_bulk_load Lx86_x87_environment_total\@, sp, \
 		Lx86_x87_environment_restore_fault\@
 	ldrh w9, [sp]
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_CONTROL]
 	.if \environment_size == 28
 	ldrh w9, [sp, #4]
 	ldrh w10, [sp, #8]
@@ -194,10 +194,10 @@ gadget x87_environment_restore_\name
 	ldrh w10, [sp, #4]
 	.endif
 	ubfx w11, w9, #11, #3
-	strb w11, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	strb w11, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	bic w9, w9, #0x3800
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
-	strh w10, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
+	strh w10, [_vcpu, #UML_X86_64_CPU_X87_TAG]
 	.if \full
 	/* The image holds ST(0) first: ST(i) is physical register TOP + i. */
 	add x9, sp, #\environment_size
@@ -207,11 +207,11 @@ Lx86_x87_environment_restore_loop\@:
 	and w15, w15, #7
 	ldr x13, [x9]
 	ldrh w14, [x9, #8]
-	add x10, _cpu, #UML_X86_64_CPU_X87
+	add x10, _vcpu, #UML_X86_64_CPU_X87
 	add x10, x10, x15, lsl #4
 	str x13, [x10]
 	strh w14, [x10, #8]
-	add x10, _cpu, #UML_X86_64_CPU_MMX
+	add x10, _vcpu, #UML_X86_64_CPU_MMX
 	str x13, [x10, x15, lsl #3]
 	add x9, x9, #10
 	add w12, w12, #1
@@ -219,7 +219,7 @@ Lx86_x87_environment_restore_loop\@:
 	b.lo Lx86_x87_environment_restore_loop\@
 	.endif
 	add sp, sp, #Lx86_x87_environment_stack\@
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_CONTROL]
 	retire_unless_x87_unchecked w9
 Lx86_x87_environment_restore_fault\@:
 	add sp, sp, #Lx86_x87_environment_stack\@
@@ -248,13 +248,13 @@ Lx86_x87_environment_clear_loop\@:
 	b.ne Lx86_x87_environment_clear_loop\@
 	/* The image tags each register that is not empty by what it
 	 * holds, which an MMX instruction's all-valid tags do not say. */
-	mov x0, _cpu
+	mov x0, _vcpu
 	helper_call uml_x86_64_x87_image_tags
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_CONTROL]
 	strh w9, [sp]
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	bic w9, w9, #0x3800
-	ldrb w10, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	ldrb w10, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	orr w9, w9, w10, lsl #11
 	.if \environment_size == 28
 	strh w9, [sp, #4]
@@ -270,7 +270,7 @@ Lx86_x87_environment_clear_loop\@:
 Lx86_x87_environment_save_loop\@:
 	add w14, w10, w11
 	and w14, w14, #7
-	add x15, _cpu, #UML_X86_64_CPU_X87
+	add x15, _vcpu, #UML_X86_64_CPU_X87
 	add x15, x15, x14, lsl #4
 	ldr x12, [x15]
 	ldrh w13, [x15, #8]
@@ -287,9 +287,9 @@ Lx86_x87_environment_save_loop\@:
 	.if \full
 	x87_initialize_state
 	.else
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_CONTROL]
 	orr w9, w9, #0x3f
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_CONTROL]
 	.endif
 	finish_store Lx86_x87_environment_total\@
 Lx86_x87_environment_save_fault\@:

@@ -100,7 +100,7 @@ Lx86_vector_map3_dot_inputs_ready\@:
  * overflow and cancel on the way to its result, so while the gadgets check
  * SIMD exceptions one always leaves there, to run checked. */
 .macro vector_map3_dot element, width
-	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	ldrb w14, [_vcpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 	tbz w14, #2, Lx86_vector_map3_dot_common\@
 	b Lx86_vector_map3_dot_exact\@
 Lx86_vector_map3_dot_common\@:
@@ -124,7 +124,7 @@ Lx86_vector_map3_dot_ready\@:
 	.pushsection GADGET_SECTION_COLD
 Lx86_vector_map3_dot_exact\@:
 	simd_leave_if_checking
-	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldr w12, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	vector_map3_dot_exact \element, 4, 0, 1
 	.if \width == 256
 	vector_map3_dot_exact \element, 5, 2, 3
@@ -190,7 +190,7 @@ gadget vector_map3_math_\symbol\()_\width\()_rm
 	vector_memory_source (\width / 8), Lx86_vector_map3_math_cross_fault\@
 	mov w13, w27
 	and x10, x26, #0xffff
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldr q0, [x10]
 	.if \width == 256
 	ldr q2, [x10, #16]

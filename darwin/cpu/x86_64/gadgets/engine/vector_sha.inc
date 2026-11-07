@@ -32,7 +32,7 @@
 	eor w9, w9, w6
 	vector_sha_sum1 10, 4
 	add w9, w9, w10
-	ldr w8, [_cpu, #(UML_X86_64_CPU_VECTORS + \constant_offset)]
+	ldr w8, [_vcpu, #(UML_X86_64_CPU_VECTORS + \constant_offset)]
 	add w9, w9, w8
 	add w9, w9, w7
 	/* majority(a,b,c) */
@@ -138,11 +138,11 @@ gadget vector_sha_\opcode\()_rr
 	mov x17, x8
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	ldr q0, [_cpu, x10]
-	ldr q1, [_cpu, x11]
+	ldr q0, [_vcpu, x10]
+	ldr q1, [_vcpu, x11]
 	vector_sha_body 0x\opcode
 	and x9, x17, #0xffff
-	str q4, [_cpu, x9]
+	str q4, [_vcpu, x9]
 	retire_and_next
 .endm
 
@@ -153,10 +153,10 @@ gadget vector_sha_\opcode\()_rm
 	mov x25, x7
 	vector_memory_source 16, Lx86_vector_sha_cross_fault\@, frame=16
 	and x10, x26, #0xffff
-	ldr q0, [_cpu, x10]
+	ldr q0, [_vcpu, x10]
 	vector_sha_body 0x\opcode
 	and x9, x23, #0xffff
-	str q4, [_cpu, x9]
+	str q4, [_vcpu, x9]
 	retire_and_next
 	vector_memory_source_fault Lx86_vector_sha_cross_fault\@, 16
 .endm

@@ -40,7 +40,7 @@
  * gadget that converted an earlier lane. */
 .macro vector_scalar_fp_to_int input, element, width, truncate, computed=0
 	/* MXCSR.DAZ makes a denormal input zero, which converts exactly. */
-	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldr w12, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_scalar_input_ready\@
 	simd_flush_denormals \input, \element
 Lx86_vector_scalar_input_ready\@:
@@ -141,7 +141,7 @@ Lx86_vector_scalar_integer_ready\@:
 
 .macro vector_scalar_write_xmm descriptor
 	and x9, x\descriptor, #0xffff
-	add x9, _cpu, x9
+	add x9, _vcpu, x9
 	str q4, [x9]
 	tbz x\descriptor, #63, Lx86_vector_scalar_write_xmm_done\@
 	movi v6.16b, #0
@@ -173,11 +173,11 @@ gadget vector_scalar_i\integer_width\()_f\element\()_rr
 	ldr x8, [_stream], #8
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	ldr q0, [_cpu, x10]
+	ldr q0, [_vcpu, x10]
 	.if \integer_width == 32
-	ldr w24, [_cpu, x11]
+	ldr w24, [_vcpu, x11]
 	.else
-	ldr x24, [_cpu, x11]
+	ldr x24, [_vcpu, x11]
 	.endif
 	vector_integer_to_scalar_body \integer_width, \element
 	vector_scalar_write_xmm 8
@@ -206,7 +206,7 @@ Lx86_vector_integer_to_scalar_cross\@:
 	.endif
 Lx86_vector_integer_to_scalar_loaded\@:
 	and x10, x26, #0xffff
-	ldr q0, [_cpu, x10]
+	ldr q0, [_vcpu, x10]
 	vector_integer_to_scalar_body \integer_width, \element
 	vector_scalar_write_xmm 23
 	retire_and_next
@@ -243,12 +243,12 @@ gadget vector_pi_f\element\()_rr
 	ldr x8, [_stream], #8
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	ldr q0, [_cpu, x10]
-	ldr d1, [_cpu, x11]
+	ldr q0, [_vcpu, x10]
+	ldr d1, [_vcpu, x11]
 	vector_pi_body \element
 	vector_scalar_write_xmm 8
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	strh wzr, [_vcpu, #UML_X86_64_CPU_X87_TAG]
+	strb wzr, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	retire_and_next
 .endm
 
@@ -266,7 +266,7 @@ Lx86_vector_pi_cross\@:
 	fmov d1, x0
 Lx86_vector_pi_loaded\@:
 	and x10, x26, #0xffff
-	ldr q0, [_cpu, x10]
+	ldr q0, [_vcpu, x10]
 	vector_pi_body \element
 	vector_scalar_write_xmm 23
 	retire_and_next
@@ -287,15 +287,15 @@ gadget vector_scalar_f\element\()_i\width\()_\truncate\()_rr
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	.if \element == 32
-	ldr s1, [_cpu, x10]
+	ldr s1, [_vcpu, x10]
 	.else
-	ldr d1, [_cpu, x10]
+	ldr d1, [_vcpu, x10]
 	.endif
 	vector_scalar_fp_to_int 1, \element, \width, \truncate
 	.if \width == 32
 	mov w24, w24
 	.endif
-	str x24, [_cpu, x9]
+	str x24, [_vcpu, x9]
 	retire_and_next
 .endm
 
@@ -324,7 +324,7 @@ Lx86_vector_fp_to_gpr_loaded\@:
 	.if \width == 32
 	mov w24, w24
 	.endif
-	str x24, [_cpu, x9]
+	str x24, [_vcpu, x9]
 	retire_and_next
 .endm
 
@@ -367,9 +367,9 @@ gadget vector_f\element\()_pi_\truncate\()_rr
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	ldr q1, [_cpu, x10]
+	ldr q1, [_vcpu, x10]
 	vector_fp_to_pi_body \element, \truncate, Lx86_vector_fp_to_pi_save\@
-	str d4, [_cpu, x9]
+	str d4, [_vcpu, x9]
 	synchronize_mmx x9, d4
 	retire_and_next
 	simd_save_status_path Lx86_vector_fp_to_pi_save\@

@@ -61,7 +61,7 @@ struct BackingKeyHash final {
 
 /* One non-executable shared mapping covers the complete UML physical-memory
  * file.  Besides avoiding a host mapping per guest page, this is the
- * iSH-style MMU invariant that lets a TLB hit become pointer arithmetic.
+ * invariant that lets a TLB hit become pointer arithmetic.
  */
 MappingBatch &mapping_batch()
 {

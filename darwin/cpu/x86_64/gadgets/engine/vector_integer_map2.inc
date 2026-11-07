@@ -261,7 +261,7 @@
 	.elseif \opcode == 0x0b
 	vector_map2_mulhrs \output, \left, \right
 	.elseif \opcode == 0x10 || \opcode == 0x14 || \opcode == 0x15
-	ldr q6, [_cpu, #UML_X86_64_CPU_VECTORS]
+	ldr q6, [_vcpu, #UML_X86_64_CPU_VECTORS]
 	.if \opcode == 0x10
 	cmlt v6.16b, v6.16b, #0
 	.elseif \opcode == 0x14
@@ -336,11 +336,11 @@ gadget vector_integer_map2_\symbol\()_\width\()_rr
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
 	.if \width == 64
-	ldr d0, [_cpu, x10]
-	ldr d1, [_cpu, x11]
+	ldr d0, [_vcpu, x10]
+	ldr d1, [_vcpu, x11]
 	.else
-	add x10, _cpu, x10
-	add x11, _cpu, x11
+	add x10, _vcpu, x10
+	add x11, _vcpu, x11
 	ldr q0, [x10]
 	vector_map2_input_size \opcode, \width
 	.if Lx86_vector_map2_input_size == 1
