@@ -142,8 +142,9 @@ public struct Guest: Equatable, Codable, Sendable {
         if raised { memoryMiB = min(memoryMiB, host.memory.maximumMiB(vCPUs: count)) }
     }
 
-    /// The memory this guest loads with: a stored size above the bound of its
-    /// vCPU count, or off the steps, comes to the nearest allowed size.
+    /// The memory this guest loads with: a stored size below the minimum or
+    /// above the bound of its vCPU count, or off the steps, comes to the
+    /// nearest allowed size.
     public func memoryWithinBound(on host: HostDevice) -> Guest {
         var guest = self
         guest.memoryMiB = host.memory.clamped(memoryMiB, vCPUs: cores)

@@ -162,16 +162,40 @@ struct MemoryPolicyTests {
         #expect(host(roomy, processors: 0).processorCount == 1)
     }
 
-    @Test func thePickerRunsFrom512ToTheBoundOfTheVCPUCountInSteps64() {
-        let four = limited.stops(vCPUs: 4)
-        #expect(four.first == 512 && four.last == 1536)
-        #expect(four.count == (1536 - 512) / 64 + 1)
-        #expect(four.allSatisfy(MemoryPolicy.runtimeAccepts))
+    @Test func thePickerRunsFrom1536ToTheBoundOfTheVCPUCountInSteps64() {
+        #expect(Limits.minimumMemoryMiB == 1536)
+        let two = limited.stops(vCPUs: 2)
+        #expect(two.first == 1536 && two.last == 1920)
+        #expect(two.count == (1920 - 1536) / 64 + 1)
+        #expect(two.allSatisfy(MemoryPolicy.runtimeAccepts))
         #expect(limited.stops(vCPUs: 1).last == 2048)
-        #expect(roomy.stops(vCPUs: 8).count == 57)
+        // The bound at four vCPUs is the minimum: one position.
+        #expect(limited.stops(vCPUs: 4) == [1536])
+        #expect(roomy.stops(vCPUs: 8).count == (4096 - 1536) / 64 + 1)
+        #expect(roomy.stops(vCPUs: 8).first == 1536)
+        // No position of any picker is below the minimum, whatever the count.
+        for policy in [limited, roomy] {
+            for count in 1...4 {
+                #expect(policy.stops(vCPUs: count).allSatisfy { $0 >= Limits.minimumMemoryMiB })
+            }
+        }
         // Added vCPUs never raise the bound.
         let bounds = (1...4).map { limited.maximumMiB(vCPUs: $0) }
         #expect(bounds == bounds.sorted(by: >))
+    }
+
+    /// A device whose memory limit leaves less than the minimum offers the
+    /// bound alone: the picker is not empty and offers no size the host cannot
+    /// honour, as the default is never above the bound.
+    @Test func aBoundBelowTheMinimumIsTheOnlyPosition() {
+        let small = MemoryPolicy(maximumsMiB: [960, 896])
+        #expect(small.minimumMiB(vCPUs: 1) == 960)
+        #expect(small.stops(vCPUs: 1) == [960])
+        #expect(small.stops(vCPUs: 2) == [896])
+        #expect(small.clamped(512, vCPUs: 1) == 960)
+        #expect(small.clamped(2048, vCPUs: 2) == 896)
+        #expect(limited.minimumMiB(vCPUs: 1) == 1536)
+        #expect(roomy.minimumMiB(vCPUs: 8) == 1536)
     }
 
     @Test func theBoundsComeOntoTheRuntimesStepsAndRange() {
@@ -340,8 +364,25 @@ struct MemoryPolicyTests {
         #expect(Guest(cores: 1, memoryMiB: 2048, capacityGiB: 8).memoryWithinBound(on: device).memoryMiB == 2048)
         // Off the steps: the nearest step, then the bound.
         #expect(Guest(cores: 2, memoryMiB: 1700, capacityGiB: 8).memoryWithinBound(on: device).memoryMiB == 1728)
-        #expect(Guest(cores: 2, memoryMiB: 100, capacityGiB: 8).memoryWithinBound(on: device).memoryMiB == 512)
-        #expect(Guest(cores: 2, memoryMiB: 1024, capacityGiB: 8).memoryWithinBound(on: device).memoryMiB == 1024)
+        // Below the minimum: raised to it.
+        #expect(Guest(cores: 2, memoryMiB: 100, capacityGiB: 8).memoryWithinBound(on: device).memoryMiB == 1536)
+        #expect(Guest(cores: 2, memoryMiB: 1024, capacityGiB: 8).memoryWithinBound(on: device).memoryMiB == 1536)
+        #expect(Guest(cores: 1, memoryMiB: 1472, capacityGiB: 8).memoryWithinBound(on: device).memoryMiB == 1536)
+        #expect(Guest(cores: 1, memoryMiB: 1536, capacityGiB: 8).memoryWithinBound(on: device).memoryMiB == 1536)
+        // A size is raised only to what the host can honour: a bound below the
+        // minimum wins.
+        let small = host(MemoryPolicy(maximumsMiB: [960]), processors: 1)
+        #expect(Guest(cores: 1, memoryMiB: 512, capacityGiB: 8).memoryWithinBound(on: small).memoryMiB == 960)
+    }
+
+    /// A guest stored by an earlier version below the minimum is raised when
+    /// the application loads it, on the path the application takes.
+    @Test func aStoredGuestBelowTheMinimumIsRaisedWhenLoaded() {
+        let device = host(roomy, processors: 4)
+        let stored = Guest(cores: 4, memoryMiB: 1024, capacityGiB: 8)
+        let loaded = LaunchOverrides().applied(to: stored, on: device)
+        #expect(loaded.memoryMiB == 1536)
+        #expect(loaded.cores == 4 && loaded.capacityGiB == 8)
     }
 
     @Test func raisingVCPUsBringsMemoryDownInStepsAndLoweringLeavesIt() {
@@ -358,9 +399,9 @@ struct MemoryPolicyTests {
         guest.setCores(1, on: device)
         #expect(guest.cores == 1 && guest.memoryMiB == 1536)
         // Raising with memory already below the new bound leaves it too.
-        var small = Guest(cores: 1, memoryMiB: 1024, capacityGiB: 8)
-        small.setCores(4, on: device)
-        #expect(small.memoryMiB == 1024)
+        var small = Guest(cores: 1, memoryMiB: 1536, capacityGiB: 8)
+        small.setCores(2, on: host(roomy, processors: 4))
+        #expect(small.memoryMiB == 1536)
     }
 
     @Test func anAutomationLaunchStatesItsSizeUnclamped() {

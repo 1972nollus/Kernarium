@@ -153,7 +153,7 @@ nonisolated struct HatchPattern: Shape {
 /// Processor and memory, the two rows of the System sheet: each with its
 /// value on the right and a ruler beneath. The rulers keep the limits of the
 /// host: the processor count stops at the vCPUs the device offers, and memory
-/// runs from 512 MiB to the bound of the chosen vCPU count, with the bound
+/// runs from 1.5 GiB to the bound of the chosen vCPU count, with the bound
 /// said beneath it.
 struct SystemControls: View {
     @Binding var guest: Guest
@@ -188,7 +188,10 @@ struct SystemControls: View {
         // The picker follows the vCPU count live: more vCPUs hold more of the
         // process's memory, so the top of the ruler falls as the count rises.
         let stops = host.memory.stops(vCPUs: guest.cores)
-        let steps = (1024 - Limits.minimumMemoryMiB) / Limits.memoryStepMiB
+        // Whole gibibytes are the long, labelled ticks: the first one is this
+        // many steps above the bottom of the ruler.
+        let bottom = stops.first ?? Limits.minimumMemoryMiB
+        let steps = (1024 - bottom % 1024) % 1024 / Limits.memoryStepMiB
         // Sizes past what a new guest gets turn orange, and the line beneath
         // says why while the chosen size is one of them. The default follows
         // the vCPU count as the top does.

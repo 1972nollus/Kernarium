@@ -169,6 +169,10 @@ control out.
   the runtime loader answers for that count
   (`kernarium_runtime_loader_maximum_guest_memory_mib`); a new guest gets the
   loader's default for it (`kernarium_runtime_loader_default_guest_memory_mib`).
+  Android is usable from 1.5 GiB, so a guest has at least that
+  (`Limits.minimumMemoryMiB`, Andarium's own: the runtime still accepts less
+  for Kernarium's guests); a stored smaller size is raised to it on load, and a
+  device whose bound is lower offers the bound alone.
   `MemoryPolicy` holds those bounds and defaults and no formula of its own. A
   guest with more than the default for its vCPU count is likely to be closed by
   iOS: Home shows a notice and the memory ruler a line and orange ticks, both
