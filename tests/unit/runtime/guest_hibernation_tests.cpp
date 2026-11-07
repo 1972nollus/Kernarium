@@ -17,7 +17,9 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <mach/mach.h>
 #include <memory>
+#include <pthread.h>
 #include <string>
 #include <sys/mman.h>
 #include <thread>
@@ -286,6 +288,10 @@ struct Ram final {
 	std::atomic<std::uint64_t> ticks{0};
 	std::atomic<std::uint64_t> changes{0};
 	std::atomic<bool> stop{false};
+	/* Odd while the kernel thread is to make no change to what the guest
+	 * holds; it names the request it last saw in `acknowledged`. */
+	std::atomic<unsigned> quiet{0};
+	std::atomic<unsigned> acknowledged{0};
 };
 
 [[nodiscard]] std::uint64_t word_of(std::size_t page, std::size_t word)
@@ -306,14 +312,20 @@ void *kernel_body(void *argument)
 		for (std::size_t word = 0; word < ram->page / 8; word += 97)
 			if (words[word] != word_of(page, word))
 				ram->pattern_errors.fetch_add(1);
-		/* The spare pages come and go, as the guest's page reporting has them. */
-		const std::uint64_t offset = (held_pages + round % spare_pages) *
-			ram->page;
-		if ((round & 1) != 0)
-			(void)ram->commitment->release(offset, ram->page);
-		else
-			(void)ram->commitment->commit(offset, ram->page);
-		ram->changes.fetch_add(1);
+		const unsigned asked = ram->quiet.load(std::memory_order_acquire);
+		if ((asked & 1) == 0) {
+			/* The spare pages come and go, as the guest's page reporting
+			 * has them. */
+			const std::uint64_t at =
+				(held_pages + round % spare_pages) * ram->page;
+			if ((round & 1) != 0)
+				(void)ram->commitment->release(at, ram->page);
+			else
+				(void)ram->commitment->commit(at, ram->page);
+			ram->changes.fetch_add(1);
+		} else {
+			ram->acknowledged.store(asked, std::memory_order_release);
+		}
 		ram->ticks.fetch_add(1, std::memory_order_relaxed);
 		nap(50);
 	}
@@ -339,6 +351,27 @@ void wait_for_ticks(const Ram &ram)
 	return ram.ticks.load() == ticks && ram.changes.load() == changes;
 }
 
+/* Returns when the kernel thread has made its last change to what the guest
+ * holds, and makes no other until `resume_changes`. It goes on reading guest
+ * RAM. The hold refuses a moment at which a thread is stopped inside a change
+ * (GuestRamImage::freeze_changes), so a test that counts the moments the hold
+ * was asked about must keep the thread it owns out of the commitment. */
+void stop_changes(Ram &ram)
+{
+	const unsigned request = ram.quiet.fetch_add(1) + 1;
+	for (int attempt = 0; attempt < 1000; ++attempt) {
+		if (ram.acknowledged.load(std::memory_order_acquire) == request)
+			return;
+		nap(2000);
+	}
+	uml::testing::fail("the kernel thread does not stop its changes");
+}
+
+void resume_changes(Ram &ram)
+{
+	ram.quiet.fetch_add(1);
+}
+
 /* Refuses the first two moments it is asked about, as a caller does whose
  * lock a stopped thread owns. */
 std::atomic<unsigned> conditionAsked{0};
@@ -346,6 +379,62 @@ std::atomic<unsigned> conditionAsked{0};
 [[nodiscard]] bool refuse_twice() noexcept
 {
 	return conditionAsked.fetch_add(1) >= 2;
+}
+
+/* Accepts every moment it is asked about. At the first, the test lets go of
+ * the kernel thread it stopped inside a change; the hold has stopped it too,
+ * so the change cannot finish until the hold lets everything run. The thread
+ * makes no change after that one. */
+std::atomic<Ram *> stoppedRam{nullptr};
+std::atomic<thread_act_t> stoppedThread{MACH_PORT_NULL};
+std::atomic<unsigned> momentsAccepted{0};
+
+[[nodiscard]] bool accept_and_let_the_change_finish() noexcept
+{
+	if (momentsAccepted.fetch_add(1) == 0) {
+		stoppedRam.load()->quiet.fetch_add(1);
+		(void)thread_resume(stoppedThread.load());
+	}
+	return true;
+}
+
+/* Stops `thread` while it is inside a change, as it is for a short part of
+ * every round. A thread stopped there shows as a change in flight and cannot
+ * leave the change until it is let go. */
+[[nodiscard]] bool stop_inside_a_change(const Ram &ram, thread_act_t thread)
+{
+	for (int attempt = 0; attempt < 50000; ++attempt) {
+		if (thread_suspend(thread) != KERN_SUCCESS)
+			return false;
+		if (ram.commitment->changes_in_flight() != 0)
+			return true;
+		(void)thread_resume(thread);
+		nap(100);
+	}
+	return false;
+}
+
+/* A hold refuses a moment that the caller accepts when a thread is stopped
+ * inside a change, and asks the caller again once it has been let go: every
+ * moment but the last is a refusal that the hold counts, whoever made it. */
+void a_change_in_flight_refuses_a_moment_the_caller_accepts(Ram &ram,
+	GuestHibernation &hibernation, pthread_t thread)
+{
+	const thread_act_t act = pthread_mach_thread_np(thread);
+	require(stop_inside_a_change(ram, act),
+		"the kernel thread is never found inside a change");
+	stoppedRam.store(&ram);
+	stoppedThread.store(act);
+	momentsAccepted.store(0);
+	require(hibernation.hibernate(&accept_and_let_the_change_finish),
+		"the hibernation must take place");
+	const HibernationReport &report = hibernation.report();
+	require(report.hold_unsettled >= 1,
+		"a change in flight must refuse the moment the caller accepts");
+	require(momentsAccepted.load() == report.hold_unsettled + 1,
+		"every moment but the last must be a refusal the hold counted");
+	require(hibernation.restore(), "the restore must succeed");
+	resume_changes(ram);
 }
 
 void a_real_hibernation_holds_the_kernel_threads_and_brings_the_ram_back()
@@ -376,15 +465,24 @@ void a_real_hibernation_holds_the_kernel_threads_and_brings_the_ram_back()
 	require(kernel_pthread_create(&thread, nullptr, &kernel_body, &ram) == 0,
 		"the kernel thread");
 	wait_for_ticks(ram);
+	a_change_in_flight_refuses_a_moment_the_caller_accepts(ram,
+		*hibernation, thread);
+	wait_for_ticks(ram);
 
 	for (int cycle = 0; cycle < 6; ++cycle) {
-		/* The first hold is refused twice and settles on the third try. */
+		/* The first hold is refused twice and settles on the third try. The
+		 * kernel thread makes no change meanwhile: one in flight at the
+		 * third moment would refuse it as well. */
+		if (cycle == 0)
+			stop_changes(ram);
 		require(hibernation->hibernate(cycle == 0 ? &refuse_twice : nullptr),
 			"the hibernation must take place");
 		const HibernationReport &report = hibernation->report();
-		if (cycle == 0)
+		if (cycle == 0) {
 			require(conditionAsked.load() == 3 && report.hold_unsettled == 2,
 				"the caller's condition decides the moment");
+			resume_changes(ram);
+		}
 		require(report.threads_held == 1 && report.threads_registered == 1,
 			"the kernel thread is the one thread held");
 		require(report.written.evicted_bytes != 0, "RAM left the process");
