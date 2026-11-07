@@ -223,6 +223,10 @@ def shell(text: str) -> int:
     elif text == "am force-stop org.lineageos.setupwizard":
         # The wizard's process holds a status bar disable record until it dies.
         (STATE / "wizard-stopped").write_text(text)
+    elif text == "am get-started-user-state 0":
+        # Provisioning starts on a guest whose user 0 is unlocked; the wizard
+        # of a fresh one is HOME and holds its status bar record until stopped.
+        print("RUNNING_UNLOCKED")
     elif text == "pidof org.lineageos.setupwizard":
         if wizard_running():
             print("1445")
