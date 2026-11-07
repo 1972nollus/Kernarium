@@ -5396,6 +5396,80 @@ def lz4_legacy_frame(payload: bytes, block_size: int = 1 << 20) -> bytes:
     return bytes(frame)
 
 
+def synthetic_selinux_policy(
+    *, udp: tuple[str, ...] = ("create", "ioctl"), ioctls: tuple[int, ...] = (0x8916, 0x891C),
+    capabilities: tuple[str, ...] = ("net_admin",), domain: str = "recovery", version: int = 30,
+) -> bytes:
+    """A kernel binary policy (version 30) with two types, a capability class and a UDP socket
+    class that inherits the socket class's permissions, and the given rules of `domain` on itself."""
+
+    def word(*values: int) -> bytes:
+        return struct.pack(f"<{len(values)}I", *values)
+
+    def named(text: str) -> bytes:
+        return text.encode()
+
+    empty_bitmap = word(64, 0, 0)
+    one_bit_bitmap = word(64, 1, 1) + word(0) + struct.pack("<Q", 2)
+    table_header = lambda count: word(count, count)  # noqa: E731 - primary names, elements
+    common_permissions = {"ioctl": 1, "read": 2, "write": 3, "create": 4}
+    udp_permissions = {"name_bind": 5}
+    capability_permissions = {"chown": 1, "net_admin": 13}
+
+    def permissions(table: dict[str, int]) -> bytes:
+        return b"".join(word(len(name), value) + named(name) for name, value in table.items())
+
+    # One constraint with an attribute comparison and a name list, so that the reader skips both.
+    constraint = (
+        word(1, 2) + word(4, 1, 1) + word(5, 2, 1) + one_bit_bitmap + empty_bitmap + empty_bitmap + word(0)
+    )
+    commons = table_header(1) + word(6, 1, 4, 4) + named("socket") + permissions(common_permissions)
+    classes = table_header(2) + (
+        word(10, 0, 1, 2, 2, 0) + named("capability") + permissions(capability_permissions)
+        + word(0) + word(0, 0, 0, 0)
+        + word(10, 6, 2, 5, 1, 1) + named("udp_socket") + named("socket")
+        + permissions(udp_permissions) + constraint + word(0) + word(0, 0, 0, 0)
+    )
+    roles = table_header(1) + word(8, 1, 0) + named("object_r") + empty_bitmap + one_bit_bitmap
+    types = table_header(2) + word(8, 1, 1, 0) + named("recovery") + word(5, 2, 1, 0) + named("other")
+    users = (
+        table_header(1) + word(8, 1, 0) + named("system_u") + one_bit_bitmap
+        + word(1) + word(1) + empty_bitmap + word(1) + empty_bitmap
+    )
+    booleans = table_header(1) + word(1, 0, 6) + named("a_bool")
+    sensitivities = table_header(1) + word(2, 0) + named("s0") + word(1) + empty_bitmap
+    categories = table_header(1) + word(2, 1, 0) + named("c0")
+
+    type_ids = {"recovery": 1, "other": 2}
+    source = type_ids[domain]
+    class_ids = {"capability": 1, "udp_socket": 2}
+
+    def allow(klass: str, target: int, mask: int) -> bytes:
+        return struct.pack("<4H", source, target, class_ids[klass], 0x0001) + word(mask)
+
+    rules = [
+        # The domain's own rules, and a decoy that grants another type's access to it.
+        allow("capability", source, sum(1 << (capability_permissions[name] - 1) for name in capabilities)),
+        allow("udp_socket", source, sum(1 << ({**common_permissions, **udp_permissions}[name] - 1) for name in udp)),
+        struct.pack("<4H", 2, source, 2, 0x0001) + word(0xFF),
+    ]
+    by_driver: dict[int, int] = {}
+    for command in ioctls:
+        by_driver[command >> 8] = by_driver.get(command >> 8, 0) | 1 << (command & 0xFF)
+    for driver, bits in sorted(by_driver.items()):
+        rules.append(
+            struct.pack("<4H", source, source, class_ids["udp_socket"], 0x0100)
+            + struct.pack("<BB", 1, driver) + bits.to_bytes(32, "little")
+        )
+    return (
+        word(0xF97CFF8C, 8) + b"SE Linux" + word(version, 1, 8, 0) + empty_bitmap + empty_bitmap
+        + commons + classes + roles + types + users + booleans + sensitivities + categories
+        + word(len(rules)) + b"".join(rules)
+        # What follows the rules is never read.
+        + word(0, 0)
+    )
+
+
 def synthetic_lineage_ramdisk_for(
     fstab: bytes, *, alignment: int = 16384, omit_dependency: bool = False,
     interface: bytes = b"eth0\0", compression: str = "lz4",
@@ -5404,7 +5478,8 @@ def synthetic_lineage_ramdisk_for(
     pixel_format: bytes = b"BGRX_8888",
     art: dict[str, bytes] | None = None,
     script: bytes = b"", imported: bytes | None = b"service console /system/bin/sh\n",
-    script_name: str = "init.recovery.cutf_cvm.rc",
+    script_name: str = "init.recovery.cutf_cvm.rc", policy: bytes | None = None,
+    no_policy: bool = False,
 ) -> bytes:
     entries = [
         newc_entry(
@@ -5423,6 +5498,9 @@ def synthetic_lineage_ramdisk_for(
             "system/bin/adbd", 0o100755,
             synthetic_aarch64_elf(alignment, needed=("libfixture.so",)), 3,
         ),
+        *([] if no_policy else [
+            newc_entry("sepolicy", 0o100644, policy if policy is not None else synthetic_selinux_policy(), 16)
+        ]),
         newc_entry("system/bin/e2fsck", 0o100755, b"tool", 4),
         newc_entry("system/bin/mke2fs", 0o100755, b"tool", 5),
         newc_entry(
@@ -5591,6 +5669,35 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
              "res/images/fastbootd.png is not the product's artwork"),
             ("a surplus frame", {"art": {**art, "loop00031.png": b"stock"}},
              "animation frames the product does not supply: .*loop00031.png"),
+            ("a ramdisk without a policy", {"no_policy": True},
+             "missing required paths.*sepolicy"),
+            ("a policy that is not a policy", {"policy": b"not a policy at all"},
+             "not a readable kernel policy: not a kernel binary SELinux policy"),
+            ("a policy of an unsupported version", {"policy": synthetic_selinux_policy(version=29)},
+             "not a readable kernel policy: policy version 29"),
+            ("a truncated policy", {"policy": synthetic_selinux_policy()[:300]},
+             "not a readable kernel policy: the policy ends inside a record"),
+            ("a recovery domain without the UDP socket", {"policy": synthetic_selinux_policy(udp=())},
+             r"does not let the recovery domain \['create', 'ioctl'\] on udp_socket"),
+            ("a recovery domain that cannot create the UDP socket",
+             {"policy": synthetic_selinux_policy(udp=("ioctl",))},
+             r"does not let the recovery domain \['create'\] on udp_socket"),
+            ("a recovery domain that cannot issue ioctls on the UDP socket",
+             {"policy": synthetic_selinux_policy(udp=("create",))},
+             r"does not let the recovery domain \['ioctl'\] on udp_socket"),
+            ("a UDP socket with no extended ioctl rule", {"policy": synthetic_selinux_policy(ioctls=())},
+             r"issue the ioctls \[\] on a UDP socket, not exactly \['0x8916', '0x891c'\]"),
+            ("a UDP socket that lacks the netmask ioctl",
+             {"policy": synthetic_selinux_policy(ioctls=(0x8916,))},
+             r"issue the ioctls \['0x8916'\] on a UDP socket"),
+            ("a UDP socket that allows another ioctl",
+             {"policy": synthetic_selinux_policy(ioctls=(0x8916, 0x891C, 0x8927))},
+             r"issue the ioctls \['0x8916', '0x891c', '0x8927'\] on a UDP socket"),
+            ("a recovery domain without CAP_NET_ADMIN", {"policy": synthetic_selinux_policy(capabilities=())},
+             r"does not let the recovery domain \['net_admin'\] on capability"),
+            ("a policy that grants another domain the socket",
+             {"policy": synthetic_selinux_policy(domain="other")},
+             r"does not let the recovery domain \['create', 'ioctl'\] on udp_socket"),
             ("a 32-bit ELF", {"elf_edit": ("<B", 4, 1)}, "little-endian ELF64"),
             ("a big-endian ELF", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF64"),
             ("a foreign machine", {"elf_edit": ("<H", 18, 62)}, "not AArch64"),
