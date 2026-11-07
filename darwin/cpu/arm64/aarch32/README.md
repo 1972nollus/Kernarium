@@ -55,7 +55,7 @@ The unit test `arm64-aarch32-decoder` decodes the stored sample words of every
 row and the whole 16-bit Thumb space and compares the answers against
 `a32_expected.py`, an independent evaluation of the same pseudocode and rules,
 and against what LLVM MC decodes (`tests/unit/arm64/aarch32_decoder/`).
-[`docs/testing.md`](../../../../docs/testing.md#aarch32-decoder) has the
+[`docs/testing.md`](../../../../docs/testing.md#cpu-instruction-tests) has the
 commands.
 
 ## The semantic library
@@ -90,4 +90,4 @@ cmake --workflow --preset check-unit
 
 Focused tests: `ctest -R '^arm64-aarch32-decoder$'`. The corpus and the
 semantic library's tests are in
-[`docs/testing.md`](../../../../docs/testing.md#aarch32-corpus).
+[`docs/testing.md`](../../../../docs/testing.md#cpu-instruction-tests).

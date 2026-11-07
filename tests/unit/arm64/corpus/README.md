@@ -26,7 +26,7 @@ ctest --test-dir .build/presets/macos-unit -R '^arm64-instruction-corpus$' \
 
 `uml_arm64_instruction_corpus_tests PACK` takes record, case, engine and
 feature filters (it prints its options when started without arguments).
-[`docs/testing.md`](../../../../docs/testing.md#a64-instruction-corpus) lists
+[`docs/testing.md`](../../../../docs/testing.md#cpu-instruction-tests) lists
 the CTests that gate the special records below.
 
 ## Files

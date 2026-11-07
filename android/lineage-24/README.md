@@ -332,7 +332,7 @@ performance points, the encoder floors, the instance limits and pixel rates, and
 the service's SELinux and seccomp additions are required by the target-files
 verifier, which also refuses a hardware decoder beyond the two. Qualification is
 opt-in
-([`../../docs/testing.md`](../../docs/testing.md#android-hardware-video-encoding-and-decoding)).
+([`../../docs/testing.md`](../../docs/testing.md#android)).
 
 ## Payload reduction
 
