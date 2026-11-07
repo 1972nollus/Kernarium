@@ -375,6 +375,74 @@ class WizardReleasedTests(unittest.TestCase):
             self.check(self.Guest(False, ["1445"]), by_wizard=False)
 
 
+# `logcat -b crash -d` after the wizard's process died while the package was disabled under it (r16, trimmed).
+WIZARD_CRASH = """\
+--------- beginning of crash
+11-07 09:40:55.611  1777  1777 E AndroidRuntime: FATAL EXCEPTION: main
+11-07 09:40:55.611  1777  1777 E AndroidRuntime: Process: org.lineageos.setupwizard, PID: 1777
+11-07 09:40:55.611  1777  1777 E AndroidRuntime: java.lang.RuntimeException: Unable to get provider androidx.startup.InitializationProvider
+11-07 09:40:55.611  1777  1777 E AndroidRuntime: Caused by: android.content.pm.PackageManager$NameNotFoundException: ComponentInfo{org.lineageos.setupwizard/androidx.startup.InitializationProvider}
+"""
+OTHER_CRASH = """\
+--------- beginning of crash
+11-07 09:50:12.105  2210  2210 E AndroidRuntime: FATAL EXCEPTION: main
+11-07 09:50:12.105  2210  2210 E AndroidRuntime: Process: com.android.documentsui, PID: 2210
+11-07 09:50:12.105  2210  2210 E AndroidRuntime: Process: org.lineageos.setupwizard.other, PID: 2211
+"""
+
+
+class WizardCrashTests(unittest.TestCase):
+    class Guest:
+        def __init__(self, crash_log: str) -> None:
+            self.crash_log, self.commands = crash_log, []
+
+        def shell(self, command: str, timeout: int = 30) -> str:
+            self.commands.append(command)
+            return self.crash_log
+
+    def test_the_wizards_process_line_is_a_crash(self) -> None:
+        self.assertEqual(
+            runner.wizard_fatals(WIZARD_CRASH),
+            ["11-07 09:40:55.611  1777  1777 E AndroidRuntime: Process: org.lineageos.setupwizard, PID: 1777"])
+
+    def test_other_processes_and_an_empty_buffer_are_not(self) -> None:
+        self.assertEqual(runner.wizard_fatals(OTHER_CRASH), [])
+        self.assertEqual(runner.wizard_fatals("--------- beginning of crash\n"), [])
+        self.assertEqual(runner.wizard_fatals(""), [])
+        # A package that only shares the wizard's prefix is not the wizard.
+        self.assertEqual(runner.wizard_fatals("E AndroidRuntime: Process: org.lineageos.setupwizard.remote, PID: 9"), [])
+
+    def test_a_wizard_crash_fails_the_check_and_names_the_process(self) -> None:
+        guest = self.Guest(WIZARD_CRASH)
+        with self.assertRaisesRegex(runner.Failure, r"the setup wizard crashed: .*Process: org\.lineageos\.setupwizard, PID: 1777"):
+            runner.check_wizard_did_not_crash(guest)
+        self.assertEqual(guest.commands, ["logcat -b crash -d"])
+
+    def test_a_clean_crash_buffer_passes(self) -> None:
+        runner.check_wizard_did_not_crash(self.Guest(OTHER_CRASH))
+
+    def test_both_guests_are_checked_after_the_wizard_is_released(self) -> None:
+        calls: list[str] = []
+        guest = mock.Mock()
+        guest.setting.return_value = "1"
+        guest.home_package.return_value = runner.LAUNCHER_PACKAGE
+        guest.resumed.return_value = f"{runner.LAUNCHER_PACKAGE}/.Launcher"
+        for by_wizard in (True, False):
+            calls.clear()
+            with self.subTest(by_wizard=by_wizard), \
+                    mock.patch.object(runner, "wait_for"), \
+                    mock.patch.object(runner, "disabled_components",
+                                      return_value={f"{runner.WIZARD}.{name}" for name in runner.WIZARD_DISABLES}), \
+                    mock.patch.object(runner, "check_wizard_released", side_effect=lambda *a, **k: calls.append("released")), \
+                    mock.patch.object(runner, "check_wizard_did_not_crash", side_effect=lambda *a, **k: calls.append("crash")), \
+                    mock.patch.object(runner, "check_defaults", side_effect=lambda *a, **k: calls.append("defaults")), \
+                    mock.patch.object(runner, "check_launcher", side_effect=lambda *a, **k: calls.append("launcher")):
+                # `pm list packages -d`: the wizard ends enabled, and the helper disables its package.
+                guest.shell.return_value = "package:com.other" if by_wizard else f"package:{runner.WIZARD}"
+                runner.check_provisioned(guest, by_wizard=by_wizard)
+            self.assertEqual(calls, ["released", "crash", "defaults", "launcher"])
+
+
 # The launcher's `Data Model` as `dumpsys activity com.android.launcher3/.uioverrides.QuickstepLauncher`
 # prints it: protobuf text for the container, which leaves a zero field out.
 DUMP_HEAD = """\

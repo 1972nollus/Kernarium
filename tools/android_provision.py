@@ -24,6 +24,14 @@ it once more after the disabling. After disabling the package the helper
 force-stops it and returns only when the wizard has no process and no record in
 `dumpsys statusbar`; a package that is disabled and stopped cannot start again.
 
+The wizard starts as HOME when the user unlocks, a few seconds after
+`sys.boot_completed`. A process the activity manager attached while the package
+was enabled fails with a NameNotFoundException if the package is disabled before
+the process has installed its content providers. So the helper changes nothing
+until user 0 is unlocked and either HOME is not the wizard or the wizard holds
+its status bar record, which its application class takes first, after the
+providers are installed (`await_wizard_bound`).
+
 The current image has no trade-in mode (DeviceDiagnostics is not in the
 product), so adbd is one process through a first boot. A release that still
 carries DeviceDiagnostics (r15 and earlier) restarts adbd twice, a few seconds
@@ -65,6 +73,8 @@ SETTLE_LIMIT_SECONDS = 120
 REACH_LIMIT_SECONDS = 90
 # The wizard's process is gone and its status bar disable record with it, or the guest is not usable.
 WIZARD_RELEASE_LIMIT_SECONDS = 30
+# The unlocked user's HOME is the wizard, and its process holds the record, within this long of boot_completed.
+WIZARD_BOUND_LIMIT_SECONDS = 120
 SETTING_VALUES = ("0", "1", "null")
 WIZARD_RECORD = re.compile(r"\bpkg=" + re.escape(SETUP_WIZARD) + r"(\s|$)", re.MULTILINE)
 TRADE_IN_ENTER = "Enabling trade-in mode"
@@ -126,6 +136,41 @@ def wizard_status_bar_record(shell: Shell) -> bool | None:
     if "mDisableRecords" not in dump:
         return None
     return WIZARD_RECORD.search(dump) is not None
+
+
+def await_wizard_bound(
+    shell: Shell,
+    *,
+    limit_seconds: float = WIZARD_BOUND_LIMIT_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Return once no wizard process can be binding: HOME is not the wizard, or the wizard holds its record.
+
+    Before user 0 is unlocked HOME is Settings' FallbackHome and the wizard may start at any moment.
+    Afterwards the wizard's application class takes the status bar record first thing in onCreate, which
+    runs after the process has installed its content providers; androidx.startup looks up the wizard's own
+    provider there, and a package disabled before that fails the lookup and kills the process.
+    """
+    deadline = clock() + limit_seconds
+    while True:
+        state = shell("am get-started-user-state 0").strip()
+        seen = f"user 0 {state or 'state unreadable'}"
+        if "RUNNING_UNLOCKED" in state:
+            home = home_package(shell)
+            if home and home != SETUP_WIZARD:
+                return
+            if home:
+                record = wizard_status_bar_record(shell)
+                if record is True:
+                    return
+                seen = f"HOME {home}, status bar record {'absent' if record is False else 'unreadable'}"
+            else:
+                # An empty answer is a shell that failed, not a HOME that is not the wizard.
+                seen = "HOME unresolved"
+        if clock() >= deadline:
+            raise ProvisionError(f"the setup wizard was not bound within {limit_seconds:g} s of the helper starting: {seen}")
+        sleep(0.5)
 
 
 def release_wizard(
@@ -205,7 +250,9 @@ def provision(
     """Provision the guest; whether it changed anything.
 
     Run it after `sys.boot_completed`. A guest that is already provisioned is
-    left alone. Raises ProvisionError when the guest is still not provisioned
+    left alone. An unprovisioned one is first waited for until the wizard is
+    bound (`await_wizard_bound`), which raises ProvisionError at its limit.
+    Raises ProvisionError when the guest is still not provisioned
     after the commands, so a harness stops instead of measuring the wizard.
     A shell that cannot reach adbd, because it is restarting, is retried.
     When it provisions an unprovisioned guest it returns only after adbd has
@@ -223,6 +270,7 @@ def provision(
         if is_provisioned(shell):
             break
         changed = True
+        await_wizard_bound(shell, sleep=sleep, clock=clock)
         shell("settings put global device_provisioned 1")
         shell("settings put secure user_setup_complete 1")
         shell(f"pm disable-user --user 0 {SETUP_WIZARD}")
