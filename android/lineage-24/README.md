@@ -838,6 +838,37 @@ and a host clock step while the guest runs is corrected at its next resume or
 boot, not at once. The target-files verifier reads the built framework overlay
 and fails an NTP server, a network origin, an empty list or a missing list.
 
+### Time zone
+
+A new guest starts on GMT, and this platform has no automatic time zone: with
+no telephony and no location provider the time zone detector reports auto
+detection unsupported, so Settings shows no "Set time zone automatically"
+switch, and its zone picker and the Setup Wizard's Date & time page set the zone
+directly without turning `auto_time_zone` off. The host application therefore
+passes the zone it is in at every start (`androidboot.kernarium.timezone`, the
+`ro.boot.kernarium.timezone` property: an IANA name the runtime has checked,
+which a release's command line file cannot set; the standalone macOS launcher
+passes none).
+
+`kernarium_time_zone.sh` (`overlay/tools`, installed on `system_ext` and run
+when boot completes in a core domain of its own, as the Wi-Fi network script
+is, because it drives the framework through `cmd`) applies it with
+`cmd alarm set-timezone`, the platform's own setter: the framework persists it
+as `persist.sys.timezone` and broadcasts the change, so running apps and the
+wizard's page show it. The guest follows the host only while nobody in the guest
+has chosen a zone: the script does nothing when `auto_time_zone` is 0, and it
+replaces a zone only if that is the one it applied last, recorded in the marker
+`persist.sys.kernarium.timezone_applied` that only the script sets (or the
+factory GMT of a guest with no marker). Any other zone was picked by the user
+and stays; picking the host's own zone, or erasing the guest, makes the guest
+follow the host again. The platform refuses a name its tzdata lacks and leaves
+the zone, and the script logs one line (tag `kernarium_time_zone`). Its domain
+reads the setting through `cmd settings`, calls the alarm service, and sets only
+its marker, which is a `system_internal_prop`. The target-files verifier
+requires the script, its service and trigger, the label, transition, rules and
+the marker's type and label, and refuses a script that writes a setting, the
+zone property or the detector.
+
 ### Branding and diagnostics
 
 The Setup Wizard names the system Andarium. The strings that carry the name

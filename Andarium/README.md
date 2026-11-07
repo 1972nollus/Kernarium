@@ -381,6 +381,15 @@ translucent fill dims and flat panels sit on, so the display costs what a
 visible one costs and the render server samples no backdrop for it. Recovery
 keeps an opaque screen.
 
+At every start the guest is given the zone the host is in (`GuestTimeZone`,
+the system's live zone, in the boot request's `android_time_zone`, runtime API
+23; on a Mac in Designed for iPad mode, the Mac's). The system image's time
+zone script applies it while nobody in the guest has chosen a zone
+([Android README](../android/lineage-24/README.md#time-zone)), so a guest
+follows iOS's zone after each start and keeps a zone picked in Android. A name
+the runtime or the guest does not accept leaves the guest's zone alone, and an
+older system ignores the request.
+
 The side keys send Android's keys as Linux key codes: Power 116 (held for the
 power menu), volume 115 and 114, Back 158 and Home 172.
 
@@ -590,6 +599,8 @@ ANDARIUM_GUEST_INSTANCE=<name>   use Library/TestGuests/<name> instead of Librar
 ANDARIUM_ADB_TESTS=1             let AdbOverVsockTests drive the running guest
 ANDARIUM_ADB_KEY_FILE=<path>     where eraseGuestMakesANewKey records the key
 ANDARIUM_ADB_REARM_TESTS=1      also run the tests that need an image raising a dead dialog's prompt again
+ANDARIUM_TIME_ZONE_APPLIED=1    also require that the guest has taken the host's time zone (an image
+                                with the time zone script)
 ANDARIUM_ADB_NET_HOLD_SECONDS=<n> keep the bridge up for a real adb (and write the key
                                  as tmp/adbkey; tmp/adb-net-done ends the hold)
 ```
