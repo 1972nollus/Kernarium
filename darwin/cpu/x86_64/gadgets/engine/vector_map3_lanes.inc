@@ -7,19 +7,19 @@ gadget vector_map3_extract_\size\()_r
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	and x13, x13, #(16 / \size - 1)
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	.if \size == 1
 	ldrb w24, [x10, x13]
-	str x24, [_cpu, x9]
+	str x24, [_vcpu, x9]
 	.elseif \size == 2
 	ldrh w24, [x10, x13, lsl #1]
-	str x24, [_cpu, x9]
+	str x24, [_vcpu, x9]
 	.elseif \size == 4
 	ldr w24, [x10, x13, lsl #2]
-	str x24, [_cpu, x9]
+	str x24, [_vcpu, x9]
 	.else
 	ldr x24, [x10, x13, lsl #3]
-	str x24, [_cpu, x9]
+	str x24, [_vcpu, x9]
 	.endif
 	retire_and_next
 .endm
@@ -32,7 +32,7 @@ gadget vector_map3_extract_\size\()_m
 	and x10, x26, #0xffff
 	ubfx x13, x26, #16, #8
 	and x13, x13, #(16 / \size - 1)
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	.if \size == 1
 	ldrb w24, [x10, x13]
 	.elseif \size == 2
@@ -76,8 +76,8 @@ gadget vector_map3_extract_128_r
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	and x13, x13, #1
-	add x9, _cpu, x9
-	add x10, _cpu, x10
+	add x9, _vcpu, x9
+	add x10, _vcpu, x10
 	add x10, x10, x13, lsl #4
 	ldr q0, [x10]
 	str q0, [x9]
@@ -97,7 +97,7 @@ gadget vector_map3_extract_128_m
 	mov x25, x7
 	and x10, x26, #0xffff
 	ubfx x13, x26, #16, #1
-	add x24, _cpu, x10
+	add x24, _vcpu, x10
 	add x24, x24, x13, lsl #4
 	page_cross_check 16, Lx86_vector_map3_extract_128_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 16
@@ -119,19 +119,19 @@ gadget vector_map3_insert_\size\()_rr
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	add x9, _cpu, x9
-	add x10, _cpu, x10
+	add x9, _vcpu, x9
+	add x10, _vcpu, x10
 	ldr q0, [x10]
 	str q0, [x9]
 	and x13, x13, #(16 / \size - 1)
 	.if \size == 1
-	ldrb w24, [_cpu, x11]
+	ldrb w24, [_vcpu, x11]
 	strb w24, [x9, x13]
 	.elseif \size == 4
-	ldr w24, [_cpu, x11]
+	ldr w24, [_vcpu, x11]
 	str w24, [x9, x13, lsl #2]
 	.else
-	ldr x24, [_cpu, x11]
+	ldr x24, [_vcpu, x11]
 	str x24, [x9, x13, lsl #3]
 	.endif
 	tbz x8, #63, Lx86_vector_map3_insert_register_done\@
@@ -168,8 +168,8 @@ Lx86_vector_map3_insert_loaded\@:
 	and x10, x26, #0xffff
 	ubfx x13, x26, #16, #8
 	and x13, x13, #(16 / \size - 1)
-	add x9, _cpu, x9
-	add x10, _cpu, x10
+	add x9, _vcpu, x9
+	add x10, _vcpu, x10
 	ldr q0, [x10]
 	str q0, [x9]
 	.if \size == 1
@@ -205,7 +205,7 @@ vector_map3_insert_memory 8
 	.endr
 	bic v4.16b, v4.16b, v6.16b
 	and x9, x\descriptor, #0xffff
-	add x9, _cpu, x9
+	add x9, _vcpu, x9
 	str q4, [x9]
 	tbz x\descriptor, #63, Lx86_vector_map3_insertps_done\@
 	movi v6.16b, #0
@@ -239,8 +239,8 @@ gadget vector_map3_insertps_rr
 	ldp x8, x13, [_stream], #16
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	add x10, _cpu, x10
-	add x11, _cpu, x11
+	add x10, _vcpu, x10
+	add x11, _vcpu, x11
 	ldr q4, [x10]
 	ldr q1, [x11]
 	ubfx w14, w13, #6, #2
@@ -271,7 +271,7 @@ gadget vector_map3_insertps_rm
 	mov x25, x7
 	read_operand 4, ldr, w, 24, w
 	and x10, x26, #0xffff
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldr q4, [x10]
 	ubfx w14, w26, #20, #2
 	vector_map3_insertps_destination

@@ -765,7 +765,7 @@ def define_groups() -> None:
                                  ("vtbx", "VTBX", "tbx")):
         table = {}
         for length in range(1, 5):
-            raw = ["add x9, _cpu, x9"]
+            raw = ["add x9, _vcpu, x9"]
             regs = {1: "{v16.16b}", 2: "{v16.16b}", 3: "{v16.16b, v17.16b}",
                     4: "{v16.16b, v17.16b}"}[length]
             if length == 1:
@@ -776,7 +776,7 @@ def define_groups() -> None:
                 raw += ["ldr q16, [x9]", "ldr d17, [x9, #16]"]
             else:
                 raw.append("ldp q16, q17, [x9]")
-            raw.append("ldr d2, [_cpu, x10]")
+            raw.append("ldr d2, [_vcpu, x10]")
             if mnemonic == "tbx" and length in (1, 3):
                 # The A64 table is a multiple of 16 bytes: the padding would
                 # answer an index the A32 table does not have, which VTBX
@@ -892,7 +892,7 @@ GUARDS = {
     # differ: subtracting 0x40000000 leaves [0, 0x7fffffff], and anything
     # else, zero included, goes negative. A nonzero negative lane is bad.
     "range": [
-        "ldr w11, [_cpu, #UML_GADGET_CPU_FPCR]", "tst w11, #0xc00000",
+        "ldr w11, [_vcpu, #UML_GADGET_CPU_FPCR]", "tst w11, #0xc00000",
         "b.ne 21f",
         "movi v7.4s, #0x40, lsl #24",
         "shl v3.4s, v1.4s, #1", "shl v4.4s, v2.4s, #1",
@@ -921,7 +921,7 @@ def render(g: Group, v: Variant, floating: bool = False) -> list:
         lines += ["ldp x8, x9, [_stream], #16"]
     elif shape == "dcore":
         lines += ["ldr x8, [_stream], #8", "ubfx x9, x8, #16, #16",
-                  "and x8, x8, #0xffff", "ldr w9, [_cpu, x9]"]
+                  "and x8, x8, #0xffff", "ldr w9, [_vcpu, x9]"]
     elif shape == "delem":
         lines += ["ldr x8, [_stream], #8", "ubfx x10, x8, #16, #16",
                   "and x8, x8, #0xffff"]
@@ -933,35 +933,35 @@ def render(g: Group, v: Variant, floating: bool = False) -> list:
     if v.raw:
         lines += v.raw
     if v.n:
-        lines.append(f"ldr {v.n}1, [_cpu, x9]")
+        lines.append(f"ldr {v.n}1, [_vcpu, x9]")
     if v.m == "elem":
-        lines += ["add x10, _cpu, x10", f"ld1r {{v2.{v.elem}}}, [x10]"]
+        lines += ["add x10, _vcpu, x10", f"ld1r {{v2.{v.elem}}}, [x10]"]
     elif v.m:
-        lines.append(f"ldr {v.m}2, [_cpu, x10]")
+        lines.append(f"ldr {v.m}2, [_vcpu, x10]")
     if guarded:
         assert shape == "dnm" and not v.m1 and not v.acc and v.m != "elem"
         # The Standard value is native: run, as every other gadget does. The
         # environment is not active at all: switch to the Standard value.
         # The guest's is native: run if the operands pass.
-        lines += ["ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]", "cbz w6, 21f",
-                  "ldrb w6, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]",
+        lines += ["ldrb w6, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]", "cbz w6, 21f",
+                  "ldrb w6, [_vcpu, #UML_ARM64_CPU_A32_FP_STANDARD]",
                   "cbnz w6, 22f"] + GUARDS[v.guard] + ["22:"]
     if v.m1:
-        lines.append(f"ldr {v.m1}1, [_cpu, x10]")
+        lines.append(f"ldr {v.m1}1, [_vcpu, x10]")
     if shape == "delem":
-        lines += ["add x10, _cpu, x10", f"ld1r {{v0.{v.elem}}}, [x10]"]
+        lines += ["add x10, _vcpu, x10", f"ld1r {{v0.{v.elem}}}, [x10]"]
     if v.acc:
-        lines.append(f"ldr {v.acc}0, [_cpu, x8]")
+        lines.append(f"ldr {v.acc}0, [_vcpu, x8]")
     lines += v.body
     # With d == m the register named last wins; the Arm oracle (and so the
     # corpus) leaves the d result.
     if v.out2:
-        lines.append(f"str {v.out2}{v.out2_reg}, [_cpu, x10]")
-    lines.append(f"str {v.out}{v.out_reg}, [_cpu, x8]")
+        lines.append(f"str {v.out2}{v.out2_reg}, [_vcpu, x10]")
+    lines.append(f"str {v.out}{v.out_reg}, [_vcpu, x8]")
     lines.append("next_gadget")
     if guarded:
         lines += ["21:", "a32_fp_standard"] + v.body
-        lines.append(f"str {v.out}{v.out_reg}, [_cpu, x8]")
+        lines.append(f"str {v.out}{v.out_reg}, [_vcpu, x8]")
         lines.append("next_gadget")
     return lines
 

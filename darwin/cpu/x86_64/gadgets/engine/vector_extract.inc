@@ -6,7 +6,7 @@ gadget vector_movmsk_\element\()_\width
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	mov x11, xzr
 	mov x12, xzr
 Lx86_vector_movmsk_loop\@:
@@ -22,7 +22,7 @@ Lx86_vector_movmsk_loop\@:
 	add x12, x12, #1
 	cmp x12, #(\width / \element)
 	b.lo Lx86_vector_movmsk_loop\@
-	str x11, [_cpu, x9]
+	str x11, [_vcpu, x9]
 	retire_and_next
 .endm
 
@@ -38,7 +38,7 @@ gadget vector_pmovmskb_\width
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	/* Collapse one sign bit per byte into a bit mask by folding pairs of
 	 * lanes at doubling widths: each shift-and-accumulate step packs the bits
 	 * of two neighbouring lanes into the lower one, so after four steps byte 0
@@ -72,7 +72,7 @@ gadget vector_pmovmskb_\width
 	orr w13, w13, w14, lsl #8
 	orr w11, w11, w13, lsl #16
 	.endif
-	str x11, [_cpu, x9]
+	str x11, [_vcpu, x9]
 	retire_and_next
 .endm
 
@@ -88,9 +88,9 @@ gadget vector_pextrw_\width
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	and x11, x11, #(\width / 16 - 1)
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldrh w12, [x10, x11, lsl #1]
-	str x12, [_cpu, x9]
+	str x12, [_vcpu, x9]
 	retire_and_next
 .endm
 
@@ -104,8 +104,8 @@ vector_pextrw 256
  * over the destination at offset x9 with the 16-bit `word` stored to element
  * x11, and synchronize an MMX destination with the x87 registers. */
 .macro vector_insert_word width, vex, word
-	add x9, _cpu, x9
-	add x10, _cpu, x10
+	add x9, _vcpu, x9
+	add x10, _vcpu, x10
 	.if \width == 64
 	ldr x14, [x10]
 	str x14, [x9]
@@ -120,7 +120,7 @@ vector_pextrw 256
 	.endif
 	.if \width == 64
 	ldr x14, [x9]
-	sub x12, x9, _cpu
+	sub x12, x9, _vcpu
 	synchronize_mmx x12, x14, x12, x15, w13
 	.endif
 	retire_and_next
@@ -132,7 +132,7 @@ gadget vector_insert_\width\()_rr\vex
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	ubfx x12, x8, #32, #16
-	ldrh w13, [_cpu, x12]
+	ldrh w13, [_vcpu, x12]
 	and x11, x11, #(\width / 16 - 1)
 	vector_insert_word \width, \vex, w13
 .endm

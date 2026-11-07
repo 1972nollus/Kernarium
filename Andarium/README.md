@@ -142,10 +142,12 @@ kernel's license files (never fetched; `--verify` compares the resource with
 them). Its table names, per project, the frameworks and prefix components it
 covers: the system (Android Open Source Project, LineageOS), the Linux kernel
 inside the runtime, and the GPU, network, storage and compression libraries of
-the iOS device prefixes. A tooling test fails when the Andarium project embeds
-a framework, or an iOS device prefix contract declares a component, that no
-entry covers ([`docs/testing.md`](../docs/testing.md#andarium)). Adding a
-library therefore means adding its entry to the script's table and running it.
+the iOS device prefixes. One more entry credits iSH as design inspiration for
+the processor emulation; it covers nothing and carries no licence. A tooling
+test fails when the Andarium project embeds a framework, or an iOS device
+prefix contract declares a component, that no entry covers
+([`docs/testing.md`](../docs/testing.md#andarium)). Adding a library therefore
+means adding its entry to the script's table and running it.
 
 ## Build
 

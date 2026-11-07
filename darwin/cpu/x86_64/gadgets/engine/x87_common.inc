@@ -26,23 +26,23 @@ Lx86_x87_raised:
 	b uml_x86_64_gadget_exception_check
 
 .macro x87_leave_if_raised
-	ldrb w9, [_cpu, #UML_X86_64_CPU_EXCEPTION_RAISED]
+	ldrb w9, [_vcpu, #UML_X86_64_CPU_EXCEPTION_RAISED]
 	cbnz w9, Lx86_x87_raised
 .endm
 
 /* A stack fault is an invalid operation: an unmasked one leaves the same way,
  * before the fault touches the status word or the stack. */
 .macro x87_stack_fault_check
-	ldrb w17, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	ldrb w17, [_vcpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 	tbz w17, #0, Lx86_x87_stack_fault_masked\@
-	ldrh w17, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
+	ldrh w17, [_vcpu, #UML_X86_64_CPU_X87_CONTROL]
 	tbnz w17, #0, Lx86_x87_stack_fault_masked\@
 	b uml_x86_64_gadget_exception_check
 Lx86_x87_stack_fault_masked\@:
 .endm
 
 .macro x87_physical logical, physical
-	ldrb \physical, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	ldrb \physical, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	add \physical, \physical, \logical
 	and \physical, \physical, #7
 .endm
@@ -52,17 +52,17 @@ Lx86_x87_stack_fault_masked\@:
  * where the present value would have been changed. */
 .macro x87_load_stack logical, significand, exponent, empty=
 	x87_physical \logical, w14
-	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	ldrh w15, [_vcpu, #UML_X86_64_CPU_X87_TAG]
 	lsl w16, w14, #1
 	lsr w15, w15, w16
 	and w15, w15, #3
 	cmp w15, #Lx86_x87_tag_empty
 	b.ne Lx86_x87_load_present\@
 	x87_stack_fault_check
-	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	ldrh w15, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	mov w17, #0x41
 	orr w15, w15, w17
-	strh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	strh w15, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	mov \significand, #0xc000000000000000
 	mov \exponent, #0xffff
 	.ifb \empty
@@ -71,7 +71,7 @@ Lx86_x87_stack_fault_masked\@:
 	b \empty
 	.endif
 Lx86_x87_load_present\@:
-	add x15, _cpu, #UML_X86_64_CPU_X87
+	add x15, _vcpu, #UML_X86_64_CPU_X87
 	add x15, x15, w14, uxtw #4
 	ldr \significand, [x15]
 	ldrh \exponent, [x15, #8]
@@ -81,21 +81,21 @@ Lx86_x87_load_done\@:
 /* Write the low two bits of `tag` as `physical`'s tag; uses w15 and w16.
  * Rotating the entry to bit 0 and back needs no mask register. */
 .macro x87_set_tag physical, tag
-	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	ldrh w15, [_vcpu, #UML_X86_64_CPU_X87_TAG]
 	lsl w16, \physical, #1
 	ror w15, w15, w16
 	bfxil w15, \tag, #0, #2
 	neg w16, w16
 	ror w15, w15, w16
-	strh w15, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	strh w15, [_vcpu, #UML_X86_64_CPU_X87_TAG]
 .endm
 
 .macro x87_store_physical physical, significand, exponent
-	add x15, _cpu, #UML_X86_64_CPU_X87
+	add x15, _vcpu, #UML_X86_64_CPU_X87
 	add x15, x15, \physical, uxtw #4
 	str \significand, [x15]
 	strh \exponent, [x15, #8]
-	add x15, _cpu, #UML_X86_64_CPU_MMX
+	add x15, _vcpu, #UML_X86_64_CPU_MMX
 	str \significand, [x15, \physical, uxtw #3]
 
 	/* Recreate the x87 two-bit classification tag. */
@@ -125,22 +125,22 @@ Lx86_x87_store_classified\@:
  * the compares into the status word and the stack-pointer instructions
  * do. FCOMI, FUCOMI and their popping forms keep it. */
 .macro x87_clear_c1
-	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	ldrh w15, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	bic w15, w15, #Lx86_x87_status_c1
-	strh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	strh w15, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 .endm
 
 /* A push clears C1 unless `keep_c1` says the value pushed is a rounded
  * result whose C1 the instruction reports, as FPTAN's and FSINCOS's are. */
 .macro x87_push significand, exponent, keep_c1=0
-	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	ldrh w15, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	.if \keep_c1 == 0
 	bic w15, w15, #Lx86_x87_status_c1
 	.endif
-	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	ldrb w14, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	sub w14, w14, #1
 	and w14, w14, #7
-	ldrh w16, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	ldrh w16, [_vcpu, #UML_X86_64_CPU_X87_TAG]
 	lsl w17, w14, #1
 	lsr w16, w16, w17
 	and w16, w16, #3
@@ -153,8 +153,8 @@ Lx86_x87_store_classified\@:
 	mov \significand, #0xc000000000000000
 	mov \exponent, #0xffff
 Lx86_x87_push_slot_ready\@:
-	strh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
-	strb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	strh w15, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
+	strb w14, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	x87_store_physical w14, \significand, \exponent
 .endm
 
@@ -163,10 +163,10 @@ Lx86_x87_push_slot_ready\@:
  * indefinite in ST0 and pushes another, raising only the stack overflow.
  * While the gadgets check x87 exceptions an unmasked one leaves here. */
 .macro x87_push_fault_check
-	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	ldrb w14, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	sub w14, w14, #1
 	and w14, w14, #7
-	ldrh w16, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	ldrh w16, [_vcpu, #UML_X86_64_CPU_X87_TAG]
 	lsl w17, w14, #1
 	lsr w16, w16, w17
 	and w16, w16, #3
@@ -178,12 +178,12 @@ Lx86_x87_push_fault_none\@:
 .endm
 
 .macro x87_pop
-	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	ldrb w14, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	mov w17, #Lx86_x87_tag_empty
 	x87_set_tag w14, w17
 	add w14, w14, #1
 	and w14, w14, #7
-	strb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	strb w14, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 .endm
 
 .macro x87_store_value pointer, significand, exponent
@@ -200,7 +200,7 @@ Lx86_x87_push_fault_none\@:
  * sp and sp+16 and leaves its result at sp+32, `reverse` swapping them, then
  * load the result and release the 48-byte frame. */
 .macro x87_binary_call helper, reverse
-	mov x0, _cpu
+	mov x0, _vcpu
 	.if \reverse
 	add x1, sp, #16
 	mov x2, sp
@@ -217,7 +217,7 @@ Lx86_x87_push_fault_none\@:
 .endm
 
 .macro x87_set_status_compare result
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	mov w10, #0x4700
 	bic w9, w9, w10
 	cmp \result, #1
@@ -235,11 +235,11 @@ Lx86_x87_compare_not_equal\@:
 	mov w10, #0x4500
 	orr w9, w9, w10
 Lx86_x87_compare_done\@:
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 .endm
 
 .macro x87_set_integer_compare result
-	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	mov x10, #0x8d5
 	bic x9, x9, x10
 	cmp \result, #1
@@ -258,7 +258,7 @@ Lx86_x87_integer_not_equal\@:
 	orr x9, x9, x10
 Lx86_x87_integer_compare_done\@:
 	orr x9, x9, #0x2
-	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	str x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 .endm
 
 .macro x87_scalar_load size, destination

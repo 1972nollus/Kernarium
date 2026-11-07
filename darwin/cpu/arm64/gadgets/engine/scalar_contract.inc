@@ -32,13 +32,13 @@ _scalar_w16 .req w0
 
 .pushsection __DATA_CONST,__gadget_scalar
 .p2align 3
-.globl NAME(uml_arm64_scalar_contract_begin)
-NAME(uml_arm64_scalar_contract_begin):
+.globl CSYM(uml_arm64_scalar_contract_begin)
+CSYM(uml_arm64_scalar_contract_begin):
 .popsection
 
 .macro scalar_pointer name, mask, sources
  .if (\mask & \sources) == \mask
- .quad NAME(uml_arm64_gadget_\name\()_forward_\mask)
+ .quad CSYM(uml_arm64_gadget_\name\()_forward_\mask)
  .else
  .quad 0
  .endif
@@ -49,7 +49,7 @@ NAME(uml_arm64_scalar_contract_begin):
  .if \forward & \bit
  mov \value, x0
  .else
- ldr \value, [_cpu, \index]
+ ldr \value, [_vcpu, \index]
  .endif
 .endm
 
@@ -84,7 +84,7 @@ NAME(uml_arm64_scalar_contract_begin):
  gadget \name
  .set Lscalar_sources\@, ((\first != Lscalar_none) & 1) | (((\second != Lscalar_none) & 1) << 1) | (((\third != Lscalar_none) & 1) << 2)
  .pushsection __DATA_CONST,__gadget_scalar
- .quad NAME(uml_arm64_gadget_\name)
+ .quad CSYM(uml_arm64_gadget_\name)
  scalar_pointer \name, 1, Lscalar_sources\@
  scalar_pointer \name, 2, Lscalar_sources\@
  scalar_pointer \name, 3, Lscalar_sources\@
@@ -118,7 +118,7 @@ NAME(uml_arm64_scalar_contract_begin):
 .endm
 
 /* Every forwarded input must be consumed before the body overwrites x0. */
-.macro scalar_load forward, bit, value, index, operand, shift, width=16, scale=0, base=_cpu
+.macro scalar_load forward, bit, value, index, operand, shift, width=16, scale=0, base=_vcpu
  .if \forward & \bit
  .ifnc \value, x0
  mov \value, x0
@@ -136,6 +136,6 @@ NAME(uml_arm64_scalar_contract_begin):
  .if \forward & \bit
  mov \value, x0
  .else
- ldr \value, [_cpu, #UML_GADGET_CPU_SP]
+ ldr \value, [_vcpu, #UML_GADGET_CPU_SP]
  .endif
 .endm

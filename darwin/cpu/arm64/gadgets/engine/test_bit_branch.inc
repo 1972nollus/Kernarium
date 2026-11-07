@@ -19,7 +19,7 @@ gadget test_bit_branch_\polarity
 	ldr x8, [_stream], #8
 	ldp x19, x20, [_stream]
 	lsr x9, x8, #16
-	ldr x10, [_cpu, x9]
+	ldr x10, [_vcpu, x9]
 	lsr x10, x10, x8
 	tst x10, #1
 	select_branch_target 0, \condition, x11
@@ -28,7 +28,7 @@ gadget test_bit_branch_\polarity\()_linked
 	ldr x8, [_stream], #8
 	ldp x19, x20, [_stream]
 	lsr x9, x8, #16
-	ldr x10, [_cpu, x9]
+	ldr x10, [_vcpu, x9]
 	lsr x10, x10, x8
 	tst x10, #1
 	select_branch_target 1, \condition
@@ -37,7 +37,7 @@ gadget test_bit_branch_\polarity\()_linked
 gadget test_bit_branch_\polarity\()_inline
 	ldp x8, x19, [_stream], #16
 	ubfx x9, x8, #16, #16
-	ldr x10, [_cpu, x9]
+	ldr x10, [_vcpu, x9]
 	lsr x10, x10, x8
 	tb\polarity w10, #0, 99f
 	next_gadget

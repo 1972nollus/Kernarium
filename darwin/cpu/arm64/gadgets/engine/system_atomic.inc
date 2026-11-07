@@ -10,8 +10,8 @@ gadget cache_zero_\name
 	mov x7, xzr
 	.else
 	ldr x8, [_stream], #8
-	ldr x7, [_cpu, x8]
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldr x7, [_vcpu, x8]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, Lcache_zero_untagged\@
 	ubfx x7, x7, #0, #56
 Lcache_zero_untagged\@:
@@ -44,8 +44,8 @@ gadget code_synchronize_\name
 	mov x0, xzr
 	.else
 	ldr x8, [_stream], #8
-	ldr x0, [_cpu, x8]
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldr x0, [_vcpu, x8]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, Lcode_synchronize_untagged\@
 	ubfx x0, x0, #0, #56
 Lcode_synchronize_untagged\@:
@@ -54,7 +54,7 @@ Lcode_synchronize_untagged\@:
 	helper_call uml_arm64_guest_code_synchronize
 	ldp x1, x2, [sp], #16
 	ldr x8, [_stream]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 .endm
@@ -72,7 +72,7 @@ code_synchronize z, 1
 gadget mops_prologue_\name
 	ldr x8, [_stream], #8
 	software_helper gadget_mops_prologue_transfer_\name
-	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	ldr w27, [_vcpu, #UML_GADGET_CPU_NZCV]
 	next_gadget
 .endm
 
@@ -80,16 +80,16 @@ gadget mops_prologue_\name
 gadget mops_epilogue_\name
 	ldr x8, [_stream], #8
 	stp x1, x2, [sp, #-16]!
-	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	str w27, [_vcpu, #UML_GADGET_CPU_NZCV]
 	mov x0, x1
 	mov x1, x2
 	mov x2, x8
 	helper_call uml_arm64_gadget_mops_epilogue_transfer_\name
 	ldp x1, x2, [sp], #16
-	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	ldr w27, [_vcpu, #UML_GADGET_CPU_NZCV]
 	cbz w0, uml_arm64_gadget_memory_fault
 	tbz w0, #1, 1f
-	b NAME(uml_arm64_gadget_illegal)
+	b CSYM(uml_arm64_gadget_illegal)
 1:
 	add _stream, _stream, #8
 	next_gadget
@@ -115,13 +115,13 @@ mops_epilogue set_z
 gadget sysreg_cntvctss_read
 	ldr x8, [_stream], #8
 	mrs x9, s3_3_c14_c0_6	/* CNTVCTSS_EL0 */
-	str x9, [_cpu, x8]
+	str x9, [_vcpu, x8]
 	next_gadget
 
 gadget pc_relative
 	ldr x8, [_stream], #8
 	ldr x9, [_stream], #8
-	str x9, [_cpu, x8]
+	str x9, [_vcpu, x8]
 	next_gadget
 
 /* Translation-time-specialized EL0 system-register accesses.  Operands are
@@ -131,19 +131,19 @@ gadget pc_relative
 .macro sysreg_read64 name, field
 gadget sysreg_\name\()_read
 	ldr x8, [_stream], #8
-	ldr x9, [_cpu, #\field]
-	str x9, [_cpu, x8]
+	ldr x9, [_vcpu, #\field]
+	str x9, [_vcpu, x8]
 	next_gadget
 .endm
 
 .macro sysreg_write64 name, field
 gadget sysreg_\name\()_write_r
 	ldr x8, [_stream], #8
-	ldr x9, [_cpu, x8]
-	str x9, [_cpu, #\field]
+	ldr x9, [_vcpu, x8]
+	str x9, [_vcpu, #\field]
 	next_gadget
 gadget sysreg_\name\()_write_z
-	str xzr, [_cpu, #\field]
+	str xzr, [_vcpu, #\field]
 	next_gadget
 .endm
 
@@ -152,7 +152,7 @@ sysreg_write64 tls, UML_GADGET_CPU_TLS
 
 gadget sysreg_nzcv_read
 	ldr x8, [_stream], #8
-	str x27, [_cpu, x8]
+	str x27, [_vcpu, x8]
 	next_gadget
 
 .purgem sysreg_write64
@@ -166,11 +166,11 @@ afp_gadget sysreg_fpcr_read
 gadget sysreg_fpcr_read
 .endif
 	ldr x8, [_stream], #8
-	ldr w9, [_cpu, #UML_GADGET_CPU_FPCR]
+	ldr w9, [_vcpu, #UML_GADGET_CPU_FPCR]
 	mov w10, #((\mask) & 0xffff)
 	movk w10, #((\mask) >> 16), lsl #16
 	and w9, w9, w10
-	str x9, [_cpu, x8]
+	str x9, [_vcpu, x8]
 	next_gadget
 .endm
 
@@ -183,46 +183,46 @@ afp_twins_end
 gadget sysreg_dczid_read
 	ldr x8, [_stream], #8
 	mov x9, #4
-	str x9, [_cpu, x8]
+	str x9, [_vcpu, x8]
 	next_gadget
 
 gadget sysreg_zero_read
 	ldr x8, [_stream], #8
-	str xzr, [_cpu, x8]
+	str xzr, [_vcpu, x8]
 	next_gadget
 
 gadget sysreg_ctr_read
 	ldr x8, [_stream], #8
 	mov w9, #0x8004
 	movk w9, #0x8444, lsl #16
-	str x9, [_cpu, x8]
+	str x9, [_vcpu, x8]
 	next_gadget
 
 gadget sysreg_cntfrq_read
 	ldr x8, [_stream], #8
 	mrs x9, cntfrq_el0
-	str x9, [_cpu, x8]
+	str x9, [_vcpu, x8]
 	next_gadget
 
 gadget sysreg_cntvct_read
 	ldr x8, [_stream], #8
 	mrs x9, cntvct_el0
-	str x9, [_cpu, x8]
+	str x9, [_vcpu, x8]
 	next_gadget
 
 gadget sysreg_fpsr_read
 	ldr x8, [_stream], #8
-	ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	ldrb w11, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]
 	cbz x11, 8f
 	mrs x9, fpsr
 	b 9f
-8:	ldr w9, [_cpu, #UML_GADGET_CPU_FPSR]
+8:	ldr w9, [_vcpu, #UML_GADGET_CPU_FPSR]
 9:
 	mov w10, #(UML_ARM64_FPSR_WRITABLE & 0xffff)
 	movk w10, #(UML_ARM64_FPSR_WRITABLE >> 16), lsl #16
 	and w9, w9, w10
-	str w9, [_cpu, #UML_GADGET_CPU_FPSR]
-	str x9, [_cpu, x8]
+	str w9, [_vcpu, #UML_GADGET_CPU_FPSR]
+	str x9, [_vcpu, x8]
 	next_gadget
 
 .macro sysreg_fp_write name, field, system, mask, afp=0
@@ -236,12 +236,12 @@ gadget sysreg_\name\()_write_r
 	ldr x13, [_stream], #8
 	mov w12, #UML_ARM64_FPCR_TRAP_ENABLES
 	.endif
-	ldr w9, [_cpu, x8]
+	ldr w9, [_vcpu, x8]
 	mov w10, #((\mask) & 0xffff)
 	movk w10, #((\mask) >> 16), lsl #16
 	and w9, w9, w10
-	str w9, [_cpu, #\field]
-	ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	str w9, [_vcpu, #\field]
+	ldrb w11, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]
 	cbz x11, 8f
 	.ifc \name,fpcr
 	bic w10, w9, w12
@@ -253,8 +253,8 @@ gadget sysreg_\name\()_write_r
 	.ifc \name,fpcr
 	tst w9, w12
 	b.eq 9f
-	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x13, [_cpu, #UML_GADGET_CPU_PC]
+	str _stream, [_vcpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x13, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 9:
@@ -262,8 +262,8 @@ gadget sysreg_\name\()_write_r
 	next_gadget
 	.if !\afp
 gadget sysreg_\name\()_write_z
-	str wzr, [_cpu, #\field]
-	ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	str wzr, [_vcpu, #\field]
+	ldrb w11, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]
 	cbz x11, 9f
 	msr \system, xzr
 9:
@@ -281,7 +281,7 @@ afp_twins_end
 
 gadget sysreg_nzcv_write_r
 	ldr x8, [_stream], #8
-	ldr w9, [_cpu, x8]
+	ldr w9, [_vcpu, x8]
 	and w9, w9, #0xf0000000
 	mov w27, w9
 	next_gadget
@@ -298,29 +298,29 @@ gadget sysreg_nzcv_write_z
  * form does. */
 gadget sysreg_dit_read
 	ldr x8, [_stream], #8
-	ldrb w9, [_cpu, #UML_GADGET_CPU_PSTATE_DIT]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_PSTATE_DIT]
 	lsl x9, x9, #24
-	str x9, [_cpu, x8]
+	str x9, [_vcpu, x8]
 	next_gadget
 
 gadget sysreg_dit_write_r
 	ldr x8, [_stream], #8
-	ldr x9, [_cpu, x8]
+	ldr x9, [_vcpu, x8]
 	ubfx x9, x9, #24, #1
-	strb w9, [_cpu, #UML_GADGET_CPU_PSTATE_DIT]
+	strb w9, [_vcpu, #UML_GADGET_CPU_PSTATE_DIT]
 	next_gadget
 
 gadget sysreg_dit_write_z
-	strb wzr, [_cpu, #UML_GADGET_CPU_PSTATE_DIT]
+	strb wzr, [_vcpu, #UML_GADGET_CPU_PSTATE_DIT]
 	next_gadget
 
 .macro pstate_store name, offset, value
 gadget pstate_\name\()_\value
 .if \value
 	mov w8, #1
-	strb w8, [_cpu, #\offset]
+	strb w8, [_vcpu, #\offset]
 .else
-	strb wzr, [_cpu, #\offset]
+	strb wzr, [_vcpu, #\offset]
 .endif
 	next_gadget
 .endm
@@ -337,13 +337,13 @@ pstate_store_field dit, UML_GADGET_CPU_PSTATE_DIT
 
 .macro pstate_daif name, operation, immediate
 gadget pstate_daif_\name\()_\immediate
-	ldrb w9, [_cpu, #UML_GADGET_CPU_PSTATE_DAIF_ACCESS]
-	cbz w9, NAME(uml_arm64_gadget_illegal)
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_PSTATE_DAIF_ACCESS]
+	cbz w9, CSYM(uml_arm64_gadget_illegal)
 .if \immediate
-	ldrb w9, [_cpu, #UML_GADGET_CPU_PSTATE_DAIF]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_PSTATE_DAIF]
 	mov w10, #\immediate
 	\operation w9, w9, w10
-	strb w9, [_cpu, #UML_GADGET_CPU_PSTATE_DAIF]
+	strb w9, [_vcpu, #UML_GADGET_CPU_PSTATE_DAIF]
 .endif
 	/* The following inline word is the fault PC used only by the gated path. */
 	add _stream, _stream, #8
@@ -417,8 +417,8 @@ memory_barrier_option 15
  * back the instructions translated after the ISB, which entering it
  * precharged. Stream: [instructions after this one][fall-through guest PC]. */
 gadget isb
-	ldr x8, [_cpu, #UML_ARM64_CPU_CODE_SEQUENCE]
-	ldr x9, [_cpu, #UML_ARM64_CPU_CODE_SEQUENCE_SEEN]
+	ldr x8, [_vcpu, #UML_ARM64_CPU_CODE_SEQUENCE]
+	ldr x9, [_vcpu, #UML_ARM64_CPU_CODE_SEQUENCE_SEEN]
 	isb
 	ldr x8, [x8]
 	cmp x8, x9
@@ -428,7 +428,7 @@ gadget isb
 1:
 	ldp x10, x11, [_stream]
 	sub x29, x29, x10
-	str x11, [_cpu, #UML_GADGET_CPU_PC]
+	str x11, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
@@ -449,7 +449,7 @@ gadget speculation_barrier_fallback
  */
 gadget clear_exclusive
 	clrex
-	add x8, _cpu, #UML_GADGET_CPU_EXCLUSIVE_ADDRESS
+	add x8, _vcpu, #UML_GADGET_CPU_EXCLUSIVE_ADDRESS
 	mov x9, #-1
 	stp x9, xzr, [x8]
 	stp xzr, xzr, [x8, #16]
@@ -485,7 +485,7 @@ gadget clrbhb
  * word, in 63:56. Mode 0 has no writeback, mode 1 uses the architecturally
  * implied byte count, and mode 2 reads the post-index increment from Rm. */
 .macro simd_structure_cpu_load count
-	add x8, _cpu, #UML_GADGET_CPU_V0
+	add x8, _vcpu, #UML_GADGET_CPU_V0
 	and w9, w19, #31
 	ldr q0, [x8, x9, lsl #4]
 	.irp reg, 1, 2, 3
@@ -498,7 +498,7 @@ gadget clrbhb
 .endm
 
 .macro simd_structure_cpu_store count
-	add x8, _cpu, #UML_GADGET_CPU_V0
+	add x8, _vcpu, #UML_GADGET_CPU_V0
 	and w9, w19, #31
 	str q0, [x8, x9, lsl #4]
 	.irp reg, 1, 2, 3
@@ -674,13 +674,13 @@ gadget clrbhb
 gadget simd_structure_\name
 	ldr x19, [_stream], #8
 	ubfx x24, x19, #16, #16
-	ldr x20, [_cpu, x24]
+	ldr x20, [_vcpu, x24]
 	.if \base_sp
 	tst x20, #0xf
 	b.ne Lsimd_structure_alignment\@
 	.endif
 	.if \base_sp == 0 || \mode != 0
-	ldrb w8, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w8, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w8, Lsimd_structure_tagged\@
 	.endif
 	branch_if_cross_page x20, (\count * (8 << \q)), x8, Lsimd_structure_slow\@
@@ -697,12 +697,12 @@ Lsimd_structure_translate\@:
 	.endif
 	.if \mode == 1
 	add x20, x20, #(\count * (8 << \q))
-	str x20, [_cpu, x24]
+	str x20, [_vcpu, x24]
 	.elseif \mode == 2
 	ubfx x8, x19, #32, #16
-	ldr x8, [_cpu, x8]
+	ldr x8, [_vcpu, x8]
 	add x20, x20, x8
-	str x20, [_cpu, x24]
+	str x20, [_vcpu, x24]
 	.endif
 	next_gadget
 
@@ -747,12 +747,12 @@ Lsimd_structure_slow\@:
 	add sp, sp, #80
 	.if \mode == 1
 	add x20, x20, #(\count * (8 << \q))
-	str x20, [_cpu, x24]
+	str x20, [_vcpu, x24]
 	.elseif \mode == 2
 	ubfx x8, x19, #32, #16
-	ldr x8, [_cpu, x8]
+	ldr x8, [_vcpu, x8]
 	add x20, x20, x8
-	str x20, [_cpu, x24]
+	str x20, [_vcpu, x24]
 	.endif
 	next_gadget
 
@@ -852,7 +852,7 @@ simd_structure_interleaved 4
 		.endif
 	.endif
 	and w9, w26, #31
-	add x10, _cpu, #UML_GADGET_CPU_V0
+	add x10, _vcpu, #UML_GADGET_CPU_V0
 	add x10, x10, x9, lsl #4
 	str q0, [x10]
 .endm
@@ -874,13 +874,13 @@ simd_structure_interleaved 4
 gadget simd_replicate_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #16, #16
-	ldr x21, [_cpu, x20]
+	ldr x21, [_vcpu, x20]
 	.if \base_sp
 	tst x21, #0xf
 	b.ne Lsimd_replicate_alignment\@
 	.endif
 	.if \base_sp == 0 || \mode != 0
-	ldrb w8, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w8, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w8, Lsimd_replicate_tagged\@
 	.endif
 	.if \count * \width > 1
@@ -892,12 +892,12 @@ Lsimd_replicate_translate\@:
 	simd_replicate_transfer \count, \width, \q
 	.if \mode == 1
 	add x21, x21, #(\count * \width)
-	str x21, [_cpu, x20]
+	str x21, [_vcpu, x20]
 	.elseif \mode == 2
 	ubfx x8, x19, #32, #16
-	ldr x8, [_cpu, x8]
+	ldr x8, [_vcpu, x8]
 	add x21, x21, x8
-	str x21, [_cpu, x20]
+	str x21, [_vcpu, x20]
 	.endif
 	next_gadget
 
@@ -928,12 +928,12 @@ Lsimd_replicate_slow\@:
 	add sp, sp, #48
 	.if \mode == 1
 	add x21, x21, #(\count * \width)
-	str x21, [_cpu, x20]
+	str x21, [_vcpu, x20]
 	.elseif \mode == 2
 	ubfx x8, x19, #32, #16
-	ldr x8, [_cpu, x8]
+	ldr x8, [_vcpu, x8]
 	add x21, x21, x8
-	str x21, [_cpu, x20]
+	str x21, [_vcpu, x20]
 	.endif
 	next_gadget
 
@@ -984,7 +984,7 @@ simd_replicate_counts d_q, 8, 1
  * direction, and writeback mode are fixed by the selected symbol. */
 .macro simd_lane_one load, width
 	and w9, w26, #31
-	add x10, _cpu, #UML_GADGET_CPU_V0
+	add x10, _vcpu, #UML_GADGET_CPU_V0
 	add x10, x10, x9, lsl #4
 	add x10, x10, x23
 	.if \load
@@ -1035,13 +1035,13 @@ gadget simd_lane_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #16, #16
 	ubfx x23, x19, #48, #8
-	ldr x21, [_cpu, x20]
+	ldr x21, [_vcpu, x20]
 	.if \base_sp
 	tst x21, #0xf
 	b.ne Lsimd_lane_alignment\@
 	.endif
 	.if \base_sp == 0 || \mode != 0
-	ldrb w8, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w8, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w8, Lsimd_lane_tagged\@
 	.endif
 	.if \count * \width > 1
@@ -1057,12 +1057,12 @@ Lsimd_lane_translate\@:
 	simd_lane_transfer \load, \count, \width
 	.if \mode == 1
 	add x21, x21, #(\count * \width)
-	str x21, [_cpu, x20]
+	str x21, [_vcpu, x20]
 	.elseif \mode == 2
 	ubfx x8, x19, #32, #16
-	ldr x8, [_cpu, x8]
+	ldr x8, [_vcpu, x8]
 	add x21, x21, x8
-	str x21, [_cpu, x20]
+	str x21, [_vcpu, x20]
 	.endif
 	next_gadget
 
@@ -1107,12 +1107,12 @@ Lsimd_lane_slow\@:
 	add sp, sp, #48
 	.if \mode == 1
 	add x21, x21, #(\count * \width)
-	str x21, [_cpu, x20]
+	str x21, [_vcpu, x20]
 	.elseif \mode == 2
 	ubfx x8, x19, #32, #16
-	ldr x8, [_cpu, x8]
+	ldr x8, [_vcpu, x8]
 	add x21, x21, x8
-	str x21, [_cpu, x20]
+	str x21, [_vcpu, x20]
 	.endif
 	next_gadget
 
@@ -1197,7 +1197,7 @@ Llse2_resume_\name:
  */
 .macro atomic_sp_alignment name
 gadget atomic_sp_alignment_\name
-	ldr x7, [_cpu, #UML_GADGET_CPU_SP]
+	ldr x7, [_vcpu, #UML_GADGET_CPU_SP]
 	tst x7, #0xf
 	b.eq 1f
 	/* _stream currently addresses the selected atomic gadget pointer,
@@ -1245,7 +1245,7 @@ uml_arm64_gadget_atomic_alignment_fault_write:
 gadget atomic_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #32, #16
-	ldr x7, [_cpu, x20]
+	ldr x7, [_vcpu, x20]
 	tbi_strip x7
 	.if \alignment
 	single_copy_alignment atomic_\name, \alignment, 1
@@ -1255,12 +1255,12 @@ gadget atomic_\name
 	mov x15, xzr
 	.else
 	ubfx x20, x19, #16, #16
-	ldr x15, [_cpu, x20]
+	ldr x15, [_vcpu, x20]
 	.endif
 	\instruction \host_register\()15, \host_register\()16, [x7]
 	.if !\discard_result
 	and x21, x19, #0xffff
-	str x16, [_cpu, x21]
+	str x16, [_vcpu, x21]
 	.endif
 	next_gadget
 .endm
@@ -1308,7 +1308,7 @@ atomic_rmw_family swp
 gadget compare_swap_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #32, #16
-	ldr x7, [_cpu, x20]
+	ldr x7, [_vcpu, x20]
 	tbi_strip x7
 	.if \alignment
 	single_copy_alignment compare_swap_\name, \alignment, 1
@@ -1318,17 +1318,17 @@ gadget compare_swap_\name
 	mov x15, xzr
 	.else
 	and x20, x19, #0xffff
-	ldr x15, [_cpu, x20]
+	ldr x15, [_vcpu, x20]
 	.endif
 	.if \replacement_zero
 	mov x16, xzr
 	.else
 	ubfx x21, x19, #16, #16
-	ldr x16, [_cpu, x21]
+	ldr x16, [_vcpu, x21]
 	.endif
 	\instruction \host_register\()15, \host_register\()16, [x7]
 	.if !\compare_zero
-	str x15, [_cpu, x20]
+	str x15, [_vcpu, x20]
 	.endif
 	next_gadget
 .endm
@@ -1363,31 +1363,31 @@ compare_swap_sizes acquire_release, casalb, casalh, casal, casal
 gadget compare_swap_pair_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #32, #16
-	ldr x7, [_cpu, x20]
+	ldr x7, [_vcpu, x20]
 	tbi_strip x7
 	single_copy_alignment compare_swap_pair_\name, \alignment, 1
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	and x20, x19, #0xffff
 	ubfx x21, x19, #16, #16
-	ldr x14, [_cpu, x20]
+	ldr x14, [_vcpu, x20]
 	.if \compare_second_zero
 	mov x15, xzr
 	.else
 	add x22, x20, #8
-	ldr x15, [_cpu, x22]
+	ldr x15, [_vcpu, x22]
 	.endif
-	ldr x16, [_cpu, x21]
+	ldr x16, [_vcpu, x21]
 	.if \replacement_second_zero
 	mov x17, xzr
 	.else
 	add x23, x21, #8
-	ldr x17, [_cpu, x23]
+	ldr x17, [_vcpu, x23]
 	.endif
 	\instruction \host_register\()14, \host_register\()15, \
 		\host_register\()16, \host_register\()17, [x7]
-	str x14, [_cpu, x20]
+	str x14, [_vcpu, x20]
 	.if !\compare_second_zero
-	str x15, [_cpu, x22]
+	str x15, [_vcpu, x22]
 	.endif
 	next_gadget
 .endm
@@ -1436,7 +1436,7 @@ EXCL(group):
 gadget exclusive_load_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #16, #16
-	ldr x7, [_cpu, x20]
+	ldr x7, [_vcpu, x20]
 	tbi_strip x7
 	.if \alignment
 	single_copy_alignment exclusive_load_\name, \alignment, 0
@@ -1447,7 +1447,7 @@ EXCL(load_resume_)\name:
 	exclusive_record_load
 	.if !\discard_result
 	and x21, x19, #0xffff
-	str x15, [_cpu, x21]
+	str x15, [_vcpu, x21]
 	.endif
 	next_gadget
 EXCL(load_miss_)\name:
@@ -1478,13 +1478,13 @@ exclusive_load_sizes acquire, ldaxrb, ldaxrh, ldaxr, ldaxr
 gadget exclusive_store_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #32, #16
-	ldr x7, [_cpu, x20]
+	ldr x7, [_vcpu, x20]
 	tbi_strip x7
 	.if \source_zero
 	mov x15, xzr
 	.else
 	and x21, x19, #0xffff
-	ldr x15, [_cpu, x21]
+	ldr x15, [_vcpu, x21]
 	.endif
 	.if \alignment
 	single_copy_alignment exclusive_store_\name, \alignment, 1
@@ -1496,7 +1496,7 @@ EXCL(store_done_)\name:
 	exclusive_record_clear
 	.if !\discard_status
 	ubfx x20, x19, #16, #16
-	str x14, [_cpu, x20]
+	str x14, [_vcpu, x20]
 	.endif
 	next_gadget
 EXCL(store_miss_)\name:
@@ -1535,7 +1535,7 @@ exclusive_store_sizes release, stlxrb, stlxrh, stlxr, stlxr
 gadget exclusive_pair_load_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #32, #16
-	ldr x7, [_cpu, x20]
+	ldr x7, [_vcpu, x20]
 	tbi_strip x7
 	single_copy_alignment exclusive_pair_load_\name, \alignment, 0
 	exclusive_translate EXCL(pair_load_miss_)\name
@@ -1544,11 +1544,11 @@ EXCL(pair_load_resume_)\name:
 	exclusive_record_load_pair
 	.if !\discard_first
 	and x21, x19, #0xffff
-	str x15, [_cpu, x21]
+	str x15, [_vcpu, x21]
 	.endif
 	.if !\discard_second
 	ubfx x22, x19, #16, #16
-	str x16, [_cpu, x22]
+	str x16, [_vcpu, x22]
 	.endif
 	next_gadget
 EXCL(pair_load_miss_)\name:
@@ -1579,19 +1579,19 @@ exclusive_pair_load_sizes acquire, ldaxp, ldaxp
 gadget exclusive_pair_store_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #36, #12
-	ldr x7, [_cpu, x20]
+	ldr x7, [_vcpu, x20]
 	tbi_strip x7
 	.if \first_zero
 	mov x15, xzr
 	.else
 	and x21, x19, #0xfff
-	ldr x15, [_cpu, x21]
+	ldr x15, [_vcpu, x21]
 	.endif
 	.if \second_zero
 	mov x16, xzr
 	.else
 	ubfx x22, x19, #12, #12
-	ldr x16, [_cpu, x22]
+	ldr x16, [_vcpu, x22]
 	.endif
 	single_copy_alignment exclusive_pair_store_\name, \alignment, 1
 	exclusive_translate EXCL(pair_store_miss_)\name
@@ -1601,7 +1601,7 @@ EXCL(pair_store_done_)\name:
 	exclusive_record_clear
 	.if !\discard_status
 	ubfx x20, x19, #24, #12
-	str x14, [_cpu, x20]
+	str x14, [_vcpu, x20]
 	.endif
 	next_gadget
 EXCL(pair_store_miss_)\name:
@@ -1678,7 +1678,7 @@ exclusive_pair_store_completes release, caspl, caspl
 gadget ordered_load_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #16, #16
-	ldr x7, [_cpu, x20]
+	ldr x7, [_vcpu, x20]
 	tbi_strip x7
 	.if \alignment
 	single_copy_alignment ordered_load_\name, \alignment, 0
@@ -1687,7 +1687,7 @@ gadget ordered_load_\name
 	\instruction \host_register\()15, [x7]
 	.if !\discard_result
 	and x21, x19, #0xffff
-	str x15, [_cpu, x21]
+	str x15, [_vcpu, x21]
 	.endif
 	next_gadget
 .endm
@@ -1714,7 +1714,7 @@ ordered_load_sizes acquire, ldarb, ldarh, ldar, ldar
 gadget ordered_store_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #16, #16
-	ldr x7, [_cpu, x20]
+	ldr x7, [_vcpu, x20]
 	tbi_strip x7
 	.if \alignment
 	single_copy_alignment ordered_store_\name, \alignment, 1
@@ -1724,7 +1724,7 @@ gadget ordered_store_\name
 	mov x15, xzr
 	.else
 	and x21, x19, #0xffff
-	ldr x15, [_cpu, x21]
+	ldr x15, [_vcpu, x21]
 	.endif
 	\instruction \host_register\()15, [x7]
 	next_gadget
@@ -1758,7 +1758,7 @@ gadget rcpc_load_\name
 	ldr x19, [_stream], #8
 	and w20, w19, #0x1f
 	ubfx w21, w19, #5, #5
-	add x8, _cpu, #UML_GADGET_CPU_X0
+	add x8, _vcpu, #UML_GADGET_CPU_X0
 	ldr x7, [x8, x20, lsl #3]
 	sbfx x9, x19, #10, #9
 	add x7, x7, x9
@@ -1780,7 +1780,7 @@ gadget rcpc_load_\name
 	sxtw x15, w15
 	.endif
 	.if !\discard
-	add x8, _cpu, #UML_GADGET_CPU_X0
+	add x8, _vcpu, #UML_GADGET_CPU_X0
 	str x15, [x8, x21, lsl #3]
 	.endif
 	next_gadget
@@ -1809,7 +1809,7 @@ gadget rcpc_store_\name
 	ldr x19, [_stream], #8
 	and w20, w19, #0x1f
 	ubfx w21, w19, #5, #5
-	add x8, _cpu, #UML_GADGET_CPU_X0
+	add x8, _vcpu, #UML_GADGET_CPU_X0
 	ldr x7, [x8, x20, lsl #3]
 	sbfx x9, x19, #10, #9
 	add x7, x7, x9
@@ -1821,7 +1821,7 @@ gadget rcpc_store_\name
 	.if \source_zero
 	mov x15, xzr
 	.else
-	add x8, _cpu, #UML_GADGET_CPU_X0
+	add x8, _vcpu, #UML_GADGET_CPU_X0
 	ldr x15, [x8, x21, lsl #3]
 	.endif
 	\instruction \host_register\()15, [x7]

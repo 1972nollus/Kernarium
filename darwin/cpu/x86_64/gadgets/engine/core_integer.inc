@@ -21,12 +21,12 @@ gadget \name
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	\load \host_register\()11, [_cpu, x9]
-	\load \host_register\()12, [_cpu, x10]
+	\load \host_register\()11, [_vcpu, x9]
+	\load \host_register\()12, [_vcpu, x10]
 	\instruction \host_register\()13, \host_register\()11, \host_register\()12
 	normalize_result \width, \host_register\()13
 	.if \writes
-	\store \store_register\()13, [_cpu, x9]
+	\store \store_register\()13, [_vcpu, x9]
 	.endif
 	record_deferred \flag_operation, \width
 	retire_and_next
@@ -36,12 +36,12 @@ gadget \name
 gadget \name
 	ldp x8, x12, [_stream], #16
 	and x9, x8, #0xffff
-	\load \host_register\()11, [_cpu, x9]
+	\load \host_register\()11, [_vcpu, x9]
 	normalize_immediate \width, \host_register\()12, \host_register\()12
 	\instruction \host_register\()13, \host_register\()11, \host_register\()12
 	normalize_result \width, \host_register\()13
 	.if \writes
-	\store \store_register\()13, [_cpu, x9]
+	\store \store_register\()13, [_vcpu, x9]
 	.endif
 	record_deferred \flag_operation, \width
 	retire_and_next
@@ -83,14 +83,14 @@ arithmetic_family test, and, 3, 0, 1
 /* ADC or SBB of the operands in x11 and x12 with the carry flag, stored to
  * the register at x9, and the flags it defines recorded. */
 .macro scalar_carry_finish instruction, flag_operation, width, host_register, store, store_register
-	ldr x16, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x16, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	and w16, w16, #1
 	\instruction \host_register\()13, \host_register\()11, \host_register\()12
 	\instruction \host_register\()13, \host_register\()13, \host_register\()16
 	normalize_result \width, \host_register\()13
-	\store \store_register\()13, [_cpu, x9]
+	\store \store_register\()13, [_vcpu, x9]
 	record_deferred \flag_operation, \width
-	strb w16, [_cpu, #UML_X86_64_CPU_DEFERRED_CARRY]
+	strb w16, [_vcpu, #UML_X86_64_CPU_DEFERRED_CARRY]
 	retire_and_next
 .endm
 
@@ -100,8 +100,8 @@ gadget \name\()_\width\()_rr
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	\load \host_register\()11, [_cpu, x9]
-	\load \host_register\()12, [_cpu, x10]
+	\load \host_register\()11, [_vcpu, x9]
+	\load \host_register\()12, [_vcpu, x10]
 	scalar_carry_finish \instruction, \flag_operation, \width, \host_register, \store, \store_register
 .endm
 
@@ -110,7 +110,7 @@ gadget \name\()_\width\()_ri
 	bl uml_x86_64_gadget_materialize_carry
 	ldp x8, x12, [_stream], #16
 	and x9, x8, #0xffff
-	\load \host_register\()11, [_cpu, x9]
+	\load \host_register\()11, [_vcpu, x9]
 	normalize_immediate \width, \host_register\()12, \host_register\()12
 	scalar_carry_finish \instruction, \flag_operation, \width, \host_register, \store, \store_register
 .endm
@@ -146,10 +146,10 @@ gadget exchange_\width\()_rr
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	\load \load_register\()11, [_cpu, x9]
-	\load \load_register\()12, [_cpu, x10]
-	\store \store_register\()12, [_cpu, x9]
-	\store \store_register\()11, [_cpu, x10]
+	\load \load_register\()11, [_vcpu, x9]
+	\load \load_register\()12, [_vcpu, x10]
+	\store \store_register\()12, [_vcpu, x9]
+	\store \store_register\()11, [_vcpu, x10]
 	retire_and_next
 .endm
 
@@ -166,7 +166,7 @@ gadget \name\()_\width\()_r
 	lazy_carry_prologue
 	.endif
 	ldr x8, [_stream], #8
-	\load \host_register\()11, [_cpu, x8]
+	\load \host_register\()11, [_vcpu, x8]
 	/* At 32 and 64 bits the flag-setting host form leaves N, Z and V
 	 * describing the guest operation; only C differs (INC and DEC preserve
 	 * it, NEG inverts it), and the builder keeps the carry conditions off
@@ -197,7 +197,7 @@ gadget \name\()_\width\()_r
 	mov x11, xzr
 	.endif
 	normalize_result \width, \host_register\()13
-	\store \store_register\()13, [_cpu, x8]
+	\store \store_register\()13, [_vcpu, x8]
 	.if \materialize
 	record_deferred_pending \flag_operation, \width
 	.else
@@ -209,9 +209,9 @@ gadget \name\()_\width\()_r
 .macro scalar_not width, load, store, host_register, store_register
 gadget not_\width\()_r
 	ldr x8, [_stream], #8
-	\load \host_register\()11, [_cpu, x8]
+	\load \host_register\()11, [_vcpu, x8]
 	mvn \host_register\()11, \host_register\()11
-	\store \store_register\()11, [_cpu, x8]
+	\store \store_register\()11, [_vcpu, x8]
 	retire_and_next
 .endm
 
@@ -236,11 +236,11 @@ gadget \operation\()_\width\()_rm
 	\load \host_register\()12, [x7]
 Lx86_arithmetic_rm_loaded\@:
 	and x8, x23, #0xffff
-	\load \host_register\()11, [_cpu, x8]
+	\load \host_register\()11, [_vcpu, x8]
 	\instruction \host_register\()13, \host_register\()11, \host_register\()12
 	normalize_result \width, \host_register\()13
 	.if \writes
-	\store \store_register\()13, [_cpu, x8]
+	\store \store_register\()13, [_vcpu, x8]
 	.endif
 	record_deferred \flag_operation, \width
 	retire_and_next
@@ -257,7 +257,7 @@ Lx86_arithmetic_rm_cross\@:
 	mov x25, x7
 	.ifc \form,r
 	and x8, x23, #0xffff
-	\load \host_register\()26, [_cpu, x8]
+	\load \host_register\()26, [_vcpu, x8]
 	.endif
 	.ifc \form,i
 	ldr x26, [_stream], #8
@@ -355,19 +355,19 @@ memory_arithmetic_family test, and, 3, 0
 .macro memory_carry_rm name, instruction, flag_operation, width, load, store, host_register, store_register
 gadget \name\()_\width\()_rm
 	bl uml_x86_64_gadget_materialize_flags
-	ldr x19, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x19, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	and w19, w19, #1
 	effective_address
 	mov x25, x7
 	read_operand (\width / 8), \load, \host_register, 12
 	and x8, x23, #0xffff
-	\load \host_register\()11, [_cpu, x8]
+	\load \host_register\()11, [_vcpu, x8]
 	\instruction \host_register\()13, \host_register\()11, \host_register\()12
 	\instruction \host_register\()13, \host_register\()13, \host_register\()19
 	normalize_result \width, \host_register\()13
-	\store \store_register\()13, [_cpu, x8]
+	\store \store_register\()13, [_vcpu, x8]
 	record_deferred \flag_operation, \width
-	strb w19, [_cpu, #UML_X86_64_CPU_DEFERRED_CARRY]
+	strb w19, [_vcpu, #UML_X86_64_CPU_DEFERRED_CARRY]
 	retire_and_next
 .endm
 
@@ -378,7 +378,7 @@ gadget \name\()_\width\()_m\form\()_locked
 gadget \name\()_\width\()_m\form
 	.endif
 	bl uml_x86_64_gadget_materialize_flags
-	ldr x19, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x19, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	and w19, w19, #1
 	memory_source_operand \form, \width, \load, \host_register
 	.if \locked
@@ -396,7 +396,7 @@ Lx86_carry_msource_exclusive\@:
 	mov x12, x26
 	mov x13, x27
 	record_deferred \flag_operation, \width
-	strb w19, [_cpu, #UML_X86_64_CPU_DEFERRED_CARRY]
+	strb w19, [_vcpu, #UML_X86_64_CPU_DEFERRED_CARRY]
 	finish_store (\width / 8)
 Lx86_carry_msource_split\@:
 	split_operand (\width / 8), Lx86_carry_msource_exclusive\@
@@ -420,7 +420,7 @@ Lx86_carry_msource_written\@:
 	mov x12, x26
 	mov x13, x27
 	record_deferred \flag_operation, \width
-	strb w19, [_cpu, #UML_X86_64_CPU_DEFERRED_CARRY]
+	strb w19, [_vcpu, #UML_X86_64_CPU_DEFERRED_CARRY]
 	finish_store (\width / 8)
 .endm
 
@@ -452,7 +452,7 @@ gadget exchange_\width\()_mr
 	effective_address
 	mov x25, x7
 	and x8, x23, #0xffff
-	\load \host_register\()26, [_cpu, x8]
+	\load \host_register\()26, [_vcpu, x8]
 	/* XCHG against memory is atomic on x86 with no LOCK prefix present. */
 	locked_aligned \width, Lx86_exchange_split\@
 Lx86_exchange_exclusive\@:
@@ -462,7 +462,7 @@ Lx86_exchange_exclusive\@:
 	store_exclusive \width, 9, 26, x7
 	cbnz w9, 1b
 	and x8, x23, #0xffff
-	\register_store \register_store_register\()24, [_cpu, x8]
+	\register_store \register_store_register\()24, [_vcpu, x8]
 	finish_store (\width / 8)
 Lx86_exchange_split\@:
 	split_operand (\width / 8), Lx86_exchange_exclusive\@
@@ -477,7 +477,7 @@ Lx86_exchange_write_cross\@:
 Lx86_exchange_written\@:
 	split_lock_leave
 	and x8, x23, #0xffff
-	\register_store \register_store_register\()24, [_cpu, x8]
+	\register_store \register_store_register\()24, [_vcpu, x8]
 	finish_store (\width / 8)
 .endm
 
@@ -605,58 +605,58 @@ memory_unary_width 64, ldr, str, x
 
 gadget byte_swap_32
 	ldr x8, [_stream], #8
-	ldr w9, [_cpu, x8]
+	ldr w9, [_vcpu, x8]
 	rev w9, w9
-	str x9, [_cpu, x8]
+	str x9, [_vcpu, x8]
 	retire_and_next
 
 gadget byte_swap_64
 	ldr x8, [_stream], #8
-	ldr x9, [_cpu, x8]
+	ldr x9, [_vcpu, x8]
 	rev x9, x9
-	str x9, [_cpu, x8]
+	str x9, [_vcpu, x8]
 	retire_and_next
 
 gadget sign_extend_accumulator_16
-	ldrsb w8, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	strh w8, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldrsb w8, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	strh w8, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	retire_and_next
 
 gadget sign_extend_accumulator_32
-	ldrsh w8, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	str x8, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldrsh w8, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	str x8, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	retire_and_next
 
 gadget sign_extend_accumulator_64
-	ldrsw x8, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	str x8, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldrsw x8, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	str x8, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	retire_and_next
 
 gadget sign_extend_data_16
-	ldrsh w8, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldrsh w8, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	asr w8, w8, #15
-	strh w8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	strh w8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	retire_and_next
 
 gadget sign_extend_data_32
-	ldr w8, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldr w8, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	asr w8, w8, #31
-	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	str x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	retire_and_next
 
 gadget sign_extend_data_64
-	ldr x8, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldr x8, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	asr x8, x8, #63
-	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	str x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	retire_and_next
 
 .macro flag_control name, instruction, mask
 gadget \name
 	bl uml_x86_64_gadget_materialize_flags
-	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x8, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	\instruction x8, x8, #\mask
 	orr x8, x8, #0x2
-	str x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	str x8, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	retire_and_next
 .endm
 
@@ -670,24 +670,24 @@ flag_control direction_set, orr, 0x400
 
 gadget lahf
 	bl uml_x86_64_gadget_materialize_flags
-	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x8, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	mov x9, #0xd5
 	and x8, x8, x9
 	orr x8, x8, #0x2
-	ldr x10, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldr x10, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	bfi x10, x8, #8, #8
-	str x10, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	str x10, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	retire_and_next
 
 gadget sahf
 	bl uml_x86_64_gadget_materialize_flags
-	ldr x8, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldr x8, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	ubfx x8, x8, #8, #8
 	mov x9, #0xd5
 	and x8, x8, x9
-	ldr x10, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x10, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	bic x10, x10, x9
 	orr x10, x10, x8
 	orr x10, x10, #0x2
-	str x10, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	str x10, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	retire_and_next

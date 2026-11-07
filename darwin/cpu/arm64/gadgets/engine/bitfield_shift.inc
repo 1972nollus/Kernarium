@@ -79,11 +79,11 @@ scalar_entry bitfield_shift_\suffix, \forward, 13, Lsd\@, Lsn\@, Lscalar_none, L
 	bitfield_shift_operate \kind, \bits64, x0, w0
 	.else
 	ubfx x10, x8, #32, #16
-	ldr x15, [_cpu, x10]
+	ldr x15, [_vcpu, x10]
 	bitfield_shift_operate \kind, \bits64, x15, w15
 	.endif
 	ubfx x9, x8, #16, #16
-	str x0, [_cpu, x9]
+	str x0, [_vcpu, x9]
 	br x14
 	scalar_variants \forward, Lsn\@, Lscalar_none, Lscalar_none, bitfield_shift_fast, \kind, \bits64, \suffix
 .endm

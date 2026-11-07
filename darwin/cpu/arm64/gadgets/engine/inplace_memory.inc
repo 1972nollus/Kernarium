@@ -54,14 +54,14 @@ scalar_unsigned_inplace_modes 1, 1, load64_unsigned_inplace
  * scalar contract, which the baked variants join unchanged. */
 .macro scalar_unsigned_inplace_row prefix, mode
 	.irp reg, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30
-	.quad NAME(uml_arm64_gadget_\prefix\()_\mode\()_\reg)
+	.quad CSYM(uml_arm64_gadget_\prefix\()_\mode\()_\reg)
 	.endr
 .endm
 
 .pushsection __DATA_CONST,__gadget_inplace
 .p2align 3
-.globl NAME(uml_arm64_gadget_scalar_unsigned_inplace_table)
-NAME(uml_arm64_gadget_scalar_unsigned_inplace_table):
+.globl CSYM(uml_arm64_gadget_scalar_unsigned_inplace_table)
+CSYM(uml_arm64_gadget_scalar_unsigned_inplace_table):
 scalar_unsigned_inplace_row store32_unsigned_inplace, r
 scalar_unsigned_inplace_row store32_unsigned_inplace, r_sp
 scalar_unsigned_inplace_row store64_unsigned_inplace, r

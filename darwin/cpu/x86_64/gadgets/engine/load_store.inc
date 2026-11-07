@@ -6,8 +6,8 @@ gadget \name
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	\load \load_register\()11, [_cpu, x10]
-	\store \store_register\()11, [_cpu, x9]
+	\load \load_register\()11, [_vcpu, x10]
+	\store \store_register\()11, [_vcpu, x9]
 	retire_and_next
 .endm
 
@@ -15,7 +15,7 @@ gadget \name
 gadget \name
 	ldp x8, x11, [_stream], #16
 	and x9, x8, #0xffff
-	\store \store_register\()11, [_cpu, x9]
+	\store \store_register\()11, [_vcpu, x9]
 	retire_and_next
 .endm
 
@@ -40,7 +40,7 @@ gadget move_\width\()_rm
 	\load \host_register\()11, [x7]
 Lx86_load_write\@:
 	and x8, x23, #0xffff
-	\store \store_register\()11, [_cpu, x8]
+	\store \store_register\()11, [_vcpu, x8]
 	retire_and_next
 Lx86_load_cross\@:
 	cross_page_load (\width / 8)
@@ -54,7 +54,7 @@ gadget move_\width\()_m\form
 	mov x25, x7
 	.ifc \form,r
 	and x8, x23, #0xffff
-	\load \host_register\()24, [_cpu, x8]
+	\load \host_register\()24, [_vcpu, x8]
 	.endif
 	.ifc \form,i
 	ldr x24, [_stream], #8
@@ -87,26 +87,26 @@ memory_move_store i, 64, ldr, x, str
 gadget lea_16
 	effective_address
 	and x8, x23, #0xffff
-	strh w7, [_cpu, x8]
+	strh w7, [_vcpu, x8]
 	retire_and_next
 
 gadget lea_32
 	effective_address
 	and x8, x23, #0xffff
 	mov w7, w7
-	str x7, [_cpu, x8]
+	str x7, [_vcpu, x8]
 	retire_and_next
 
 gadget lea_64
 	effective_address
 	and x8, x23, #0xffff
-	str x7, [_cpu, x8]
+	str x7, [_vcpu, x8]
 	retire_and_next
 
 /* Push the value in `host_register`24 as a `width`-bit stack element, ending
  * the gadget. */
 .macro push_value width, store, host_register
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	ldr x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub x25, x25, #(\width / 8)
 	.if \width == 32
 	mov w25, w25
@@ -116,7 +116,7 @@ gadget lea_64
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()24, [x7]
 Lx86_push_value_done\@:
-	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	str x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	finish_store (\width / 8)
 Lx86_push_value_cross\@:
 	cross_page_store x24, (\width / 8)
@@ -127,7 +127,7 @@ Lx86_push_value_cross\@:
 gadget push_\width\()_r
 	ldr x23, [_stream], #8
 	and x8, x23, #0xffff
-	\load \host_register\()24, [_cpu, x8]
+	\load \host_register\()24, [_vcpu, x8]
 	push_value \width, \store, \host_register
 .endm
 
@@ -140,7 +140,7 @@ gadget push_\width\()_i
 .macro pop_register width, load, host_register, store, store_register
 gadget pop_\width\()_r
 	ldr x23, [_stream], #8
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	ldr x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	.if \width == 32
 	mov w25, w25
 	.endif
@@ -153,9 +153,9 @@ Lx86_pop_done\@:
 	.if \width == 32
 	mov w9, w9
 	.endif
-	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	str x9, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	and x8, x23, #0xffff
-	\store \store_register\()24, [_cpu, x8]
+	\store \store_register\()24, [_vcpu, x8]
 	retire_and_next
 Lx86_pop_cross\@:
 	cross_page_load (\width / 8)
@@ -180,7 +180,7 @@ pop_register 64, ldr, x, str, x
 .macro push_flags width, store, host_register
 gadget push_flags_\width
 	bl uml_x86_64_gadget_materialize_flags
-	ldr x24, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x24, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	/* PUSHF stores RF and VM as zero whatever RFLAGS holds; IRET may have
 	 * loaded RF. */
 	and x24, x24, #~0x30000
@@ -197,7 +197,7 @@ push_flags 64, str, x
 .macro pop_flags width, load, host_register
 gadget pop_flags_\width
 	ldr x23, [_stream], #8
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	ldr x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	.if \width == 32
 	mov w25, w25
 	.endif
@@ -207,7 +207,7 @@ gadget pop_flags_\width
 	\load \host_register\()24, [x7]
 Lx86_pop_flags_done\@:
 	bl uml_x86_64_gadget_materialize_flags
-	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	mov x12, x9
 	mov x10, #0x4dd5
 	.if \width != 16
@@ -217,13 +217,13 @@ Lx86_pop_flags_done\@:
 	and x24, x24, x10
 	orr x9, x9, x24
 	orr x9, x9, #0x2
-	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	str x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	bic x12, x9, x12
 	add x9, x25, #(\width / 8)
 	.if \width == 32
 	mov w9, w9
 	.endif
-	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	str x9, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	/* Setting TF arms #DB after the next instruction: leave at it so the
 	 * runtime can run exactly that one. Setting AC leaves too, for the
 	 * runtime checks alignment while it is set. */
@@ -232,13 +232,13 @@ Lx86_pop_flags_done\@:
 	tbnz x12, #18, Lx86_pop_flags_alignment\@
 	retire_and_next
 Lx86_pop_flags_alignment\@:
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	str x8, [_vcpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 Lx86_pop_flags_trap\@:
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	str x8, [_vcpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_TRAP_FLAG
@@ -258,7 +258,7 @@ pop_flags 64, ldr, x
 .macro leave width, load, store, host_register
 gadget leave_\width
 	ldr x23, [_stream], #8
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 5 * 8)]
+	ldr x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 5 * 8)]
 	.if \width == 32
 	mov w25, w25
 	.endif
@@ -271,8 +271,8 @@ Lx86_leave_done\@:
 	.if \width == 32
 	mov w9, w9
 	.endif
-	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	\store \host_register\()24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 5 * 8)]
+	str x9, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	\store \host_register\()24, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 5 * 8)]
 	retire_and_next
 Lx86_leave_cross\@:
 	cross_page_load (\width / 8)
@@ -315,7 +315,7 @@ push_memory 64, ldr, x, str, x
 .macro pop_memory width, load, load_register, store, store_register
 gadget pop_\width\()_m
 	ldr x23, [_stream]
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	ldr x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	.if \width == 32
 	mov w25, w25
 	.endif
@@ -325,15 +325,15 @@ gadget pop_\width\()_m
 	.if \width == 32
 	mov w26, w26
 	.endif
-	str x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	str x26, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	effective_address
-	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	str x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	mov x27, x7
 	page_cross_check (\width / 8), Lx86_pop_memory_destination_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \store_register\()24, [x7]
 Lx86_pop_memory_done\@:
-	str x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	str x26, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	mov x25, x27
 	finish_store (\width / 8)
 Lx86_pop_memory_destination_cross\@:
@@ -386,7 +386,7 @@ Lx86_stack_write_ready\@:
 .endm
 
 .macro call_push_and_exit width, store, host_register, linked=0, indirect=0, positioned=1
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	ldr x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub x25, x25, #(\width / 8)
 	.if \width == 32
 	mov w25, w25
@@ -395,7 +395,7 @@ Lx86_stack_write_ready\@:
 	page_cross_check (\width / 8), Lx86_call_cross\@
 	stack_fast 1, Lx86_call_slow\@
 	\store \host_register\()24, [x7]
-	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	str x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	/* A plain page owes no publication; the write may still land in the
 	 * block that is running, which is what the rest of the test decides. */
 	invalidate_stack_write (\width / 8), 0
@@ -408,7 +408,7 @@ Lx86_call_slow\@:
 	.endif
 	\store \host_register\()24, [x7]
 Lx86_call_done\@:
-	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	str x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	invalidate_stack_write (\width / 8)
 Lx86_call_settled\@:
 	add _executed, _executed, #1
@@ -423,7 +423,7 @@ Lx86_call_settled\@:
 	.endif
 	.endif
 Lx86_call_exit\@:
-	str x26, [_cpu, #UML_X86_64_CPU_RIP]
+	str x26, [_vcpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 Lx86_call_cross\@:
@@ -483,7 +483,7 @@ gadget \name
 	.if \cached
 	ldr x27, [_stream], #8
 	.endif
-	\load \host_register\()26, [_cpu, x8]
+	\load \host_register\()26, [_vcpu, x8]
 	call_push_and_exit \width, \store, \store_register, 0, \cached
 .endm
 
@@ -535,7 +535,7 @@ call_indirect_memory call_indirect_32_m_cached, 32, ldr, w, str, w, 1
 .macro return_gadget name, width, load, host_register, cached=0
 gadget \name
 	ldr x23, [_stream], #8
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	ldr x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	.if \width == 32
 	mov w25, w25
 	.endif
@@ -553,14 +553,14 @@ Lx86_return_done\@:
 	.if \width == 32
 	mov w9, w9
 	.endif
-	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	str x9, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	.if \cached
 	follow_target_link x24, Lx86_return_miss\@
 Lx86_return_miss\@:
 	.endif
-	str x24, [_cpu, #UML_X86_64_CPU_RIP]
+	str x24, [_vcpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 Lx86_return_cross\@:
@@ -576,13 +576,13 @@ gadget \name
 	.else
 	ldr x8, [_stream]
 	.endif
-	\load \host_register\()8, [_cpu, x8]
+	\load \host_register\()8, [_vcpu, x8]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	.if \cached
 	follow_indirect_link x8, x27
 	.else
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	str x8, [_vcpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 	.endif
@@ -601,7 +601,7 @@ gadget \name
 	.if \cached
 	follow_indirect_link x24, x27
 	.else
-	str x24, [_cpu, #UML_X86_64_CPU_RIP]
+	str x24, [_vcpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 	.endif
@@ -629,8 +629,8 @@ gadget \name
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	\load \load_register\()11, [_cpu, x10]
-	\store \store_register\()11, [_cpu, x9]
+	\load \load_register\()11, [_vcpu, x10]
+	\store \store_register\()11, [_vcpu, x9]
 	retire_and_next
 .endm
 
@@ -683,7 +683,7 @@ Lx86_extend_cross\@:
 	\cross_extend
 Lx86_extend_write\@:
 	and x8, x23, #0xffff
-	\destination_store \destination_register\()11, [_cpu, x8]
+	\destination_store \destination_register\()11, [_vcpu, x8]
 	retire_and_next
 .endm
 

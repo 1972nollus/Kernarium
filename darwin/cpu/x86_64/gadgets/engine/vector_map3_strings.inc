@@ -84,25 +84,25 @@ Lx86_vector_map3_string_compute:
 	add w6, w6, #1
 	cbz w12, Lx86_vector_map3_string_implicit_lengths
 	cbz w11, Lx86_vector_map3_string_explicit_32
-	ldr x14, [_cpu, #0]
+	ldr x14, [_vcpu, #0]
 	cmp x14, #0
 	cneg x14, x14, mi
 	cmp x14, x3
 	csel x4, x14, x3, lo
-	ldr x14, [_cpu, #16]
+	ldr x14, [_vcpu, #16]
 	cmp x14, #0
 	cneg x14, x14, mi
 	cmp x14, x3
 	csel x5, x14, x3, lo
 	b Lx86_vector_map3_string_lengths_ready
 Lx86_vector_map3_string_explicit_32:
-	ldr w14, [_cpu, #0]
+	ldr w14, [_vcpu, #0]
 	sxtw x14, w14
 	cmp x14, #0
 	cneg x14, x14, mi
 	cmp x14, x3
 	csel x4, x14, x3, lo
-	ldr w14, [_cpu, #16]
+	ldr w14, [_vcpu, #16]
 	sxtw x14, w14
 	cmp x14, #0
 	cneg x14, x14, mi
@@ -270,7 +270,7 @@ Lx86_vector_map3_string_polarity_done:
 	mov w25, w1
 	mov w26, w2
 	mov w16, w3
-	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	mov x10, #0x8d5
 	bic x9, x9, x10
 	cmp w24, #0
@@ -285,10 +285,10 @@ Lx86_vector_map3_string_polarity_done:
 	and w11, w24, #1
 	orr x9, x9, x11, lsl #11
 	orr x9, x9, #2
-	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
-	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	str x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
+	str xzr, [_vcpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	.if (\opcode & 1) == 0
-	add x9, _cpu, #UML_X86_64_CPU_VECTORS
+	add x9, _vcpu, #UML_X86_64_CPU_VECTORS
 	movi v4.16b, #0
 	tbnz w27, #6, Lx86_vector_map3_string_expanded_mask\@
 	mov v4.h[0], w24
@@ -330,7 +330,7 @@ Lx86_vector_map3_string_index_high\@:
 Lx86_vector_map3_string_index_default\@:
 	mov w11, w16
 Lx86_vector_map3_string_index_ready\@:
-	str x11, [_cpu, #8]
+	str x11, [_vcpu, #8]
 	.endif
 Lx86_vector_map3_string_result_done\@:
 	retire_and_next
@@ -342,7 +342,7 @@ Lx86_vector_map3_string_result_done\@:
 	 * records lie inside that same set, so a pending record has nothing left
 	 * to contribute: discard it instead of materializing a value this
 	 * gadget immediately overwrites. */
-	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	str xzr, [_vcpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	and w13, w27, #0xff
 	mov w12, #(\opcode <= 0x61)
 	ubfx w11, w27, #8, #1
@@ -356,8 +356,8 @@ gadget vector_map3_string_\symbol\()_rr
 	mov x19, x8
 	and x10, x8, #0xffff
 	ubfx x11, x8, #16, #16
-	ldr q0, [_cpu, x10]
-	ldr q1, [_cpu, x11]
+	ldr q0, [_vcpu, x10]
+	ldr q1, [_vcpu, x11]
 	vector_map3_string_execute \opcode, 19
 .endm
 
@@ -368,7 +368,7 @@ gadget vector_map3_string_\symbol\()_rm
 	mov x25, x7
 	vector_memory_source 16, Lx86_vector_map3_string_cross_fault\@, frame=16
 	and x10, x23, #0xffff
-	ldr q0, [_cpu, x10]
+	ldr q0, [_vcpu, x10]
 	vector_map3_string_execute \opcode, 23
 	vector_memory_source_fault Lx86_vector_map3_string_cross_fault\@, 16
 .endm

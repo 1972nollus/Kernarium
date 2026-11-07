@@ -5,7 +5,7 @@
 gadget \name\()_\width\()_r
 	ldr x23, [_stream], #8
 	and x8, x23, #0xffff
-	\load \host_register\()15, [_cpu, x8]
+	\load \host_register\()15, [_vcpu, x8]
 	b \target
 .endm
 
@@ -47,34 +47,34 @@ divide_forms idiv, 64, ldr, x, Lx86_divide_signed_64
 .p2align 4
 Lx86_divide_unsigned_8:
 	cbz w15, Lx86_divide_trap
-	ldrh w13, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldrh w13, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	udiv w16, w13, w15
 	cmp w16, #0xff
 	b.hi Lx86_divide_trap
 	msub w17, w16, w15, w13
 	orr w16, w16, w17, lsl #8
-	strh w16, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	strh w16, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	retire_and_next
 
 .p2align 4
 Lx86_divide_unsigned_16:
 	cbz w15, Lx86_divide_trap
-	ldrh w13, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	ldrh w14, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	ldrh w13, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	ldrh w14, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	orr w13, w13, w14, lsl #16
 	udiv w16, w13, w15
 	lsr w8, w16, #16
 	cbnz w8, Lx86_divide_trap
 	msub w17, w16, w15, w13
-	strh w16, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	strh w17, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	strh w16, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	strh w17, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	retire_and_next
 
 .p2align 4
 Lx86_divide_unsigned_32:
 	cbz w15, Lx86_divide_trap
-	ldr w13, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	ldr w14, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	ldr w13, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	ldr w14, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	orr x13, x13, x14, lsl #32
 	mov w15, w15
 	udiv x16, x13, x15
@@ -83,8 +83,8 @@ Lx86_divide_unsigned_32:
 	msub x17, x16, x15, x13
 	mov w16, w16
 	mov w17, w17
-	str x16, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	str x17, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	str x16, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	str x17, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	retire_and_next
 
 /* Unsigned [x14:x13] / x15. The caller checks x15 for zero. x12 reports
@@ -125,19 +125,19 @@ Lx86_divide_unsigned_128_overflow:
 .p2align 4
 Lx86_divide_unsigned_64:
 	cbz x15, Lx86_divide_trap
-	ldr x13, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	ldr x14, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	ldr x13, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	ldr x14, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	bl Lx86_divide_unsigned_128_64
 	cbnz w12, Lx86_divide_trap
-	str x13, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	str x14, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	str x13, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	str x14, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	retire_and_next
 
 .p2align 4
 Lx86_divide_signed_8:
 	sxtb w15, w15
 	cbz w15, Lx86_divide_trap
-	ldrsh w13, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldrsh w13, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	sdiv w16, w13, w15
 	sxtb w8, w16
 	cmp w16, w8
@@ -145,31 +145,31 @@ Lx86_divide_signed_8:
 	msub w17, w16, w15, w13
 	and w16, w16, #0xff
 	bfi w16, w17, #8, #8
-	strh w16, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	strh w16, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	retire_and_next
 
 .p2align 4
 Lx86_divide_signed_16:
 	sxth w15, w15
 	cbz w15, Lx86_divide_trap
-	ldrh w13, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	ldrh w14, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	ldrh w13, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	ldrh w14, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	orr w13, w13, w14, lsl #16
 	sdiv w16, w13, w15
 	sxth w8, w16
 	cmp w16, w8
 	b.ne Lx86_divide_trap
 	msub w17, w16, w15, w13
-	strh w16, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	strh w17, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	strh w16, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	strh w17, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	retire_and_next
 
 .p2align 4
 Lx86_divide_signed_32:
 	sxtw x15, w15
 	cbz x15, Lx86_divide_trap
-	ldr w13, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	ldr w14, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	ldr w13, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	ldr w14, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	orr x13, x13, x14, lsl #32
 	sdiv x16, x13, x15
 	sxtw x8, w16
@@ -178,15 +178,15 @@ Lx86_divide_signed_32:
 	msub x17, x16, x15, x13
 	mov w16, w16
 	mov w17, w17
-	str x16, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	str x17, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	str x16, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	str x17, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	retire_and_next
 
 .p2align 4
 Lx86_divide_signed_64:
 	cbz x15, Lx86_divide_trap
-	ldr x13, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	ldr x14, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	ldr x13, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	ldr x14, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	lsr x24, x14, #63
 	lsr x25, x15, #63
 	cbz x24, Lx86_divide_signed_dividend_absolute
@@ -214,13 +214,13 @@ Lx86_divide_signed_remainder:
 	cbz w24, Lx86_divide_signed_store
 	neg x14, x14
 Lx86_divide_signed_store:
-	str x13, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	str x14, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	str x13, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	str x14, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	retire_and_next
 
 .p2align 4
 Lx86_divide_trap:
 	instruction_rip x22
-	str x22, [_cpu, #UML_X86_64_CPU_RIP]
+	str x22, [_vcpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_FLOATING_POINT_TRAP
 	b uml_x86_64_gadget_leave
