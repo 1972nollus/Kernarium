@@ -27,8 +27,12 @@ a fresh instance, and checks the contract in android/lineage-24/README.md:
   tools/android_provision.py, and reaches the same observable state without a
   person: both settings 1 and HOME on the launcher. The shell may not disable
   the wizard's components, so the helper disables the wizard package for user 0
-  instead, and stops its process, which holds a status bar lock until it dies.
-  The helper then finds nothing left to do. Its home screen is checked the same.
+  instead, once the wizard is bound, and stops its process, which holds a status
+  bar lock until it dies. The helper then finds nothing left to do. Its home
+  screen is checked the same.
+
+Neither guest may have a wizard crash in its crash buffer: the helper's disable
+landing while the wizard binds kills the process with a NameNotFoundException.
 
 The flow is the contract of release r17 and later: a release that still shows
 LineageOS's other pages fails at the first page that is not in the list.
@@ -86,6 +90,8 @@ LAUNCHER_LOAD_SECONDS = 60
 UI_DUMP = "/data/local/tmp/andarium-oobe-ui.xml"
 BOUNDS = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 RESUMED = re.compile(r"ResumedActivity: ActivityRecord\{\S+ u\d+ (\S+) t\d+\}")
+# A wizard process that died of an uncaught exception is a `Process:` line of the crash buffer.
+WIZARD_FATAL = re.compile(r"^.*\bProcess: " + re.escape(WIZARD) + r"(?![\w.]).*$", re.MULTILINE)
 ADB_LOST = re.compile(r"offline|device not found|no devices|closed|unauthorized", re.IGNORECASE)
 RECONNECT_ATTEMPTS = 8
 # What the wizard disables itself when its last page finishes.
@@ -266,6 +272,11 @@ def launcher_layout_drops(log: str) -> list[str] | None:
                 match.group("level") in "WE" or "Can't find" in match.group("message")):
             drops.append(f"{match.group('tag')}: {match.group('message')}")
     return drops
+
+
+def wizard_fatals(crash_log: str) -> list[str]:
+    """The crash buffer's lines that name the wizard's process as the one that died."""
+    return [match.group(0).strip() for match in WIZARD_FATAL.finditer(crash_log)]
 
 
 def disabled_components(dumpsys_package: str) -> set[str]:
@@ -516,6 +527,17 @@ def check_wizard_released(device: Device, *, by_wizard: bool) -> None:
     print("the wizard holds no status bar lock")
 
 
+def check_wizard_did_not_crash(device: Device) -> None:
+    """The wizard's process did not die of an exception, in either guest.
+
+    The crash buffer was raised with the others before the wizard ran (wait_booted), so a crash
+    during the boot is still there. The helper must not disable the wizard while its process binds."""
+    fatals = wizard_fatals(device.shell("logcat -b crash -d", timeout=60))
+    if fatals:
+        raise Failure("the setup wizard crashed: " + "; ".join(fatals[:3]))
+    print("the wizard did not crash")
+
+
 def check_launcher(device: Device) -> None:
     """The home screen holds the six applications of the default layout on its first page, and the dock is empty.
 
@@ -573,6 +595,7 @@ def check_provisioned(device: Device, *, by_wizard: bool, before: dict[str, str]
     print("provisioned: settings 1, HOME is the launcher, the wizard "
           + ("disabled its HOME activity and manager" if by_wizard else "package is disabled"))
     check_wizard_released(device, by_wizard=by_wizard)
+    check_wizard_did_not_crash(device)
     check_defaults(device, before)
     check_launcher(device)
 

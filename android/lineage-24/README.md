@@ -240,8 +240,13 @@ a guest to measure it provisions the guest over adb after `sys.boot_completed`
 --erase` and `tests/perf/android_launch_suite.py`): it sets both settings and
 disables the wizard package for user 0 (the shell may not disable the wizard's
 own components), so HOME resolves to the launcher, and it changes nothing in
-the image. It returns only after adbd has stayed one process for six seconds
-with no trade-in mode pending, which costs those six seconds on this image and
+the image. It changes nothing until user 0 is `RUNNING_UNLOCKED` and either HOME
+is not the wizard or the wizard holds its status bar record (120 s at most, then
+it fails naming the state it saw), because a wizard process whose package is
+disabled while it binds dies. After the disabling it force-stops the wizard and
+returns only once the wizard has no process and no record and adbd has stayed
+one process for six seconds with no trade-in mode pending, which costs those
+six seconds on this image and
 keeps a harness correct on an older release that still carries DeviceDiagnostics
 (r15 and earlier, where provisioning at `sys.boot_completed` also keeps the
 mode from starting: "Not starting trade-in mode, device is setup"). A measurement
@@ -313,9 +318,11 @@ process stays until the system reclaims it, and nothing restarts it; a client
 still connects, which CTS's OMAPI version test needs. The OMAPI features are not declared. QuickSearchBox and its
 home-screen search surface are deliberately omitted. Bluetooth
 device implementations and feature declarations are also omitted. Settings is
-the stock application apart from its Bluetooth parts (a `packages/apps/Settings`
-topic, route `p0009`): the Connected devices entry, which holds only Bluetooth,
-the Bluetooth developer option and the media output switcher are gone. The
+the stock application apart from the pages for hardware the product lacks (two
+`packages/apps/Settings` topics, route `p0009`): the Connected devices entry,
+which holds only Bluetooth, the Bluetooth developer option, the media output
+switcher, the hearing devices row, and the hearing-device, Bluetooth pairing,
+telephony, biometric and USB pages are gone. The
 Network page is the stock one with its Wi-Fi page. The Wi-Fi hotspot and
 wireless display pages are hidden, because the virtual Wi-Fi interface is a
 station only, and so is System update, because the synced AOSP tree has no
@@ -682,6 +689,11 @@ neverallows, and `device/lineage/sepolicy` (route `p0021`) drops the `vold` and
 back, a later such grant fails the policy build, and the target-files verifier
 repeats the checks on the built policy (a user build has no permissive
 domain; a userdebug build may have only `su`).
+
+DocumentsUI (Files) on a smallest width of 720 dp or more can throw an
+`IllegalStateException` from AppCompat's `CascadingMenuPopup` when its overflow
+menu changes during the popup's exit transition; real tablets share this
+upstream defect, and there is no product fix.
 
 ### Lock screen, input and wallpaper
 
