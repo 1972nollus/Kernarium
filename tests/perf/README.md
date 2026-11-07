@@ -100,7 +100,11 @@ guest, which boots the system that build carries, without Home:
 disk only with `--erase`. A fresh guest starts in LineageOS Setup Wizard, where
 HOME returns to the wizard, so after the boot `--erase` provisions the guest
 over adb (`tools/android_provision.py`, recorded as `provisioned` in the
-summary). The helper returns once adbd has settled. Releases up to r15 carry
+summary). The helper stops the disabled wizard, whose process holds a status bar
+lock until it dies (no clock, no shade, only Back in the navigation bar), and
+returns once the wizard has no process and no lock and adbd has settled. A
+guest the helper provisioned before that fix carries the lock, so runs on the
+two helper versions are not comparable. Releases up to r15 carry
 Android's trade-in mode, which restarted adbd twice some 230 s into an
 unprovisioned first boot and killed a warm-up shell; the current image has none,
 and provisioning keeps the mode from starting on an older one.

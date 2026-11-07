@@ -876,9 +876,11 @@ computers, stopping, a port in use).
 every zone Foundation knows.
 The package also tests orientation ownership for phones, full-screen and
 windowed iPads, loss of a scene lock, coalesced guest commands, partial failures
-and stale completions after a guest restart. `SessionOrientationHostingTests`
-checks the real scene root's session lock and the built bundle's portrait-only
-iPhone declaration. The opt-in `RotationOverVsockTests`
+and stale completions after a guest restart, and which screen edges a run
+defers. `SessionOrientationHostingTests` checks the real scene root's session
+lock and deferred edges, and the built bundle's portrait-only iPhone
+declaration; only a device shows how the system answers the swipes
+([Edge gestures](#edge-gestures-device-only)). The opt-in `RotationOverVsockTests`
 (`TEST_RUNNER_ANDARIUM_ROTATION_TESTS=1`, selecting only that suite) boots Android
 and verifies that the host override preserves and restores locked and unset
 guest rotation preferences. A hands-on iPad check additionally covers rotation
@@ -1075,6 +1077,24 @@ device with a passcode needs the owner's approval at the device. Its commands,
 approval rules, and failure modes are in
 `Kernarium/scripts/ipad-automation.py --help`. Keep all automation code in the
 test targets.
+
+### Edge gestures (device only)
+
+The Simulator shows which edges a run defers: `AndariumPreview -screen session`
+with edge swipes within 4 pt of the screen edge shows the deferral tab on a
+first swipe from the top and the system's gesture on the second. It does not
+show what a device does, which needs an iPad lease, the automation host and a
+guest with Android's 3-button navigation and Developer options > Pointer
+location on:
+
+- whether the host's synthesized edge swipes start system gestures at all
+  (down from the top right, up from the bottom centre, on Andarium's Home);
+- for each edge in a run, against a build without the deferral, what iOS does
+  (tab, Control Center, Notification Center, Home) and whether Android's trace
+  is whole or cut short;
+- the bottom edge with the home indicator hidden, as a run has it, and with it
+  visible. The Simulator honours the bottom edge only with the indicator
+  visible.
 
 ### Window layout (device only)
 
@@ -1670,14 +1690,25 @@ a blank instance:
   `UML_ANDROID_OOBE_RELEASE` names the release and the Android macOS executable
   is built) boots two fresh instances. On the first it checks that the guest
   starts unprovisioned in LineageOS Setup Wizard, which HOME does not leave,
-  completes the wizard through its own pages and checks the end state: both
-  settings 1, the wizard's HOME activity and flow manager disabled, and HOME
-  reaching the launcher. The second is started with `boot_android.py
-  --provision`, the harness path of `tools/android_provision.py`, and must end
-  with both settings 1 and HOME on the launcher, the wizard package disabled
-  for user 0 (the shell may not disable its components), and nothing left for
-  the helper to do. Measurements on an erased guest use that helper, so they do
-  not land in the wizard.
+  and completes the wizard through the pages the product shows, exactly
+  Welcome, Language, Date and time, Theme and Finish in that order (a hidden
+  page or another order fails; the flow is the contract of release r17 and
+  later). It then checks the end state: both settings 1, the wizard's HOME
+  activity and flow manager disabled, HOME reaching the launcher, and the
+  defaults the shortened flow leaves to the platform: three-button navigation
+  (`navigation_mode` 0, the gestural overlay off, both mode overlays present),
+  no screen lock, location on with the settings it had before the wizard, Wi-Fi
+  connected to VirtWifi, and no status bar disable record held by the wizard.
+  The second is started with `boot_android.py --provision`, the harness path of
+  `tools/android_provision.py`, and must end with both settings 1 and HOME on
+  the launcher, the wizard package disabled for user 0 (the shell may not
+  disable its components), no wizard process and no status bar record (the
+  helper stops the process that holds it), the same defaults, and nothing left
+  for the helper to do. On both guests the launcher's data model holds exactly
+  the six applications of the default layout on the first page, none in the
+  dock, and the log shows no item dropped while the launcher read its layout.
+  Measurements on an erased guest use that helper, so they do not land in the
+  wizard.
 - `android-adb-debugging` (integration, registered only when
   `UML_ANDROID_ADB_DEBUGGING_RELEASE` names the release and the Android macOS
   executable is built) boots a blank instance and checks the adb topics of the

@@ -1484,6 +1484,87 @@ def check_setup_wizard_art(overlay: zipfile.ZipFile) -> None:
         fail(f"{SETUP_WIZARD_OVERLAY} has no {SETUP_WIZARD_WELCOME}")
     if welcome != (SETUP_WIZARD_ART / "raw/lottie_welcome.json").read_bytes():
         fail(f"{SETUP_WIZARD_OVERLAY}'s {SETUP_WIZARD_WELCOME} is not the product's animation")
+    check_setup_wizard_flow(overlay)
+
+
+# The Setup Wizard shows the pages the product has reviewed and no others. LineageOS's flow lists
+# eleven more: each is either decided against or can never apply to this product (the README of the
+# release names the reason for every one). The overlay carries two scripts, which are raw files and
+# so reach the overlay unchanged: the owner's flow, and the one a secondary user runs. A script is
+# reviewed as the flow its first action reaches, in order, and it may define nothing else.
+SETUP_WIZARD_NAMESPACE = "http://schemas.android.com/apk/res/com.google.android.setupwizard"
+SETUP_WIZARD_FLOWS = {
+    "lineage_wizard_script.xml": ("welcome", "locale", "datetime", "theme_settings", "finish"),
+    "lineage_wizard_script_user.xml": ("welcome", "theme_settings", "finish"),
+}
+SETUP_WIZARD_HIDDEN = (
+    "bluetooth_setup",
+    "network_setup",
+    "sim_missing",
+    "restore",
+    "location_settings",
+    "device_specific",
+    "recovery_update",
+    "lineage_settings",
+    "biometric_settings",
+    "lockscreen_settings",
+    "navigation_settings",
+)
+
+
+def check_setup_wizard_script(source: str, text: str, reviewed: tuple[str, ...]) -> None:
+    """The script's flow is the reviewed pages in order, and no hidden page is defined or reached."""
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as error:
+        fail(f"{source} is not well-formed XML: {error}")
+    if root.tag != "WizardScript":
+        fail(f"{source} is not a WizardScript")
+    first = root.get(f"{{{SETUP_WIZARD_NAMESPACE}}}firstAction")
+    if first is None:
+        fail(f"{source} names no firstAction")
+    actions: dict[str, list[str]] = {}
+    for action in root.findall("WizardAction"):
+        identifier = action.get("id")
+        if identifier is None or identifier in actions:
+            fail(f"{source} has a WizardAction without a unique id: {identifier!r}")
+        actions[identifier] = [
+            target
+            for result in action.findall("result")
+            if (target := result.get(f"{{{SETUP_WIZARD_NAMESPACE}}}action")) is not None
+        ]
+    reached: list[str] = []
+    pending = [first]
+    while pending:
+        identifier = pending.pop(0)
+        if identifier in reached:
+            continue
+        if identifier not in actions:
+            fail(f"{source}: the flow reaches {identifier!r}, which the script does not define")
+        reached.append(identifier)
+        pending.extend(actions[identifier])
+    hidden = [page for page in SETUP_WIZARD_HIDDEN if page in actions]
+    if hidden:
+        fail(f"{source} defines pages the product hides: {', '.join(hidden)}")
+    if tuple(reached) != reviewed:
+        fail(f"{source} reaches {' > '.join(reached)}, not the reviewed {' > '.join(reviewed)}")
+    unreached = sorted(set(actions) - set(reached))
+    if unreached:
+        fail(f"{source} defines pages its flow never reaches: {', '.join(unreached)}")
+
+
+def check_setup_wizard_flow(overlay: zipfile.ZipFile) -> None:
+    """The overlay's scripts are the tracked ones, and the tracked ones are the reviewed flows."""
+    for name, reviewed in SETUP_WIZARD_FLOWS.items():
+        tracked = SETUP_WIZARD_ART / "raw" / name
+        check_setup_wizard_script(str(tracked), tracked.read_text(encoding="utf-8"), reviewed)
+        member = f"res/raw/{name}"
+        try:
+            shipped = overlay.read(member)
+        except KeyError:
+            fail(f"{SETUP_WIZARD_OVERLAY} has no {member}")
+        if shipped != tracked.read_bytes():
+            fail(f"{SETUP_WIZARD_OVERLAY}'s {member} is not the product's script")
 
 
 def check_setup_wizard_branding(
@@ -1508,6 +1589,170 @@ def check_setup_wizard_branding(
             fail(f"{SETUP_WIZARD_OVERLAY} does not set the string {text.decode()!r}")
     if holds(b"Lineage"):
         fail(f"{SETUP_WIZARD_OVERLAY} still names LineageOS or Lineage")
+
+
+# The navigation mode is the platform's. LineageOS's Setup Wizard switched a device without an
+# app-switch key to gestural navigation when it started, before its first page; the product's
+# wizard topic (route p0026) removes that call, so a fresh guest runs the framework's default,
+# three buttons, and Settings can switch it either way: both mode overlays stay in the image. The
+# wizard's dex no longer names the function (R8 keeps method names), no overlay configuration
+# enables a mode overlay, and no property enables one at boot, which would override the default.
+SETUP_WIZARD_APK = "SYSTEM_EXT/priv-app/LineageSetupWizard/LineageSetupWizard.apk"
+GESTURAL_FORCING = b"enableGesturalNavigation"
+NAVIGATION_OVERLAY_DIRECTORIES = (
+    "PRODUCT/overlay/NavigationBarMode3Button/",
+    "PRODUCT/overlay/NavigationBarModeGestural/",
+)
+NAVIGATION_OVERLAY_PACKAGES = "com.android.internal.systemui.navbar."
+OVERLAY_CONFIGURATION = re.compile(r"[A-Z_]+/overlay/config/[^/]+\.xml")
+OVERLAY_THEME_PROPERTY = "ro.boot.vendor.overlay.theme"
+
+
+def check_navigation_mode(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    """The wizard leaves the navigation mode alone, and both modes stay available."""
+    info = infos.get(SETUP_WIZARD_APK)
+    if info is None:
+        fail(f"{SETUP_WIZARD_APK} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, STATISTICS_APK_LIMIT))) as apk:
+            for name in apk.namelist():
+                if name.startswith("classes") and name.endswith(".dex") and GESTURAL_FORCING in apk.read(name):
+                    fail(
+                        f"{SETUP_WIZARD_APK} still forces gestural navigation: "
+                        f"{name} contains {GESTURAL_FORCING.decode()}"
+                    )
+    except (OSError, zipfile.BadZipFile) as error:
+        fail(f"{SETUP_WIZARD_APK} is not a readable application archive: {error}")
+    for directory in NAVIGATION_OVERLAY_DIRECTORIES:
+        if not any(name.startswith(directory) and name.endswith(".apk") for name in infos):
+            fail(f"the navigation mode overlay under {directory} is missing: Settings could not switch modes")
+    for name in sorted(infos):
+        if OVERLAY_CONFIGURATION.fullmatch(name) is None:
+            continue
+        try:
+            configuration = ET.fromstring(read_small(archive, infos[name], 1 << 20))
+        except ET.ParseError as error:
+            fail(f"{name} is not well-formed XML: {error}")
+        for element in configuration.iter():
+            package = element.get("package", "")
+            if package.startswith(NAVIGATION_OVERLAY_PACKAGES) and element.get("enabled") != "false":
+                fail(f"{name} enables the navigation mode overlay {package}: the mode is the platform's")
+
+
+# Trebuchet's stock default workspace names Google applications and widgets that the image does not
+# ship, so a fresh guest lost most of its items and showed the rest on the second page, with an empty
+# first page and dock. The product's runtime resource overlay for Launcher3QuickStep carries one layout
+# per grid the launcher can pick, and each puts the image's six launcher applications on the first
+# page, with an empty dock and no widget. The tracked layouts are checked as a table of reviewed
+# components (each one's APK must be in the image) and the overlay must hold every layout. The overlay
+# compiles the layouts, so the check reads their strings in the overlay's string pools, as the Setup
+# Wizard check does, and a layout of the stock launcher fails on its Google names.
+LAUNCHER_OVERLAY = (
+    "PRODUCT/overlay/Launcher3QuickStep__lineage_andarium__auto_generated_rro_product.apk"
+)
+LAUNCHER_LAYOUTS = (
+    Path(__file__).resolve().parents[1] / "overlay/overlay/packages/apps/Launcher3/res/xml"
+)
+LAUNCHER_NAMESPACE = "http://schemas.android.com/apk/res-auto/com.android.launcher3"
+LAUNCHER_GRIDS = ("4x5", "5x5", "5x6", "5x7", "6x5", "6x6")
+# (package, class) of each application with a launcher activity, and where its APK is.
+LAUNCHER_APPS = {
+    ("com.android.settings", "com.android.settings.Settings"): "SYSTEM_EXT/priv-app/Settings/Settings.apk",
+    ("org.lineageos.etar", "com.android.calendar.AllInOneActivity"): "PRODUCT/app/Etar/Etar.apk",
+    ("org.lineageos.glimpse", "org.lineageos.glimpse.MainActivity"): "PRODUCT/app/Glimpse/Glimpse.apk",
+    ("org.lineageos.twelve", "org.lineageos.twelve.MainActivity"): "PRODUCT/app/Twelve/Twelve.apk",
+    ("com.android.calculator2", "com.android.calculator2.Calculator"):
+        "PRODUCT/app/ExactCalculator/ExactCalculator.apk",
+    ("com.android.documentsui", "com.android.documentsui.LauncherActivity"):
+        "SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk",
+}
+LAUNCHER_FORBIDDEN_NAMES = ("google", "vending", "deskclock", "alarmclock", "@string/", "@xml/")
+LAUNCHER_ATTRIBUTES = ("packageName", "className", "screen", "x", "y")
+
+
+def check_launcher_layout(grid: str, source: str, text: str) -> None:
+    """One tracked layout: the six reviewed applications on screen 0 of a grid, and nothing else."""
+    columns, rows = (int(part) for part in grid.split("x"))
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as error:
+        fail(f"{source} is not well-formed XML: {error}")
+    if root.tag != "favorites":
+        fail(f"{source} is not a favorites layout")
+    # Comments are not in the parsed tree: the names that matter are the ones the launcher reads.
+    for element in root.iter():
+        for value in [element.tag, element.text or "", *element.attrib.values()]:
+            for name in LAUNCHER_FORBIDDEN_NAMES:
+                if name in value.lower():
+                    fail(f"{source} names {name!r} in {value!r}: the image ships no such application")
+    seen: dict[tuple[str, str], tuple[int, int]] = {}
+    cells: set[tuple[int, int]] = set()
+    for item in root:
+        if item.tag != "favorite":
+            fail(f"{source} holds a <{item.tag}>: the layout may hold only applications")
+        attributes = {
+            (name[len(LAUNCHER_NAMESPACE) + 2:] if name.startswith("{") else name): value
+            for name, value in item.attrib.items()
+        }
+        if sorted(attributes) != sorted(LAUNCHER_ATTRIBUTES):
+            fail(
+                f"{source} has a favorite with attributes {sorted(attributes)}, "
+                f"not {sorted(LAUNCHER_ATTRIBUTES)} (a hotseat, folder, uri or title item is not allowed)"
+            )
+        if any(not name.startswith("{" + LAUNCHER_NAMESPACE + "}") for name in item.attrib):
+            fail(f"{source} has a favorite attribute outside the launcher namespace")
+        component = (attributes["packageName"], attributes["className"])
+        if component not in LAUNCHER_APPS:
+            fail(f"{source} names {component[0]}/{component[1]}, which is not in the reviewed table")
+        if component in seen:
+            fail(f"{source} names {component[0]}/{component[1]} twice")
+        try:
+            screen, x, y = (int(attributes[name]) for name in ("screen", "x", "y"))
+        except ValueError:
+            fail(f"{source} has a favorite whose screen, x or y is not a number")
+        if screen != 0:
+            fail(f"{source} puts {component[1]} on screen {screen}: every item is on the first page")
+        if not (0 <= x < columns and 0 <= y < rows):
+            fail(f"{source} puts {component[1]} at ({x}, {y}), outside the {grid} grid")
+        if (x, y) in cells:
+            fail(f"{source} puts two items at ({x}, {y})")
+        cells.add((x, y))
+        seen[component] = (x, y)
+    if set(seen) != set(LAUNCHER_APPS):
+        missing = sorted(app[1] for app in set(LAUNCHER_APPS) - set(seen))
+        fail(f"{source} lacks {', '.join(missing)}: it holds exactly the six reviewed applications")
+
+
+def check_launcher_workspace(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    """The overlay carries the first-page layouts, and every application they name is in the image."""
+    for apk in LAUNCHER_APPS.values():
+        if apk not in infos:
+            fail(f"{apk} is missing: the launcher's default workspace names its application")
+    info = infos.get(LAUNCHER_OVERLAY)
+    if info is None:
+        fail(f"{LAUNCHER_OVERLAY} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, 16 << 20))) as overlay:
+            members = {name: overlay.read(name) for name in overlay.namelist() if name.startswith("res/xml/")}
+    except (OSError, zipfile.BadZipFile) as error:
+        fail(f"{LAUNCHER_OVERLAY} is not a readable overlay: {error}")
+    for grid in LAUNCHER_GRIDS:
+        name = f"default_workspace_{grid}.xml"
+        tracked = LAUNCHER_LAYOUTS / name
+        check_launcher_layout(grid, str(tracked), tracked.read_text(encoding="utf-8"))
+        payload = members.get(f"res/xml/{name}")
+        if payload is None:
+            fail(f"{LAUNCHER_OVERLAY} has no res/xml/{name}: a {grid} guest would show the stock layout")
+
+        def holds(text: str) -> bool:
+            return text.encode() in payload or text.encode("utf-16-le") in payload
+
+        for _package, component in LAUNCHER_APPS:
+            if not holds(component):
+                fail(f"{LAUNCHER_OVERLAY}'s res/xml/{name} does not name {component}")
+        for stock in LAUNCHER_FORBIDDEN_NAMES[:4]:
+            if holds(stock):
+                fail(f"{LAUNCHER_OVERLAY}'s res/xml/{name} is a stock layout: it names {stock}")
 
 
 # The framework's runtime resource overlay holds the product's replacement for LineageOS's
@@ -2937,6 +3182,11 @@ def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None
                 fail(f"unexpected ABI in {info.filename}: {key}={value!r}, not {expected!r}")
         if key == "ro.zygote" and value != VENDOR_MULTILIB_PROPERTIES["ro.zygote"]:
             fail(f"unexpected zygote in {info.filename}: {value}")
+        if key == OVERLAY_THEME_PROPERTY:
+            fail(
+                f"{info.filename} sets {key}={value}: a vendor overlay theme enables overlays at "
+                "boot, and the navigation mode overlays are the platform's to choose"
+            )
         if key == "persist.sys.usb.config":
             fail(
                 f"{info.filename} sets {key}={value}: USB debugging is off on a fresh data "
@@ -3333,7 +3583,8 @@ def check_audio_policy(
         "ro.config.system_vol_default": "7",
         "ro.config.assistant_vol_default": "15",
         # The guest boots without a lock screen, and `locksettings set-disabled` can turn
-        # it on: LockSettingsService stores this default when it creates its database.
+        # it on: LockSettingsService stores this default when it creates its database. The
+        # Setup Wizard's screen lock page is hidden, so this is the lock a fresh guest keeps.
         "ro.lockscreen.disable.default": "true",
         # Userdata is a plain ext4 mount of its partition, which the mount holds exclusively:
         # apexd's pinned APEX images (a dm-linear table over that partition) fail with EBUSY,
@@ -3572,6 +3823,8 @@ def main() -> None:
         check_default_wallpaper(archive, infos)
         check_no_statistics_uploader(archive, infos)
         check_setup_wizard_branding(archive, infos)
+        check_navigation_mode(archive, infos)
+        check_launcher_workspace(archive, infos)
         check_network_time(archive, infos)
         check_pinner_overlay(archive, infos)
         check_application_manifests(archive, infos, build_variant)

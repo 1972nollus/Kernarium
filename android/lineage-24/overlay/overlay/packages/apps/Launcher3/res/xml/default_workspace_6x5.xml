@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Copyright (C) 2021 The Android Open Source Project
+
+     Licensed under the Apache License, Version 2.0 (the "License");
+     you may not use this file except in compliance with the License.
+     You may obtain a copy of the License at
+
+          http://www.apache.org/licenses/LICENSE-2.0
+
+     Unless required by applicable law or agreed to in writing, software
+     distributed under the License is distributed on an "AS IS" BASIS,
+     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     See the License for the specific language governing permissions and
+     limitations under the License.
+
+     Derived from the Android Open Source Project's default_workspace_6x5.xml.
+     The image ships six applications with a launcher activity. The stock layout
+     names Google applications and widgets that it does not ship, so a fresh guest
+     lost most of its items and showed the rest on the second page, with an empty
+     first page and dock. These six fill the first page row by row from the top
+     left, in this order; the dock and the other pages are empty. A component is
+     named by package and class, and no entry names a string, a widget or an
+     application the image does not ship.
+-->
+
+<favorites xmlns:launcher="http://schemas.android.com/apk/res-auto/com.android.launcher3">
+
+    <!-- Screen 0, 6 columns -->
+    <!-- Settings -->
+    <favorite
+        launcher:packageName="com.android.settings"
+        launcher:className="com.android.settings.Settings"
+        launcher:screen="0"
+        launcher:x="0"
+        launcher:y="0" />
+
+    <!-- Calendar (Etar) -->
+    <favorite
+        launcher:packageName="org.lineageos.etar"
+        launcher:className="com.android.calendar.AllInOneActivity"
+        launcher:screen="0"
+        launcher:x="1"
+        launcher:y="0" />
+
+    <!-- Gallery (Glimpse) -->
+    <favorite
+        launcher:packageName="org.lineageos.glimpse"
+        launcher:className="org.lineageos.glimpse.MainActivity"
+        launcher:screen="0"
+        launcher:x="2"
+        launcher:y="0" />
+
+    <!-- Music (Twelve) -->
+    <favorite
+        launcher:packageName="org.lineageos.twelve"
+        launcher:className="org.lineageos.twelve.MainActivity"
+        launcher:screen="0"
+        launcher:x="3"
+        launcher:y="0" />
+
+    <!-- Calculator -->
+    <favorite
+        launcher:packageName="com.android.calculator2"
+        launcher:className="com.android.calculator2.Calculator"
+        launcher:screen="0"
+        launcher:x="4"
+        launcher:y="0" />
+
+    <!-- Files (DocumentsUI) -->
+    <favorite
+        launcher:packageName="com.android.documentsui"
+        launcher:className="com.android.documentsui.LauncherActivity"
+        launcher:screen="0"
+        launcher:x="5"
+        launcher:y="0" />
+
+</favorites>
