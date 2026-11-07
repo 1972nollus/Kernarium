@@ -141,6 +141,7 @@ has_sdk()
 find_tool XCODEBUILD xcodebuild
 find_tool CMAKE cmake
 find_tool OTOOL otool
+find_tool NM nm
 find_tool STRIP strip
 find_tool PYTHON python3
 
@@ -295,6 +296,12 @@ simulator_slice()
 	if has_sdk simulator; then printf '%s' "$1"; fi
 }
 
+# Every slice of every packaged SDK: the framework slices of the runtimes and
+# the GPU stack, each built for its own platform (Mach-O platform 2 for the
+# device, 7 for the Simulator).
+PACKAGED_SLICES=
+has_sdk device && PACKAGED_SLICES="$PACKAGED_SLICES ios-arm64:2"
+has_sdk simulator && PACKAGED_SLICES="$PACKAGED_SLICES ios-arm64-simulator:7"
 RUNTIME_FRAMEWORKS="$RUNTIME_ANDROID_4K"
 if [ "$RUNTIMES" = all ]; then
 	RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_ANDROID_4K"
@@ -348,6 +355,22 @@ strip_debug_maps $RUNTIME_FRAMEWORKS $GL_FRAMEWORKS
 if has_sdk device; then
 	strip_debug_maps KosmicKrisp
 fi
+# A runtime's dSYM names the kernel's functions at their place in the carrier
+# section (scripts/kernel-dsym-symbols.py), which is how a crash report
+# symbolizes a panic's frames; its binary never does.
+for slice_platform in $PACKAGED_SLICES; do
+	slice=${slice_platform%%:*}
+	for framework in $RUNTIME_FRAMEWORKS; do
+		binary="$STAGE/$framework.xcframework/$slice/$framework.framework/$framework"
+		symbols="$STAGE/$framework.xcframework/$slice/dSYMs/$framework.framework.dSYM/Contents/Resources/DWARF/$framework"
+		[ -f "$symbols" ] || fail "missing debug symbols: $symbols"
+		"$NM" -a "$symbols" | LC_ALL=C grep -q ' ___uml_kernel_symbols$' ||
+			fail "the dSYM of $framework does not name the kernel's functions; rebuild the framework"
+		if "$NM" -a "$binary" | LC_ALL=C grep -q ' ___uml_kernel_symbols$'; then
+			fail "the binary of $framework carries the kernel's function symbols"
+		fi
+	done
+done
 for framework in $RUNTIME_FRAMEWORKS; do
 	install_privacy_manifest "$framework" KRuntime
 done
@@ -393,12 +416,6 @@ create_archive_xcframework HostVideoEncoder $HOST_VIDEO_ENCODER_HEADERS -- \
 	"$(device_slice "$HOST_VIDEO_ENCODER")" \
 	"$(simulator_slice "$SIMULATOR_HOST_VIDEO_ENCODER")"
 
-# Every slice of every packaged SDK: the framework slices of the runtimes and
-# the GPU stack, each built for its own platform (Mach-O platform 2 for the
-# device, 7 for the Simulator).
-PACKAGED_SLICES=
-has_sdk device && PACKAGED_SLICES="$PACKAGED_SLICES ios-arm64:2"
-has_sdk simulator && PACKAGED_SLICES="$PACKAGED_SLICES ios-arm64-simulator:7"
 packaged_frameworks()
 {
 	slice=$1

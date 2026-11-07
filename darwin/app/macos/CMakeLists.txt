@@ -109,6 +109,21 @@ function(uml_add_macos_embedded_kernel_app
         "LINKER:-sectalign,__TEXT,__uml_elf,0x4000"
         "LINKER:-sectcreate,__TEXT,__info_plist,${_uml_info_plist}")
 
+    # `<name>-dsym` writes the executable's dSYM beside it, with the kernel's
+    # function symbols at their place in __TEXT,__uml_elf, where the runtime
+    # moves a panic's kernel frames (runtime/kernel_crash_frames). It is not
+    # part of the default build.
+    add_custom_target("${TARGET_NAME}-dsym"
+        COMMAND xcrun dsymutil "$<TARGET_FILE:${TARGET_NAME}>"
+            -o "$<TARGET_FILE:${TARGET_NAME}>.dSYM"
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${PROJECT_SOURCE_DIR}/scripts/kernel-dsym-symbols.py"
+            --dsym "$<TARGET_FILE:${TARGET_NAME}>.dSYM/Contents/Resources/DWARF/$<TARGET_FILE_NAME:${TARGET_NAME}>"
+            --elf "${_uml_kernel_image}"
+        VERBATIM)
+    uml_declare_architecture_target("${TARGET_NAME}-dsym" app)
+    add_dependencies("${TARGET_NAME}-dsym" "${TARGET_NAME}")
+
     set_target_properties("${TARGET_NAME}" PROPERTIES
         UML_BUNDLE_IDENTIFIER "${UML_MACOS_APP_BUNDLE_IDENTIFIER}"
         RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin
