@@ -2,6 +2,7 @@
 #include "kernel_signal_scope.hpp"
 #include "memory/shared_backing.hpp"
 
+#include <atomic>
 #include <cstring>
 #include <crt_externs.h>
 #include <dlfcn.h>
@@ -211,6 +212,52 @@ bool keep_signed_kernel_text(void *address, std::size_t length) noexcept
 bool signed_kernel_text_kept(const void *address, std::size_t length) noexcept
 {
 	return ::uml::memory::host_range_kept(address, length);
+}
+
+namespace {
+
+/* Constant-initialized and trivially destructible: a carrier that outlives
+ * the host's exit() still reads it, and the panic path reads it from a signal
+ * handler. */
+struct AliasTable {
+	std::atomic<std::size_t> count;
+	KernelTextAlias entries[kernel_text_alias_limit];
+};
+constinit AliasTable alias_table{};
+
+} // namespace
+
+bool record_kernel_text_alias(const void *address, std::size_t length,
+	const void *carrier) noexcept
+{
+	const auto begin = reinterpret_cast<std::uintptr_t>(address);
+	std::uintptr_t end;
+	if (length == 0 || carrier == nullptr ||
+	    __builtin_add_overflow(begin, length, &end))
+		return false;
+	const std::size_t count = alias_table.count.load(std::memory_order_acquire);
+	for (std::size_t index = 0; index < count; ++index)
+		if (alias_table.entries[index].begin == begin &&
+		    alias_table.entries[index].end == end &&
+		    alias_table.entries[index].carrier ==
+			reinterpret_cast<std::uintptr_t>(carrier))
+			return true;
+	if (count == kernel_text_alias_limit)
+		return false;
+	alias_table.entries[count] = {begin, end,
+		reinterpret_cast<std::uintptr_t>(carrier)};
+	alias_table.count.store(count + 1, std::memory_order_release);
+	return true;
+}
+
+std::size_t recorded_kernel_text_aliases(KernelTextAlias *aliases,
+	std::size_t capacity) noexcept
+{
+	const std::size_t count = alias_table.count.load(std::memory_order_acquire);
+	const std::size_t copied = count < capacity ? count : capacity;
+	for (std::size_t index = 0; index < copied; ++index)
+		aliases[index] = alias_table.entries[index];
+	return count;
 }
 
 namespace {
