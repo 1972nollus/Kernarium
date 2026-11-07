@@ -7,7 +7,12 @@ import Testing
 import UIKit
 @testable import Andarium
 
-/// Opt-in physical-device comparison of app surfaces and retained allocations.
+/// Opt-in physical-device comparison of app surfaces and retained allocations:
+/// repeated system-app launches at Retina and point resolution, at the guest
+/// memory and vCPU count the launch states, which every snapshot records. The
+/// optional full-resolution WebGL Aquarium workload records the actual
+/// renderer, frames and FPS alongside process, guest and GPU memory
+/// (`tests/integration/android/webgl/README.md`).
 @MainActor
 struct RetinaMemoryTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["ANDARIUM_RETINA_MEMORY_TESTS"] == "1"), .timeLimit(.minutes(20)))

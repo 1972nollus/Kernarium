@@ -4,6 +4,10 @@ import Foundation
 import Testing
 @testable import AndariumCore
 
+// Orientation ownership for phones, full-screen and windowed iPads and the loss
+// of a scene lock (SessionOrientationTests), and coalesced guest commands,
+// partial failures and stale completions after a guest restart
+// (GuestRotationControllerTests).
 struct SessionOrientationTests {
     private let screen = CGSize(width: 1024, height: 768)
 

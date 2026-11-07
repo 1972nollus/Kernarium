@@ -11,14 +11,19 @@ investigation date.
 | Virtio sound: playback pacing, the null output, capture and the microphone | [`../darwin/device/audio/README.md`](../darwin/device/audio/README.md) |
 | Virtio video decoding, encoding and the private wire contract | [`../darwin/device/video/README.md`](../darwin/device/video/README.md) and [`../kernel/common/video/README.md`](../kernel/common/video/README.md) |
 | Platform hardware video encoder: discovery, cache, sessions, recovery | [`../darwin/platform/README.md`](../darwin/platform/README.md) |
+| Virtio vsock: the host end of the guest's vsock device, for a service such as adbd | [`../darwin/device/vsock/README.md`](../darwin/device/vsock/README.md) |
 | Guest VA-API backend over the video decoder and encoder | [`../tools/video/va-v4l2/README.md`](../tools/video/va-v4l2/README.md) |
 | Attempted performance work | [`optimization-history.md`](optimization-history.md) |
 | Performance tools, probes, and profilers | [`../tests/perf/README.md`](../tests/perf/README.md) |
+| Test fixtures: the video decoder frames and the vhost-user test devices | [`../tests/support/video/README.md`](../tests/support/video/README.md) and [`../tests/support/vhost_user/README.md`](../tests/support/vhost_user/README.md) |
+| Android test probes: motion input, storage accounting and the WebGL workload | [`../tests/integration/android/motion/README.md`](../tests/integration/android/motion/README.md), [`../tests/integration/android/storage/README.md`](../tests/integration/android/storage/README.md) and [`../tests/integration/android/webgl/README.md`](../tests/integration/android/webgl/README.md) |
 | A64 instruction coverage | [`a64-instruction-coverage.md`](a64-instruction-coverage.md) and `tests/unit/arm64/*.tsv` |
 | A64 instruction corpus | [`../tests/unit/arm64/corpus/README.md`](../tests/unit/arm64/corpus/README.md) |
 | A32 instruction coverage | [`a32-instruction-coverage.md`](a32-instruction-coverage.md) and `tests/unit/arm64/a32_instruction_inventory.tsv` |
 | AArch32 decoder and encoding table | [`../darwin/cpu/arm64/aarch32/README.md`](../darwin/cpu/arm64/aarch32/README.md) |
 | AArch32 instruction corpus and its oracle | [`../tests/unit/arm64/aarch32_corpus/README.md`](../tests/unit/arm64/aarch32_corpus/README.md) |
+| x86-64 instruction corpus, its masked-flags data and the producers of its cases | [`../tests/unit/x86_64/corpus/README.md`](../tests/unit/x86_64/corpus/README.md), [`../tests/unit/x86_64/masked_flags/README.md`](../tests/unit/x86_64/masked_flags/README.md), [`../tools/x86-tests/README.md`](../tools/x86-tests/README.md) and [`../tools/fex-tests/README.md`](../tools/fex-tests/README.md) |
+| Instruction corpus sources and their generator | [`../tools/instruction-corpus/README.md`](../tools/instruction-corpus/README.md) |
 | Darwin runtime details | [`../darwin/README.md`](../darwin/README.md) |
 | Android guest storage on the host: layout file, partition tables, data disk, exactly two disks | [`../darwin/device/block/README.md`](../darwin/device/block/README.md) |
 | Kernarium iOS application | [`../Kernarium/README.md`](../Kernarium/README.md) |
@@ -48,9 +53,9 @@ that goes into the Android image and the licence of the patched project for a
 patch to another project. The root [`LICENSE`](../LICENSE) is the GPL-2.0 text
 and [`../LICENSES/`](../LICENSES/README.md) holds the rest.
 
-Short accepted decisions remain under [`decisions/`](decisions/). Machine-
-readable manifests, identities, and test inventories are the source of truth
-for exact lists and counts.
+Decisions live as current contracts in the document that owns the subject,
+not in a separate decision log. Machine-readable manifests, identities, and
+test inventories are the source of truth for exact lists and counts.
 
 The repository intentionally has no handoff, progress, evidence-index, or
 dated investigation documents. Durable results belong in the owner above;

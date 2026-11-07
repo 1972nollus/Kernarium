@@ -174,10 +174,9 @@ space frees it with its arena. A code change one vCPU publishes resets the
 space's links before that vCPU continues, so every other executor of the space
 leaves translated code at its next block transition. Sharing is the default
 on a host that retargets a link pair in one access (FEAT_LSE2, which every
-Apple Silicon product has): it halves the four-vCPU Geekbench multi-core
-cache, and renewal, below, keeps a shared space from accumulating the freed
-arena and link records that process churn leaves in it, which WebGL
-Aquarium's cache did before (G227, G267, G268). A private cache sweeps away
+Apple Silicon product has), and renewal, below, keeps a shared space from
+accumulating the freed arena and link records that process churn leaves in it.
+A private cache sweeps away
 the link records and indirect sites that nothing it holds names any more, once
 they number half again what its last sweep kept and enough of its translations
 have left the cache to have left some unnamed: a record no resident
@@ -213,8 +212,7 @@ held can be looked up again. Its number keeps its place in the executor's
 window order as a tombstone that the least-recently-used rule retires with no
 work, so a window keeps exactly the live address spaces it kept before. A
 shared space dies with the last executor attached to it, which lets go at its
-own next entry; a vCPU that is idle keeps it until then. Geekbench's windows
-otherwise hold the boot-time processes' spaces for the whole run (G272).
+own next entry; a vCPU that is idle keeps it until then.
 
 Slots bound how many translations a cache holds, not their bytes, so both
 gadget engines also keep a process-wide byte budget
@@ -242,10 +240,7 @@ guest memory, at least 128 MiB, and at most an eighth of the footprint the
 host lets the process reach where it sets one (iOS; on macOS the launch states
 it with `--memory-limit=` or `UML_MEMORY_LIMIT_MIB`, and otherwise there is
 none), or the size `--gadget-cache-budget=` gives. A process that never sets one, such as a
-unit test, keeps 1 GiB. No measured workload was asked to shed under that
-budget: on four vCPUs and 8 GiB the largest, x86 multi-core Geekbench, peaked
-at a seventh of its 2 GiB budget, and at the iPad's geometry WebGL Aquarium,
-the least headroom, peaked at 47% of 358 MiB (G282). Where a limit is stated
+unit test, keeps 1 GiB. Where a limit is stated
 the vCPU count's cap (`runtime/guest_memory_budget.hpp`,
 [architecture](../docs/architecture.md#memory-and-executable-code)) lowers the
 budget further, and the Android and KDE loads at their worst ceilings do shed

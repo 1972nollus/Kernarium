@@ -511,16 +511,9 @@ reaches it while it is revoked:
   for the guest's console; one made while the guest is quiesced reaches it on
   resume.
 
-The throttle moves the work to the efficiency cores rather than removing
-cores: on an A15 iPad, a KDE guest with six vCPUs running a six-thread load
-for 240 s behind the window drew about a tenth of the estimated power it
-drew unthrottled (about 0.2 W against 2.0 W, with no performance-core time),
-and ran at about a third of its foreground rate. Process CPU time fell only
-about 16%. Over that window iOS showed no reaction: the process kept its
-foreground-focal CPU role, the thermal state stayed nominal, and no
-background CPU limit fired. Taking guest CPUs offline (hot-unplug) would cap
-the core count outright and is the fallback if a hotter device or a longer
-window shows thermal pressure.
+The throttle moves the guest's work to the efficiency cores rather than taking
+cores away; in a 240 s run on an A15 iPad, iOS raised no thermal or
+background-CPU reaction.
 
 The mode `keepRunning` keeps a guest working for a time its owner chose (15
 minutes to 2 hours, 30 by default) without a window. A timer button, offered

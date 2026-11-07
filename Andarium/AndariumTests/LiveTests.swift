@@ -169,6 +169,7 @@ struct DefaultGuestTests {
     }
 }
 
+/// A late layout cannot retain a retired display while Home is showing.
 @MainActor
 struct RuntimeDisplayLifetimeTests {
     @Test func homeDoesNotRetainALayoutFromTheRetiredDisplay() throws {

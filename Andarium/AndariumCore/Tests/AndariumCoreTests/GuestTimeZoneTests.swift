@@ -5,6 +5,9 @@ import Testing
 
 @testable import AndariumCore
 
+/// The same name vectors as the runtime's `kernarium-guest-time-zone` test
+/// (`tests/unit/kernarium/guest_time_zone_tests.cpp`), and every zone Foundation
+/// knows is accepted.
 struct GuestTimeZoneTests {
     @Test func theNamesOfTheIanaDatabaseAreGivenAsTheyAre() {
         for name in [

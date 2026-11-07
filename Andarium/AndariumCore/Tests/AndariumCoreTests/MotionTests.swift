@@ -5,6 +5,11 @@ import Foundation
 import Testing
 @testable import AndariumCore
 
+// SI conversion of a sample and its wire form, the mount's axes as the window
+// and the owner of rotation change, the saved choice (unset follows the
+// device, on and off stick), socket delivery, stop during connection and stale
+// callbacks. The host's reading of the guest's control frames and what the
+// sensors then do are in MotionDemandTests.swift.
 struct MotionTests {
     @Test func aStationaryFaceUpDeviceReportsPositiveGravity() throws {
         let sample = MotionSample(sensor: .accelerometer, x: 0, y: 0, z: -1)

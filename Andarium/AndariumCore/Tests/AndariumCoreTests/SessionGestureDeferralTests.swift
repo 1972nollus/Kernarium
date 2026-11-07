@@ -4,6 +4,7 @@ import Foundation
 import Testing
 @testable import AndariumCore
 
+// Which screen edges a run defers.
 struct SessionGestureDeferralTests {
     private let screen = CGSize(width: 834, height: 1210)
 

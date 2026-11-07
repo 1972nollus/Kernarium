@@ -24,7 +24,8 @@ avoid unrelated formatting churn. There is no repository-wide formatter.
 ## Build and product boundaries
 
 - CMake 3.27 or newer with Ninja is the first-party build system. Use the
-  checked-in presets; `CMakeUserPresets.json` is local and ignored.
+  checked-in presets; `CMakeUserPresets.json` is local and ignored. CMake is
+  the only first-party build manifest; do not add a Bazel or Meson one.
 - CTest is the test registry. Register first-party tests through the helpers in
   `cmake/UmlTesting.cmake`, never raw `add_test`.
 - Linux retains Kbuild/GNU Make. Third-party projects retain their verified

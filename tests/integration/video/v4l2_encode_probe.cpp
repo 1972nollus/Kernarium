@@ -5,6 +5,34 @@
 // imported dma-buf input, drained, resumed and reconfigured; the coded stream is
 // checked for structure, timestamps and flags, and decoded back through the
 // guest's stateful decoder (when there is one) to check its quality.
+//
+// For every advertised coded format, profile and raw layout it encodes
+// generated pictures from mapped and imported dma-buf input, and checks the
+// key-frame flags, header buffers, timestamps, forced key frames, controls
+// refused while streaming, crop, drain with the last flag and end-of-stream
+// event, resumption, a restart after STREAMOFF without a drain, and a
+// resolution change. It also:
+//
+// - holds every control and raw format the guest registers against the host
+//   table, so a control the driver dropped or a format listed under another
+//   fourcc fails;
+// - encodes packed BGRA and RGBA pictures, whose red and blue blocks show the
+//   channel order;
+// - encodes every raw layout at a width that is not a whole pitch (342 x 120),
+//   where the rows lie at the padded pitch that TRY_FMT and S_FMT both state;
+// - checks the parameter sets that PREPEND_SPSPPS_TO_IDR adds and the layers
+//   that hierarchical coding makes;
+// - requires colorimetry stated on the raw queue, including
+//   V4L2_COLORSPACE_RAW with a transfer function and range, to read back as
+//   stated, survive a repeated S_FMT and S_PARM, and appear in the H.264
+//   stream's VUI; BT.2020 with PQ and with HLG (V4L2_XFER_FUNC_HLG, the
+//   kernel line's local value 8), stated on a P010 raw queue, must read back
+//   and show as transfer characteristics 16 and 18 in the HEVC Main 10
+//   stream's VUI;
+// - requires the B-frame control to run from zero in steps of one and the
+//   level menus to default to their lowest item, as the host describes them;
+// - decodes each stream back through the guest decoder and compares it with
+//   the pictures by luma PSNR.
 #include <linux/videodev2.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>

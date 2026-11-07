@@ -39,6 +39,12 @@ checks semantic source/ABI identity, page and module policy, ELF geometry,
 payload inventory, and exact bridge imports without requiring Kbuild or a
 source checkout.
 
+The contracts of the shared series follow, grouped by subject. A topic's
+behavior is described here once, whichever product builds it; a line's README
+says only where its products differ.
+
+## Console, signals and run end
+
 Host-terminal console output preserves unread terminal input when changing
 newline processing. Input and output may share one host PTY, so a kernel log
 must not discard pending interactive commands or bootstrap payload bytes.
@@ -91,8 +97,10 @@ accessor's expected result and prints nothing. `guest-kernel-nofault` checks
 that its sysrq t dump prints no report.
 
 Signal dispositions are process-wide, so a host thread that carries no vCPU
-can take UML's handlers too. Its SIGSEGV or SIGBUS is reported and left to the
-host's default action. SIGALRM, which the process-directed ITIMER_REAL may hand
+can take UML's handlers too. Its SIGSEGV or SIGBUS is reported with its real
+host thread and literal addresses and left to the host's default action. A
+synchronous fault enters the guest path only from a virtual CPU carrier, or
+from the boot thread while it still owns CPU0. SIGALRM, which the process-directed ITIMER_REAL may hand
 to any thread that leaves it unblocked, never runs a guest tick there: the
 kernel reports it once, keeps SIGALRM blocked on that thread afterwards, and
 raises it again for the process, where CPU0's carrier takes it. Embedders
@@ -105,6 +113,12 @@ carrier. A stop also wakes carriers parked before CPU bring-up or after
 hotplug, which reach no IPI boundary. A host stop skips Linux exitcalls, so the
 run end stops the RTC alarm helper itself. `guest-run-end-stop` stops guests
 throughout their boot and requires each run to end with no kernel thread left.
+
+A public stop reaches every carrier: one leaving translated guest code honours
+it before its task continues, and an idle carrier's wait includes the stop
+descriptor. The last-ditch handler for a fatal host signal exits at once
+without Linux exitcalls, because the carrier that receives a process-directed
+signal may be running its vCPU's idle task.
 
 The kernel tells the host how the guest ends, with the bridge import
 `darwin_uml_guest_shutdown(kind, command)`, which `machine_restart()`,
@@ -119,6 +133,8 @@ same intent as well, before any driver is shut down, and a driver whose
 it aborts the process, and no restart follows it. The kernel's exit status
 keeps its meaning, so a host that reads only the status sees what it saw
 before.
+
+## Machine description and host threads
 
 Every kernel describes the virtual machine in the SMBIOS tables firmware
 writes on other machines, so `/sys/class/dmi/id`, `/sys/firmware/dmi` and the
@@ -155,6 +171,8 @@ emulator a session leader, so a Darwin kernel starts none, and a console
 keeps the size its input terminal had when the line opened.
 `guest-console-session` checks the session and process group.
 
+## Stack traces and user memory
+
 A Darwin kernel stack trace walks the stack its starting stack pointer lies
 on: a task's own stack in guest memory or, on the current vCPU carrier, the
 carrier's native stack or the signal stack its interrupts run on. An
@@ -173,6 +191,8 @@ page at a time up to its terminator. As with the native
 so a short path costs the same wherever it lies in its page.
 `guest-user-strings` checks the copy's length limits, page crossings and
 faults.
+
+## arm64 task interface
 
 An arm64 signal handler installed without `SA_RESTORER` returns to a
 trampoline in the final guest page, above `STACK_TOP`, where the Darwin host
@@ -279,23 +299,172 @@ and SIGCHLD throughout, so the process takes those on a thread that runs no
 guest. Every other carrier wait polls the pending IPIs or does not depend on
 EINTR. Without SME no carrier blocks these signals.
 
+Every arm64 task has `NT_ARM_TLS`, as natively: TPIDR_EL0, then TPIDR2_EL0,
+which reads as zero and ignores writes unless the run has SME.
+`guest-sme-off-gadgets` and `guest-sme-off-jit` check it without SME.
+
+## Memory and address space
+
+The native mapping window contains guest RAM plus an auxiliary address-space
+allowance equal to RAM, bounded from 1 GiB to 4 GiB. Vmapped task stacks and
+other kernel virtual mappings use that allowance; their physical pages still
+come from the guest's `mem=` allocation. The window additionally carries the
+fixed vhost-user shared-memory reservation described below plus the stub pages,
+added after that bound so the aperture never reduces the vmalloc allowance or
+the configured guest RAM. The host emulator admits the same span
+(`UML_NATIVE_VHOST_USER_SHMEM_RESERVATION` and `UML_NATIVE_STUB_PAGES` in the
+top-level CMake layout); a host that reserves less faults on the kernel's own
+stub write, so the two sizes move together.
+
+The window lies inside every task's address range, and `mmap()` refuses any
+user mapping that would enter it. A user TLB flush can still cover it: freeing
+page tables widens the flush to each table's whole span, which starts inside
+the window when a table also maps the first pages above it. Such a flush drops
+and replays only the guest ranges beside the window, because the host would
+take a range inside it for the kernel's own mappings.
+
+Darwin UML negotiates the standardized vhost-user shared-memory-region
+transport (`VHOST_USER_PROTOCOL_F_SHMEM_MAP`), obtains one region through
+`VHOST_USER_GET_SHMEM_CONFIG`, and services acknowledged backend
+`SHMEM_MAP`/`SHMEM_UNMAP` messages with exact descriptor, range, permission,
+and owner validation. The kernel reserves a 1 GiB guarded guest-physical
+aperture outside RAM, enforces 16 KiB mapping alignment (the host page), and
+supports one mapping per 16 KiB aperture page through a
+constant-time page-to-record index. Reset, disconnect, and release revoke every
+mapping in bounded descriptor batches, and a request-stream lock serializes the
+backend-request IRQ against the drain in every synchronous reply wait
+([architecture](../../docs/architecture.md)) so two vCPUs cannot split one
+framed request. The virtqueue and config interrupts either path records are
+taken and cleared under the same lock before they are delivered, so a
+recorded interrupt is never lost between two deliverers. Virtio-GPU
+host-visible blobs use the same 16 KiB granularity without a private userspace
+ioctl or a bridge ABI change. Android's Venus Vulkan HAL needs the aperture:
+Venus refuses to initialize without `VIRTGPU_PARAM_HOST_VISIBLE` or guest VRAM.
+
+The kernel requests the runtime's anonymous physical-memory token. The
+kernel's linear physical window becomes the RAM root, so MMU and host-service
+consumers do not retain a second full-span mapping. Guest RAM is committed on
+demand: every chunk of the anonymous root starts released, `mem_init` commits
+what memblock reserved, `arch_alloc_page()` commits a released chunk the first
+time the allocator hands out a page of it, and the free-page reporting driver
+releases each whole reported chunk through the bridge. Physical iOS wires only
+committed chunks. `page_cache_trim` reclaims inactive page cache above a floor
+(`page_cache_trim.floor_mb`, by default 1/32 of RAM) through memcg proactive
+reclaim, which leaves anonymous memory alone, and only when the host asks. The
+management console's `trim on` and `trim off`, like `page_cache_trim.enabled`,
+start and stop a pass every `page_cache_trim.interval_ms` that takes a quarter
+of the excess. While more than a quarter of what a pass reclaimed is read back
+before the next one, as when a program starts, the interval doubles, up to 32
+times, and a pass whose evictions stay out restores it. `trim once` takes the
+excess for at most a second, then compacts memory for at most another, since
+the pages reclaim frees lie between pages still in use and only whole chunks go
+back, then runs free-page reporting until it finds nothing more to release. It
+replies with both amounts and each step's time, so a host can suspend a guest
+that holds no cold cache. `guest-page-cache-trim` checks the default, all three
+commands, the back-off, and a pass over file cache read between the pages of a
+tmpfs file.
+
+Every slice selects `HAVE_ALIGNED_STRUCT_PAGE` and `HAVE_CMPXCHG_DOUBLE`, as
+native arm64 does; the x86-64 userspace slice keeps the arm64 kernel. SLUB
+therefore updates a slab's freelist and counters with one CASP, which runs
+directly on the host CPU, and `kmalloc_nolock()`, which BPF timers allocate
+with, can use every cache. A build assertion checks that the FLATMEM memory
+map's `SMP_CACHE_BYTES` allocation alignment covers the double-word alignment
+this needs.
+
+Threads of one process replay their mappings to the host side by side; a user
+`mm` has no replay lock, and the host orders its walkers instead. A batch
+records the generation's invalidation epoch when it begins, Linux invalidates
+the host range after it changes a PTE and before it frees the page, every
+invalidation advances the epoch, and a batch publishes only while the epoch
+still matches, so a walker that sampled a PTE before it changed cannot publish
+it afterwards. Two walkers of one page can still publish out of order across a
+change that needs no invalidation. Every such change makes the PTE more
+permissive, so the stale batch leaves the page less accessible than Linux
+allows and the next access replays it. A user `mm` queues exact page ranges,
+while `init_mm`, which the host maps natively, still rounds to the 16 KiB host
+page. A fault replays before Linux resolves it only when the PTE already grants
+the access, and then brings its 16 KiB neighbours along; the replay after
+resolution covers the faulting page and joins the pending snapshot under one
+lock hold, so a sibling cannot take the range away and leave the task to return
+to a page nobody has published. A user replay is published in batches of 64
+pages which span the ranges of its snapshot, and only a rejected batch is walked
+again, with a timer, IPI and scheduling checkpoint after every full batch and
+every sixteenth rejection, so a whole-`mm` replay after a fork makes progress
+while siblings keep invalidating. Within a page table the walk sends a run of
+neighbouring user PTEs as one host call when they are all absent or map
+consecutive offsets of one backing with one protection; it sends the run when
+the next PTE breaks it, when the page table ends or when the batch is full, and
+a walk that stops early drops its unsent run, because its range is walked
+again. `guest-tlb-replay-runs` checks the runs' frames and protections.
+`init_mm` keeps its serialized walker and its per-page calls.
+
+`init_mm` has one synchronizing owner at a time and walks without a batch
+budget. A synchronization its owner requests fails at once instead of
+blocking, and the entry for callers that already hold an `mmap` lock accepts
+only a user `mm`. Every synchronization takes and clears the pending ranges
+under one lock hold, applies all of them, and requeues all of them when any
+part fails, so no pending range is lost. One 16 KiB host slot carries four
+`init_mm` PTEs: they are sampled under the PTE lock, the
+whole host slot is dropped before the present quarters are mapped and the
+absent ones unmapped, and the first failure stops the slot. A slot whose four
+PTEs are present, name consecutive frames from a 16 KiB-aligned offset of one
+backing, and agree in protection is mapped as one shared host page, so it is
+the same memory as the frames' other views; an empty slot is unmapped in one
+call; every other slot is a host-private copy that is coherent with the frames
+only at a synchronization point. The four samples are not one atomic snapshot;
+a writer publishes its range after it changes a PTE, so a later walk reapplies
+it. A walk applies only the `init_mm` PTEs that carry `_PAGE_NEEDSYNC`, and so
+only the slots one of whose quarters carries it, and clears the
+bit by compare-and-exchange once the host mapping is applied. A writer that
+changes the PTE meanwhile has set the bit again, and its own flush applies the
+new value. A vmalloc purge flushes the whole span between the areas it frees,
+so without the bit such a walk mapped every present page of the span again.
+User PTEs keep the bit. A kernel-mode fault marks and publishes exactly its
+Linux page, synchronizes `init_mm`, and resumes only when the host confirms
+the access is backed; any other outcome panics instead of faulting again. A
+nested mmu-gather flush keeps the range it collected
+instead of becoming a whole-`mm` flush, because a Darwin range invalidation
+already quiesces the generation's executors and advances its epoch.
+
 With 4 KiB pages, a kernel alias outside the linear map is the same memory as
 the frames' other views only where one 16 KiB host slot holds a whole aligned
-group of four. Four shared topics make that so for memory the kernel shares:
-the vmalloc group hook in `mm/vmalloc.c`, the host mapping of congruent
-`init_mm` slots with the `flush_kernel_vmap_range()`,
-`invalidate_kernel_vmap_range()` and `flush_cache_vunmap()` hooks in `arch/um`,
-the io_uring region allocation, and the fbdev shmem flush for the virtio-gpu
-console. `flush_cache_vunmap()` publishes the private slots of a range before
-Linux clears its PTEs, so the stores of a `vm_map_ram()` alias, such as
-EROFS's LZ4 output, reach the page cache before it is read or freed. The first
-three are inert on any architecture that reports no vmap group, and the flush
-costs a page-table check there. The x86_64 slice's
-pinned-ring accounting below sees no change: a ring in one page of the
-application's memory is one folio and stays valid, and a larger one that is
-not whole aligned groups is refused with `EINVAL`.
-[`tests/integration/kernel`](../../tests/integration/kernel) checks the sharing
-in both directions and reads back an LZ4 EROFS image with 4 KiB clusters.
+group of four, so the architecture reports a vmap group of four pages. Four
+shared topics make that so for memory the kernel shares: the vmalloc group hook
+in `mm/vmalloc.c`, the host mapping of congruent `init_mm` slots with the
+`flush_kernel_vmap_range()`, `invalidate_kernel_vmap_range()` and
+`flush_cache_vunmap()` hooks in `arch/um`, the io_uring region allocation, and
+the fbdev shmem flush for the virtio-gpu console. vmalloc aligns, rounds and
+allocates every area in groups and `vmap()` aligns its area to a group, so BPF
+maps and ring buffers, perf and PACKET_MMAP rings and the io_uring regions that
+the kernel allocates share their memory with user space. An area that cannot be
+grouped falls back to small pages only when it is kernel-private (never a
+`VM_USERMAP` one), and `remap_vmalloc_range` warns once about memory that is
+not whole groups. The kernel-vmap hooks publish and refresh the private copy of
+a slot that cannot be shared, as they do for the callers that already bracket a
+vmap alias (XFS, dm, the DMA-BUF heaps). `flush_cache_vunmap()` publishes the
+private slots of a range before Linux clears its PTEs, so the stores of a
+`vm_map_ram()` alias, such as EROFS's LZ4 output, reach the page cache before it
+is read or freed: a kernel TLB sync applies only changed PTEs, so without it
+they would stay in the host's copy while the linear map read stale frames. The
+first three topics are inert on any architecture that reports no vmap group,
+and the flush costs a page-table check there. Pages that user space owns cannot
+be regrouped, so io_uring refuses with `EINVAL` an `IORING_SETUP_NO_MMAP` ring,
+a registered memory region or a provided-buffer ring whose pages are neither
+one folio nor whole aligned groups; a ring in one page of the application's
+memory is one folio and stays valid, so the x86_64 slice's pinned-ring
+accounting below sees no change. The BPF ring buffer, a topic of the mainline
+overlay (`kernel/bpf/ringbuf.c`), is laid out so that the first data copy ends
+on a group boundary, and a buffer under 16 KiB brackets its wrapped tail with
+the vmap hooks. Perf no longer selects `PERF_USE_VMALLOC`, as native arm64 does
+not. The virtio-gpu console draws into a vmap of scattered shmem pages, which
+is a private copy on this profile, so the fbdev shmem dirty callback flushes
+the damaged lines before the device reads them; without it a VNC client sees a
+blank console. The arm64 kernels run `guest-kernel-user-shared-memory` and
+`guest-erofs-lz4`, which check the sharing in both directions and read back an
+LZ4 EROFS image with 4 KiB clusters
+([`tests/integration/kernel`](../../tests/integration/kernel)); the x86_64 slice
+runs the latter's runner directly.
 
 In the x86_64 slice, a guest entry is marked shared while another agent may
 observe the memory of the task's mm: while another task may run on it
@@ -339,9 +508,7 @@ engines' shared segment model reads the two fields. The arm64 kernels set
 neither, and the arm64 host reads neither; the implementation is the x86_64
 slice's (see the [mainline README](../mainline-6.18/README.md)).
 
-Every arm64 task has `NT_ARM_TLS`, as natively: TPIDR_EL0, then TPIDR2_EL0,
-which reads as zero and ignores writes unless the run has SME.
-`guest-sme-off-gadgets` and `guest-sme-off-jit` check it without SME.
+## CPU identity and AArch32
 
 An arm64 task reads `/proc/cpuinfo` exactly as arm64 Linux's `c_show()`
 prints it for a 64-bit task, and both engines give the same bytes. Each online
@@ -422,12 +589,138 @@ Guest pages are 4 KiB, so 32-bit programs laid out for 4 KiB pages, as the
 files of stock Debian armhf userspace are, run as they are.
 `tests/integration/aarch32` runs one.
 
-Both maintained kernel lines perform futex updates atomically against native
+## Scheduling and interrupts
+
+Darwin's cooperative scheduler services timer deadlines and pending IPI vectors
+at safe kernel spin, retry, TLB-walk, and `cond_resched()` boundaries, and in
+`schedule()` when the caller stays runnable. The uaccess retry and TLB-walk
+safe points poll through `cond_resched()`, which does so only without
+`CONFIG_PREEMPTION`; both assert that at build time. The TLB walk of
+`flush_tlb_mm()` is a safe point only for its direct callers, `dup_mmap()` and
+the soft-dirty clear, which hold no spinlock or RCU read lock. The mmu_gather
+flushes under the PTE lock and never reaches it: the port's own `tlb_flush()`
+walks no VMA, and `exit_mmap()`'s full-mm gather does no host work, because
+`arch_exit_mmap()` has already emptied the host generation and no task is left
+to map into it. A uaccess that may sleep
+retries its fault until the fault handler refuses it or the task is dying, as
+native uaccess re-executes the access, so a sibling's `fork()` that
+write-protects the page again after the fault never fails the copy with
+`-EFAULT`. That fault is the kernel's own access, so it carries no
+`FAULT_FLAG_USER`: a userfaultfd made with `UFFD_USER_MODE_ONLY` refuses it
+and the copy fails with `-EFAULT`, as it does natively, while a user-mode
+access to the same range is still delivered. A uaccess write holds its page
+with a pin taken under the page-table lock, so a `fork()` meanwhile gives the
+child a copy and a store through the kernel's alias never reaches it.
+Every path that changes a CPU's
+logical IRQ state outside `local_irq_*()`, including interrupt work run from an
+idle wait, reports the change to lockdep as interrupt entry would; without
+`CONFIG_TRACE_IRQFLAGS` the reports compile away. The IPI signal is only a
+wake edge, so a task that yields in a retry loop would otherwise stop its CPU
+whenever nothing else is runnable there: `tty_open()` retries that way while
+the last
+close of a terminal is in progress, and a shutdown that restarted a console
+getty stopped for minutes, with `rcu_sched` stall reports, waiting for a timer
+and a queued wakeup that the looping CPU never serviced. A pagefault-disabled
+uaccess
+never reports mmap-lock contention as a fault: `mmap_read_trylock()` refuses to
+barge past a queued writer while the faulting retry of the same task still
+steals the lock, so answering the try with `-EFAULT` made `futex_wait_setup()`
+alternate a failing atomic read with a succeeding faulting one and never yield
+the CPU that writer needs. The contended atomic walk runs under RCU instead,
+which `MMU_GATHER_RCU_TABLE_FREE` keeps safe, and the page-table lock still
+samples the entry.
+
+An idle virtual CPU never blocks while one of its IPI vectors is pending. A
+remote sender writes the idle wake pipe only when it takes the target's pending
+mask from zero to non-zero and sends no signal to a target marked idle, so a
+bit that is already set when the wait starts has no wake edge behind it. The
+local irq_work vector sets its bit without a pipe edge and can be left set with
+nothing queued, and a CPU that blocked on it would absorb every later remote
+vector until an unrelated descriptor or timer woke it. The idle wait reads the
+mask after publishing the idle state and polls instead of blocking.
+
+Every kernel product performs futex updates atomically against native
 userspace running on other vCPUs. Compare-and-exchange reports the value
 observed by that operation, and wake-operation arithmetic retries competing
 updates instead of overwriting them. The optional `guest-futex-atomic` test
 checks concurrent kernel/userspace updates and robust priority-inheritance
 mutexes.
+
+## Block devices and filesystems
+
+Releasing an ext4 inode preallocation never allocates, so evicting a cached
+inode from the inode shrinker, which runs under `PF_MEMALLOC`, does not trip
+the page allocator's check against `__GFP_NOFAIL` requests there. While a
+block group holds an inode preallocation, a shared topic keeps references to
+the group's in-core bitmap and buddy folios and its on-disk block bitmap
+buffer, so the release finds all three cached. The references cost at most
+three 4 KiB pages per such group and keep those pages from being reclaimed or
+migrated. Closed inodes keep preallocations, for example after enabling
+fs-verity, so the release is not confined to open files.
+`guest-ext4-prealloc-reclaim` evicts such inodes under memory pressure, on
+4 KiB and 1 KiB blocks, and requires that reclaim release them with no
+`__GFP_NOFAIL` page allocation.
+
+The block allocator indexes each block group by its largest free order and its
+average fragment size in xarrays, and moves a group between them under the
+group lock, so the insert can use only the atomic reserves and fails when
+memory is that short. A group left out is still found by the linear scan of
+the later criteria, so a failed insert costs a worse choice of group and never
+an allocation. A shared topic inserts with `__GFP_NOWARN`, because
+`warn_alloc()` printed a stack trace from writeback in the middle of the
+pressure that caused it, which the test above rightly rejects. It also checks,
+when a group's order is unchanged, that the group is indexed and indexes it
+again if not, where upstream returned early and left the group out until its
+order changed. The extent status cache is filled the same way: the extents a
+lookup reads are inserted under the inode's extent-cache lock with an atomic
+allocation, a miss only means the extent tree is read again, and a second
+shared topic adds `__GFP_NOWARN` to that allocation for the same reason.
+
+Direct UBD images advertise discard ranges up to 128 MiB and service each range
+with one host hole punch. A UBD request carries its host I/O state in the data
+blk-mq allocates with the request, and the work item that runs it walks its
+segments itself, so accepting or running a request allocates no memory, even
+during writeback under memory pressure. `guest-ubd-request-memory` traces every
+allocation while it drives each kind of request. The project adds no behavior
+to upstream UML's COW implementation, and Apple launchers never construct a COW
+image pair.
+
+## Shutdown and device removal
+
+UML runs its exitcalls, which tear its drivers down, while the other vCPUs
+still run tasks, and `poweroff -f` leaves every task running. The UBD exitcall
+therefore quiesces every disk before it destroys the workqueue that runs their
+requests: the requests already handed to it complete, and a later one waits in
+its queue until the run ends, as on a machine that has stopped.
+`guest-ubd-poweroff` powers guests off with direct reads in flight on every
+vCPU.
+
+A management-console halt or reboot, an unbind and a lost vhost-user
+backend reach a driver's removal without `device_shutdown()`. The Virtio
+video driver's removal, for a decoder and an encoder alike, resets the device
+and deletes its queues before it returns anything the device held, then
+answers every pending command as failed, so a queued buffer returns to vb2 in
+error, and flushes its event work. Its state lasts until the last open file is
+closed, which no longer reaches the device. `guest-video-teardown` removes
+each device by unbind, halt and forced power-off while it has open files,
+queued buffers and commands in flight.
+
+A synchronous video command waits five seconds for its answer. On Darwin its
+answer is already in guest memory when the kick returns, because the backend
+runs the queue before it acknowledges the kick and the device answers such a
+command at once, so the timeout can only race the completion interrupt; a
+device that queues its work may still answer later. A command therefore owns
+its response memory and copies a timely answer to its caller, and a waiter
+that gives up leaves the command allocated for the late answer, or the
+removal, to free. An open that fails after the device made its stream
+destroys that stream. `guest-video-late-answer` serves the decoder from the
+production device behind a test-only shim that answers one parameter query
+late and another never.
+
+## Devices
+
+The Darwin network receive path uses NAPI, and the display-mapped absolute
+pointer is a direct touchscreen.
 
 A virtio-gpu PRIME export is always read-write. The first export of a buffer
 fixes the mode of every later one, and guest Mesa exports without `DRM_RDWR`,
@@ -483,3 +776,114 @@ nonblocking flip a client queues right after a blocking one is refused with
 `-EBUSY`. No scanout needs the wait, because the host copies the frame when the
 driver flushes the resource. The optional `guest-drm-vblank` test checks the
 vblank wait and the flip rate against the mode's refresh rate.
+
+
+A Virtio-GPU file on a device with context initialization has no context until
+it initializes one or its first transfer, submission, or resource creation
+creates it. Every handle the file opened before then, typically a PRIME
+import, is attached to the context when it is created, as a handle opened
+afterwards is when it opens; closing one first drops it without a detach.
+Upstream attaches only handles opened after the context exists, so the host
+refused every transfer that named such a buffer. Android's gralloc mapper reads
+an imported buffer exactly that way, which blanked every screenshot.
+
+The Virtio-GPU primary plane accepts ARGB8888 as well as XRGB8888, so a GBM
+client whose EGL config has alpha can set a mode. XRGB8888 stays the first
+format, the one fbdev takes. The plane has no blend-mode property. The host
+presents a scanout's colour channels and ignores its alpha byte, which is what
+premultiplied alpha over the CRTC's black background shows. The
+[Android product](../mainline-6.18/README.md#android-product) offers the other
+32-bit RGB orders as well.
+
+## Suspend, wake and the management console
+
+Lifecycle quiesce uses full Linux system suspend. The management console
+acknowledges only after the suspend entry boundary and remains the explicit
+wake source, so monotonic guest uptime excludes time while an Apple host has
+frozen the application. Multi-vCPU suspend parks secondary carriers through CPU
+hotplug and restores them before guest tasks resume. The console socket is
+`/tmp/uml-<umid>-mconsole`, or `<dir>/mconsole` when the host passes
+`uml_dir=<dir>`, a directory owned by that machine alone; a path that does not
+fit Darwin's 104-byte `sun_path` is refused, never truncated.
+
+The console's `mem` replies `total=<n> available=<n> free=<n>`: the MemTotal,
+MemAvailable and MemFree that `/proc/meminfo` prints, in decimal bytes, with
+one space between the fields and nothing after them, as one reply and no
+error. It reads `si_meminfo()` and `si_mem_available()` from the console's
+interrupt, with no file and no process context, so it answers where a policy
+keeps the console from `/proc/meminfo`, as on Android. A kernel without the
+command refuses it as an unknown command.
+
+Only a wake source ends the suspend. Some wake any suspend: the management
+console, the UML RTC alarm, VNC input, and a vhost-user device whose wakeup is
+enabled in sysfs (its backend channel and every queue's call descriptor
+alike). The Darwin network interface wakes only a suspend the guest started
+itself, such as Android's once its last wakelock goes away, as a phone's
+wireless interface does: a received frame ends it and keeps the guest awake
+for 500 ms through the `darwin-net-rx` wakeup source, so that the stack and
+the task the frame is for answer before the next automatic suspend, and an
+`adb` command to a guest whose display is off is answered at once instead of
+at the next RTC alarm. A suspend the host asked for through the management
+console ends only with the host's wake, and no frame fails it; the kernel
+knows it from the host's request until the guest has replied that it is
+suspended. `darwin_net_kern.guest_wake=0` turns the wake and the hold off. 
+
+A Linux host clears O_ASYNC on every other descriptor for the suspend; Darwin,
+whose IRQ notification thread stands in for SIGIO, takes those descriptors off
+that thread instead, so console input, vhost-user requests and block
+completions wait for the resume and are handled then, and so does network
+input in a suspend the host asked for. Those descriptors stay nonblocking: a
+vhost-user reply wait still serves its backend's requests during a suspend,
+and the `irq_work` that delivers what one recorded drains the request socket
+until it would block, so a blocking socket would hold that CPU in the host's
+`recvmsg()` and the suspend would never end. The suspended CPU
+sleeps until a wake source has input or a wakeup is pending, so neither a host
+signal nor a notification collected before the suspend ends it. A wake request
+that arrives while a suspend is still being entered, whether the host or the
+guest started it, is answered at once rather than left on the console, and it
+still ends that suspend: the PM core aborts at its next wakeup check, or the
+CPU does not go to sleep. The PM core keeps every wakeup signaled since the
+suspend began, including one signaled while it syncs file systems, and a
+suspend whose sync saw one ends before it notifies or freezes anything; a
+guest that is not suspending only answers the request, and its next suspend
+discards that wakeup. A suspend the host asked for that ends with `-EBUSY`, as
+when one of the guest's own wake sources such as an RTC alarm fired while it
+was being entered, is entered again up to three more times; the host's wake
+ends the request instead, and a request that gives up replies `Suspend
+failed`.
+
+Virtio input is not a wake source, because a suspend disables its rings, so a
+host that forwards a key also sends the wake. `guest-suspend-holds`
+keeps network, console and vhost-user traffic flowing through a suspend the
+host asked for, sends early wakes, one of them while a frozen file system
+holds the suspend's sync, fires an RTC alarm during a held sync of the host's
+suspend, which must still hold, and wakes a suspend the guest entered by
+itself with a wake, with a power key typed on the VNC display and with a
+network connection, after which the host's own suspend must hold under
+traffic on its first attempt. 
+
+The Virtio sound driver starts a substream afresh
+after a suspend, with no position and no pending message, whether it was
+playing, paused or prepared, because the ALSA core restarts it at offset 0
+and the driver releases on the device the stream of a substream the core did
+not run, before the rings are disabled; UML runs no virtio freeze, so nothing
+else would tell the device. The driver reports elapsed periods one at a time,
+so a guest stall longer than the buffer xruns, or carries on when the stop
+threshold is the boundary; it releases the periods queued before a start in
+prepare, hw_params and hw_free; and it pads the last period of a drain with
+silence. `guest-virtio-sound-suspend` plays across a suspend, a pause and a
+reopen, across a 300 ms stop of the guest, and through the drains.
+
+## BPF
+
+The kernel exposes its BTF at `/sys/kernel/btf/vmlinux` for CO-RE programs.
+BPF runs on the interpreter; no BPF code is generated at run time. Helpers
+that take a callback, such as `bpf_loop`, `bpf_for_each_map_elem`, and
+`bpf_timer_set_callback`, reach an interpreted callback through a fixed pool of
+1024 built-in entry points. Each callback subprogram of a loaded program holds
+one until the program is freed, and a load that finds none free fails with
+`ENOSPC`. The interpreter still rejects kfunc calls, and tail calls in a
+program that has callbacks or other subprograms; `bpf_wq`, which only kfuncs
+reach, is therefore unavailable. Tracing program types (kprobe, uprobe,
+tracepoint, raw tracepoint, iterator) need `CONFIG_BPF_EVENTS`, which UML does
+not provide.

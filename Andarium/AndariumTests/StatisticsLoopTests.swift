@@ -29,6 +29,14 @@ private final class SleepGate {
     }
 }
 
+/// The statistics loop against a scripted runtime, with the pause between
+/// readings held by the test: no reading without a viewer, the quarter-second
+/// then one-second cadence with the memory after every other reading, the loop
+/// stopping with the foreground, with a guest that is not running and with its
+/// last viewer, a memory the kernel does not give keeping the last figure, and
+/// a new boot starting the figures over. `StatsMeter` and `StatsSampling` are
+/// tested in `andarium-core`, and `ConsoleReport`, the harness's console
+/// lines, in the application (`ConsoleReportTests`).
 @MainActor
 struct StatisticsLoopTests {
     private let host = HostDevice(

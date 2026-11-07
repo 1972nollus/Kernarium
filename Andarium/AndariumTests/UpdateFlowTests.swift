@@ -94,6 +94,10 @@ final class StubDriver: RuntimeDriver {
     func localNetworkAddress() -> String? { address }
 }
 
+/// The update, interrupted-update (Start retries, Restore, Erase) and
+/// blocked-start flows against a stub runtime, including a clean shutdown
+/// returning Home with a fresh session and a failed run refusing another
+/// Start.
 @MainActor
 struct UpdateFlowTests {
     private let host = HostDevice(

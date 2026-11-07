@@ -15,7 +15,7 @@ Each round boots a fresh guest, checks that the readers are moving, and
 powers it off. The kernel must reach "reboot: Power down", the emulator must
 exit with status 0, and nothing after the power-off request may be a kernel
 warning, oops, panic or host fault report. The contract is the UBD paragraph
-of kernel/mainline-6.18/README.md.
+of kernel/common/README.md.
 """
 
 from __future__ import annotations

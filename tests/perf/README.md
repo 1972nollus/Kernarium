@@ -7,7 +7,7 @@ gates.
 ## Benchmark policy
 
 Use matched builds and record the revision/dirty state, relevant configuration,
-host and power state, page profile, engine, guest topology, command, repeated
+host and power state, engine, guest topology, command, repeated
 result, and exit/shutdown status. Diagnostic profiler runs are not score
 evidence.
 
