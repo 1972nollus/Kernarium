@@ -23,6 +23,9 @@ final class StubDriver: RuntimeDriver {
     }
     func save(_ guest: Guest) throws { savedGuest = guest }
     func startPlan() -> StartPlan? { plan }
+    /// What the data disk holds now; a test sets it as a run would.
+    var diskUsedBytes: UInt64 = 0
+    func measuredUsedBytes() -> UInt64 { diskUsedBytes }
     func begin(guest: Guest, mode: StartMode, kind: BootKind) {
         begun.append((mode, kind))
     }
@@ -258,6 +261,28 @@ struct UpdateFlowTests {
         driver.plan = nil
         model.refreshPlan()
         #expect(model.plan == .normal)
+    }
+
+    /// Home states the storage the guest holds. It is measured when the guest
+    /// loads, so the end of a run measures it again, however the run ended.
+    @Test func theEndOfARunMeasuresTheStorageAgain() {
+        let (model, driver) = model(plan: .normal)
+        model.guest?.usedBytes = 2 * Limits.bytesPerGiB
+        model.start(.normal)
+        model.finishBoot(.normal)
+        // Android wrote to its data disk while the guest ran.
+        driver.diskUsedBytes = 5 * Limits.bytesPerGiB + Limits.bytesPerGiB / 2
+        model.runEnded(RunEnd(result: 0), uptimeSeconds: 60)
+        #expect(model.phase == .home)
+        #expect(model.guest?.usedBytes == driver.diskUsedBytes)
+        #expect(model.guest?.freeBytes == 8 * Limits.bytesPerGiB - driver.diskUsedBytes)
+
+        let (failed, other) = self.model(plan: .normal)
+        failed.start(.normal)
+        other.diskUsedBytes = 3 * Limits.bytesPerGiB
+        failed.runEnded(RunEnd(result: -4), uptimeSeconds: 60)
+        #expect(failed.phase == .failed)
+        #expect(failed.guest?.usedBytes == 3 * Limits.bytesPerGiB)
     }
 
     @Test func homeOffersRecoveryOnceTheFirstStartHasHappened() {

@@ -12,9 +12,11 @@ import UIKit
 ///
 /// `cleanPowerOffReturnsHomeAndAnUncleanEndRequiresRelaunch`: two clean
 /// power-offs each return Home, three boots reuse the app process, and a
-/// host-stopped third run stays failed until relaunch. It deletes only that
-/// isolated test guest. ANDARIUM_END_HOLD_SECONDS keeps the third run's End
-/// screen up for that long, for a look at it.
+/// host-stopped third run stays failed until relaunch. Before the first start
+/// Home offers no recovery start and no storage in use; once the first run
+/// has returned Home it offers it and states the storage the data disk
+/// holds. It deletes only that isolated test guest. ANDARIUM_END_HOLD_SECONDS
+/// keeps the third run's End screen up for that long, for a look at it.
 ///
 /// `cleanShutdownMemorySnapshots` (ANDARIUM_MEMORY_SNAPSHOTS=1) runs five clean
 /// boot/power-off cycles. It saves allocation totals, thread names and
@@ -59,6 +61,11 @@ struct ShutdownFlowTests {
             try await Task.sleep(for: .milliseconds(100))
         }
         try #require(model.guest != nil && model.busy == nil && model.alert == nil)
+
+        // The guest has not started: no data disk, so Start in recovery waits
+        // and nothing is in use.
+        #expect(model.plan == .firstStart && !model.plan.offersRecovery)
+        #expect(model.guest?.usedBytes == 0)
 
         let identity = try entry.adbKeyStore.loadOrCreate()
         let operations = AdbGuestOperations(identity: identity, clock: GuestRunClock(), device: "device")
@@ -105,6 +112,17 @@ struct ShutdownFlowTests {
             if memorySnapshots || boot < boots {
                 #expect(model.runEnd.poweredOff)
                 #expect(model.plan == .normal)
+                if boot == 1 {
+                    // The first run created the data disk and Android wrote to
+                    // it: Home offers recovery and states what the disk holds
+                    // now, not what it held when the guest loaded.
+                    #expect(model.plan.offersRecovery)
+                    let disk = directory.appendingPathComponent(InstanceFiles.dataDisk)
+                    let held = try URL(fileURLWithPath: disk.path).resourceValues(forKeys: [.fileAllocatedSizeKey])
+                    let onDisk = UInt64(held.fileAllocatedSize ?? 0)
+                    #expect(onDisk > 0 && model.guest?.usedBytes == onDisk, "Home states \(String(describing: model.guest?.usedBytes)) of \(onDisk)")
+                    print("ANDROID_SHUTDOWN: after the first run Home states \(model.guest?.usedBytes ?? 0) bytes of the data disk")
+                }
                 if memorySnapshots {
                     try memorySnapshot("home-\(boot)-immediate")
                     try await Task.sleep(for: .seconds(10))

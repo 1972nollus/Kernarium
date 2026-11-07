@@ -180,7 +180,8 @@ control out.
 - **Storage.** A guest's files live in `Library/Guest/` of the application's
   container behind `GuestStorage`. The system disk is Android's, read-only, and
   stays in the release directory; the runtime creates the data disk `data.img`
-  at the first start, sized by the guest's capacity, and only grows it after.
+  at the first start, sized by the guest's capacity, and only grows it after;
+  Home disables Start in recovery until then (`StartPlan.offersRecovery`).
   The runtime passes both paths to Linux in a kernel argument, so they stay at
   paths free of spaces and the other characters `DiskPath` refuses (which is
   why the guest is not in `Application Support`).
@@ -197,9 +198,10 @@ control out.
 The device application drives the Android runtime through the same loader as
 Kernarium. A run starts when the guest's display has its size and the disk is
 ready, on a thread of its own. Android's clean power-off releases the kernel's
-resources and guest RAM and returns to Home, where Start boots again in the
-same process; an unclean shutdown, a host stop or a cleanup that fails keeps
-the failure screen and requires reopening Andarium.
+resources and guest RAM and returns to Home, which states the storage the data
+disk then holds and where Start boots again in the same process; an unclean
+shutdown, a host stop or a cleanup that fails keeps the failure screen and
+requires reopening Andarium.
 
 - **Time zone.** Every start gives the guest the host's zone
   (`GuestTimeZone`, the boot request's `android_time_zone`); the system image

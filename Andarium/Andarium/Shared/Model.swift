@@ -720,6 +720,9 @@ final class AppModel {
             session.showStats = showStats
         }
         lifecycle.phase = end.phase
+        // The run changed the data disk: what Home states of the storage is
+        // what the disk holds now, not what it held when the guest loaded.
+        if let driver { lifecycle.guest?.usedBytes = driver.measuredUsedBytes() }
         persistNow()
         refreshPlan()
     }
