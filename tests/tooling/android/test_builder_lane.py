@@ -794,6 +794,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           signed: bool = False,
                           adbd_launch_unreadable: bool = False,
                           vendor_property_variant: str | None = None,
+                          soc_variant: str | None = None,
+                          board_variant: str | None = None,
                           video_properties: dict[str, str] | None = None,
                           missing_video_ueventd: bool = False,
                           mesa_gles_alignment: int = 16384,
@@ -1967,6 +1969,20 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     # post_process_props.py comments out a denylisted vendor property; the
                     # product denylists the unreliable present fence of the inherited config.
                     "#ro.vendor.hwc.drm.present_fence_not_reliable=true\n"
+                    # The board's own name, and the inherited SoC values, which the denylist
+                    # comments out of the vendor partition (the odm file states the SoC).
+                    + {
+                        None: "ro.product.board=andarium\n",
+                        "cutf": "ro.product.board=cutf\n",
+                        "missing": "",
+                    }[board_variant]
+                    + "#ro.soc.manufacturer=Google\n#ro.soc.model=vsoc_arm64_pgagnostic\n"
+                    + {
+                        "vendor-manufacturer": "ro.soc.manufacturer=Google\n",
+                        "vendor-model": "ro.soc.model=vsoc_arm64_pgagnostic\n",
+                        "vendor-other": "ro.soc.et=true\n",
+                        "vendor-same": "ro.soc.manufacturer=Kernarium\nro.soc.model=Virtual CPU\n",
+                    }.get(soc_variant, "")
                     + {
                         "present-fence-unreliable":
                             "ro.vendor.hwc.drm.present_fence_not_reliable=true\n",
@@ -1987,7 +2003,33 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         ).items()
                     ),
                 )
-                archive.writestr("ODM/etc/build.prop", abi_properties("odm", "armeabi-v7a,armeabi"))
+                soc_properties = {
+                    "ro.soc.manufacturer": "Kernarium",
+                    "ro.soc.model": "Virtual CPU",
+                }
+                soc_properties.update({
+                    None: {},
+                    "missing-manufacturer": {"ro.soc.manufacturer": None},
+                    "missing-model": {"ro.soc.model": None},
+                    "cuttlefish": {"ro.soc.manufacturer": "Google",
+                                   "ro.soc.model": "vsoc_arm64_pgagnostic"},
+                    "joined-model": {"ro.soc.model": "Kernarium Virtual CPU"},
+                    "lowercase-model": {"ro.soc.model": "Virtual cpu"},
+                    "unknown-model": {"ro.soc.model": "unknown"},
+                    "vendor-manufacturer": {},
+                    "vendor-model": {},
+                    "vendor-other": {},
+                    "vendor-same": {},
+                }[soc_variant])
+                archive.writestr(
+                    "ODM/etc/build.prop",
+                    abi_properties("odm", "armeabi-v7a,armeabi")
+                    + "".join(
+                        f"{name}={value}\n"
+                        for name, value in soc_properties.items()
+                        if value is not None
+                    ),
+                )
                 if module:
                     archive.writestr("VENDOR/lib/modules/forbidden.ko", b"module")
                 if module_loader:
@@ -2565,6 +2607,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("unreliable-present-fence", {"vendor_property_variant": "present-fence-unreliable"}),
             ("missing-incremental-property", {"vendor_property_variant": "no-incremental"}),
             ("disabled-incremental-property", {"vendor_property_variant": "incremental-off"}),
+            ("cuttlefish-board", {"board_variant": "cutf"}),
+            ("missing-board", {"board_variant": "missing"}),
+            ("missing-odm-soc-manufacturer", {"soc_variant": "missing-manufacturer"}),
+            ("missing-odm-soc-model", {"soc_variant": "missing-model"}),
+            ("cuttlefish-soc", {"soc_variant": "cuttlefish"}),
+            ("joined-soc-model", {"soc_variant": "joined-model"}),
+            ("lowercase-soc-model", {"soc_variant": "lowercase-model"}),
+            ("unknown-soc-model", {"soc_variant": "unknown-model"}),
+            ("vendor-soc-manufacturer", {"soc_variant": "vendor-manufacturer"}),
+            ("vendor-soc-model", {"soc_variant": "vendor-model"}),
+            ("vendor-soc-other", {"soc_variant": "vendor-other"}),
+            ("vendor-soc-same-as-odm", {"soc_variant": "vendor-same"}),
             ("missing-thermal-apex", {"thermal_hal_variant": "missing-apex"}),
             ("thermal-apex-without-binary", {"thermal_hal_variant": "no-binary"}),
             ("thermal-apex-without-fragment", {"thermal_hal_variant": "no-fragment"}),
@@ -3074,6 +3128,34 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "VENDOR/build.prop lacks ro.incremental.enable=1: None"),
             ("disabled-incremental-property-cause", {"vendor_property_variant": "incremental-off"},
              "VENDOR/build.prop lacks ro.incremental.enable=1: '0'"),
+            ("cuttlefish-board-cause", {"board_variant": "cutf"},
+             "unexpected board name ro.product.board in VENDOR/build.prop: 'cutf', "
+             "not 'andarium'"),
+            ("missing-board-cause", {"board_variant": "missing"},
+             "unexpected board name ro.product.board in VENDOR/build.prop: None"),
+            ("missing-odm-soc-manufacturer-cause", {"soc_variant": "missing-manufacturer"},
+             "unexpected SoC identity ro.soc.manufacturer in ODM/etc/build.prop: None, "
+             "not 'Kernarium'"),
+            ("missing-odm-soc-model-cause", {"soc_variant": "missing-model"},
+             "unexpected SoC identity ro.soc.model in ODM/etc/build.prop: None, "
+             "not 'Virtual CPU'"),
+            ("cuttlefish-soc-cause", {"soc_variant": "cuttlefish"},
+             "unexpected SoC identity ro.soc.manufacturer in ODM/etc/build.prop: 'Google'"),
+            ("joined-soc-model-cause", {"soc_variant": "joined-model"},
+             "unexpected SoC identity ro.soc.model in ODM/etc/build.prop: "
+             "'Kernarium Virtual CPU', not 'Virtual CPU'"),
+            ("lowercase-soc-model-cause", {"soc_variant": "lowercase-model"},
+             "unexpected SoC identity ro.soc.model in ODM/etc/build.prop: 'Virtual cpu'"),
+            ("unknown-soc-model-cause", {"soc_variant": "unknown-model"},
+             "unexpected SoC identity ro.soc.model in ODM/etc/build.prop: 'unknown'"),
+            ("vendor-soc-manufacturer-cause", {"soc_variant": "vendor-manufacturer"},
+             "VENDOR/build.prop sets ro.soc.manufacturer=Google: the SoC identity is the ODM"),
+            ("vendor-soc-model-cause", {"soc_variant": "vendor-model"},
+             "VENDOR/build.prop sets ro.soc.model=vsoc_arm64_pgagnostic: the SoC identity is the ODM"),
+            ("vendor-soc-other-cause", {"soc_variant": "vendor-other"},
+             "VENDOR/build.prop sets ro.soc.et=true: the SoC identity is the ODM"),
+            ("vendor-soc-same-as-odm-cause", {"soc_variant": "vendor-same"},
+             "VENDOR/build.prop sets ro.soc.manufacturer=Kernarium: the SoC identity is the ODM"),
             ("missing-thermal-apex-cause", {"thermal_hal_variant": "missing-apex"},
              "com.android.hardware.thermal.apex is missing: the product needs a thermal HAL"),
             ("thermal-apex-without-binary-cause", {"thermal_hal_variant": "no-binary"},
@@ -3821,6 +3903,109 @@ def verify_product_identity(android_root: Path) -> None:
         except SystemExit:
             continue
         fail(f"a build with {label} passes the product identity check")
+
+
+def odm_properties(android_root: Path) -> dict[str, str]:
+    """The properties of the overlay's odm property file, which TARGET_ODM_PROP hands to the build."""
+    properties: dict[str, str] = {}
+    for line in (android_root / "overlay/config/odm.prop").read_text().splitlines():
+        if line.strip() and not line.startswith("#"):
+            key, separator, value = line.partition("=")
+            if not separator or key in properties:
+                fail(f"odm.prop has a line that is not a new key=value: {line!r}")
+            properties[key] = value
+    return properties
+
+
+def verify_hardware_identity(android_root: Path) -> None:
+    """The board is the device's and the SoC is the virtual CPU, stated where the build reads them.
+
+    The inherited Cuttlefish product states Google and its device name as the SoC, in the vendor
+    properties, and names its board cutf. The product drops the vendor values with the denylist,
+    states its own in an odm property file (a make list cannot carry a value with a space) and
+    renames the board; the verifier requires the result in the image."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    soc = {"ro.soc.manufacturer": "Kernarium", "ro.soc.model": "Virtual CPU"}
+    if verifier.SOC_IDENTITY != soc or verifier.BOARD_NAME != "andarium":
+        fail(f"the verifier expects {verifier.SOC_IDENTITY} on board {verifier.BOARD_NAME}")
+    if odm_properties(android_root) != soc:
+        fail(f"overlay/config/odm.prop sets {odm_properties(android_root)}, not {soc}")
+    board = (android_root / "overlay/BoardConfig.mk").read_text()
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
+    for text, name, line in (
+        (board, "BoardConfig.mk", "TARGET_BOOTLOADER_BOARD_NAME := andarium\n"),
+        (board, "BoardConfig.mk", "TARGET_ODM_PROP += device/kernarium/andarium/config/odm.prop\n"),
+        (product, "lineage_andarium.mk",
+         "PRODUCT_VENDOR_PROPERTY_BLACKLIST += ro.soc.manufacturer ro.soc.model\n"),
+    ):
+        if text.count(line) != 1:
+            fail(f"{name} does not contain {line.strip()!r} exactly once")
+    if "TARGET_ODM_PROP :=" in board or "TARGET_BOOTLOADER_BOARD_NAME +=" in board:
+        fail("BoardConfig.mk assigns the odm property list or the board name in another way")
+    # The vendor properties of the product must not state the SoC again.
+    if re.search(r"^\s*ro\.soc\.\w+\s*=", product, re.MULTILINE):
+        fail("lineage_andarium.mk assigns a ro.soc property in a list that the denylist empties")
+    script = (android_root / "build/build-aosp.sh").read_text()
+    for needle in ("get_build_var TARGET_BOOTLOADER_BOARD_NAME", "get_build_var TARGET_ODM_PROP"):
+        if needle not in script:
+            fail(f"build-aosp.sh does not check the build variable: {needle}")
+
+    # What CTS' BuildTest accepts, and the values the product sets pass; the helper names why not.
+    manufacturer, model = verifier.SOC_PATTERNS["ro.soc.manufacturer"], verifier.SOC_PATTERNS["ro.soc.model"]
+    for value, pattern in (("Kernarium", manufacturer), ("Virtual CPU", model), ("SM8550", model),
+                           ("a.b_c/d+e-f 1", model), ("andarium", verifier.BOARD_PATTERN)):
+        problems = verifier.cts_build_value_problems("x", value, pattern)
+        if problems:
+            fail(f"CTS would accept {value!r}, the helper says {problems}")
+    for value, pattern, reason in (
+        (" Kernarium", manufacturer, "surrounding whitespace"),
+        ("Kernarium ", manufacturer, "surrounding whitespace"),
+        ("Kernarium, Inc.", manufacturer, "does not match"),
+        ("Kernarium_Inc", manufacturer, "does not match"),
+        ("", manufacturer, "does not match"),
+        ("unknown", manufacturer, "is unknown"),
+        ("Unknown", model, "is unknown"),
+        ("Virtual CPU ", model, "surrounding whitespace"),
+        ("Virtual:CPU", model, "does not match"),
+        ("Virtual\tCPU", model, "does not match"),
+        ("Virtual CPU \u00e9", model, "does not match"),
+        ("two words", verifier.BOARD_PATTERN, "does not match"),
+    ):
+        if not any(reason in problem for problem in verifier.cts_build_value_problems("x", value, pattern)):
+            fail(f"the CTS value check accepts {value!r}, which {reason}")
+
+    odm = dict(soc)
+    vendor = {"ro.product.board": "andarium"}
+    verifier.check_hardware_identity(odm, vendor)
+    # An inherited key with a comment sign is not a property; a value the vendor drops is absent.
+    verifier.check_hardware_identity(odm, dict(vendor, **{"#ro.soc.model": "vsoc_arm64_pgagnostic"}))
+    for label, odm_map, vendor_map in (
+        ("no SoC identity", {}, vendor),
+        ("the Cuttlefish SoC", {"ro.soc.manufacturer": "Google", "ro.soc.model": "vsoc_arm64_pgagnostic"}, vendor),
+        ("a manufacturer of a real chip vendor", dict(odm, **{"ro.soc.manufacturer": "Qualcomm"}), vendor),
+        ("the joined model", dict(odm, **{"ro.soc.model": "Kernarium Virtual CPU"}), vendor),
+        ("a SoC in the vendor partition", odm, dict(vendor, **{"ro.soc.model": "Virtual CPU"})),
+        ("another SoC property in the vendor partition", odm, dict(vendor, **{"ro.soc.et": "true"})),
+        ("the Cuttlefish board", odm, {"ro.product.board": "cutf"}),
+        ("no board", odm, {}),
+    ):
+        try:
+            verifier.check_hardware_identity(odm_map, vendor_map)
+        except SystemExit:
+            continue
+        fail(f"a build with {label} passes the hardware identity check")
+    # The expected values are checked against CTS too: a value CTS would refuse fails the image.
+    original = verifier.SOC_IDENTITY
+    try:
+        verifier.SOC_IDENTITY = {"ro.soc.manufacturer": "Kernarium", "ro.soc.model": "unknown"}
+        try:
+            verifier.check_hardware_identity(dict(verifier.SOC_IDENTITY), vendor)
+        except SystemExit:
+            pass
+        else:
+            fail("an expected SoC model of 'unknown' passes the hardware identity check")
+    finally:
+        verifier.SOC_IDENTITY = original
 
 
 def verify_pinner_overlay(android_root: Path) -> None:
@@ -5625,6 +5810,7 @@ def main() -> None:
     verify_userdata_grow(android_root)
     verify_zram_fstab(android_root)
     verify_product_identity(android_root)
+    verify_hardware_identity(android_root)
     verify_pinner_overlay(android_root)
     verify_secondary_zygote_topic(android_root)
     verify_decoder_output_delay_topic(android_root)
