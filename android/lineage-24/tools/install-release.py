@@ -66,7 +66,18 @@ def main() -> None:
         with tempfile.TemporaryDirectory(prefix="print-acceptance.") as scratch:
             descriptor = Path(scratch) / "accepted-release.env"
             descriptor.write_text(text, encoding="utf-8")
-            verify_release(source, android_root, acceptance_path=descriptor)
+            # The verifiers report what they checked on standard output, in
+            # this process and in the tools it runs. Standard error carries
+            # that report so standard output is the descriptor alone.
+            sys.stdout.flush()
+            saved_stdout = os.dup(1)
+            os.dup2(2, 1)
+            try:
+                verify_release(source, android_root, acceptance_path=descriptor)
+            finally:
+                sys.stdout.flush()
+                os.dup2(saved_stdout, 1)
+                os.close(saved_stdout)
         sys.stdout.write(text)
         return
 
