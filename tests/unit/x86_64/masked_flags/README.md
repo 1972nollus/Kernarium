@@ -1,7 +1,7 @@
 # x86 masked floating-point flags
 
-`source/` holds the 951 instruction encodings and all 18,109 selected operand
-sets with the flags observed on the Intel Xeon. The
+`source/` holds the instruction encodings and the selected operand sets with
+the flags observed on the Intel Xeon. The
 `uml_x86_64_masked_flags` CMake target materializes `xeon-flags.bin` in the
 build tree, preserving its accepted SHA-256, for both engine consumers.
 Generation needs neither a Xeon nor XE2's original requests or responses.
