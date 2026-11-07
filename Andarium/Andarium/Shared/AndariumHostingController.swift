@@ -10,11 +10,14 @@ protocol SceneGeometryObserver: AnyObject {
     func sceneGeometryDidChange()
 }
 
-/// The scene's root controller owns the orientation preference. A child of
-/// SwiftUI's default root cannot reliably supply this scene-wide preference.
+/// The scene's root controller owns the orientation preference and, in a
+/// run, the screen edges that defer system gestures. A child of SwiftUI's
+/// default root cannot reliably supply these scene-wide preferences.
 final class AndariumHostingController<Content: View>: UIHostingController<Content>, SceneGeometryObserver {
     private let model: AppModel
     private var lockRequested = false
+    /// The run's deferred edges; nil leaves SwiftUI's preference in charge.
+    private var deferredEdges: ScreenEdges?
     private var updateScheduled = false
 
     init(rootView: Content, model: AppModel) {
@@ -35,6 +38,18 @@ final class AndariumHostingController<Content: View>: UIHostingController<Conten
     // The scene policy belongs to this root, including when SwiftUI embeds
     // a UIKit display controller whose default lock preference is false.
     override var childForInterfaceOrientationLock: UIViewController? { nil }
+
+    // SwiftUI defers the left and right edges unless a view says otherwise,
+    // and on Home it hands the choice to a navigation child. In a run the
+    // root decides alone. A presented sheet supplies its own preference.
+    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge {
+        guard let deferredEdges else { return super.preferredScreenEdgesDeferringSystemGestures }
+        return UIRectEdge(rawValue: deferredEdges.rawValue)
+    }
+
+    override var childForScreenEdgesDeferringSystemGestures: UIViewController? {
+        deferredEdges == nil ? super.childForScreenEdgesDeferringSystemGestures : nil
+    }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
@@ -78,6 +93,19 @@ final class AndariumHostingController<Content: View>: UIHostingController<Conten
                 setNeedsUpdateOfPrefersInterfaceOrientationLocked()
             }
             model.hostDrivesGuestRotation = policy.hostDrivesGuestRotation
+            let insets = view.safeAreaInsets
+            var insetEdges: ScreenEdges = []
+            if insets.top >= 0.5 { insetEdges.insert(.top) }
+            if insets.left >= 0.5 { insetEdges.insert(.left) }
+            if insets.bottom >= 0.5 { insetEdges.insert(.bottom) }
+            if insets.right >= 0.5 { insetEdges.insert(.right) }
+            let deferral = SessionGestureDeferral(
+                phase: model.phase, sceneSize: size, screenSize: scene.screen.bounds.size,
+                insetEdges: insetEdges)
+            if deferral.deferredEdges != deferredEdges {
+                deferredEdges = deferral.deferredEdges
+                setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
+            }
             // One call per turn, whatever the number of layouts and geometry
             // updates that scheduled it.
             model.driver?.sceneGeometryDidChange()

@@ -388,6 +388,18 @@ The guest display supports up to ten simultaneous fingers, including pinch
 and other gestures. The shared [GuestHost input](../GuestHost/README.md) maps
 each finger independently onto the guest's visible display.
 
+In a normal run whose scene fills the screen, the scene's root defers the
+system's edge gestures on each edge the guest's display meets, except the
+bottom (`SessionGestureDeferral`). On an iPad with the status bar hidden that
+is the top and both sides: the first swipe down from the top reaches Android's
+notification shade while iOS shows its tab, and a second swipe opens
+Notification Center or Control Center. Home and the app switcher stay one
+swipe, and Android's 3-button bar, the default, is tapped. An iPhone's guest is
+inset at the top and bottom, so only the sides are deferred, which is SwiftUI's
+own default on every other screen. A presented sheet supplies its own
+preference. While the guest has the keyboard focus, three-finger touches are
+the guest's, not UIKit's editing gestures.
+
 Retina mode applies at the next start, because the runtime takes it at boot, so
 it is set on Home only and the session's Settings has no Display section. It
 follows the device until the person sets it: on where the system lets the

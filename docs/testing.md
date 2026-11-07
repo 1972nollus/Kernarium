@@ -871,7 +871,8 @@ ways, backpressure each way, half close, a failed stream, the limit of
 computers, stopping, a port in use).
 The package also tests orientation ownership for phones, full-screen and
 windowed iPads, loss of a scene lock, coalesced guest commands, partial failures
-and stale completions after a guest restart. `SessionOrientationHostingTests`
+and stale completions after a guest restart, and which screen edges a run
+defers; a device shows how the system answers the swipes. `SessionOrientationHostingTests`
 checks the real scene root's session lock and the built bundle's portrait-only
 iPhone declaration. The opt-in `RotationOverVsockTests`
 (`TEST_RUNNER_ANDARIUM_ROTATION_TESTS=1`, selecting only that suite) boots Android
