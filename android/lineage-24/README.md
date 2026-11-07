@@ -170,6 +170,25 @@ reports. The verifier checks the identity there and that the fingerprint starts
 partition's own identity is not constrained. `darwin` stays the name of the
 host platform.
 
+The board and the processor carry the device's name too, where Cuttlefish's
+leaked. `Build.BOARD` (`ro.product.board`) is `andarium`, from the board file's
+`TARGET_BOOTLOADER_BOARD_NAME`. `Build.SOC_MANUFACTURER` and `Build.SOC_MODEL`
+are `Kernarium` and `Virtual CPU`, split as a chip vendor writes them; joined
+they are the host's name for the virtual CPU, `Kernarium Virtual CPU`, which an
+x86-64 guest prints as its CPUID brand string, and a tooling test requires the
+two to agree. The pair comes from the ODM partition: `overlay/config/odm.prop`,
+which `BoardConfig.mk` names in `TARGET_ODM_PROP` (a make property list cannot
+carry a value with a space), while the product's denylist drops the inherited
+Cuttlefish values, `Google` and the device name, from the vendor partition. The
+verifier requires the board, the odm pair, no `ro.soc.*` in the vendor
+partition, and values that CTS's `BuildTest` accepts. Android's CDD fixes the
+SoC fields for the life of a product. `ro.board.platform` (`vsoc_arm64`) and
+`ro.hardware` (`cutf_cvm`) keep the inherited names, which init scripts and HAL
+modules are selected by. An application that recognises a chip only from a
+table of known vendors, as CPU Info's SoC name does, still shows it as unknown:
+the virtual CPU is no vendor's chip, and its MIDR and features stay what the
+emulator implements.
+
 Diagnostics on a `user` image start on the host and need no guest root: the
 guest console the host captures for kernel logs, UML's mconsole (`sysrq`,
 `proc`, `stack`, and `mem` for the memory counters, which it reads without

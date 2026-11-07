@@ -552,6 +552,15 @@ PRODUCT_PACKAGE_OVERLAYS += device/kernarium/andarium/overlay
 # rejects it when it is true.
 PRODUCT_VENDOR_PROPERTY_BLACKLIST += ro.vendor.hwc.drm.present_fence_not_reliable
 
+# The inherited Cuttlefish product also states the SoC identity in the vendor
+# properties, as its product manufacturer and device (Google and
+# vsoc_arm64_pgagnostic), which Build.SOC_MANUFACTURER and Build.SOC_MODEL then
+# report. The denylist drops both for the same reason, and config/odm.prop,
+# which BoardConfig.mk hands to the build as TARGET_ODM_PROP, states the
+# virtual CPU's. The target-files verifier requires the odm values and no
+# ro.soc.* in the vendor build.prop, so that each property has one source.
+PRODUCT_VENDOR_PROPERTY_BLACKLIST += ro.soc.manufacturer ro.soc.model
+
 # ADB reaches the guest over vsock (and over TCP when the launch has a host
 # forward) even though this machine has no USB controller. A user build retains
 # the stock shell privilege boundary; a userdebug build also lets `adb root`

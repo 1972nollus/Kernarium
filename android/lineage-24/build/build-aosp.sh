@@ -227,6 +227,13 @@ lunch "${LINEAGE24_PRODUCT}-${LINEAGE24_RELEASE_CONFIG}-${LINEAGE24_BUILD_VARIAN
 	fail "product does not check prebuilt ELF alignment"
 [[ "$(get_build_var TARGET_BOOTS_16K)" != true ]] ||
 	fail "product selects the 16 KiB boot contract on a 4 KiB kernel"
+# The board is the device's own, not Cuttlefish's, and the SoC identity is the
+# product's odm property file (overlay/config/odm.prop). The target-files
+# verifier checks the properties the images carry.
+[[ "$(get_build_var TARGET_BOOTLOADER_BOARD_NAME)" == andarium ]] ||
+	fail "the board must be named andarium, not the inherited Cuttlefish board"
+[[ " $(get_build_var TARGET_ODM_PROP) " == *" device/kernarium/andarium/config/odm.prop "* ]] ||
+	fail "TARGET_ODM_PROP must name the product's SoC identity file"
 for variable in \
 	BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE \
 	BOARD_SYSTEM_EXTIMAGE_FILE_SYSTEM_TYPE \
