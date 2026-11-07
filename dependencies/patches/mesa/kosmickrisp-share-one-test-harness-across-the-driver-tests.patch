@@ -88,7 +88,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  .../tests/tess_draw_size_shaders/generate.sh  |    7 -
  .../tess_passthrough_shaders/generate.sh      |    8 -
  .../vulkan/tests/test_16bit_varying_io.c      |    9 +-
- .../vulkan/tests/test_3d_array_alias.c        |  122 +-
+ .../vulkan/tests/test_3d_array_alias.c        |  120 +-
  .../tests/test_address_binding_planes.c       |   69 +-
  .../test_alpha_to_coverage_no_attachment.cpp  |  814 ++++-----
  .../vulkan/tests/test_blend_pipeline_key.c    |  138 +-
@@ -158,7 +158,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  .../tests/test_unused_attachment_gaps.cpp     |  751 ++++----
  .../texel_buffer_bounds_shaders/generate.sh   |    5 -
  .../unused_attachment_shaders/generate.sh     |    7 -
- 101 files changed, 8441 insertions(+), 16544 deletions(-)
+ 101 files changed, 8440 insertions(+), 16543 deletions(-)
  delete mode 100755 src/kosmickrisp/vulkan/tests/alpha_to_coverage_shaders/generate.sh
  delete mode 100755 src/kosmickrisp/vulkan/tests/command_buffer_shaders/generate.sh
  delete mode 100755 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/generate.sh
@@ -2900,12 +2900,12 @@ index 40657bb5c97b94f09a55ee066a6d7a4875db0b52..51f7b6e268dc92d1044ddf3c09cb1a3b
  /* A vertex shader that reads a 16-bit attribute and writes it to a 16-bit
   * varying, which is the shape the 16-bit storage tests build. */
 diff --git a/src/kosmickrisp/vulkan/tests/test_3d_array_alias.c b/src/kosmickrisp/vulkan/tests/test_3d_array_alias.c
-index 4226d843a8fbde36cf267533a54a5df9cefbac82..ed0e5cf36ecff8a68b2b8b3f967166b8027b1de8 100644
+index de3edebf0bef81f70a5438d0a5d8b7919ba80bc1..d5de2656063c518e022000c7eb08cfbe4e384b4c 100644
 --- a/src/kosmickrisp/vulkan/tests/test_3d_array_alias.c
 +++ b/src/kosmickrisp/vulkan/tests/test_3d_array_alias.c
-@@ -9,19 +9,12 @@
-  * slice of the image itself rather than a layer of that alias, so every slice
-  * of every level must receive exactly the color drawn into it. */
+@@ -12,19 +12,12 @@
+  * whether the view keeps the image's usage, as Zink's render targets do, or
+  * only the attachment usage. */
  #include "kosmickrisp/vulkan/kk_device.h"
 -#include "kosmickrisp/vulkan/kk_entrypoints.h"
  #include "kosmickrisp/vulkan/kk_image.h"
@@ -2924,7 +2924,7 @@ index 4226d843a8fbde36cf267533a54a5df9cefbac82..ed0e5cf36ecff8a68b2b8b3f967166b8
  
  /* 7x7x12 is the geometry the OpenGL CTS copy_image functional tests build: a
   * 3D texture whose four level mip chain exceeds the three levels a 7x7 2D
-@@ -33,7 +26,7 @@ struct context {
+@@ -36,7 +29,7 @@ struct context {
     VkQueue queue;
     VkCommandBuffer cmd;
     const struct vk_device_dispatch_table *api;
@@ -2933,7 +2933,7 @@ index 4226d843a8fbde36cf267533a54a5df9cefbac82..ed0e5cf36ecff8a68b2b8b3f967166b8
  };
  
  static uint32_t
-@@ -42,17 +35,6 @@ minify(uint32_t value, uint32_t level)
+@@ -45,17 +38,6 @@ minify(uint32_t value, uint32_t level)
     return MAX2(value >> level, 1u);
  }
  
@@ -2951,7 +2951,7 @@ index 4226d843a8fbde36cf267533a54a5df9cefbac82..ed0e5cf36ecff8a68b2b8b3f967166b8
  static void
  image_barrier(struct context *ctx, VkImage image, VkImageLayout from,
                VkImageLayout to)
-@@ -102,20 +84,11 @@ test_levels(struct context *ctx, uint32_t levels, bool reinterpret)
+@@ -106,20 +88,11 @@ test_levels(struct context *ctx, uint32_t levels, bool reinterpret,
        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
     };
     VkImage image;
@@ -2976,7 +2976,7 @@ index 4226d843a8fbde36cf267533a54a5df9cefbac82..ed0e5cf36ecff8a68b2b8b3f967166b8
  
     const struct kk_image *kk_img = kk_image_from_handle(image);
     const uint32_t alias_levels =
-@@ -128,34 +101,18 @@ test_levels(struct context *ctx, uint32_t levels, bool reinterpret)
+@@ -132,34 +105,18 @@ test_levels(struct context *ctx, uint32_t levels, bool reinterpret,
        readback_B += minify(WIDTH, level) * minify(HEIGHT, level) *
                      minify(DEPTH, level) * TEXEL;
     }
@@ -3015,16 +3015,7 @@ index 4226d843a8fbde36cf267533a54a5df9cefbac82..ed0e5cf36ecff8a68b2b8b3f967166b8
     image_barrier(ctx, image, VK_IMAGE_LAYOUT_UNDEFINED,
                   VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
  
-@@ -184,7 +141,7 @@ test_levels(struct context *ctx, uint32_t levels, bool reinterpret)
-             refused += result != VK_SUCCESS;
-             continue;
-          }
--         CHECK(result);
-+         VK_CHECK(result);
-          const VkRenderingAttachmentInfo attachment = {
-             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-             .imageView = slice_views[level][slice],
-@@ -224,13 +181,13 @@ test_levels(struct context *ctx, uint32_t levels, bool reinterpret)
+@@ -228,13 +185,13 @@ test_levels(struct context *ctx, uint32_t levels, bool reinterpret,
        ctx->api->CmdCopyImageToBuffer(ctx->cmd, image,
           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback, 1, &copy);
     }
@@ -3040,8 +3031,8 @@ index 4226d843a8fbde36cf267533a54a5df9cefbac82..ed0e5cf36ecff8a68b2b8b3f967166b8
 +   VK_CHECK(ctx->api->QueueWaitIdle(ctx->queue));
  
     uint32_t bad = 0;
-    for (uint32_t level = 0; level < alias_levels; level++) {
-@@ -272,55 +229,19 @@ test_levels(struct context *ctx, uint32_t levels, bool reinterpret)
+    for (uint32_t level = 0; level < levels; level++) {
+@@ -275,55 +232,19 @@ test_levels(struct context *ctx, uint32_t levels, bool reinterpret,
  int
  main(void)
  {
@@ -3102,9 +3093,9 @@ index 4226d843a8fbde36cf267533a54a5df9cefbac82..ed0e5cf36ecff8a68b2b8b3f967166b8
 +      &ctx.t, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, &pool, &ctx.cmd);
  
     bool pass = true;
-    pass &= test_levels(&ctx, 1, false);
-@@ -328,7 +249,6 @@ main(void)
-    pass &= test_levels(&ctx, MAX_LEVELS, true);
+    pass &= test_levels(&ctx, 1, false, true);
+@@ -333,7 +254,6 @@ main(void)
+    pass &= test_levels(&ctx, MAX_LEVELS, true, false);
  
     ctx.api->DestroyCommandPool(ctx.device, pool, NULL);
 -   ctx.api->DestroyDevice(ctx.device, NULL);

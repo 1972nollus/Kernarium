@@ -87,7 +87,7 @@ index 880b23c72df84448bb8b9e8efb3324cbc25ffc5f..8cb371445b100e658440d0f70708ecfb
     layout->width_px = image->extent.width / width_scale;
     layout->height_px = image->extent.height / height_scale;
 diff --git a/src/kosmickrisp/vulkan/kk_image_view.c b/src/kosmickrisp/vulkan/kk_image_view.c
-index daf70afca65a50a79a9c2d214b5ad65ff29e1564..857b69aaa0bf2c3ab13afb90a457603c875bed25 100644
+index 2839fb35f7ebd2f921f2e3d318d71694e74fdcb0..5e1fa330a9212010b3c33dd6e0a4b76ade8e8fc8 100644
 --- a/src/kosmickrisp/vulkan/kk_image_view.c
 +++ b/src/kosmickrisp/vulkan/kk_image_view.c
 @@ -118,7 +118,17 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,

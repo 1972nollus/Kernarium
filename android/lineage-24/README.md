@@ -1021,12 +1021,16 @@ vendor init script copies to `ro.hw_timeout_multiplier`. The framework scales
 its ANR and watchdog timeouts by it (`Build.HW_TIMEOUT_MULTIPLIER`), so the
 slower engines, the gadget interpreters on the Mac and on the iPad, do not raise
 ANRs that a phone-speed device would not. Cuttlefish uses 3 on its native
-architecture and 50 when it emulates another one. Two CTS cases assume 3 or
-less: `JobSchedulingTest#testAnr_onStartJob` and `#testAnr_onStopJob` wait 30 s
-for the ANR that the job scheduler raises 8 s times the multiplier after an
-unanswered `onStartJob` or `onStopJob`, which is 40 s here (24 s at 3, where
-both pass). They are a timing deviation of the product, not a defect, and the
-multiplier stays.
+architecture and 50 when it emulates another one. Three CTS cases assume a
+smaller multiplier. `JobSchedulingTest#testAnr_onStartJob` and
+`#testAnr_onStopJob` wait 30 s for the ANR that the job scheduler raises 8 s
+times the multiplier after an unanswered `onStartJob` or `onStopJob`, which is
+40 s here (24 s at 3, where both pass). `SurfaceSyncGroupTests#testProcessCrash`
+waits a fixed 5 s for the window manager to complete a sync group whose
+participant crashed, which happens only when the group's ready timeout, 1 s
+times the multiplier, expires, because nothing links to the participant's
+death; it passes at 4 or less. They are a timing deviation of the product, not
+a defect, and the multiplier stays.
 
 That script replaces the inherited Cuttlefish graphics init script. It expands
 only `androidboot` properties the tracked command line sets, because a copy
@@ -1209,11 +1213,37 @@ unless that config has no depth plane, and a pbuffer of it must stencil: a draw
 that writes only stencil and a draw that passes only where the stencil matches
 colour the two halves of the picture apart.
 
+The product declares OpenGL ES 3.2. The boot command line's
+`androidboot.opengles.version=196610` (0x30002) is the one writer of
+`ro.opengles.version`, which the vendor init script copies at early-init and
+the framework reports to applications. The Virgl driver makes ES 3.2 contexts
+over the host's Zink on KosmicKrisp and lists
+`GL_ANDROID_extension_pack_es31a` on every ES 3.1 or later context, on a Mac
+and on an A15 iPad alike, so the product also declares
+`android.hardware.opengles.aep`: the CTS requires the feature exactly when a
+device that reports 3.1 or later lists the extension.
+`android.software.opengles.deqp.level` is 132776705 (2026-03-01), the level at
+which every EGL, GLES2, GLES3 and GLES31 dEQP list of the Android 17 CTS passed
+whole on both ABIs. A declared level makes the CTS run every list dated up to
+it, so the target-files verifier pins the level and requires the extension pack,
+and the builder lane pins the command line's version: a platform update that
+moves the `latest` level file fails verification until its new lists pass. The
+EGL `get_frame_timestamps` cases require a composite-to-present latency under
+four vsyncs and miss it on a heavily loaded host, so run them on a quiet one.
+
+A dEQP run sometimes ends with `deqp:testercore` aborting on FORTIFY's
+`pthread_mutex_lock called on a destroyed mutex` in `RenderThread`. This is an
+upstream exit race: dEQP's activity calls `exit(0)` while hwui's render thread
+still handles the background memory trim, whose lock belongs to the
+`WebViewFunctorManager` singleton that `exit()` has already destroyed. The
+process has already exited 0, no tombstone is written, and no result changes.
+
 The product declares `android.hardware.vulkan.version` 1.4, `level` 1 and
 `compute` 0, and deliberately declares no `android.software.vulkan.deqp.level`:
 this driver has not been qualified against Android's Vulkan dEQP must-pass list.
 A declared level makes the CTS run every list dated up to it, so a declaration
-waits for those lists to pass whole. One gap is known in this
+waits for those lists to pass whole, and the target-files verifier refuses one
+until then. One gap is known in this
 stack: `vkMapMemory` of host-visible memory exported as a hardware buffer fails
 with `VK_ERROR_MEMORY_MAP_FAILED`, because gralloc backs such a buffer with a
 classic 3D resource, which Venus refuses to map by design (its contents reach

@@ -1073,6 +1073,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     for name in ("egl", "gralloc", "vulkan")
                     if not (init_variant == "missing-hal-copy" and name == "vulkan")
                 )
+                if init_variant != "missing-gles-copy":
+                    graphics += "    setprop ro.opengles.version ${ro.boot.opengles.version}\n"
                 if init_variant == "angle-copy":
                     graphics += (
                         "    setprop debug.angle.feature_overrides_enabled "
@@ -2062,6 +2064,17 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         f"VENDOR/etc/permissions/{wifi_feature_file}.xml",
                         f'<permissions><feature name="{wifi_feature_file}"/></permissions>',
                     )
+                # The GLES claim's two platform files: the extension pack and
+                # the qualified dEQP level.
+                archive.writestr(
+                    "VENDOR/etc/permissions/android.hardware.opengles.aep.xml",
+                    '<permissions><feature name="android.hardware.opengles.aep"/></permissions>',
+                )
+                archive.writestr(
+                    "VENDOR/etc/permissions/android.software.opengles.deqp.level-latest.xml",
+                    '<permissions><feature name="android.software.opengles.deqp.level" '
+                    'version="132776705"/></permissions>',
+                )
                 archive.writestr(
                     "VENDOR/etc/permissions/handheld_core_hardware.xml",
                     "<permissions>"
@@ -2970,6 +2983,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("time-zone-missing-marker-context", {"time_zone_variant": "missing-marker-context"}),
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
+            ("missing-gles-copy", {"init_variant": "missing-gles-copy"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
             ("ungated-density", {"init_variant": "ungated-density"}),
             ("missing-rcu-restore", {"init_variant": "missing-rcu-restore"}),
@@ -3257,6 +3271,27 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not run 'mkdir /data/vendor/wifi/wpa 0770 wifi wifi' at boot"),
             ("missing-wifi-feature-cause", {"missing_wifi_feature": True},
              "required feature is not declared: android.hardware.wifi"),
+            ("missing-gles-copy-cause", {"init_variant": "missing-gles-copy"},
+             "does not copy the OpenGL ES version at early-init"),
+            ("missing-aep-feature-cause",
+             {"entries": {"VENDOR/etc/permissions/android.hardware.opengles.aep.xml": None}},
+             "required feature is not declared: android.hardware.opengles.aep"),
+            ("missing-gles-deqp-level-cause",
+             {"entries": {"VENDOR/etc/permissions/"
+                          "android.software.opengles.deqp.level-latest.xml": None}},
+             "must be declared once at the qualified level 132776705: \\[\\]"),
+            ("unqualified-gles-deqp-level-cause",
+             {"entries": {"VENDOR/etc/permissions/"
+                          "android.software.opengles.deqp.level-latest.xml":
+                          b'<permissions><feature name="android.software.opengles.deqp.level" '
+                          b'version="132842241"/></permissions>'}},
+             "qualified level 132776705: \\['132842241'\\]"),
+            ("vulkan-deqp-level-cause",
+             {"entries": {"VENDOR/etc/permissions/"
+                          "android.software.vulkan.deqp.level-latest.xml":
+                          b'<permissions><feature name="android.software.vulkan.deqp.level" '
+                          b'version="132776705"/></permissions>'}},
+             "a Vulkan dEQP level is declared"),
             ("missing-wifi-overlay-cause",
              {"entries": {"VENDOR/overlay/KernariumWifiOverlay.apk": None}},
              "VENDOR/overlay/KernariumWifiOverlay.apk"),
@@ -5614,6 +5649,19 @@ def verify_hal_selections(android_root: Path) -> None:
     module = f"vulkan.{verifier.BOOT_HAL_SELECTIONS['vulkan']}"
     if f"MESA_VENUS_HAL_MODULE='{module}'" not in metadata.splitlines():
         fail(f"the Vulkan HAL selection does not name the Venus module {module}")
+
+    # The command line is also the one writer of ro.opengles.version, the GLES
+    # version the CTS qualifies the product's features and dEQP level against.
+    versions = [
+        token.partition("=")[2]
+        for token in command_line
+        if token.partition("=")[0] == "androidboot.opengles.version"
+    ]
+    if versions != [str(verifier.BOOT_OPENGLES_VERSION)]:
+        fail(
+            f"boot command line declares OpenGL ES {versions}, not "
+            f"{verifier.BOOT_OPENGLES_VERSION}"
+        )
 
     # ro.serialno comes from androidboot.serialno, and Build.getSerial() must match
     # ^[a-zA-Z0-9]+$ (CTS AccessSerialNumberTest#testGetSerialReturnsExpectedFormat).

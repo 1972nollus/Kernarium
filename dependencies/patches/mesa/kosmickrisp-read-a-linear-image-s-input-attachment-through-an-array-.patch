@@ -97,10 +97,10 @@ index 0e47357795bd7bbfe499f30c19f55ff977afacad..18932806d63262425bbf82c4e4fbd0dc
        return VK_ERROR_INITIALIZATION_FAILED;
  
 diff --git a/src/kosmickrisp/vulkan/kk_image_view.c b/src/kosmickrisp/vulkan/kk_image_view.c
-index bfddc6f001e2db37fb63bbe7aaa04ecca6927b2f..bb3602a78bb21ac793b671c329a37e743d99409e 100644
+index ed1661f14380b8ffe27ffce5c03ff20f26e58216..682a65f74e339a2e50409a9c6e7f924a5b270070 100644
 --- a/src/kosmickrisp/vulkan/kk_image_view.c
 +++ b/src/kosmickrisp/vulkan/kk_image_view.c
-@@ -228,9 +228,13 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
+@@ -232,9 +232,13 @@ kk_image_view_init(struct kk_device *dev, struct kk_image_view *view,
  
        if (view->vk.usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {

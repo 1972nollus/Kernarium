@@ -265,7 +265,9 @@ own conformance standing is whatever its recorded campaigns show.
 
 GLES reaches the guest over the same path and from the same capsets: the
 guest's Mesa derives its GLES version from what Virgl advertises, so nothing
-targets GLES separately and no GLES-only host provider exists.
+targets GLES separately and no GLES-only host provider exists. On macOS and on
+an A15 iPad that is OpenGL ES 3.2 with every extension of the Android extension
+pack, and the Android guest declares both.
 
 The formats Virgl advertises are the formats the host really stores. A sized
 depth internal format is only a request in OpenGL -- the host may satisfy
@@ -472,6 +474,17 @@ them to be reported complete. The other attaches one slice of a
 three-dimensional texture beside a two-dimensional texture, which leaves no
 attachment layered, and the rule requiring a common texture target applies
 only when one is.
+
+Each distinct sample mask is a pipeline compile. Metal has no fixed-function
+sample mask, so KosmicKrisp folds a pipeline's mask into its fragment function
+and offers no dynamic sample mask, and Zink keys its pipelines on the mask: a
+new value costs a pipeline and a Metal compile, about 70 ms. The host state
+tracker therefore hands the driver only the mask bits that select the
+framebuffer's samples, and the full mask when they select every sample. A GL
+application that varies the other bits, as
+`dEQP-GLES31.functional.multisample.default_framebuffer.sample_mask_non_effective_bits`
+does for every quad it draws, compiles once per effective mask, at most sixteen
+times on a four-sample framebuffer.
 
 Hardware video decode is not advertised over Virgl; the renderer is built
 without it.
@@ -809,7 +822,9 @@ the Virgl gallium driver behind the `kernarium` EGL and GLES libraries, and
 Mesa's Venus driver installed as the Vulkan HAL `vulkan.virtio.so`, with
 gralloc buffers from minigbm and presentation through
 `VK_ANDROID_native_buffer`. That contract, including which guest epoch the
-hardware-buffer path needs and why no dEQP level is declared, lives in
+hardware-buffer path needs, why no Vulkan dEQP level is declared, and the
+OpenGL ES 3.2 claim with the Android extension pack and the dEQP level its
+lists qualified, lives in
 [`../android/lineage-24/README.md`](../android/lineage-24/README.md#graphics).
 
 Khronos publishes Android's mandatory Vulkan functionality as the
@@ -970,6 +985,18 @@ levels or layers its image cannot provide fails with
 as the 2D or 2D-array texture the image is: Venus creates views without waiting
 for the result, so a refusal would surface later as a lost device. Metal still
 decides pixel-format compatibility.
+
+A 2D or 2D-array view of a 3D image renders through the image's own texture at
+every level, naming the slice with the render pass depth plane. It is sampled,
+stored and read as an input attachment through a 2D-array alias of the image,
+which Metal limits to the levels a 2D array of the image's width and height may
+have. A view of a deeper level, whose width and height are both one, is made for
+rendering alone and gives a descriptor no texture: core Vulkan only renders to
+such a view, and a `VK_EXT_image_2d_view_of_3d` view samples or stores only at
+the alias's levels. A refusal would end the process: virglrenderer clears every
+level of a texture it creates, and Zink clears a 3D level through such a view
+with no fallback. `kosmickrisp_3d_array_alias` renders every slice of every
+level of a 7x7x12 image through both kinds of view.
 
 Programmable primitive IDs cross the Metal vertex/fragment interface as flat
 user varyings. Layer and viewport indices use unsigned native Metal attributes
