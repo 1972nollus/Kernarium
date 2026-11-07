@@ -16,7 +16,12 @@ struct GuestLayer: View {
         if showsGuest {
             ZStack {
                 Color.black.ignoresSafeArea()
-                GuestDisplayView(keyboardVisible: .constant(false), retinaMode: model.retina) { view, geometry in
+                GuestDisplayView(
+                    keyboardVisible: .constant(false), retinaMode: model.retina,
+                    // A touch beside the side keys reaches the guest, and
+                    // puts the keys away.
+                    touchDidBegin: { model.session.closeSideKeys() }
+                ) { view, geometry in
                     (model.driver as? LiveRuntime)?.viewDidLayout(view, geometry)
                 }
                 // In a window, iPadOS draws its window controls over the
