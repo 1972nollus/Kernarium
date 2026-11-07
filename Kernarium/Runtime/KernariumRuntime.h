@@ -78,7 +78,17 @@ enum {
  * -UML_EMULATOR_INVALID_ARGUMENT when it is anything else. The guest's
  * kernel command line, which also carries the release's own and the launch's
  * arguments, holds 4096 bytes; a run whose command line is longer fails
- * with a message that says so. A Linux guest ignores the key. */
+ * with a message that says so. A Linux guest ignores the key.
+ *
+ * An Android guest also takes the host's time zone for this boot:
+ * android_time_zone is its IANA name (for example Asia/Tokyo), 1 through 64
+ * characters of A-Z a-z 0-9 _ + - and / in slash-separated components that
+ * start with a letter or digit, or null for none. The runtime reads it only
+ * from a request whose struct_size covers it, passes a valid name as
+ * androidboot.kernarium.timezone, and drops anything else with a line on
+ * stderr: a time zone never fails a boot. Whether the guest knows the name,
+ * and whether it follows it, is the guest's to decide. A Linux guest ignores
+ * it. */
 typedef struct kernarium_runtime_boot {
     uint32_t struct_size;
     uint32_t width;
@@ -97,6 +107,7 @@ typedef struct kernarium_runtime_boot {
     uint32_t gpu_budget_engine_mib;
     uint32_t gpu_budget_headroom_mib;
     const char* android_adb_public_key;
+    const char* android_time_zone;
 } kernarium_runtime_boot;
 
 /* What a launch's host GPU budget comes to, as the runtime evaluates it for

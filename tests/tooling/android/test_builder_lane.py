@@ -529,6 +529,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         r'android:pathData="([^"]+)"', (wizard_art_root / "drawable/logo.xml").read_text(encoding="utf-8")
     )
     wizard_welcome = (wizard_art_root / "raw/lottie_welcome.json").read_bytes()
+    # The two wizard scripts the overlay carries, as raw files reach the overlay: unchanged.
+    wizard_scripts = {
+        name: (wizard_art_root / "raw" / name).read_bytes() for name in tool.SETUP_WIZARD_FLOWS
+    }
+    owner_name, user_name = wizard_scripts
+    launcher_apps = sorted(tool.LAUNCHER_APPS)
+    launcher_grids = tool.LAUNCHER_GRIDS
+    launcher_overlay_entry = tool.LAUNCHER_OVERLAY
     # The reader of compiled array resources sees the same items through either string pool.
     tables = [("config_ntpServers", ["none"]), ("config_autoTimeSourcesPriority", ["telephony", "external"]),
               ("config_ntpServers", ["ntp://ntp.example", "x"]), ("empty", [])]
@@ -783,8 +791,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           pinner_overlay_variant: str | None = None,
                           statistics_variant: str | None = None,
                           wizard_branding_variant: str | None = None,
+                          navigation_variant: str | None = None,
+                          launcher_variant: str | None = None,
                           network_time_variant: str | None = None,
                           reclaim_variant: str | None = None,
+                          time_zone_variant: str | None = None,
                           wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
                           cas_hal_variant: str | None = None,
@@ -956,6 +967,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "product-false": "ro.adb.secure=false\n",
                     }.get(adb_secure_variant, "")
                     + ("" if missing_lockscreen_default else "ro.lockscreen.disable.default=true\n")
+                    + ("ro.boot.vendor.overlay.theme=com.android.internal.systemui.navbar.gestural\n"
+                       if navigation_variant == "overlay-theme-property" else "")
                     + {
                         None: "apexd.config.use_fiemap=false\n",
                         "missing": "",
@@ -1326,6 +1339,46 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         reclaim_rc = reclaim_rc.replace(old, new)
                 if reclaim_variant != "missing-rc":
                     archive.writestr("SYSTEM_EXT/etc/init/kernarium_reclaim_boot_apps.rc", reclaim_rc)
+                # The script that applies the host's time zone, with its init file: the tracked ones,
+                # and the ways each can go wrong.
+                time_zone_script = (
+                    verifier.parents[1] / "overlay/tools/kernarium_time_zone.sh"
+                ).read_text()
+                time_zone_rc = (
+                    verifier.parents[1] / "overlay/tools/kernarium_time_zone.rc"
+                ).read_text()
+                for variant, (old, new) in {
+                    "no-property": ("getprop ro.boot.kernarium.timezone", "getprop ro.boot.other"),
+                    "no-auto-read": ("cmd settings get global auto_time_zone", "true"),
+                    "no-set": ('cmd alarm set-timezone "$zone"', "true"),
+                    "no-marker": ('setprop "$marker" "$zone"', "true"),
+                    "writes-setting": ("tag=kernarium_time_zone\n",
+                                       "tag=kernarium_time_zone\ncmd settings put global auto_time_zone 0\n"),
+                    "setprop-zone": ("tag=kernarium_time_zone\n",
+                                     "tag=kernarium_time_zone\nsetprop persist.sys.timezone GMT\n"),
+                    "detector": ("tag=kernarium_time_zone\n",
+                                 "tag=kernarium_time_zone\n"
+                                 "cmd time_zone_detector set_auto_detection_enabled true\n"),
+                }.items():
+                    if time_zone_variant == variant:
+                        if old not in time_zone_script:
+                            fail(f"the time zone script lacks '{old}' for the {variant} variant")
+                        time_zone_script = time_zone_script.replace(old, new)
+                if time_zone_variant != "missing-script":
+                    archive.writestr("SYSTEM_EXT/bin/kernarium_time_zone.sh", time_zone_script)
+                for variant, (old, new) in {
+                    "missing-service": ("service kernarium_time_zone ", "service other_service "),
+                    "not-oneshot": ("    oneshot\n", ""),
+                    "not-disabled": ("    disabled\n", ""),
+                    "started-at-boot": ("on property:sys.boot_completed=1", "on boot"),
+                    "no-start": ("    start kernarium_time_zone\n", ""),
+                }.items():
+                    if time_zone_variant == variant:
+                        if old not in time_zone_rc:
+                            fail(f"the time zone init file lacks '{old}' for the {variant} variant")
+                        time_zone_rc = time_zone_rc.replace(old, new)
+                if time_zone_variant != "missing-rc":
+                    archive.writestr("SYSTEM_EXT/etc/init/kernarium_time_zone.rc", time_zone_rc)
                 archive.writestr(
                     "SYSTEM_EXT/etc/selinux/system_ext_file_contexts",
                     "/(system_ext|system/system_ext)/bin/other\\.sh  u:object_r:system_file:s0\n"
@@ -1340,6 +1393,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         if reclaim_variant == "missing-label"
                         else "/(system_ext|system/system_ext)/bin/kernarium_reclaim_boot_apps\\.sh  "
                         "u:object_r:kernarium_reclaim_boot_apps_exec:s0\n"
+                    )
+                    + (
+                        ""
+                        if time_zone_variant == "missing-label"
+                        else "/(system_ext|system/system_ext)/bin/kernarium_time_zone\\.sh  "
+                        "u:object_r:kernarium_time_zone_exec:s0\n"
                     ),
                 )
                 # Platform, vendor and system_ext policy as the builder emits them: the
@@ -1393,6 +1452,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         if wifi_network_variant == "missing-marker-context"
                         else "persist.sys.kernarium.virtwifi_saved    "
                         "u:object_r:kernarium_wifi_network_prop:s0 exact bool\n"
+                    )
+                    + (
+                        ""
+                        if time_zone_variant == "missing-marker-context"
+                        else "persist.sys.kernarium.timezone_applied    "
+                        "u:object_r:kernarium_time_zone_prop:s0 exact string\n"
                     ),
                 )
                 archive.writestr(
@@ -1431,6 +1496,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     + ("" if adb_prop_not_system else "kernarium_adb_host_prop ")
                     + ("" if wifi_network_variant == "marker-not-system"
                        else "kernarium_wifi_network_prop ")
+                    + ("" if time_zone_variant == "marker-not-system"
+                       else "kernarium_time_zone_prop ")
                     + "))\n"
                     + (
                         ""
@@ -1474,6 +1541,41 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                              "(fifo_file (read write getattr)))\n"),
                         )
                         if reclaim_variant != variant
+                    )
+                    + "".join(
+                        rule
+                        for variant, rule in (
+                            ("missing-transition",
+                             "(typetransition init kernarium_time_zone_exec process "
+                             "kernarium_time_zone)\n"),
+                            ("missing-settings-find",
+                             "(allow kernarium_time_zone settings_service "
+                             "(service_manager (find)))\n"),
+                            ("missing-alarm-find",
+                             "(allow kernarium_time_zone alarm_service "
+                             "(service_manager (find)))\n"),
+                            ("missing-transfer",
+                             "(allow kernarium_time_zone system_server (binder (transfer)))\n"),
+                            ("missing-call",
+                             "(allow system_server kernarium_time_zone (binder (call)))\n"),
+                            ("missing-fd",
+                             "(allow system_server kernarium_time_zone (fd (use)))\n"),
+                            ("missing-fifo",
+                             "(allow system_server kernarium_time_zone "
+                             "(fifo_file (read write getattr)))\n"),
+                        )
+                        if time_zone_variant != variant
+                    )
+                    + (
+                        ""
+                        if time_zone_variant == "missing-marker-rule"
+                        else "(allow kernarium_time_zone kernarium_time_zone_prop "
+                        "(property_service (set)))\n"
+                    )
+                    + (
+                        "(allow kernarium_time_zone timezone_prop (property_service (set)))\n"
+                        if time_zone_variant == "sets-zone-property"
+                        else ""
                     )
                     + (
                         ""
@@ -1636,6 +1738,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         catalogue += " lineagestats"
                     if statistics_variant == "wizard-setting" and not parts:
                         dex += b" stats_collection"
+                    # R8 keeps method names, so a wizard that still forces gestural navigation
+                    # names the function in its dex.
+                    dex += b" usesGestureNavigation" if not parts else b""
+                    if navigation_variant == "dex-forces-gestural" and not parts:
+                        dex += b" enableGesturalNavigation"
                     payload = io.BytesIO()
                     with zipfile.ZipFile(payload, "w") as application:
                         # The compiled manifest's string pool is UTF-16, so a marker named there is
@@ -1750,11 +1857,72 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             overlay.writestr("res/drawable-v24/logo.xml", wizard_logo)
                         if wizard_branding_variant != "no-animation":
                             overlay.writestr("res/raw/lottie_welcome.json", wizard_animation)
+                        for script_name, script in wizard_scripts.items():
+                            if wizard_branding_variant == "no-script" and script_name == owner_name:
+                                continue
+                            if wizard_branding_variant == "no-user-script" and script_name == user_name:
+                                continue
+                            if wizard_branding_variant == "stock-script" and script_name == owner_name:
+                                script = script.replace(b'wizard:action="datetime"', b'wizard:action="network_setup"')
+                            if wizard_branding_variant == "stock-user-script" and script_name == user_name:
+                                script += b"\n"
+                            overlay.writestr(f"res/raw/{script_name}", script)
                     archive.writestr(
                         "PRODUCT/overlay/"
                         "LineageSetupWizard__lineage_andarium__auto_generated_rro_product.apk",
                         wizard_apk.getvalue(),
                     )
+                # The two navigation mode overlays stay in the product partition, so that Settings can
+                # switch either way; no configuration enables one.
+                for mode in ("3Button", "Gestural"):
+                    if navigation_variant == f"no-{mode.lower()}-overlay":
+                        continue
+                    archive.writestr(
+                        f"PRODUCT/overlay/NavigationBarMode{mode}/NavigationBarMode{mode}Overlay.apk",
+                        release_apk,
+                    )
+                navigation_configuration = {
+                    "config-enables-gestural": (
+                        "PRODUCT/overlay/config/config.xml",
+                        '<config><overlay package="com.android.internal.systemui.navbar.gestural" enabled="true"/></config>',
+                    ),
+                    "config-enables-3button-undisabled": (
+                        "VENDOR/overlay/config/config.xml",
+                        '<config><merge path="x"/><overlay package="com.android.internal.systemui.navbar.threebutton"/></config>',
+                    ),
+                    "config-unreadable": ("SYSTEM_EXT/overlay/config/config.xml", "<config>"),
+                    "config-disables-gestural": (
+                        "PRODUCT/overlay/config/config.xml",
+                        '<config><overlay package="com.android.internal.systemui.navbar.gestural" enabled="false"/>'
+                        '<overlay package="com.android.theme.icon_pack.circular.android" enabled="true"/></config>',
+                    ),
+                }.get(navigation_variant)
+                if navigation_configuration is not None:
+                    archive.writestr(*navigation_configuration)
+                # The launcher's default workspace: DocumentsUI is the one of the six applications whose APK the
+                # required list does not name, and the overlay holds a compiled layout per grid, whose strings
+                # are the component names.
+                if launcher_variant != "no-documentsui":
+                    archive.writestr("SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk", release_apk)
+                if launcher_variant != "no-overlay":
+                    layout_strings = [name for pair in launcher_apps for name in pair]
+                    if launcher_variant == "stock-layout":
+                        layout_strings.append("com.google.android.googlequicksearchbox")
+                    if launcher_variant == "lacks-files":
+                        layout_strings.remove("com.android.documentsui.LauncherActivity")
+                    launcher_apk = io.BytesIO()
+                    with zipfile.ZipFile(launcher_apk, "w") as overlay:
+                        overlay.writestr("AndroidManifest.xml", release_manifest)
+                        overlay.writestr("resources.arsc", b"\x00config_fixture\x00")
+                        for grid in launcher_grids:
+                            if launcher_variant == "no-6x5" and grid == "6x5":
+                                continue
+                            strings = "\x00".join(layout_strings)
+                            overlay.writestr(
+                                f"res/xml/default_workspace_{grid}.xml",
+                                strings.encode("utf-16-le" if launcher_variant == "utf16-layout" else "utf-8"),
+                            )
+                    archive.writestr(launcher_overlay_entry, launcher_apk.getvalue())
                 if wallpaper_variant != "missing-overlay":
                     # The framework's runtime resource overlay: Soong lists the tablet default
                     # wallpapers with the version qualifier aapt2 adds to a smallest-width one.
@@ -2221,6 +2389,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         signed_good = root / "signed-good.zip"
         write_fixture(signed_good, signed=True)
         run_tool(verifier, "--target-files", signed_good, "--signed", *kernel_options, check=True)
+        # A configuration that names a navigation mode overlay without enabling it enables nothing.
+        disabled_configuration = root / "navigation-configuration-disabled.zip"
+        write_fixture(disabled_configuration, navigation_variant="config-disables-gestural")
+        run_tool(verifier, "--target-files", disabled_configuration, *kernel_options, check=True)
+        # The overlay's string pools may be UTF-16, as the build packs them.
+        utf16_layouts = root / "launcher-layouts-utf16.zip"
+        write_fixture(utf16_layouts, launcher_variant="utf16-layout")
+        run_tool(verifier, "--target-files", utf16_layouts, *kernel_options, check=True)
         for variant in BUILD_VARIANTS:
             signed_fixture = root / f"{variant}-signed-check.zip"
             write_fixture(signed_fixture, build_variant=variant, signed=True)
@@ -2664,6 +2840,23 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("setup-wizard-logo-lacking-a-path", {"wizard_branding_variant": "logo-lacks-a-path"}),
             ("setup-wizard-without-animation", {"wizard_branding_variant": "no-animation"}),
             ("setup-wizard-with-another-animation", {"wizard_branding_variant": "stock-animation"}),
+            ("setup-wizard-without-its-script", {"wizard_branding_variant": "no-script"}),
+            ("setup-wizard-without-its-user-script", {"wizard_branding_variant": "no-user-script"}),
+            ("setup-wizard-with-another-script", {"wizard_branding_variant": "stock-script"}),
+            ("setup-wizard-with-another-user-script", {"wizard_branding_variant": "stock-user-script"}),
+            ("setup-wizard-forces-gestural-navigation", {"navigation_variant": "dex-forces-gestural"}),
+            ("missing-gestural-navigation-overlay", {"navigation_variant": "no-gestural-overlay"}),
+            ("missing-three-button-navigation-overlay", {"navigation_variant": "no-3button-overlay"}),
+            ("overlay-configuration-enables-gestural", {"navigation_variant": "config-enables-gestural"}),
+            ("overlay-configuration-enables-three-button",
+             {"navigation_variant": "config-enables-3button-undisabled"}),
+            ("overlay-configuration-unreadable", {"navigation_variant": "config-unreadable"}),
+            ("vendor-overlay-theme-property", {"navigation_variant": "overlay-theme-property"}),
+            ("missing-launcher-overlay", {"launcher_variant": "no-overlay"}),
+            ("launcher-overlay-without-a-grid", {"launcher_variant": "no-6x5"}),
+            ("launcher-overlay-with-a-stock-layout", {"launcher_variant": "stock-layout"}),
+            ("launcher-layout-without-files", {"launcher_variant": "lacks-files"}),
+            ("launcher-layout-names-an-application-the-image-lacks", {"launcher_variant": "no-documentsui"}),
             ("ntp-server-left", {"network_time_variant": "ntp-server"}),
             ("ntp-server-left-in-a-qualified-definition",
              {"network_time_variant": "ntp-server-in-a-qualified-table"}),
@@ -2704,6 +2897,32 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("reclaim-missing-call", {"reclaim_variant": "missing-call"}),
             ("reclaim-missing-fd", {"reclaim_variant": "missing-fd"}),
             ("reclaim-missing-fifo", {"reclaim_variant": "missing-fifo"}),
+            ("missing-time-zone-script", {"time_zone_variant": "missing-script"}),
+            ("missing-time-zone-rc", {"time_zone_variant": "missing-rc"}),
+            ("time-zone-missing-service", {"time_zone_variant": "missing-service"}),
+            ("time-zone-not-oneshot", {"time_zone_variant": "not-oneshot"}),
+            ("time-zone-not-disabled", {"time_zone_variant": "not-disabled"}),
+            ("time-zone-started-at-boot", {"time_zone_variant": "started-at-boot"}),
+            ("time-zone-no-start", {"time_zone_variant": "no-start"}),
+            ("time-zone-no-property", {"time_zone_variant": "no-property"}),
+            ("time-zone-no-auto-read", {"time_zone_variant": "no-auto-read"}),
+            ("time-zone-no-set", {"time_zone_variant": "no-set"}),
+            ("time-zone-no-marker", {"time_zone_variant": "no-marker"}),
+            ("time-zone-writes-setting", {"time_zone_variant": "writes-setting"}),
+            ("time-zone-setprop-zone", {"time_zone_variant": "setprop-zone"}),
+            ("time-zone-detector", {"time_zone_variant": "detector"}),
+            ("time-zone-missing-label", {"time_zone_variant": "missing-label"}),
+            ("time-zone-missing-transition", {"time_zone_variant": "missing-transition"}),
+            ("time-zone-missing-settings-find", {"time_zone_variant": "missing-settings-find"}),
+            ("time-zone-missing-alarm-find", {"time_zone_variant": "missing-alarm-find"}),
+            ("time-zone-missing-transfer", {"time_zone_variant": "missing-transfer"}),
+            ("time-zone-missing-call", {"time_zone_variant": "missing-call"}),
+            ("time-zone-missing-fd", {"time_zone_variant": "missing-fd"}),
+            ("time-zone-missing-fifo", {"time_zone_variant": "missing-fifo"}),
+            ("time-zone-sets-zone-property", {"time_zone_variant": "sets-zone-property"}),
+            ("time-zone-missing-marker-rule", {"time_zone_variant": "missing-marker-rule"}),
+            ("time-zone-marker-not-system", {"time_zone_variant": "marker-not-system"}),
+            ("time-zone-missing-marker-context", {"time_zone_variant": "missing-marker-context"}),
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
@@ -3298,6 +3517,42 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "LineageSetupWizard.* has no res/raw/lottie_welcome.json"),
             ("setup-wizard-with-another-animation-cause", {"wizard_branding_variant": "stock-animation"},
              "res/raw/lottie_welcome.json is not the product's animation"),
+            ("setup-wizard-without-its-script-cause", {"wizard_branding_variant": "no-script"},
+             "LineageSetupWizard.* has no res/raw/lineage_wizard_script.xml"),
+            ("setup-wizard-without-its-user-script-cause", {"wizard_branding_variant": "no-user-script"},
+             "LineageSetupWizard.* has no res/raw/lineage_wizard_script_user.xml"),
+            ("setup-wizard-with-another-script-cause", {"wizard_branding_variant": "stock-script"},
+             "res/raw/lineage_wizard_script.xml is not the product's script"),
+            ("setup-wizard-with-another-user-script-cause", {"wizard_branding_variant": "stock-user-script"},
+             "res/raw/lineage_wizard_script_user.xml is not the product's script"),
+            ("setup-wizard-forces-gestural-navigation-cause", {"navigation_variant": "dex-forces-gestural"},
+             "LineageSetupWizard.apk still forces gestural navigation: classes.dex contains "
+             "enableGesturalNavigation"),
+            ("missing-gestural-navigation-overlay-cause", {"navigation_variant": "no-gestural-overlay"},
+             "overlay under PRODUCT/overlay/NavigationBarModeGestural/ is missing"),
+            ("missing-three-button-navigation-overlay-cause", {"navigation_variant": "no-3button-overlay"},
+             "overlay under PRODUCT/overlay/NavigationBarMode3Button/ is missing"),
+            ("overlay-configuration-enables-gestural-cause", {"navigation_variant": "config-enables-gestural"},
+             "PRODUCT/overlay/config/config.xml enables the navigation mode overlay "
+             "com.android.internal.systemui.navbar.gestural"),
+            ("overlay-configuration-enables-three-button-cause",
+             {"navigation_variant": "config-enables-3button-undisabled"},
+             "VENDOR/overlay/config/config.xml enables the navigation mode overlay "
+             "com.android.internal.systemui.navbar.threebutton"),
+            ("overlay-configuration-unreadable-cause", {"navigation_variant": "config-unreadable"},
+             "SYSTEM_EXT/overlay/config/config.xml is not well-formed XML"),
+            ("vendor-overlay-theme-property-cause", {"navigation_variant": "overlay-theme-property"},
+             "PRODUCT/etc/build.prop sets ro.boot.vendor.overlay.theme=com.android.internal.systemui.navbar.gestural"),
+            ("missing-launcher-overlay-cause", {"launcher_variant": "no-overlay"},
+             "Launcher3QuickStep__lineage_andarium__auto_generated_rro_product.apk is missing"),
+            ("launcher-overlay-without-a-grid-cause", {"launcher_variant": "no-6x5"},
+             "has no res/xml/default_workspace_6x5.xml: a 6x5 guest would show the stock layout"),
+            ("launcher-overlay-with-a-stock-layout-cause", {"launcher_variant": "stock-layout"},
+             "res/xml/default_workspace_4x5.xml is a stock layout: it names google"),
+            ("launcher-layout-without-files-cause", {"launcher_variant": "lacks-files"},
+             "res/xml/default_workspace_4x5.xml does not name com.android.documentsui.LauncherActivity"),
+            ("launcher-layout-names-an-application-the-image-lacks-cause", {"launcher_variant": "no-documentsui"},
+             "SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk is missing: the launcher's default workspace"),
             ("ntp-server-left-cause", {"network_time_variant": "ntp-server"},
              "config_ntpServers names the NTP server ntp://time.android.com in .*framework-res"),
             ("ntp-server-left-in-a-qualified-definition-cause",
@@ -3390,6 +3645,58 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not allow system_server kernarium_reclaim_boot_apps fd use"),
             ("reclaim-missing-fifo-cause", {"reclaim_variant": "missing-fifo"},
              "does not allow system_server kernarium_reclaim_boot_apps fifo_file write"),
+            ("missing-time-zone-script-cause", {"time_zone_variant": "missing-script"},
+             "required entries are missing: .*SYSTEM_EXT/bin/kernarium_time_zone.sh"),
+            ("missing-time-zone-rc-cause", {"time_zone_variant": "missing-rc"},
+             "required entries are missing: .*SYSTEM_EXT/etc/init/kernarium_time_zone.rc"),
+            ("time-zone-missing-service-cause", {"time_zone_variant": "missing-service"},
+             "does not declare the kernarium_time_zone service"),
+            ("time-zone-not-oneshot-cause", {"time_zone_variant": "not-oneshot"},
+             "does not declare kernarium_time_zone as oneshot"),
+            ("time-zone-not-disabled-cause", {"time_zone_variant": "not-disabled"},
+             "does not declare kernarium_time_zone as disabled"),
+            ("time-zone-started-at-boot-cause", {"time_zone_variant": "started-at-boot"},
+             "starts kernarium_time_zone under 'boot'"),
+            ("time-zone-no-start-cause", {"time_zone_variant": "no-start"},
+             "does not start kernarium_time_zone when boot completes"),
+            ("time-zone-no-property-cause", {"time_zone_variant": "no-property"},
+             "does not contain 'ro.boot.kernarium.timezone'"),
+            ("time-zone-no-auto-read-cause", {"time_zone_variant": "no-auto-read"},
+             "does not contain 'cmd settings get global auto_time_zone'"),
+            ("time-zone-no-set-cause", {"time_zone_variant": "no-set"},
+             "does not contain 'cmd alarm set-timezone \"\\$zone\"'"),
+            ("time-zone-no-marker-cause", {"time_zone_variant": "no-marker"},
+             "does not contain 'setprop \"\\$marker\" \"\\$zone\"'"),
+            ("time-zone-writes-setting-cause", {"time_zone_variant": "writes-setting"},
+             "contains 'settings put': it may only read the user's automatic time zone setting"),
+            ("time-zone-setprop-zone-cause", {"time_zone_variant": "setprop-zone"},
+             "contains 'setprop persist.sys.timezone': it may only read"),
+            ("time-zone-detector-cause", {"time_zone_variant": "detector"},
+             "contains 'time_zone_detector': it may only read the user's automatic time zone setting"),
+            ("time-zone-missing-label-cause", {"time_zone_variant": "missing-label"},
+             "system_ext file contexts do not label /system_ext/bin/kernarium_time_zone.sh"),
+            ("time-zone-missing-transition-cause", {"time_zone_variant": "missing-transition"},
+             "does not move init into the time zone domain"),
+            ("time-zone-missing-settings-find-cause", {"time_zone_variant": "missing-settings-find"},
+             "does not allow kernarium_time_zone settings_service service_manager find"),
+            ("time-zone-missing-alarm-find-cause", {"time_zone_variant": "missing-alarm-find"},
+             "does not allow kernarium_time_zone alarm_service service_manager find"),
+            ("time-zone-missing-transfer-cause", {"time_zone_variant": "missing-transfer"},
+             "does not allow kernarium_time_zone system_server binder transfer"),
+            ("time-zone-missing-call-cause", {"time_zone_variant": "missing-call"},
+             "does not allow system_server kernarium_time_zone binder call"),
+            ("time-zone-missing-fd-cause", {"time_zone_variant": "missing-fd"},
+             "does not allow system_server kernarium_time_zone fd use"),
+            ("time-zone-missing-fifo-cause", {"time_zone_variant": "missing-fifo"},
+             "does not allow system_server kernarium_time_zone fifo_file write"),
+            ("time-zone-sets-zone-property-cause", {"time_zone_variant": "sets-zone-property"},
+             "lets the time zone domain set .*timezone_prop.*not only its own marker"),
+            ("time-zone-missing-marker-rule-cause", {"time_zone_variant": "missing-marker-rule"},
+             "does not let the time zone domain set persist.sys.kernarium.timezone_applied"),
+            ("time-zone-marker-not-system-cause", {"time_zone_variant": "marker-not-system"},
+             "does not define the system-owned kernarium_time_zone_prop"),
+            ("time-zone-missing-marker-context-cause", {"time_zone_variant": "missing-marker-context"},
+             "do not label persist.sys.kernarium.timezone_applied"),
             ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
              "userdata entry lacks the fs_mgr quota flag"),
             ("wrong-apex-filesystem-cause", {"wrong_apex_filesystem": True},
@@ -4572,6 +4879,345 @@ def verify_reclaim_boot_apps(android_root: Path) -> None:
             fail("the reclaim script acts without a process list")
 
 
+def verify_time_zone(android_root: Path) -> None:
+    """The time zone script follows the host only while nobody in the guest has chosen a zone.
+
+    The script runs with stub tools: getprop and setprop read and write a table of properties,
+    `cmd settings get` prints the automatic time zone setting, `cmd alarm set-timezone` records the
+    call and, as the platform does, takes a name its tzdata has and refuses any other, and log
+    records what the script says."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    tools = android_root / "overlay/tools"
+    script = tools / "kernarium_time_zone.sh"
+    # The sepolicy sources hold what the built-policy check looks for.
+    policy = (android_root / "overlay/sepolicy/system_ext/private/kernarium_time_zone.te").read_text()
+    for needle in (
+        "init_daemon_domain(kernarium_time_zone)",
+        "allow kernarium_time_zone settings_service:service_manager find;",
+        "allow kernarium_time_zone alarm_service:service_manager find;",
+        "allow kernarium_time_zone system_server:binder transfer;",
+        "allow system_server kernarium_time_zone:binder call;",
+        "allow system_server kernarium_time_zone:fd use;",
+        "allow system_server kernarium_time_zone:fifo_file { getattr read write };",
+        "allow kernarium_time_zone system_file:file execute_no_trans;",
+        "system_internal_prop(kernarium_time_zone_prop)",
+        "set_prop(kernarium_time_zone, kernarium_time_zone_prop)",
+    ):
+        if needle not in policy:
+            fail(f"the time zone domain lacks '{needle}'")
+    if len(re.findall(r"^set_prop\(", policy, re.M)) != 1:
+        fail("the time zone domain sets a property besides its marker")
+    contexts = (android_root / "overlay/sepolicy/system_ext/private/file_contexts").read_text()
+    if (
+        r"/(system_ext|system/system_ext)/bin/kernarium_time_zone\.sh  "
+        "u:object_r:kernarium_time_zone_exec:s0"
+    ) not in contexts:
+        fail("the system_ext file contexts do not label the time zone script")
+    properties = (android_root / "overlay/sepolicy/system_ext/private/property_contexts").read_text()
+    if (
+        "persist.sys.kernarium.timezone_applied    u:object_r:kernarium_time_zone_prop:s0 exact string"
+    ) not in properties:
+        fail("the system_ext property contexts do not label the time zone marker")
+    blueprint = (tools / "Android.bp").read_text()
+    for needle in (
+        'name: "kernarium_time_zone_script"',
+        'src: "kernarium_time_zone.sh"',
+        'init_rc: ["kernarium_time_zone.rc"]',
+    ):
+        if needle not in blueprint:
+            fail(f"overlay/tools/Android.bp lacks {needle}")
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
+    if len(re.findall(r"^PRODUCT_PACKAGES \+= kernarium_time_zone_script$", product, re.M)) != 1:
+        fail("lineage_andarium.mk does not add the time zone script to PRODUCT_PACKAGES exactly once")
+    verifier.check_time_zone((tools / "kernarium_time_zone.rc").read_text(), script.read_bytes())
+
+    # What the guest's tzdata knows.
+    known = ("GMT", "Asia/Tokyo", "Europe/Paris", "Europe/Berlin", "America/Argentina/Buenos_Aires", "Etc/GMT+5")
+    marker = "persist.sys.kernarium.timezone_applied"
+
+    def run(zone: str | None, auto: str, current: str, applied: str = "") -> tuple[
+        subprocess.CompletedProcess, list[str], str, str
+    ]:
+        """Runs the script once; returns the process, the recorded calls, the final zone and marker."""
+        with tempfile.TemporaryDirectory(prefix="time-zone-script-") as temporary:
+            stubs = Path(temporary)
+            calls = stubs / "calls"
+            properties = stubs / "properties"
+            properties.mkdir()
+            (properties / "ro.boot.kernarium.timezone").write_text((zone or "") + "\n")
+            (properties / "persist.sys.timezone").write_text(current + "\n")
+            (properties / marker).write_text(applied + "\n")
+            for name, body in {
+                "getprop": f'cat {properties}/"$1" 2>/dev/null || echo\n',
+                "setprop": f'echo "setprop $*" >> {calls}\necho "$2" > {properties}/"$1"\n',
+                "cmd": (
+                    f'echo "cmd $*" >> {calls}\n'
+                    'if [ "$1 $2 $3 $4" = "settings get global auto_time_zone" ]; then\n'
+                    f'    [ -z "{auto}" ] || echo "{auto}"\n'
+                    'elif [ "$1 $2" = "alarm set-timezone" ]; then\n'
+                    f'    case " {" ".join(known)} " in\n'
+                    f'        *" $3 "*) echo "$3" > {properties}/persist.sys.timezone ;;\n'
+                    "    esac\n"
+                    "else\n    exit 2\nfi\n"
+                ),
+                "log": f'echo "log $*" >> {calls}\n',
+                "sleep": f'echo "sleep $*" >> {calls}\n',
+            }.items():
+                (stubs / name).write_text("#!/bin/sh\n" + body)
+                (stubs / name).chmod(0o755)
+            env = {"PATH": f"{stubs}:/usr/bin:/bin"}
+            result = subprocess.run(["/bin/sh", str(script)], env=env, capture_output=True, text=True)
+            recorded = calls.read_text().splitlines() if calls.exists() else []
+            return (
+                result,
+                recorded,
+                (properties / "persist.sys.timezone").read_text().strip(),
+                (properties / marker).read_text().strip(),
+            )
+
+    def sets(recorded: list[str]) -> list[str]:
+        return [line for line in recorded if line.startswith("cmd alarm set-timezone")]
+
+    def notes(recorded: list[str]) -> list[str]:
+        return [line for line in recorded if line.startswith("log ")]
+
+    # A new guest (GMT, or no zone yet, and no marker) takes the host's zone once, with the setting
+    # on or unset, and records it; the script says so in one line.
+    for current in ("GMT", ""):
+        for auto in ("1", "null"):
+            result, recorded, final, applied = run("Asia/Tokyo", auto, current)
+            if (
+                result.returncode != 0
+                or final != "Asia/Tokyo"
+                or applied != "Asia/Tokyo"
+                or sets(recorded) != ["cmd alarm set-timezone Asia/Tokyo"]
+                or len(notes(recorded)) != 1
+            ):
+                fail(f"the time zone script (auto {auto}, was {current!r}) did not take Asia/Tokyo: "
+                     f"{recorded} {final} {applied}")
+    # It follows a changed host zone while the zone is still the one it applied, and takes every
+    # character a name may have.
+    for zone in ("Europe/Paris", "America/Argentina/Buenos_Aires", "Etc/GMT+5"):
+        result, recorded, final, applied = run(zone, "1", "Asia/Tokyo", "Asia/Tokyo")
+        if result.returncode != 0 or final != zone or applied != zone:
+            fail(f"the time zone script did not follow the host to {zone}: {recorded} {final} {applied}")
+    # A zone the user picked (Settings' or the wizard's picker, which leave the setting on) is
+    # never replaced, whether the script had applied one before or the guest predates the marker.
+    for applied in ("Asia/Tokyo", ""):
+        result, recorded, final, marker_value = run("Europe/Paris", "1", "Europe/Berlin", applied)
+        if (
+            result.returncode != 0
+            or final != "Europe/Berlin"
+            or marker_value != applied
+            or sets(recorded)
+            or len(notes(recorded)) != 1
+        ):
+            fail(f"the time zone script replaced a chosen zone (marker {applied!r}): "
+                 f"{recorded} {final} {marker_value}")
+    # With the automatic time zone off nothing is touched, whatever the zone is.
+    for applied, current in (("Asia/Tokyo", "Asia/Tokyo"), ("", "GMT"), ("Asia/Tokyo", "Europe/Berlin")):
+        result, recorded, final, marker_value = run("Europe/Paris", "0", current, applied)
+        if (
+            result.returncode != 0
+            or final != current
+            or marker_value != applied
+            or sets(recorded)
+            or any(line.startswith("setprop") for line in recorded)
+            or len(notes(recorded)) != 1
+        ):
+            fail(f"the time zone script touched the guest with the setting off: {recorded} {final}")
+    # A zone that is already the host's is not set again, and the marker follows it, so a guest whose
+    # user picked the host's zone follows the host again.
+    for applied in ("", "Asia/Tokyo", "Europe/Berlin"):
+        result, recorded, final, marker_value = run("Asia/Tokyo", "1", "Asia/Tokyo", applied)
+        if result.returncode != 0 or sets(recorded) or final != "Asia/Tokyo" or marker_value != "Asia/Tokyo":
+            fail(f"the time zone script mishandled the host's own zone (marker {applied!r}): "
+                 f"{recorded} {final} {marker_value}")
+    # A name the guest's tzdata lacks is refused by the platform: the zone and the marker stay, one
+    # line says so, and the boot goes on.
+    result, recorded, final, applied = run("Pacific/Coyhaique", "1", "Europe/Paris", "Europe/Paris")
+    if (
+        result.returncode != 0
+        or final != "Europe/Paris"
+        or applied != "Europe/Paris"
+        or sets(recorded) != ["cmd alarm set-timezone Pacific/Coyhaique"]
+        or len(notes(recorded)) != 1
+        or "Pacific/Coyhaique" not in notes(recorded)[0]
+    ):
+        fail(f"the time zone script did not keep the zone for an unknown name: {recorded} {final} {applied}")
+    # No zone from the host (the standalone launcher, an older application): nothing is read or set.
+    result, recorded, final, applied = run(None, "1", "Asia/Tokyo")
+    if result.returncode != 0 or recorded or final != "Asia/Tokyo":
+        fail(f"the time zone script acted without a host zone: {recorded}")
+    # A setting that cannot be read leaves the zone alone and says so.
+    result, recorded, final, applied = run("Europe/Paris", "", "GMT")
+    if result.returncode == 0 or sets(recorded) or final != "GMT":
+        fail(f"the time zone script acted on an unreadable setting: {recorded} {final}")
+    # A name that is not a time zone name never reaches cmd.
+    for bad in ("Asia/Tokyo;reboot", "../etc", "/Asia/Tokyo", "Asia//Tokyo", "Asia/Tokyo/", "a b", "$(id)",
+                "Asia/To`id`"):
+        result, recorded, final, applied = run(bad, "1", "GMT")
+        if result.returncode != 0 or any(line.startswith("cmd ") for line in recorded) or final != "GMT":
+            fail(f"the time zone script passed {bad!r} to cmd: {recorded}")
+
+
+def verify_setup_wizard_flow(android_root: Path) -> None:
+    """A wizard script is the reviewed flow in order, and no page the product hides is in it.
+
+    The scripts are raw files, so the overlay carries them as they are tracked; the verifier walks
+    the tracked file from its first action. These cases rewrite the flow the way a careless
+    edit or a rebase onto LineageOS's own script would."""
+    tool = load_tool(android_root / "tools/verify-target-files.py")
+    raw = android_root / "overlay/overlay/packages/apps/SetupWizard/app/src/main/res/raw"
+    namespace = tool.SETUP_WIZARD_NAMESPACE
+    for name, reviewed in tool.SETUP_WIZARD_FLOWS.items():
+        tool.check_setup_wizard_script(name, (raw / name).read_text(encoding="utf-8"), reviewed)
+    if set(tool.SETUP_WIZARD_FLOWS["lineage_wizard_script.xml"]) & set(tool.SETUP_WIZARD_HIDDEN):
+        fail("the reviewed flow names a page the product hides")
+    for page in ("network_setup", "restore", "lineage_settings", "lockscreen_settings", "navigation_settings",
+                 "location_settings"):
+        if page not in tool.SETUP_WIZARD_HIDDEN:
+            fail(f"the wizard page {page} is not on the hidden list")
+
+    def script(*actions: tuple[str, str | None], first: str | None = None, root: str = "WizardScript") -> str:
+        body = "".join(
+            f'<WizardAction id="{identifier}" wizard:uri="intent:#Intent;action=x;end">'
+            + (f'<result wizard:action="{following}" />' if following else "")
+            + "</WizardAction>"
+            for identifier, following in actions
+        )
+        start = f' wizard:firstAction="{actions[0][0] if first is None else first}"' if first != "" else ""
+        return f'<{root} xmlns:wizard="{namespace}"{start}>{body}</{root}>'
+
+    def refuses(label: str, pattern: str, name: str, text: str) -> None:
+        try:
+            tool.check_setup_wizard_script(name, text, tool.SETUP_WIZARD_FLOWS[name])
+        except SystemExit as stop:
+            if not re.search(pattern, str(stop)):
+                fail(f"{label}: the refusal does not name its cause: {stop}")
+        else:
+            fail(f"{label}: the wizard script check accepts it")
+
+    owner = "lineage_wizard_script.xml"
+    user = "lineage_wizard_script_user.xml"
+    flow = [("welcome", "locale"), ("locale", "datetime"), ("datetime", "theme_settings"),
+            ("theme_settings", "finish"), ("finish", None)]
+    tool.check_setup_wizard_script(owner, script(*flow), tool.SETUP_WIZARD_FLOWS[owner])
+    for page in tool.SETUP_WIZARD_HIDDEN:
+        inserted = [("welcome", "locale"), ("locale", page), (page, "datetime"), ("datetime", "theme_settings"),
+                    ("theme_settings", "finish"), ("finish", None)]
+        refuses(f"{page}-in-the-flow", f"defines pages the product hides: {page}", owner, script(*inserted))
+        refuses(f"{page}-left-unreached", f"defines pages the product hides: {page}", owner,
+                script(*flow, (page, "finish")))
+    refuses("a-reviewed-page-dropped", "reaches welcome > locale > theme_settings > finish, not the reviewed",
+            owner, script(("welcome", "locale"), ("locale", "theme_settings"), ("theme_settings", "finish"),
+                          ("finish", None)))
+    refuses("pages-reordered", "reaches welcome > locale > theme_settings > datetime > finish, not the reviewed",
+            owner, script(("welcome", "locale"), ("locale", "theme_settings"), ("theme_settings", "datetime"),
+                          ("datetime", "finish"), ("finish", None)))
+    refuses("a-new-page", "reaches welcome > locale > about > datetime", owner,
+            script(("welcome", "locale"), ("locale", "about"), ("about", "datetime"), ("datetime", "theme_settings"),
+                   ("theme_settings", "finish"), ("finish", None)))
+    refuses("an-unreached-page", "defines pages its flow never reaches: about", owner, script(*flow, ("about", "finish")))
+    refuses("a-dangling-result", "the flow reaches 'finish', which the script does not define", owner,
+            script(("welcome", "locale"), ("locale", "datetime"), ("datetime", "theme_settings"),
+                   ("theme_settings", "finish")))
+    refuses("no-first-action", "names no firstAction", owner, script(*flow, first=""))
+    refuses("a-first-action-that-is-not-defined", "reaches 'start'", owner, script(*flow, first="start"))
+    refuses("a-repeated-id", "without a unique id", owner, script(*flow, ("finish", None)))
+    refuses("not-a-wizard-script", "is not a WizardScript", owner, script(*flow, root="Other"))
+    refuses("not-xml", "is not well-formed XML", owner, "<WizardScript>")
+    # The secondary user's flow is welcome and theme.
+    user_flow = [("welcome", "theme_settings"), ("theme_settings", "finish"), ("finish", None)]
+    tool.check_setup_wizard_script(user, script(*user_flow), tool.SETUP_WIZARD_FLOWS[user])
+    refuses("the-owners-flow-for-a-secondary-user", "reaches welcome > locale > datetime > theme_settings > finish, not",
+            user, script(*flow))
+    refuses("the-owners-script-with-the-users-name", "not the reviewed welcome > theme_settings > finish",
+            user, script(*flow))
+    refuses("location-in-the-users-flow", "defines pages the product hides: location_settings", user,
+            script(("welcome", "location_settings"), ("location_settings", "theme_settings"),
+                   ("theme_settings", "finish"), ("finish", None)))
+
+
+def verify_launcher_layouts(android_root: Path) -> None:
+    """The launcher's default workspace holds the six reviewed applications on the first page.
+
+    The layouts are compiled into the launcher's overlay, so the verifier reads the tracked text.
+    These cases rewrite a layout the way an edit or a return to the stock layout would."""
+    tool = load_tool(android_root / "tools/verify-target-files.py")
+    layouts = android_root / "overlay/overlay/packages/apps/Launcher3/res/xml"
+    names = sorted(path.name for path in layouts.glob("*.xml"))
+    if names != [f"default_workspace_{grid}.xml" for grid in tool.LAUNCHER_GRIDS]:
+        fail(f"the tracked launcher layouts are {names}, not one per reviewed grid")
+    for grid in tool.LAUNCHER_GRIDS:
+        text = (layouts / f"default_workspace_{grid}.xml").read_text(encoding="utf-8")
+        tool.check_launcher_layout(grid, grid, text)
+        # Row by row from the top left: the columns of the grid decide where each one goes.
+        columns = int(grid.split("x")[0])
+        placed = re.findall(r'launcher:x="(\d+)"\s+launcher:y="(\d+)"', text)
+        if placed != [(str(index % columns), str(index // columns)) for index in range(6)]:
+            fail(f"the {grid} layout does not fill the first page row by row: {placed}")
+    sample = (layouts / "default_workspace_5x5.xml").read_text(encoding="utf-8")
+    favorite = re.search(r"    <favorite\n(?:.*\n){4}.*/>\n", sample)
+    if favorite is None:
+        fail("the 5x5 layout has no favorite to rewrite")
+    first = favorite.group(0)
+
+    def refuses(label: str, pattern: str, text: str, grid: str = "5x5") -> None:
+        try:
+            tool.check_launcher_layout(grid, label, text)
+        except SystemExit as stop:
+            if not re.search(pattern, str(stop)):
+                fail(f"{label}: the refusal does not name its cause: {stop}")
+        else:
+            fail(f"{label}: the launcher layout check accepts it")
+
+    def with_item(item: str) -> str:
+        return sample.replace("</favorites>", item + "\n</favorites>")
+
+    app = ('<favorite launcher:packageName="{p}" launcher:className="{c}" launcher:screen="{s}" '
+           'launcher:x="{x}" launcher:y="{y}"{extra} />')
+    refuses("a-hotseat-item", "has a favorite with attributes",
+            sample.replace(first, first.replace('launcher:screen="0"', 'launcher:container="-101" launcher:screen="0"', 1)))
+    refuses("an-item-on-the-second-page", "on screen 1: every item is on the first page",
+            sample.replace('launcher:screen="0"', 'launcher:screen="1"', 1))
+    refuses("a-widget", r"holds a <appwidget>",
+            with_item('<appwidget launcher:packageName="org.lineageos.twelve" launcher:className="x" '
+                      'launcher:screen="0" launcher:x="0" launcher:y="3" launcher:spanX="4" launcher:spanY="1" />'))
+    refuses("a-resolve-item", r"holds a <resolve>", with_item('<resolve launcher:screen="0" launcher:x="0" launcher:y="3" />'))
+    refuses("a-folder", r"holds a <folder>", with_item('<folder launcher:screen="0" launcher:x="0" launcher:y="3" />'))
+    refuses("a-uri-item", "has a favorite with attributes",
+            with_item('<favorite launcher:uri="#Intent;action=android.intent.action.MAIN;end" launcher:screen="0" '
+                      'launcher:x="0" launcher:y="3" />'))
+    refuses("google-play", "names 'vending'",
+            with_item(app.format(p="com.android.vending", c="com.android.vending.AssetBrowserActivity",
+                                 s=0, x=0, y=3, extra="")))
+    refuses("a-google-application", "names 'google'",
+            with_item(app.format(p="com.google.android.gm", c="com.google.android.gm.ConversationListActivityGmail",
+                                 s=0, x=0, y=3, extra="")))
+    refuses("the-clock", "names 'deskclock'",
+            with_item(app.format(p="com.android.deskclock", c="com.android.deskclock.DeskClock", s=0, x=0, y=3, extra="")))
+    refuses("a-string-reference", "names '@string/'", sample.replace("</favorites>", '<folder launcher:title="@string/x" />\n</favorites>'))
+    refuses("an-application-the-image-lacks-a-table-row-for", "not in the reviewed table",
+            with_item(app.format(p="org.lineageos.camelot", c="org.lineageos.camelot.MainActivity", s=0, x=0, y=3, extra="")))
+    refuses("a-repeated-application", "twice", with_item(first.replace('launcher:x="0"', 'launcher:x="4"').replace(
+        'launcher:y="0"', 'launcher:y="3"')))
+    refuses("one-of-the-six-missing", "lacks com.android.documentsui.LauncherActivity: it holds exactly the six",
+            sample.replace(re.search(r"    <!-- Files \(DocumentsUI\) -->\n(?:.*\n){6}", sample).group(0), ""))
+    refuses("a-column-outside-the-grid", r"outside the 5x5 grid", sample.replace('launcher:x="4"', 'launcher:x="5"'))
+    refuses("a-row-outside-the-grid", r"outside the 5x5 grid", sample.replace('launcher:y="1"', 'launcher:y="5"'))
+    refuses("two-items-in-a-cell", r"two items at \(0, 0\)", sample.replace('launcher:x="1"', 'launcher:x="0"', 1))
+    refuses("a-cell-that-is-not-a-number", "is not a number", sample.replace('launcher:x="1"', 'launcher:x="one"', 1))
+    refuses("a-favorite-without-a-class", "has a favorite with attributes",
+            sample.replace('        launcher:className="com.android.settings.Settings"\n', "", 1))
+    refuses("an-attribute-outside-the-launcher-namespace", "outside the launcher namespace",
+            sample.replace('launcher:x="1"', 'x="1"', 1))
+    refuses("not-xml", "is not well-formed XML", "<favorites>")
+    refuses("not-a-layout", "is not a favorites layout", "<other />")
+    # A grid's columns and rows come from its name.
+    refuses("a-smaller-grid", "outside the 4x5 grid", sample, grid="4x5")
+
+
 def verify_default_wallpaper(android_root: Path) -> None:
     """The overlay replaces LineageOS's 1920 pixel tablet wallpaper with a bounded square.
 
@@ -4800,6 +5446,7 @@ def verify_package_assertions(android_root: Path) -> None:
         "kernarium_net_setup",
         "kernarium_wifi_network_script",
         "kernarium_reclaim_boot_apps_script",
+        "kernarium_time_zone_script",
     ):
         if package not in present:
             fail(f"build-aosp.sh does not assert that {package} is present")
@@ -5841,7 +6488,10 @@ def main() -> None:
     verify_decoder_output_delay_topic(android_root)
     verify_secure_element_topic(android_root)
     verify_reclaim_boot_apps(android_root)
+    verify_time_zone(android_root)
     verify_default_wallpaper(android_root)
+    verify_setup_wizard_flow(android_root)
+    verify_launcher_layouts(android_root)
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)
     verify_package_assertions(android_root)

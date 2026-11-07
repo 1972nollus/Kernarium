@@ -273,6 +273,15 @@ counting what the emulator adds, and the runtime refuses a launch whose
 arguments exceed it with a line that says so, because the kernel would end the
 process.
 
+An Android guest also takes the host's time zone from the boot request
+(`android_time_zone`, runtime API 23): an IANA name of 1 to 64 characters of
+`A-Za-z0-9_+-` in slash-separated components that start with a letter or digit,
+or null. The runtime passes a valid name as `androidboot.kernarium.timezone`
+(launcher-owned, so a release's command-line file cannot set it) and drops
+anything else with a line on stderr, because a time zone never fails a boot.
+Kernarium sends none; Andarium sends the system's live zone at every start
+([`Andarium/README.md`](../Andarium/README.md#runtime)).
+
 Every automation runtime also reads `KERNARIUM_BACKGROUND_JOB_AT_START=1`
 (`0` or unset asks for nothing; anything else is reported and ignored). A guest
 in the keep-running mode (`KERNARIUM_BACKGROUND_MODE=keepRunning`) then gets

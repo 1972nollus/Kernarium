@@ -585,6 +585,9 @@ grammar, which accepts a loopback address only, and the listeners that attach
 each accepted connection to a guest port. `kernarium-adb-channel` covers the
 kernel arguments that carry an Android guest's adb key and the request that adbd
 not listen on TCP, and the limit on the whole kernel command line.
+`kernarium-guest-time-zone` covers the time zone names the runtime lets onto
+that command line (the IANA names, never a space, a quotation mark or an empty
+component).
 
 `guest-vsock-stream` (integration) runs the device against a Linux guest's
 driver through the launcher's loopback forward, with a Python `AF_VSOCK` server
@@ -888,11 +891,15 @@ encoder against moduli with the text `adb keygen` wrote for them, and the
 listener of ADB over Network on loopback against a fake guest (bytes both
 ways, backpressure each way, half close, a failed stream, the limit of
 computers, stopping, a port in use).
+`GuestTimeZoneTests` holds the same name vectors as the runtime and accepts
+every zone Foundation knows.
 The package also tests orientation ownership for phones, full-screen and
 windowed iPads, loss of a scene lock, coalesced guest commands, partial failures
-and stale completions after a guest restart. `SessionOrientationHostingTests`
-checks the real scene root's session lock and the built bundle's portrait-only
-iPhone declaration. The opt-in `RotationOverVsockTests`
+and stale completions after a guest restart, and which screen edges a run
+defers. `SessionOrientationHostingTests` checks the real scene root's session
+lock and deferred edges, and the built bundle's portrait-only iPhone
+declaration; only a device shows how the system answers the swipes
+([Edge gestures](#edge-gestures-device-only)). The opt-in `RotationOverVsockTests`
 (`TEST_RUNNER_ANDARIUM_ROTATION_TESTS=1`, selecting only that suite) boots Android
 and verifies that the host override preserves and restores locked and unset
 guest rotation preferences. A hands-on iPad check additionally covers rotation
@@ -1003,7 +1010,11 @@ foreign key refused with no prompt and nothing queued while debugging is off,
 and prompting while it is on), and the key after Erase Guest. The tests read the
 key the application made for the boot, again on every attempt until adbd accepts
 it, and never make one: a key made before an `ANDARIUM_ERASE=1` launch's erase
-deletes it would be one the guest was not given. `AdbOverVsockTests/aPromptWhoseDialogDiedIsRaisedAgain()` kills
+deletes it would be one the guest was not given. `AdbOverVsockTests/theGuestIsGivenTheHostsTimeZone()` reads `ro.boot.kernarium.timezone`
+and requires the host's zone; with `TEST_RUNNER_ANDARIUM_TIME_ZONE_APPLIED=1` (an
+image with the time zone script) it also waits for `persist.sys.timezone` to
+take it.
+`AdbOverVsockTests/aPromptWhoseDialogDiedIsRaisedAgain()` kills
 SystemUI while the dialog is up and waits for the dialog to come back without a new offer: stock Android leaves
 adbd's prompt pending, so it needs an image whose framework starts the dialog again and runs only with
 `TEST_RUNNER_ANDARIUM_ADB_REARM_TESTS=1`. `aPromptWhoseDialogIsUpIsNotRaisedTwice()` holds a dialog
@@ -1095,6 +1106,24 @@ device with a passcode needs the owner's approval at the device. Its commands,
 approval rules, and failure modes are in
 `Kernarium/scripts/ipad-automation.py --help`. Keep all automation code in the
 test targets.
+
+### Edge gestures (device only)
+
+The Simulator shows which edges a run defers: `AndariumPreview -screen session`
+with edge swipes within 4 pt of the screen edge shows the deferral tab on a
+first swipe from the top and the system's gesture on the second. It does not
+show what a device does, which needs an iPad lease, the automation host and a
+guest with Android's 3-button navigation and Developer options > Pointer
+location on:
+
+- whether the host's synthesized edge swipes start system gestures at all
+  (down from the top right, up from the bottom centre, on Andarium's Home);
+- for each edge in a run, against a build without the deferral, what iOS does
+  (tab, Control Center, Notification Center, Home) and whether Android's trace
+  is whole or cut short;
+- the bottom edge with the home indicator hidden, as a run has it, and with it
+  visible. The Simulator honours the bottom edge only with the indicator
+  visible.
 
 ### Window layout (device only)
 
@@ -1563,7 +1592,9 @@ suspend blocker with the adb host-connected property it follows, the adb daemon'
 TCP-policy launch properties (read from its APEX payload, with adbd's right to read their labels), the network
 setup tool with the ARP policy init sets before it, its library, label and domain
 transition, the script that saves the virtual Wi-Fi network once, after boot and
-without touching the user's Wi-Fi switch, with its core domain, its binder transfer to the Wi-Fi service's process and the call back, and its marker, the Wi-Fi
+without touching the user's Wi-Fi switch, with its core domain, its binder transfer to the Wi-Fi service's process and the call back, and its marker, the script that
+applies the host's time zone after boot (its domain, its marker, and that it writes no setting and not the zone property;
+`lineage24-builder-lane` runs it against stub tools for a new guest, a followed change, a zone the user chose, the setting off, an unknown name and bad names), the Wi-Fi
 HAL and supplicant with their manifest fragments and services, the Wi-Fi feature
 declaration and the absent Ethernet, Aware, RTT, Direct and Passpoint ones, the built-in macvlan, cfg80211 and virt_wifi
 options of the packaged kernel configuration, the absent wificond, the ClearKey HAL's access to the memfd files of applications, the
@@ -1688,14 +1719,28 @@ a blank instance:
   `UML_ANDROID_OOBE_RELEASE` names the release and the Android macOS executable
   is built) boots two fresh instances. On the first it checks that the guest
   starts unprovisioned in LineageOS Setup Wizard, which HOME does not leave,
-  completes the wizard through its own pages and checks the end state: both
-  settings 1, the wizard's HOME activity and flow manager disabled, and HOME
-  reaching the launcher. The second is started with `boot_android.py
-  --provision`, the harness path of `tools/android_provision.py`, and must end
-  with both settings 1 and HOME on the launcher, the wizard package disabled
-  for user 0 (the shell may not disable its components), and nothing left for
-  the helper to do. Measurements on an erased guest use that helper, so they do
-  not land in the wizard.
+  and completes the wizard through the pages the product shows, exactly
+  Welcome, Language, Date and time, Theme and Finish in that order (a hidden
+  page or another order fails; the flow is the contract of release r17 and
+  later). It then checks the end state: both settings 1, the wizard's HOME
+  activity and flow manager disabled, HOME reaching the launcher, and the
+  defaults the shortened flow leaves to the platform: three-button navigation
+  (`navigation_mode` 0, the gestural overlay off, both mode overlays present),
+  no screen lock, location on with the settings it had before the wizard, Wi-Fi
+  connected to VirtWifi, and no status bar disable record held by the wizard.
+  The second is started with `boot_android.py --provision`, the harness path of
+  `tools/android_provision.py`, and must end with both settings 1 and HOME on
+  the launcher, the wizard package disabled for user 0 (the shell may not
+  disable its components), no wizard process and no status bar record (the
+  helper stops the process that holds it), the same defaults, and nothing left
+  for the helper to do. On both guests the launcher's data model holds exactly
+  the six applications of the default layout on the first page, none in the
+  dock, and the log shows no item dropped while the launcher read its layout.
+  The runner raises the guest's log buffers to 64 MiB (`logcat -G`, read back)
+  the first time adb answers, before the wizard runs, so the launcher's layout
+  load line cannot rotate out; a log without that line fails the run.
+  Measurements on an erased guest use that helper, so they do not land in the
+  wizard.
 - `android-adb-debugging` (integration, registered only when
   `UML_ANDROID_ADB_DEBUGGING_RELEASE` names the release and the Android macOS
   executable is built) boots a blank instance and checks the adb topics of the

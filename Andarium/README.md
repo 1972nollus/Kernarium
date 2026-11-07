@@ -384,6 +384,15 @@ translucent fill dims and flat panels sit on, so the display costs what a
 visible one costs and the render server samples no backdrop for it. Recovery
 keeps an opaque screen.
 
+At every start the guest is given the zone the host is in (`GuestTimeZone`,
+the system's live zone, in the boot request's `android_time_zone`, runtime API
+23; on a Mac in Designed for iPad mode, the Mac's). The system image's time
+zone script applies it while nobody in the guest has chosen a zone
+([Android README](../android/lineage-24/README.md#time-zone)), so a guest
+follows iOS's zone after each start and keeps a zone picked in Android. A name
+the runtime or the guest does not accept leaves the guest's zone alone, and an
+older system ignores the request.
+
 The side keys send Android's keys as Linux key codes: Power 116 (held for the
 power menu), volume 115 and 114, Back 158 and Home 172.
 
@@ -396,6 +405,22 @@ fingers stay down), not as the user lifting a finger, so a tap does not follow
 it; a display change cancels the touches that are down the same way. Android's
 Recovery ignores the cancel and still selects the item under a cancelled still
 tap ([`android/lineage-24/README.md`](../android/lineage-24/README.md)).
+
+In a normal run whose scene fills the screen, the scene's root defers the
+system's edge gestures on all four edges, on an iPhone and an iPad alike
+(`SessionGestureDeferral`). The guest's display stays inside the safe area, so
+only the preference changes: the first swipe from an edge goes to Android
+(its notification shade, its navigation gestures) while iOS shows its tab, and
+a second swipe while the tab shows reaches the system. Home, boot, Recovery,
+the failure screen and an open sheet keep SwiftUI's own preference, which
+defers the sides, and so does a window that does not fill the screen. While
+the guest has the keyboard focus, three-finger touches are the guest's, not
+UIKit's editing gestures.
+
+The Simulator honours the bottom edge only while the home indicator shows, and
+a run hides it (`persistentSystemOverlays(.hidden)`), so there one swipe from
+the bottom still leaves the application. What a device does is not
+established ([Edge gestures](../docs/testing.md#edge-gestures-device-only)).
 
 Retina mode applies at the next start, because the runtime takes it at boot, so
 it is set on Home only and the session's Settings has no Display section. It
@@ -619,6 +644,8 @@ ANDARIUM_GUEST_INSTANCE=<name>   use Library/TestGuests/<name> instead of Librar
 ANDARIUM_ADB_TESTS=1             let AdbOverVsockTests drive the running guest
 ANDARIUM_ADB_KEY_FILE=<path>     where eraseGuestMakesANewKey records the key
 ANDARIUM_ADB_REARM_TESTS=1      also run the tests that need an image raising a dead dialog's prompt again
+ANDARIUM_TIME_ZONE_APPLIED=1    also require that the guest has taken the host's time zone (an image
+                                with the time zone script)
 ANDARIUM_ADB_NET_HOLD_SECONDS=<n> keep the bridge up for a real adb (and write the key
                                  as tmp/adbkey; tmp/adb-net-done ends the hold)
 ```

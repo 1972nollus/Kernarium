@@ -301,7 +301,8 @@ class AndroidRunnerTests(unittest.TestCase):
         return [
             call["args"][-1] for call in outcome.tool("adb")
             if "shell" in call["args"]
-            and call["args"][-1].startswith(("settings put", "pm disable-user"))
+            and call["args"][-1].startswith(
+                ("settings put", "pm disable-user", "am force-stop org.lineageos.setupwizard"))
         ]
 
     def test_an_erased_guest_is_provisioned_before_the_workload(self) -> None:
@@ -317,7 +318,9 @@ class AndroidRunnerTests(unittest.TestCase):
             commands[:2],
             ["settings put global device_provisioned 1",
              "settings put secure user_setup_complete 1"])
-        self.assertEqual(commands[2:], ["pm disable-user --user 0 org.lineageos.setupwizard"])
+        # The disabled wizard's process holds the status bar, so the helper stops it too.
+        self.assertEqual(commands[2:], ["pm disable-user --user 0 org.lineageos.setupwizard",
+                                        "am force-stop org.lineageos.setupwizard"])
         shells = [c["args"][-1] for c in outcome.tool("adb") if "shell" in c["args"]]
         first_work = min(i for i, s in enumerate(shells)
                          if s.startswith(("sh /data/local/tmp/", "am start -W")))

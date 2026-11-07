@@ -37,6 +37,10 @@ final class AndariumProcess {
     private init() {
         entry = AppEntry.fromArguments()
         entry.configureTips()
+        // A report staged for sharing by a process that ended is of no use.
+        // This is the process's launch: a test that builds a model does not
+        // sweep the folder a running test stages its files in.
+        BugReportStaging.sweep()
         model = entry.makeModel()
     }
 }

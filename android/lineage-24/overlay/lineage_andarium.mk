@@ -472,6 +472,13 @@ PRODUCT_PACKAGES += kernarium_wifi_network_script
 # when something uses them.
 PRODUCT_PACKAGES += kernarium_reclaim_boot_apps_script
 
+# A new guest starts on GMT and Android's automatic time zone has no source in
+# it, so the host application passes its own time zone at every start
+# (ro.boot.kernarium.timezone). Once boot completes this script applies it
+# while "Set time zone automatically" is on, and leaves a zone the user chose
+# with it off alone. It runs from system_ext in a core domain of its own.
+PRODUCT_PACKAGES += kernarium_time_zone_script
+
 # A Vulkan hardware-buffer import check: it fills gralloc buffers of several
 # formats and widths through the CPU, imports each into Vulkan and reads it
 # back, so a row pitch the driver cannot import or the renderer misreads fails
@@ -617,6 +624,8 @@ PRODUCT_SYSTEM_EXT_PROPERTIES += \
 # can then be changed with `locksettings set-disabled` or the Settings app.
 # config_disableLockscreenByDefault is false for that reason (the overlay's
 # core/res config.xml). The standalone launcher gives every release a new /data.
+# The Setup Wizard's screen lock page is hidden, so a fresh guest keeps this
+# default until a person sets a lock in Settings.
 PRODUCT_PRODUCT_PROPERTIES += \
     ro.lockscreen.disable.default=true
 

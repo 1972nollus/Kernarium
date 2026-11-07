@@ -4,6 +4,7 @@
 #include "KernariumAdbChannel.hpp"
 #include "KernariumConsoleInput.hpp"
 #include "KernariumConsoleOutput.hpp"
+#include "KernariumGuestTimeZone.hpp"
 #include "KernariumKeyWake.hpp"
 #include "KernariumRestartLoop.hpp"
 #include "KernariumStatistics.hpp"
@@ -877,7 +878,8 @@ void appendKernelCommandLine(
     std::vector<std::string>& arguments,
     const uml::android::Storage& storage,
     uint32_t dotsPerInch,
-    std::string_view adbPublicKey)
+    std::string_view adbPublicKey,
+    std::string_view timeZone)
 {
     const auto path = storage.release() / uml::android::releaseCommandLine;
     constexpr std::string_view densityPrefix {
@@ -888,7 +890,8 @@ void appendKernelCommandLine(
         densityPrefix,
         adbAuthorizationPrefix,
         kernarium::adb::keyPrefix,
-        kernarium::adb::tcpPrefix};
+        kernarium::adb::tcpPrefix,
+        kernarium::timezone::prefix};
     for (auto& argument :
          uml::android::readKernelCommandLine(path, launcherPrefixes))
         arguments.push_back(std::move(argument));
@@ -933,6 +936,12 @@ void appendKernelCommandLine(
 #endif
     if (kernarium::adb::tcpDisabled(hostForward)) {
         arguments.emplace_back(std::string {kernarium::adb::tcpPrefix} + "0");
+    }
+    /* The host's time zone for this boot, which the guest's time zone script
+     * applies while the person lets the guest follow the host. */
+    if (!timeZone.empty()) {
+        arguments.emplace_back(
+            std::string {kernarium::timezone::prefix} + std::string {timeZone});
     }
 }
 
@@ -1051,6 +1060,9 @@ struct GuestRequest final {
     /* The adb host key an Android guest authorizes for the launch, empty for
      * none; a Linux guest ignores it. */
     std::string adbPublicKey;
+    /* The host's time zone an Android guest is given for the launch, empty for
+     * none; a Linux guest ignores it. */
+    std::string timeZone;
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
     /* The guest's two disks: the release's system disk and the instance's
      * data disk. */
@@ -1375,7 +1387,8 @@ private:
             arguments,
             *request_.androidStorage,
             request_.dotsPerInch,
-            request_.adbPublicKey);
+            request_.adbPublicKey,
+            request_.timeZone);
 #else
         /* A sealed ext4 derivative is attached read-only; the per-run /init
          * mounts either kind of image beneath the overlay. */
@@ -1521,6 +1534,11 @@ int runtimePlanGpuBudget(
 constexpr std::size_t bootSizeBeforeAdbKey =
     offsetof(kernarium_runtime_boot, android_adb_public_key);
 
+/* What a request states before the time zone was added to it: everything but
+ * the time zone, the adb key included. */
+constexpr std::size_t bootSizeBeforeTimeZone =
+    offsetof(kernarium_runtime_boot, android_time_zone);
+
 int runtimeRun(
     KernariumMetalView view,
     const kernarium_runtime_boot* boot)
@@ -1540,7 +1558,7 @@ int runtimeRun(
         /* Read only from a request large enough to hold it, and no further
          * than the longest key: the string is the caller's. */
         std::string adbPublicKey;
-        if (boot->struct_size >= sizeof(kernarium_runtime_boot) &&
+        if (boot->struct_size >= bootSizeBeforeTimeZone &&
             boot->android_adb_public_key != nullptr) {
             const std::size_t length = ::strnlen(
                 boot->android_adb_public_key,
@@ -1551,6 +1569,23 @@ int runtimeRun(
                 return -UML_EMULATOR_INVALID_ARGUMENT;
             }
             adbPublicKey.assign(boot->android_adb_public_key, length);
+        }
+        /* The same for the time zone, which differs in one respect: a name
+         * that is not valid is dropped, because the guest keeps its own zone
+         * without one and no boot should fail over it. */
+        std::string timeZone;
+        if (boot->struct_size >= sizeof(kernarium_runtime_boot) &&
+            boot->android_time_zone != nullptr) {
+            const std::size_t length = ::strnlen(
+                boot->android_time_zone,
+                kernarium::timezone::maximumLength + 1U);
+            if (kernarium::timezone::validIdentifier(
+                    {boot->android_time_zone, length}))
+                timeZone.assign(boot->android_time_zone, length);
+            else
+                std::fputs(
+                    "Kernarium: ignoring an invalid time zone name\n",
+                    stderr);
         }
         const uint32_t width = boot->width;
         const uint32_t height = boot->height;
@@ -1583,6 +1618,7 @@ int runtimeRun(
         }
         GuestRequest request;
         request.adbPublicKey = std::move(adbPublicKey);
+        request.timeZone = std::move(timeZone);
         request.dotsPerInch = dotsPerInch;
         request.guestMemoryMiB = guestMemoryMiB;
         request.guestProcessorCount = guestProcessorCount;

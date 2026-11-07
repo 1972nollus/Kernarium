@@ -69,6 +69,15 @@ uml_add_unit_test(NAME kernarium-adb-channel
     COMMAND uml_kernarium_adb_channel_tests
     LABELS kernarium)
 
+# The host's time zone an Android guest is given, and which names the runtime
+# lets onto the kernel command line.
+add_executable(uml_kernarium_guest_time_zone_tests guest_time_zone_tests.cpp)
+target_include_directories(uml_kernarium_guest_time_zone_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/Kernarium/Runtime)
+uml_add_unit_test(NAME kernarium-guest-time-zone
+    COMMAND uml_kernarium_guest_time_zone_tests
+    LABELS kernarium)
+
 # How a statistics reading is composed from the emulator's and the display's
 # figures, and when the guest's memory may be asked for.
 add_executable(uml_kernarium_statistics_tests statistics_tests.cpp)
