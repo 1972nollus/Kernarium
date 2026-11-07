@@ -128,10 +128,11 @@ platform default; route `p0026` removes the wizard's forcing), Restore and
 Andarium features (not useful here), and Bluetooth, SIM, device-specific setup,
 biometrics and recovery update (no such hardware or script).
 
-The home screen's first page holds the six applications with a launcher activity
-(Settings, Calendar, Gallery, Music, Calculator, Files) and nothing else; the
-Launcher3 resource overlay owns the layouts and the verifier requires them. The
-launcher reads its layout once, so a guest created earlier keeps its home screen.
+The home screen is one page that holds the six applications with a launcher
+activity (Settings, Calendar, Gallery, Music, Calculator, Files) and nothing
+else: no widget, no second page and an empty dock. The Launcher3 resource overlay
+owns the layouts and the verifier requires them. The launcher reads its layout
+once, so a guest created earlier keeps its home screen.
 
 ### Motion sensors
 
@@ -377,7 +378,7 @@ init mounts a partition by name from any Android GPT disk it finds.
 
 `support/image/disk-policy.json` is the tracked policy: partition names, GUIDs,
 packing rules, and the data disk template with its capacity range (4 through
-64 GiB, 8 by default). `tools/ubd-disk.py assemble` turns it and the built
+128 GiB, 8 by default). `tools/ubd-disk.py assemble` turns it and the built
 images into `system.img` and the release's `partition-layout.json` (schema 2).
 The host reads only that file, never the policy, so a layout is a release
 property: changing a size or an offset needs no host change. The host does not

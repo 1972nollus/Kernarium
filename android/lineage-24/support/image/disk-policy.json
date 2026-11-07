@@ -61,7 +61,7 @@
     "capacity_gib": {
       "minimum": 4,
       "default": 8,
-      "maximum": 64
+      "maximum": 128
     },
     "partitions": [
       {

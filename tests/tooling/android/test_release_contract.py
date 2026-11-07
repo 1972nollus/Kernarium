@@ -244,6 +244,44 @@ def main() -> None:
             semantic=False,
         )
 
+        # --print-acceptance writes the descriptor and nothing else to standard
+        # output: the verifiers' own "verified ..." lines, from this process and
+        # from the tools it runs, go to standard error.
+        print_acceptance = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-c",
+                (
+                    "import importlib.util, subprocess, sys\n"
+                    "tools = sys.argv[1]\n"
+                    "sys.path.insert(0, tools)\n"
+                    "import release_common\n"
+                    "def verified(release_root, android_root, *, acceptance_path=None, semantic=True):\n"
+                    "    print('verified in process')\n"
+                    "    subprocess.run(['echo', 'verified in a tool'], check=True)\n"
+                    "    return {}\n"
+                    "release_common.verify_release = verified\n"
+                    "spec = importlib.util.spec_from_file_location('install_release', tools + '/install-release.py')\n"
+                    "module = importlib.util.module_from_spec(spec)\n"
+                    "spec.loader.exec_module(module)\n"
+                    "sys.argv = ['install-release.py', '--source', sys.argv[2], '--print-acceptance']\n"
+                    "module.main()\n"
+                ),
+                str(android_root / "tools"),
+                str(release_root),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if print_acceptance.returncode != 0:
+            fail(f"--print-acceptance failed: {print_acceptance.stderr.strip()}")
+        if print_acceptance.stdout != render_acceptance(manifest):
+            fail("--print-acceptance wrote more than the descriptor to standard output")
+        if "verified in process" not in print_acceptance.stderr or "verified in a tool" not in print_acceptance.stderr:
+            fail("--print-acceptance lost the verifiers' report")
+
         historical = copy.deepcopy(manifest)
         historical["source"]["projects_manifest_sha256"] = "b" * 64
         historical["kernel"]["final_tree"] = "c" * 40

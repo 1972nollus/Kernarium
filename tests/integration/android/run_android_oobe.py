@@ -17,12 +17,14 @@ a fresh instance, and checks the contract in android/lineage-24/README.md:
   (`navigation_mode` 0, the gestural overlay off and both mode overlays
   present), no screen lock, location on as it was before the wizard, Wi-Fi
   connected to VirtWifi, no status bar lock held by the wizard, and a home
-  screen whose first page holds the six applications of the default layout
-  (Settings, Calendar, Gallery, Music, Calculator, Files) with an empty dock,
-  none of them dropped while the launcher read its layout. The drop check
-  reads the guest's log, so the runner raises the log buffers as soon as adb
-  answers, before the wizard runs, and a log without the launcher's layout
-  load is a failure, not a skipped check;
+  screen that is one page holding the six applications of the default layout
+  (Settings, Calendar, Gallery, Music, Calculator, Files), no widget and an
+  empty dock, none of them dropped while the launcher read its layout. The
+  drop check reads the guest's log, so the runner raises the log buffers as
+  soon as adb answers, before the wizard runs, and a log without the
+  launcher's layout load is a failure, not a skipped check. `--width`,
+  `--height` and `--dpi` pick the display, so a phone and a tablet density
+  each get their own grid;
 - helper: the guest is started with `--provision`, the harness path of
   tools/android_provision.py, and reaches the same observable state without a
   person: both settings 1 and HOME on the launcher. The shell may not disable
@@ -96,6 +98,10 @@ ADB_LOST = re.compile(r"offline|device not found|no devices|closed|unauthorized"
 RECONNECT_ATTEMPTS = 8
 # What the wizard disables itself when its last page finishes.
 WIZARD_DISABLES = ("SetupWizardActivity", "wizardmanager.WizardManager")
+# The wizard finishes asynchronously: its flow manager is disabled a moment after the Finish page, and a loaded host takes longer.
+WIZARD_RELEASE_SECONDS = 30
+# A status bar disable record of the wizard, with the two flag words it holds: `dumpsys statusbar`'s mDisableRecords.
+WIZARD_RECORD_FLAGS = re.compile(r"\bwhat1=0x([0-9a-fA-F]+)\s+what2=0x([0-9a-fA-F]+)\s+pkg=" + re.escape(WIZARD) + r"(?![\w.])")
 WIZARD_STEPS = 20
 
 
@@ -252,6 +258,57 @@ def launcher_problems(items: list[dict]) -> list[str]:
     return problems
 
 
+# What release r16 showed on the second page of its home screen, besides the music widget and
+# behind an empty first page: Gallery, Music and Settings. Each stays on the home screen.
+R16_SECOND_PAGE_APPS = frozenset({
+    ("org.lineageos.glimpse", "org.lineageos.glimpse.MainActivity"),
+    ("org.lineageos.twelve", "org.lineageos.twelve.MainActivity"),
+    ("com.android.settings", "com.android.settings.Settings"),
+})
+WORKSPACE_VIEW = re.compile(r"^(?P<indent> *)com\.android\.launcher3\.Workspace\{")
+
+
+def workspace_view(dump: str) -> tuple[int, list[str]] | None:
+    """The workspace's pages and widget views in the launcher's view hierarchy, or None without one.
+
+    A page is a `CellLayout` child of the `Workspace`; a widget is an app widget host view anywhere
+    below it. The hierarchy comes in the same dump as the data model, indented by depth."""
+    lines = dump.splitlines()
+    for start, line in enumerate(lines):
+        header = WORKSPACE_VIEW.match(line)
+        if header is None:
+            continue
+        depth = len(header.group("indent"))
+        subtree = []
+        for below in lines[start + 1:]:
+            if below.strip() and len(below) - len(below.lstrip()) <= depth:
+                break
+            subtree.append(below)
+        children = [len(below) - len(below.lstrip()) for below in subtree if below.strip()]
+        if not children:
+            return 0, []
+        child_depth = min(children)
+        pages = sum(1 for below in subtree
+                    if len(below) - len(below.lstrip()) == child_depth
+                    and below.lstrip().startswith("com.android.launcher3.CellLayout{"))
+        widgets = [below.strip().split("{")[0] for below in subtree if "AppWidgetHostView{" in below]
+        return pages, widgets
+    return None
+
+
+def workspace_view_problems(view: tuple[int, list[str]] | None) -> list[str]:
+    """What is wrong with the workspace's views: one page, and no widget on it."""
+    if view is None:
+        return ["the dump has no workspace view, so the page count and the widgets cannot be read"]
+    pages, widgets = view
+    problems = []
+    if pages != 1:
+        problems.append(f"{pages} workspace pages, expected exactly one")
+    if widgets:
+        problems.append(f"{len(widgets)} app widget view(s) on the workspace: {', '.join(sorted(set(widgets)))}")
+    return problems
+
+
 def log_buffer_sizes(logcat_g: str) -> dict[str, int]:
     """Each buffer's capacity in bytes from `logcat -g`, whose lines read `main: ring buffer is 64 MiB (...)`."""
     return {match.group("buffer"): int(float(match.group("size")) * LOG_UNITS[match.group("unit")])
@@ -277,6 +334,16 @@ def launcher_layout_drops(log: str) -> list[str] | None:
 def wizard_fatals(crash_log: str) -> list[str]:
     """The crash buffer's lines that name the wizard's process as the one that died."""
     return [match.group(0).strip() for match in WIZARD_FATAL.finditer(crash_log)]
+
+
+def wizard_holds_status_bar(dump: str) -> bool | None:
+    """Whether the wizard's status bar disable record disables anything, None when the dump holds no record list.
+
+    A finished wizard keeps its process, cached, and with it a record whose two flag words are zero: the record stays
+    until the process dies, and a zero record hides nothing. Release r16 does the same."""
+    if "mDisableRecords" not in dump:
+        return None
+    return any(int(first, 16) or int(second, 16) for first, second in WIZARD_RECORD_FLAGS.findall(dump))
 
 
 def disabled_components(dumpsys_package: str) -> set[str]:
@@ -349,8 +416,12 @@ class Device:
     def wizard_status_bar_record(self) -> bool | None:
         return android_provision.wizard_status_bar_record(self.shell)
 
+    def wizard_status_bar_lock(self) -> bool | None:
+        return wizard_holds_status_bar(self.shell("dumpsys statusbar"))
+
     def wizard_processes(self) -> list[str] | None:
-        return android_provision.wizard_processes(self.shell)
+        # pidof exits 1 when no process has the name; that is the answer (an empty list), not an error of the shell.
+        return android_provision.wizard_processes(lambda command: self.shell(f"{command}; true"))
 
 
 def wait_for(description: str, probe: Callable[[], bool], seconds: int,
@@ -517,11 +588,13 @@ def check_defaults(device: Device, before: dict[str, str] | None) -> None:
 
 
 def check_wizard_released(device: Device, *, by_wizard: bool) -> None:
-    """The wizard holds no status bar lock: no disable record, and for the helper no process either.
+    """The wizard holds no status bar lock: its disable record disables nothing, and for the helper there is no process.
 
     A wizard that ran to its last page may take a moment to let go; a lock that stays is
-    the empty status bar and the single Back key of a guest nobody can use."""
-    wait_for("the wizard to hold no status bar disable record", lambda: device.wizard_status_bar_record() is False, 30)
+    the empty status bar and the single Back key of a guest nobody can use. The process of a wizard that
+    finished lives on, cached, with a record of two zero flag words: that is released (release r16 ends the same way)."""
+    wait_for("the wizard to hold no status bar lock", lambda: device.wizard_status_bar_lock() is False,
+             WIZARD_RELEASE_SECONDS)
     if not by_wizard and device.wizard_processes() != []:
         raise Failure(f"the setup wizard still runs after the helper: {device.wizard_processes()}")
     print("the wizard holds no status bar lock")
@@ -539,7 +612,7 @@ def check_wizard_did_not_crash(device: Device) -> None:
 
 
 def check_launcher(device: Device) -> None:
-    """The home screen holds the six applications of the default layout on its first page, and the dock is empty.
+    """The home screen is one page of the six applications of the default layout, with no widget and an empty dock.
 
     The launcher reads its layout when it first starts, and a guest keeps what it built, so this is
     a fresh guest's check. A release whose layout names an application the image lacks drops it and
@@ -547,13 +620,20 @@ def check_launcher(device: Device) -> None:
     buffers were raised before the wizard ran (wait_booted): a log without it is a failure."""
     deadline = time.monotonic() + LAUNCHER_LOAD_SECONDS
     while True:
-        items = launcher_items(device.shell(f"dumpsys activity {LAUNCHER_ACTIVITY}", timeout=60))
-        if len(items) >= len(HOME_APPS) or time.monotonic() >= deadline:
+        dump = device.shell(f"dumpsys activity {LAUNCHER_ACTIVITY}", timeout=60)
+        items = launcher_items(dump)
+        view = workspace_view(dump)
+        # The model lists the items before the workspace binds them to a page.
+        if (len(items) >= len(HOME_APPS) and view is not None and view[0] >= 1) or time.monotonic() >= deadline:
             break
         time.sleep(2)
-    problems = launcher_problems(items)
+    problems = launcher_problems(items) + workspace_view_problems(view)
     if problems:
         raise Failure("the launcher's workspace is not the default layout: " + "; ".join(problems))
+    gone = R16_SECOND_PAGE_APPS - {item["component"] for item in items}
+    if gone:
+        raise Failure("an application release r16 showed on its second page is not on the home screen: "
+                      + ", ".join(sorted("/".join(component) for component in gone)))
     log = device.shell("logcat -b main -d -v time -s ModelDbController:D "
                        + " ".join(f"{tag}:D" for tag in LAUNCHER_LAYOUT_TAGS), timeout=60)
     drops = launcher_layout_drops(log)
@@ -563,7 +643,7 @@ def check_launcher(device: Device) -> None:
                       "or the drops cannot be checked")
     if drops:
         raise Failure("the launcher dropped items of its default layout: " + "; ".join(drops[:5]))
-    print("home screen: the six applications on the first page, the dock empty, no item dropped")
+    print("home screen: one page, the six applications, no widget, the dock empty, no item dropped")
 
 
 def check_provisioned(device: Device, *, by_wizard: bool, before: dict[str, str] | None = None) -> None:
@@ -586,10 +666,17 @@ def check_provisioned(device: Device, *, by_wizard: bool, before: dict[str, str]
     if by_wizard:
         if package_disabled:
             raise Failure("the wizard package is disabled after the wizard finished, not only its activities")
-        disabled = disabled_components(device.shell(f"dumpsys package {WIZARD}"))
-        missing = {name for name in WIZARD_DISABLES if f"{WIZARD}.{name}" not in disabled}
-        if missing:
-            raise Failure(f"the wizard did not disable {sorted(missing)}; disabled: {sorted(disabled)}")
+        def undisabled() -> tuple[set[str], set[str]]:
+            disabled = disabled_components(device.shell(f"dumpsys package {WIZARD}"))
+            return {name for name in WIZARD_DISABLES if f"{WIZARD}.{name}" not in disabled}, disabled
+
+        try:
+            wait_for("the wizard to disable its HOME activity and its flow manager", lambda: not undisabled()[0],
+                     WIZARD_RELEASE_SECONDS)
+        except Failure:
+            missing, disabled = undisabled()
+            raise Failure(f"the wizard did not disable {sorted(missing)} within {WIZARD_RELEASE_SECONDS} s; "
+                          f"disabled: {sorted(disabled)}") from None
     elif not package_disabled:
         raise Failure("the helper left the wizard package enabled")
     print("provisioned: settings 1, HOME is the launcher, the wizard "
@@ -610,6 +697,9 @@ def launch(options: argparse.Namespace, scratch: pathlib.Path, name: str, adb: s
     command = [sys.executable, str(LAUNCHER), "--instance", str(scratch / f"{name}-instance"),
                "--adb", adb, "--adb-port", str(serial_port), "--display", "offscreen",
                "--cpus", str(options.cpus), "--boot-timeout", str(options.boot_timeout), *extra]
+    for name in ("width", "height", "dpi"):
+        if getattr(options, name):
+            command += [f"--{name}", str(getattr(options, name))]
     if options.release:
         command += ["--release", str(options.release)]
     if options.emulator:
@@ -660,6 +750,9 @@ def main() -> int:
     parser.add_argument("--emulator", type=pathlib.Path, help="the Android macOS executable (the launcher's default)")
     parser.add_argument("--adb-port", type=int, default=5576, help="loopback port the launcher forwards adbd to")
     parser.add_argument("--cpus", type=int, default=4)
+    parser.add_argument("--width", type=int, help="guest display width in pixels (the launcher's default)")
+    parser.add_argument("--height", type=int, help="guest display height in pixels (the launcher's default)")
+    parser.add_argument("--dpi", type=int, help="guest display density: with the size it picks the launcher's grid")
     parser.add_argument("--boot-timeout", type=int, default=900)
     parser.add_argument("--only", choices=("wizard", "helper"), help="run one of the two guests")
     options = parser.parse_args()

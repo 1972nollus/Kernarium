@@ -13,8 +13,10 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
+import argparse
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 from unittest import mock
 
@@ -347,7 +349,7 @@ class WizardReleasedTests(unittest.TestCase):
         def __init__(self, record, processes) -> None:
             self.record, self.processes = record, processes
 
-        def wizard_status_bar_record(self):
+        def wizard_status_bar_lock(self):
             return self.record
 
         def wizard_processes(self):
@@ -363,7 +365,7 @@ class WizardReleasedTests(unittest.TestCase):
 
     def test_a_wizard_that_holds_the_status_bar_fails_both_guests(self) -> None:
         for by_wizard in (True, False):
-            with self.subTest(by_wizard=by_wizard), self.assertRaisesRegex(runner.Failure, "no status bar disable record"):
+            with self.subTest(by_wizard=by_wizard), self.assertRaisesRegex(runner.Failure, "no status bar lock"):
                 self.check(self.Guest(True, []), by_wizard=by_wizard)
             with self.subTest(by_wizard=by_wizard, unreadable=True), self.assertRaises(runner.Failure):
                 self.check(self.Guest(None, []), by_wizard=by_wizard)
@@ -373,6 +375,104 @@ class WizardReleasedTests(unittest.TestCase):
         self.check(self.Guest(False, []), by_wizard=False)
         with self.assertRaisesRegex(runner.Failure, "still runs after the helper"):
             self.check(self.Guest(False, ["1445"]), by_wizard=False)
+
+
+# `dumpsys statusbar` of a guest whose wizard finished (r17 and r16 end the same way): the wizard's process lives on, cached, with
+# a record of two zero flag words beside SystemUI's own.
+STATUS_BAR_AFTER_WIZARD = """\
+displayId=0
+    mDisabled1=0x0
+    mDisabled2=0x0
+  mDisableRecords.size=3
+    [0] userId=0 what1=0x00000000 what2=0x00000000 pkg=com.android.systemui token=android.os.BinderProxy@e47a561
+    [1] userId=0 what1=0x00000000 what2=0x00000000 pkg=com.android.systemui token=android.os.BinderProxy@2eb2886
+    [2] userId=0 what1=0x00000000 what2=0x00000000 pkg=org.lineageos.setupwizard token=android.os.BinderProxy@21d4547
+  mCurrentUserId=0
+"""
+
+
+class WizardProcessesTests(unittest.TestCase):
+    def test_a_missing_process_is_an_empty_answer_not_a_shell_error(self) -> None:
+        commands: list[str] = []
+
+        class Recording(runner.Device):
+            def shell(self, command: str, timeout: int = 30) -> str:
+                commands.append(command)
+                return self.answer
+
+        device = Recording("adb", "serial", {})
+        device.answer = ""
+        self.assertEqual(device.wizard_processes(), [])
+        device.answer = "1445 1450"
+        self.assertEqual(device.wizard_processes(), ["1445", "1450"])
+        # `pidof` exits 1 for no process, which the strict shell would raise.
+        self.assertTrue(all(command.endswith("; true") for command in commands), commands)
+
+
+class StatusBarLockTests(unittest.TestCase):
+    def test_a_finished_wizards_zero_record_is_not_a_lock(self) -> None:
+        self.assertIs(runner.wizard_holds_status_bar(STATUS_BAR_AFTER_WIZARD), False)
+
+    def test_a_record_with_a_flag_is_a_lock(self) -> None:
+        for first, second in (("0x00010000", "0x00000000"), ("0x00000000", "0x00000002"), ("0x7fffffff", "0x1")):
+            with self.subTest(first=first, second=second):
+                held = STATUS_BAR_AFTER_WIZARD.replace(
+                    "what1=0x00000000 what2=0x00000000 pkg=org.lineageos.setupwizard",
+                    f"what1={first} what2={second} pkg=org.lineageos.setupwizard")
+                self.assertIs(runner.wizard_holds_status_bar(held), True)
+
+    def test_only_the_wizards_own_record_counts(self) -> None:
+        other = STATUS_BAR_AFTER_WIZARD.replace("what1=0x00000000 what2=0x00000000 pkg=com.android.systemui",
+                                                "what1=0x00010000 what2=0x00000000 pkg=com.android.systemui", 1)
+        self.assertIs(runner.wizard_holds_status_bar(other), False)
+        prefix = STATUS_BAR_AFTER_WIZARD.replace("pkg=org.lineageos.setupwizard ", "pkg=org.lineageos.setupwizard.other ") \
+            .replace("what1=0x00000000 what2=0x00000000 pkg=org.lineageos.setupwizard.other",
+                     "what1=0x00010000 what2=0x00000000 pkg=org.lineageos.setupwizard.other")
+        self.assertIs(runner.wizard_holds_status_bar(prefix), False)
+
+    def test_a_dump_without_the_record_list_is_unreadable(self) -> None:
+        self.assertIsNone(runner.wizard_holds_status_bar("Can't find service: statusbar"))
+        self.assertIs(runner.wizard_holds_status_bar("mDisableRecords.size=0\n"), False)
+
+
+class WizardDisablesWaitTests(unittest.TestCase):
+    """The wizard disables its flow manager a moment after its Finish page: the runner waits for it."""
+
+    def run_check(self, answers: list[set[str]]):
+        guest = mock.Mock()
+        guest.setting.return_value = "1"
+        guest.home_package.return_value = runner.LAUNCHER_PACKAGE
+        guest.resumed.return_value = f"{runner.LAUNCHER_PACKAGE}/.Launcher"
+        guest.shell.return_value = "package:com.other"
+        polls = []
+
+        def polling(description: str, probe, seconds: int, guest=None) -> None:
+            for _ in range(len(answers)):
+                polls.append(description)
+                if probe():
+                    return
+            raise runner.Failure(f"{description}: not within {seconds} s")
+
+        sequence = iter(answers + [answers[-1]] * 4)
+        with mock.patch.object(runner, "wait_for", polling), \
+                mock.patch.object(runner, "disabled_components", side_effect=lambda _dump: next(sequence)), \
+                mock.patch.object(runner, "check_wizard_released"), \
+                mock.patch.object(runner, "check_wizard_did_not_crash"), \
+                mock.patch.object(runner, "check_defaults"), \
+                mock.patch.object(runner, "check_launcher"):
+            runner.check_provisioned(guest, by_wizard=True)
+        return polls
+
+    def test_a_manager_disabled_a_moment_later_passes(self) -> None:
+        only_activity = {f"{runner.WIZARD}.SetupWizardActivity"}
+        both = {f"{runner.WIZARD}.{name}" for name in runner.WIZARD_DISABLES}
+        polls = self.run_check([only_activity, both])
+        self.assertIn("the wizard to disable its HOME activity and its flow manager", polls)
+
+    def test_a_manager_that_stays_enabled_fails_and_names_it(self) -> None:
+        only_activity = {f"{runner.WIZARD}.SetupWizardActivity"}
+        with self.assertRaisesRegex(runner.Failure, r"did not disable \['wizardmanager\.WizardManager'\] within 30 s"):
+            self.run_check([only_activity, only_activity])
 
 
 # `logcat -b crash -d` after the wizard's process died while the package was disabled under it (r16, trimmed).
@@ -480,13 +580,29 @@ def dump_item(item_id: int, kind: str, package: str, class_name: str, *, page: i
             f"screen={page} cell({x},{y}) span(1,1) title=null, items: [])\n")
 
 
-def home_dump(*, columns: int = 5, **changes) -> str:
+def workspace_tree(*, pages: int = 1, widgets: int = 0) -> str:
+    """The launcher's view hierarchy as the activity dump prints it: a page is a CellLayout below the Workspace."""
+    lines = ["                com.android.launcher3.Workspace{b549cbe V.ED..... ........ 0,0-720,1280 #7f0903fa app:id/workspace}"]
+    for page in range(pages):
+        lines.append(f"                  com.android.launcher3.CellLayout{{8b2995{page} V.ED..... ........ 0,37-720,1140}}")
+        lines.append("                    com.android.launcher3.ShortcutAndWidgetContainer{d47add7 V.E...... ........ 13,14-707,1089}")
+        if page == pages - 1:
+            for widget in range(widgets):
+                lines.append("                      com.android.launcher3.widget.LauncherAppWidgetHostView{ed1f61%d VFE....L. "
+                             "R.....ID 0,0-695,215 #%d}" % (widget, widget + 2))
+                lines.append("                        android.widget.LinearLayout{56f4e2 VFE...C.. ......ID 0,0-695,215}")
+            lines.append("                      com.android.launcher3.views.DoubleShadowBubbleTextView{1e5369 VFED..CL. ......ID 139,860-278,1075 #3}")
+    lines.append("                com.android.launcher3.Hotseat{3bcd11f V.ED..... ........ 0,1158-720,1280 #7f0901c2 app:id/hotseat}")
+    return "\n".join(lines) + "\n"
+
+
+def home_dump(*, columns: int = 5, pages: int = 1, widgets: int = 0, **changes) -> str:
     apps = sorted(runner.HOME_APPS)
     order = [("com.android.settings", "com.android.settings.Settings")] + [app for app in apps if app[0] != "com.android.settings"]
     items = []
     for index, (package, class_name) in enumerate(order):
         items.append(dump_item(index + 2, "workspace", package, class_name, x=index % columns, y=index // columns))
-    return DUMP_HEAD + "".join(items) + DUMP_TAIL
+    return workspace_tree(pages=pages, widgets=widgets) + DUMP_HEAD + "".join(items) + DUMP_TAIL
 
 
 class LauncherWorkspaceTests(unittest.TestCase):
@@ -587,6 +703,46 @@ class LauncherLayoutLogTests(unittest.TestCase):
         self.assertEqual(runner.launcher_layout_drops(DROPS + CLEAN), [])
 
 
+class WorkspaceViewTests(unittest.TestCase):
+    def test_one_page_and_no_widget_is_the_home_screen(self) -> None:
+        self.assertEqual(runner.workspace_view(home_dump()), (1, []))
+        self.assertEqual(runner.workspace_view_problems(runner.workspace_view(home_dump())), [])
+
+    def test_a_second_page_is_a_problem(self) -> None:
+        # Release r16 showed an empty first page and the items on a second one.
+        self.assertEqual(runner.workspace_view(home_dump(pages=2)), (2, []))
+        self.assertEqual(runner.workspace_view_problems(runner.workspace_view(home_dump(pages=2))),
+                         ["2 workspace pages, expected exactly one"])
+
+    def test_no_page_is_a_problem(self) -> None:
+        self.assertEqual(runner.workspace_view_problems(runner.workspace_view(home_dump(pages=0))),
+                         ["0 workspace pages, expected exactly one"])
+
+    def test_a_widget_is_a_problem_wherever_it_sits(self) -> None:
+        # The music widget of release r16 was a LauncherAppWidgetHostView on the second page.
+        problems = runner.workspace_view_problems(runner.workspace_view(home_dump(widgets=1)))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("1 app widget view(s)", problems[0])
+        self.assertIn("com.android.launcher3.widget.LauncherAppWidgetHostView", problems[0])
+        both = runner.workspace_view_problems(runner.workspace_view(home_dump(pages=2, widgets=2)))
+        self.assertEqual(len(both), 2)
+
+    def test_a_dump_without_the_workspace_view_cannot_pass(self) -> None:
+        for dump in ("", DUMP_HEAD + DUMP_TAIL):
+            self.assertIsNone(runner.workspace_view(dump))
+            self.assertIn("no workspace view", runner.workspace_view_problems(runner.workspace_view(dump))[0])
+
+    def test_the_dock_and_other_views_are_not_pages(self) -> None:
+        dump = home_dump() + "                  com.android.launcher3.CellLayout{99 V.E 0,0-1,1}\n"
+        # Outside the workspace's subtree (the same depth as the Hotseat, not below the Workspace).
+        self.assertEqual(runner.workspace_view(dump)[0], 1)
+
+    def test_the_applications_of_r16s_second_page_are_on_the_home_screen(self) -> None:
+        self.assertLessEqual(runner.R16_SECOND_PAGE_APPS, runner.HOME_APPS)
+        self.assertEqual({package for package, _ in runner.R16_SECOND_PAGE_APPS},
+                         {"org.lineageos.glimpse", "org.lineageos.twelve", "com.android.settings"})
+
+
 class FakeLauncher:
     def __init__(self, dump: str, log: str) -> None:
         self.dump = dump
@@ -611,6 +767,27 @@ class CheckLauncherTests(unittest.TestCase):
         guest = FakeLauncher(home_dump(), CLEAN)
         self.check(guest)
         self.assertEqual(guest.dumps, 1)
+
+    def test_a_second_page_is_a_failure(self) -> None:
+        with self.assertRaisesRegex(runner.Failure, "2 workspace pages, expected exactly one"):
+            self.check(FakeLauncher(home_dump(pages=2), CLEAN))
+
+    def test_a_widget_is_a_failure(self) -> None:
+        with self.assertRaisesRegex(runner.Failure, "app widget view"):
+            self.check(FakeLauncher(home_dump(widgets=1), CLEAN))
+
+    def test_the_workspace_may_bind_after_the_model_lists_its_items(self) -> None:
+        class Binding(FakeLauncher):
+            def shell(self, command: str, timeout: int = 30) -> str:
+                if command.startswith("dumpsys activity") and self.dumps < 1:
+                    self.dumps += 1
+                    return home_dump(pages=0)
+                return super().shell(command, timeout)
+
+        guest = Binding(home_dump(), CLEAN)
+        with mock.patch.object(runner, "LAUNCHER_LOAD_SECONDS", 60), mock.patch.object(runner.time, "sleep"):
+            runner.check_launcher(guest)
+        self.assertEqual(guest.dumps, 2)
 
     def test_a_log_without_the_layout_load_is_a_failure(self) -> None:
         # The check must not skip itself: it fails when the line is missing, rotated out or never logged.
@@ -792,6 +969,24 @@ class WaitBootedTests(unittest.TestCase):
                 mock.patch.object(runner, "wait_booted", side_effect=lambda *args: order.append("sized and booted")):
             runner.run_guest(options, Path("."), "wizard", "adb", {}, [], lambda *args: order.append("exercise"))
         self.assertEqual(order, ["sized and booted", "exercise"])
+
+
+class LaunchCommandTests(unittest.TestCase):
+    def command(self, **display) -> list[str]:
+        options = argparse.Namespace(adb_port=5576, cpus=4, boot_timeout=100, release=None, emulator=None,
+                                     **{"width": None, "height": None, "dpi": None, **display})
+        with mock.patch.object(runner.subprocess, "Popen") as popen, tempfile.TemporaryDirectory() as scratch:
+            runner.launch(options, Path(scratch), "wizard", "adb", [])
+        return popen.call_args.args[0]
+
+    def test_the_display_is_the_launchers_default_unless_stated(self) -> None:
+        command = self.command()
+        self.assertFalse(any(value in command for value in ("--width", "--height", "--dpi")))
+
+    def test_a_display_profile_reaches_the_launcher(self) -> None:
+        command = self.command(width=1179, height=2400, dpi=480)
+        for name, value in (("--width", "1179"), ("--height", "2400"), ("--dpi", "480")):
+            self.assertEqual(command[command.index(name) + 1], value)
 
 
 if __name__ == "__main__":

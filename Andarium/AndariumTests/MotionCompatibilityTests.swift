@@ -117,12 +117,17 @@ struct MotionCompatibilityTests {
             }
             session.update(enabled: true, foreground: true, axes: .portrait)
             defer { session.update(enabled: false, foreground: false, axes: .portrait) }
-            // Connected: the sensors start, continuously until the service speaks.
+            // Connected: a legacy service never speaks, so the sensors start and read continuously. An on-demand
+            // service speaks on connect, and its demand is empty when no guest process uses a sensor: the plan
+            // then stays off, and the demand frame is the sign of the connection.
+            func connected() -> Bool {
+                session.plan != .off || (expectation != "legacy" && session.demand != nil)
+            }
             let connectDeadline = ContinuousClock.now + .seconds(30)
-            while session.plan == .off, ContinuousClock.now < connectDeadline {
+            while !connected(), ContinuousClock.now < connectDeadline {
                 try await Task.sleep(for: .milliseconds(50))
             }
-            try #require(session.plan != .off, "The guest's motion service did not accept the connection")
+            try #require(connected(), "The guest's motion service did not accept the connection")
             print("MOTION compat: connected; plan \(session.plan)")
             // Hold the connection and watch what the service says for a while.
             let watchUntil = ContinuousClock.now + .seconds(8)

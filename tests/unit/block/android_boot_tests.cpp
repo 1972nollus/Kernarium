@@ -233,7 +233,7 @@ void testLayoutParsing(const Fixture &fixture)
 
 	require(layout.data.layoutVersion == 1);
 	require(layout.data.minimumGiB == 4 && layout.data.defaultGiB == 8 &&
-		layout.data.maximumGiB == 64);
+		layout.data.maximumGiB == 128);
 	require(layout.data.partition("misc").offset == mebibyte);
 	require(layout.data.partition("misc").size == mebibyte);
 	require(layout.data.partition("metadata").offset == 2U * mebibyte);
@@ -245,7 +245,7 @@ void testLayoutParsing(const Fixture &fixture)
 	requireThrows([&] { (void)layout.data.partition("system"); });
 
 	/* The data disk's capacity is the template's range. */
-	for (const std::uint32_t gib : {0U, 3U, 65U})
+	for (const std::uint32_t gib : {0U, 3U, 129U})
 		requireThrows([&] { (void)layout.dataGpt(gib); });
 	require(layout.dataGpt(4).diskBytes == 4U * gibibyte);
 }
@@ -489,7 +489,7 @@ void testDataDiskCreate(const Fixture &fixture, const fs::path &directory)
 	require(fs::file_size(path) == 4U * gibibyte);
 	require(entryCount(directory) == 1);
 
-	for (const std::uint32_t gib : {0U, 3U, 65U})
+	for (const std::uint32_t gib : {0U, 3U, 129U})
 		requireThrows([&] { android::createDataDisk(layout, directory / "other.img", gib); });
 	for (const char *name : {"a,b.img", "a b.img", "a:b.img"})
 		requireThrows([&] { android::createDataDisk(layout, directory / name, 4); });
@@ -601,7 +601,7 @@ void testDataDiskGrow(const Fixture &fixture, const fs::path &directory)
 	/* It never shrinks. */
 	requireThrows([&] { (void)android::prepareDataDisk(layout, path, 6); });
 	requireThrows([&] { android::growDataDisk(layout, path, 7); });
-	requireThrows([&] { android::growDataDisk(layout, path, 65); });
+	requireThrows([&] { android::growDataDisk(layout, path, 129); });
 	require(android::validateDataDisk(layout, path) == 7);
 	require(entryCount(directory) == 1);
 
