@@ -15,6 +15,9 @@
     {
       "kind": "local",
       "path": "AndariumCore",
+    }, {
+      "kind": "local",
+      "path": "../GuestHost/Core",
     },
   ],
   "files": [
@@ -46,6 +49,7 @@
     },
     { "path": "../.build/andarium-system", "target-membership": [ "Andarium/resources" ] },
     { "path": "AndariumCore" },
+    { "path": "../GuestHost/Core" },
     {
       "kind": "group",
       "name": "Products",
@@ -101,6 +105,9 @@
       "package-product-members": [
         {
           "product-name": "AndariumCore",
+          "build-phase": { "build-phase": "frameworks" },
+        }, {
+          "product-name": "GuestHostCore",
           "build-phase": { "build-phase": "frameworks" },
         },
       ],
@@ -164,6 +171,9 @@
         {
           "product-name": "AndariumCore",
           "build-phase": { "build-phase": "frameworks" },
+        }, {
+          "product-name": "GuestHostCore",
+          "build-phase": { "build-phase": "frameworks" },
         },
       ],
       "build-settings": {
@@ -201,6 +211,9 @@
       "package-product-members": [
         {
           "product-name": "AndariumCore",
+          "build-phase": { "build-phase": "frameworks" },
+        }, {
+          "product-name": "GuestHostCore",
           "build-phase": { "build-phase": "frameworks" },
         },
       ],

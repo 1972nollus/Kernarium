@@ -176,6 +176,11 @@ SHOTS: list[Shot] = [
     s("session-stats", "Guest", "session-stats", "The CPU, memory and frame rate readout drawn over the guest."),
     s("session-setup", "Guest", "session-setup", "The guest's own first-run setup screen."),
     s("session-off", "Guest", "session-off", "The guest's screen after it powered off."),
+    s("space-pause", "Guest", "space-pause", "The running guest paused because the device is nearly out of space: the screen over it with Resume and Shut down.", dark=True),
+    s("space-pause-short", "Guest", "space-pause-short", "The same screen after Resume found the space still short: it states what is free now."),
+    s("space-pause-pausing", "Guest", "space-pause-pausing", "The same screen while the guest is being paused: it offers nothing until the guest holds still."),
+    s("space-pause-running", "Guest", "space-pause-running", "The guest did not hold still: the screen says it still runs and offers Shut down and Check again."),
+    s("space-pause-shutting-down", "Guest", "space-pause-shutting-down", "The same screen once Shut down was chosen: the buttons give way to Shutting down."),
     s("recovery", "Guest", "recovery", "Recovery running."),
     s("recovery-side-keys", "Guest", "recovery-open", "Recovery with the side keys open."),
     # Settings during a session

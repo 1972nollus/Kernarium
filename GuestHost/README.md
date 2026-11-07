@@ -6,11 +6,19 @@ Kernarium runtime framework and show it. Each application compiles
 `GuestHost/Sources/` into its own module as a synchronized folder, so the types
 are `internal` and `@testable import Kernarium` reaches them. It is not a
 Swift package: the packages it would need are prebuilt XCFrameworks under
-`.build/` and the runtime header outside any package root.
+`.build/` and the runtime header outside any package root. What needs neither
+(logic both applications decide the same way) is the exception: `Core/` is a
+package with no UIKit, SwiftUI or runtime dependency, tested with `swift test`
+(`guest-host-core`), and each application's own package or module imports it.
 
 ## Contents
 
 ```text
+Core/                                  GuestHostCore, a Swift package both
+                                       applications import: sizes and their text,
+                                       the free-space thresholds (RunSpace), and
+                                       the pause for space (SpacePauser,
+                                       SuspensionCheck, SpacePause)
 Sources/KernariumRuntimeLoader.h/.mm   loads the embedded runtime framework and
                                        wraps its C API (Runtime/KernariumRuntime.h)
 Sources/GuestDisplay.swift             the Metal view that shows the guest's display,

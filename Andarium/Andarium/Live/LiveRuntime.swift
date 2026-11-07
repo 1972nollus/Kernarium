@@ -77,7 +77,22 @@ final class LiveRuntime: RuntimeDriver {
                 message: "The guest’s screen could not follow this window. Close and reopen Andarium to try again.")
         })
     private var normalRun = false
+    /// The runtime runs a guest, from its start until its run returns.
+    private var runActive = false
     private var active = UIApplication.shared.applicationState == .active
+    /// The device's free space, which the run watches. The application's
+    /// own reading unless a test supplies another.
+    private let freeSpace: @Sendable () -> UInt64
+    private var spaceWatchTask: Task<Void, Never>?
+    /// Tells a watch that ended from the one that replaced it.
+    private var spaceWatchGeneration = 0
+    /// The person asked to shut a guest paused for space down: Android is
+    /// not asked anything else, and the space is not watched, as it goes.
+    private var shuttingDown = false
+    /// The screen over the session says the space is short, whether Android
+    /// is paused or still runs behind it: the space is not watched, and the
+    /// guest is asked nothing, until the person answers it.
+    private var spaceAlertOpen = false
     private var observers: [NSObjectProtocol] = []
 
     private var pending: PendingRun?
@@ -90,11 +105,17 @@ final class LiveRuntime: RuntimeDriver {
     private var thermalObserver: NSObjectProtocol?
     private var console: ConsoleSink?
 
-    init(model: AppModel, storage: TwoDiskStorage, marker: PauseMarker, keyStore: AdbKeyStore = AdbKeyStore()) {
+    init(
+        model: AppModel, storage: TwoDiskStorage, marker: PauseMarker, keyStore: AdbKeyStore = AdbKeyStore(),
+        freeSpace: @escaping @Sendable () -> UInt64 = { AppEntry.freeStorageBytes() }
+    ) {
         self.model = model
         self.storage = storage
         self.keyStore = keyStore
-        pause = PauseController(effects: LivePauseEffects(), marker: marker, runClock: clock)
+        self.freeSpace = freeSpace
+        let effects = LivePauseEffects()
+        pause = PauseController(effects: effects, marker: marker, runClock: clock)
+        effects.statistics = { [weak self] in await self?.readStatistics() }
         model.microphone = MicrophoneController(model: model, source: SystemMicrophoneSource()) {
             // The runtime is told the setting and never asks the system
             // itself; a guest records silence while access is out of reach.
@@ -233,6 +254,8 @@ final class LiveRuntime: RuntimeDriver {
         model?.microphone?.guestStarting()
 
         pause.guestDidStart()
+        runActive = true
+        shuttingDown = false
         bootStartedAt = Date()
         runStartedAt = Date()
         startThermalObservation()
@@ -363,6 +386,7 @@ final class LiveRuntime: RuntimeDriver {
         if bootCompleted {
             reachedBootCompleted = true
             updateGuestRotation()
+            updateSpaceWatch()
             // An update counts as applied once its start has booted, whatever
             // happens to the application after that.
             do { try storage.bootCompleted() } catch { print("Andarium: the guest's record was not updated: \(error.localizedDescription)") }
@@ -378,8 +402,10 @@ final class LiveRuntime: RuntimeDriver {
         // The boot that follows is another one: it ends an update only by
         // reaching sys.boot_completed itself.
         reachedBootCompleted = false
+        spaceAlertOpen = false
         motion.stop()
         updateGuestRotation()
+        updateSpaceWatch()
         switch model.phase {
         case .running, .booting:
             bootStartedAt = Date()
@@ -391,8 +417,12 @@ final class LiveRuntime: RuntimeDriver {
 
     private func finished(result: Int32) {
         normalRun = false
+        runActive = false
+        shuttingDown = false
+        spaceAlertOpen = false
         motion.stop()
         updateGuestRotation()
+        updateSpaceWatch()
         stopThermalObservation()
         kernarium_runtime_loader_set_restart_handler(nil)
         kernarium_runtime_loader_set_console_output_handler(nil)
@@ -415,7 +445,7 @@ final class LiveRuntime: RuntimeDriver {
         runStartedAt = nil
         // The run wrote to the data disk, so the device has less free space
         // than before it.
-        model?.host.freeStorageBytes = AppEntry.freeStorageBytes()
+        model?.host.freeStorageBytes = freeSpace()
         let loop = result == Int32(KERNARIUM_RUNTIME_RESULT_RESTART_LOOP)
         model?.runEnded(RunEnd(result: result, restartedInALoop: loop), uptimeSeconds: uptime)
     }
@@ -423,12 +453,14 @@ final class LiveRuntime: RuntimeDriver {
     // MARK: Keys
 
     func press(_ key: GuestKey) {
+        guard !holdsGuestStill else { return }
         kernarium_runtime_loader_send_key(key.rawValue, 1)
         kernarium_runtime_loader_send_key(key.rawValue, 0)
     }
 
     /// Holds the key down for `seconds`, as Power is for Android's power menu.
     func hold(_ key: GuestKey, seconds: Double = LiveRuntime.powerMenuHold) {
+        guard !holdsGuestStill else { return }
         kernarium_runtime_loader_send_key(key.rawValue, 1)
         Task {
             try? await Task.sleep(for: .seconds(seconds))
@@ -470,7 +502,7 @@ final class LiveRuntime: RuntimeDriver {
         // the window and the mount follows the window's orientation. Never
         // remap per sensor sample.
         if motionMount.update(policy: policy, interface: interfaceMotionAxes) { motion.restart() }
-        rotation.update(policy: policy, ready: normalRun && reachedBootCompleted && active)
+        rotation.update(policy: policy, ready: normalRun && reachedBootCompleted && active && !holdsGuestStill)
         updateMotionSensors()
     }
 
@@ -482,7 +514,8 @@ final class LiveRuntime: RuntimeDriver {
     private func updateMotionSensors() {
         motion.update(
             enabled: model?.motionSensorsOn == true,
-            foreground: normalRun && reachedBootCompleted && active && rotation.applied == rotationPolicy,
+            foreground: normalRun && reachedBootCompleted && active && !holdsGuestStill
+                && rotation.applied == rotationPolicy,
             axes: motionMount.axes
         )
     }
@@ -563,6 +596,158 @@ final class LiveRuntime: RuntimeDriver {
         #endif
     }
 
+    // MARK: Free space
+
+    /// A guest paused for space, or going down after it, is asked nothing: a
+    /// request to it would wait, or fail as it goes. Nor is one the screen
+    /// says the space is short for: the person decides what happens to it.
+    private var holdsGuestStill: Bool { pause.isPausedForSpace || shuttingDown || spaceAlertOpen }
+
+    /// The space is watched while Android runs a normal start it has booted
+    /// and the application holds it in the foreground: before it has booted
+    /// the start check stands for the space, and a guest the application
+    /// paused for the background or for space needs no watching.
+    private var wantsSpaceWatch: Bool {
+        runActive && normalRun && reachedBootCompleted && !holdsGuestStill && pause.phase == .foreground
+    }
+
+    private func updateSpaceWatch() {
+        guard wantsSpaceWatch else {
+            spaceWatchTask?.cancel()
+            spaceWatchTask = nil
+            return
+        }
+        guard spaceWatchTask == nil else { return }
+        spaceWatchGeneration += 1
+        let generation = spaceWatchGeneration
+        spaceWatchTask = Task { [weak self] in
+            await self?.watchSpace()
+            if let self, self.spaceWatchGeneration == generation { self.spaceWatchTask = nil }
+        }
+    }
+
+    /// Reads the space now and then, as often as the guest could write what
+    /// is left before the pause (`RunSpace.nextCheck`), and stops once it
+    /// has paused the guest.
+    private func watchSpace() async {
+        while !Task.isCancelled {
+            let free = await readFreeSpace()
+            guard !Task.isCancelled, wantsSpaceWatch else { return }
+            model?.host.freeStorageBytes = free
+            if RunSpace.verdict(freeBytes: free) == .pause {
+                pauseForSpace(freeBytes: free)
+                return
+            }
+            try? await Task.sleep(for: RunSpace.nextCheck(freeBytes: free))
+        }
+    }
+
+    private func pauseForSpace(freeBytes: UInt64) {
+        guard pause.beginSpacePause() else { return }
+        print("Andarium: the guest is pausing: \(Formats.size(bytes: freeBytes)) of the device's space is free")
+        spaceAlertOpen = true
+        motion.stop()
+        updateGuestRotation()
+        model?.guestPausingForSpace(freeBytes: freeBytes)
+        Task { [weak self] in await self?.settleSpacePause() }
+    }
+
+    /// Suspends the guest and says what came of it: the screen offers Resume
+    /// over a guest that holds still, and Shut down over one that did not.
+    private func settleSpacePause() async {
+        guard let outcome = await pause.settleSpacePause() else { return }
+        switch outcome {
+        case .held:
+            print("Andarium: the guest is paused")
+            model?.guestPausedForSpace()
+        case .running:
+            print("Andarium: the guest could not be paused")
+            model?.guestNotPausedForSpace()
+        }
+    }
+
+    /// The person asks to check the space and pause again, over a guest that
+    /// did not pause. Returns whether there is enough space for it to run on,
+    /// which takes the screen away; otherwise the guest is paused again.
+    func checkSpaceAfterPauseFailed() async -> Bool {
+        let free = await readFreeSpace()
+        model?.host.freeStorageBytes = free
+        guard !RunSpace.allowsResume(freeBytes: free) else {
+            spaceAlertOpen = false
+            updateGuestRotation()
+            updateSpaceWatch()
+            return true
+        }
+        guard pause.beginSpacePause() else { return false }
+        await settleSpacePause()
+        return false
+    }
+
+    /// One reading, off the main thread: the system works the figure out
+    /// from the volume.
+    private func readFreeSpace() async -> UInt64 {
+        let source = freeSpace
+        return await Task.detached(priority: .utility) { source() }.value
+    }
+
+    func resumeAfterSpacePause() async -> Bool {
+        let free = await readFreeSpace()
+        model?.host.freeStorageBytes = free
+        guard RunSpace.allowsResume(freeBytes: free) else { return false }
+        await wakeGuest()
+        guard !pause.isPausedForSpace else { return false }
+        print("Andarium: the guest resumes: \(Formats.size(bytes: free)) of the device's space is free")
+        spaceAlertOpen = false
+        updateGuestRotation()
+        updateSpaceWatch()
+        return true
+    }
+
+    func shutDownAfterSpacePause() async throws {
+        shuttingDown = true
+        await wakeGuest()
+        guard !pause.isPausedForSpace else {
+            shuttingDown = false
+            throw AdbFailure(message: "Android is still paused.")
+        }
+        do {
+            let result = try await operations.shell("reboot -p", limit: .seconds(30))
+            if let code = result.exitCode, code != 0 {
+                throw AdbFailure(message: "Android refused to power off (\(code)).")
+            }
+            // Android powers off after the command returns, which ends the
+            // run; the screen goes with it. Until it has, it is going down.
+            try await waitForRunToEnd(.seconds(120))
+        } catch {
+            // The shell's stream can end because the guest is already going
+            // down: the run ending says so.
+            if runActive { try? await waitForRunToEnd(.seconds(5)) }
+            guard runActive else { return }
+            shuttingDown = false
+            spaceAlertOpen = false
+            updateGuestRotation()
+            updateSpaceWatch()
+            throw error
+        }
+    }
+
+    private func waitForRunToEnd(_ limit: Duration) async throws {
+        let deadline = ContinuousClock.now + limit
+        while runActive {
+            guard ContinuousClock.now < deadline else {
+                throw AdbFailure(message: "Android did not power off.")
+            }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+    }
+
+    /// Wakes the guest the pause holds and returns once it is back.
+    private func wakeGuest() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            if !pause.resumeFromSpacePause(finished: { continuation.resume() }) { continuation.resume() }
+        }
+    }
+
     // MARK: Lifecycle
 
     private func observeLifecycle() {
@@ -577,8 +762,14 @@ final class LiveRuntime: RuntimeDriver {
                 $0.updateGuestRotation()
                 $0.pause.willResignActive()
             }),
-            (UIApplication.didEnterBackgroundNotification, { $0.pause.didEnterBackground() }),
-            (UIApplication.willEnterForegroundNotification, { $0.pause.willEnterForeground() }),
+            (UIApplication.didEnterBackgroundNotification, {
+                $0.pause.didEnterBackground()
+                $0.updateSpaceWatch()
+            }),
+            (UIApplication.willEnterForegroundNotification, {
+                $0.pause.willEnterForeground()
+                $0.updateSpaceWatch()
+            }),
             (UIApplication.willTerminateNotification, { $0.pause.willTerminate() }),
             (UIApplication.didBecomeActiveNotification, { $0.didBecomeActive() }),
         ]
@@ -601,7 +792,11 @@ final class LiveRuntime: RuntimeDriver {
         updateGuestRotation()
         guard let model else { return }
         model.applicationActive = true
-        model.host.freeStorageBytes = AppEntry.freeStorageBytes()
+        let free = freeSpace()
+        model.host.freeStorageBytes = free
+        // A guest paused for space waits for the person, who may have made
+        // room while Andarium was away: the screen says what is free now.
+        if model.spacePause != nil { model.spacePause?.freeBytes = free }
         model.microphone?.refresh()
     }
 
@@ -650,6 +845,28 @@ final class LivePauseEffects: PauseEffects {
             kernarium_runtime_loader_resume()
             Task { @MainActor in finished() }
         }
+    }
+
+    /// Writes the guest's storage back and suspends it with its RAM left in
+    /// the process: the device is short of the space an image of it takes.
+    func suspendGuestResident(reason: String, finished: @escaping @MainActor () -> Void) {
+        let assertion = PauseTaskAssertion(named: "guest-sync")
+        queue.async {
+            let unflushed = kernarium_runtime_loader_quiesce_resident()
+            Task { @MainActor in
+                print("Andarium: guest storage settled on \(reason), RAM kept (\(unflushed) unflushed)")
+                assertion.end()
+                finished()
+            }
+        }
+    }
+
+    /// Set by the runtime that owns this: where the guest's statistics come
+    /// from, on their own queue.
+    var statistics: (@MainActor () async -> StatsSample?)?
+
+    func guestProcessorTime() async -> UInt64? {
+        await statistics?()?.processorTimeNanoseconds
     }
 
     /// Writes the guest's storage back, and suspends the guest when asked,

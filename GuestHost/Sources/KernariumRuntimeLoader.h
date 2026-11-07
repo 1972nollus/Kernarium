@@ -44,6 +44,10 @@ void kernarium_runtime_loader_request_stop(void);
 int kernarium_runtime_loader_sync(void);
 /* Leaves the guest safely abandonable, and lets it run again. */
 int kernarium_runtime_loader_quiesce(void);
+/* quiesce that keeps the guest's RAM in the process, where a quiesce would
+ * hibernate it: for a host short of the space the image takes. Pair it with
+ * kernarium_runtime_loader_resume. */
+int kernarium_runtime_loader_quiesce_resident(void);
 void kernarium_runtime_loader_resume(void);
 /* Holds (nonzero) or releases (zero) the guest's GPU requests; see
  * kernarium_runtime_set_gpu_hold_function. Returns the runtime's answer, or -1

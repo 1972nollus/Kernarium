@@ -201,6 +201,10 @@ Android's logical density on the kernel command line use that launch geometry.
 The touchscreen's absolute range is fixed at 0 through 32767 on both axes, and
 Kernarium maps the guest's visible rectangle in the view onto it.
 
+A host short of the space a hibernation image takes quiesces with
+`quiesce_resident` (runtime API 25), which keeps the guest's RAM in the process
+([`docs/architecture.md`](../docs/architecture.md#hibernation)).
+
 A contact the host takes away, rather than ends (UIKit's cancelled touches, a
 display mode change, the view leaving its window), is cancelled with
 `cancel_touch` (runtime API 24), not released: the touchscreen turns the slot

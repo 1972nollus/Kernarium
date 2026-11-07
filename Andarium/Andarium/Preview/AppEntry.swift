@@ -71,7 +71,7 @@ struct AppEntry {
         if screen == "session-tip" {
             Tips.showAllTipsForTesting()
         } else if screen.hasPrefix("session") || screen.hasPrefix("settings") || screen.hasPrefix("recovery") || screen.hasPrefix("boot")
-            || Self.operationScreens.contains(screen) {
+            || screen.hasPrefix("space-pause") || Self.operationScreens.contains(screen) {
             Tips.hideAllTipsForTesting()
         }
         try? Tips.configure([.displayFrequency(.immediate)])
@@ -196,6 +196,16 @@ struct AppEntry {
             // shows as it is.
             if operation && (freeze || Self.resultScreens.contains(screen)) {
                 model.busy = Self.operationOverlay(for: screen, model: model)
+            }
+        case "space-pause", "space-pause-short", "space-pause-shutting-down", "space-pause-pausing",
+            "space-pause-running":
+            model.phase = .running(.normal)
+            model.spacePause = switch screen {
+            case "space-pause-short": SpacePause(freeBytes: 1_200 * Limits.bytesPerMiB, stillShort: true)
+            case "space-pause-shutting-down": SpacePause(freeBytes: 820 * Limits.bytesPerMiB, working: .shuttingDown)
+            case "space-pause-pausing": SpacePause(freeBytes: 820 * Limits.bytesPerMiB, stage: .pausing)
+            case "space-pause-running": SpacePause(freeBytes: 820 * Limits.bytesPerMiB, stage: .notPaused)
+            default: SpacePause(freeBytes: 820 * Limits.bytesPerMiB)
             }
         case "recovery", "recovery-open":
             model.session.sideKeysOpen = screen == "recovery-open"

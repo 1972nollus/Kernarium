@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 24U
+#define KERNARIUM_RUNTIME_API_VERSION 25U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -175,6 +175,10 @@ typedef int (*kernarium_runtime_sync_function)(void);
  * its filesystems back, enters full system suspend, then flushes the host's
  * own files. Pair it with resume. */
 typedef int (*kernarium_runtime_quiesce_function)(void);
+/* quiesce for a host that must not write what it is short of: the same
+ * order and result, with the guest's RAM kept in the process and no
+ * hibernation image written where a quiesce would have written one. */
+typedef int (*kernarium_runtime_quiesce_resident_function)(void);
 typedef void (*kernarium_runtime_resume_function)(void);
 typedef void (*kernarium_runtime_send_touch_function)(
     uint32_t slot,
@@ -424,6 +428,7 @@ typedef struct kernarium_runtime_api {
     kernarium_runtime_read_statistics_function read_statistics;
     kernarium_runtime_read_guest_memory_function read_guest_memory;
     kernarium_runtime_cancel_touch_function cancel_touch;
+    kernarium_runtime_quiesce_resident_function quiesce_resident;
 } kernarium_runtime_api;
 
 #if defined(__GNUC__)
@@ -433,7 +438,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v24(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v25(void);
 
 /* An automation-only extension, outside the versioned table: only a runtime
  * built for automation exports this symbol, and the application looks it up

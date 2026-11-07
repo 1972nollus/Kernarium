@@ -33,6 +33,11 @@ struct SessionView: View {
                 SessionSettingsSheet(large: false)
                     .environment(model)
             }
+            // The screen over the session says why the guest is paused, and a
+            // sheet would cover it.
+            .onChange(of: model.spacePause != nil) { _, paused in
+                if paused { settings = false }
+            }
     }
 
     private var runtime: LiveRuntime? { model.driver as? LiveRuntime }

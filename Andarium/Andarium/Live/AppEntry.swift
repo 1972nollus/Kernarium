@@ -47,7 +47,9 @@ struct AppEntry {
     /// The model for this launch. A copy of Andarium without its system, or
     /// with one it cannot read, still opens, and says so.
     @MainActor
-    func makeModel() -> AppModel {
+    /// `freeSpace` is the device's free space a run watches: the application's
+    /// own reading unless a test supplies another.
+    func makeModel(freeSpace: @escaping @Sendable () -> UInt64 = { AppEntry.freeStorageBytes() }) -> AppModel {
         let launch = overrides
         let bundle = Bundle.main
         let version = Self.appVersion(bundle)
@@ -123,7 +125,18 @@ struct AppEntry {
             print("Andarium: the previous process ended out of the foreground; the guest starts again from boot")
         }
         if carried != nil {
-            let runtime = LiveRuntime(model: model, storage: storage, marker: marker, keyStore: adbKeyStore)
+            #if APP_STORE
+            let watched = freeSpace
+            #else
+            // A harness launch of an isolated instance may state the free space.
+            let watched = launch.instance == nil
+                ? freeSpace : Self.harnessFreeSpace(in: locations.directory, fallback: freeSpace)
+            if launch.instance != nil {
+                Self.answerSpaceScreenFromHarness(model: model, directory: locations.directory)
+            }
+            #endif
+            let runtime = LiveRuntime(
+                model: model, storage: storage, marker: marker, keyStore: adbKeyStore, freeSpace: watched)
             model.driver = runtime
             model.refreshPlan()
             // Access the person took away while Andarium was closed takes the

@@ -15,7 +15,8 @@ tests ([`graphics.md`](../docs/graphics.md#ios-simulator-software-renderer)).
 Andarium/Shared/      screens and model both targets build
 Andarium/Preview/     mock screens, data and launch arguments (Simulator)
 Andarium/Live/        the runtime, storage and session of the device app
-AndariumCore/         Swift package: the model and the adb client, no UIKit
+AndariumCore/         Swift package: the model and the adb client, no UIKit; it
+                      re-exports GuestHostCore (../GuestHost/Core)
 AndariumTests/        hosted tests of the device app
 Config/               entitlements, Info.plist, privacy manifest, bridging header
 scripts/              system staging, the App Store bundle check, acknowledgements,
@@ -228,6 +229,26 @@ requires reopening Andarium.
   a guest application uses it and sends samples over private vsock port 5556;
   the system image must include the
   [motion sub-HAL](../android/lineage-24/README.md#motion-sensors).
+- **Free space.** Once Android has booted a normal start, the application
+  reads the device's free space (`RunSpace.nextCheck`: every 2 s near the
+  limit, every 30 s on a roomy device) and pauses the guest below 1 GiB
+  (`RunSpace.pauseBelowBytes`), before the data disk, which Android mounts so
+  that a failed write panics, can fail to grow. The pause is the runtime's
+  suspension with the storage written back first and the RAM kept in the
+  process: no image of it goes to the device that is short of space
+  ([lifecycle](../docs/architecture.md#guest-lifecycle)). The suspension is
+  confirmed by the guest's processor time standing still (`SuspensionCheck`);
+  a guest that does not hold still is woken and suspended once more, and one
+  that still runs is left running behind a screen that says so and offers
+  Shut down and Check again, never Resume. A paused guest is asked nothing and
+  no lifecycle edge wakes it, the background included: the application stays
+  resident rather than hibernate. Settings closes and an adb operation and ADB
+  over network end. A screen over the session offers Resume, which reads the
+  space again and wakes the guest at 1.5 GiB (a start's reserve,
+  `RunSpace.resumeAtBytes`) or more, and Shut down, which wakes the guest and
+  has Android power off. The thresholds and the pause itself are
+  [GuestHostCore](../GuestHost/README.md), shared with Kernarium; the reading
+  comes from `AppEntry.makeModel(freeSpace:)`, which a test replaces.
 - **Statistics.** The session's capsule and Settings' Stats rows show the
   runtime's readings ([`Kernarium/README.md`](../Kernarium/README.md#statistics)),
   read only while a view shows them, the application is active and the guest
@@ -281,7 +302,11 @@ additionally reads `KERNARIUM_ANDROID_ADB_AUTH`
 ([`Kernarium/README.md`](../Kernarium/README.md#automation-runs)).
 `ANDARIUM_GUEST_INSTANCE=<name>` runs an isolated guest under
 `Library/TestGuests/<name>`, for tests that need a fresh guest while the
-ordinary guest or its pending update must be preserved.
+ordinary guest or its pending update must be preserved. A file `free-space-mib`
+in that directory, holding a number, stands for the device's free space in the
+run's low-space watch while it exists, so a harness drives the pause without
+filling the disk; a file `space-answer` there (`resume`, `shutdown` or
+`check`) answers the screen over a paused guest once it offers that answer.
 
 On an Apple silicon Mac, `xcodebuild test -scheme Andarium -destination
 'platform=macOS,variant=Designed for iPad'

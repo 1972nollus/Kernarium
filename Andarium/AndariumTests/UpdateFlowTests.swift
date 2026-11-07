@@ -72,6 +72,29 @@ final class StubDriver: RuntimeDriver {
         try await install(update)
     }
 
+    /// What the resume of a guest paused for space answers, and what Shut
+    /// down does; a test sets them as the runtime would behave.
+    var resumeAnswers = true
+    private(set) var spaceResumes = 0
+    func resumeAfterSpacePause() async -> Bool {
+        spaceResumes += 1
+        return resumeAnswers
+    }
+    /// What checking again over a guest that did not pause answers: whether
+    /// the space is enough now.
+    var checkAnswers = false
+    private(set) var spaceChecks = 0
+    func checkSpaceAfterPauseFailed() async -> Bool {
+        spaceChecks += 1
+        return checkAnswers
+    }
+    var shutDownError: Error?
+    private(set) var spaceShutDowns = 0
+    func shutDownAfterSpacePause() async throws {
+        spaceShutDowns += 1
+        if let shutDownError { throw shutDownError }
+    }
+
     /// ADB over the network as the stub plays it.
     var debugging: Bool? = true
     var address: String? = "192.0.2.23"
