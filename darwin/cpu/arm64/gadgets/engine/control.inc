@@ -1,26 +1,26 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 gadget svc
 	ldr x8, [_stream]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, #UML_GADGET_EVENT_SYSCALL
 	b uml_arm64_gadget_leave
 
 gadget interrupt
 	ldr x8, [_stream]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, #UML_GADGET_EVENT_INTERRUPT
 	b uml_arm64_gadget_leave
 
 gadget illegal
 	ldr x8, [_stream]
-	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str _stream, [_vcpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, #UML_GADGET_EVENT_ILLEGAL
 	b uml_arm64_gadget_leave
 
 gadget breakpoint
 	ldr x8, [_stream]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, #UML_GADGET_EVENT_BREAKPOINT
 	b uml_arm64_gadget_leave
 
@@ -38,7 +38,7 @@ gadget breakpoint
 	 * when callers enter with counts above 8,191. */
 	tbnz x29, #63, 98f
 	ldr x9, [\link, #16]
-	str x9, [_cpu, #UML_GADGET_CPU_PC]
+	str x9, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 98:
@@ -49,7 +49,7 @@ gadget breakpoint
  * of that BlockLink, so the guest PC is the BlockLink's own. */
 gadget link_exit
 	ldr x9, [_stream, #16]
-	str x9, [_cpu, #UML_GADGET_CPU_PC]
+	str x9, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
@@ -61,10 +61,10 @@ gadget link_exit
  * materialization helper.
  */
 gadget fp_link_entry
-	ldrb w8, [_cpu, #UML_GADGET_CPU_FP_LOADED]
+	ldrb w8, [_vcpu, #UML_GADGET_CPU_FP_LOADED]
 	cbz w8, 97f
 	mov w8, #1
-	strb w8, [_cpu, #UML_GADGET_CPU_FP_DIRTY]
+	strb w8, [_vcpu, #UML_GADGET_CPU_FP_DIRTY]
 98:
 	next_gadget
 97:
@@ -76,7 +76,7 @@ gadget fp_link_entry
 
 gadget branch
 	ldr x8, [_stream]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
@@ -87,8 +87,8 @@ gadget branch_linked
 gadget branch_link
 	ldr x8, [_stream], #8
 	ldr x9, [_stream]
-	str x9, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str x9, [_vcpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
@@ -97,13 +97,13 @@ gadget branch_link
  * private engine state that a cached return consults only after its site
  * cells miss, so a wrong or stale record costs nothing but the old exit. */
 .macro push_return_record pc, link
-	ldrb w12, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
-	add x13, _cpu, #UML_GADGET_CPU_RETURN_STACK
+	ldrb w12, [_vcpu, #UML_GADGET_CPU_RETURN_TOP]
+	add x13, _vcpu, #UML_GADGET_CPU_RETURN_STACK
 	add x13, x13, x12, lsl #4
 	stp \pc, \link, [x13]
 	add w12, w12, #1
 	and w12, w12, #UML_GADGET_CPU_RETURN_MASK
-	strb w12, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
+	strb w12, [_vcpu, #UML_GADGET_CPU_RETURN_TOP]
 .endm
 
 /* The call's second operand is the return block's link rather than the
@@ -112,30 +112,30 @@ gadget branch_link_linked
 	ldr x8, [_stream], #8
 	ldr x11, [_stream]
 	ldr x9, [x11, #16]
-	str x9, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
+	str x9, [_vcpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
 	push_return_record x9, x11
 	follow_block_link x8
 
 gadget branch_register
 	ldr x8, [_stream]
-	ldr x10, [_cpu, x8]
-	str x10, [_cpu, #UML_GADGET_CPU_PC]
+	ldr x10, [_vcpu, x8]
+	str x10, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
 gadget branch_link_register
 	ldr x8, [_stream], #8
 	ldr x11, [_stream]
-	ldr x10, [_cpu, x8]
-	str x11, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
-	str x10, [_cpu, #UML_GADGET_CPU_PC]
+	ldr x10, [_vcpu, x8]
+	str x11, [_vcpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
+	str x10, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
 gadget return
 	ldr x8, [_stream]
-	ldr x10, [_cpu, x8]
-	str x10, [_cpu, #UML_GADGET_CPU_PC]
+	ldr x10, [_vcpu, x8]
+	str x10, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
@@ -173,15 +173,15 @@ gadget return
 	.if \ras
 	/* The newest return record is popped only when it names the live link
 	 * register; anything else leaves the ring alone and exits as before. */
-	ldrb w13, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
+	ldrb w13, [_vcpu, #UML_GADGET_CPU_RETURN_TOP]
 	sub w13, w13, #1
 	and w13, w13, #UML_GADGET_CPU_RETURN_MASK
-	add x14, _cpu, #UML_GADGET_CPU_RETURN_STACK
+	add x14, _vcpu, #UML_GADGET_CPU_RETURN_STACK
 	add x14, x14, x13, lsl #4
 	ldp x11, x12, [x14]
 	cmp x10, x11
 	b.ne 97f
-	strb w13, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
+	strb w13, [_vcpu, #UML_GADGET_CPU_RETURN_TOP]
 	/* Train the site's next cell as the cold helper would, so the ordinary
 	 * cell path hits this target from now on and the ring is consulted
 	 * only when the site is more polymorphic than its cells. */
@@ -201,7 +201,7 @@ gadget return
 	 * settles on few targets goes back to its cells. */
 	.pushsection GADGET_SECTION_COLD
 Ltarget_tier\@:
-	ldr x13, [_cpu, #UML_GADGET_CPU_TARGET_TIER]
+	ldr x13, [_vcpu, #UML_GADGET_CPU_TARGET_TIER]
 	cbz x13, Ltarget_tier_miss\@
 	eor x14, x10, x10, lsr #10
 	ubfx x14, x14, #2, #UML_GADGET_TARGET_TIER_BITS
@@ -212,8 +212,8 @@ Ltarget_tier\@:
 	train_indirect_cell
 	follow_block_link x12
 Ltarget_tier_miss\@:
-	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x10, [_cpu, #UML_GADGET_CPU_PC]
+	str x9, [_vcpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x10, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 	.popsection
@@ -221,7 +221,7 @@ Ltarget_tier_miss\@:
 
 gadget branch_register_cached
 	ldp x8, x9, [_stream]
-	ldr x10, [_cpu, x8]
+	ldr x10, [_vcpu, x8]
 	follow_indirect_link
 
 /* As branch_link_linked, the return address comes out of the return block's
@@ -229,15 +229,15 @@ gadget branch_register_cached
 gadget branch_link_register_cached
 	ldp x8, x9, [_stream], #16
 	ldr x14, [_stream]
-	ldr x10, [_cpu, x8]
+	ldr x10, [_vcpu, x8]
 	ldr x11, [x14, #16]
-	str x11, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
+	str x11, [_vcpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
 	push_return_record x11, x14
 	follow_indirect_link
 
 gadget return_cached
 	ldp x8, x9, [_stream]
-	ldr x10, [_cpu, x8]
+	ldr x10, [_vcpu, x8]
 	follow_indirect_link 1
 
 /* The exit of a fused or conditional branch: x19 and x20 hold the two
@@ -250,7 +250,7 @@ gadget return_cached
 	follow_block_link x8
 	.else
 	csel \scratch, x19, x20, \condition
-	str \scratch, [_cpu, #UML_GADGET_CPU_PC]
+	str \scratch, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 	.endif
@@ -330,9 +330,9 @@ gadget compare_register_branch_\width\()_\name
 	ldr x19, [_stream], #8
 	ldr x20, [_stream]
 	ubfx x10, x8, #16, #16
-	ldr x15, [_cpu, x10]
+	ldr x15, [_vcpu, x10]
 	ubfx x11, x8, #32, #16
-	ldr x16, [_cpu, x11]
+	ldr x16, [_vcpu, x11]
 	.if \bits64
 	subs xzr, x15, x16
 	.else
@@ -349,9 +349,9 @@ gadget compare_register_branch_\width\()_\name\()_inline
 	ldr x19, [_stream], #8
 	lsr x20, x8, #48
 	ubfx x10, x8, #16, #16
-	ldr x15, [_cpu, x10]
+	ldr x15, [_vcpu, x10]
 	ubfx x11, x8, #32, #16
-	ldr x16, [_cpu, x11]
+	ldr x16, [_vcpu, x11]
 	.if \bits64
 	subs xzr, x15, x16
 	.else
@@ -418,7 +418,7 @@ gadget compare_immediate_branch_\width\()_\name
 	ldr x19, [_stream], #8
 	ldr x20, [_stream]
 	ubfx w10, w8, #8, #5
-	ldr x15, [_cpu, x10, lsl #3]
+	ldr x15, [_vcpu, x10, lsl #3]
 	lsr x11, x8, #16
 	.if \bits64
 	subs xzr, x15, x11
@@ -436,7 +436,7 @@ gadget compare_immediate_branch_\width\()_\name\()_inline
 	ldr x19, [_stream], #8
 	lsr x20, x8, #40
 	ubfx w10, w8, #8, #5
-	ldr x15, [_cpu, x10, lsl #3]
+	ldr x15, [_vcpu, x10, lsl #3]
 	ubfx x11, x8, #16, #24
 	.if \bits64
 	subs xzr, x15, x11
@@ -522,7 +522,7 @@ conditional_branch_inline le, le
 /* A64 treats both condition encodings 14 and 15 as always true. */
 gadget branch_always
 	ldr x8, [_stream]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
@@ -537,14 +537,14 @@ gadget branch_always_linked
 gadget compare_branch_\width_name\()_\polarity
 	ldr x8, [_stream], #8
 	ldp x19, x20, [_stream]
-	ldr \width\()9, [_cpu, x8]
+	ldr \width\()9, [_vcpu, x8]
 	cmp \width\()9, #0
 	select_branch_target 0, \condition, x10
 
 gadget compare_branch_\width_name\()_\polarity\()_linked
 	ldr x8, [_stream], #8
 	ldp x19, x20, [_stream]
-	ldr \width\()9, [_cpu, x8]
+	ldr \width\()9, [_vcpu, x8]
 	cmp \width\()9, #0
 	select_branch_target 1, \condition
 
@@ -554,7 +554,7 @@ gadget compare_branch_\width_name\()_\polarity\()_inline
 	ldr x19, [_stream], #8
 	lsr x20, x8, #16
 	and x8, x8, #0xffff
-	ldr \width\()9, [_cpu, x8]
+	ldr \width\()9, [_vcpu, x8]
 	cmp \width\()9, #0
 	inline_branch_tail \condition
 .endm
@@ -570,14 +570,14 @@ compare_branch x, x, nz, ne
 gadget test_branch_\polarity
 	ldp x8, x9, [_stream], #16
 	ldp x19, x20, [_stream]
-	ldr x10, [_cpu, x8]
+	ldr x10, [_vcpu, x8]
 	tst x10, x9
 	select_branch_target 0, \condition, x11
 
 gadget test_branch_\polarity\()_linked
 	ldp x8, x9, [_stream], #16
 	ldp x19, x20, [_stream]
-	ldr x10, [_cpu, x8]
+	ldr x10, [_vcpu, x8]
 	tst x10, x9
 	select_branch_target 1, \condition
 
@@ -588,7 +588,7 @@ gadget test_branch_\polarity\()_inline
 	ldr x19, [_stream], #8
 	lsr x20, x8, #16
 	and x8, x8, #0xffff
-	ldr x10, [_cpu, x8]
+	ldr x10, [_vcpu, x8]
 	tst x10, x9
 	inline_branch_tail \condition
 .endm

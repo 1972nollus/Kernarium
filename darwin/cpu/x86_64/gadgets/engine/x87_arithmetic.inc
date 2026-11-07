@@ -65,7 +65,7 @@ gadget x87_compare_\name
 	x87_load_stack w24, x9, w10
 	add x11, sp, #16
 	x87_store_value x11, x9, w10
-	mov x0, _cpu
+	mov x0, _vcpu
 	mov x1, sp
 	add x2, sp, #16
 	/* Bit 8 of the register word marks FUCOM and FUCOMI; bit 1 of the
@@ -103,7 +103,7 @@ gadget x87_conditional_move_\condition
 	x87_load_stack w24, x11, w12, empty=Lx86_x87_conditional_fault\@
 	mov w13, #0
 	x87_load_stack w13, x9, w10, empty=Lx86_x87_conditional_destination_fault\@
-	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	.if \condition == 0
 	tbz x9, #0, Lx86_x87_conditional_done\@
 	.elseif \condition == 1
@@ -149,7 +149,7 @@ gadget x87_test_zero
 	x87_load_stack w13, x9, w10
 	x87_store_value sp, x9, w10
 	stp xzr, xzr, [sp, #16]
-	mov x0, _cpu
+	mov x0, _vcpu
 	mov x1, sp
 	add x2, sp, #16
 	mov w3, #0
@@ -161,7 +161,7 @@ gadget x87_test_zero
 
 .macro x87_memory_convert size, helper, signed16, has_cpu, output
 	.if \has_cpu
-	mov x0, _cpu
+	mov x0, _vcpu
 		.if \size == 4
 	mov w1, w9
 		.else
@@ -226,7 +226,7 @@ gadget x87_memory_\type\()_compare_\pop
 	mov w13, #0
 	x87_load_stack w13, x9, w10
 	x87_store_value x19, x9, w10
-	mov x0, _cpu
+	mov x0, _vcpu
 	mov x1, sp
 	add x2, sp, #16
 	mov w3, #0

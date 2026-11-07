@@ -317,11 +317,11 @@ gadget vector_integer_\opcode\()_\width\()_rr
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
 	.if \width == 64
-	ldr d0, [_cpu, x10]
-	ldr d1, [_cpu, x11]
+	ldr d0, [_vcpu, x10]
+	ldr d1, [_vcpu, x11]
 	.else
-	add x10, _cpu, x10
-	add x11, _cpu, x11
+	add x10, _vcpu, x10
+	add x11, _vcpu, x11
 	/* Bit 62 says the gadget before this one left the left operand in v4,
 	 * and v5 with it at 256 bits: take it from there rather than reading
 	 * back the state slot it has just written, whose store the load has to

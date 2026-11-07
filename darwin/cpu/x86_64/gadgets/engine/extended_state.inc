@@ -48,25 +48,25 @@ Lx86_extended_load_done\@:
 .endm
 
 .macro extended_state_requested
-	ldr w24, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	ldr w9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 16)]
+	ldr w24, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	ldr w9, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 16)]
 	bfi x24, x9, #32, #32
 	and x24, x24, #7
 .endm
 
 .macro extended_state_save_x87
 	tbz x24, #0, Lx86_extended_save_x87_done\@
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_CONTROL]
 	strh w9, [x19]
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	bic w9, w9, #0x3800
-	ldrb w10, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	ldrb w10, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	and w10, w10, #7
 	orr w9, w9, w10, lsl #11
 	strh w9, [x19, #2]
 
 	/* Convert the full two-bit tag word to FXSAVE's physical bitmap. */
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_TAG]
 	mov w10, #0
 	mov w11, #0
 Lx86_extended_save_tag_loop\@:
@@ -85,9 +85,9 @@ Lx86_extended_save_tag_loop\@:
 	str xzr, [x19, #16]
 
 	/* FXSAVE stores ST(i) in logical stack order, not physical order. */
-	add x10, _cpu, #UML_X86_64_CPU_X87
+	add x10, _vcpu, #UML_X86_64_CPU_X87
 	add x11, x19, #32
-	ldrb w13, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	ldrb w13, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	mov w12, #0
 Lx86_extended_save_x87_loop\@:
 	add w14, w13, w12
@@ -109,9 +109,9 @@ Lx86_extended_save_x87_done\@:
 .macro extended_state_save_mxcsr
 	tst x24, #6
 	b.eq Lx86_extended_save_mxcsr_done\@
-	ldr w9, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldr w9, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	fold_host_flags w9, 10, 11
-	str w9, [_cpu, #UML_X86_64_CPU_MXCSR]
+	str w9, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	str w9, [x19, #24]
 	mov w9, #0xffff
 	str w9, [x19, #28]
@@ -120,7 +120,7 @@ Lx86_extended_save_mxcsr_done\@:
 
 .macro extended_state_save_sse
 	tbz x24, #1, Lx86_extended_save_sse_done\@
-	add x10, _cpu, #UML_X86_64_CPU_VECTORS
+	add x10, _vcpu, #UML_X86_64_CPU_VECTORS
 	add x11, x19, #160
 	mov w12, #16
 Lx86_extended_save_sse_loop\@:
@@ -133,7 +133,7 @@ Lx86_extended_save_sse_done\@:
 
 .macro extended_state_save_avx
 	tbz x24, #2, Lx86_extended_save_avx_done\@
-	add x10, _cpu, #(UML_X86_64_CPU_VECTORS + 16)
+	add x10, _vcpu, #(UML_X86_64_CPU_VECTORS + 16)
 	add x11, x19, #Lx86_extended_ymm_high
 	mov w12, #16
 Lx86_extended_save_avx_loop\@:
@@ -166,7 +166,7 @@ Lx86_extended_write_done\@:
 Lx86_extended_published\@:
 	add sp, sp, #Lx86_extended_size
 	instruction_rip x8, 1
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	str x8, [_vcpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
@@ -187,7 +187,7 @@ Lx86_extended_write_done\@:
 	publish_pending_code x25, \size
 	add sp, sp, #Lx86_extended_size
 	instruction_rip x8, 1
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	str x8, [_vcpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
@@ -198,18 +198,18 @@ Lx86_extended_write_done\@:
 	tbz x24, #0, Lx86_extended_restore_x87_done\@
 	tbnz x25, #0, Lx86_extended_restore_x87_present\@
 	mov w9, #0x037f
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_CONTROL]
+	strh wzr, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	mov w9, #0xffff
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
-	add x10, _cpu, #UML_X86_64_CPU_MMX
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_TAG]
+	strb wzr, [_vcpu, #UML_X86_64_CPU_X87_TOP]
+	add x10, _vcpu, #UML_X86_64_CPU_MMX
 	mov w11, #8
 Lx86_extended_clear_mmx_loop\@:
 	str xzr, [x10], #8
 	subs w11, w11, #1
 	b.ne Lx86_extended_clear_mmx_loop\@
-	add x10, _cpu, #UML_X86_64_CPU_X87
+	add x10, _vcpu, #UML_X86_64_CPU_X87
 	mov w11, #8
 Lx86_extended_clear_x87_loop\@:
 	stp xzr, xzr, [x10], #16
@@ -219,15 +219,15 @@ Lx86_extended_clear_x87_loop\@:
 
 Lx86_extended_restore_x87_present\@:
 	ldrh w9, [x19]
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_CONTROL]
 	ldrh w9, [x19, #2]
 	ubfx w13, w9, #11, #3
-	strb w13, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	strb w13, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	bic w9, w9, #0x3800
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	ldrb w26, [x19, #4]
 	mov w27, #0xffff
-	add x10, _cpu, #UML_X86_64_CPU_X87
+	add x10, _vcpu, #UML_X86_64_CPU_X87
 	add x11, x19, #32
 	mov w12, #0
 Lx86_extended_restore_x87_loop\@:
@@ -238,7 +238,7 @@ Lx86_extended_restore_x87_loop\@:
 	ldrh w17, [x11, #8]
 	str x16, [x15]
 	strh w17, [x15, #8]
-	add x15, _cpu, #UML_X86_64_CPU_MMX
+	add x15, _vcpu, #UML_X86_64_CPU_MMX
 	str x16, [x15, x14, lsl #3]
 	lsrv w9, w26, w14
 	tbz w9, #0, Lx86_extended_restore_x87_next\@
@@ -268,7 +268,7 @@ Lx86_extended_restore_x87_next\@:
 	add w12, w12, #1
 	cmp w12, #8
 	b.lo Lx86_extended_restore_x87_loop\@
-	strh w27, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	strh w27, [_vcpu, #UML_X86_64_CPU_X87_TAG]
 Lx86_extended_restore_x87_done\@:
 .endm
 
@@ -289,7 +289,7 @@ Lx86_extended_check_mxcsr_done\@:
 	tst x24, #6
 	b.eq Lx86_extended_restore_mxcsr_done\@
 	ldr w9, [x19, #24]
-	str w9, [_cpu, #UML_X86_64_CPU_MXCSR]
+	str w9, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	msr fpsr, xzr
 	refresh_simd_exact w9, 10, 11
 	publish_guest_rounding 9, 10, 11
@@ -299,7 +299,7 @@ Lx86_extended_restore_mxcsr_done\@:
 .macro extended_state_restore_sse
 	tbz x24, #1, Lx86_extended_restore_sse_done\@
 	tbnz x25, #1, Lx86_extended_restore_sse_present\@
-	add x10, _cpu, #UML_X86_64_CPU_VECTORS
+	add x10, _vcpu, #UML_X86_64_CPU_VECTORS
 	movi v0.16b, #0
 	mov w11, #16
 Lx86_extended_clear_sse_loop\@:
@@ -308,7 +308,7 @@ Lx86_extended_clear_sse_loop\@:
 	b.ne Lx86_extended_clear_sse_loop\@
 	b Lx86_extended_restore_sse_done\@
 Lx86_extended_restore_sse_present\@:
-	add x10, _cpu, #UML_X86_64_CPU_VECTORS
+	add x10, _vcpu, #UML_X86_64_CPU_VECTORS
 	add x11, x19, #160
 	mov w12, #16
 Lx86_extended_restore_sse_loop\@:
@@ -322,7 +322,7 @@ Lx86_extended_restore_sse_done\@:
 .macro extended_state_restore_avx
 	tbz x24, #2, Lx86_extended_restore_avx_done\@
 	tbnz x25, #2, Lx86_extended_restore_avx_present\@
-	add x10, _cpu, #(UML_X86_64_CPU_VECTORS + 16)
+	add x10, _vcpu, #(UML_X86_64_CPU_VECTORS + 16)
 	movi v0.16b, #0
 	mov w11, #16
 Lx86_extended_clear_avx_loop\@:
@@ -331,7 +331,7 @@ Lx86_extended_clear_avx_loop\@:
 	b.ne Lx86_extended_clear_avx_loop\@
 	b Lx86_extended_restore_avx_done\@
 Lx86_extended_restore_avx_present\@:
-	add x10, _cpu, #(UML_X86_64_CPU_VECTORS + 16)
+	add x10, _vcpu, #(UML_X86_64_CPU_VECTORS + 16)
 	add x11, x19, #Lx86_extended_ymm_high
 	mov w12, #16
 Lx86_extended_restore_avx_loop\@:

@@ -53,7 +53,7 @@
 /* A VEX write: a 128-bit result zeroes the register's upper half. */
 .macro vector_dot_write width, descriptor
 	and x9, x\descriptor, #0xffff
-	add x9, _cpu, x9
+	add x9, _vcpu, x9
 	str q6, [x9]
 	.if \width == 256
 	str q7, [x9, #16]
@@ -69,9 +69,9 @@ gadget vector_dot_\opcode\()_\width\()_rr
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	add x9, _cpu, x9
-	add x10, _cpu, x10
-	add x11, _cpu, x11
+	add x9, _vcpu, x9
+	add x10, _vcpu, x10
+	add x11, _vcpu, x11
 	ldr q0, [x9]
 	ldr q1, [x10]
 	ldr q2, [x11]
@@ -93,8 +93,8 @@ gadget vector_dot_\opcode\()_\width\()_rm
 	vector_memory_source (\width / 8), Lx86_vector_dot_cross_fault\@, 2, 5
 	and x9, x23, #0xffff
 	and x10, x26, #0xffff
-	add x9, _cpu, x9
-	add x10, _cpu, x10
+	add x9, _vcpu, x9
+	add x10, _vcpu, x10
 	ldr q0, [x9]
 	ldr q1, [x10]
 	.if \width == 256

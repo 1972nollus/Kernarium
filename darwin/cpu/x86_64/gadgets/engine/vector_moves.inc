@@ -6,7 +6,7 @@ gadget vector_move_\width\()_mr
 	effective_address
 	mov x25, x7
 	and x8, x23, #0xffff
-	\load \host_register\()24, [_cpu, x8]
+	\load \host_register\()24, [_vcpu, x8]
 	page_cross_check (\width / 8), Lx86_vector_scalar_store_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	.if \width == 32
@@ -37,7 +37,7 @@ Lx86_vector_move_64_128_cross:
 	fmov d0, x0
 Lx86_vector_move_64_128_write:
 	and x8, x23, #0xffff
-	add x8, _cpu, x8
+	add x8, _vcpu, x8
 	str q0, [x8]
 	retire_and_next
 
@@ -53,7 +53,7 @@ Lx86_vector_move_64_128_vex_cross:
 	fmov d0, x0
 Lx86_vector_move_64_128_vex_write:
 	and x8, x23, #0xffff
-	add x8, _cpu, x8
+	add x8, _vcpu, x8
 	str q0, [x8]
 	movi v1.16b, #0
 	str q1, [x8, #16]
@@ -63,8 +63,8 @@ gadget vector_move_64_mmx_rr
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	ldr x11, [_cpu, x10]
-	str x11, [_cpu, x9]
+	ldr x11, [_vcpu, x10]
+	str x11, [_vcpu, x9]
 	synchronize_mmx x9, x11, x12, x13, w14
 	retire_and_next
 
@@ -73,7 +73,7 @@ gadget vector_move_64_mmx_rm
 	mov x25, x7
 	read_operand 8, ldr, x, 24
 	and x9, x23, #0xffff
-	str x24, [_cpu, x9]
+	str x24, [_vcpu, x9]
 	synchronize_mmx x9, x24, x12, x13, w14
 	retire_and_next
 
@@ -82,8 +82,8 @@ gadget vector_gpr_to_xmm_\width\()\vex
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	\load \host_register\()11, [_cpu, x10]
-	add x9, _cpu, x9
+	\load \host_register\()11, [_vcpu, x10]
+	add x9, _vcpu, x9
 	movi v0.16b, #0
 	str q0, [x9]
 	.if \width == 32
@@ -109,11 +109,11 @@ gadget vector_gpr_to_mmx_\width
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	\load \host_register\()11, [_cpu, x10]
+	\load \host_register\()11, [_vcpu, x10]
 	.if \width == 32
 	mov w11, w11
 	.endif
-	str x11, [_cpu, x9]
+	str x11, [_vcpu, x9]
 	synchronize_mmx x9, x11, x12, x13, w14
 	retire_and_next
 .endm
@@ -128,7 +128,7 @@ gadget vector_memory_32_to_mmx
 	mov x25, x7
 	read_operand 4, ldr, w, 24, w
 	and x9, x23, #0xffff
-	str x24, [_cpu, x9]
+	str x24, [_vcpu, x9]
 	synchronize_mmx x9, x24, x12, x13, w14
 	retire_and_next
 
@@ -137,18 +137,18 @@ gadget vector_scalar_move_\width\()_rr\vex
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	\load \host_register\()11, [_cpu, x10]
+	\load \host_register\()11, [_vcpu, x10]
 	.ifc \vex,_vex
 	ubfx x12, x8, #32, #16
-	add x12, _cpu, x12
+	add x12, _vcpu, x12
 	ldr q0, [x12]
-	add x9, _cpu, x9
+	add x9, _vcpu, x9
 	str q0, [x9]
 	\store \host_register\()11, [x9]
 	movi v1.16b, #0
 	str q1, [x9, #16]
 	.else
-	\store \host_register\()11, [_cpu, x9]
+	\store \host_register\()11, [_vcpu, x9]
 	.endif
 	retire_and_next
 .endm
@@ -166,7 +166,7 @@ gadget vector_scalar_move_\width\()_rm\vex
 	mov x25, x7
 	read_operand (\width / 8), \load, \host_register, 24
 	and x8, x23, #0xffff
-	add x8, _cpu, x8
+	add x8, _vcpu, x8
 	movi v0.16b, #0
 	str q0, [x8]
 	.if \width == 32

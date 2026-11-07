@@ -117,8 +117,8 @@ def parallel_gadget(mode: int, kind: int) -> str:
     t = lane_arrangement(name)
     sets_flags = prefix in ("S", "U")
     lines = ["ldr x8, [_stream], #8", "ubfx x9, x8, #8, #8",
-             "ldr w9, [_cpu, x9]", "ubfx x10, x8, #16, #8",
-             "ldr w10, [_cpu, x10]"]
+             "ldr w9, [_vcpu, x9]", "ubfx x10, x8, #16, #8",
+             "ldr w10, [_vcpu, x10]"]
     if name in ("ASX", "SAX"):
         lines.append("ror w10, w10, #16")
     lines += ["fmov s0, w9", "fmov s1, w10"]
@@ -139,18 +139,18 @@ def parallel_gadget(mode: int, kind: int) -> str:
     lines.append(f"fmov w11, s{result}")
     if sets_flags:
         lines += [f"fmov w12, s{flags}",
-                  "str w12, [_cpu, #UML_ARM64_CPU_A32_GE_MASK]"]
-    lines += ["and x8, x8, #0xff", "str w11, [_cpu, x8]", "next_gadget"]
+                  "str w12, [_vcpu, #UML_ARM64_CPU_A32_GE_MASK]"]
+    lines += ["and x8, x8, #0xff", "str w11, [_vcpu, x8]", "next_gadget"]
     return "\n".join(lines)
 
 
 def sel_gadget() -> str:
     return "\n".join([
-        "ldr x8, [_stream], #8", "ubfx x9, x8, #8, #8", "ldr w9, [_cpu, x9]",
-        "ubfx x10, x8, #16, #8", "ldr w10, [_cpu, x10]",
-        "ldr w12, [_cpu, #UML_ARM64_CPU_A32_GE_MASK]",
+        "ldr x8, [_stream], #8", "ubfx x9, x8, #8, #8", "ldr w9, [_vcpu, x9]",
+        "ubfx x10, x8, #16, #8", "ldr w10, [_vcpu, x10]",
+        "ldr w12, [_vcpu, #UML_ARM64_CPU_A32_GE_MASK]",
         "and w11, w9, w12", "bic w13, w10, w12", "orr w11, w11, w13",
-        "and x8, x8, #0xff", "str w11, [_cpu, x8]", "next_gadget"])
+        "and x8, x8, #0xff", "str w11, [_vcpu, x8]", "next_gadget"])
 
 
 def emit(asm) -> None:

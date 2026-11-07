@@ -176,10 +176,10 @@ def stored(width: str) -> str:
 
 def vfp_binary(asm, width: str, name: str, operation: str) -> None:
     r = width
-    body = [f"ldr {r}0, [_cpu, x9]",
-            f"ldr {r}1, [_cpu, x10]",
+    body = [f"ldr {r}0, [_vcpu, x9]",
+            f"ldr {r}1, [_vcpu, x10]",
             f"{operation} {r}0, {r}0, {r}1",
-            f"str {stored(r)}0, [_cpu, x8]",
+            f"str {stored(r)}0, [_vcpu, x8]",
             "next_gadget"]
     head = ["ldr x8, [_stream], #8", *unpack("n", "m", "d")]
     if width == "s" and name in ("vadd", "vsub", "vmul"):
@@ -191,7 +191,7 @@ def vfp_binary(asm, width: str, name: str, operation: str) -> None:
         # with Advanced SIMD floating point then switches only for the
         # operands outside it.
         def good(offset: str, value: str, shifted: str, label: str) -> list:
-            return [f"ldr {value}, [_cpu, {offset}]",
+            return [f"ldr {value}, [_vcpu, {offset}]",
                     f"lsl {shifted}, {value}, #1",
                     f"cbz {shifted}, {label}f",
                     f"eor {shifted}, {shifted}, {shifted}, lsl #1",
@@ -199,10 +199,10 @@ def vfp_binary(asm, width: str, name: str, operation: str) -> None:
                     f"{label}:"]
         asm.gadget(f"vfp_{name}_{width}", "\n".join(
             head + [
-                "ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]", "cbz w6, 21f",
-                "ldrb w6, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]",
+                "ldrb w6, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]", "cbz w6, 21f",
+                "ldrb w6, [_vcpu, #UML_ARM64_CPU_A32_FP_STANDARD]",
                 "cbz w6, 22f",
-                "ldr w11, [_cpu, #UML_GADGET_CPU_FPCR]",
+                "ldr w11, [_vcpu, #UML_GADGET_CPU_FPCR]",
                 "tst w11, #0xc00000", "b.ne 21f"]
             + good("x9", "w11", "w12", "23") + good("x10", "w13", "w14", "24")
             + ["22:"] + body
@@ -217,11 +217,11 @@ def vfp_mac(asm, width: str, name: str, body: list[str]) -> None:
         "ldr x8, [_stream], #8",
         *unpack("n", "m", "d"),
         "a32_fp_guest",
-        f"ldr {r}0, [_cpu, x9]",
-        f"ldr {r}1, [_cpu, x10]",
-        f"ldr {r}3, [_cpu, x8]",
+        f"ldr {r}0, [_vcpu, x9]",
+        f"ldr {r}1, [_vcpu, x10]",
+        f"ldr {r}3, [_vcpu, x8]",
         *[line.replace("%", r) for line in body],
-        f"str {stored(r)}3, [_cpu, x8]",
+        f"str {stored(r)}3, [_vcpu, x8]",
         "next_gadget"]))
 
 
@@ -232,10 +232,10 @@ def vfp_unary(asm, width: str, name: str, operation: str | None,
     # unary operands: d[0:16] m[16:32]; unpack names the second lane "n".
     if environment:
         lines.append("a32_fp_guest")
-    lines.append(f"ldr {r}0, [_cpu, x9]")
+    lines.append(f"ldr {r}0, [_vcpu, x9]")
     if operation is not None:
         lines.append(f"{operation} {r}0, {r}0")
-    lines += [f"str {stored(r)}0, [_cpu, x8]", "next_gadget"]
+    lines += [f"str {stored(r)}0, [_vcpu, x8]", "next_gadget"]
     asm.gadget(f"vfp_{name}_{width}", "\n".join(lines))
 
 
@@ -247,13 +247,13 @@ def vfp_compare(asm, width: str, signaling: bool, zero: bool,
     instruction = "fcmpe" if signaling else "fcmp"
     lines = ["ldr x8, [_stream], #8", "ubfx x9, x8, #16, #16",
              "and x8, x8, #0xffff", "a32_fp_guest",
-             f"ldr {r}0, [_cpu, x8]"]
+             f"ldr {r}0, [_vcpu, x8]"]
     if zero:
         lines.append(f"{instruction} {r}0, #0.0")
     else:
-        lines += [f"ldr {r}1, [_cpu, x9]", f"{instruction} {r}0, {r}1"]
+        lines += [f"ldr {r}1, [_vcpu, x9]", f"{instruction} {r}0, {r}1"]
     lines += ["mrs x10, nzcv", "and w10, w10, #0xf0000000",
-              "str w10, [_cpu, #UML_ARM64_CPU_A32_FPSCR_NZCV]"]
+              "str w10, [_vcpu, #UML_ARM64_CPU_A32_FPSCR_NZCV]"]
     if apsr:
         lines.append("mov w27, w10")
     lines.append("next_gadget")
@@ -271,10 +271,10 @@ def emit_move_select(asm) -> None:
     for r in "sd":
         asm.gadget(f"vfp_vmov_{r}_select", "\n".join([
             "ldr x8, [_stream], #8", "ubfx x9, x8, #16, #16",
-            "and x10, x8, #0xffff", "ldr " + r + "0, [_cpu, x9]",
-            "ldr " + r + "1, [_cpu, x10]", "lsr w14, w27, #28",
+            "and x10, x8, #0xffff", "ldr " + r + "0, [_vcpu, x9]",
+            "ldr " + r + "1, [_vcpu, x10]", "lsr w14, w27, #28",
             "lsr x15, x8, #32", "lsr x15, x15, x14", "tst x15, #1",
-            f"fcsel {r}0, {r}0, {r}1, ne", f"str {r}0, [_cpu, x10]",
+            f"fcsel {r}0, {r}0, {r}1, ne", f"str {r}0, [_vcpu, x10]",
             "next_gadget"]))
 
 
@@ -319,9 +319,9 @@ def emit_vfp_arithmetic(asm) -> None:
 def emit_vfp_immediate(asm) -> None:
     # [d offset][immediate]
     asm.gadget("vfp_vmov_imm_s", "ldp x8, x9, [_stream], #16\n"
-               "str w9, [_cpu, x8]\nnext_gadget")
+               "str w9, [_vcpu, x8]\nnext_gadget")
     asm.gadget("vfp_vmov_imm_d", "ldp x8, x9, [_stream], #16\n"
-               "str x9, [_cpu, x8]\nnext_gadget")
+               "str x9, [_vcpu, x8]\nnext_gadget")
 
 
 def emit_vfp_convert(asm) -> None:
@@ -333,8 +333,8 @@ def emit_vfp_convert(asm) -> None:
                 asm.gadget(f"vfp_cvt_from_{sign}_{width}", "\n".join([
                     "ldr x8, [_stream], #8", *unpack("d", "n"),
                     "a32_fp_guest",
-                    "ldr w9, [_cpu, x9]", f"{signed_name} {r}0, w9",
-                    f"str {stored(r)}0, [_cpu, x8]", "next_gadget"]))
+                    "ldr w9, [_vcpu, x9]", f"{signed_name} {r}0, w9",
+                    f"str {stored(r)}0, [_vcpu, x8]", "next_gadget"]))
             else:
                 # An integer to a single or double is the same in either
                 # native environment unless the guest rounds other than to
@@ -343,22 +343,22 @@ def emit_vfp_convert(asm) -> None:
                 # guest's only for the other rounding modes.
                 asm.gadget(f"vfp_cvt_from_{sign}_{width}", "\n".join([
                     "ldr x8, [_stream], #8", *unpack("d", "n"),
-                    "ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]",
+                    "ldrb w6, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]",
                     "cbz w6, 21f",
-                    "ldr w10, [_cpu, #UML_GADGET_CPU_FPCR]",
+                    "ldr w10, [_vcpu, #UML_GADGET_CPU_FPCR]",
                     "tst w10, #0xc00000", "b.ne 21f",
-                    "ldr w9, [_cpu, x9]", f"{signed_name} {r}0, w9",
-                    f"str {stored(r)}0, [_cpu, x8]", "next_gadget",
+                    "ldr w9, [_vcpu, x9]", f"{signed_name} {r}0, w9",
+                    f"str {stored(r)}0, [_vcpu, x8]", "next_gadget",
                     "21:", "a32_fp_guest",
-                    "ldr w9, [_cpu, x9]", f"{signed_name} {r}0, w9",
-                    f"str {stored(r)}0, [_cpu, x8]", "next_gadget"]))
+                    "ldr w9, [_vcpu, x9]", f"{signed_name} {r}0, w9",
+                    f"str {stored(r)}0, [_vcpu, x8]", "next_gadget"]))
             to = "fcvtzs" if sign == "s" else "fcvtzu"
             if width == "h":
                 asm.gadget(f"vfp_cvt_to_{sign}_{width}", "\n".join([
                     "ldr x8, [_stream], #8", *unpack("d", "n"),
                     "a32_fp_guest",
-                    f"ldr {r}0, [_cpu, x9]", f"{to} w9, {r}0",
-                    "str w9, [_cpu, x8]", "next_gadget"]))
+                    f"ldr {r}0, [_vcpu, x9]", f"{to} w9, {r}0",
+                    "str w9, [_vcpu, x8]", "next_gadget"]))
             else:
                 # A conversion to an integer always rounds toward zero, so
                 # its result and flags are the same in either native
@@ -369,22 +369,22 @@ def emit_vfp_convert(asm) -> None:
                 # puts this between Advanced SIMD VMAX and VMIN, which run
                 # in the other environment.
                 if width == "s":
-                    test = ["ldr w10, [_cpu, x9]", "and w11, w10, #0x7fffffff",
+                    test = ["ldr w10, [_vcpu, x9]", "and w11, w10, #0x7fffffff",
                             "sub w11, w11, #1", "mov w12, #0x7fffff",
                             "cmp w11, w12", "b.lo 21f", "fmov s0, w10"]
                 else:
-                    test = ["ldr x10, [_cpu, x9]",
+                    test = ["ldr x10, [_vcpu, x9]",
                             "and x11, x10, #0x7fffffffffffffff",
                             "sub x11, x11, #1", "mov x12, #0xfffffffffffff",
                             "cmp x11, x12", "b.lo 21f", "fmov d0, x10"]
                 asm.gadget(f"vfp_cvt_to_{sign}_{width}", "\n".join([
                     "ldr x8, [_stream], #8", *unpack("d", "n"),
-                    "ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]",
+                    "ldrb w6, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]",
                     "cbz w6, 21f", *test,
-                    f"{to} w9, {r}0", "str w9, [_cpu, x8]", "next_gadget",
+                    f"{to} w9, {r}0", "str w9, [_vcpu, x8]", "next_gadget",
                     "21:", "a32_fp_guest",
-                    f"ldr {r}0, [_cpu, x9]", f"{to} w9, {r}0",
-                    "str w9, [_cpu, x8]", "next_gadget"]))
+                    f"ldr {r}0, [_vcpu, x9]", f"{to} w9, {r}0",
+                    "str w9, [_vcpu, x8]", "next_gadget"]))
             # VCVTR: one rounding, by the FPSCR mode (N, P, M, Z), so the
             # flags are those of a single conversion: an overflow raises
             # Invalid alone and an inexact result Inexact alone.
@@ -394,8 +394,8 @@ def emit_vfp_convert(asm) -> None:
             asm.gadget(f"vfp_cvt_tor_{sign}_{width}", "\n".join([
                 "ldr x8, [_stream], #8", *unpack("d", "n"),
                 "a32_fp_guest",
-                f"ldr {r}0, [_cpu, x9]",
-                "ldr w10, [_cpu, #UML_GADGET_CPU_FPCR]",
+                f"ldr {r}0, [_vcpu, x9]",
+                "ldr w10, [_vcpu, #UML_GADGET_CPU_FPCR]",
                 "ubfx w10, w10, #22, #2",
                 "cbz w10, 11f", "cmp w10, #1", "b.eq 12f",
                 "cmp w10, #2", "b.eq 13f",
@@ -403,26 +403,26 @@ def emit_vfp_convert(asm) -> None:
                 f"11:", f"{modes[0][1]}{suffix} w9, {r}0", "b 14f",
                 f"12:", f"{modes[1][1]}{suffix} w9, {r}0", "b 14f",
                 f"13:", f"{modes[2][1]}{suffix} w9, {r}0",
-                "14:", "str w9, [_cpu, x8]", "next_gadget"]))
+                "14:", "str w9, [_vcpu, x8]", "next_gadget"]))
     # single <-> double
     asm.gadget("vfp_cvt_ds", "\n".join([
         "ldr x8, [_stream], #8", *unpack("d", "n"),
-        "a32_fp_guest", "ldr s0, [_cpu, x9]", "fcvt d0, s0",
-        "str d0, [_cpu, x8]", "next_gadget"]))
+        "a32_fp_guest", "ldr s0, [_vcpu, x9]", "fcvt d0, s0",
+        "str d0, [_vcpu, x8]", "next_gadget"]))
     asm.gadget("vfp_cvt_sd", "\n".join([
         "ldr x8, [_stream], #8", *unpack("d", "n"),
-        "a32_fp_guest", "ldr d0, [_cpu, x9]", "fcvt s0, d0",
-        "str s0, [_cpu, x8]", "next_gadget"]))
+        "a32_fp_guest", "ldr d0, [_vcpu, x9]", "fcvt s0, d0",
+        "str s0, [_vcpu, x8]", "next_gadget"]))
     # half precision, in the bottom (B) or top (T) half of a single register:
     # the offsets of the half are the builder's (+2 for the top).
     asm.gadget("vfp_cvt_sh", "\n".join([
         "ldr x8, [_stream], #8", *unpack("d", "n"),
-        "a32_fp_guest", "ldr h0, [_cpu, x9]", "fcvt s0, h0",
-        "str s0, [_cpu, x8]", "next_gadget"]))
+        "a32_fp_guest", "ldr h0, [_vcpu, x9]", "fcvt s0, h0",
+        "str s0, [_vcpu, x8]", "next_gadget"]))
     asm.gadget("vfp_cvt_hs", "\n".join([
         "ldr x8, [_stream], #8", *unpack("d", "n"),
-        "a32_fp_guest", "ldr s0, [_cpu, x9]", "fcvt h0, s0",
-        "str h0, [_cpu, x8]", "next_gadget"]))
+        "a32_fp_guest", "ldr s0, [_vcpu, x9]", "fcvt h0, s0",
+        "str h0, [_vcpu, x8]", "next_gadget"]))
     # fixed point: [offset][fbits at bit 16], fbits from 0 to 32; the register
     # is both the source and the destination. A conversion with an immediate
     # fraction width is selected through a table of the 33 widths, two
@@ -442,7 +442,7 @@ def emit_vfp_convert(asm) -> None:
                     "ldr x8, [_stream], #8",
                     "ubfx x13, x8, #16, #8", "and x8, x8, #0xffff",
                     "a32_fp_guest",
-                    f"ldr {r}0, [_cpu, x8]",
+                    f"ldr {r}0, [_vcpu, x8]",
                 ]
                 if size == 16:
                     body.append("mrs x14, fpsr")
@@ -465,9 +465,9 @@ def emit_vfp_convert(asm) -> None:
                 if width == "d":
                     if sign == "s":
                         body.append("sxtw x9, w9")
-                    body.append("str x9, [_cpu, x8]")
+                    body.append("str x9, [_vcpu, x8]")
                 else:
-                    body.append("str w9, [_cpu, x8]")
+                    body.append("str w9, [_vcpu, x8]")
                 body.append("next_gadget")
                 asm.gadget(f"vfp_cvt_tofix_{sign}{size}_{width}",
                            "\n".join(body))
@@ -478,14 +478,14 @@ def emit_vfp_convert(asm) -> None:
                     "ldr x8, [_stream], #8",
                     "ubfx x13, x8, #16, #8", "and x8, x8, #0xffff",
                     "a32_fp_guest",
-                    ("ldr w9, [_cpu, x8]" if size == 32 else
-                     ("ldrsh w9, [_cpu, x8]" if sign == "s" else
-                      "ldrh w9, [_cpu, x8]")),
+                    ("ldr w9, [_vcpu, x8]" if size == 32 else
+                     ("ldrsh w9, [_vcpu, x8]" if sign == "s" else
+                      "ldrh w9, [_vcpu, x8]")),
                     "mrs x14, fpcr", "bic x15, x14, #0xc00000",
                     "msr fpcr, x15",
                     "adr x12, 2f", "add x12, x12, x13, lsl #3", "br x12",
                     "2:", table, "3:", "msr fpcr, x14",
-                    f"str {stored(r)}0, [_cpu, x8]", "next_gadget"]
+                    f"str {stored(r)}0, [_vcpu, x8]", "next_gadget"]
                 asm.gadget(f"vfp_cvt_fromfix_{sign}{size}_{width}",
                            "\n".join(body))
 
@@ -494,27 +494,27 @@ def emit_vfp_core(asm) -> None:
     # [d offset][t offset]: a single word in each direction
     asm.gadget("vfp_mov_w", "\n".join([
         "ldr x8, [_stream], #8", *unpack("d", "n"),
-        "ldr w9, [_cpu, x9]", "str w9, [_cpu, x8]", "next_gadget"]))
+        "ldr w9, [_vcpu, x9]", "str w9, [_vcpu, x8]", "next_gadget"]))
     # two words, adjacent in CpuState: [d][t][t2] core to extension
     asm.gadget("vfp_mov_core_pair_in", "\n".join([
         "ldr x8, [_stream], #8", *unpack("d", "n", "m"),
-        "ldr w9, [_cpu, x9]", "ldr w10, [_cpu, x10]",
-        "add x8, _cpu, x8", "stp w9, w10, [x8]", "next_gadget"]))
+        "ldr w9, [_vcpu, x9]", "ldr w10, [_vcpu, x10]",
+        "add x8, _vcpu, x8", "stp w9, w10, [x8]", "next_gadget"]))
     # [t][t2][s]: extension to core
     asm.gadget("vfp_mov_core_pair_out", "\n".join([
         "ldr x8, [_stream], #8", *unpack("d", "n", "m"),
-        "add x10, _cpu, x10", "ldp w11, w12, [x10]",
-        "str w11, [_cpu, x8]", "str w12, [_cpu, x9]", "next_gadget"]))
+        "add x10, _vcpu, x10", "ldp w11, w12, [x10]",
+        "str w11, [_vcpu, x8]", "str w12, [_vcpu, x9]", "next_gadget"]))
     # scalar lanes: core to lane [lane][t], lane to core [t][lane]
     for suffix, store in (("b", "strb"), ("h", "strh"), ("w", "str")):
         asm.gadget(f"vfp_mov_to_lane_{suffix}", "\n".join([
             "ldr x8, [_stream], #8", *unpack("d", "n"),
-            "ldr w9, [_cpu, x9]", f"{store} w9, [_cpu, x8]", "next_gadget"]))
+            "ldr w9, [_vcpu, x9]", f"{store} w9, [_vcpu, x8]", "next_gadget"]))
     for suffix, load in (("ub", "ldrb"), ("uh", "ldrh"), ("w", "ldr"),
                          ("sb", "ldrsb"), ("sh", "ldrsh")):
         asm.gadget(f"vfp_mov_from_lane_{suffix}", "\n".join([
             "ldr x8, [_stream], #8", *unpack("d", "n"),
-            f"{load} w9, [_cpu, x9]", "str w9, [_cpu, x8]", "next_gadget"]))
+            f"{load} w9, [_vcpu, x9]", "str w9, [_vcpu, x8]", "next_gadget"]))
 
 
 FPSCR_NZCV = "0xf0000000"
@@ -526,38 +526,38 @@ def emit_vfp_system(asm) -> None:
     # FPSCR.NZCV from CpuState. [t offset]
     asm.gadget("vfp_vmrs", "\n".join([
         "ldr x8, [_stream], #8",
-        "ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]",
+        "ldrb w11, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]",
         "cbz w11, 1f", "mrs x9, fpsr", "b 2f",
-        "1:", "ldr w9, [_cpu, #UML_GADGET_CPU_FPSR]",
+        "1:", "ldr w9, [_vcpu, #UML_GADGET_CPU_FPSR]",
         "2:", "mov w10, #(UML_ARM64_FPSR_WRITABLE & 0xffff)",
         "movk w10, #(UML_ARM64_FPSR_WRITABLE >> 16), lsl #16",
         "and w9, w9, w10",
-        "ldr w10, [_cpu, #UML_GADGET_CPU_FPCR]",
+        "ldr w10, [_vcpu, #UML_GADGET_CPU_FPCR]",
         "movz w11, #0x07c8, lsl #16", "and w10, w10, w11",
         "orr w9, w9, w10",
-        "ldr w10, [_cpu, #UML_ARM64_CPU_A32_FPSCR_NZCV]",
+        "ldr w10, [_vcpu, #UML_ARM64_CPU_A32_FPSCR_NZCV]",
         f"and w10, w10, #{FPSCR_NZCV}", "orr w9, w9, w10",
-        "str w9, [_cpu, x8]", "next_gadget"]))
+        "str w9, [_vcpu, x8]", "next_gadget"]))
     # VMRS APSR_nzcv, FPSCR
     asm.gadget("vfp_vmrs_apsr", "\n".join([
-        "ldr w9, [_cpu, #UML_ARM64_CPU_A32_FPSCR_NZCV]",
+        "ldr w9, [_vcpu, #UML_ARM64_CPU_A32_FPSCR_NZCV]",
         f"and w27, w9, #{FPSCR_NZCV}", "next_gadget"]))
     # VMSR FPSCR, Rt: the control bits the profile has (the trap enables,
     # LEN and STRIDE read as zero and ignore writes) go to CpuState and the
     # live FPCR; the status bits to CpuState and the live FPSR; the flags to
     # CpuState. [t offset]
     asm.gadget("vfp_vmsr", "\n".join([
-        "ldr x8, [_stream], #8", "ldr w9, [_cpu, x8]",
+        "ldr x8, [_stream], #8", "ldr w9, [_vcpu, x8]",
         f"and w10, w9, #{FPSCR_NZCV}",
-        "str w10, [_cpu, #UML_ARM64_CPU_A32_FPSCR_NZCV]",
+        "str w10, [_vcpu, #UML_ARM64_CPU_A32_FPSCR_NZCV]",
         "movz w10, #0x07c8, lsl #16", "and w10, w9, w10",
-        "str w10, [_cpu, #UML_GADGET_CPU_FPCR]",
+        "str w10, [_vcpu, #UML_GADGET_CPU_FPCR]",
         "mov w11, #(UML_ARM64_FPSR_WRITABLE & 0xffff)",
         "movk w11, #(UML_ARM64_FPSR_WRITABLE >> 16), lsl #16",
-        "and w11, w9, w11", "str w11, [_cpu, #UML_GADGET_CPU_FPSR]",
-        "ldrb w12, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]", "cbz w12, 1f",
+        "and w11, w9, w11", "str w11, [_vcpu, #UML_GADGET_CPU_FPSR]",
+        "ldrb w12, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]", "cbz w12, 1f",
         "msr fpcr, x10", "msr fpsr, x11",
-        "strb wzr, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]", "1:",
+        "strb wzr, [_vcpu, #UML_ARM64_CPU_A32_FP_STANDARD]", "1:",
         "next_gadget"]))
 
 
@@ -570,7 +570,7 @@ def memory_prologue(label: str, mode: str, mask: int = 3) -> list[str]:
     if mode == "abs":
         lines.append("lsr x7, x19, #32")
     else:
-        lines += ["ubfx x9, x19, #16, #8", "ldr w9, [_cpu, x9]",
+        lines += ["ubfx x9, x19, #16, #8", "ldr w9, [_vcpu, x9]",
                   "lsr x10, x19, #32", "add w7, w9, w10"]
     lines += [f"tst w7, #{mask}", f"b.ne Lalign_{label}"]
     return lines
@@ -591,18 +591,18 @@ def vfp_memory(asm, load: bool, width: str, mode: str) -> None:
     lines.append("and x14, x19, #0xffff")
     if load:
         lines += [f"ldr {width}0, [x7]",
-                  f"str {stored(width)}0, [_cpu, x14]"]
+                  f"str {stored(width)}0, [_vcpu, x14]"]
     else:
-        lines += [f"ldr {width}0, [_cpu, x14]", f"str {width}0, [x7]"]
+        lines += [f"ldr {width}0, [_vcpu, x14]", f"str {width}0, [x7]"]
     lines.append("next_gadget")
     lines.append("a32_translate_cold " + translate)
     lines.append(f"Lcross_{name}:")
     if load:
         lines += [f"transfer_slow 0, x7, {size}, fault=La32_position_fault",
                   "and x14, x19, #0xffff",
-                  f"str {stored(width)}0, [_cpu, x14]"]
+                  f"str {stored(width)}0, [_vcpu, x14]"]
     else:
-        lines += ["and x14, x19, #0xffff", f"ldr {width}0, [_cpu, x14]",
+        lines += ["and x14, x19, #0xffff", f"ldr {width}0, [_vcpu, x14]",
                   f"transfer_slow 1, x7, {size}, fault=La32_position_fault"]
     lines.append("next_gadget")
     lines += [f"Lalign_{name}:", "b La32_position_alignment_fault_" +
@@ -652,18 +652,18 @@ def vfp_block(asm, load: bool, bytes_: int) -> None:
                  f" Lresume_{name}, Lcross_{name}, 0,"
                  f" fault=La32_memory_fault")
     lines = ["ldp x21, x19, [_stream], #16",
-             "and x9, x19, #0x7fff", "ldr w9, [_cpu, x9]",
+             "and x9, x19, #0x7fff", "ldr w9, [_vcpu, x9]",
              "sbfx x10, x19, #16, #16", "add w7, w9, w10",
              "sbfx x11, x19, #32, #16", "add w22, w9, w11",
              "tst w7, #3", f"b.ne Lalign_{name}",
              "a32_translate " + translate,
-             "ubfx x13, x19, #48, #16", "add x13, _cpu, x13"]
+             "ubfx x13, x19, #48, #16", "add x13, _vcpu, x13"]
     if load:
         lines += block_copy(bytes_, "x7", "x13")
     else:
         lines += block_copy(bytes_, "x13", "x7")
     lines += ["tbz x19, #15, 1f", "and x9, x19, #0x7fff",
-              "str w22, [_cpu, x9]", "1:", "add _stream, _stream, #8",
+              "str w22, [_vcpu, x9]", "1:", "add _stream, _stream, #8",
               "next_gadget",
               "a32_translate_cold " + translate,
               f"Lcross_{name}:", "ldr x8, [_stream], #8",

@@ -52,7 +52,7 @@ def copy_lines(bytes_: int, load: bool) -> list[str]:
 
 def slot(k: int) -> list[str]:
     """x13 = the CpuState address of slot k."""
-    return [f"ubfx x13, x24, #{16 * k}, #16", "add x13, _cpu, x13"]
+    return [f"ubfx x13, x24, #{16 * k}, #16", "add x13, _vcpu, x13"]
 
 
 def body(name: str, load: bool, bytes_: int, transfer: list[str],
@@ -66,16 +66,16 @@ def body(name: str, load: bool, bytes_: int, transfer: list[str],
                  f" Lresume_{name}, {crossing}, 0,"
                  f" fault=La32_memory_fault")
     lines = ["ldp x21, x19, [_stream], #16", "ldr x24, [_stream], #8",
-             "and x9, x19, #0x7fff", "ldr w9, [_cpu, x9]",
+             "and x9, x19, #0x7fff", "ldr w9, [_vcpu, x9]",
              "tbnz x19, #31, 2f", f"mov w10, #{bytes_}", "b 3f",
-             "2:", "ubfx x10, x19, #16, #15", "ldr w10, [_cpu, x10]",
+             "2:", "ubfx x10, x19, #16, #15", "ldr w10, [_vcpu, x10]",
              "3:", "add w22, w9, w10", "mov w7, w9",
              "ubfx x11, x19, #32, #8", "tst w7, w11",
              f"b.ne Lcross_{name}",
              "a32_translate " + translate]
     lines += transfer
     lines += [f"Lfinish_{name}:", "tbz x19, #15, 1f", "and x9, x19, #0x7fff",
-              "str w22, [_cpu, x9]", "1:", "add _stream, _stream, #8",
+              "str w22, [_vcpu, x9]", "1:", "add _stream, _stream, #8",
               "next_gadget",
               "a32_translate_cold " + translate]
     if split:
@@ -107,14 +107,14 @@ def fast_body(name: str, load: bool, bytes_: int, writeback: str,
                  f" Lresume_{name}, Lsplit_{name}, 0,"
                  f" fault=La32_memory_fault")
     lines = ["ldp x21, x19, [_stream], #16", "ldr x24, [_stream], #8",
-             "and x9, x19, #0x7fff", "ldr w7, [_cpu, x9]"]
+             "and x9, x19, #0x7fff", "ldr w7, [_vcpu, x9]"]
     if writeback == "a":
         lines += ["lsr x10, x19, #32", "add w7, w7, w10",
-                  "ubfx x9, x19, #16, #15", "str w7, [_cpu, x9]"]
+                  "ubfx x9, x19, #16, #15", "str w7, [_vcpu, x9]"]
     elif writeback == "i":
         lines.append(f"add w22, w7, #{bytes_}")
     elif writeback == "r":
-        lines += ["ubfx x10, x19, #16, #15", "ldr w10, [_cpu, x10]",
+        lines += ["ubfx x10, x19, #16, #15", "ldr w10, [_vcpu, x10]",
                   "add w22, w7, w10"]
     if hinted:
         lines += ["lsr x11, x24, #32", "tst w7, w11", f"b.ne Lalign_{name}"]
@@ -122,14 +122,14 @@ def fast_body(name: str, load: bool, bytes_: int, writeback: str,
     lines.append("ubfx x13, x24, #0, #16")
     if bytes_ in (8, 16):
         reg = "d0" if bytes_ == 8 else "q0"
-        lines += ([f"ldr {reg}, [x7]", f"str {reg}, [_cpu, x13]"] if load else
-                  [f"ldr {reg}, [_cpu, x13]", f"str {reg}, [x7]"])
+        lines += ([f"ldr {reg}, [x7]", f"str {reg}, [_vcpu, x13]"] if load else
+                  [f"ldr {reg}, [_vcpu, x13]", f"str {reg}, [x7]"])
     else:
-        lines.append("add x13, _cpu, x13")
+        lines.append("add x13, _vcpu, x13")
         lines += copy_lines(bytes_, load)
     lines.append(f"Lfinish_{name}:")
     if writeback in ("i", "r"):
-        lines += ["and x9, x19, #0x7fff", "str w22, [_cpu, x9]"]
+        lines += ["and x9, x19, #0x7fff", "str w22, [_vcpu, x9]"]
     lines += ["add _stream, _stream, #8", "next_gadget",
               "a32_translate_cold " + translate,
               f"Lsplit_{name}:"] + split + [f"b Lfinish_{name}"]
@@ -158,20 +158,20 @@ def all_lanes_fast(asm, size: int, pairs: int, writeback: str) -> None:
                  f" Lcold_{name}, Lresume_{name}, Lalign_{name}, 0,"
                  f" fault=La32_memory_fault")
     lines = ["ldp x21, x19, [_stream], #16", "ldr x24, [_stream], #8",
-             "and x9, x19, #0x7fff", "ldr w7, [_cpu, x9]"]
+             "and x9, x19, #0x7fff", "ldr w7, [_vcpu, x9]"]
     if writeback == "i":
         lines.append(f"add w22, w7, #{size}")
     elif writeback == "r":
-        lines += ["ubfx x10, x19, #16, #15", "ldr w10, [_cpu, x10]",
+        lines += ["ubfx x10, x19, #16, #15", "ldr w10, [_vcpu, x10]",
                   "add w22, w7, w10"]
     lines += ["lsr x11, x24, #32", "tst w7, w11", f"b.ne Lalign_{name}",
               "a32_translate " + translate,
               f"ld1r {{v0.{ARRANGEMENT[size]}}}, [x7]",
-              "ubfx x13, x24, #0, #16", "str d0, [_cpu, x13]"]
+              "ubfx x13, x24, #0, #16", "str d0, [_vcpu, x13]"]
     if pairs == 2:
-        lines += ["ubfx x13, x24, #16, #16", "str d0, [_cpu, x13]"]
+        lines += ["ubfx x13, x24, #16, #16", "str d0, [_vcpu, x13]"]
     if writeback in ("i", "r"):
-        lines += ["and x9, x19, #0x7fff", "str w22, [_cpu, x9]"]
+        lines += ["and x9, x19, #0x7fff", "str w22, [_vcpu, x9]"]
     lines += ["add _stream, _stream, #8", "next_gadget",
               "a32_translate_cold " + translate,
               f"Lalign_{name}:", "ldr x8, [_stream], #8",

@@ -43,7 +43,7 @@ gadget vector_map3_pclmul_\width\()_rm
 	vector_memory_source (\width / 8), Lx86_vector_map3_pclmul_cross_fault\@
 	mov w13, w27
 	and x10, x26, #0xffff
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldr q0, [x10]
 	.if \width == 256
 	ldr q2, [x10, #16]
@@ -143,8 +143,8 @@ gadget vector_map3_sha1rnds4_rr
 	ldp x8, x13, [_stream], #16
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	ldr q0, [_cpu, x10]
-	ldr q1, [_cpu, x11]
+	ldr q0, [_vcpu, x10]
+	ldr q1, [_vcpu, x11]
 	vector_map3_sha1_body
 	vector_write_xmm 128, 8
 	retire_and_next
@@ -156,7 +156,7 @@ gadget vector_map3_sha1rnds4_rm
 	vector_memory_source 16, Lx86_vector_map3_sha1_cross_fault, frame=16
 	mov w13, w27
 	and x10, x26, #0xffff
-	ldr q0, [_cpu, x10]
+	ldr q0, [_vcpu, x10]
 	vector_map3_sha1_body
 	vector_write_xmm 128, 23
 	retire_and_next
@@ -192,7 +192,7 @@ gadget vector_map3_sha1rnds4_rm
 gadget vector_map3_aeskeygen_rr
 	ldp x8, x13, [_stream], #16
 	ubfx x10, x8, #16, #16
-	ldr q1, [_cpu, x10]
+	ldr q1, [_vcpu, x10]
 	vector_map3_aeskeygen_body
 	vector_write_xmm 128, 8
 	retire_and_next
