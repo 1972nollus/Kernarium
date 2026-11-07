@@ -747,9 +747,16 @@ final class AppModel {
         persistNow()
     }
 
+    /// The Gyroscope switch as the screens show it: the guest's choice, which
+    /// is on until the person turns it off, and only where the device has
+    /// sensors to share.
+    var motionSensorsOn: Bool { guest?.motionSensorsOn(available: motionSensorsAvailable) == true }
+
+    /// The Gyroscope switch. It asks for nothing and is kept as chosen; on a
+    /// device without sensors there is nothing to turn on.
     func setMotionSensors(_ on: Bool) {
         guard guest != nil, !on || motionSensorsAvailable else { return }
-        guest?.motionSensors = on
+        guest?.motionChoice = on
         persistNow()
         driver?.setMotionSensors(on)
     }

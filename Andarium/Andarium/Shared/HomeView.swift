@@ -3,7 +3,7 @@
 import AndariumCore
 import SwiftUI
 
-/// The only screen before a run: the guest's processor, memory and storage,
+/// The only screen before a run: the guest's storage, processors and memory,
 /// its options and Start. Without a guest it offers to set one up.
 struct HomeView: View {
     @Environment(AppModel.self) private var model
@@ -79,7 +79,6 @@ struct HomeView: View {
     private var narrowLayout: some View {
         VStack(spacing: 22) {
             notices
-            panel(large: false)
             SystemSection()
             guestSections
             RecoveryErasePanel()
@@ -95,7 +94,6 @@ struct HomeView: View {
     private var tallLayout: some View {
         VStack(spacing: 28) {
             notices
-            panel(large: true)
             SystemSection()
             guestSections
             RecoveryErasePanel()
@@ -112,7 +110,6 @@ struct HomeView: View {
         HStack(alignment: .top, spacing: 24) {
             VStack(spacing: 22) {
                 notices
-                panel(large: true)
                 SystemSection()
             }
             .frame(maxWidth: 520)
@@ -127,24 +124,6 @@ struct HomeView: View {
         .padding(.top, 8)
         .padding(.bottom, 20)
         .frame(maxWidth: .infinity)
-    }
-
-    @ViewBuilder
-    private func panel(large: Bool) -> some View {
-        @Bindable var model = model
-        if model.guest != nil {
-            // The panel can be read once more as the guest goes (Erase Guest),
-            // so the binding never assumes there is one.
-            StoragePanel(
-                guest: Binding(
-                    get: { model.guest ?? Guest.fresh(on: model.host) },
-                    set: { if model.guest != nil { model.guest = $0 } }
-                ),
-                host: model.host,
-                stops: model.capacityStopsGiB,
-                resize: { model.sheet = .resize }
-            )
-        }
     }
 
     /// Display, Capabilities and Backup: what the guest shows and may use.

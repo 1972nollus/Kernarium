@@ -454,7 +454,7 @@ final class LiveRuntime: RuntimeDriver {
         // owns rotation; while the host does, the guest is drawn upright in
         // the window and the mount follows the window's orientation. Never
         // remap per sensor sample.
-        if motionMount.update(policy: policy, interface: interfaceMotionAxes) { motion.stop() }
+        if motionMount.update(policy: policy, interface: interfaceMotionAxes) { motion.restart() }
         rotation.update(policy: policy, ready: normalRun && reachedBootCompleted && active)
         updateMotionSensors()
     }
@@ -465,13 +465,11 @@ final class LiveRuntime: RuntimeDriver {
     }
 
     private func updateMotionSensors() {
-        if normalRun, reachedBootCompleted, active, rotation.applied == rotationPolicy,
-           model?.guest?.motionSensors == true {
-            motion.axes = motionMount.axes
-            motion.start()
-        } else {
-            motion.stop()
-        }
+        motion.update(
+            enabled: model?.motionSensorsOn == true,
+            foreground: normalRun && reachedBootCompleted && active && rotation.applied == rotationPolicy,
+            axes: motionMount.axes
+        )
     }
 
     // MARK: Microphone

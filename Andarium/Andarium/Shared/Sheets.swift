@@ -29,7 +29,7 @@ struct NewGuestSheet: View {
                             text: "Setting up needs \(Formats.size(bytes: model.createRequirementBytes)) free for the guest's setup. This \(model.host.name) has \(Formats.size(bytes: model.host.freeStorageBytes)). Free up space in Settings › General › \(model.host.name) Storage."
                         )
                     }
-                    StoragePanel(guest: draftBinding, host: model.host, stops: model.capacityStopsGiB, isNew: true)
+                    StoragePanel(guest: draftBinding, host: model.host, stops: model.capacityStopsGiB)
                     HomeSection(title: "Backup") {
                         BackupOption(isOn: Binding(
                             get: { draftBinding.wrappedValue.includeInBackups },

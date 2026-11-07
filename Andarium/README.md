@@ -71,10 +71,11 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
     -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' build
 ```
 
-Home has one Start button for a normal boot. Below its Storage card come the
-Guest System section (vCPUs and RAM as a summary; Edit opens the sheet that
-changes them), Display (Retina mode), Capabilities (Microphone, Gyroscope) and
-Backup (Back Up Guest Data); the Recovery and Erase section groups Start in
+Home has one Start button for a normal boot. Below its notices come the Guest
+System section (Storage first, with what the guest holds of its capacity, a
+pending growth or the largest size, and Resize; then vCPUs and RAM as a
+summary, where Edit opens the sheet that changes them), Display (Retina mode),
+Capabilities (Microphone, Gyroscope) and Backup (Back Up Guest Data); the Recovery and Erase section groups Start in
 Recovery and Erase Guest, which asks to be confirmed in a standard destructive
 alert. The sections carry no explanatory notes except where a capability is
 unavailable (a device without a gyroscope says so). Setting a guest up asks
@@ -425,15 +426,30 @@ apps can keep several such buffers. These host graphics allocations count
 against the same iOS process limit as guest RAM, so the RAM setting alone does
 not bound Andarium's memory use.
 
-Gyroscope is off by default. Its switch in Home's Capabilities shares the
-device's accelerometer and gyroscope with the guest. The choice is saved with the guest.
-A device with neither sensor leaves the switch unavailable. Capture starts
-after a normal boot finishes, while the app is active, and stops when the
-switch turns off, the app becomes inactive, or the guest ends or restarts.
-Recovery never captures motion. Only the newest samples are sent, at up to
-100 Hz, over private vsock port 5556; nothing listens on the host’s network.
-The system image must include the [motion sub-HAL](../android/lineage-24/README.md#motion-sensors);
-a missing service is reported in Home's Capabilities.
+Gyroscope is on by default wherever the device has an accelerometer or a
+gyroscope. It asks for no permission. Its switch in Home's Capabilities shares
+the device's sensors with the guest. A choice made there (on or off) is saved
+with the guest and the default never replaces it (`Guest.motionChoice`); a
+device with neither sensor shows the switch off and unavailable.
+
+The host reads a sensor only while an application in the guest uses it. The
+guest's sensor service says which sensors are active, and the period each was
+asked for, in a 16-byte control frame (`MotionDemand`) that it sends on the
+motion connection when the host connects and at every change.
+`MotionSampling` turns that into what Core Motion does: each active sensor is
+read at half its requested period (never faster than 100 Hz, so the guest's
+own pacing sets the rate an application sees), and nothing is read while
+nothing is in use. The connection is held while the switch is on and the guest
+is in front, since the frames arrive on it, and it has no timer while it is
+idle. A service that sends no frame (an older image) is read continuously at
+100 Hz, both sensors, until it sends one, and a new connection starts from
+that again. Reading starts after a normal boot finishes, while the app is
+active, and stops when the switch turns off, the app becomes inactive, or the
+guest ends or restarts. Recovery never captures motion. Each sample is sent as
+it is read, newest only, over private vsock port 5556; nothing listens on the
+host's network. The system image must include the
+[motion sub-HAL](../android/lineage-24/README.md#motion-sensors); a missing
+service is reported in Home's Capabilities.
 
 ### Statistics
 
@@ -511,11 +527,16 @@ sheet; each launch sweeps the folder. The guest's copy and any earlier ones are
 removed after a good pull.
 
 **Install APK** is in every build, in a normal session: Settings, Apps,
-Install APK... picks a file in Files, and Settings dismisses at once. Everything
+Install APK... picks a file in Files, and Settings dismisses at once. The
+picker offers only the type the system gives a file that ends in `.apk`
+(`InstallRefusal.pickerType`, built at run time: no Info.plist declaration),
+and dims `.apks`, `.xapk`, `.apkm`, `.zip` and a file
+with no extension. Everything
 after that is on the full-screen overlay, which blocks input for the whole
 install and is the one the bug report uses. A file that is not a single `.apk`
-(`InstallRefusal`: another kind, or a `.apks`, `.xapk` or `.apkm` bundle) is
-refused on it at once, in words of its own. An `.apk` is streamed in 256 KiB
+(`InstallRefusal`: another kind, or a `.apks`, `.xapk` or `.apkm` bundle, which
+a picker could still hand over if a system or another application types its
+extension as an apk) is refused on it at once, in words of its own. An `.apk` is streamed in 256 KiB
 reads to `abb_exec:package install -r -t -S <size>` for the first eight tenths
 of the bar; the guest's own install holds it there, with the Cancel button
 gone. The overlay then stays up with how it went, App Installed with Done or

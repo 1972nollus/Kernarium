@@ -5,7 +5,9 @@ import Foundation
 
 /// Private host-to-guest motion protocol on vsock 5556. Each 20-byte record is
 /// little endian: "ANS1", Android sensor type (1 or 4), three IEEE float32 SI
-/// values. The guest timestamps receipt in its own CLOCK_BOOTTIME domain.
+/// values. The guest timestamps receipt in its own CLOCK_BOOTTIME domain. The
+/// guest answers on the same connection with `MotionDemand` frames, which say
+/// which sensors an application uses.
 public struct MotionSample: Sendable {
     public enum Sensor: UInt32, Sendable { case accelerometer = 1, gyroscope = 4 }
     /// The host interface orientation the virtual device is mounted to
@@ -43,115 +45,154 @@ public struct MotionSample: Sendable {
     }
 }
 
-/// Sends only the latest sample of each sensor, with bounded memory and no
-/// blocking writes. A stop closes the stream and drops pending samples; a
-/// connection completing after a stop cannot revive it. The opener must bound
-/// its connect wait (the app uses 250 ms).
+/// The private motion connection to the guest on vsock 5556: the host sends
+/// samples and reads the guest's `MotionDemand` frames. It sends each sample
+/// as it arrives, with bounded memory and no blocking writes (a write that
+/// would block closes the connection, so a stalled or paused guest never has
+/// old motion queued behind it), and holds no timer while connected. A stop
+/// closes the connection and a connection completing after a stop cannot
+/// revive it. The opener must bound its connect wait (the app uses 250 ms). A
+/// connection that fails or drops is tried again after `retryDelay`.
 public final class MotionStream: @unchecked Sendable {
     public static let port: UInt32 = 5556
     private let opener: any GuestStreamOpener
     private let connectionChanged: @Sendable (Bool) -> Void
+    private let demandChanged: @Sendable (MotionDemand) -> Void
+    private let retryDelay: DispatchTimeInterval
     private let lock = NSLock()
     private let queue = DispatchQueue(label: "andarium-motion-stream")
-    private var timer: DispatchSourceTimer?
+    private var running = false
     private var generation: UInt64 = 0
     private var descriptor: Int32 = -1
-    private var latest: [MotionSample.Sensor: Data] = [:]
-    private var retryAt = ContinuousClock.now
+    private var reader: DispatchSourceRead?
+    /// The start of a frame that has not all arrived.
+    private var partial = Data()
 
     public init(
         opener: any GuestStreamOpener,
-        connectionChanged: @escaping @Sendable (Bool) -> Void = { _ in }
+        retryDelay: DispatchTimeInterval = .seconds(1),
+        connectionChanged: @escaping @Sendable (Bool) -> Void = { _ in },
+        demandChanged: @escaping @Sendable (MotionDemand) -> Void = { _ in }
     ) {
         self.opener = opener
+        self.retryDelay = retryDelay
         self.connectionChanged = connectionChanged
+        self.demandChanged = demandChanged
     }
     deinit { stop() }
 
     @discardableResult
     public func start() -> UInt64 {
-        lock.withLock {
-            guard timer == nil else { return generation }
+        let epoch: UInt64? = lock.withLock {
+            guard !running else { return nil }
+            running = true
             generation &+= 1
-            let epoch = generation
-            retryAt = .now
-            let source = DispatchSource.makeTimerSource(queue: queue)
-            source.schedule(deadline: .now(), repeating: .milliseconds(10))
-            source.setEventHandler { [weak self] in self?.sendLatest(epoch: epoch) }
-            timer = source
-            source.resume()
-            return epoch
+            return generation
         }
+        guard let epoch else { return lock.withLock { generation } }
+        queue.async { [self] in connect(epoch: epoch) }
+        return epoch
     }
 
     public func stop() {
         lock.withLock {
+            running = false
             generation &+= 1
-            timer?.cancel()
-            timer = nil
-            latest.removeAll()
-            closeStream()
+            partial.removeAll()
+            _ = closeStream()
         }
     }
 
     public func submit(_ sample: MotionSample, epoch: UInt64) {
-        guard let data = sample.encoded else { return }
-        lock.withLock {
-            guard timer != nil, generation == epoch else { return }
-            latest[sample.sensor] = data
+        guard let packet = sample.encoded else { return }
+        let dropped = lock.withLock { () -> Bool in
+            guard running, generation == epoch, descriptor >= 0 else { return false }
+            let sent = packet.withUnsafeBytes { Darwin.send(descriptor, $0.baseAddress, $0.count, MSG_DONTWAIT) }
+            guard sent != packet.count else { return false }
+            // Closing discards a partial record and avoids queuing old motion
+            // behind a stalled or paused guest.
+            return closeStream()
         }
+        if dropped { lost(epoch: epoch) }
     }
 
-    // Called only with the lock held, so a stop cannot close a reused fd.
-    private func closeStream() {
-        if descriptor >= 0 {
-            Darwin.close(descriptor)
-            descriptor = -1
+    // Called only with the lock held. The descriptor is closed by the reader's
+    // cancel handler, after it can no longer be sent on, so a stop cannot
+    // close a descriptor number that has been reused. Answers whether a
+    // connection was closed.
+    private func closeStream() -> Bool {
+        guard descriptor >= 0 else { return false }
+        let closing = descriptor
+        descriptor = -1
+        if let reader {
+            self.reader = nil
+            reader.cancel()
+        } else {
+            Darwin.close(closing)
         }
+        return true
     }
 
-    private func sendLatest(epoch: UInt64) {
-        let connect = lock.withLock { () -> Bool in
-            generation == epoch && timer != nil && descriptor < 0 && ContinuousClock.now >= retryAt
-        }
-        if connect {
-            let opened = try? opener.openStream()
-            let connected = lock.withLock { () -> Bool? in
-                guard generation == epoch, timer != nil else {
-                    if let opened { Darwin.close(opened) }
-                    return nil
-                }
-                retryAt = .now + .seconds(1)
-                if let opened {
-                    var one: Int32 = 1
-                    if setsockopt(opened, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout.size(ofValue: one))) == 0 {
-                        descriptor = opened
-                    } else {
-                        Darwin.close(opened)
-                    }
-                }
-                // Never replay samples collected while connecting.
-                latest.removeAll()
-                return descriptor >= 0
+    private func connect(epoch: UInt64) {
+        let current = lock.withLock { running && generation == epoch && descriptor < 0 }
+        guard current else { return }
+        let opened = try? opener.openStream()
+        let connected = lock.withLock { () -> Bool? in
+            guard running, generation == epoch else {
+                if let opened { Darwin.close(opened) }
+                return nil
             }
-            if let connected { connectionChanged(connected) }
+            guard let opened else { return false }
+            var one: Int32 = 1
+            guard setsockopt(opened, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout.size(ofValue: one))) == 0 else {
+                Darwin.close(opened)
+                return false
+            }
+            descriptor = opened
+            partial.removeAll()
+            let source = DispatchSource.makeReadSource(fileDescriptor: opened, queue: queue)
+            source.setEventHandler { [weak self] in self?.readFrames(from: opened, epoch: epoch) }
+            source.setCancelHandler { Darwin.close(opened) }
+            reader = source
+            source.resume()
+            return true
         }
-        let disconnected = lock.withLock { () -> Bool in
-            guard generation == epoch, timer != nil, descriptor >= 0 else { return false }
-            for sensor in [MotionSample.Sensor.accelerometer, .gyroscope] {
-                guard let packet = latest.removeValue(forKey: sensor) else { continue }
-                let sent = packet.withUnsafeBytes { Darwin.send(descriptor, $0.baseAddress, $0.count, MSG_DONTWAIT) }
-                if sent != packet.count {
-                    // Closing discards a partial record and avoids queuing old
-                    // motion behind a stalled or paused guest.
-                    closeStream()
-                    latest.removeAll()
-                    retryAt = .now + .seconds(1)
-                    return true
-                }
+        guard let connected else { return }
+        connectionChanged(connected)
+        if !connected { retry(epoch: epoch) }
+    }
+
+    /// The connection ended without a stop: report it and connect again.
+    private func lost(epoch: UInt64) {
+        connectionChanged(false)
+        retry(epoch: epoch)
+    }
+
+    private func retry(epoch: UInt64) {
+        queue.asyncAfter(deadline: .now() + retryDelay) { [self] in connect(epoch: epoch) }
+    }
+
+    /// The guest's frames. An end of stream or a bad frame drops the
+    /// connection; the next one starts from what the service says on it.
+    private func readFrames(from descriptor: Int32, epoch: UInt64) {
+        var buffer = [UInt8](repeating: 0, count: 64)
+        let count = recv(descriptor, &buffer, buffer.count, MSG_DONTWAIT)
+        if count < 0 && (errno == EAGAIN || errno == EINTR) { return }
+        var frames: [MotionDemand] = []
+        let dropped = lock.withLock { () -> Bool in
+            guard running, generation == epoch, self.descriptor == descriptor else { return false }
+            guard count > 0 else { return closeStream() }
+            partial.append(contentsOf: buffer.prefix(count))
+            while partial.count >= MotionDemand.frameSize {
+                let frame = partial.prefix(MotionDemand.frameSize)
+                partial.removeFirst(MotionDemand.frameSize)
+                guard let demand = MotionDemand(frame: Data(frame)) else { return closeStream() }
+                frames.append(demand)
             }
             return false
         }
-        if disconnected { connectionChanged(false) }
+        // Frames that arrived before a bad one still count.
+        for frame in frames { demandChanged(frame) }
+        if dropped { lost(epoch: epoch) }
     }
 }
