@@ -1860,6 +1860,10 @@ claim. The campaign runner's `--help` gives the fixed plan, the input
 generations, and the evidence layout that `--verify-only` reparses without
 launching a guest.
 
+Budget campaign concurrency from host physical footprint and the
+`IOAccelerator (graphics)` row of `vmmap -summary`, rather than process RSS,
+which omits swapped-out allocations.
+
 ### OpenGL ES3 FBO state-query waiver
 
 `tests/integration/gpu/vk_gl_cts_waivers.json` holds the granted waivers. Its

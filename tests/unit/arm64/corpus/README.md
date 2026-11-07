@@ -191,9 +191,7 @@ byte `b` of `Zi`, `0x2000 + 32i + b` of `Pi`, `0x10000 + 256r + b` of ZA row
 `r`, and `0x30000 + b` of ZT0.
 
 A version 1 pack is a version 2 pack without SVLs. `build-unit-corpus.py`
-reads both and writes version 2. Version 3 added the non-streaming SVE state of
-the removed SVE profile (a VL per record, P0-P15, FFR, and field 40) and is no
-longer read.
+reads versions 1 and 2 and writes version 2.
 
 ## Running
 
@@ -641,7 +639,7 @@ is not here, because the architecture leaves it IMPLEMENTATION DEFINED whether
 the abort or the failed monitor check comes first. A completed access cannot
 show which TLB key an engine filled; the `arm64-tlb` test and the
 `guest_tagged_*_loop.S` probes
-([performance tools](../../perf/README.md#focused-assembly-probes)) own that.
+([performance tools](../../../perf/README.md#focused-assembly-probes)) own that.
 
 The equivalence section writes the `arm64-tbi-equivalence` records. Each case
 is an existing corpus case that reaches memory through an untagged base

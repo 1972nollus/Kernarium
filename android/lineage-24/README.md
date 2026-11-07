@@ -427,6 +427,8 @@ listed, so a boot that cannot save it tries again, and a network the user
 forgets stays forgotten. It never turns Wi-Fi on or connects, so the user's
 Wi-Fi switch decides whether the saved network is joined.
 
+### Audio and settings defaults
+
 The vendor audio policy exposes the 48 kHz stereo primary playback path and one
 built-in microphone, the Virtio sound capture stream (16-bit PCM at 48 kHz, mono
 or stereo), supplies the AOSP software effects configuration, and disables
@@ -459,6 +461,8 @@ eligible even while a host keyboard is attached. Fresh settings databases seed
 every user-facing audio stream at its maximum and disable UI, lock, dial-pad,
 charging, and power sounds; subsequent volume and sound settings remain owned
 by the user.
+
+### Debugging and adb
 
 Fresh settings databases keep Developer options and USB debugging off: the
 overlay defaults Developer options off and the product sets no
@@ -580,6 +584,8 @@ DownloadProvider transfers use a silent low-importance channel so their
 progress icon remains visible there; later notification changes remain owned
 by the user.
 
+### Security policy and HAL domains
+
 The product uses software KeyMint/gatekeeper, SELinux enforcing policy, no
 `system_other` image, and no loadable modules or DLKM partitions.
 
@@ -605,6 +611,8 @@ AOSP HAL's own and harmless (an unset property reads as its default), so
 `overlay/sepolicy/vendor/hal_wifi_default.te` allows exactly that read, never a
 set and never a blanket `dontaudit`, and the target-files verifier requires the
 rule in the packaged vendor policy.
+
+### Framework and CTS behaviour
 
 The guest kernel has no ashmem, the product sets `sys.use_memfd`, and the
 vendor policy enables `memfd_class`, so the shared buffers an application
@@ -670,6 +678,8 @@ neverallows, and `device/lineage/sepolicy` (route `p0021`) drops the `vold` and
 back, a later such grant fails the policy build, and the target-files verifier
 repeats the checks on the built policy (a user build has no permissive
 domain; a userdebug build may have only `su`).
+
+### Lock screen, input and wallpaper
 
 The guest boots straight to the home screen, and its swipe lock screen can be
 turned on; the Setup Wizard's screen lock page is hidden, so a fresh guest keeps
@@ -753,6 +763,8 @@ regenerates the files from LineageOS's pinned file (`generate --source`); the
 target-files verifier requires the built framework overlay's two variants to be
 squares of at most 1024 pixels, which is where the order shows.
 
+### Desktop windowing, display pacing and installs
+
 When applications update together while their tasks are in a desk (LineageOS
 enables desktop windowing on tablets), WM Shell's `PackageUpdateController`
 starts a `PackageUpdateActivity` placeholder in the task of each, once per
@@ -783,6 +795,8 @@ need the vendor property `ro.incremental.enable=1`, which the inherited
 Cuttlefish configuration sets, and a kernel with Incremental FS. The
 target-files verifier pins the property so a change in the inherited product
 cannot drop it unnoticed.
+
+### Boot and memory tuning
 
 A first boot compiles nothing. ART Service would otherwise compile every
 package without a usable artifact, for each instruction set the package runs
@@ -1290,21 +1304,20 @@ corresponding Darwin UML hardware. The active DRM composer, power and memtrack
 integration, ClearKey DRM and CAS, dumpstate diagnostics, software
 KeyMint/gatekeeper, and Credential Manager remain.
 
-The thermal HAL APEX was first removed with these, and is installed again. It
-is AOSP's example AIDL thermal service (`com.android.hardware.thermal`), which
-reports fixed example temperatures and is what Cuttlefish ships, not a driver
-for hardware the machine lacks. `system_server`'s thermal manager and the NDK thermal API need
+The product installs the thermal HAL APEX. It is AOSP's example AIDL thermal
+service (`com.android.hardware.thermal`), which reports fixed example
+temperatures and is what Cuttlefish ships, not a driver for hardware the
+machine lacks. `system_server`'s thermal manager and the NDK thermal API need
 a thermal HAL, and CTS `NativeThermalTest` fails with "HAL Ready: false"
 without one. The module carries its own SELinux file contexts, and the platform
 policy already has the `hal_thermal_default` domain and the service context.
 The target-files verifier requires the vendor APEX to hold the service, the
 VINTF fragment that declares `IThermal/default` and the init script.
 
-The conditional-access (CAS) HAL APEX was removed with that group too and is
-installed again. It is AOSP's default CAS service
-(`com.android.hardware.cas`), which loads the ClearKey CAS plugin
-(`libclearkeycasplugin`, installed for both ISAs under `/vendor/lib*/mediacas`)
-and needs no device. Without it `MediaCas` has no `IMediaCasService`: CTS
+The product installs the conditional-access (CAS) HAL APEX. It is AOSP's
+default CAS service (`com.android.hardware.cas`), which loads the ClearKey CAS
+plugin (`libclearkeycasplugin`, installed for both ISAs under
+`/vendor/lib*/mediacas`) and needs no device. Without it `MediaCas` has no `IMediaCasService`: CTS
 `MediaCasTest` throws `UnsupportedCasException` for the ClearKey CAS system
 id 63192. The vendor policy already has the `hal_cas_default` domain and the
 platform has the service context. The target-files verifier requires the vendor
@@ -1655,10 +1668,6 @@ invocation and canonical output root, and delete only explicit Android paths.
 Preserve the current accepted release and its active writable bundle, the
 Android source and patch-producer checkouts, accepted kernel inputs, dependency
 prefixes, non-Android guests, and unrelated files beside a bundle.
-
-The second architecture adds a variant to nearly every module, so the first
-multilib release is built in a fresh output directory, never over the 64-bit-only
-one; that output is a superseded build once the multilib release is accepted.
 
 ## Storage accounting
 

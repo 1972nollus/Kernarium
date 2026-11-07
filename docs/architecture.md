@@ -254,9 +254,8 @@ vCPUs in the Android and KDE loads, rounded up to 16 MiB: 128, 160, 192, 224,
 240, 240, 272 and 272 MiB for 1 to 8 vCPUs, and 16 MiB more for each vCPU
 beyond. It sits under those loads' worst ceilings, so the budget's own
 shedding (to seven eighths of the budget, when the accounts pass it) bounds the
-cache there. Geekbench's multi-core runs at 8 vCPUs peak at 71 to 94 MiB, and
-a budget forced down to 64 MiB cost them no measurable score. The
-4 MiB per vCPU are the slot tags, which the cache's ledger does not charge. An
+cache there. The 4 MiB per vCPU are the slot tags, which the cache's ledger
+does not charge. An
 explicit `--gadget-cache-budget=` is used as stated and is not capped. The run
 (`runtime::set_gadget_cache_budget`), the plan's E and the application's bound
 below all evaluate this header; none states the formula itself.
@@ -622,7 +621,7 @@ builds, and the region layout section of the
 change to a group moves.
 
 Data-alignment faults retain the effective data address and the faulting PC.
-The host exports a distinct bridge event, and both kernel lines deliver
+The host exports a distinct bridge event, and every kernel product delivers
 `SIGBUS/BUS_ADRALN` so a guest handler can repair the access and resume. They
 do not enter page-fault repair or retire the faulting instruction.
 
@@ -719,12 +718,7 @@ HWCAP2_SME2, SME_I16I32 and SME_BI32I32 are clear, and the ZT0 forms are
 undefined.
 
 Both engines are `complete`, so a guest is told of SME1 only: FEAT_SME,
-FEAT_SME_F64F64 and FEAT_SME_I16I64. On the M4, SME1 against the policy
-off made Geekbench 6's Object Detection, Background Blur and Photo Library
-1.34x faster (geomean) on the gadget engine and 1.39x on the JIT, without
-regressing its single- or multi-core score, while adding SME2's forms to
-the gadget engine lost to SME1 (geomean 0.975), so the engines stay at
-`complete` ([optimization history](optimization-history.md)).
+FEAT_SME_F64F64 and FEAT_SME_I16I64 ([optimization history](optimization-history.md)).
 
 Each vCPU's SME register file is one zeroed, 256-byte-aligned allocation of
 the size its SVL needs, made at start-up only when the run implements SME and

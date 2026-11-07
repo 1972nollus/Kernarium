@@ -201,6 +201,48 @@ Every macOS and iOS product prefix builds and verifies at a 27.0 deployment
 target; the kernel host tools, which run only on the build host, are the
 exception.
 
+### iOS static libraries, archive manifests and ref discovery
+
+The iOS storage build exports only the two file-oriented C entry points used by
+Kernarium. They run one at a time, and while one runs they redirect the whole
+process's `std::cout` and `std::cerr`, where the core reports its reasons; a
+failed call appends that output to its error message. The storage archive
+excludes every GPT fdisk command-line front end and `popt`. The standalone
+macOS Android launcher runs an installed `sgdisk` executable instead (see the
+[static disk contract](../android/lineage-24/README.md#static-disk-and-boot-contract));
+no Homebrew library is linked or discovered.
+The zstd build contains the streaming decompressor but excludes compression,
+dictionary-builder, legacy-frame, deprecated, and command-line code. Both
+libraries use static framework slices so their Clang module maps remain
+separate when Xcode processes the XCFrameworks. The two builders share
+`ios-static-xcframework.sh` for packaging, verification, and publication, and
+their verifiers share `cmake/VerifyIosStaticXCFramework.cmake`; each supplies
+only its library build, headers, provenance, and symbol contract.
+
+Additional build-only archives use
+`dependencies/prepare.sh --archive-manifest PATH --cache CACHE`. The tab-separated
+manifest has `name`, `url`, and `sha256` columns; HTTPS downloads are verified
+before publication as `CACHE/archives/SHA256-NAME`. `--no-fetch` and `--verify`
+require those same authenticated cache entries. Archive preparation installs
+nothing; package installation belongs in an isolated build environment.
+[`kernel-host-tools/archives.tsv`](kernel-host-tools/archives.tsv) is the first
+production archive manifest: the kernel host tools build extracts headers from
+its Debian package into a private build directory. Its URL names a fixed
+snapshot.debian.org timestamp because Debian's pool drops a package version on
+the next stable update, so a pool URL would stop resolving on a fresh machine.
+[`llvm/archives.tsv`](llvm/archives.tsv) is the second: the pinned LLVM source
+release that the iOS Simulator GPU build compiles for llvmpipe. The GPU builder
+verifies it with `--verify` and installs the manifest into that prefix.
+
+To discover a release tag's immutable source identity, use
+`dependencies/prepare.sh --resolve-ref REPOSITORY refs/tags/TAG`. The result
+peels annotated tags; record that object ID in the source manifest before
+preparation. Ref discovery does not update a manifest or prepared checkout.
+When provenance requires the annotated tag object itself, use
+`dependencies/prepare.sh --materialize-tag REPOSITORY REF OBJECT COMMIT CHECKOUT`.
+It accepts an exact `refs/tags/` ref, verifies the pinned tag object and peeled
+commit, and publishes only that tag without changing the checkout's HEAD or files.
+
 ## No build-host paths
 
 A library compiles in directories it derives from its installation prefix:
@@ -236,7 +278,7 @@ which prefixes share a row. Adding, removing, or sharing another product's
 dependency does not invalidate a prefix, while any change to one of its own
 rows still requires a rebuild.
 
-## Experimental Vulkan composition
+## Apple GPU prefix
 
 `apple-gpu-vulkan-experiment` is a separately named product built for macOS
 and for the iOS device, from one source matrix and one set of patches; its
@@ -371,46 +413,6 @@ committed series.
 The optional `MESA_KK_DEBUG=submit_timing` diagnostics are specified with the
 tools that use them, in
 [`../tests/perf/README.md`](../tests/perf/README.md#native-whole-submit-timing).
-
-The iOS storage build exports only the two file-oriented C entry points used by
-Kernarium. They run one at a time, and while one runs they redirect the whole
-process's `std::cout` and `std::cerr`, where the core reports its reasons; a
-failed call appends that output to its error message. The storage archive
-excludes every GPT fdisk command-line front end and `popt`. The standalone
-macOS Android launcher runs an installed `sgdisk` executable instead (see the
-[static disk contract](../android/lineage-24/README.md#static-disk-and-boot-contract));
-no Homebrew library is linked or discovered.
-The zstd build contains the streaming decompressor but excludes compression,
-dictionary-builder, legacy-frame, deprecated, and command-line code. Both
-libraries use static framework slices so their Clang module maps remain
-separate when Xcode processes the XCFrameworks. The two builders share
-`ios-static-xcframework.sh` for packaging, verification, and publication, and
-their verifiers share `cmake/VerifyIosStaticXCFramework.cmake`; each supplies
-only its library build, headers, provenance, and symbol contract.
-
-Additional build-only archives use
-`dependencies/prepare.sh --archive-manifest PATH --cache CACHE`. The tab-separated
-manifest has `name`, `url`, and `sha256` columns; HTTPS downloads are verified
-before publication as `CACHE/archives/SHA256-NAME`. `--no-fetch` and `--verify`
-require those same authenticated cache entries. Archive preparation installs
-nothing; package installation belongs in an isolated build environment.
-[`kernel-host-tools/archives.tsv`](kernel-host-tools/archives.tsv) is the first
-production archive manifest: the kernel host tools build extracts headers from
-its Debian package into a private build directory. Its URL names a fixed
-snapshot.debian.org timestamp because Debian's pool drops a package version on
-the next stable update, so a pool URL would stop resolving on a fresh machine.
-[`llvm/archives.tsv`](llvm/archives.tsv) is the second: the pinned LLVM source
-release that the iOS Simulator GPU build compiles for llvmpipe. The GPU builder
-verifies it with `--verify` and installs the manifest into that prefix.
-
-To discover a release tag's immutable source identity, use
-`dependencies/prepare.sh --resolve-ref REPOSITORY refs/tags/TAG`. The result
-peels annotated tags; record that object ID in the source manifest before
-preparation. Ref discovery does not update a manifest or prepared checkout.
-When provenance requires the annotated tag object itself, use
-`dependencies/prepare.sh --materialize-tag REPOSITORY REF OBJECT COMMIT CHECKOUT`.
-It accepts an exact `refs/tags/` ref, verifies the pinned tag object and peeled
-commit, and publishes only that tag without changing the checkout's HEAD or files.
 
 ## Patch maintenance
 

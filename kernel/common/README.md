@@ -281,21 +281,42 @@ EINTR. Without SME no carrier blocks these signals.
 
 With 4 KiB pages, a kernel alias outside the linear map is the same memory as
 the frames' other views only where one 16 KiB host slot holds a whole aligned
-group of four. Four shared topics make that so for memory the kernel shares:
-the vmalloc group hook in `mm/vmalloc.c`, the host mapping of congruent
-`init_mm` slots with the `flush_kernel_vmap_range()`,
-`invalidate_kernel_vmap_range()` and `flush_cache_vunmap()` hooks in `arch/um`,
-the io_uring region allocation, and the fbdev shmem flush for the virtio-gpu
-console. `flush_cache_vunmap()` publishes the private slots of a range before
-Linux clears its PTEs, so the stores of a `vm_map_ram()` alias, such as
-EROFS's LZ4 output, reach the page cache before it is read or freed. The first
-three are inert on any architecture that reports no vmap group, and the flush
-costs a page-table check there. The x86_64 slice's
-pinned-ring accounting below sees no change: a ring in one page of the
-application's memory is one folio and stays valid, and a larger one that is
-not whole aligned groups is refused with `EINVAL`.
-[`tests/integration/kernel`](../../tests/integration/kernel) checks the sharing
-in both directions and reads back an LZ4 EROFS image with 4 KiB clusters.
+group of four, so the architecture reports a vmap group of four pages. Four
+shared topics make that so for memory the kernel shares: the vmalloc group hook
+in `mm/vmalloc.c`, the host mapping of congruent `init_mm` slots with the
+`flush_kernel_vmap_range()`, `invalidate_kernel_vmap_range()` and
+`flush_cache_vunmap()` hooks in `arch/um`, the io_uring region allocation, and
+the fbdev shmem flush for the virtio-gpu console. vmalloc aligns, rounds and
+allocates every area in groups and `vmap()` aligns its area to a group, so BPF
+maps and ring buffers, perf and PACKET_MMAP rings and the io_uring regions that
+the kernel allocates share their memory with user space. An area that cannot be
+grouped falls back to small pages only when it is kernel-private (never a
+`VM_USERMAP` one), and `remap_vmalloc_range` warns once about memory that is
+not whole groups. The kernel-vmap hooks publish and refresh the private copy of
+a slot that cannot be shared, as they do for the callers that already bracket a
+vmap alias (XFS, dm, the DMA-BUF heaps). `flush_cache_vunmap()` publishes the
+private slots of a range before Linux clears its PTEs, so the stores of a
+`vm_map_ram()` alias, such as EROFS's LZ4 output, reach the page cache before it
+is read or freed: a kernel TLB sync applies only changed PTEs, so without it
+they would stay in the host's copy while the linear map read stale frames. The
+first three topics are inert on any architecture that reports no vmap group,
+and the flush costs a page-table check there. Pages that user space owns cannot
+be regrouped, so io_uring refuses with `EINVAL` an `IORING_SETUP_NO_MMAP` ring,
+a registered memory region or a provided-buffer ring whose pages are neither
+one folio nor whole aligned groups; a ring in one page of the application's
+memory is one folio and stays valid, so the x86_64 slice's pinned-ring
+accounting below sees no change. The BPF ring buffer, a topic of the mainline
+overlay (`kernel/bpf/ringbuf.c`), is laid out so that the first data copy ends
+on a group boundary, and a buffer under 16 KiB brackets its wrapped tail with
+the vmap hooks. Perf no longer selects `PERF_USE_VMALLOC`, as native arm64 does
+not. The virtio-gpu console draws into a vmap of scattered shmem pages, which
+is a private copy on this profile, so the fbdev shmem dirty callback flushes
+the damaged lines before the device reads them; without it a VNC client sees a
+blank console. The arm64 kernels run `guest-kernel-user-shared-memory` and
+`guest-erofs-lz4`, which check the sharing in both directions and read back an
+LZ4 EROFS image with 4 KiB clusters
+([`tests/integration/kernel`](../../tests/integration/kernel)); the x86_64 slice
+runs the latter's runner directly.
 
 In the x86_64 slice, a guest entry is marked shared while another agent may
 observe the memory of the task's mm: while another task may run on it
@@ -422,7 +443,7 @@ Guest pages are 4 KiB, so 32-bit programs laid out for 4 KiB pages, as the
 files of stock Debian armhf userspace are, run as they are.
 `tests/integration/aarch32` runs one.
 
-Both maintained kernel lines perform futex updates atomically against native
+Every kernel product performs futex updates atomically against native
 userspace running on other vCPUs. Compare-and-exchange reports the value
 observed by that operation, and wake-operation arithmetic retries competing
 updates instead of overwriting them. The optional `guest-futex-atomic` test

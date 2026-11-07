@@ -172,22 +172,9 @@ stack does not (see Kernel stacks).
 
 Every product uses 64 KiB task stacks (`CONFIG_KERNEL_STACK_ORDER=4` with
 4 KiB pages), virtually mapped with an unmapped guard region around each, and
-`CONFIG_SCHED_STACK_END_CHECK`. The deepest use measured, with
-`CONFIG_DEBUG_STACK_USAGE`, the stack dumps and the exit-time "greatest stack
-depth" lines under the heaviest workload of each line:
-
-| Line and workload | Deepest | Margin at 64 KiB |
-|---|---|---|
-| x86-64 slice, JIT: filesystem, memory, network, xfrm, compiler and 316 LTP cases | 25.6 KiB | 2.5x |
-| x86-64 slice, JIT: headless Chromium | 22.4 KiB | 2.9x |
-| arm64 Linux, gadgets: the same phases and LTP | 22.6 KiB | 2.8x |
-| Android, gadgets: boot, five cold launches, package compilation | 23.6 KiB | 2.7x |
-
-The Android stress script (GMEM) reached 25.0 KiB on a 128 KiB stack, a 2.6x
-margin. No stack above 32 KiB appeared in the `kstack_*` histogram of any run.
-The deepest stacks were `kworker` threads and processes at exit. XFS and Btrfs
-were not exercised, because the rootfs has no `mkfs` for them; the Android
-product has neither.
+`CONFIG_SCHED_STACK_END_CHECK`. The deepest use measured under the heaviest
+workload of each product, with `CONFIG_DEBUG_STACK_USAGE`, was about 26 KiB, a
+margin of 2.5x or more.
 
 The signal stack the host gives each vCPU carrier is separate: 128 KiB from
 `malloc`, whatever `THREAD_SIZE` is, with the deepest use measured at
@@ -420,14 +407,6 @@ that holds no cold cache. `guest-page-cache-trim` checks the default, all three
 commands, the back-off, and a pass over file cache read between the pages of a
 tmpfs file.
 
-The image has no array of per-CPU signal stacks: the host gives each vCPU
-carrier a 128 KiB signal stack of its own, whatever `THREAD_SIZE` is. Two
-further cuts were tried and dropped, so that nobody attempts them again. The
-relocation records (`.rela.dyn`, about 2 MB) stay in the image, because pages
-freed below the break lie outside the vhost-user memory table. The
-shared-memory tables stay static, because the map request is served in
-interrupt context, where an atomic allocation can fail.
-
 Releasing an ext4 inode preallocation never allocates, so evicting a cached
 inode from the inode shrinker, which runs under `PF_MEMALLOC`, does not trip
 the page allocator's check against `__GFP_NOFAIL` requests there. While a
@@ -567,35 +546,9 @@ nested mmu-gather flush keeps the range it collected
 instead of becoming a whole-`mm` flush, because a Darwin range invalidation
 already quiesces the generation's executors and advances its epoch.
 
-Memory that the kernel shares with user space through `init_mm` must be
-whole shared slots, so the architecture reports a vmap group of four pages. vmalloc then aligns, rounds and allocates every area in
-groups and `vmap()` aligns its area to a group, so BPF maps and ring buffers,
-perf and PACKET_MMAP rings and the io_uring regions that the kernel allocates
-share their memory with user space. An area that cannot be grouped falls back
-to small pages only when it is kernel-private (never a `VM_USERMAP` one), and
-`remap_vmalloc_range` warns once about memory that is not whole groups. The
-kernel-vmap hooks `flush_kernel_vmap_range()` and
-`invalidate_kernel_vmap_range()` publish and refresh the private copy of a
-slot that cannot be shared, as they do for the callers that already bracket a
-vmap alias (XFS, dm, the DMA-BUF heaps). `flush_cache_vunmap()`, which Linux
-calls before vmalloc, `vunmap()` or `vm_unmap_ram()` clears an alias's PTEs,
-publishes the range's private slots too: a kernel TLB sync applies only
-changed PTEs, so without it the stores of a short-lived alias, such as EROFS's
-LZ4 decompression into page-cache folios, would stay in the host's copy while
-the linear map read stale frames, and reach the frames only at a later purge,
-after they may have been reused. Pages that user space owns cannot be
-regrouped, so io_uring refuses with `EINVAL` an `IORING_SETUP_NO_MMAP` ring, a
-registered memory region or a provided-buffer ring whose pages are neither one
-folio nor whole aligned groups. The BPF ring buffer is laid out so that the
-first data copy ends on a group boundary, which is a change to
-`kernel/bpf/ringbuf.c`. A
-buffer under 16 KiB brackets its wrapped tail with the vmap hooks. Perf no
-longer selects `PERF_USE_VMALLOC`, as native arm64 does not. The virtio-gpu
-console draws into a vmap of scattered shmem pages, which is a private copy on
-this profile, so the fbdev shmem dirty callback flushes the damaged lines
-before the device reads them; without it a VNC client sees a blank console.
-The arm64 kernels run `guest-kernel-user-shared-memory` and `guest-erofs-lz4`;
-the x86_64 slice runs the latter's runner directly.
+Memory that the kernel shares with user space through `init_mm` must be whole
+shared slots, so the architecture reports a vmap group of four pages; the
+[shared README](../common/README.md) describes the topics that make that so.
 
 Signal dispositions are process-wide, so the emulator's device and renderer
 threads share UML's `SIGSEGV` and `SIGBUS` handlers even though they own no
@@ -1038,13 +991,10 @@ for dynticks idle, which the shared policy already runs as `NO_HZ_IDLE`, and
 
 The list asks for `CONFIG_BUG_ON_DATA_CORRUPTION`, which selects
 `CONFIG_LIST_HARDENED`: a list operation whose neighbours do not point back
-panics instead of carrying on with a corrupted list. It costs 2.3% over
-single-vCPU system-call microbenchmarks (getppid 1.6%, a pipe round trip 2.5%,
-a 4 KiB tmpfs read or write up to 3.9%) and nothing measurable on a broad guest
-workload (compiling, a tree walk, tar: 0.991 of the time on four vCPUs, 0.987
-on one). Only Android's list asks for it, so the Linux product does not set it;
-moving the symbol to the shared policy would put the same cost on every
-product.
+panics instead of carrying on with a corrupted list. It costs about 2% on
+system-call microbenchmarks. Only Android's list asks for it, so the Linux
+product does not set it; moving the symbol to the shared policy would put the
+same cost on every product.
 
 GKI also turns on hardening and memory options that no list requires
 (`INIT_ON_ALLOC_DEFAULT_ON`, `FORTIFY_SOURCE`, `SLAB_FREELIST_HARDENED`,
@@ -1108,13 +1058,8 @@ count. Companion LLVM tools must match the selected compiler family.
 
 Every kernel generates BTF, so the build also needs pahole and a static
 libelf. Both come from the `kernel-host-tools` dependency product, built from
-pinned elfutils, dwarves, and libbpf sources:
-
-```sh
-dependencies/prepare.sh --product kernel-host-tools
-dependencies/prepare.sh --archive-manifest dependencies/kernel-host-tools/archives.tsv
-dependencies/build-kernel-host-tools.sh
-```
+pinned elfutils, dwarves, and libbpf sources; the
+[dependencies README](../../dependencies/README.md) has its commands.
 
 `UML_KERNEL_HOST_TOOLS_PREFIX` selects the prefix (default
 `.build/dependencies/kernel-host-tools`) and `UML_KERNEL_PAHOLE` may select a
