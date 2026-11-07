@@ -151,6 +151,17 @@ struct HomeView: View {
                 text: "The guest needs \(Formats.size(bytes: Limits.startReserveBytes)) free to start. Free up space in Settings › General › \(model.host.name) Storage."
             )
         }
+        if let guest = model.guest, model.host.memory.isAboveDefault(guest.memoryMiB, vCPUs: guest.cores) {
+            NoticeCard(
+                symbol: "exclamationmark.triangle.fill", color: .orange,
+                title: MemoryWarning.title,
+                text: MemoryWarning.explanation(
+                    memoryMiB: guest.memoryMiB,
+                    safeMiB: model.host.memory.defaultMemoryMiB(vCPUs: guest.cores),
+                    deviceName: model.host.name
+                )
+            )
+        }
         switch model.plan {
         case .update(_, let release):
             NoticeCard(

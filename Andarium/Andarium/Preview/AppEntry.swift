@@ -116,6 +116,8 @@ struct AppEntry {
             model.plan = .blocked(.olderAndroid)
         case "home-closed":
             model.notice = .closedInBackground
+        case "home-memory-warning", "system-memory-warning":
+            model.guest = PreviewData.highMemoryGuest(on: host)
         case "home-options", "home-display", "home-capabilities", "home-backup", "system-edit":
             break
         case "home-mic-on":
@@ -277,7 +279,7 @@ struct AppEntry {
             model.sheet = .create
         case "resize":
             model.sheet = .resize
-        case "system-edit":
+        case "system-edit", "system-memory-warning":
             model.sheet = .system
         case "home-mic-alert":
             model.setMicrophone(true)
