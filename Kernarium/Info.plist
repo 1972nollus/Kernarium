@@ -7,7 +7,7 @@
 		<string>com.imxieyi.Kernarium.guest.*</string>
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Kernarium records from the microphone only when you turn on Microphone in Emulator Settings, so that programs in the guest can use it.</string>
+	<string>Kernarium records from the microphone only when you turn on Microphone in Emulator settings, so that programs in the guest can use it.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
