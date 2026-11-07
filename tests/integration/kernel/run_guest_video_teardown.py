@@ -27,7 +27,7 @@ The guest runs with slab_debug=FZPU, so freed memory is poisoned and checked
 and a use after free faults instead of reading stale state. Nothing after the
 removal may be a kernel warning, slab report, oops, panic or host fault
 report, and each halt or power-off must end the emulator with status 0. The
-contract is the driver-removal paragraph of kernel/mainline-6.18/README.md.
+contract is the driver-removal paragraph of kernel/common/README.md.
 """
 
 from __future__ import annotations

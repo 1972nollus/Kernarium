@@ -16,7 +16,7 @@ submits and a flush ends, a discard and a write-zeroes
 the traced submission path must show allocations, so the trace saw it,
 none may be the driver's, nothing may be lost, everything must read back as
 written, and the guest must print no kernel warning and power off cleanly.
-The contract is the UBD paragraph of kernel/mainline-6.18/README.md.
+The contract is the UBD paragraph of kernel/common/README.md.
 """
 
 from __future__ import annotations

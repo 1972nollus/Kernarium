@@ -1346,7 +1346,7 @@ the console wake edge. Every console request ends the suspend, so a trimming
 change requested meanwhile waits for the resume, and nothing else on the
 guest's descriptors ends it, network traffic included. An edge sent before the
 guest reached the boundary, as after a suspend request whose reply timed out,
-still ends it; the [mainline README](../kernel/mainline-6.18/README.md) gives
+still ends it; the [shared kernel README](../kernel/common/README.md) gives
 the kernel's side, including which wake sources end a suspend the host asked
 for and which end one the guest started. `uml_emulator_wake()` sends that edge
 whatever the host last asked for, except to a guest it has quiesced, as a

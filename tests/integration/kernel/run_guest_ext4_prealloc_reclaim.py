@@ -8,7 +8,7 @@ PF_MEMALLOC, where the page allocator warns about the __GFP_NOFAIL request
 that reloading an uncached buddy folio or bitmap buffer would make. While a
 block group holds an inode preallocation the kernel keeps the group's bitmap
 and buddy folios and its bitmap buffer referenced, so the release finds them
-in memory. The contract is the ext4 paragraph of kernel/mainline-6.18/README.md.
+in memory. The contract is the ext4 paragraph of kernel/common/README.md.
 
 The guest formats an ext4 disk with fs-verity, which leaves an inode
 preallocation on every closed file it protects, writes thousands of files,

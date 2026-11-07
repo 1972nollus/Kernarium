@@ -59,7 +59,7 @@ seconds, with the PM core reporting that freezing user space was aborted. The
 shell answers, and once the holder is released the next suspend holds and wakes.
 The arm checks the kernel half of the host's abort; the host half is the
 guest-console and emulator-lifecycle unit tests.
-The contract is the suspend paragraph of the mainline kernel README.
+The contract is the suspend paragraph of kernel/common/README.md.
 """
 
 from __future__ import annotations

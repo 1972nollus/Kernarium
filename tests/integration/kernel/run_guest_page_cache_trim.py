@@ -35,7 +35,7 @@ cache like any other, in phases:
   Then 256 MiB read once must stay cached again, and a command the trimmer
   does not know must be refused.
 
-The contract is the guest RAM paragraph of the mainline kernel README.
+The contract is the guest RAM paragraph of kernel/common/README.md.
 """
 
 from __future__ import annotations

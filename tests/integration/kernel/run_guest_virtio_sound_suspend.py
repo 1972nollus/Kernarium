@@ -36,7 +36,7 @@ the probe streams: with the stop threshold at the boundary the stream must
 carry on, and with the default thresholds it xruns once and plays on at the
 rate of audio. Every case must pass, and the guest must print no kernel
 warning, oops or host fault report. The contract is the suspend paragraph of
-kernel/mainline-6.18/README.md.
+kernel/common/README.md.
 """
 
 from __future__ import annotations
