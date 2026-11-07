@@ -233,9 +233,10 @@ outcomes are known and not defects of the image:
 - The launcher sets `androidboot.hw_timeout_multiplier`, which scales the
   framework's ANR, watchdog and input timeouts, from the guest's vCPU count: 3 at
   six or more, 5 below, where the gadget engines are slower than a phone
-  (`darwin/device/block/android_boot.hpp`). The launchers refuse any value of it
-  in a release's command line except the `=5` that earlier releases carry, which
-  they drop.
+  (`darwin/device/block/android_boot.hpp`). The release's command line does not
+  set it, and the vendor init script falls back to 5 when a launch passes none.
+  The launchers refuse any value of it in a release's command line except the
+  `=5` that earlier releases carry, which they drop.
 - The guest has a compressed swap of half its RAM (one zram entry in
   `fstab.uml`), enabled at `sys.boot_completed`. PinnerService does not lock the
   home app's files, and `kernarium_reclaim_boot_apps.sh` kills only the cached

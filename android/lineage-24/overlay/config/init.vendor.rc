@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 on early-init
-    setprop ro.hw_timeout_multiplier ${ro.boot.hw_timeout_multiplier}
+    # The launcher passes it from the vCPU count; a launch with none gets 5.
+    setprop ro.hw_timeout_multiplier ${ro.boot.hw_timeout_multiplier:-5}
     setprop hypervisor.memory_reclaim.supported ${ro.boot.hypervisor.vm.supported}
     setprop ro.setupwizard.mode ${ro.boot.setupwizard_mode}
     # Graphics configuration. The tracked boot command line sets every
