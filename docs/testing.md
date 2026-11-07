@@ -1696,6 +1696,9 @@ a blank instance:
   for the helper to do. On both guests the launcher's data model holds exactly
   the six applications of the default layout on the first page, none in the
   dock, and the log shows no item dropped while the launcher read its layout.
+  The runner raises the guest's log buffers to 64 MiB (`logcat -G`, read back)
+  the first time adb answers, before the wizard runs, so the launcher's layout
+  load line cannot rotate out; a log without that line fails the run.
   Measurements on an erased guest use that helper, so they do not land in the
   wizard.
 - `android-adb-debugging` (integration, registered only when
