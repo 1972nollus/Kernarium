@@ -177,28 +177,35 @@ pipe.
 
 ## Documentation policy
 
-Documentation records durable current contracts and concise historical
-outcomes. Git history is the worklog.
+Tracked documentation is high level and current. Git history is the
+worklog.
 
+- A README or a document under `docs/` states what the component is, what it
+  owns, the contracts other components and users rely on, its canonical build
+  or test entry point, and links to the owning documents.
+- State a contract as its current value or behaviour. Add at most one clause
+  of reason, and only where a reader would otherwise undo it. Rationale,
+  rejected alternatives, user decisions and product wording choices stay out
+  of tracked files: record them in local, untracked notes, such as an agent's
+  private memory.
+- Do not restate what the code, `--help`, a schema or a test already makes
+  clear: screen text, field formats, option and environment tables,
+  step-by-step mechanics, measured numbers. Put a mechanic the code does not
+  make clear in a comment beside that code.
+- Keep code and command examples to the smallest canonical entry point.
 - Do not add investigation diaries, handoff files, progress logs, temporary
-  failure analysis, machine-specific snapshots, or evidence indexes.
-- Remove temporary-state problems and their analysis once the durable result
-  is understood. Document only a continuing limitation or contract.
-- Explain decisions with a short outcome and its consequences. Do not preserve
-  exhaustive comparisons of rejected alternatives.
-- Keep code and command examples to the smallest canonical entry point needed
-  for quick use. Put detailed mechanics in scripts, `--help`, tests, or code.
-- Describe what a component guarantees, not the step-by-step history of how it
-  was implemented.
+  failure analysis, machine-specific snapshots, or evidence indexes. Remove a
+  temporary problem and its analysis once the result is understood; document a
+  continuing limitation in a sentence.
 - Keep attempted performance work only in
   [`docs/optimization-history.md`](docs/optimization-history.md). Each entry is
   a brief hypothesis, disposition, and durable lesson; omit raw logs,
-  temporary paths, build IDs, and full measurement tables.
+  temporary paths, build IDs, and measurement tables.
 - Keep `AGENTS.md` limited to reusable repository-wide instructions. Put
-  product and subsystem contracts in their owning documentation, not incident
-  narratives here.
+  product and subsystem contracts in their owning documentation.
 - Prefer one owning document and links from other locations. Delete superseded
   documents instead of retaining duplicate status summaries.
+- Documentation that a patch adds to another project follows the same rules.
 - Keep project documentation under `docs/` or beside the subsystem it owns.
   The repository root is reserved for `AGENTS.md`, the one-line `CLAUDE.md`
   compatibility link, `LICENSE` and `LICENSES/`, and an optional human-facing
