@@ -39,7 +39,8 @@ application embeds every framework, links none at launch, and loads exactly
 one for the process lifetime. Packaging includes each runtime's dSYM in its
 XCFramework and then strips the framework binary with `strip -S`, which drops
 the linker's debug map (it names the build host's directories) and keeps the
-UUID the dSYM matches.
+UUID the dSYM matches. The dSYM alone also names the kernel's functions, at
+their place in `__TEXT,__uml_elf` (`scripts/kernel-dsym-symbols.py`).
 
 Kernarium makes one run per launch. A guest that restarts itself is booted
 again inside that run, in the same process, and the run returns only when the

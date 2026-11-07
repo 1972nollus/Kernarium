@@ -527,7 +527,12 @@ host-file flushing still runs but guest write-back and freeze are unavailable.
 The kernel says how the guest ends before it shuts its drivers down, with the
 bridge import `darwin_uml_guest_shutdown()`: power-off, halt, or restart with the
 command the guest passed. The runtime keeps the kind and a bounded copy of the
-command in the run's `Context`. A panic aborts the process and reports nothing.
+command in the run's `Context`. A panic reports nothing and aborts the process
+after the runtime moves the kernel frames on every thread's stack and registers
+from the kernel's alias to the same instructions in the framework's
+`__TEXT,__uml_elf` section (`runtime/kernel_crash_frames`), where the runtime's
+dSYM, which alone names the kernel's functions, symbolizes them in a crash
+report.
 
 A guest that restarts itself boots again in the same process, because iOS can
 neither re-exec nor respawn an application. The macOS launchers

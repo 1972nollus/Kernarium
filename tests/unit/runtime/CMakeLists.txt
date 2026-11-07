@@ -33,6 +33,15 @@ uml_add_unit_test(
     NAME runtime-kernel-signal-scope
     COMMAND uml_runtime_kernel_signal_scope_tests)
 
+# The panic path's rewrite of the kernel's frames to the carrier bytes.
+add_executable(uml_runtime_kernel_crash_frames_tests
+    kernel_crash_frames_tests.cpp)
+target_link_libraries(uml_runtime_kernel_crash_frames_tests PRIVATE
+    UML::RuntimeKernelSignals)
+uml_add_unit_test(
+    NAME runtime-kernel-crash-frames
+    COMMAND uml_runtime_kernel_crash_frames_tests)
+
 # The kernel a shared library links into itself is found through the library
 # that holds the lookup, not through the executable that loads it.
 add_library(uml_runtime_embedded_kernel_probe SHARED
