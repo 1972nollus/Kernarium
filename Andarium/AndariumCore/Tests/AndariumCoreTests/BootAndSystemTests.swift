@@ -110,6 +110,20 @@ struct SystemInfoTests {
         #expect(info.architecture == "arm64, 4 KiB pages")
         #expect(info.securityPatch == "1 October 2026")
         #expect(info.appVersion == "1.0 (1)")
+        // A release published before the ABI list was recorded has none.
+        #expect(info.abis.isEmpty)
+    }
+
+    @Test func theAbiListComesFromTheManifestInTheImagesOrder() throws {
+        let listed = manifest.replacingOccurrences(
+            of: "\"security_patch\": \"2026-10-01\"",
+            with: "\"security_patch\": \"2026-10-01\", \"abi_list\": [\"arm64-v8a\", \"armeabi-v7a\", \"armeabi\"]"
+        )
+        let info = try SystemInfo(manifest: Data(listed.utf8), appVersion: "1")
+        #expect(info.abis == ["arm64-v8a", "armeabi-v7a", "armeabi"])
+        // Anything that is not a name is left out rather than shown.
+        let odd = listed.replacingOccurrences(of: "\"armeabi\"]", with: "\"\", 7]")
+        #expect(try SystemInfo(manifest: Data(odd.utf8), appVersion: "1").abis == ["arm64-v8a", "armeabi-v7a"])
     }
 
     @Test func theSecurityPatchIsWordedOrLeftOut() throws {

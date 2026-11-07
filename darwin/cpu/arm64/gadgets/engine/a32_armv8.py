@@ -332,8 +332,8 @@ def emit_crc(asm) -> None:
                 "ldr x8, [_stream], #8",
                 "ubfx x9, x8, #16, #16", "ubfx x10, x8, #32, #16",
                 "and x8, x8, #0xffff",
-                "ldr w9, [_cpu, x9]", "ldr w10, [_cpu, x10]",
-                f"{mnemonic} w9, w9, w10", "str w9, [_cpu, x8]",
+                "ldr w9, [_vcpu, x9]", "ldr w10, [_vcpu, x10]",
+                f"{mnemonic} w9, w9, w10", "str w9, [_vcpu, x8]",
                 "next_gadget"]))
 
 
@@ -351,23 +351,23 @@ def emit_vfpv8(asm) -> None:
         for op, cc in zip(VFP8_OPS[:4], conditions):
             asm.gadget(f"vfp8_{op}_{label}", "\n".join([
                 *vfp8_operands(r, True),
-                f"ldr {r}0, [_cpu, x9]", f"ldr {r}1, [_cpu, x10]",
+                f"ldr {r}0, [_vcpu, x9]", f"ldr {r}1, [_vcpu, x10]",
                 "msr nzcv, x27", f"fcsel {r}0, {r}0, {r}1, {cc}",
-                f"str {store}0, [_cpu, x8]", "next_gadget"]))
+                f"str {store}0, [_vcpu, x8]", "next_gadget"]))
         for op, mnemonic in (("vmaxnm", "fmaxnm"), ("vminnm", "fminnm")):
             asm.gadget(f"vfp8_{op}_{label}", "\n".join([
                 *vfp8_operands(r, True), "a32_fp_guest",
-                f"ldr {r}0, [_cpu, x9]", f"ldr {r}1, [_cpu, x10]",
+                f"ldr {r}0, [_vcpu, x9]", f"ldr {r}1, [_vcpu, x10]",
                 f"{mnemonic} {r}0, {r}0, {r}1",
-                f"str {store}0, [_cpu, x8]", "next_gadget"]))
+                f"str {store}0, [_vcpu, x8]", "next_gadget"]))
         for op, mnemonic in (("vrinta", "frinta"), ("vrintn", "frintn"),
                              ("vrintp", "frintp"), ("vrintm", "frintm"),
                              ("vrintz", "frintz"), ("vrintx", "frintx"),
                              ("vrintr", "frinti")):
             asm.gadget(f"vfp8_{op}_{label}", "\n".join([
                 *vfp8_operands(r, False), "a32_fp_guest",
-                f"ldr {r}0, [_cpu, x9]", f"{mnemonic} {r}0, {r}0",
-                f"str {store}0, [_cpu, x8]", "next_gadget"]))
+                f"ldr {r}0, [_vcpu, x9]", f"{mnemonic} {r}0, {r}0",
+                f"str {store}0, [_vcpu, x8]", "next_gadget"]))
 
 
 def emit_vfpcvt8(asm) -> None:
@@ -376,41 +376,41 @@ def emit_vfpcvt8(asm) -> None:
             for r in ("s", "d", "h"):
                 asm.gadget(f"vfp8_cvt{letter}_{suffix}_{r}", "\n".join([
                     *vfp8_operands(r, False), "a32_fp_guest",
-                    f"ldr {r}0, [_cpu, x9]",
+                    f"ldr {r}0, [_vcpu, x9]",
                     f"fcvt{letter}{suffix} w9, {r}0",
-                    "str w9, [_cpu, x8]", "next_gadget"]))
+                    "str w9, [_vcpu, x8]", "next_gadget"]))
 
 
 def emit_vfphalf(asm) -> None:
     # VINS Sd, Sm: the low half of Sm into the top half of Sd. [d][m]
     asm.gadget("vfp_ins", "\n".join([
         "ldr x8, [_stream], #8", *a32_simd.unpack("d", "n"),
-        "ldr w9, [_cpu, x9]", "ldr w10, [_cpu, x8]",
-        "bfi w10, w9, #16, #16", "str w10, [_cpu, x8]", "next_gadget"]))
+        "ldr w9, [_vcpu, x9]", "ldr w10, [_vcpu, x8]",
+        "bfi w10, w9, #16, #16", "str w10, [_vcpu, x8]", "next_gadget"]))
     # VMOVX Sd, Sm: the top half of Sm, zero-extended.
     asm.gadget("vfp_movx", "\n".join([
         "ldr x8, [_stream], #8", *a32_simd.unpack("d", "n"),
-        "ldr w9, [_cpu, x9]", "lsr w9, w9, #16", "str w9, [_cpu, x8]",
+        "ldr w9, [_vcpu, x9]", "lsr w9, w9, #16", "str w9, [_vcpu, x8]",
         "next_gadget"]))
     # VMOV Hn, Rt: the low half of Rt, zero-extended. [Sn][Rt]
     asm.gadget("vfp_mov_toh", "\n".join([
         "ldr x8, [_stream], #8", *a32_simd.unpack("d", "n"),
-        "ldr w9, [_cpu, x9]", "and w9, w9, #0xffff", "str w9, [_cpu, x8]",
+        "ldr w9, [_vcpu, x9]", "and w9, w9, #0xffff", "str w9, [_vcpu, x8]",
         "next_gadget"]))
     # VMOV Rt, Hn: the half of Sn, zero-extended. [Rt][Sn]
     asm.gadget("vfp_mov_h", "\n".join([
         "ldr x8, [_stream], #8", *a32_simd.unpack("d", "n"),
-        "ldrh w9, [_cpu, x9]", "str w9, [_cpu, x8]", "next_gadget"]))
+        "ldrh w9, [_vcpu, x9]", "str w9, [_vcpu, x8]", "next_gadget"]))
     # VCVTB and VCVTT between half and double: the half is in the bottom or
     # top of an S register (the builder's offset). [d][m]
     asm.gadget("vfp_cvt_dh", "\n".join([
         "ldr x8, [_stream], #8", *a32_simd.unpack("d", "n"),
-        "a32_fp_guest", "ldr h0, [_cpu, x9]", "fcvt d0, h0",
-        "str d0, [_cpu, x8]", "next_gadget"]))
+        "a32_fp_guest", "ldr h0, [_vcpu, x9]", "fcvt d0, h0",
+        "str d0, [_vcpu, x8]", "next_gadget"]))
     asm.gadget("vfp_cvt_hd", "\n".join([
         "ldr x8, [_stream], #8", *a32_simd.unpack("d", "n"),
-        "a32_fp_guest", "ldr d0, [_cpu, x9]", "fcvt h0, d0",
-        "str h0, [_cpu, x8]", "next_gadget"]))
+        "a32_fp_guest", "ldr d0, [_vcpu, x9]", "fcvt h0, d0",
+        "str h0, [_vcpu, x8]", "next_gadget"]))
 
 
 def emit(asm) -> None:

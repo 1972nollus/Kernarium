@@ -30,7 +30,7 @@ scalar_entry move_wide_packed_\suffix, 0, 0, Lscalar_offset48, Lscalar_none, Lsc
 	and _scalar_x11, x8, #0xffffffffffff
 	.endif
 	lsr x9, x8, #48
-	str _scalar_x11, [_cpu, x9]
+	str _scalar_x11, [_vcpu, x9]
 	br x14
 .endm
 

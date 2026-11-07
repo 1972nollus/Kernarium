@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * A forwarded host connection must not outlive a guest that stops answering.
  * SLiRP holds the host end while it has data for the guest, so a guest that

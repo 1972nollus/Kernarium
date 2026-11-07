@@ -372,8 +372,12 @@ def tracked_erofs_parameters(android_root: Path) -> tuple[str, str]:
     return found[0], found[1]
 
 
-def synthetic_resource_table(arrays: list[tuple[str, list[str]]], *, utf8: bool = True) -> bytes:
-    """A compiled resource table whose one package holds the given string-array resources."""
+def synthetic_resource_table(
+    arrays: list[tuple[str, list[str]]], *, utf8: bool = True,
+    booleans: list[tuple[str, bool]] = (), compact: bool = False,
+) -> bytes:
+    """A compiled resource table whose one package holds the given string-array resources and
+    bool resources (as compact entries when `compact` is set, as a recent aapt2 writes them)."""
 
     def pool(strings: list[str]) -> bytes:
         data, offsets = b"", []
@@ -391,27 +395,41 @@ def synthetic_resource_table(arrays: list[tuple[str, list[str]]], *, utf8: bool 
                 + struct.pack(f"<{len(strings)}I", *offsets) + data)
 
     values = sorted({item for _, items in arrays for item in items})
-    names = [name for name, _ in arrays]
-    entries = b""
-    offsets = []
-    for index, (_, items) in enumerate(arrays):
-        offsets.append(len(entries))
-        entries += struct.pack("<HHIII", 16, 1, index, 0, len(items))
-        for item in items:
-            entries += struct.pack("<IHBBI", 0x02000001, 8, 0, 3, values.index(item))
+    names = [name for name, _ in arrays] + [name for name, _ in booleans]
     configuration = struct.pack("<I", 64) + b"\x00" * 60
     type_header = 20 + len(configuration)
-    type_chunk = (struct.pack("<HHIBBHII", 0x0201, type_header,
-                              type_header + 4 * len(arrays) + len(entries), 1, 0, 0, len(arrays),
-                              type_header + 4 * len(arrays))
-                  + configuration + struct.pack(f"<{len(arrays)}I", *offsets) + entries)
-    type_pool, key_pool = pool(["array"]), pool(names)
+
+    def type_chunk(type_id: int, entries: list[bytes]) -> bytes:
+        offsets, body = [], b""
+        for entry in entries:
+            offsets.append(len(body))
+            body += entry
+        return (struct.pack("<HHIBBHII", 0x0201, type_header,
+                            type_header + 4 * len(entries) + len(body), type_id, 0, 0, len(entries),
+                            type_header + 4 * len(entries))
+                + configuration + struct.pack(f"<{len(entries)}I", *offsets) + body)
+
+    array_entries = []
+    for index, (_, items) in enumerate(arrays):
+        entry = struct.pack("<HHIII", 16, 1, index, 0, len(items))
+        for item in items:
+            entry += struct.pack("<IHBBI", 0x02000001, 8, 0, 3, values.index(item))
+        array_entries.append(entry)
+    bool_entries = []
+    for index, (_, value) in enumerate(booleans, start=len(arrays)):
+        data = 0xFFFFFFFF if value else 0
+        if compact:  # key in the size field; the value type in the flags' high byte; the data
+            bool_entries.append(struct.pack("<HHI", index, 0x1200 | 0x08, data))
+        else:
+            bool_entries.append(struct.pack("<HHI", 8, 0, index) + struct.pack("<HBBI", 8, 0, 0x12, data))
+    chunks = type_chunk(1, array_entries) + (type_chunk(2, bool_entries) if booleans else b"")
+    type_pool, key_pool = pool(["array", "bool"] if booleans else ["array"]), pool(names)
     package_header = 288
     package = (struct.pack("<HHII", 0x0200, package_header,
-                           package_header + len(type_pool) + len(key_pool) + len(type_chunk), 0x7F)
+                           package_header + len(type_pool) + len(key_pool) + len(chunks), 0x7F)
                + b"\x00" * 256
                + struct.pack("<IIIII", package_header, 0, package_header + len(type_pool), 0, 0)
-               + type_pool + key_pool + type_chunk)
+               + type_pool + key_pool + chunks)
     global_pool = pool(values)
     return struct.pack("<HHII", 2, 12, 12 + len(global_pool) + len(package), 1) + global_pool + package
 
@@ -529,6 +547,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         r'android:pathData="([^"]+)"', (wizard_art_root / "drawable/logo.xml").read_text(encoding="utf-8")
     )
     wizard_welcome = (wizard_art_root / "raw/lottie_welcome.json").read_bytes()
+    # The two wizard scripts the overlay carries, as raw files reach the overlay: unchanged.
+    wizard_scripts = {
+        name: (wizard_art_root / "raw" / name).read_bytes() for name in tool.SETUP_WIZARD_FLOWS
+    }
+    owner_name, user_name = wizard_scripts
+    launcher_apps = sorted(tool.LAUNCHER_APPS)
+    launcher_grids = tool.LAUNCHER_GRIDS
+    launcher_overlay_entry = tool.LAUNCHER_OVERLAY
     # The reader of compiled array resources sees the same items through either string pool.
     tables = [("config_ntpServers", ["none"]), ("config_autoTimeSourcesPriority", ["telephony", "external"]),
               ("config_ntpServers", ["ntp://ntp.example", "x"]), ("empty", [])]
@@ -537,6 +563,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
     for utf8 in (True, False):
         if tool.resource_arrays(synthetic_resource_table(tables, utf8=utf8)) != expected_arrays:
             fail(f"the resource array reader misreads a {'UTF-8' if utf8 else 'UTF-16'} string pool")
+    # ... and a bool resource, whether the table keeps it as a full or as a compact entry.
+    flags = [("config_flipToScreenOffEnabled", False), ("other", True), ("config_flipToScreenOffEnabled", True)]
+    for compact in (False, True):
+        table = synthetic_resource_table(tables, booleans=flags, compact=compact)
+        if tool.resource_booleans(table) != {"config_flipToScreenOffEnabled": [False, True], "other": [True]}:
+            fail(f"the resource bool reader misreads {'compact' if compact else 'full'} entries")
+        if tool.resource_arrays(table) != expected_arrays:
+            fail(f"the resource array reader misreads a table that also holds {'compact' if compact else 'full'} bools")
     release_manifest = synthetic_compiled_manifest(None, debuggable=False)
     release_apk = synthetic_apk(debuggable=False)
     preopt_apks = sorted(tool.REQUIRED_PREOPT_APKS)
@@ -783,8 +817,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           pinner_overlay_variant: str | None = None,
                           statistics_variant: str | None = None,
                           wizard_branding_variant: str | None = None,
+                          navigation_variant: str | None = None,
+                          launcher_variant: str | None = None,
                           network_time_variant: str | None = None,
+                          flip_variant: str | None = None,
                           reclaim_variant: str | None = None,
+                          time_zone_variant: str | None = None,
                           wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
                           cas_hal_variant: str | None = None,
@@ -794,6 +832,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           signed: bool = False,
                           adbd_launch_unreadable: bool = False,
                           vendor_property_variant: str | None = None,
+                          soc_variant: str | None = None,
+                          board_variant: str | None = None,
                           video_properties: dict[str, str] | None = None,
                           missing_video_ueventd: bool = False,
                           mesa_gles_alignment: int = 16384,
@@ -954,6 +994,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "product-false": "ro.adb.secure=false\n",
                     }.get(adb_secure_variant, "")
                     + ("" if missing_lockscreen_default else "ro.lockscreen.disable.default=true\n")
+                    + ("ro.boot.vendor.overlay.theme=com.android.internal.systemui.navbar.gestural\n"
+                       if navigation_variant == "overlay-theme-property" else "")
                     + {
                         None: "apexd.config.use_fiemap=false\n",
                         "missing": "",
@@ -1326,6 +1368,46 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         reclaim_rc = reclaim_rc.replace(old, new)
                 if reclaim_variant != "missing-rc":
                     archive.writestr("SYSTEM_EXT/etc/init/kernarium_reclaim_boot_apps.rc", reclaim_rc)
+                # The script that applies the host's time zone, with its init file: the tracked ones,
+                # and the ways each can go wrong.
+                time_zone_script = (
+                    verifier.parents[1] / "overlay/tools/kernarium_time_zone.sh"
+                ).read_text()
+                time_zone_rc = (
+                    verifier.parents[1] / "overlay/tools/kernarium_time_zone.rc"
+                ).read_text()
+                for variant, (old, new) in {
+                    "no-property": ("getprop ro.boot.kernarium.timezone", "getprop ro.boot.other"),
+                    "no-auto-read": ("cmd settings get global auto_time_zone", "true"),
+                    "no-set": ('cmd alarm set-timezone "$zone"', "true"),
+                    "no-marker": ('setprop "$marker" "$zone"', "true"),
+                    "writes-setting": ("tag=kernarium_time_zone\n",
+                                       "tag=kernarium_time_zone\ncmd settings put global auto_time_zone 0\n"),
+                    "setprop-zone": ("tag=kernarium_time_zone\n",
+                                     "tag=kernarium_time_zone\nsetprop persist.sys.timezone GMT\n"),
+                    "detector": ("tag=kernarium_time_zone\n",
+                                 "tag=kernarium_time_zone\n"
+                                 "cmd time_zone_detector set_auto_detection_enabled true\n"),
+                }.items():
+                    if time_zone_variant == variant:
+                        if old not in time_zone_script:
+                            fail(f"the time zone script lacks '{old}' for the {variant} variant")
+                        time_zone_script = time_zone_script.replace(old, new)
+                if time_zone_variant != "missing-script":
+                    archive.writestr("SYSTEM_EXT/bin/kernarium_time_zone.sh", time_zone_script)
+                for variant, (old, new) in {
+                    "missing-service": ("service kernarium_time_zone ", "service other_service "),
+                    "not-oneshot": ("    oneshot\n", ""),
+                    "not-disabled": ("    disabled\n", ""),
+                    "started-at-boot": ("on property:sys.boot_completed=1", "on boot"),
+                    "no-start": ("    start kernarium_time_zone\n", ""),
+                }.items():
+                    if time_zone_variant == variant:
+                        if old not in time_zone_rc:
+                            fail(f"the time zone init file lacks '{old}' for the {variant} variant")
+                        time_zone_rc = time_zone_rc.replace(old, new)
+                if time_zone_variant != "missing-rc":
+                    archive.writestr("SYSTEM_EXT/etc/init/kernarium_time_zone.rc", time_zone_rc)
                 archive.writestr(
                     "SYSTEM_EXT/etc/selinux/system_ext_file_contexts",
                     "/(system_ext|system/system_ext)/bin/other\\.sh  u:object_r:system_file:s0\n"
@@ -1340,6 +1422,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         if reclaim_variant == "missing-label"
                         else "/(system_ext|system/system_ext)/bin/kernarium_reclaim_boot_apps\\.sh  "
                         "u:object_r:kernarium_reclaim_boot_apps_exec:s0\n"
+                    )
+                    + (
+                        ""
+                        if time_zone_variant == "missing-label"
+                        else "/(system_ext|system/system_ext)/bin/kernarium_time_zone\\.sh  "
+                        "u:object_r:kernarium_time_zone_exec:s0\n"
                     ),
                 )
                 # Platform, vendor and system_ext policy as the builder emits them: the
@@ -1393,6 +1481,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         if wifi_network_variant == "missing-marker-context"
                         else "persist.sys.kernarium.virtwifi_saved    "
                         "u:object_r:kernarium_wifi_network_prop:s0 exact bool\n"
+                    )
+                    + (
+                        ""
+                        if time_zone_variant == "missing-marker-context"
+                        else "persist.sys.kernarium.timezone_applied    "
+                        "u:object_r:kernarium_time_zone_prop:s0 exact string\n"
                     ),
                 )
                 archive.writestr(
@@ -1431,6 +1525,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     + ("" if adb_prop_not_system else "kernarium_adb_host_prop ")
                     + ("" if wifi_network_variant == "marker-not-system"
                        else "kernarium_wifi_network_prop ")
+                    + ("" if time_zone_variant == "marker-not-system"
+                       else "kernarium_time_zone_prop ")
                     + "))\n"
                     + (
                         ""
@@ -1474,6 +1570,41 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                              "(fifo_file (read write getattr)))\n"),
                         )
                         if reclaim_variant != variant
+                    )
+                    + "".join(
+                        rule
+                        for variant, rule in (
+                            ("missing-transition",
+                             "(typetransition init kernarium_time_zone_exec process "
+                             "kernarium_time_zone)\n"),
+                            ("missing-settings-find",
+                             "(allow kernarium_time_zone settings_service "
+                             "(service_manager (find)))\n"),
+                            ("missing-alarm-find",
+                             "(allow kernarium_time_zone alarm_service "
+                             "(service_manager (find)))\n"),
+                            ("missing-transfer",
+                             "(allow kernarium_time_zone system_server (binder (transfer)))\n"),
+                            ("missing-call",
+                             "(allow system_server kernarium_time_zone (binder (call)))\n"),
+                            ("missing-fd",
+                             "(allow system_server kernarium_time_zone (fd (use)))\n"),
+                            ("missing-fifo",
+                             "(allow system_server kernarium_time_zone "
+                             "(fifo_file (read write getattr)))\n"),
+                        )
+                        if time_zone_variant != variant
+                    )
+                    + (
+                        ""
+                        if time_zone_variant == "missing-marker-rule"
+                        else "(allow kernarium_time_zone kernarium_time_zone_prop "
+                        "(property_service (set)))\n"
+                    )
+                    + (
+                        "(allow kernarium_time_zone timezone_prop (property_service (set)))\n"
+                        if time_zone_variant == "sets-zone-property"
+                        else ""
                     )
                     + (
                         ""
@@ -1636,6 +1767,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         catalogue += " lineagestats"
                     if statistics_variant == "wizard-setting" and not parts:
                         dex += b" stats_collection"
+                    # R8 keeps method names, so a wizard that still forces gestural navigation
+                    # names the function in its dex.
+                    dex += b" usesGestureNavigation" if not parts else b""
+                    if navigation_variant == "dex-forces-gestural" and not parts:
+                        dex += b" enableGesturalNavigation"
                     payload = io.BytesIO()
                     with zipfile.ZipFile(payload, "w") as application:
                         # The compiled manifest's string pool is UTF-16, so a marker named there is
@@ -1750,11 +1886,72 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             overlay.writestr("res/drawable-v24/logo.xml", wizard_logo)
                         if wizard_branding_variant != "no-animation":
                             overlay.writestr("res/raw/lottie_welcome.json", wizard_animation)
+                        for script_name, script in wizard_scripts.items():
+                            if wizard_branding_variant == "no-script" and script_name == owner_name:
+                                continue
+                            if wizard_branding_variant == "no-user-script" and script_name == user_name:
+                                continue
+                            if wizard_branding_variant == "stock-script" and script_name == owner_name:
+                                script = script.replace(b'wizard:action="datetime"', b'wizard:action="network_setup"')
+                            if wizard_branding_variant == "stock-user-script" and script_name == user_name:
+                                script += b"\n"
+                            overlay.writestr(f"res/raw/{script_name}", script)
                     archive.writestr(
                         "PRODUCT/overlay/"
                         "LineageSetupWizard__lineage_andarium__auto_generated_rro_product.apk",
                         wizard_apk.getvalue(),
                     )
+                # The two navigation mode overlays stay in the product partition, so that Settings can
+                # switch either way; no configuration enables one.
+                for mode in ("3Button", "Gestural"):
+                    if navigation_variant == f"no-{mode.lower()}-overlay":
+                        continue
+                    archive.writestr(
+                        f"PRODUCT/overlay/NavigationBarMode{mode}/NavigationBarMode{mode}Overlay.apk",
+                        release_apk,
+                    )
+                navigation_configuration = {
+                    "config-enables-gestural": (
+                        "PRODUCT/overlay/config/config.xml",
+                        '<config><overlay package="com.android.internal.systemui.navbar.gestural" enabled="true"/></config>',
+                    ),
+                    "config-enables-3button-undisabled": (
+                        "VENDOR/overlay/config/config.xml",
+                        '<config><merge path="x"/><overlay package="com.android.internal.systemui.navbar.threebutton"/></config>',
+                    ),
+                    "config-unreadable": ("SYSTEM_EXT/overlay/config/config.xml", "<config>"),
+                    "config-disables-gestural": (
+                        "PRODUCT/overlay/config/config.xml",
+                        '<config><overlay package="com.android.internal.systemui.navbar.gestural" enabled="false"/>'
+                        '<overlay package="com.android.theme.icon_pack.circular.android" enabled="true"/></config>',
+                    ),
+                }.get(navigation_variant)
+                if navigation_configuration is not None:
+                    archive.writestr(*navigation_configuration)
+                # The launcher's default workspace: DocumentsUI is the one of the six applications whose APK the
+                # required list does not name, and the overlay holds a compiled layout per grid, whose strings
+                # are the component names.
+                if launcher_variant != "no-documentsui":
+                    archive.writestr("SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk", release_apk)
+                if launcher_variant != "no-overlay":
+                    layout_strings = [name for pair in launcher_apps for name in pair]
+                    if launcher_variant == "stock-layout":
+                        layout_strings.append("com.google.android.googlequicksearchbox")
+                    if launcher_variant == "lacks-files":
+                        layout_strings.remove("com.android.documentsui.LauncherActivity")
+                    launcher_apk = io.BytesIO()
+                    with zipfile.ZipFile(launcher_apk, "w") as overlay:
+                        overlay.writestr("AndroidManifest.xml", release_manifest)
+                        overlay.writestr("resources.arsc", b"\x00config_fixture\x00")
+                        for grid in launcher_grids:
+                            if launcher_variant == "no-6x5" and grid == "6x5":
+                                continue
+                            strings = "\x00".join(layout_strings)
+                            overlay.writestr(
+                                f"res/xml/default_workspace_{grid}.xml",
+                                strings.encode("utf-16-le" if launcher_variant == "utf16-layout" else "utf-8"),
+                            )
+                    archive.writestr(launcher_overlay_entry, launcher_apk.getvalue())
                 if wallpaper_variant != "missing-overlay":
                     # The framework's runtime resource overlay: Soong lists the tablet default
                     # wallpapers with the version qualifier aapt2 adds to a smallest-width one.
@@ -1800,8 +1997,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         network_time["config_autoTimeSourcesPriority"] = ["telephony"]
                     elif network_time_variant == "origin-missing":
                         del network_time["config_autoTimeSourcesPriority"]
+                    # The product's flip-to-screen-off switch, off in the default configuration.
+                    flip_values = [False]
+                    if flip_variant == "enabled":
+                        flip_values = [True]
+                    elif flip_variant == "enabled-in-a-qualified-table":
+                        flip_values = [False, True]
+                    elif flip_variant == "missing":
+                        flip_values = []
                     network_table = synthetic_resource_table(
-                        [*network_time.items(), *extra_definitions], utf8=network_time_variant != "utf16-pool"
+                        [*network_time.items(), *extra_definitions], utf8=network_time_variant != "utf16-pool",
+                        booleans=[("config_flipToScreenOffEnabled", value) for value in flip_values],
+                        compact=flip_variant == "compact",
                     )
                     framework_apk = io.BytesIO()
                     with zipfile.ZipFile(framework_apk, "w") as overlay:
@@ -1975,6 +2182,20 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     # post_process_props.py comments out a denylisted vendor property; the
                     # product denylists the unreliable present fence of the inherited config.
                     "#ro.vendor.hwc.drm.present_fence_not_reliable=true\n"
+                    # The board's own name, and the inherited SoC values, which the denylist
+                    # comments out of the vendor partition (the odm file states the SoC).
+                    + {
+                        None: "ro.product.board=andarium\n",
+                        "cutf": "ro.product.board=cutf\n",
+                        "missing": "",
+                    }[board_variant]
+                    + "#ro.soc.manufacturer=Google\n#ro.soc.model=vsoc_arm64_pgagnostic\n"
+                    + {
+                        "vendor-manufacturer": "ro.soc.manufacturer=Google\n",
+                        "vendor-model": "ro.soc.model=vsoc_arm64_pgagnostic\n",
+                        "vendor-other": "ro.soc.et=true\n",
+                        "vendor-same": "ro.soc.manufacturer=Kernarium\nro.soc.model=Virtual CPU\n",
+                    }.get(soc_variant, "")
                     + {
                         "present-fence-unreliable":
                             "ro.vendor.hwc.drm.present_fence_not_reliable=true\n",
@@ -1995,7 +2216,33 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         ).items()
                     ),
                 )
-                archive.writestr("ODM/etc/build.prop", abi_properties("odm", "armeabi-v7a,armeabi"))
+                soc_properties = {
+                    "ro.soc.manufacturer": "Kernarium",
+                    "ro.soc.model": "Virtual CPU",
+                }
+                soc_properties.update({
+                    None: {},
+                    "missing-manufacturer": {"ro.soc.manufacturer": None},
+                    "missing-model": {"ro.soc.model": None},
+                    "cuttlefish": {"ro.soc.manufacturer": "Google",
+                                   "ro.soc.model": "vsoc_arm64_pgagnostic"},
+                    "joined-model": {"ro.soc.model": "Kernarium Virtual CPU"},
+                    "lowercase-model": {"ro.soc.model": "Virtual cpu"},
+                    "unknown-model": {"ro.soc.model": "unknown"},
+                    "vendor-manufacturer": {},
+                    "vendor-model": {},
+                    "vendor-other": {},
+                    "vendor-same": {},
+                }[soc_variant])
+                archive.writestr(
+                    "ODM/etc/build.prop",
+                    abi_properties("odm", "armeabi-v7a,armeabi")
+                    + "".join(
+                        f"{name}={value}\n"
+                        for name, value in soc_properties.items()
+                        if value is not None
+                    ),
+                )
                 if module:
                     archive.writestr("VENDOR/lib/modules/forbidden.ko", b"module")
                 if module_loader:
@@ -2181,12 +2428,24 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         good = root / "good.zip"
         write_fixture(good)
         run_tool(verifier, "--target-files", good, *kernel_options, check=True)
+        # A recent aapt2 writes a resource that holds one value as a compact entry.
+        compact_good = root / "compact-good.zip"
+        write_fixture(compact_good, flip_variant="compact")
+        run_tool(verifier, "--target-files", compact_good, *kernel_options, check=True)
         # Signed target files are checked with --signed: the release certificate alone is trusted,
         # and only a user build is signed. The unsigned fixtures above hold the test certificate's
         # member, which each variant's unsigned build writes.
         signed_good = root / "signed-good.zip"
         write_fixture(signed_good, signed=True)
         run_tool(verifier, "--target-files", signed_good, "--signed", *kernel_options, check=True)
+        # A configuration that names a navigation mode overlay without enabling it enables nothing.
+        disabled_configuration = root / "navigation-configuration-disabled.zip"
+        write_fixture(disabled_configuration, navigation_variant="config-disables-gestural")
+        run_tool(verifier, "--target-files", disabled_configuration, *kernel_options, check=True)
+        # The overlay's string pools may be UTF-16, as the build packs them.
+        utf16_layouts = root / "launcher-layouts-utf16.zip"
+        write_fixture(utf16_layouts, launcher_variant="utf16-layout")
+        run_tool(verifier, "--target-files", utf16_layouts, *kernel_options, check=True)
         for variant in BUILD_VARIANTS:
             signed_fixture = root / f"{variant}-signed-check.zip"
             write_fixture(signed_fixture, build_variant=variant, signed=True)
@@ -2573,6 +2832,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("unreliable-present-fence", {"vendor_property_variant": "present-fence-unreliable"}),
             ("missing-incremental-property", {"vendor_property_variant": "no-incremental"}),
             ("disabled-incremental-property", {"vendor_property_variant": "incremental-off"}),
+            ("cuttlefish-board", {"board_variant": "cutf"}),
+            ("missing-board", {"board_variant": "missing"}),
+            ("missing-odm-soc-manufacturer", {"soc_variant": "missing-manufacturer"}),
+            ("missing-odm-soc-model", {"soc_variant": "missing-model"}),
+            ("cuttlefish-soc", {"soc_variant": "cuttlefish"}),
+            ("joined-soc-model", {"soc_variant": "joined-model"}),
+            ("lowercase-soc-model", {"soc_variant": "lowercase-model"}),
+            ("unknown-soc-model", {"soc_variant": "unknown-model"}),
+            ("vendor-soc-manufacturer", {"soc_variant": "vendor-manufacturer"}),
+            ("vendor-soc-model", {"soc_variant": "vendor-model"}),
+            ("vendor-soc-other", {"soc_variant": "vendor-other"}),
+            ("vendor-soc-same-as-odm", {"soc_variant": "vendor-same"}),
             ("missing-thermal-apex", {"thermal_hal_variant": "missing-apex"}),
             ("thermal-apex-without-binary", {"thermal_hal_variant": "no-binary"}),
             ("thermal-apex-without-fragment", {"thermal_hal_variant": "no-fragment"}),
@@ -2618,6 +2889,23 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("setup-wizard-logo-lacking-a-path", {"wizard_branding_variant": "logo-lacks-a-path"}),
             ("setup-wizard-without-animation", {"wizard_branding_variant": "no-animation"}),
             ("setup-wizard-with-another-animation", {"wizard_branding_variant": "stock-animation"}),
+            ("setup-wizard-without-its-script", {"wizard_branding_variant": "no-script"}),
+            ("setup-wizard-without-its-user-script", {"wizard_branding_variant": "no-user-script"}),
+            ("setup-wizard-with-another-script", {"wizard_branding_variant": "stock-script"}),
+            ("setup-wizard-with-another-user-script", {"wizard_branding_variant": "stock-user-script"}),
+            ("setup-wizard-forces-gestural-navigation", {"navigation_variant": "dex-forces-gestural"}),
+            ("missing-gestural-navigation-overlay", {"navigation_variant": "no-gestural-overlay"}),
+            ("missing-three-button-navigation-overlay", {"navigation_variant": "no-3button-overlay"}),
+            ("overlay-configuration-enables-gestural", {"navigation_variant": "config-enables-gestural"}),
+            ("overlay-configuration-enables-three-button",
+             {"navigation_variant": "config-enables-3button-undisabled"}),
+            ("overlay-configuration-unreadable", {"navigation_variant": "config-unreadable"}),
+            ("vendor-overlay-theme-property", {"navigation_variant": "overlay-theme-property"}),
+            ("missing-launcher-overlay", {"launcher_variant": "no-overlay"}),
+            ("launcher-overlay-without-a-grid", {"launcher_variant": "no-6x5"}),
+            ("launcher-overlay-with-a-stock-layout", {"launcher_variant": "stock-layout"}),
+            ("launcher-layout-without-files", {"launcher_variant": "lacks-files"}),
+            ("launcher-layout-names-an-application-the-image-lacks", {"launcher_variant": "no-documentsui"}),
             ("ntp-server-left", {"network_time_variant": "ntp-server"}),
             ("ntp-server-left-in-a-qualified-definition",
              {"network_time_variant": "ntp-server-in-a-qualified-table"}),
@@ -2628,6 +2916,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("time-origin-list-empty", {"network_time_variant": "origin-empty"}),
             ("time-origin-list-without-external", {"network_time_variant": "origin-without-external"}),
             ("time-origin-list-missing", {"network_time_variant": "origin-missing"}),
+            ("flip-to-screen-off-enabled", {"flip_variant": "enabled"}),
+            ("flip-to-screen-off-enabled-in-a-qualified-definition",
+             {"flip_variant": "enabled-in-a-qualified-table"}),
+            ("flip-to-screen-off-missing", {"flip_variant": "missing"}),
             ("statistics-uploader-in-parts-manifest", {"statistics_variant": "parts-manifest"}),
             ("statistics-uploader-in-parts-dex", {"statistics_variant": "parts-dex"}),
             ("statistics-endpoint-in-parts-resources", {"statistics_variant": "parts-endpoint"}),
@@ -2658,6 +2950,32 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("reclaim-missing-call", {"reclaim_variant": "missing-call"}),
             ("reclaim-missing-fd", {"reclaim_variant": "missing-fd"}),
             ("reclaim-missing-fifo", {"reclaim_variant": "missing-fifo"}),
+            ("missing-time-zone-script", {"time_zone_variant": "missing-script"}),
+            ("missing-time-zone-rc", {"time_zone_variant": "missing-rc"}),
+            ("time-zone-missing-service", {"time_zone_variant": "missing-service"}),
+            ("time-zone-not-oneshot", {"time_zone_variant": "not-oneshot"}),
+            ("time-zone-not-disabled", {"time_zone_variant": "not-disabled"}),
+            ("time-zone-started-at-boot", {"time_zone_variant": "started-at-boot"}),
+            ("time-zone-no-start", {"time_zone_variant": "no-start"}),
+            ("time-zone-no-property", {"time_zone_variant": "no-property"}),
+            ("time-zone-no-auto-read", {"time_zone_variant": "no-auto-read"}),
+            ("time-zone-no-set", {"time_zone_variant": "no-set"}),
+            ("time-zone-no-marker", {"time_zone_variant": "no-marker"}),
+            ("time-zone-writes-setting", {"time_zone_variant": "writes-setting"}),
+            ("time-zone-setprop-zone", {"time_zone_variant": "setprop-zone"}),
+            ("time-zone-detector", {"time_zone_variant": "detector"}),
+            ("time-zone-missing-label", {"time_zone_variant": "missing-label"}),
+            ("time-zone-missing-transition", {"time_zone_variant": "missing-transition"}),
+            ("time-zone-missing-settings-find", {"time_zone_variant": "missing-settings-find"}),
+            ("time-zone-missing-alarm-find", {"time_zone_variant": "missing-alarm-find"}),
+            ("time-zone-missing-transfer", {"time_zone_variant": "missing-transfer"}),
+            ("time-zone-missing-call", {"time_zone_variant": "missing-call"}),
+            ("time-zone-missing-fd", {"time_zone_variant": "missing-fd"}),
+            ("time-zone-missing-fifo", {"time_zone_variant": "missing-fifo"}),
+            ("time-zone-sets-zone-property", {"time_zone_variant": "sets-zone-property"}),
+            ("time-zone-missing-marker-rule", {"time_zone_variant": "missing-marker-rule"}),
+            ("time-zone-marker-not-system", {"time_zone_variant": "marker-not-system"}),
+            ("time-zone-missing-marker-context", {"time_zone_variant": "missing-marker-context"}),
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
             ("missing-gles-copy", {"init_variant": "missing-gles-copy"}),
@@ -2682,6 +3000,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           synthetic_apk(debuggable=False)}}),
             ("webgl-probe-left-in-the-image",
              {"entries": {"SYSTEM/app/AndariumWebGLProbe/AndariumWebGLProbe.apk":
+                          synthetic_apk(debuggable=False)}}),
+            ("storage-test-left-in-the-system-image",
+             {"entries": {"SYSTEM/app/AndariumStorageTests/AndariumStorageTests.apk":
+                          synthetic_apk(debuggable=False)}}),
+            ("storage-test-left-in-the-data-image",
+             {"entries": {"DATA/app/AndariumStorageTests/AndariumStorageTests.apk":
                           synthetic_apk(debuggable=False)}}),
             ("debuggable-application-in-a-user-build",
              {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable=True)}}),
@@ -3095,6 +3419,34 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "VENDOR/build.prop lacks ro.incremental.enable=1: None"),
             ("disabled-incremental-property-cause", {"vendor_property_variant": "incremental-off"},
              "VENDOR/build.prop lacks ro.incremental.enable=1: '0'"),
+            ("cuttlefish-board-cause", {"board_variant": "cutf"},
+             "unexpected board name ro.product.board in VENDOR/build.prop: 'cutf', "
+             "not 'andarium'"),
+            ("missing-board-cause", {"board_variant": "missing"},
+             "unexpected board name ro.product.board in VENDOR/build.prop: None"),
+            ("missing-odm-soc-manufacturer-cause", {"soc_variant": "missing-manufacturer"},
+             "unexpected SoC identity ro.soc.manufacturer in ODM/etc/build.prop: None, "
+             "not 'Kernarium'"),
+            ("missing-odm-soc-model-cause", {"soc_variant": "missing-model"},
+             "unexpected SoC identity ro.soc.model in ODM/etc/build.prop: None, "
+             "not 'Virtual CPU'"),
+            ("cuttlefish-soc-cause", {"soc_variant": "cuttlefish"},
+             "unexpected SoC identity ro.soc.manufacturer in ODM/etc/build.prop: 'Google'"),
+            ("joined-soc-model-cause", {"soc_variant": "joined-model"},
+             "unexpected SoC identity ro.soc.model in ODM/etc/build.prop: "
+             "'Kernarium Virtual CPU', not 'Virtual CPU'"),
+            ("lowercase-soc-model-cause", {"soc_variant": "lowercase-model"},
+             "unexpected SoC identity ro.soc.model in ODM/etc/build.prop: 'Virtual cpu'"),
+            ("unknown-soc-model-cause", {"soc_variant": "unknown-model"},
+             "unexpected SoC identity ro.soc.model in ODM/etc/build.prop: 'unknown'"),
+            ("vendor-soc-manufacturer-cause", {"soc_variant": "vendor-manufacturer"},
+             "VENDOR/build.prop sets ro.soc.manufacturer=Google: the SoC identity is the ODM"),
+            ("vendor-soc-model-cause", {"soc_variant": "vendor-model"},
+             "VENDOR/build.prop sets ro.soc.model=vsoc_arm64_pgagnostic: the SoC identity is the ODM"),
+            ("vendor-soc-other-cause", {"soc_variant": "vendor-other"},
+             "VENDOR/build.prop sets ro.soc.et=true: the SoC identity is the ODM"),
+            ("vendor-soc-same-as-odm-cause", {"soc_variant": "vendor-same"},
+             "VENDOR/build.prop sets ro.soc.manufacturer=Kernarium: the SoC identity is the ODM"),
             ("missing-thermal-apex-cause", {"thermal_hal_variant": "missing-apex"},
              "com.android.hardware.thermal.apex is missing: the product needs a thermal HAL"),
             ("thermal-apex-without-binary-cause", {"thermal_hal_variant": "no-binary"},
@@ -3183,6 +3535,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           synthetic_apk(debuggable=False)}},
              "unneeded built-in application payload is forbidden: "
              "SYSTEM/app/AndariumWebGLProbe"),
+            ("storage-test-left-in-the-system-image-cause",
+             {"entries": {"SYSTEM/app/AndariumStorageTests/AndariumStorageTests.apk":
+                          synthetic_apk(debuggable=False)}},
+             "unneeded built-in application payload is forbidden: "
+             "SYSTEM/app/AndariumStorageTests"),
+            ("storage-test-left-in-the-data-image-cause",
+             {"entries": {"DATA/app/AndariumStorageTests/AndariumStorageTests.apk":
+                          synthetic_apk(debuggable=False)}},
+             "unneeded built-in application payload is forbidden: "
+             "DATA/app/AndariumStorageTests"),
             ("debuggable-application-in-a-user-build-cause",
              {"entries": {"PRODUCT/app/Fixture/Fixture.apk": synthetic_apk(debuggable=True)}},
              "a user build must not carry a debuggable application: "
@@ -3227,6 +3589,42 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "LineageSetupWizard.* has no res/raw/lottie_welcome.json"),
             ("setup-wizard-with-another-animation-cause", {"wizard_branding_variant": "stock-animation"},
              "res/raw/lottie_welcome.json is not the product's animation"),
+            ("setup-wizard-without-its-script-cause", {"wizard_branding_variant": "no-script"},
+             "LineageSetupWizard.* has no res/raw/lineage_wizard_script.xml"),
+            ("setup-wizard-without-its-user-script-cause", {"wizard_branding_variant": "no-user-script"},
+             "LineageSetupWizard.* has no res/raw/lineage_wizard_script_user.xml"),
+            ("setup-wizard-with-another-script-cause", {"wizard_branding_variant": "stock-script"},
+             "res/raw/lineage_wizard_script.xml is not the product's script"),
+            ("setup-wizard-with-another-user-script-cause", {"wizard_branding_variant": "stock-user-script"},
+             "res/raw/lineage_wizard_script_user.xml is not the product's script"),
+            ("setup-wizard-forces-gestural-navigation-cause", {"navigation_variant": "dex-forces-gestural"},
+             "LineageSetupWizard.apk still forces gestural navigation: classes.dex contains "
+             "enableGesturalNavigation"),
+            ("missing-gestural-navigation-overlay-cause", {"navigation_variant": "no-gestural-overlay"},
+             "overlay under PRODUCT/overlay/NavigationBarModeGestural/ is missing"),
+            ("missing-three-button-navigation-overlay-cause", {"navigation_variant": "no-3button-overlay"},
+             "overlay under PRODUCT/overlay/NavigationBarMode3Button/ is missing"),
+            ("overlay-configuration-enables-gestural-cause", {"navigation_variant": "config-enables-gestural"},
+             "PRODUCT/overlay/config/config.xml enables the navigation mode overlay "
+             "com.android.internal.systemui.navbar.gestural"),
+            ("overlay-configuration-enables-three-button-cause",
+             {"navigation_variant": "config-enables-3button-undisabled"},
+             "VENDOR/overlay/config/config.xml enables the navigation mode overlay "
+             "com.android.internal.systemui.navbar.threebutton"),
+            ("overlay-configuration-unreadable-cause", {"navigation_variant": "config-unreadable"},
+             "SYSTEM_EXT/overlay/config/config.xml is not well-formed XML"),
+            ("vendor-overlay-theme-property-cause", {"navigation_variant": "overlay-theme-property"},
+             "PRODUCT/etc/build.prop sets ro.boot.vendor.overlay.theme=com.android.internal.systemui.navbar.gestural"),
+            ("missing-launcher-overlay-cause", {"launcher_variant": "no-overlay"},
+             "Launcher3QuickStep__lineage_andarium__auto_generated_rro_product.apk is missing"),
+            ("launcher-overlay-without-a-grid-cause", {"launcher_variant": "no-6x5"},
+             "has no res/xml/default_workspace_6x5.xml: a 6x5 guest would show the stock layout"),
+            ("launcher-overlay-with-a-stock-layout-cause", {"launcher_variant": "stock-layout"},
+             "res/xml/default_workspace_4x5.xml is a stock layout: it names google"),
+            ("launcher-layout-without-files-cause", {"launcher_variant": "lacks-files"},
+             "res/xml/default_workspace_4x5.xml does not name com.android.documentsui.LauncherActivity"),
+            ("launcher-layout-names-an-application-the-image-lacks-cause", {"launcher_variant": "no-documentsui"},
+             "SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk is missing: the launcher's default workspace"),
             ("ntp-server-left-cause", {"network_time_variant": "ntp-server"},
              "config_ntpServers names the NTP server ntp://time.android.com in .*framework-res"),
             ("ntp-server-left-in-a-qualified-definition-cause",
@@ -3246,6 +3644,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "config_autoTimeSourcesPriority in .*framework-res.* lacks external"),
             ("time-origin-list-missing-cause", {"network_time_variant": "origin-missing"},
              "framework-res.* does not set config_autoTimeSourcesPriority"),
+            ("flip-to-screen-off-enabled-cause", {"flip_variant": "enabled"},
+             "config_flipToScreenOffEnabled is true in .*framework-res.*FaceDownDetector"),
+            ("flip-to-screen-off-enabled-in-a-qualified-definition-cause",
+             {"flip_variant": "enabled-in-a-qualified-table"},
+             "config_flipToScreenOffEnabled is true in .*framework-res.*FaceDownDetector"),
+            ("flip-to-screen-off-missing-cause", {"flip_variant": "missing"},
+             "framework-res.* does not set config_flipToScreenOffEnabled: .*FaceDownDetector"),
             ("statistics-uploader-in-parts-manifest-cause", {"statistics_variant": "parts-manifest"},
              "LineageParts.apk still carries LineageOS's statistics uploader: AndroidManifest.xml "
              "contains lineagestats"),
@@ -3319,6 +3724,58 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not allow system_server kernarium_reclaim_boot_apps fd use"),
             ("reclaim-missing-fifo-cause", {"reclaim_variant": "missing-fifo"},
              "does not allow system_server kernarium_reclaim_boot_apps fifo_file write"),
+            ("missing-time-zone-script-cause", {"time_zone_variant": "missing-script"},
+             "required entries are missing: .*SYSTEM_EXT/bin/kernarium_time_zone.sh"),
+            ("missing-time-zone-rc-cause", {"time_zone_variant": "missing-rc"},
+             "required entries are missing: .*SYSTEM_EXT/etc/init/kernarium_time_zone.rc"),
+            ("time-zone-missing-service-cause", {"time_zone_variant": "missing-service"},
+             "does not declare the kernarium_time_zone service"),
+            ("time-zone-not-oneshot-cause", {"time_zone_variant": "not-oneshot"},
+             "does not declare kernarium_time_zone as oneshot"),
+            ("time-zone-not-disabled-cause", {"time_zone_variant": "not-disabled"},
+             "does not declare kernarium_time_zone as disabled"),
+            ("time-zone-started-at-boot-cause", {"time_zone_variant": "started-at-boot"},
+             "starts kernarium_time_zone under 'boot'"),
+            ("time-zone-no-start-cause", {"time_zone_variant": "no-start"},
+             "does not start kernarium_time_zone when boot completes"),
+            ("time-zone-no-property-cause", {"time_zone_variant": "no-property"},
+             "does not contain 'ro.boot.kernarium.timezone'"),
+            ("time-zone-no-auto-read-cause", {"time_zone_variant": "no-auto-read"},
+             "does not contain 'cmd settings get global auto_time_zone'"),
+            ("time-zone-no-set-cause", {"time_zone_variant": "no-set"},
+             "does not contain 'cmd alarm set-timezone \"\\$zone\"'"),
+            ("time-zone-no-marker-cause", {"time_zone_variant": "no-marker"},
+             "does not contain 'setprop \"\\$marker\" \"\\$zone\"'"),
+            ("time-zone-writes-setting-cause", {"time_zone_variant": "writes-setting"},
+             "contains 'settings put': it may only read the user's automatic time zone setting"),
+            ("time-zone-setprop-zone-cause", {"time_zone_variant": "setprop-zone"},
+             "contains 'setprop persist.sys.timezone': it may only read"),
+            ("time-zone-detector-cause", {"time_zone_variant": "detector"},
+             "contains 'time_zone_detector': it may only read the user's automatic time zone setting"),
+            ("time-zone-missing-label-cause", {"time_zone_variant": "missing-label"},
+             "system_ext file contexts do not label /system_ext/bin/kernarium_time_zone.sh"),
+            ("time-zone-missing-transition-cause", {"time_zone_variant": "missing-transition"},
+             "does not move init into the time zone domain"),
+            ("time-zone-missing-settings-find-cause", {"time_zone_variant": "missing-settings-find"},
+             "does not allow kernarium_time_zone settings_service service_manager find"),
+            ("time-zone-missing-alarm-find-cause", {"time_zone_variant": "missing-alarm-find"},
+             "does not allow kernarium_time_zone alarm_service service_manager find"),
+            ("time-zone-missing-transfer-cause", {"time_zone_variant": "missing-transfer"},
+             "does not allow kernarium_time_zone system_server binder transfer"),
+            ("time-zone-missing-call-cause", {"time_zone_variant": "missing-call"},
+             "does not allow system_server kernarium_time_zone binder call"),
+            ("time-zone-missing-fd-cause", {"time_zone_variant": "missing-fd"},
+             "does not allow system_server kernarium_time_zone fd use"),
+            ("time-zone-missing-fifo-cause", {"time_zone_variant": "missing-fifo"},
+             "does not allow system_server kernarium_time_zone fifo_file write"),
+            ("time-zone-sets-zone-property-cause", {"time_zone_variant": "sets-zone-property"},
+             "lets the time zone domain set .*timezone_prop.*not only its own marker"),
+            ("time-zone-missing-marker-rule-cause", {"time_zone_variant": "missing-marker-rule"},
+             "does not let the time zone domain set persist.sys.kernarium.timezone_applied"),
+            ("time-zone-marker-not-system-cause", {"time_zone_variant": "marker-not-system"},
+             "does not define the system-owned kernarium_time_zone_prop"),
+            ("time-zone-missing-marker-context-cause", {"time_zone_variant": "missing-marker-context"},
+             "do not label persist.sys.kernarium.timezone_applied"),
             ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
              "userdata entry lacks the fs_mgr quota flag"),
             ("wrong-apex-filesystem-cause", {"wrong_apex_filesystem": True},
@@ -3832,6 +4289,133 @@ def verify_product_identity(android_root: Path) -> None:
         except SystemExit:
             continue
         fail(f"a build with {label} passes the product identity check")
+
+
+def odm_properties(android_root: Path) -> dict[str, str]:
+    """The properties of the overlay's odm property file, which TARGET_ODM_PROP hands to the build."""
+    properties: dict[str, str] = {}
+    for line in (android_root / "overlay/config/odm.prop").read_text().splitlines():
+        if line.strip() and not line.startswith("#"):
+            key, separator, value = line.partition("=")
+            if not separator or key in properties:
+                fail(f"odm.prop has a line that is not a new key=value: {line!r}")
+            properties[key] = value
+    return properties
+
+
+def verify_hardware_identity(android_root: Path) -> None:
+    """The board is the device's and the SoC is the virtual CPU, stated where the build reads them.
+
+    The inherited Cuttlefish product states Google and its device name as the SoC, in the vendor
+    properties, and names its board cutf. The product drops the vendor values with the denylist,
+    states its own in an odm property file (a make list cannot carry a value with a space) and
+    renames the board; the verifier requires the result in the image."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    soc = {"ro.soc.manufacturer": "Kernarium", "ro.soc.model": "Virtual CPU"}
+    if verifier.SOC_IDENTITY != soc or verifier.BOARD_NAME != "andarium":
+        fail(f"the verifier expects {verifier.SOC_IDENTITY} on board {verifier.BOARD_NAME}")
+    if odm_properties(android_root) != soc:
+        fail(f"overlay/config/odm.prop sets {odm_properties(android_root)}, not {soc}")
+    board = (android_root / "overlay/BoardConfig.mk").read_text()
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
+    for text, name, line in (
+        (board, "BoardConfig.mk", "TARGET_BOOTLOADER_BOARD_NAME := andarium\n"),
+        (board, "BoardConfig.mk", "TARGET_ODM_PROP += device/kernarium/andarium/config/odm.prop\n"),
+        (product, "lineage_andarium.mk",
+         "PRODUCT_VENDOR_PROPERTY_BLACKLIST += ro.soc.manufacturer ro.soc.model\n"),
+    ):
+        if text.count(line) != 1:
+            fail(f"{name} does not contain {line.strip()!r} exactly once")
+    if "TARGET_ODM_PROP :=" in board or "TARGET_BOOTLOADER_BOARD_NAME +=" in board:
+        fail("BoardConfig.mk assigns the odm property list or the board name in another way")
+    # The vendor properties of the product must not state the SoC again.
+    if re.search(r"^\s*ro\.soc\.\w+\s*=", product, re.MULTILINE):
+        fail("lineage_andarium.mk assigns a ro.soc property in a list that the denylist empties")
+    script = (android_root / "build/build-aosp.sh").read_text()
+    for needle in ("get_build_var TARGET_BOOTLOADER_BOARD_NAME", "get_build_var TARGET_ODM_PROP"):
+        if needle not in script:
+            fail(f"build-aosp.sh does not check the build variable: {needle}")
+
+    # What CTS' BuildTest accepts, and the values the product sets pass; the helper names why not.
+    manufacturer, model = verifier.SOC_PATTERNS["ro.soc.manufacturer"], verifier.SOC_PATTERNS["ro.soc.model"]
+    for value, pattern in (("Kernarium", manufacturer), ("Virtual CPU", model), ("SM8550", model),
+                           ("a.b_c/d+e-f 1", model), ("andarium", verifier.BOARD_PATTERN)):
+        problems = verifier.cts_build_value_problems("x", value, pattern)
+        if problems:
+            fail(f"CTS would accept {value!r}, the helper says {problems}")
+    for value, pattern, reason in (
+        (" Kernarium", manufacturer, "surrounding whitespace"),
+        ("Kernarium ", manufacturer, "surrounding whitespace"),
+        ("Kernarium, Inc.", manufacturer, "does not match"),
+        ("Kernarium_Inc", manufacturer, "does not match"),
+        ("", manufacturer, "does not match"),
+        ("unknown", manufacturer, "is unknown"),
+        ("Unknown", model, "is unknown"),
+        ("Virtual CPU ", model, "surrounding whitespace"),
+        ("Virtual:CPU", model, "does not match"),
+        ("Virtual\tCPU", model, "does not match"),
+        ("Virtual CPU \u00e9", model, "does not match"),
+        ("two words", verifier.BOARD_PATTERN, "does not match"),
+    ):
+        if not any(reason in problem for problem in verifier.cts_build_value_problems("x", value, pattern)):
+            fail(f"the CTS value check accepts {value!r}, which {reason}")
+
+    odm = dict(soc)
+    vendor = {"ro.product.board": "andarium"}
+    verifier.check_hardware_identity(odm, vendor)
+    # An inherited key with a comment sign is not a property; a value the vendor drops is absent.
+    verifier.check_hardware_identity(odm, dict(vendor, **{"#ro.soc.model": "vsoc_arm64_pgagnostic"}))
+    for label, odm_map, vendor_map in (
+        ("no SoC identity", {}, vendor),
+        ("the Cuttlefish SoC", {"ro.soc.manufacturer": "Google", "ro.soc.model": "vsoc_arm64_pgagnostic"}, vendor),
+        ("a manufacturer of a real chip vendor", dict(odm, **{"ro.soc.manufacturer": "Qualcomm"}), vendor),
+        ("the joined model", dict(odm, **{"ro.soc.model": "Kernarium Virtual CPU"}), vendor),
+        ("a SoC in the vendor partition", odm, dict(vendor, **{"ro.soc.model": "Virtual CPU"})),
+        ("another SoC property in the vendor partition", odm, dict(vendor, **{"ro.soc.et": "true"})),
+        ("the Cuttlefish board", odm, {"ro.product.board": "cutf"}),
+        ("no board", odm, {}),
+    ):
+        try:
+            verifier.check_hardware_identity(odm_map, vendor_map)
+        except SystemExit:
+            continue
+        fail(f"a build with {label} passes the hardware identity check")
+    # The expected values are checked against CTS too: a value CTS would refuse fails the image.
+    original = verifier.SOC_IDENTITY
+    try:
+        verifier.SOC_IDENTITY = {"ro.soc.manufacturer": "Kernarium", "ro.soc.model": "unknown"}
+        try:
+            verifier.check_hardware_identity(dict(verifier.SOC_IDENTITY), vendor)
+        except SystemExit:
+            pass
+        else:
+            fail("an expected SoC model of 'unknown' passes the hardware identity check")
+    finally:
+        verifier.SOC_IDENTITY = original
+
+
+def verify_host_cpu_name(root: Path, android_root: Path) -> None:
+    """The image and the host name the same virtual CPU.
+
+    The host gives its CPU one name (darwin/cpu/guest_identity.hpp): an x86-64 guest reads it as
+    the CPUID brand string and the /proc/cpuinfo model name, and every kernel's SMBIOS tables
+    carry it. The Android image states it the way a chip vendor does, as a maker and a chip
+    (ro.soc.manufacturer and ro.soc.model), which a space joins; the pair must not drift from the
+    host's name."""
+    header = (root / "darwin/cpu/guest_identity.hpp").read_text()
+    names = re.findall(r'guest_cpu_model_name_storage\[\]\s*=\s*"([^"\\]*)"\s*;', header)
+    if len(names) != 1:
+        fail(f"guest_identity.hpp does not define the CPU name exactly once: {names}")
+    host = names[0]
+    if not host or len(host) >= 48:
+        fail(f"the host CPU name {host!r} does not fit a CPUID brand string")
+    soc = odm_properties(android_root)
+    image = soc["ro.soc.manufacturer"] + " " + soc["ro.soc.model"]
+    if image != host:
+        fail(f"the image names its CPU {image!r} (overlay/config/odm.prop), the host {host!r}")
+    expected = load_tool(android_root / "tools/verify-target-files.py").SOC_IDENTITY
+    if expected["ro.soc.manufacturer"] + " " + expected["ro.soc.model"] != host:
+        fail(f"the verifier expects a CPU other than the host's {host!r}: {expected}")
 
 
 def verify_pinner_overlay(android_root: Path) -> None:
@@ -4374,6 +4958,345 @@ def verify_reclaim_boot_apps(android_root: Path) -> None:
             fail("the reclaim script acts without a process list")
 
 
+def verify_time_zone(android_root: Path) -> None:
+    """The time zone script follows the host only while nobody in the guest has chosen a zone.
+
+    The script runs with stub tools: getprop and setprop read and write a table of properties,
+    `cmd settings get` prints the automatic time zone setting, `cmd alarm set-timezone` records the
+    call and, as the platform does, takes a name its tzdata has and refuses any other, and log
+    records what the script says."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    tools = android_root / "overlay/tools"
+    script = tools / "kernarium_time_zone.sh"
+    # The sepolicy sources hold what the built-policy check looks for.
+    policy = (android_root / "overlay/sepolicy/system_ext/private/kernarium_time_zone.te").read_text()
+    for needle in (
+        "init_daemon_domain(kernarium_time_zone)",
+        "allow kernarium_time_zone settings_service:service_manager find;",
+        "allow kernarium_time_zone alarm_service:service_manager find;",
+        "allow kernarium_time_zone system_server:binder transfer;",
+        "allow system_server kernarium_time_zone:binder call;",
+        "allow system_server kernarium_time_zone:fd use;",
+        "allow system_server kernarium_time_zone:fifo_file { getattr read write };",
+        "allow kernarium_time_zone system_file:file execute_no_trans;",
+        "system_internal_prop(kernarium_time_zone_prop)",
+        "set_prop(kernarium_time_zone, kernarium_time_zone_prop)",
+    ):
+        if needle not in policy:
+            fail(f"the time zone domain lacks '{needle}'")
+    if len(re.findall(r"^set_prop\(", policy, re.M)) != 1:
+        fail("the time zone domain sets a property besides its marker")
+    contexts = (android_root / "overlay/sepolicy/system_ext/private/file_contexts").read_text()
+    if (
+        r"/(system_ext|system/system_ext)/bin/kernarium_time_zone\.sh  "
+        "u:object_r:kernarium_time_zone_exec:s0"
+    ) not in contexts:
+        fail("the system_ext file contexts do not label the time zone script")
+    properties = (android_root / "overlay/sepolicy/system_ext/private/property_contexts").read_text()
+    if (
+        "persist.sys.kernarium.timezone_applied    u:object_r:kernarium_time_zone_prop:s0 exact string"
+    ) not in properties:
+        fail("the system_ext property contexts do not label the time zone marker")
+    blueprint = (tools / "Android.bp").read_text()
+    for needle in (
+        'name: "kernarium_time_zone_script"',
+        'src: "kernarium_time_zone.sh"',
+        'init_rc: ["kernarium_time_zone.rc"]',
+    ):
+        if needle not in blueprint:
+            fail(f"overlay/tools/Android.bp lacks {needle}")
+    product = (android_root / "overlay/lineage_andarium.mk").read_text()
+    if len(re.findall(r"^PRODUCT_PACKAGES \+= kernarium_time_zone_script$", product, re.M)) != 1:
+        fail("lineage_andarium.mk does not add the time zone script to PRODUCT_PACKAGES exactly once")
+    verifier.check_time_zone((tools / "kernarium_time_zone.rc").read_text(), script.read_bytes())
+
+    # What the guest's tzdata knows.
+    known = ("GMT", "Asia/Tokyo", "Europe/Paris", "Europe/Berlin", "America/Argentina/Buenos_Aires", "Etc/GMT+5")
+    marker = "persist.sys.kernarium.timezone_applied"
+
+    def run(zone: str | None, auto: str, current: str, applied: str = "") -> tuple[
+        subprocess.CompletedProcess, list[str], str, str
+    ]:
+        """Runs the script once; returns the process, the recorded calls, the final zone and marker."""
+        with tempfile.TemporaryDirectory(prefix="time-zone-script-") as temporary:
+            stubs = Path(temporary)
+            calls = stubs / "calls"
+            properties = stubs / "properties"
+            properties.mkdir()
+            (properties / "ro.boot.kernarium.timezone").write_text((zone or "") + "\n")
+            (properties / "persist.sys.timezone").write_text(current + "\n")
+            (properties / marker).write_text(applied + "\n")
+            for name, body in {
+                "getprop": f'cat {properties}/"$1" 2>/dev/null || echo\n',
+                "setprop": f'echo "setprop $*" >> {calls}\necho "$2" > {properties}/"$1"\n',
+                "cmd": (
+                    f'echo "cmd $*" >> {calls}\n'
+                    'if [ "$1 $2 $3 $4" = "settings get global auto_time_zone" ]; then\n'
+                    f'    [ -z "{auto}" ] || echo "{auto}"\n'
+                    'elif [ "$1 $2" = "alarm set-timezone" ]; then\n'
+                    f'    case " {" ".join(known)} " in\n'
+                    f'        *" $3 "*) echo "$3" > {properties}/persist.sys.timezone ;;\n'
+                    "    esac\n"
+                    "else\n    exit 2\nfi\n"
+                ),
+                "log": f'echo "log $*" >> {calls}\n',
+                "sleep": f'echo "sleep $*" >> {calls}\n',
+            }.items():
+                (stubs / name).write_text("#!/bin/sh\n" + body)
+                (stubs / name).chmod(0o755)
+            env = {"PATH": f"{stubs}:/usr/bin:/bin"}
+            result = subprocess.run(["/bin/sh", str(script)], env=env, capture_output=True, text=True)
+            recorded = calls.read_text().splitlines() if calls.exists() else []
+            return (
+                result,
+                recorded,
+                (properties / "persist.sys.timezone").read_text().strip(),
+                (properties / marker).read_text().strip(),
+            )
+
+    def sets(recorded: list[str]) -> list[str]:
+        return [line for line in recorded if line.startswith("cmd alarm set-timezone")]
+
+    def notes(recorded: list[str]) -> list[str]:
+        return [line for line in recorded if line.startswith("log ")]
+
+    # A new guest (GMT, or no zone yet, and no marker) takes the host's zone once, with the setting
+    # on or unset, and records it; the script says so in one line.
+    for current in ("GMT", ""):
+        for auto in ("1", "null"):
+            result, recorded, final, applied = run("Asia/Tokyo", auto, current)
+            if (
+                result.returncode != 0
+                or final != "Asia/Tokyo"
+                or applied != "Asia/Tokyo"
+                or sets(recorded) != ["cmd alarm set-timezone Asia/Tokyo"]
+                or len(notes(recorded)) != 1
+            ):
+                fail(f"the time zone script (auto {auto}, was {current!r}) did not take Asia/Tokyo: "
+                     f"{recorded} {final} {applied}")
+    # It follows a changed host zone while the zone is still the one it applied, and takes every
+    # character a name may have.
+    for zone in ("Europe/Paris", "America/Argentina/Buenos_Aires", "Etc/GMT+5"):
+        result, recorded, final, applied = run(zone, "1", "Asia/Tokyo", "Asia/Tokyo")
+        if result.returncode != 0 or final != zone or applied != zone:
+            fail(f"the time zone script did not follow the host to {zone}: {recorded} {final} {applied}")
+    # A zone the user picked (Settings' or the wizard's picker, which leave the setting on) is
+    # never replaced, whether the script had applied one before or the guest predates the marker.
+    for applied in ("Asia/Tokyo", ""):
+        result, recorded, final, marker_value = run("Europe/Paris", "1", "Europe/Berlin", applied)
+        if (
+            result.returncode != 0
+            or final != "Europe/Berlin"
+            or marker_value != applied
+            or sets(recorded)
+            or len(notes(recorded)) != 1
+        ):
+            fail(f"the time zone script replaced a chosen zone (marker {applied!r}): "
+                 f"{recorded} {final} {marker_value}")
+    # With the automatic time zone off nothing is touched, whatever the zone is.
+    for applied, current in (("Asia/Tokyo", "Asia/Tokyo"), ("", "GMT"), ("Asia/Tokyo", "Europe/Berlin")):
+        result, recorded, final, marker_value = run("Europe/Paris", "0", current, applied)
+        if (
+            result.returncode != 0
+            or final != current
+            or marker_value != applied
+            or sets(recorded)
+            or any(line.startswith("setprop") for line in recorded)
+            or len(notes(recorded)) != 1
+        ):
+            fail(f"the time zone script touched the guest with the setting off: {recorded} {final}")
+    # A zone that is already the host's is not set again, and the marker follows it, so a guest whose
+    # user picked the host's zone follows the host again.
+    for applied in ("", "Asia/Tokyo", "Europe/Berlin"):
+        result, recorded, final, marker_value = run("Asia/Tokyo", "1", "Asia/Tokyo", applied)
+        if result.returncode != 0 or sets(recorded) or final != "Asia/Tokyo" or marker_value != "Asia/Tokyo":
+            fail(f"the time zone script mishandled the host's own zone (marker {applied!r}): "
+                 f"{recorded} {final} {marker_value}")
+    # A name the guest's tzdata lacks is refused by the platform: the zone and the marker stay, one
+    # line says so, and the boot goes on.
+    result, recorded, final, applied = run("Pacific/Coyhaique", "1", "Europe/Paris", "Europe/Paris")
+    if (
+        result.returncode != 0
+        or final != "Europe/Paris"
+        or applied != "Europe/Paris"
+        or sets(recorded) != ["cmd alarm set-timezone Pacific/Coyhaique"]
+        or len(notes(recorded)) != 1
+        or "Pacific/Coyhaique" not in notes(recorded)[0]
+    ):
+        fail(f"the time zone script did not keep the zone for an unknown name: {recorded} {final} {applied}")
+    # No zone from the host (the standalone launcher, an older application): nothing is read or set.
+    result, recorded, final, applied = run(None, "1", "Asia/Tokyo")
+    if result.returncode != 0 or recorded or final != "Asia/Tokyo":
+        fail(f"the time zone script acted without a host zone: {recorded}")
+    # A setting that cannot be read leaves the zone alone and says so.
+    result, recorded, final, applied = run("Europe/Paris", "", "GMT")
+    if result.returncode == 0 or sets(recorded) or final != "GMT":
+        fail(f"the time zone script acted on an unreadable setting: {recorded} {final}")
+    # A name that is not a time zone name never reaches cmd.
+    for bad in ("Asia/Tokyo;reboot", "../etc", "/Asia/Tokyo", "Asia//Tokyo", "Asia/Tokyo/", "a b", "$(id)",
+                "Asia/To`id`"):
+        result, recorded, final, applied = run(bad, "1", "GMT")
+        if result.returncode != 0 or any(line.startswith("cmd ") for line in recorded) or final != "GMT":
+            fail(f"the time zone script passed {bad!r} to cmd: {recorded}")
+
+
+def verify_setup_wizard_flow(android_root: Path) -> None:
+    """A wizard script is the reviewed flow in order, and no page the product hides is in it.
+
+    The scripts are raw files, so the overlay carries them as they are tracked; the verifier walks
+    the tracked file from its first action. These cases rewrite the flow the way a careless
+    edit or a rebase onto LineageOS's own script would."""
+    tool = load_tool(android_root / "tools/verify-target-files.py")
+    raw = android_root / "overlay/overlay/packages/apps/SetupWizard/app/src/main/res/raw"
+    namespace = tool.SETUP_WIZARD_NAMESPACE
+    for name, reviewed in tool.SETUP_WIZARD_FLOWS.items():
+        tool.check_setup_wizard_script(name, (raw / name).read_text(encoding="utf-8"), reviewed)
+    if set(tool.SETUP_WIZARD_FLOWS["lineage_wizard_script.xml"]) & set(tool.SETUP_WIZARD_HIDDEN):
+        fail("the reviewed flow names a page the product hides")
+    for page in ("network_setup", "restore", "lineage_settings", "lockscreen_settings", "navigation_settings",
+                 "location_settings"):
+        if page not in tool.SETUP_WIZARD_HIDDEN:
+            fail(f"the wizard page {page} is not on the hidden list")
+
+    def script(*actions: tuple[str, str | None], first: str | None = None, root: str = "WizardScript") -> str:
+        body = "".join(
+            f'<WizardAction id="{identifier}" wizard:uri="intent:#Intent;action=x;end">'
+            + (f'<result wizard:action="{following}" />' if following else "")
+            + "</WizardAction>"
+            for identifier, following in actions
+        )
+        start = f' wizard:firstAction="{actions[0][0] if first is None else first}"' if first != "" else ""
+        return f'<{root} xmlns:wizard="{namespace}"{start}>{body}</{root}>'
+
+    def refuses(label: str, pattern: str, name: str, text: str) -> None:
+        try:
+            tool.check_setup_wizard_script(name, text, tool.SETUP_WIZARD_FLOWS[name])
+        except SystemExit as stop:
+            if not re.search(pattern, str(stop)):
+                fail(f"{label}: the refusal does not name its cause: {stop}")
+        else:
+            fail(f"{label}: the wizard script check accepts it")
+
+    owner = "lineage_wizard_script.xml"
+    user = "lineage_wizard_script_user.xml"
+    flow = [("welcome", "locale"), ("locale", "datetime"), ("datetime", "theme_settings"),
+            ("theme_settings", "finish"), ("finish", None)]
+    tool.check_setup_wizard_script(owner, script(*flow), tool.SETUP_WIZARD_FLOWS[owner])
+    for page in tool.SETUP_WIZARD_HIDDEN:
+        inserted = [("welcome", "locale"), ("locale", page), (page, "datetime"), ("datetime", "theme_settings"),
+                    ("theme_settings", "finish"), ("finish", None)]
+        refuses(f"{page}-in-the-flow", f"defines pages the product hides: {page}", owner, script(*inserted))
+        refuses(f"{page}-left-unreached", f"defines pages the product hides: {page}", owner,
+                script(*flow, (page, "finish")))
+    refuses("a-reviewed-page-dropped", "reaches welcome > locale > theme_settings > finish, not the reviewed",
+            owner, script(("welcome", "locale"), ("locale", "theme_settings"), ("theme_settings", "finish"),
+                          ("finish", None)))
+    refuses("pages-reordered", "reaches welcome > locale > theme_settings > datetime > finish, not the reviewed",
+            owner, script(("welcome", "locale"), ("locale", "theme_settings"), ("theme_settings", "datetime"),
+                          ("datetime", "finish"), ("finish", None)))
+    refuses("a-new-page", "reaches welcome > locale > about > datetime", owner,
+            script(("welcome", "locale"), ("locale", "about"), ("about", "datetime"), ("datetime", "theme_settings"),
+                   ("theme_settings", "finish"), ("finish", None)))
+    refuses("an-unreached-page", "defines pages its flow never reaches: about", owner, script(*flow, ("about", "finish")))
+    refuses("a-dangling-result", "the flow reaches 'finish', which the script does not define", owner,
+            script(("welcome", "locale"), ("locale", "datetime"), ("datetime", "theme_settings"),
+                   ("theme_settings", "finish")))
+    refuses("no-first-action", "names no firstAction", owner, script(*flow, first=""))
+    refuses("a-first-action-that-is-not-defined", "reaches 'start'", owner, script(*flow, first="start"))
+    refuses("a-repeated-id", "without a unique id", owner, script(*flow, ("finish", None)))
+    refuses("not-a-wizard-script", "is not a WizardScript", owner, script(*flow, root="Other"))
+    refuses("not-xml", "is not well-formed XML", owner, "<WizardScript>")
+    # The secondary user's flow is welcome and theme.
+    user_flow = [("welcome", "theme_settings"), ("theme_settings", "finish"), ("finish", None)]
+    tool.check_setup_wizard_script(user, script(*user_flow), tool.SETUP_WIZARD_FLOWS[user])
+    refuses("the-owners-flow-for-a-secondary-user", "reaches welcome > locale > datetime > theme_settings > finish, not",
+            user, script(*flow))
+    refuses("the-owners-script-with-the-users-name", "not the reviewed welcome > theme_settings > finish",
+            user, script(*flow))
+    refuses("location-in-the-users-flow", "defines pages the product hides: location_settings", user,
+            script(("welcome", "location_settings"), ("location_settings", "theme_settings"),
+                   ("theme_settings", "finish"), ("finish", None)))
+
+
+def verify_launcher_layouts(android_root: Path) -> None:
+    """The launcher's default workspace holds the six reviewed applications on the first page.
+
+    The layouts are compiled into the launcher's overlay, so the verifier reads the tracked text.
+    These cases rewrite a layout the way an edit or a return to the stock layout would."""
+    tool = load_tool(android_root / "tools/verify-target-files.py")
+    layouts = android_root / "overlay/overlay/packages/apps/Launcher3/res/xml"
+    names = sorted(path.name for path in layouts.glob("*.xml"))
+    if names != [f"default_workspace_{grid}.xml" for grid in tool.LAUNCHER_GRIDS]:
+        fail(f"the tracked launcher layouts are {names}, not one per reviewed grid")
+    for grid in tool.LAUNCHER_GRIDS:
+        text = (layouts / f"default_workspace_{grid}.xml").read_text(encoding="utf-8")
+        tool.check_launcher_layout(grid, grid, text)
+        # Row by row from the top left: the columns of the grid decide where each one goes.
+        columns = int(grid.split("x")[0])
+        placed = re.findall(r'launcher:x="(\d+)"\s+launcher:y="(\d+)"', text)
+        if placed != [(str(index % columns), str(index // columns)) for index in range(6)]:
+            fail(f"the {grid} layout does not fill the first page row by row: {placed}")
+    sample = (layouts / "default_workspace_5x5.xml").read_text(encoding="utf-8")
+    favorite = re.search(r"    <favorite\n(?:.*\n){4}.*/>\n", sample)
+    if favorite is None:
+        fail("the 5x5 layout has no favorite to rewrite")
+    first = favorite.group(0)
+
+    def refuses(label: str, pattern: str, text: str, grid: str = "5x5") -> None:
+        try:
+            tool.check_launcher_layout(grid, label, text)
+        except SystemExit as stop:
+            if not re.search(pattern, str(stop)):
+                fail(f"{label}: the refusal does not name its cause: {stop}")
+        else:
+            fail(f"{label}: the launcher layout check accepts it")
+
+    def with_item(item: str) -> str:
+        return sample.replace("</favorites>", item + "\n</favorites>")
+
+    app = ('<favorite launcher:packageName="{p}" launcher:className="{c}" launcher:screen="{s}" '
+           'launcher:x="{x}" launcher:y="{y}"{extra} />')
+    refuses("a-hotseat-item", "has a favorite with attributes",
+            sample.replace(first, first.replace('launcher:screen="0"', 'launcher:container="-101" launcher:screen="0"', 1)))
+    refuses("an-item-on-the-second-page", "on screen 1: every item is on the first page",
+            sample.replace('launcher:screen="0"', 'launcher:screen="1"', 1))
+    refuses("a-widget", r"holds a <appwidget>",
+            with_item('<appwidget launcher:packageName="org.lineageos.twelve" launcher:className="x" '
+                      'launcher:screen="0" launcher:x="0" launcher:y="3" launcher:spanX="4" launcher:spanY="1" />'))
+    refuses("a-resolve-item", r"holds a <resolve>", with_item('<resolve launcher:screen="0" launcher:x="0" launcher:y="3" />'))
+    refuses("a-folder", r"holds a <folder>", with_item('<folder launcher:screen="0" launcher:x="0" launcher:y="3" />'))
+    refuses("a-uri-item", "has a favorite with attributes",
+            with_item('<favorite launcher:uri="#Intent;action=android.intent.action.MAIN;end" launcher:screen="0" '
+                      'launcher:x="0" launcher:y="3" />'))
+    refuses("google-play", "names 'vending'",
+            with_item(app.format(p="com.android.vending", c="com.android.vending.AssetBrowserActivity",
+                                 s=0, x=0, y=3, extra="")))
+    refuses("a-google-application", "names 'google'",
+            with_item(app.format(p="com.google.android.gm", c="com.google.android.gm.ConversationListActivityGmail",
+                                 s=0, x=0, y=3, extra="")))
+    refuses("the-clock", "names 'deskclock'",
+            with_item(app.format(p="com.android.deskclock", c="com.android.deskclock.DeskClock", s=0, x=0, y=3, extra="")))
+    refuses("a-string-reference", "names '@string/'", sample.replace("</favorites>", '<folder launcher:title="@string/x" />\n</favorites>'))
+    refuses("an-application-the-image-lacks-a-table-row-for", "not in the reviewed table",
+            with_item(app.format(p="org.lineageos.camelot", c="org.lineageos.camelot.MainActivity", s=0, x=0, y=3, extra="")))
+    refuses("a-repeated-application", "twice", with_item(first.replace('launcher:x="0"', 'launcher:x="4"').replace(
+        'launcher:y="0"', 'launcher:y="3"')))
+    refuses("one-of-the-six-missing", "lacks com.android.documentsui.LauncherActivity: it holds exactly the six",
+            sample.replace(re.search(r"    <!-- Files \(DocumentsUI\) -->\n(?:.*\n){6}", sample).group(0), ""))
+    refuses("a-column-outside-the-grid", r"outside the 5x5 grid", sample.replace('launcher:x="4"', 'launcher:x="5"'))
+    refuses("a-row-outside-the-grid", r"outside the 5x5 grid", sample.replace('launcher:y="1"', 'launcher:y="5"'))
+    refuses("two-items-in-a-cell", r"two items at \(0, 0\)", sample.replace('launcher:x="1"', 'launcher:x="0"', 1))
+    refuses("a-cell-that-is-not-a-number", "is not a number", sample.replace('launcher:x="1"', 'launcher:x="one"', 1))
+    refuses("a-favorite-without-a-class", "has a favorite with attributes",
+            sample.replace('        launcher:className="com.android.settings.Settings"\n', "", 1))
+    refuses("an-attribute-outside-the-launcher-namespace", "outside the launcher namespace",
+            sample.replace('launcher:x="1"', 'x="1"', 1))
+    refuses("not-xml", "is not well-formed XML", "<favorites>")
+    refuses("not-a-layout", "is not a favorites layout", "<other />")
+    # A grid's columns and rows come from its name.
+    refuses("a-smaller-grid", "outside the 4x5 grid", sample, grid="4x5")
+
+
 def verify_default_wallpaper(android_root: Path) -> None:
     """The overlay replaces LineageOS's 1920 pixel tablet wallpaper with a bounded square.
 
@@ -4602,6 +5525,7 @@ def verify_package_assertions(android_root: Path) -> None:
         "kernarium_net_setup",
         "kernarium_wifi_network_script",
         "kernarium_reclaim_boot_apps_script",
+        "kernarium_time_zone_script",
     ):
         if package not in present:
             fail(f"build-aosp.sh does not assert that {package} is present")
@@ -4915,6 +5839,80 @@ def lz4_legacy_frame(payload: bytes, block_size: int = 1 << 20) -> bytes:
     return bytes(frame)
 
 
+def synthetic_selinux_policy(
+    *, udp: tuple[str, ...] = ("create", "ioctl"), ioctls: tuple[int, ...] = (0x8916, 0x891C),
+    capabilities: tuple[str, ...] = ("net_admin",), domain: str = "recovery", version: int = 30,
+) -> bytes:
+    """A kernel binary policy (version 30) with two types, a capability class and a UDP socket
+    class that inherits the socket class's permissions, and the given rules of `domain` on itself."""
+
+    def word(*values: int) -> bytes:
+        return struct.pack(f"<{len(values)}I", *values)
+
+    def named(text: str) -> bytes:
+        return text.encode()
+
+    empty_bitmap = word(64, 0, 0)
+    one_bit_bitmap = word(64, 1, 1) + word(0) + struct.pack("<Q", 2)
+    table_header = lambda count: word(count, count)  # noqa: E731 - primary names, elements
+    common_permissions = {"ioctl": 1, "read": 2, "write": 3, "create": 4}
+    udp_permissions = {"name_bind": 5}
+    capability_permissions = {"chown": 1, "net_admin": 13}
+
+    def permissions(table: dict[str, int]) -> bytes:
+        return b"".join(word(len(name), value) + named(name) for name, value in table.items())
+
+    # One constraint with an attribute comparison and a name list, so that the reader skips both.
+    constraint = (
+        word(1, 2) + word(4, 1, 1) + word(5, 2, 1) + one_bit_bitmap + empty_bitmap + empty_bitmap + word(0)
+    )
+    commons = table_header(1) + word(6, 1, 4, 4) + named("socket") + permissions(common_permissions)
+    classes = table_header(2) + (
+        word(10, 0, 1, 2, 2, 0) + named("capability") + permissions(capability_permissions)
+        + word(0) + word(0, 0, 0, 0)
+        + word(10, 6, 2, 5, 1, 1) + named("udp_socket") + named("socket")
+        + permissions(udp_permissions) + constraint + word(0) + word(0, 0, 0, 0)
+    )
+    roles = table_header(1) + word(8, 1, 0) + named("object_r") + empty_bitmap + one_bit_bitmap
+    types = table_header(2) + word(8, 1, 1, 0) + named("recovery") + word(5, 2, 1, 0) + named("other")
+    users = (
+        table_header(1) + word(8, 1, 0) + named("system_u") + one_bit_bitmap
+        + word(1) + word(1) + empty_bitmap + word(1) + empty_bitmap
+    )
+    booleans = table_header(1) + word(1, 0, 6) + named("a_bool")
+    sensitivities = table_header(1) + word(2, 0) + named("s0") + word(1) + empty_bitmap
+    categories = table_header(1) + word(2, 1, 0) + named("c0")
+
+    type_ids = {"recovery": 1, "other": 2}
+    source = type_ids[domain]
+    class_ids = {"capability": 1, "udp_socket": 2}
+
+    def allow(klass: str, target: int, mask: int) -> bytes:
+        return struct.pack("<4H", source, target, class_ids[klass], 0x0001) + word(mask)
+
+    rules = [
+        # The domain's own rules, and a decoy that grants another type's access to it.
+        allow("capability", source, sum(1 << (capability_permissions[name] - 1) for name in capabilities)),
+        allow("udp_socket", source, sum(1 << ({**common_permissions, **udp_permissions}[name] - 1) for name in udp)),
+        struct.pack("<4H", 2, source, 2, 0x0001) + word(0xFF),
+    ]
+    by_driver: dict[int, int] = {}
+    for command in ioctls:
+        by_driver[command >> 8] = by_driver.get(command >> 8, 0) | 1 << (command & 0xFF)
+    for driver, bits in sorted(by_driver.items()):
+        rules.append(
+            struct.pack("<4H", source, source, class_ids["udp_socket"], 0x0100)
+            + struct.pack("<BB", 1, driver) + bits.to_bytes(32, "little")
+        )
+    return (
+        word(0xF97CFF8C, 8) + b"SE Linux" + word(version, 1, 8, 0) + empty_bitmap + empty_bitmap
+        + commons + classes + roles + types + users + booleans + sensitivities + categories
+        + word(len(rules)) + b"".join(rules)
+        # What follows the rules is never read.
+        + word(0, 0)
+    )
+
+
 def synthetic_lineage_ramdisk_for(
     fstab: bytes, *, alignment: int = 16384, omit_dependency: bool = False,
     interface: bytes = b"eth0\0", compression: str = "lz4",
@@ -4923,7 +5921,8 @@ def synthetic_lineage_ramdisk_for(
     pixel_format: bytes = b"BGRX_8888",
     art: dict[str, bytes] | None = None,
     script: bytes = b"", imported: bytes | None = b"service console /system/bin/sh\n",
-    script_name: str = "init.recovery.cutf_cvm.rc",
+    script_name: str = "init.recovery.cutf_cvm.rc", policy: bytes | None = None,
+    no_policy: bool = False,
 ) -> bytes:
     entries = [
         newc_entry(
@@ -4942,6 +5941,9 @@ def synthetic_lineage_ramdisk_for(
             "system/bin/adbd", 0o100755,
             synthetic_aarch64_elf(alignment, needed=("libfixture.so",)), 3,
         ),
+        *([] if no_policy else [
+            newc_entry("sepolicy", 0o100644, policy if policy is not None else synthetic_selinux_policy(), 16)
+        ]),
         newc_entry("system/bin/e2fsck", 0o100755, b"tool", 4),
         newc_entry("system/bin/mke2fs", 0o100755, b"tool", 5),
         newc_entry(
@@ -5110,6 +6112,35 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
              "res/images/fastbootd.png is not the product's artwork"),
             ("a surplus frame", {"art": {**art, "loop00031.png": b"stock"}},
              "animation frames the product does not supply: .*loop00031.png"),
+            ("a ramdisk without a policy", {"no_policy": True},
+             "missing required paths.*sepolicy"),
+            ("a policy that is not a policy", {"policy": b"not a policy at all"},
+             "not a readable kernel policy: not a kernel binary SELinux policy"),
+            ("a policy of an unsupported version", {"policy": synthetic_selinux_policy(version=29)},
+             "not a readable kernel policy: policy version 29"),
+            ("a truncated policy", {"policy": synthetic_selinux_policy()[:300]},
+             "not a readable kernel policy: the policy ends inside a record"),
+            ("a recovery domain without the UDP socket", {"policy": synthetic_selinux_policy(udp=())},
+             r"does not let the recovery domain \['create', 'ioctl'\] on udp_socket"),
+            ("a recovery domain that cannot create the UDP socket",
+             {"policy": synthetic_selinux_policy(udp=("ioctl",))},
+             r"does not let the recovery domain \['create'\] on udp_socket"),
+            ("a recovery domain that cannot issue ioctls on the UDP socket",
+             {"policy": synthetic_selinux_policy(udp=("create",))},
+             r"does not let the recovery domain \['ioctl'\] on udp_socket"),
+            ("a UDP socket with no extended ioctl rule", {"policy": synthetic_selinux_policy(ioctls=())},
+             r"issue the ioctls \[\] on a UDP socket, not exactly \['0x8916', '0x891c'\]"),
+            ("a UDP socket that lacks the netmask ioctl",
+             {"policy": synthetic_selinux_policy(ioctls=(0x8916,))},
+             r"issue the ioctls \['0x8916'\] on a UDP socket"),
+            ("a UDP socket that allows another ioctl",
+             {"policy": synthetic_selinux_policy(ioctls=(0x8916, 0x891C, 0x8927))},
+             r"issue the ioctls \['0x8916', '0x891c', '0x8927'\] on a UDP socket"),
+            ("a recovery domain without CAP_NET_ADMIN", {"policy": synthetic_selinux_policy(capabilities=())},
+             r"does not let the recovery domain \['net_admin'\] on capability"),
+            ("a policy that grants another domain the socket",
+             {"policy": synthetic_selinux_policy(domain="other")},
+             r"does not let the recovery domain \['create', 'ioctl'\] on udp_socket"),
             ("a 32-bit ELF", {"elf_edit": ("<B", 4, 1)}, "little-endian ELF64"),
             ("a big-endian ELF", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF64"),
             ("a foreign machine", {"elf_edit": ("<H", 18, 62)}, "not AArch64"),
@@ -5649,12 +6680,17 @@ def main() -> None:
     verify_userdata_grow(android_root)
     verify_zram_fstab(android_root)
     verify_product_identity(android_root)
+    verify_hardware_identity(android_root)
+    verify_host_cpu_name(root, android_root)
     verify_pinner_overlay(android_root)
     verify_secondary_zygote_topic(android_root)
     verify_decoder_output_delay_topic(android_root)
     verify_secure_element_topic(android_root)
     verify_reclaim_boot_apps(android_root)
+    verify_time_zone(android_root)
     verify_default_wallpaper(android_root)
+    verify_setup_wizard_flow(android_root)
+    verify_launcher_layouts(android_root)
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)
     verify_package_assertions(android_root)

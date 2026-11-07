@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * A guest transmit into a full ring waits for the SLiRP event loop instead of
  * being dropped: the guest driver has no queue flow control, so a refused

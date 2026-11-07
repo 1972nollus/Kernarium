@@ -1,7 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import AndariumCore
 import SwiftUI
 
-/// The only screen before a run: the guest's processor, memory and storage,
+/// The only screen before a run: the guest's storage, processors and memory,
 /// its options and Start. Without a guest it offers to set one up.
 struct HomeView: View {
     @Environment(AppModel.self) private var model
@@ -55,13 +57,16 @@ struct HomeView: View {
             case .create: NewGuestSheet()
             case .resize: ResizeSheet()
             case .system: SystemSheet()
-            case .erase:
-                EraseSheet(confirmed: hints.eraseConfirmed)
-                    .presentationSizing(EraseSheetSizing())
             case .info: InfoSheet(page: hints.infoPage)
             }
         }
         .microphoneAccessAlert()
+        .alert("Erase Guest?", isPresented: $model.confirmingErase) {
+            Button("Erase Guest", role: .destructive) { model.erase() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Everything the guest has stored is deleted. This can\u{2019}t be undone.")
+        }
         .alert("Not Enough Free Space", isPresented: $model.startBlocked) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -74,7 +79,6 @@ struct HomeView: View {
     private var narrowLayout: some View {
         VStack(spacing: 22) {
             notices
-            panel(large: false)
             SystemSection()
             guestSections
             RecoveryErasePanel()
@@ -90,7 +94,6 @@ struct HomeView: View {
     private var tallLayout: some View {
         VStack(spacing: 28) {
             notices
-            panel(large: true)
             SystemSection()
             guestSections
             RecoveryErasePanel()
@@ -107,7 +110,6 @@ struct HomeView: View {
         HStack(alignment: .top, spacing: 24) {
             VStack(spacing: 22) {
                 notices
-                panel(large: true)
                 SystemSection()
             }
             .frame(maxWidth: 520)
@@ -122,18 +124,6 @@ struct HomeView: View {
         .padding(.top, 8)
         .padding(.bottom, 20)
         .frame(maxWidth: .infinity)
-    }
-
-    @ViewBuilder
-    private func panel(large: Bool) -> some View {
-        @Bindable var model = model
-        if model.guest != nil {
-            StoragePanel(
-                guest: Binding(get: { model.guest! }, set: { model.guest = $0 }),
-                host: model.host,
-                resize: { model.sheet = .resize }
-            )
-        }
     }
 
     /// Display, Capabilities and Backup: what the guest shows and may use.
@@ -165,8 +155,8 @@ struct HomeView: View {
         case .update(_, let release):
             NoticeCard(
                 symbol: "arrow.down.circle.fill", color: .accentColor,
-                title: "Andarium updated to \(release)",
-                text: "The next start finishes the update and takes a little longer. Your data is saved first, so a start that does not finish can be undone."
+                title: "System image updated",
+                text: "Andarium system image is updated to \(release). The next start finishes the update and takes a little longer."
             )
         case .unfinishedUpdate(let release, let canRetry, let canRestore):
             UnfinishedUpdateCard(release: release, canRetry: canRetry, canRestore: canRestore)
@@ -180,18 +170,11 @@ struct HomeView: View {
         }
         if let notice = model.notice {
             switch notice {
-            case .erased:
-                NoticeCard(
-                    symbol: "sparkles", color: .accentColor,
-                    title: "Guest erased",
-                    text: "The next start runs Andarium's setup.",
-                    onClose: { withAnimation { model.notice = nil } }
-                )
             case .closedInBackground:
                 NoticeCard(
                     symbol: "moon.zzz.fill", color: .secondary,
                     title: "iOS closed Andarium",
-                    text: "The guest was paused in the background. Start it again when you're ready.",
+                    text: "The guest was shut down in the background.",
                     onClose: { withAnimation { model.notice = nil } }
                 )
             }
@@ -284,12 +267,6 @@ struct WelcomeView: View {
                 .padding(.bottom, 34)
             Text("No Guest Yet")
                 .font(.title2.weight(.bold))
-            Text("Andarium is built in. Set up a guest to run it.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 340)
-                .padding(.top, 8)
             if !model.host.runsGuestGraphics {
                 NoticeCard(
                     symbol: "cpu", color: .orange,
@@ -400,7 +377,7 @@ struct UnfinishedUpdateCard: View {
         case (true, false):
             "The start that updates to \(release) did not reach its end. Start tries it again, or erase the guest to start over."
         case (false, true):
-            "This Andarium carries a different release than the update that did not finish. Restore puts back your data from before it, or erase the guest to start over."
+            "This app version carries a different release than the update that did not finish. Restore puts back your data from before it, or erase the guest to start over."
         case (false, false):
             "The start that updates to \(release) did not reach its end, and nothing from before it is left to put back. Erase the guest to start over."
         }
@@ -435,10 +412,10 @@ struct RecoveryErasePanel: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(!model.plan.allowsStart || !model.host.runsGuestGraphics)
+                .disabled(!model.plan.allowsStart(.recovery) || !model.host.runsGuestGraphics)
                 Divider().padding(.leading, 58)
                 Button {
-                    model.sheet = .erase
+                    model.confirmingErase = true
                 } label: {
                     HStack(spacing: 12) {
                         IconTile(symbol: "trash.fill", color: .red)

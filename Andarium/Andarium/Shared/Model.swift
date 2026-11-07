@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import AndariumCore
 import Observation
 import SwiftUI
@@ -11,7 +13,7 @@ enum StatisticsViewer: Hashable {
 }
 
 enum SheetKind: String, Identifiable, Hashable {
-    case create, resize, erase, info, system
+    case create, resize, info, system
 
     var id: String { rawValue }
 }
@@ -43,47 +45,10 @@ enum GuestScreen: Equatable {
     case off
 }
 
-/// One APK handed to Android from the session's Settings.
-struct ApkInstall: Identifiable, Equatable {
-    enum State: Equatable {
-        case installing(Double)
-        case installed
-        /// The file is not an app package.
-        case notApk
-        /// The file is an app in several parts (.apks, .xapk, .apkm), which
-        /// the install does not take.
-        case bundle
-        /// The guest's package installer refused it.
-        case failed(String)
-    }
-
-    let id = UUID()
-    var fileName: String
-    var sizeBytes: UInt64
-    var state: State
-
-    /// "Signal-7.21.4.apk" installs as Signal, version 7.21.4.
-    var appName: String {
-        let base = (fileName as NSString).deletingPathExtension
-        let name = base.split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map(String.init) ?? base
-        return name.prefix(1).uppercased() + name.dropFirst()
-    }
-
-    var version: String? {
-        let base = (fileName as NSString).deletingPathExtension
-        let parts = base.split(whereSeparator: { $0 == "-" || $0 == "_" })
-        return parts.dropFirst().first { $0.first?.isNumber == true }.map(String.init)
-    }
-
-    static let sampleFile = "Signal-7.21.4.apk"
-    static let sampleSizeBytes = UInt64(38.2 * Double(Limits.bytesPerMiB))
-}
-
-/// What the running guest offers through Settings: installs, ADB and the
-/// stats overlay. It lasts for one run.
+/// What the running guest offers through Settings: ADB and the stats
+/// overlay. It lasts for one run.
 @Observable
 final class SessionState {
-    var installs: [ApkInstall] = []
     /// ADB over Network is on: the listener runs.
     var adb = false
     /// The device's address on the local network while `adb` is on; nil
@@ -99,53 +64,6 @@ final class SessionState {
 
     /// The address the preview shows, from the range reserved for examples.
     static let previewAddress = "198.51.100.23"
-
-    /// The file name's kind for the install: an app in one file, one in
-    /// several, or not an app.
-    static func installKind(of fileName: String) -> ApkInstall.State? {
-        let name = fileName.lowercased()
-        if name.hasSuffix(".apk") { return nil }
-        if [".apks", ".xapk", ".apkm"].contains(where: { name.hasSuffix($0) }) { return .bundle }
-        return .notApk
-    }
-
-    /// Mock install: anything that is not an .apk is refused at once;
-    /// an .apk installs over about three seconds.
-    func install(fileName: String, sizeBytes: UInt64, play: Bool = true) {
-        if let refused = Self.installKind(of: fileName) {
-            withAnimation(.snappy) {
-                installs.insert(ApkInstall(fileName: fileName, sizeBytes: sizeBytes, state: refused), at: 0)
-            }
-            return
-        }
-        let item = ApkInstall(fileName: fileName, sizeBytes: sizeBytes, state: .installing(0))
-        withAnimation(.snappy) { installs.insert(item, at: 0) }
-        guard play else { return }
-        Task {
-            for step in 1...20 {
-                try? await Task.sleep(for: .milliseconds(150))
-                update(item.id, .installing(Double(step) / 20))
-            }
-            try? await Task.sleep(for: .milliseconds(250))
-            withAnimation(.snappy) { update(item.id, .installed) }
-        }
-    }
-
-    func update(_ id: UUID, _ state: ApkInstall.State) {
-        guard let index = installs.firstIndex(where: { $0.id == id }) else { return }
-        installs[index].state = state
-    }
-
-    func remove(_ id: UUID) {
-        installs.removeAll { $0.id == id }
-    }
-
-    /// Notes an install's end in the Apps list.
-    func record(_ state: ApkInstall.State, fileName: String, sizeBytes: UInt64) {
-        withAnimation(.snappy) {
-            installs.insert(ApkInstall(fileName: fileName, sizeBytes: sizeBytes, state: state), at: 0)
-        }
-    }
 }
 
 /// What the screens read and change. The guest's life (create, start, boot,
@@ -166,8 +84,15 @@ final class AppModel {
     /// Free space a new guest needs, which the storage behind the screens
     /// decides.
     var createRequirementBytes: UInt64
+    /// The largest data disk the carried system accepts, in GiB; the storage
+    /// rulers stop there when it is below `Limits.capacityRangeGiB`.
+    var releaseMaximumGiB = Limits.capacityRangeGiB.upperBound
+    /// The sizes the storage rulers offer, in steps of 4 GiB.
+    var capacityStopsGiB: [Int] { Limits.capacityStopsGiB(releaseMaximumGiB: releaseMaximumGiB) }
     var sheet: SheetKind?
     var startBlocked = false
+    /// Erase Guest is asking to be confirmed.
+    var confirmingErase = false
     /// What a start would be, from the guest's files: Home words Start and
     /// shows the update notices by it.
     var plan: StartPlan = .normal
@@ -179,6 +104,19 @@ final class AppModel {
     // App-wide display option, set on the home screen: the guest draws at the
     // screen's pixel density. The guest's display always follows the window.
     var retina = false
+    /// Whether the person has set Retina mode themselves. Until they do, it
+    /// follows the device (`DisplayOptions.defaultRetina`); once they have,
+    /// the default never replaces their choice.
+    var retinaChosen = false
+    /// The person's choice of Retina mode on Home.
+    func chooseRetina(_ on: Bool) {
+        retina = on
+        retinaChosen = true
+    }
+    /// What is kept of the display options across launches.
+    var displayOptions: DisplayOptions {
+        DisplayOptions(chosenRetina: retinaChosen ? retina : nil)
+    }
     /// The host window owns display rotation until iPadOS grants the
     /// full-screen session's orientation lock. Never a saved guest setting.
     var hostDrivesGuestRotation = false
@@ -195,9 +133,11 @@ final class AppModel {
     /// Seconds the boot screen shows when it is held.
     var frozenElapsed = 9
 
+    #if !APP_STORE
     /// The launch's automation work (create, erase, start) has run; a scene
     /// that connects to this model again does not repeat it.
     var launchApplied = false
+    #endif
 
     /// The runtime and storage behind the screens; nil plays mock data.
     var driver: (any RuntimeDriver)?
@@ -252,8 +192,10 @@ final class AppModel {
     }
     /// The figures behind the screens, from the driver's readings.
     private(set) var statisticsMeter = StatsMeter()
+    #if !APP_STORE
     /// A launch for automation prints each reading.
     var printsStatistics = false
+    #endif
     /// Waits between readings; a test paces them by hand.
     @ObservationIgnored var statisticsSleep: @MainActor (Duration) async -> Void = { duration in
         try? await Task.sleep(for: duration)
@@ -367,8 +309,10 @@ final class AppModel {
         refreshPlan()
     }
 
+    /// Erase Guest: everything the guest stored is deleted, its choices
+    /// included, and Andarium returns to the first-launch screen.
     func erase() {
-        guard let driver, let current = guest else {
+        guard let driver, guest != nil else {
             lifecycle.erase()
             plan = .firstStart
             return
@@ -377,9 +321,13 @@ final class AppModel {
             BusyState(title: "Erasing Guest", detail: "Deleting everything the guest stored.", progress: 0),
             failure: "The Guest Could Not Be Erased"
         ) { progress in
-            _ = try await driver.erase(current, progress: progress)
+            // A choice saved a moment after the last change must not come
+            // back after the files are gone.
+            self.persistTask?.cancel()
+            try await driver.erase(progress: progress)
             self.lifecycle.erase()
-            self.persistNow()
+            self.resizePreset = nil
+            self.sheet = nil
             self.refreshPlan()
         }
     }
@@ -513,9 +461,13 @@ final class AppModel {
     /// has dismissed, the overlay covers the screens, and a Cancel button
     /// stops it. `work` reports through the update closure and throws
     /// `CancellationError` when the person cancelled; any other error is an
-    /// alert. `finished` runs once the overlay has gone.
+    /// alert. `finished` runs once the overlay has gone. With `ending`, the
+    /// overlay stays up instead and says how the operation ended (its words
+    /// on success; `failure` and the error's on failure) until the person
+    /// closes it; cancelling still takes the overlay away.
     private func runOperation<Output: Sendable>(
         _ state: BusyState, failure: String,
+        ending: ((Output) -> (title: String, detail: String))? = nil,
         _ work: @escaping @MainActor (@escaping @Sendable (BusyUpdate) -> Void) async throws -> Output,
         finished: @escaping @MainActor (Output) -> Void = { _ in }
     ) {
@@ -529,6 +481,7 @@ final class AppModel {
         operation = Task { [weak self] in
             guard let self else { return }
             var result: Output?
+            var failureWords: String?
             do {
                 result = try await work { update in
                     Task { @MainActor in self.apply(update, epoch: epoch) }
@@ -536,15 +489,35 @@ final class AppModel {
             } catch is CancellationError {
             } catch {
                 if operationEpoch == epoch {
-                    alert = AppAlert(title: failure, message: error.localizedDescription)
+                    if ending == nil {
+                        alert = AppAlert(title: failure, message: error.localizedDescription)
+                    } else {
+                        failureWords = error.localizedDescription
+                    }
                 }
             }
             // The run ending, or a restart, took the operation over already.
             guard operationEpoch == epoch else { return }
-            busy = nil
             operation = nil
-            if let result { finished(result) }
+            if let ending, let result {
+                let words = ending(result)
+                busy = ended(title: words.title, detail: words.detail, failed: false)
+            } else if ending != nil, let failureWords {
+                busy = ended(title: failure, detail: failureWords, failed: true)
+            } else {
+                busy = nil
+            }
+            if ending == nil, let result { finished(result) }
         }
+    }
+
+    /// The overlay of an operation that is over: how it ended, and the button
+    /// that closes it.
+    private func ended(title: String, detail: String, failed: Bool) -> BusyState {
+        BusyState(
+            title: title, detail: detail,
+            result: BusyResult(failed: failed, dismiss: BusyCancel { [weak self] in self?.busy = nil })
+        )
     }
 
     private func apply(_ update: BusyUpdate, epoch: Int) {
@@ -572,6 +545,8 @@ final class AppModel {
     /// with the boot, so the overlay goes and no alert is raised over the
     /// screen that says the guest stopped.
     private func abandonOperation() {
+        // The words of a finished operation belong to the run that ended.
+        if operation == nil, busy?.result != nil { busy = nil }
         guard operation != nil else { return }
         operationEpoch += 1
         operation?.cancel()
@@ -629,56 +604,44 @@ final class AppModel {
         return file
     }
 
-    /// Install App: `url` is what the Files picker returned. A file that does
-    /// not end in .apk (a split bundle too) is answered at once with a row in
-    /// Settings, which stays open: the result is false. For an .apk the
-    /// caller dismisses Settings and the install runs behind the overlay:
-    /// the result is true. The file's security scope is held to the end.
-    func installPicked(_ url: URL) -> Bool {
+    /// Install APK: `url` is what the Files picker returned. Settings has
+    /// dismissed and the install runs behind the overlay, which stays up at the
+    /// end with how it went until the person closes it. A file that is not a
+    /// single .apk is refused on the same overlay, at once. The file's security
+    /// scope is held to the end of the install.
+    func installPicked(_ url: URL) {
+        guard busy == nil else { return }
         let name = url.lastPathComponent
+        if let refusal = InstallRefusal(fileName: name) {
+            busy = ended(title: Self.installFailure, detail: refusal.message, failed: true)
+            return
+        }
         let scoped = url.startAccessingSecurityScopedResource()
         let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         let size = UInt64(max(bytes, 0))
-        func release() {
-            if scoped { url.stopAccessingSecurityScopedResource() }
-        }
-        guard SessionState.installKind(of: name) == nil else {
-            release()
-            session.install(fileName: name, sizeBytes: size)
-            return false
-        }
-        guard busy == nil else {
-            release()
-            return false
-        }
         runOperation(
             BusyState(
                 title: "Installing App",
                 detail: "\(name) \u{00B7} \(Formats.size(bytes: size))", progress: 0
             ),
-            failure: "App Not Installed",
-            { [driver, weak self] update in
-                defer { release() }
-                do {
-                    if let driver {
-                        try await driver.installApk(at: url, sizeBytes: bytes, update: update)
-                    } else {
-                        try await Self.playInstall(update)
-                    }
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    self?.session.record(.failed(error.localizedDescription), fileName: name, sizeBytes: size)
-                    throw error
+            failure: Self.installFailure,
+            ending: { _ in (title: "App Installed", detail: "\(name) is installed in the guest.") },
+            { [driver] update in
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                if let driver {
+                    try await driver.installApk(at: url, sizeBytes: bytes, update: update)
+                } else {
+                    try await Self.playInstall(update)
                 }
-                // 100% for a moment, then the overlay goes.
+                // 100% for a moment, then the result.
                 update(BusyUpdate(progress: 1))
                 try? await Task.sleep(for: .milliseconds(500))
-                self?.session.record(.installed, fileName: name, sizeBytes: size)
             }
         )
-        return true
     }
+
+    /// The title of an install that did not happen.
+    static let installFailure = "App Not Installed"
 
     /// The preview's install: the file goes over, the guest takes its time.
     private static func playInstall(_ update: @Sendable (BusyUpdate) -> Void) async throws {
@@ -705,15 +668,10 @@ final class AppModel {
                 driver.begin(guest: guest, mode: mode, kind: kind)
             }
         case .lowSpace: startBlocked = true
-        case .unfinishedUpdate:
-            alert = AppAlert(
-                title: "Andarium's Update Didn't Finish",
-                message: plan.allowsStart
-                    ? "Recovery starts only once the update has finished. Start tries the update again; Restore or Erase Guest goes back."
-                    : "The guest starts only after its data is restored or the guest is erased."
-            )
-        case let .blocked(reason):
-            alert = AppAlert(title: reason.title, message: reason.explanation)
+        // The screens offer no start the plan refuses (`StartPlan.allowsStart`),
+        // so one that arrives anyway, from a keyboard or a launch, is ignored
+        // without a message: Home already says what the guest waits for.
+        case .unfinishedUpdate, .blocked: break
         case .needsNewerChip:
             alert = AppAlert(title: DeviceRequirement.title, message: DeviceRequirement.explanation(deviceName: host.name))
         case .noGuest: break
@@ -789,9 +747,16 @@ final class AppModel {
         persistNow()
     }
 
+    /// The Gyroscope switch as the screens show it: the guest's choice, which
+    /// is on until the person turns it off, and only where the device has
+    /// sensors to share.
+    var motionSensorsOn: Bool { guest?.motionSensorsOn(available: motionSensorsAvailable) == true }
+
+    /// The Gyroscope switch. It asks for nothing and is kept as chosen; on a
+    /// device without sensors there is nothing to turn on.
     func setMotionSensors(_ on: Bool) {
         guard guest != nil, !on || motionSensorsAvailable else { return }
-        guest?.motionSensors = on
+        guest?.motionChoice = on
         persistNow()
         driver?.setMotionSensors(on)
     }
@@ -933,8 +898,8 @@ final class AppModel {
     }
 
     /// The step of the boot under way, from the runtime's milestones.
-    func liveBootStage(recovery: Bool) -> Int {
-        BootSteps.current(preparingDisk: preparingDisk, milestone: bootTracker.milestone, recovery: recovery)
+    func liveBootStage() -> Int {
+        BootSteps.current(preparingDisk: preparingDisk, milestone: bootTracker.milestone)
     }
 
     /// The failure screen's copyable report.

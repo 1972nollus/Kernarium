@@ -1,24 +1,26 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * Derived from iSH Asbestos' ARM64 guest gadgets. Runtime blocks contain only
- * pointers to these precompiled routines and inline integer operands.
+ * The arm64 guest gadgets. Runtime blocks contain only pointers to these
+ * precompiled routines and inline integer operands; NOTICE.md beside the
+ * engine credits the design that inspired this arrangement.
  */
 #include "../../layout/assembly_offsets.h"
+#include "../../../gadget_host_frame.inc"
 
 /* Apple Silicon exposes the Armv8 CRC and cryptographic extensions. Keep the
  * assembler aware of them so extension-backed gadgets can use native ops. */
 .arch armv8.6-a+crc+crypto+sha3+rcpc+i8mm+fp16
 
-#define NAME(value) _##value
+#define CSYM(symbol) _##symbol
 
-_cpu .req x1
-_tlb .req x2
+_vcpu .req x1
+_swtlb .req x2
 _stream .req x28
 
 .macro gadget name
-	.globl NAME(uml_arm64_gadget_\name)
+	.globl CSYM(uml_arm64_gadget_\name)
 	.p2align 4
-NAME(uml_arm64_gadget_\name):
+CSYM(uml_arm64_gadget_\name):
 .endm
 
 #include "scalar_contract.inc"
@@ -38,7 +40,7 @@ NAME(uml_arm64_gadget_\name):
 	 * exits. FPCR writes update it eagerly, so the steady path is one load
 	 * and one predicted branch. Keep the cold system-register setup out of
 	 * every generated gadget to minimize code footprint. */
-	ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	ldrb w6, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]
 	cbnz w6, 99f
 	bl uml_arm64_gadget_activate_native_fp_environment
 99:
@@ -58,7 +60,7 @@ NAME(uml_arm64_gadget_\name):
  */
 .macro fpsr_model_helper helper
 	mrs x16, fpsr
-	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	str w16, [_vcpu, #UML_GADGET_CPU_FPSR]
 	mov x19, x1
 	mov x20, x2
 	mov x0, x1
@@ -66,7 +68,7 @@ NAME(uml_arm64_gadget_\name):
 	helper_call uml_arm64_\helper
 	mov x1, x19
 	mov x2, x20
-	ldr w17, [_cpu, #UML_GADGET_CPU_FPSR]
+	ldr w17, [_vcpu, #UML_GADGET_CPU_FPSR]
 	msr fpsr, x17
 .endm
 
@@ -86,13 +88,13 @@ NAME(uml_arm64_gadget_\name):
 .macro fpsr_merge_helper helper
 	software_helper \helper
 	mrs x17, fpsr
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	ldr w16, [_vcpu, #UML_GADGET_CPU_FPSR]
 	orr w16, w16, w17
-	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	str w16, [_vcpu, #UML_GADGET_CPU_FPSR]
 	msr fpsr, x16
 .endm
 
-/* Translate guest address x7 through the persistent iSH-style TLB of 16,384
+/* Translate guest address x7 through the persistent software TLB of 16,384
  * direct-mapped entries. On success x7 is the host address. The miss helper
  * updates the entry.
  */
@@ -100,7 +102,7 @@ NAME(uml_arm64_gadget_\name):
 	/* Entries are keyed by guest page number (address >> page shift). */
 	lsr x8, x7, #UML_GADGET_GUEST_PAGE_SHIFT
 	ubfx x9, x7, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
-	add x10, _tlb, x9, lsl #UML_GADGET_TLB_SET_SHIFT
+	add x10, _swtlb, x9, lsl #UML_GADGET_TLB_SET_SHIFT
 	/* Each access-specific tag is paired with its backing delta, so the
 	 * successful way needs one cache-line-local load pair and no later load. */
 	ldp x11, x12, [x10, #\page_offset]
@@ -133,7 +135,7 @@ NAME(uml_arm64_gadget_\name):
  * the TLB, check alignment and report a fault by the same untagged address.
  * Scratch: w9. */
 .macro tbi_strip reg
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, Ltbi_strip_done\@
 	ubfx \reg, \reg, #0, #56
 Ltbi_strip_done\@:
@@ -166,7 +168,7 @@ Ltbi_strip_done\@:
 	add x8, \address, #(\bytes - 1)
 	.endif
 	ubfx x9, \address, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
-	add x10, _tlb, x9, lsl #UML_GADGET_TLB_SET_SHIFT
+	add x10, _swtlb, x9, lsl #UML_GADGET_TLB_SET_SHIFT
 	ldp x11, x12, [x10, #\page_offset]
 	.if \bytes > 1
 	lsr x8, x8, #UML_GADGET_GUEST_PAGE_SHIFT
@@ -251,38 +253,41 @@ Ltbi_strip_done\@:
 uml_arm64_gadget_activate_native_fp_environment:
 	mrs x6, fpcr
 	mrs x5, fpsr
-	str x6, [_cpu, #UML_GADGET_CPU_HOST_FPCR]
-	str x5, [_cpu, #UML_GADGET_CPU_HOST_FPSR]
+	str x6, [_vcpu, #UML_GADGET_CPU_HOST_FPCR]
+	str x5, [_vcpu, #UML_GADGET_CPU_HOST_FPSR]
 	mov w6, #1
-	strb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
-	ldr w6, [_cpu, #UML_GADGET_CPU_FPCR]
+	strb w6, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]
+	ldr w6, [_vcpu, #UML_GADGET_CPU_FPCR]
 	mov w5, #UML_ARM64_FPCR_TRAP_ENABLES
 	bic w6, w6, w5
 	msr fpcr, x6
-	ldr w6, [_cpu, #UML_GADGET_CPU_FPSR]
+	ldr w6, [_vcpu, #UML_GADGET_CPU_FPSR]
 	msr fpsr, x6
 	ret
 
-.globl NAME(uml_arm64_gadget_enter)
-.p2align 4
-NAME(uml_arm64_gadget_enter):
-	/* x0 = data-only program stream, x1 = CpuState, x2 = TLB,
-	 * x3 = initial guest instruction count. x29 is otherwise unused by the
-	 * engine and remains live across helper calls. The two-register result
-	 * returns the event in w0 and completed count in x1 without a hot-boundary
-	 * memory store. Darwin reserves x18 and clears it when it interrupts the
-	 * thread, so the engine neither uses, saves nor restores it: x19's pair
-	 * partner is the zero register.
-	 */
-	stp xzr, x19, [sp, #-0x80]!
-	stp x20, x21, [sp, #0x10]
-	stp x22, x23, [sp, #0x20]
-	stp x24, x25, [sp, #0x30]
-	stp x26, x27, [sp, #0x40]
-	stp x28, x29, [sp, #0x50]
-	str lr, [sp, #0x60]
+/* The entry frame's own slots, after the registers gadget_host_frame.inc
+ * saves. A build that counts executed instructions keeps the caller's counter
+ * pointer in one, which execution_count reads. */
 #if UML_GADGET_EXECUTION_HISTOGRAM
-	str x4, [sp, #0x70]
+#define UML_GADGET_FRAME_HISTOGRAM GADGET_HOST_FRAME_SAVED
+#define UML_GADGET_FRAME_SLOTS 16
+#else
+#define UML_GADGET_FRAME_SLOTS 0
+#endif
+
+/* Runs a data-only stream until a gadget leaves the engine.
+ *   in:  x0 stream, x1 CpuState, x2 TLB, x3 instructions already retired
+ *        (x4 the counter table, in a histogram build)
+ *   out: w0 the event, x1 the instructions retired
+ * Inside, x28 walks the stream, x29 holds the retirement count and x27 the
+ * guest's flags; the frame keeps the caller's copies of all three. The result
+ * pair is returned in registers, so the hot boundary stores nothing. */
+.globl CSYM(uml_arm64_gadget_enter)
+.p2align 4
+CSYM(uml_arm64_gadget_enter):
+	gadget_host_frame_push UML_GADGET_FRAME_SLOTS
+#if UML_GADGET_EXECUTION_HISTOGRAM
+	str x4, [sp, #UML_GADGET_FRAME_HISTOGRAM]
 #endif
 	mov _stream, x0
 	/* Bias the retirement accumulator by the linked-chain limit. This lets
@@ -292,20 +297,14 @@ NAME(uml_arm64_gadget_enter):
 	/* Keep the architectural flags in a callee-saved host register. Gadget
 	 * scratch comparisons may clobber native PSTATE, so consumers still issue
 	 * MSR NZCV, but no per-instruction CpuState load/store is required. */
-	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	ldr w27, [_vcpu, #UML_GADGET_CPU_NZCV]
 	next_gadget
 
 .p2align 4
 uml_arm64_gadget_leave:
-	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	str w27, [_vcpu, #UML_GADGET_CPU_NZCV]
 	add x1, x29, #1, lsl #12
-	ldr lr, [sp, #0x60]
-	ldp x28, x29, [sp, #0x50]
-	ldp x26, x27, [sp, #0x40]
-	ldp x24, x25, [sp, #0x30]
-	ldp x22, x23, [sp, #0x20]
-	ldp x20, x21, [sp, #0x10]
-	ldp xzr, x19, [sp], #0x80
+	gadget_host_frame_pop UML_GADGET_FRAME_SLOTS
 	ret
 
 /* MOVZ/MOVN are folded to a full constant by the translator.  Rd==XZR is
@@ -313,7 +312,7 @@ uml_arm64_gadget_leave:
 scalar_entry move_wide_constant, 0, 0, Lscalar_offset0, Lscalar_none, Lscalar_none, Lscalar_none, 2
 	ldr x8, [_stream], #8
 	ldr _scalar_x11, [_stream], #8
-	add x13, _cpu, #UML_GADGET_CPU_X0
+	add x13, _vcpu, #UML_GADGET_CPU_X0
 	str _scalar_x11, [x13, x8]
 	next_gadget
 
@@ -360,7 +359,7 @@ scalar_entry add_sub_immediate_\suffix, \forward, 1, Lsd\@, Lsn\@, Lscalar_none,
 	.if \source_sp
 	scalar_load_sp \forward, 1, x15
 	.else
-	scalar_load \forward, 1, x15, 10, 8, 8, 5, 3, _cpu
+	scalar_load \forward, 1, x15, 10, 8, 8, 5, 3, _vcpu
 	.endif
 	lsr x11, x8, #16
 	.if \bits64
@@ -373,11 +372,11 @@ scalar_entry add_sub_immediate_\suffix, \forward, 1, Lsd\@, Lsn\@, Lscalar_none,
 	.endif
 	.if \destination_special
 		.if !\flags
-	str _scalar_x16, [_cpu, #UML_GADGET_CPU_SP]
+	str _scalar_x16, [_vcpu, #UML_GADGET_CPU_SP]
 		.endif
 	.else
 	and w9, w8, #0x1f
-	str _scalar_x16, [_cpu, x9, lsl #3]
+	str _scalar_x16, [_vcpu, x9, lsl #3]
 	.endif
 	br x14
 	scalar_variants \forward, Lsn\@, Lscalar_none, Lscalar_none, add_sub_immediate_fast, \bits64, \subtract, \flags, \source_sp, \destination_special, \suffix
@@ -417,7 +416,7 @@ add_sub_immediate_modes 1, 1, 1, x_sub_s
 	.endif
 	.if !\destination_discard
 	and x9, x8, #0xffff
-	str _scalar_x7, [_cpu, x9]
+	str _scalar_x7, [_vcpu, x9]
 	.endif
 	next_gadget
 .endm
@@ -440,12 +439,12 @@ scalar_entry add_sub_register_\suffix, \forward, 2, Lsd\@, Lsn\@, Lsm\@, Lscalar
 	.if \left_zero
 	mov x15, xzr
 	.else
-	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
+	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _vcpu
 	.endif
 	.if \right_zero
 	mov x16, xzr
 	.else
-	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _cpu
+	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _vcpu
 	.endif
 	.if \shift_kind != 0
 	ubfx x6, x8, #48, #6
@@ -483,11 +482,11 @@ scalar_entry add_sub_register_\suffix, \forward, 2, Lsd\@, Lsn\@, Lsm\@, Lscalar
 	.endif
 scalar_entry add_sub_register_\suffix, \forward, 3, Lsd\@, Lsn\@, Lsm\@, Lscalar_none, 1
 	ldr x8, [_stream], #8
-	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
+	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _vcpu
 	.if \right_zero
 	mov x16, xzr
 	.else
-	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _cpu
+	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _vcpu
 	.endif
 	.if \extension == 0
 	and x16, x16, #0xff
@@ -601,14 +600,14 @@ scalar_entry add_sub_carry_\suffix, \forward, 4, Lsd\@, Lsn\@, Lsm\@, Lscalar_no
 	.if \left_zero
 	mov x15, xzr
 	.else
-	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
+	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _vcpu
 	.endif
 	.if \right_zero
 	mov x16, xzr
 	.elseif \same_source
 	mov x16, x15
 	.else
-	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _cpu
+	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _vcpu
 	.endif
 	msr nzcv, x27
 	.if \bits64
@@ -621,7 +620,7 @@ scalar_entry add_sub_carry_\suffix, \forward, 4, Lsd\@, Lsn\@, Lsm\@, Lscalar_no
 	.endif
 	.if !\destination_zero
 	uxth w9, w8
-	str _scalar_x7, [_cpu, x9]
+	str _scalar_x7, [_vcpu, x9]
 	.endif
 	next_gadget
 	scalar_variants \forward, Lsn\@, Lsm\@, Lscalar_none, add_sub_carry_fast, \bits64, \subtract, \flags, \left_zero, \right_zero, \same_source, \destination_zero, \suffix
@@ -679,17 +678,17 @@ scalar_entry multiply_add_\suffix, \forward, 5, Lsd\@, Lsn\@, Lsm\@, Lsa\@, 1
 		.if \operation >= 8 || \addend_zero
 	mov _scalar_x7, xzr
 		.else
-	scalar_load \forward, 4, _scalar_x7, 12, 8, 48, 16, 0, _cpu
+	scalar_load \forward, 4, _scalar_x7, 12, 8, 48, 16, 0, _vcpu
 			/* W-form writes zero-extend the copied addend. */
 			.if \operation == 0 || \operation == 1
 	mov _scalar_w7, _scalar_w7
 			.endif
 		.endif
 	.else
-	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
-	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _cpu
+	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _vcpu
+	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _vcpu
 		.if \operation < 8 && !\addend_zero
-	scalar_load \forward, 4, x17, 12, 8, 48, 16, 0, _cpu
+	scalar_load \forward, 4, x17, 12, 8, 48, 16, 0, _vcpu
 		.endif
 		.if \operation == 0
 			.if \addend_zero
@@ -746,7 +745,7 @@ scalar_entry multiply_add_\suffix, \forward, 5, Lsd\@, Lsn\@, Lsm\@, Lsa\@, 1
 		.endif
 	.endif
 	and x9, x8, #0xffff
-	str _scalar_x7, [_cpu, x9]
+	str _scalar_x7, [_vcpu, x9]
 	next_gadget
 	scalar_variants \forward, Lsn\@, Lsm\@, Lsa\@, multiply_add_fast, \operation, \left_zero, \right_zero, \addend_zero, \suffix
 .endm
@@ -800,14 +799,14 @@ scalar_entry variable_shift_\suffix, \forward, 6, Lsd\@, Lsn\@, Lsm\@, Lscalar_n
 	.if \left_zero
 	mov x15, xzr
 	.else
-	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
+	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _vcpu
 	.endif
 	.if \right_zero
 	mov x16, xzr
 	.elseif \same_source
 	mov x16, x15
 	.else
-	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _cpu
+	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _vcpu
 	.endif
 	.if \bits64
 		.if \operation == 0
@@ -831,7 +830,7 @@ scalar_entry variable_shift_\suffix, \forward, 6, Lsd\@, Lsn\@, Lsm\@, Lscalar_n
 		.endif
 	.endif
 	uxth w9, w8
-	str _scalar_x7, [_cpu, x9]
+	str _scalar_x7, [_vcpu, x9]
 	next_gadget
 	scalar_variants \forward, Lsn\@, Lsm\@, Lscalar_none, variable_shift_fast, \operation, \bits64, \left_zero, \right_zero, \same_source, \suffix
 .endm
@@ -874,14 +873,14 @@ scalar_entry divide_\suffix, \forward, 7, Lsd\@, Lsn\@, Lsm\@, Lscalar_none, 1
 	.if \left_zero
 	mov x15, xzr
 	.else
-	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
+	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _vcpu
 	.endif
 	.if \right_zero
 	mov x16, xzr
 	.elseif \same_source
 	mov x16, x15
 	.else
-	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _cpu
+	scalar_load \forward, 2, x16, 11, 8, 32, 16, 0, _vcpu
 	.endif
 	.if \bits64
 		.if \signed
@@ -897,7 +896,7 @@ scalar_entry divide_\suffix, \forward, 7, Lsd\@, Lsn\@, Lsm\@, Lscalar_none, 1
 		.endif
 	.endif
 	uxth w9, w8
-	str _scalar_x7, [_cpu, x9]
+	str _scalar_x7, [_vcpu, x9]
 	next_gadget
 	scalar_variants \forward, Lsn\@, Lsm\@, Lscalar_none, divide_fast, \signed, \bits64, \left_zero, \right_zero, \same_source, \suffix
 .endm
@@ -927,23 +926,23 @@ divide_sources 1, 1, x_s
 	.ifc \source_mode, rr
 	ubfx x8, x11, #16, #16
 	lsr x9, x11, #32
-	ldr x14, [_cpu, x8]
-	ldr x15, [_cpu, x9]
+	ldr x14, [_vcpu, x8]
+	ldr x15, [_vcpu, x9]
 	.else
 	.ifc \source_mode, same
 	ubfx x8, x11, #16, #16
-	ldr x14, [_cpu, x8]
+	ldr x14, [_vcpu, x8]
 	mov x15, x14
 	.else
 	.ifc \source_mode, rz
 	ubfx x8, x11, #16, #16
-	ldr x14, [_cpu, x8]
+	ldr x14, [_vcpu, x8]
 	mov x15, xzr
 	.else
 	.ifc \source_mode, zr
 	lsr x9, x11, #32
 	mov w14, wzr
-	ldr x15, [_cpu, x9]
+	ldr x15, [_vcpu, x9]
 	.else
 	mov w14, wzr
 	mov x15, xzr
@@ -973,7 +972,7 @@ gadget crc32_\suffix
 	.else
 	crc32cx w16, w14, x15
 	.endif
-	str x16, [_cpu, x10]
+	str x16, [_vcpu, x10]
 	next_gadget
 .endm
 
@@ -1032,7 +1031,7 @@ crc32_software_entry zz, \prefix\()_zz
 	lsr x15, x15, #8
 	crc32_software_byte
 	.endif
-	str x14, [_cpu, x10]
+	str x14, [_vcpu, x10]
 	next_gadget
 .endm
 
@@ -1069,7 +1068,7 @@ crc32_sources 7, cx, 8, 0x3b78, 0x82f6
 	.endif
 scalar_entry extract_register_\suffix, \forward, 8, Lsd\@, Lsn\@, Lsm\@, Lscalar_none, 1
 	ldr x8, [_stream], #8
-	add x13, _cpu, #UML_GADGET_CPU_X0
+	add x13, _vcpu, #UML_GADGET_CPU_X0
 	.if \left_zero
 	mov x14, xzr
 	.else
@@ -1166,7 +1165,7 @@ scalar_entry conditional_select_fast_\name\()_\suffix, \forward, 9, Lsd\@, Lsn\@
 	csneg _scalar_w7, w15, w16, \condition
 		.endif
 	.endif
-	str _scalar_x7, [_cpu, x9]
+	str _scalar_x7, [_vcpu, x9]
 	next_gadget
 	scalar_variants \forward, Lsn\@, Lsm\@, Lscalar_none, conditional_select_fast, \name, \condition, \operation, \bits64, \suffix
 .endm
@@ -1205,12 +1204,12 @@ conditional_select_fast_modes le, le
 scalar_entry conditional_select_fast_always_\suffix, \forward, 9, Lsd\@, Lsn\@, Lscalar_none, Lscalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x9, x8, #0, #16
-	scalar_load \forward, 1, _scalar_x15, 10, 8, 16, 16, 0, _cpu
+	scalar_load \forward, 1, _scalar_x15, 10, 8, 16, 16, 0, _vcpu
 	.if \bits64
-	str _scalar_x15, [_cpu, x9]
+	str _scalar_x15, [_vcpu, x9]
 	.else
 	mov _scalar_w7, _scalar_w15
-	str _scalar_x7, [_cpu, x9]
+	str _scalar_x7, [_vcpu, x9]
 	.endif
 	next_gadget
 	scalar_variants \forward, Lsn\@, Lscalar_none, Lscalar_none, conditional_select_always, \bits64, \suffix
@@ -1241,11 +1240,11 @@ scalar_entry conditional_compare_fast_\name\()_\suffix, \forward, 10, Lscalar_no
 	next_gadget
 Lconditional_compare_true\@:
 	.endif
-	scalar_load \forward, 1, x12, 10, 8, 0, 16, 0, _cpu
+	scalar_load \forward, 1, x12, 10, 8, 0, 16, 0, _vcpu
 	.if \immediate
 	ubfx x13, x8, #16, #5
 	.else
-	scalar_load \forward, 2, x13, 11, 8, 16, 16, 0, _cpu
+	scalar_load \forward, 2, x13, 11, 8, 16, 16, 0, _vcpu
 	.endif
 	.if \bits64
 		.if \subtract
@@ -1317,7 +1316,7 @@ scalar_entry logical_shifted_\suffix, \forward, 11, Lsd\@, Lsn\@, Lsm\@, Lscalar
 	mov x15, xzr
 		.endif
 	.else
-	scalar_load \forward, 1, x15, 10, 8, 8, 5, 3, _cpu
+	scalar_load \forward, 1, x15, 10, 8, 8, 5, 3, _vcpu
 	.endif
 	.if \right_zero
 	.if \operation == 1 && \bits64 && \left_zero && !\invert && \shift_kind == 0 && !\destination_zero
@@ -1327,9 +1326,9 @@ scalar_entry logical_shifted_\suffix, \forward, 11, Lsd\@, Lsn\@, Lsm\@, Lscalar
 	.endif
 	.else
 	.if \operation == 1 && \bits64 && \left_zero && !\invert && \shift_kind == 0 && !\destination_zero
-	scalar_load \forward, 2, _scalar_x16, 11, 8, 16, 5, 3, _cpu
+	scalar_load \forward, 2, _scalar_x16, 11, 8, 16, 5, 3, _vcpu
 	.else
-	scalar_load \forward, 2, x16, 11, 8, 16, 5, 3, _cpu
+	scalar_load \forward, 2, x16, 11, 8, 16, 5, 3, _vcpu
 	.endif
 	.endif
 	.if \shift_kind != 0
@@ -1362,11 +1361,11 @@ scalar_entry logical_shifted_\suffix, \forward, 11, Lsd\@, Lsn\@, Lsm\@, Lscalar
 	.if \operation == 1 && \left_zero && !\invert && \shift_kind == 0 && !\destination_zero
 		.if \bits64
 	and w9, w8, #0x1f
-	str _scalar_x16, [_cpu, x9, lsl #3]
+	str _scalar_x16, [_vcpu, x9, lsl #3]
 		.else
 	mov _scalar_w7, w16
 	and w9, w8, #0x1f
-	str _scalar_x7, [_cpu, x9, lsl #3]
+	str _scalar_x7, [_vcpu, x9, lsl #3]
 		.endif
 	.else
 		.if \bits64
@@ -1395,7 +1394,7 @@ scalar_entry logical_shifted_\suffix, \forward, 11, Lsd\@, Lsn\@, Lsm\@, Lscalar
 		.endif
 		.if !\destination_zero
 	and w9, w8, #0x1f
-	str _scalar_x7, [_cpu, x9, lsl #3]
+	str _scalar_x7, [_vcpu, x9, lsl #3]
 		.endif
 	.endif
 	next_gadget
@@ -1486,7 +1485,7 @@ scalar_entry logical_immediate_\suffix, \forward, 12, Lsd\@, Lsn\@, Lscalar_none
 	mov x27, #0x40000000
 		.endif
 	.else
-	scalar_load \forward, 1, x15, 10, 8, 8, 5, 3, _cpu
+	scalar_load \forward, 1, x15, 10, 8, 8, 5, 3, _vcpu
 		.if \bits64
 			.if \operation == 0
 	and _scalar_x16, x15, x14
@@ -1514,11 +1513,11 @@ scalar_entry logical_immediate_\suffix, \forward, 12, Lsd\@, Lsn\@, Lscalar_none
 	.endif
 	.if \destination_special
 		.if \operation != 3
-	str _scalar_x16, [_cpu, #UML_GADGET_CPU_SP]
+	str _scalar_x16, [_vcpu, #UML_GADGET_CPU_SP]
 		.endif
 	.else
 	and w9, w8, #0x1f
-	str _scalar_x16, [_cpu, x9, lsl #3]
+	str _scalar_x16, [_vcpu, x9, lsl #3]
 	.endif
 	next_gadget
 	scalar_variants \forward, Lsn\@, Lscalar_none, Lscalar_none, logical_immediate_fast, \operation, \bits64, \source_zero, \destination_special, \suffix
@@ -1562,7 +1561,7 @@ scalar_entry bitfield_\suffix, \forward, 13, Lsd\@, Lsn\@, Lsm\@, Lscalar_none, 
 	.if \source_zero
 	mov x15, xzr
 	.else
-	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
+	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _vcpu
 	.endif
 	.if \operation == 1
 	/* Capture the old destination before the result overwrites x0. */
@@ -1600,7 +1599,7 @@ scalar_entry bitfield_\suffix, \forward, 13, Lsd\@, Lsn\@, Lsm\@, Lscalar_none, 
 	mov _scalar_w16, _scalar_w16
 	.endif
 	and x9, x8, #0xffff
-	str _scalar_x16, [_cpu, x9]
+	str _scalar_x16, [_vcpu, x9]
 	next_gadget
 	scalar_variants \forward, Lsn\@, Lsm\@, Lscalar_none, bitfield_fast, \operation, \bits64, \rotate_nonzero, \source_zero, \suffix
 .endm
@@ -1699,7 +1698,7 @@ scalar_entry bit_reverse_count_\suffix, \forward, 14, Lsd\@, Lsn\@, Lscalar_none
 	cneg _scalar_w13, w12, mi
 		.endif
 	.endif
-	str _scalar_x13, [_cpu, x11]
+	str _scalar_x13, [_vcpu, x11]
 	next_gadget
 	scalar_variants \forward, Lsn\@, Lscalar_none, Lscalar_none, bit_reverse_count_fast, \operation, \bits64, \native, \suffix
 .endm
@@ -1743,7 +1742,7 @@ bit_reverse_count_fast 8, 1, 1, x_abs_native
 scalar_entry integer_\name\()_fast_\suffix, \forward, 15, Lsd\@, Lsn\@, Lsm\@, Lscalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x9, x8, #0, #16
-	scalar_load \forward, 1, x12, 10, 8, 16, 16, 0, _cpu
+	scalar_load \forward, 1, x12, 10, 8, 16, 16, 0, _vcpu
 	.if \immediate
 		.if \is_signed
 	asr x13, x8, #32
@@ -1751,7 +1750,7 @@ scalar_entry integer_\name\()_fast_\suffix, \forward, 15, Lsd\@, Lsn\@, Lsm\@, L
 	lsr x13, x8, #32
 		.endif
 	.else
-	scalar_load \forward, 2, x13, 11, 8, 32, 16, 0, _cpu
+	scalar_load \forward, 2, x13, 11, 8, 32, 16, 0, _vcpu
 	.endif
 	.if \bits64
 	cmp x12, x13
@@ -1760,7 +1759,7 @@ scalar_entry integer_\name\()_fast_\suffix, \forward, 15, Lsd\@, Lsn\@, Lsm\@, L
 	cmp w12, w13
 	csel _scalar_w14, w12, w13, \condition
 	.endif
-	str _scalar_x14, [_cpu, x9]
+	str _scalar_x14, [_vcpu, x9]
 	next_gadget
 	scalar_variants \forward, Lsn\@, Lsm\@, Lscalar_none, integer_min_max_fast, \name, \condition, \is_signed, \bits64, \immediate, \suffix
 .endm
@@ -1787,11 +1786,11 @@ integer_min_max_fast_modes umin, ls, 0
 scalar_entry integer_min_max_copy_\suffix, \forward, 15, Lsd\@, Lsn\@, Lscalar_none, Lscalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x9, x8, #0, #16
-	scalar_load \forward, 1, _scalar_x12, 10, 8, 16, 16, 0, _cpu
+	scalar_load \forward, 1, _scalar_x12, 10, 8, 16, 16, 0, _vcpu
 	.if \bits64 == 0
 	mov _scalar_w12, _scalar_w12
 	.endif
-	str _scalar_x12, [_cpu, x9]
+	str _scalar_x12, [_vcpu, x9]
 	next_gadget
 	scalar_variants \forward, Lsn\@, Lscalar_none, Lscalar_none, integer_min_max_copy, \bits64, \suffix
 .endm
@@ -1853,7 +1852,7 @@ gadget rmif_fast
 	and x12, x8, #0xffff
 	ubfx x11, x8, #16, #6
 	lsr x14, x8, #32
-	ldr x12, [_cpu, x12]
+	ldr x12, [_vcpu, x12]
 	ror x13, x12, x11
 	lsl w13, w13, #28
 	bic w27, w27, w14
@@ -1869,7 +1868,7 @@ gadget rmif_zero
 .macro setf_fast width, suffix
 gadget setf_fast_\suffix
 	ldr x8, [_stream], #8
-	ldr w12, [_cpu, x8]
+	ldr w12, [_vcpu, x8]
 	tst w12, #((1 << \width) - 1)
 	cset w17, eq
 	ubfx w15, w12, #(\width - 1), #1
@@ -1891,7 +1890,7 @@ setf_fast 16, 16
 .macro setf_native encoding, suffix
 gadget setf_native_\suffix
 	ldr x8, [_stream], #8
-	ldr w8, [_cpu, x8]
+	ldr w8, [_vcpu, x8]
 	msr nzcv, x27
 	.inst \encoding
 	mrs x27, nzcv

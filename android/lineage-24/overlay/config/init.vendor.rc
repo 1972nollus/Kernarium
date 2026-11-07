@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 on early-init
     setprop ro.hw_timeout_multiplier ${ro.boot.hw_timeout_multiplier}
     setprop hypervisor.memory_reclaim.supported ${ro.boot.hypervisor.vm.supported}

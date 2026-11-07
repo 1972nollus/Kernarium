@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import SwiftUI
 
 /// A page of Info that a navigation path or a launch can open directly.
@@ -46,7 +48,6 @@ nonisolated struct Acknowledgements: Decodable, Sendable {
         let license: String
         /// Its SPDX expression.
         let spdx: String
-        let note: String?
         /// Identifiers into `Acknowledgements.licenses`.
         let licenses: [String]
         let texts: [Notice]
@@ -129,7 +130,7 @@ struct AcknowledgementsView: View {
                     Text(group.title)
                 } footer: {
                     if group.id == acknowledgements.groups.last?.id {
-                        Text("Android, LineageOS, Linux and the other names and marks here belong to their owners. They identify the software built into Andarium and imply no endorsement.")
+                        Text("Android, LineageOS, Linux and the other names and marks here belong to their owners. They identify the software built into Andarium and the work that inspired its design, and imply no endorsement.")
                             .padding(.top, 8)
                     }
                 }
@@ -179,30 +180,20 @@ struct LicenseView: View {
     private func summary(_ project: Acknowledgements.Project) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             field("Copyright", "© \(project.copyright)")
-            field("License", project.license, detail: project.spdx)
-            if let note = project.note {
-                Text(note)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
+            field("License", project.license)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
     }
 
-    private func field(_ title: String, _ value: String, detail: String? = nil) -> some View {
+    private func field(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Text(value)
                 .font(.subheadline)
-            if let detail, detail != value {
-                Text(detail)
-                    .font(.footnote.monospaced())
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 

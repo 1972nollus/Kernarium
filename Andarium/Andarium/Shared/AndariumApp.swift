@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import AndariumCore
 import SwiftUI
 import UIKit
@@ -5,7 +7,11 @@ import UIKit
 @main
 final class AndariumApp: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        true
+        // Mesa reads its disk cache's location and limit from the process
+        // environment when the runtime thread creates the guest's screen.
+        // Set them here, before any scene or runtime exists.
+        MesaShaderCache.configureBeforeFirstUse()
+        return true
     }
 
     func application(
@@ -31,6 +37,10 @@ final class AndariumProcess {
     private init() {
         entry = AppEntry.fromArguments()
         entry.configureTips()
+        // A report staged for sharing by a process that ended is of no use.
+        // This is the process's launch: a test that builds a model does not
+        // sweep the folder a running test stages its files in.
+        BugReportStaging.sweep()
         model = entry.makeModel()
     }
 }
@@ -105,6 +115,7 @@ struct RootView: View {
         } message: { alert in
             Text(alert.message)
         }
+        #if !APP_STORE
         .task {
             // The launch's automation work happens once per model: a scene
             // that connects again must not create, erase or start the guest
@@ -113,5 +124,6 @@ struct RootView: View {
             model.launchApplied = true
             await entry.applyDeferred(to: model)
         }
+        #endif
     }
 }

@@ -106,6 +106,20 @@ uml_add_tooling_test(
     LABELS audit
     TIMEOUT 180)
 
+# The licensing rule is by location (LICENSES/README.md): every source file
+# carries an SPDX header with an identifier allowed where it lives, none uses a
+# deprecated identifier, and LICENSE and LICENSES/ hold the text of every
+# identifier in use. The fixtures mutate a header, a text and an exception.
+uml_add_tooling_test(
+    NAME repository-license-headers
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_license_headers.py
+        --checker
+            ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/check_license_headers.py
+        --source-root ${PROJECT_SOURCE_DIR}
+    LABELS audit
+    TIMEOUT 90)
+
 uml_add_tooling_test(
     NAME engine-kind-link-audit
     COMMAND ${Python3_EXECUTABLE}

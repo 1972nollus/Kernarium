@@ -9,6 +9,15 @@
          (lineage_andarium.mk), which seeds the stored value when the lock
          settings database is created. -->
     <bool name="config_disableLockscreenByDefault">false</bool>
+
+    <!-- The power manager's FaceDownDetector turns the screen off when the device is laid face
+         down. While it is enabled it holds an accelerometer connection (every 200 ms, batched)
+         for as long as the screen is on, whatever runs in the guest, so the host keeps reading its
+         motion sensor. The guest is a window or a full-screen scene, never a phone on a table.
+         FaceDownDetector.isEnabled requires this resource, its DeviceConfig switch
+         (attention_manager_service/enable_flip_to_screen_off, default true) and a test override
+         to be true, and it registers no sensor listener while any is false. -->
+    <bool name="config_flipToScreenOffEnabled">false</bool>
     <integer name="config_audio_notif_vol_default">7</integer>
     <integer name="config_audio_ring_vol_default">7</integer>
 

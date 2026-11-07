@@ -45,9 +45,9 @@
 /* sme.inc named its gadgets for the SME part; these are ordinary entries. */
 .purgem gadget
 .macro gadget name
-	.globl NAME(uml_arm64_gadget_\name)
+	.globl CSYM(uml_arm64_gadget_\name)
 	.p2align 4
-NAME(uml_arm64_gadget_\name):
+CSYM(uml_arm64_gadget_\name):
 .endm
 
 /* The part's helper calls: a helper the base parts already call is reached
@@ -91,22 +91,22 @@ La32veneer_\symbol:
  * activates the environment first when it is not active, and clobbers only
  * x5, x6 and lr, as ensure_fp_environment does. */
 .macro a32_fp_guest
-	ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	ldrb w6, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]
 	cbz w6, La32fpinactive\@
-	ldrb w6, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]
+	ldrb w6, [_vcpu, #UML_ARM64_CPU_A32_FP_STANDARD]
 	cbz w6, La32fpdone\@
 	bl La32_fp_to_guest
 	b La32fpdone\@
 La32fpinactive\@:
 	bl uml_arm64_gadget_activate_native_fp_environment
-	strb wzr, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]
+	strb wzr, [_vcpu, #UML_ARM64_CPU_A32_FP_STANDARD]
 La32fpdone\@:
 .endm
 
 .macro a32_fp_standard
-	ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	ldrb w6, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]
 	cbz w6, La32fpinactive\@
-	ldrb w6, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]
+	ldrb w6, [_vcpu, #UML_ARM64_CPU_A32_FP_STANDARD]
 	cbnz w6, La32fpdone\@
 	b La32fpswitch\@
 La32fpinactive\@:
@@ -126,14 +126,14 @@ La32fpdone\@:
  * UNDEFINED instruction through the illegal-instruction exit, an internal
  * error as the fatal event. */
 .macro a32_library_call
-	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	str w27, [_vcpu, #UML_GADGET_CPU_NZCV]
 	/* The live FPSR is the host register while the native environment is
 	 * active: commit it to CpuState for the library, which merges the flags
 	 * it raises into CpuState, and reinstall it after (fpsr_model_helper). */
-	ldrb w16, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	ldrb w16, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]
 	cbz w16, 96f
 	mrs x17, fpsr
-	str w17, [_cpu, #UML_GADGET_CPU_FPSR]
+	str w17, [_vcpu, #UML_GADGET_CPU_FPSR]
 96:
 	mov x19, x1
 	mov x20, x2
@@ -144,20 +144,20 @@ La32fpdone\@:
 	helper_call uml_arm64_gadget_a32_execute
 	mov x1, x19
 	mov x2, x20
-	ldrb w16, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	ldrb w16, [_vcpu, #UML_GADGET_CPU_FP_ACTIVE]
 	cbz w16, 95f
-	ldr w17, [_cpu, #UML_GADGET_CPU_FPSR]
+	ldr w17, [_vcpu, #UML_GADGET_CPU_FPSR]
 	msr fpsr, x17
 95:
-	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	ldr w27, [_vcpu, #UML_GADGET_CPU_NZCV]
 	cbz w0, 97f
 	cmp w0, #UML_GADGET_A32_LIBRARY_FAULT
 	b.eq La32_memory_fault
 	cmp w0, #UML_GADGET_A32_LIBRARY_UNDEFINED
 	b.eq La32_undefined
 	sub x9, _stream, #8
-	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x21, [_cpu, #UML_GADGET_CPU_PC]
+	str x9, [_vcpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x21, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, #-1
 	b uml_arm64_gadget_leave
 97:
@@ -176,15 +176,15 @@ La32fpdone\@:
 	cmp x10, x11
 	b.eq 98f
 	.if \ras
-	ldrb w13, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
+	ldrb w13, [_vcpu, #UML_GADGET_CPU_RETURN_TOP]
 	sub w13, w13, #1
 	and w13, w13, #UML_GADGET_CPU_RETURN_MASK
-	add x14, _cpu, #UML_GADGET_CPU_RETURN_STACK
+	add x14, _vcpu, #UML_GADGET_CPU_RETURN_STACK
 	add x14, x14, x13, lsl #4
 	ldp x11, x12, [x14]
 	cmp x10, x11
 	b.ne 97f
-	strb w13, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
+	strb w13, [_vcpu, #UML_GADGET_CPU_RETURN_TOP]
 	train_indirect_cell
 	b 98f
 97:
@@ -194,7 +194,7 @@ La32fpdone\@:
 	follow_block_link x12
 	.pushsection GADGET_SECTION_A32_COLD
 La32_target_tier\@:
-	ldr x13, [_cpu, #UML_GADGET_CPU_TARGET_TIER]
+	ldr x13, [_vcpu, #UML_GADGET_CPU_TARGET_TIER]
 	cbz x13, La32_target_tier_miss\@
 	eor x14, x10, x10, lsr #10
 	ubfx x14, x14, #2, #UML_GADGET_TARGET_TIER_BITS
@@ -205,8 +205,8 @@ La32_target_tier\@:
 	train_indirect_cell
 	follow_block_link x12
 La32_target_tier_miss\@:
-	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x10, [_cpu, #UML_GADGET_CPU_PC]
+	str x9, [_vcpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x10, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 	.popsection
@@ -284,7 +284,7 @@ gadget a32_credit
  * next entry runs the rest an instruction at a time. */
 gadget a32_set_itstate
 	ldr x8, [_stream], #8
-	strb w8, [_cpu, #UML_ARM64_CPU_A32_ITSTATE]
+	strb w8, [_vcpu, #UML_ARM64_CPU_A32_ITSTATE]
 	next_gadget
 
 /* \value := the value LR gets for a call that returns to \key: the return
@@ -303,7 +303,7 @@ gadget a32_bl_linked
 	ldp x8, x11, [_stream]
 	ldr x9, [x11, #16]
 	a32_return_value w12, x12, x9
-	str w12, [_cpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
+	str w12, [_vcpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
 	push_return_record x9, x11
 	follow_block_link x8
 
@@ -312,8 +312,8 @@ gadget a32_bl_linked
 gadget a32_bl
 	ldr x8, [_stream], #8
 	ldr x12, [_stream]
-	str w12, [_cpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str w12, [_vcpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
@@ -326,12 +326,12 @@ gadget a32_\name
 	.if \cached
 	ldr x9, [_stream], #8
 	.endif
-	ldr w10, [_cpu, x8]
+	ldr w10, [_vcpu, x8]
 	\key
 	.if \cached
 	a32_follow_indirect \ras
 	.else
-	str x10, [_cpu, #UML_GADGET_CPU_PC]
+	str x10, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 	.endif
@@ -351,22 +351,22 @@ a32_indirect bw, a32_key_thumb, 0, 0
  * BL; [source offset][LR value] not. */
 gadget a32_blx_cached
 	ldp x8, x9, [_stream], #16
-	ldr w10, [_cpu, x8]
+	ldr w10, [_vcpu, x8]
 	a32_key_interworking
 	ldr x14, [_stream]
 	ldr x11, [x14, #16]
 	a32_return_value w15, x15, x11
-	str w15, [_cpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
+	str w15, [_vcpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
 	push_return_record x11, x14
 	a32_follow_indirect 0
 
 gadget a32_blx
 	ldr x8, [_stream], #8
 	ldr x15, [_stream]
-	ldr w10, [_cpu, x8]
+	ldr w10, [_vcpu, x8]
 	a32_key_interworking
-	str w15, [_cpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
-	str x10, [_cpu, #UML_GADGET_CPU_PC]
+	str w15, [_vcpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
+	str x10, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
@@ -374,7 +374,7 @@ gadget a32_blx
  * PC reads it from the scratch slot it names. [slot offset][value] */
 gadget a32_set_scratch
 	ldp x8, x9, [_stream], #16
-	str w9, [_cpu, x8]
+	str w9, [_vcpu, x8]
 	next_gadget
 
 /* SVC and BKPT leave with the key stream word as the exit scratch too, so
@@ -382,15 +382,15 @@ gadget a32_set_scratch
  * ITSTATE. [key] */
 gadget a32_svc
 	ldr x8, [_stream]
-	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str _stream, [_vcpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, #UML_GADGET_EVENT_SYSCALL
 	b uml_arm64_gadget_leave
 
 gadget a32_bkpt
 	ldr x8, [_stream]
-	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str _stream, [_vcpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, #UML_GADGET_EVENT_BREAKPOINT
 	b uml_arm64_gadget_leave
 
@@ -401,7 +401,7 @@ gadget a32_bkpt
 gadget a32_\name\()_inline
 	ldp x8, x19, [_stream], #16
 	ldr x20, [_stream], #8
-	ldr w9, [_cpu, x8]
+	ldr w9, [_vcpu, x8]
 	cmp w9, #0
 	b.\condition 1f
 	next_gadget
@@ -412,7 +412,7 @@ gadget a32_\name\()_inline
 gadget a32_\name\()_linked
 	ldp x8, x19, [_stream], #16
 	ldr x20, [_stream]
-	ldr w9, [_cpu, x8]
+	ldr w9, [_vcpu, x8]
 	cmp w9, #0
 	csel x8, x19, x20, \condition
 	follow_block_link x8
@@ -420,10 +420,10 @@ gadget a32_\name\()_linked
 gadget a32_\name\()_plain
 	ldp x8, x19, [_stream], #16
 	ldr x20, [_stream]
-	ldr w9, [_cpu, x8]
+	ldr w9, [_vcpu, x8]
 	cmp w9, #0
 	csel x10, x19, x20, \condition
-	str x10, [_cpu, #UML_GADGET_CPU_PC]
+	str x10, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 .endm
@@ -443,9 +443,9 @@ a32_compare_branch cbnz, ne
 gadget a32_\name
 	ldr x19, [_stream], #8
 	and x9, x19, #0xff
-	ldr w9, [_cpu, x9]
+	ldr w9, [_vcpu, x9]
 	ubfx x10, x19, #8, #8
-	ldr w10, [_cpu, x10]
+	ldr w10, [_vcpu, x10]
 	add w7, w9, w10, lsl #\shift
 	a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, La32tb_cold_\name, La32tb_resume_\name, La32tb_cross_\name, 0, fault=La32_position_fault
 	\load w10, [x7]
@@ -488,7 +488,7 @@ gadget a32_library
  * FPCR. x5 and x6 only. */
 .p2align 4
 La32_fp_to_standard:
-	ldr w6, [_cpu, #UML_GADGET_CPU_FPCR]
+	ldr w6, [_vcpu, #UML_GADGET_CPU_FPCR]
 	movz w5, #0x0408, lsl #16
 	and w5, w6, w5
 	orr w5, w5, #0x03000000
@@ -496,14 +496,14 @@ La32_fp_to_standard:
 	b.eq 1f
 	msr fpcr, x5
 1:	mov w5, #1
-	strb w5, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]
+	strb w5, [_vcpu, #UML_ARM64_CPU_A32_FP_STANDARD]
 	ret
 
 .p2align 4
 La32_fp_to_guest:
-	ldr w6, [_cpu, #UML_GADGET_CPU_FPCR]
+	ldr w6, [_vcpu, #UML_GADGET_CPU_FPCR]
 	msr fpcr, x6
-	strb wzr, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]
+	strb wzr, [_vcpu, #UML_ARM64_CPU_A32_FP_STANDARD]
 	ret
 
 /* Faults the memory gadgets share: the key of the instruction is in x21 and
@@ -522,15 +522,15 @@ La32_position_fault:
 	a32_position_pc
 La32_memory_fault:
 	sub x9, _stream, #8
-	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x21, [_cpu, #UML_GADGET_CPU_PC]
+	str x9, [_vcpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x21, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, #UML_GADGET_EVENT_MEMORY_FAULT
 	b uml_arm64_gadget_leave
 
 La32_undefined:
 	sub x9, _stream, #8
-	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x21, [_cpu, #UML_GADGET_CPU_PC]
+	str x9, [_vcpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x21, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, #UML_GADGET_EVENT_ILLEGAL
 	b uml_arm64_gadget_leave
 
@@ -564,9 +564,9 @@ La32_alignment_fault_write:
 gadget a32_mrs
 	ldr x8, [_stream], #8
 	and w9, w27, #0xf0000000
-	ldrb w10, [_cpu, #UML_ARM64_CPU_A32_Q]
+	ldrb w10, [_vcpu, #UML_ARM64_CPU_A32_Q]
 	orr w9, w9, w10, lsl #27
-	ldr w10, [_cpu, #UML_ARM64_CPU_A32_GE_MASK]
+	ldr w10, [_vcpu, #UML_ARM64_CPU_A32_GE_MASK]
 	and w11, w10, #1
 	ubfx w12, w10, #8, #1
 	orr w11, w11, w12, lsl #1
@@ -576,7 +576,7 @@ gadget a32_mrs
 	orr w11, w11, w12, lsl #3
 	orr w9, w9, w11, lsl #16
 	orr w9, w9, #0x10
-	str w9, [_cpu, x8]
+	str w9, [_vcpu, x8]
 	next_gadget
 
 /* MSR APSR_nzcvq and APSR_g: [rn offset[0:8], bit 8 for N Z C V and Q,
@@ -584,11 +584,11 @@ gadget a32_mrs
 gadget a32_msr
 	ldr x8, [_stream], #8
 	and x9, x8, #0xff
-	ldr w9, [_cpu, x9]
+	ldr w9, [_vcpu, x9]
 	tbz x8, #8, 1f
 	and w27, w9, #0xf0000000
 	ubfx w10, w9, #27, #1
-	strb w10, [_cpu, #UML_ARM64_CPU_A32_Q]
+	strb w10, [_vcpu, #UML_ARM64_CPU_A32_Q]
 1:
 	tbz x8, #9, 2f
 	ubfx w10, w9, #16, #1
@@ -606,7 +606,7 @@ gadget a32_msr
 	neg w10, w10
 	and w10, w10, #0xff
 	orr w11, w11, w10, lsl #24
-	str w11, [_cpu, #UML_ARM64_CPU_A32_GE_MASK]
+	str w11, [_vcpu, #UML_ARM64_CPU_A32_GE_MASK]
 2:
 	next_gadget
 
@@ -614,26 +614,26 @@ gadget a32_msr
  * the register offset(s) as its operand. */
 gadget a32_read_tpidruro
 	ldr x8, [_stream], #8
-	ldr w9, [_cpu, #UML_ARM64_CPU_A32_TPIDRURO]
-	str w9, [_cpu, x8]
+	ldr w9, [_vcpu, #UML_ARM64_CPU_A32_TPIDRURO]
+	str w9, [_vcpu, x8]
 	next_gadget
 
 gadget a32_read_tpidrurw
 	ldr x8, [_stream], #8
-	ldr w9, [_cpu, #UML_GADGET_CPU_TLS]
-	str w9, [_cpu, x8]
+	ldr w9, [_vcpu, #UML_GADGET_CPU_TLS]
+	str w9, [_vcpu, x8]
 	next_gadget
 
 gadget a32_write_tpidrurw
 	ldr x8, [_stream], #8
-	ldr w9, [_cpu, x8]
-	str x9, [_cpu, #UML_GADGET_CPU_TLS]
+	ldr w9, [_vcpu, x8]
+	str x9, [_vcpu, #UML_GADGET_CPU_TLS]
 	next_gadget
 
 gadget a32_read_cntfrq
 	ldr x8, [_stream], #8
 	mrs x9, cntfrq_el0
-	str w9, [_cpu, x8]
+	str w9, [_vcpu, x8]
 	next_gadget
 
 /* MRRC CNTVCT: [rt offset[0:8], rt2 offset[8:16]] */
@@ -641,10 +641,10 @@ gadget a32_read_cntvct
 	ldr x8, [_stream], #8
 	mrs x9, cntvct_el0
 	and x10, x8, #0xff
-	str w9, [_cpu, x10]
+	str w9, [_vcpu, x10]
 	ubfx x10, x8, #8, #8
 	lsr x9, x9, #32
-	str w9, [_cpu, x10]
+	str w9, [_vcpu, x10]
 	next_gadget
 
 /* The CP15 barriers run only under SCTLR.CP15BEN; otherwise the instruction
@@ -652,7 +652,7 @@ gadget a32_read_cntvct
 .macro a32_cp15_barrier name, instruction
 gadget a32_cp15_\name
 	ldr x21, [_stream], #8
-	ldrb w8, [_cpu, #UML_ARM64_CPU_A32_CP15BEN]
+	ldrb w8, [_vcpu, #UML_ARM64_CPU_A32_CP15BEN]
 	cbz w8, La32_undefined
 	\instruction
 	next_gadget
@@ -674,8 +674,8 @@ gadget a32_isb
  * block ends there, so everything it precharged has retired. Stream: [next
  * key]. */
 gadget a32_code_sequence_check
-	ldr x8, [_cpu, #UML_ARM64_CPU_CODE_SEQUENCE]
-	ldr x9, [_cpu, #UML_ARM64_CPU_CODE_SEQUENCE_SEEN]
+	ldr x8, [_vcpu, #UML_ARM64_CPU_CODE_SEQUENCE]
+	ldr x9, [_vcpu, #UML_ARM64_CPU_CODE_SEQUENCE_SEEN]
 	ldr x8, [x8]
 	cmp x8, x9
 	b.ne 1f
@@ -683,7 +683,7 @@ gadget a32_code_sequence_check
 	next_gadget
 1:
 	ldr x8, [_stream]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 

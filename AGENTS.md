@@ -24,7 +24,8 @@ avoid unrelated formatting churn. There is no repository-wide formatter.
 ## Build and product boundaries
 
 - CMake 3.27 or newer with Ninja is the first-party build system. Use the
-  checked-in presets; `CMakeUserPresets.json` is local and ignored.
+  checked-in presets; `CMakeUserPresets.json` is local and ignored. CMake is
+  the only first-party build manifest; do not add a Bazel or Meson one.
 - CTest is the test registry. Register first-party tests through the helpers in
   `cmake/UmlTesting.cmake`, never raw `add_test`.
 - Linux retains Kbuild/GNU Make. Third-party projects retain their verified
@@ -41,6 +42,16 @@ avoid unrelated formatting churn. There is no repository-wide formatter.
 
 Keep C++20 code warning-clean under `-Wall -Wextra -Werror`, preserve SPDX
 headers, and follow adjacent formatting.
+
+Licensing: the project is GPL-2.0-or-later, and each file's own SPDX header
+governs. A patch to another project, and a file derived from that project,
+keeps that project's licence. Code that goes into the Android tree or image
+(the overlay, sepolicy, sensors and the Android test apps) is Apache-2.0.
+Everything else is GPL-2.0-or-later. A first-party file derived from kernel
+code keeps the kernel's identifier and records the reason in its header. New
+files carry a header from `LICENSES/`; `repository-license-headers` enforces
+the rule by location. [`LICENSES/README.md`](LICENSES/README.md) has the
+detail.
 
 ## Architecture and source ownership
 
@@ -190,19 +201,56 @@ outcomes. Git history is the worklog.
   documents instead of retaining duplicate status summaries.
 - Keep project documentation under `docs/` or beside the subsystem it owns.
   The repository root is reserved for `AGENTS.md`, the one-line `CLAUDE.md`
-  compatibility link, and an optional human-facing `README.md`.
+  compatibility link, `LICENSE` and `LICENSES/`, and an optional human-facing
+  `README.md`.
 
 Update documentation in the same change whenever its current contract changes.
 `CLAUDE.md` must remain exactly one line containing `@AGENTS.md`.
+
+## Privacy
+
+The repository and its whole history are public. Tracked files, commit
+messages, patch headers and generated series are all published, and the rules
+below apply to each of them.
+
+- Never record a person's or a site's own values:
+  - account names, home paths, and machine, volume and build-host names.
+    Write a placeholder (`/Users/<user>`, `/Volumes/<volume>`) or a role
+    ("the x86-64 build host");
+  - device, simulator, app-container and CoreDevice identifiers. Tests
+    synthesize their own;
+  - email addresses other than the configured Git identity, which commits
+    and exported patches carry;
+  - the Apple Team ID and signing identities. They belong in the ignored
+    `GuestHost/Config/Signing.local.xcconfig`, from its tracked `.example`;
+  - private network addresses and ssh endpoints;
+  - the names and paths of local agent tooling that lives outside the
+    repository: wrappers, leases and scratch directories.
+- Never link a coding session. A `Claude-Session:` trailer never enters a
+  commit message or a patch, and `scripts/patch_series.py` drops it on export.
+- Never record benchmark result links or result IDs. Record the scores and
+  the run's conditions instead.
+- For third-party software the repository does not distribute, such as
+  benchmark payloads, record only what the tooling expects: name, version and
+  digest. Never record where a copy came from, and never publish an image
+  that contains one.
+- Keep material written for App Store Connect outside the repository.
+- Never commit build logs, captured command output or machine snapshots.
+  They carry paths and identifiers.
+- A value a site needs comes from a flag, an environment variable, or an
+  ignored local file with a tracked `.example`.
+- `repository-environment-portability` checks tracked and new files against
+  generic rules, plus a private denylist of the site's own values kept outside
+  the repository (`--list-rules` describes both). Add a newly found private
+  value to that denylist. The check does not read commit messages, so review
+  each message against these rules before committing.
 
 ## Workspace and commit hygiene
 
 - Do not commit build trees, kernel replay checkouts, rootfs images, caches,
   IDE state, temporary reports, or generated runtime output.
-- Keep host-, user-, device-, and site-specific values out of tracked files.
-  They live outside the repository: a flag, an environment variable, or an
-  ignored local file with a tracked `.example`.
-  `repository-environment-portability` enforces this.
+- Keep host-, user-, device-, and site-specific values out of tracked files
+  and commit messages, as [Privacy](#privacy) describes.
 - After validating a replacement Android release, remove the superseded
   artifacts that
   [`android/lineage-24/README.md`](android/lineage-24/README.md#superseded-releases)

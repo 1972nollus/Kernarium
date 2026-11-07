@@ -51,6 +51,7 @@ GROUPS = [
     {"id": "system", "title": "Operating System"},
     {"id": "graphics", "title": "Graphics"},
     {"id": "libraries", "title": "Libraries"},
+    {"id": "inspiration", "title": "Design Inspiration"},
 ]
 
 # Where each license text comes from: (source, path). A source is a directory
@@ -214,7 +215,7 @@ def projects(texts: Texts) -> list[dict]:
         return {"title": title, "text": text} if title else {"text": text}
 
     def entry(**fields) -> dict:
-        base = {"frameworks": [], "components": [], "licenses": [], "texts": [], "note": None}
+        base = {"frameworks": [], "components": [], "licenses": [], "texts": []}
         base.update(fields)
         return base
 
@@ -226,10 +227,6 @@ def projects(texts: Texts) -> list[dict]:
             copyright="The Android Open Source Project",
             license="Apache License 2.0",
             spdx="Apache-2.0",
-            note=(
-                "The system image carries many more components under their own licenses; "
-                "it lists their notices in its own notice file."
-            ),
             licenses=["apache-2.0"],
         ),
         entry(
@@ -248,10 +245,6 @@ def projects(texts: Texts) -> list[dict]:
             copyright="Linus Torvalds and the Linux kernel contributors",
             license="GPL v2 with Linux syscall exception",
             spdx="GPL-2.0-only WITH Linux-syscall-note",
-            note=(
-                "The kernel the system runs on, built into the runtime. "
-                "Other licenses may also apply to individual files."
-            ),
             frameworks=["KRuntime_Android_6_18_4K"],
             licenses=["linux-syscall-note", "gpl-2.0"],
         ),
@@ -262,10 +255,6 @@ def projects(texts: Texts) -> list[dict]:
             copyright=MESA_HOLDERS,
             license="MIT License",
             spdx="MIT",
-            note=(
-                "Includes KosmicKrisp, which draws Vulkan on Metal, and Zink, which draws "
-                "OpenGL on Vulkan. Individual files may state other licenses."
-            ),
             frameworks=["MesaEGL", "MesaGallium", "KosmicKrisp"],
             components=["mesa"],
             texts=[{"text": mit_template(texts, MESA_HOLDERS)}],
@@ -277,7 +266,6 @@ def projects(texts: Texts) -> list[dict]:
             copyright="Red Hat, Inc., Google LLC, VMware, Inc., Collabora Ltd., Intel Corporation and other virglrenderer contributors",
             license="MIT License",
             spdx="MIT",
-            note="Derived in many parts from Mesa.",
             components=["virglrenderer"],
             texts=[own(None, "virglrenderer", "COPYING")],
         ),
@@ -298,7 +286,6 @@ def projects(texts: Texts) -> list[dict]:
             copyright="2015-2026 The Khronos Group Inc.",
             license="Apache License 2.0 or MIT License",
             spdx="Apache-2.0 OR MIT",
-            note="Available under either license.",
             components=["vulkan-headers"],
             licenses=["apache-2.0"],
             texts=[
@@ -398,10 +385,26 @@ def projects(texts: Texts) -> list[dict]:
             copyright="Meta Platforms, Inc. and affiliates",
             license="BSD 3-Clause License",
             spdx="BSD-3-Clause",
-            note="Offered under the BSD license or the GNU GPL v2. Andarium uses it under the BSD license.",
             frameworks=["LibZstd"],
             components=["zstd-decompression"],
             texts=[own(None, "zstd", "LICENSE")],
+        ),
+        # Credit, not a licence: none of iSH's code is part of the app.
+        entry(
+            id="ish",
+            group="inspiration",
+            name="iSH",
+            copyright="Theodore Dubois and the iSH contributors",
+            license="Design inspiration only",
+            spdx="NOASSERTION",
+            texts=[
+                {
+                    "text": "The threaded-code execution and the software TLB of Andarium's "
+                    "processor emulation were inspired by the design of iSH, by Theodore "
+                    "Dubois and the iSH contributors.\n\nNo iSH source code is part of "
+                    "Andarium."
+                }
+            ],
         ),
     ]
 

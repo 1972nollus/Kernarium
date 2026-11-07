@@ -31,6 +31,8 @@ struct SceneLifetimeTests {
     }
 
     @Test func everySceneConnectionShowsTheProcessModel() async throws {
+        let lease = try await HostWindow.take()
+        defer { lease.give() }
         let scene = try await applicationScene()
         let launched = try #require((scene.delegate as? AndariumSceneDelegate)?.model)
         #expect(launched === AndariumProcess.shared.model)
@@ -61,10 +63,10 @@ struct SceneLifetimeTests {
         let driver = StubDriver(plan: .normal)
         model.driver = driver
         let entry = AppEntry(overrides: LaunchOverrides(environment: ["ANDARIUM_ERASE": "1"], processorCount: 4))
-        let scene = try await applicationScene()
-        let window = try #require(scene.windows.first { $0.isKeyWindow })
-        let original = window.rootViewController
-        defer { window.rootViewController = original }
+        _ = try await applicationScene()
+        let lease = try await HostWindow.take()
+        defer { lease.give() }
+        let window = lease.window
         // A scene connecting again shows the same model in a new root.
         for connection in 1...2 {
             window.rootViewController = UIHostingController(rootView: RootView(entry: entry).environment(model))

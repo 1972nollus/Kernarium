@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "elf_loader.h"
 #include "kernel_resources.hpp"
 #include "kernel_signal_scope.hpp"

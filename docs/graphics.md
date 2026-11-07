@@ -677,8 +677,8 @@ as host shared memory and the device maps it into the guest's blob aperture,
 which is one fixed guest-physical region of
 `protocol::hostVisibleSharedMemoryRegionSize`. That constant and the kernel's
 `UML_VHOST_USER_SHMEM_SIZE` are one value, because `uml_vhost_user_shmem_claim`
-refuses a region of any other size; changing it is a change to both maintained
-kernel lines as well as to the host.
+refuses a region of any other size; changing it is a change to the
+kernel as well as to the host.
 
 The aperture, not host memory, is therefore what bounds host-visible Vulkan
 memory, and the renderer advertises it that way: the synthesized host-visible
@@ -1469,37 +1469,11 @@ rules are the comment above
 `KK_HEAP_START_MIB` in `src/kosmickrisp/vulkan/kk_cmd_draw.c` and
 `kk_device_memory_pool.h`, in this project's Mesa series.
 
-An uninterrupted released mustpass fraction runs about 200,000 cases in one
-`deqp-vk` process, and a 1536 MiB guest cannot hold every group in that
-traversal. The cost has two parts: a baseline that grows through the fraction,
-from the released case hierarchy the enumeration builds to about 1 GB near its
-end, and per-group transients on top of it, such as `dEQP-VK.reconvergence`,
-whose tests simulate each subgroup's control flow on the CPU. The guest reaper
-takes `deqp-vk` where the two meet. Raising
-guest RAM is not available, and a 1024 MiB guest is killed earlier still.
-
-Two further consequences. The already-transported `results.qpa` stays in the
-guest's `/run` tmpfs, which is guest RAM, and holds nearly a fifth of the guest
-by the time the reaper fires. And a killed `deqp-vk` takes the whole service cgroup
-with it, so the guest prints no further progress line and sends no artifact
-frames: the run goes silent rather than reporting a stall, and its verdicts
-survive only as the result frames already on the console. The device lane ends a
-run within three minutes of the reaper's own line rather than waiting out its
-stall guard, and writes whatever the console carried.
-
-A baked device campaign therefore leaves out the groups its guest memory cannot
-hold, under the exclusion contract in [`testing.md`](testing.md).
-
-### Experimental host memory
-
-Native graphics allocations are separate from the configured guest RAM limit.
-KosmicKrisp releases obsolete pipeline resources with their last Vulkan owner
-and a submission's recording storage after GPU completion; see the
-[KosmicKrisp driver contracts](#kosmickrisp-driver-contracts).
-
-Budget campaign concurrency from host physical footprint and the
-`IOAccelerator (graphics)` row of `vmmap -summary`, rather than process RSS,
-which omits swapped-out allocations.
+A 1536 MiB guest on the A15 cannot hold a whole mustpass fraction in one
+`deqp-vk` process, and a killed `deqp-vk` takes the service cgroup and its
+artifact frames with it, so a baked device campaign leaves out the groups its
+guest memory cannot hold, under the exclusion contract in
+[`testing.md`](testing.md).
 
 ## Metal shader cache
 
@@ -1543,23 +1517,20 @@ that call names in Designed for iPad mode. That layout is Metal's own and
 undocumented; if it moves, the application finds no cache, logs so, and
 removes nothing. The system log's `fopen failed for data file` from
 `libCoreFSCache` at launch is Metal opening an empty cache, not a failure. The
-application also sets `MESA_SHADER_CACHE_DISABLE`: Mesa's own disk cache would
-live below `$HOME/.cache`, which a device container does not let it create, so
-Metal's cache is the only one that outlives a launch.
+application also places Mesa's own disk cache, which is separate (see
+[Mesa shader cache](#mesa-shader-cache)).
 
 The macOS command-line emulators, `uml-darwin` and `uml-darwin-android17`,
-carry the bundle identifier `com.imxieyi.uml-darwin` in an Info.plist embedded
-in the executable (`darwin/app/macos`), so their cache is
+carry the bundle identifier of their embedded Info.plist ([Darwin
+README](../darwin/README.md#products-and-defaults)), so their cache is
 `$(getconf DARWIN_USER_CACHE_DIR)/com.imxieyi.uml-darwin/com.apple.metal`, one
 numbered file pair per concurrent process. Both executables share it because
 they compile the same Mesa and KosmicKrisp shaders. A process with no bundle
 identifier, such as a script or a unit test, shares `com.apple.metal` in that
 directory with every other unsandboxed process of the user, so what an
 emulator caches never reaches the host's other tools. Conformance campaigns
-are what fill the emulator's cache: a Vulkan CTS case that compiles shaders no
-earlier case compiled adds 8 to 23 KB of data and about 160 bytes of index, a
-repeated case adds nothing, and each pair stops near 1.1 GB while more pairs
-appear with concurrent processes.
+are what fill the emulator's cache; each file pair stops near its size bound,
+and more pairs appear with concurrent processes.
 
 The emulator bounds that cache the way Kernarium bounds its own, with the same
 limit. When it starts with a GPU device, before anything in the process can
@@ -1575,6 +1546,49 @@ identifier, such as a script or a unit test, shares `com.apple.metal` with
 every other such process and is not bounded: the GPU unit tests keep their own
 cache for this reason (see [`testing.md`](testing.md)), and a shared cache that
 earlier emulators grew may simply be deleted.
+
+## Mesa shader cache
+
+Mesa keeps a disk cache of what Zink and KosmicKrisp compile, apart from
+Metal's, and finds it through the process environment when the host GPU's
+screen is created on a runtime thread. Left alone it lives below
+`$HOME/.cache`: a device container does not let Mesa create that directory, so
+the iOS applications ran with the cache disabled, and on a Mac every program of
+the user shared one cache with a limit of 1 GB.
+
+Each application and emulator therefore gives Mesa a home of its own and a
+size limit, once, at process start and before any thread can read the
+environment: `MESA_SHADER_CACHE_DIR` names `<user cache directory>/<bundle
+identifier>`, the directory Metal's cache is named after, and
+`MESA_SHADER_CACHE_MAX_SIZE` is 64 MiB. Mesa creates only the last component of
+a path, so the process creates the directory. The environment is not safe to
+change later: the terminal's libghostty copies it at its first initialization
+and the runtime thread reads it during boot. Kernarium and Andarium do this in
+`GuestHost/Sources/MesaShaderCache.swift` from their launch and the macOS
+emulators in `darwin/device/gpu/mesa_shader_cache.hpp` from
+`runEmbeddedKernel`; the two change together. A variable already in the
+environment is kept, so a harness or a test chooses its own cache, and
+`MESA_SHADER_CACHE_DISABLE` runs without one. A process with no cache directory
+or no bundle identifier runs without a cache instead of falling back to
+`$HOME/.cache`. The emulators' cache is
+`$(getconf DARWIN_USER_CACHE_DIR)com.imxieyi.uml-darwin/mesa_shader_cache`,
+beside Metal's.
+
+Mesa evicts entries when a write would pass the limit, and the limit counts the
+entries, not the 2 MiB `index` file that Mesa maps beside them. Entries are
+keyed by the Mach-O UUID of the Mesa frameworks that wrote them, so a rebuilt
+framework never reads another build's entries, which age out under the limit.
+The default format keeps one file per entry. The database format
+(`MESA_DISK_CACHE_DATABASE`) keeps the same bytes in a fixed 101 files beside
+the same index and saves nothing at this size; Mesa's single-file format has no
+limit at all and cannot bound the cache.
+
+The cache is only an accelerator. It lives in the system's cache directory,
+which is not backed up and which iOS may purge when storage runs low. A purged
+or missing cache costs recompilation and nothing else: no behavior depends on
+an entry surviving, and the next launch creates the directory again.
+
+The limit is headroom: it exists to bound what an unusual workload could add.
 
 ## Validation
 

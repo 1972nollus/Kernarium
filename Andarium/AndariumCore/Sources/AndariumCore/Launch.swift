@@ -87,8 +87,11 @@ public struct LaunchOverrides: Equatable, Sendable {
     /// count above what the host offers comes down to it. A memory size the
     /// environment states is kept as stated, for automation; any other is
     /// taken within the bound of the vCPU count the guest then has, as a
-    /// stored size is on load.
-    public func applied(to guest: Guest, on host: HostDevice) -> Guest {
+    /// stored size is on load. A capacity the launch states is held to
+    /// `capacityMaximumGiB`, the largest data disk the carried system accepts.
+    public func applied(
+        to guest: Guest, on host: HostDevice, capacityMaximumGiB: Int = Limits.capacityRangeGiB.upperBound
+    ) -> Guest {
         var guest = guest
         guest.cores = min(max(guest.cores, 1), host.processorCount)
         if let vCPUCount { guest.cores = min(vCPUCount, host.processorCount) }
@@ -97,7 +100,7 @@ public struct LaunchOverrides: Equatable, Sendable {
         } else {
             guest = guest.memoryWithinBound(on: host)
         }
-        if let capacityGiB { guest.setCapacity(capacityGiB) }
+        if let capacityGiB { guest.setCapacity(capacityGiB, maximum: capacityMaximumGiB) }
         return guest
     }
 }
@@ -105,12 +108,55 @@ public struct LaunchOverrides: Equatable, Sendable {
 /// The display option set on Home, kept across launches. The guest's display
 /// always follows the window, so that is not an option; a value an earlier
 /// version stored for it is ignored.
+///
+/// Retina mode (the guest draws at the screen's pixel density) follows the
+/// device until the person sets it: it is on where the system lets the
+/// application use more than `retinaDefaultAboveBytes`, off where it does
+/// not. A choice made on Home is kept as made and the default never replaces it.
 public struct DisplayOptions: Codable, Equatable, Sendable {
-    /// Whether the guest draws at the screen's pixel density.
-    public var retina = false
+    /// What the person chose for Retina mode; nil until they choose.
+    public var chosenRetina: Bool?
 
-    public init(retina: Bool = false) {
-        self.retina = retina
+    public init(chosenRetina: Bool? = nil) {
+        self.chosenRetina = chosenRetina
+    }
+
+    /// Retina mode is on by default above this much memory the system lets
+    /// the application use (4 GiB).
+    public static let retinaDefaultAboveBytes: UInt64 = 4 << 30
+
+    /// The default Retina mode for `memoryLimitBytes`, what the system holds
+    /// the application's memory to (`MemoryLimit.bytes`); zero where it sets
+    /// none, a Mac, which has more than the threshold.
+    public static func defaultRetina(memoryLimitBytes: UInt64) -> Bool {
+        memoryLimitBytes == 0 || memoryLimitBytes > retinaDefaultAboveBytes
+    }
+
+    /// Retina mode as the guest draws: the person's choice, else the default.
+    public func retina(memoryLimitBytes: UInt64) -> Bool {
+        chosenRetina ?? Self.defaultRetina(memoryLimitBytes: memoryLimitBytes)
+    }
+
+    // The stored form keeps `retina` for the value and `chosen` for whether the
+    // person set it. A form from before the default has no `chosen`: its
+    // `true` was a choice, and its `false` may only have been the old default,
+    // so it counts as no choice.
+    private enum CodingKeys: String, CodingKey { case retina, chosen }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let retina = try values.decodeIfPresent(Bool.self, forKey: .retina) ?? false
+        switch try values.decodeIfPresent(Bool.self, forKey: .chosen) {
+        case true?: chosenRetina = retina
+        case false?: chosenRetina = nil
+        case nil: chosenRetina = retina ? true : nil
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(chosenRetina ?? false, forKey: .retina)
+        try values.encode(chosenRetina != nil, forKey: .chosen)
     }
 }
 

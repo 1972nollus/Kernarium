@@ -1,13 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import AndariumCore
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
 /// Settings while the guest runs, opened from the side keys. It slides up over
-/// the guest, which keeps running behind it: install an app from Files,
-/// connect a computer with adb, make a bug report, watch the stats, and
-/// change the capabilities the guest may use. An operation on the guest dismisses Settings and
-/// shows the full-screen progress.
+/// the guest, which keeps running behind it: watch the stats, install an app
+/// from Files, connect a computer with adb and make a bug report. An
+/// operation on the guest dismisses Settings and shows the full-screen
+/// progress, and then how it ended.
 struct SessionSettingsSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -24,12 +26,10 @@ struct SessionSettingsSheet: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 List {
-                    if normalSession, model.capabilities.apkInstall { apps(session) }
-                    if normalSession, model.capabilities.adbOverNetwork { adb(session) }
-                    if normalSession, model.capabilities.bugReport { bugReport }
                     if model.capabilities.statistics { stats(session) }
-                    display
-                    capabilities
+                    if normalSession, model.capabilities.apkInstall { apps }
+                    if normalSession, model.capabilities.adbOverNetwork { developer(session) }
+                    if normalSession, model.capabilities.bugReport { diagnostics }
                 }
                 .task {
                     guard let target = model.sessionPreset.settingsScroll else { return }
@@ -46,16 +46,16 @@ struct SessionSettingsSheet: View {
                 }
             }
         }
-        .microphoneAccessAlert()
         .task { await model.watchSettings() }
         .presentationDetents([.medium, .large], selection: $detent)
         .presentationBackground(Color(.systemGroupedBackground))
         .presentationBackgroundInteraction(.enabled(upThrough: .medium))
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
+        .fileImporter(isPresented: $importing, allowedContentTypes: [InstallRefusal.pickerType]) { result in
             guard case .success(let url) = result else { return }
-            // An .apk starts the install and Settings goes; anything else is
-            // answered by a row here, and Settings stays.
-            if model.installPicked(url) { dismiss() }
+            // Settings goes; the install, or the refusal of a file that is not
+            // one .apk, is on the full-screen overlay.
+            model.installPicked(url)
+            dismiss()
         }
     }
 
@@ -65,11 +65,11 @@ struct SessionSettingsSheet: View {
         return false
     }
 
-    // MARK: Bug report
+    // MARK: Diagnostics
 
-    /// Tapping the row starts at once; the footer says what a report holds.
-    private var bugReport: some View {
-        Section {
+    /// Tapping the row starts at once.
+    private var diagnostics: some View {
+        Section("Diagnostics") {
             Button {
                 dismiss()
                 model.createBugReport()
@@ -81,24 +81,19 @@ struct SessionSettingsSheet: View {
                     Spacer()
                 }
             }
-        } footer: {
-            Text(Self.bugReportNotice)
         }
     }
 
-    /// What the report holds, said before it is made.
-    static let bugReportNotice = "A bug report holds the guest\u{2019}s logs, installed apps, accounts and Wi-Fi names."
-
     // MARK: Apps
 
-    private func apps(_ session: SessionState) -> some View {
+    private var apps: some View {
         Section("Apps") {
             Button {
                 importing = true
             } label: {
                 HStack(spacing: 12) {
                     IconTile(symbol: "square.and.arrow.down.fill")
-                    Text("Install App\u{2026}")
+                    Text("Install APK\u{2026}")
                         .foregroundStyle(Color.accentColor)
                     Spacer()
                     Text("From Files")
@@ -106,20 +101,12 @@ struct SessionSettingsSheet: View {
                         .foregroundStyle(Color(.secondaryLabel))
                 }
             }
-            ForEach(session.installs) { item in
-                InstallRow(item: item)
-                    .swipeActions {
-                        Button("Remove", systemImage: "xmark", role: .destructive) {
-                            withAnimation { session.remove(item.id) }
-                        }
-                    }
-            }
         }
     }
 
-    // MARK: ADB
+    // MARK: Developer
 
-    private func adb(_ session: SessionState) -> some View {
+    private func developer(_ session: SessionState) -> some View {
         Section {
             Toggle(isOn: Binding(get: { session.adb }, set: { model.setAdbOverNetwork($0) })) {
                 HStack(spacing: 12) {
@@ -139,7 +126,7 @@ struct SessionSettingsSheet: View {
                 }
             }
         } header: {
-            Text("ADB")
+            Text("Developer")
         } footer: {
             if let problem = session.adbProblem {
                 Text(problem).foregroundStyle(.red)
@@ -228,65 +215,6 @@ struct SessionSettingsSheet: View {
         .id("stats")
     }
 
-    // MARK: Display and capabilities
-
-    /// Retina mode where it can change while the guest runs (the preview);
-    /// on a device it applies at the next start and is set on Home.
-    @ViewBuilder
-    private var display: some View {
-        @Bindable var model = model
-        if model.guest != nil, model.capabilities.liveDisplayOptions {
-            Section("Display") {
-                Toggle(isOn: $model.retina) {
-                    rowLabel("Retina mode", symbol: "rectangle.inset.filled")
-                }
-            }
-            .id("display")
-        }
-    }
-
-    /// The microphone and the gyroscope, which apply at once. While iOS
-    /// refuses the microphone the row dims and says so; turning it on then
-    /// offers Settings.
-    @ViewBuilder
-    private var capabilities: some View {
-        if let guest = model.guest {
-            let denied = model.microphoneState == .denied
-            Section {
-                Toggle(isOn: Binding(
-                    get: { model.microphoneShownOn },
-                    set: { model.setMicrophone($0) }
-                )) {
-                    HStack(spacing: 12) {
-                        IconTile(symbol: "mic.fill", color: denied ? .gray : .accentColor)
-                            .opacity(denied ? 0.55 : 1)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Microphone")
-                                .lineLimit(1)
-                                .opacity(denied ? 0.55 : 1)
-                            if denied {
-                                Text(CapabilityWords.microphoneDenied)
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-                Toggle(isOn: Binding(
-                    get: { guest.motionSensors }, set: { model.setMotionSensors($0) }
-                )) {
-                    rowLabel("Gyroscope", symbol: "gyroscope")
-                }
-                .disabled(!model.motionSensorsAvailable && !guest.motionSensors)
-            } header: {
-                Text("Capabilities")
-            } footer: {
-                Text(model.motionSensorsProblem ?? CapabilitiesSection.gyroscopeNote(available: model.motionSensorsAvailable))
-            }
-            .id("capabilities")
-        }
-    }
-
     private func rowLabel(_ title: String, symbol: String) -> some View {
         HStack(spacing: 12) {
             IconTile(symbol: symbol)
@@ -302,89 +230,5 @@ struct SessionSettingsSheet: View {
             .monospacedDigit()
             .foregroundStyle(.secondary)
             .contentTransition(.numericText())
-    }
-}
-
-/// One app on its way into the guest, or the result.
-struct InstallRow: View {
-    let item: ApkInstall
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            tile
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.body.weight(.medium))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                detail
-                    .font(.footnote)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-            if item.state == .installed {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(Color.accentColor)
-                    .accessibilityLabel("Installed")
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private var title: String {
-        item.state == .installed ? item.appName : item.fileName
-    }
-
-    @ViewBuilder
-    private var tile: some View {
-        switch item.state {
-        case .installing, .installed:
-            // The app's own icon is not known until the guest has it; its
-            // initial stands in.
-            Text(String(item.appName.prefix(1)))
-                .font(.system(size: 19, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
-                .frame(width: 40, height: 40)
-                .background(Color.accentColor.gradient, in: .rect(cornerRadius: 11, style: .continuous))
-                .opacity(item.state == .installed ? 1 : 0.55)
-        case .notApk, .bundle:
-            Image(systemName: "doc.fill")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 40, height: 40)
-                .background(Color.gray.gradient, in: .rect(cornerRadius: 11, style: .continuous))
-        case .failed:
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 40, height: 40)
-                .background(Color.red.gradient, in: .rect(cornerRadius: 11, style: .continuous))
-        }
-    }
-
-    @ViewBuilder
-    private var detail: some View {
-        switch item.state {
-        case .installing(let progress):
-            VStack(alignment: .leading, spacing: 5) {
-                ProgressBar(value: max(0.03, progress), height: 5)
-                Text("Installing \u{00B7} \(Int((progress * 100).rounded()))% of \(Formats.size(bytes: item.sizeBytes))")
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-        case .installed:
-            Text(item.version.map { "Installed \u{00B7} version \($0)" } ?? "Installed")
-                .foregroundStyle(.secondary)
-        case .notApk:
-            Text("This isn\u{2019}t an app. Choose a file that ends in .apk.")
-                .foregroundStyle(.red)
-        case .bundle:
-            Text("Apps that come in several files can\u{2019}t be installed yet. Choose a single .apk file.")
-                .foregroundStyle(.red)
-        case .failed(let reason):
-            Text(reason)
-                .foregroundStyle(.red)
-        }
     }
 }

@@ -10,7 +10,7 @@
  * them, or a NaN that could raise an unmasked invalid operation, leaves the
  * guest's flags as they were. */
 .macro vector_compare_set_flags
-	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	mov x10, #0x8d5
 	bic x9, x9, x10
 	orr x9, x9, #2
@@ -30,14 +30,14 @@ Lx86_vector_compare_equal\@:
 Lx86_vector_compare_less\@:
 	orr x9, x9, #1
 Lx86_vector_compare_done\@:
-	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	str xzr, [_vcpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
+	str x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	retire_and_next
 .endm
 
 /* MXCSR.DAZ compares a denormal input as zero. */
 .macro vector_compare_inputs element
-	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldr w12, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_compare_inputs_ready\@
 	simd_flush_denormals_each \element, 0, 1
 Lx86_vector_compare_inputs_ready\@:
@@ -48,8 +48,8 @@ gadget vector_\name\()_\width\()_rr
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	ldr \fp_register\()0, [_cpu, x9]
-	ldr \fp_register\()1, [_cpu, x10]
+	ldr \fp_register\()0, [_vcpu, x9]
+	ldr \fp_register\()1, [_vcpu, x10]
 	vector_compare_inputs \width
 	\compare \fp_register\()0, \fp_register\()1
 	vector_compare_set_flags
@@ -68,7 +68,7 @@ Lx86_vector_compare_cross\@:
 	fmov \fp_register\()1, \host_register\()0
 Lx86_vector_compare_loaded\@:
 	and x8, x23, #0xffff
-	ldr \fp_register\()0, [_cpu, x8]
+	ldr \fp_register\()0, [_vcpu, x8]
 	vector_compare_inputs \width
 	\compare \fp_register\()0, \fp_register\()1
 	vector_compare_set_flags

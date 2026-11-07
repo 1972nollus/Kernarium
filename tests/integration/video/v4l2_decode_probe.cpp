@@ -1,4 +1,53 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+// Qualifies the guest V4L2 stateful decoder (the Virtio video decoder) from
+// inside a guest, with and without the GPU. It checks:
+//
+// - every advertised profile's pixels, and the raw layouts, including packed
+//   BGRA capture and 8-bit capture of a 10-bit stream;
+// - the rows of every raw format at the padded pitch the device states
+//   (TRY_FMT and S_FMT against the rule at widths that are and are not whole
+//   pitches, and the 120 x 90 window streams read row by row);
+// - imported dma-buf capture: the queue's own buffers handed back and guest
+//   memory a client brings, with each buffer's planes in separate dma-bufs or
+//   in one and their lengths stated as QUERYBUF gave them, as the whole
+//   dma-buf, or not at all. With the GPU the capture buffers are host-visible
+//   blobs and an imported dma-buf takes another path in the driver;
+// - timestamps, source-change and EOS events, the display order of H.264 and
+//   HEVC B-pictures and a seek in both (over open-group streams for HEVC);
+// - the H.264 and HEVC profile and level menus: Constrained High beside High,
+//   levels from 1.0 up to 5.2 and from 1 up to 6.2, the current level the
+//   highest;
+// - flat portrait and square H.264 and HEVC pictures (2304 x 4096,
+//   4096 x 4096, 4320 x 8192), decoded to frames of their own size inside a
+//   frame range that is a rectangle;
+// - a stream that changes its picture size twice, decoded the way Android's
+//   V4L2 codec handles it, including a drain asked for while the last change
+//   is still on its way: every picture of a size returns, then the LAST
+//   buffer, before the source change is visible. A client that queues the
+//   whole stream and drains straight away, with both changes inside its
+//   drain, gets every picture of all three sizes before the one LAST buffer
+//   that ends the drain;
+// - every profile started in v4l2_codec2's order, with a provisional 64 x 64
+//   capture format (and queued buffers for it) before the size is known, the
+//   parameter sets and the picture as two coded buffers, and the capture
+//   format chosen only after the source change: the buffer that declared the
+//   size is held until then, nothing lands in the provisional buffers, and
+//   the picture arrives whole before the LAST buffer;
+// - the coded queue's buffer size, read back for every coded format as a
+//   client sees it (S_FMT and G_FMT, then the plane length REQBUFS
+//   allocates): the tier of each picture size stated, and for a size beyond
+//   the format's range, as a client that states none passes it, the tier of
+//   the largest picture it takes;
+// - large buffers created with the guest's free memory in blocks of 32 KiB,
+//   none larger, the state a guest that has run for days is in: a 124 MiB
+//   coded buffer, the most the device attaches, is created, exported and
+//   imported again, and the 4096 x 4096 and 4320 x 8192 flat pictures are
+//   decoded into mapped buffers. The scatter lists of these buffers are
+//   hundreds of kilobytes, so a driver that asks the kernel for a list in one
+//   block fails them with `page allocation failure: order:4`.
+//
+// The test, `guest-v4l2-decode` or `guest-v4l2-decode-gpu`, also fails on a
+// kernel fault or a failed shutdown (docs/testing.md).
 #include <linux/videodev2.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>

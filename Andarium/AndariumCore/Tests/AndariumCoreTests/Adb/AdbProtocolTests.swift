@@ -6,6 +6,12 @@ import Testing
 
 @testable import AndariumCore
 
+// The adb client against a scripted adbd on a socket pair (FakeAdbd.swift): the
+// codec, the handshake with authorization off, on and rejected, streams,
+// shell v2, sync and the bug report parser. AdbOperationTests.swift adds the
+// timeouts, on a clock the test moves, the session and a cancel from another
+// thread, and DescriptorTransportTests.swift the end of a stream announced
+// right after its last bytes.
 struct AdbCodecTests {
     @Test func commandsAreTheLittleEndianTags() {
         #expect(AdbWire.cnxn == 0x4e58_4e43)

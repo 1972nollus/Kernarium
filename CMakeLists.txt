@@ -95,7 +95,7 @@ option(UML_KERNARIUM_AUTOMATION_HARNESS
     "Build the automation-only Kernarium runtime: Linux boots host payloads, Android lets a launch turn ADB authorization off"
     OFF)
 option(UML_APP_STORE_RUNTIME
-    "Build the App Store Kernarium runtime: it reads no environment variable that tunes, observes or drives a run"
+    "Build the App Store Kernarium runtime: it reads no environment variable that tunes, observes or drives a run, and carries no debugging or automation support"
     OFF)
 option(UML_BUILD_NETWORK_PROVIDER
     "Build the optional SLiRP network provider"

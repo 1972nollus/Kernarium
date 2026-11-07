@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import AndariumCore
 import SwiftUI
 
@@ -85,14 +87,17 @@ struct RowDivider: View {
 
 // MARK: System
 
-/// The guest's processors and memory as a summary, with Edit opening the sheet
-/// that changes them.
+/// The guest's system in one section: its storage first, with Resize, then
+/// its processors and memory as a summary, with Edit opening the sheet that
+/// changes them.
 struct SystemSection: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         if let guest = model.guest {
-            HomeSection(title: "System") {
+            HomeSection(title: "Guest System") {
+                StorageRow(guest: guest, stops: model.capacityStopsGiB, resize: { model.sheet = .resize })
+                Divider().padding(.horizontal, 16)
                 HStack(spacing: 12) {
                     stat(symbol: "cpu", value: "\(guest.cores)", unit: guest.cores == 1 ? "vCPU" : "vCPUs")
                     stat(symbol: "memorychip", value: memory(guest).value, unit: "\(memory(guest).unit) RAM")
@@ -152,13 +157,14 @@ struct DisplaySection: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        @Bindable var model = model
         HomeSection(title: "Display") {
             OptionRow(title: "Retina mode", symbol: "rectangle.inset.filled") {
-                Toggle("Retina mode", isOn: $model.retina).labelsHidden()
+                Toggle("Retina mode", isOn: Binding(
+                    get: { model.retina },
+                    set: { model.chooseRetina($0) }
+                ))
+                .labelsHidden()
             }
-        } footer: {
-            SectionNote("Draws the guest at the screen's full pixel density. It applies the next time the guest starts.")
         }
         .id("display")
     }
@@ -178,17 +184,17 @@ struct CapabilitiesSection: View {
                 RowDivider()
                 GyroscopeRow()
             } footer: {
-                SectionNote(model.motionSensorsProblem ?? Self.gyroscopeNote(available: model.motionSensorsAvailable))
+                if let reason = model.motionSensorsProblem ?? Self.gyroscopeUnavailable(available: model.motionSensorsAvailable) {
+                    SectionNote(reason)
+                }
             }
             .id("capabilities")
         }
     }
 
-    /// What Gyroscope shares, or why it cannot.
-    static func gyroscopeNote(available: Bool) -> String {
-        available
-            ? "Gyroscope shares this device's gyroscope and accelerometer with the guest while Andarium is active."
-            : "This device has no gyroscope or accelerometer to share."
+    /// Why Gyroscope cannot be turned on; nil when it can, which needs no note.
+    static func gyroscopeUnavailable(available: Bool) -> String? {
+        available ? nil : "This device has no gyroscope or accelerometer to share."
     }
 }
 
@@ -220,14 +226,13 @@ struct GyroscopeRow: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let on = model.guest?.motionSensors == true
         OptionRow(title: "Gyroscope", symbol: "gyroscope") {
             Toggle("Gyroscope", isOn: Binding(
-                get: { on },
+                get: { model.motionSensorsOn },
                 set: { model.setMotionSensors($0) }
             ))
             .labelsHidden()
-            .disabled(!model.motionSensorsAvailable && !on)
+            .disabled(!model.motionSensorsAvailable)
         }
     }
 }
@@ -275,7 +280,7 @@ struct BackupNote: View {
     let host: HostDevice
 
     var body: some View {
-        SectionNote("Puts the guest's apps and files in iCloud and computer backups of this \(host.name). They are left out by default: they take several GiB, and the system can set itself up again.")
+        SectionNote("Puts the guest's apps and files in iCloud and computer backups of this \(host.name).")
     }
 }
 

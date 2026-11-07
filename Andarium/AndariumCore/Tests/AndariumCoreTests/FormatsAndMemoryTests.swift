@@ -298,10 +298,4 @@ struct MemoryPolicyTests {
         #expect(!MemoryPolicy.runtimeAccepts(448))
         #expect(!MemoryPolicy.runtimeAccepts(4160))
     }
-
-    @Test func theBoundIsWordedWithTheCountWhereTheLimitMattersOnly() {
-        #expect(Formats.memoryBound(4096, vCPUs: 10) == "Up to 4 GiB")
-        #expect(Formats.memoryBound(1536, vCPUs: 4) == "Up to 1.5 GiB with 4 vCPUs")
-        #expect(Formats.memoryBound(2048, vCPUs: 1) == "Up to 2 GiB with 1 vCPU")
-    }
 }

@@ -8,6 +8,14 @@ import Testing
 /// Opt-in real-device test: the production model, display, runtime, Core Motion
 /// source, vsock transport, Android HAL and SensorManager event queue. The
 /// foreground probe APK is copied to Library/Caches/andarium-motion-probe.apk before launch.
+///
+/// The probe reads both sensors through Android's public SensorManager API.
+/// The automated mode checks sustained delivery and off/on/off; the separate
+/// `ANDARIUM_MOTION_INTERACTIVE=1` mode checks physical tilt and rotation
+/// (`tests/integration/android/motion/README.md` has the probe and the
+/// invocation). Physical sensor delivery requires a sensor-capable iOS device
+/// and a guest image carrying the motion sub-HAL; Simulator and Mac tests do
+/// not establish that path.
 @Suite(.serialized)
 @MainActor
 struct MotionOverVsockTests {

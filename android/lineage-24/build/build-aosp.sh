@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Build the fixed LineageOS 24 UML product: page-agnostic arm64 userspace with
 # a 32-bit armeabi-v7a second architecture for applications, on the 4 KiB
 # kernel.
@@ -227,6 +227,13 @@ lunch "${LINEAGE24_PRODUCT}-${LINEAGE24_RELEASE_CONFIG}-${LINEAGE24_BUILD_VARIAN
 	fail "product does not check prebuilt ELF alignment"
 [[ "$(get_build_var TARGET_BOOTS_16K)" != true ]] ||
 	fail "product selects the 16 KiB boot contract on a 4 KiB kernel"
+# The board is the device's own, not Cuttlefish's, and the SoC identity is the
+# product's odm property file (overlay/config/odm.prop). The target-files
+# verifier checks the properties the images carry.
+[[ "$(get_build_var TARGET_BOOTLOADER_BOARD_NAME)" == andarium ]] ||
+	fail "the board must be named andarium, not the inherited Cuttlefish board"
+[[ " $(get_build_var TARGET_ODM_PROP) " == *" device/kernarium/andarium/config/odm.prop "* ]] ||
+	fail "TARGET_ODM_PROP must name the product's SoC identity file"
 for variable in \
 	BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE \
 	BOARD_SYSTEM_EXTIMAGE_FILE_SYSTEM_TYPE \
@@ -448,6 +455,8 @@ fi
 	fail "the script that saves the virtual Wi-Fi network is absent"
 [[ "$PRODUCT_PACKAGES" == *" kernarium_reclaim_boot_apps_script "* ]] ||
 	fail "the script that reclaims the cached boot-started apps is absent"
+[[ "$PRODUCT_PACKAGES" == *" kernarium_time_zone_script "* ]] ||
+	fail "the script that applies the host's time zone is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.android.hardware.wifi "* ]] ||
 	fail "the Wi-Fi HAL that the virtual Wi-Fi needs is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.google.cf.wpa_supplicant "* ]] ||

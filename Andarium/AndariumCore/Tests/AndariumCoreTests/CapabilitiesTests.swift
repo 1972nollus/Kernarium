@@ -10,12 +10,11 @@ struct CapabilitiesTests {
         #expect(device.bugReport && device.apkInstall && device.adbOverNetwork)
         // The statistics are the runtime's own readings.
         #expect(device.statistics)
-        #expect(!device.liveDisplayOptions)
     }
 
     @Test func thePreviewPretendsToDoEverything() {
         let preview = Capabilities.preview
         #expect(preview.bugReport && preview.apkInstall && preview.adbOverNetwork)
-        #expect(preview.statistics && preview.liveDisplayOptions)
+        #expect(preview.statistics)
     }
 }

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Direct CpuState vector offsets fit in 16 bits. Builders use these layouts
  * whenever one instruction has multiple vector operands; gadget/link/helper
  * pointers and full-width data remain separate stream cells. */
@@ -28,7 +29,7 @@
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 .endm
@@ -47,7 +48,7 @@
 gadget floating_move_immediate
 	ldr x8, [_stream], #8
 	ldr x9, [_stream], #8
-	add x10, _cpu, #UML_GADGET_CPU_V0
+	add x10, _vcpu, #UML_GADGET_CPU_V0
 	add x10, x10, x8, lsl #4
 	str x9, [x10]
 	str xzr, [x10, #8]
@@ -62,7 +63,7 @@ gadget \name
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	.if \bytes == 2
@@ -125,7 +126,7 @@ vector_entry \name, \forward, Lvector_register0, Lvector_register8, Lscalar_none
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	.if \afp
@@ -281,10 +282,10 @@ gadget floating_horizontal_\name
 	ensure_fp_environment
 	ldr x11, [_stream], #8
 	unpack_u16_3 x11, x8, x9, x10
-	ldr q0, [_cpu, x9]
-	ldr \destination, [_cpu, x10]
+	ldr q0, [_vcpu, x9]
+	ldr \destination, [_vcpu, x10]
 	\operation \source, \source, \destination
-	str q0, [_cpu, x8]
+	str q0, [_vcpu, x8]
 	next_gadget
 .endm
 
@@ -299,10 +300,10 @@ gadget floating_horizontal_\name
 	ensure_fp_environment
 	ldr x11, [_stream], #8
 	unpack_u16_3 x11, x8, x9, x10
-	ldr q0, [_cpu, x9]
-	ldr q1, [_cpu, x10]
+	ldr q0, [_vcpu, x9]
+	ldr q1, [_vcpu, x10]
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
-	str q2, [_cpu, x8]
+	str q2, [_vcpu, x8]
 	next_gadget
 .endm
 
@@ -319,9 +320,9 @@ gadget floating_horizontal_\name
 	ensure_fp_environment
 	ldr x10, [_stream], #8
 	unpack_u16_2 x10, x8, x9
-	ldr q0, [_cpu, x9]
+	ldr q0, [_vcpu, x9]
 	\operation \destination, v0.\arrangement
-	str q1, [_cpu, x8]
+	str q1, [_vcpu, x8]
 	next_gadget
 .endm
 
@@ -336,9 +337,9 @@ gadget floating_horizontal_\name
 	ensure_fp_environment
 	ldr x10, [_stream], #8
 	unpack_u16_2 x10, x8, x9
-	ldr q0, [_cpu, x9]
+	ldr q0, [_vcpu, x9]
 	\operation \destination, v0.\arrangement
-	str q1, [_cpu, x8]
+	str q1, [_vcpu, x8]
 	next_gadget
 .endm
 
@@ -394,8 +395,8 @@ gadget bfloat_convert_scalar_native
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	ubfx x10, x8, #16, #16
-	add x12, _cpu, x10
-	add x13, _cpu, x9
+	add x12, _vcpu, x10
+	add x13, _vcpu, x9
 	ldr s0, [x12]
 	ldr q1, [x13]
 	.inst 0x1e634001
@@ -407,8 +408,8 @@ gadget bfloat_convert_lower_native
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	ubfx x10, x8, #16, #16
-	add x12, _cpu, x10
-	add x13, _cpu, x9
+	add x12, _vcpu, x10
+	add x13, _vcpu, x9
 	ldr q0, [x12]
 	.inst 0x0ea16802
 	str q2, [x13]
@@ -419,8 +420,8 @@ gadget bfloat_convert_upper_native
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	ubfx x10, x8, #16, #16
-	add x12, _cpu, x10
-	add x13, _cpu, x9
+	add x12, _vcpu, x10
+	add x13, _vcpu, x9
 	ldr q0, [x12]
 	ldr q2, [x13]
 	.inst 0x4ea16802
@@ -443,11 +444,11 @@ gadget \name
 	uxth w9, w8
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	ldr q0, [_cpu, x10]
-	ldr q1, [_cpu, x11]
-	ldr q2, [_cpu, x9]
+	ldr q0, [_vcpu, x10]
+	ldr q1, [_vcpu, x11]
+	ldr q2, [_vcpu, x9]
 	.inst \encoding
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 .endm
 
@@ -458,9 +459,9 @@ gadget \name
 	uxth w9, w8
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	add x13, _cpu, x10
-	add x14, _cpu, x11
-	add x15, _cpu, x9
+	add x13, _vcpu, x10
+	add x14, _vcpu, x11
+	add x15, _vcpu, x9
 	ldr q0, [x13]
 	ldr q1, [x14]
 	ldr q2, [x15]
@@ -579,8 +580,8 @@ gadget_or_twin floating_reciprocal_\name, \afp
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	ubfx x10, x8, #16, #16
-	add x12, _cpu, x10
-	add x13, _cpu, x9
+	add x12, _vcpu, x10
+	add x13, _vcpu, x9
 	.if \afp
 	ldr q1, [x13]
 	.endif
@@ -605,8 +606,8 @@ gadget_or_twin floating_reciprocal_\name, \afp
 	uxth w9, w8
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	add x13, _cpu, x10
-	add x14, _cpu, x11
+	add x13, _vcpu, x10
+	add x14, _vcpu, x11
 	.if \afp
 	ldr q0, [x13]
 	.else
@@ -614,7 +615,7 @@ gadget_or_twin floating_reciprocal_\name, \afp
 	.endif
 	ldr \source1, [x14]
 	\operation \destination, \source0, \source1
-	add x13, _cpu, x9
+	add x13, _vcpu, x9
 	str q2, [x13]
 	next_gadget
 .endm
@@ -631,11 +632,11 @@ gadget floating_reciprocal_\name
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	ubfx x10, x8, #16, #16
-	add x12, _cpu, x10
+	add x12, _vcpu, x10
 	ldr q0, [x12]
 	.if !\unary
 	lsr x10, x8, #32
-	add x12, _cpu, x10
+	add x12, _vcpu, x10
 	ldr q1, [x12]
 	.endif
 	movi v2.16b, #0
@@ -644,7 +645,7 @@ gadget floating_reciprocal_\name
 	.else
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
 	.endif
-	add x12, _cpu, x9
+	add x12, _vcpu, x9
 	str q2, [x12]
 	next_gadget
 .endm
@@ -695,15 +696,15 @@ vector_entry floating_complex_\name, \forward, Lscalar_offset0, Lscalar_offset16
 	uxth w9, w8
 	ubfx x10, x8, #16, #16
 	lsr x11, x8, #32
-	vector_read \forward, 1, q0, [_cpu, x10]
-	vector_read \forward, 2, q1, [_cpu, x11]
+	vector_read \forward, 1, q0, [_vcpu, x10]
+	vector_read \forward, 2, q1, [_vcpu, x11]
 	.if \accumulate
-	vector_read \forward, 4, q2, [_cpu, x9]
+	vector_read \forward, 4, q2, [_vcpu, x9]
 	.else
 	movi v2.16b, #0
 	.endif
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement, #\rotation
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, floating_complex_vector, \name, \operation, \arrangement, \rotation, \accumulate
 .endm
@@ -723,11 +724,11 @@ vector_entry floating_complex_\name, \forward, Lscalar_offset0, Lscalar_offset16
 	uxth w9, w8
 	ubfx x10, x8, #16, #16
 	lsr x11, x8, #32
-	vector_read \forward, 1, q0, [_cpu, x10]
-	vector_read \forward, 2, q1, [_cpu, x11]
-	vector_read \forward, 4, q2, [_cpu, x9]
+	vector_read \forward, 1, q0, [_vcpu, x10]
+	vector_read \forward, 2, q1, [_vcpu, x11]
+	vector_read \forward, 4, q2, [_vcpu, x9]
 	fcmla v2.\arrangement, v0.\arrangement, v1.\element[\index], #\rotation
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, floating_complex_element, \name, \arrangement, \element, \index, \rotation
 .endm
@@ -784,7 +785,7 @@ vector_entry \name, \forward, Lvector_register0, Lvector_register8, Lvector_regi
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x12, x10, lsl #4
 	add x14, x12, x11, lsl #4
 	add x15, x12, x9, lsl #4
@@ -855,11 +856,11 @@ vector_entry simd_basic_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lsca
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	lsr x11, x8, #32
-	vector_read \forward, 1, q0, [_cpu, x10]
-	vector_read \forward, 2, q1, [_cpu, x11]
+	vector_read \forward, 1, q0, [_vcpu, x10]
+	vector_read \forward, 2, q1, [_vcpu, x11]
 	movi v2.16b, #0
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lscalar_none, simd_basic_floating_binary, \name, \operation, \arrangement
 .endm
@@ -870,10 +871,10 @@ vector_entry simd_basic_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lsca
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	vector_read \forward, 1, q0, [_cpu, x10]
+	vector_read \forward, 1, q0, [_vcpu, x10]
 	movi v2.16b, #0
 	\operation v2.\arrangement, v0.\arrangement
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_none, Lscalar_none, simd_basic_floating_unary, \name, \operation, \arrangement
 .endm
@@ -906,7 +907,7 @@ simd_basic_floating_unary fsqrt_2d, fsqrt, 2d
 .macro floating_compare_body bits, signal, zero
 	ensure_fp_environment
 	ubfx w9, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x11, x9, lsl #4
 	.if !\zero
 	ubfx w10, w8, #16, #5
@@ -1047,7 +1048,7 @@ vector_entry \name, \forward, Lvector_register0, Lvector_register8, Lvector_regi
 	ldr x8, [_stream], #8
 	ubfx w9, w8, #8, #5
 	ubfx w10, w8, #16, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x11, x9, lsl #4
 	add x13, x11, x10, lsl #4
 	.if !\forward
@@ -1078,7 +1079,7 @@ vector_entry \name, \forward, Lvector_register0, Lvector_register8, Lvector_regi
 	ldr x8, [_stream], #8
 	ubfx w9, w8, #8, #5
 	ubfx w10, w8, #16, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x11, x9, lsl #4
 	add x13, x11, x10, lsl #4
 	vector_read \forward, 1, q0, [x12]
@@ -1096,7 +1097,7 @@ vector_entry \name, \forward, Lvector_register0, Lvector_register8, Lscalar_none
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	ubfx w9, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x11, x9, lsl #4
 	.if !\forward
 	movi v2.16b, #0
@@ -1118,7 +1119,7 @@ vector_entry \name, \forward, Lvector_register0, Lvector_register8, Lscalar_none
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	ubfx w9, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x11, x9, lsl #4
 	vector_read \forward, 1, q0, [x12]
 	\operation v2.\arrangement, v0.\arrangement, #0.0
@@ -1188,7 +1189,7 @@ gadget_or_twin \name, \afp
 	fp_two_vector_operands
 	ldr q0, [x12]
 	.if \half_involved && !\afp
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
+	ldr w16, [_vcpu, #UML_GADGET_CPU_FPCR]
 	tbnz w16, #26, Lsimd_fcvt_vector_software_\@
 	.endif
 	.if \upper_narrow
@@ -1257,8 +1258,8 @@ gadget_or_twin \name, \afp
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	lsr x10, x8, #16
-	add x12, _cpu, x10
-	add x13, _cpu, x9
+	add x12, _vcpu, x10
+	add x13, _vcpu, x9
 	.if \source_bits == 16
 	ldr h0, [x12]
 	.elseif \source_bits == 32
@@ -1269,7 +1270,7 @@ gadget_or_twin \name, \afp
 	.if \afp
 	ldr q2, [x13]
 	.elseif \source_bits == 16 || \destination_bits == 16
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
+	ldr w16, [_vcpu, #UML_GADGET_CPU_FPCR]
 	tbnz w16, #26, Lfloating_convert_software_\@
 	.endif
 	.if \source_bits == 16 && \destination_bits == 32
@@ -1359,7 +1360,7 @@ gadget floating_javascript_convert_software_fallback
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	fpsr_model_helper floating_javascript_convert_software
-	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	ldr w27, [_vcpu, #UML_GADGET_CPU_NZCV]
 	next_gadget
 
 /* The software path under FPCR.FZ corrects the Z flag some hosts set for a
@@ -1371,11 +1372,11 @@ gadget_or_twin \name, \afp
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	ldr d0, [x12]
 	.if !\afp
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
+	ldr w16, [_vcpu, #UML_GADGET_CPU_FPCR]
 	tbnz w16, #24, Lfloating_javascript_convert_software_\@
 	.endif
 	fjcvtzs w14, d0
@@ -1391,14 +1392,14 @@ Lfloating_javascript_convert_flags_\@:
 	.endif
 	.if \discard == 0
 	and w9, w8, #0x1f
-	add x13, _cpu, #UML_GADGET_CPU_X0
+	add x13, _vcpu, #UML_GADGET_CPU_X0
 	str x14, [x13, x9, lsl #3]
 	.endif
 	next_gadget
 	.if !\afp
 Lfloating_javascript_convert_software_\@:
 	fpsr_model_helper floating_javascript_convert_software
-	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	ldr w27, [_vcpu, #UML_GADGET_CPU_NZCV]
 	next_gadget
 	.endif
 .endm
@@ -1425,12 +1426,12 @@ gadget_or_twin \name, \afp
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x11, x9, lsl #4
 	.if \zero
 	mov x14, #0
 	.else
-	add x12, _cpu, #UML_GADGET_CPU_X0
+	add x12, _vcpu, #UML_GADGET_CPU_X0
 	ldr x14, [x12, x10, lsl #3]
 	.endif
 	afp_merge_source \afp
@@ -1513,13 +1514,13 @@ gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	ldr \floating\()0, [x12]
 	\operation \integer\()14, \floating\()0
 	.if \discard == 0
 	and w9, w8, #0x1f
-	add x13, _cpu, #UML_GADGET_CPU_X0
+	add x13, _vcpu, #UML_GADGET_CPU_X0
 	str x14, [x13, x9, lsl #3]
 	.endif
 	next_gadget
@@ -1580,15 +1581,15 @@ afp_twins_end
  * equal-stride tables so the builder selects one exact native gadget at
  * translation time; the running gadget has no scale dispatch. */
 .macro floating_fixed_table_begin name
-	.globl NAME(uml_arm64_gadget_\name)
+	.globl CSYM(uml_arm64_gadget_\name)
 	.p2align 4
-NAME(uml_arm64_gadget_\name):
+CSYM(uml_arm64_gadget_\name):
 .endm
 
 .macro floating_fixed_table_end name
 	.p2align 4
-	.globl NAME(uml_arm64_gadget_\name\()_end)
-NAME(uml_arm64_gadget_\name\()_end):
+	.globl CSYM(uml_arm64_gadget_\name\()_end)
+CSYM(uml_arm64_gadget_\name\()_end):
 .endm
 
 /* A FEAT_AFP twin table has the same stride as its base, which the unit
@@ -1615,13 +1616,13 @@ NAME(uml_arm64_gadget_\name\()_end):
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	ldr \floating\()0, [x12]
 	\operation \integer\()14, \floating\()0, #\fraction
 	.if \discard == 0
 	and w9, w8, #0x1f
-	add x13, _cpu, #UML_GADGET_CPU_X0
+	add x13, _vcpu, #UML_GADGET_CPU_X0
 	str x14, [x13, x9, lsl #3]
 	.endif
 	next_gadget
@@ -1721,12 +1722,12 @@ afp_twins_end
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x11, x9, lsl #4
 	.if \zero
 	mov x14, #0
 	.else
-	add x12, _cpu, #UML_GADGET_CPU_X0
+	add x12, _vcpu, #UML_GADGET_CPU_X0
 	ldr x14, [x12, x10, lsl #3]
 	.endif
 	afp_merge_source \afp
@@ -1801,15 +1802,15 @@ gadget_or_twin \name, \afp
 	ldr x12, [_stream], #8
 	unpack_u16_4 x12, x8, x9, x10, x11
 	movi v3.16b, #0
-	ldr \first, [_cpu, x9]
-	ldr \second, [_cpu, x10]
+	ldr \first, [_vcpu, x9]
+	ldr \second, [_vcpu, x10]
 	.if \afp
-	ldr q2, [_cpu, x11]
+	ldr q2, [_vcpu, x11]
 	.else
-	ldr \addend, [_cpu, x11]
+	ldr \addend, [_vcpu, x11]
 	.endif
 	\operation \destination, \first, \second, \addend
-	str q3, [_cpu, x8]
+	str q3, [_vcpu, x8]
 	next_gadget
 .endm
 
@@ -1850,7 +1851,7 @@ vector_entry simd_floating_\name, \forward, Lvector_register0, Lvector_register8
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	vector_read \forward, 1, q0, [x12]
 	\operation v2.\arrangement, v0.\arrangement
@@ -1906,13 +1907,13 @@ vector_entry simd_three_same_\name, \forward, Lscalar_offset0, Lscalar_offset16,
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	lsr x11, x8, #32
-	vector_read \forward, 1, q0, [_cpu, x10]
-	vector_read \forward, 2, q1, [_cpu, x11]
+	vector_read \forward, 1, q0, [_vcpu, x10]
+	vector_read \forward, 2, q1, [_vcpu, x11]
 	.if \accumulate
-	vector_read \forward, 4, q2, [_cpu, x9]
+	vector_read \forward, 4, q2, [_vcpu, x9]
 	.endif
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, simd_three_same_vector, \name, \operation, \arrangement, \accumulate, \fpstate
 .endm
@@ -1930,13 +1931,13 @@ vector_entry simd_three_same_\name, \forward, Lscalar_offset0, Lscalar_offset16,
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	lsr x11, x8, #32
-	vector_read \forward, 1, q0, [_cpu, x10]
-	vector_read \forward, 2, q1, [_cpu, x11]
+	vector_read \forward, 1, q0, [_vcpu, x10]
+	vector_read \forward, 2, q1, [_vcpu, x11]
 	.if \accumulate
-	vector_read \forward, 4, q2, [_cpu, x9]
+	vector_read \forward, 4, q2, [_vcpu, x9]
 	.endif
 	\operation \arrangement\()2, \arrangement\()0, \arrangement\()1
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, simd_three_same_scalar, \name, \operation, \arrangement, \accumulate, \fpstate
 .endm
@@ -2061,11 +2062,11 @@ gadget simd_three_same_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x13, x14, x15
-	ldr \load_destination, [_cpu, x13]
-	ldr \load_left, [_cpu, x14]
-	ldr \load_right, [_cpu, x15]
+	ldr \load_destination, [_vcpu, x13]
+	ldr \load_left, [_vcpu, x14]
+	ldr \load_right, [_vcpu, x15]
 	\operation \destination, \left, \right
-	str q0, [_cpu, x13]
+	str q0, [_vcpu, x13]
 	next_gadget
 .endm
 
@@ -2090,14 +2091,14 @@ gadget simd_rdm_software
 	ensure_fp_environment
 	ldr w8, [_stream], #8
 	mrs x16, fpsr
-	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	str w16, [_vcpu, #UML_GADGET_CPU_FPSR]
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov w1, w8
 	helper_call uml_arm64_simd_rdm_software
 	ldp x1, x2, [sp], #16
-	cbz w0, NAME(uml_arm64_gadget_illegal)
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	cbz w0, CSYM(uml_arm64_gadget_illegal)
+	ldr w16, [_vcpu, #UML_GADGET_CPU_FPSR]
 	msr fpsr, x16
 	add _stream, _stream, #8
 	next_gadget
@@ -2116,16 +2117,16 @@ gadget simd_rdm_software
 gadget simd_dot_vector_\name
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
-	ldr q0, [_cpu, x9]
-	ldr q1, [_cpu, x10]
-	ldr q2, [_cpu, x11]
+	ldr q0, [_vcpu, x9]
+	ldr q1, [_vcpu, x10]
+	ldr q2, [_vcpu, x11]
 	\operation v0.\destination, v1.\sources, v2.\sources
 	.if \wide
-	str q0, [_cpu, x9]
+	str q0, [_vcpu, x9]
 	.else
-	str d0, [_cpu, x9]
+	str d0, [_vcpu, x9]
 	add x9, x9, #8
-	str xzr, [_cpu, x9]
+	str xzr, [_vcpu, x9]
 	.endif
 	next_gadget
 .endm
@@ -2143,16 +2144,16 @@ simd_dot_vector usdot_4s, usdot, 4s, 16b, 1
 gadget simd_dot_indexed_\name\()_\destination\()_\index
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
-	ldr q0, [_cpu, x9]
-	ldr q1, [_cpu, x10]
-	ldr q2, [_cpu, x11]
+	ldr q0, [_vcpu, x9]
+	ldr q1, [_vcpu, x10]
+	ldr q2, [_vcpu, x11]
 	\operation v0.\destination, v1.\sources, v2.4b[\index]
 	.if \wide
-	str q0, [_cpu, x9]
+	str q0, [_vcpu, x9]
 	.else
-	str d0, [_cpu, x9]
+	str d0, [_vcpu, x9]
 	add x9, x9, #8
-	str xzr, [_cpu, x9]
+	str xzr, [_vcpu, x9]
 	.endif
 	next_gadget
 .endm
@@ -2219,16 +2220,16 @@ simd_dot_indexed_family usdot, usdot
 gadget simd_dot_vector_\name\()_soft
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
-	ldr q0, [_cpu, x9]
-	ldr q1, [_cpu, x10]
-	ldr q2, [_cpu, x11]
+	ldr q0, [_vcpu, x9]
+	ldr q1, [_vcpu, x10]
+	ldr q2, [_vcpu, x11]
 	simd_dot_software_body \signed_left, \signed_right, \wide
 	.if \wide
-	str q0, [_cpu, x9]
+	str q0, [_vcpu, x9]
 	.else
-	str d0, [_cpu, x9]
+	str d0, [_vcpu, x9]
 	add x9, x9, #8
-	str xzr, [_cpu, x9]
+	str xzr, [_vcpu, x9]
 	.endif
 	next_gadget
 .endm
@@ -2246,17 +2247,17 @@ simd_dot_vector_software usdot_4s, 0, 1, 1
 gadget simd_dot_indexed_\name\()_\shape\()_\index\()_soft
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
-	ldr q0, [_cpu, x9]
-	ldr q1, [_cpu, x10]
-	ldr q2, [_cpu, x11]
+	ldr q0, [_vcpu, x9]
+	ldr q1, [_vcpu, x10]
+	ldr q2, [_vcpu, x11]
 	dup v2.4s, v2.s[\index]
 	simd_dot_software_body \signed_left, \signed_right, \wide
 	.if \wide
-	str q0, [_cpu, x9]
+	str q0, [_vcpu, x9]
 	.else
-	str d0, [_cpu, x9]
+	str d0, [_vcpu, x9]
 	add x9, x9, #8
-	str xzr, [_cpu, x9]
+	str xzr, [_vcpu, x9]
 	.endif
 	next_gadget
 .endm
@@ -2281,11 +2282,11 @@ simd_dot_indexed_software_family usdot, 0, 1
 gadget simd_matrix_\name
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
-	ldr q0, [_cpu, x9]
-	ldr q1, [_cpu, x10]
-	ldr q2, [_cpu, x11]
+	ldr q0, [_vcpu, x9]
+	ldr q1, [_vcpu, x10]
+	ldr q2, [_vcpu, x11]
 	\operation v0.4s, v1.16b, v2.16b
-	str q0, [_cpu, x9]
+	str q0, [_vcpu, x9]
 	next_gadget
 .endm
 
@@ -2314,9 +2315,9 @@ simd_matrix_native usmmla, usmmla
 gadget simd_matrix_\name\()_soft
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
-	ldr q0, [_cpu, x10]
-	ldr q1, [_cpu, x11]
-	ldr q16, [_cpu, x9]
+	ldr q0, [_vcpu, x10]
+	ldr q1, [_vcpu, x11]
+	ldr q16, [_vcpu, x9]
 	.if \signed_left
 	sxtl v2.8h, v0.8b
 	sxtl2 v3.8h, v0.16b
@@ -2340,7 +2341,7 @@ gadget simd_matrix_\name\()_soft
 	simd_matrix_reduce 6, 7, \unsigned_product
 	zip1 v4.4s, v4.4s, v6.4s
 	add v16.4s, v16.4s, v4.4s
-	str q16, [_cpu, x9]
+	str q16, [_vcpu, x9]
 	next_gadget
 .endm
 
@@ -2365,13 +2366,13 @@ vector_entry simd_widening_\name, \forward, Lscalar_offset0, Lscalar_offset16, L
 	.endif
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
-	vector_read \forward, 1, q0, [_cpu, x10]
-	vector_read \forward, 2, q1, [_cpu, x11]
+	vector_read \forward, 1, q0, [_vcpu, x10]
+	vector_read \forward, 2, q1, [_vcpu, x11]
 	.if \accumulate
-	vector_read \forward, 4, q2, [_cpu, x9]
+	vector_read \forward, 4, q2, [_vcpu, x9]
 	.endif
 	\operation v2.\destination, v0.\left, v1.\right
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, simd_widening_vector, \name, \operation, \destination, \left, \right, \accumulate, \fpstate
 .endm
@@ -2385,13 +2386,13 @@ vector_entry simd_widening_\name, \forward, Lscalar_offset0, Lscalar_offset16, L
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
-	vector_read \forward, 1, q0, [_cpu, x10]
-	vector_read \forward, 2, q1, [_cpu, x11]
+	vector_read \forward, 1, q0, [_vcpu, x10]
+	vector_read \forward, 2, q1, [_vcpu, x11]
 	.if \accumulate
-	vector_read \forward, 4, q2, [_cpu, x9]
+	vector_read \forward, 4, q2, [_vcpu, x9]
 	.endif
 	\operation \destination\()2, \source\()0, \source\()1
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, simd_widening_scalar, \name, \operation, \destination, \source, \accumulate
 .endm
@@ -2424,13 +2425,13 @@ vector_entry simd_widening_\name, \forward, Lscalar_offset0, Lscalar_offset16, L
 vector_entry simd_widening_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, 1
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
-	vector_read \forward, 1, q0, [_cpu, x10]
-	vector_read \forward, 2, q1, [_cpu, x11]
+	vector_read \forward, 1, q0, [_vcpu, x10]
+	vector_read \forward, 2, q1, [_vcpu, x11]
 	.if \preserve
-	vector_read \forward, 4, q2, [_cpu, x9]
+	vector_read \forward, 4, q2, [_vcpu, x9]
 	.endif
 	\operation v2.\destination, v0.\left, v1.\right
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, simd_high_narrow_vector, \name, \operation, \destination, \left, \right, \preserve
 .endm
@@ -2511,12 +2512,12 @@ vector_entry simd_unary_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lvec
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	lsr w10, w8, #16
-	vector_read \forward, 1, q0, [_cpu, x10]
+	vector_read \forward, 1, q0, [_vcpu, x10]
 	.if \accumulate
-	vector_read \forward, 2, q2, [_cpu, x9]
+	vector_read \forward, 2, q2, [_vcpu, x9]
 	.endif
 	\operation v2.\destination, v0.\source
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lvector_old\@, Lscalar_none, simd_unary_vector, \name, \operation, \destination, \source, \accumulate, \fpstate
 .endm
@@ -2533,12 +2534,12 @@ vector_entry simd_unary_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lvec
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	lsr w10, w8, #16
-	vector_read \forward, 1, q0, [_cpu, x10]
+	vector_read \forward, 1, q0, [_vcpu, x10]
 	.if \accumulate
-	vector_read \forward, 2, q2, [_cpu, x9]
+	vector_read \forward, 2, q2, [_vcpu, x9]
 	.endif
 	\operation \destination\()2, \source\()0
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lvector_old\@, Lscalar_none, simd_unary_scalar, \name, \operation, \destination, \source, \accumulate, \fpstate
 .endm
@@ -2640,9 +2641,9 @@ vector_entry simd_unary_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lsca
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	lsr w10, w8, #16
-	vector_read \forward, 1, q0, [_cpu, x10]
+	vector_read \forward, 1, q0, [_vcpu, x10]
 	\operation v2.\arrangement, v0.\arrangement, #0
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_none, Lscalar_none, simd_compare_zero_vector, \name, \operation, \arrangement
 .endm
@@ -2652,9 +2653,9 @@ vector_entry simd_unary_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lsca
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	lsr w10, w8, #16
-	vector_read \forward, 1, q0, [_cpu, x10]
+	vector_read \forward, 1, q0, [_vcpu, x10]
 	\operation d2, d0, #0
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_none, Lscalar_none, simd_compare_zero_scalar, \name, \operation
 .endm
@@ -2706,9 +2707,9 @@ vector_entry simd_unary_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lsca
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	lsr w10, w8, #16
-	vector_read \forward, 1, q0, [_cpu, x10]
+	vector_read \forward, 1, q0, [_vcpu, x10]
 	\operation v2.\destination, v0.\source, #\shift
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_none, Lscalar_none, simd_shll, \name, \operation, \destination, \source, \shift
 .endm
@@ -2726,7 +2727,7 @@ vector_entry simd_reduce_\name, \forward, Lvector_register0, Lvector_register8, 
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	vector_read \forward, 1, q0, [x12]
@@ -2795,20 +2796,20 @@ vector_entry \name\()_\arrangement, \forward, Lscalar_offset0, Lscalar_offset16,
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
 	.if \wide
-	vector_read \forward, 1, q0, [_cpu, x10]
-	vector_read \forward, 2, q1, [_cpu, x11]
+	vector_read \forward, 1, q0, [_vcpu, x10]
+	vector_read \forward, 2, q1, [_vcpu, x11]
 	.if \accumulate
-	vector_read \forward, 4, q2, [_cpu, x9]
+	vector_read \forward, 4, q2, [_vcpu, x9]
 	.endif
 	.else
-	vector_read \forward, 1, d0, [_cpu, x10]
-	vector_read \forward, 2, d1, [_cpu, x11]
+	vector_read \forward, 1, d0, [_vcpu, x10]
+	vector_read \forward, 2, d1, [_vcpu, x11]
 	.if \accumulate
-	vector_read \forward, 4, d2, [_cpu, x9]
+	vector_read \forward, 4, d2, [_vcpu, x9]
 	.endif
 	.endif
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, simd_bitwise_shape, \name, \operation, \arrangement, \wide, \accumulate
 .endm
@@ -2834,8 +2835,8 @@ simd_bitwise simd_bif, bif, 1
 vector_entry \name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_none, Lscalar_none, 1
 	ldr x8, [_stream], #8
 	unpack_u16_2 x8, x9, x10
-	vector_read \forward, 1, \register\()2, [_cpu, x10]
-	str q2, [_cpu, x9]
+	vector_read \forward, 1, \register\()2, [_vcpu, x10]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_none, Lscalar_none, simd_move_shape, \name, \register
 .endm
@@ -2854,10 +2855,10 @@ simd_move_shape simd_mov_16b, q
 gadget \name\()_native
 	ldr x8, [_stream], #8
 	unpack_u16_2 x8, x9, x10
-	ldr q0, [_cpu, x9]
-	ldr q1, [_cpu, x10]
+	ldr q0, [_vcpu, x9]
+	ldr q1, [_vcpu, x10]
 	\operation v0.16b, v1.16b
-	str q0, [_cpu, x9]
+	str q0, [_vcpu, x9]
 	next_gadget
 .endm
 
@@ -2865,9 +2866,9 @@ gadget \name\()_native
 gadget \name\()_native
 	ldr x8, [_stream], #8
 	unpack_u16_2 x8, x9, x10
-	ldr q1, [_cpu, x10]
+	ldr q1, [_vcpu, x10]
 	\operation v0.16b, v1.16b
-	str q0, [_cpu, x9]
+	str q0, [_vcpu, x9]
 	next_gadget
 .endm
 
@@ -2905,11 +2906,11 @@ simd_crypto_two_software simd_aesimc
 gadget \name
 	ldr x11, [_stream], #8
 	unpack_u16_3 x11, x8, x9, x10
-	ldr q0, [_cpu, x8]
-	ldr q1, [_cpu, x9]
-	ldr q2, [_cpu, x10]
+	ldr q0, [_vcpu, x8]
+	ldr q1, [_vcpu, x9]
+	ldr q2, [_vcpu, x10]
 	\operation \destination, \first, \second
-	str q0, [_cpu, x8]
+	str q0, [_vcpu, x8]
 	next_gadget
 .endm
 
@@ -2930,10 +2931,10 @@ simd_sha_three simd_sha512su1, sha512su1, v0.2d, v1.2d, v2.2d
 gadget \name
 	ldr x10, [_stream], #8
 	unpack_u16_2 x10, x8, x9
-	ldr q0, [_cpu, x8]
-	ldr q1, [_cpu, x9]
+	ldr q0, [_vcpu, x8]
+	ldr q1, [_vcpu, x9]
 	\operation \destination, \source
-	str q0, [_cpu, x8]
+	str q0, [_vcpu, x8]
 	next_gadget
 .endm
 
@@ -2986,9 +2987,9 @@ simd_crypto_two_software simd_sha512su0
 gadget \name
 	ldr x12, [_stream], #8
 	unpack_u16_4 x12, x8, x9, x10, x11
-	ldr q1, [_cpu, x9]
-	ldr q2, [_cpu, x10]
-	ldr q3, [_cpu, x11]
+	ldr q1, [_vcpu, x9]
+	ldr q2, [_vcpu, x10]
+	ldr q3, [_vcpu, x11]
 .if \native
 	\operation v0.16b, v1.16b, v2.16b, v3.16b
 .elseif \kind == 0
@@ -2998,7 +2999,7 @@ gadget \name
 	bic v0.16b, v2.16b, v3.16b
 	eor v0.16b, v0.16b, v1.16b
 .endif
-	str q0, [_cpu, x8]
+	str q0, [_vcpu, x8]
 	next_gadget
 .endm
 
@@ -3012,8 +3013,8 @@ simd_four_source_logic simd_bcax_soft, bcax, 0, 1
 gadget \name
 	ldr x11, [_stream], #8
 	unpack_u16_3 x11, x8, x9, x10
-	ldr q1, [_cpu, x9]
-	ldr q2, [_cpu, x10]
+	ldr q1, [_vcpu, x9]
+	ldr q2, [_vcpu, x10]
 .if \native
 	rax1 v0.2d, v1.2d, v2.2d
 .else
@@ -3022,7 +3023,7 @@ gadget \name
 	orr v0.16b, v0.16b, v3.16b
 	eor v0.16b, v0.16b, v1.16b
 .endif
-	str q0, [_cpu, x8]
+	str q0, [_vcpu, x8]
 	next_gadget
 .endm
 
@@ -3034,8 +3035,8 @@ simd_rax1 simd_rax1_soft, 0
 gadget \name
 	ldr x11, [_stream], #8
 	unpack_u16_3 x11, x8, x9, x10
-	ldr q1, [_cpu, x9]
-	ldr q2, [_cpu, x10]
+	ldr q1, [_vcpu, x9]
+	ldr q2, [_vcpu, x10]
 .if \native
 	xar v0.2d, v1.2d, v2.2d, #\rotate
 .else
@@ -3046,7 +3047,7 @@ gadget \name
 	orr v0.16b, v0.16b, v3.16b
 .endif
 .endif
-	str q0, [_cpu, x8]
+	str q0, [_vcpu, x8]
 	next_gadget
 .endm
 
@@ -3129,11 +3130,11 @@ gadget \name
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	ldr q1, [_cpu, x10]
-	ldr q2, [_cpu, x11]
+	ldr q1, [_vcpu, x10]
+	ldr q2, [_vcpu, x11]
 	\operation v0.\destination_arrangement, v1.\source_arrangement, \
 		v2.\source_arrangement
-	str q0, [_cpu, x9]
+	str q0, [_vcpu, x9]
 	next_gadget
 .endm
 
@@ -3167,7 +3168,7 @@ gadget simd_extract_q\offset
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x12, x10, lsl #4
 	add x14, x12, x11, lsl #4
 	ldr q1, [x13]
@@ -3184,7 +3185,7 @@ gadget simd_extract_d\offset
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x12, x10, lsl #4
 	add x14, x12, x11, lsl #4
 	ldr d1, [x13]
@@ -3228,13 +3229,13 @@ gadget \name
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	lsr x11, x8, #32
-	ldr q1, [_cpu, x10]
-	ldr q2, [_cpu, x11]
+	ldr q1, [_vcpu, x10]
+	ldr q2, [_vcpu, x11]
 	\operation v0.\arrangement, v1.\arrangement, v2.\arrangement
 	.if \wide
-	str q0, [_cpu, x9]
+	str q0, [_vcpu, x9]
 	.else
-	add x15, _cpu, x9
+	add x15, _vcpu, x9
 	str d0, [x15]
 	str xzr, [x15, #8]
 	.endif
@@ -3270,7 +3271,7 @@ gadget \name
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #7
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x12, x10, lsl #4
 	ldr q1, [x13]
 	.if \bytes == 8
@@ -3334,7 +3335,7 @@ gadget \name
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #7
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x12, x10, lsl #4
 	ldr q1, [x13]
 	.if \bytes == 8
@@ -3385,7 +3386,7 @@ gadget \name
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #7
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x12, x10, lsl #4
 	.if \scalar
 	.if \bytes == 1
@@ -3450,7 +3451,7 @@ gadget simd_shift_left_sqshlu_\name\()_\shift
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x12, x10, lsl #4
 	ldr \load, [x13]
 	sqshlu \destination, \source, #\shift
@@ -3515,7 +3516,7 @@ gadget \name
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #6
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x12, x10, lsl #4
 	ldr q1, [x13]
 	\widening v0.\wide_arrangement, v1.\narrow_arrangement, #0
@@ -3554,22 +3555,22 @@ gadget \name
 	.if \count > 1
 	lsr x12, x8, #48
 	.endif
-	ldr q4, [_cpu, x10]
-	ldr q0, [_cpu, x11]
+	ldr q4, [_vcpu, x10]
+	ldr q0, [_vcpu, x11]
 	.if \count > 1
-	ldr q1, [_cpu, x12]
+	ldr q1, [_vcpu, x12]
 	.endif
 	.if \count > 2
 	ldr x13, [_stream], #8
 	and x14, x13, #0xffff
-	ldr q2, [_cpu, x14]
+	ldr q2, [_vcpu, x14]
 	.endif
 	.if \count > 3
 	ubfx x15, x13, #16, #16
-	ldr q3, [_cpu, x15]
+	ldr q3, [_vcpu, x15]
 	.endif
 	.if \extend
-	ldr q5, [_cpu, x9]
+	ldr q5, [_vcpu, x9]
 	.endif
 	.if \count == 1
 	\operation v5.16b, {v0.16b}, v4.16b
@@ -3581,9 +3582,9 @@ gadget \name
 	\operation v5.16b, {v0.16b-v3.16b}, v4.16b
 	.endif
 	.if \wide
-	str q5, [_cpu, x9]
+	str q5, [_vcpu, x9]
 	.else
-	add x15, _cpu, x9
+	add x15, _vcpu, x9
 	str d5, [x15]
 	str xzr, [x15, #8]
 	.endif
@@ -3618,7 +3619,7 @@ gadget \name
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #4
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x12, x10, lsl #4
 	add x13, x13, x11
 	.if \bytes == 1
@@ -3678,7 +3679,7 @@ gadget \name
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_X0
+	add x11, _vcpu, #UML_GADGET_CPU_X0
 	add x11, x11, x10, lsl #3
 	.if \bytes == 8
 	ldr x12, [x11]
@@ -3690,7 +3691,7 @@ gadget \name
 	.else
 	dup v0.\arrangement, w12
 	.endif
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x11, x11, x9, lsl #4
 	.if \wide
 	str q0, [x11]
@@ -3715,7 +3716,7 @@ simd_duplicate_general_shape simd_duplicate_general_2d, 2d, 1, 8
 gadget \name
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
-	add x10, _cpu, #UML_GADGET_CPU_V0
+	add x10, _vcpu, #UML_GADGET_CPU_V0
 	add x10, x10, x9, lsl #4
 	str xzr, [x10]
 	str xzr, [x10, #8]
@@ -3735,7 +3736,7 @@ gadget \name
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #7
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x12, x10, lsl #4
 	ldr q1, [x13]
 	.if \bytes == 8
@@ -3785,7 +3786,7 @@ gadget \name
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #7
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x12, x10, lsl #4
 	.if \scalar
 	.if \bytes == 2
@@ -3849,12 +3850,12 @@ gadget simd_indexed_\name\()_\arrangement\()_\index
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x13, x14, x15
 	.if \accumulate
-	ldr q0, [_cpu, x13]
+	ldr q0, [_vcpu, x13]
 	.endif
-	ldr q1, [_cpu, x14]
-	ldr q2, [_cpu, x15]
+	ldr q1, [_vcpu, x14]
+	ldr q2, [_vcpu, x15]
 	\operation v0.\arrangement, v1.\arrangement, v2.\element[\index]
-	str q0, [_cpu, x13]
+	str q0, [_vcpu, x13]
 	next_gadget
 .endm
 
@@ -3881,12 +3882,12 @@ gadget simd_indexed_\name\()_\element\()_\high\()_\index
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x13, x14, x15
 	.if \accumulate
-	ldr q0, [_cpu, x13]
+	ldr q0, [_vcpu, x13]
 	.endif
-	ldr q1, [_cpu, x14]
-	ldr q2, [_cpu, x15]
+	ldr q1, [_vcpu, x14]
+	ldr q2, [_vcpu, x15]
 	\operation v0.\wide, v1.\narrow, v2.\element[\index]
-	str q0, [_cpu, x13]
+	str q0, [_vcpu, x13]
 	next_gadget
 .endm
 
@@ -3920,18 +3921,18 @@ gadget simd_indexed_\name\()_\element\()_\shape\()_\index
 	movi v0.16b, #0
 	movi v1.16b, #0
 	.if \accumulate
-	ldr \load_destination, [_cpu, x13]
+	ldr \load_destination, [_vcpu, x13]
 	.endif
-	ldr \load_source, [_cpu, x14]
+	ldr \load_source, [_vcpu, x14]
 	.else
 	.if \accumulate
-	ldr q0, [_cpu, x13]
+	ldr q0, [_vcpu, x13]
 	.endif
-	ldr q1, [_cpu, x14]
+	ldr q1, [_vcpu, x14]
 	.endif
-	ldr q2, [_cpu, x15]
+	ldr q2, [_vcpu, x15]
 	\operation \wide, \narrow, v2.\element[\index]
-	str q0, [_cpu, x13]
+	str q0, [_vcpu, x13]
 	next_gadget
 .endm
 
@@ -3962,13 +3963,13 @@ gadget simd_indexed_\name\()_\element\()_\shape\()_\index
 	unpack_u16_3 x8, x13, x14, x15
 	.if \scalar
 	movi v1.16b, #0
-	ldr \load_source, [_cpu, x14]
+	ldr \load_source, [_vcpu, x14]
 	.else
-	ldr q1, [_cpu, x14]
+	ldr q1, [_vcpu, x14]
 	.endif
-	ldr q2, [_cpu, x15]
+	ldr q2, [_vcpu, x15]
 	\operation \arrangement, \load_source, v2.\element[\index]
-	str q0, [_cpu, x13]
+	str q0, [_vcpu, x13]
 	next_gadget
 .endm
 
@@ -4001,15 +4002,15 @@ gadget simd_indexed_\name\()_\element\()_\shape\()_\index
 	.if \scalar
 	movi v0.16b, #0
 	movi v1.16b, #0
-	ldr \load_destination, [_cpu, x13]
-	ldr \load_source, [_cpu, x14]
+	ldr \load_destination, [_vcpu, x13]
+	ldr \load_source, [_vcpu, x14]
 	.else
-	ldr q0, [_cpu, x13]
-	ldr q1, [_cpu, x14]
+	ldr q0, [_vcpu, x13]
+	ldr q1, [_vcpu, x14]
 	.endif
-	ldr q2, [_cpu, x15]
+	ldr q2, [_vcpu, x15]
 	\operation \arrangement, \load_source, v2.\element[\index]
-	str q0, [_cpu, x13]
+	str q0, [_vcpu, x13]
 	next_gadget
 .endm
 
@@ -4046,13 +4047,13 @@ vector_entry simd_indexed_\name\()_\shape\()_\index, \forward, Lscalar_offset0, 
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	lsr x11, x8, #32
-	vector_read \forward, 1, q0, [_cpu, x10]
-	vector_read \forward, 2, q1, [_cpu, x11]
+	vector_read \forward, 1, q0, [_vcpu, x10]
+	vector_read \forward, 2, q1, [_vcpu, x11]
 	.if \accumulate
-	vector_read \forward, 4, q2, [_cpu, x9]
+	vector_read \forward, 4, q2, [_vcpu, x9]
 	.endif
 	\operation \destination, \source, v1.\element[\index]
-	str q2, [_cpu, x9]
+	str q2, [_vcpu, x9]
 	next_gadget
 	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, simd_indexed_floating_shape, \name, \operation, \shape, \destination, \source, \element, \index, \accumulate
 .endm
@@ -4089,7 +4090,7 @@ gadget simd_fmulx_\name
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x12, x9, lsl #4
 	add x14, x12, x10, lsl #4
 	add x15, x12, x11, lsl #4
@@ -4115,7 +4116,7 @@ gadget simd_addp_scalar
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	ldr q1, [x12]
@@ -4131,7 +4132,7 @@ gadget \name
 	ldr x8, [_stream], #8
 	ldr x9, [_stream], #8
 	and w10, w8, #0x1f
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x11, x11, x10, lsl #4
 	.if \wide
 	stp x9, x9, [x11]
@@ -4147,7 +4148,7 @@ gadget \name
 	ldr x8, [_stream], #8
 	ldr x9, [_stream], #8
 	and w10, w8, #0x1f
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x11, x11, x10, lsl #4
 	.if \wide
 	ldr q0, [x11]
@@ -4182,11 +4183,11 @@ gadget \name
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #4
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x12, x10, lsl #4
 	add x12, x12, x11
 	\load \target, [x12]
-	add x12, _cpu, #UML_GADGET_CPU_X0
+	add x12, _vcpu, #UML_GADGET_CPU_X0
 	str x13, [x12, x9, lsl #3]
 	next_gadget
 .endm
@@ -4214,12 +4215,12 @@ gadget \name
 	ubfx w10, w8, #16, #4
 	.if !\zero
 	ubfx w11, w8, #8, #5
-	add x12, _cpu, #UML_GADGET_CPU_X0
+	add x12, _vcpu, #UML_GADGET_CPU_X0
 	ldr x13, [x12, x11, lsl #3]
 	.else
 	mov x13, xzr
 	.endif
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x12, x12, x9, lsl #4
 	add x12, x12, x10
 	.if \bytes == 1
@@ -4254,7 +4255,7 @@ gadget \name
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #4
 	ubfx w12, w8, #24, #4
-	add x13, _cpu, #UML_GADGET_CPU_V0
+	add x13, _vcpu, #UML_GADGET_CPU_V0
 	add x14, x13, x10, lsl #4
 	add x14, x14, x12
 	.if \bytes == 1
@@ -4292,7 +4293,7 @@ gadget \name
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
+	add x11, _vcpu, #UML_GADGET_CPU_V0
 	add x11, x11, x10, lsl #4
 	.if \bytes == 2
 	ldrh w12, [x11, #\offset]
@@ -4301,7 +4302,7 @@ gadget \name
 	.else
 	ldr x12, [x11, #\offset]
 	.endif
-	add x13, _cpu, #UML_GADGET_CPU_X0
+	add x13, _vcpu, #UML_GADGET_CPU_X0
 	str x12, [x13, x9, lsl #3]
 	next_gadget
 .endm
@@ -4314,10 +4315,10 @@ gadget \name
 	.if \zero
 	mov x12, xzr
 	.else
-	add x11, _cpu, #UML_GADGET_CPU_X0
+	add x11, _vcpu, #UML_GADGET_CPU_X0
 	ldr x12, [x11, x10, lsl #3]
 	.endif
-	add x13, _cpu, #UML_GADGET_CPU_V0
+	add x13, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x13, x9, lsl #4
 	.if \bytes == 2
 	strh w12, [x13, #\offset]
@@ -4359,7 +4360,7 @@ gadget floating_select_\name\()_\suffix
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #5
 	msr nzcv, x27
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x12, x10, lsl #4
 	add x14, x12, x11, lsl #4
 	csel x13, x13, x14, \condition
@@ -4407,7 +4408,7 @@ gadget floating_select_always_\suffix
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
+	add x12, _vcpu, #UML_GADGET_CPU_V0
 	add x13, x12, x10, lsl #4
 	add x14, x12, x9, lsl #4
 	.if \bytes == 2

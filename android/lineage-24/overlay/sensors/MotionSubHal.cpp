@@ -71,6 +71,8 @@ public:
         std::lock_guard lock(mutex_);
         callback_ = callback;
         states_ = {};
+        // Every subscription ended with the framework's restart.
+        sendControl();
         return Result::OK;
     }
     const std::string getName() override { return "Andarium Motion"; }
@@ -80,14 +82,23 @@ public:
     Return<Result> activate(int32_t handle, bool enabled) override {
         if (handle < 1 || handle > 2) return Result::BAD_VALUE;
         std::lock_guard lock(mutex_);
-        states_[handle - 1].active = enabled;
-        states_[handle - 1].next = 0;
+        auto& state = states_[handle - 1];
+        const bool changed = state.active != enabled;
+        state.active = enabled;
+        state.next = 0;
+        if (changed) sendControl();
         return Result::OK;
     }
     Return<Result> batch(int32_t handle, int64_t period, int64_t latency) override {
         if (handle < 1 || handle > 2 || period < 0 || latency < 0) return Result::BAD_VALUE;
         std::lock_guard lock(mutex_);
-        states_[handle - 1].period = std::clamp<int64_t>(period, 10'000'000, 1'000'000'000);
+        auto& state = states_[handle - 1];
+        const auto previous = state.period;
+        state.period = std::clamp<int64_t>(period, andarium::motion::minimum_period_ns,
+                                           andarium::motion::maximum_period_ns);
+        // The host paces its readings by the period of a sensor in use; one
+        // that is not in use is told its period when it is activated.
+        if (state.active && state.period != previous) sendControl();
         return Result::OK;
     }
     Return<Result> flush(int32_t handle) override {
@@ -122,6 +133,33 @@ public:
     }
 
 private:
+    // Tells the host which sensors applications use and how often, on the
+    // connection it made. The frame is the whole state, so a later frame
+    // replaces an earlier one. Called with mutex_ held. A frame that cannot
+    // be sent whole would leave the host with a stale picture, so the
+    // connection is shut down: the receiving loop ends, the host connects
+    // again and the state is sent on that connection.
+    void sendControl() {
+        if (peer_ < 0) return;
+        const auto frame = andarium::motion::encode_control(
+            {states_[0].active, states_[1].active}, {states_[0].period, states_[1].period});
+        const auto sent = send(peer_, frame.data(), frame.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
+        if (sent != static_cast<ssize_t>(frame.size())) {
+            ALOGW("Andarium motion: control frame not sent (%zd): %s", sent, strerror(errno));
+            shutdown(peer_, SHUT_RDWR);
+        }
+    }
+    // The connection the host made, for sendControl. It is set after the
+    // host is accepted and cleared before the descriptor closes.
+    void attach(int fd) {
+        std::lock_guard lock(mutex_);
+        peer_ = fd;
+        sendControl();
+    }
+    void detach() {
+        std::lock_guard lock(mutex_);
+        peer_ = -1;
+    }
     // Serialize events with activate, initialize and flush.
     void post(const Event& event) {
         callback_->postEvents({event}, callback_->createScopedWakelock(false));
@@ -201,12 +239,15 @@ private:
             if (stream < 0) continue;
             // Only the private host channel may supply hardware samples.
             if (peer.svm_cid != VMADDR_CID_HOST) continue;
+            attach(stream.get());
             receive(stream.get());
+            detach();
         }
     }
     std::mutex mutex_;
     android::sp<IHalProxyCallback> callback_;
     std::array<SensorState, 2> states_{};
+    int peer_ = -1;
     // Declared before the worker, so it outlives the join in the worker's
     // destructor, which requests a stop and so writes to it.
     unique_fd wake_;

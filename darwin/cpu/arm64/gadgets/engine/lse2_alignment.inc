@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* FEAT_LSE2 alignment of single-copy-atomic accesses. With LSE2, an LSE
  * atomic, an exclusive, or a load-acquire/store-release access that is not
  * naturally aligned but lies inside one 16-byte block completes single-copy
@@ -22,7 +23,7 @@
 uml_arm64_gadget_lse2_alignment_\direction\()_\mask:
 	movz x9, #(UML_GADGET_TLB_UNALIGNED_ATOMICS & 0xffff)
 	movk x9, #(UML_GADGET_TLB_UNALIGNED_ATOMICS >> 16), lsl #16
-	ldrb w9, [_tlb, x9]
+	ldrb w9, [_swtlb, x9]
 	cbz w9, uml_arm64_gadget_atomic_alignment_fault_\direction
 	and x9, x7, #15
 	cmp x9, #(15 - \mask)

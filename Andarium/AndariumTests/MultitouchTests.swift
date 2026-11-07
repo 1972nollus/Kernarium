@@ -3,6 +3,10 @@ import Testing
 import UIKit
 @testable import Andarium
 
+/// Independent finger paths and slots, cancellation, viewport crossings, the
+/// ten-contact limit and releasing all contacts. The host `virtio-input-protocol`
+/// unit test covers the advertised multitouch axes, tracking-ID lifetimes and
+/// wraparound, and legacy primary-finger coordinates.
 @MainActor
 struct MultitouchTests {
     private func geometry() throws -> GuestTouchGeometry {

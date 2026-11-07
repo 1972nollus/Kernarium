@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Apply every routed AOSP project series to an exact pinned Repo workspace.
 set -eu
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import AndariumCore
 import Foundation
 import Metal
@@ -30,7 +32,13 @@ struct AppEntry {
     }
 
     /// The adb key of the guest this launch runs.
-    var adbKeyStore: AdbKeyStore { AdbKeyStore(instance: overrides.instance) }
+    var adbKeyStore: AdbKeyStore {
+        #if APP_STORE
+        return AdbKeyStore()
+        #else
+        return AdbKeyStore(instance: overrides.instance)
+        #endif
+    }
 
     func configureTips() {
         try? Tips.configure([.displayFrequency(.immediate)])
@@ -82,22 +90,33 @@ struct AppEntry {
         }
         // A stored memory size above the bound of its vCPU count comes down to
         // it; a size the launch states stays as stated.
-        guest = guest.map { launch.applied(to: $0, on: host) }
+        guest = guest.map {
+            launch.applied(to: $0, on: host, capacityMaximumGiB: storage.release.maximumGiB)
+        }
 
-        // A report staged for sharing by a process that ended is of no use.
-        BugReportStaging.sweep()
         let model = AppModel(
             guest: guest, host: host, system: system, capabilities: .device,
             createRequirementBytes: storage.createRequirementBytes
         )
+        // The rulers offer no size the carried system's data disk would refuse.
+        model.releaseMaximumGiB = storage.release.maximumGiB
+        // Retina mode is the person's choice where they made one, else on when
+        // the system lets this application use more than 4 GiB.
         let options = DisplayOptionsStore.load()
-        model.retina = launch.retina ?? options.retina
+        model.retina = launch.retina ?? options.retina(memoryLimitBytes: MemoryLimit.bytes())
+        model.retinaChosen = options.chosenRetina != nil
+        #if !APP_STORE
         // A harness launch shows the statistics from the start of the run and
-        // prints each reading; an App Store build never has this setting.
+        // prints each reading.
         model.session.showStats = launch.statistics
         model.printsStatistics = launch.statistics
+        #endif
 
+        #if APP_STORE
+        let markerDirectory = Self.supportDirectory()
+        #else
         let markerDirectory = launch.instance == nil ? Self.supportDirectory() : locations.directory
+        #endif
         let marker = PauseMarker(url: markerDirectory.appendingPathComponent("pause.json"))
         if marker.consume(), guest != nil {
             model.notice = .closedInBackground
@@ -115,6 +134,7 @@ struct AppEntry {
         return model
     }
 
+    #if !APP_STORE
     /// An automation launch creates the guest if there is none, erases it
     /// when asked, and starts it; a normal launch stops at Home.
     @MainActor
@@ -122,16 +142,31 @@ struct AppEntry {
         let launch = overrides
         guard launch.start != nil || launch.erase else { return }
         if model.guest == nil {
-            model.create(launch.applied(to: Guest.fresh(on: model.host), on: model.host))
+            model.create(Self.launchGuest(launch, on: model))
             guard await Self.idle(model) else { return }
         }
         if launch.erase {
             model.erase()
             guard await Self.idle(model) else { return }
+            // Erasing leaves no guest; a launch that starts one sets up a new
+            // guest first.
+            if launch.start != nil, model.guest == nil {
+                model.create(Self.launchGuest(launch, on: model))
+                guard await Self.idle(model) else { return }
+            }
         }
         if let mode = launch.start, model.alert == nil {
             model.start(mode)
         }
+    }
+
+    /// A new guest as the launch asks for it, within the carried system's data
+    /// disk.
+    @MainActor
+    private static func launchGuest(_ launch: LaunchOverrides, on model: AppModel) -> Guest {
+        launch.applied(
+            to: Guest.fresh(on: model.host), on: model.host, capacityMaximumGiB: model.releaseMaximumGiB
+        )
     }
 
     /// Waits for the busy overlay to go, within a bound; false if it did not.
@@ -144,6 +179,7 @@ struct AppEntry {
         }
         return model.alert == nil
     }
+    #endif
 
     // MARK: Device
 
@@ -156,14 +192,18 @@ struct AppEntry {
     /// `Library/Guest/`. The disk's path goes to Linux in a kernel argument
     /// that cannot carry a space, so the guest does not live in `Application
     /// Support`; the library directory's name is safe on a device and on a Mac.
+    /// A harness launch's isolated `instance` lives beside it; an App Store
+    /// build has only the one guest.
     static func guestDirectory(instance: String? = nil) -> URL {
         let library = (try? FileManager.default.url(
             for: .libraryDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         )) ?? FileManager.default.temporaryDirectory
+        #if !APP_STORE
         if let instance {
             return library.appendingPathComponent("TestGuests", isDirectory: true)
                 .appendingPathComponent(instance, isDirectory: true)
         }
+        #endif
         return library.appendingPathComponent("Guest", isDirectory: true)
     }
 
@@ -219,6 +259,28 @@ struct AppEntry {
         let values = try? URL(fileURLWithPath: NSHomeDirectory())
             .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
         return UInt64(max(values?.volumeAvailableCapacityForImportantUsage ?? 0, 0))
+    }
+}
+
+/// What the system holds this application's memory to: the footprint plus what
+/// the system lets it grow by, which is the limit iOS enforces (jetsam) and
+/// 2,867 MiB on an iPad mini 6. Zero where the system sets none (a Mac, or an
+/// iOS application on one). The same figure as `uml::platform::
+/// os_memory_limit_bytes` (`darwin/platform/apple/os_memory_limit.hpp`), which
+/// the runtime holds the guest's memory to; this application does not link
+/// that header.
+enum MemoryLimit {
+    static func bytes() -> UInt64 {
+        var info = task_vm_info_data_t()
+        let words = MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size
+        var count = mach_msg_type_number_t(words)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: words) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS, Int(count) >= words, info.limit_bytes_remaining != 0 else { return 0 }
+        return info.phys_footprint + info.limit_bytes_remaining
     }
 }
 

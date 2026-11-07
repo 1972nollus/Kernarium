@@ -401,8 +401,14 @@ cp -R "$SOURCES/proxy-libintl/." \
 	"$SOURCES/glib/subprojects/proxy-libintl-0.5"
 mkdir -p -- "$SOURCES/glib/subprojects/gvdb"
 cp -R "$SOURCES/gvdb/." "$SOURCES/glib/subprojects/gvdb"
+# GLib compiles its locale, character-set alias, module, libexec and state
+# directories in from its prefix, which here is the final one. It is configured
+# with the neutral prefix instead, so that its libraries hold no path of this
+# build and the prefix can be renamed, and installed into an image that is
+# merged into the stage; its pkg-config files name the final prefix, where the
+# dependants of this build find them.
 meson_env setup "$BUILDS/glib" "$SOURCES/glib" \
-	--prefix="$PREFIX" --libdir=lib --buildtype=release \
+	--prefix="$NO_HOST_PREFIX" --libdir=lib --buildtype=release \
 	--default-library=static --wrap-mode=nodownload \
 	--force-fallback-for=intl \
 	-Dtests=false -Dinstalled_tests=false -Dnls=disabled \
@@ -411,7 +417,10 @@ meson_env setup "$BUILDS/glib" "$SOURCES/glib" \
 	-Dxattr=false -Ddtrace=disabled -Dsystemtap=disabled \
 	-Dlibelf=disabled -Dglib_debug=disabled -Dbsymbolic_functions=false
 meson_env compile -C "$BUILDS/glib"
-meson_install_env install -C "$BUILDS/glib"
+GLIB_IMAGE="$TEMP_ROOT/glib-image"
+private_env env DESTDIR="$GLIB_IMAGE" CMAKE="$MESON_CMAKE_BLOCKER" \
+	"$MESON" install -C "$BUILDS/glib"
+merge_neutral_image "$GLIB_IMAGE" "$STAGE" "$PREFIX"
 
 printf '%s\n' "building libslirp 4.9.7"
 # libslirp's project-level static option selects a non-installed helper target.
@@ -449,7 +458,9 @@ cmake_build_install "$BUILDS/softfloat"
 printf '%s\n' "building FEXCore FEX-2610 with fmt 12.2.1 and xxHash 0.8.3"
 # FEX builds fmt, xxHash, and unordered_dense as its own submodules, which the
 # verified rows fill in. Only FEXCore and those libraries are built: the
-# shared library, frontends, and install rules stay out of the prefix.
+# shared library, frontends, and install rules stay out of the prefix. FEXCore
+# takes the default directories of its thunks from CMAKE_INSTALL_PREFIX, which
+# nothing installs here, so it is the neutral prefix rather than the final one.
 # FEXCore calls the prefix's SoftFloat, which has no preserve_all ABI.
 FEX_COMMIT=$(awk -F '\t' '$1 == "fex" { print $5 }' "$MANIFEST")
 for submodule in fmt:fmt xxhash:xxhash unordered-dense:unordered_dense; do
@@ -468,6 +479,7 @@ cmake_setup "$SOURCES/fex" "$BUILDS/fex" \
 	-DENABLE_FEX_ALLOCATOR=OFF -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF \
 	-DENABLE_OFFLINE_TELEMETRY=OFF -DENABLE_GDB_SYMBOLS=OFF \
 	-DBUILD_TESTING=OFF -DBUILD_FEXCONFIG=OFF -DBUILD_THUNKS=OFF \
+	-DCMAKE_INSTALL_PREFIX="$NO_HOST_PREFIX" \
 	-DCMAKE_DISABLE_FIND_PACKAGE_fmt=ON \
 	-DCMAKE_DISABLE_FIND_PACKAGE_xxhash=ON \
 	-DCMAKE_DISABLE_FIND_PACKAGE_unordered_dense=ON

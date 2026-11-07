@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import Foundation
 
 /// What a guest does when Kernarium leaves the foreground. A guest runs only

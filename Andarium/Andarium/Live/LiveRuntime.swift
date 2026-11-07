@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import AndariumCore
 import Foundation
 import Observation
@@ -111,13 +113,12 @@ final class LiveRuntime: RuntimeDriver {
         return try await storage.create(guest, progress: progress)
     }
 
-    func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest {
+    func erase(progress: @escaping @Sendable (Double) -> Void) async throws {
         defer { model?.host.freeStorageBytes = AppEntry.freeStorageBytes() }
-        let erased = try await storage.erase(guest, progress: progress)
+        try await storage.erase(progress: progress)
         // The next guest is a new one: it boots with a key of its own.
         keyStore.delete()
         adbIdentity = nil
-        return erased
     }
 
     func save(_ guest: Guest) throws {
@@ -248,6 +249,9 @@ final class LiveRuntime: RuntimeDriver {
         let processorCount = UInt32(run.guest.cores)
         let dotsPerInch = geometry.dotsPerInch
         let adbKeyLine = adbIdentity?.publicKeyLine
+        // The zone the host is in now, read at every start: the guest follows
+        // it while its own automatic time zone is on.
+        let timeZone = GuestTimeZone.current()
         // The run occupies its thread for the guest's whole life and the GPU
         // service reaches the main queue while it starts, so it must not be
         // the main thread. It owns a thread outright rather than a place on
@@ -256,7 +260,7 @@ final class LiveRuntime: RuntimeDriver {
             let result = Self.runGuest(
                 view: view, dataDiskPath: dataDiskPath, releasePath: releasePath, dataGiB: dataGiB, bootMode: bootMode,
                 width: width, height: height, dotsPerInch: dotsPerInch, memoryMiB: memoryMiB,
-                processorCount: processorCount, adbKeyLine: adbKeyLine
+                processorCount: processorCount, adbKeyLine: adbKeyLine, timeZone: timeZone
             )
             Task { @MainActor in self.finished(result: result) }
         }
@@ -267,32 +271,37 @@ final class LiveRuntime: RuntimeDriver {
     private nonisolated static func runGuest(
         view: GuestMetalView, dataDiskPath: String, releasePath: String, dataGiB: UInt32, bootMode: UInt32,
         width: UInt32, height: UInt32, dotsPerInch: UInt32, memoryMiB: UInt32,
-        processorCount: UInt32, adbKeyLine: String?
+        processorCount: UInt32, adbKeyLine: String?, timeZone: String?
     ) -> Int32 {
         dataDiskPath.withCString { dataDisk in
             releasePath.withCString { release in
                 withOptionalCString(adbKeyLine) { adbKey in
-                    var request = kernarium_runtime_boot()
-                    request.struct_size = UInt32(MemoryLayout<kernarium_runtime_boot>.size)
-                    request.width = width
-                    request.height = height
-                    request.dots_per_inch = dotsPerInch
-                    request.guest_memory_mib = memoryMiB
-                    request.guest_processor_count = processorCount
-                    request.android_boot_mode = bootMode
-                    // The guest's display always follows the window.
-                    request.auto_resize_guest = 1
-                    request.android_data_disk_path = dataDisk
-                    request.android_release_path = release
-                    request.android_data_gib = dataGiB
-                    // The launch parameters the picker's bound was computed with.
-                    let parameters = kernarium_runtime_loader_launch_memory_set()
-                    request.gpu_budget_application_mib = parameters.application_mib
-                    request.gpu_budget_engine_mib = parameters.engine_mib
-                    request.gpu_budget_headroom_mib = parameters.headroom_mib
-                    // The key adbd authorizes for this boot, or none.
-                    request.android_adb_public_key = adbKey
-                    return withUnsafePointer(to: &request) { kernarium_runtime_loader_run(view, $0) }
+                    withOptionalCString(timeZone) { zone in
+                        var request = kernarium_runtime_boot()
+                        request.struct_size = UInt32(MemoryLayout<kernarium_runtime_boot>.size)
+                        request.width = width
+                        request.height = height
+                        request.dots_per_inch = dotsPerInch
+                        request.guest_memory_mib = memoryMiB
+                        request.guest_processor_count = processorCount
+                        request.android_boot_mode = bootMode
+                        // The guest's display always follows the window.
+                        request.auto_resize_guest = 1
+                        request.android_data_disk_path = dataDisk
+                        request.android_release_path = release
+                        request.android_data_gib = dataGiB
+                        // The launch parameters the picker's bound was computed with.
+                        let parameters = kernarium_runtime_loader_launch_memory_set()
+                        request.gpu_budget_application_mib = parameters.application_mib
+                        request.gpu_budget_engine_mib = parameters.engine_mib
+                        request.gpu_budget_headroom_mib = parameters.headroom_mib
+                        // The key adbd authorizes for this boot, or none.
+                        request.android_adb_public_key = adbKey
+                        // The host's time zone, which the guest applies while its
+                        // own automatic time zone is on, or none.
+                        request.android_time_zone = zone
+                        return withUnsafePointer(to: &request) { kernarium_runtime_loader_run(view, $0) }
+                    }
                 }
             }
         }
@@ -453,7 +462,7 @@ final class LiveRuntime: RuntimeDriver {
         // owns rotation; while the host does, the guest is drawn upright in
         // the window and the mount follows the window's orientation. Never
         // remap per sensor sample.
-        if motionMount.update(policy: policy, interface: interfaceMotionAxes) { motion.stop() }
+        if motionMount.update(policy: policy, interface: interfaceMotionAxes) { motion.restart() }
         rotation.update(policy: policy, ready: normalRun && reachedBootCompleted && active)
         updateMotionSensors()
     }
@@ -464,13 +473,11 @@ final class LiveRuntime: RuntimeDriver {
     }
 
     private func updateMotionSensors() {
-        if normalRun, reachedBootCompleted, active, rotation.applied == rotationPolicy,
-           model?.guest?.motionSensors == true {
-            motion.axes = motionMount.axes
-            motion.start()
-        } else {
-            motion.stop()
-        }
+        motion.update(
+            enabled: model?.motionSensorsOn == true,
+            foreground: normalRun && reachedBootCompleted && active && rotation.applied == rotationPolicy,
+            axes: motionMount.axes
+        )
     }
 
     // MARK: Microphone
@@ -594,11 +601,11 @@ final class LiveRuntime: RuntimeDriver {
     private func observeDisplayOptions() {
         guard let model else { return }
         withObservationTracking {
-            _ = (model.retina, model.hostDrivesGuestRotation)
+            _ = (model.retina, model.retinaChosen, model.hostDrivesGuestRotation)
         } onChange: {
             Task { @MainActor in
                 guard let model = self.model else { return }
-                DisplayOptionsStore.save(DisplayOptions(retina: model.retina))
+                DisplayOptionsStore.save(model.displayOptions)
                 self.updateGuestRotation()
                 self.observeDisplayOptions()
             }

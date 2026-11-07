@@ -273,6 +273,15 @@ counting what the emulator adds, and the runtime refuses a launch whose
 arguments exceed it with a line that says so, because the kernel would end the
 process.
 
+An Android guest also takes the host's time zone from the boot request
+(`android_time_zone`, runtime API 23): an IANA name of 1 to 64 characters of
+`A-Za-z0-9_+-` in slash-separated components that start with a letter or digit,
+or null. The runtime passes a valid name as `androidboot.kernarium.timezone`
+(launcher-owned, so a release's command-line file cannot set it) and drops
+anything else with a line on stderr, because a time zone never fails a boot.
+Kernarium sends none; Andarium sends the system's live zone at every start
+([`Andarium/README.md`](../Andarium/README.md#runtime)).
+
 Every automation runtime also reads `KERNARIUM_BACKGROUND_JOB_AT_START=1`
 (`0` or unset asks for nothing; anything else is reported and ignored). A guest
 in the keep-running mode (`KERNARIUM_BACKGROUND_MODE=keepRunning`) then gets
@@ -310,6 +319,32 @@ runtime whose host code carries the name of one of them
 (`Andarium/scripts/check-app-store-bundle.py --runtime`). The release and
 automation runtimes read them as they did.
 
+The App Store runtime also carries none of the debugging support the others
+have, so a shipped application cannot capture its screen, inject input, profile
+itself or log its memory: the frame mirror (`gpu/frame_tap.hpp`, with the
+mirror thread of each `MetalPresentation`), console input
+(`console::InputRegistry`; the console output relay stays), the guest sampler
+(`guest_sampler_disabled.cpp` replaces `guest_sampler.cpp`), the footprint log
+(`FootprintReporter`), the virtual Jetsam (`virtual_jetsam_disabled.cpp`), the
+display and video activity logs and the frame statistics reports. Configuring
+it with `UML_GADGET_CACHE_CENSUS` or `UML_GADGET_EXECUTION_HISTOGRAM` fails.
+The runtime API table keeps its layout and version in every runtime
+(`KernariumRuntime.h`): the App Store runtime's `set_frame_sink` and
+`send_console_input` entries answer `-ENOTSUP`. Touch and key input, adb over
+vsock, the statistics and motion channels, `request_stop`, the throttle, trim
+and budget calls, the cache counters and the shader caches are product features
+and stay. The packaging check refuses the symbols and log text of what is left
+out (`DEBUG_SYMBOLS` and `DEBUG_STRINGS` in the script) and keeps the two
+stand-ins' names allowed.
+
+Switches that third-party libraries read from the environment (Mesa's
+`GALLIUM_*`, `ZINK_DEBUG` and `MESA_SHADER_*`, KosmicKrisp's `KK_DEBUG`,
+virglrenderer's `VREND_DEBUG` and `VIRGL_LOG_FILE`, glib's `G_DEBUG` and
+libslirp's `SLIRP_DEBUG`) stay in the shipped libraries, and the check does not
+look for them. Nothing reaches them on an App Store install: iOS fixes the
+launch environment of an installed application, and no debugger can attach to
+it.
+
 ## Devices and display
 
 Kernarium attaches:
@@ -338,7 +373,7 @@ Android's logical density on the kernel command line use that launch geometry.
 The touchscreen's absolute range is fixed at 0 through 32767 on both axes, as
 the VNC touchscreen's is, and Kernarium maps the guest's visible rectangle in
 the view onto it, so touch resolution does not depend on the launch size. The
-Metal shader cache policy is in
+Metal and Mesa shader cache policies are in
 [`graphics.md`](../docs/graphics.md#metal-shader-cache).
 
 The guest view lies within the content the system leaves clear of the window
@@ -476,16 +511,9 @@ reaches it while it is revoked:
   for the guest's console; one made while the guest is quiesced reaches it on
   resume.
 
-The throttle moves the work to the efficiency cores rather than removing
-cores: on an A15 iPad, a KDE guest with six vCPUs running a six-thread load
-for 240 s behind the window drew about a tenth of the estimated power it
-drew unthrottled (about 0.2 W against 2.0 W, with no performance-core time),
-and ran at about a third of its foreground rate. Process CPU time fell only
-about 16%. Over that window iOS showed no reaction: the process kept its
-foreground-focal CPU role, the thermal state stayed nominal, and no
-background CPU limit fired. Taking guest CPUs offline (hot-unplug) would cap
-the core count outright and is the fallback if a hotter device or a longer
-window shows thermal pressure.
+The throttle moves the guest's work to the efficiency cores rather than taking
+cores away; in a 240 s run on an A15 iPad, iOS raised no thermal or
+background-CPU reaction.
 
 The mode `keepRunning` keeps a guest working for a time its owner chose (15
 minutes to 2 hours, 30 by default) without a window. A timer button, offered
@@ -629,6 +657,8 @@ Each script documents its options in `--help` or its header:
   test-support application that plays digital silence on a non-mixable audio
   session so that a run can interrupt Kernarium's audio without UI
   automation (`launch` starts it in the foreground, `terminate --pid` ends it,
-  and `--help` lists its modes); and
+  and `--help` lists its modes); `build` signs with the team of
+  [`GuestHost/Config/Signing.local.xcconfig`](../GuestHost/README.md#signing)
+  or `UML_DEVELOPMENT_TEAM`; and
 - `verify-signed-kernel-carrier.py` checks that a kernel image is safe for the
   signed carrier.

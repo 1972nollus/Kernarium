@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 #
 # Copyright 2026 The Android Open Source Project
 #
@@ -18,6 +19,18 @@
 # makefile removes transports and HALs that Darwin UML cannot provide, while
 # this board owns its static storage and module-free kernel.
 include device/google/cuttlefish/vsoc_arm64_pgagnostic/BoardConfig.mk
+
+# The inherited board names itself cutf, which ro.product.board and so
+# Build.BOARD report. The device's own name replaces it. ro.board.platform and
+# ro.hardware keep their inherited values: init scripts and HAL modules are
+# selected by them.
+TARGET_BOOTLOADER_BOARD_NAME := andarium
+
+# The SoC identity (ro.soc.manufacturer, ro.soc.model) is a property file
+# because a model with a space cannot be a PRODUCT_VENDOR_PROPERTIES word. The
+# build adds it to ODM/etc/build.prop, and lineage_andarium.mk drops the
+# Cuttlefish values from the vendor partition's.
+TARGET_ODM_PROP += device/kernarium/andarium/config/odm.prop
 
 # 32-bit applications run beside the 64-bit ones. The second architecture is
 # ARMv8-A AArch32 built as the softfp armeabi-v7a ABI, with armeabi as the

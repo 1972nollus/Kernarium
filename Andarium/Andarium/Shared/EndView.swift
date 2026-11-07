@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import SwiftUI
 import UIKit
 
@@ -44,20 +46,6 @@ struct EndView: View {
             .padding(.top, 14)
 
             Spacer(minLength: 24)
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "rectangle.stack")
-                    .font(.title3)
-                    .foregroundStyle(.tint)
-                    .frame(width: 28)
-                Text("Swipe up from the bottom edge and pause to see your apps, then swipe Andarium up to close it.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(16)
-            .frame(maxWidth: 380)
-            .glassEffect(.regular, in: .rect(cornerRadius: 22))
-            .padding(.bottom, 12)
         }
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

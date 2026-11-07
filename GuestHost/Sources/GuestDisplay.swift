@@ -133,6 +133,9 @@ final class GuestMetalView: MTKView, UIKeyInput {
     private var guestContentSize: CGSize?
 
     override var canBecomeFirstResponder: Bool { true }
+    // While the guest has the keyboard focus, three fingers are the guest's
+    // touches, not UIKit's undo, redo, copy and paste gestures.
+    override var editingInteractionConfiguration: UIEditingInteractionConfiguration { .none }
     var hasText: Bool { true }
     var keyboardType: UIKeyboardType = .asciiCapable
     var autocorrectionType: UITextAutocorrectionType = .no

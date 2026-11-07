@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //
 // Copyright 2026 The Android Open Source Project
 //
@@ -73,6 +74,17 @@ sh_binary {
     system_ext_specific: true,
     filename_from_src: true,
     init_rc: ["kernarium_reclaim_boot_apps.rc"],
+}
+
+// Applies the host's time zone once boot completes, while the user's automatic
+// time zone is on. It runs `cmd settings` and `cmd alarm`, so it is installed on
+// system_ext for a core domain of its own (kernarium_time_zone).
+sh_binary {
+    name: "kernarium_time_zone_script",
+    src: "kernarium_time_zone.sh",
+    system_ext_specific: true,
+    filename_from_src: true,
+    init_rc: ["kernarium_time_zone.rc"],
 }
 
 cc_binary {

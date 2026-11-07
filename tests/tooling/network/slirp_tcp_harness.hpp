@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * A SLiRP instance driven directly, with a guest the probe writes by hand and
  * a clock the probe advances, so a TCP timer that runs for minutes on a real

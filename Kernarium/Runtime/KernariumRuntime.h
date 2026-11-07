@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 22U
+#define KERNARIUM_RUNTIME_API_VERSION 23U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -68,7 +68,17 @@ enum {
  * -UML_EMULATOR_INVALID_ARGUMENT when it is anything else. The guest's
  * kernel command line, which also carries the release's own and the launch's
  * arguments, holds 4096 bytes; a run whose command line is longer fails
- * with a message that says so. A Linux guest ignores the key. */
+ * with a message that says so. A Linux guest ignores the key.
+ *
+ * An Android guest also takes the host's time zone for this boot:
+ * android_time_zone is its IANA name (for example Asia/Tokyo), 1 through 64
+ * characters of A-Z a-z 0-9 _ + - and / in slash-separated components that
+ * start with a letter or digit, or null for none. The runtime reads it only
+ * from a request whose struct_size covers it, passes a valid name as
+ * androidboot.kernarium.timezone, and drops anything else with a line on
+ * stderr: a time zone never fails a boot. Whether the guest knows the name,
+ * and whether it follows it, is the guest's to decide. A Linux guest ignores
+ * it. */
 typedef struct kernarium_runtime_boot {
     uint32_t struct_size;
     uint32_t width;
@@ -87,6 +97,7 @@ typedef struct kernarium_runtime_boot {
     uint32_t gpu_budget_engine_mib;
     uint32_t gpu_budget_headroom_mib;
     const char* android_adb_public_key;
+    const char* android_time_zone;
 } kernarium_runtime_boot;
 
 /* What a launch's host GPU budget comes to, as the runtime evaluates it for
@@ -170,6 +181,10 @@ typedef void (*kernarium_runtime_console_output_callback)(
 typedef void (*kernarium_runtime_set_console_output_callback_function)(
     kernarium_runtime_console_output_callback callback,
     void* context);
+/* Writes to the guest's console. An App Store runtime (the
+ * kernarium-ios-device-android-app-store preset) has no console input: its
+ * entry stays in the table, so the table's layout and version are the same in
+ * every runtime, and answers -ENOTSUP. */
 typedef int (*kernarium_runtime_send_console_input_function)(
     const void* buffer,
     size_t length);
@@ -202,7 +217,9 @@ typedef void (*kernarium_runtime_frame_sink)(void* context, void* pixel_buffer);
  * A null sink stops the mirror, and returns only once no call to the previous
  * sink is running or will start, so its context may be released; the sink must
  * not call this. Returns 0, or a negative value for a width or rate of zero.
- * The setting applies to the guest's display whenever one exists. */
+ * The setting applies to the guest's display whenever one exists. An App Store
+ * runtime has no mirror: its entry stays in the table and answers -ENOTSUP for
+ * any arguments. */
 typedef int (*kernarium_runtime_set_frame_sink_function)(
     kernarium_runtime_frame_sink sink,
     void* context,

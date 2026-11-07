@@ -53,9 +53,12 @@ Python tooling tests keep the host `$TMPDIR` for `sun_path`.
 
 `repository-environment-portability` is the one tooling test that scans
 tracked source, and it looks for forbidden values rather than expected ones:
-host paths and account names, private addresses, ssh endpoints and Apple
-signing identifiers outside the project's own (read from `project.pbxproj` and
-JSON `project.xcproj` projects, xcconfig files, plists and CMake). It also
+host paths and account names, private addresses, ssh endpoints, a
+`Claude-Session:` trailer line (patch export drops it, and no exception
+allows it) and Apple
+signing identifiers (a development team is never tracked; a bundle identifier
+stays inside the project's own namespace), read from `project.pbxproj` and
+JSON `project.xcproj` projects, xcconfig files, plists and CMake. It also
 scans new unignored files, so a leak fails before it is committed. A site adds
 its private tokens to a local denylist, found at
 `${XDG_CONFIG_HOME:-$HOME/.config}/linux-um-darwin/portability-denylist` or
@@ -65,6 +68,16 @@ reviewed exception goes in
 reasons, and an entry that matches nothing fails.
 `python3 tests/tooling/cmake/check_environment_portability.py --list-rules`
 describes the rules and the denylist format.
+
+`repository-license-headers` enforces the [licensing rule](../LICENSES/README.md)
+by location. It reads the first lines of every tracked or new unignored source
+file or script, skips patch files, and requires an SPDX header whose
+identifier is allowed where the file lives, no deprecated identifier, and the
+texts in `LICENSE` and `LICENSES/` for each identifier in use. A reviewed
+exception goes in `tests/tooling/cmake/license-header-exceptions.tsv`, and an
+entry that matches nothing fails. Its fixtures mutate a header, a text and an
+exception; `python3 tests/tooling/cmake/check_license_headers.py --list-rules`
+describes the locations.
 
 Unit tests create scratch files through `tests/unit/scratch/`, never at a
 host-global path unless that path is the production contract under test, as
@@ -270,51 +283,17 @@ The optional `guest-v4l2-decode` test qualifies the
 the guest architecture and configure an integration preset with
 `UML_V4L2_PROBE_BINARY` pointing to it. The rootfs needs a shell, `ip`,
 `sha256sum` and `timeout`. The test boots a disposable overlay with the probe
-and its fixtures installed as payload files, checks their SHA-256 list, checks
-every advertised profile's pixels, raw layouts including packed BGRA capture
-and 8-bit capture of a 10-bit stream, the rows of every raw format at the
-padded pitch the device states (TRY_FMT and S_FMT against the rule at widths
-that are and are not whole pitches, and the 120 x 90 window streams read row by
-row), imported dma-buf capture, timestamps,
-source-change and EOS events, the display order of H.264 and HEVC B-pictures
-and a seek in both (over open-group streams for HEVC), reads the H.264 and HEVC
-profile and level menus (Constrained High beside High, levels from 1.0 up to
-5.2 and from 1 up to 6.2, the current level the highest), decodes flat portrait
-and square H.264 and HEVC pictures (2304 x 4096, 4096 x 4096, 4320 x 8192) to
-frames of their own size inside a frame range that is a rectangle, and rejects
-kernel faults or failed shutdown. Imported capture covers the queue's own
-buffers handed back and guest memory a client brings, with each buffer's planes
-in separate dma-bufs or in one and their lengths stated as QUERYBUF gave them,
-as the whole dma-buf, or not at all. `guest-v4l2-decode-gpu` runs the same probe
-with the GPU, where capture buffers are host-visible blobs and an imported
-dma-buf takes another path in the driver. A stream that changes its picture size
-twice is decoded the way Android's V4L2 codec handles it, including a drain asked
-for while the last change is still on its way: every picture of a size returns,
-then the LAST buffer, before the source change is visible. A client that queues
-the whole stream and drains straight away, with both changes inside its drain,
-gets every picture of all three sizes before the one LAST buffer that ends the
-drain. Every profile is also
-started in v4l2_codec2's order, with a provisional 64 x 64 capture format (and
-queued buffers for it) before the size is known, the parameter sets and the
-picture as two coded buffers, and the capture format chosen only after the
-source change: the buffer that declared the size is held until then, nothing
-lands in the provisional buffers, and the picture arrives whole before the LAST
-buffer. The coded queue's buffer size is read back for every coded format as
-a client sees it (S_FMT and G_FMT, then the plane length REQBUFS allocates): the
-tier of each picture size stated, and for a size beyond the format's range, as a
-client that states none passes it, the tier of the largest picture it takes.
-The large buffers are also created with the guest's free memory in
-blocks of 32 KiB, none larger, the state a guest that has run for days is in:
-a 124 MiB coded buffer, the most the device attaches, is created, exported and
-imported again, and the 4096 x 4096 and 4320 x 8192 flat pictures are decoded
-into mapped buffers. The scatter lists of these buffers are hundreds of
-kilobytes, so a driver that asks the kernel for a list in one block fails them
-with `page allocation failure: order:4`, as it did a 4K HEVC decode on a
-1536 MiB Android guest. Android uses its own 4 KiB guest and deployment workflow.
-The fixed x86_64 userspace product registers no CTest suites, so the x86_64
-slice exercises its own V4L2 path by running `run_v4l2_decode.py`, with `--gpu`
-for the GPU case, directly with an x86-64 probe and an x86-64 rootfs, the way
-its boot check below is run.
+and its fixtures installed as payload files, checks their SHA-256 list, and runs
+the probe, whose header lists what it checks: the profiles' pixels and raw
+layouts, imported dma-buf capture, events, display order and seeks, the profile
+and level menus, picture sizes up to 4320 x 8192, size changes and drains as
+Android's V4L2 codec drives them, and large buffers made from fragmented guest
+memory. A kernel fault or a failed shutdown fails it. `guest-v4l2-decode-gpu`
+runs the same probe with the GPU. Android uses its own 4 KiB guest and
+deployment workflow. The fixed x86_64 userspace product registers no CTest
+suites, so the x86_64 slice exercises its own V4L2 path by running
+`run_v4l2_decode.py`, with `--gpu` for the GPU case, directly with an x86-64
+probe and an x86-64 rootfs, the way its boot check below is run.
 
 `guest-video-error-answer` needs no probe or rootfs. Its arm64 guest has a
 decoder whose device, the production one behind a test-only shim, answers the
@@ -327,28 +306,11 @@ same way. Build `tests/integration/video/v4l2_encode_probe.cpp` as a static
 C++20 executable for the guest architecture and configure
 `UML_V4L2_ENCODE_PROBE_BINARY`. The guest boots with `--video` and
 `--video-encoder`, and the probe finds the encoder and the decoder by their
-card names. For every advertised coded format, profile and raw layout it
-encodes generated pictures from mapped and imported dma-buf input, and checks
-the key-frame flags, header buffers, timestamps, forced key frames, controls
-refused while streaming, crop, drain with the last flag and end-of-stream
-event, resumption, a restart after STREAMOFF without a drain, and a resolution
-change. It also holds every control and raw format the guest registers
-against the host table, so a control the driver dropped or a format listed
-under another fourcc fails; encodes packed BGRA and RGBA pictures, whose red
-and blue blocks show the channel order; encodes every raw layout at a width
-that is not a whole pitch (342 x 120), where the rows lie at the padded pitch
-that TRY_FMT and S_FMT both state; and checks the parameter sets that
-`PREPEND_SPSPPS_TO_IDR` adds and the layers that hierarchical coding makes.
-Colorimetry stated on the raw queue, including `V4L2_COLORSPACE_RAW` with a
-transfer function and range, must read back as stated, survive a repeated
-`S_FMT` and `S_PARM`, and appear in the H.264 stream's VUI; BT.2020 with PQ
-and with HLG (`V4L2_XFER_FUNC_HLG`, the kernel line's local value 8), stated on
-a P010 raw queue, must read back and show as transfer characteristics 16 and 18
-in the HEVC Main 10 stream's VUI; the B-frame control
-must run from zero in steps of one and the level menus default to their lowest
-item, as the host describes them. Each stream is decoded back through the guest decoder and compared with the
-pictures by luma PSNR. The x86_64 slice runs `run_v4l2_encode.py`
-directly, like the decoder.
+card names. It encodes generated pictures in every advertised coded format,
+profile and raw layout, decodes each stream back through the guest decoder and
+compares it with the pictures by luma PSNR; the probe's header lists the rest of
+what it checks. The x86_64 slice runs `run_v4l2_encode.py` directly, like the
+decoder.
 
 The optional `guest-v4l2-mmap-capture` test covers what that one cannot: with a
 GPU the decoder's capture buffers are host-visible Virtio-GPU blobs, and an
@@ -553,6 +515,9 @@ grammar, which accepts a loopback address only, and the listeners that attach
 each accepted connection to a guest port. `kernarium-adb-channel` covers the
 kernel arguments that carry an Android guest's adb key and the request that adbd
 not listen on TCP, and the limit on the whole kernel command line.
+`kernarium-guest-time-zone` covers the time zone names the runtime lets onto
+that command line (the IANA names, never a space, a quotation mark or an empty
+component).
 
 `guest-vsock-stream` (integration) runs the device against a Linux guest's
 driver through the launcher's loopback forward, with a Python `AF_VSOCK` server
@@ -735,6 +700,11 @@ runtime links them, as `HostBattery.xcframework` and
 `KernariumTests` links them, so the test process reaches each without loading a
 second runtime.
 
+Both projects sign with the team in the ignored
+`GuestHost/Config/Signing.local.xcconfig` ([setup](../GuestHost/README.md#signing)).
+Without it a Simulator build works unsigned and a device build stops asking for
+a development team.
+
 The Simulator renders with llvmpipe, which runs one rasterizer thread per host
 core; `LP_NUM_THREADS` caps them for a launch (`SIMCTL_CHILD_LP_NUM_THREADS=2`
 with `xcrun simctl launch`) on a loaded host, at the cost of frame rate.
@@ -843,100 +813,80 @@ also rejects supplied dSYMs whose UUIDs differ from their frameworks.
 
 `andarium-core` (unit, macOS hosts) runs the tests of the Swift package
 `Andarium/AndariumCore`, the application's model and its adb client, with
-`swift test`: the adb client runs against a scripted adbd on a socket pair
-(authorization off, on and rejected, streams, shell v2, sync, a bug report,
-timeouts on a clock the test moves, a cancel from another thread, the end of
-a stream announced right after its last bytes), its key
-encoder against moduli with the text `adb keygen` wrote for them, and the
-listener of ADB over Network on loopback against a fake guest (bytes both
-ways, backpressure each way, half close, a failed stream, the limit of
-computers, stopping, a port in use).
-The package also tests orientation ownership for phones, full-screen and
-windowed iPads, loss of a scene lock, coalesced guest commands, partial failures
-and stale completions after a guest restart. `SessionOrientationHostingTests`
-checks the real scene root's session lock and the built bundle's portrait-only
-iPhone declaration. The opt-in `RotationOverVsockTests`
-(`TEST_RUNNER_ANDARIUM_ROTATION_TESTS=1`, selecting only that suite) boots Android
-and verifies that the host override preserves and restores locked and unset
-guest rotation preferences. A hands-on iPad check additionally covers rotation
-with Control Center's lock off and transitions between a full-screen scene and
-a window (`TEST_RUNNER_ANDARIUM_ROTATION_VISUAL=1`, selecting
-`RotationOverVsockTests`); pure policy tests do not establish the visible result.
-`andarium-motion-protocol` (unit) decodes independent motion wire fixtures
-and rejects truncated records, unknown sensor types and non-finite values.
-The core package also checks SI conversion, the saved choice, socket delivery,
-stop during connection and stale callbacks. Hosted
-`AndroidOperationTests` checks that the motion toggle persists and reaches
-the runtime driver. Physical sensor delivery requires a sensor-capable iOS
-device and a guest image carrying the motion sub-HAL; Simulator and Mac tests
-do not establish that path. The opt-in `MotionOverVsockTests` drives the real
-model and runtime on the iPad and reads both sensors through Android's public
-SensorManager API in a foreground probe. Its automated mode checks sustained
-delivery and off/on/off; its separate `ANDARIUM_MOTION_INTERACTIVE=1` mode checks
-physical tilt and rotation ([probe and invocation](../tests/integration/android/motion/README.md)).
+`swift test`; the test files say what each suite covers. `andarium-motion-protocol`
+(unit) decodes independent motion wire fixtures and rejects truncated records,
+unknown sensor types and non-finite values, and checks the guest's control frame
+(the sensors in use and their periods) against independent bytes.
 `andarium-stage-system-image` (tooling) covers the system-image staging script
-and the option checks of `package-ios-frameworks.sh --runtimes android`. The
-application itself builds with Xcode: `AndariumPreview` is its Simulator build
-with mock data, and `Andarium` is the device application
+and the option checks of `package-ios-frameworks.sh --runtimes android`.
+`andarium-capture-screens` (tooling) checks that the screenshot script's
+`--out` directory takes one run at a time, with a second run refused at once
+and the lock released however a run ends, without a Simulator.
+
+The application itself builds with Xcode: `AndariumPreview` is its Simulator
+build with mock data, and `Andarium` is the device application
 ([`Andarium/README.md`](../Andarium/README.md#targets)). `AndariumTests` is
 hosted in `Andarium` and runs on an iPad, in the iOS Simulator and, as an iPad
-app, on an Apple silicon Mac (`xcodebuild test -scheme Andarium`); its
-`MultitouchTests` cover independent finger paths and slots, cancellation,
-viewport crossings, the ten-contact limit and releasing all contacts. The host
-`virtio-input-protocol` test covers the advertised multitouch axes, tracking-ID
-lifetimes and wraparound, and legacy primary-finger coordinates. Its
-`UpdateFlowTests` drive
-the update, interrupted-update (Start retries, Restore, Erase) and blocked-start flows
-against a stub runtime, including a clean shutdown returning Home with a fresh
-session and a failed run refusing another Start. `ShutdownFlowTests` runs the
-production views and runtime with `TEST_RUNNER_ANDARIUM_SHUTDOWN_TESTS=1` and
-`TEST_RUNNER_ANDARIUM_GUEST_INSTANCE=shutdown-flow`, without `ANDARIUM_START`:
-two clean power-offs each return Home, three boots reuse the app process, and a
-host-stopped third run stays failed until relaunch. It deletes only that isolated
-test guest.
+app, on an Apple silicon Mac (`xcodebuild test -scheme Andarium`). The hosted
+tests share the application's one key window; a test that replaces its root
+view controller or connects a window of its own takes it with
+`HostWindow.take()` (`Andarium/AndariumTests/HostWindow.swift`), and no test
+opens the system's Settings or any other app, because the scene applies an
+orientation lock only while the application is active. Only a device shows how
+the system answers the edge swipes `SessionOrientationHostingTests` defers
+([Edge gestures](#edge-gestures-device-only)).
+
+The opt-in suites each need a switch, and the test's header says what it checks:
+
+- `RotationOverVsockTests` boots Android with
+  `TEST_RUNNER_ANDARIUM_ROTATION_TESTS=1`, selecting only that suite.
+  `TEST_RUNNER_ANDARIUM_ROTATION_VISUAL=1` adds a hands-on iPad check of
+  rotation with Control Center's lock off and of transitions between a
+  full-screen scene and a window; pure policy tests do not establish the
+  visible result.
+- `MotionCompatibilityTests` (`TEST_RUNNER_ANDARIUM_MOTION_COMPAT=1`, an isolated
+  guest instance, on a Mac or an iPad) drives the motion session with a
+  synthetic device against the guest's own sensor service in a real boot:
+  `TEST_RUNNER_ANDARIUM_MOTION_EXPECT=legacy` (the default) for an image whose
+  service sends no control frame, `ondemand` for one that does.
+  `TEST_RUNNER_ANDARIUM_MOTION_DIAG=1` also prints which of the guest's own
+  users keep a sensor active.
+- `MotionOverVsockTests` drives the real model and runtime on the iPad and reads
+  both sensors through Android's public SensorManager API in a foreground probe;
+  its separate `ANDARIUM_MOTION_INTERACTIVE=1` mode checks physical tilt and
+  rotation ([probe and invocation](../tests/integration/android/motion/README.md)).
+  Physical sensor delivery requires a sensor-capable iOS device and a guest
+  image carrying the motion sub-HAL; Simulator and Mac tests do not establish
+  that path.
+- `ShutdownFlowTests` runs the production views and runtime with
+  `TEST_RUNNER_ANDARIUM_SHUTDOWN_TESTS=1` and
+  `TEST_RUNNER_ANDARIUM_GUEST_INSTANCE=shutdown-flow`, without `ANDARIUM_START`;
+  `TEST_RUNNER_ANDARIUM_END_HOLD_SECONDS` keeps the third run's End screen up for
+  that long, for a look at it.
+- `RetinaMemoryTests` compares repeated system-app launches at Retina and point
+  resolution; see the [WebGL workload](../tests/integration/android/webgl/README.md)
+  for its optional Aquarium workload, invocation and snapshot collection.
 
 Run `ShutdownFlowTests/cleanShutdownMemorySnapshots()` alone with
 `TEST_RUNNER_ANDARIUM_MEMORY_SNAPSHOTS=1` and the same isolated guest setting,
-without `ANDARIUM_START`, for five clean boot/power-off cycles. It saves allocation
-totals, thread names and VM-region metadata (no memory contents) to the app's
-`tmp/ShutdownMemory/` before boot, while running, and immediately and ten seconds
-after each return Home. Each settled snapshot requires zero wired memory and
-zero dirty or swapped pages in the guest-domain and scratch heaps; the retired
-guest display must also deallocate. The initial thirty-second pause allows
-Instruments Allocations and VM Tracker to attach. Collect the snapshots from the
-app container afterward. Compare live allocations across cycles: the runtime's
-address reservations, signed code, framework caches and malloc's freed capacity
-may remain in the process. `RuntimeDisplayLifetimeTests` also checks that a late
-layout cannot retain a retired display while Home is showing.
+without `ANDARIUM_START`, for five clean boot/power-off cycles. It saves
+allocation totals, thread names and VM-region metadata (no memory contents) to
+the app's `tmp/ShutdownMemory/`; collect them from the app container afterward.
+Attach Instruments Allocations and VM Tracker during its initial pause, and
+compare live allocations across cycles: the runtime's address reservations,
+signed code, framework caches and malloc's freed capacity may remain in the
+process.
 
-The opt-in `RetinaMemoryTests` compares repeated system-app launches at Retina
-and point resolution at the guest memory and vCPU count the launch states,
-which every snapshot records. Its optional full-resolution
-WebGL Aquarium workload records actual renderer, frames and FPS alongside
-process, guest and GPU memory. See the [WebGL workload](../tests/integration/android/webgl/README.md)
-for invocation and snapshot collection.
-
-Its `AndroidOperationTests` and
-`AdbOverNetworkModelTests` play Create Bug Report, Install App and ADB over
-Network the same way. `AdbOverVsockTests` drive a real Android guest with the
-application's own client and authorization on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1`
-with `TEST_RUNNER_ANDARIUM_START=normal`): a shell command, the multitouch
-features Android advertises to applications, two runtime touch
-contacts reaching Android's input reader through movement and independent
-release, the USB debugging setting and the channel with it on and off, a
-computer's connection through the
-bridge, a bug report (a zip above 1 MB, and its time), a cancel, a system APK
-pulled from the image and installed as an update (and its time), the image's
-key rule (the application's key accepted whatever the debugging setting; a
-foreign key refused with no prompt and nothing queued while debugging is off,
-and prompting while it is on), and the key after Erase Guest. The tests read the
-key the application made for the boot, again on every attempt until adbd accepts
-it, and never make one: a key made before an `ANDARIUM_ERASE=1` launch's erase
-deletes it would be one the guest was not given. `AdbOverVsockTests/aPromptWhoseDialogDiedIsRaisedAgain()` kills
-SystemUI while the dialog is up and waits for the dialog to come back without a new offer: stock Android leaves
-adbd's prompt pending, so it needs an image whose framework starts the dialog again and runs only with
-`TEST_RUNNER_ANDARIUM_ADB_REARM_TESTS=1`. `aPromptWhoseDialogIsUpIsNotRaisedTwice()` holds a dialog
-up for 50 s and requires that the framework's look leaves it alone (one activity record throughout).
+`AndroidOperationTests` and `AdbOverNetworkModelTests` play Create Bug Report,
+Install APK and ADB over Network against a stub runtime. `AdbOverVsockTests`
+drive a real Android guest with the application's own client and authorization
+on (`TEST_RUNNER_ANDARIUM_ADB_TESTS=1` with
+`TEST_RUNNER_ANDARIUM_START=normal`); two of them need an image whose framework
+starts the debugging prompt again and run only with
+`TEST_RUNNER_ANDARIUM_ADB_REARM_TESTS=1`.
+`theGuestIsGivenTheHostsTimeZone()` also waits for the guest to apply the zone
+with `TEST_RUNNER_ANDARIUM_TIME_ZONE_APPLIED=1`, for an image with the time zone
+script.
 
 `AdbOverVsockTests/androidReportsExactStorageSizes()` is a standalone storage
 run with `TEST_RUNNER_ANDARIUM_STORAGE_TESTS=1` in addition to the ADB and normal
@@ -944,32 +894,18 @@ start settings. Build `AndariumStorageTests`
 ([`tests/integration/android/storage`](../tests/integration/android/storage/README.md))
 as an explicit Soong module, which signs it with the AOSP test key (never a release
 key), and copy it into the application's `tmp/AndariumStorageTests.apk`
-before running only that method. It installs the APK through the application's
-client, sets the guest's `hidden_api_policy` to 1 for the run (the test calls one
-hidden API) and restores it, runs `StorageAccountingTest#exactFilesystemBytes`,
-which checks both primary-storage helpers and `StorageStatsManager` against the
-mounted filesystem sizes, removes the APK and powers Android off cleanly.
+before running only that method.
 With the same ADB, storage and normal-start settings,
-`AdbOverVsockTests/storageSettingsShowNonnegativeUsage()` opens Android's internal
-Storage settings, waits for the summary, checks for negative displayed values
-while scrolling through the category rows, saves PNG screenshots and UI hierarchies
-to the application's `tmp/StorageSettings/`, and powers Android off. Run this method
-alone and collect that directory from the app container afterward.
+`AdbOverVsockTests/storageSettingsShowNonnegativeUsage()` saves PNG screenshots
+and UI hierarchies of Android's Storage settings to the application's
+`tmp/StorageSettings/`. Run this method alone and collect that directory from
+the app container afterward.
 
 With `TEST_RUNNER_ANDARIUM_ADB_NET_HOLD_SECONDS` one more test holds the bridge up for
 a real adb on the Mac, in a Mac run or in an iPad run (`platform=iOS,id=<udid>`
 with `test-without-building`): it prints the address, and `tmp/adbkey` in the
 application's container is the key to give the Mac's adb (`devicectl device copy
-from` on an iPad). Give that adb its own server port and key home.
-`StatisticsLoopTests` drive the statistics loop against a scripted runtime with
-the pause between readings held by the test: no reading without a viewer, the
-quarter-second then one-second cadence with the memory after every other
-reading, the loop stopping with the foreground, with a guest that is not
-running and with its last viewer, a memory the kernel does not give keeping the
-last figure, and a new boot starting the figures over. `ConsoleReport`, the
-harness's console lines, is in the application and tested there
-(`ConsoleReportTests`); `StatsMeter` and `StatsSampling` are in
-`andarium-core`. A Mac launch of the guest
+from` on an iPad). Give that adb its own server port and key home. A Mac launch of the guest
 itself uses the same command with `-only-testing:AndariumTests/AutomationHoldTests`,
 `TEST_RUNNER_ANDARIUM_START` and `TEST_RUNNER_ANDARIUM_HOLD_SECONDS`
 ([`Andarium/README.md`](../Andarium/README.md#automation)). macOS asks once, per
@@ -979,35 +915,30 @@ connection") until a person answers; build to the internal disk instead.
 
 `ios-privacy-manifests` (tooling) covers `scripts/check-privacy-manifests.py`,
 which fails when a built application or framework uses a required-reason API
-(found in its undefined symbols and Objective-C selectors) that its
-`PrivacyInfo.xcprivacy` does not declare, or declares tracking, collected data
-or a reason code Apple does not define, or has an Info.plist with an empty
-version or no `MinimumOSVersion`. `package-ios-frameworks.sh` runs it on the
-device slice of every framework it packages (the manifests are
-`Kernarium/PrivacyManifests`), and it runs on any built bundle:
-`python3 scripts/check-privacy-manifests.py Andarium.app`. Its fixtures are
-small libraries compiled with the iOS SDK.
+that its `PrivacyInfo.xcprivacy` does not declare, declares tracking or collected
+data, or has an Info.plist with an empty version or no `MinimumOSVersion`.
+`package-ios-frameworks.sh` runs it on the device slice of every framework it
+packages (the manifests are `Kernarium/PrivacyManifests`), and it runs on any
+built bundle: `python3 scripts/check-privacy-manifests.py Andarium.app`. Its
+fixtures are small libraries compiled with the iOS SDK.
 
 `andarium-app-store-bundle` (tooling) covers
 `Andarium/scripts/check-app-store-bundle.py`, the last build phase of the
 AppStore configuration (`Andarium/README.md#configurations`) and the check of
-`package-ios-frameworks.sh --app-store`: Info.plist keys,
-no environment knob or harness console line in host code, no trace
-of the build host in an executable (the linker's debug map, which `strip -S`
-removes, and a path under `/Users/<name>/`), and the privacy check. Its
-fixtures are compiled with the iOS SDK too. The configuration itself is
-validated by building it unsigned (`CODE_SIGNING_ALLOWED=NO`).
+`package-ios-frameworks.sh --app-store`; the script's header lists what it
+requires of the bundle. Its fixtures are compiled with the iOS SDK too. The
+configuration itself is validated by building it unsigned
+(`CODE_SIGNING_ALLOWED=NO`).
 
-`andarium-acknowledgements` (tooling) checks that the Acknowledgements
-resource, `Andarium/Andarium/Shared/Acknowledgements.json`, names a project,
-its copyright holders, its license and a license text for every framework the
-Andarium project embeds and every component of the iOS device prefixes'
-contracts (`dependencies/platforms`), on the checked-in resource and on copies
-with one entry removed. The resource is generated by
-`Andarium/scripts/acknowledgements.py` from the verified dependency sources and
-the kernel's license files; `--verify` checks it against them, which needs
-those sources, and the test does not. Hosted `AcknowledgementsTests` decodes the
-bundled resource.
+`andarium-acknowledgements` (tooling) checks that the Acknowledgements resource,
+`Andarium/Andarium/Shared/Acknowledgements.json`, names a project, its copyright
+holders, its license and a license text for every framework the Andarium project
+embeds and every component of the iOS device prefixes' contracts
+(`dependencies/platforms`), on the checked-in resource and on copies with one
+entry removed. The resource is generated by `Andarium/scripts/acknowledgements.py`
+from the verified dependency sources and the kernel's license files; `--verify`
+checks it against them, which needs those sources, and the test does not. Hosted
+`AcknowledgementsTests` decodes the bundled resource.
 
 ### UI automation on a device
 
@@ -1017,6 +948,24 @@ device with a passcode needs the owner's approval at the device. Its commands,
 approval rules, and failure modes are in
 `Kernarium/scripts/ipad-automation.py --help`. Keep all automation code in the
 test targets.
+
+### Edge gestures (device only)
+
+The Simulator shows which edges a run defers: `AndariumPreview -screen session`
+with edge swipes within 4 pt of the screen edge shows the deferral tab on a
+first swipe from the top and the system's gesture on the second. It does not
+show what a device does, which needs an iPad lease, the automation host and a
+guest with Android's 3-button navigation and Developer options > Pointer
+location on:
+
+- whether the host's synthesized edge swipes start system gestures at all
+  (down from the top right, up from the bottom centre, on Andarium's Home);
+- for each edge in a run, against a build without the deferral, what iOS does
+  (tab, Control Center, Notification Center, Home) and whether Android's trace
+  is whole or cut short;
+- the bottom edge with the home indicator hidden, as a run has it, and with it
+  visible. The Simulator honours the bottom edge only with the indicator
+  visible.
 
 ### Window layout (device only)
 
@@ -1219,66 +1168,40 @@ not exhaustive variant proof.
 [`a64-instruction-coverage.md`](a64-instruction-coverage.md) owns the
 inventory tables and that completeness boundary.
 
-The `arm64-sme-native` records hold SME results observed on the M4 at its
-streaming vector length, 64 bytes. They run for each engine whose
-`sme_support` is at least `complete` where the virtual CPU implements SME
-at that length, which needs an SME host and the guest-SME policy, on by
-default, and a
-case that needs SME2 runs only for an engine at `sme2`. Elsewhere they are
-skipped, and the `arm64-absent-sme` record pins every SME profile encoding
-UNDEFINED on every host. The
-`arm64-instruction-corpus-sme-native` tooling test re-derives their cases from
-their generator, and `arm64-sme-native-oracle` drives the native oracle with
-base A64 cases on any arm64 Mac. Regenerating their outcomes needs an SME host;
-the corpus README describes it.
+The corpus README describes the special records: the [native
+SME](../tests/unit/arm64/corpus/README.md#native-sme-cases), [absent-feature](../tests/unit/arm64/corpus/README.md#absent-feature-cases),
+[SM = 0 family](../tests/unit/arm64/corpus/README.md#sm--0-family-cases),
+[top-byte-ignore](../tests/unit/arm64/corpus/README.md#top-byte-ignore-memory-cases)
+and [native floating-point trap](../tests/unit/arm64/corpus/README.md#native-floating-point-trap-cases)
+cases. These tests gate them:
 
-The virtual CPU implements no SVE outside streaming mode, so no corpus case
-holds a vector length or non-streaming SVE state. The `arm64-absent-sve`
-records pin every SVE encoding that the removed profile executed UNDEFINED
-outside the SM = 0 family below, in both engines on every host.
-
-The SM = 0 family is the one set of SVE words that a virtual CPU with SME and
-without SVE executes outside streaming mode, at a vector length of 16 bytes: a
-deliberate departure from the architecture that [CPU execution and
-scheduling](architecture.md#cpu-execution-and-scheduling) defines. No host
-observes its results, because an M4 traps those words, so the `arm64-sm0-vl`
-record holds the project's own, written from the pseudocode, and
-`arm64-instruction-corpus-sm0-vl` re-derives it. The `arm64-sme-native`
-records hold no family word at SM = 0, and
-`arm64-instruction-corpus-sm0-vl-profile` runs the `arm64-sm0-vl`,
-`arm64-absent-sve` and `arm64-absent-sme` records for a virtual CPU with the
-SME profile assumed on any host. The unit tests `arm64-sm0-vector-length`,
-`arm64-gadget-sme`, `arm64-jit-sme-control` and `arm64-jit-sme-codegen` check
-the family against a model of the pseudocode and run it in each engine.
-
-Top-byte ignore (TBI), which every arm64 guest runs with unless the host
-passes `--guest-no-top-byte-ignore`, ignores the top byte of every data
-address, SP-based or not. The `arm64-tbi-memory` record
-holds the atomic, compare-and-swap, ordered, RCpc and exclusive forms reaching
-memory through a pointer tagged in its top byte, with the virtual CPU's
-top-byte ignore on, and the controls with it off. Its expectations come from
-the architecture's pseudocode, it needs no host feature, and
-`arm64-instruction-corpus-tbi-memory` re-derives it. The `arm64-tlb` unit test
-pins that an entry filled through any tag goes with its page, and the
-`guest_tagged_*_loop.S` probes time the form and the aliasing a tag could
-cause.
-
-The `arm64-tbi-equivalence` records rerun existing memory cases (general,
-SIMD&FP, pair, structure, SVE and SME forms) with a tagged base register and
-expect the source's result, add the tag-in-index, carry and SP-base forms, and
-pin that a tagged pointer faults at itself with TBI off;
-`arm64-instruction-corpus-tbi-equivalence` re-derives them, and
-`arm64-jit-top-byte-ignore` runs the JIT's strip across the forms. The SME
-cases need an SME host.
-
-The `arm64-floating-trap-native` records, and the outcomes of the
-register-only `arm64-floating-trap-scalar`, `-vector` and `-control` cases,
-were observed on the M1, which traps floating-point exceptions natively; any
-arm64 Mac regenerates them with the same oracle. The `afp` and `bf16` records
-need FEAT_AFP and FEAT_BF16 and were observed on the M4. The
-`arm64-instruction-corpus-floating-trap-native` tooling test re-derives their
-cases and holds every trap to one cause, and one at a program's entry to no
-state change.
+- `arm64-instruction-corpus-sme-native` re-derives the `arm64-sme-native`
+  cases from their generator, and `arm64-sme-native-oracle` drives the native
+  oracle with base A64 cases on any arm64 Mac. The records run only for an
+  engine and host that implement SME at their vector length, which needs an SME
+  host and the guest-SME policy, on by default; elsewhere they are skipped, and
+  `arm64-absent-sme` pins every SME profile encoding UNDEFINED on every host.
+  Regenerating their outcomes needs an SME host.
+- `arm64-absent-sve` pins every SVE encoding outside the SM = 0 family
+  UNDEFINED, in both engines on every host; the virtual CPU has no SVE outside
+  streaming mode, so no corpus case holds a vector length or non-streaming SVE
+  state.
+- `arm64-instruction-corpus-sm0-vl` re-derives the `arm64-sm0-vl` record, and
+  `arm64-instruction-corpus-sm0-vl-profile` runs it with `arm64-absent-sve` and
+  `arm64-absent-sme` for a virtual CPU with the SME profile assumed on any host.
+  The unit tests `arm64-sm0-vector-length`, `arm64-gadget-sme`,
+  `arm64-jit-sme-control` and `arm64-jit-sme-codegen` check the family against
+  a model of the pseudocode and run it in each engine.
+- `arm64-instruction-corpus-tbi-memory` and
+  `arm64-instruction-corpus-tbi-equivalence` re-derive the `arm64-tbi-memory`
+  and `arm64-tbi-equivalence` records, and `arm64-jit-top-byte-ignore` runs the
+  JIT's strip across the forms; the SME cases among them need an SME host. The
+  `arm64-tlb` unit test pins that an entry filled through any tag goes with its
+  page, and the `guest_tagged_*_loop.S` probes time the form.
+- `arm64-instruction-corpus-floating-trap-native` re-derives the
+  `arm64-floating-trap-native` cases and holds every trap to one cause, and one
+  at a program's entry to no state change. Any arm64 Mac regenerates the
+  records; those that need FEAT_AFP or FEAT_BF16 need a host with them.
 
 The `arm64-instruction-corpus-invalid-encoding` tooling test requires every
 illegal-instruction case that the decode partitions, the allocation table, and
@@ -1485,7 +1408,9 @@ suspend blocker with the adb host-connected property it follows, the adb daemon'
 TCP-policy launch properties (read from its APEX payload, with adbd's right to read their labels), the network
 setup tool with the ARP policy init sets before it, its library, label and domain
 transition, the script that saves the virtual Wi-Fi network once, after boot and
-without touching the user's Wi-Fi switch, with its core domain, its binder transfer to the Wi-Fi service's process and the call back, and its marker, the Wi-Fi
+without touching the user's Wi-Fi switch, with its core domain, its binder transfer to the Wi-Fi service's process and the call back, and its marker, the script that
+applies the host's time zone after boot (its domain, its marker, and that it writes no setting and not the zone property;
+`lineage24-builder-lane` runs it against stub tools for a new guest, a followed change, a zone the user chose, the setting off, an unknown name and bad names), the Wi-Fi
 HAL and supplicant with their manifest fragments and services, the Wi-Fi feature
 declaration and the absent Ethernet, Aware, RTT, Direct and Passpoint ones, the built-in macvlan, cfg80211 and virt_wifi
 options of the packaged kernel configuration, the absent wificond, the ClearKey HAL's access to the memfd files of applications, the
@@ -1494,7 +1419,10 @@ discrete app-op list that keeps AOSP's default ops, the 1024 pixel tablet
 default wallpaper in the framework overlay with the checks of the overlay's copy, the example thermal HAL
 with its manifest fragment and service, the default CAS HAL with its ClearKey
 plugin, the vendor `build.prop` without the unreliable-present-fence property
-and with `ro.incremental.enable=1`, the software decoders' 3840x2160 limits, the
+and with `ro.incremental.enable=1`, the board named `andarium`, the SoC pair in
+`ODM/etc/build.prop` (the same name the host gives the virtual CPU, which
+`lineage24-builder-lane` requires) and no `ro.soc.*` in the vendor's, the
+software decoders' 3840x2160 limits, the
 hardware video encoder service, a codec list of its two encoders and two
 decoders, their properties and no other enabled decoder, the video nodes' group,
 the service's seccomp calls and its label), and `lineage24-builder-lane` the
@@ -1607,14 +1535,28 @@ a blank instance:
   `UML_ANDROID_OOBE_RELEASE` names the release and the Android macOS executable
   is built) boots two fresh instances. On the first it checks that the guest
   starts unprovisioned in LineageOS Setup Wizard, which HOME does not leave,
-  completes the wizard through its own pages and checks the end state: both
-  settings 1, the wizard's HOME activity and flow manager disabled, and HOME
-  reaching the launcher. The second is started with `boot_android.py
-  --provision`, the harness path of `tools/android_provision.py`, and must end
-  with both settings 1 and HOME on the launcher, the wizard package disabled
-  for user 0 (the shell may not disable its components), and nothing left for
-  the helper to do. Measurements on an erased guest use that helper, so they do
-  not land in the wizard.
+  and completes the wizard through the pages the product shows, exactly
+  Welcome, Language, Date and time, Theme and Finish in that order (a hidden
+  page or another order fails; the flow is the contract of release r17 and
+  later). It then checks the end state: both settings 1, the wizard's HOME
+  activity and flow manager disabled, HOME reaching the launcher, and the
+  defaults the shortened flow leaves to the platform: three-button navigation
+  (`navigation_mode` 0, the gestural overlay off, both mode overlays present),
+  no screen lock, location on with the settings it had before the wizard, Wi-Fi
+  connected to VirtWifi, and no status bar disable record held by the wizard.
+  The second is started with `boot_android.py --provision`, the harness path of
+  `tools/android_provision.py`, and must end with both settings 1 and HOME on
+  the launcher, the wizard package disabled for user 0 (the shell may not
+  disable its components), no wizard process and no status bar record (the
+  helper stops the process that holds it), the same defaults, and nothing left
+  for the helper to do. On both guests the launcher's data model holds exactly
+  the six applications of the default layout on the first page, none in the
+  dock, and the log shows no item dropped while the launcher read its layout.
+  The runner raises the guest's log buffers to 64 MiB (`logcat -G`, read back)
+  the first time adb answers, before the wizard runs, so the launcher's layout
+  load line cannot rotate out; a log without that line fails the run.
+  Measurements on an erased guest use that helper, so they do not land in the
+  wizard.
 - `android-adb-debugging` (integration, registered only when
   `UML_ANDROID_ADB_DEBUGGING_RELEASE` names the release and the Android macOS
   executable is built) boots a blank instance and checks the adb topics of the
@@ -1776,6 +1718,10 @@ campaign is not an all-`Pass`, all-features-supported, or Khronos conformance
 claim. The campaign runner's `--help` gives the fixed plan, the input
 generations, and the evidence layout that `--verify-only` reparses without
 launching a guest.
+
+Budget campaign concurrency from host physical footprint and the
+`IOAccelerator (graphics)` row of `vmmap -summary`, rather than process RSS,
+which omits swapped-out allocations.
 
 ### OpenGL ES3 FBO state-query waiver
 

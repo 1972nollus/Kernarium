@@ -24,6 +24,11 @@ author from each patch and a rebase keeps it, so a replay's committer never
 reaches a patch file. Export therefore refuses a topic whose author is a
 placeholder or one Git invented from the account and host names, and leaves
 fixing it to the person who owns the topic.
+
+A topic message may carry a ``Claude-Session:`` trailer, a link to a private
+coding session that describes no change. Export drops that line from the
+patch it writes, so a replay that still has it cannot bring it back; the
+topic's tree, and so the series' identity, do not depend on a message.
 """
 
 from __future__ import annotations
@@ -42,6 +47,8 @@ sys.dont_write_bytecode = True
 SERIES_FILE = "series.tsv"
 DEFAULT_LICENSE = "GPL-2.0-or-later"
 ZERO_FROM = b"From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001\n"
+# A trailer line that links a private coding session; export leaves it out.
+SESSION_TRAILER = b"Claude-Session:"
 PATCH_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*\.patch$")
 OBJECT_ID = re.compile(r"^[0-9a-f]{40}$")
 FILENAME_MAX_LENGTH = 80
@@ -332,6 +339,28 @@ def _existing_license(directory: Path) -> str | None:
     return None
 
 
+def drop_session_trailers(patch: bytes) -> bytes:
+    """The patch without the session trailer lines of its message.
+
+    The message ends at the last ``---`` line before the first diff, which is
+    where Git writes the separator. Nothing after it is touched, and a blank
+    line the trailer leaves at the end of the message goes with it.
+    """
+    diff = patch.find(b"\ndiff --git ")
+    head = patch if diff < 0 else patch[:diff]
+    end = head.rfind(b"\n---\n")
+    if end < 0:
+        return patch
+    lines = patch[:end + 1].splitlines(keepends=True)
+    kept = [line for line in lines if not line.startswith(SESSION_TRAILER)]
+    if len(kept) == len(lines):
+        return patch
+    message = b"".join(kept)
+    while message.endswith(b"\n\n"):
+        message = message[:-1]
+    return message + patch[end + 1:]
+
+
 def _format(source: Path, base: str, head: str, output: Path) -> list[str]:
     raw = output / "raw"
     raw.mkdir()
@@ -352,6 +381,10 @@ def _format(source: Path, base: str, head: str, output: Path) -> list[str]:
             raise SeriesError(
                 f"two topics export to {name}; give one of them a distinct subject"
             )
+        data = path.read_bytes()
+        cleaned = drop_session_trailers(data)
+        if cleaned != data:
+            path.write_bytes(cleaned)
         path.rename(output / name)
         names.append(name)
     raw.rmdir()

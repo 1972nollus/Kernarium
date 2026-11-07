@@ -17,6 +17,13 @@ to another package's components, so the helper disables the wizard package for
 user 0 instead. It changes nothing in the image, and it changes nothing in a
 guest that is already provisioned.
 
+The wizard locks the status bar while its process runs (the bar, quick settings,
+heads-up alerts, the clock and every navigation key but Back) with a disable
+record that only the process's death clears, and the activity manager can start
+it once more after the disabling. After disabling the package the helper
+force-stops it and returns only when the wizard has no process and no record in
+`dumpsys statusbar`; a package that is disabled and stopped cannot start again.
+
 The current image has no trade-in mode (DeviceDiagnostics is not in the
 product), so adbd is one process through a first boot. A release that still
 carries DeviceDiagnostics (r15 and earlier) restarts adbd twice, a few seconds
@@ -41,6 +48,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import re
 import shlex
 import shutil
 import subprocess
@@ -55,7 +63,10 @@ SETTLE_STABLE_SECONDS = 6
 SETTLE_LIMIT_SECONDS = 120
 # A shell that cannot reach adbd (it is restarting) is retried for this long before it is an error.
 REACH_LIMIT_SECONDS = 90
+# The wizard's process is gone and its status bar disable record with it, or the guest is not usable.
+WIZARD_RELEASE_LIMIT_SECONDS = 30
 SETTING_VALUES = ("0", "1", "null")
+WIZARD_RECORD = re.compile(r"\bpkg=" + re.escape(SETUP_WIZARD) + r"(\s|$)", re.MULTILINE)
 TRADE_IN_ENTER = "Enabling trade-in mode"
 TRADE_IN_STOP = "Stopping trade-in mode"
 HOME_INTENT = "-a android.intent.action.MAIN -c android.intent.category.HOME"
@@ -98,6 +109,50 @@ def trade_in_pending(shell: Shell) -> bool:
     """Whether trade-in mode was entered and not yet stopped, by the framework's own log lines."""
     log = shell("logcat -d -b all -s TradeInModeService:I")
     return log.rfind(TRADE_IN_ENTER) > log.rfind(TRADE_IN_STOP)
+
+
+def wizard_processes(shell: Shell) -> list[str] | None:
+    """The wizard's process ids, empty when it is not running, None when the answer is not ids."""
+    answer = shell(f"pidof {SETUP_WIZARD}").strip()
+    if not answer:
+        return []
+    identifiers = answer.split()
+    return identifiers if all(identifier.isdigit() for identifier in identifiers) else None
+
+
+def wizard_status_bar_record(shell: Shell) -> bool | None:
+    """Whether the wizard holds a status bar disable record, None when the dump could not be read."""
+    dump = shell("dumpsys statusbar")
+    if "mDisableRecords" not in dump:
+        return None
+    return WIZARD_RECORD.search(dump) is not None
+
+
+def release_wizard(
+    shell: Shell,
+    *,
+    limit_seconds: float = WIZARD_RELEASE_LIMIT_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Stop the disabled wizard and return once it has no process and no status bar record."""
+    deadline = clock() + limit_seconds
+    shell(f"am force-stop {SETUP_WIZARD}")
+    while True:
+        processes = wizard_processes(shell)
+        record = wizard_status_bar_record(shell)
+        if processes == [] and record is False:
+            return
+        if clock() >= deadline:
+            held = {True: "held", False: "absent", None: "unreadable"}[record]
+            raise ProvisionError(
+                f"the setup wizard still holds the guest {limit_seconds:g} s after it was disabled: "
+                f"process {' '.join(processes) if processes else ('unreadable' if processes is None else 'none')}, "
+                f"status bar record {held}"
+            )
+        if processes != []:
+            shell(f"am force-stop {SETUP_WIZARD}")
+        sleep(1)
 
 
 def settle(
@@ -182,8 +237,10 @@ def provision(
                 f"HOME={home_package(shell)!r}"
             )
         break
-    if changed and settle_adbd:
-        settle(shell, sleep=sleep, clock=clock)
+    if changed:
+        release_wizard(shell, sleep=sleep, clock=clock)
+        if settle_adbd:
+            settle(shell, sleep=sleep, clock=clock)
     return changed
 
 

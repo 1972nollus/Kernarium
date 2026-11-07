@@ -27,12 +27,16 @@ Andarium.xcodeproj/   JSON project (project.xcproj) and its shared schemes
 
 `../GuestHost/Sources` holds the host code Kernarium and Andarium share to
 run a guest: the runtime loader, the display and touch view, the zstd utility
-and the shader cache.
+and the Metal and Mesa shader caches.
 
 The project file is the JSON format Xcode 27 reads and Xcode 27.2 writes
 (`project.xcproj`), kept in the canonical form
 `xcrun xcprojformatter --update Andarium/Andarium.xcodeproj` produces: format
-after every hand edit. Kernarium keeps its `.pbxproj`.
+after every hand edit. Kernarium keeps its `.pbxproj`. Every configuration
+takes its base settings from `../GuestHost/Config/Signing.xcconfig`; the
+signer's team is in the ignored `Signing.local.xcconfig` beside it
+([`GuestHost/README.md`](../GuestHost/README.md#signing)), so the project names
+no team.
 
 ## Targets
 
@@ -53,22 +57,44 @@ arguments (`-screen <name>`, `-play YES`, `-lowSpace YES`, `-resetTips YES`,
 `-bootStage <step>` for a frozen boot screen, `-systemMicrophone YES` to run the
 Microphone switch against the Simulator's own permission) open any screen or state directly
 so a Simulator driven only by `simctl` reaches every flow (`-screen bug-report`
-and `-screen install-apk` play the two guest operations on the overlay).
-`scripts/capture-screens.py` launches every screen on a Simulator and saves a
-labelled PNG set with a `manifest.json` (device, orientation, appearance, screen
-and what to look at; `--list` prints the screens):
+and `-screen install-apk` hold the overlay of the two guest operations part way;
+`-play YES` plays them). The Preview also writes `capture-state.json` to its
+caches (process, screen, and whether the app is active), which
+`scripts/capture-screens.py` reads to keep only a picture of the app in front.
+`scripts/capture-screens.py` launches every screen on a Simulator made for the
+run (not one another session or test uses) and saves a labelled PNG set with a
+`manifest.json` (device, orientation, appearance, screen and what to look at;
+`--list` prints the screens). A
+directory takes one capture run at a time: a second run into the same `--out`
+refuses at once and names the first (a lock file in the directory, released
+when the run ends however it ends), so name several `--device` options in one
+run or give each run its own directory:
 
 ```sh
 xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
     -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' build
 ```
 
-Home has one Start button for a normal boot. Below its Storage card come the
-System section (vCPUs and RAM as a summary; Edit opens the sheet that changes
-them), Display (Retina mode), Capabilities (Microphone, Gyroscope) and Backup
-(Back Up Guest Data); the Recovery and Erase section groups Start in Recovery and
-Erase Guest. Setting a guest up asks only for its storage and backups. A fresh guest
-opens the system's setup wizard on its first normal boot.
+Home has one Start button for a normal boot. Below its notices come the Guest
+System section (Storage first, with what the guest holds of its capacity, a
+pending growth or the largest size, and Resize; then vCPUs and RAM as a
+summary, where Edit opens the sheet that changes them), Display (Retina mode),
+Capabilities (Microphone, Gyroscope) and Backup (Back Up Guest Data); the Recovery and Erase section groups Start in
+Recovery and Erase Guest, which asks to be confirmed in a standard destructive
+alert. The sections carry no explanatory notes except where a capability is
+unavailable (a device without a gyroscope says so). Setting a guest up asks
+only for its storage and backups. A fresh guest opens the system's setup wizard
+on its first normal boot.
+
+A start the plan refuses is never offered and never answered with a message:
+Start and Start in Recovery are dimmed (`StartPlan.allowsStart(_:)`) while the
+card above says what the guest waits for, and a start that arrives anyway, from
+a launch, is ignored. Only the two things Home cannot show beforehand are
+alerts: too little free space and a chip that cannot draw the guest.
+
+Erase Guest deletes everything the guest has stored, its choices included
+(`GuestStorage.erase`), and Andarium returns to the first-launch screen, from
+where a new guest is set up with the defaults.
 
 ## Devices
 
@@ -100,6 +126,16 @@ orientation and each change restarts the stream (`MotionMount`).
 
 `ITSAppUsesNonExemptEncryption` is NO in `Config/Info.plist`.
 
+## Info
+
+Info names the application's version and the system it carries, from the
+release manifest the packaging step stages beside the image: the build
+(release), the Android version, the security patch, the kernel, the kernel's
+architecture and the architectures the image enables (`android.abi_list`, from
+`ro.product.cpu.abilist`, for example arm64-v8a, armeabi-v7a and armeabi). A
+release published before the list was recorded has none, and the row is then
+left out.
+
 ## Acknowledgements
 
 Info lists every project the application carries, and a tap shows the
@@ -110,10 +146,12 @@ kernel's license files (never fetched; `--verify` compares the resource with
 them). Its table names, per project, the frameworks and prefix components it
 covers: the system (Android Open Source Project, LineageOS), the Linux kernel
 inside the runtime, and the GPU, network, storage and compression libraries of
-the iOS device prefixes. A tooling test fails when the Andarium project embeds
-a framework, or an iOS device prefix contract declares a component, that no
-entry covers ([`docs/testing.md`](../docs/testing.md#andarium)). Adding a
-library therefore means adding its entry to the script's table and running it.
+the iOS device prefixes. One more entry credits iSH as design inspiration for
+the processor emulation; it covers nothing and carries no licence. A tooling
+test fails when the Andarium project embeds a framework, or an iOS device
+prefix contract declares a component, that no entry covers
+([`docs/testing.md`](../docs/testing.md#andarium)). Adding a library therefore
+means adding its entry to the script's table and running it.
 
 ## Build
 
@@ -164,15 +202,33 @@ leaves out everything that exists for automation or only pretends:
   harness's console lines (`Shared/ConsoleReport.swift`, with every call to it,
   and the thermal state and uptime reads behind them). The type is in the
   application, so no such line is in `AndariumCore` either.
+- It also leaves out what only a launch setting could use: the launch's
+  deferred work (create, erase, start; `AppEntry.applyDeferred`), the printing
+  of each statistics reading and the isolated guest instance (its directory
+  and adb key tag). `LaunchOverrides` stays in `AndariumCore` for its
+  clamping, and an App Store build gives it no value.
+- It defines `UML_APP_STORE_APPLICATION` for the loader it compiles
+  (`GCC_PREPROCESSOR_DEFINITIONS[config=AppStore]`, which Swift's view of the
+  bridging header honors), so the loader leaves out the display mirror,
+  console input and the automation lookups that the application never calls
+  ([`GuestHost/README.md`](../GuestHost/README.md)).
 - It embeds the App Store runtime, packaged by
   `Kernarium/scripts/package-ios-frameworks.sh --app-store --runtimes android`
   from the `kernarium-ios-device-android-app-store` preset, which reads no
-  environment knob ([`Kernarium/README.md`](../Kernarium/README.md#automation-runs)).
+  environment knob and carries no debugging or automation support: no frame
+  mirror (screen capture), no console input, no sampler, no footprint log or
+  activity log
+  ([`Kernarium/README.md`](../Kernarium/README.md#automation-runs)). What the
+  third-party libraries read from the environment stays, and is unreachable on
+  an installed application.
 - It is not offered to Macs, and its Archive action uses it.
 - Its last build phase runs `scripts/check-app-store-bundle.py` on the
   application, which fails the build on a missing key in Info.plist,
-  an environment knob or a trace of the build host (the
-  linker's debug map, a home-directory path) in the application or a framework,
+  an environment knob, a symbol or log text of the
+  debugging and automation support above, a test bundle or an XCTest or
+  Testing framework, or a trace of the build host (the linker's debug map, a
+  path under a home directory, on a mounted volume or in a temporary
+  directory) in the application or a framework,
   a console line of the harness in the application's code, or a privacy
   manifest that does not cover a binary
   ([`scripts/check-privacy-manifests.py`](../scripts/check-privacy-manifests.py)).
@@ -263,6 +319,12 @@ system disk and the data disk, creates `data.img` at the first start sized by
 the guest's capacity, and only grows it afterwards. Create and Erase therefore
 write no disk and take no time.
 
+Every storage ruler (a new guest, Resize Storage) moves in 4 GiB steps from
+4 GiB to at most 128 GiB (`Limits.capacityStopsGiB`); the default stays 8 GiB.
+The top is also bounded by the largest data disk the carried release's layout
+allows (`ReleaseIdentity.maximumGiB`), which the model keeps as
+`releaseMaximumGiB`, so a release that allows less offers less.
+
 `InstanceRules.decide` (`Instance.swift`, the rules and vectors of the
 [Android README](../android/lineage-24/README.md#guest-instance-storage))
 chooses what a start does with the carried release, and `StartPlan` is what
@@ -317,12 +379,23 @@ Start can boot again in the same app process. An unclean shutdown, a host stop,
 or cleanup that fails keeps the failure screen and requires reopening Andarium. The boot screen follows
 the guest's console for its milestones (the kernel, Android's init and
 `sys.boot_completed`, or Recovery's service) until the runtime reports boot
-events. A normal boot has four stages, and the last, Startup, spins until
-`sys.boot_completed`; the guest's display is laid out from the first frame and
-shows dimmed behind the screen, which a plain translucent fill dims and flat
-panels sit on, so the display costs what a visible one costs and the render
-server samples no backdrop for it. Recovery keeps its fifth stage, Screen, on an
-opaque screen.
+events. Every boot has four steps (System image, Linux Kernel, Storage, and
+Startup or, in Recovery, Recovery), and the last spins until
+`sys.boot_completed`; there is no bar or percentage for the whole boot, only
+the disk write's own percentage on the first step. The guest's display is laid
+out from the first frame and shows dimmed behind the screen, which a plain
+translucent fill dims and flat panels sit on, so the display costs what a
+visible one costs and the render server samples no backdrop for it. Recovery
+keeps an opaque screen.
+
+At every start the guest is given the zone the host is in (`GuestTimeZone`,
+the system's live zone, in the boot request's `android_time_zone`, runtime API
+23; on a Mac in Designed for iPad mode, the Mac's). The system image's time
+zone script applies it while nobody in the guest has chosen a zone
+([Android README](../android/lineage-24/README.md#time-zone)), so a guest
+follows iOS's zone after each start and keeps a zone picked in Android. A name
+the runtime or the guest does not accept leaves the guest's zone alone, and an
+older system ignores the request.
 
 The side keys send Android's keys as Linux key codes: Power 116 (held for the
 power menu), volume 115 and 114, Back 158 and Home 172.
@@ -331,10 +404,35 @@ The guest display supports up to ten simultaneous fingers, including pinch
 and other gestures. The shared [GuestHost input](../GuestHost/README.md) maps
 each finger independently onto the guest's visible display.
 
+In a normal run whose scene fills the screen, the scene's root defers the
+system's edge gestures on all four edges, on an iPhone and an iPad alike
+(`SessionGestureDeferral`). The guest's display stays inside the safe area, so
+only the preference changes: the first swipe from an edge goes to Android
+(its notification shade, its navigation gestures) while iOS shows its tab, and
+a second swipe while the tab shows reaches the system. Home, boot, Recovery,
+the failure screen and an open sheet keep SwiftUI's own preference, which
+defers the sides, and so does a window that does not fill the screen. While
+the guest has the keyboard focus, three-finger touches are the guest's, not
+UIKit's editing gestures.
+
+The Simulator honours the bottom edge only while the home indicator shows, and
+a run hides it (`persistentSystemOverlays(.hidden)`), so there one swipe from
+the bottom still leaves the application. What a device does is not
+established ([Edge gestures](../docs/testing.md#edge-gestures-device-only)).
+
 Retina mode applies at the next start, because the runtime takes it at boot, so
-the session's Settings leaves it out (`Capabilities.liveDisplayOptions`). The
-guest's display always follows the window; there is no option for it, and a
-value an earlier version stored is ignored.
+it is set on Home only and the session's Settings has no Display section. It
+follows the device until the person sets it: on where the system lets the
+application use more than 4 GiB of memory, off where it does not
+(`DisplayOptions.defaultRetina`). That limit is what the system holds the
+process to, read as the footprint plus what the system lets it grow by
+(`MemoryLimit` in `Live/AppEntry.swift`, the figure of
+`uml::platform::os_memory_limit_bytes`), 2,867 MiB on an iPad mini 6 and none on
+a Mac. A choice made on Home is kept as made and the default never replaces
+it; a stored `false` from before the default counts as no choice, because it
+may only have been the old default. The guest's display always follows the
+window; there is no option for it, and a value an earlier version stored is
+ignored.
 
 Capabilities apply at once. Turning Microphone on asks iOS for access at that
 moment; if iOS refuses, the switch goes back off, the row dims with "Not allowed
@@ -357,16 +455,30 @@ apps can keep several such buffers. These host graphics allocations count
 against the same iOS process limit as guest RAM, so the RAM setting alone does
 not bound Andarium's memory use.
 
-Gyroscope is off by default. Its switch in Home's Capabilities (and the
-session's Settings) shares the device's accelerometer and gyroscope with the
-guest. The choice is saved with the guest.
-A device with neither sensor leaves the switch unavailable. Capture starts
-after a normal boot finishes, while the app is active, and stops when the
-switch turns off, the app becomes inactive, or the guest ends or restarts.
-Recovery never captures motion. Only the newest samples are sent, at up to
-100 Hz, over private vsock port 5556; nothing listens on the host’s network.
-The system image must include the [motion sub-HAL](../android/lineage-24/README.md#motion-sensors);
-a missing service is reported in Capabilities and Settings.
+Gyroscope is on by default wherever the device has an accelerometer or a
+gyroscope. It asks for no permission. Its switch in Home's Capabilities shares
+the device's sensors with the guest. A choice made there (on or off) is saved
+with the guest and the default never replaces it (`Guest.motionChoice`); a
+device with neither sensor shows the switch off and unavailable.
+
+The host reads a sensor only while an application in the guest uses it. The
+guest's sensor service says which sensors are active, and the period each was
+asked for, in a 16-byte control frame (`MotionDemand`) that it sends on the
+motion connection when the host connects and at every change.
+`MotionSampling` turns that into what Core Motion does: each active sensor is
+read at half its requested period (never faster than 100 Hz, so the guest's
+own pacing sets the rate an application sees), and nothing is read while
+nothing is in use. The connection is held while the switch is on and the guest
+is in front, since the frames arrive on it, and it has no timer while it is
+idle. A service that sends no frame (an older image) is read continuously at
+100 Hz, both sensors, until it sends one, and a new connection starts from
+that again. Reading starts after a normal boot finishes, while the app is
+active, and stops when the switch turns off, the app becomes inactive, or the
+guest ends or restarts. Recovery never captures motion. Each sample is sent as
+it is read, newest only, over private vsock port 5556; nothing listens on the
+host's network. The system image must include the
+[motion sub-HAL](../android/lineage-24/README.md#motion-sensors); a missing
+service is reported in Home's Capabilities.
 
 ### Statistics
 
@@ -432,9 +544,9 @@ Erase Guest deletes. The client signs adbd's AUTH token
 and never offers its key: a second token means adbd refused it, and the
 operation says so.
 
-**Create Bug Report** is in every build, in a normal session. Its row in
-Settings has a footer saying what a report holds, and a tap starts it at once.
-Settings dismisses and the full-screen overlay shows the guest's own progress
+**Create Bug Report** is in every build, in a normal session. Its row, alone in
+the Diagnostics section of Settings, starts it at once with a tap. Settings
+dismisses and the full-screen overlay shows the guest's own progress
 (nine tenths of the bar) and then the copy, with a Cancel button that stops the
 dump in the guest (`setprop ctl.stop dumpstatez`) and removes what it left. The
 zip is staged in `tmp/BugReports/` after a check of the free space
@@ -443,15 +555,23 @@ sheet (a centred popover on an iPad), and is deleted on every outcome of the
 sheet; each launch sweeps the folder. The guest's copy and any earlier ones are
 removed after a good pull.
 
-**Install App** is in every build, in a normal session: Settings, Apps,
-Install App... picks a single `.apk` in Files (a file of another kind is
-answered by a row, a `.apks`, `.xapk` or `.apkm` bundle by one of its own, and
-Settings stays open). For an `.apk` Settings dismisses and the overlay shows the
-file streamed in 256 KiB reads to `abb_exec:package install -r -t -S <size>` for
-the first eight tenths of the bar; the guest's own install holds it there, with
-the Cancel button gone, and a success closes the overlay and adds an Installed
-row. A failure is an alert and a Failed row, in the words of
-`PackageInstallMessages`.
+**Install APK** is in every build, in a normal session: Settings, Apps,
+Install APK... picks a file in Files, and Settings dismisses at once. The
+picker offers only the type the system gives a file that ends in `.apk`
+(`InstallRefusal.pickerType`, built at run time: no Info.plist declaration),
+and dims `.apks`, `.xapk`, `.apkm`, `.zip` and a file
+with no extension. Everything
+after that is on the full-screen overlay, which blocks input for the whole
+install and is the one the bug report uses. A file that is not a single `.apk`
+(`InstallRefusal`: another kind, or a `.apks`, `.xapk` or `.apkm` bundle, which
+a picker could still hand over if a system or another application types its
+extension as an apk) is refused on it at once, in words of its own. An `.apk` is streamed in 256 KiB
+reads to `abb_exec:package install -r -t -S <size>` for the first eight tenths
+of the bar; the guest's own install holds it there, with the Cancel button
+gone. The overlay then stays up with how it went, App Installed with Done or
+App Not Installed with OK and the error in the words of
+`PackageInstallMessages`, until it is closed; cancelling takes it away with
+nothing left behind, and the end of the run takes a finished result away.
 
 **ADB over Network** lets a computer on the same network use adb on the guest.
 It is off at every run, never persisted, and available only while the guest's
@@ -514,13 +634,16 @@ KERNARIUM_ANDROID_BOOT_MODE (recovery starts Recovery), KERNARIUM_ANDROID_DISK_S
 KERNARIUM_HOST_FORWARD, KERNARIUM_FOOTPRINT_LOG_MS, KERNARIUM_EXECUTION_ENGINE,
 KERNARIUM_GUEST_HIBERNATION, KERNARIUM_ANDROID_ADB_AUTH
 ANDARIUM_START=normal|recovery   create the guest if there is none, then start
-ANDARIUM_ERASE=1                 erase the guest's data before the start
+ANDARIUM_ERASE=1                 erase the guest before the start; with ANDARIUM_START
+                                 a new guest is then set up
 ANDARIUM_STATS=1                 show the statistics over the session and
                                  print each reading
 ANDARIUM_GUEST_INSTANCE=<name>   use Library/TestGuests/<name> instead of Library/Guest
 ANDARIUM_ADB_TESTS=1             let AdbOverVsockTests drive the running guest
 ANDARIUM_ADB_KEY_FILE=<path>     where eraseGuestMakesANewKey records the key
 ANDARIUM_ADB_REARM_TESTS=1      also run the tests that need an image raising a dead dialog's prompt again
+ANDARIUM_TIME_ZONE_APPLIED=1    also require that the guest has taken the host's time zone (an image
+                                with the time zone script)
 ANDARIUM_ADB_NET_HOLD_SECONDS=<n> keep the bridge up for a real adb (and write the key
                                  as tmp/adbkey; tmp/adb-net-done ends the hold)
 ```

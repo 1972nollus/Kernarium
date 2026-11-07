@@ -7,6 +7,9 @@ import Testing
 import UIKit
 @testable import Andarium
 
+/// The real scene root's session lock and deferred edges, and the built
+/// bundle's portrait-only iPhone declaration. Only a device shows how the
+/// system answers the swipes (docs/testing.md, "Edge gestures").
 @MainActor
 @Suite(.serialized)
 struct SessionOrientationHostingTests {
@@ -18,20 +21,23 @@ struct SessionOrientationHostingTests {
         return condition()
     }
 
+    private static var applicationState: String {
+        switch UIApplication.shared.applicationState {
+        case .active: "active"
+        case .inactive: "inactive (a test or the system took it out of the foreground)"
+        case .background: "in the background"
+        @unknown default: "in an unknown state"
+        }
+    }
+
     @Test func theSceneRootLocksOnlyTheGuestSession() async throws {
         let entry = AppEntry.fromArguments()
         let model = entry.makeModel()
-        try #require(await eventually {
-            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-                .contains { $0.windows.contains { $0.isKeyWindow } }
-        })
-        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let keyWindow = scene.windows.first { $0.isKeyWindow }
-        let window = try #require(keyWindow)
-        let original = window.rootViewController
-        defer { window.rootViewController = original }
+        let lease = try await HostWindow.take()
+        defer { lease.give() }
+        let scene = lease.scene
         let controller = AndariumHostingController(rootView: Color.black, model: model)
-        window.rootViewController = controller
+        lease.window.rootViewController = controller
         let phone = UIDevice.current.userInterfaceIdiom == .phone
         #expect(controller.supportedInterfaceOrientations == (phone ? .portrait : .all))
         #expect(!controller.prefersInterfaceOrientationLocked)
@@ -41,7 +47,9 @@ struct SessionOrientationHostingTests {
         let fullScreen = abs(size.width - screen.width) < 0.5 && abs(size.height - screen.height) < 0.5
         if !phone && fullScreen {
             #expect(await eventually { controller.prefersInterfaceOrientationLocked })
-            #expect(await eventually { scene.effectiveGeometry.isInterfaceOrientationLocked })
+            #expect(
+                await eventually { scene.effectiveGeometry.isInterfaceOrientationLocked },
+                "the scene applies the lock only while the application is active; it is \(Self.applicationState)")
             #expect(await eventually { !model.hostDrivesGuestRotation })
         } else {
             #expect(!controller.prefersInterfaceOrientationLocked)
@@ -51,21 +59,49 @@ struct SessionOrientationHostingTests {
         #expect(await eventually { !controller.prefersInterfaceOrientationLocked && !model.hostDrivesGuestRotation })
     }
 
+    @Test func theSceneRootDefersTheGuestsEdgesOnlyInANormalRun() async throws {
+        let entry = AppEntry.fromArguments()
+        let model = entry.makeModel()
+        let lease = try await HostWindow.take()
+        defer { lease.give() }
+        let scene = lease.scene
+        let controller = AndariumHostingController(rootView: Color.black, model: model)
+        lease.window.rootViewController = controller
+        // Outside a run the root keeps SwiftUI's preference, which never
+        // takes the top or the bottom edge from the system.
+        let outside = controller.preferredScreenEdgesDeferringSystemGestures
+        #expect(!outside.contains(.top) && !outside.contains(.bottom))
+        model.phase = .running(.normal)
+        let size = scene.effectiveGeometry.coordinateSpace.bounds.size
+        let screen = scene.screen.bounds.size
+        let fullScreen = abs(size.width - screen.width) < 0.5 && abs(size.height - screen.height) < 0.5
+        if fullScreen {
+            #expect(await eventually { controller.preferredScreenEdgesDeferringSystemGestures == .all })
+            #expect(controller.childForScreenEdgesDeferringSystemGestures == nil)
+        } else {
+            try await Task.sleep(for: .milliseconds(300))
+            #expect(controller.preferredScreenEdgesDeferringSystemGestures == outside)
+        }
+        model.phase = .running(.recovery)
+        #expect(await eventually { controller.preferredScreenEdgesDeferringSystemGestures == outside })
+        model.phase = .home
+        #expect(await eventually { controller.preferredScreenEdgesDeferringSystemGestures == outside })
+    }
+
+    @Test func theGuestKeepsThreeFingersWhileItHasTheKeyboardFocus() {
+        let view = GuestMetalView(frame: .zero, device: nil)
+        #expect(view.editingInteractionConfiguration == .none)
+    }
+
     @Test func theSceneRootTellsTheDriverWhenTheGeometryChanges() async throws {
         let entry = AppEntry.fromArguments()
         let model = entry.makeModel()
         let driver = StubDriver(plan: nil)
         model.driver = driver
-        try #require(await eventually {
-            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-                .contains { $0.windows.contains { $0.isKeyWindow } }
-        })
-        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let window = try #require(scene.windows.first { $0.isKeyWindow })
-        let original = window.rootViewController
-        defer { window.rootViewController = original }
+        let lease = try await HostWindow.take()
+        defer { lease.give() }
         let controller = AndariumHostingController(rootView: Color.black, model: model)
-        window.rootViewController = controller
+        lease.window.rootViewController = controller
         #expect(await eventually { driver.geometryChanges > 0 })
         // Let the first layouts settle, then report a storm of geometry
         // updates within one turn: the driver hears of it, and not once for

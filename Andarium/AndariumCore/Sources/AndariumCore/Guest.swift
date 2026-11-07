@@ -22,8 +22,10 @@ public struct Guest: Equatable, Codable, Sendable {
     /// A larger capacity that applies when the guest next starts.
     public var pendingCapacityGiB: Int?
     public var microphone: Bool
-    /// Shares the host accelerometer and gyroscope with the guest. Off by default.
-    public var motionSensors: Bool
+    /// The person's choice to share the device's accelerometer and gyroscope
+    /// with the guest; nil until they choose, and then it follows the device
+    /// (`motionSensorsOn(available:)`). Stored under `motionSensors`.
+    public var motionChoice: Bool?
     /// Whether iCloud and computer backups include the guest's files. Off by
     /// default: the guest is several GiB that Android can set up again.
     public var includeInBackups: Bool
@@ -35,12 +37,13 @@ public struct Guest: Equatable, Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case cores, memoryMiB, capacityGiB, pendingCapacityGiB, microphone
-        case includeInBackups, motionSensors
+        case includeInBackups
+        case motionChoice = "motionSensors"
     }
 
     public init(
         cores: Int, memoryMiB: Int, capacityGiB: Int, pendingCapacityGiB: Int? = nil,
-        microphone: Bool = false, includeInBackups: Bool = false, motionSensors: Bool = false,
+        microphone: Bool = false, includeInBackups: Bool = false, motionChoice: Bool? = nil,
         usedBytes: UInt64 = 0
     ) {
         self.cores = cores
@@ -48,7 +51,7 @@ public struct Guest: Equatable, Codable, Sendable {
         self.capacityGiB = capacityGiB
         self.pendingCapacityGiB = pendingCapacityGiB
         self.microphone = microphone
-        self.motionSensors = motionSensors
+        self.motionChoice = motionChoice
         self.includeInBackups = includeInBackups
         self.usedBytes = usedBytes
     }
@@ -61,7 +64,16 @@ public struct Guest: Equatable, Codable, Sendable {
         pendingCapacityGiB = try values.decodeIfPresent(Int.self, forKey: .pendingCapacityGiB)
         microphone = try values.decode(Bool.self, forKey: .microphone)
         includeInBackups = try values.decode(Bool.self, forKey: .includeInBackups)
-        motionSensors = try values.decode(Bool.self, forKey: .motionSensors)
+        motionChoice = try values.decodeIfPresent(Bool.self, forKey: .motionChoice)
+    }
+
+    /// Whether the guest gets the device's motion: the person's choice, else
+    /// on, wherever the device has the sensors to share. It needs no iOS
+    /// permission, and nothing is read until an application in the guest
+    /// uses a sensor (`MotionSampling`). Without sensors it is off, whatever
+    /// was chosen.
+    public func motionSensorsOn(available: Bool) -> Bool {
+        available && (motionChoice ?? true)
     }
 
     public var usedGiB: Double { Double(usedBytes) / Double(Limits.bytesPerGiB) }
@@ -84,8 +96,10 @@ public struct Guest: Equatable, Codable, Sendable {
 
     /// Resize: storage only grows, and the growth waits for the next start.
     /// Choosing the current capacity again cancels a growth not yet applied.
-    public mutating func setCapacity(_ value: Int) {
-        let value = min(max(value, capacityGiB), Limits.capacityRangeGiB.upperBound)
+    /// `maximum` is the largest the carried system accepts, when that is
+    /// below the range's.
+    public mutating func setCapacity(_ value: Int, maximum: Int = Limits.capacityRangeGiB.upperBound) {
+        let value = min(max(value, capacityGiB), min(maximum, Limits.capacityRangeGiB.upperBound))
         pendingCapacityGiB = value > capacityGiB ? value : nil
     }
 
@@ -97,7 +111,8 @@ public struct Guest: Equatable, Codable, Sendable {
         }
     }
 
-    /// The same choices with nothing in it: what Erase leaves behind.
+    /// The same choices with nothing in it: what Android's own factory reset
+    /// leaves behind.
     public var erased: Guest {
         var guest = self
         guest.capacityGiB = effectiveCapacityGiB

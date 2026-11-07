@@ -22,7 +22,7 @@ func withAndroidGuest(
         model.create(entry.overrides.applied(to: Guest.fresh(on: model.host), on: model.host))
         try await waitForAndroidGuest(until: { model.busy == nil }, seconds: 30)
     }
-    let previousChoice = try #require(model.guest).motionSensors
+    let previousChoice = model.motionSensorsOn
     defer {
         model.setMotionSensors(previousChoice)
     }

@@ -16,9 +16,10 @@ final class StubDriver: RuntimeDriver {
 
     func create(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest { guest }
     private(set) var erased = 0
-    func erase(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws -> Guest {
+    var eraseFails = false
+    func erase(progress: @escaping @Sendable (Double) -> Void) async throws {
+        if eraseFails { throw InstanceError.refused("Nothing could be deleted.") }
         erased += 1
-        return guest
     }
     func save(_ guest: Guest) throws { savedGuest = guest }
     func startPlan() -> StartPlan? { plan }
@@ -62,7 +63,9 @@ final class StubDriver: RuntimeDriver {
         try await bugReport(update)
     }
     var install: (@Sendable (@Sendable (BusyUpdate) -> Void) async throws -> Void) = { _ in }
+    private(set) var installed = 0
     func installApk(at url: URL, sizeBytes: Int, update: @escaping @Sendable (BusyUpdate) -> Void) async throws {
+        installed += 1
         try await install(update)
     }
 
@@ -91,6 +94,10 @@ final class StubDriver: RuntimeDriver {
     func localNetworkAddress() -> String? { address }
 }
 
+/// The update, interrupted-update (Start retries, Restore, Erase) and
+/// blocked-start flows against a stub runtime, including a clean shutdown
+/// returning Home with a fresh session and a failed run refusing another
+/// Start.
 @MainActor
 struct UpdateFlowTests {
     private let host = HostDevice(
@@ -153,30 +160,91 @@ struct UpdateFlowTests {
         #expect(model.plan == .unfinishedUpdate(to: "r2", canRetry: true, canRestore: true))
     }
 
-    @Test func anAndroidThatCannotRetryWaitsForRestoreOrErase() {
+    @Test func anAndroidThatCannotRetryWaitsForRestoreOrEraseWithoutAMessage() {
         let (model, driver) = model(plan: .unfinishedUpdate(to: "r2", canRetry: false, canRestore: true))
         #expect(!model.plan.allowsStart)
-        model.start(.normal)
+        for mode in [StartMode.normal, .recovery] {
+            #expect(!model.plan.allowsStart(mode))
+            model.start(mode)
+        }
         #expect(model.phase == .home)
         #expect(driver.begun.isEmpty)
-        #expect(model.alert?.title == "Andarium's Update Didn't Finish")
+        #expect(model.alert == nil)
     }
 
-    @Test func recoveryWaitsForTheUpdateToFinish() {
+    @Test func recoveryWaitsForTheUpdateToFinishWithoutAMessage() {
         let (model, driver) = model(plan: .unfinishedUpdate(to: "r2", canRetry: true, canRestore: true))
+        #expect(model.plan.allowsStart(.normal) && !model.plan.allowsStart(.recovery))
         model.start(.recovery)
         #expect(model.phase == .home)
         #expect(driver.begun.isEmpty)
-        #expect(model.alert?.title == "Andarium's Update Didn't Finish")
+        #expect(model.alert == nil)
     }
 
-    @Test func aBlockedGuestSaysWhyAndStaysAtHome() {
+    @Test func aBlockedGuestIsNotStartedAndNothingIsSaid() {
         let (model, driver) = model(plan: .blocked(.olderAndroid))
-        model.start(.normal)
+        for mode in [StartMode.normal, .recovery] {
+            #expect(!model.plan.allowsStart(mode))
+            model.start(mode)
+        }
         #expect(model.phase == .home)
         #expect(driver.begun.isEmpty)
-        #expect(model.alert?.title == StartBlock.olderAndroid.title)
-        #expect(model.alert?.message == StartBlock.olderAndroid.explanation)
+        #expect(model.alert == nil && !model.startBlocked)
+    }
+
+    @Test func lowSpaceStillAsksBeforeAStart() {
+        let (model, driver) = model(plan: .normal)
+        model.host.freeStorageBytes = 1_000_000
+        model.start(.normal)
+        #expect(model.startBlocked)
+        #expect(driver.begun.isEmpty)
+    }
+
+    // MARK: Erase
+
+    private func eventually(_ condition: () -> Bool) async -> Bool {
+        for _ in 0..<400 {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+
+    @Test func eraseDeletesTheGuestAndReturnsToTheFirstLaunchScreen() async {
+        let (model, driver) = model(plan: .normal)
+        model.notice = .closedInBackground
+        model.resizePreset = 24
+        model.erase()
+        #expect(model.busy?.title == "Erasing Guest")
+        #expect(await eventually { model.busy == nil })
+        #expect(driver.erased == 1)
+        // No guest: Home shows the first-launch screen, with no notice that
+        // the guest was erased.
+        #expect(model.guest == nil)
+        #expect(model.notice == nil)
+        #expect(model.resizePreset == nil)
+        #expect(model.phase == .home)
+        #expect(model.alert == nil)
+        #expect(model.plan == .normal)
+    }
+
+    @Test func aFailedEraseKeepsTheGuestAndSaysSo() async {
+        let (model, driver) = model(plan: .normal)
+        driver.eraseFails = true
+        model.erase()
+        #expect(await eventually { model.alert != nil })
+        #expect(model.alert?.title == "The Guest Could Not Be Erased")
+        #expect(model.guest != nil)
+        #expect(await eventually { model.busy == nil })
+    }
+
+    @Test func aChoiceMadeJustBeforeEraseIsNotSavedBack() async {
+        let (model, driver) = model(plan: .normal)
+        model.guest?.cores = 2
+        model.erase()
+        #expect(await eventually { model.busy == nil })
+        try? await Task.sleep(for: .milliseconds(500))
+        #expect(driver.savedGuest == nil)
     }
 
     @Test func theEndOfARunReadsThePlanAgain() {
@@ -197,7 +265,7 @@ struct UpdateFlowTests {
         model.start(.normal)
         model.finishBoot(.normal)
         let guest = model.guest
-        model.session.installs = [ApkInstall(fileName: "test.apk", sizeBytes: 10, state: .installed)]
+        model.session.usbDebugging = true
         model.session.showStats = true
         model.sessionPreset.settings = true
         model.sheet = .info
@@ -205,7 +273,7 @@ struct UpdateFlowTests {
         #expect(model.phase == .home)
         #expect(model.guest == guest)
         #expect(model.sheet == nil)
-        #expect(model.session.installs.isEmpty)
+        #expect(model.session.usbDebugging == nil)
         #expect(model.session.showStats)
         #expect(model.sessionPreset == SessionPreset())
         model.start(.recovery)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Verify the kernel-less LineageOS recovery partition and its compressed ramdisk."""
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import struct
 from pathlib import Path, PurePosixPath
 
 import android_image
+import selinux_policy
 
 
 MAX_RAMDISK_SIZE = 256 * 1024 * 1024
@@ -23,6 +24,7 @@ LZ4_LEGACY_BLOCK_LIMIT = 8 * 1024 * 1024
 REQUIRED_PATHS = {
     "init",
     "prop.default",
+    "sepolicy",
     "system/bin/adbd",
     "system/bin/e2fsck",
     "system/bin/mke2fs",
@@ -42,6 +44,15 @@ RECOVERY_SCRIPT_IMPORT = "init.recovery.cuttlefish.rc"
 # host's ro.boot.lcd_density is vendor-private, so the script publishes it.
 DENSITY_TRIGGER = "on early-init && property:ro.boot.lcd_density=*"
 DENSITY_COMMAND = "setprop ro.sf.lcd_density ${ro.boot.lcd_density}"
+
+
+# The recovery UI gives eth0 its SLiRP address itself, with SIOCSIFADDR and SIOCSIFNETMASK on a
+# UDP socket (overlay/recovery). The recovery domain's policy is the ramdisk's own /sepolicy: the
+# stock policy gives it no UDP socket, so the UI's socket() failed with EACCES ("Failed to open
+# socket: Permission denied" on the screen) and eth0 kept no IPv4 address. The product grants
+# the socket and exactly those two ioctls (overlay/sepolicy/vendor/recovery.te).
+RECOVERY_DOMAIN = "recovery"
+ADDRESS_IOCTLS = {0x8916, 0x891C}
 
 
 # The product's own recovery artwork: the device overlay's recovery/res/images, which the build copies
@@ -232,6 +243,28 @@ def check_recovery_script(script: bytes) -> None:
         fail(f"recovery script does not run '{DENSITY_COMMAND}' at '{DENSITY_TRIGGER}'")
 
 
+def check_recovery_policy(policy_bytes: bytes) -> None:
+    """The recovery domain may open the UDP socket the UI addresses eth0 with, and no more."""
+    try:
+        policy = selinux_policy.SelinuxPolicy(policy_bytes)
+    except selinux_policy.PolicyError as error:
+        fail(f"recovery sepolicy is not a readable kernel policy: {error}")
+    for target_class, wanted in (("udp_socket", {"create", "ioctl"}), ("capability", {"net_admin"})):
+        held = policy.permissions(RECOVERY_DOMAIN, RECOVERY_DOMAIN, target_class)
+        if not wanted <= held:
+            fail(
+                f"recovery policy does not let the {RECOVERY_DOMAIN} domain {sorted(wanted - held)} "
+                f"on {target_class}: the UI could not give eth0 its address"
+            )
+    commands = policy.ioctls(RECOVERY_DOMAIN, RECOVERY_DOMAIN, "udp_socket")
+    if commands != ADDRESS_IOCTLS:
+        fail(
+            f"recovery policy lets the {RECOVERY_DOMAIN} domain issue the ioctls "
+            f"{sorted(map(hex, commands))} on a UDP socket, not exactly "
+            f"{sorted(map(hex, ADDRESS_IOCTLS))}"
+        )
+
+
 def verify_entries(
     entries: dict[str, android_image.NewcEntry], expected_fstab: bytes, expected_script: bytes,
     art: dict[str, bytes],
@@ -242,6 +275,7 @@ def verify_entries(
     if entries[RECOVERY_SCRIPT].payload != expected_script:
         fail(f"recovery {RECOVERY_SCRIPT} differs from the checked device tree")
     verify_art(entries, art)
+    check_recovery_policy(entries["sepolicy"].payload)
     for name in ("system/bin/recovery", "system/bin/adbd"):
         entry = entries[name]
         if not stat.S_ISREG(entry.mode) or not entry.mode & 0o111:

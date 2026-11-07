@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * libslirp writes the host sockets it makes or accepts with plain send(),
  * which raises SIGPIPE when the peer has reset the connection. A guest that

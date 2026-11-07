@@ -8,13 +8,13 @@
 
 .pushsection __DATA_CONST,__gadget_vector
 .p2align 3
-.globl NAME(uml_arm64_vector_contract_begin)
-NAME(uml_arm64_vector_contract_begin):
+.globl CSYM(uml_arm64_vector_contract_begin)
+CSYM(uml_arm64_vector_contract_begin):
 .popsection
 
 .macro vector_pointer name, mask, sources
  .if (\mask & \sources) == \mask
- .quad NAME(uml_arm64_gadget_\name\()_vector_\mask)
+ .quad CSYM(uml_arm64_gadget_\name\()_vector_\mask)
  .else
  .quad 0
  .endif
@@ -25,7 +25,7 @@ NAME(uml_arm64_vector_contract_begin):
  gadget \name
  .set Lvector_sources\@, ((\first != Lscalar_none) & 1) | (((\second != Lscalar_none) & 1) << 1) | (((\third != Lscalar_none) & 1) << 2)
  .pushsection __DATA_CONST,__gadget_vector
- .quad NAME(uml_arm64_gadget_\name)
+ .quad CSYM(uml_arm64_gadget_\name)
  .irp mask, 1, 2, 3, 4, 5, 6, 7
  vector_pointer \name, \mask, Lvector_sources\@
  .endr

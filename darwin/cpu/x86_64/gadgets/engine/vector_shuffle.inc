@@ -11,7 +11,7 @@
  * HSUB subtracts the odd elements from the even ones, and ADDSUB adds the
  * second source with its even lanes negated, a - b being a + -b. */
 .macro vector_horizontal_inputs element, width
-	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldr w12, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_horizontal_inputs_ready\@
 	.if \width == 256
 	simd_flush_denormals_each \element, 0, 1, 2, 3
@@ -285,7 +285,7 @@ gadget vector_\operation\()_\element\()_\width\()_rm
 	mov x25, x7
 	vector_memory_source (\width / 8), Lx86_vector_shuffle_cross_fault\@
 	and x10, x26, #0xffff
-	add x10, _cpu, x10
+	add x10, _vcpu, x10
 	ldr q0, [x10]
 	.if \width == 256
 	ldr q2, [x10, #16]

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import Foundation
 
 /// What a bundle's payload boots. One runtime framework serves one flavour,

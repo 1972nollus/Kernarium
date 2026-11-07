@@ -91,7 +91,7 @@
 	.endif
 
 	.ifc \operation,rcl
-	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x8, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	and w19, w8, #1
 	mov w16, w26
 	mov \host_register\()27, \host_register\()24
@@ -106,7 +106,7 @@ Lx86_rotate_carry_loop\@:
 	.endif
 
 	.ifc \operation,rcr
-	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x8, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	and w19, w8, #1
 	mov w16, w26
 	mov \host_register\()27, \host_register\()24
@@ -145,7 +145,7 @@ Lx86_shift_odd_parity\@:
  * untouched. A zero count in the other paths means that no flags change.
  */
 .macro shift_update_flags operation, width, host_register
-	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x8, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	bic x8, x8, #1
 	orr x8, x8, x19
 	.ifc \operation,shl
@@ -207,7 +207,7 @@ Lx86_shift_odd_parity\@:
 	orr x8, x8, #0x800
 Lx86_shift_flags_done\@:
 	orr x8, x8, #0x2
-	str x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	str x8, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 .endm
 
 /* Shifts and rotates usually feed another arithmetic operation before any
@@ -287,13 +287,13 @@ Lx86_shift_override_szp_done\@:
 	tbz w10, #0, Lx86_shift_override_ready\@
 	orr w9, w9, #0x800
 Lx86_shift_override_ready\@:
-	ldrh w10, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
-	ldrh w11, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
+	ldrh w10, [_vcpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	ldrh w11, [_vcpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
 	bic w11, w11, w8
 	orr w11, w11, w9
 	orr w10, w10, w8
-	strh w10, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
-	strh w11, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
+	strh w10, [_vcpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
+	strh w11, [_vcpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
 .endm
 
 /* The part of a shift or rotate of the value in `host_register`24 by the count
@@ -357,11 +357,11 @@ gadget \operation\()_\width\()_r\form
 	ldr x8, [_stream], #8
 	and x25, x8, #0xffff
 	ubfx x9, x8, #16, #16
-	ldrb w26, [_cpu, x9]
+	ldrb w26, [_vcpu, x9]
 	.endif
-	\load \host_register\()24, [_cpu, x25]
+	\load \host_register\()24, [_vcpu, x25]
 	shift_apply \operation, \width, \host_register, Lx86_shift_register_store\@, Lx86_shift_register_write\@
-	\store \store_register\()27, [_cpu, x25]
+	\store \store_register\()27, [_vcpu, x25]
 	cbz w26, Lx86_shift_register_done\@
 	shift_flags \operation, \width, \host_register
 Lx86_shift_register_done\@:
@@ -374,7 +374,7 @@ gadget \operation\()_\width\()_m\form
 	mov x25, x7
 	.ifc \form,r
 	and x8, x23, #0xffff
-	ldrb w26, [_cpu, x8]
+	ldrb w26, [_vcpu, x8]
 	.else
 	ldr x26, [_stream], #8
 	.endif
@@ -462,10 +462,10 @@ gadget \operation\()_\width\()_rr\form
 	ldp x8, x26, [_stream], #16
 	and x25, x8, #0xffff
 	ubfx x9, x8, #16, #16
-	\load \host_register\()24, [_cpu, x25]
-	\load \host_register\()15, [_cpu, x9]
+	\load \host_register\()24, [_vcpu, x25]
+	\load \host_register\()15, [_vcpu, x9]
 	.ifc \form,r
-	ldrb w26, [_cpu, x26]
+	ldrb w26, [_vcpu, x26]
 	.endif
 	.if \width == 64
 	and w26, w26, #0x3f
@@ -474,11 +474,11 @@ gadget \operation\()_\width\()_rr\form
 	.endif
 	cbz w26, Lx86_double_shift_register_zero\@
 	double_shift_compute \operation, \width, \host_register
-	\store \store_register\()27, [_cpu, x25]
+	\store \store_register\()27, [_vcpu, x25]
 	shift_record_flags \operation, \width, \host_register
 	retire_and_next
 Lx86_double_shift_register_zero\@:
-	\store \store_register\()24, [_cpu, x25]
+	\store \store_register\()24, [_vcpu, x25]
 	retire_and_next
 .endm
 
@@ -489,9 +489,9 @@ gadget \operation\()_\width\()_mr\form
 	ldr x26, [_stream], #8
 	read_operand (\width / 8), \load, \host_register, 24
 	and x8, x23, #0xffff
-	\load \host_register\()15, [_cpu, x8]
+	\load \host_register\()15, [_vcpu, x8]
 	.ifc \form,r
-	ldrb w26, [_cpu, x26]
+	ldrb w26, [_vcpu, x26]
 	.endif
 	.if \width == 64
 	and w26, w26, #0x3f

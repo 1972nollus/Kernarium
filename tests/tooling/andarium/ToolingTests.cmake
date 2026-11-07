@@ -40,3 +40,12 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/andarium/test_acknowledgements.py
     LABELS andarium
     TIMEOUT 60)
+
+# The screenshot script takes one run at a time into a directory, refuses a
+# second run at once and releases the directory however a run ends.
+uml_add_tooling_test(
+    NAME andarium-capture-screens
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/andarium/test_capture_screens.py
+    LABELS andarium
+    TIMEOUT 60)

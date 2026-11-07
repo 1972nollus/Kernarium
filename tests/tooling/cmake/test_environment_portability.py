@@ -67,7 +67,7 @@ def findings(output: str) -> set[tuple[str, int, str]]:
     parsed: set[tuple[str, int, str]] = set()
     for line in output.splitlines():
         parts = line.split(": ", 2)
-        if len(parts) == 3 and parts[1] in ("R1", "R2", "R3", "R4", "R5"):
+        if len(parts) == 3 and parts[1] in ("R1", "R2", "R3", "R4", "R5", "R6"):
             path, _, number = parts[0].rpartition(":")
             parsed.add((path, int(number), parts[1]))
     return parsed
@@ -124,6 +124,22 @@ def make_fixture(root: Path) -> None:
                 "PRODUCT_BUNDLE_IDENTIFIER = org.linux-um-darwin.App;",  # 7 pass
                 "DEVELOPMENT_TEAM = ${TEAM};",  # 8 pass
                 "DEVELOPMENT_TEAM = TEAM$(X);",  # 9 R3
+            ]
+        )
+        + "\n",
+    )
+    # A base xcconfig with an empty team passes, whatever follows it; a
+    # literal team fails.
+    write(
+        root,
+        "Config/Signing.xcconfig",
+        "\n".join(
+            [
+                "// base",  # 1
+                "DEVELOPMENT_TEAM =",  # 2 pass
+                "",  # 3
+                '#include? "Signing.local.xcconfig"',  # 4
+                "DEVELOPMENT_TEAM = ABCDE12345",  # 5 R3
             ]
         )
         + "\n",
@@ -268,6 +284,7 @@ def make_fixture(root: Path) -> None:
                 "",
                 "Built on /Users/someone/src.",  # 6 R1
                 "Signed-off-by: Alice <alice@build.example.com>",
+                "Claude-Session: https://example.invalid/session/1",  # 8 R6
                 "---",
                 "diff --git a/f b/f",
                 "--- a/f",
@@ -275,9 +292,21 @@ def make_fixture(root: Path) -> None:
                 "@@ -1,3 +1,4 @@",
                 " /Users/context/x",  # pass
                 "-/Users/removed/x",  # pass
-                "+/Users/added/x",  # 15 R1
-                "+192.168.0.9",  # 16 R2
+                "+/Users/added/x",  # 16 R1
+                "+192.168.0.9",  # 17 R2
                 "+ok",
+            ]
+        )
+        + "\n",
+    )
+    write(
+        root,
+        "session.txt",
+        "\n".join(
+            [
+                "Claude-Session: https://example.invalid/session/1",  # 1 R6
+                "a Claude-Session: mention in running text",  # 2 pass
+                " Claude-Session: indented",  # 3 pass
             ]
         )
         + "\n",
@@ -312,6 +341,7 @@ EXPECTED = {
     ("App.xcodeproj/project.pbxproj", 1, "R3"),
     ("App.xcodeproj/project.pbxproj", 4, "R3"),
     ("App.xcodeproj/project.pbxproj", 9, "R3"),
+    ("Config/Signing.xcconfig", 5, "R3"),
     ("App.xcodeproj/project.xcproj", 5, "R3"),
     ("App.xcodeproj/project.xcproj", 6, "R3"),
     ("App.xcodeproj/project.xcproj", 8, "R3"),
@@ -332,9 +362,11 @@ EXPECTED = {
     ("remote.sh", 2, "R4"),
     ("remote.sh", 3, "R4"),
     ("remote.sh", 6, "R4"),
+    ("session.txt", 1, "R6"),
     ("series/topic.patch", 6, "R1"),
-    ("series/topic.patch", 15, "R1"),
-    ("series/topic.patch", 16, "R2"),
+    ("series/topic.patch", 8, "R6"),
+    ("series/topic.patch", 16, "R1"),
+    ("series/topic.patch", 17, "R2"),
 }
 DENYLIST_EXPECTED = {
     ("tokens.txt", 1, "R5"),

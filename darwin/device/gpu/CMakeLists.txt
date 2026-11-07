@@ -15,12 +15,27 @@ endfunction()
 # Keep the renderer, display, protocol device, transport, and in-process
 # service as independently owned units. Their dependency direction follows
 # the data path and contains no reverse service callbacks.
+# Where the system keeps this process's caches; see process_cache_location.hpp.
+add_library(uml_gpu_process_cache_location STATIC process_cache_location.cpp)
+add_library(UML::GpuProcessCacheLocation ALIAS uml_gpu_process_cache_location)
+uml_configure_gpu_component(uml_gpu_process_cache_location)
+target_link_libraries(uml_gpu_process_cache_location PRIVATE
+    "-framework CoreFoundation")
+
 # Bounds the process's own Metal shader cache; see metal_shader_cache.hpp.
 add_library(uml_gpu_metal_shader_cache STATIC metal_shader_cache.cpp)
 add_library(UML::GpuMetalShaderCache ALIAS uml_gpu_metal_shader_cache)
 uml_configure_gpu_component(uml_gpu_metal_shader_cache)
 target_link_libraries(uml_gpu_metal_shader_cache PRIVATE
-    "-framework CoreFoundation")
+    UML::GpuProcessCacheLocation)
+
+# Places and bounds the process's own Mesa disk shader cache; see
+# mesa_shader_cache.hpp.
+add_library(uml_gpu_mesa_shader_cache STATIC mesa_shader_cache.cpp)
+add_library(UML::GpuMesaShaderCache ALIAS uml_gpu_mesa_shader_cache)
+uml_configure_gpu_component(uml_gpu_mesa_shader_cache)
+target_link_libraries(uml_gpu_mesa_shader_cache PRIVATE
+    UML::GpuProcessCacheLocation)
 
 add_library(uml_gpu_device_memory_pool STATIC device_memory_pool.cpp)
 add_library(UML::GpuDeviceMemoryPool ALIAS uml_gpu_device_memory_pool)
@@ -59,6 +74,11 @@ set(_uml_gpu_display_sources
     metal_scanout_shader.mm
     native_display_common.cpp
     scanout_framebuffer.cpp)
+# The frame mirror (frame_tap.hpp) copies the guest's display out of the
+# process: an App Store runtime has none.
+if(UML_APP_STORE_RUNTIME)
+    list(REMOVE_ITEM _uml_gpu_display_sources frame_tap.cpp)
+endif()
 if(UML_TARGET_MACOS)
     list(APPEND _uml_gpu_display_sources
         metal_readback.mm

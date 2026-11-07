@@ -94,8 +94,18 @@ struct DisplayOptionsStoreTests {
     @Test func optionsSurviveTheStore() {
         let saved = DisplayOptionsStore.load()
         defer { DisplayOptionsStore.save(saved) }
-        DisplayOptionsStore.save(DisplayOptions(retina: true))
-        #expect(DisplayOptionsStore.load() == DisplayOptions(retina: true))
+        for options in [DisplayOptions(chosenRetina: true), DisplayOptions(chosenRetina: false), DisplayOptions()] {
+            DisplayOptionsStore.save(options)
+            #expect(DisplayOptionsStore.load() == options)
+        }
+    }
+
+    @Test func theMemoryLimitIsReadOrNone() {
+        // Zero where the system sets none (a Mac); otherwise the footprint
+        // plus what it may still grow by, which is above the footprint.
+        let limit = MemoryLimit.bytes()
+        #expect(limit == 0 || limit > 64 << 20)
+        #expect(limit < 1 << 40)
     }
 }
 
@@ -159,6 +169,7 @@ struct DefaultGuestTests {
     }
 }
 
+/// A late layout cannot retain a retired display while Home is showing.
 @MainActor
 struct RuntimeDisplayLifetimeTests {
     @Test func homeDoesNotRetainALayoutFromTheRetiredDisplay() throws {
@@ -262,8 +273,11 @@ struct RecoveryDisplayTests {
     }
 }
 
+/// Saves the guest's display as a PNG through the runtime's frame mirror. An
+/// App Store build has neither the mirror nor this.
 @MainActor
 func captureGuestFrame(named name: String) async throws {
+    #if !APP_STORE
     let capture = GuestFrameCapture()
     let result = kernarium_runtime_loader_set_frame_sink({ context, buffer in
         guard let context, let buffer else { return }
@@ -285,6 +299,7 @@ func captureGuestFrame(named name: String) async throws {
     let png = try #require(UIImage(cgImage: rendered).pngData())
     try png.write(to: FileManager.default.temporaryDirectory.appendingPathComponent(name))
     print("GUEST_FRAME: saved tmp/\(name)")
+    #endif
 }
 
 /// The system Andarium carries, written the way Create writes it: decoded

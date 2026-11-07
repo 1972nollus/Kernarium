@@ -5,6 +5,11 @@ import Foundation
 import Testing
 @testable import AndariumCore
 
+// SI conversion of a sample and its wire form, the mount's axes as the window
+// and the owner of rotation change, the saved choice (unset follows the
+// device, on and off stick), socket delivery, stop during connection and stale
+// callbacks. The host's reading of the guest's control frames and what the
+// sensors then do are in MotionDemandTests.swift.
 struct MotionTests {
     @Test func aStationaryFaceUpDeviceReportsPositiveGravity() throws {
         let sample = MotionSample(sensor: .accelerometer, x: 0, y: 0, z: -1)
@@ -105,17 +110,35 @@ struct MotionTests {
         #expect(!restart && mount.axes == .landscapeLeft)
     }
 
-    @Test func theChoiceSurvivesEraseAndReloadAndIsRequiredLikeTheOthers() throws {
-        let complete = Data(
+    @Test func theGyroscopeFollowsTheDeviceUntilThePersonChooses() throws {
+        // No choice is stored: a record without the field is unset, and unset
+        // is on wherever the device has sensors to share.
+        let unset = Data(#"{"cores":2,"memoryMiB":1024,"capacityGiB":8,"microphone":false,"includeInBackups":false}"#.utf8)
+        let guest = try JSONDecoder().decode(Guest.self, from: unset)
+        #expect(guest.motionChoice == nil)
+        #expect(guest.motionSensorsOn(available: true))
+        // Without sensors it is off, as the switch shows it.
+        #expect(!guest.motionSensorsOn(available: false))
+        let host = HostDevice(
+            name: "iPad", processorCount: 6, memory: MemoryPolicy(maximumsMiB: [4096]), freeStorageBytes: 40_000_000_000
+        )
+        #expect(Guest.fresh(on: host).motionChoice == nil)
+        #expect(String(decoding: try JSONEncoder().encode(guest), as: UTF8.self).contains("motionSensors") == false)
+    }
+
+    @Test func aChoiceSticksThroughEraseAndReload() throws {
+        let off = Data(
             #"{"cores":2,"memoryMiB":1024,"capacityGiB":8,"microphone":false,"includeInBackups":false,"motionSensors":false}"#.utf8)
-        var guest = try JSONDecoder().decode(Guest.self, from: complete)
-        #expect(!guest.motionSensors)
-        // Andarium carries no migration: a record without the field is not read.
-        let old = Data(#"{"cores":2,"memoryMiB":1024,"capacityGiB":8,"microphone":false,"includeInBackups":false}"#.utf8)
-        #expect(throws: DecodingError.self) { try JSONDecoder().decode(Guest.self, from: old) }
-        guest.motionSensors = true
-        let saved = try JSONEncoder().encode(guest.erased)
-        #expect(try JSONDecoder().decode(Guest.self, from: saved).motionSensors)
+        var guest = try JSONDecoder().decode(Guest.self, from: off)
+        #expect(guest.motionChoice == false)
+        #expect(!guest.motionSensorsOn(available: true))
+        let savedOff = try JSONEncoder().encode(guest.erased)
+        #expect(try JSONDecoder().decode(Guest.self, from: savedOff).motionChoice == false)
+        guest.motionChoice = true
+        let savedOn = try JSONEncoder().encode(guest.erased)
+        let reloaded = try JSONDecoder().decode(Guest.self, from: savedOn)
+        #expect(reloaded.motionChoice == true && reloaded.motionSensorsOn(available: true))
+        #expect(!reloaded.motionSensorsOn(available: false))
     }
 
     private final class Opener: GuestStreamOpener, @unchecked Sendable {

@@ -3,9 +3,10 @@
 """Make the local images a Geekbench 5 measurement needs: armv7 by default, or
 the same release's geekbench_aarch64 with --program.
 
-Neither the Geekbench payload nor an image that
-carries it is ever published or committed: the tool refuses to write one into
-the repository outside its ignored .build tree. It only packages a Geekbench release directory and checks its program SHA-256.
+Neither the Geekbench payload nor an image that carries it is ever published
+or committed: the tool refuses to write one into the repository outside its
+ignored .build tree. It only packages a Geekbench release directory and checks
+its program SHA-256.
 
   payload  an EROFS image with the program and geekbench.plar at its root,
            for run_guest_geekbench.py --payload (Mac and MacBook Air).
@@ -260,7 +261,7 @@ def main() -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     payload = commands.add_parser("payload", help="make the EROFS payload")
     payload.add_argument("--release-dir", required=True, type=pathlib.Path,
-                         help="the Geekbench 5 release")
+                         help="the Geekbench 5 release directory")
     payload.add_argument("--program-sha256", required=True,
                          help="the release's program SHA-256")
     payload.add_argument("--output", required=True, type=pathlib.Path)

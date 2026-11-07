@@ -26,9 +26,32 @@ Sources/LinuxKeyboard.swift            characters to Linux key codes
 Sources/ZstdUtil.swift                 streamed, sparse zstd decode
 Sources/MicrophonePermission.swift     the system microphone permission, read and requested
 Sources/MetalShaderCache.swift         the bound on Metal's per-application shader cache
+Sources/MesaShaderCache.swift          the place and size limit of Mesa's disk shader cache
 Sources/GuestProcessorLimit.swift      the vCPU count the applications default to and offer
                                        at most, as the loader answers it
+Config/Signing.xcconfig                the signing settings both Xcode projects use as
+                                       their base configuration
 ```
+
+## Signing
+
+Both projects take their signing from `Config/Signing.xcconfig`, which names no
+team. The signer's own Apple Developer team goes in `Config/Signing.local.xcconfig`,
+which the base file includes when it exists and Git ignores:
+
+```sh
+cp GuestHost/Config/Signing.local.xcconfig.example GuestHost/Config/Signing.local.xcconfig
+# then set DEVELOPMENT_TEAM in it
+```
+
+Without that file a build for the iOS Simulator works unsigned and a build for
+a device stops with Xcode's "requires a development team" error. Name the team
+in that file, not in Xcode's Signing & Capabilities editor, which would write it
+into the tracked project. A worktree is
+a separate checkout and needs its own copy to build for a device.
+`Kernarium/scripts/audio-interrupter.py` reads the same file (or
+`UML_DEVELOPMENT_TEAM`). The team is never tracked: the
+`repository-environment-portability` test fails on a literal one.
 
 ## Rules
 
@@ -47,4 +70,8 @@ contact. The Virtio device uses Linux type-B slots and tracking IDs; its legacy
   sources rely on them.
 - Background running, picture in picture and the console are Kernarium's, and
   stay in `Kernarium/Kernarium/`.
+- An application that defines `UML_APP_STORE_APPLICATION` (Andarium's AppStore
+  configuration) gets a loader without `set_frame_sink`, `send_console_input`
+  and the two `automation_*` entries and their lookups; the other entries and
+  the runtime API's validation are the same.
 - A change here is a change to both applications: build and test both.

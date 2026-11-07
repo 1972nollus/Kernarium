@@ -14,6 +14,6 @@ presentation_api	Metal
 renderer_features	core-profile,software-rasterizer,readback-scanout
 components	libepoxy,virglrenderer,mesa
 source_manifest	dependencies/manifest.tsv
-common_recipe	apple-gpu-vulkan-experiment-v4
+common_recipe	apple-gpu-vulkan-experiment-v5
 venus_dynamic_loading	none
 helper_process	disabled
