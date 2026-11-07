@@ -103,21 +103,40 @@ typedef struct kernarium_launch_memory_set {
     uint32_t headroom_mib;
 } kernarium_launch_memory_set;
 
-/* The parameters a launch states unless it states its own. The loader answers
- * the next two functions itself, from the same header the runtime's budget
- * comes from: the runtime is loaded once, for the flavour a launch chooses, so
- * the settings cannot ask it. */
+/* The conservative parameters: the ones the default guest RAM and the host
+ * GPU's budget of a launch are measured with, and so the ones a launch states
+ * in its boot request unless it states its own. The loader answers this and
+ * the functions below itself, from the same header the runtime's budget comes
+ * from: the runtime is loaded once, for the flavour a launch chooses, so the
+ * settings cannot ask it. */
 kernarium_launch_memory_set kernarium_runtime_loader_launch_memory_set(void);
+/* The parameters the most guest RAM a person may choose is measured with: they
+ * count none of A, E_rest and S. Only the maximum uses them. */
+kernarium_launch_memory_set kernarium_runtime_loader_maximum_memory_set(void);
 /* The most guest RAM, in MiB, the settings offer at `guest_processor_count`
  * vCPUs with `parameters` (zero vCPUs count as one): the largest multiple of 64
  * from 512 through 4096 that leaves the host GPU its 384 MiB floor under the
  * memory limit the system sets this process. 4096 where the system sets none,
- * the Mac included; 512 where even that leaves less than the floor. */
+ * the Mac included; 512 where even that leaves less than the floor. The
+ * settings pass the maximum set. */
 uint32_t kernarium_runtime_loader_maximum_guest_memory_mib(
     uint32_t guest_processor_count,
     kernarium_launch_memory_set parameters);
 /* The same for a memory limit the caller states in bytes, zero for none. */
 uint32_t kernarium_runtime_loader_maximum_guest_memory_mib_for_limit(
+    uint64_t limit_bytes,
+    uint32_t guest_processor_count,
+    kernarium_launch_memory_set parameters);
+/* The guest RAM, in MiB, a new guest gets at `guest_processor_count` vCPUs
+ * (zero counts as one): the most guest RAM with `parameters`, the launch set,
+ * taken down to a multiple of 512 and held within 1536 through 4096, and never
+ * above the maximum the settings offer. 4096 where the system sets no limit. A
+ * guest with more is likely to be ended by the system. */
+uint32_t kernarium_runtime_loader_default_guest_memory_mib(
+    uint32_t guest_processor_count,
+    kernarium_launch_memory_set parameters);
+/* The same for a memory limit the caller states in bytes, zero for none. */
+uint32_t kernarium_runtime_loader_default_guest_memory_mib_for_limit(
     uint64_t limit_bytes,
     uint32_t guest_processor_count,
     kernarium_launch_memory_set parameters);

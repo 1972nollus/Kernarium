@@ -167,8 +167,9 @@ control out.
 - **Memory.** A guest has at most the shared
   [vCPU limit](../docs/architecture.md#memory-and-executable-code) and the RAM
   the runtime loader answers for that count
-  (`kernarium_runtime_loader_maximum_guest_memory_mib`); `MemoryPolicy` holds
-  those bounds and no formula of its own.
+  (`kernarium_runtime_loader_maximum_guest_memory_mib`); a new guest gets the
+  loader's default for it (`kernarium_runtime_loader_default_guest_memory_mib`).
+  `MemoryPolicy` holds those bounds and defaults and no formula of its own.
 - **Storage.** A guest's files live in `Library/Guest/` of the application's
   container behind `GuestStorage`. The system disk is Android's, read-only, and
   stays in the release directory; the runtime creates the data disk `data.img`

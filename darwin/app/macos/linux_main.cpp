@@ -42,6 +42,8 @@ extern const unsigned char uml_boot_init_end[]
 
 namespace {
 
+/* The guest RAM when the launch states no memory limit; with one, the shared
+ * default for that limit (main.cpp). */
 constexpr std::string_view macos_default_guest_memory{"mem=8G"};
 constexpr std::string_view guest_init_option{"--guest-init="};
 constexpr std::string_view guest_file_option{"--guest-file="};

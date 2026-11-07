@@ -15,8 +15,9 @@ namespace uml::emulator {
 /* The launch parameters of the host GPU's fixed budget
  * (platform/gpu_budget.hpp): A, the application's expected ceiling; E_rest,
  * the guest side's other memory beyond the gadget cache and the slot tags; and
- * S, the headroom. Each defaults to the launch set
- * (runtime/guest_memory_budget.hpp), whose values are not chosen yet. */
+ * S, the headroom. Each defaults to the conservative launch set
+ * (runtime/guest_memory_budget.hpp), the one the default guest RAM is measured
+ * with. */
 struct GpuBudgetParameters final {
 	std::uint64_t application{
 		::uml::runtime::guest_memory::launch_memory_set.application};
@@ -68,6 +69,15 @@ struct GpuBudgetPlan final {
  * absent or unreadable. */
 [[nodiscard]] std::size_t configured_option_bytes(
 	const std::vector<std::string> &arguments, std::string_view option);
+
+/* The mem= argument a launcher gives a launch that gives none: `fallback`, the
+ * launcher's own size, or, where the launch states the process's memory limit
+ * (--memory-limit=, else UML_MEMORY_LIMIT_MIB), the default guest RAM for that
+ * limit at the launch's vCPU count (ncpus=, else the applications' default;
+ * runtime/guest_memory_budget.hpp), so a Mac run sizes its guest as the
+ * device does. */
+[[nodiscard]] std::string default_guest_memory_argument(
+	const std::vector<std::string> &arguments, std::string_view fallback);
 
 /* A launch option's byte count for the host GPU budget: a whole number with
  * an optional K, M or G suffix, where zero is a value too. False when `text`

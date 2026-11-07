@@ -244,15 +244,23 @@ struct AppEntry {
         #endif
     }
 
-    /// The most guest RAM at each vCPU count: the runtime's own budget
-    /// formula, answered by the loader as it is for Kernarium, against the
-    /// memory limit the system sets this process (none on a Mac) and the
-    /// launch parameters.
+    /// The most guest RAM at each vCPU count and the default a new guest gets:
+    /// the runtime's own budget formula, answered by the loader as it is for
+    /// Kernarium, against the memory limit the system sets this process (none
+    /// on a Mac). The maximum counts none of the launch allowances; the default
+    /// counts the conservative launch set the host GPU's budget uses too.
     static func memoryPolicy(processorCount: Int) -> MemoryPolicy {
-        let parameters = kernarium_runtime_loader_launch_memory_set()
-        return MemoryPolicy(processorCount: processorCount) { count in
-            Int(kernarium_runtime_loader_maximum_guest_memory_mib(UInt32(count), parameters))
-        }
+        let maximumSet = kernarium_runtime_loader_maximum_memory_set()
+        let launchSet = kernarium_runtime_loader_launch_memory_set()
+        return MemoryPolicy(
+            processorCount: processorCount,
+            bound: { count in
+                Int(kernarium_runtime_loader_maximum_guest_memory_mib(UInt32(count), maximumSet))
+            },
+            defaultMemory: { count in
+                Int(kernarium_runtime_loader_default_guest_memory_mib(UInt32(count), launchSet))
+            }
+        )
     }
 
     static func freeStorageBytes() -> UInt64 {

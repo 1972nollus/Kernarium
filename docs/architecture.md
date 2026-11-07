@@ -101,10 +101,11 @@ B = clamp(L - A - G - E - S, 384 MiB, G / 2)
 
 G is the guest's RAM, E the guest side's host memory, A the application's
 expected ceiling and S the unused headroom; with no limit B is G / 2. A, the rest
-of E and S are launch parameters defaulting to the launch set in
-`runtime/guest_memory_budget.hpp`. A launch under the floor is never refused: B
-is the floor and the launch says the process is likely to be ended.
-[`graphics.md`](graphics.md) owns what B bounds.
+of E and S are launch parameters defaulting to the conservative launch set in
+`runtime/guest_memory_budget.hpp`. L is the limit the system advertises to the
+process; shortage elsewhere in the system is not counted. A launch under the
+floor is never refused: B is the floor and the launch says the process is likely
+to be ended. [`graphics.md`](graphics.md) owns what B bounds.
 
 The guest side's memory follows the vCPU count, v, and that header is the one
 place that says how; every caller evaluates it:
@@ -116,8 +117,14 @@ c(v, G) = min(derive_budget(G, L), cap(v))      where L is set; derive_budget(G,
 
 `cap(v)` is a table of the gadget cache's ceiling per vCPU count. The largest
 guest RAM a limit leaves, `G_max(v)`, is the largest G (in 64 MiB steps, within
-the bounds in the header) that keeps B at its floor or above; Kernarium's
-settings offer no more than it ([Kernarium](../Kernarium/README.md)). The
+the bounds in the header) that keeps B at its floor or above. The settings of
+Kernarium and Andarium offer no more than `G_max(v)` under a set that counts none
+of A, E_rest and S (`maximum_memory_set`). A new guest's RAM is `G_max(v)` under
+the conservative launch set, in 0.5 GiB steps within 1.5 to 4 GiB and never above
+that maximum (`default_guest_memory_mib`); a guest with more is likely to be ended
+by the system, and Andarium says so on Home and beside its memory picker
+([Andarium](../Andarium/README.md)). The macOS launchers take the same default
+for a launch that states a memory limit. The
 applications' vCPU limit is the rule `application_vcpu_limit` in the same
 header: the host's physical cores, at most 8. It is the default and the maximum
 of Kernarium, Andarium and the macOS launchers (`emulator/src/options.hpp`); an

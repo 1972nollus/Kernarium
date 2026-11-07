@@ -12,8 +12,9 @@ namespace uml::platform {
 inline constexpr std::uint64_t gpu_budget_floor_bytes = 384ULL << 20;
 
 /* What the fixed GPU budget derives from, all in bytes. A, E and S are the
- * launch parameters: they default to zero, which leaves only the guest's own
- * memory and the gadget cache in the sum until their values are chosen. */
+ * launch parameters (runtime/guest_memory_budget.hpp states the sets a launch
+ * takes them from); a caller that states none of them leaves only the guest's
+ * own memory and the gadget cache in the sum. */
 struct GpuBudgetInputs final {
 	/* L: the memory the host lets the process reach before it ends it
 	 * (process_memory_limit_bytes), zero for none. */

@@ -21,6 +21,8 @@
 
 namespace {
 
+/* The guest RAM when the launch states no memory limit; with one, the shared
+ * default for that limit (main.cpp). */
 constexpr std::string_view android_default_guest_memory{"mem=4G"};
 constexpr std::string_view release_option{"--android-release="};
 constexpr std::string_view data_disk_option{"--android-data-disk="};

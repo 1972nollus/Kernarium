@@ -129,43 +129,89 @@ struct HostDeviceTests {
             #expect(bounds.allSatisfy { $0 == Limits.runtimeMemoryRangeMiB.upperBound })
         }
         // A new guest takes every vCPU the device offers and the default
-        // memory of that count (the safe limit in half-gibibyte steps).
+        // memory of that count, which is the loader's answer for the
+        // conservative launch set and the one the host GPU's budget uses.
         let fresh = Guest.fresh(on: host)
         #expect(fresh.cores == host.processorCount)
         #expect(fresh.memoryMiB == host.memory.defaultMemoryMiB(vCPUs: host.processorCount))
         #expect(fresh.memoryMiB <= host.memory.maximumMiB(vCPUs: host.processorCount))
+        let launch = kernarium_runtime_loader_launch_memory_set()
+        let maximumSet = kernarium_runtime_loader_maximum_memory_set()
+        for count in 1...host.processorCount {
+            #expect(host.memory.defaultMemoryMiB(vCPUs: count)
+                == Int(kernarium_runtime_loader_default_guest_memory_mib(UInt32(count), launch)))
+            #expect(host.memory.maximumMiB(vCPUs: count)
+                == Int(kernarium_runtime_loader_maximum_guest_memory_mib(UInt32(count), maximumSet)))
+            #expect(host.memory.defaultMemoryMiB(vCPUs: count) <= host.memory.maximumMiB(vCPUs: count))
+            #expect(Limits.defaultMemoryRangeMiB.contains(host.memory.defaultMemoryMiB(vCPUs: count))
+                || host.memory.defaultMemoryMiB(vCPUs: count) == host.memory.maximumMiB(vCPUs: count))
+            // A new guest is not one the application warns about; one with the
+            // most the picker offers is, wherever the picker offers more.
+            #expect(!host.memory.isAboveDefault(host.memory.defaultMemoryMiB(vCPUs: count), vCPUs: count))
+            #expect(host.memory.isAboveDefault(host.memory.maximumMiB(vCPUs: count), vCPUs: count)
+                == (host.memory.maximumMiB(vCPUs: count) > host.memory.defaultMemoryMiB(vCPUs: count)))
+        }
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            // A Mac sets no limit: the whole range, and nothing to warn about.
+            #expect((1...host.processorCount).allSatisfy {
+                host.memory.defaultMemoryMiB(vCPUs: $0) == Limits.runtimeMemoryRangeMiB.upperBound
+                    && !host.memory.isAboveDefault(host.memory.maximumMiB(vCPUs: $0), vCPUs: $0)
+            })
+        }
         #expect(AppEntry.freeStorageBytes() > 0)
     }
 }
 
-/// The unit fixtures of the default memory are the shared budget formula's
-/// own answers; this asks the loader, which holds that formula, for the same
+/// The unit fixtures of the bounds and defaults are the shared budget rule's
+/// own answers; this asks the loader, which holds that rule, for the same
 /// rows, and for the vCPU count a device with a given number of cores offers.
 struct DefaultGuestTests {
     @Test func theFixturesAreTheLoadersBoundsAndTheCoreLimitIsEightAtMost() {
-        let parameters = kernarium_runtime_loader_launch_memory_set()
+        let launch = kernarium_runtime_loader_launch_memory_set()
+        let maximumSet = kernarium_runtime_loader_maximum_memory_set()
         for (cores, expected) in [(1, 1), (4, 4), (6, 6), (8, 8), (10, 8), (12, 8), (20, 8)] {
             #expect(GuestProcessorLimit.vCPUs(physicalProcessorCount: cores) == expected)
         }
         for (limitMiB, bounds, defaults) in [
-            (1536, [960, 960, 896, 896, 896, 896, 896, 896], [4: 896, 6: 896, 8: 896]),
-            (2048, [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344], [4: 1408, 6: 1344, 8: 1344]),
-            (2304, [1728, 1728, 1664, 1664, 1600, 1600, 1600, 1600], [4: 1536, 6: 1536, 8: 1536]),
-            (2867, [2304, 2304, 2240, 2240, 2176, 2176, 2176, 2176], [4: 2048, 6: 2048, 8: 2048]),
-            (3584, [3008, 3008, 2944, 2944, 2880, 2880, 2880, 2880], [4: 2560, 6: 2560, 8: 2560]),
-            (4096, [3520, 3520, 3456, 3456, 3392, 3392, 3392, 3392], [4: 3072, 6: 3072, 8: 3072]),
-            (5120, Array(repeating: 4096, count: 8), [4: 4096, 6: 4096, 8: 4096]),
-            (0, Array(repeating: 4096, count: 8), [4: 4096, 6: 4096, 8: 4096]),
-        ] as [(Int, [Int], [Int: Int])] {
-            let policy = MemoryPolicy(processorCount: 8) { count in
-                Int(kernarium_runtime_loader_maximum_guest_memory_mib_for_limit(
-                    UInt64(limitMiB) << 20, UInt32(count), parameters))
-            }
+            (1536, [960, 960, 896, 896, 896, 896, 896, 896], [960, 960, 896, 896, 896, 896, 896, 896]),
+            (2048, [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344], [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344]),
+            (2304, [1728, 1728, 1664, 1664, 1600, 1600, 1600, 1600], Array(repeating: 1536, count: 8)),
+            (2867, [2304, 2304, 2240, 2240, 2176, 2176, 2176, 2176], Array(repeating: 1536, count: 8)),
+            (3584, [3008, 3008, 2944, 2944, 2880, 2880, 2880, 2880], Array(repeating: 2048, count: 8)),
+            (4096, [3520, 3520, 3456, 3456, 3392, 3392, 3392, 3392], Array(repeating: 2560, count: 8)),
+            (5120, Array(repeating: 4096, count: 8), Array(repeating: 3584, count: 8)),
+            (6144, Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8)),
+            (0, Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8)),
+        ] as [(Int, [Int], [Int])] {
+            let policy = MemoryPolicy(
+                processorCount: 8,
+                bound: { count in
+                    Int(kernarium_runtime_loader_maximum_guest_memory_mib_for_limit(
+                        UInt64(limitMiB) << 20, UInt32(count), maximumSet))
+                },
+                defaultMemory: { count in
+                    Int(kernarium_runtime_loader_default_guest_memory_mib_for_limit(
+                        UInt64(limitMiB) << 20, UInt32(count), launch))
+                }
+            )
             #expect((1...8).map { policy.maximumMiB(vCPUs: $0) } == bounds, "limit \(limitMiB) MiB")
-            for (cores, memory) in defaults {
-                #expect(policy.defaultMemoryMiB(vCPUs: cores) == memory, "limit \(limitMiB) MiB, \(cores) vCPUs")
-            }
+            #expect((1...8).map { policy.defaultMemoryMiB(vCPUs: $0) } == defaults, "limit \(limitMiB) MiB")
         }
+        // The loader's launch set is the conservative one; the maximum counts none.
+        #expect(launch.application_mib == 64 && launch.engine_mib == 320 && launch.headroom_mib == 149)
+        #expect(maximumSet.application_mib == 0 && maximumSet.engine_mib == 0 && maximumSet.headroom_mib == 0)
+    }
+
+    /// The app's constant for the range a default is held within is the
+    /// rule's: an iPad mini 6 sits on its bottom and a limit with room on its top.
+    @Test func theDefaultRangeIsTheRulesRange() {
+        let launch = kernarium_runtime_loader_launch_memory_set()
+        func defaultMiB(limitMiB: UInt64) -> Int {
+            Int(kernarium_runtime_loader_default_guest_memory_mib_for_limit(limitMiB << 20, 6, launch))
+        }
+        #expect(defaultMiB(limitMiB: 2867) == Limits.defaultMemoryRangeMiB.lowerBound)
+        #expect(defaultMiB(limitMiB: 0) == Limits.defaultMemoryRangeMiB.upperBound)
+        #expect(defaultMiB(limitMiB: 1 << 20) == Limits.defaultMemoryRangeMiB.upperBound)
     }
 }
 

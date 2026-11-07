@@ -726,9 +726,13 @@ struct KernariumTests {
         )
 
         #expect(configuration.vCPUCount == 6)
+        // The runtime's own default at the loaded vCPU count: what the system
+        // leaves a device, and 4096 on a Mac, which sets no limit.
         #expect(
             configuration.guestMemoryMiB ==
-                (ProcessInfo.processInfo.isiOSAppOnMac ? 4096 : 1536)
+                Int(kernarium_runtime_loader_default_guest_memory_mib(
+                    6, kernarium_runtime_loader_launch_memory_set()
+                ))
         )
         #expect(configuration.overlaySizeGiB == 8)
         #expect(configuration.androidDiskSizeGiB == 8)
@@ -792,18 +796,85 @@ struct KernariumTests {
         }
     }
 
+    /// The default is the runtime's rule, asked of the loader with the
+    /// conservative launch set: an iPad mini 6's 2,867 MiB gives 1536 MiB at
+    /// every vCPU count, larger limits give more in half-gibibyte steps, and a
+    /// Mac, which sets no limit, keeps the top of the range.
     @Test
-    func aDeviceDefaultsToLessGuestMemoryThanAMac() {
-        let device = EmulatorConfiguration.defaultGuestMemoryMiB(
-            appRunsOnMac: false
-        )
-        #expect(device == 1536)
+    func theDefaultGuestMemoryIsTheSharedRuleAtTheVCPUCount() {
+        let launch = kernarium_runtime_loader_launch_memory_set()
+        func defaults(limitMiB: UInt64) -> [Int] {
+            (1...8).map { vCPUs in
+                Int(kernarium_runtime_loader_default_guest_memory_mib_for_limit(
+                    limitMiB << 20, UInt32(vCPUs), launch
+                ))
+            }
+        }
+        #expect(defaults(limitMiB: 2867) == Array(repeating: 1536, count: 8))
+        #expect(defaults(limitMiB: 3584) == Array(repeating: 2048, count: 8))
+        #expect(defaults(limitMiB: 4096) == Array(repeating: 2560, count: 8))
+        #expect(defaults(limitMiB: 5120) == Array(repeating: 3584, count: 8))
+        #expect(defaults(limitMiB: 6144) == Array(repeating: 4096, count: 8))
+        #expect(defaults(limitMiB: 0) == Array(repeating: 4096, count: 8))
+        // A limit under the range's bottom keeps the default on the
+        // maximum, which is on the stepper's steps.
+        let tight = defaults(limitMiB: 2048)
+        #expect(tight == [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344])
+        for vCPUs in 1...8 {
+            #expect(EmulatorConfiguration.systemDefaultGuestMemory(vCPUs) ==
+                Int(kernarium_runtime_loader_default_guest_memory_mib(
+                    UInt32(vCPUs), launch
+                )))
+        }
+        // Zero vCPUs count as one.
+        #expect(EmulatorConfiguration.systemDefaultGuestMemory(0) ==
+            EmulatorConfiguration.systemDefaultGuestMemory(1))
         #expect(
-            EmulatorConfiguration.defaultGuestMemoryMiB(appRunsOnMac: true) ==
-                4096
+            EmulatorConfiguration.guestMemoryRangeMiB.contains(
+                EmulatorConfiguration.systemDefaultGuestMemory(6)
+            )
         )
-        #expect(EmulatorConfiguration.guestMemoryRangeMiB.contains(device))
-        #expect(device % EmulatorConfiguration.guestMemoryStepMiB == 0)
+        #expect(
+            EmulatorConfiguration.systemDefaultGuestMemory(6) %
+                EmulatorConfiguration.guestMemoryStepMiB == 0
+        )
+    }
+
+    /// A configuration with nothing stored takes the default of the vCPU
+    /// count it loads with, whether the count was defaulted, stored or stated
+    /// by the environment.
+    @Test
+    func theDefaultGuestMemoryFollowsTheLoadedVCPUCount() {
+        let (defaults, suiteName) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        var asked: [Int] = []
+        let rule: EmulatorConfiguration.DefaultGuestMemory = { vCPUs in
+            asked.append(vCPUs)
+            return 2048 - vCPUs * 64
+        }
+        func load(_ environment: [String: String] = [:]) -> EmulatorConfiguration {
+            asked = []
+            return EmulatorConfiguration.load(
+                defaults: defaults,
+                physicalProcessorCount: 6,
+                environment: environment,
+                guestMemoryBound: Self.unboundedGuestMemory,
+                defaultGuestMemory: rule
+            )
+        }
+        #expect(load().guestMemoryMiB == 2048 - 6 * 64)
+        #expect(asked == [6])
+        #expect(
+            load([EmulatorConfiguration.vCPUEnvironmentKey: "3"])
+                .guestMemoryMiB == 2048 - 3 * 64
+        )
+        #expect(asked == [3])
+        defaults.set(2, forKey: "emulator.vCPUCount")
+        #expect(load().guestMemoryMiB == 2048 - 2 * 64)
+        #expect(asked == [2])
+        // A stored size is kept, and the default is not what decides it.
+        defaults.set(1024, forKey: "emulator.guestMemoryMiB")
+        #expect(load().guestMemoryMiB == 1024)
     }
 
     @Test
@@ -908,18 +979,19 @@ struct KernariumTests {
     }
 
     @Test
-    func gpuBudgetParametersComeFromTheEnvironmentAndDefaultToNothing() {
+    func gpuBudgetParametersComeFromTheEnvironmentAndDefaultToTheLaunchSet() {
         let (defaults, suiteName) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        // Their values are pending a decision, so a launch states none.
+        // A launch states the conservative launch set unless the environment
+        // names a value: A 64, E_rest 320, S 45 + 40 + 64 MiB.
         let plain = EmulatorConfiguration.load(
             defaults: defaults,
             physicalProcessorCount: 6
         )
-        #expect(plain.gpuBudgetApplicationMiB == 0)
-        #expect(plain.gpuBudgetEngineMiB == 0)
-        #expect(plain.gpuBudgetHeadroomMiB == 0)
+        #expect(plain.gpuBudgetApplicationMiB == 64)
+        #expect(plain.gpuBudgetEngineMiB == 320)
+        #expect(plain.gpuBudgetHeadroomMiB == 149)
 
         let stated = EmulatorConfiguration.load(
             defaults: defaults,
@@ -935,7 +1007,8 @@ struct KernariumTests {
         #expect(stated.gpuBudgetEngineMiB == 50)
         #expect(stated.gpuBudgetHeadroomMiB == 100)
 
-        // A value that is not a whole number in range states nothing.
+        // A value that is not a whole number in range states nothing, and
+        // the launch set stays.
         let refused = EmulatorConfiguration.load(
             defaults: defaults,
             physicalProcessorCount: 6,
@@ -947,9 +1020,9 @@ struct KernariumTests {
                     "99999999",
             ]
         )
-        #expect(refused.gpuBudgetApplicationMiB == 0)
-        #expect(refused.gpuBudgetEngineMiB == 0)
-        #expect(refused.gpuBudgetHeadroomMiB == 0)
+        #expect(refused.gpuBudgetApplicationMiB == 64)
+        #expect(refused.gpuBudgetEngineMiB == 320)
+        #expect(refused.gpuBudgetHeadroomMiB == 149)
 
         // The parameters are not stored: no setting writes them.
         stated.save(defaults: defaults)
@@ -957,21 +1030,21 @@ struct KernariumTests {
             EmulatorConfiguration.load(
                 defaults: defaults,
                 physicalProcessorCount: 6
-            ).gpuBudgetApplicationMiB == 0
+            ).gpuBudgetApplicationMiB == 64
         )
     }
 
     /// No bound at all: a host that sets no memory limit.
     private static let unboundedGuestMemory: EmulatorConfiguration
-        .GuestMemoryBound = { _, _, _, _ in 4096 }
+        .GuestMemoryBound = { _ in 4096 }
 
-    /// The iPad mini 6's 2,867 MiB with main's launch set (A, E_rest and S
-    /// of zero), the rows the runtime's own formula gives at 1 through 6 vCPUs.
+    /// The iPad mini 6's 2,867 MiB with the maximum set (A, E_rest and S of
+    /// zero), the rows the runtime's own formula gives at 1 through 6 vCPUs.
     private static let mainGuestMemoryRows = [
         1: 2304, 2: 2304, 3: 2240, 4: 2240, 5: 2176, 6: 2176,
     ]
     private static let mainGuestMemoryBound: EmulatorConfiguration
-        .GuestMemoryBound = { vCPUCount, _, _, _ in
+        .GuestMemoryBound = { vCPUCount in
         mainGuestMemoryRows[vCPUCount] ?? 2176
     }
 
@@ -984,12 +1057,25 @@ struct KernariumTests {
                 ))
             }
         }
-        // Main's set counts none of A, E_rest and S.
+        // The maximum set counts none of A, E_rest and S: the most a person
+        // may choose. 2048 MiB stays selectable on an iPad mini 6.
         let none = kernarium_launch_memory_set(
             application_mib: 0, engine_mib: 0, headroom_mib: 0
         )
+        let maximumSet = kernarium_runtime_loader_maximum_memory_set()
+        #expect(maximumSet.application_mib == 0)
+        #expect(maximumSet.engine_mib == 0)
+        #expect(maximumSet.headroom_mib == 0)
         #expect(maximums(none) == [2304, 2304, 2240, 2240, 2176, 2176, 2176, 2176])
-        // The candidate sets of the user's pending choice.
+        #expect(maximums(maximumSet) == maximums(none))
+        // The conservative launch set the default and the host GPU's budget
+        // use: A 64, E_rest 320, and S of 45 + 40 + 64.
+        let launch = kernarium_runtime_loader_launch_memory_set()
+        #expect(launch.application_mib == 64)
+        #expect(launch.engine_mib == 320)
+        #expect(launch.headroom_mib == 149)
+        #expect(maximums(launch) == [1792, 1728, 1728, 1664, 1664, 1664, 1600, 1600])
+        // Other sets keep the formula's shape.
         #expect(
             maximums(kernarium_launch_memory_set(
                 application_mib: 56, engine_mib: 563, headroom_mib: 64
@@ -1013,8 +1099,8 @@ struct KernariumTests {
                 ) == 4096
             )
         }
-        // The launch set the loader reports is the one the defaults follow.
-        let launch = kernarium_runtime_loader_launch_memory_set()
+        // The launch set the loader reports is the one the GPU budget
+        // defaults follow.
         #expect(
             Int(launch.application_mib) ==
                 EmulatorConfiguration.defaultGPUBudgetApplicationMiB
@@ -1028,16 +1114,28 @@ struct KernariumTests {
                 EmulatorConfiguration.defaultGPUBudgetHeadroomMiB
         )
         // The system's own answer is some size of the stepper's range.
-        let system = EmulatorConfiguration(
+        var configuration = EmulatorConfiguration(
             vCPUCount: 4, guestMemoryMiB: 1024, overlaySizeGiB: 8,
             androidDiskSizeGiB: 8, rootfsFilename: "x.erofs",
             retinaMode: false, autoResizeGuest: true, androidBootMode: .automatic
-        ).maximumGuestMemoryMiB(vCPUCount: 4)
+        )
+        let system = configuration.maximumGuestMemoryMiB(vCPUCount: 4)
         #expect(EmulatorConfiguration.guestMemoryRangeMiB.contains(system))
         #expect(
             (system - EmulatorConfiguration.guestMemoryRangeMiB.lowerBound) %
                 EmulatorConfiguration.guestMemoryStepMiB == 0
         )
+        // It is the maximum set's answer for this process, whatever launch
+        // parameters the configuration states for the host GPU's budget.
+        #expect(
+            system == Int(kernarium_runtime_loader_maximum_guest_memory_mib(
+                4, maximumSet
+            ))
+        )
+        configuration.gpuBudgetApplicationMiB = 900
+        configuration.gpuBudgetEngineMiB = 900
+        configuration.gpuBudgetHeadroomMiB = 900
+        #expect(configuration.maximumGuestMemoryMiB(vCPUCount: 4) == system)
     }
 
     @Test
@@ -1046,13 +1144,14 @@ struct KernariumTests {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         // Nothing stored: the default, or the maximum where that is less.
-        let defaultMiB = EmulatorConfiguration.defaultGuestMemoryMiB
+        let defaultMiB = 1536
         for (bound, expected) in [(4096, defaultMiB), (1344, 1344), (512, 512)] {
             #expect(
                 EmulatorConfiguration.load(
                     defaults: defaults,
                     physicalProcessorCount: 6,
-                    guestMemoryBound: { _, _, _, _ in bound }
+                    guestMemoryBound: { _ in bound },
+                    defaultGuestMemory: { _ in defaultMiB }
                 ).guestMemoryMiB == min(defaultMiB, expected)
             )
         }
@@ -1081,8 +1180,9 @@ struct KernariumTests {
             ).guestMemoryMiB == 1792
         )
 
-        // The bound sees the vCPU count the environment states and the launch
-        // parameters, and a size the environment states is kept as stated.
+        // The bound sees the vCPU count the environment states and nothing
+        // else: the launch parameters the environment states change the host
+        // GPU's budget, not the most guest RAM the settings offer.
         var seen: [Int] = []
         let loaded = EmulatorConfiguration.load(
             defaults: defaults,
@@ -1093,12 +1193,13 @@ struct KernariumTests {
                 EmulatorConfiguration.gpuBudgetEngineEnvironmentKey: "600",
                 EmulatorConfiguration.gpuBudgetHeadroomEnvironmentKey: "100",
             ],
-            guestMemoryBound: { vCPUs, application, engine, headroom in
-                seen = [vCPUs, application, engine, headroom]
+            guestMemoryBound: { vCPUs in
+                seen.append(vCPUs)
                 return 1024
             }
         )
-        #expect(seen == [3, 60, 600, 100])
+        #expect(seen == [3])
+        #expect(loaded.gpuBudgetApplicationMiB == 60)
         #expect(loaded.guestMemoryMiB == 1024)
         #expect(
             EmulatorConfiguration.load(
@@ -1159,7 +1260,7 @@ struct KernariumTests {
         for (said, expected) in [(0, 512), (600, 576), (2150, 2112), (99999, 4096)] {
             #expect(
                 configuration.maximumGuestMemoryMiB(
-                    vCPUCount: 4, bound: { _, _, _, _ in said }
+                    vCPUCount: 4, bound: { _ in said }
                 ) == expected
             )
         }
