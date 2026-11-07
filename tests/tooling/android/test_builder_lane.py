@@ -372,8 +372,12 @@ def tracked_erofs_parameters(android_root: Path) -> tuple[str, str]:
     return found[0], found[1]
 
 
-def synthetic_resource_table(arrays: list[tuple[str, list[str]]], *, utf8: bool = True) -> bytes:
-    """A compiled resource table whose one package holds the given string-array resources."""
+def synthetic_resource_table(
+    arrays: list[tuple[str, list[str]]], *, utf8: bool = True,
+    booleans: list[tuple[str, bool]] = (), compact: bool = False,
+) -> bytes:
+    """A compiled resource table whose one package holds the given string-array resources and
+    bool resources (as compact entries when `compact` is set, as a recent aapt2 writes them)."""
 
     def pool(strings: list[str]) -> bytes:
         data, offsets = b"", []
@@ -391,27 +395,41 @@ def synthetic_resource_table(arrays: list[tuple[str, list[str]]], *, utf8: bool 
                 + struct.pack(f"<{len(strings)}I", *offsets) + data)
 
     values = sorted({item for _, items in arrays for item in items})
-    names = [name for name, _ in arrays]
-    entries = b""
-    offsets = []
-    for index, (_, items) in enumerate(arrays):
-        offsets.append(len(entries))
-        entries += struct.pack("<HHIII", 16, 1, index, 0, len(items))
-        for item in items:
-            entries += struct.pack("<IHBBI", 0x02000001, 8, 0, 3, values.index(item))
+    names = [name for name, _ in arrays] + [name for name, _ in booleans]
     configuration = struct.pack("<I", 64) + b"\x00" * 60
     type_header = 20 + len(configuration)
-    type_chunk = (struct.pack("<HHIBBHII", 0x0201, type_header,
-                              type_header + 4 * len(arrays) + len(entries), 1, 0, 0, len(arrays),
-                              type_header + 4 * len(arrays))
-                  + configuration + struct.pack(f"<{len(arrays)}I", *offsets) + entries)
-    type_pool, key_pool = pool(["array"]), pool(names)
+
+    def type_chunk(type_id: int, entries: list[bytes]) -> bytes:
+        offsets, body = [], b""
+        for entry in entries:
+            offsets.append(len(body))
+            body += entry
+        return (struct.pack("<HHIBBHII", 0x0201, type_header,
+                            type_header + 4 * len(entries) + len(body), type_id, 0, 0, len(entries),
+                            type_header + 4 * len(entries))
+                + configuration + struct.pack(f"<{len(entries)}I", *offsets) + body)
+
+    array_entries = []
+    for index, (_, items) in enumerate(arrays):
+        entry = struct.pack("<HHIII", 16, 1, index, 0, len(items))
+        for item in items:
+            entry += struct.pack("<IHBBI", 0x02000001, 8, 0, 3, values.index(item))
+        array_entries.append(entry)
+    bool_entries = []
+    for index, (_, value) in enumerate(booleans, start=len(arrays)):
+        data = 0xFFFFFFFF if value else 0
+        if compact:  # key in the size field; the value type in the flags' high byte; the data
+            bool_entries.append(struct.pack("<HHI", index, 0x1200 | 0x08, data))
+        else:
+            bool_entries.append(struct.pack("<HHI", 8, 0, index) + struct.pack("<HBBI", 8, 0, 0x12, data))
+    chunks = type_chunk(1, array_entries) + (type_chunk(2, bool_entries) if booleans else b"")
+    type_pool, key_pool = pool(["array", "bool"] if booleans else ["array"]), pool(names)
     package_header = 288
     package = (struct.pack("<HHII", 0x0200, package_header,
-                           package_header + len(type_pool) + len(key_pool) + len(type_chunk), 0x7F)
+                           package_header + len(type_pool) + len(key_pool) + len(chunks), 0x7F)
                + b"\x00" * 256
                + struct.pack("<IIIII", package_header, 0, package_header + len(type_pool), 0, 0)
-               + type_pool + key_pool + type_chunk)
+               + type_pool + key_pool + chunks)
     global_pool = pool(values)
     return struct.pack("<HHII", 2, 12, 12 + len(global_pool) + len(package), 1) + global_pool + package
 
@@ -537,6 +555,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
     for utf8 in (True, False):
         if tool.resource_arrays(synthetic_resource_table(tables, utf8=utf8)) != expected_arrays:
             fail(f"the resource array reader misreads a {'UTF-8' if utf8 else 'UTF-16'} string pool")
+    # ... and a bool resource, whether the table keeps it as a full or as a compact entry.
+    flags = [("config_flipToScreenOffEnabled", False), ("other", True), ("config_flipToScreenOffEnabled", True)]
+    for compact in (False, True):
+        table = synthetic_resource_table(tables, booleans=flags, compact=compact)
+        if tool.resource_booleans(table) != {"config_flipToScreenOffEnabled": [False, True], "other": [True]}:
+            fail(f"the resource bool reader misreads {'compact' if compact else 'full'} entries")
+        if tool.resource_arrays(table) != expected_arrays:
+            fail(f"the resource array reader misreads a table that also holds {'compact' if compact else 'full'} bools")
     release_manifest = synthetic_compiled_manifest(None, debuggable=False)
     release_apk = synthetic_apk(debuggable=False)
     preopt_apks = sorted(tool.REQUIRED_PREOPT_APKS)
@@ -784,6 +810,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           statistics_variant: str | None = None,
                           wizard_branding_variant: str | None = None,
                           network_time_variant: str | None = None,
+                          flip_variant: str | None = None,
                           reclaim_variant: str | None = None,
                           wallpaper_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
@@ -1800,8 +1827,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         network_time["config_autoTimeSourcesPriority"] = ["telephony"]
                     elif network_time_variant == "origin-missing":
                         del network_time["config_autoTimeSourcesPriority"]
+                    # The product's flip-to-screen-off switch, off in the default configuration.
+                    flip_values = [False]
+                    if flip_variant == "enabled":
+                        flip_values = [True]
+                    elif flip_variant == "enabled-in-a-qualified-table":
+                        flip_values = [False, True]
+                    elif flip_variant == "missing":
+                        flip_values = []
                     network_table = synthetic_resource_table(
-                        [*network_time.items(), *extra_definitions], utf8=network_time_variant != "utf16-pool"
+                        [*network_time.items(), *extra_definitions], utf8=network_time_variant != "utf16-pool",
+                        booleans=[("config_flipToScreenOffEnabled", value) for value in flip_values],
+                        compact=flip_variant == "compact",
                     )
                     framework_apk = io.BytesIO()
                     with zipfile.ZipFile(framework_apk, "w") as overlay:
@@ -2215,6 +2252,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         good = root / "good.zip"
         write_fixture(good)
         run_tool(verifier, "--target-files", good, *kernel_options, check=True)
+        # A recent aapt2 writes a resource that holds one value as a compact entry.
+        compact_good = root / "compact-good.zip"
+        write_fixture(compact_good, flip_variant="compact")
+        run_tool(verifier, "--target-files", compact_good, *kernel_options, check=True)
         # Signed target files are checked with --signed: the release certificate alone is trusted,
         # and only a user build is signed. The unsigned fixtures above hold the test certificate's
         # member, which each variant's unsigned build writes.
@@ -2674,6 +2715,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("time-origin-list-empty", {"network_time_variant": "origin-empty"}),
             ("time-origin-list-without-external", {"network_time_variant": "origin-without-external"}),
             ("time-origin-list-missing", {"network_time_variant": "origin-missing"}),
+            ("flip-to-screen-off-enabled", {"flip_variant": "enabled"}),
+            ("flip-to-screen-off-enabled-in-a-qualified-definition",
+             {"flip_variant": "enabled-in-a-qualified-table"}),
+            ("flip-to-screen-off-missing", {"flip_variant": "missing"}),
             ("statistics-uploader-in-parts-manifest", {"statistics_variant": "parts-manifest"}),
             ("statistics-uploader-in-parts-dex", {"statistics_variant": "parts-dex"}),
             ("statistics-endpoint-in-parts-resources", {"statistics_variant": "parts-endpoint"}),
@@ -3317,6 +3362,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "config_autoTimeSourcesPriority in .*framework-res.* lacks external"),
             ("time-origin-list-missing-cause", {"network_time_variant": "origin-missing"},
              "framework-res.* does not set config_autoTimeSourcesPriority"),
+            ("flip-to-screen-off-enabled-cause", {"flip_variant": "enabled"},
+             "config_flipToScreenOffEnabled is true in .*framework-res.*FaceDownDetector"),
+            ("flip-to-screen-off-enabled-in-a-qualified-definition-cause",
+             {"flip_variant": "enabled-in-a-qualified-table"},
+             "config_flipToScreenOffEnabled is true in .*framework-res.*FaceDownDetector"),
+            ("flip-to-screen-off-missing-cause", {"flip_variant": "missing"},
+             "framework-res.* does not set config_flipToScreenOffEnabled: .*FaceDownDetector"),
             ("statistics-uploader-in-parts-manifest-cause", {"statistics_variant": "parts-manifest"},
              "LineageParts.apk still carries LineageOS's statistics uploader: AndroidManifest.xml "
              "contains lineagestats"),

@@ -1550,15 +1550,14 @@ def resource_string_pool(table: bytes, offset: int) -> list[str]:
     return strings
 
 
-def resource_arrays(table: bytes) -> dict[str, list[list[str]]]:
-    """Every array resource of a compiled resource table, by name: one list of its items'
-    strings for each definition (an item that is not a string reads as "<type:data>")."""
-    arrays: dict[str, list[list[str]]] = {}
+def resource_entries(table: bytes, type_name: str):
+    """The (name, position, flags) of every entry of one resource type in a compiled resource
+    table, in each of its configurations. The position is that of the ResTable_entry, or of the
+    compact entry whose key sits where a full entry keeps its size."""
     position = struct.unpack_from("<H", table, 2)[0]
     chunk, _, size = struct.unpack_from("<HHI", table, position)
     if chunk != 0x0001:
         raise ValueError("the table does not start with a string pool")
-    values = resource_string_pool(table, position)
     position += size
     while position + 8 <= len(table):
         chunk, header_size, size = struct.unpack_from("<HHI", table, position)
@@ -1573,7 +1572,7 @@ def resource_arrays(table: bytes) -> dict[str, list[list[str]]]:
                 inner_chunk, inner_header, inner_size = struct.unpack_from("<HHI", table, inner)
                 if inner_size < 8:
                     break
-                if inner_chunk == 0x0201 and types[table[inner + 8] - 1] == "array":
+                if inner_chunk == 0x0201 and types[table[inner + 8] - 1] == type_name:
                     count, entries_start = struct.unpack_from("<II", table, inner + 12)
                     kind = table[inner + 9]
                     if kind & 0x01:  # sparse: (index, offset / 4) pairs of 16 bits
@@ -1587,20 +1586,45 @@ def resource_arrays(table: bytes) -> dict[str, list[list[str]]]:
                         if entry_offset == 0xFFFFFFFF:
                             continue
                         entry = inner + entries_start + entry_offset
-                        _, flags, key = struct.unpack_from("<HHI", table, entry)
-                        if not flags & 1:
-                            continue
-                        item_count = struct.unpack_from("<I", table, entry + 12)[0]
-                        items = []
-                        for index in range(item_count):
-                            _, _, data_type, data = struct.unpack_from(
-                                "<HBBI", table, entry + 16 + 12 * index + 4
-                            )
-                            items.append(values[data] if data_type == 3 else f"<{data_type}:{data}>")
-                        arrays.setdefault(keys[key], []).append(items)
+                        key, flags = struct.unpack_from("<HH", table, entry)
+                        if not flags & 0x08:  # a full entry: size, flags, then a 32-bit key
+                            key = struct.unpack_from("<I", table, entry + 4)[0]
+                        yield keys[key], entry, flags
                 inner += inner_size
         position += size
+
+
+def resource_arrays(table: bytes) -> dict[str, list[list[str]]]:
+    """Every array resource of a compiled resource table, by name: one list of its items'
+    strings for each definition (an item that is not a string reads as "<type:data>")."""
+    arrays: dict[str, list[list[str]]] = {}
+    values = resource_string_pool(table, struct.unpack_from("<H", table, 2)[0])
+    for name, entry, flags in resource_entries(table, "array"):
+        if not flags & 1:
+            continue
+        item_count = struct.unpack_from("<I", table, entry + 12)[0]
+        items = []
+        for index in range(item_count):
+            _, _, data_type, data = struct.unpack_from("<HBBI", table, entry + 16 + 12 * index + 4)
+            items.append(values[data] if data_type == 3 else f"<{data_type}:{data}>")
+        arrays.setdefault(name, []).append(items)
     return arrays
+
+
+def resource_booleans(table: bytes) -> dict[str, list[bool]]:
+    """Every bool resource of a compiled resource table, by name: its value in each definition."""
+    booleans: dict[str, list[bool]] = {}
+    for name, entry, flags in resource_entries(table, "bool"):
+        if flags & 0x08:  # compact: the value type is the flags' high byte, the data follows
+            data_type, data = flags >> 8, struct.unpack_from("<I", table, entry + 4)[0]
+        elif flags & 0x01:
+            continue
+        else:
+            size = struct.unpack_from("<H", table, entry)[0]
+            _, _, data_type, data = struct.unpack_from("<HBBI", table, entry + size)
+        if data_type == 0x12:  # TYPE_INT_BOOLEAN
+            booleans.setdefault(name, []).append(data != 0)
+    return booleans
 
 
 def check_network_time(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
@@ -1629,6 +1653,37 @@ def check_network_time(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInf
             fail(f"{NETWORK_TIME_ORIGINS} lists the network in {FRAMEWORK_OVERLAY}: network time is not a time source")
         if "external" not in items:
             fail(f"{NETWORK_TIME_ORIGINS} in {FRAMEWORK_OVERLAY} lacks external: without it a device without telephony loses \"Set time automatically\"")
+
+
+# The power manager's FaceDownDetector turns the screen off when the device lies face down. While
+# it is enabled it holds an accelerometer connection (every 200 ms, batched over 2 s) for as long
+# as the screen is on, so the host's motion sensor stays running although no application asked for
+# a reading, and a virtual device that is never "face down" gains nothing from it. The detector is
+# enabled only when the framework resource is true (and the attention_manager_service flag the
+# platform leaves on), so the product's framework overlay turns it off for every boot.
+FLIP_TO_SCREEN_OFF = "config_flipToScreenOffEnabled"
+
+
+def check_flip_to_screen_off(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    """The framework overlay disables flip-to-screen-off, which would hold the accelerometer."""
+    info = infos.get(FRAMEWORK_OVERLAY)
+    if info is None:
+        fail(f"{FRAMEWORK_OVERLAY} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, FRAMEWORK_OVERLAY_LIMIT))) as overlay:
+            booleans = resource_booleans(overlay.read("resources.arsc"))
+    except (KeyError, OSError, ValueError, struct.error, IndexError, zipfile.BadZipFile) as error:
+        fail(f"{FRAMEWORK_OVERLAY} has no readable resource table: {error}")
+    if FLIP_TO_SCREEN_OFF not in booleans:
+        fail(
+            f"{FRAMEWORK_OVERLAY} does not set {FLIP_TO_SCREEN_OFF}: the power manager's "
+            "FaceDownDetector would hold an accelerometer connection while the screen is on"
+        )
+    if any(booleans[FLIP_TO_SCREEN_OFF]):
+        fail(
+            f"{FLIP_TO_SCREEN_OFF} is true in {FRAMEWORK_OVERLAY}: the power manager's "
+            "FaceDownDetector would hold an accelerometer connection while the screen is on"
+        )
 
 
 # PinnerService's pin sizes are framework resources that the platform does not declare
@@ -3431,6 +3486,7 @@ def main() -> None:
         check_no_statistics_uploader(archive, infos)
         check_setup_wizard_branding(archive, infos)
         check_network_time(archive, infos)
+        check_flip_to_screen_off(archive, infos)
         check_pinner_overlay(archive, infos)
         check_application_manifests(archive, infos, build_variant)
         check_thermal_hal(archive, infos)

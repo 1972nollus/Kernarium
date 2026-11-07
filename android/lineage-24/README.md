@@ -304,7 +304,11 @@ shuts the connection down, so the host connects again and is told afresh; a
 host that never receives a frame is served continuously. The sensor
 framework’s own users decide what is active: auto-rotation keeps the
 accelerometer active while an application that can rotate is in front and the
-screen is on. Each 20-byte sample record is little endian:
+screen is on. The power manager's flip-to-screen-off feature would hold it for
+the whole time the screen is on, so the product's framework overlay sets
+`config_flipToScreenOffEnabled` to false and the target-files verifier requires
+that; with auto-rotation off and no application using a sensor, none is active.
+Each 20-byte sample record is little endian:
 `ANS1`, a uint32 Android sensor type (1 accelerometer or 4 gyroscope), then
 three float32 values in m/s² or rad/s. Axes match the mounted virtual display
 (x right, y up, z out of the screen). Andarium keeps them fixed while Android
