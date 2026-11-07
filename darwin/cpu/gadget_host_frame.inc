@@ -27,7 +27,8 @@
 #define GADGET_HOST_FRAME_SAVED 0x60
 
 .macro gadget_host_frame_push slots=0
-	stp x29, x30, [sp, #-(GADGET_HOST_FRAME_SAVED + \slots)]!
+	sub sp, sp, #(GADGET_HOST_FRAME_SAVED + \slots)
+	stp x29, x30, [sp]
 	stp x19, x20, [sp, #0x10]
 	stp x21, x22, [sp, #0x20]
 	stp x23, x24, [sp, #0x30]
@@ -35,13 +36,14 @@
 	stp x27, x28, [sp, #0x50]
 .endm
 
-/* The restores are independent loads; the stack pointer moves with the last
- * pair, which holds the return address. */
+/* The stack pointer moves before the first store and after the last load, so
+ * a saved register is never below it. */
 .macro gadget_host_frame_pop slots=0
+	ldp x29, x30, [sp]
 	ldp x19, x20, [sp, #0x10]
 	ldp x21, x22, [sp, #0x20]
 	ldp x23, x24, [sp, #0x30]
 	ldp x25, x26, [sp, #0x40]
 	ldp x27, x28, [sp, #0x50]
-	ldp x29, x30, [sp], #(GADGET_HOST_FRAME_SAVED + \slots)
+	add sp, sp, #(GADGET_HOST_FRAME_SAVED + \slots)
 .endm
