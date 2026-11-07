@@ -93,15 +93,8 @@ final class AndariumHostingController<Content: View>: UIHostingController<Conten
                 setNeedsUpdateOfPrefersInterfaceOrientationLocked()
             }
             model.hostDrivesGuestRotation = policy.hostDrivesGuestRotation
-            let insets = view.safeAreaInsets
-            var insetEdges: ScreenEdges = []
-            if insets.top >= 0.5 { insetEdges.insert(.top) }
-            if insets.left >= 0.5 { insetEdges.insert(.left) }
-            if insets.bottom >= 0.5 { insetEdges.insert(.bottom) }
-            if insets.right >= 0.5 { insetEdges.insert(.right) }
             let deferral = SessionGestureDeferral(
-                phase: model.phase, sceneSize: size, screenSize: scene.screen.bounds.size,
-                insetEdges: insetEdges)
+                phase: model.phase, sceneSize: size, screenSize: scene.screen.bounds.size)
             if deferral.deferredEdges != deferredEdges {
                 deferredEdges = deferral.deferredEdges
                 setNeedsUpdateOfScreenEdgesDeferringSystemGestures()

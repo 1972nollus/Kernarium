@@ -20,25 +20,25 @@ public struct ScreenEdges: OptionSet, Hashable, Sendable {
 ///
 /// On a deferred edge the system gives the first swipe to the application and
 /// shows its indicator; a second swipe while the indicator shows reaches the
-/// system. A swipe can reach Android only where the guest's display meets the
-/// screen edge, which is where the scene fills the screen and the safe area
-/// leaves no inset, so only those edges are deferred. The bottom edge stays
-/// the system's, so one swipe still leaves Andarium: Android's 3-button bar is
-/// tapped, not swiped. Outside a normal run the session takes no part and the
-/// screen keeps its own preference.
+/// system. A normal run in a scene that fills the screen defers all four
+/// edges, on an iPhone and an iPad alike, so a stray swipe from an edge
+/// reaches Android (its notification shade, its navigation gestures) or shows
+/// the system's indicator instead of leaving Andarium or opening Control
+/// Center. The guest's display stays inside the safe area: only the
+/// preference changes, not the layout. Outside a normal run, and in a window
+/// that does not fill the screen, the session takes no part and the screen
+/// keeps its own preference.
 public struct SessionGestureDeferral: Equatable, Sendable {
     /// The edges to defer, or nil where the session does not decide.
     public let deferredEdges: ScreenEdges?
 
-    /// - Parameter insetEdges: the edges where the safe area insets the
-    ///   guest's display from the screen edge.
-    public init(phase: Phase, sceneSize: CGSize, screenSize: CGSize, insetEdges: ScreenEdges) {
+    public init(phase: Phase, sceneSize: CGSize, screenSize: CGSize) {
         let fullScreen = abs(sceneSize.width - screenSize.width) < 0.5
             && abs(sceneSize.height - screenSize.height) < 0.5
         guard case .running(.normal) = phase, fullScreen else {
             deferredEdges = nil
             return
         }
-        deferredEdges = ScreenEdges.all.subtracting(insetEdges).intersection([.top, .left, .right])
+        deferredEdges = .all
     }
 }

@@ -65,20 +65,15 @@ struct SessionOrientationHostingTests {
         let controller = AndariumHostingController(rootView: Color.black, model: model)
         lease.window.rootViewController = controller
         // Outside a run the root keeps SwiftUI's preference, which never
-        // takes the top edge from the system.
+        // takes the top or the bottom edge from the system.
         let outside = controller.preferredScreenEdgesDeferringSystemGestures
-        #expect(!outside.contains(.top))
+        #expect(!outside.contains(.top) && !outside.contains(.bottom))
         model.phase = .running(.normal)
         let size = scene.effectiveGeometry.coordinateSpace.bounds.size
         let screen = scene.screen.bounds.size
         let fullScreen = abs(size.width - screen.width) < 0.5 && abs(size.height - screen.height) < 0.5
         if fullScreen {
-            let insets = controller.view.safeAreaInsets
-            var expected: UIRectEdge = []
-            if insets.top < 0.5 { expected.insert(.top) }
-            if insets.left < 0.5 { expected.insert(.left) }
-            if insets.right < 0.5 { expected.insert(.right) }
-            #expect(await eventually { controller.preferredScreenEdgesDeferringSystemGestures == expected })
+            #expect(await eventually { controller.preferredScreenEdgesDeferringSystemGestures == .all })
             #expect(controller.childForScreenEdgesDeferringSystemGestures == nil)
         } else {
             try await Task.sleep(for: .milliseconds(300))
