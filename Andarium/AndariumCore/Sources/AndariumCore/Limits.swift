@@ -43,7 +43,7 @@ public enum Limits {
 
     /// Free space a new guest needs for Android's first start, on top of the
     /// space its storage takes.
-    public static let firstStartReserveBytes: UInt64 = 3 * bytesPerGiB
+    public static let firstStartReserveBytes: UInt64 = RunSpace.firstStartReserveBytes
     /// Free space any start needs for Android's own writes; it is what a
     /// guest paused for space needs to resume (`RunSpace`).
     public static let startReserveBytes: UInt64 = RunSpace.startReserveBytes

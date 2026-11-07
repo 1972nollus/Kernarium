@@ -20,6 +20,9 @@ public enum RunSpace {
 
     /// Free space any start needs for the guest's own writes.
     public static let startReserveBytes: UInt64 = Bytes.gib * 3 / 2
+    /// Free space the first start of an Android guest needs, which writes its
+    /// first setup into a data disk that does not exist yet.
+    public static let firstStartReserveBytes: UInt64 = Bytes.gib * 3
     /// Free space below which a running guest is paused: what its storage
     /// may still grow by before it cannot, less what the pause itself
     /// writes. The write-back of a guest's dirty pages and the writes of one

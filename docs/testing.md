@@ -247,6 +247,12 @@ fakes, so no device is needed. Android recovery qualification uses a fresh
 disposable bundle with `TEST_RUNNER_KERNARIUM_ANDROID_BOOT_MODE=recovery`;
 never run wipe checks against an existing user bundle.
 
+Kernarium's opt-in `SpacePauseGuestTests` pauses the application's own Linux
+or Android guest through a free-space number, then resumes and shuts it down
+(`TEST_RUNNER_KERNARIUM_SPACE_PAUSE_TESTS=1` and
+`TEST_RUNNER_KERNARIUM_SPACE_HARNESS=1`; the launch selects the guest as for
+any run, and the test ends it).
+
 `KernariumTests` runs on an iPad, in the iOS Simulator
 (`Kernarium/scripts/run-ios-simulator-tests.sh`, for UI tests) and, as an iPad
 app, on an Apple silicon Mac. The iPad is the reference and passes everything.

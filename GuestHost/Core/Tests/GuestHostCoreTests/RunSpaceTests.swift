@@ -80,6 +80,24 @@ struct SpacePauseTests {
     }
 }
 
+struct SpacePauseEndingTests {
+    @Test func aStopSaysItEndsTheRunLikeLeavingTheGuest() {
+        let paused = SpacePause(guest: "Linux", freeBytes: 820 * Bytes.mib, ending: .stop)
+        #expect(paused.detail.hasSuffix("Shut down ends the run, as leaving the guest does."))
+        let notPaused = SpacePause(guest: "Linux", freeBytes: 820 * Bytes.mib, stage: .notPaused, ending: .stop)
+        #expect(notPaused.detail.hasSuffix("Shut down ends the run, as leaving the guest does."))
+        let stopping = SpacePause(guest: "Linux", freeBytes: 0, working: .shuttingDown, ending: .stop)
+        #expect(stopping.detail == "Linux is stopping. What it had stored is kept.")
+    }
+
+    @Test func aPowerOffSaysNothingOfStopping() {
+        let paused = SpacePause(freeBytes: 820 * Bytes.mib)
+        #expect(!paused.detail.contains("ends the run"))
+        #expect(SpacePause(freeBytes: 0, working: .shuttingDown).detail
+            == "Android is saving what it has and shutting down.")
+    }
+}
+
 struct SpacePauseWordingTests {
     @Test func theFirstWordsGiveTheFreeSpaceAndWhatIsNeeded() {
         let pause = SpacePause(freeBytes: 820 * Bytes.mib)
@@ -159,5 +177,34 @@ struct SuspensionCheckTests {
     @Test func theBoundIsAFewSeconds() {
         let seconds = Int(SuspensionCheck.interval.components.seconds) * (SuspensionCheck.maximumReadings - 1)
         #expect(seconds >= 5 && seconds <= 10)
+    }
+}
+
+struct StartSpaceTests {
+    @Test func aStartWithRoomHasNoShortage() {
+        #expect(StartSpace(freeBytes: RunSpace.startReserveBytes) == nil)
+        #expect(StartSpace(freeBytes: 40 * Bytes.gib) == nil)
+    }
+
+    @Test func aStartBelowTheReserveStatesWhatItNeedsAndWhatTheDeviceHas() throws {
+        let shortage = try #require(StartSpace(freeBytes: 900 * Bytes.mib))
+        #expect(shortage.neededBytes == RunSpace.startReserveBytes)
+        #expect(StartSpace.title == "Not enough free space")
+        #expect(shortage.message(device: "iPad")
+            == "Starting needs 1.5 GiB free for the guest's own writes. This iPad has 900 MiB free.")
+    }
+
+    @Test func theFirstStartOfAnAndroidGuestNeedsMore() throws {
+        #expect(StartSpace(freeBytes: 2 * Bytes.gib) == nil)
+        let shortage = try #require(StartSpace(freeBytes: 2 * Bytes.gib, firstStart: true))
+        #expect(shortage.neededBytes == RunSpace.firstStartReserveBytes)
+        #expect(shortage.message(device: "iPhone").hasPrefix("Starting needs 3 GiB free"))
+        #expect(shortage.advice(device: "iPhone") == "Free up space in Settings \u{203A} General \u{203A} iPhone Storage.")
+    }
+}
+
+struct HostStorageTests {
+    @Test func theVolumeOfADirectoryHasSomeFreeSpace() {
+        #expect(HostStorage.freeBytes(on: URL(fileURLWithPath: NSTemporaryDirectory())) > 0)
     }
 }
