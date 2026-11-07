@@ -349,7 +349,7 @@ class WizardReleasedTests(unittest.TestCase):
         def __init__(self, record, processes) -> None:
             self.record, self.processes = record, processes
 
-        def wizard_status_bar_record(self):
+        def wizard_status_bar_lock(self):
             return self.record
 
         def wizard_processes(self):
@@ -365,7 +365,7 @@ class WizardReleasedTests(unittest.TestCase):
 
     def test_a_wizard_that_holds_the_status_bar_fails_both_guests(self) -> None:
         for by_wizard in (True, False):
-            with self.subTest(by_wizard=by_wizard), self.assertRaisesRegex(runner.Failure, "no status bar disable record"):
+            with self.subTest(by_wizard=by_wizard), self.assertRaisesRegex(runner.Failure, "no status bar lock"):
                 self.check(self.Guest(True, []), by_wizard=by_wizard)
             with self.subTest(by_wizard=by_wizard, unreadable=True), self.assertRaises(runner.Failure):
                 self.check(self.Guest(None, []), by_wizard=by_wizard)
@@ -375,6 +375,86 @@ class WizardReleasedTests(unittest.TestCase):
         self.check(self.Guest(False, []), by_wizard=False)
         with self.assertRaisesRegex(runner.Failure, "still runs after the helper"):
             self.check(self.Guest(False, ["1445"]), by_wizard=False)
+
+
+# `dumpsys statusbar` of a guest whose wizard finished (r17 and r16 end the same way): the wizard's process lives on, cached, with
+# a record of two zero flag words beside SystemUI's own.
+STATUS_BAR_AFTER_WIZARD = """\
+displayId=0
+    mDisabled1=0x0
+    mDisabled2=0x0
+  mDisableRecords.size=3
+    [0] userId=0 what1=0x00000000 what2=0x00000000 pkg=com.android.systemui token=android.os.BinderProxy@e47a561
+    [1] userId=0 what1=0x00000000 what2=0x00000000 pkg=com.android.systemui token=android.os.BinderProxy@2eb2886
+    [2] userId=0 what1=0x00000000 what2=0x00000000 pkg=org.lineageos.setupwizard token=android.os.BinderProxy@21d4547
+  mCurrentUserId=0
+"""
+
+
+class StatusBarLockTests(unittest.TestCase):
+    def test_a_finished_wizards_zero_record_is_not_a_lock(self) -> None:
+        self.assertIs(runner.wizard_holds_status_bar(STATUS_BAR_AFTER_WIZARD), False)
+
+    def test_a_record_with_a_flag_is_a_lock(self) -> None:
+        for first, second in (("0x00010000", "0x00000000"), ("0x00000000", "0x00000002"), ("0x7fffffff", "0x1")):
+            with self.subTest(first=first, second=second):
+                held = STATUS_BAR_AFTER_WIZARD.replace(
+                    "what1=0x00000000 what2=0x00000000 pkg=org.lineageos.setupwizard",
+                    f"what1={first} what2={second} pkg=org.lineageos.setupwizard")
+                self.assertIs(runner.wizard_holds_status_bar(held), True)
+
+    def test_only_the_wizards_own_record_counts(self) -> None:
+        other = STATUS_BAR_AFTER_WIZARD.replace("what1=0x00000000 what2=0x00000000 pkg=com.android.systemui",
+                                                "what1=0x00010000 what2=0x00000000 pkg=com.android.systemui", 1)
+        self.assertIs(runner.wizard_holds_status_bar(other), False)
+        prefix = STATUS_BAR_AFTER_WIZARD.replace("pkg=org.lineageos.setupwizard ", "pkg=org.lineageos.setupwizard.other ") \
+            .replace("what1=0x00000000 what2=0x00000000 pkg=org.lineageos.setupwizard.other",
+                     "what1=0x00010000 what2=0x00000000 pkg=org.lineageos.setupwizard.other")
+        self.assertIs(runner.wizard_holds_status_bar(prefix), False)
+
+    def test_a_dump_without_the_record_list_is_unreadable(self) -> None:
+        self.assertIsNone(runner.wizard_holds_status_bar("Can't find service: statusbar"))
+        self.assertIs(runner.wizard_holds_status_bar("mDisableRecords.size=0\n"), False)
+
+
+class WizardDisablesWaitTests(unittest.TestCase):
+    """The wizard disables its flow manager a moment after its Finish page: the runner waits for it."""
+
+    def run_check(self, answers: list[set[str]]):
+        guest = mock.Mock()
+        guest.setting.return_value = "1"
+        guest.home_package.return_value = runner.LAUNCHER_PACKAGE
+        guest.resumed.return_value = f"{runner.LAUNCHER_PACKAGE}/.Launcher"
+        guest.shell.return_value = "package:com.other"
+        polls = []
+
+        def polling(description: str, probe, seconds: int, guest=None) -> None:
+            for _ in range(len(answers)):
+                polls.append(description)
+                if probe():
+                    return
+            raise runner.Failure(f"{description}: not within {seconds} s")
+
+        sequence = iter(answers + [answers[-1]] * 4)
+        with mock.patch.object(runner, "wait_for", polling), \
+                mock.patch.object(runner, "disabled_components", side_effect=lambda _dump: next(sequence)), \
+                mock.patch.object(runner, "check_wizard_released"), \
+                mock.patch.object(runner, "check_wizard_did_not_crash"), \
+                mock.patch.object(runner, "check_defaults"), \
+                mock.patch.object(runner, "check_launcher"):
+            runner.check_provisioned(guest, by_wizard=True)
+        return polls
+
+    def test_a_manager_disabled_a_moment_later_passes(self) -> None:
+        only_activity = {f"{runner.WIZARD}.SetupWizardActivity"}
+        both = {f"{runner.WIZARD}.{name}" for name in runner.WIZARD_DISABLES}
+        polls = self.run_check([only_activity, both])
+        self.assertIn("the wizard to disable its HOME activity and its flow manager", polls)
+
+    def test_a_manager_that_stays_enabled_fails_and_names_it(self) -> None:
+        only_activity = {f"{runner.WIZARD}.SetupWizardActivity"}
+        with self.assertRaisesRegex(runner.Failure, r"did not disable \['wizardmanager\.WizardManager'\] within 30 s"):
+            self.run_check([only_activity, only_activity])
 
 
 # `logcat -b crash -d` after the wizard's process died while the package was disabled under it (r16, trimmed).

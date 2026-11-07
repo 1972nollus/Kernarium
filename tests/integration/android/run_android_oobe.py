@@ -98,6 +98,10 @@ ADB_LOST = re.compile(r"offline|device not found|no devices|closed|unauthorized"
 RECONNECT_ATTEMPTS = 8
 # What the wizard disables itself when its last page finishes.
 WIZARD_DISABLES = ("SetupWizardActivity", "wizardmanager.WizardManager")
+# The wizard finishes asynchronously: its flow manager is disabled a moment after the Finish page, and a loaded host takes longer.
+WIZARD_RELEASE_SECONDS = 30
+# A status bar disable record of the wizard, with the two flag words it holds: `dumpsys statusbar`'s mDisableRecords.
+WIZARD_RECORD_FLAGS = re.compile(r"\bwhat1=0x([0-9a-fA-F]+)\s+what2=0x([0-9a-fA-F]+)\s+pkg=" + re.escape(WIZARD) + r"(?![\w.])")
 WIZARD_STEPS = 20
 
 
@@ -332,6 +336,16 @@ def wizard_fatals(crash_log: str) -> list[str]:
     return [match.group(0).strip() for match in WIZARD_FATAL.finditer(crash_log)]
 
 
+def wizard_holds_status_bar(dump: str) -> bool | None:
+    """Whether the wizard's status bar disable record disables anything, None when the dump holds no record list.
+
+    A finished wizard keeps its process, cached, and with it a record whose two flag words are zero: the record stays
+    until the process dies, and a zero record hides nothing. Release r16 does the same."""
+    if "mDisableRecords" not in dump:
+        return None
+    return any(int(first, 16) or int(second, 16) for first, second in WIZARD_RECORD_FLAGS.findall(dump))
+
+
 def disabled_components(dumpsys_package: str) -> set[str]:
     """The component class names the wizard package lists as disabled for user 0."""
     lines = dumpsys_package.splitlines()
@@ -401,6 +415,9 @@ class Device:
 
     def wizard_status_bar_record(self) -> bool | None:
         return android_provision.wizard_status_bar_record(self.shell)
+
+    def wizard_status_bar_lock(self) -> bool | None:
+        return wizard_holds_status_bar(self.shell("dumpsys statusbar"))
 
     def wizard_processes(self) -> list[str] | None:
         return android_provision.wizard_processes(self.shell)
@@ -570,11 +587,13 @@ def check_defaults(device: Device, before: dict[str, str] | None) -> None:
 
 
 def check_wizard_released(device: Device, *, by_wizard: bool) -> None:
-    """The wizard holds no status bar lock: no disable record, and for the helper no process either.
+    """The wizard holds no status bar lock: its disable record disables nothing, and for the helper there is no process.
 
     A wizard that ran to its last page may take a moment to let go; a lock that stays is
-    the empty status bar and the single Back key of a guest nobody can use."""
-    wait_for("the wizard to hold no status bar disable record", lambda: device.wizard_status_bar_record() is False, 30)
+    the empty status bar and the single Back key of a guest nobody can use. The process of a wizard that
+    finished lives on, cached, with a record of two zero flag words: that is released (release r16 ends the same way)."""
+    wait_for("the wizard to hold no status bar lock", lambda: device.wizard_status_bar_lock() is False,
+             WIZARD_RELEASE_SECONDS)
     if not by_wizard and device.wizard_processes() != []:
         raise Failure(f"the setup wizard still runs after the helper: {device.wizard_processes()}")
     print("the wizard holds no status bar lock")
@@ -646,10 +665,17 @@ def check_provisioned(device: Device, *, by_wizard: bool, before: dict[str, str]
     if by_wizard:
         if package_disabled:
             raise Failure("the wizard package is disabled after the wizard finished, not only its activities")
-        disabled = disabled_components(device.shell(f"dumpsys package {WIZARD}"))
-        missing = {name for name in WIZARD_DISABLES if f"{WIZARD}.{name}" not in disabled}
-        if missing:
-            raise Failure(f"the wizard did not disable {sorted(missing)}; disabled: {sorted(disabled)}")
+        def undisabled() -> tuple[set[str], set[str]]:
+            disabled = disabled_components(device.shell(f"dumpsys package {WIZARD}"))
+            return {name for name in WIZARD_DISABLES if f"{WIZARD}.{name}" not in disabled}, disabled
+
+        try:
+            wait_for("the wizard to disable its HOME activity and its flow manager", lambda: not undisabled()[0],
+                     WIZARD_RELEASE_SECONDS)
+        except Failure:
+            missing, disabled = undisabled()
+            raise Failure(f"the wizard did not disable {sorted(missing)} within {WIZARD_RELEASE_SECONDS} s; "
+                          f"disabled: {sorted(disabled)}") from None
     elif not package_disabled:
         raise Failure("the helper left the wizard package enabled")
     print("provisioned: settings 1, HOME is the launcher, the wizard "
