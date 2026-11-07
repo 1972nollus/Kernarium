@@ -1217,11 +1217,13 @@ and on an A15 iPad alike, so the product also declares
 `android.hardware.opengles.aep`: the CTS requires the feature exactly when a
 device that reports 3.1 or later lists the extension.
 `android.software.opengles.deqp.level` is 132776705 (2026-03-01), the level at
-which every GLES2, GLES3 and GLES31 dEQP list of the Android 17 CTS passed whole
-on both ABIs. A declared level makes the CTS run every list dated up to it, so
-the target-files verifier pins the level and requires the extension pack, and
-the builder lane pins the command line's version: a platform update that moves
-the `latest` level file fails verification until its new lists pass.
+which every EGL, GLES2, GLES3 and GLES31 dEQP list of the Android 17 CTS passed
+whole on both ABIs. A declared level makes the CTS run every list dated up to
+it, so the target-files verifier pins the level and requires the extension pack,
+and the builder lane pins the command line's version: a platform update that
+moves the `latest` level file fails verification until its new lists pass. The
+EGL `get_frame_timestamps` cases require a composite-to-present latency under
+four vsyncs and miss it on a heavily loaded host, so run them on a quiet one.
 
 A dEQP run sometimes ends with `deqp:testercore` aborting on FORTIFY's
 `pthread_mutex_lock called on a destroyed mutex` in `RenderThread`. This is an
