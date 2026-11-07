@@ -242,17 +242,46 @@ struct StartButton: View {
     }
 }
 
-/// The rounded square that marks every row: a white glyph on the accent.
+/// The rounded square that marks every row: a white glyph on the accent. The
+/// glyph is an SF Symbol, or an image of the asset catalog that is already
+/// white (it is shown as it is, never tinted).
 struct IconTile: View {
-    let symbol: String
-    var color: Color = .accentColor
+    private enum Glyph {
+        case symbol(String)
+        case asset(String)
+    }
+
+    private let glyph: Glyph
+    let color: Color
+
+    init(symbol: String, color: Color = .accentColor) {
+        glyph = .symbol(symbol)
+        self.color = color
+    }
+
+    init(asset: String, color: Color = .accentColor) {
+        glyph = .asset(asset)
+        self.color = color
+    }
 
     var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(.white)
+        glyphView
             .frame(width: 30, height: 30)
             .background(color.gradient, in: .rect(cornerRadius: 8, style: .continuous))
+    }
+
+    @ViewBuilder private var glyphView: some View {
+        switch glyph {
+        case .symbol(let name):
+            Image(systemName: name)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+        case .asset(let name):
+            Image(name)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 16, height: 16)
+        }
     }
 }
 

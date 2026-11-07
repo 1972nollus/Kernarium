@@ -118,6 +118,9 @@ struct SystemSheet: View {
 
 /// The app, the system it carries and the notices for what is in it. Read-only.
 struct InfoSheet: View {
+    /// The project's page on GitHub.
+    static let projectURL = URL(string: "https://github.com/imxieyi/Kernarium")!
+
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var path: [InfoPage]
@@ -155,7 +158,25 @@ struct InfoSheet: View {
                     }
                 }
                 Section {
-                    NavigationLink("Acknowledgements", value: InfoPage.acknowledgements)
+                    Link(destination: Self.projectURL) {
+                        HStack(spacing: 12) {
+                            IconTile(asset: "GitHubMark")
+                                .accessibilityHidden(true)
+                            Text("Kernarium on GitHub")
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    NavigationLink(value: InfoPage.acknowledgements) {
+                        HStack(spacing: 12) {
+                            IconTile(symbol: "doc.text.fill")
+                                .accessibilityHidden(true)
+                            Text("Acknowledgements")
+                        }
+                    }
                 }
             }
             .navigationTitle("Info")
