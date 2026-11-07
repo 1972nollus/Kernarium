@@ -9,6 +9,9 @@ policy and the layout file, is in the
 this README is what the host guarantees about those files. The macOS launcher
 (`darwin/app/macos/android17_main.cpp`) and the Kernarium runtime
 (`Kernarium/Runtime`) call the library and nothing else touches a guest's disks.
+The library also owns the launcher-set display density and the hardware timeout
+multiplier rule (3 from six vCPUs, 5 below), and it refuses a release argument
+that sets either, apart from the legacy multiplier `=5`, which it drops.
 
 ## The layout file
 

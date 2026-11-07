@@ -811,6 +811,12 @@ UML_INIT_REQUIRED = (
 # every standalone macOS boot.
 UML_INIT_DENSITY_TRIGGER = "early-init && property:ro.boot.lcd_density=*"
 UML_INIT_DENSITY_COPY = "setprop ro.sf.lcd_density ${ro.boot.lcd_density}"
+# The framework scales its ANR, watchdog and input timeouts by the hardware timeout
+# multiplier, which every launcher passes from the guest's vCPU count; the tracked
+# command line does not set it. The copy defaults to 5 for a launch that passes none,
+# because an unset property leaves the framework's scale at 1.
+UML_INIT_TIMEOUT_COPY = "setprop ro.hw_timeout_multiplier ${ro.boot.hw_timeout_multiplier:-5}"
+UML_INIT_TIMEOUT_PROPERTY = "setprop ro.hw_timeout_multiplier "
 # The boot command line expedites RCU grace periods until boot completes; the
 # product init script then restores normal ones.
 UML_INIT_RCU_TRIGGER = "property:sys.boot_completed=1"
@@ -1307,6 +1313,17 @@ def check_boot_policy(
             fail(f"UML init policy does not copy the {name} HAL selection at early-init")
     if UML_INIT_OPENGLES_COPY not in early_init:
         fail("UML init policy does not copy the OpenGL ES version at early-init")
+    for trigger, commands in actions.items():
+        for command in commands:
+            if command.startswith(UML_INIT_TIMEOUT_PROPERTY) and (
+                trigger != "early-init" or command != UML_INIT_TIMEOUT_COPY
+            ):
+                fail(
+                    f"UML init policy runs '{command}' at '{trigger}', not "
+                    f"'{UML_INIT_TIMEOUT_COPY}' at early-init"
+                )
+    if UML_INIT_TIMEOUT_COPY not in early_init:
+        fail("UML init policy does not copy the hardware timeout multiplier at early-init")
     for trigger, commands in actions.items():
         if UML_INIT_DENSITY_COPY in commands and trigger != UML_INIT_DENSITY_TRIGGER:
             fail(f"UML init policy copies the display density under '{trigger}'")

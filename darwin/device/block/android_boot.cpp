@@ -248,6 +248,13 @@ std::vector<std::string> readKernelCommandLine(
 			text.size());
 		const std::string_view argument{text.data() + begin,
 			cursor - begin};
+		/* A launcher that sets the multiplier gets the legacy one dropped
+		 * rather than refused: every release before it carries it. */
+		if (argument == legacyHwTimeoutMultiplierArgument &&
+		    std::ranges::find(launcherPrefixes,
+				      hwTimeoutMultiplierPrefix) !=
+			    launcherPrefixes.end())
+			continue;
 		for (const auto prefix : launcherPrefixes)
 			if (argument.starts_with(prefix))
 				throw std::invalid_argument(
@@ -282,6 +289,12 @@ std::string lcdDensityArgument(std::uint32_t dotsPerInch)
 {
 	return std::string{lcdDensityPrefix} +
 	       std::to_string(dotsPerInch == 0 ? defaultLcdDensity : dotsPerInch);
+}
+
+std::string hwTimeoutMultiplierArgument(unsigned vcpus)
+{
+	return std::string{hwTimeoutMultiplierPrefix} +
+	       std::to_string(hwTimeoutMultiplier(vcpus));
 }
 
 std::uint32_t parseDotsPerInch(std::string_view text)

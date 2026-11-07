@@ -1068,6 +1068,19 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
                     fstab,
                 )
+                # The hardware timeout multiplier the launcher passes, which the
+                # copy defaults to 5 for a launch that passes none.
+                timeout_copy = {
+                    "missing-timeout-copy": "",
+                    "timeout-copy-without-default": (
+                        "    setprop ro.hw_timeout_multiplier "
+                        "${ro.boot.hw_timeout_multiplier}\n"
+                    ),
+                }.get(
+                    init_variant,
+                    "    setprop ro.hw_timeout_multiplier "
+                    "${ro.boot.hw_timeout_multiplier:-5}\n",
+                )
                 graphics = "".join(
                     f"    setprop ro.hardware.{name} ${{ro.boot.hardware.{name}}}\n"
                     for name in ("egl", "gralloc", "vulkan")
@@ -1184,7 +1197,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 ) + ("on boot\n" + online if userdata_grow_variant == "at-boot" else "")
                 archive.writestr(
                     "VENDOR/etc/init/init.kernarium.rc",
-                    "on early-init\n" + graphics + density +
+                    "on early-init\n" + timeout_copy + graphics + density +
                     "on fs\n    mount_all --early\n"
                     "on late-fs\n"
                     + userdata_grow_late +
@@ -2984,6 +2997,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
             ("missing-gles-copy", {"init_variant": "missing-gles-copy"}),
+            ("missing-timeout-copy", {"init_variant": "missing-timeout-copy"}),
+            ("timeout-copy-without-default", {"init_variant": "timeout-copy-without-default"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
             ("ungated-density", {"init_variant": "ungated-density"}),
             ("missing-rcu-restore", {"init_variant": "missing-rcu-restore"}),
@@ -3273,6 +3288,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "required feature is not declared: android.hardware.wifi"),
             ("missing-gles-copy-cause", {"init_variant": "missing-gles-copy"},
              "does not copy the OpenGL ES version at early-init"),
+            ("missing-timeout-copy-cause", {"init_variant": "missing-timeout-copy"},
+             "does not copy the hardware timeout multiplier at early-init"),
+            ("timeout-copy-without-default-cause",
+             {"init_variant": "timeout-copy-without-default"},
+             "runs 'setprop ro.hw_timeout_multiplier \\$\\{ro.boot.hw_timeout_multiplier\\}' "
+             "at 'early-init', not"),
             ("missing-aep-feature-cause",
              {"entries": {"VENDOR/etc/permissions/android.hardware.opengles.aep.xml": None}},
              "required feature is not declared: android.hardware.opengles.aep"),
@@ -5687,6 +5708,16 @@ def verify_hal_selections(android_root: Path) -> None:
                         f"init action '{trigger}' expands ro.boot.{name}, "
                         "which the boot command line does not set"
                     )
+
+    # Every launcher sets the hardware timeout multiplier from the guest's vCPU
+    # count, so the tracked command line must not, and the product init script
+    # defaults the copy to 5 for a launch that passes none.
+    if any(
+        token.startswith("androidboot.hw_timeout_multiplier=") for token in command_line
+    ):
+        fail("boot command line sets the hardware timeout multiplier, which launchers set")
+    if verifier.UML_INIT_TIMEOUT_COPY not in verifier.init_actions(script).get("early-init", []):
+        fail("product init script does not default the hardware timeout multiplier to 5")
 
     # Boot runs with expedited RCU grace periods, and the product init script
     # restores normal ones once boot completes.

@@ -900,6 +900,73 @@ void testLcdDensity(const fs::path &directory)
 					 std::string{android::bootDevicesArgument}});
 }
 
+/* Every launcher gives the guest a timeout multiplier from its vCPU count.
+ * A release cannot set it, apart from the `=5` that the releases published
+ * before the launchers set it carry, which a launcher that sets the value
+ * drops. */
+void testHwTimeoutMultiplier(const fs::path &directory)
+{
+	for (const unsigned vcpus : {0U, 1U, 2U, 4U, 5U})
+		require(android::hwTimeoutMultiplier(vcpus) == 5U);
+	for (const unsigned vcpus : {6U, 7U, 8U, 10U, 64U})
+		require(android::hwTimeoutMultiplier(vcpus) == 3U);
+
+	require(android::hwTimeoutMultiplierArgument(8) ==
+		"androidboot.hw_timeout_multiplier=3");
+	require(android::hwTimeoutMultiplierArgument(4) ==
+		"androidboot.hw_timeout_multiplier=5");
+	require(android::legacyHwTimeoutMultiplierArgument ==
+		std::string{android::hwTimeoutMultiplierPrefix} + "5");
+
+	const std::string devices{android::bootDevicesArgument};
+	const auto path = directory / "multiplier-command-line.txt";
+	constexpr std::array<std::string_view, 2> setsMultiplier{
+		"androidboot.kernarium.adb_auth=",
+		android::hwTimeoutMultiplierPrefix};
+	constexpr std::array<std::string_view, 1> leavesMultiplier{
+		"androidboot.kernarium.adb_auth="};
+
+	/* The launcher that sets the multiplier drops the legacy argument and
+	 * keeps the others in order. */
+	writeText(path, "quiet androidboot.hw_timeout_multiplier=5 " + devices +
+			" console=ttyS0\n");
+	require(android::readKernelCommandLine(path, setsMultiplier) ==
+		std::vector<std::string>{"quiet", devices, "console=ttyS0"});
+	/* A release without the argument reads the same. */
+	writeText(path, "quiet " + devices + "\n");
+	require(android::readKernelCommandLine(path, setsMultiplier) ==
+		std::vector<std::string>{"quiet", devices});
+	/* Any other multiplier is refused. */
+	for (const char *bad : {"androidboot.hw_timeout_multiplier=3",
+				"androidboot.hw_timeout_multiplier=50",
+				"androidboot.hw_timeout_multiplier=05",
+				"androidboot.hw_timeout_multiplier=",
+				"androidboot.hw_timeout_multiplier=5x"}) {
+		writeText(path, std::string{"quiet "} + bad + " " + devices + "\n");
+		requireThrows([&] {
+			(void)android::readKernelCommandLine(path, setsMultiplier);
+		});
+		/* A launcher that does not set it passes the argument through. */
+		const auto arguments =
+			android::readKernelCommandLine(path, leavesMultiplier);
+		require(std::find(arguments.begin(), arguments.end(),
+				  std::string{bad}) != arguments.end());
+	}
+	writeText(path, "quiet androidboot.hw_timeout_multiplier=5 " + devices + "\n");
+	require(android::readKernelCommandLine(path, leavesMultiplier) ==
+		std::vector<std::string>{
+			"quiet", "androidboot.hw_timeout_multiplier=5", devices});
+	/* Dropping the argument leaves the rest of the checks in force. */
+	writeText(path, "quiet androidboot.hw_timeout_multiplier=5\n");
+	requireThrows([&] {
+		(void)android::readKernelCommandLine(path, setsMultiplier);
+	});
+	writeText(path, "androidboot.hw_timeout_multiplier=5\n");
+	requireThrows([&] {
+		(void)android::readKernelCommandLine(path, setsMultiplier);
+	});
+}
+
 /* Both launchers read the release's kernel command line through one
  * tokenizer and refuse an argument that they set themselves. */
 void testKernelCommandLine(const fs::path &directory)
@@ -975,6 +1042,7 @@ int main(int argc, char *argv[])
 	testRestartSelectsAutomaticMode(fixture, fresh("restart"));
 	testStorageIsExact(fixture, fresh("exact"));
 	testLcdDensity(fresh("density"));
+	testHwTimeoutMultiplier(fresh("multiplier"));
 	testKernelCommandLine(fresh("command-line"));
 	testUbdPath();
 	return 0;
