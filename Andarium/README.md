@@ -71,10 +71,11 @@ xcodebuild -project Andarium/Andarium.xcodeproj -scheme AndariumPreview \
     -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' build
 ```
 
-Home has one Start button for a normal boot. Below its Storage card come the
-Guest System section (vCPUs and RAM as a summary; Edit opens the sheet that
-changes them), Display (Retina mode), Capabilities (Microphone, Gyroscope) and
-Backup (Back Up Guest Data); the Recovery and Erase section groups Start in
+Home has one Start button for a normal boot. Below its notices come the Guest
+System section (Storage first, with what the guest holds of its capacity, a
+pending growth or the largest size, and Resize; then vCPUs and RAM as a
+summary, where Edit opens the sheet that changes them), Display (Retina mode),
+Capabilities (Microphone, Gyroscope) and Backup (Back Up Guest Data); the Recovery and Erase section groups Start in
 Recovery and Erase Guest, which asks to be confirmed in a standard destructive
 alert. The sections carry no explanatory notes except where a capability is
 unavailable (a device without a gyroscope says so). Setting a guest up asks

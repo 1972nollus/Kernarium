@@ -209,24 +209,15 @@ struct SystemControls: View {
     }
 }
 
-/// Storage in one glass panel: a new guest chooses its capacity on a ruler;
-/// an existing one shows what it holds and opens Resize.
+/// A new guest's storage in one glass panel: its capacity on a ruler, with
+/// the host's free space beneath it.
 struct StoragePanel: View {
     @Binding var guest: Guest
     let host: HostDevice
     /// The sizes the ruler offers (`AppModel.capacityStopsGiB`).
     let stops: [Int]
-    var isNew = false
-    var resize: () -> Void = {}
 
     var body: some View {
-        VStack(spacing: 0) {
-            if isNew { capacity } else { storage }
-        }
-        .glassEffect(.regular, in: .rect(cornerRadius: 30))
-    }
-
-    private var capacity: some View {
         ControlRow(title: "Storage", symbol: "internaldrive", value: Formats.size(gib: guest.capacityGiB)) {
             Ruler(
                 index: Binding(
@@ -244,14 +235,25 @@ struct StoragePanel: View {
             Text("\(Formats.size(bytes: host.freeStorageBytes)) free on this \(host.name)")
                 .foregroundStyle(.secondary)
         }
+        .glassEffect(.regular, in: .rect(cornerRadius: 30))
     }
+}
+
+/// An existing guest's storage, the first row of Home's Guest System
+/// section: what the guest holds of its capacity, a pending growth or the
+/// largest size, and Resize.
+struct StorageRow: View {
+    let guest: Guest
+    /// The sizes Resize offers (`AppModel.capacityStopsGiB`).
+    let stops: [Int]
+    var resize: () -> Void = {}
 
     /// Storage only grows, so at the largest size Resize has nothing to offer.
     private var atMaximum: Bool {
         guest.capacityGiB >= (stops.last ?? Limits.capacityRangeGiB.upperBound)
     }
 
-    private var storage: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ControlHeader(title: "Storage", symbol: "internaldrive", value: "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(gib: guest.capacityGiB))")
             UsageBar(used: guest.usedGiB, capacity: Double(guest.capacityGiB), pending: guest.pendingCapacityGiB.map(Double.init))
@@ -275,12 +277,12 @@ struct StoragePanel: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(atMaximum)
+                .accessibilityIdentifier("home-storage-resize")
             }
             .font(.footnote)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 14)
+        .padding(.vertical, 14)
     }
 }
 
