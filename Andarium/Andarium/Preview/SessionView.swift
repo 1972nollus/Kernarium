@@ -23,11 +23,15 @@ struct SessionView: View {
     @State private var prepared = false
 
     var body: some View {
+        @Bindable var model = model
         let guestModel = model.guest ?? Guest.fresh(on: model.host)
         ZStack {
             Color.black.ignoresSafeArea()
             guest
                 .clipped()
+                // As on the device, a touch on the guest closes the keys and
+                // still reaches the guest.
+                .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in model.session.closeSideKeys() })
         }
         .overlay(alignment: .top) {
             if model.session.showStats {
@@ -40,7 +44,7 @@ struct SessionView: View {
         .overlay {
             SideKeysOverlay(
                 mode: mode, lit: screen != .off,
-                open: model.sessionPreset.keysOpen, leading: model.sessionPreset.leftEdge,
+                open: $model.session.sideKeysOpen, leading: model.sessionPreset.leftEdge,
                 actions: SideKeyActions(
                     power: pressPower, powerHold: holdPower,
                     volumeUp: { pressVolume(up: true) }, volumeDown: { pressVolume(up: false) },
@@ -50,7 +54,9 @@ struct SessionView: View {
             )
         }
         .statusBarHidden(true)
-        .persistentSystemOverlays(.hidden)
+        // The system honours the bottom edge's deferral only while the home
+        // indicator is visible: with it hidden, one swipe goes Home.
+        .persistentSystemOverlays(.visible)
         .sheet(isPresented: $settings) {
             SessionSettingsSheet(large: model.sessionPreset.settingsLarge)
                 .environment(model)

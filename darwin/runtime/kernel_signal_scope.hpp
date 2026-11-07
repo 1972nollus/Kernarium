@@ -96,6 +96,33 @@ void release_kernel_image(void *address, std::size_t length,
 [[nodiscard]] bool signed_kernel_text_kept(
 	const void *address, std::size_t length) noexcept;
 
+/* One signed text range the loader aliased: [begin, end) reads the bytes of
+ * the process's own __TEXT,__uml_elf section from `carrier` on. A return
+ * address inside the alias names the same instruction at its carrier address,
+ * which the crash reporter attributes to the image and the image's dSYM
+ * symbolizes (kernel_crash_frames.hpp). */
+struct KernelTextAlias {
+	std::uintptr_t begin;
+	std::uintptr_t end;
+	std::uintptr_t carrier;
+};
+
+/* More executable segments than this are not recorded; their frames stay
+ * unsymbolized. */
+inline constexpr std::size_t kernel_text_alias_limit = 16;
+
+/* Record that [address, address + length) aliases the carrier bytes at
+ * `carrier`, once the alias is in place: the loader calls it before the kernel
+ * runs, and the record lasts as long as the kept alias does. Recording the
+ * same range again changes nothing. False when the table is full. */
+bool record_kernel_text_alias(const void *address, std::size_t length,
+	const void *carrier) noexcept;
+
+/* Copy up to `capacity` recorded aliases to `aliases` and return how many
+ * there are. Async-signal-safe: the panic path reads it. */
+[[nodiscard]] std::size_t recorded_kernel_text_aliases(
+	KernelTextAlias *aliases, std::size_t capacity) noexcept;
+
 /* Whether [image, image + size) is exactly the kernel ELF the process links
  * into itself as its __TEXT,__uml_elf section: the section of the image that
  * holds this library (a framework, or the executable that links the library

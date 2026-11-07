@@ -58,6 +58,54 @@ struct StorageTests {
         #expect(used >= 3 * 1024 * 1024 && used < 8 * 1024 * 1024)
     }
 
+    /// The figure Home shows after a run: the measure follows the disk as the
+    /// guest writes to it, with no reload of the guest.
+    @Test func theMeasureFollowsTheDataDiskAsItGrows() async throws {
+        let (storage, root) = try makeStorage()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await storage.create(Guest.fresh(on: host))
+        #expect(storage.measuredUsedBytes() == 0)
+        let handle = try { () -> FileHandle in
+            FileManager.default.createFile(atPath: storage.locations.data.path, contents: Data(repeating: 1, count: 1 << 20))
+            return try FileHandle(forWritingTo: storage.locations.data)
+        }()
+        defer { try? handle.close() }
+        let first = storage.measuredUsedBytes()
+        #expect(first >= 1 << 20 && first < 4 << 20)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(repeating: 2, count: 8 << 20))
+        try handle.synchronize()
+        let second = storage.measuredUsedBytes()
+        #expect(second >= first + (8 << 20))
+    }
+
+    /// Start in recovery waits for the first start: the plan is the first
+    /// start until the runtime has created the data disk, and an erased and
+    /// recreated guest is back to it.
+    @Test func theFirstStartLastsUntilTheDataDiskExistsAndAnEraseReturnsToIt() async throws {
+        let (storage, root) = try makeStorage()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let guest = try await storage.create(Guest.fresh(on: host))
+        #expect(storage.startPlan() == .firstStart)
+        #expect(storage.startPlan()?.offersRecovery == false)
+        // The first start is prepared and under way; the runtime creates the
+        // disk and Android sets itself up.
+        try await storage.prepareStart(guest)
+        #expect(storage.startPlan() == .firstStart)
+        try Data("android data".utf8).write(to: storage.locations.data)
+        #expect(storage.startPlan() == .normal)
+        #expect(storage.startPlan()?.offersRecovery == true)
+        // The plan lasts across a clean shutdown and a new process.
+        try storage.bootCompleted()
+        try storage.completeRun()
+        #expect(storage.startPlan()?.offersRecovery == true)
+
+        try await storage.erase()
+        _ = try await storage.create(Guest.fresh(on: host))
+        #expect(storage.startPlan() == .firstStart)
+        #expect(storage.startPlan()?.offersRecovery == false)
+    }
+
     @Test func eraseDeletesTheDataTheRecordAndTheChoicesSoNoGuestIsLeft() async throws {
         let (storage, root) = try makeStorage()
         defer { try? FileManager.default.removeItem(at: root) }

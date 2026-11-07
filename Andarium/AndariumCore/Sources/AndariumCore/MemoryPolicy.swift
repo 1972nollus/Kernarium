@@ -19,6 +19,10 @@ import Foundation
 /// Each added vCPU holds more of the process's memory, so neither rises with
 /// the count. The limit is fixed for the process, so they are read once, for
 /// every count the host has.
+///
+/// The least a person may choose is `Limits.minimumMemoryMiB`, or the bound
+/// where a device's limit leaves less than that: the bound always wins, so the
+/// picker is never empty and never offers what the host cannot honour.
 public struct MemoryPolicy: Equatable, Sendable {
     /// The most guest RAM at 1, 2, ... vCPUs, each on the runtime's steps and
     /// inside its range.
@@ -64,11 +68,17 @@ public struct MemoryPolicy: Equatable, Sendable {
         maximums[min(max(vCPUs, 1), maximums.count) - 1]
     }
 
-    /// Every position of the picker at `vCPUs` vCPUs: 512 MiB up to the bound,
-    /// in the runtime's 64 MiB steps.
+    /// The least guest RAM the picker offers at `vCPUs` vCPUs: the minimum
+    /// for Android, or the bound where that is lower.
+    public func minimumMiB(vCPUs: Int) -> Int {
+        min(Limits.minimumMemoryMiB, maximumMiB(vCPUs: vCPUs))
+    }
+
+    /// Every position of the picker at `vCPUs` vCPUs: the minimum up to the
+    /// bound, in the runtime's 64 MiB steps.
     public func stops(vCPUs: Int) -> [Int] {
         Array(stride(
-            from: Limits.minimumMemoryMiB, through: maximumMiB(vCPUs: vCPUs), by: Limits.memoryStepMiB
+            from: minimumMiB(vCPUs: vCPUs), through: maximumMiB(vCPUs: vCPUs), by: Limits.memoryStepMiB
         ))
     }
 
@@ -86,10 +96,10 @@ public struct MemoryPolicy: Equatable, Sendable {
         mib > defaultMemoryMiB(vCPUs: vCPUs)
     }
 
-    /// A stored or requested size at `vCPUs` vCPUs: on the nearest step in the
-    /// runtime's range, and no more than the bound.
+    /// A stored or requested size at `vCPUs` vCPUs: on the nearest step, at
+    /// least the minimum and no more than the bound.
     public func clamped(_ mib: Int, vCPUs: Int) -> Int {
-        min(Self.nearestStep(mib), maximumMiB(vCPUs: vCPUs))
+        min(max(Self.nearestStep(mib), Limits.minimumMemoryMiB), maximumMiB(vCPUs: vCPUs))
     }
 
     /// Whether the runtime accepts `mib` (a value of its own step in range).

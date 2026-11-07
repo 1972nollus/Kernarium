@@ -17,6 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from release_common import (  # noqa: E402
     PAYLOAD_SPECS,
     fail,
+    load_manifest,
+    render_acceptance,
     verify_release,
 )
 
@@ -41,6 +43,14 @@ def main() -> None:
     parser.add_argument("--source", required=True)
     parser.add_argument("--destination-root", type=Path)
     parser.add_argument("--acceptance", type=Path)
+    parser.add_argument(
+        "--print-acceptance",
+        action="store_true",
+        help=(
+            "print the accepted-release.env text that selects the candidate, "
+            "after checking the candidate against it, and install nothing"
+        ),
+    )
     args = parser.parse_args()
 
     reject_nonlocal_syntax(args.source)
@@ -49,6 +59,28 @@ def main() -> None:
         fail("release source must be an absolute local path")
 
     android_root = Path(__file__).resolve().parents[1]
+    if args.print_acceptance:
+        if args.destination_root or args.acceptance:
+            fail("--print-acceptance takes only --source")
+        text = render_acceptance(load_manifest(source))
+        with tempfile.TemporaryDirectory(prefix="print-acceptance.") as scratch:
+            descriptor = Path(scratch) / "accepted-release.env"
+            descriptor.write_text(text, encoding="utf-8")
+            # The verifiers report what they checked on standard output, in
+            # this process and in the tools it runs. Standard error carries
+            # that report so standard output is the descriptor alone.
+            sys.stdout.flush()
+            saved_stdout = os.dup(1)
+            os.dup2(2, 1)
+            try:
+                verify_release(source, android_root, acceptance_path=descriptor)
+            finally:
+                sys.stdout.flush()
+                os.dup2(saved_stdout, 1)
+                os.close(saved_stdout)
+        sys.stdout.write(text)
+        return
+
     outer_root = android_root.parents[1]
     destination_root = args.destination_root or outer_root / ".build/android/releases"
     acceptance = args.acceptance or android_root / "metadata/accepted-release.env"

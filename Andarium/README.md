@@ -131,6 +131,14 @@ everything that exists for automation or only pretends:
   preset, packaged with `package-ios-frameworks.sh --app-store --runtimes
   android`; [`Kernarium/README.md`](../Kernarium/README.md#automation-runs)).
 - It is not offered to Macs, and its Archive action uses it.
+- It refuses an embedded artifact that is behind the archived commit: a build
+  phase runs [`scripts/check-embedded-artifacts.py`](../scripts/check-embedded-artifacts.py),
+  which compares the accepted Android release and kernel descriptors with the
+  commit's inputs, and the staged and packaged system and runtime with the
+  descriptors, and fails naming the changed paths and commits. A release that
+  records no input trees, a dirty input, or a staged or packaged artifact that is
+  not the accepted one stops the build; only the user decides to ship pending
+  changes, by naming the release ID in `PENDING_INPUTS_DECISION`.
 - Its last build phase runs `scripts/check-app-store-bundle.py`, which fails the
   build on a missing Info.plist key, an environment knob, a symbol or log text
   of the debugging and automation support, a test bundle or XCTest framework, a
@@ -169,6 +177,10 @@ control out.
   the runtime loader answers for that count
   (`kernarium_runtime_loader_maximum_guest_memory_mib`); a new guest gets the
   loader's default for it (`kernarium_runtime_loader_default_guest_memory_mib`).
+  Android is usable from 1.5 GiB, so a guest has at least that
+  (`Limits.minimumMemoryMiB`, Andarium's own: the runtime still accepts less
+  for Kernarium's guests); a stored smaller size is raised to it on load, and a
+  device whose bound is lower offers the bound alone.
   `MemoryPolicy` holds those bounds and defaults and no formula of its own. A
   guest with more than the default for its vCPU count is likely to be closed by
   iOS: Home shows a notice and the memory ruler a line and orange ticks, both
@@ -176,7 +188,8 @@ control out.
 - **Storage.** A guest's files live in `Library/Guest/` of the application's
   container behind `GuestStorage`. The system disk is Android's, read-only, and
   stays in the release directory; the runtime creates the data disk `data.img`
-  at the first start, sized by the guest's capacity, and only grows it after.
+  at the first start, sized by the guest's capacity, and only grows it after;
+  Home disables Start in recovery until then (`StartPlan.offersRecovery`).
   The runtime passes both paths to Linux in a kernel argument, so they stay at
   paths free of spaces and the other characters `DiskPath` refuses (which is
   why the guest is not in `Application Support`).
@@ -193,9 +206,10 @@ control out.
 The device application drives the Android runtime through the same loader as
 Kernarium. A run starts when the guest's display has its size and the disk is
 ready, on a thread of its own. Android's clean power-off releases the kernel's
-resources and guest RAM and returns to Home, where Start boots again in the
-same process; an unclean shutdown, a host stop or a cleanup that fails keeps
-the failure screen and requires reopening Andarium.
+resources and guest RAM and returns to Home, which states the storage the data
+disk then holds and where Start boots again in the same process; an unclean
+shutdown, a host stop or a cleanup that fails keeps the failure screen and
+requires reopening Andarium.
 
 - **Time zone.** Every start gives the guest the host's zone
   (`GuestTimeZone`, the boot request's `android_time_zone`); the system image
@@ -203,7 +217,10 @@ the failure screen and requires reopening Andarium.
   ([Android README](../android/lineage-24/README.md#time-zone)).
 - **Input.** The shared [GuestHost input](../GuestHost/README.md) maps up to
   ten fingers onto the guest's display. A touch the system takes over reaches
-  Android as a cancelled touch, not a lift, so no tap follows.
+  Android as a cancelled touch, not a lift, so no tap follows. Only the side
+  keys take touches: while they are open, a touch that begins anywhere else
+  reaches Android from its first event and closes the keys
+  (`SessionState.closeSideKeys`, called by the display's `touchDidBegin`).
 - **Retina.** Retina mode applies at the next start and uses the screen's
   native pixels, whose host allocations count against the same iOS process
   limit as guest RAM (`DisplayOptions`).

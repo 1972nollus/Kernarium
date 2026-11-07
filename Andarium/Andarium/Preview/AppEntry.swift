@@ -38,6 +38,7 @@ struct AppEntry {
     /// Where Home scrolls to for a screen that shows a lower section.
     private static let scrollTargets: [String: String] = [
         "home-options": "erase", "home-recovery-erase": "erase", "start-recovery": "erase", "erase": "erase",
+        "home-new-recovery": "erase",
         "home-display": "display",
         "home-capabilities": "capabilities", "home-mic-on": "capabilities", "home-mic-denied": "capabilities",
         "home-mic-alert": "capabilities", "home-gyroscope-unavailable": "capabilities",
@@ -95,7 +96,7 @@ struct AppEntry {
         }
 
         switch screen {
-        case "home-new":
+        case "home-new", "home-new-recovery":
             model.guest = Guest.fresh(on: host)
             model.plan = .firstStart
         case "home-grow":
@@ -151,8 +152,8 @@ struct AppEntry {
         case "session", "session-tip", "session-open", "session-keyboard", "session-stats",
              "session-power", "session-setup", "session-off", "session-left", "session-volume":
             model.session.showStats = screen == "session-stats"
+            model.session.sideKeysOpen = ["session-open", "session-off", "session-left", "session-volume"].contains(screen)
             model.sessionPreset = SessionPreset(
-                keysOpen: ["session-open", "session-off", "session-left", "session-volume"].contains(screen),
                 volumePanel: screen == "session-volume",
                 powerMenu: screen == "session-power",
                 leftEdge: ["session-left", "session-volume"].contains(screen),
@@ -197,7 +198,7 @@ struct AppEntry {
                 model.busy = Self.operationOverlay(for: screen, model: model)
             }
         case "recovery", "recovery-open":
-            model.sessionPreset = SessionPreset(keysOpen: screen == "recovery-open")
+            model.session.sideKeysOpen = screen == "recovery-open"
             model.phase = .running(.recovery)
         case "failed":
             // The failure path a real run takes: a crash after 42 minutes.

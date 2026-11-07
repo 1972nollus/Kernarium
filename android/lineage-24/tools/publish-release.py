@@ -28,6 +28,7 @@ from release_common import (  # noqa: E402
     PAYLOAD_SPECS,
     PRODUCT_FAMILY,
     RELEASE_ID_RE,
+    SCHEMA_VERSION,
     error,
     fail,
     parse_env,
@@ -518,7 +519,7 @@ def main() -> None:
             write_receipt(staging / "provenance/build-receipt.tsv", receipt_rows)
 
             manifest = {
-                "schema_version": 6,
+                "schema_version": SCHEMA_VERSION,
                 "release_id": args.release_id,
                 "directory_name": directory_name,
                 "product_family": PRODUCT_FAMILY,
@@ -546,7 +547,11 @@ def main() -> None:
                     "page_size": 4096,
                     "elf_role": "darwin-uml",
                 },
-                "outer": {"revision": outer_revision, "dirty": False},
+                "outer": {
+                    "revision": outer_revision,
+                    "dirty": False,
+                    **tracked["outer"],
+                },
                 "producer": {
                     "entry_point": "android/lineage-24/build/publish-release.sh",
                     "functional_options": [

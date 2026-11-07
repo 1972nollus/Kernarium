@@ -64,6 +64,22 @@ class BootAndroidTests(unittest.TestCase):
         (release / "guest/system.img").write_bytes(b"image")
         return release
 
+    def test_a_density_is_passed_to_the_emulator(self) -> None:
+        options = boot_android.parse_arguments(
+            ["--width", "1179", "--height", "2400", "--dpi", "480"]
+        )
+        command = boot_android.emulator_command(
+            options,
+            Path("/tmp/release"),
+            Path("/tmp/instance/data.img"),
+            Path("/tmp/uml-darwin-android17"),
+        )
+        self.assertIn("--gpu-width=1179", command)
+        self.assertIn("--gpu-height=2400", command)
+        self.assertIn("--gpu-dpi=480", command)
+        with self.assertRaises(SystemExit):
+            boot_android.parse_arguments(["--dpi", "0"])
+
     def fake_tools(self, root: Path) -> tuple[Path, Path]:
         emulator = root / "uml-darwin-android17"
         adb = root / "adb"
@@ -83,6 +99,7 @@ class BootAndroidTests(unittest.TestCase):
         self.assertIn("--gpu-display=native", command)
         self.assertIn("--gpu-width=720", command)
         self.assertIn("--gpu-height=1280", command)
+        self.assertFalse(any(value.startswith("--gpu-dpi") for value in command))
         self.assertIn("--execution-engine=gadgets", command)
         self.assertIn("--video", command)
         self.assertIn("--video-encoder", command)

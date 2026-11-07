@@ -23,6 +23,10 @@ public protocol GuestStorage: Sendable {
     /// What a start would be, from the instance on disk; nil when its record
     /// cannot be read.
     func startPlan() -> StartPlan?
+    /// The data Android has written: what the data disk occupies now, which
+    /// the guest changes while it runs and `load` measures once. Zero where
+    /// there is no data disk.
+    func measuredUsedBytes() -> UInt64
     /// Applies the update rules before a start; a refusal throws. A start
     /// whose update did not finish tries it again.
     func prepareStart(_ guest: Guest, progress: @escaping @Sendable (Double) -> Void) async throws
@@ -217,7 +221,7 @@ public struct TwoDiskStorage: GuestStorage {
 
     /// The data Android has written: what the data disk occupies. The system
     /// is not in it.
-    func measuredUsedBytes() -> UInt64 {
+    public func measuredUsedBytes() -> UInt64 {
         // A URL caches the resource values it has read, and the disk changes
         // under it while the guest runs, so each measure starts from the path.
         let values = try? URL(fileURLWithPath: locations.data.path).resourceValues(forKeys: [.fileAllocatedSizeKey])

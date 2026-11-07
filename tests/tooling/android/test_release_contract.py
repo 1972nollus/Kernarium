@@ -73,13 +73,19 @@ def main() -> None:
         PAYLOAD_SPECS,
         PRODUCT_FAMILY,
         SCHEMA_VERSION,
+        LEGACY_SCHEMA_VERSION,
         ACCEPTANCE_KEYS,
+        LEGACY_ACCEPTANCE_KEYS,
+        INPUT_TREES_KEY,
+        acceptance_values,
         kernel_series_provenance,
         parse_env,
+        render_acceptance,
         series_provenance,
         sha256_path,
         verify_release,
     )
+    import release_inputs  # noqa: PLC0415
 
     def provenance(*directories: Path) -> tuple[int, str]:
         return series_provenance(root, *directories)
@@ -96,10 +102,23 @@ def main() -> None:
     kernel_patch_count, kernel_patch_digest = kernel_series_provenance(root)
     abi = parse_env(root / "kernel/common/abi/identity.env")
     tracked_acceptance = parse_env(android_root / "metadata/accepted-release.env")
-    if set(tracked_acceptance) != ACCEPTANCE_KEYS:
+    # The accepted release may predate the recorded input trees (schema 6); the
+    # embedded-artifact check then refuses it as unverifiable until a schema 7
+    # release is accepted.
+    tracked_schema = tracked_acceptance.get("LINEAGE24_ACCEPTED_SCHEMA")
+    if tracked_schema == str(SCHEMA_VERSION):
+        tracked_keys = ACCEPTANCE_KEYS
+    elif tracked_schema == str(LEGACY_SCHEMA_VERSION):
+        tracked_keys = LEGACY_ACCEPTANCE_KEYS
+    else:
+        fail(f"tracked acceptance descriptor has an unknown schema {tracked_schema!r}")
+    if set(tracked_acceptance) != tracked_keys:
         fail("tracked acceptance descriptor keys differ from the release contract")
+    if INPUT_TREES_KEY in tracked_acceptance:
+        trees = release_inputs.parse_trees(tracked_acceptance[INPUT_TREES_KEY])
+        if sorted(trees) != release_inputs.input_paths(root / release_inputs.LIST_RELATIVE):
+            fail("tracked acceptance descriptor names input paths the list does not")
     tracked_expected = {
-        "LINEAGE24_ACCEPTED_SCHEMA": str(SCHEMA_VERSION),
         "LINEAGE24_ACCEPTED_PRODUCT_FAMILY": PRODUCT_FAMILY,
         "LINEAGE24_ACCEPTED_ANDROID_MAJOR": "17",
         "LINEAGE24_ACCEPTED_PAGE_SIZE": "4096",
@@ -165,7 +184,13 @@ def main() -> None:
             "abi_fingerprint": abi["DARWIN_UML_ABI_FINGERPRINT"],
             "elf_role": "darwin-uml",
         },
-        "outer": {"revision": "a" * 40, "dirty": False},
+        "outer": {
+            "revision": "a" * 40,
+            "dirty": False,
+            "input_trees": release_inputs.object_ids(
+                root, release_inputs.input_paths(root / release_inputs.LIST_RELATIVE)
+            ),
+        },
         "producer": {
             "entry_point": "android/lineage-24/build/publish-release.sh",
             "functional_options": ["pinned AOSP source", "verified Android kernel build"],
@@ -200,26 +225,17 @@ def main() -> None:
         manifest_path = release_root / "release-manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         acceptance = temporary_root / "accepted-release.env"
-        acceptance.write_text(
-            "\n".join((
-                f"LINEAGE24_ACCEPTED_SCHEMA={SCHEMA_VERSION}",
-                f"LINEAGE24_ACCEPTED_RELEASE_ID='{release_id}'",
-                f"LINEAGE24_ACCEPTED_DIRECTORY_NAME='{directory_name}'",
-                f"LINEAGE24_ACCEPTED_PRODUCT_FAMILY='{PRODUCT_FAMILY}'",
-                "LINEAGE24_ACCEPTED_ANDROID_MAJOR=17",
-                f"LINEAGE24_ACCEPTED_BUILD_VARIANT='{manifest['android']['build_variant']}'",
-                f"LINEAGE24_ACCEPTED_SOURCE_MANIFEST_COMMIT='{manifest['source']['manifest_commit']}'",
-                f"LINEAGE24_ACCEPTED_SOURCE_BASE_MANIFEST_SHA256='{manifest['source']['base_manifest_sha256']}'",
-                f"LINEAGE24_ACCEPTED_SOURCE_PROJECTS_MANIFEST_SHA256='{manifest['source']['projects_manifest_sha256']}'",
-                f"LINEAGE24_ACCEPTED_KERNEL_FINAL_TREE='{manifest['kernel']['final_tree']}'",
-                f"LINEAGE24_ACCEPTED_KERNEL_PATCH_MANIFEST_SHA256='{manifest['kernel']['patch_manifest_sha256']}'",
-                f"LINEAGE24_ACCEPTED_OUTER_REVISION='{manifest['outer']['revision']}'",
-                "LINEAGE24_ACCEPTED_PAGE_SIZE=4096",
-                f"LINEAGE24_ACCEPTED_ABI_VERSION={manifest['kernel']['abi_version']}",
-                f"LINEAGE24_ACCEPTED_ABI_FINGERPRINT='{manifest['kernel']['abi_fingerprint']}'",
-                "",
-            ))
-        )
+        acceptance.write_text(render_acceptance(manifest))
+        rendered = parse_env(acceptance)
+        if rendered != acceptance_values(manifest) or set(rendered) != ACCEPTANCE_KEYS:
+            fail("the rendered descriptor does not repeat the manifest")
+        if rendered["LINEAGE24_ACCEPTED_SCHEMA"] != "7" or not acceptance.read_text().startswith(
+            "# SPDX-License-Identifier: GPL-2.0-or-later\n"
+        ):
+            fail("the rendered descriptor is not a schema 7 descriptor with its header")
+        for path, tree in manifest["outer"]["input_trees"].items():
+            if f"{path}={tree}" not in rendered[INPUT_TREES_KEY].split(" "):
+                fail(f"the rendered descriptor omits the input tree of {path}")
 
         verify_release(
             release_root,
@@ -227,6 +243,44 @@ def main() -> None:
             acceptance_path=acceptance,
             semantic=False,
         )
+
+        # --print-acceptance writes the descriptor and nothing else to standard
+        # output: the verifiers' own "verified ..." lines, from this process and
+        # from the tools it runs, go to standard error.
+        print_acceptance = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-c",
+                (
+                    "import importlib.util, subprocess, sys\n"
+                    "tools = sys.argv[1]\n"
+                    "sys.path.insert(0, tools)\n"
+                    "import release_common\n"
+                    "def verified(release_root, android_root, *, acceptance_path=None, semantic=True):\n"
+                    "    print('verified in process')\n"
+                    "    subprocess.run(['echo', 'verified in a tool'], check=True)\n"
+                    "    return {}\n"
+                    "release_common.verify_release = verified\n"
+                    "spec = importlib.util.spec_from_file_location('install_release', tools + '/install-release.py')\n"
+                    "module = importlib.util.module_from_spec(spec)\n"
+                    "spec.loader.exec_module(module)\n"
+                    "sys.argv = ['install-release.py', '--source', sys.argv[2], '--print-acceptance']\n"
+                    "module.main()\n"
+                ),
+                str(android_root / "tools"),
+                str(release_root),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if print_acceptance.returncode != 0:
+            fail(f"--print-acceptance failed: {print_acceptance.stderr.strip()}")
+        if print_acceptance.stdout != render_acceptance(manifest):
+            fail("--print-acceptance wrote more than the descriptor to standard output")
+        if "verified in process" not in print_acceptance.stderr or "verified in a tool" not in print_acceptance.stderr:
+            fail("--print-acceptance lost the verifiers' report")
 
         historical = copy.deepcopy(manifest)
         historical["source"]["projects_manifest_sha256"] = "b" * 64
@@ -267,6 +321,82 @@ def main() -> None:
         manifest_path.write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n"
         )
+
+        # A schema 6 release predates the input trees: it stays valid as history
+        # under a schema 6 descriptor, and is never the tracked tree's own release.
+        legacy = copy.deepcopy(manifest)
+        legacy["schema_version"] = LEGACY_SCHEMA_VERSION
+        del legacy["outer"]["input_trees"]
+        manifest_path.write_text(json.dumps(legacy, indent=2, sort_keys=True) + "\n")
+        legacy_acceptance = temporary_root / "legacy-accepted-release.env"
+        legacy_acceptance.write_text(render_acceptance(legacy))
+        if set(parse_env(legacy_acceptance)) != LEGACY_ACCEPTANCE_KEYS:
+            fail("a schema 6 descriptor carries input trees")
+        verify_release(
+            release_root, android_root, acceptance_path=legacy_acceptance, semantic=False
+        )
+        expect_failure(
+            lambda: verify_release(
+                release_root, android_root, acceptance_path=acceptance, semantic=False
+            ),
+            "a schema 6 release against a schema 7 descriptor",
+        )
+        expect_failure(
+            lambda: verify_release(release_root, android_root, semantic=False),
+            "a schema 6 release as the tracked tree's own",
+        )
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        expect_failure(
+            lambda: verify_release(
+                release_root, android_root, acceptance_path=legacy_acceptance, semantic=False
+            ),
+            "a schema 7 release against a schema 6 descriptor",
+        )
+        for label, edit in (
+            ("a schema 6 release that records input trees",
+             lambda value: value.update(schema_version=LEGACY_SCHEMA_VERSION)),
+            ("a schema 7 release without input trees",
+             lambda value: value["outer"].pop("input_trees")),
+            ("no input trees",
+             lambda value: value["outer"].update(input_trees={})),
+            ("a short object ID",
+             lambda value: value["outer"]["input_trees"].update(
+                 {"android/lineage-24/overlay": "abc"})),
+            ("an input path that is not normalized",
+             lambda value: value["outer"]["input_trees"].update({"../escape": "a" * 40})),
+            ("an object ID in capitals",
+             lambda value: value["outer"]["input_trees"].update(
+                 {"android/lineage-24/overlay": "A" * 40})),
+        ):
+            broken = copy.deepcopy(manifest)
+            edit(broken)
+            manifest_path.write_text(json.dumps(broken, indent=2, sort_keys=True) + "\n")
+            expect_failure(
+                lambda: verify_release(
+                    release_root, android_root, acceptance_path=acceptance, semantic=False
+                ),
+                label,
+            )
+        # The descriptor repeats the manifest's input trees, and a release the
+        # tracked tree publishes records its own.
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        changed = copy.deepcopy(manifest)
+        changed["outer"]["input_trees"]["android/lineage-24/overlay"] = "e" * 40
+        stale_acceptance = temporary_root / "stale-accepted-release.env"
+        stale_acceptance.write_text(render_acceptance(changed))
+        expect_failure(
+            lambda: verify_release(
+                release_root, android_root, acceptance_path=stale_acceptance, semantic=False
+            ),
+            "a descriptor whose input trees differ from the manifest's",
+        )
+        manifest_path.write_text(json.dumps(changed, indent=2, sort_keys=True) + "\n")
+        expect_failure(
+            lambda: verify_release(release_root, android_root, semantic=False),
+            "a release whose input trees differ from the tracked tree's",
+        )
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        verify_release(release_root, android_root, semantic=False)
 
         # A release of the mainline kernel line records no kernel tag and
         # carries the mainline product family. The ACK-built releases' tag and

@@ -12,10 +12,6 @@
   {
    "id": "libraries",
    "title": "Libraries"
-  },
-  {
-   "id": "inspiration",
-   "title": "Design inspiration"
   }
  ],
  "licenses": {
@@ -326,22 +322,6 @@
    "copyright": "Meta Platforms, Inc. and affiliates",
    "license": "BSD 3-Clause License",
    "spdx": "BSD-3-Clause"
-  },
-  {
-   "frameworks": [],
-   "components": [],
-   "licenses": [],
-   "texts": [
-    {
-     "text": "The threaded-code execution and the software TLB of Andarium's processor emulation were inspired by the design of iSH, by Theodore Dubois and the iSH contributors.\n\nNo iSH source code is part of Andarium."
-    }
-   ],
-   "id": "ish",
-   "group": "inspiration",
-   "name": "iSH",
-   "copyright": "Theodore Dubois and the iSH contributors",
-   "license": "Design inspiration only",
-   "spdx": "NOASSERTION"
   }
  ]
 }

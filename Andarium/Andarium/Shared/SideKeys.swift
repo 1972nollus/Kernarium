@@ -20,13 +20,22 @@ struct SideKeyActions {
 /// keys; tapped they swell in place into Power and a volume rocker, with
 /// Settings and a Back and Home pair right beside them as one small group.
 /// They move up and down the edge with a drag and across to the other edge.
+///
+/// Only the keys take touches. While they are open, a touch anywhere else
+/// reaches the guest as it would with them closed, and the guest's display
+/// closes the keys when it receives that touch (`SessionState.closeSideKeys`).
 struct SideKeysOverlay: View {
+    /// How the keys open and close.
+    static let motion = Animation.spring(duration: 0.36, bounce: 0.22)
+
     let mode: StartMode
     /// Whether the guest's screen is on, for Power's light.
     let lit: Bool
+    /// Whether the keys are open. The session owns it, so the guest's
+    /// display can close them.
+    @Binding var open: Bool
     let actions: SideKeyActions
 
-    @State private var open: Bool
     @State private var leading: Bool
     @State private var fraction: CGFloat = 0.32
     @State private var dragStart: CGPoint?
@@ -35,11 +44,11 @@ struct SideKeysOverlay: View {
     @Namespace private var keysSpace
     private let tip = SideKeysTip()
 
-    init(mode: StartMode, lit: Bool, open: Bool = false, leading: Bool = false, actions: SideKeyActions) {
+    init(mode: StartMode, lit: Bool, open: Binding<Bool>, leading: Bool = false, actions: SideKeyActions) {
         self.mode = mode
         self.lit = lit
+        _open = open
         self.actions = actions
-        _open = State(initialValue: open)
         _leading = State(initialValue: leading)
     }
 
@@ -64,14 +73,14 @@ struct SideKeysOverlay: View {
         ZStack {
             if open {
                 // A soft shade behind the group keeps it legible over any
-                // screen; tapping it closes the keys.
+                // screen. It takes no touch: one beside the group reaches the
+                // guest, which closes the keys.
                 RadialGradient(
                     colors: [.black.opacity(0.5), .black.opacity(0.16), .black.opacity(0)],
                     center: UnitPoint(x: edgeX / max(size.width, 1), y: openY / max(size.height, 1)),
                     startRadius: 20, endRadius: 300
                 )
-                .contentShape(Rectangle())
-                .onTapGesture { setOpen(false) }
+                .allowsHitTesting(false)
                 .transition(.opacity)
 
                 GlassEffectContainer(spacing: 4) {
@@ -85,6 +94,7 @@ struct SideKeysOverlay: View {
                         }
                     }
                 }
+                .accessibilityAction(.escape) { setOpen(false) }
                 .position(x: edgeX + inward * (KeyMetrics.edgeGap + groupWidth / 2), y: openY)
             } else {
                 ClosedKeys(space: keysSpace, leading: leading)
@@ -161,7 +171,7 @@ struct SideKeysOverlay: View {
     }
 
     private func setOpen(_ value: Bool) {
-        withAnimation(.spring(duration: 0.36, bounce: 0.22)) { open = value }
+        withAnimation(Self.motion) { open = value }
         if value { tip.invalidate(reason: .actionPerformed) }
     }
 }

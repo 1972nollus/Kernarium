@@ -452,7 +452,7 @@ struct RecoveryErasePanel: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(!model.plan.allowsStart(.recovery) || !model.host.runsGuestGraphics)
+                .disabled(!model.plan.offersRecovery || !model.host.runsGuestGraphics)
                 Divider().padding(.leading, 58)
                 Button {
                     model.confirmingErase = true

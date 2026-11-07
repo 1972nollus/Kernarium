@@ -139,13 +139,19 @@ private:
 		length, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(),
 		reinterpret_cast<vm_address_t>(source), FALSE,
 		&current_protection, &maximum_protection, VM_INHERIT_NONE);
-	if (result == KERN_SUCCESS && target == destination &&
-	    !::uml::runtime::keep_signed_kernel_text(
-		    reinterpret_cast<void *>(destination), length))
-		fprintf(stderr,
-			"UML ELF: cannot keep signed kernel text at %#lx; the "
-			"guest cannot restart in place\n",
-			static_cast<unsigned long>(destination));
+	if (result == KERN_SUCCESS && target == destination) {
+		if (!::uml::runtime::keep_signed_kernel_text(
+			    reinterpret_cast<void *>(destination), length))
+			fprintf(stderr,
+				"UML ELF: cannot keep signed kernel text at %#lx; the "
+				"guest cannot restart in place\n",
+				static_cast<unsigned long>(destination));
+		/* A panic rewrites the kernel's frames to the carrier bytes this
+		 * range reads from, which the crash report can symbolize. A restart
+		 * finds the alias kept and this record in place. */
+		(void)::uml::runtime::record_kernel_text_alias(
+			reinterpret_cast<const void *>(destination), length, source);
+	}
 	if (result != KERN_SUCCESS || target != destination ||
 	    (current_protection & (VM_PROT_READ | VM_PROT_EXECUTE)) !=
 		(VM_PROT_READ | VM_PROT_EXECUTE) ||

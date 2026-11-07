@@ -211,6 +211,15 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help=f"guest display height in pixels (default: {DEFAULT_DISPLAY_HEIGHT})",
     )
     parser.add_argument(
+        "--dpi",
+        type=positive_integer,
+        help=(
+            "guest display density, which is also the Android density and, "
+            "with the size, picks the launcher's grid (default: the "
+            "emulator's 213)"
+        ),
+    )
+    parser.add_argument(
         "--display",
         choices=("native", "offscreen", "vnc"),
         default="native",
@@ -413,6 +422,7 @@ def emulator_command(
           if options.offscreen_mirror else []),
         f"--gpu-width={options.width}",
         f"--gpu-height={options.height}",
+        *([f"--gpu-dpi={options.dpi}"] if options.dpi else []),
         "--video",
         "--video-encoder",
         *([f"--audio-output={options.audio_output}"]

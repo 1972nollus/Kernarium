@@ -279,7 +279,8 @@ opens the system's Settings or another app.
 The opt-in suites each need a `TEST_RUNNER_ANDARIUM_*` switch that the suite's
 header names: rotation, motion compatibility and over-vsock, shutdown flow,
 Retina memory, the ADB-over-vsock guest tests (including Android storage and
-the touch-cancel path) and the ADB-over-network hold. The storage test signs
+the touch-cancel path), the side keys' pass-through of touches to Android and
+the ADB-over-network hold. The storage test signs
 its helper APK with the AOSP test key, never a release key. When derived data is
 on a removable volume, macOS prompts once for access and the launch hangs until
 answered; build to the internal disk instead.
@@ -304,7 +305,8 @@ The Simulator shows which edges a run defers (`AndariumPreview -screen
 session`) but not what iPadOS does with the swipes. Check on an iPad, under a
 lease with the automation host and a guest using 3-button navigation, whether
 the host's synthesized edge swipes start system gestures and what iOS does for
-each deferred edge, with the home indicator hidden and visible.
+each deferred edge. A run keeps the home indicator visible, which the bottom
+edge's deferral needs.
 
 ### Window layout (device only)
 
