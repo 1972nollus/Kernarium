@@ -240,8 +240,13 @@ a guest to measure it provisions the guest over adb after `sys.boot_completed`
 --erase` and `tests/perf/android_launch_suite.py`): it sets both settings and
 disables the wizard package for user 0 (the shell may not disable the wizard's
 own components), so HOME resolves to the launcher, and it changes nothing in
-the image. It returns only after adbd has stayed one process for six seconds
-with no trade-in mode pending, which costs those six seconds on this image and
+the image. It changes nothing until user 0 is `RUNNING_UNLOCKED` and either HOME
+is not the wizard or the wizard holds its status bar record (120 s at most, then
+it fails naming the state it saw), because a wizard process whose package is
+disabled while it binds dies. After the disabling it force-stops the wizard and
+returns only once the wizard has no process and no record and adbd has stayed
+one process for six seconds with no trade-in mode pending, which costs those
+six seconds on this image and
 keeps a harness correct on an older release that still carries DeviceDiagnostics
 (r15 and earlier, where provisioning at `sys.boot_completed` also keeps the
 mode from starting: "Not starting trade-in mode, device is setup"). A measurement

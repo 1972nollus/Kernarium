@@ -1577,9 +1577,10 @@ a blank instance:
   the launcher, the wizard package disabled for user 0 (the shell may not
   disable its components), no wizard process and no status bar record (the
   helper stops the process that holds it), the same defaults, and nothing left
-  for the helper to do. On both guests the launcher's data model holds exactly
-  the six applications of the default layout on the first page, none in the
-  dock, and the log shows no item dropped while the launcher read its layout.
+  for the helper to do. Neither guest's crash buffer names the wizard's
+  process. On both guests the launcher's data model holds exactly the six
+  applications of the default layout on the first page, none in the dock, and
+  the log shows no item dropped while the launcher read its layout.
   The runner raises the guest's log buffers to 64 MiB (`logcat -G`, read back)
   the first time adb answers, before the wizard runs, so the launcher's layout
   load line cannot rotate out; a log without that line fails the run.
