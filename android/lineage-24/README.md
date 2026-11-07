@@ -1021,12 +1021,16 @@ vendor init script copies to `ro.hw_timeout_multiplier`. The framework scales
 its ANR and watchdog timeouts by it (`Build.HW_TIMEOUT_MULTIPLIER`), so the
 slower engines, the gadget interpreters on the Mac and on the iPad, do not raise
 ANRs that a phone-speed device would not. Cuttlefish uses 3 on its native
-architecture and 50 when it emulates another one. Two CTS cases assume 3 or
-less: `JobSchedulingTest#testAnr_onStartJob` and `#testAnr_onStopJob` wait 30 s
-for the ANR that the job scheduler raises 8 s times the multiplier after an
-unanswered `onStartJob` or `onStopJob`, which is 40 s here (24 s at 3, where
-both pass). They are a timing deviation of the product, not a defect, and the
-multiplier stays.
+architecture and 50 when it emulates another one. Three CTS cases assume a
+smaller multiplier. `JobSchedulingTest#testAnr_onStartJob` and
+`#testAnr_onStopJob` wait 30 s for the ANR that the job scheduler raises 8 s
+times the multiplier after an unanswered `onStartJob` or `onStopJob`, which is
+40 s here (24 s at 3, where both pass). `SurfaceSyncGroupTests#testProcessCrash`
+waits a fixed 5 s for the window manager to complete a sync group whose
+participant crashed, which happens only when the group's ready timeout, 1 s
+times the multiplier, expires, because nothing links to the participant's
+death; it passes at 4 or less. They are a timing deviation of the product, not
+a defect, and the multiplier stays.
 
 That script replaces the inherited Cuttlefish graphics init script. It expands
 only `androidboot` properties the tracked command line sets, because a copy
@@ -1218,6 +1222,13 @@ on both ABIs. A declared level makes the CTS run every list dated up to it, so
 the target-files verifier pins the level and requires the extension pack, and
 the builder lane pins the command line's version: a platform update that moves
 the `latest` level file fails verification until its new lists pass.
+
+A dEQP run sometimes ends with `deqp:testercore` aborting on FORTIFY's
+`pthread_mutex_lock called on a destroyed mutex` in `RenderThread`. This is an
+upstream exit race: dEQP's activity calls `exit(0)` while hwui's render thread
+still handles the background memory trim, whose lock belongs to the
+`WebViewFunctorManager` singleton that `exit()` has already destroyed. The
+process has already exited 0, no tombstone is written, and no result changes.
 
 The product declares `android.hardware.vulkan.version` 1.4, `level` 1 and
 `compute` 0, and deliberately declares no `android.software.vulkan.deqp.level`:
