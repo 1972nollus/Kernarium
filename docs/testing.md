@@ -881,8 +881,9 @@ with Control Center's lock off and transitions between a full-screen scene and
 a window (`TEST_RUNNER_ANDARIUM_ROTATION_VISUAL=1`, selecting
 `RotationOverVsockTests`); pure policy tests do not establish the visible result.
 `andarium-motion-protocol` (unit) decodes independent motion wire fixtures
-and rejects truncated records, unknown sensor types and non-finite values.
-The core package also checks SI conversion, the saved choice (unset follows the
+and rejects truncated records, unknown sensor types and non-finite values, and
+checks the guest's control frame (the sensors in use and their periods)
+against independent bytes. The core package also checks SI conversion, the saved choice (unset follows the
 device, on and off stick), socket delivery, stop during connection and stale
 callbacks, the host's reading of the guest's control frames, and the state
 machine and session that turn them into what the sensors do against a fake

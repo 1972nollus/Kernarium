@@ -287,12 +287,24 @@ period are independent; flush posts a completion after earlier delivered
 events. The target-files verifier requires the service, its VINTF instance,
 feature declarations and exactly this backend in `hals.conf`.
 
-Andarium supplies samples only when the user enables Motion Sensors. The
-sub-HAL accepts a single stream on vsock port 5556 from host CID 2; it accepts
-no guest-originated sensor source. Its SELinux domain uses the platform’s
-explicit virtual-device vsock classification, with only create, bind, listen,
-accept, read, getattr and getopt on its own sockets; no connect or ioctl access
-is granted. Each 20-byte record is little endian:
+Andarium supplies samples only while its Gyroscope switch is on (the default)
+and an application uses the sensor. The sub-HAL accepts a single stream on
+vsock port 5556 from host CID 2; it accepts no guest-originated sensor source.
+Its SELinux domain uses the platform’s explicit virtual-device vsock
+classification, with only create, bind, listen, accept, read, write, shutdown,
+getattr and getopt on its own sockets; no connect or ioctl access is granted.
+The sub-HAL tells the host which sensors are active, and the period each was
+asked for, in a 16-byte frame on that connection when the host connects and at
+every change (`activate`, `batch` of a sensor in use, `initialize`), so the
+host reads only what an application uses. The frame is little endian: `ANC1`,
+a uint32 mask of the active sensors (bit 0 accelerometer, bit 1 gyroscope),
+then the sampling periods of the accelerometer and of the gyroscope in
+microseconds, brought into 10 ms to 1 s. A frame that cannot be sent whole
+shuts the connection down, so the host connects again and is told afresh; a
+host that never receives a frame is served continuously. The sensor
+framework’s own users decide what is active: auto-rotation keeps the
+accelerometer active while an application that can rotate is in front and the
+screen is on. Each 20-byte sample record is little endian:
 `ANS1`, a uint32 Android sensor type (1 accelerometer or 4 gyroscope), then
 three float32 values in m/s² or rad/s. Axes match the mounted virtual display
 (x right, y up, z out of the screen). Andarium keeps them fixed while Android
