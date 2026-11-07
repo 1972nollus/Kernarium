@@ -1528,7 +1528,10 @@ discrete app-op list that keeps AOSP's default ops, the 1024 pixel tablet
 default wallpaper in the framework overlay with the checks of the overlay's copy, the example thermal HAL
 with its manifest fragment and service, the default CAS HAL with its ClearKey
 plugin, the vendor `build.prop` without the unreliable-present-fence property
-and with `ro.incremental.enable=1`, the software decoders' 3840x2160 limits, the
+and with `ro.incremental.enable=1`, the board named `andarium`, the SoC pair in
+`ODM/etc/build.prop` (the same name the host gives the virtual CPU, which
+`lineage24-builder-lane` requires) and no `ro.soc.*` in the vendor's, the
+software decoders' 3840x2160 limits, the
 hardware video encoder service, a codec list of its two encoders and two
 decoders, their properties and no other enabled decoder, the video nodes' group,
 the service's seccomp calls and its label), and `lineage24-builder-lane` the

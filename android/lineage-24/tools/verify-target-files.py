@@ -1049,6 +1049,23 @@ PRODUCT_IDENTITY = {
 }
 
 
+# The board and the SoC the guest reports as Build.BOARD, Build.SOC_MANUFACTURER and
+# Build.SOC_MODEL. The board is the device's name, not Cuttlefish's. The SoC is the virtual CPU,
+# split as a chip vendor writes it, the maker and the chip (Qualcomm and SM8550): joined with a
+# space, the pair is the name the host gives the CPU (darwin/cpu/guest_identity.hpp), which a
+# tooling test requires. The ODM partition states it (overlay/config/odm.prop); the vendor
+# partition carries no SoC property, since the Cuttlefish values it would inherit are dropped.
+BOARD_NAME = "andarium"
+SOC_IDENTITY = {"ro.soc.manufacturer": "Kernarium", "ro.soc.model": "Virtual CPU"}
+# What CTS accepts (android.os.cts.BuildTest#testBuildConstants): each value is trimmed, matches
+# its pattern, and is not "unknown" (the test compares exactly; the check here ignores case).
+BOARD_PATTERN = re.compile(r"^[0-9A-Za-z._-]+$")
+SOC_PATTERNS = {
+    "ro.soc.manufacturer": re.compile(r"^[0-9A-Za-z ]+$"),
+    "ro.soc.model": re.compile(r"^[0-9A-Za-z ._/+-]+$"),
+}
+
+
 # brand/name/device:release/id/incremental:type/tags, the form of ro.build.fingerprint.
 BUILD_FINGERPRINT = re.compile(
     r"^[^/]+/[^/]+/[^:/]+:[^/]+/(?P<id>[^/]+)/(?P<incremental>[^:/]+):(?P<type>[^/]+)/(?P<tags>.+)$"
@@ -1101,6 +1118,53 @@ def check_product_identity(
             )
 
 
+def cts_build_value_problems(name: str, value: str, pattern: re.Pattern[str]) -> list[str]:
+    """Why CTS' BuildTest would reject a Build constant of this value, if it would."""
+    problems = []
+    if value != value.strip():
+        problems.append("has surrounding whitespace")
+    if pattern.fullmatch(value) is None:
+        problems.append(f"does not match {pattern.pattern}")
+    if value.strip().lower() == "unknown":
+        problems.append("is unknown")
+    return [f"{name} {value!r} {problem}" for problem in problems]
+
+
+def check_hardware_identity(
+    odm_properties: dict[str, str], vendor_properties: dict[str, str]
+) -> None:
+    """The board is the device's and the SoC is the virtual CPU, each stated once.
+
+    ro.product.board is the vendor partition's, from the board's bootloader name. The SoC
+    identity is the ODM partition's: the vendor partition carries no ro.soc.* property, because
+    the inherited Cuttlefish product states Google and its device name there and the build drops
+    them. The expected values themselves must pass CTS, so that a change to them fails here and
+    not in BuildTest."""
+    board = vendor_properties.get("ro.product.board")
+    if board != BOARD_NAME:
+        fail(
+            f"unexpected board name ro.product.board in VENDOR/build.prop: {board!r}, "
+            f"not {BOARD_NAME!r}"
+        )
+    problems = cts_build_value_problems("ro.product.board", BOARD_NAME, BOARD_PATTERN)
+    for name, expected in SOC_IDENTITY.items():
+        problems += cts_build_value_problems(name, expected, SOC_PATTERNS[name])
+        value = odm_properties.get(name)
+        if value != expected:
+            fail(
+                f"unexpected SoC identity {name} in ODM/etc/build.prop: {value!r}, "
+                f"not {expected!r}"
+            )
+    if problems:
+        fail(f"the expected hardware identity fails CTS' BuildTest: {'; '.join(problems)}")
+    for name, value in vendor_properties.items():
+        if name.startswith("ro.soc."):
+            fail(
+                f"VENDOR/build.prop sets {name}={value}: the SoC identity is the ODM partition's, "
+                "and PRODUCT_VENDOR_PROPERTY_BLACKLIST drops the inherited Cuttlefish values"
+            )
+
+
 def check_debuggable_payload(infos: dict[str, zipfile.ZipInfo], build_variant: str) -> None:
     """A user build carries nothing a debuggable build adds; a userdebug build carries su."""
     if build_variant == "user":
@@ -1141,6 +1205,14 @@ def check_boot_policy(
             read_small(archive, infos["VENDOR/build.prop"]).decode("utf-8", errors="strict")
         ),
         build_variant,
+    )
+    check_hardware_identity(
+        parse_properties(
+            read_small(archive, infos["ODM/etc/build.prop"]).decode("utf-8", errors="strict")
+        ),
+        parse_properties(
+            read_small(archive, infos["VENDOR/build.prop"]).decode("utf-8", errors="strict")
+        ),
     )
     check_debuggable_payload(infos, build_variant)
 
