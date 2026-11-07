@@ -53,8 +53,10 @@ target_compile_definitions(uml_runtime_context PRIVATE
 
 # Process signal state an embedded kernel image leaves behind, which the loader
 # closes before it releases the image, and that release, which keeps the image's
-# guest-RAM tail while a host-service view borrows it.
+# guest-RAM tail while a host-service view borrows it. The aliased kernel text
+# it keeps is also what a panic rewrites the crash report's frames from.
 add_library(uml_runtime_kernel_signals OBJECT
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/kernel_crash_frames.cpp
     ${PROJECT_SOURCE_DIR}/darwin/runtime/kernel_signal_scope.cpp)
 add_library(UML::RuntimeKernelSignals ALIAS uml_runtime_kernel_signals)
 uml_declare_architecture_target(uml_runtime_kernel_signals runtime)

@@ -6,6 +6,7 @@
 #include "device/guest_end/guest_end.hpp"
 #include "device/sockets/socket_paths.hpp"
 #include "guest_files.hpp"
+#include "kernel_crash_frames.hpp"
 #include "memory/shared_backing.hpp"
 
 #include <errno.h>
@@ -189,9 +190,17 @@ void darwin_uml_guest_shutdown(int kind, const char *command)
 	} while (written < 0 && errno == EINTR);
 }
 
+/*
+ * Every guest kernel crash ends here, kernel-mode faults included. The crash
+ * report symbolizes a frame only inside an image's own __TEXT, so the
+ * kernel's frames, which sit in the alias of the image's __TEXT,__uml_elf
+ * section, move to the section itself first. That is the last work before the
+ * abort and takes no lock, so everything that may wait is done before it.
+ */
 void darwin_uml_abort(void)
 {
 	::uml::device::remove_registered_socket_paths();
+	::uml::runtime::translate_kernel_frames_for_crash_report();
 	signal(SIGABRT, SIG_DFL);
 	abort();
 }

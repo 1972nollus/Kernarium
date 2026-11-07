@@ -216,9 +216,16 @@ add_custom_command(TARGET KernariumRuntime POST_BUILD
     COMMENT "Installing the versioned Kernarium runtime module map"
     VERBATIM)
 
+# The dSYM, and only the dSYM, also names the kernel's functions at their place
+# in the __TEXT,__uml_elf section: the runtime moves a panic's kernel frames
+# there so a crash report symbolizes them (runtime/kernel_crash_frames).
 add_custom_command(TARGET KernariumRuntime POST_BUILD
     COMMAND xcrun dsymutil "$<TARGET_FILE:KernariumRuntime>"
         -o "$<TARGET_BUNDLE_DIR:KernariumRuntime>.dSYM"
+    COMMAND "${Python3_EXECUTABLE}" -B
+        "${PROJECT_SOURCE_DIR}/scripts/kernel-dsym-symbols.py"
+        --dsym "$<TARGET_BUNDLE_DIR:KernariumRuntime>.dSYM/Contents/Resources/DWARF/${KERNARIUM_RUNTIME_FRAMEWORK_NAME}"
+        --elf "${_kernarium_kernel_image}"
     BYPRODUCTS
         "${CMAKE_CURRENT_BINARY_DIR}/${KERNARIUM_RUNTIME_FRAMEWORK_NAME}.framework.dSYM/Contents/Resources/DWARF/${KERNARIUM_RUNTIME_FRAMEWORK_NAME}"
     COMMENT "Generating Kernarium runtime debug symbols"
