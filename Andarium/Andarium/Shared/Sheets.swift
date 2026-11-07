@@ -124,7 +124,6 @@ struct InfoSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var path: [InfoPage]
-    @ScaledMetric(relativeTo: .body) private var markSize: CGFloat = 20
 
     init(page: InfoPage?) {
         _path = State(initialValue: page?.trail ?? [])
@@ -160,16 +159,10 @@ struct InfoSheet: View {
                 }
                 Section {
                     Link(destination: Self.projectURL) {
-                        HStack {
-                            Label {
-                                Text("Kernarium on GitHub")
-                            } icon: {
-                                Image("GitHubMark")
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: markSize, height: markSize)
-                                    .accessibilityHidden(true)
-                            }
+                        HStack(spacing: 12) {
+                            IconTile(asset: "GitHubMark")
+                                .accessibilityHidden(true)
+                            Text("Kernarium on GitHub")
                             Spacer()
                             Image(systemName: "arrow.up.right")
                                 .font(.footnote.weight(.semibold))
@@ -177,7 +170,13 @@ struct InfoSheet: View {
                                 .accessibilityHidden(true)
                         }
                     }
-                    NavigationLink("Acknowledgements", value: InfoPage.acknowledgements)
+                    NavigationLink(value: InfoPage.acknowledgements) {
+                        HStack(spacing: 12) {
+                            IconTile(symbol: "doc.text.fill")
+                                .accessibilityHidden(true)
+                            Text("Acknowledgements")
+                        }
+                    }
                 }
             }
             .navigationTitle("Info")
