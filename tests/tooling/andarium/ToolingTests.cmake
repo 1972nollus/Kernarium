@@ -32,6 +32,16 @@ uml_add_tooling_test(
     LABELS andarium;package
     TIMEOUT 240)
 
+# The release build refuses an embedded artifact that is behind the commit it
+# archives; the fixtures build a repository, a staged system and an application
+# with a kernel carrying a banner and a configuration, and change one thing each.
+uml_add_tooling_test(
+    NAME andarium-embedded-artifacts
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/andarium/test_check_embedded_artifacts.py
+    LABELS andarium;android;package
+    TIMEOUT 180)
+
 # The Acknowledgements resource names a project and its license text for each
 # framework the application embeds and each library of its iOS device prefixes.
 uml_add_tooling_test(

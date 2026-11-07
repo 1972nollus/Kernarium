@@ -23,6 +23,8 @@ if _ARTIFACTS not in sys.path:
 from contract_checks import ContractChecks, parse_config, sha256_path  # noqa: E402
 from kernel_artifact import verify_config_policy  # noqa: E402
 
+import release_inputs  # noqa: E402
+
 _CHECKS = ContractChecks("Android release verifier")
 error = _CHECKS.error
 fail = _CHECKS.fail
@@ -33,7 +35,12 @@ require_hex = _CHECKS.require_hex
 safe_relative = _CHECKS.safe_relative
 parse_env = _CHECKS.parse_env
 
-SCHEMA_VERSION = 6
+# Schema 7 records the object IDs of the release's input paths (outer.input_trees,
+# android/lineage-24/support/release/input-paths.tsv). Releases of schema 6 were
+# published before that and stay valid as history; no release is built as one.
+SCHEMA_VERSION = 7
+LEGACY_SCHEMA_VERSION = 6
+SCHEMA_VERSIONS = (LEGACY_SCHEMA_VERSION, SCHEMA_VERSION)
 PRODUCT_FAMILY = "lineage-24-mainline-6.18-4k"
 DIRECTORY_PREFIX = "lineage24-mainline6.18-4k-"
 # The kernel artifact family of the Android product. Kernarium and CMake key
@@ -187,6 +194,7 @@ KERNEL_KEYS = {
     "elf_role",
 }
 OUTER_KEYS = {"revision", "dirty"}
+OUTER_KEYS_WITH_INPUTS = OUTER_KEYS | {"input_trees"}
 PRODUCER_KEYS = {"entry_point", "functional_options", "builder"}
 BUILDER_KEYS = {
     "os",
@@ -199,23 +207,28 @@ BUILDER_KEYS = {
 }
 INVENTORY_KEYS = {"path", "role", "format", "size"}
 
-ACCEPTANCE_KEYS = {
-    "LINEAGE24_ACCEPTED_SCHEMA",
-    "LINEAGE24_ACCEPTED_RELEASE_ID",
-    "LINEAGE24_ACCEPTED_DIRECTORY_NAME",
-    "LINEAGE24_ACCEPTED_PRODUCT_FAMILY",
-    "LINEAGE24_ACCEPTED_ANDROID_MAJOR",
-    "LINEAGE24_ACCEPTED_BUILD_VARIANT",
-    "LINEAGE24_ACCEPTED_SOURCE_MANIFEST_COMMIT",
-    "LINEAGE24_ACCEPTED_SOURCE_BASE_MANIFEST_SHA256",
-    "LINEAGE24_ACCEPTED_SOURCE_PROJECTS_MANIFEST_SHA256",
-    "LINEAGE24_ACCEPTED_KERNEL_FINAL_TREE",
-    "LINEAGE24_ACCEPTED_KERNEL_PATCH_MANIFEST_SHA256",
-    "LINEAGE24_ACCEPTED_OUTER_REVISION",
-    "LINEAGE24_ACCEPTED_PAGE_SIZE",
-    "LINEAGE24_ACCEPTED_ABI_VERSION",
-    "LINEAGE24_ACCEPTED_ABI_FINGERPRINT",
-}
+# The accepted descriptor's keys in file order, each with whether its value is
+# written as a bare number. A schema 7 descriptor adds the input trees.
+INPUT_TREES_KEY = "LINEAGE24_ACCEPTED_INPUT_TREES"
+ACCEPTANCE_FIELDS = (
+    ("LINEAGE24_ACCEPTED_SCHEMA", True),
+    ("LINEAGE24_ACCEPTED_RELEASE_ID", False),
+    ("LINEAGE24_ACCEPTED_DIRECTORY_NAME", False),
+    ("LINEAGE24_ACCEPTED_PRODUCT_FAMILY", False),
+    ("LINEAGE24_ACCEPTED_ANDROID_MAJOR", True),
+    ("LINEAGE24_ACCEPTED_BUILD_VARIANT", False),
+    ("LINEAGE24_ACCEPTED_SOURCE_MANIFEST_COMMIT", False),
+    ("LINEAGE24_ACCEPTED_SOURCE_BASE_MANIFEST_SHA256", False),
+    ("LINEAGE24_ACCEPTED_SOURCE_PROJECTS_MANIFEST_SHA256", False),
+    ("LINEAGE24_ACCEPTED_KERNEL_FINAL_TREE", False),
+    ("LINEAGE24_ACCEPTED_KERNEL_PATCH_MANIFEST_SHA256", False),
+    ("LINEAGE24_ACCEPTED_OUTER_REVISION", False),
+    ("LINEAGE24_ACCEPTED_PAGE_SIZE", True),
+    ("LINEAGE24_ACCEPTED_ABI_VERSION", True),
+    ("LINEAGE24_ACCEPTED_ABI_FINGERPRINT", False),
+)
+LEGACY_ACCEPTANCE_KEYS = {key for key, _ in ACCEPTANCE_FIELDS}
+ACCEPTANCE_KEYS = LEGACY_ACCEPTANCE_KEYS | {INPUT_TREES_KEY}
 
 
 def load_manifest(release_root: Path) -> dict:
@@ -231,7 +244,8 @@ def load_manifest(release_root: Path) -> dict:
 
 def validate_manifest(value: object) -> dict:
     manifest = require_exact_keys(value, TOP_LEVEL_KEYS, "release manifest")
-    if manifest["schema_version"] != SCHEMA_VERSION:
+    schema_version = manifest["schema_version"]
+    if isinstance(schema_version, bool) or schema_version not in SCHEMA_VERSIONS:
         fail("release manifest schema version is unsupported")
     release_id = require_string(manifest["release_id"], "release ID")
     if RELEASE_ID_RE.fullmatch(release_id) is None:
@@ -310,10 +324,16 @@ def validate_manifest(value: object) -> dict:
     if kernel["elf_role"] != "darwin-uml":
         fail("kernel ELF role is not darwin-uml")
 
-    outer = require_exact_keys(manifest["outer"], OUTER_KEYS, "outer")
+    outer = require_exact_keys(
+        manifest["outer"],
+        OUTER_KEYS_WITH_INPUTS if schema_version == SCHEMA_VERSION else OUTER_KEYS,
+        "outer",
+    )
     require_hex(outer["revision"], 40, "outer revision")
     if outer["dirty"] is not False:
         fail("accepted release records a dirty outer project")
+    if schema_version == SCHEMA_VERSION:
+        validate_input_trees(outer["input_trees"])
 
     producer = require_exact_keys(manifest["producer"], PRODUCER_KEYS, "producer")
     if producer["entry_point"] != "android/lineage-24/build/publish-release.sh":
@@ -355,6 +375,20 @@ def validate_manifest(value: object) -> dict:
     if ordered_paths != sorted(ordered_paths):
         fail("release inventory is not sorted by path")
     return manifest
+
+
+def validate_input_trees(trees: object) -> None:
+    """Check the release's recorded object IDs of its input paths."""
+    if not isinstance(trees, dict) or not trees:
+        fail("outer.input_trees must be a nonempty object")
+    for path, object_id in trees.items():
+        if (
+            not isinstance(path, str)
+            or not release_inputs.normalized(path)
+            or not isinstance(object_id, str)
+            or release_inputs.OBJECT_ID_RE.fullmatch(object_id) is None
+        ):
+            fail(f"outer.input_trees has a malformed entry: {path!r}")
 
 
 def validate_routes(routes: object, label: str) -> None:
@@ -450,6 +484,7 @@ TRACKED_SECTIONS = {
     "android": "Android",
     "source": "source",
     "kernel": "kernel",
+    "outer": "outer project",
 }
 
 
@@ -457,14 +492,23 @@ def tracked_identity(android_root: Path) -> dict[str, dict]:
     """Return the release-manifest fields the tracked tree determines.
 
     The publisher adds each section's per-build fields: the source routes,
-    and the kernel's release, page size and ELF role. The
-    verifier compares an accepted release against these fields.
+    and the kernel's release, page size and ELF role, and the outer project's
+    revision. The input trees are the object IDs of the listed input paths at
+    the outer project's HEAD, which the publisher requires clean. The verifier
+    compares a release published from this tree against these fields.
     """
     outer_root = android_root.parents[1]
     lineage = parse_env(android_root / "metadata/lineage.env")
     kernel = parse_env(outer_root / KERNEL_METADATA)
     abi = parse_env(outer_root / "kernel/common/abi/identity.env")
     kernel_count, kernel_digest = kernel_series_provenance(outer_root)
+    try:
+        input_trees = release_inputs.object_ids(
+            outer_root,
+            release_inputs.input_paths(outer_root / release_inputs.LIST_RELATIVE),
+        )
+    except release_inputs.InputError as error:
+        fail(f"cannot record the release input trees: {error}")
     return {
         "android": {"build_variant": configured_build_variant(android_root)},
         "source": {
@@ -488,10 +532,16 @@ def tracked_identity(android_root: Path) -> dict[str, dict]:
             "abi_version": int(abi["DARWIN_UML_ABI_VERSION"]),
             "abi_fingerprint": abi["DARWIN_UML_ABI_FINGERPRINT"],
         },
+        "outer": {"input_trees": input_trees},
     }
 
 
 def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
+    if manifest["schema_version"] != SCHEMA_VERSION:
+        fail(
+            f"a schema {manifest['schema_version']} release records no input "
+            "trees, so it cannot be the tracked tree's own release"
+        )
     for section, expected in tracked_identity(android_root).items():
         for key, value in expected.items():
             if manifest[section][key] != value:
@@ -501,12 +551,10 @@ def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
                 )
 
 
-def verify_acceptance(manifest: dict, acceptance_path: Path) -> None:
-    acceptance = parse_env(acceptance_path)
-    if set(acceptance) != ACCEPTANCE_KEYS:
-        fail("accepted-release descriptor keys differ from the fixed contract")
-    expected = {
-        "LINEAGE24_ACCEPTED_SCHEMA": str(SCHEMA_VERSION),
+def acceptance_values(manifest: dict) -> dict[str, str]:
+    """Return the accepted descriptor's values for a manifest, by key."""
+    values = {
+        "LINEAGE24_ACCEPTED_SCHEMA": str(manifest["schema_version"]),
         "LINEAGE24_ACCEPTED_RELEASE_ID": manifest["release_id"],
         "LINEAGE24_ACCEPTED_DIRECTORY_NAME": manifest["directory_name"],
         "LINEAGE24_ACCEPTED_PRODUCT_FAMILY": manifest["product_family"],
@@ -522,6 +570,30 @@ def verify_acceptance(manifest: dict, acceptance_path: Path) -> None:
         "LINEAGE24_ACCEPTED_ABI_VERSION": str(manifest["kernel"]["abi_version"]),
         "LINEAGE24_ACCEPTED_ABI_FINGERPRINT": manifest["kernel"]["abi_fingerprint"],
     }
+    if manifest["schema_version"] == SCHEMA_VERSION:
+        values[INPUT_TREES_KEY] = release_inputs.render_trees(manifest["outer"]["input_trees"])
+    return values
+
+
+def render_acceptance(manifest: dict) -> str:
+    """Return the accepted-release.env text that selects a release."""
+    values = acceptance_values(manifest)
+    lines = [
+        "# SPDX-License-Identifier: GPL-2.0-or-later",
+        "# Reviewed static LineageOS 24 mainline 6.18 4 KiB runtime release identity.",
+    ]
+    for key, numeric in ACCEPTANCE_FIELDS:
+        lines.append(f"{key}={values[key]}" if numeric else f"{key}='{values[key]}'")
+    if INPUT_TREES_KEY in values:
+        lines.append(f"{INPUT_TREES_KEY}='{values[INPUT_TREES_KEY]}'")
+    return "\n".join(lines) + "\n"
+
+
+def verify_acceptance(manifest: dict, acceptance_path: Path) -> None:
+    acceptance = parse_env(acceptance_path)
+    expected = acceptance_values(manifest)
+    if set(acceptance) != set(expected):
+        fail("accepted-release descriptor keys differ from the fixed contract")
     for key, value in expected.items():
         if acceptance.get(key) != value:
             fail(f"release differs from accepted descriptor field {key}")

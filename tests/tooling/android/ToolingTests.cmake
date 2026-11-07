@@ -72,6 +72,16 @@ uml_add_tooling_test(
     LABELS android;audit
     TIMEOUT 30)
 
+# The list of paths that decide a release names every producer, and the object
+# IDs it yields do not depend on history.
+uml_add_tooling_test(
+    NAME lineage24-release-inputs
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_release_inputs.py
+        --source-root ${PROJECT_SOURCE_DIR}
+    LABELS android;audit
+    TIMEOUT 60)
+
 uml_add_tooling_test(
     NAME android17-macos-launcher-options
     COMMAND ${Python3_EXECUTABLE} -B
