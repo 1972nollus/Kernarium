@@ -57,6 +57,11 @@ struct SessionView: View {
             SessionSettingsSheet(large: model.sessionPreset.settingsLarge)
                 .environment(model)
         }
+        // The screen over the session says why the guest is paused, and a
+        // sheet would cover it.
+        .onChange(of: model.spacePause != nil) { _, paused in
+            if paused { settings = false }
+        }
         .onAppear(perform: prepare)
         .task {
             while !Task.isCancelled {

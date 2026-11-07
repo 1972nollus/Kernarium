@@ -91,6 +91,15 @@ protocol RuntimeDriver: AnyObject {
     /// Puts the data back to what the update that did not finish started
     /// from; the guest does not start.
     func restoreUpdate() throws
+    /// The person resumes a guest paused for want of space. Reads the space
+    /// again and wakes the guest when it is at least `Limits.resumeAtBytes`;
+    /// returns whether it did. The guest stays paused otherwise.
+    func resumeAfterSpacePause() async -> Bool
+    /// The person shuts down a guest paused for want of space: wakes it
+    /// without watching the space again and asks Android to power off, which
+    /// ends the run. Throws when Android cannot be asked; the guest runs on
+    /// and the watch starts again then.
+    func shutDownAfterSpacePause() async throws
     /// Enables or stops sharing motion with the guest.
     func setMotionSensors(_ on: Bool)
     /// The scene's geometry changed, which may include its interface

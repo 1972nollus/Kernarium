@@ -101,11 +101,19 @@ struct RootView: View {
             if let busy = model.busy {
                 BusyOverlay(state: busy)
             }
+            // Over everything the session shows, a Settings sheet aside: the
+            // model closes it when the guest pauses.
+            if let pause = model.spacePause {
+                LowSpaceOverlay(
+                    pause: pause, resume: { model.resumeAfterSpacePause() },
+                    shutDown: { model.shutDownAfterSpacePause() })
+            }
         }
         // Toggles take the jade accent too, not the system green.
         .tint(Color.accentColor)
         .animation(.easeInOut(duration: 0.4), value: model.phase)
         .animation(.easeInOut(duration: 0.2), value: model.busy != nil)
+        .animation(.easeInOut(duration: 0.2), value: model.spacePause != nil)
         .alert(
             model.alert?.title ?? "",
             isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } }),

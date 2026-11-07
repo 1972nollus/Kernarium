@@ -197,6 +197,13 @@ struct AppEntry {
             if operation && (freeze || Self.resultScreens.contains(screen)) {
                 model.busy = Self.operationOverlay(for: screen, model: model)
             }
+        case "space-pause", "space-pause-short", "space-pause-shutting-down":
+            model.phase = .running(.normal)
+            model.spacePause = switch screen {
+            case "space-pause-short": SpacePause(freeBytes: 1_200 * Limits.bytesPerMiB, stillShort: true)
+            case "space-pause-shutting-down": SpacePause(freeBytes: 820 * Limits.bytesPerMiB, working: .shuttingDown)
+            default: SpacePause(freeBytes: 820 * Limits.bytesPerMiB)
+            }
         case "recovery", "recovery-open":
             model.sessionPreset = SessionPreset(keysOpen: screen == "recovery-open")
             model.phase = .running(.recovery)

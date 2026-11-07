@@ -143,6 +143,9 @@ final class AppModel {
     var driver: (any RuntimeDriver)?
     /// A long task the screens wait for.
     var busy: BusyState?
+    /// The guest is paused because the device is nearly out of space; the
+    /// screen over the session asks what to do.
+    var spacePause: SpacePause?
     var alert: AppAlert?
     /// How far the current boot has got, from the guest's console.
     var bootTracker = BootTracker()
@@ -352,6 +355,70 @@ final class AppModel {
         }
     }
 
+    // MARK: Low space
+
+    /// The runtime paused the guest: the device is down to `freeBytes`. What
+    /// needs the guest is let go (an operation, ADB over network), the
+    /// session closes its Settings, and the screen over it offers Resume and
+    /// Shut down.
+    func guestPausedForSpace(freeBytes: UInt64) {
+        host.freeStorageBytes = freeBytes
+        abandonOperation()
+        stopAdbOverNetwork()
+        spacePause = SpacePause(freeBytes: freeBytes)
+    }
+
+    /// Resume: the driver reads the space again and wakes the guest when
+    /// there is enough; otherwise the screen says what is free now.
+    func resumeAfterSpacePause() {
+        guard var pause = spacePause, pause.working == nil else { return }
+        guard let driver else {
+            // The preview plays the pause away.
+            spacePause = nil
+            return
+        }
+        pause.working = .resuming
+        spacePause = pause
+        Task { [weak self] in
+            let resumed = await driver.resumeAfterSpacePause()
+            // A guest that paused again meanwhile has a screen of its own.
+            guard let self, var pause = self.spacePause, pause.working == .resuming else { return }
+            if resumed {
+                self.spacePause = nil
+            } else {
+                pause.freeBytes = self.host.freeStorageBytes
+                pause.stillShort = true
+                pause.working = nil
+                self.spacePause = pause
+            }
+        }
+    }
+
+    /// Shut down: Android is woken and asked to power off, which writes what
+    /// it has and ends the run. The run ending takes the screen away.
+    func shutDownAfterSpacePause() {
+        guard var pause = spacePause, pause.working == nil else { return }
+        guard let driver else {
+            powerOff()
+            return
+        }
+        pause.working = .shuttingDown
+        spacePause = pause
+        Task { [weak self] in
+            do {
+                try await driver.shutDownAfterSpacePause()
+            } catch {
+                guard let self, self.spacePause?.working == .shuttingDown else { return }
+                // The guest runs on, and its space is watched again: the
+                // screen comes back with the new figure if it is still short.
+                self.spacePause = nil
+                self.alert = AppAlert(
+                    title: "Android could not be shut down",
+                    message: "It could not be asked to power off. Try again, or close Andarium and open it again.")
+            }
+        }
+    }
+
     // MARK: ADB over network
 
     /// ADB over network may be switched on: the guest's USB debugging is on.
@@ -416,8 +483,9 @@ final class AppModel {
     /// Reads the guest's USB debugging setting. ADB over network ends when
     /// it is off.
     func refreshUsbDebugging() async {
+        // A guest paused for space is not asked: a connection waits for it.
         guard capabilities.adbOverNetwork, let driver, case .running(.normal) = phase,
-              !readingUsbDebugging else { return }
+              spacePause == nil, !readingUsbDebugging else { return }
         readingUsbDebugging = true
         defer { readingUsbDebugging = false }
         let current = session
@@ -710,6 +778,7 @@ final class AppModel {
     func runEnded(_ end: RunEnd, uptimeSeconds: Int?) {
         abandonOperation()
         endAdbOverNetwork()
+        spacePause = nil
         runEnd = end
         runUptimeSeconds = uptimeSeconds
         if end.poweredOff {
@@ -732,6 +801,7 @@ final class AppModel {
     func restart() {
         abandonOperation()
         endAdbOverNetwork()
+        spacePause = nil
         frozenBootStage = nil
         sessionPreset = SessionPreset()
         let showStats = session.showStats
