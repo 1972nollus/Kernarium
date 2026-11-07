@@ -171,7 +171,7 @@ struct SystemControls: View {
     private var processor: some View {
         ControlRow(
             title: "Processor", symbol: "cpu",
-            value: guest.cores == 1 ? "1 vCPU" : "\(guest.cores) vCPUs"
+            value: Formats.vcpus(guest.cores)
         ) {
             Ruler(
                 index: Binding(get: { guest.cores - 1 }, set: { guest.setCores($0 + 1, on: host) }),

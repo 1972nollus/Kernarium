@@ -159,6 +159,7 @@ SHOTS: list[Shot] = [
     s("info-license-long", "Info", "info-license-gpl", "A page with a long license text (Linux: syscall exception and GPL v2)."),
     # Boot
     *boot_stages("boot", "boot", ["System image", "Linux Kernel", "Storage", "Startup"], "Normal boot over the dimmed guest display, no progress bar"),
+    s("boot-single-vcpu", "Boot", "boot-single-vcpu", "Normal boot of a guest with a single vCPU: the Linux Kernel line says \"1 vCPU\"."),
     s("boot-first-start", "Boot", "boot-first", "First start: Storage prepares the disk and Startup sets up for the first time."),
     s("boot-update", "Boot", "boot-upgrade", "The first start after an update: Startup updates the apps."),
     s("boot-restart", "Boot", "boot-restart", "The guest restarting."),

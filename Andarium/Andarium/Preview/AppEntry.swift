@@ -134,6 +134,9 @@ struct AppEntry {
         case "boot":
             model.guest?.pendingCapacityGiB = 24
             boot(.normal, stage: 3, seconds: 9)
+        case "boot-single-vcpu":
+            model.guest?.cores = 1
+            boot(.normal, stage: 3, seconds: 9)
         case "boot-first":
             model.guest = model.guest?.erased
             model.plan = .firstStart

@@ -23,6 +23,13 @@ struct FormatsTests {
 
     /// A size keeps three significant digits, so a unit's last values round
     /// up into the next unit and never state "1024 MiB".
+    @Test func aProcessorCountTakesTheSingularForOne() {
+        #expect(Formats.vcpus(1) == "1 vCPU")
+        #expect(Formats.vcpus(0) == "0 vCPUs")
+        #expect(Formats.vcpus(2) == "2 vCPUs")
+        #expect(Formats.vcpus(8) == "8 vCPUs")
+    }
+
     @Test func aSizeRoundingToTheNextUnitMovesUp() {
         #expect(Formats.size(bytes: bytes(mib: 1023.4)) == "1023 MiB")
         #expect(Formats.size(bytes: bytes(mib: 1023.6)) == "1 GiB")

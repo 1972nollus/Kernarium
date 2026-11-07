@@ -57,6 +57,9 @@ public enum Formats {
     /// A size in whole gibibytes, as "8 GiB".
     public static func size(gib: Int) -> String { size(Double(gib), unit: 3) }
 
+    /// A processor count and its noun: "1 vCPU", "6 vCPUs".
+    public static func vcpus(_ count: Int) -> String { "\(count) \(count == 1 ? "vCPU" : "vCPUs")" }
+
     /// The count of gibibytes in `mib`, without its unit: the labels of a
     /// ruler whose row states the unit.
     public static func gibibytes(mib: Int) -> String { number(Double(mib) / 1024) }

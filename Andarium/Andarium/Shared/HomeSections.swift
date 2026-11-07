@@ -112,7 +112,7 @@ struct SystemSection: View {
 
     /// "6 vCPUs · 2.5 GiB".
     static func summary(of guest: Guest) -> String {
-        "\(guest.cores) \(guest.cores == 1 ? "vCPU" : "vCPUs") · \(Formats.size(mib: guest.memoryMiB))"
+        "\(Formats.vcpus(guest.cores)) · \(Formats.size(mib: guest.memoryMiB))"
     }
 }
 
