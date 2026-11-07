@@ -2,7 +2,7 @@
 /* Implicit-register string operations and REP/REPE/REPNE loops. */
 
 .macro string_source_address
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 6 * 8)]
+	ldr x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 6 * 8)]
 	tbnz x23, #3, Lx86_string_source_16\@
 	tbz x23, #0, Lx86_string_source_64\@
 	mov w25, w25
@@ -13,17 +13,17 @@ Lx86_string_source_64\@:
 	ubfx w8, w23, #1, #2
 	cmp w8, #1
 	b.ne Lx86_string_source_not_fs\@
-	ldr x9, [_cpu, #UML_X86_64_CPU_FS_BASE]
+	ldr x9, [_vcpu, #UML_X86_64_CPU_FS_BASE]
 	b Lx86_string_source_base\@
 Lx86_string_source_not_fs\@:
 	cmp w8, #2
 	b.ne Lx86_string_source_done\@
-	ldr x9, [_cpu, #UML_X86_64_CPU_GS_BASE]
+	ldr x9, [_vcpu, #UML_X86_64_CPU_GS_BASE]
 Lx86_string_source_base\@:
 	add x25, x25, x9
 	/* Legacy protected mode's linear address space is 32 bits wide, so a
 	 * segment base plus the offset wraps at 4 GiB there. */
-	ldrb w9, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
+	ldrb w9, [_vcpu, #UML_X86_64_CPU_EXECUTION_MODE]
 	cmp w9, #1
 	b.ne Lx86_string_source_done\@
 	mov w25, w25
@@ -31,7 +31,7 @@ Lx86_string_source_done\@:
 .endm
 
 .macro string_destination_address
-	ldr x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 7 * 8)]
+	ldr x26, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 7 * 8)]
 	tbnz x23, #3, Lx86_string_destination_16\@
 	tbz x23, #0, Lx86_string_destination_64\@
 	mov w26, w26
@@ -92,8 +92,8 @@ Lx86_string_store_ready\@:
 .endm
 
 .macro string_update_pointer width, offset
-	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + \offset)]
-	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + \offset)]
+	ldr x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	tbnz x9, #10, Lx86_string_pointer_decrement\@
 	tbnz x23, #3, Lx86_string_pointer_increment_16\@
 	tbz x23, #0, Lx86_string_pointer_increment_64\@
@@ -120,7 +120,7 @@ Lx86_string_pointer_decrement_16\@:
 Lx86_string_pointer_decrement_64\@:
 	sub x8, x8, #(\width / 8)
 Lx86_string_pointer_store\@:
-	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + \offset)]
+	str x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + \offset)]
 .endm
 
 
@@ -255,13 +255,13 @@ gadget string_\operation\()_\width
 	str w9, [sp, #UML_X86_64_FRAME_STRING_BUDGET]
 	tbnz x23, #3, Lx86_string_count_16\@
 	tbz x23, #0, Lx86_string_count_64\@
-	ldr w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	ldr w24, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	b Lx86_string_count_ready\@
 Lx86_string_count_16\@:
-	ldrh w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	ldrh w24, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	b Lx86_string_count_ready\@
 Lx86_string_count_64\@:
-	ldr x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	ldr x24, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 Lx86_string_count_ready\@:
 	cbz x24, Lx86_string_finish_empty\@
 	.ifc \operation,move
@@ -285,7 +285,7 @@ Lx86_string_iteration\@:
 	string_update_pointer \width, (7 * 8)
 	.endif
 	.ifc \operation,store
-	\load \host_register\()27, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	\load \host_register\()27, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	string_destination_address
 	string_store \width, \store, \host_register
 	string_update_pointer \width, (7 * 8)
@@ -293,7 +293,7 @@ Lx86_string_iteration\@:
 	.ifc \operation,load
 	string_source_address
 	string_load \width, \load, \host_register, 25, 27
-	\store \store_register\()27, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	\store \store_register\()27, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	string_update_pointer \width, (6 * 8)
 	.endif
 	.ifc \operation,compare
@@ -306,7 +306,7 @@ Lx86_string_iteration\@:
 	string_update_pointer \width, (7 * 8)
 	.endif
 	.ifc \operation,scan
-	\load \host_register\()27, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	\load \host_register\()27, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	string_destination_address
 	string_load \width, \load, \host_register, 26, 19
 	string_compare_flags \width, \host_register
@@ -319,12 +319,12 @@ Lx86_string_iteration\@:
 	tbz x23, #0, Lx86_string_store_count_64\@
 	mov w24, w24
 Lx86_string_store_count_64\@:
-	str x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	str x24, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	b Lx86_string_count_stored\@
 Lx86_string_store_count_16\@:
-	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	ldr x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	bfi x8, x24, #0, #16
-	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	str x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 Lx86_string_count_stored\@:
 	cbz x24, Lx86_string_finish\@
 	.ifc \operation,compare
@@ -364,7 +364,7 @@ Lx86_string_repeat_equal\@:
 /* The instruction stops between elements; see the run loop's exit. This
  * block keeps the size it had, so the run loop's code does not move. */
 Lx86_string_budget_spent\@:
-	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	orr x9, x9, #0x10000
 	b Lx86_string_between_elements\@
 
@@ -398,7 +398,7 @@ Lx86_string_bulk_run\@:
 	tst x23, #0x6
 	b.ne Lx86_string_iteration\@
 Lx86_string_bulk_forward\@:
-	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	tbnz x9, #10, Lx86_string_iteration\@
 	.ifc \operation,move
 	string_source_address
@@ -464,7 +464,7 @@ Lx86_string_bulk_copy\@:
 	string_forward_copy \shift
 	.endif
 	.ifc \operation,store
-	\load \host_register\()27, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	\load \host_register\()27, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	mov x1, x7
 	mov x11, x19
 	string_forward_fill \width, \shift
@@ -503,19 +503,19 @@ Lx86_string_bulk_retire\@:
 	 * fault in the next translation resumes the instruction exactly here.
 	 */
 	.ifc \operation,move
-	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 6 * 8)]
+	ldr x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 6 * 8)]
 	add x8, x8, x19
 	tbz x23, #0, Lx86_string_bulk_source_wide\@
 	mov w8, w8
 Lx86_string_bulk_source_wide\@:
-	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 6 * 8)]
+	str x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 6 * 8)]
 	.endif
-	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 7 * 8)]
+	ldr x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 7 * 8)]
 	add x8, x8, x19
 	tbz x23, #0, Lx86_string_bulk_destination_wide\@
 	mov w8, w8
 Lx86_string_bulk_destination_wide\@:
-	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 7 * 8)]
+	str x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 7 * 8)]
 	/* The count needs no narrowing: it was loaded at its address size and a
 	 * run never consumes more elements than it holds.
 	 */
@@ -525,7 +525,7 @@ Lx86_string_bulk_destination_wide\@:
 	lsr x9, x19, #\shift
 	sub x24, x24, x9
 	.endif
-	str x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	str x24, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	cbz x24, Lx86_string_finish\@
 	/* Charge the shared repeat budget by bytes moved rather than by run, so a
 	 * long copy still returns to the executor often enough to release its
@@ -543,10 +543,10 @@ Lx86_string_bulk_destination_wide\@:
 	 * if it returns to the kernel here; `execute` clears it when the
 	 * instruction resumes. The instruction has retired nothing, so the exit
 	 * tells the dispatch what its repeat budget covered. */
-	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	ldr x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	orr x9, x9, #0x10000
 Lx86_string_between_elements\@:
-	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	str x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
 	b Lx86_repeat_yield
 Lx86_string_finish\@:
 	.ifc \operation,compare
@@ -573,13 +573,13 @@ gadget string_\operation\()_\width\()_step
 	str w9, [sp, #UML_X86_64_FRAME_STRING_BUDGET]
 	tbnz x23, #3, Lx86_string_step_count_16\@
 	tbz x23, #0, Lx86_string_step_count_64\@
-	ldr w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	ldr w24, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	b Lx86_string_step_count_ready\@
 Lx86_string_step_count_16\@:
-	ldrh w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	ldrh w24, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	b Lx86_string_step_count_ready\@
 Lx86_string_step_count_64\@:
-	ldr x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	ldr x24, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 Lx86_string_step_count_ready\@:
 	cbz x24, Lx86_string_finish_empty\@
 	b Lx86_string_iteration\@

@@ -3,8 +3,8 @@
 """Emit the x86-64 gadget entries that have their guest register offsets baked in.
 
 The ordinary families decode every operand from a stream word and reach
-CpuState through a register index: "ldr x11, [_cpu, x9]" feeding "str x13,
-[_cpu, x9]". The host forwards a store to a dependent load at rename only when
+CpuState through a register index: "ldr x11, [_vcpu, x9]" feeding "str x13,
+[_vcpu, x9]". The host forwards a store to a dependent load at rename only when
 both name a base register and a constant displacement, so a chain of such
 entries pays about 6.8 cycles per hop where the immediate form pays 2.5.
 Baking the offsets gives every access the immediate form and drops the decode
@@ -89,10 +89,10 @@ class Out:
     def table(self, name, entries):
         self.emit('\t.pushsection __DATA,__const')
         self.emit('\t.p2align 3')
-        self.emit(f'\t.globl NAME(uml_x86_64_baked_{name})')
-        self.emit(f'NAME(uml_x86_64_baked_{name}):')
+        self.emit(f'\t.globl CSYM(uml_x86_64_baked_{name})')
+        self.emit(f'CSYM(uml_x86_64_baked_{name}):')
         for entry in entries:
-            self.emit(f'\t.quad NAME(uml_x86_64_gadget_b_{entry})')
+            self.emit(f'\t.quad CSYM(uml_x86_64_gadget_b_{entry})')
         self.emit('\t.popsection')
 
 
@@ -128,7 +128,7 @@ def base_address(o, base):
     if base == 'none':
         o.emit('\tmov x7, x14')
     else:
-        o.emit(f'\tldr x10, [_cpu, #{base}]')
+        o.emit(f'\tldr x10, [_vcpu, #{base}]')
         o.emit('\tadd x7, x14, x10')
 
 
@@ -249,7 +249,7 @@ def memory_prologue(o, base):
         # the base register's load hides when it stands alone.
         o.emit('\tldr x23, [_stream], #8')
         o.emit('\tsxtw x14, w23')
-        o.emit(f'\tldr x10, [_cpu, #{base}]')
+        o.emit(f'\tldr x10, [_vcpu, #{base}]')
         o.emit('\tadd x7, x14, x10')
     o.emit('\tmov x25, x7')
 
@@ -357,7 +357,7 @@ def shared_tails(o):
         o.emit('\thelper_call uml_x86_64_gadget_invalidate_code')
         o.emit(f'Lx86_baked_store_overlap_exit_{size}:')
         o.emit('\tinstruction_rip x8, 1, 32')
-        o.emit('\tstr x8, [_cpu, #UML_X86_64_CPU_RIP]')
+        o.emit('\tstr x8, [_vcpu, #UML_X86_64_CPU_RIP]')
         o.emit('\tadd _executed, _executed, #1')
         o.emit('\tx86_memory_order_boundary')
         o.emit('\tmov w0, #UML_X86_64_EVENT_CONTINUED')
@@ -378,13 +378,13 @@ def arith_register(o):
                 for s in regs:
                     name = f'{op}_{width}_rr_{d}_{s}'
                     o.gadget(name)
-                    o.emit(f'\t{ld} {hr}11, [_cpu, #{d}]')
-                    o.emit(f'\t{ld} {hr}12, [_cpu, #{s}]')
+                    o.emit(f'\t{ld} {hr}11, [_vcpu, #{d}]')
+                    o.emit(f'\t{ld} {hr}12, [_vcpu, #{s}]')
                     o.emit(f'\t{host} {hr}13, {hr}11, {hr}12')
                     normalize(o, width, f'{hr}13')
                     flag_form(o, op, width, 11, 12)
                     if writes:
-                        o.emit(f'\t{st} {sr}13, [_cpu, #{d}]')
+                        o.emit(f'\t{st} {sr}13, [_vcpu, #{d}]')
                     record(o, flagop, width)
                     o.emit('\tretire_and_next')
                     entries.append(name)
@@ -394,12 +394,12 @@ def arith_register(o):
                 name = f'{op}_{width}_ri_{d}'
                 o.gadget(name)
                 o.emit('\tldr x12, [_stream], #8')
-                o.emit(f'\t{ld} {hr}11, [_cpu, #{d}]')
+                o.emit(f'\t{ld} {hr}11, [_vcpu, #{d}]')
                 o.emit(f'\t{host} {hr}13, {hr}11, {hr}12')
                 normalize(o, width, f'{hr}13')
                 flag_form(o, op, width, 11, 12)
                 if writes:
-                    o.emit(f'\t{st} {sr}13, [_cpu, #{d}]')
+                    o.emit(f'\t{st} {sr}13, [_vcpu, #{d}]')
                 record(o, flagop, width)
                 o.emit('\tretire_and_next')
                 entries.append(name)
@@ -414,8 +414,8 @@ def move_register(o):
             for s in regs:
                 name = f'move_{width}_rr_{d}_{s}'
                 o.gadget(name)
-                o.emit(f'\t{ld} {lr}11, [_cpu, #{s}]')
-                o.emit(f'\t{st} {sr}11, [_cpu, #{d}]')
+                o.emit(f'\t{ld} {lr}11, [_vcpu, #{s}]')
+                o.emit(f'\t{st} {sr}11, [_vcpu, #{d}]')
                 o.emit('\tretire_and_next')
                 entries.append(name)
         o.table(f'move_{width}_rr', entries)
@@ -424,7 +424,7 @@ def move_register(o):
             name = f'move_{width}_ri_{d}'
             o.gadget(name)
             o.emit('\tldr x11, [_stream], #8')
-            o.emit(f'\t{st} {sr}11, [_cpu, #{d}]')
+            o.emit(f'\t{st} {sr}11, [_vcpu, #{d}]')
             o.emit('\tretire_and_next')
             entries.append(name)
         o.table(f'move_{width}_ri', entries)
@@ -455,15 +455,15 @@ def extend_register(o):
             for s in regs_for(source_width):
                 entry = f'{name}_rr_{d}_{s}'
                 o.gadget(entry)
-                o.emit(f'\t{ld} {lr}11, [_cpu, #{s}]')
-                o.emit(f'\t{st} {sr}11, [_cpu, #{d}]')
+                o.emit(f'\t{ld} {lr}11, [_vcpu, #{s}]')
+                o.emit(f'\t{st} {sr}11, [_vcpu, #{d}]')
                 o.emit('\tretire_and_next')
                 entries.append(entry)
         o.table(f'{name}_rr', entries)
 
 
 def unary_body(o, name, width, d, ld, st, hr, sr, flagop, pending=False):
-    o.emit(f'\t{ld} {hr}11, [_cpu, #{d}]')
+    o.emit(f'\t{ld} {hr}11, [_vcpu, #{d}]')
     # At 32 and 64 bits the flag-setting host form leaves N, Z and V
     # describing the guest operation; only C differs (INC and DEC preserve it,
     # NEG inverts it), and the builder keeps the carry conditions off these
@@ -480,7 +480,7 @@ def unary_body(o, name, width, d, ld, st, hr, sr, flagop, pending=False):
         o.emit('\tmov x12, x11')
         o.emit('\tmov x11, xzr')
     normalize(o, width, f'{hr}13')
-    o.emit(f'\t{st} {sr}13, [_cpu, #{d}]')
+    o.emit(f'\t{st} {sr}13, [_vcpu, #{d}]')
     record(o, flagop, width, pending)
     o.emit('\tretire_and_next')
 
@@ -503,13 +503,13 @@ def carry_prologue(o, kind):
         o.emit(line)
     if kind == 'settled':
         return
-    o.emit('\tldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]')
+    o.emit('\tldr x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]')
     if kind == 'clear':
         o.emit('\tbic x9, x9, #1')
     else:
         o.emit('\tbfi x9, x16, #0, #1')
     o.emit('\torr x9, x9, #2')
-    o.emit('\tstr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]')
+    o.emit('\tstr x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]')
 
 
 def unary_register(o):
@@ -543,9 +543,9 @@ def unary_register(o):
         for d in regs:
             entry = f'not_{width}_r_{d}'
             o.gadget(entry)
-            o.emit(f'\t{ld} {hr}11, [_cpu, #{d}]')
+            o.emit(f'\t{ld} {hr}11, [_vcpu, #{d}]')
             o.emit(f'\tmvn {hr}11, {hr}11')
-            o.emit(f'\t{st} {sr}11, [_cpu, #{d}]')
+            o.emit(f'\t{st} {sr}11, [_vcpu, #{d}]')
             o.emit('\tretire_and_next')
             entries.append(entry)
         o.table(f'not_{width}_r', entries)
@@ -564,11 +564,11 @@ def addresses(o):
                 o.gadget(name)
                 o.emit('\tldr x23, [_stream], #8')
                 o.emit('\tsxtw x14, w23')
-                o.emit(f'\tldr x13, [_cpu, #{index}]')
+                o.emit(f'\tldr x13, [_vcpu, #{index}]')
                 if base == 'none':
                     o.emit(f'\tadd x7, x14, x13, lsl #{scale}')
                 else:
-                    o.emit(f'\tldr x10, [_cpu, #{base}]')
+                    o.emit(f'\tldr x10, [_vcpu, #{base}]')
                     o.emit(f'\tadd x7, x10, x13, lsl #{scale}')
                     o.emit('\tadd x7, x7, x14')
                 o.emit('\tnext_gadget')
@@ -582,7 +582,7 @@ def load_body(o, size, ld, lr, cross, st, sr, v):
     translate(o, False, size)
     o.emit(f'\t{ld} {lr}11, [x7]')
     o.emit(f'{write}:')
-    o.emit(f'\t{st} {sr}11, [_cpu, #{v}]')
+    o.emit(f'\t{st} {sr}11, [_vcpu, #{v}]')
     o.emit('\tretire_and_next')
     o.emit(f'{crossed}:')
     o.emit(f'\tadr x19, {write}')
@@ -643,7 +643,7 @@ def stores(o):
                 entry = f'move_{width}_mr_{v}_{base}'
                 o.gadget(entry)
                 memory_prologue(o, base)
-                o.emit(f'\t{ld} {hr}24, [_cpu, #{v}]')
+                o.emit(f'\t{ld} {hr}24, [_vcpu, #{v}]')
                 store_body(o, width // 8, st, hr)
                 entries.append(entry)
         o.table(f'move_{width}_mr', entries)
@@ -652,7 +652,7 @@ def stores(o):
             entry = f'move_{width}_xmr_{v}'
             o.gadget(entry)
             access_prologue(o)
-            o.emit(f'\t{ld} {hr}24, [_cpu, #{v}]')
+            o.emit(f'\t{ld} {hr}24, [_vcpu, #{v}]')
             store_body(o, width // 8, st, hr)
             entries.append(entry)
         o.table(f'move_{width}_xmr', entries)
@@ -683,12 +683,12 @@ def arith_source_body(o, op, width, v):
     translate(o, False, width // 8)
     o.emit(f'\t{ld} {hr}12, [x7]')
     o.emit(f'{loaded}:')
-    o.emit(f'\t{ld} {hr}11, [_cpu, #{v}]')
+    o.emit(f'\t{ld} {hr}11, [_vcpu, #{v}]')
     o.emit(f'\t{host} {hr}13, {hr}11, {hr}12')
     normalize(o, width, f'{hr}13')
     flag_form(o, op, width, 11, 12)
     if writes:
-        o.emit(f'\t{st} {sr}13, [_cpu, #{v}]')
+        o.emit(f'\t{st} {sr}13, [_vcpu, #{v}]')
     record(o, flagop, width)
     o.emit('\tretire_and_next')
     o.emit(f'{crossed}:')
@@ -778,7 +778,7 @@ def memory_arith(o):
                     entry = f'{op}_{width}_mr_{v}_{base}'
                     o.gadget(entry)
                     memory_prologue(o, base)
-                    o.emit(f'\t{ld} {hr}26, [_cpu, #{v}]')
+                    o.emit(f'\t{ld} {hr}26, [_vcpu, #{v}]')
                     arith_destination_body(o, op, width)
                     entries.append(entry)
             o.table(f'{op}_{width}_mr', entries)
@@ -787,7 +787,7 @@ def memory_arith(o):
                 entry = f'{op}_{width}_xmr_{v}'
                 o.gadget(entry)
                 access_prologue(o)
-                o.emit(f'\t{ld} {hr}26, [_cpu, #{v}]')
+                o.emit(f'\t{ld} {hr}26, [_vcpu, #{v}]')
                 arith_destination_body(o, op, width)
                 entries.append(entry)
             o.table(f'{op}_{width}_xmr', entries)
@@ -821,7 +821,7 @@ def lea(o):
                 base_address(o, base)
                 if width == 32:
                     o.emit('\tmov w7, w7')
-                o.emit(f'\tstr x7, [_cpu, #{d}]')
+                o.emit(f'\tstr x7, [_vcpu, #{d}]')
                 o.emit('\tretire_and_next')
                 entries.append(entry)
         o.table(f'lea_{width}', entries)
@@ -831,7 +831,7 @@ def lea(o):
             o.gadget(entry)
             if width == 32:
                 o.emit('\tmov w7, w7')
-            o.emit(f'\tstr x7, [_cpu, #{d}]')
+            o.emit(f'\tstr x7, [_vcpu, #{d}]')
             o.emit('\tretire_and_next')
             entries.append(entry)
         o.table(f'lea_{width}_x', entries)
@@ -917,8 +917,8 @@ def push_pop(o):
     for d in GPR:
         entry = f'push_64_r_{d}'
         o.gadget(entry)
-        o.emit(f'\tldr x24, [_cpu, #{d}]')
-        o.emit('\tldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
+        o.emit(f'\tldr x24, [_vcpu, #{d}]')
+        o.emit('\tldr x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
         o.emit('\tsub x25, x25, #8')
         o.emit('\tmov x7, x25')
         crossed, done = o.label('pushcross'), o.label('pushdone')
@@ -929,13 +929,13 @@ def push_pop(o):
         # path joins the epilogue at its overlap test.
         o.emit(f'\tstack_fast 1, {slow}')
         o.emit('\tstr x24, [x7]')
-        o.emit('\tstr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
+        o.emit('\tstr x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
         o.emit(f'\tb {check}')
         o.emit(f'{slow}:')
         translate(o, True, 8, record_stack=True, miss='Lx86_baked_stack_miss')
         o.emit('\tstr x24, [x7]')
         o.emit(f'{done}:')
-        o.emit('\tstr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
+        o.emit('\tstr x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
         finish_store(o, 8, check, 'Lx86_baked_stack_overlap')
         # No stream word holds the publication flag; a crossing store reaches
         # the epilogue without a translation to settle it, so it starts clear.
@@ -949,7 +949,7 @@ def push_pop(o):
     for d in GPR:
         entry = f'pop_64_r_{d}'
         o.gadget(entry)
-        o.emit('\tldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
+        o.emit('\tldr x25, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
         o.emit('\tmov x7, x25')
         crossed, done, slow = o.label('popcross'), o.label('popdone'), o.label('popslow')
         page_cross(o, 8, crossed)
@@ -961,8 +961,8 @@ def push_pop(o):
         o.emit('\tldr x11, [x7]')
         o.emit(f'{done}:')
         o.emit('\tadd x9, x25, #8')
-        o.emit('\tstr x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
-        o.emit(f'\tstr x11, [_cpu, #{d}]')
+        o.emit('\tstr x9, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
+        o.emit(f'\tstr x11, [_vcpu, #{d}]')
         o.emit('\tretire_and_next')
         o.emit(f'{crossed}:')
         o.emit(f'\tadr x19, {done}')

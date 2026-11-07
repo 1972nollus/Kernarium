@@ -58,7 +58,7 @@
 #define GADGET_PHASE_A32_COLD 0
 #define GADGET_PHASE_A32_VENEER 0
 
-/* Zero-size bounds of each part, for the guest sampler's PC test. NAME() is
+/* Zero-size bounds of each part, for the guest sampler's PC test. CSYM() is
  * not defined until core_integer.inc. */
 .macro gadget_bank_bound name
 	.globl _\name

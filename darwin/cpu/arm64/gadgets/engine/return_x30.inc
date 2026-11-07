@@ -15,7 +15,7 @@
  */
 gadget return_x30_cached
 	ldr x9, [_stream]
-	ldr x10, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
+	ldr x10, [_vcpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
 	follow_indirect_link 1
 
 .purgem follow_indirect_link

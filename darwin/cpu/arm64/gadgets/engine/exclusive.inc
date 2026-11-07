@@ -72,7 +72,7 @@
 .macro exclusive_translate miss
 	lsr x8, x7, #UML_GADGET_GUEST_PAGE_SHIFT
 	ubfx x9, x7, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
-	add x10, _tlb, x9, lsl #UML_GADGET_TLB_SET_SHIFT
+	add x10, _swtlb, x9, lsl #UML_GADGET_TLB_SET_SHIFT
 	ldp x11, x12, [x10, #UML_GADGET_TLB_ENTRY_WRITE_PAGE]
 	cmp x8, x11
 	b.ne \miss
@@ -82,12 +82,12 @@
 /* Record the software monitor after a host load: host address x7, value x15
  * (and x16). Scratch: x9. */
 .macro exclusive_record_load
-	add x9, _cpu, #UML_GADGET_CPU_EXCLUSIVE_KEY
+	add x9, _vcpu, #UML_GADGET_CPU_EXCLUSIVE_KEY
 	stp x7, x15, [x9]
 .endm
 
 .macro exclusive_record_load_pair
-	add x9, _cpu, #UML_GADGET_CPU_EXCLUSIVE_KEY
+	add x9, _vcpu, #UML_GADGET_CPU_EXCLUSIVE_KEY
 	stp x7, x15, [x9]
 	str x16, [x9, #(UML_GADGET_CPU_EXCLUSIVE_VALUE2 - UML_GADGET_CPU_EXCLUSIVE_KEY)]
 .endm
@@ -95,7 +95,7 @@
 /* Every store ends the monitor, whatever its outcome. A zero host address
  * matches no store. */
 .macro exclusive_record_clear
-	str xzr, [_cpu, #UML_GADGET_CPU_EXCLUSIVE_KEY]
+	str xzr, [_vcpu, #UML_GADGET_CPU_EXCLUSIVE_KEY]
 .endm
 
 /* The load's shared miss routine: x7 guest address, x13 where the gadget
@@ -125,7 +125,7 @@
  * at the routine's comparison, label 3, with the record in x9. */
 .macro exclusive_store_lost entry
 \entry:
-	ldr x9, [_cpu, #UML_GADGET_CPU_EXCLUSIVE_KEY]
+	ldr x9, [_vcpu, #UML_GADGET_CPU_EXCLUSIVE_KEY]
 	tbnz x9, #UML_GADGET_EXCLUSIVE_KEY_REENTERED_BIT, 3f
 	br x13
 .endm
@@ -149,12 +149,12 @@
 	b \fault
 1:
 	mov x7, x0
-	ldr x9, [_cpu, #UML_GADGET_CPU_EXCLUSIVE_KEY]
+	ldr x9, [_vcpu, #UML_GADGET_CPU_EXCLUSIVE_KEY]
 3:
 	and x9, x9, #~(1 << UML_GADGET_EXCLUSIVE_KEY_REENTERED_BIT)
 	cmp x9, x7
 	b.ne 2f
-	ldr x10, [_cpu, #UML_GADGET_CPU_EXCLUSIVE_VALUE]
+	ldr x10, [_vcpu, #UML_GADGET_CPU_EXCLUSIVE_VALUE]
 	mov x11, x10
 	\cas_instruction \host_register\()11, \host_register\()15, [x7]
 	cmp \host_register\()11, \host_register\()10
@@ -185,12 +185,12 @@
 	b \fault
 1:
 	mov x7, x0
-	ldr x9, [_cpu, #UML_GADGET_CPU_EXCLUSIVE_KEY]
+	ldr x9, [_vcpu, #UML_GADGET_CPU_EXCLUSIVE_KEY]
 3:
 	and x9, x9, #~(1 << UML_GADGET_EXCLUSIVE_KEY_REENTERED_BIT)
 	cmp x9, x7
 	b.ne 2f
-	add x12, _cpu, #UML_GADGET_CPU_EXCLUSIVE_VALUE
+	add x12, _vcpu, #UML_GADGET_CPU_EXCLUSIVE_VALUE
 	ldp x10, x11, [x12]
 	mov x20, x10
 	mov x21, x11

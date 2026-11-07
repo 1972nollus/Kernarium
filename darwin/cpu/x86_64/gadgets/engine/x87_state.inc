@@ -3,17 +3,17 @@
 
 .macro x87_initialize_state
 	mov w9, #0x037f
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_CONTROL]
+	strh wzr, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	mov w9, #0xffff
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_TAG]
+	strb wzr, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 .endm
 
 gadget x87_emms
 	mov w9, #0xffff
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_TAG]
+	strb wzr, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	retire_and_next
 
 gadget x87_nop
@@ -27,10 +27,10 @@ gadget x87_load_register
 
 gadget x87_exchange_register
 	ldr w13, [_stream], #8
-	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	ldrb w14, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	add w15, w14, w13
 	and w15, w15, #7
-	ldrh w16, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	ldrh w16, [_vcpu, #UML_X86_64_CPU_X87_TAG]
 	lsl w17, w14, #1
 	lsr w9, w16, w17
 	and w24, w9, #3
@@ -40,7 +40,7 @@ gadget x87_exchange_register
 	cmp w24, #Lx86_x87_tag_empty
 	ccmp w25, #Lx86_x87_tag_empty, #4, ne
 	b.eq Lx86_x87_exchange_empty
-	add x16, _cpu, #UML_X86_64_CPU_X87
+	add x16, _vcpu, #UML_X86_64_CPU_X87
 	add x17, x16, w14, uxtw #4
 	add x16, x16, w15, uxtw #4
 	ldr x9, [x17]
@@ -51,7 +51,7 @@ gadget x87_exchange_register
 	strh w12, [x17, #8]
 	str x9, [x16]
 	strh w10, [x16, #8]
-	add x16, _cpu, #UML_X86_64_CPU_MMX
+	add x16, _vcpu, #UML_X86_64_CPU_MMX
 	ldr x9, [x16, w14, uxtw #3]
 	ldr x10, [x16, w15, uxtw #3]
 	str x10, [x16, w14, uxtw #3]
@@ -61,9 +61,9 @@ gadget x87_exchange_register
 	x87_set_tag w14, w25
 	x87_set_tag w13, w24
 Lx86_x87_exchange_done:
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	bic w9, w9, #Lx86_x87_status_c1
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	retire_and_next
 /* A stack underflow: masked, an empty register reads as the QNaN
  * indefinite and the exchange goes on. */
@@ -101,16 +101,16 @@ Lx86_x87_sign_underflow:
 /* FXAM's class in C3, C2 and C0: 000 unsupported, 001 NaN, 010 normal,
  * 011 infinity, 100 zero, 101 empty, 110 denormal; its sign in C1. */
 gadget x87_examine
-	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
-	add x15, _cpu, #UML_X86_64_CPU_X87
+	ldrb w14, [_vcpu, #UML_X86_64_CPU_X87_TOP]
+	add x15, _vcpu, #UML_X86_64_CPU_X87
 	add x15, x15, w14, uxtw #4
 	ldr x11, [x15]
 	ldrh w16, [x15, #8]
-	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	ldrh w15, [_vcpu, #UML_X86_64_CPU_X87_TAG]
 	lsl w17, w14, #1
 	lsr w15, w15, w17
 	and w15, w15, #3
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	mov w10, #0x4700
 	bic w9, w9, w10
 	tbz w16, #15, Lx86_x87_examine_positive
@@ -140,7 +140,7 @@ Lx86_x87_examine_tiny:
 	csel w10, w10, w15, eq
 Lx86_x87_examine_done:
 	orr w9, w9, w10
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	retire_and_next
 
 .macro x87_constant name, significand, exponent
@@ -160,23 +160,23 @@ x87_constant ln_2, 0xb17217f7d1cf79ac, 0x3ffe
 x87_constant zero, 0x0000000000000000, 0x0000
 
 gadget x87_decrement_top
-	ldrb w9, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	ldrb w9, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	sub w9, w9, #1
 	and w9, w9, #7
-	strb w9, [_cpu, #UML_X86_64_CPU_X87_TOP]
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	strb w9, [_vcpu, #UML_X86_64_CPU_X87_TOP]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	bic w9, w9, #Lx86_x87_status_c1
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	retire_and_next
 
 gadget x87_increment_top
-	ldrb w9, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	ldrb w9, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	add w9, w9, #1
 	and w9, w9, #7
-	strb w9, [_cpu, #UML_X86_64_CPU_X87_TOP]
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	strb w9, [_vcpu, #UML_X86_64_CPU_X87_TOP]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	bic w9, w9, #Lx86_x87_status_c1
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	retire_and_next
 
 .macro x87_free_entry name, pop
@@ -210,19 +210,19 @@ x87_store_register_entry keep, 0
 x87_store_register_entry pop, 1
 
 gadget x87_store_status_ax
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	bic w9, w9, #0x3800
-	ldrb w10, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	ldrb w10, [_vcpu, #UML_X86_64_CPU_X87_TOP]
 	orr w9, w9, w10, lsl #11
-	ldr x10, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	ldr x10, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	bfxil x10, x9, #0, #16
-	str x10, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	str x10, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	retire_and_next
 
 gadget x87_clear_exceptions
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	ldrh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	and w9, w9, #0xff00
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	strh w9, [_vcpu, #UML_X86_64_CPU_X87_STATUS]
 	retire_and_next
 
 gadget x87_initialize

@@ -3,11 +3,11 @@
 gadget syscall
 	bl uml_x86_64_gadget_materialize_flags
 	ldr x8, [_stream]
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
-	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
-	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
-	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 11 * 8)]
-	strb wzr, [_cpu, #UML_X86_64_CPU_SYSTEM_CALL_32BIT]
+	str x8, [_vcpu, #UML_X86_64_CPU_RIP]
+	str x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	ldr x9, [_vcpu, #UML_X86_64_CPU_RFLAGS]
+	str x9, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 11 * 8)]
+	strb wzr, [_vcpu, #UML_X86_64_CPU_SYSTEM_CALL_32BIT]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_SYSCALL
@@ -16,9 +16,9 @@ gadget syscall
 gadget int80
 	bl uml_x86_64_gadget_materialize_flags
 	ldr x8, [_stream]
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	str x8, [_vcpu, #UML_X86_64_CPU_RIP]
 	mov w9, #1
-	strb w9, [_cpu, #UML_X86_64_CPU_SYSTEM_CALL_32BIT]
+	strb w9, [_vcpu, #UML_X86_64_CPU_SYSTEM_CALL_32BIT]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_SYSCALL
@@ -26,7 +26,7 @@ gadget int80
 
 gadget breakpoint
 	ldr x8, [_stream]
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	str x8, [_vcpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_BREAKPOINT
@@ -36,15 +36,15 @@ gadget breakpoint
  * instruction. */
 gadget icebp
 	ldr x8, [_stream]
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	str x8, [_vcpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_DEBUG_TRAP
 	b uml_x86_64_gadget_leave
 
 gadget cpuid
-	ldr w5, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	ldr w10, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	ldr w5, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	ldr w10, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	mov w6, wzr
 	mov w7, wzr
 	mov w8, wzr
@@ -172,43 +172,43 @@ Lx86_cpuid_brand_three:
 	/* "U\0\0\0" */
 	mov w7, #0x0055
 Lx86_cpuid_done:
-	str x6, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
-	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
-	str x7, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
+	str x6, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	str x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	str x9, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	str x7, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
 	/* CPUID serializes, so it is a code-change checkpoint: a vCPU that saw
 	 * the flag of a cross-modifying-code protocol, then executes it, must
 	 * run the code the writer left. The run leaves for the instruction
 	 * after it, and the runtime revalidates what it selects there. */
 	ldr x8, [_stream]
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	str x8, [_vcpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 
 gadget xgetbv
-	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	ldr x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	cmp x8, #0
 	mov w9, #7
 	csel w8, w9, wzr, eq
-	str x8, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	str xzr, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	str x8, [_vcpu, #UML_X86_64_CPU_REGISTERS]
+	str xzr, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	retire_and_next
 
 .macro timestamp rdtscp
 gadget \rdtscp
 	ldr x23, [_stream], #8
-	ldrb w8, [_cpu, #UML_X86_64_CPU_TIMESTAMP_FAULTS]
+	ldrb w8, [_vcpu, #UML_X86_64_CPU_TIMESTAMP_FAULTS]
 	cbnz w8, Lx86_general_protection
 	isb
 	mrs x8, cntvct_el0
 	mov w9, w8
-	str x9, [_cpu, #UML_X86_64_CPU_REGISTERS]
+	str x9, [_vcpu, #UML_X86_64_CPU_REGISTERS]
 	lsr x8, x8, #32
-	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
+	str x8, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	.ifc \rdtscp,rdtscp
-	str xzr, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	str xzr, [_vcpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	.endif
 	retire_and_next
 .endm
@@ -223,7 +223,7 @@ gadget privileged
  * the stream word in x23 locates. */
 Lx86_general_protection:
 	instruction_rip x22
-	str x22, [_cpu, #UML_X86_64_CPU_RIP]
+	str x22, [_vcpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_GENERAL_PROTECTION
 	b uml_x86_64_gadget_leave
 
@@ -232,22 +232,22 @@ Lx86_general_protection:
  * vCPU reports processor 0 of node 0. */
 gadget rdpid_32_r
 	ldr x8, [_stream], #8
-	str xzr, [_cpu, x8]
+	str xzr, [_vcpu, x8]
 	retire_and_next
 
 gadget rdpid_64_r
 	ldr x8, [_stream], #8
-	str xzr, [_cpu, x8]
+	str xzr, [_vcpu, x8]
 	retire_and_next
 
 .macro read_segment_base name, base, host_register
 gadget read_\name\()_base_\host_register\()_r
 	ldr x8, [_stream], #8
-	ldr x9, [_cpu, #\base]
+	ldr x9, [_vcpu, #\base]
 	.ifc \host_register,32
 	mov w9, w9
 	.endif
-	str x9, [_cpu, x8]
+	str x9, [_vcpu, x8]
 	retire_and_next
 .endm
 
@@ -258,13 +258,13 @@ gadget write_\name\()_base_\width\()_r
 	.if \width == 64
 	ldr x23, [_stream], #8
 	.endif
-	ldr \host_register\()9, [_cpu, x8]
+	ldr \host_register\()9, [_vcpu, x8]
 	.if \width == 64
 	sbfx x10, x9, #0, #48
 	cmp x10, x9
 	b.ne Lx86_general_protection
 	.endif
-	str x9, [_cpu, #\base]
+	str x9, [_vcpu, #\base]
 	retire_and_next
 .endm
 
@@ -298,7 +298,7 @@ gadget store_machine_status_\width\()_r
 	ldr x8, [_stream], #8
 	mov w9, #0x0033
 	movk w9, #0x8005, lsl #16
-	\store \host_register\()9, [_cpu, x8]
+	\store \host_register\()9, [_vcpu, x8]
 	retire_and_next
 .endm
 
@@ -334,7 +334,7 @@ Lx86_mxcsr_load_done:
 	 * as STMXCSR shows. The loaded flags replace the host's. */
 	tst w24, #0xffff0000
 	b.ne Lx86_general_protection
-	str w24, [_cpu, #UML_X86_64_CPU_MXCSR]
+	str w24, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	msr fpsr, xzr
 	refresh_simd_exact w24, 9, 10
 	publish_guest_rounding 9, 10, 11
@@ -347,9 +347,9 @@ Lx86_mxcsr_load_cross:
 gadget mxcsr_store
 	effective_address
 	mov x25, x7
-	ldr w24, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldr w24, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	fold_host_flags w24, 9, 10
-	str w24, [_cpu, #UML_X86_64_CPU_MXCSR]
+	str w24, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	page_cross_check 4, Lx86_mxcsr_store_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 4
 	str w24, [x7]
@@ -368,7 +368,7 @@ Lx86_memory_fault_at:
 	cbz w8, Lx86_memory_fault_unlocked
 	split_lock_leave
 Lx86_memory_fault_unlocked:
-	str x22, [_cpu, #UML_X86_64_CPU_RIP]
+	str x22, [_vcpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_MEMORY_FAULT
 	b uml_x86_64_gadget_leave
 
@@ -377,7 +377,7 @@ Lx86_memory_fault_unlocked:
  * changed. Every memory gadget that stores shares this exit. */
 Lx86_store_code_exit:
 	instruction_rip x8, 1
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	str x8, [_vcpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_barrier
 	mov w0, #UML_X86_64_EVENT_CONTINUED
@@ -387,7 +387,7 @@ Lx86_store_code_exit:
  * elements with RIP still naming it. */
 Lx86_repeat_yield:
 	instruction_rip x22
-	str x22, [_cpu, #UML_X86_64_CPU_RIP]
+	str x22, [_vcpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_REPEAT_YIELD
 	b uml_x86_64_gadget_leave
 
@@ -401,7 +401,7 @@ Lx86_segment_check:
 	cbz w8, Lx86_segment_check_unlocked
 	split_lock_leave
 Lx86_segment_check_unlocked:
-	str x22, [_cpu, #UML_X86_64_CPU_RIP]
+	str x22, [_vcpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_SEGMENT_CHECK
 	b uml_x86_64_gadget_leave
 
@@ -410,6 +410,6 @@ Lx86_segment_check_unlocked:
  * instruction under a bypass, having checked it. */
 gadget segment_guard
 	ldr x23, [_stream], #8
-	ldrb w8, [_cpu, #UML_X86_64_CPU_SEGMENT_BYPASS]
+	ldrb w8, [_vcpu, #UML_X86_64_CPU_SEGMENT_BYPASS]
 	cbz w8, Lx86_segment_check
 	next_gadget

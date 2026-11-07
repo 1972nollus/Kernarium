@@ -6,7 +6,7 @@ gadget vector_map2_mask_load_\element\()_\width
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	add x26, _cpu, x26
+	add x26, _vcpu, x26
 	sub sp, sp, #32
 	stp xzr, xzr, [sp]
 	stp xzr, xzr, [sp, #16]
@@ -53,7 +53,7 @@ Lx86_vector_map2_mask_load_done\@:
 	.endif
 	add sp, sp, #32
 	and x9, x23, #0xffff
-	add x9, _cpu, x9
+	add x9, _vcpu, x9
 	str q4, [x9]
 	.if \width == 256
 	str q5, [x9, #16]
@@ -79,9 +79,9 @@ gadget vector_map2_mask_store_\element\()_\width
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	add x26, _cpu, x26
+	add x26, _vcpu, x26
 	and x27, x23, #0xffff
-	add x27, _cpu, x27
+	add x27, _vcpu, x27
 	mov x24, #0
 	mov x19, #0
 Lx86_vector_map2_mask_store_scan\@:

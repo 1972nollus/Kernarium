@@ -37,14 +37,14 @@
  * AdvSIMD instruction, calls no helper and touches no V register. */
 .pushsection __DATA_CONST,__gadget_sme
 .p2align 3
-.globl NAME(uml_arm64_gadget_streaming_rows_begin)
-NAME(uml_arm64_gadget_streaming_rows_begin):
+.globl CSYM(uml_arm64_gadget_streaming_rows_begin)
+CSYM(uml_arm64_gadget_streaming_rows_begin):
 	.macro streaming_row begin, end
-	.quad NAME(uml_arm64_gadget_\begin), NAME(uml_arm64_gadget_\end)
+	.quad CSYM(uml_arm64_gadget_\begin), CSYM(uml_arm64_gadget_\end)
 	.endm
 	/* One entry: gadgets are 16-byte aligned, so four bytes name one. */
 	.macro streaming_entry name
-	.quad NAME(uml_arm64_gadget_\name), NAME(uml_arm64_gadget_\name) + 4
+	.quad CSYM(uml_arm64_gadget_\name), CSYM(uml_arm64_gadget_\name) + 4
 	.endm
 	streaming_row move_wide_constant, bit_reverse_count_w_cnt
 	streaming_row bit_reverse_count_w_abs, bit_reverse_count_x_cnt
@@ -68,8 +68,8 @@ NAME(uml_arm64_gadget_streaming_rows_begin):
 	streaming_row sm_memory_begin, sm_memory_end
 	.purgem streaming_row
 	.purgem streaming_entry
-.globl NAME(uml_arm64_gadget_streaming_rows_end)
-NAME(uml_arm64_gadget_streaming_rows_end):
+.globl CSYM(uml_arm64_gadget_streaming_rows_end)
+CSYM(uml_arm64_gadget_streaming_rows_end):
 .popsection
 
 .pushsection GADGET_SECTION_SME
@@ -80,13 +80,13 @@ NAME(uml_arm64_gadget_streaming_rows_end):
  * x0-x7 across it. */
 .p2align 4
 uml_arm64_gadget_sme_resume:
-	ldrb w9, [_cpu, #UML_ARM64_CPU_SVCR]
-	ldrb w10, [_cpu, #UML_ARM64_CPU_SME_HOST_MODE]
+	ldrb w9, [_vcpu, #UML_ARM64_CPU_SVCR]
+	ldrb w10, [_vcpu, #UML_ARM64_CPU_SME_HOST_MODE]
 	mrs x16, fpsr
 	tbz w9, #1, 2f
 	smstart
-	ldr x11, [_cpu, #UML_ARM64_CPU_SME_REGISTERS]
-	ldr w13, [_cpu, #UML_ARM64_CPU_SME_SVL]
+	ldr x11, [_vcpu, #UML_ARM64_CPU_SME_REGISTERS]
+	ldr w13, [_vcpu, #UML_ARM64_CPU_SME_SVL]
 	mov x14, #UML_ARM64_SME_ZA_OFFSET_VL
 	madd x11, x13, x14, x11
 	mov w12, wzr
@@ -121,7 +121,7 @@ uml_arm64_gadget_sme_resume:
 	smstart sm
 	orr w10, w10, #UML_ARM64_SME_HOST_STREAMING
 4:
-	strb w10, [_cpu, #UML_ARM64_CPU_SME_HOST_MODE]
+	strb w10, [_vcpu, #UML_ARM64_CPU_SME_HOST_MODE]
 	msr fpsr, x16
 	ret
 
@@ -130,12 +130,12 @@ uml_arm64_gadget_sme_resume:
  * uml_arm64_gadget_sme_resume. */
 .p2align 4
 uml_arm64_gadget_sme_suspend:
-	ldrb w10, [_cpu, #UML_ARM64_CPU_SME_HOST_MODE]
+	ldrb w10, [_vcpu, #UML_ARM64_CPU_SME_HOST_MODE]
 	tbz w10, #0, 9f
 	mrs x16, fpsr
 	tbz w10, #1, 2f
-	ldr x11, [_cpu, #UML_ARM64_CPU_SME_REGISTERS]
-	ldr w13, [_cpu, #UML_ARM64_CPU_SME_SVL]
+	ldr x11, [_vcpu, #UML_ARM64_CPU_SME_REGISTERS]
+	ldr w13, [_vcpu, #UML_ARM64_CPU_SME_SVL]
 	mov x14, #UML_ARM64_SME_ZA_OFFSET_VL
 	madd x11, x13, x14, x11
 	mov w12, wzr
@@ -165,7 +165,7 @@ uml_arm64_gadget_sme_suspend:
 2:
 	smstop
 	and w10, w10, #~(UML_ARM64_SME_HOST_STREAMING | UML_ARM64_SME_HOST_ZA)
-	strb w10, [_cpu, #UML_ARM64_CPU_SME_HOST_MODE]
+	strb w10, [_vcpu, #UML_ARM64_CPU_SME_HOST_MODE]
 	msr fpsr, x16
 9:
 	ret
@@ -177,9 +177,9 @@ uml_arm64_gadget_sme_suspend:
  * entry. The guest's FPSR stays in CpuState, where the executor left it
  * with the native FP environment inactive, and the host's own FPCR and FPSR
  * are back when this returns. */
-.globl NAME(uml_arm64_gadget_enter_streaming)
+.globl CSYM(uml_arm64_gadget_enter_streaming)
 .p2align 4
-NAME(uml_arm64_gadget_enter_streaming):
+CSYM(uml_arm64_gadget_enter_streaming):
 	stp x29, x30, [sp, #-0x70]!
 	mov x29, sp
 	stp x19, x20, [sp, #0x10]
@@ -196,7 +196,7 @@ NAME(uml_arm64_gadget_enter_streaming):
 	msr fpcr, x11
 	mov x19, x1
 	bl uml_arm64_gadget_sme_resume
-	bl NAME(uml_arm64_gadget_enter)
+	bl CSYM(uml_arm64_gadget_enter)
 	mov x20, x1
 	mov x1, x19
 	bl uml_arm64_gadget_sme_suspend
@@ -225,7 +225,7 @@ NAME(uml_arm64_gadget_enter_streaming):
 	cbnz x8, \slow
 	lsr x8, \address, #UML_GADGET_GUEST_PAGE_SHIFT
 	ubfx x9, \address, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
-	add x10, _tlb, x9, lsl #UML_GADGET_TLB_SET_SHIFT
+	add x10, _swtlb, x9, lsl #UML_GADGET_TLB_SET_SHIFT
 	.if \access
 	ldp x11, x12, [x10, #UML_GADGET_TLB_ENTRY_WRITE_PAGE]
 	.else
@@ -240,7 +240,7 @@ NAME(uml_arm64_gadget_enter_streaming):
  * aligned (CheckSPAlignment). The descriptor is in x14. */
 .macro sme_base slow
 	and x9, x14, #0xffff
-	ldr x7, [_cpu, x9]
+	ldr x7, [_vcpu, x9]
 	tbz x14, #UML_GADGET_SME_BASE_SP_BIT, 81f
 	tst x7, #0xf
 	b.ne \slow
@@ -251,7 +251,7 @@ NAME(uml_arm64_gadget_enter_streaming):
  * base was SP, as the base transfers do. */
 .macro sme_untag
 	tbnz x14, #UML_GADGET_SME_BASE_SP_BIT, 82f
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, 82f
 	ubfx x7, x7, #0, #56
 82:
@@ -275,41 +275,41 @@ NAME(uml_arm64_gadget_enter_streaming):
 .endm
 
 	.p2align 4
-	.globl NAME(uml_arm64_gadget_sme_streaming_begin)
-NAME(uml_arm64_gadget_sme_streaming_begin):
+	.globl CSYM(uml_arm64_gadget_sme_streaming_begin)
+CSYM(uml_arm64_gadget_sme_streaming_begin):
 
 /* MRS Xt, SVCR. Stream: [Xt offset]. */
 gadget sme_svcr_read
 	ldr x8, [_stream], #8
-	ldrb w9, [_cpu, #UML_ARM64_CPU_SVCR]
-	str x9, [_cpu, x8]
+	ldrb w9, [_vcpu, #UML_ARM64_CPU_SVCR]
+	str x9, [_vcpu, x8]
 	next_gadget
 
 /* MRS Xt, TPIDR2_EL0: the guest's register, never the host's. */
 gadget sme_tpidr2_read
 	ldr x8, [_stream], #8
-	ldr x9, [_cpu, #UML_ARM64_CPU_TPIDR2]
-	str x9, [_cpu, x8]
+	ldr x9, [_vcpu, #UML_ARM64_CPU_TPIDR2]
+	str x9, [_vcpu, x8]
 	next_gadget
 
 /* MSR TPIDR2_EL0, Xt. Stream: [Xt offset]. */
 gadget sme_tpidr2_write_r
 	ldr x8, [_stream], #8
-	ldr x9, [_cpu, x8]
-	str x9, [_cpu, #UML_ARM64_CPU_TPIDR2]
+	ldr x9, [_vcpu, x8]
+	str x9, [_vcpu, #UML_ARM64_CPU_TPIDR2]
 	next_gadget
 
 gadget sme_tpidr2_write_z
-	str xzr, [_cpu, #UML_ARM64_CPU_TPIDR2]
+	str xzr, [_vcpu, #UML_ARM64_CPU_TPIDR2]
 	next_gadget
 
 /* RDSVL Xd, #imm: imm x SVL in bytes, read from the vCPU at run time.
  * Stream: [Xd offset][imm, sign-extended]. */
 gadget sme_rdsvl
 	ldp x8, x10, [_stream], #16
-	ldr w9, [_cpu, #UML_ARM64_CPU_SME_SVL]
+	ldr w9, [_vcpu, #UML_ARM64_CPU_SME_SVL]
 	mul x9, x9, x10
-	str x9, [_cpu, x8]
+	str x9, [_vcpu, x8]
 	next_gadget
 
 /* ADDSVL and ADDSPL: Xd|SP = Xn|SP + imm x SVL (or SVL / 8). Stream:
@@ -319,13 +319,13 @@ gadget sme_\name
 	ldp x8, x10, [_stream], #16
 	ubfx x11, x8, #16, #16
 	and x8, x8, #0xffff
-	ldr w9, [_cpu, #UML_ARM64_CPU_SME_SVL]
+	ldr w9, [_vcpu, #UML_ARM64_CPU_SME_SVL]
 	.if \shift
 	lsr w9, w9, #\shift
 	.endif
-	ldr x12, [_cpu, x11]
+	ldr x12, [_vcpu, x11]
 	madd x9, x9, x10, x12
-	str x9, [_cpu, x8]
+	str x9, [_vcpu, x8]
 	next_gadget
 .endm
 sme_add_vector_length addsvl, 0
@@ -343,7 +343,7 @@ gadget sme_svcr_write_\name
 	bl uml_arm64_gadget_sme_suspend
 	ldr x8, [_stream], #8
 	.if \from_register
-	ldr x8, [_cpu, x8]
+	ldr x8, [_vcpu, x8]
 	and x8, x8, #(UML_ARM64_SVCR_SM | UML_ARM64_SVCR_ZA)
 	lsl x8, x8, #UML_GADGET_SME_SVCR_VALUE_SHIFT
 	orr x8, x8, #(UML_ARM64_SVCR_SM | UML_ARM64_SVCR_ZA)
@@ -357,12 +357,12 @@ gadget sme_svcr_write_\name
 	cmp w0, #UML_GADGET_SME_SVCR_WRITTEN
 	b.ne 1f
 	add x8, x8, #4
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 1:
-	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	str _stream, [_vcpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x8, [_vcpu, #UML_GADGET_CPU_PC]
 	cmp w0, #UML_GADGET_SME_SVCR_NEEDS_STORAGE
 	mov w0, #UML_GADGET_EVENT_SME_ACCESS
 	mov w9, #-1
@@ -383,11 +383,11 @@ gadget sm_za_vector_\name
 	ldr x14, [_stream], #8
 	sme_base 2f
 	ubfx x10, x14, #32, #4
-	ldr w13, [_cpu, #UML_ARM64_CPU_SME_SVL]
+	ldr w13, [_vcpu, #UML_ARM64_CPU_SME_SVL]
 	madd x7, x10, x13, x7
 	sme_untag
 	ubfx x9, x14, #16, #16
-	ldr w15, [_cpu, x9]
+	ldr w15, [_vcpu, x9]
 	add w15, w15, w10
 	sme_translate \access, x7, x13, 2f
 	.if \access
@@ -445,8 +445,8 @@ gadget sm_zt0_zero
 /* ZERO { mask } with host ZA resident: one entry per tile mask, 16 bytes
  * apart, so the builder selects table + mask x 16. */
 	.p2align 4
-	.globl NAME(uml_arm64_gadget_sm_za_zero_table)
-NAME(uml_arm64_gadget_sm_za_zero_table):
+	.globl CSYM(uml_arm64_gadget_sm_za_zero_table)
+CSYM(uml_arm64_gadget_sm_za_zero_table):
 	.set Lsme_zero_mask, 0
 	.rept 256
 	.inst 0xc0080000 | Lsme_zero_mask
@@ -454,11 +454,11 @@ NAME(uml_arm64_gadget_sm_za_zero_table):
 	.p2align 4
 	.set Lsme_zero_mask, Lsme_zero_mask + 1
 	.endr
-	.globl NAME(uml_arm64_gadget_sm_za_zero_table_end)
-NAME(uml_arm64_gadget_sm_za_zero_table_end):
+	.globl CSYM(uml_arm64_gadget_sm_za_zero_table_end)
+CSYM(uml_arm64_gadget_sm_za_zero_table_end):
 
-	.globl NAME(uml_arm64_gadget_sme_streaming_end)
-NAME(uml_arm64_gadget_sme_streaming_end):
+	.globl CSYM(uml_arm64_gadget_sme_streaming_end)
+CSYM(uml_arm64_gadget_sme_streaming_end):
 
 /* Every one of those accesses and zeroings with SVCR.SM = 0 and ZA = 1, when
  * guest ZA and ZT0 stay in the register file: the helper does them all.
@@ -537,8 +537,8 @@ Lsme_trampoline_\cpu\()_\symbol:
 
 .pushsection __DATA_CONST,__gadget_sme
 .p2align 3
-.globl NAME(uml_arm64_sme_twin_begin)
-NAME(uml_arm64_sme_twin_begin):
+.globl CSYM(uml_arm64_sme_twin_begin)
+CSYM(uml_arm64_sme_twin_begin):
 .popsection
 
 /* 1 while a twin has a base entry of the same name. */
@@ -546,11 +546,11 @@ NAME(uml_arm64_sme_twin_begin):
 
 .purgem gadget
 .macro gadget name
-	.globl NAME(uml_arm64_gadget_sm_\name)
+	.globl CSYM(uml_arm64_gadget_sm_\name)
 	.p2align 4
-NAME(uml_arm64_gadget_sm_\name):
+CSYM(uml_arm64_gadget_sm_\name):
 	.if Lsme_twin_of_base
-	sme_twin_row NAME(uml_arm64_gadget_\name), NAME(uml_arm64_gadget_sm_\name)
+	sme_twin_row CSYM(uml_arm64_gadget_\name), CSYM(uml_arm64_gadget_sm_\name)
 	.endif
 .endm
 
@@ -564,8 +564,8 @@ NAME(uml_arm64_gadget_sm_\name):
 .endm
 
 	.p2align 4
-	.globl NAME(uml_arm64_gadget_sm_twins_begin)
-NAME(uml_arm64_gadget_sm_twins_begin):
+	.globl CSYM(uml_arm64_gadget_sm_twins_begin)
+CSYM(uml_arm64_gadget_sm_twins_begin):
 
 /* CSSC CNT on a host without FEAT_CSSC: a GPR-only population count, where
  * the base entry counts with AdvSIMD. Stream: as the base entry's. */
@@ -574,7 +574,7 @@ gadget bit_reverse_count_\suffix
 	ldr x9, [_stream], #8
 	lsr x11, x9, #16
 	ubfx x10, x9, #0, #16
-	ldr x12, [_cpu, x10]
+	ldr x12, [_vcpu, x10]
 	.if !\bits64
 	mov w12, w12
 	.endif
@@ -590,7 +590,7 @@ gadget bit_reverse_count_\suffix
 	mov x13, #0x0101010101010101
 	mul x12, x12, x13
 	lsr x0, x12, #56
-	str x0, [_cpu, x11]
+	str x0, [_vcpu, x11]
 	next_gadget
 .endm
 sme_population_count w_cnt, 0
@@ -606,11 +606,11 @@ sme_population_count x_cnt, 1
 .macro sme_fpcr_write name, mask
 gadget \name
 	ldp x8, x13, [_stream], #16
-	ldr w9, [_cpu, x8]
+	ldr w9, [_vcpu, x8]
 	mov w10, #((\mask) & 0xffff)
 	movk w10, #((\mask) >> 16), lsl #16
 	and w9, w9, w10
-	str w9, [_cpu, #UML_GADGET_CPU_FPCR]
+	str w9, [_vcpu, #UML_GADGET_CPU_FPCR]
 	mov w12, #UML_ARM64_FPCR_TRAP_ENABLES
 	bic w10, w9, w12
 	msr fpcr, x10
@@ -621,7 +621,7 @@ sme_fpcr_write sysreg_fpcr_write_r_afp, (UML_ARM64_FPCR_WRITABLE | UML_ARM64_FPC
 .purgem sme_fpcr_write
 
 gadget sysreg_fpcr_write_z
-	str wzr, [_cpu, #UML_GADGET_CPU_FPCR]
+	str wzr, [_vcpu, #UML_GADGET_CPU_FPCR]
 	msr fpcr, xzr
 	next_gadget
 
@@ -669,8 +669,8 @@ scalar_unsigned_fast 1, 1, 0, 1, load64_unsigned_fast_r_sp
 
 .macro sme_inplace_twins prefix, twin
 	.irp reg, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30
-	sme_twin_row NAME(uml_arm64_gadget_\prefix\()_r_\reg), NAME(uml_arm64_gadget_sm_\twin\()_r)
-	sme_twin_row NAME(uml_arm64_gadget_\prefix\()_r_sp_\reg), NAME(uml_arm64_gadget_sm_\twin\()_r_sp)
+	sme_twin_row CSYM(uml_arm64_gadget_\prefix\()_r_\reg), CSYM(uml_arm64_gadget_sm_\twin\()_r)
+	sme_twin_row CSYM(uml_arm64_gadget_\prefix\()_r_sp_\reg), CSYM(uml_arm64_gadget_sm_\twin\()_r_sp)
 	.endr
 .endm
 sme_inplace_twins store32_unsigned_inplace, store32_unsigned_fast
@@ -704,12 +704,12 @@ sme_inplace_twins load64_unsigned_inplace, load64_unsigned_fast
 #define GADGET_SECTION_COLD __TEXT,__a64_cold,regular,pure_instructions
 #undef UML_GADGET_SME_TWIN
 
-	.globl NAME(uml_arm64_gadget_sm_twins_end)
-NAME(uml_arm64_gadget_sm_twins_end):
+	.globl CSYM(uml_arm64_gadget_sm_twins_end)
+CSYM(uml_arm64_gadget_sm_twins_end):
 
 .pushsection __DATA_CONST,__gadget_sme
-.globl NAME(uml_arm64_sme_twin_end)
-NAME(uml_arm64_sme_twin_end):
+.globl CSYM(uml_arm64_sme_twin_end)
+CSYM(uml_arm64_sme_twin_end):
 .popsection
 
 /* The register-only SVE, SVE2 and SME forms and the FP&SIMD classes legal in
@@ -736,7 +736,7 @@ NAME(uml_arm64_sme_twin_end):
  * Scratch: x8-x13. */
 .macro sm_vector_address access, slow
 	and x9, x14, #0xffff
-	ldr x7, [_cpu, x9]
+	ldr x7, [_vcpu, x9]
 	tbz x14, #UML_GADGET_SME_VM_BASE_SP_BIT, 1f
 	tst x7, #0xf
 	b.ne \slow
@@ -746,7 +746,7 @@ NAME(uml_arm64_sme_twin_end):
 2:
 	tbz x14, #UML_GADGET_SME_VM_INDEX_BIT, 4f
 	ubfx x9, x14, #16, #16
-	ldr x10, [_cpu, x9]
+	ldr x10, [_vcpu, x9]
 	tbz x14, #UML_GADGET_SME_VM_WORD_BIT, 3f
 	tbnz x14, #UML_GADGET_SME_VM_SIGNED_BIT, 5f
 	mov w10, w10
@@ -759,7 +759,7 @@ NAME(uml_arm64_sme_twin_end):
 	add x7, x7, x10
 4:
 	tbnz x14, #UML_GADGET_SME_VM_BASE_SP_BIT, 6f
-	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	ldrb w9, [_vcpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, 6f
 	ubfx x7, x7, #0, #56
 6:
@@ -771,9 +771,9 @@ NAME(uml_arm64_sme_twin_end):
 .macro sm_vector_writeback
 	tbz x14, #UML_GADGET_SME_VM_WRITEBACK_BIT, 7f
 	and x9, x14, #0xffff
-	ldr x10, [_cpu, x9]
+	ldr x10, [_vcpu, x9]
 	add x10, x10, x15
-	str x10, [_cpu, x9]
+	str x10, [_vcpu, x9]
 7:
 .endm
 

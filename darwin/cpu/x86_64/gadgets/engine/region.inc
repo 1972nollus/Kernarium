@@ -101,7 +101,7 @@
 
 /* The parts' offset-0 labels, which the order file names. The cold part's is
  * also what a host sample of a cold path reads, its own labels being
- * temporary. NAME() is not defined until engine/common.inc. */
+ * temporary. CSYM() is not defined until engine/common.inc. */
 .macro gadget_region_begin
 	.section GADGET_SECTION_BANK
 	.p2align 14

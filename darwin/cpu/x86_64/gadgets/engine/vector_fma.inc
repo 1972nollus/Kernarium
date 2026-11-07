@@ -325,7 +325,7 @@ Lx86_vector_fma_tiny_done\@:
  * NaN, and flushes a tiny result. Returns to `back`. Uses v16 to v21. */
 .macro vector_fma_exact form, operation, element_bits, width, scalar, back
 	simd_save_status_branch Lx86_vector_fma_save\@, 14
-	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldr w12, [_vcpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_fma_inputs_ready\@
 	simd_flush_masks \element_bits, 18, 19
 	.if \scalar
@@ -460,7 +460,7 @@ Lx86_vector_fma_unusual_ready\@:
  * branches to `special`, and the exact path starts at `exact`. Their paths,
  * after the gadget, return to `special_back` and `exact_back`. */
 .macro vector_fma_body form, operation, element_bits, width, scalar, special, special_back, exact, exact_back
-	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	ldrb w14, [_vcpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 	tbnz w14, #2, \exact
 	vector_fma_compute \form, \operation, \element_bits, \width, \scalar
 	.if \scalar
@@ -521,7 +521,7 @@ Lx86_vector_fma_unusual_ready\@:
 
 .macro vector_fma_write width, descriptor
 	and x9, x\descriptor, #0xffff
-	add x9, _cpu, x9
+	add x9, _vcpu, x9
 	str q6, [x9]
 	.if \width == 256
 	str q7, [x9, #16]
@@ -537,9 +537,9 @@ gadget vector_fma_\name\()_\element\()_\shape\()_rr
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
-	add x9, _cpu, x9
-	add x10, _cpu, x10
-	add x11, _cpu, x11
+	add x9, _vcpu, x9
+	add x10, _vcpu, x10
+	add x11, _vcpu, x11
 	ldr q0, [x9]
 	ldr q1, [x10]
 	ldr q2, [x11]
@@ -567,8 +567,8 @@ gadget vector_fma_\name\()_\element\()_\shape\()_rm
 	vector_memory_source Lx86_vector_fma_input_size\@, Lx86_vector_fma_cross_fault\@, 2, 5, scalar=\scalar, single=1
 	and x9, x23, #0xffff
 	and x10, x26, #0xffff
-	add x9, _cpu, x9
-	add x10, _cpu, x10
+	add x9, _vcpu, x9
+	add x10, _vcpu, x10
 	ldr q0, [x9]
 	ldr q1, [x10]
 	.if \width == 256

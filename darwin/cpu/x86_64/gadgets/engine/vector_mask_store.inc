@@ -27,13 +27,13 @@ gadget vector_mask_store_\width
 	movk x10, #0x1020, lsl #16
 	movk x10, #0x0408, lsl #32
 	movk x10, #0x0002, lsl #48
-	ldr x9, [_cpu, x8]
+	ldr x9, [_vcpu, x8]
 	and x9, x9, #0x8080808080808080
 	mul x9, x9, x10
 	lsr x19, x9, #56
 	.if \width == 128
 	add x8, x8, #8
-	ldr x9, [_cpu, x8]
+	ldr x9, [_vcpu, x8]
 	and x9, x9, #0x8080808080808080
 	mul x9, x9, x10
 	lsr x9, x9, #56
@@ -63,7 +63,7 @@ Lx86_vector_mask_store_low\@:
 Lx86_vector_mask_store_checked\@:
 	cbz x19, Lx86_vector_mask_store_done\@
 	and x27, x23, #0xffff
-	add x27, _cpu, x27
+	add x27, _vcpu, x27
 	/* No page is page-aligned plus one. */
 	mov x24, #1
 Lx86_vector_mask_store_loop\@:
