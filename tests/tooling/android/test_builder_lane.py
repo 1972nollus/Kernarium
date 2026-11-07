@@ -529,6 +529,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         r'android:pathData="([^"]+)"', (wizard_art_root / "drawable/logo.xml").read_text(encoding="utf-8")
     )
     wizard_welcome = (wizard_art_root / "raw/lottie_welcome.json").read_bytes()
+    # The two wizard scripts the overlay carries, as raw files reach the overlay: unchanged.
+    wizard_scripts = {
+        name: (wizard_art_root / "raw" / name).read_bytes() for name in tool.SETUP_WIZARD_FLOWS
+    }
+    owner_name, user_name = wizard_scripts
+    launcher_apps = sorted(tool.LAUNCHER_APPS)
+    launcher_grids = tool.LAUNCHER_GRIDS
+    launcher_overlay_entry = tool.LAUNCHER_OVERLAY
     # The reader of compiled array resources sees the same items through either string pool.
     tables = [("config_ntpServers", ["none"]), ("config_autoTimeSourcesPriority", ["telephony", "external"]),
               ("config_ntpServers", ["ntp://ntp.example", "x"]), ("empty", [])]
@@ -783,6 +791,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           pinner_overlay_variant: str | None = None,
                           statistics_variant: str | None = None,
                           wizard_branding_variant: str | None = None,
+                          navigation_variant: str | None = None,
+                          launcher_variant: str | None = None,
                           network_time_variant: str | None = None,
                           reclaim_variant: str | None = None,
                           wallpaper_variant: str | None = None,
@@ -956,6 +966,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "product-false": "ro.adb.secure=false\n",
                     }.get(adb_secure_variant, "")
                     + ("" if missing_lockscreen_default else "ro.lockscreen.disable.default=true\n")
+                    + ("ro.boot.vendor.overlay.theme=com.android.internal.systemui.navbar.gestural\n"
+                       if navigation_variant == "overlay-theme-property" else "")
                     + {
                         None: "apexd.config.use_fiemap=false\n",
                         "missing": "",
@@ -1636,6 +1648,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         catalogue += " lineagestats"
                     if statistics_variant == "wizard-setting" and not parts:
                         dex += b" stats_collection"
+                    # R8 keeps method names, so a wizard that still forces gestural navigation
+                    # names the function in its dex.
+                    dex += b" usesGestureNavigation" if not parts else b""
+                    if navigation_variant == "dex-forces-gestural" and not parts:
+                        dex += b" enableGesturalNavigation"
                     payload = io.BytesIO()
                     with zipfile.ZipFile(payload, "w") as application:
                         # The compiled manifest's string pool is UTF-16, so a marker named there is
@@ -1750,11 +1767,72 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             overlay.writestr("res/drawable-v24/logo.xml", wizard_logo)
                         if wizard_branding_variant != "no-animation":
                             overlay.writestr("res/raw/lottie_welcome.json", wizard_animation)
+                        for script_name, script in wizard_scripts.items():
+                            if wizard_branding_variant == "no-script" and script_name == owner_name:
+                                continue
+                            if wizard_branding_variant == "no-user-script" and script_name == user_name:
+                                continue
+                            if wizard_branding_variant == "stock-script" and script_name == owner_name:
+                                script = script.replace(b'wizard:action="datetime"', b'wizard:action="network_setup"')
+                            if wizard_branding_variant == "stock-user-script" and script_name == user_name:
+                                script += b"\n"
+                            overlay.writestr(f"res/raw/{script_name}", script)
                     archive.writestr(
                         "PRODUCT/overlay/"
                         "LineageSetupWizard__lineage_andarium__auto_generated_rro_product.apk",
                         wizard_apk.getvalue(),
                     )
+                # The two navigation mode overlays stay in the product partition, so that Settings can
+                # switch either way; no configuration enables one.
+                for mode in ("3Button", "Gestural"):
+                    if navigation_variant == f"no-{mode.lower()}-overlay":
+                        continue
+                    archive.writestr(
+                        f"PRODUCT/overlay/NavigationBarMode{mode}/NavigationBarMode{mode}Overlay.apk",
+                        release_apk,
+                    )
+                navigation_configuration = {
+                    "config-enables-gestural": (
+                        "PRODUCT/overlay/config/config.xml",
+                        '<config><overlay package="com.android.internal.systemui.navbar.gestural" enabled="true"/></config>',
+                    ),
+                    "config-enables-3button-undisabled": (
+                        "VENDOR/overlay/config/config.xml",
+                        '<config><merge path="x"/><overlay package="com.android.internal.systemui.navbar.threebutton"/></config>',
+                    ),
+                    "config-unreadable": ("SYSTEM_EXT/overlay/config/config.xml", "<config>"),
+                    "config-disables-gestural": (
+                        "PRODUCT/overlay/config/config.xml",
+                        '<config><overlay package="com.android.internal.systemui.navbar.gestural" enabled="false"/>'
+                        '<overlay package="com.android.theme.icon_pack.circular.android" enabled="true"/></config>',
+                    ),
+                }.get(navigation_variant)
+                if navigation_configuration is not None:
+                    archive.writestr(*navigation_configuration)
+                # The launcher's default workspace: DocumentsUI is the one of the six applications whose APK the
+                # required list does not name, and the overlay holds a compiled layout per grid, whose strings
+                # are the component names.
+                if launcher_variant != "no-documentsui":
+                    archive.writestr("SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk", release_apk)
+                if launcher_variant != "no-overlay":
+                    layout_strings = [name for pair in launcher_apps for name in pair]
+                    if launcher_variant == "stock-layout":
+                        layout_strings.append("com.google.android.googlequicksearchbox")
+                    if launcher_variant == "lacks-files":
+                        layout_strings.remove("com.android.documentsui.LauncherActivity")
+                    launcher_apk = io.BytesIO()
+                    with zipfile.ZipFile(launcher_apk, "w") as overlay:
+                        overlay.writestr("AndroidManifest.xml", release_manifest)
+                        overlay.writestr("resources.arsc", b"\x00config_fixture\x00")
+                        for grid in launcher_grids:
+                            if launcher_variant == "no-6x5" and grid == "6x5":
+                                continue
+                            strings = "\x00".join(layout_strings)
+                            overlay.writestr(
+                                f"res/xml/default_workspace_{grid}.xml",
+                                strings.encode("utf-16-le" if launcher_variant == "utf16-layout" else "utf-8"),
+                            )
+                    archive.writestr(launcher_overlay_entry, launcher_apk.getvalue())
                 if wallpaper_variant != "missing-overlay":
                     # The framework's runtime resource overlay: Soong lists the tablet default
                     # wallpapers with the version qualifier aapt2 adds to a smallest-width one.
@@ -2221,6 +2299,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         signed_good = root / "signed-good.zip"
         write_fixture(signed_good, signed=True)
         run_tool(verifier, "--target-files", signed_good, "--signed", *kernel_options, check=True)
+        # A configuration that names a navigation mode overlay without enabling it enables nothing.
+        disabled_configuration = root / "navigation-configuration-disabled.zip"
+        write_fixture(disabled_configuration, navigation_variant="config-disables-gestural")
+        run_tool(verifier, "--target-files", disabled_configuration, *kernel_options, check=True)
+        # The overlay's string pools may be UTF-16, as the build packs them.
+        utf16_layouts = root / "launcher-layouts-utf16.zip"
+        write_fixture(utf16_layouts, launcher_variant="utf16-layout")
+        run_tool(verifier, "--target-files", utf16_layouts, *kernel_options, check=True)
         for variant in BUILD_VARIANTS:
             signed_fixture = root / f"{variant}-signed-check.zip"
             write_fixture(signed_fixture, build_variant=variant, signed=True)
@@ -2664,6 +2750,23 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("setup-wizard-logo-lacking-a-path", {"wizard_branding_variant": "logo-lacks-a-path"}),
             ("setup-wizard-without-animation", {"wizard_branding_variant": "no-animation"}),
             ("setup-wizard-with-another-animation", {"wizard_branding_variant": "stock-animation"}),
+            ("setup-wizard-without-its-script", {"wizard_branding_variant": "no-script"}),
+            ("setup-wizard-without-its-user-script", {"wizard_branding_variant": "no-user-script"}),
+            ("setup-wizard-with-another-script", {"wizard_branding_variant": "stock-script"}),
+            ("setup-wizard-with-another-user-script", {"wizard_branding_variant": "stock-user-script"}),
+            ("setup-wizard-forces-gestural-navigation", {"navigation_variant": "dex-forces-gestural"}),
+            ("missing-gestural-navigation-overlay", {"navigation_variant": "no-gestural-overlay"}),
+            ("missing-three-button-navigation-overlay", {"navigation_variant": "no-3button-overlay"}),
+            ("overlay-configuration-enables-gestural", {"navigation_variant": "config-enables-gestural"}),
+            ("overlay-configuration-enables-three-button",
+             {"navigation_variant": "config-enables-3button-undisabled"}),
+            ("overlay-configuration-unreadable", {"navigation_variant": "config-unreadable"}),
+            ("vendor-overlay-theme-property", {"navigation_variant": "overlay-theme-property"}),
+            ("missing-launcher-overlay", {"launcher_variant": "no-overlay"}),
+            ("launcher-overlay-without-a-grid", {"launcher_variant": "no-6x5"}),
+            ("launcher-overlay-with-a-stock-layout", {"launcher_variant": "stock-layout"}),
+            ("launcher-layout-without-files", {"launcher_variant": "lacks-files"}),
+            ("launcher-layout-names-an-application-the-image-lacks", {"launcher_variant": "no-documentsui"}),
             ("ntp-server-left", {"network_time_variant": "ntp-server"}),
             ("ntp-server-left-in-a-qualified-definition",
              {"network_time_variant": "ntp-server-in-a-qualified-table"}),
@@ -3298,6 +3401,42 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "LineageSetupWizard.* has no res/raw/lottie_welcome.json"),
             ("setup-wizard-with-another-animation-cause", {"wizard_branding_variant": "stock-animation"},
              "res/raw/lottie_welcome.json is not the product's animation"),
+            ("setup-wizard-without-its-script-cause", {"wizard_branding_variant": "no-script"},
+             "LineageSetupWizard.* has no res/raw/lineage_wizard_script.xml"),
+            ("setup-wizard-without-its-user-script-cause", {"wizard_branding_variant": "no-user-script"},
+             "LineageSetupWizard.* has no res/raw/lineage_wizard_script_user.xml"),
+            ("setup-wizard-with-another-script-cause", {"wizard_branding_variant": "stock-script"},
+             "res/raw/lineage_wizard_script.xml is not the product's script"),
+            ("setup-wizard-with-another-user-script-cause", {"wizard_branding_variant": "stock-user-script"},
+             "res/raw/lineage_wizard_script_user.xml is not the product's script"),
+            ("setup-wizard-forces-gestural-navigation-cause", {"navigation_variant": "dex-forces-gestural"},
+             "LineageSetupWizard.apk still forces gestural navigation: classes.dex contains "
+             "enableGesturalNavigation"),
+            ("missing-gestural-navigation-overlay-cause", {"navigation_variant": "no-gestural-overlay"},
+             "overlay under PRODUCT/overlay/NavigationBarModeGestural/ is missing"),
+            ("missing-three-button-navigation-overlay-cause", {"navigation_variant": "no-3button-overlay"},
+             "overlay under PRODUCT/overlay/NavigationBarMode3Button/ is missing"),
+            ("overlay-configuration-enables-gestural-cause", {"navigation_variant": "config-enables-gestural"},
+             "PRODUCT/overlay/config/config.xml enables the navigation mode overlay "
+             "com.android.internal.systemui.navbar.gestural"),
+            ("overlay-configuration-enables-three-button-cause",
+             {"navigation_variant": "config-enables-3button-undisabled"},
+             "VENDOR/overlay/config/config.xml enables the navigation mode overlay "
+             "com.android.internal.systemui.navbar.threebutton"),
+            ("overlay-configuration-unreadable-cause", {"navigation_variant": "config-unreadable"},
+             "SYSTEM_EXT/overlay/config/config.xml is not well-formed XML"),
+            ("vendor-overlay-theme-property-cause", {"navigation_variant": "overlay-theme-property"},
+             "PRODUCT/etc/build.prop sets ro.boot.vendor.overlay.theme=com.android.internal.systemui.navbar.gestural"),
+            ("missing-launcher-overlay-cause", {"launcher_variant": "no-overlay"},
+             "Launcher3QuickStep__lineage_andarium__auto_generated_rro_product.apk is missing"),
+            ("launcher-overlay-without-a-grid-cause", {"launcher_variant": "no-6x5"},
+             "has no res/xml/default_workspace_6x5.xml: a 6x5 guest would show the stock layout"),
+            ("launcher-overlay-with-a-stock-layout-cause", {"launcher_variant": "stock-layout"},
+             "res/xml/default_workspace_4x5.xml is a stock layout: it names google"),
+            ("launcher-layout-without-files-cause", {"launcher_variant": "lacks-files"},
+             "res/xml/default_workspace_4x5.xml does not name com.android.documentsui.LauncherActivity"),
+            ("launcher-layout-names-an-application-the-image-lacks-cause", {"launcher_variant": "no-documentsui"},
+             "SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk is missing: the launcher's default workspace"),
             ("ntp-server-left-cause", {"network_time_variant": "ntp-server"},
              "config_ntpServers names the NTP server ntp://time.android.com in .*framework-res"),
             ("ntp-server-left-in-a-qualified-definition-cause",
@@ -4572,6 +4711,163 @@ def verify_reclaim_boot_apps(android_root: Path) -> None:
             fail("the reclaim script acts without a process list")
 
 
+def verify_setup_wizard_flow(android_root: Path) -> None:
+    """A wizard script is the reviewed flow in order, and no page the product hides is in it.
+
+    The scripts are raw files, so the overlay carries them as they are tracked; the verifier walks
+    the tracked file from its first action. These cases rewrite the flow the way a careless
+    edit or a rebase onto LineageOS's own script would."""
+    tool = load_tool(android_root / "tools/verify-target-files.py")
+    raw = android_root / "overlay/overlay/packages/apps/SetupWizard/app/src/main/res/raw"
+    namespace = tool.SETUP_WIZARD_NAMESPACE
+    for name, reviewed in tool.SETUP_WIZARD_FLOWS.items():
+        tool.check_setup_wizard_script(name, (raw / name).read_text(encoding="utf-8"), reviewed)
+    if set(tool.SETUP_WIZARD_FLOWS["lineage_wizard_script.xml"]) & set(tool.SETUP_WIZARD_HIDDEN):
+        fail("the reviewed flow names a page the product hides")
+    for page in ("network_setup", "restore", "lineage_settings", "lockscreen_settings", "navigation_settings",
+                 "location_settings"):
+        if page not in tool.SETUP_WIZARD_HIDDEN:
+            fail(f"the wizard page {page} is not on the hidden list")
+
+    def script(*actions: tuple[str, str | None], first: str | None = None, root: str = "WizardScript") -> str:
+        body = "".join(
+            f'<WizardAction id="{identifier}" wizard:uri="intent:#Intent;action=x;end">'
+            + (f'<result wizard:action="{following}" />' if following else "")
+            + "</WizardAction>"
+            for identifier, following in actions
+        )
+        start = f' wizard:firstAction="{actions[0][0] if first is None else first}"' if first != "" else ""
+        return f'<{root} xmlns:wizard="{namespace}"{start}>{body}</{root}>'
+
+    def refuses(label: str, pattern: str, name: str, text: str) -> None:
+        try:
+            tool.check_setup_wizard_script(name, text, tool.SETUP_WIZARD_FLOWS[name])
+        except SystemExit as stop:
+            if not re.search(pattern, str(stop)):
+                fail(f"{label}: the refusal does not name its cause: {stop}")
+        else:
+            fail(f"{label}: the wizard script check accepts it")
+
+    owner = "lineage_wizard_script.xml"
+    user = "lineage_wizard_script_user.xml"
+    flow = [("welcome", "locale"), ("locale", "datetime"), ("datetime", "theme_settings"),
+            ("theme_settings", "finish"), ("finish", None)]
+    tool.check_setup_wizard_script(owner, script(*flow), tool.SETUP_WIZARD_FLOWS[owner])
+    for page in tool.SETUP_WIZARD_HIDDEN:
+        inserted = [("welcome", "locale"), ("locale", page), (page, "datetime"), ("datetime", "theme_settings"),
+                    ("theme_settings", "finish"), ("finish", None)]
+        refuses(f"{page}-in-the-flow", f"defines pages the product hides: {page}", owner, script(*inserted))
+        refuses(f"{page}-left-unreached", f"defines pages the product hides: {page}", owner,
+                script(*flow, (page, "finish")))
+    refuses("a-reviewed-page-dropped", "reaches welcome > locale > theme_settings > finish, not the reviewed",
+            owner, script(("welcome", "locale"), ("locale", "theme_settings"), ("theme_settings", "finish"),
+                          ("finish", None)))
+    refuses("pages-reordered", "reaches welcome > locale > theme_settings > datetime > finish, not the reviewed",
+            owner, script(("welcome", "locale"), ("locale", "theme_settings"), ("theme_settings", "datetime"),
+                          ("datetime", "finish"), ("finish", None)))
+    refuses("a-new-page", "reaches welcome > locale > about > datetime", owner,
+            script(("welcome", "locale"), ("locale", "about"), ("about", "datetime"), ("datetime", "theme_settings"),
+                   ("theme_settings", "finish"), ("finish", None)))
+    refuses("an-unreached-page", "defines pages its flow never reaches: about", owner, script(*flow, ("about", "finish")))
+    refuses("a-dangling-result", "the flow reaches 'finish', which the script does not define", owner,
+            script(("welcome", "locale"), ("locale", "datetime"), ("datetime", "theme_settings"),
+                   ("theme_settings", "finish")))
+    refuses("no-first-action", "names no firstAction", owner, script(*flow, first=""))
+    refuses("a-first-action-that-is-not-defined", "reaches 'start'", owner, script(*flow, first="start"))
+    refuses("a-repeated-id", "without a unique id", owner, script(*flow, ("finish", None)))
+    refuses("not-a-wizard-script", "is not a WizardScript", owner, script(*flow, root="Other"))
+    refuses("not-xml", "is not well-formed XML", owner, "<WizardScript>")
+    # The secondary user's flow is welcome and theme.
+    user_flow = [("welcome", "theme_settings"), ("theme_settings", "finish"), ("finish", None)]
+    tool.check_setup_wizard_script(user, script(*user_flow), tool.SETUP_WIZARD_FLOWS[user])
+    refuses("the-owners-flow-for-a-secondary-user", "reaches welcome > locale > datetime > theme_settings > finish, not",
+            user, script(*flow))
+    refuses("the-owners-script-with-the-users-name", "not the reviewed welcome > theme_settings > finish",
+            user, script(*flow))
+    refuses("location-in-the-users-flow", "defines pages the product hides: location_settings", user,
+            script(("welcome", "location_settings"), ("location_settings", "theme_settings"),
+                   ("theme_settings", "finish"), ("finish", None)))
+
+
+def verify_launcher_layouts(android_root: Path) -> None:
+    """The launcher's default workspace holds the six reviewed applications on the first page.
+
+    The layouts are compiled into the launcher's overlay, so the verifier reads the tracked text.
+    These cases rewrite a layout the way an edit or a return to the stock layout would."""
+    tool = load_tool(android_root / "tools/verify-target-files.py")
+    layouts = android_root / "overlay/overlay/packages/apps/Launcher3/res/xml"
+    names = sorted(path.name for path in layouts.glob("*.xml"))
+    if names != [f"default_workspace_{grid}.xml" for grid in tool.LAUNCHER_GRIDS]:
+        fail(f"the tracked launcher layouts are {names}, not one per reviewed grid")
+    for grid in tool.LAUNCHER_GRIDS:
+        text = (layouts / f"default_workspace_{grid}.xml").read_text(encoding="utf-8")
+        tool.check_launcher_layout(grid, grid, text)
+        # Row by row from the top left: the columns of the grid decide where each one goes.
+        columns = int(grid.split("x")[0])
+        placed = re.findall(r'launcher:x="(\d+)"\s+launcher:y="(\d+)"', text)
+        if placed != [(str(index % columns), str(index // columns)) for index in range(6)]:
+            fail(f"the {grid} layout does not fill the first page row by row: {placed}")
+    sample = (layouts / "default_workspace_5x5.xml").read_text(encoding="utf-8")
+    favorite = re.search(r"    <favorite\n(?:.*\n){4}.*/>\n", sample)
+    if favorite is None:
+        fail("the 5x5 layout has no favorite to rewrite")
+    first = favorite.group(0)
+
+    def refuses(label: str, pattern: str, text: str, grid: str = "5x5") -> None:
+        try:
+            tool.check_launcher_layout(grid, label, text)
+        except SystemExit as stop:
+            if not re.search(pattern, str(stop)):
+                fail(f"{label}: the refusal does not name its cause: {stop}")
+        else:
+            fail(f"{label}: the launcher layout check accepts it")
+
+    def with_item(item: str) -> str:
+        return sample.replace("</favorites>", item + "\n</favorites>")
+
+    app = ('<favorite launcher:packageName="{p}" launcher:className="{c}" launcher:screen="{s}" '
+           'launcher:x="{x}" launcher:y="{y}"{extra} />')
+    refuses("a-hotseat-item", "has a favorite with attributes",
+            sample.replace(first, first.replace('launcher:screen="0"', 'launcher:container="-101" launcher:screen="0"', 1)))
+    refuses("an-item-on-the-second-page", "on screen 1: every item is on the first page",
+            sample.replace('launcher:screen="0"', 'launcher:screen="1"', 1))
+    refuses("a-widget", r"holds a <appwidget>",
+            with_item('<appwidget launcher:packageName="org.lineageos.twelve" launcher:className="x" '
+                      'launcher:screen="0" launcher:x="0" launcher:y="3" launcher:spanX="4" launcher:spanY="1" />'))
+    refuses("a-resolve-item", r"holds a <resolve>", with_item('<resolve launcher:screen="0" launcher:x="0" launcher:y="3" />'))
+    refuses("a-folder", r"holds a <folder>", with_item('<folder launcher:screen="0" launcher:x="0" launcher:y="3" />'))
+    refuses("a-uri-item", "has a favorite with attributes",
+            with_item('<favorite launcher:uri="#Intent;action=android.intent.action.MAIN;end" launcher:screen="0" '
+                      'launcher:x="0" launcher:y="3" />'))
+    refuses("google-play", "names 'vending'",
+            with_item(app.format(p="com.android.vending", c="com.android.vending.AssetBrowserActivity",
+                                 s=0, x=0, y=3, extra="")))
+    refuses("a-google-application", "names 'google'",
+            with_item(app.format(p="com.google.android.gm", c="com.google.android.gm.ConversationListActivityGmail",
+                                 s=0, x=0, y=3, extra="")))
+    refuses("the-clock", "names 'deskclock'",
+            with_item(app.format(p="com.android.deskclock", c="com.android.deskclock.DeskClock", s=0, x=0, y=3, extra="")))
+    refuses("a-string-reference", "names '@string/'", sample.replace("</favorites>", '<folder launcher:title="@string/x" />\n</favorites>'))
+    refuses("an-application-the-image-lacks-a-table-row-for", "not in the reviewed table",
+            with_item(app.format(p="org.lineageos.camelot", c="org.lineageos.camelot.MainActivity", s=0, x=0, y=3, extra="")))
+    refuses("a-repeated-application", "twice", with_item(first.replace('launcher:x="0"', 'launcher:x="4"').replace(
+        'launcher:y="0"', 'launcher:y="3"')))
+    refuses("one-of-the-six-missing", "lacks com.android.documentsui.LauncherActivity: it holds exactly the six",
+            sample.replace(re.search(r"    <!-- Files \(DocumentsUI\) -->\n(?:.*\n){6}", sample).group(0), ""))
+    refuses("a-column-outside-the-grid", r"outside the 5x5 grid", sample.replace('launcher:x="4"', 'launcher:x="5"'))
+    refuses("a-row-outside-the-grid", r"outside the 5x5 grid", sample.replace('launcher:y="1"', 'launcher:y="5"'))
+    refuses("two-items-in-a-cell", r"two items at \(0, 0\)", sample.replace('launcher:x="1"', 'launcher:x="0"', 1))
+    refuses("a-cell-that-is-not-a-number", "is not a number", sample.replace('launcher:x="1"', 'launcher:x="one"', 1))
+    refuses("a-favorite-without-a-class", "has a favorite with attributes",
+            sample.replace('        launcher:className="com.android.settings.Settings"\n', "", 1))
+    refuses("an-attribute-outside-the-launcher-namespace", "outside the launcher namespace",
+            sample.replace('launcher:x="1"', 'x="1"', 1))
+    refuses("not-xml", "is not well-formed XML", "<favorites>")
+    refuses("not-a-layout", "is not a favorites layout", "<other />")
+    # A grid's columns and rows come from its name.
+    refuses("a-smaller-grid", "outside the 4x5 grid", sample, grid="4x5")
+
+
 def verify_default_wallpaper(android_root: Path) -> None:
     """The overlay replaces LineageOS's 1920 pixel tablet wallpaper with a bounded square.
 
@@ -5842,6 +6138,8 @@ def main() -> None:
     verify_secure_element_topic(android_root)
     verify_reclaim_boot_apps(android_root)
     verify_default_wallpaper(android_root)
+    verify_setup_wizard_flow(android_root)
+    verify_launcher_layouts(android_root)
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)
     verify_package_assertions(android_root)
