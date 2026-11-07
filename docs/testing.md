@@ -304,7 +304,8 @@ The Simulator shows which edges a run defers (`AndariumPreview -screen
 session`) but not what iPadOS does with the swipes. Check on an iPad, under a
 lease with the automation host and a guest using 3-button navigation, whether
 the host's synthesized edge swipes start system gestures and what iOS does for
-each deferred edge, with the home indicator hidden and visible.
+each deferred edge. A run keeps the home indicator visible, which the bottom
+edge's deferral needs.
 
 ### Window layout (device only)
 

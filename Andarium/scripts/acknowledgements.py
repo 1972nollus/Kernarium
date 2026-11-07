@@ -51,7 +51,6 @@ GROUPS = [
     {"id": "system", "title": "Operating system"},
     {"id": "graphics", "title": "Graphics"},
     {"id": "libraries", "title": "Libraries"},
-    {"id": "inspiration", "title": "Design inspiration"},
 ]
 
 # Where each license text comes from: (source, path). A source is a directory
@@ -388,23 +387,6 @@ def projects(texts: Texts) -> list[dict]:
             frameworks=["LibZstd"],
             components=["zstd-decompression"],
             texts=[own(None, "zstd", "LICENSE")],
-        ),
-        # Credit, not a licence: none of iSH's code is part of the app.
-        entry(
-            id="ish",
-            group="inspiration",
-            name="iSH",
-            copyright="Theodore Dubois and the iSH contributors",
-            license="Design inspiration only",
-            spdx="NOASSERTION",
-            texts=[
-                {
-                    "text": "The threaded-code execution and the software TLB of Andarium's "
-                    "processor emulation were inspired by the design of iSH, by Theodore "
-                    "Dubois and the iSH contributors.\n\nNo iSH source code is part of "
-                    "Andarium."
-                }
-            ],
         ),
     ]
 

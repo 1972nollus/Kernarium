@@ -82,6 +82,9 @@ protocol RuntimeDriver: AnyObject {
     /// What a start would be, from the guest's files; nil when they cannot be
     /// read, which a start then reports.
     func startPlan() -> StartPlan?
+    /// What the guest's data disk occupies now, measured from its file; the
+    /// guest changes it while it runs.
+    func measuredUsedBytes() -> UInt64
     /// A run is wanted. The runtime starts once the guest's display has its
     /// size, after the disk is ready.
     func begin(guest: Guest, mode: StartMode, kind: BootKind)
