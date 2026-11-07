@@ -685,6 +685,11 @@ back, a later such grant fails the policy build, and the target-files verifier
 repeats the checks on the built policy (a user build has no permissive
 domain; a userdebug build may have only `su`).
 
+DocumentsUI (Files) on a smallest width of 720 dp or more can throw an
+`IllegalStateException` from AppCompat's `CascadingMenuPopup` when its overflow
+menu changes during the popup's exit transition; real tablets share this
+upstream defect, and there is no product fix.
+
 ### Lock screen, input and wallpaper
 
 The guest boots straight to the home screen, and its swipe lock screen can be
