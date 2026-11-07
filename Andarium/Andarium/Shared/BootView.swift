@@ -209,12 +209,10 @@ struct BootView: View {
         }
     }
 
+    /// The symbol of the note a first start or an update shows; no other
+    /// boot has one.
     static func noteSymbol(_ kind: BootKind) -> String {
-        switch kind {
-        case .firstStart: "sparkles"
-        case .upgrade: "arrow.triangle.2.circlepath"
-        default: "info.circle"
-        }
+        kind == .firstStart ? "sparkles" : "arrow.triangle.2.circlepath"
     }
 
     static func note(_ kind: BootKind, from: String?, system: SystemInfo) -> String? {
@@ -223,9 +221,7 @@ struct BootView: View {
             "The first-run setup may take a few minutes."
         case .upgrade:
             "Updating \(from.map { "from \($0) " } ?? "")to \(system.release). Apps and files are kept."
-        case .recovery:
-            "Recovery appears on the guest\u{2019}s screen. Use touch, or the side keys: volume moves, Power chooses."
-        case .normal, .restart:
+        case .normal, .restart, .recovery:
             nil
         }
     }
