@@ -180,25 +180,20 @@ struct LicenseView: View {
     private func summary(_ project: Acknowledgements.Project) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             field("Copyright", "© \(project.copyright)")
-            field("License", project.license, detail: project.spdx)
+            field("License", project.license)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
     }
 
-    private func field(_ title: String, _ value: String, detail: String? = nil) -> some View {
+    private func field(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Text(value)
                 .font(.subheadline)
-            if let detail, detail != value {
-                Text(detail)
-                    .font(.footnote.monospaced())
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 
