@@ -477,6 +477,52 @@ class AttachedGuestSessionTests(unittest.TestCase):
         self.assertIn("UML_SESSION_READY:/bin/sh", guest.output())
         self.assertEqual(guest.run_command("printf '%s' ready").output, "ready")
 
+    def test_boot_accepts_the_prompt_of_a_shell_that_names_its_directory(
+        self,
+    ) -> None:
+        # An image whose /bin/sh is BusyBox's ash prints the working directory
+        # before the prompt character, as `~ # `.
+        self.emulator.write_text(
+            "#!/bin/sh\n"
+            "printf 'UML_SESSION_READY:/bin/sh\\n\\n"
+            "BusyBox v1.37.0 built-in shell (ash)\\n"
+            "Enter help for a list of built-in commands.\\n\\n"
+            "/bin/sh: cannot access tty; job control turned off\\n~ # '\n"
+            "exec /bin/sh\n",
+            encoding="utf-8",
+        )
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+            memory="4G",
+            workspace="tmpfs",
+            init_shell=True,
+        )
+        self.addCleanup(self.stop, guest)
+        guest.boot_to_shell(PROCESS_WAIT_SECONDS)
+        self.assertEqual(guest.run_command("printf '%s' ready").output, "ready")
+
+    def test_the_root_prompt_matches_the_bytes_of_each_shell(self) -> None:
+        prompt = re.compile(guest_support.ROOT_PROMPT)
+        for transcript in (
+            b"# ",
+            b"\r\n# ",
+            b"\r\n~ # ",
+            b"\n/ # ",
+            b"\r\n\x1b[?2004l\r# ",
+        ):
+            with self.subTest(transcript=transcript):
+                self.assertIsNotNone(prompt.search(transcript))
+        # Only a prompt that ends what the console has shown counts, and only
+        # on the line it ends.
+        for transcript in (
+            b"\r\nnot a prompt # yet\r\n",
+            b"\r\n~ # ls\r\n",
+            b"\r\n~ $ ",
+        ):
+            with self.subTest(transcript=transcript):
+                self.assertIsNone(prompt.search(transcript))
+
     def test_kernel_lines_inside_the_ready_marker_still_reach_the_shell(
         self,
     ) -> None:
