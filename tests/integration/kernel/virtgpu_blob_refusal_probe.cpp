@@ -10,7 +10,7 @@
  * everywhere, so the rows below do not depend on the GPU memory budget; they
  * check both blob branches (a host3d blob and a guest blob that the host must
  * name), that a refusal leaves the descriptor usable, and that an ordinary
- * guest blob still works.  The exit status is the number of failed checks.
+ * host3d blob still works.  The exit status is the number of failed checks.
  *
  * The UAPI structures are declared here, as the header is not in every guest.
  */
@@ -72,7 +72,6 @@ constexpr uint64_t param_context_init = 6;
 constexpr uint64_t param_supported_capsets = 7;
 constexpr uint64_t context_param_capset_id = 1;
 
-constexpr uint32_t blob_mem_guest = 1;
 constexpr uint32_t blob_mem_host3d = 2;
 constexpr uint32_t blob_mem_host3d_guest = 3;
 constexpr uint32_t blob_flag_mappable = 1;
@@ -210,14 +209,15 @@ int main()
 	}
 	checkf(accepted == 0, "repeated refusals", "%d of %d were accepted", accepted, refusals);
 
-	/* An ordinary guest blob is created, and gets a handle and a resource. */
+	/* An ordinary host3d blob, the anonymous kind Venus uses for its shared
+	 * memory, is created and gets a handle and a resource. */
 	CreateBlob ordinary{};
-	ordinary.blob_mem = blob_mem_guest;
+	ordinary.blob_mem = blob_mem_host3d;
 	ordinary.blob_flags = blob_flag_mappable;
 	ordinary.size = 65536;
 	const int result = ioctl(fd, ioctl_create_blob, &ordinary);
 	checkf(result == 0 && ordinary.bo_handle != 0 && ordinary.res_handle != 0,
-	       "an ordinary guest blob", "ioctl %d, errno %d, handle %u, resource %u", result,
+	       "an ordinary host3d blob", "ioctl %d, errno %d, handle %u, resource %u", result,
 	       result ? errno : 0, ordinary.bo_handle, ordinary.res_handle);
 	if (result == 0 && ordinary.bo_handle != 0)
 		close_handle(fd, ordinary.bo_handle);
