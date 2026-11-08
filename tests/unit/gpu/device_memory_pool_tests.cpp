@@ -273,10 +273,81 @@ void setReclaimWaitsForARunningHook()
     refused.join();
 }
 
+void accountedBytesCountOnlyWhatTheSystemCounts()
+{
+    using uml::gpu::accountedGpuBytes;
+
+    /* Metal counts a no-copy import at its full size; the memory the GPU
+     * holds for the process is what remains, unless the kernel's graphics
+     * ledger says more. */
+    require(accountedGpuBytes(100 * page, 0, 0) == 100 * page,
+        "with nothing imported the counter stands");
+    require(accountedGpuBytes(100 * page, 30 * page, 0) == 70 * page,
+        "an import is left out of the counter");
+    require(accountedGpuBytes(100 * page, 30 * page, 60 * page) == 70 * page,
+        "the larger of the counter less imports and the ledger");
+    require(accountedGpuBytes(100 * page, 30 * page, 80 * page) == 80 * page,
+        "the ledger is a floor the imports cannot lower");
+    require(accountedGpuBytes(100 * page, 100 * page, 5 * page) == 5 * page,
+        "a counter that is all imports leaves the ledger");
+
+    /* The two are read at different instants: an import larger than the
+     * counter reads as nothing made, not as a wrapped number. */
+    require(accountedGpuBytes(10 * page, 30 * page, 0) == 0,
+        "an import past the counter does not wrap");
+    require(accountedGpuBytes(10 * page, 30 * page, 4 * page) == 4 * page,
+        "and leaves the ledger");
+    constexpr std::uint64_t most = std::numeric_limits<std::uint64_t>::max();
+    require(accountedGpuBytes(most, 0, 0) == most, "the largest counter");
+    require(accountedGpuBytes(0, most, 0) == 0, "the largest import");
+}
+
+void importsDoNotFillThePool()
+{
+    /* A guest's host-visible allocations are shared-memory segments the
+     * driver imports, and Metal counts every one of them. The pool charges
+     * what is made for the GPU: 50 of the counter's 90 pages are an import,
+     * so a reservation of the 60 pages left fits where one counting the
+     * import would refuse it. */
+    Counter metal;
+    Counter imported;
+    Counter ledger;
+    auto accounted = [&] {
+        const std::uint64_t lent = imported.bytes.load();
+        return uml::gpu::accountedGpuBytes(
+            metal.bytes.load(), lent, ledger.bytes.load());
+    };
+    DeviceMemoryPool pool(100 * page, accounted, page);
+    metal.bytes = 90 * page;
+    imported.bytes = 50 * page;
+    require(pool.usage() == 40 * page, "the import is not charged");
+    require(pool.reserve(60 * page), "the pool holds what is left of it");
+    require(pool.refusals() == 0, "nothing was refused");
+    metal.bytes += 60 * page;
+    pool.release(60 * page);
+    require(pool.usage() == 100 * page, "the made allocation replaces its "
+                                        "reservation");
+    require(!pool.reserve(page), "a pool full of made memory refuses");
+
+    /* An import that is freed leaves the pool as it was. */
+    metal.bytes -= 50 * page;
+    imported.bytes = 0;
+    require(pool.usage() == 100 * page, "freeing an import changes nothing "
+                                        "that was charged");
+
+    /* The ledger holds what the counter omits. */
+    ledger.bytes = 95 * page;
+    require(pool.usage() == 100 * page, "the larger estimate stands");
+    metal.bytes = 10 * page;
+    require(pool.usage() == 95 * page, "the ledger is a floor");
+}
+
 } // namespace
 
 int main()
 {
+    accountedBytesCountOnlyWhatTheSystemCounts();
+    importsDoNotFillThePool();
     admitsWhatFits();
     growthLeavesTheRestToTheGuest();
     concurrentAllocationsNeverCrossTheLimit();

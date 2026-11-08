@@ -305,14 +305,19 @@ VirglRenderer::VirglRenderer()
         if (limit != 0) {
             /*
              * What the host GPU holds is the larger of Metal's allocation
-             * counter and the graphics ledger jetsam counts: the ledger also
-             * holds the driver's command storage and the surfaces the counter
-             * omits, and the counter can briefly pass the ledger. Neither
-             * estimate may lower the other.
+             * counter less the host memory the drivers only import, and the
+             * graphics ledger jetsam counts: the ledger also holds the
+             * driver's command storage and the surfaces the counter omits,
+             * and the counter, which counts an import at its full size
+             * though iOS keeps its file-backed pages outside the footprint,
+             * can pass the ledger. Neither estimate may lower the other.
              */
             deviceMemoryPool = std::make_unique<DeviceMemoryPool>(limit,
                 [] {
-                    return std::max(uml::platform::hostGpuAllocatedBytes(),
+                    const std::uint64_t imported =
+                        virgl_renderer_get_imported_host_memory();
+                    return accountedGpuBytes(
+                        uml::platform::hostGpuAllocatedBytes(), imported,
                         uml::platform::hostGraphicsFootprintBytes());
                 },
                 static_cast<std::uint64_t>(getpagesize()));

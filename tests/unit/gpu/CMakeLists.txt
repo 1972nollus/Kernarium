@@ -224,6 +224,14 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
 
+    # The renderer reports the host memory the drivers hold by import, which
+    # Metal counts in full and the device memory pool must not charge.
+    uml_add_gpu_unit_test(gpu-host-imported-memory
+        uml_gpu_host_imported_memory_tests host_gl_imported_memory_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY TIMEOUT 120)
+
     # An idle host GL context must give back what its last batches held when
     # the renderer tells the driver it has gone idle (EGL_MESA_context_trim).
     uml_add_gpu_unit_test(gpu-host-context-trim
@@ -442,6 +450,7 @@ if(TARGET uml_gpu_service)
         gpu-packed-yuv-planes gpu-texture-barrier-clear gpu-padded-row-transfer
         gpu-host-context-trim gpu-host-context-trim-concurrent
         gpu-host-gl-device-memory-budget gpu-host-gl-reclaim-retry
+        gpu-host-imported-memory
         PROPERTIES SKIP_RETURN_CODE 77)
 
     # The renderer and the same-process render server share one fence table.
