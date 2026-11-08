@@ -844,6 +844,24 @@ uml_add_guest_integration_test(
     TIMEOUT 420
     CPUS 2)
 
+# A blob the host refuses never becomes a handle: the ioctl that creates a
+# blob waits for the host's answer and fails with EINVAL or ENOMEM, in the
+# host3d and guest-blob branches alike, instead of returning a GEM handle that
+# no host resource stands behind. The guest has the GPU; the probe names a host
+# object that does not exist, so the refusal does not depend on the GPU budget.
+uml_add_guest_integration_test(
+    NAME guest-virtgpu-blob-refusal
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/virtgpu_blob_refusal_probe.cpp
+        "--cxxflags=-Wall -Wextra -Werror"
+        --guest-argument=--gpu --guest-argument=--gpu-display=vnc
+        --guest-argument=--gpu-vnc-bind=127.0.0.1 --guest-argument=--gpu-vnc-port=0
+        --ncpus 4 --probe-timeout 240
+    LABELS guest;kernel;gpu
+    TIMEOUT 600
+    CPUS 4
+    GPUS 1)
+
 # The settings the Android CTS and the desktop disagree on: a Linux guest has
 # SysV IPC, the NFS client and SCTP, no RDS and no wakelock interface, and
 # runs the helper a piped core_pattern names; every guest has IPv4 multicast,

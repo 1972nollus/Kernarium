@@ -272,7 +272,7 @@ it. The bridge fields used below are defined by the comments in
   answer fails them with `-ENOMEM` (any other error with `-EINVAL`) before the
   guest holds a handle, so Mesa raises `GL_OUT_OF_MEMORY` and gralloc fails the
   allocation. A blob the host refused is never a buffer other processes can
-  import. The in-kernel host blob and a dma-buf import hold locks and do not
+  import (`guest-virtgpu-blob-refusal`). The in-kernel host blob and a dma-buf import hold locks and do not
   wait. That wait and the get-caps ioctl's capset wait are freezable, so a
   drawing guest suspends while the host holds its GPU answers (`set_gpu_hold`);
   the waits that hold a lock (a host-visible blob's `mmap()`, the control
