@@ -8,6 +8,33 @@
 
 namespace uml::gpu {
 
+/* The device memory the host GPU holds for the process, as the pool counts
+ * it, from three readings.
+ *
+ * `metalAllocated` is Metal's allocation counter, which counts a no-copy
+ * buffer at its full size whatever backs it. `imported` is the part of that
+ * the process only lends the GPU, host memory a device maps by its address,
+ * such as the shared-memory segments behind a guest's host-visible
+ * allocations: on iOS they are container files, outside the footprint the
+ * system limits the process by, so they must not fill a budget that exists to
+ * keep the footprint under its limit. `graphicsFootprint` is the kernel's
+ * graphics ledger, which also holds the driver's own command storage and the
+ * surfaces Metal's counter omits, and is what jetsam counts. Neither
+ * estimate may lower the other, and an import larger than the counter (the
+ * two are read at different instants) leaves the ledger alone.
+ *
+ * Read `imported` before `metalAllocated`: an import that lands between the
+ * two readings is then counted a moment too long and never too short. */
+[[nodiscard]] constexpr std::uint64_t accountedGpuBytes(
+    std::uint64_t metalAllocated,
+    std::uint64_t imported,
+    std::uint64_t graphicsFootprint) noexcept
+{
+    const std::uint64_t made =
+        metalAllocated > imported ? metalAllocated - imported : 0;
+    return made > graphicsFootprint ? made : graphicsFootprint;
+}
+
 /* The device memory the host grants a Venus guest, as one pool that every
  * consumer charges before it allocates: the renderer for each allocation the
  * guest asks for, and the host GPU driver for memory it allocates for itself,

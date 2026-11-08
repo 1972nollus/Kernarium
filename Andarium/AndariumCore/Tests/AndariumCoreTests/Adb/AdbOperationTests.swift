@@ -201,7 +201,9 @@ struct AdbSessionTests {
         final class Mute: AdbTransport, @unchecked Sendable {
             private let gate = DispatchSemaphore(value: 0)
             func readExactly(_ count: Int) throws -> Data {
-                gate.wait()
+                // The watchdog's shutdown opens it; the bound is for one
+                // that never comes.
+                _ = gate.wait(timeout: .now() + 30)
                 throw AdbError.guestGone
             }
             func writeAll(_ data: Data) throws {}
@@ -221,7 +223,9 @@ struct AdbSessionTests {
         final class Mute: AdbTransport, @unchecked Sendable {
             private let gate = DispatchSemaphore(value: 0)
             func readExactly(_ count: Int) throws -> Data {
-                gate.wait()
+                // The watchdog's shutdown opens it; the bound is for one
+                // that never comes.
+                _ = gate.wait(timeout: .now() + 30)
                 throw AdbError.guestGone
             }
             func writeAll(_ data: Data) throws {}

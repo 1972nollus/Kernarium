@@ -3,3 +3,4 @@
 # export again; never edit this directory by hand.
 patch	SetupWizard-drop-the-diagnostic-data-question.patch
 patch	SetupWizard-leave-the-navigation-mode-to-the-platform.patch
+patch	SetupWizard-end-the-wizard-at-the-end-of-its-script.patch

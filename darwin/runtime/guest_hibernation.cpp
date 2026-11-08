@@ -2,6 +2,7 @@
 #include "guest_hibernation.hpp"
 
 #include "memory/guest_ram_commitment.hpp"
+#include "session_record.hpp"
 #include "thread_fence.hpp"
 
 #include <algorithm>
@@ -201,6 +202,8 @@ private:
 
 void GuestHibernation::end_process() noexcept
 {
+	end_session_record(SessionEnd::hibernation_restore_failed, EX_SOFTWARE,
+		"guest RAM could not be restored after a hibernation");
 	_exit(EX_SOFTWARE);
 }
 

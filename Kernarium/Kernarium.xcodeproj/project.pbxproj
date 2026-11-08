@@ -195,6 +195,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 8AF5E8F2302C966400B19616 /* Build configuration list for PBXNativeTarget "Kernarium" */;
 			buildPhases = (
+				A10000000000000000000041 /* Check Mac run location */,
 				8AF5E8CB302C966200B19616 /* Sources */,
 				8AF5E8CC302C966200B19616 /* Frameworks */,
 				8AF5E8CD302C966200B19616 /* Resources */,
@@ -393,6 +394,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"$SRCROOT/scripts/embed-device-framework.sh\" \"$SRCROOT/../.build/kernarium-xcframeworks/KosmicKrisp.xcframework\"\n";
+		};
+		A10000000000000000000041 /* Check Mac run location */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Check Mac run location";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/usr/bin/env python3 -B \"$SRCROOT/../scripts/check-run-location.py\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

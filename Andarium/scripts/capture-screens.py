@@ -141,6 +141,7 @@ SHOTS: list[Shot] = [
     s("home-update-unfinished-restore-only", "Home", "home-update-failed-restore", "An unfinished update that can only be restored."),
     s("home-blocked", "Home", "home-blocked", "Start blocked because the guest is newer than the system in this app."),
     s("home-notice-closed", "Home", "home-closed", "The notice shown after iOS closed Andarium while it was paused."),
+    s("home-notice-ended", "Home", "home-ended", "The notice shown at the launch after Android's previous session ended badly, here in a kernel panic."),
     s("home-notice-low-space", "Home", "home-low-space", "The low free space notice on Home."),
     s("home-notice-memory-high", "Home", "home-memory-warning", "A guest with more memory than a new one gets (the most the device offers): the notice above Guest system says iOS is likely to close Andarium and what is safer.", dark=True),
     s("busy-create", "Operations", "busy-create", "The overlay while the guest is created: title, detail and progress."),

@@ -553,6 +553,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
     }
     owner_name, user_name = wizard_scripts
     launcher_apps = sorted(tool.LAUNCHER_APPS)
+    launcher_dock = tool.LAUNCHER_DOCK
     launcher_grids = tool.LAUNCHER_GRIDS
     launcher_overlay_entry = tool.LAUNCHER_OVERLAY
     # The reader of compiled array resources sees the same items through either string pool.
@@ -819,6 +820,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wizard_branding_variant: str | None = None,
                           navigation_variant: str | None = None,
                           launcher_variant: str | None = None,
+                          easter_egg_variant: str | None = None,
                           network_time_variant: str | None = None,
                           flip_variant: str | None = None,
                           reclaim_variant: str | None = None,
@@ -831,6 +833,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           ota_certificates: str | None = None,
                           signed: bool = False,
                           adbd_launch_unreadable: bool = False,
+                          venus_policy_variant: str | None = None,
                           vendor_property_variant: str | None = None,
                           soc_variant: str | None = None,
                           board_variant: str | None = None,
@@ -1088,6 +1091,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 )
                 if init_variant != "missing-gles-copy":
                     graphics += "    setprop ro.opengles.version ${ro.boot.opengles.version}\n"
+                # The Venus driver option that makes vkAllocateMemory wait for the host's reply.
+                venus_sync = "    setprop debug.mesa.vn.perf no_async_mem_alloc\n"
+                if init_variant not in ("missing-venus-sync", "venus-sync-at-boot", "venus-sync-other-value"):
+                    graphics += venus_sync
+                elif init_variant == "venus-sync-other-value":
+                    graphics += "    setprop debug.mesa.vn.perf no_async_mem_alloc,log_ctx_info\n"
                 if init_variant == "angle-copy":
                     graphics += (
                         "    setprop debug.angle.feature_overrides_enabled "
@@ -1195,6 +1204,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 userdata_grow_block = (
                     "on post-fs-data\n" + userdata_grow_data if userdata_grow_data else ""
                 ) + ("on boot\n" + online if userdata_grow_variant == "at-boot" else "")
+                if init_variant == "venus-sync-at-boot":
+                    wifi_dirs += venus_sync
+                elif init_variant == "venus-sync-cleared-at-boot":
+                    wifi_dirs += "    setprop debug.mesa.vn.perf \"\"\n"
                 archive.writestr(
                     "VENDOR/etc/init/init.kernarium.rc",
                     "on early-init\n" + timeout_copy + graphics + density +
@@ -1450,9 +1463,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "SYSTEM/etc/selinux/plat_sepolicy.cil",
                     "(typeattributeset coredomain (adbd init system_server))\n"
-                    + ("(typeattributeset domain (init system_server vendor_init))\n"
-                       if adbd_launch_unreadable
-                       else "(typeattributeset domain (adbd init system_server vendor_init))\n")
+                    + "(typeattributeset domain ("
+                    + ("" if adbd_launch_unreadable else "adbd ")
+                    + "init system_server vendor_init untrusted_app surfaceflinger"
+                    + ("" if venus_policy_variant == "shell-unreadable" else " shell")
+                    + "))\n"
+                    # The Venus driver option is a debug property that vendor_init sets and every
+                    # domain reads.
+                    + "(allow domain debug_prop (file (read getattr map open)))\n"
+                    + ("" if venus_policy_variant == "vendor-init-cannot-set"
+                       else "(allow vendor_init debug_prop (property_service (set)))\n")
                     +
                     "(allow domain boot_status_prop (file (read getattr map open)))\n"
                     "(allow domain bootloader_prop (file (read getattr map open)))\n"
@@ -1474,7 +1494,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "ro.boot.              u:object_r:bootloader_prop:s0\n"
                     "persist.sys.usb.config  u:object_r:system_prop:s0 exact string\n"
                     "persist.adb.tls_server.enable  u:object_r:system_adbd_prop:s0 exact bool\n"
-                    "init.svc.  u:object_r:init_service_status_prop:s0\n",
+                    "init.svc.  u:object_r:init_service_status_prop:s0\n"
+                    "debug.  u:object_r:debug_prop:s0\n",
                 )
                 archive.writestr(
                     "VENDOR/etc/selinux/vendor_property_contexts",
@@ -1946,8 +1967,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 # are the component names.
                 if launcher_variant != "no-documentsui":
                     archive.writestr("SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk", release_apk)
+                # The easter egg that the platform logo screen opens; the framework's list installs it
+                # as a platform application.
+                if easter_egg_variant is None:
+                    archive.writestr("SYSTEM/app/EasterEgg/EasterEgg.apk", release_apk)
+                elif easter_egg_variant == "product-partition":
+                    archive.writestr("PRODUCT/app/EasterEgg/EasterEgg.apk", release_apk)
+                elif easter_egg_variant == "wrong-directory":
+                    archive.writestr("SYSTEM/app/Egg/EasterEgg.apk", release_apk)
                 if launcher_variant != "no-overlay":
-                    layout_strings = [name for pair in launcher_apps for name in pair]
+                    layout_strings = [name for pair in launcher_dock for name in pair]
+                    if launcher_variant == "six-application-layout":
+                        layout_strings = [name for pair in launcher_apps for name in pair]
                     if launcher_variant == "stock-layout":
                         layout_strings.append("com.google.android.googlequicksearchbox")
                     if launcher_variant == "lacks-files":
@@ -2460,6 +2491,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         disabled_configuration = root / "navigation-configuration-disabled.zip"
         write_fixture(disabled_configuration, navigation_variant="config-disables-gestural")
         run_tool(verifier, "--target-files", disabled_configuration, *kernel_options, check=True)
+        # The framework's product list decides which application directory holds the easter egg.
+        egg_in_product = root / "easter-egg-in-product.zip"
+        write_fixture(egg_in_product, easter_egg_variant="product-partition")
+        run_tool(verifier, "--target-files", egg_in_product, *kernel_options, check=True)
         # The overlay's string pools may be UTF-16, as the build packs them.
         utf16_layouts = root / "launcher-layouts-utf16.zip"
         write_fixture(utf16_layouts, launcher_variant="utf16-layout")
@@ -2923,7 +2958,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("launcher-overlay-without-a-grid", {"launcher_variant": "no-6x5"}),
             ("launcher-overlay-with-a-stock-layout", {"launcher_variant": "stock-layout"}),
             ("launcher-layout-without-files", {"launcher_variant": "lacks-files"}),
+            ("launcher-overlay-with-the-six-application-layout", {"launcher_variant": "six-application-layout"}),
             ("launcher-layout-names-an-application-the-image-lacks", {"launcher_variant": "no-documentsui"}),
+            ("missing-easter-egg", {"easter_egg_variant": "missing"}),
+            ("easter-egg-in-a-directory-of-another-name", {"easter_egg_variant": "wrong-directory"}),
             ("ntp-server-left", {"network_time_variant": "ntp-server"}),
             ("ntp-server-left-in-a-qualified-definition",
              {"network_time_variant": "ntp-server-in-a-qualified-table"}),
@@ -2998,6 +3036,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
             ("missing-gles-copy", {"init_variant": "missing-gles-copy"}),
             ("missing-timeout-copy", {"init_variant": "missing-timeout-copy"}),
+            ("missing-venus-sync", {"init_variant": "missing-venus-sync"}),
+            ("venus-sync-at-boot", {"init_variant": "venus-sync-at-boot"}),
+            ("venus-sync-other-value", {"init_variant": "venus-sync-other-value"}),
+            ("venus-sync-cleared-at-boot", {"init_variant": "venus-sync-cleared-at-boot"}),
+            ("vendor-init-cannot-set-venus-option", {"venus_policy_variant": "vendor-init-cannot-set"}),
+            ("shell-cannot-read-venus-option", {"venus_policy_variant": "shell-unreadable"}),
             ("timeout-copy-without-default", {"init_variant": "timeout-copy-without-default"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
             ("ungated-density", {"init_variant": "ungated-density"}),
@@ -3290,6 +3334,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not copy the OpenGL ES version at early-init"),
             ("missing-timeout-copy-cause", {"init_variant": "missing-timeout-copy"},
              "does not copy the hardware timeout multiplier at early-init"),
+            ("missing-venus-sync-cause", {"init_variant": "missing-venus-sync"},
+             "does not run 'setprop debug.mesa.vn.perf no_async_mem_alloc' at early-init"),
+            ("venus-sync-at-boot-cause", {"init_variant": "venus-sync-at-boot"},
+             "runs 'setprop debug.mesa.vn.perf no_async_mem_alloc' at 'boot', not"),
+            ("venus-sync-other-value-cause", {"init_variant": "venus-sync-other-value"},
+             "runs 'setprop debug.mesa.vn.perf no_async_mem_alloc,log_ctx_info' at 'early-init', not"),
+            ("venus-sync-cleared-at-boot-cause", {"init_variant": "venus-sync-cleared-at-boot"},
+             "runs 'setprop debug.mesa.vn.perf \"\"' at 'boot', not"),
+            ("vendor-init-cannot-set-venus-option-cause", {"venus_policy_variant": "vendor-init-cannot-set"},
+             "vendor_init may not set debug.mesa.vn.perf, labelled debug_prop"),
+            ("shell-cannot-read-venus-option-cause", {"venus_policy_variant": "shell-unreadable"},
+             "shell may not read debug.mesa.vn.perf, labelled debug_prop"),
             ("timeout-copy-without-default-cause",
              {"init_variant": "timeout-copy-without-default"},
              "runs 'setprop ro.hw_timeout_multiplier \\$\\{ro.boot.hw_timeout_multiplier\\}' "
@@ -3652,6 +3708,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "res/xml/default_workspace_4x5.xml is a stock layout: it names google"),
             ("launcher-layout-without-files-cause", {"launcher_variant": "lacks-files"},
              "res/xml/default_workspace_4x5.xml does not name com.android.documentsui.LauncherActivity"),
+            ("launcher-overlay-with-the-six-application-layout-cause", {"launcher_variant": "six-application-layout"},
+             "res/xml/default_workspace_4x5.xml names com.android.calculator2.Calculator: the home screen "
+             "holds only the dock"),
+            ("missing-easter-egg-cause", {"easter_egg_variant": "missing"},
+             "EasterEgg.apk is missing from the image: the Android version row opens the logo screen"),
+            ("easter-egg-in-a-directory-of-another-name-cause", {"easter_egg_variant": "wrong-directory"},
+             "EasterEgg.apk is missing from the image: the Android version row opens the logo screen"),
             ("launcher-layout-names-an-application-the-image-lacks-cause", {"launcher_variant": "no-documentsui"},
              "SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk is missing: the launcher's default workspace"),
             ("ntp-server-left-cause", {"network_time_variant": "ntp-server"},
@@ -5208,50 +5271,56 @@ def verify_setup_wizard_flow(android_root: Path) -> None:
 
     owner = "lineage_wizard_script.xml"
     user = "lineage_wizard_script_user.xml"
+    # Theme is the last page: its Finish button ends the wizard, so no closing page follows it.
     flow = [("welcome", "locale"), ("locale", "datetime"), ("datetime", "theme_settings"),
-            ("theme_settings", "finish"), ("finish", None)]
+            ("theme_settings", None)]
     tool.check_setup_wizard_script(owner, script(*flow), tool.SETUP_WIZARD_FLOWS[owner])
     for page in tool.SETUP_WIZARD_HIDDEN:
         inserted = [("welcome", "locale"), ("locale", page), (page, "datetime"), ("datetime", "theme_settings"),
-                    ("theme_settings", "finish"), ("finish", None)]
+                    ("theme_settings", None)]
         refuses(f"{page}-in-the-flow", f"defines pages the product hides: {page}", owner, script(*inserted))
         refuses(f"{page}-left-unreached", f"defines pages the product hides: {page}", owner,
-                script(*flow, (page, "finish")))
-    refuses("a-reviewed-page-dropped", "reaches welcome > locale > theme_settings > finish, not the reviewed",
-            owner, script(("welcome", "locale"), ("locale", "theme_settings"), ("theme_settings", "finish"),
-                          ("finish", None)))
-    refuses("pages-reordered", "reaches welcome > locale > theme_settings > datetime > finish, not the reviewed",
+                script(*flow, (page, None)))
+    refuses("a-closing-page-after-theme",
+            "reaches welcome > locale > datetime > theme_settings > finish, not the reviewed", owner,
+            script(("welcome", "locale"), ("locale", "datetime"), ("datetime", "theme_settings"),
+                   ("theme_settings", "finish"), ("finish", None)))
+    refuses("a-reviewed-page-dropped", "reaches welcome > locale > theme_settings, not the reviewed",
+            owner, script(("welcome", "locale"), ("locale", "theme_settings"), ("theme_settings", None)))
+    refuses("pages-reordered", "reaches welcome > locale > theme_settings > datetime, not the reviewed",
             owner, script(("welcome", "locale"), ("locale", "theme_settings"), ("theme_settings", "datetime"),
-                          ("datetime", "finish"), ("finish", None)))
+                          ("datetime", None)))
     refuses("a-new-page", "reaches welcome > locale > about > datetime", owner,
             script(("welcome", "locale"), ("locale", "about"), ("about", "datetime"), ("datetime", "theme_settings"),
-                   ("theme_settings", "finish"), ("finish", None)))
-    refuses("an-unreached-page", "defines pages its flow never reaches: about", owner, script(*flow, ("about", "finish")))
-    refuses("a-dangling-result", "the flow reaches 'finish', which the script does not define", owner,
-            script(("welcome", "locale"), ("locale", "datetime"), ("datetime", "theme_settings"),
-                   ("theme_settings", "finish")))
+                   ("theme_settings", None)))
+    refuses("an-unreached-page", "defines pages its flow never reaches: about", owner, script(*flow, ("about", None)))
+    refuses("a-dangling-result", "the flow reaches 'theme_settings', which the script does not define", owner,
+            script(("welcome", "locale"), ("locale", "datetime"), ("datetime", "theme_settings")))
     refuses("no-first-action", "names no firstAction", owner, script(*flow, first=""))
     refuses("a-first-action-that-is-not-defined", "reaches 'start'", owner, script(*flow, first="start"))
-    refuses("a-repeated-id", "without a unique id", owner, script(*flow, ("finish", None)))
+    refuses("a-repeated-id", "without a unique id", owner, script(*flow, ("theme_settings", None)))
     refuses("not-a-wizard-script", "is not a WizardScript", owner, script(*flow, root="Other"))
     refuses("not-xml", "is not well-formed XML", owner, "<WizardScript>")
     # The secondary user's flow is welcome and theme.
-    user_flow = [("welcome", "theme_settings"), ("theme_settings", "finish"), ("finish", None)]
+    user_flow = [("welcome", "theme_settings"), ("theme_settings", None)]
     tool.check_setup_wizard_script(user, script(*user_flow), tool.SETUP_WIZARD_FLOWS[user])
-    refuses("the-owners-flow-for-a-secondary-user", "reaches welcome > locale > datetime > theme_settings > finish, not",
+    refuses("a-closing-page-in-the-users-flow", "reaches welcome > theme_settings > finish, not the reviewed",
+            user, script(("welcome", "theme_settings"), ("theme_settings", "finish"), ("finish", None)))
+    refuses("the-owners-flow-for-a-secondary-user",
+            "reaches welcome > locale > datetime > theme_settings, not the reviewed welcome > theme_settings",
             user, script(*flow))
-    refuses("the-owners-script-with-the-users-name", "not the reviewed welcome > theme_settings > finish",
+    refuses("the-owners-script-with-the-users-name", "not the reviewed welcome > theme_settings",
             user, script(*flow))
     refuses("location-in-the-users-flow", "defines pages the product hides: location_settings", user,
             script(("welcome", "location_settings"), ("location_settings", "theme_settings"),
-                   ("theme_settings", "finish"), ("finish", None)))
+                   ("theme_settings", None)))
 
 
 def verify_launcher_layouts(android_root: Path) -> None:
-    """The launcher's default workspace holds the six reviewed applications on the first page.
+    """The launcher's default home screen is the dock of Files and Settings and an empty workspace.
 
     The layouts are compiled into the launcher's overlay, so the verifier reads the tracked text.
-    These cases rewrite a layout the way an edit or a return to the stock layout would."""
+    These cases rewrite a layout the way an edit or a return to an earlier layout would."""
     tool = load_tool(android_root / "tools/verify-target-files.py")
     layouts = android_root / "overlay/overlay/packages/apps/Launcher3/res/xml"
     names = sorted(path.name for path in layouts.glob("*.xml"))
@@ -5260,16 +5329,19 @@ def verify_launcher_layouts(android_root: Path) -> None:
     for grid in tool.LAUNCHER_GRIDS:
         text = (layouts / f"default_workspace_{grid}.xml").read_text(encoding="utf-8")
         tool.check_launcher_layout(grid, grid, text)
-        # Row by row from the top left: the columns of the grid decide where each one goes.
-        columns = int(grid.split("x")[0])
-        placed = re.findall(r'launcher:x="(\d+)"\s+launcher:y="(\d+)"', text)
-        if placed != [(str(index % columns), str(index // columns)) for index in range(6)]:
-            fail(f"the {grid} layout does not fill the first page row by row: {placed}")
+        # Files then Settings, centred in the dock: the pair of slots follows the grid's hotseat.
+        placed = re.findall(r'launcher:container="(-?\d+)"\s+launcher:screen="(\d+)"\s+launcher:x="(\d+)"\s+launcher:y="(\d+)"', text)
+        slots = {"4x5": (1, 2), "5x5": (1, 3), "5x6": (1, 3), "5x7": (1, 3), "6x5": (2, 3), "6x6": (2, 3)}[grid]
+        if placed != [("-101", str(slot), str(slot), "0") for slot in slots]:
+            fail(f"the {grid} layout does not put Files and Settings in slots {slots} of its dock: {placed}")
+        # No item on the workspace: every favorite is in the hotseat container.
+        if len(re.findall(r"<favorite\b", text)) != 2 or re.search(r"<(?:appwidget|folder|resolve|shortcut)\b", text):
+            fail(f"the {grid} layout holds more than the two dock items")
     sample = (layouts / "default_workspace_5x5.xml").read_text(encoding="utf-8")
-    favorite = re.search(r"    <favorite\n(?:.*\n){4}.*/>\n", sample)
-    if favorite is None:
-        fail("the 5x5 layout has no favorite to rewrite")
-    first = favorite.group(0)
+    favorites = re.findall(r"    <favorite\n(?:.*\n){5}.*/>\n", sample)
+    if len(favorites) != 2:
+        fail("the 5x5 layout has no two favorites to rewrite")
+    files, settings = favorites
 
     def refuses(label: str, pattern: str, text: str, grid: str = "5x5") -> None:
         try:
@@ -5283,38 +5355,61 @@ def verify_launcher_layouts(android_root: Path) -> None:
     def with_item(item: str) -> str:
         return sample.replace("</favorites>", item + "\n</favorites>")
 
-    app = ('<favorite launcher:packageName="{p}" launcher:className="{c}" launcher:screen="{s}" '
-           'launcher:x="{x}" launcher:y="{y}"{extra} />')
-    refuses("a-hotseat-item", "has a favorite with attributes",
-            sample.replace(first, first.replace('launcher:screen="0"', 'launcher:container="-101" launcher:screen="0"', 1)))
-    refuses("an-item-on-the-second-page", "on screen 1: every item is on the first page",
-            sample.replace('launcher:screen="0"', 'launcher:screen="1"', 1))
+    app = ('<favorite launcher:packageName="{p}" launcher:className="{c}" launcher:container="{k}" '
+           'launcher:screen="{s}" launcher:x="{x}" launcher:y="{y}"{extra} />')
+    calendar = app.format(p="org.lineageos.etar", c="com.android.calendar.AllInOneActivity", k="-101",
+                          s=0, x=0, y=0, extra="")
+    refuses("an-item-on-the-workspace", "in container -100: the workspace is empty, and only the dock holds items",
+            sample.replace('launcher:container="-101"', 'launcher:container="-100"', 1))
+    refuses("an-item-with-no-container", "has a favorite with attributes",
+            sample.replace(files.splitlines()[3] + "\n", "", 1))
+    refuses("a-gallery-in-the-dock", "puts com.android.calendar.AllInOneActivity in the dock",
+            with_item(calendar))
     refuses("a-widget", r"holds a <appwidget>",
             with_item('<appwidget launcher:packageName="org.lineageos.twelve" launcher:className="x" '
-                      'launcher:screen="0" launcher:x="0" launcher:y="3" launcher:spanX="4" launcher:spanY="1" />'))
-    refuses("a-resolve-item", r"holds a <resolve>", with_item('<resolve launcher:screen="0" launcher:x="0" launcher:y="3" />'))
-    refuses("a-folder", r"holds a <folder>", with_item('<folder launcher:screen="0" launcher:x="0" launcher:y="3" />'))
+                      'launcher:container="-100" launcher:screen="0" launcher:x="0" launcher:y="3" '
+                      'launcher:spanX="4" launcher:spanY="1" />'))
+    refuses("a-resolve-item", r"holds a <resolve>",
+            with_item('<resolve launcher:container="-101" launcher:screen="0" launcher:x="0" launcher:y="0" />'))
+    refuses("a-folder", r"holds a <folder>",
+            with_item('<folder launcher:container="-101" launcher:screen="0" launcher:x="0" launcher:y="0" />'))
     refuses("a-uri-item", "has a favorite with attributes",
-            with_item('<favorite launcher:uri="#Intent;action=android.intent.action.MAIN;end" launcher:screen="0" '
-                      'launcher:x="0" launcher:y="3" />'))
+            with_item('<favorite launcher:uri="#Intent;action=android.intent.action.MAIN;end" launcher:container="-101" '
+                      'launcher:screen="0" launcher:x="0" launcher:y="0" />'))
     refuses("google-play", "names 'vending'",
-            with_item(app.format(p="com.android.vending", c="com.android.vending.AssetBrowserActivity",
-                                 s=0, x=0, y=3, extra="")))
+            with_item(app.format(p="com.android.vending", c="com.android.vending.AssetBrowserActivity", k="-101",
+                                 s=0, x=0, y=0, extra="")))
     refuses("a-google-application", "names 'google'",
             with_item(app.format(p="com.google.android.gm", c="com.google.android.gm.ConversationListActivityGmail",
-                                 s=0, x=0, y=3, extra="")))
+                                 k="-101", s=0, x=0, y=0, extra="")))
     refuses("the-clock", "names 'deskclock'",
-            with_item(app.format(p="com.android.deskclock", c="com.android.deskclock.DeskClock", s=0, x=0, y=3, extra="")))
-    refuses("a-string-reference", "names '@string/'", sample.replace("</favorites>", '<folder launcher:title="@string/x" />\n</favorites>'))
+            with_item(app.format(p="com.android.deskclock", c="com.android.deskclock.DeskClock", k="-101",
+                                 s=0, x=0, y=0, extra="")))
+    refuses("a-string-reference", "names '@string/'",
+            sample.replace("</favorites>", '<folder launcher:title="@string/x" />\n</favorites>'))
     refuses("an-application-the-image-lacks-a-table-row-for", "not in the reviewed table",
-            with_item(app.format(p="org.lineageos.camelot", c="org.lineageos.camelot.MainActivity", s=0, x=0, y=3, extra="")))
-    refuses("a-repeated-application", "twice", with_item(first.replace('launcher:x="0"', 'launcher:x="4"').replace(
-        'launcher:y="0"', 'launcher:y="3"')))
-    refuses("one-of-the-six-missing", "lacks com.android.documentsui.LauncherActivity: it holds exactly the six",
-            sample.replace(re.search(r"    <!-- Files \(DocumentsUI\) -->\n(?:.*\n){6}", sample).group(0), ""))
-    refuses("a-column-outside-the-grid", r"outside the 5x5 grid", sample.replace('launcher:x="4"', 'launcher:x="5"'))
-    refuses("a-row-outside-the-grid", r"outside the 5x5 grid", sample.replace('launcher:y="1"', 'launcher:y="5"'))
-    refuses("two-items-in-a-cell", r"two items at \(0, 0\)", sample.replace('launcher:x="1"', 'launcher:x="0"', 1))
+            with_item(app.format(p="org.lineageos.camelot", c="org.lineageos.camelot.MainActivity", k="-101",
+                                 s=0, x=0, y=0, extra="")))
+    refuses("a-repeated-application", "twice", with_item(files.replace('launcher:screen="1"', 'launcher:screen="0"')
+                                                         .replace('launcher:x="1"', 'launcher:x="0"')))
+    refuses("files-missing", "lacks com.android.documentsui.LauncherActivity: the dock holds exactly Files and Settings",
+            sample.replace(files, ""))
+    refuses("settings-missing", "lacks com.android.settings.Settings: the dock holds exactly Files and Settings",
+            sample.replace(settings, ""))
+    refuses("a-slot-outside-the-dock", r"dock slot 5, outside the 5 slots of the 5x5 dock",
+            sample.replace('launcher:screen="3"', 'launcher:screen="5"').replace('launcher:x="3"', 'launcher:x="5"'))
+    refuses("a-column-that-is-not-the-slot", r"at \(2, 0\) in slot 3",
+            sample.replace('launcher:x="3"', 'launcher:x="2"'))
+    refuses("a-dock-row-that-is-not-0", r"at \(3, 1\) in slot 3",
+            sample.replace('launcher:y="0" />\n\n</favorites>', 'launcher:y="1" />\n\n</favorites>'))
+    refuses("two-items-in-a-slot", r"two items in dock slot 1",
+            sample.replace('launcher:screen="3"', 'launcher:screen="1"').replace('launcher:x="3"', 'launcher:x="1"'))
+    refuses("a-pair-that-is-not-centred", r"in slots 1 and 2, not the centred 1 and 3 of the 5 slots",
+            sample.replace('launcher:screen="3"', 'launcher:screen="2"').replace('launcher:x="3"', 'launcher:x="2"'))
+    refuses("files-and-settings-swapped", r"in slots 3 and 1, not the centred 1 and 3 of the 5 slots",
+            sample.replace('launcher:screen="1"', 'launcher:screen="9"').replace('launcher:x="1"', 'launcher:x="9"')
+            .replace('launcher:screen="3"', 'launcher:screen="1"').replace('launcher:x="3"', 'launcher:x="1"')
+            .replace('launcher:screen="9"', 'launcher:screen="3"').replace('launcher:x="9"', 'launcher:x="3"'))
     refuses("a-cell-that-is-not-a-number", "is not a number", sample.replace('launcher:x="1"', 'launcher:x="one"', 1))
     refuses("a-favorite-without-a-class", "has a favorite with attributes",
             sample.replace('        launcher:className="com.android.settings.Settings"\n', "", 1))
@@ -5322,8 +5417,8 @@ def verify_launcher_layouts(android_root: Path) -> None:
             sample.replace('launcher:x="1"', 'x="1"', 1))
     refuses("not-xml", "is not well-formed XML", "<favorites>")
     refuses("not-a-layout", "is not a favorites layout", "<other />")
-    # A grid's columns and rows come from its name.
-    refuses("a-smaller-grid", "outside the 4x5 grid", sample, grid="4x5")
+    # A grid's slots come from its name: the 5x5 pair is not the 6x6 pair.
+    refuses("a-wider-dock", r"not the centred 2 and 3 of the 6 slots", sample, grid="6x6")
 
 
 def verify_default_wallpaper(android_root: Path) -> None:
@@ -5551,6 +5646,7 @@ def verify_package_assertions(android_root: Path) -> None:
         "KernariumWifiOverlay",
         "KernariumPinnerOverlay",
         "SecureElement",
+        "EasterEgg",
         "kernarium_net_setup",
         "kernarium_wifi_network_script",
         "kernarium_reclaim_boot_apps_script",

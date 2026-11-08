@@ -19,8 +19,8 @@ AndariumCore/         Swift package: the model and the adb client, no UIKit; it
                       re-exports GuestHostCore (../GuestHost/Core)
 AndariumTests/        hosted tests of the device app
 Config/               entitlements, Info.plist, privacy manifest, bridging header
-scripts/              system staging, the App Store bundle check, the Mac run
-                      location check, acknowledgements, screen capture
+scripts/              system staging, the App Store bundle check,
+                      acknowledgements, screen capture
 Andarium.xcodeproj/   JSON project (project.xcproj) and its shared schemes
 ../GuestHost/Sources  host code shared with Kernarium: the runtime loader, the
                       display and touch view, zstd, the shader caches
@@ -98,7 +98,7 @@ disk, partition layout, kernel command line and manifest into
 The `AndariumTests` bundle runs hosted in the application on an iPad, in the
 iOS Simulator or, as an iPad app, on an Apple silicon Mac (whose derived data
 must be outside the temporary directories,
-[`docs/testing.md`](../docs/testing.md#andarium)). For the Simulator,
+[`docs/testing.md`](../docs/testing.md#apple-builds-and-kernarium)). For the Simulator,
 package its slices first (below), then:
 
 ```sh
@@ -265,6 +265,12 @@ requires reopening Andarium.
   graphics. `GraphicsNotice` decides: the first reading is a baseline, and
   refusals less than a minute apart are one burst, which shows one notice
   whether or not it was dismissed. Recovery runs no app and is not read.
+- **Session ends.** The runtime records how each session ended
+  ([`docs/architecture.md`](../docs/architecture.md)). The next launch keeps
+  that record as the previous session's (`PreviousSession`) and, after an end
+  that was neither Android's own nor a stop, Home shows a notice with its cause
+  (`SessionRecord.notice`). `ExitReports` keeps the exit and diagnostic reports
+  MetricKit delivers beside the records.
 
 ## Android operations
 
@@ -278,7 +284,10 @@ is on. `AndariumCore/Adb` speaks the protocol.
   device only and not synchronized. Its public key goes in each boot request
   (`android_adb_public_key`), which adbd authorizes for that boot.
 - **Create bug report and Install APK** are in every build, in a normal
-  session.
+  session. A bug report is Android's zip with Andarium's session records and
+  MetricKit reports added under `andarium/`, the application's container paths
+  taken out (`BugReportAttachments`); a zip that cannot be amended safely is
+  shared as Android made it.
 - **ADB over network** is off at every run and never persisted, and is
   available only while the guest's USB debugging is on. `AdbNetworkBridge`
   listens on TCP 5555 and relays each computer to a fresh vsock stream, serving

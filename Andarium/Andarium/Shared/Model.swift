@@ -269,6 +269,24 @@ final class AppModel {
         set { lifecycle.notice = newValue }
     }
 
+    /// Where the session records and MetricKit's reports are kept: a bug
+    /// report carries them (`BugReportAttachments`).
+    var diagnosticsDirectory: URL?
+    /// The application's container paths, which never leave in a bug report.
+    var diagnosticsContainers: [String] = []
+
+    /// At launch: keeps `diagnostics` for bug reports and reads how the
+    /// previous session ended (`PreviousSession`), before the next boot writes
+    /// its own record. A bad end of a guest that still exists says so on Home.
+    func adoptDiagnostics(in diagnostics: URL, containers: [String], endedOutOfForeground: Bool) {
+        diagnosticsDirectory = diagnostics
+        diagnosticsContainers = containers
+        guard let previous = PreviousSession.consume(in: diagnostics, endedOutOfForeground: endedOutOfForeground)
+        else { return }
+        print("Andarium: \(previous.record.summary)")
+        if guest != nil, let notice = previous.notice { self.notice = notice }
+    }
+
     var canCreate: Bool { host.hasRoom(for: createRequirementBytes) }
     /// Less free space than Android's first start wants: Home says so before
     /// a start would fail.
@@ -701,9 +719,20 @@ final class AppModel {
                 detail: "The guest is collecting its logs and state. This can take several minutes.", progress: 0
             ),
             failure: "Bug report not created",
-            { [driver] update in
-                if let driver { return try await driver.createBugReport(update: update) }
-                return try await Self.playBugReport(update)
+            { [driver, diagnosticsDirectory, diagnosticsContainers] update in
+                let file = if let driver {
+                    try await driver.createBugReport(update: update)
+                } else {
+                    try await Self.playBugReport(update)
+                }
+                // The host's records travel inside Android's own report.
+                if let diagnosticsDirectory {
+                    _ = await Task.detached(priority: .userInitiated) {
+                        BugReportAttachments.attach(
+                            to: file, from: diagnosticsDirectory, containers: diagnosticsContainers)
+                    }.value
+                }
+                return file
             },
             finished: { [weak self] file in self?.share(file) }
         )

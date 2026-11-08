@@ -122,6 +122,10 @@ struct AppEntry {
             model.plan = .blocked(.olderAndroid)
         case "home-closed":
             model.notice = .closedInBackground
+        case "home-ended":
+            model.notice = .sessionEnded(SessionEndNotice(
+                title: "Android's kernel panicked",
+                text: "Android stopped with a kernel panic: Attempted to kill init! exitcode=0x0000000b."))
         case "home-memory-warning", "system-memory-warning":
             model.guest = PreviewData.highMemoryGuest(on: host)
         case "home-options", "home-display", "home-capabilities", "home-backup", "system-edit":
