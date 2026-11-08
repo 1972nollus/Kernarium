@@ -596,28 +596,28 @@ def workspace_tree(*, pages: int = 1, widgets: int = 0) -> str:
     return "\n".join(lines) + "\n"
 
 
-def home_dump(*, columns: int = 5, pages: int = 1, widgets: int = 0, **changes) -> str:
-    apps = sorted(runner.HOME_APPS)
-    order = [("com.android.settings", "com.android.settings.Settings")] + [app for app in apps if app[0] != "com.android.settings"]
-    items = []
-    for index, (package, class_name) in enumerate(order):
-        items.append(dump_item(index + 2, "workspace", package, class_name, x=index % columns, y=index // columns))
+def home_dump(*, pages: int = 1, widgets: int = 0, dock_ranks: tuple[int, int] = (1, 3)) -> str:
+    """The home screen of release r18: Files and Settings in the dock, an empty workspace."""
+    files, settings = sorted(runner.DOCK_APPS, key=lambda app: app[0] != "com.android.documentsui")
+    items = [dump_item(2, "hotseat", *files, index=dock_ranks[0], x=dock_ranks[0]),
+             dump_item(3, "hotseat", *settings, index=dock_ranks[1], x=dock_ranks[1])]
     return workspace_tree(pages=pages, widgets=widgets) + DUMP_HEAD + "".join(items) + DUMP_TAIL
 
 
 class LauncherWorkspaceTests(unittest.TestCase):
-    def test_the_six_applications_on_the_first_page_are_the_default_layout(self) -> None:
+    def test_files_and_settings_in_the_dock_are_the_default_layout(self) -> None:
         items = runner.launcher_items(home_dump())
-        self.assertEqual(len(items), 6)
-        self.assertEqual({item["component"] for item in items}, runner.HOME_APPS)
-        self.assertEqual({item["page"] for item in items}, {0})
-        self.assertEqual({item["container"] for item in items}, {"workspace"})
+        self.assertEqual(len(items), 2)
+        self.assertEqual({item["component"] for item in items}, runner.DOCK_APPS)
+        self.assertEqual({item["container"] for item in items}, {"hotseat"})
+        self.assertEqual(sorted(item["rank"] for item in items), [1, 3])
         self.assertEqual(runner.launcher_problems(items), [])
 
-    def test_a_grid_with_other_columns_is_the_same_layout(self) -> None:
-        for columns in (4, 5, 6):
-            with self.subTest(columns=columns):
-                self.assertEqual(runner.launcher_problems(runner.launcher_items(home_dump(columns=columns))), [])
+    def test_the_dock_ranks_are_not_the_runners_business(self) -> None:
+        # The grid decides the slots (the verifier pins them per grid); the runner reads which items are in the dock.
+        for ranks in ((0, 1), (1, 3), (2, 3), (1, 2)):
+            with self.subTest(ranks=ranks):
+                self.assertEqual(runner.launcher_problems(runner.launcher_items(home_dump(dock_ranks=ranks))), [])
 
     def test_the_prediction_items_are_not_items(self) -> None:
         items = runner.launcher_items(DUMP_HEAD + DUMP_TAIL)
@@ -625,48 +625,59 @@ class LauncherWorkspaceTests(unittest.TestCase):
 
     def test_a_dump_without_a_data_model_has_no_items(self) -> None:
         self.assertEqual(runner.launcher_items("nothing here"), [])
-        self.assertEqual(len(runner.launcher_problems([])), 7)
+        self.assertEqual(len(runner.launcher_problems([])), 3)
 
-    def test_the_old_layout_is_a_failure_on_every_count(self) -> None:
-        # What r16 showed: a widget and three applications on the second page.
+    def test_release_r17s_six_applications_on_the_workspace_are_a_failure(self) -> None:
+        old = DUMP_HEAD
+        for index, (package, class_name) in enumerate(sorted(runner.DOCK_APPS) + [
+                ("org.lineageos.etar", "com.android.calendar.AllInOneActivity"),
+                ("org.lineageos.glimpse", "org.lineageos.glimpse.MainActivity"),
+                ("org.lineageos.twelve", "org.lineageos.twelve.MainActivity"),
+                ("com.android.calculator2", "com.android.calculator2.Calculator")]):
+            old += dump_item(index + 2, "workspace", package, class_name, x=index % 5, y=index // 5)
+        problems = runner.launcher_problems(runner.launcher_items(old + DUMP_TAIL))
+        text = "; ".join(problems)
+        self.assertIn("6 items, expected 2", text)
+        self.assertIn("com.android.settings/com.android.settings.Settings is on the workspace page 0, which stays empty", text)
+        self.assertIn("org.lineageos.etar/com.android.calendar.AllInOneActivity (APP) is not Files or Settings", text)
+        self.assertEqual(text.count("is on the workspace page"), 6)
+
+    def test_release_r16s_widget_and_second_page_are_a_failure(self) -> None:
         old = (DUMP_HEAD
                + dump_item(2, "workspace", "org.lineageos.twelve", "org.lineageos.twelve.ui.widgets.NowPlayingAppWidgetProvider",
                            page=1, type_name="WIDGET")
                + dump_item(3, "workspace", "org.lineageos.glimpse", "org.lineageos.glimpse.MainActivity", page=1, x=1, y=4)
-               + dump_item(4, "workspace", "org.lineageos.twelve", "org.lineageos.twelve.MainActivity", page=1, x=2, y=4)
-               + dump_item(5, "workspace", "com.android.settings", "com.android.settings.Settings", page=1, x=3, y=4)
                + DUMP_TAIL)
-        problems = runner.launcher_problems(runner.launcher_items(old))
-        text = "; ".join(problems)
-        self.assertIn("4 items, expected 6", text)
-        self.assertIn("(WIDGET) is not one of the six applications", text)
-        self.assertIn("org.lineageos.glimpse/org.lineageos.glimpse.MainActivity is on page 1, not the first", text)
-        self.assertIn("com.android.calculator2/com.android.calculator2.Calculator is missing", text)
+        text = "; ".join(runner.launcher_problems(runner.launcher_items(old)))
+        self.assertIn("(WIDGET) is not Files or Settings", text)
+        self.assertIn("org.lineageos.glimpse/org.lineageos.glimpse.MainActivity is on the workspace page 1", text)
+        self.assertIn("com.android.documentsui/com.android.documentsui.LauncherActivity is missing from the dock", text)
+        self.assertIn("com.android.settings/com.android.settings.Settings is missing from the dock", text)
 
-    def test_an_item_in_the_dock_is_a_failure(self) -> None:
+    def test_files_on_the_workspace_is_a_failure(self) -> None:
         dump = home_dump().replace(
+            "    \tItemInfo(id=2 type=APP container=# com.android.launcher3.logger.LauncherAtom$ContainerInfo@21c970c\nhotseat {",
             "    \tItemInfo(id=2 type=APP container=# com.android.launcher3.logger.LauncherAtom$ContainerInfo@21c970c\nworkspace {",
-            "    \tItemInfo(id=2 type=APP container=# com.android.launcher3.logger.LauncherAtom$ContainerInfo@21c970c\nhotseat {\n  index: 0\n",
             1)
         problems = runner.launcher_problems(runner.launcher_items(dump))
         self.assertEqual(len(problems), 1, problems)
-        self.assertIn("is in the hotseat, not on the workspace", problems[0])
+        self.assertIn("is on the workspace page 0, which stays empty", problems[0])
 
-    def test_a_seventh_item_is_a_failure(self) -> None:
-        dump = home_dump().replace(DUMP_TAIL, dump_item(9, "workspace", "com.android.deskclock", "com.android.deskclock.DeskClock",
-                                                      x=0, y=4) + DUMP_TAIL)
+    def test_a_third_item_is_a_failure(self) -> None:
+        dump = home_dump().replace(DUMP_TAIL, dump_item(9, "hotseat", "org.lineageos.etar", "com.android.calendar.AllInOneActivity",
+                                                      index=0) + DUMP_TAIL)
         problems = runner.launcher_problems(runner.launcher_items(dump))
-        self.assertTrue(any("7 items, expected 6" in problem for problem in problems), problems)
-        self.assertTrue(any("com.android.deskclock" in problem for problem in problems), problems)
+        self.assertTrue(any("3 items, expected 2" in problem for problem in problems), problems)
+        self.assertTrue(any("com.android.calendar.AllInOneActivity" in problem for problem in problems), problems)
 
-    def test_a_missing_application_is_named(self) -> None:
+    def test_a_missing_dock_application_is_named(self) -> None:
         dump = home_dump()
-        start = dump.index("    \tItemInfo(id=7 ")
+        start = dump.index("    \tItemInfo(id=3 ")
         end = dump.index(DUMP_TAIL)
         problems = runner.launcher_problems(runner.launcher_items(dump[:start] + dump[end:]))
         self.assertEqual(len(problems), 2, problems)
-        self.assertIn("5 items, expected 6", problems[0])
-        self.assertIn("is missing", problems[1])
+        self.assertIn("1 items, expected 2", problems[0])
+        self.assertEqual(problems[1], "com.android.settings/com.android.settings.Settings is missing from the dock")
 
 
 DROPS = """\
@@ -737,25 +748,118 @@ class WorkspaceViewTests(unittest.TestCase):
         # Outside the workspace's subtree (the same depth as the Hotseat, not below the Workspace).
         self.assertEqual(runner.workspace_view(dump)[0], 1)
 
-    def test_the_applications_of_r16s_second_page_are_on_the_home_screen(self) -> None:
-        self.assertLessEqual(runner.R16_SECOND_PAGE_APPS, runner.HOME_APPS)
-        self.assertEqual({package for package, _ in runner.R16_SECOND_PAGE_APPS},
-                         {"org.lineageos.glimpse", "org.lineageos.twelve", "com.android.settings"})
+
+# The app drawer as uiautomator dumps it on a guest of release r17 (opened with the launcher's ALL_APPS intent):
+# the search container and one node per application, whose id is the launcher's `icon`.
+def drawer_hierarchy(*labels: str, search: bool = True) -> str:
+    nodes = [node("Search apps", runner.DRAWER_SEARCH_ID, "[23,186][1155,343]")] if search else []
+    for index, label in enumerate(labels):
+        nodes.append(node(label, runner.DRAWER_ICON_ID, f"[{24 + 226 * (index % 5)},373][{250 + 226 * (index % 5)},733]"))
+    nodes.append(node("", "com.android.launcher3:id/accessibility_action_view", "[0,84][1179,2256]"))
+    return hierarchy(*nodes)
+
+
+def workspace_hierarchy() -> str:
+    # The workspace's and the dock's icons carry no resource id, so they are not the drawer's.
+    return hierarchy(node("Files", "", "[25,2000][251,2200]"), node("Settings", "", "[701,2000][927,2200]"))
+
+
+SIX = ("Calculator", "Calendar", "Files", "Gallery", "Music", "Settings")
 
 
 class FakeLauncher:
-    def __init__(self, dump: str, log: str) -> None:
+    """A guest whose launcher shows a home screen, and its app drawer once the ALL_APPS intent has been sent."""
+
+    def __init__(self, dump: str, log: str, drawer: tuple[str, ...] | None = SIX) -> None:
         self.dump = dump
         self.log = log
         self.dumps = 0
+        self.drawer = drawer
+        self.commands: list[str] = []
+        self.opened = False
+
+    def resumed(self) -> str:
+        return f"{runner.LAUNCHER_PACKAGE}/.uioverrides.QuickstepLauncher"
+
+    def ui_nodes(self) -> list[dict[str, str]]:
+        if self.opened and self.drawer is not None:
+            return runner.parse_nodes(drawer_hierarchy(*self.drawer))
+        return runner.parse_nodes(workspace_hierarchy())
 
     def shell(self, command: str, timeout: int = 30) -> str:
+        self.commands.append(command)
         if command.startswith("dumpsys activity"):
             self.dumps += 1
             return self.dump
         if command.startswith("logcat"):
             return self.log
+        if command == f"am start -a {runner.ALL_APPS_ACTION}":
+            self.opened = True
+            return ""
+        if command == "input keyevent KEYCODE_HOME":
+            self.opened = False
+            return ""
         raise AssertionError(command)
+
+
+class AppDrawerTests(unittest.TestCase):
+    def test_the_drawer_is_read_from_the_icons_with_the_launchers_icon_id(self) -> None:
+        nodes = runner.parse_nodes(drawer_hierarchy(*SIX))
+        self.assertEqual(runner.drawer_labels(nodes), list(SIX))
+        self.assertEqual(runner.drawer_problems(runner.drawer_labels(nodes)), [])
+
+    def test_the_home_screen_is_not_the_drawer(self) -> None:
+        # Files and Settings sit in the dock with the same labels, but there is no search container.
+        self.assertIsNone(runner.drawer_labels(runner.parse_nodes(workspace_hierarchy())))
+        self.assertEqual(runner.drawer_problems(None), ["the app drawer did not open"])
+
+    def test_an_application_missing_from_the_drawer_is_named(self) -> None:
+        labels = runner.drawer_labels(runner.parse_nodes(drawer_hierarchy("Calendar", "Files", "Gallery", "Settings")))
+        problems = runner.drawer_problems(labels)
+        self.assertEqual(problems, ["Calculator is not in the app drawer: it is off the home screen only, not uninstalled",
+                                    "Music is not in the app drawer: it is off the home screen only, not uninstalled"])
+
+    def test_a_dock_application_missing_from_the_drawer_is_named_without_the_excuse(self) -> None:
+        labels = runner.drawer_labels(runner.parse_nodes(drawer_hierarchy(*[label for label in SIX if label != "Files"])))
+        self.assertEqual(runner.drawer_problems(labels), ["Files is not in the app drawer"])
+
+    def test_an_extra_or_repeated_application_is_a_problem(self) -> None:
+        labels = runner.drawer_labels(runner.parse_nodes(drawer_hierarchy(*SIX, "Camera", "Music")))
+        self.assertEqual(runner.drawer_problems(labels),
+                         ["Camera is in the app drawer, which lists only the six applications of the image",
+                          "Music is in the app drawer twice"])
+
+    def test_the_four_applications_are_the_drawer_only_ones(self) -> None:
+        self.assertEqual(runner.DRAWER_ONLY_LABELS, {"Calendar", "Gallery", "Music", "Calculator"})
+        self.assertEqual(runner.DRAWER_LABELS, set(SIX))
+
+    def test_the_drawer_is_opened_with_the_intent_and_the_home_screen_is_restored(self) -> None:
+        guest = FakeLauncher(home_dump(), CLEAN)
+        with mock.patch.object(runner.time, "sleep"):
+            labels = runner.open_app_drawer(guest)
+        self.assertEqual(labels, list(SIX))
+        self.assertEqual(guest.commands, ["input keyevent KEYCODE_HOME", f"am start -a {runner.ALL_APPS_ACTION}",
+                                          "input keyevent KEYCODE_HOME"])
+
+    def test_a_drawer_that_never_opens_is_none(self) -> None:
+        guest = FakeLauncher(home_dump(), CLEAN, drawer=None)
+        clock = iter(range(0, 1000, 10))
+        with mock.patch.object(runner.time, "sleep"), mock.patch.object(runner.time, "monotonic", side_effect=lambda: next(clock)):
+            self.assertIsNone(runner.open_app_drawer(guest))
+
+    def test_a_dump_that_fails_while_the_drawer_opens_is_tried_again(self) -> None:
+        class Flaky(FakeLauncher):
+            calls = 0
+
+            def ui_nodes(self) -> list[dict[str, str]]:
+                Flaky.calls += 1
+                if Flaky.calls < 4:
+                    raise runner.Failure("the UI dump is not XML")
+                return super().ui_nodes()
+
+        guest = Flaky(home_dump(), CLEAN)
+        with mock.patch.object(runner.time, "sleep"):
+            self.assertEqual(runner.open_app_drawer(guest), list(SIX))
 
 
 class CheckLauncherTests(unittest.TestCase):
@@ -767,6 +871,16 @@ class CheckLauncherTests(unittest.TestCase):
         guest = FakeLauncher(home_dump(), CLEAN)
         self.check(guest)
         self.assertEqual(guest.dumps, 1)
+
+    def test_the_drawer_is_checked_after_the_home_screen(self) -> None:
+        guest = FakeLauncher(home_dump(), CLEAN)
+        self.check(guest)
+        self.assertIn(f"am start -a {runner.ALL_APPS_ACTION}", guest.commands)
+
+    def test_an_uninstalled_application_is_a_failure(self) -> None:
+        with self.assertRaisesRegex(runner.Failure, "app drawer is not the six applications: Music is not in the app drawer: "
+                                                    "it is off the home screen only, not uninstalled"):
+            self.check(FakeLauncher(home_dump(), CLEAN, drawer=("Calculator", "Calendar", "Files", "Gallery", "Settings")))
 
     def test_a_second_page_is_a_failure(self) -> None:
         with self.assertRaisesRegex(runner.Failure, "2 workspace pages, expected exactly one"):
@@ -811,7 +925,7 @@ class CheckLauncherTests(unittest.TestCase):
         self.assertIn("-b main", log_commands[0])
 
     def test_the_wrong_workspace_is_a_failure_naming_the_problem(self) -> None:
-        with self.assertRaisesRegex(runner.Failure, "not the default layout: 0 items, expected 6"):
+        with self.assertRaisesRegex(runner.Failure, "not the default layout: 0 items, expected 2"):
             self.check(FakeLauncher(DUMP_HEAD + DUMP_TAIL, CLEAN))
 
     def test_a_dropped_item_is_a_failure_even_when_the_workspace_looks_right(self) -> None:

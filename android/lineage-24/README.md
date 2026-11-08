@@ -128,11 +128,11 @@ platform default; route `p0026` removes the wizard's forcing), Restore and
 Andarium features (not useful here), and Bluetooth, SIM, device-specific setup,
 biometrics and recovery update (no such hardware or script).
 
-The home screen is one page that holds the six applications with a launcher
-activity (Settings, Calendar, Gallery, Music, Calculator, Files) and nothing
-else: no widget, no second page and an empty dock. The Launcher3 resource overlay
-owns the layouts and the verifier requires them. The launcher reads its layout
-once, so a guest created earlier keeps its home screen.
+The home screen is one empty page with a dock of Files and Settings: no
+widget, no second page and no other item. Calendar, Gallery, Music and
+Calculator stay installed and are in the app drawer. The Launcher3 resource
+overlay owns the layouts and the verifier requires them. The launcher reads its
+layout once, so a guest created earlier keeps its home screen.
 
 ### Motion sensors
 

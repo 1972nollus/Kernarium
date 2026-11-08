@@ -553,6 +553,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
     }
     owner_name, user_name = wizard_scripts
     launcher_apps = sorted(tool.LAUNCHER_APPS)
+    launcher_dock = tool.LAUNCHER_DOCK
     launcher_grids = tool.LAUNCHER_GRIDS
     launcher_overlay_entry = tool.LAUNCHER_OVERLAY
     # The reader of compiled array resources sees the same items through either string pool.
@@ -1947,7 +1948,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 if launcher_variant != "no-documentsui":
                     archive.writestr("SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk", release_apk)
                 if launcher_variant != "no-overlay":
-                    layout_strings = [name for pair in launcher_apps for name in pair]
+                    layout_strings = [name for pair in launcher_dock for name in pair]
+                    if launcher_variant == "six-application-layout":
+                        layout_strings = [name for pair in launcher_apps for name in pair]
                     if launcher_variant == "stock-layout":
                         layout_strings.append("com.google.android.googlequicksearchbox")
                     if launcher_variant == "lacks-files":
@@ -2923,6 +2926,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("launcher-overlay-without-a-grid", {"launcher_variant": "no-6x5"}),
             ("launcher-overlay-with-a-stock-layout", {"launcher_variant": "stock-layout"}),
             ("launcher-layout-without-files", {"launcher_variant": "lacks-files"}),
+            ("launcher-overlay-with-the-six-application-layout", {"launcher_variant": "six-application-layout"}),
             ("launcher-layout-names-an-application-the-image-lacks", {"launcher_variant": "no-documentsui"}),
             ("ntp-server-left", {"network_time_variant": "ntp-server"}),
             ("ntp-server-left-in-a-qualified-definition",
@@ -3652,6 +3656,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "res/xml/default_workspace_4x5.xml is a stock layout: it names google"),
             ("launcher-layout-without-files-cause", {"launcher_variant": "lacks-files"},
              "res/xml/default_workspace_4x5.xml does not name com.android.documentsui.LauncherActivity"),
+            ("launcher-overlay-with-the-six-application-layout-cause", {"launcher_variant": "six-application-layout"},
+             "res/xml/default_workspace_4x5.xml names com.android.calculator2.Calculator: the home screen "
+             "holds only the dock"),
             ("launcher-layout-names-an-application-the-image-lacks-cause", {"launcher_variant": "no-documentsui"},
              "SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk is missing: the launcher's default workspace"),
             ("ntp-server-left-cause", {"network_time_variant": "ntp-server"},
@@ -5260,16 +5267,19 @@ def verify_launcher_layouts(android_root: Path) -> None:
     for grid in tool.LAUNCHER_GRIDS:
         text = (layouts / f"default_workspace_{grid}.xml").read_text(encoding="utf-8")
         tool.check_launcher_layout(grid, grid, text)
-        # Row by row from the top left: the columns of the grid decide where each one goes.
-        columns = int(grid.split("x")[0])
-        placed = re.findall(r'launcher:x="(\d+)"\s+launcher:y="(\d+)"', text)
-        if placed != [(str(index % columns), str(index // columns)) for index in range(6)]:
-            fail(f"the {grid} layout does not fill the first page row by row: {placed}")
+        # Files then Settings, centred in the dock: the pair of slots follows the grid's hotseat.
+        placed = re.findall(r'launcher:container="(-?\d+)"\s+launcher:screen="(\d+)"\s+launcher:x="(\d+)"\s+launcher:y="(\d+)"', text)
+        slots = {"4x5": (1, 2), "5x5": (1, 3), "5x6": (1, 3), "5x7": (1, 3), "6x5": (2, 3), "6x6": (2, 3)}[grid]
+        if placed != [("-101", str(slot), str(slot), "0") for slot in slots]:
+            fail(f"the {grid} layout does not put Files and Settings in slots {slots} of its dock: {placed}")
+        # No item on the workspace: every favorite is in the hotseat container.
+        if len(re.findall(r"<favorite\b", text)) != 2 or re.search(r"<(?:appwidget|folder|resolve|shortcut)\b", text):
+            fail(f"the {grid} layout holds more than the two dock items")
     sample = (layouts / "default_workspace_5x5.xml").read_text(encoding="utf-8")
-    favorite = re.search(r"    <favorite\n(?:.*\n){4}.*/>\n", sample)
-    if favorite is None:
-        fail("the 5x5 layout has no favorite to rewrite")
-    first = favorite.group(0)
+    favorites = re.findall(r"    <favorite\n(?:.*\n){5}.*/>\n", sample)
+    if len(favorites) != 2:
+        fail("the 5x5 layout has no two favorites to rewrite")
+    files, settings = favorites
 
     def refuses(label: str, pattern: str, text: str, grid: str = "5x5") -> None:
         try:
@@ -5283,38 +5293,61 @@ def verify_launcher_layouts(android_root: Path) -> None:
     def with_item(item: str) -> str:
         return sample.replace("</favorites>", item + "\n</favorites>")
 
-    app = ('<favorite launcher:packageName="{p}" launcher:className="{c}" launcher:screen="{s}" '
-           'launcher:x="{x}" launcher:y="{y}"{extra} />')
-    refuses("a-hotseat-item", "has a favorite with attributes",
-            sample.replace(first, first.replace('launcher:screen="0"', 'launcher:container="-101" launcher:screen="0"', 1)))
-    refuses("an-item-on-the-second-page", "on screen 1: every item is on the first page",
-            sample.replace('launcher:screen="0"', 'launcher:screen="1"', 1))
+    app = ('<favorite launcher:packageName="{p}" launcher:className="{c}" launcher:container="{k}" '
+           'launcher:screen="{s}" launcher:x="{x}" launcher:y="{y}"{extra} />')
+    calendar = app.format(p="org.lineageos.etar", c="com.android.calendar.AllInOneActivity", k="-101",
+                          s=0, x=0, y=0, extra="")
+    refuses("an-item-on-the-workspace", "in container -100: the workspace is empty, and only the dock holds items",
+            sample.replace('launcher:container="-101"', 'launcher:container="-100"', 1))
+    refuses("an-item-with-no-container", "has a favorite with attributes",
+            sample.replace(files.splitlines()[3] + "\n", "", 1))
+    refuses("a-gallery-in-the-dock", "puts com.android.calendar.AllInOneActivity in the dock",
+            with_item(calendar))
     refuses("a-widget", r"holds a <appwidget>",
             with_item('<appwidget launcher:packageName="org.lineageos.twelve" launcher:className="x" '
-                      'launcher:screen="0" launcher:x="0" launcher:y="3" launcher:spanX="4" launcher:spanY="1" />'))
-    refuses("a-resolve-item", r"holds a <resolve>", with_item('<resolve launcher:screen="0" launcher:x="0" launcher:y="3" />'))
-    refuses("a-folder", r"holds a <folder>", with_item('<folder launcher:screen="0" launcher:x="0" launcher:y="3" />'))
+                      'launcher:container="-100" launcher:screen="0" launcher:x="0" launcher:y="3" '
+                      'launcher:spanX="4" launcher:spanY="1" />'))
+    refuses("a-resolve-item", r"holds a <resolve>",
+            with_item('<resolve launcher:container="-101" launcher:screen="0" launcher:x="0" launcher:y="0" />'))
+    refuses("a-folder", r"holds a <folder>",
+            with_item('<folder launcher:container="-101" launcher:screen="0" launcher:x="0" launcher:y="0" />'))
     refuses("a-uri-item", "has a favorite with attributes",
-            with_item('<favorite launcher:uri="#Intent;action=android.intent.action.MAIN;end" launcher:screen="0" '
-                      'launcher:x="0" launcher:y="3" />'))
+            with_item('<favorite launcher:uri="#Intent;action=android.intent.action.MAIN;end" launcher:container="-101" '
+                      'launcher:screen="0" launcher:x="0" launcher:y="0" />'))
     refuses("google-play", "names 'vending'",
-            with_item(app.format(p="com.android.vending", c="com.android.vending.AssetBrowserActivity",
-                                 s=0, x=0, y=3, extra="")))
+            with_item(app.format(p="com.android.vending", c="com.android.vending.AssetBrowserActivity", k="-101",
+                                 s=0, x=0, y=0, extra="")))
     refuses("a-google-application", "names 'google'",
             with_item(app.format(p="com.google.android.gm", c="com.google.android.gm.ConversationListActivityGmail",
-                                 s=0, x=0, y=3, extra="")))
+                                 k="-101", s=0, x=0, y=0, extra="")))
     refuses("the-clock", "names 'deskclock'",
-            with_item(app.format(p="com.android.deskclock", c="com.android.deskclock.DeskClock", s=0, x=0, y=3, extra="")))
-    refuses("a-string-reference", "names '@string/'", sample.replace("</favorites>", '<folder launcher:title="@string/x" />\n</favorites>'))
+            with_item(app.format(p="com.android.deskclock", c="com.android.deskclock.DeskClock", k="-101",
+                                 s=0, x=0, y=0, extra="")))
+    refuses("a-string-reference", "names '@string/'",
+            sample.replace("</favorites>", '<folder launcher:title="@string/x" />\n</favorites>'))
     refuses("an-application-the-image-lacks-a-table-row-for", "not in the reviewed table",
-            with_item(app.format(p="org.lineageos.camelot", c="org.lineageos.camelot.MainActivity", s=0, x=0, y=3, extra="")))
-    refuses("a-repeated-application", "twice", with_item(first.replace('launcher:x="0"', 'launcher:x="4"').replace(
-        'launcher:y="0"', 'launcher:y="3"')))
-    refuses("one-of-the-six-missing", "lacks com.android.documentsui.LauncherActivity: it holds exactly the six",
-            sample.replace(re.search(r"    <!-- Files \(DocumentsUI\) -->\n(?:.*\n){6}", sample).group(0), ""))
-    refuses("a-column-outside-the-grid", r"outside the 5x5 grid", sample.replace('launcher:x="4"', 'launcher:x="5"'))
-    refuses("a-row-outside-the-grid", r"outside the 5x5 grid", sample.replace('launcher:y="1"', 'launcher:y="5"'))
-    refuses("two-items-in-a-cell", r"two items at \(0, 0\)", sample.replace('launcher:x="1"', 'launcher:x="0"', 1))
+            with_item(app.format(p="org.lineageos.camelot", c="org.lineageos.camelot.MainActivity", k="-101",
+                                 s=0, x=0, y=0, extra="")))
+    refuses("a-repeated-application", "twice", with_item(files.replace('launcher:screen="1"', 'launcher:screen="0"')
+                                                         .replace('launcher:x="1"', 'launcher:x="0"')))
+    refuses("files-missing", "lacks com.android.documentsui.LauncherActivity: the dock holds exactly Files and Settings",
+            sample.replace(files, ""))
+    refuses("settings-missing", "lacks com.android.settings.Settings: the dock holds exactly Files and Settings",
+            sample.replace(settings, ""))
+    refuses("a-slot-outside-the-dock", r"dock slot 5, outside the 5 slots of the 5x5 dock",
+            sample.replace('launcher:screen="3"', 'launcher:screen="5"').replace('launcher:x="3"', 'launcher:x="5"'))
+    refuses("a-column-that-is-not-the-slot", r"at \(2, 0\) in slot 3",
+            sample.replace('launcher:x="3"', 'launcher:x="2"'))
+    refuses("a-dock-row-that-is-not-0", r"at \(3, 1\) in slot 3",
+            sample.replace('launcher:y="0" />\n\n</favorites>', 'launcher:y="1" />\n\n</favorites>'))
+    refuses("two-items-in-a-slot", r"two items in dock slot 1",
+            sample.replace('launcher:screen="3"', 'launcher:screen="1"').replace('launcher:x="3"', 'launcher:x="1"'))
+    refuses("a-pair-that-is-not-centred", r"in slots 1 and 2, not the centred 1 and 3 of the 5 slots",
+            sample.replace('launcher:screen="3"', 'launcher:screen="2"').replace('launcher:x="3"', 'launcher:x="2"'))
+    refuses("files-and-settings-swapped", r"in slots 3 and 1, not the centred 1 and 3 of the 5 slots",
+            sample.replace('launcher:screen="1"', 'launcher:screen="9"').replace('launcher:x="1"', 'launcher:x="9"')
+            .replace('launcher:screen="3"', 'launcher:screen="1"').replace('launcher:x="3"', 'launcher:x="1"')
+            .replace('launcher:screen="9"', 'launcher:screen="3"').replace('launcher:x="9"', 'launcher:x="3"'))
     refuses("a-cell-that-is-not-a-number", "is not a number", sample.replace('launcher:x="1"', 'launcher:x="one"', 1))
     refuses("a-favorite-without-a-class", "has a favorite with attributes",
             sample.replace('        launcher:className="com.android.settings.Settings"\n', "", 1))
@@ -5322,8 +5355,8 @@ def verify_launcher_layouts(android_root: Path) -> None:
             sample.replace('launcher:x="1"', 'x="1"', 1))
     refuses("not-xml", "is not well-formed XML", "<favorites>")
     refuses("not-a-layout", "is not a favorites layout", "<other />")
-    # A grid's columns and rows come from its name.
-    refuses("a-smaller-grid", "outside the 4x5 grid", sample, grid="4x5")
+    # A grid's slots come from its name: the 5x5 pair is not the 6x6 pair.
+    refuses("a-wider-dock", r"not the centred 2 and 3 of the 6 slots", sample, grid="6x6")
 
 
 def verify_default_wallpaper(android_root: Path) -> None:
