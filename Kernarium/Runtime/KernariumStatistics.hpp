@@ -89,6 +89,7 @@ struct GraphicsFigures final {
     std::uint64_t usageBytes {};
     std::uint64_t contextBytes {};
     std::uint64_t memoryRefusals {};
+    bool guestReclaims {};
     /* Largest first; the entries past the table's room are dropped. */
     std::span<const GraphicsHolderFigures> holders;
 };
@@ -104,6 +105,7 @@ struct GraphicsFigures final {
     result.usage_bytes = figures.usageBytes;
     result.context_bytes = figures.contextBytes;
     result.memory_refusals = figures.memoryRefusals;
+    result.guest_reclaims = figures.guestReclaims ? 1U : 0U;
     const auto count = std::min<std::size_t>(
         figures.holders.size(), KERNARIUM_RUNTIME_GRAPHICS_HOLDERS);
     for (std::size_t index = 0; index < count; ++index) {

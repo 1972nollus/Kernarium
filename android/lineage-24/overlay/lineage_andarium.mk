@@ -653,4 +653,11 @@ PRODUCT_PRODUCT_PROPERTIES += \
 PRODUCT_PRODUCT_PROPERTIES += \
     apexd.config.use_fiemap=false
 
+# lmkd ends the cached app that holds the most host graphics memory when the host
+# reports pressure in /sys/class/drm/card0/gpu_memory_report (route p0027). The code
+# is off unless this is set, and does nothing on a kernel without the file. The
+# platform's property_contexts label the name as an lmkd setting (route p0020).
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.lmk.gpu_reclaim=true
+
 PRODUCT_IGNORE_ALL_ANDROIDMK := true

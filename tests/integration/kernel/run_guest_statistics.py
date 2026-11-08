@@ -88,7 +88,8 @@ STATS_LINE = re.compile(
     r"(?: held (?P<held>\d+) of (?P<ram>\d+) MiB)?"
     r"(?: gpu-refusals (?P<refusals>\d+))?"
     r"(?: gpu-memory (?P<gpuused>\d+)/(?P<gpubudget>\d+) MiB"
-    r"(?: attributed (?P<gpuheld>\d+) MiB(?P<holders>(?: holders.*)?))?)?$"
+    r"(?: attributed (?P<gpuheld>\d+) MiB(?P<holders>(?: holders.*?)?))?)?"
+    r"(?P<reclaim> guest-reclaim=on)?$"
 )
 CARRIER = re.compile(r"^uml-vcpu-\d+-carrier$")
 WRAPPER = """\

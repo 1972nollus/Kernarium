@@ -11,11 +11,12 @@ private let budget = 534 * mebibyte
 /// A reading with `held` MiB credited to contexts and a host that holds
 /// `overhead` MiB besides.
 private func reading(
-    held: UInt64, overhead: UInt64 = 40, refusals: UInt64 = 0, holders: [GraphicsHolder] = []
+    held: UInt64, overhead: UInt64 = 40, refusals: UInt64 = 0, guestReclaims: Bool = false,
+    holders: [GraphicsHolder] = []
 ) -> GraphicsMemoryReading {
     GraphicsMemoryReading(
         budgetBytes: budget, usageBytes: (held + overhead) * mebibyte, contextBytes: held * mebibyte,
-        refusals: refusals, holders: holders)
+        refusals: refusals, guestReclaims: guestReclaims, holders: holders)
 }
 
 private func holder(_ pid: UInt32, mib: UInt64, idle: Int = 60, name: String = "app") -> GraphicsHolder {
@@ -168,6 +169,22 @@ struct GraphicsReclaimTests {
             budgetBytes: 0, usageBytes: 900 * mebibyte, contextBytes: 900 * mebibyte, refusals: 3,
             holders: [holder(1, mib: 500)])
         for second in stride(from: 0, to: 20, by: 2) { #expect(!watch.observe(none, at: second)) }
+    }
+
+    @Test func theHostStandsDownWhileTheGuestReclaims() {
+        let watch = Watch()
+        let full = [holder(7, mib: 100)]
+        _ = watch.observe(reading(held: 500, holders: full), at: 0)
+        #expect(watch.observe(reading(held: 500, holders: full), at: 2), "the policy never acted without the guest")
+        for second in stride(from: 4, to: 40, by: 2) {
+            #expect(
+                !watch.observe(reading(held: 500, refusals: UInt64(second), guestReclaims: true, holders: full), at: second),
+                "acted at \(second) s while the guest's own killer reclaims")
+        }
+        // The guest's killer stops: the policy starts from nothing, so it needs
+        // its confirming readings again, and a refusal it saw before is no edge.
+        #expect(!watch.observe(reading(held: 500, refusals: 38, holders: full), at: 40))
+        #expect(watch.observe(reading(held: 500, refusals: 38, holders: full), at: 42))
     }
 
     // MARK: Who may be asked

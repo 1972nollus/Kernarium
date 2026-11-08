@@ -139,6 +139,7 @@ public:
             minimumBytes);
         GraphicsMemory memory {
             .contextBytes = snapshot.totalBytes,
+            .guestReclaims = display_->guestReclaims(),
             .holders = std::move(snapshot.holders),
         };
         if (const auto pool = VirglRenderer::deviceMemory()) {

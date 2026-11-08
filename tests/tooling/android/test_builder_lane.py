@@ -812,6 +812,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           adb_secure_variant: str | None = None,
                           missing_lockscreen_default: bool = False,
                           use_fiemap_variant: str | None = None,
+                          lmkd_variant: str | None = None,
                           userdata_grow_variant: str | None = None,
                           userdata_grow_policy_variant: str | None = None,
                           discrete_ops_variant: str | None = None,
@@ -998,6 +999,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "product-false": "ro.adb.secure=false\n",
                     }.get(adb_secure_variant, "")
                     + ("" if missing_lockscreen_default else "ro.lockscreen.disable.default=true\n")
+                    + {
+                        "property-missing": "",
+                        "property-off": "ro.lmk.gpu_reclaim=false\n",
+                    }.get(lmkd_variant, "ro.lmk.gpu_reclaim=true\n")
                     + ("ro.boot.vendor.overlay.theme=com.android.internal.systemui.navbar.gestural\n"
                        if navigation_variant == "overlay-theme-property" else "")
                     + {
@@ -1013,6 +1018,21 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         ).items()
                     ),
                 )
+                # lmkd with the GPU reclaim of route p0027: the names only that topic puts in it.
+                if lmkd_variant != "missing-binary":
+                    archive.writestr(
+                        "SYSTEM/bin/lmkd",
+                        b"\x00" * 8
+                        + b"".join(
+                            marker + b"\x00"
+                            for variant, marker in (
+                                ("no-property-name", b"ro.lmk.gpu_reclaim"),
+                                ("no-report-path", b"/sys/class/drm/card0/gpu_memory_report"),
+                                ("no-kill-reason", b"graphics memory pressure"),
+                            )
+                            if lmkd_variant != variant and lmkd_variant != "old-binary"
+                        ),
+                    )
                 archive.writestr(
                     "SYSTEM/bin/android-fixture",
                     synthetic_aarch64_elf(alignment, edit=elf_edit),
@@ -1463,12 +1483,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 # The real platform policy is 3.4 MB; the filler keeps the fixture realistic in size.
                 archive.writestr(
                     "SYSTEM/etc/selinux/plat_sepolicy.cil",
-                    "(typeattributeset coredomain (adbd init system_server"
+                    "(typeattributeset coredomain (adbd init system_server lmkd"
                     + (" hal_audio_default" if audio_ring_variant == "core-hal" else "")
                     + "))\n"
                     + "(typeattributeset domain ("
                     + ("" if adbd_launch_unreadable else "adbd ")
-                    + "init system_server vendor_init untrusted_app surfaceflinger hal_audio_default"
+                    + "init system_server vendor_init untrusted_app surfaceflinger lmkd hal_audio_default"
                     + ("" if venus_policy_variant == "shell-unreadable" else " shell")
                     + "))\n"
                     # The Venus driver option is a debug property that vendor_init sets and every
@@ -1491,6 +1511,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "(allow domain system_prop (file (read getattr map open)))\n"
                     "(allow domain system_adbd_prop (file (read getattr map open)))\n"
                     "(allow domain init_service_status_prop (file (read getattr map open)))\n"
+                    # The platform lets its core domains read lmkd's settings, and declares the
+                    # sysfs types, the virtio-gpu device's among them.
+                    + ("" if lmkd_variant == "property-unreadable"
+                       else "(allow coredomain lmkd_config_prop (file (getattr open read map)))\n")
+                    + "(typeattributeset sysfs_type (sysfs sysfs_gpu))\n"
                     "(typeattributeset mlstrustedsubject (artd installd"
                     + (" mediaprovider_app" if lineage_policy == "mediaprovider-trusted" else "")
                     + "))\n"
@@ -1509,7 +1534,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "init.svc.  u:object_r:init_service_status_prop:s0\n"
                     "debug.  u:object_r:debug_prop:s0\n"
                     "ro.hardware.  u:object_r:vendor_default_prop:s0\n"
-                    "ro.hardware.audio.primary  u:object_r:exported_default_prop:s0 exact string\n",
+                    "ro.hardware.audio.primary  u:object_r:exported_default_prop:s0 exact string\n"
+                    + ("ro.lmk.low  u:object_r:lmkd_config_prop:s0 exact int\n"
+                       if lmkd_variant == "no-property-label" else
+                       "ro.lmk.gpu_reclaim  u:object_r:lmkd_config_prop:s0 exact bool\n"),
                 )
                 archive.writestr(
                     "VENDOR/etc/selinux/vendor_property_contexts",
@@ -1540,8 +1568,20 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil",
                     "(typeattributeset vendor_property_type (vendor_aware_available_prop ))\n"
+                    # The report file's type (sysfs_gpu_memory.te) and what lmkd may do with it and
+                    # with the directories of the virtio-gpu device that lead to it.
+                    + ("" if lmkd_variant == "type-not-sysfs"
+                       else "(typeattributeset sysfs_type (sysfs_gpu_memory))\n")
+                    + ("" if lmkd_variant == "no-dir-search"
+                       else "(allow lmkd sysfs_gpu (dir (search)))\n")
+                    + {
+                        "no-report-rule": "",
+                        "no-report-write": "(allow lmkd sysfs_gpu_memory (file (getattr open read ioctl lock map)))\n",
+                    }.get(lmkd_variant,
+                          "(allow lmkd sysfs_gpu_memory (file (getattr open read ioctl lock map watch "
+                          "watch_reads write append)))\n")
                     # A relabelto on a contextmount type is allowed; only the Lineage rules are not.
-                    "(typeattributeset fs_type (fixture_rootfs sdcard_posix))\n"
+                    + "(typeattributeset fs_type (fixture_rootfs sdcard_posix))\n"
                     "(typeattributeset contextmount_type (fixture_rootfs))\n"
                     "(allow init fixture_rootfs (filesystem (relabelto)))\n"
                     + (
@@ -1743,7 +1783,21 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         else "(allowx fsck_202604 system_data_root_file_202604 (ioctl dir ("
                         + ("0x6610 0x5401" if userdata_grow_policy_variant == "more-ioctls" else "0x6610")
                         + ")))\n"
-                    ),
+                    )
+                    # The virtio-gpu device's sysfs tree, and the report file in it that has a type of its own.
+                    + '(genfscon sysfs "/devices/virtio-uml-cmdline/virtio-uml.0" '
+                    "(u object_r sysfs_gpu ((s0) (s0))))\n"
+                    + {
+                        "no-genfs": "",
+                        "genfs-wrong-type":
+                            '(genfscon sysfs "/devices/virtio-uml-cmdline/virtio-uml.0/drm/card0/'
+                            'gpu_memory_report" (u object_r sysfs_gpu ((s0) (s0))))\n',
+                        "genfs-other-path":
+                            '(genfscon sysfs "/devices/virtio-uml-cmdline/virtio-uml.0/gpu_memory_report" '
+                            "(u object_r sysfs_gpu_memory ((s0) (s0))))\n",
+                    }.get(lmkd_variant,
+                          '(genfscon sysfs "/devices/virtio-uml-cmdline/virtio-uml.0/drm/card0/'
+                          'gpu_memory_report" (u object_r sysfs_gpu_memory_202604 ((s0) (s0))))\n'),
                 )
                 ueventd = "/dev/ttyS0 0660 root shell\n"
                 if not missing_virtio_console:
@@ -2889,6 +2943,22 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-lockscreen-default", {"missing_lockscreen_default": True}),
             ("missing-use-fiemap", {"use_fiemap_variant": "missing"}),
             ("use-fiemap-true", {"use_fiemap_variant": "true"}),
+            ("missing-lmkd-binary", {"lmkd_variant": "missing-binary"}),
+            ("lmkd-without-the-gpu-reclaim", {"lmkd_variant": "old-binary"}),
+            ("lmkd-without-the-setting-name", {"lmkd_variant": "no-property-name"}),
+            ("lmkd-without-the-report-path", {"lmkd_variant": "no-report-path"}),
+            ("lmkd-without-the-kill-reason", {"lmkd_variant": "no-kill-reason"}),
+            ("missing-lmkd-gpu-reclaim-property", {"lmkd_variant": "property-missing"}),
+            ("lmkd-gpu-reclaim-property-off", {"lmkd_variant": "property-off"}),
+            ("unlabelled-lmkd-gpu-reclaim-property", {"lmkd_variant": "no-property-label"}),
+            ("unreadable-lmkd-gpu-reclaim-property", {"lmkd_variant": "property-unreadable"}),
+            ("gpu-report-type-not-a-sysfs-type", {"lmkd_variant": "type-not-sysfs"}),
+            ("gpu-report-not-labelled", {"lmkd_variant": "no-genfs"}),
+            ("gpu-report-labelled-as-the-device", {"lmkd_variant": "genfs-wrong-type"}),
+            ("gpu-report-labelled-at-another-path", {"lmkd_variant": "genfs-other-path"}),
+            ("lmkd-cannot-use-the-gpu-report", {"lmkd_variant": "no-report-rule"}),
+            ("lmkd-cannot-write-the-gpu-report", {"lmkd_variant": "no-report-write"}),
+            ("lmkd-cannot-search-the-gpu-device", {"lmkd_variant": "no-dir-search"}),
             ("userdata-grow-missing", {"userdata_grow_variant": "missing"}),
             ("userdata-grow-offline-only", {"userdata_grow_variant": "offline-only"}),
             ("userdata-grow-offline-also", {"userdata_grow_variant": "offline-also"}),
@@ -3496,6 +3566,38 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "unexpected product property apexd.config.use_fiemap: \\[\\]"),
             ("use-fiemap-true-cause", {"use_fiemap_variant": "true"},
              "unexpected product property apexd.config.use_fiemap: \\['true'\\]"),
+            ("missing-lmkd-binary-cause", {"lmkd_variant": "missing-binary"},
+             "SYSTEM/bin/lmkd is missing"),
+            ("lmkd-without-the-gpu-reclaim-cause", {"lmkd_variant": "old-binary"},
+             "SYSTEM/bin/lmkd lacks 'ro.lmk.gpu_reclaim': the p0027 topic is missing from the build"),
+            ("lmkd-without-the-setting-name-cause", {"lmkd_variant": "no-property-name"},
+             "SYSTEM/bin/lmkd lacks 'ro.lmk.gpu_reclaim'"),
+            ("lmkd-without-the-report-path-cause", {"lmkd_variant": "no-report-path"},
+             "SYSTEM/bin/lmkd lacks '/sys/class/drm/card0/gpu_memory_report'"),
+            ("lmkd-without-the-kill-reason-cause", {"lmkd_variant": "no-kill-reason"},
+             "SYSTEM/bin/lmkd lacks 'graphics memory pressure'"),
+            ("missing-lmkd-gpu-reclaim-property-cause", {"lmkd_variant": "property-missing"},
+             "unexpected product property ro.lmk.gpu_reclaim: \\[\\]"),
+            ("lmkd-gpu-reclaim-property-off-cause", {"lmkd_variant": "property-off"},
+             "unexpected product property ro.lmk.gpu_reclaim: \\['false'\\]"),
+            ("unlabelled-lmkd-gpu-reclaim-property-cause", {"lmkd_variant": "no-property-label"},
+             "lmkd may not read ro.lmk.gpu_reclaim, labelled default_prop"),
+            ("unreadable-lmkd-gpu-reclaim-property-cause", {"lmkd_variant": "property-unreadable"},
+             "lmkd may not read ro.lmk.gpu_reclaim, labelled lmkd_config_prop"),
+            ("gpu-report-type-not-a-sysfs-type-cause", {"lmkd_variant": "type-not-sysfs"},
+             "sysfs_gpu_memory is not a sysfs type of the policy"),
+            ("gpu-report-not-labelled-cause", {"lmkd_variant": "no-genfs"},
+             "the vendor policy does not label /devices/virtio-uml-cmdline/virtio-uml.0/drm/card0/gpu_memory_report sysfs_gpu_memory \\(it has None\\)"),
+            ("gpu-report-labelled-as-the-device-cause", {"lmkd_variant": "genfs-wrong-type"},
+             "\\(it has sysfs_gpu\\)"),
+            ("gpu-report-labelled-at-another-path-cause", {"lmkd_variant": "genfs-other-path"},
+             "the vendor policy does not label /devices/virtio-uml-cmdline/virtio-uml.0/drm/card0/gpu_memory_report"),
+            ("lmkd-cannot-use-the-gpu-report-cause", {"lmkd_variant": "no-report-rule"},
+             "lmkd may not open, read and write sysfs_gpu_memory"),
+            ("lmkd-cannot-write-the-gpu-report-cause", {"lmkd_variant": "no-report-write"},
+             "lmkd may not open, read and write sysfs_gpu_memory"),
+            ("lmkd-cannot-search-the-gpu-device-cause", {"lmkd_variant": "no-dir-search"},
+             "lmkd may not search sysfs_gpu directories"),
             ("no-adbd-keep-alive-cause", {"init_variant": "no-adbd-keep-alive"},
              "does not run 'start adbd' at property:init.svc.adbd=stopped"),
             ("missing-swapon-cause", {"init_variant": "missing-swapon"},
@@ -5648,6 +5750,66 @@ def verify_overlay_sepolicy(android_root: Path) -> None:
                      f"{result.stderr!r}")
 
 
+def verify_lmkd_gpu_reclaim(android_root: Path) -> None:
+    """The overlay, the routed topics and the verifier agree on lmkd's GPU reclaim.
+
+    The target-files fixtures prove what the verifier rejects; this proves that the sources
+    that produce the policy, the property and the lmkd binary are what the verifier looks for."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    overlay = android_root / "overlay"
+    patches = android_root / "patches/projects"
+    # The report file's type is public and a sysfs type; the vendor labels the file with it.
+    public = (overlay / "sepolicy/system_ext/public/sysfs_gpu_memory.te").read_text()
+    if f"type {verifier.LMKD_GPU_REPORT_TYPE}, fs_type, sysfs_type;" not in public:
+        fail("the public system_ext policy does not declare the report file's type as a sysfs type")
+    if re.search(r"^\s*(allow|neverallow|dontaudit)\b", public, re.MULTILINE):
+        fail("the public system_ext policy holds a rule: only the private policy may")
+    genfs = (overlay / "sepolicy/vendor/genfs_contexts").read_text()
+    label = (
+        f"genfscon sysfs {verifier.LMKD_GPU_REPORT_GENFS_PATH} "
+        f"u:object_r:{verifier.LMKD_GPU_REPORT_TYPE}:s0"
+    )
+    if genfs.splitlines().count(label) != 1:
+        fail(f"overlay/sepolicy/vendor/genfs_contexts lacks the line '{label}' exactly once")
+    device = f"genfscon sysfs {verifier.LMKD_GPU_REPORT_GENFS_PATH.rsplit('/drm/', 1)[0]} "
+    if not any(line.startswith(device) for line in genfs.splitlines()):
+        fail("the report file's path is not under a labelled virtio-gpu device")
+    private = (overlay / "sepolicy/system_ext/private/lmkd_gpu_reclaim.te").read_text()
+    for needle in (
+        f"allow lmkd {verifier.LMKD_GPU_DEVICE_TYPE}:dir search;",
+        f"allow lmkd {verifier.LMKD_GPU_REPORT_TYPE}:file rw_file_perms;",
+    ):
+        if needle not in private:
+            fail(f"the private system_ext policy lacks '{needle}'")
+    board = (overlay / "BoardConfig.mk").read_text()
+    if len(re.findall(
+        r"^SYSTEM_EXT_PUBLIC_SEPOLICY_DIRS \+= device/kernarium/andarium/sepolicy/system_ext/public$",
+        board, re.MULTILINE,
+    )) != 1:
+        fail("BoardConfig.mk does not add the public system_ext policy directory exactly once")
+    # The product turns the feature on, and the build refuses a product that does not.
+    product = (overlay / "lineage_andarium.mk").read_text()
+    setting = verifier.LMKD_GPU_RECLAIM_PROPERTY
+    if len(re.findall(
+        rf"^PRODUCT_PRODUCT_PROPERTIES \+= \\\n    {re.escape(setting)}=true$", product, re.MULTILINE
+    )) != 1:
+        fail(f"lineage_andarium.mk does not set {setting}=true in the product properties exactly once")
+    script = (android_root / "build/build-aosp.sh").read_text()
+    if f'*" {setting}=true "*' not in script:
+        fail(f"build-aosp.sh does not require {setting}=true")
+    # The routed topics put in the binary the names the verifier looks for, and label the setting.
+    lmkd = "".join(path.read_text() for path in sorted((patches / "p0027/series").glob("*.patch")))
+    for marker in verifier.LMKD_GPU_MARKERS:
+        if f'"{marker.decode()}"' not in lmkd:
+            fail(f"the p0027 topic does not hold the string {marker.decode()!r} that the verifier requires")
+    sepolicy = "".join(path.read_text() for path in sorted((patches / "p0020/series").glob("*.patch")))
+    if f"+{setting}" not in sepolicy or "lmkd_config_prop" not in sepolicy:
+        fail(f"the p0020 topics do not label {setting}")
+    projects = (android_root / "patches/projects.tsv").read_text().splitlines()
+    if [line.split("\t")[4] for line in projects if line.startswith("25\t")] != ["system/memory/lmkd"]:
+        fail("the route table does not route system/memory/lmkd as its 25th route")
+
+
 def verify_media_codecs_overlay(android_root: Path) -> None:
     """The tracked software decoder update satisfies the verifier that checks the image."""
     verifier = load_tool(android_root / "tools/verify-target-files.py")
@@ -6875,6 +7037,7 @@ def main() -> None:
     verify_setup_wizard_flow(android_root)
     verify_launcher_layouts(android_root)
     verify_overlay_sepolicy(android_root)
+    verify_lmkd_gpu_reclaim(android_root)
     verify_media_codecs_overlay(android_root)
     verify_package_assertions(android_root)
     verify_debugging_defaults(android_root)
