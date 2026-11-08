@@ -53,6 +53,11 @@ it. The bridge fields used below are defined by the comments in
   may share one host PTY, and a console write allocates no memory. Closing a
   serial line never closes a host descriptor. The console PTY assertion and
   `guest-console-write-memory` check the first two.
+- Output a serial line has queued for a host channel that took less than a
+  write offered goes out before the line's console text, and before the
+  exitcalls close the line at power-off, halt or restart. The console waits up
+  to 1 s for the channel and the exitcalls up to 2 s.
+  `guest-console-queued-output` checks the power-off.
 - Host-side kernel code changes a signal mask only with `pthread_sigmask()`
   (Darwin's `sigprocmask()` sets every thread's mask) and reaches variadic libc
   functions only through fixed-arity bridge functions or shims. The bridge
