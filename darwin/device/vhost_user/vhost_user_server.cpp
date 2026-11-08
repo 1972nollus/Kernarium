@@ -1433,6 +1433,9 @@ void VhostUserServer::runAnsweredKick(std::uint32_t index)
     for (;;) {
         const auto taken = queues_[index].lastAvailable;
         suppressKicks(index, true);
+        /* Counted once the guest is told not to kick: a buffer it publishes
+         * from here on may come without one. */
+        const auto waitingBefore = waitingBuffers(index);
         try {
             processQueue(index);
         } catch (...) {
@@ -1440,9 +1443,14 @@ void VhostUserServer::runAnsweredKick(std::uint32_t index)
             throw;
         }
         suppressKicks(index, false);
-        /* A queue that took nothing is waiting for its device, its gate or
-         * its enable, each of which runs it again. */
-        if (queues_[index].lastAvailable == taken || waitingBuffers(index) == 0)
+        if (waitingBuffers(index) == 0)
+            return;
+        /* A pass that took nothing of buffers already waiting when it began
+         * declined them: their device, gate or enable runs the queue again.
+         * A pass that began on an empty ring, because another run had
+         * drained it, declined nothing, and what waits now came unkicked
+         * while kicks were off. */
+        if (queues_[index].lastAvailable == taken && waitingBefore != 0)
             return;
     }
 }

@@ -109,7 +109,8 @@ private:
     void drainKick(std::uint32_t index);
     void processQueue(std::uint32_t index);
     /* Runs queue `index` after its kick was answered, with the guest's kicks
-     * suppressed meanwhile, until no buffer added while it ran is waiting. */
+     * suppressed meanwhile, until no buffer is waiting that the guest added
+     * while kicks were off. */
     void runAnsweredKick(std::uint32_t index);
     void suppressKicks(std::uint32_t index, bool suppress) noexcept;
     /* How many buffers the guest has made available on queue `index` that the
