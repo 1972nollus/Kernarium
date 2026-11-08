@@ -19,8 +19,8 @@ AndariumCore/         Swift package: the model and the adb client, no UIKit; it
                       re-exports GuestHostCore (../GuestHost/Core)
 AndariumTests/        hosted tests of the device app
 Config/               entitlements, Info.plist, privacy manifest, bridging header
-scripts/              system staging, the App Store bundle check, acknowledgements,
-                      screen capture
+scripts/              system staging, the App Store bundle check, the Mac run
+                      location check, acknowledgements, screen capture
 Andarium.xcodeproj/   JSON project (project.xcproj) and its shared schemes
 ../GuestHost/Sources  host code shared with Kernarium: the runtime loader, the
                       display and touch view, zstd, the shader caches
@@ -96,7 +96,9 @@ disk, partition layout, kernel command line and manifest into
 `.build/andarium-system`, which the application bundles as it stands.
 
 The `AndariumTests` bundle runs hosted in the application on an iPad, in the
-iOS Simulator or, as an iPad app, on an Apple silicon Mac. For the Simulator,
+iOS Simulator or, as an iPad app, on an Apple silicon Mac (whose derived data
+must be outside the temporary directories,
+[`docs/testing.md`](../docs/testing.md#andarium)). For the Simulator,
 package its slices first (below), then:
 
 ```sh
@@ -253,6 +255,16 @@ requires reopening Andarium.
   runtime's readings ([`Kernarium/README.md`](../Kernarium/README.md#statistics)),
   read only while a view shows them, the application is active and the guest
   runs (`StatsSampling.isWanted`).
+- **Graphics memory.** The runtime counts the graphics allocations the host
+  refused the guest ([`docs/graphics.md`](../docs/graphics.md#device-memory-budget)).
+  While a normal session runs in the foreground the model reads the count every
+  2 s, with or without a statistics view (`AppModel.refreshGraphicsNotice`), and
+  a rise shows `GraphicsNoticeBanner`: a glass banner that takes touches only
+  where it is drawn, dismissible and gone after 30 s. It tells the person to
+  swipe a broken app away in Recents, which restarts the process that lost its
+  graphics. `GraphicsNotice` decides: the first reading is a baseline, and
+  refusals less than a minute apart are one burst, which shows one notice
+  whether or not it was dismissed. Recovery runs no app and is not read.
 
 ## Android operations
 

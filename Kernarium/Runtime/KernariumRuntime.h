@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 25U
+#define KERNARIUM_RUNTIME_API_VERSION 26U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -318,6 +318,13 @@ typedef struct kernarium_runtime_statistics {
      * before the guest's kernel has claimed its RAM. */
     uint64_t memory_bytes;
     uint64_t memory_held_bytes;
+    /* How many times the host told the guest that its GPU had no room for a
+     * graphics allocation, since the display was made, so a restart does not
+     * reset it. Only an answer the guest received counts, after the host has
+     * freed what it could and tried again; a Venus (Vulkan) allocation the
+     * host refused is not counted. A rise means a guest application may have
+     * lost its graphics state; 0 while there is no display. */
+    uint64_t gpu_memory_refusals;
 } kernarium_runtime_statistics;
 /* Fills `statistics` (the caller sets struct_size) with the running guest's
  * host-side figures. Returns 0, -ENODEV with no guest running (before its
@@ -438,7 +445,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v25(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v26(void);
 
 /* An automation-only extension, outside the versioned table: only a runtime
  * built for automation exports this symbol, and the application looks it up

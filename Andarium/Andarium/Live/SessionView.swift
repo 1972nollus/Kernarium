@@ -22,6 +22,9 @@ struct SessionView: View {
                         .allowsHitTesting(false)
                 }
             }
+            .overlay(alignment: .top) {
+                GraphicsNoticeOverlay()
+            }
             .overlay {
                 SideKeysOverlay(mode: mode, lit: true, open: $model.session.sideKeysOpen, actions: actions)
             }

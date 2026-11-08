@@ -82,7 +82,12 @@ final class SessionState {
 final class AppModel {
     var lifecycle: Lifecycle {
         // The readings run while the guest does.
-        didSet { if lifecycle.phase != oldValue.phase { refreshStatistics() } }
+        didSet {
+            if lifecycle.phase != oldValue.phase {
+                refreshStatistics()
+                refreshGraphicsNotice()
+            }
+        }
     }
     var host: HostDevice
     /// The system this build of Andarium carries.
@@ -200,7 +205,12 @@ final class AppModel {
     /// Whether the application is the active one. The readings stop when it
     /// is not, and start again with a new baseline.
     var applicationActive = true {
-        didSet { if applicationActive != oldValue { refreshStatistics() } }
+        didSet {
+            if applicationActive != oldValue {
+                refreshStatistics()
+                refreshGraphicsNotice()
+            }
+        }
     }
     /// The figures behind the screens, from the driver's readings.
     private(set) var statisticsMeter = StatsMeter()
@@ -215,6 +225,20 @@ final class AppModel {
     @ObservationIgnored private var statisticsTask: Task<Void, Never>?
     /// Tells a loop that ended from the one that replaced it.
     @ObservationIgnored private var statisticsGeneration = 0
+
+    // MARK: Graphics notice state
+
+    /// Whether the session says Android ran out of graphics memory, from the
+    /// runtime's count of the refusals the guest was answered with.
+    private(set) var graphicsNotice = GraphicsNotice()
+    /// Waits between readings of that count; a test paces them by hand.
+    @ObservationIgnored var graphicsNoticeSleep: @MainActor (Duration) async -> Void = { duration in
+        try? await Task.sleep(for: duration)
+    }
+    /// The moment a reading is taken at; a test sets its own.
+    @ObservationIgnored var graphicsNoticeClock: @MainActor () -> ContinuousClock.Instant = { .now }
+    @ObservationIgnored private var graphicsNoticeTask: Task<Void, Never>?
+    @ObservationIgnored private var graphicsNoticeGeneration = 0
 
     init(
         guest: Guest?, host: HostDevice, system: SystemInfo, capabilities: Capabilities,
@@ -823,6 +847,7 @@ final class AppModel {
         abandonOperation()
         endAdbOverNetwork()
         spacePause = nil
+        graphicsNotice = GraphicsNotice()
         runEnd = end
         runUptimeSeconds = uptimeSeconds
         if end.poweredOff {
@@ -846,6 +871,7 @@ final class AppModel {
         abandonOperation()
         endAdbOverNetwork()
         spacePause = nil
+        graphicsNotice = GraphicsNotice()
         frozenBootStage = nil
         sessionPreset = SessionPreset()
         let showStats = session.showStats
@@ -1012,6 +1038,59 @@ final class AppModel {
             print(ConsoleReport.statistics(statisticsMeter, guestMemoryMiB: guest?.memoryMiB ?? 0))
         }
         #endif
+    }
+
+    // MARK: Graphics notice
+
+    /// The count is read while a normal session runs in the foreground, with
+    /// or without a view of the statistics: the notice is for a person who
+    /// is using the guest. Recovery runs no app that could lose its
+    /// graphics.
+    private var graphicsNoticeWanted: Bool {
+        guard case .running(.normal) = phase else { return false }
+        return applicationActive && capabilities.statistics && driver != nil
+    }
+
+    /// Starts reading the refusal count when it is wanted and stops when it
+    /// is not. The count is the runtime's for the whole launch, so a reading
+    /// after a pause finds what was refused meanwhile.
+    func refreshGraphicsNotice() {
+        if graphicsNoticeWanted {
+            guard graphicsNoticeTask == nil else { return }
+            graphicsNoticeGeneration += 1
+            let generation = graphicsNoticeGeneration
+            graphicsNoticeTask = Task { [weak self] in
+                await self?.runGraphicsNoticeLoop()
+                if let self, self.graphicsNoticeGeneration == generation { self.graphicsNoticeTask = nil }
+            }
+        } else if let task = graphicsNoticeTask {
+            task.cancel()
+            graphicsNoticeTask = nil
+            graphicsNoticeGeneration += 1
+        }
+    }
+
+    private func runGraphicsNoticeLoop() async {
+        guard let driver else { return }
+        while !Task.isCancelled, graphicsNoticeWanted {
+            if let refusals = await driver.readGraphicsRefusals(), !Task.isCancelled {
+                graphicsNotice.record(refusals: refusals, at: graphicsNoticeClock())
+            }
+            guard !Task.isCancelled else { return }
+            await graphicsNoticeSleep(GraphicsNotice.pollInterval)
+        }
+    }
+
+    /// The person dismisses the notice.
+    func dismissGraphicsNotice() {
+        graphicsNotice.dismiss()
+    }
+
+    /// The Simulator preview plays a refusal: it has no runtime to count one.
+    func previewGraphicsNotice() {
+        let now = graphicsNoticeClock()
+        graphicsNotice.record(refusals: 0, at: now)
+        graphicsNotice.record(refusals: 1, at: now)
     }
 
     /// The step of the boot under way, from the runtime's milestones.
