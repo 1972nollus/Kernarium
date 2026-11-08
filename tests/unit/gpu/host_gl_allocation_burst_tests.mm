@@ -14,8 +14,11 @@
 // The test holds a lead of its own, Metal 4 command storage that only the
 // ledger counts, sets the budget a little above what the process holds, and
 // creates textures until the budget refuses one, with no transfer or draw in
-// between. One transfer then submits work, and the host must hold no more than
-// the budget.
+// between. A transfer and a fence then submit work, and the host must hold no
+// more than the budget. The renderer submits once before the burst: what a
+// first submission records (command storage, the driver's own pipelines) is
+// counted and never refused, so a renderer that had not yet submitted would
+// pass the budget by it at the refusal, whose reclaim submits.
 
 #include "host_gl_test_support.hpp"
 #include "host_gpu_memory.hpp"
@@ -199,8 +202,15 @@ int main()
             return skipWithoutRenderer(error);
         }
 
-        // A burst: creations only, nothing the renderer has to submit.
         std::uint32_t nextResourceId = 1;
+        auto warmUp = std::make_unique<Texture>(*renderer, nextResourceId++);
+        std::uint64_t fenceId = 0;
+        require(warmUp->result() == 0 && warmUp->upload() == 0 &&
+                renderer->createFenceAndWait(0, 0, ++fenceId, nullptr) == 0,
+            "the renderer could not make, upload and submit a first texture");
+        const std::uint64_t warm = used();
+
+        // A burst: creations only, nothing the renderer has to submit.
         std::vector<std::unique_ptr<Texture>> held;
         std::uint32_t made = 0;
         for (std::uint32_t index = 0; index < attempts; ++index) {
@@ -219,8 +229,9 @@ int main()
         const std::uint64_t afterBurst = used();
 
         // Work submitted now makes resident whatever was not yet.
-        require(!held.empty() && held.front()->upload() == 0,
-            "a texture made within the budget took no upload");
+        require(!held.empty() && held.front()->upload() == 0 &&
+                renderer->createFenceAndWait(0, 0, ++fenceId, nullptr) == 0,
+            "a texture made within the budget could not be uploaded");
         std::uint64_t peak = used();
         const auto deadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
@@ -230,12 +241,14 @@ int main()
         }
         std::fprintf(stderr,
             "lead %.1f MiB; %u textures of %.0f MiB made in a burst against a "
-            "limit of %.1f MiB (%.1f MiB before the renderer); %.1f MiB held "
-            "after the burst, %.1f MiB at most once work was submitted\n",
+            "limit of %.1f MiB (%.1f MiB before the renderer, %.1f MiB after "
+            "its first submission); %.1f MiB held after the burst, %.1f MiB "
+            "at most once work was submitted\n",
             static_cast<double>(heldLead) / mebibyte, made,
             static_cast<double>(textureBytes) / mebibyte,
             static_cast<double>(limit) / mebibyte,
             static_cast<double>(before) / mebibyte,
+            static_cast<double>(warm) / mebibyte,
             static_cast<double>(afterBurst) / mebibyte,
             static_cast<double>(peak) / mebibyte);
 
@@ -245,6 +258,7 @@ int main()
             "a burst of creations took the host past its budget once work "
             "was submitted");
         held.clear();
+        warmUp.reset();
         renderer.reset();
         std::fputs("Allocation burst: ok\n", stderr);
     }
