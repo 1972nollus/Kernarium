@@ -7,8 +7,12 @@ import Foundation
 
 /// A scripted adbd on the far end of a socket pair. It speaks the same wire
 /// format as the client, one stream at a time, and runs on a thread of its
-/// own; a service is a closure that talks through a `FakeStream`.
+/// own; a service is a closure that talks through a `FakeStream`. Both ends
+/// are shut down `limit` after it starts, so a test whose client or service
+/// waits on something that never comes fails instead of hanging the run.
 final class FakeAdbd: @unchecked Sendable {
+    static let limit = DispatchTimeInterval.seconds(30)
+
     enum Auth {
         /// `ro.adb.secure=0`: CNXN answers CNXN.
         case off
@@ -29,6 +33,7 @@ final class FakeAdbd: @unchecked Sendable {
     private var tokens = 0
     private var sawPublicKey = false
     private var finished = false
+    private let expiry: DispatchWorkItem
 
     /// A service name ending in `*` matches by prefix.
     init(
@@ -37,8 +42,14 @@ final class FakeAdbd: @unchecked Sendable {
     ) {
         var pair: [Int32] = [0, 0]
         precondition(socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0)
-        client = DescriptorTransport(descriptor: pair[0])
-        server = DescriptorTransport(descriptor: pair[1])
+        let client = DescriptorTransport(descriptor: pair[0])
+        let server = DescriptorTransport(descriptor: pair[1])
+        self.client = client
+        self.server = server
+        expiry = DispatchWorkItem { [weak client, weak server] in
+            client?.shutdown()
+            server?.shutdown()
+        }
         self.auth = auth
         self.features = features
         self.maxData = maxData
@@ -50,6 +61,7 @@ final class FakeAdbd: @unchecked Sendable {
         }
         thread.name = "fake-adbd"
         thread.start()
+        DispatchQueue.global().asyncAfter(deadline: .now() + FakeAdbd.limit, execute: expiry)
     }
 
     var servicesOpened: [String] { lock.withLock { opened } }
@@ -57,6 +69,7 @@ final class FakeAdbd: @unchecked Sendable {
     var publicKeyWasOffered: Bool { lock.withLock { sawPublicKey } }
 
     func shutdown() {
+        expiry.cancel()
         server.shutdown()
         client.shutdown()
     }
