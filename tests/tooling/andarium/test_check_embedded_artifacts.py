@@ -92,10 +92,18 @@ def macho(sections: dict) -> bytes:
     return header + segment + entries + payload
 
 
-def kernel_image(release: str = KERNEL_RELEASE, config: str = CONFIG) -> bytes:
+NEUTRAL_BUILDER = "kernarium@kernarium"
+
+
+def kernel_image(
+    release: str = KERNEL_RELEASE, config: str = CONFIG,
+    builder: str = NEUTRAL_BUILDER, proc_builder: str = NEUTRAL_BUILDER,
+) -> bytes:
+    """A kernel image with the banner and the /proc/version format, which both name the builder."""
     return (
         b"\x7fELF" + b"\0" * 64
-        + f"Linux version {release} (builder@host) (clang) #1 SMP\n".encode()
+        + f"Linux version {release} ({builder}) (clang) #1 SMP\n".encode()
+        + b"\0" * 8 + f"%s version %s ({proc_builder}) (clang) %s\n".encode()
         + b"\0" * 32 + b"IKCFG_ST" + gzip.compress(config.encode()) + b"IKCFG_ED" + b"\0" * 16
     )
 
@@ -163,13 +171,13 @@ class Fixture:
         write(staged, "release-manifest.json", json.dumps(self.manifest(release_id, trees)))
         return staged
 
-    def package(self, release: str = KERNEL_RELEASE, config: str = CONFIG) -> Path:
+    def package(self, release: str = KERNEL_RELEASE, config: str = CONFIG, **builders: str) -> Path:
         app = self.root / "Andarium.app"
         shutil.rmtree(app, ignore_errors=True)
         shutil.copytree(self.repo / ".build/andarium-system", app / "andarium-system")
         framework = app / "Frameworks" / f"{FRAMEWORK}.framework"
         framework.mkdir(parents=True)
-        (framework / FRAMEWORK).write_bytes(macho({"__uml_elf": kernel_image(release, config)}))
+        (framework / FRAMEWORK).write_bytes(macho({"__uml_elf": kernel_image(release, config, **builders)}))
         return app
 
     def run(self, *arguments: str, decision: str | None = None, app: bool = True, python: str = sys.executable):
@@ -347,6 +355,22 @@ class CheckTests(unittest.TestCase):
             self.fixture.run(decision=f"{RELEASE_ID} {KERNEL_ID}"),
             "6.18.98-gdeadbeef0000", KERNEL_RELEASE, "package the frameworks")
 
+    def test_a_packaged_kernel_built_as_another_user_or_host_fails_whatever_the_decision(self) -> None:
+        # The build user and host are personal values: the verdict says that
+        # the pair is wrong and never repeats it.
+        cases = {
+            "banner user": {"builder": "qzxuser@kernarium"},
+            "banner host": {"builder": "kernarium@qzxhost"},
+            "banner pair": {"builder": "qzxuser@qzxhost"},
+            "proc format": {"proc_builder": "qzxuser@qzxhost"},
+        }
+        for label, builders in cases.items():
+            with self.subTest(label):
+                self.fixture.app = self.fixture.package(**builders)
+                result = self.fixture.run(decision=f"{RELEASE_ID} {KERNEL_ID}")
+                self.fails(result, NEUTRAL_BUILDER, "build-kernel.sh")
+                self.assertNotIn("qzx", result.stdout + result.stderr)
+
     def test_a_missing_runtime_framework_fails(self) -> None:
         shutil.rmtree(self.fixture.app / "Frameworks")
         self.fails(self.fixture.run(decision=KERNEL_ID), f"embeds no {FRAMEWORK}")
@@ -374,7 +398,7 @@ class CheckTests(unittest.TestCase):
         self.fails(self.fixture.run(), "CONFIG_MODULES", "android.fragment requests y")
 
     def test_a_kernel_without_a_configuration_fails(self) -> None:
-        image = b"\x7fELF" + f"Linux version {KERNEL_RELEASE} (b@h) #1\n".encode()
+        image = b"\x7fELF" + f"Linux version {KERNEL_RELEASE} ({NEUTRAL_BUILDER}) #1\n".encode()
         (self.fixture.app / "Frameworks" / f"{FRAMEWORK}.framework" / FRAMEWORK).write_bytes(
             macho({"__uml_elf": image}))
         self.fails(self.fixture.run(decision=KERNEL_ID), "carries no configuration")

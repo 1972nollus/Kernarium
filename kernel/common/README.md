@@ -142,6 +142,10 @@ it. The bridge fields used below are defined by the comments in
   same span (`UML_NATIVE_VHOST_USER_SHMEM_RESERVATION` and
   `UML_NATIVE_STUB_PAGES` in the top-level CMake layout), so the sizes move
   together. `mmap()` refuses a user mapping that would enter the window.
+- A load from a user mapping succeeds when the mapping permits any access, for
+  a task and for the kernel's own access, as on native arm64 and x86: write
+  implies read, and an execute-only mapping reads. Only `PROT_NONE` refuses
+  (`guest-write-only-mapping`).
 - The kernel negotiates the vhost-user shared-memory transport
   (`VHOST_USER_PROTOCOL_F_SHMEM_MAP`) and reserves a 1 GiB guarded aperture
   outside RAM with 16 KiB mapping alignment (the host page). Virtio-GPU
@@ -263,13 +267,16 @@ it. The bridge fields used below are defined by the comments in
   dma-buf another driver exported with `-ENODEV`; do not restore the stable
   change that routed it to the generic importer. Hardware video and Android's
   gralloc import only the device's own exports.
-- The resource-creation ioctl for a 2D or classic 3D resource waits at most 15 s
-  for the host's answer, and an out-of-memory answer fails it with `-ENOMEM`, so
-  Mesa raises `GL_OUT_OF_MEMORY` and gralloc fails the allocation. That wait and
-  the get-caps ioctl's capset wait are freezable, so a drawing guest suspends
-  while the host holds its GPU answers (`set_gpu_hold`); the waits that hold a
-  lock (a host-visible blob's `mmap()`, the control queue's ring-full wait) are
-  not.
+- The resource-creation ioctls (a 2D or classic 3D resource, and a host3d or
+  guest blob) wait at most 15 s for the host's answer, and an out-of-memory
+  answer fails them with `-ENOMEM` (any other error with `-EINVAL`) before the
+  guest holds a handle, so Mesa raises `GL_OUT_OF_MEMORY` and gralloc fails the
+  allocation. A blob the host refused is never a buffer other processes can
+  import (`guest-virtgpu-blob-refusal`). The in-kernel host blob and a dma-buf import hold locks and do not
+  wait. That wait and the get-caps ioctl's capset wait are freezable, so a
+  drawing guest suspends while the host holds its GPU answers (`set_gpu_hold`);
+  the waits that hold a lock (a host-visible blob's `mmap()`, the control
+  queue's ring-full wait) are not.
 - A classic 3D resource is coherent with the GPU through its dma-buf around
   `DMA_BUF_IOCTL_SYNC`; CPU access must be bracketed and a producer must flush
   its commands first. The optional `guest-gbm-dmabuf` test checks it.
