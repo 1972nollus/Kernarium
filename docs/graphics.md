@@ -333,6 +333,33 @@ leaves the holders unnamed and nothing acts on them. `read_graphics_memory`
 print them with `--stats`. Andarium ends the cached background app that holds
 the most when the budget is nearly full (`GraphicsReclaim`).
 
+The guest's own low-memory killer can do that instead. The device offers a
+private Virtio-GPU extension (`VIRTIO_GPU_F_UML_MEMORY_REPORT`, bit 23, only
+while the renderer has a budget; the wire contract is
+[`kernel/common/gpu`](../kernel/common/gpu/README.md)): one query command
+answers with the budget, the pool's usage, what the contexts hold, the refusal
+count and up to 16 holders by process, and the guest kernel serves the answer
+as `gpu_memory_report` ([kernel contract](../kernel/common/README.md#devices),
+`guest-virtgpu-memory-report`). The answer comes from the ledger and the pool
+on the transport thread and never waits for the renderer. A query that
+subscribes also makes the device raise a config-change event (`events_read`
+bit 1) when the pool goes under or out of pressure, and at most once a second
+when a refusal was counted; the guest then asks again.
+
+- Pressure is `ledger + overhead + 96 MiB >= B`, with the host's smallest
+  overhead seen (usage less the ledger), the margin `GraphicsReclaim` uses. It
+  is declared after 1 s of it and cleared after 5 s without it
+  (`device/gpu/memory_pressure.*`, the evaluator with an injected clock).
+- Nothing is periodic and nothing wakes an idle device: the ledger's change
+  observer arms a coalescing 250 ms timer on the transport thread, and the
+  evaluator arms one deadline for its own next change.
+- A query that sets `GUEST_RECLAIMS` records that a reclaimer in the guest is
+  armed. The flag belongs to the connection, is cleared by a query without it
+  and by a new connection, and reaches the applications as `guest_reclaims` of
+  `read_graphics_memory` (runtime API 29) and the launchers' `--stats` line as
+  `guest-reclaim=on`. While it is set `GraphicsReclaim` stands down and does not
+  end an app.
+
 ### Android guest requirements
 
 The Android guest reaches the same renderer by a separate route: one Soong port

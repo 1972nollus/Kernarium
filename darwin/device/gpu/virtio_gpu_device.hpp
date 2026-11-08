@@ -6,6 +6,7 @@
 #include "unique_descriptor.hpp"
 #include "virgl_renderer.hpp"
 #include "display.hpp"
+#include "memory_pressure.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -77,6 +78,24 @@ public:
 #endif
     ~VirtioGpuDevice();
 
+    /* The private memory report (kernel/common/gpu): the guest asks how near
+     * the device memory budget is and which of its processes hold it, and may
+     * subscribe to an event for a change. It is offered while the renderer has
+     * a budget. */
+    [[nodiscard]] bool offersMemoryReport() const noexcept;
+    /* Called, on whichever thread made the change and with no lock held,
+     * when graphics memory changes while a guest is subscribed; the transport
+     * sets it before the guest runs, and it must be quick. */
+    void setMemoryWake(std::function<void()> wake);
+    /* Evaluates the subscription at `now` (MemoryPressure), on the transport
+     * thread; returns whether it raised the event. */
+    bool evaluateMemory(std::chrono::steady_clock::time_point now) noexcept;
+    /* When to evaluate again if nothing changes before; nothing while calm or
+     * unsubscribed. */
+    [[nodiscard]] std::optional<std::chrono::steady_clock::time_point>
+        memoryDeadline() const noexcept;
+    /* Whether the guest has yet to clear the memory event. */
+    [[nodiscard]] bool memoryEventPending() const noexcept;
     [[nodiscard]] protocol::GpuConfig config() const noexcept;
     void recordConfigRead(
         std::uint32_t offset,
@@ -177,6 +196,12 @@ private:
     [[nodiscard]] std::vector<std::uint8_t> response(
         const protocol::GpuControlHeader& request,
         protocol::GpuResponse type) const;
+    /* The answer to a memory query whose reply may use `capacity` bytes. */
+    [[nodiscard]] std::vector<std::uint8_t> memoryReport(
+        const protocol::GpuControlHeader& request,
+        std::span<const std::uint8_t> bytes,
+        std::size_t capacity);
+    [[nodiscard]] MemoryPressure::Reading memoryReading() const noexcept;
     [[nodiscard]] std::vector<std::uint8_t> displayInfo(
         const protocol::GpuControlHeader& request) const;
     [[nodiscard]] std::vector<std::uint8_t> edid(
@@ -258,6 +283,14 @@ private:
     std::uint64_t displayGeneration_ {};
     std::uint64_t reportedDisplayGeneration_ {};
     std::uint64_t clearedDisplayGeneration_ {};
+    /* The memory event, kept as the display event is. */
+    std::uint64_t memoryGeneration_ {};
+    std::uint64_t reportedMemoryGeneration_ {};
+    std::uint64_t clearedMemoryGeneration_ {};
+    /* How many events this connection has raised. */
+    std::uint32_t memoryEventsRaised_ {};
+    MemoryPressure memoryPressure_;
+    std::function<void()> memoryWake_;
     std::vector<SharedMemoryAction> sharedMemoryActions_;
     std::uint64_t nextSharedMemoryActionId_ {1};
     std::uint32_t scanoutResource_ {};
