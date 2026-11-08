@@ -15,64 +15,34 @@
      limitations under the License.
 
      Derived from the Android Open Source Project's default_workspace_5x6.xml.
-     The image ships six applications with a launcher activity. The stock layout
-     names Google applications and widgets that it does not ship, so a fresh guest
-     lost most of its items and showed the rest on the second page, with an empty
-     first page and dock. These six fill the first page row by row from the top
-     left, in this order; the dock and the other pages are empty. A component is
-     named by package and class, and no entry names a string, a widget or an
-     application the image does not ship.
+     The stock layout names Google applications and widgets that the image does
+     not ship, so a fresh guest lost most of its items. This layout keeps one
+     empty workspace page and puts Files and Settings in the dock, centred in
+     its 5 slots. The other applications with a launcher activity (Calendar,
+     Gallery, Music and Calculator) stay installed and are in the app drawer. A
+     component is named by package and class, and no entry names a string, a
+     widget or an application the image does not ship.
 -->
 
 <favorites xmlns:launcher="http://schemas.android.com/apk/res-auto/com.android.launcher3">
 
-    <!-- Screen 0, 5 columns -->
-    <!-- Settings -->
-    <favorite
-        launcher:packageName="com.android.settings"
-        launcher:className="com.android.settings.Settings"
-        launcher:screen="0"
-        launcher:x="0"
-        launcher:y="0" />
-
-    <!-- Calendar (Etar) -->
-    <favorite
-        launcher:packageName="org.lineageos.etar"
-        launcher:className="com.android.calendar.AllInOneActivity"
-        launcher:screen="0"
-        launcher:x="1"
-        launcher:y="0" />
-
-    <!-- Gallery (Glimpse) -->
-    <favorite
-        launcher:packageName="org.lineageos.glimpse"
-        launcher:className="org.lineageos.glimpse.MainActivity"
-        launcher:screen="0"
-        launcher:x="2"
-        launcher:y="0" />
-
-    <!-- Music (Twelve) -->
-    <favorite
-        launcher:packageName="org.lineageos.twelve"
-        launcher:className="org.lineageos.twelve.MainActivity"
-        launcher:screen="0"
-        launcher:x="3"
-        launcher:y="0" />
-
-    <!-- Calculator -->
-    <favorite
-        launcher:packageName="com.android.calculator2"
-        launcher:className="com.android.calculator2.Calculator"
-        launcher:screen="0"
-        launcher:x="4"
-        launcher:y="0" />
-
+    <!-- Dock, 5 slots: the rank of an item is its screen and its column -->
     <!-- Files (DocumentsUI) -->
     <favorite
         launcher:packageName="com.android.documentsui"
         launcher:className="com.android.documentsui.LauncherActivity"
-        launcher:screen="0"
-        launcher:x="0"
-        launcher:y="1" />
+        launcher:container="-101"
+        launcher:screen="1"
+        launcher:x="1"
+        launcher:y="0" />
+
+    <!-- Settings -->
+    <favorite
+        launcher:packageName="com.android.settings"
+        launcher:className="com.android.settings.Settings"
+        launcher:container="-101"
+        launcher:screen="3"
+        launcher:x="3"
+        launcher:y="0" />
 
 </favorites>

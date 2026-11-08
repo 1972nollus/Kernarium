@@ -7,7 +7,8 @@
      Derived from LineageOS's lineage_wizard_script.xml. The pages this product
      shows are Welcome, Language, Date and time and Theme; every other page of
      LineageOS's flow is left out. The README of the Android release names the
-     reason for each.
+     reason for each. Theme is the last page: its Finish button ends the wizard,
+     so the script has no closing page.
 -->
 <WizardScript xmlns:wizard="http://schemas.android.com/apk/res/com.google.android.setupwizard"
     wizard:firstAction="welcome">
@@ -35,12 +36,6 @@
 
     <WizardAction
         id="theme_settings"
-        wizard:uri="intent:#Intent;action=org.lineageos.setupwizard.THEME_SETTINGS;end">
-        <result wizard:action="finish" />
-    </WizardAction>
-
-    <WizardAction
-        id="finish"
-        wizard:uri="intent:#Intent;action=org.lineageos.setupwizard.LINEAGE_SETUP_COMPLETE;end" />
+        wizard:uri="intent:#Intent;action=org.lineageos.setupwizard.THEME_SETTINGS;end" />
 
 </WizardScript>
