@@ -142,6 +142,10 @@ it. The bridge fields used below are defined by the comments in
   same span (`UML_NATIVE_VHOST_USER_SHMEM_RESERVATION` and
   `UML_NATIVE_STUB_PAGES` in the top-level CMake layout), so the sizes move
   together. `mmap()` refuses a user mapping that would enter the window.
+- A load from a user mapping succeeds when the mapping permits any access, for
+  a task and for the kernel's own access, as on native arm64 and x86: write
+  implies read, and an execute-only mapping reads. Only `PROT_NONE` refuses
+  (`guest-write-only-mapping`).
 - The kernel negotiates the vhost-user shared-memory transport
   (`VHOST_USER_PROTOCOL_F_SHMEM_MAP`) and reserves a 1 GiB guarded aperture
   outside RAM with 16 KiB mapping alignment (the host page). Virtio-GPU

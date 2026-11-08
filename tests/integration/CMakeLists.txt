@@ -829,6 +829,21 @@ uml_add_guest_integration_test(
     TIMEOUT 420
     CPUS 2)
 
+# A mapping that permits writes permits reads, as native arm64 and x86 allow
+# it, for a task and for the kernel's own access: the first load from a
+# PROT_WRITE mapping (anonymous or file, shared or private) is not a SIGSEGV.
+# An execute-only mapping reads too, while PROT_NONE and a store to a
+# read-only mapping still fault with SEGV_ACCERR.
+uml_add_guest_integration_test(
+    NAME guest-write-only-mapping
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/write_only_mapping_probe.cpp
+        "--cxxflags=-Wall -Wextra -Werror"
+        --ncpus 2 --probe-timeout 120
+    LABELS guest;kernel;memory
+    TIMEOUT 420
+    CPUS 2)
+
 # The settings the Android CTS and the desktop disagree on: a Linux guest has
 # SysV IPC, the NFS client and SCTP, no RDS and no wakelock interface, and
 # runs the helper a piped core_pattern names; every guest has IPv4 multicast,
