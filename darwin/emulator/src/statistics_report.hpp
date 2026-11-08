@@ -13,8 +13,9 @@ namespace uml::emulator {
 /*
  * The line a macOS launcher prints for each interval of --stats=<ms>: the
  * share of the guest's vCPUs that computed, the frames that reached the
- * display and the frames the guest offered, per second, and the memory the
- * guest and the host report. It is measurement tooling with no UI, built from
+ * display and the frames the guest offered, per second, the memory the guest
+ * and the host report and, with a display, how many graphics allocations the
+ * host has refused the guest. It is measurement tooling with no UI, built from
  * the same calls the iOS applications make, so a Mac validates their figures.
  * The report keeps no clock and reads no source: it turns the samples it is
  * given into text.
@@ -33,6 +34,9 @@ struct StatisticsSample final {
 	/* The guest's RAM and the part of it the host holds. */
 	std::uint64_t ram_bytes {};
 	std::uint64_t ram_held_bytes {};
+	/* How many times the host told the guest its GPU had no room for an
+	 * allocation, since the display was made; none without a display. */
+	std::optional<std::uint64_t> gpu_memory_refusals;
 };
 
 /* The guest kernel's own memory figures. */
@@ -108,7 +112,11 @@ public:
 				" held %llu of %llu MiB",
 				mebibytes(sample.ram_held_bytes),
 				mebibytes(sample.ram_bytes));
-		return std::string {line};
+		std::string text {line};
+		if (sample.gpu_memory_refusals)
+			text += " gpu-refusals " +
+				std::to_string(*sample.gpu_memory_refusals);
+		return text;
 	}
 
 private:

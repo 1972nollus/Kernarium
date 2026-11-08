@@ -150,7 +150,8 @@ struct AppEntry {
         case "boot-restart":
             boot(.restart, stage: 3, seconds: 8)
         case "session", "session-tip", "session-open", "session-keyboard", "session-stats",
-             "session-power", "session-setup", "session-off", "session-left", "session-volume":
+             "session-power", "session-setup", "session-off", "session-left", "session-volume",
+             "session-graphics-notice":
             model.session.showStats = screen == "session-stats"
             model.session.sideKeysOpen = ["session-open", "session-off", "session-left", "session-volume"].contains(screen)
             model.sessionPreset = SessionPreset(
@@ -167,6 +168,7 @@ struct AppEntry {
                 }()
             )
             model.phase = .running(.normal)
+            if screen == "session-graphics-notice" { model.previewGraphicsNotice() }
         case "settings", "settings-adb-off", "settings-adb-no-address", "settings-adb", "settings-stats",
              "install-apk", "install-done", "install-failed", "install-not-apk", "install-bundle", "bug-report":
             let session = model.session

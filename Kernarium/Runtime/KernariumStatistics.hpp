@@ -33,14 +33,16 @@ struct DisplayFigures final {
 
 /* One reading. `guest` is the emulator's, `display` the GPU service's (none
  * when no service is registered, which reads as no frames), `bootIndex` the
- * restart count of the launch's guest, and `timestampNs` the steady clock when
- * the guest's CPU time was read. */
+ * restart count of the launch's guest, `timestampNs` the steady clock when
+ * the guest's CPU time was read, and `memoryRefusals` the GPU service's count
+ * of graphics allocations the guest was refused (none reads as 0). */
 [[nodiscard]] constexpr kernarium_runtime_statistics reading(
     const uml_emulator_statistics& guest,
     std::optional<DisplayFigures> display,
     std::optional<bool> scanout,
     std::uint32_t bootIndex,
-    std::uint64_t timestampNs) noexcept
+    std::uint64_t timestampNs,
+    std::optional<std::uint64_t> memoryRefusals = std::nullopt) noexcept
 {
     kernarium_runtime_statistics result {};
     result.struct_size = sizeof(result);
@@ -53,6 +55,7 @@ struct DisplayFigures final {
     result.offered_frames = display ? display->offeredFrames : 0U;
     result.memory_bytes = guest.guest_ram_bytes;
     result.memory_held_bytes = guest.guest_ram_held_bytes;
+    result.gpu_memory_refusals = memoryRefusals.value_or(0U);
     return result;
 }
 

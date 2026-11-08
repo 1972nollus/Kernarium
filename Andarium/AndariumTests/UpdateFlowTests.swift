@@ -58,6 +58,16 @@ final class StubDriver: RuntimeDriver {
         return memories[min(memoryAsked, memories.count - 1)]
     }
 
+    /// What the refusal-count readings answer, in turn, the last one
+    /// repeating; nothing until a test scripts them.
+    var refusalCounts: [UInt64?] = []
+    private(set) var refusalsAsked = 0
+    func readGraphicsRefusals() async -> UInt64? {
+        defer { refusalsAsked += 1 }
+        guard !refusalCounts.isEmpty else { return nil }
+        return refusalCounts[min(refusalsAsked, refusalCounts.count - 1)]
+    }
+
     /// What a bug report or an install does when the model asks.
     var bugReport: (@Sendable (@Sendable (BusyUpdate) -> Void) async throws -> URL) = { _ in
         throw CancellationError()

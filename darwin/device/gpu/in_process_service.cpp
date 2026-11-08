@@ -116,6 +116,14 @@ public:
         return display_->statistics();
     }
 
+    std::optional<std::uint64_t> memoryRefusals() const noexcept
+    {
+        std::lock_guard lock(displayMutex_);
+        if (!display_)
+            return std::nullopt;
+        return display_->memoryRefusals();
+    }
+
     std::string takeConnectionName()
     {
         std::lock_guard lock(connectionMutex_);
@@ -385,6 +393,12 @@ std::optional<DisplayStatistics> InProcessGpuService::displayStatistics()
     const noexcept
 {
     return implementation_->displayStatistics();
+}
+
+std::optional<std::uint64_t> InProcessGpuService::memoryRefusals()
+    const noexcept
+{
+    return implementation_->memoryRefusals();
 }
 
 } // namespace uml::gpu

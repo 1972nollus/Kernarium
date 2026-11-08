@@ -535,10 +535,23 @@ final class LiveRuntime: RuntimeDriver {
         }
     }
 
+    func readGraphicsRefusals() async -> UInt64? {
+        await withCheckedContinuation { continuation in
+            statsQueue.async { continuation.resume(returning: Self.graphicsRefusalsReading()) }
+        }
+    }
+
     func readGuestMemory() async -> GuestMemorySample? {
         await withCheckedContinuation { continuation in
             statsQueue.async { continuation.resume(returning: Self.guestMemoryReading()) }
         }
+    }
+
+    private nonisolated static func graphicsRefusalsReading() -> UInt64? {
+        var reading = kernarium_runtime_statistics()
+        reading.struct_size = UInt32(MemoryLayout<kernarium_runtime_statistics>.size)
+        guard kernarium_runtime_loader_read_statistics(&reading) == 0 else { return nil }
+        return reading.gpu_memory_refusals
     }
 
     private nonisolated static func statisticsReading() -> StatsSample? {
