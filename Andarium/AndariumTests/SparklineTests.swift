@@ -19,6 +19,21 @@ struct SparklineTests {
         #expect(Array(slots.suffix(2)) == [40, 55])
     }
 
+    @Test func theFreshPreviewSessionShowsDashesAndHoldsStill() {
+        var readout = Readout(previewReadings: 0, memoryMiB: 2048)
+        readout.tick(memoryMiB: 2048)
+        #expect(readout.history.isEmpty)
+        #expect(readout.cpuText == Readout.unknown)
+        #expect(Sparkline.slotValues(readout.history, slots: StatsMeter.historyLength).allSatisfy { $0 == nil })
+    }
+
+    @Test func aShortPreviewSessionKeepsItsReadings() {
+        var readout = Readout(previewReadings: 3, memoryMiB: 2048)
+        readout.tick(memoryMiB: 2048)
+        #expect(readout.history.count == 3)
+        #expect(readout.cpu == readout.history.last)
+    }
+
     @Test func aLongHistoryKeepsTheNewestValues() {
         let slots = Sparkline.slotValues(Array(1...12), slots: 10)
         #expect(slots == Array(3...12).map { Optional($0) })
