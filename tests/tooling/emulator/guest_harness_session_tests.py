@@ -202,6 +202,39 @@ class AttachedGuestSessionTests(unittest.TestCase):
         self.assertIn(b"sink-marker", sink.getvalue())
         self.assertEqual(sink.getvalue(), bytes(guest._transcript))
 
+    def test_separate_host_output_keeps_diagnostics_out_of_guest_lines(
+        self,
+    ) -> None:
+        # The stand-in writes a guest line in two parts, a host diagnostic
+        # between them, and then says whether its stderr is the terminal.
+        self.emulator.write_text(
+            "#!/bin/sh\n"
+            "printf 'PASS swp/a probe line: r'\n"
+            "printf 'Darwin host fault: signal=4\\n' >&2\n"
+            "printf 'aises SIGILL\\n'\n"
+            "if [ -t 2 ]; then echo 'stderr is the terminal' >&2; fi\n"
+            "exit 3\n",
+            encoding="utf-8",
+        )
+        with guest_support.ConsoleProcess(
+            [str(self.emulator)], separate_host_output=True
+        ) as process:
+            self.assertTrue(process.wait_for_exit(PROCESS_WAIT_SECONDS))
+            self.assertEqual(
+                process.output(), "PASS swp/a probe line: raises SIGILL"
+            )
+            self.assertEqual(
+                process.host_output(), "Darwin host fault: signal=4"
+            )
+            self.assertEqual(process.return_code, 3)
+        with guest_support.ConsoleProcess([str(self.emulator)]) as process:
+            self.assertTrue(process.wait_for_exit(PROCESS_WAIT_SECONDS))
+            self.assertIn(
+                "rDarwin host fault: signal=4\naises SIGILL", process.output()
+            )
+            self.assertIn("stderr is the terminal", process.output())
+            self.assertEqual(process.host_output(), "")
+
     def test_a_timed_out_command_keeps_what_it_printed(self) -> None:
         self.emulator.write_text("#!/bin/sh\nexec /bin/sh\n", encoding="utf-8")
         guest = guest_support.Guest(

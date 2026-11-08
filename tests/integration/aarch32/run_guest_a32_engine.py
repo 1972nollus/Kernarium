@@ -16,10 +16,13 @@ the probe, and the extension's instructions must raise SIGILL instead.
 
 The runner boots the probe aligned to 64 KiB and the one aligned to 4 KiB
 only, and fails on any failed check, any SIGILL the probe did not expect (a
-guest illegal instruction is a blocker) and any crash of the guest or the
-emulator. --groups selects probe groups by hand (A32_PROBE_GROUPS in the
-guest), and A32_PROBE_VERBOSE=1 makes the runner print every line of the
-guest's output, passes included.
+guest illegal instruction is a blocker), any crash of the guest or the
+emulator, and an emulator that does not power off with status 0. The
+emulator's diagnostics come on a stream of their own, and the probe's lines
+are read with the kernel's console lines taken out, since one can reach the
+host inside a probe line (check_boot). --groups selects probe groups by hand
+(A32_PROBE_GROUPS in the guest), and A32_PROBE_VERBOSE=1 makes the runner
+print every line of the guest's output, passes included.
 """
 
 from __future__ import annotations
@@ -31,23 +34,88 @@ import os
 import pathlib
 import re
 import sys
+import time
 
 # The harness's directory.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "support"))
 
-from guest import ConsoleProcess, emulator_arguments  # noqa: E402
+from guest import (  # noqa: E402
+    KERNEL_LINE, ConsoleProcess, emulator_arguments, require_host_fast_paths)
 
 
 SUMMARY = re.compile(
-    rb"a32-engine-probe: (?P<failures>\d+) failure\(s\) in (?P<checks>\d+) "
-    rb"check\(s\), sigill expected (?P<expected>\d+) unexpected "
-    rb"(?P<unexpected>\d+)"
+    r"^a32-engine-probe: (?P<failures>\d+) failure\(s\) in (?P<checks>\d+) "
+    r"check\(s\), sigill expected (?P<expected>\d+) unexpected "
+    r"(?P<unexpected>\d+)$", re.MULTILINE
 )
 # The probe's own lines are not host crashes, whatever they name.
 PROBE_LINE = re.compile(r"^(PASS|FAIL|SKIP|NOTE) |^a32-engine-probe: ")
 HOST_CRASH = re.compile(
     r"SIGILL|[Ii]llegal instruction|host fault|Kernel panic|"
     r"Attempted to kill init|segfault at")
+# A kernel line can land between any two bytes of a probe line (guest.py says
+# why), so kernel lines are found wherever they start.
+KERNEL_RECORD = re.compile(KERNEL_LINE.decode())
+# How long the probe has to power the guest off once it has reported.
+POWER_OFF_SECONDS = 60
+# How much of the console's end a boot without a summary prints.
+SUMMARY_CONTEXT_LINES = 20
+
+
+def console_parts(console: str) -> tuple[list[str], list[str]]:
+    """The kernel's lines in the guest's console output, and the probe's own
+    lines, rejoined where a kernel line had split one."""
+    console += "\n"
+    records = [record.rstrip("\r\n")
+               for record in KERNEL_RECORD.findall(console)]
+    return records, KERNEL_RECORD.sub("", console).splitlines()
+
+
+def crashes(console: str, host: str) -> list[str]:
+    """Every line that reports a crash of the guest or the emulator: any
+    diagnostic of the emulator's, any kernel line, and any other line of the
+    console that is not the probe's own, which names one."""
+    records, lines = console_parts(console)
+    return ([line for line in host.splitlines() if HOST_CRASH.search(line)]
+            + [record for record in records if HOST_CRASH.search(record)]
+            + [line for line in lines
+               if HOST_CRASH.search(line) and not PROBE_LINE.match(line)])
+
+
+def check_boot(label: str, console: str, host: str, status: int | None,
+               verbose: bool = False) -> int:
+    """Judge one boot from the guest's console output, the emulator's own
+    output and its exit status (None if it never exited), and return the
+    failures and unexpected SIGILLs the probe reported."""
+    require_host_fast_paths(host)
+    _, lines = console_parts(console)
+    for line in lines:
+        # Failures and skips are the news; the passes are a count, unless
+        # A32_PROBE_VERBOSE asks for every line of the guest's output.
+        if verbose or line.startswith(
+                ("FAIL ", "SKIP ", "NOTE ", "a32-engine-probe: ")):
+            print(line)
+    found = crashes(console, host)
+    if found:
+        print("\n".join(found))
+        raise RuntimeError(f"{label}: the guest or the emulator crashed")
+    if status != 0:
+        raise RuntimeError(
+            f"{label}: the emulator did not power off cleanly "
+            f"(status {status})")
+    match = SUMMARY.search("\n".join(lines))
+    if match is None:
+        print("\n".join(lines[-SUMMARY_CONTEXT_LINES:]))
+        raise RuntimeError(f"{label}: the probe reported no summary")
+    if int(match.group("checks")) == 0:
+        raise RuntimeError(f"{label}: the probe ran no checks")
+    failures = int(match.group("failures"))
+    unexpected = int(match.group("unexpected"))
+    print(f"{label}: {match.group('checks')} check(s), "
+          f"{failures} failure(s), SIGILLs expected "
+          f"{match.group('expected')} unexpected {unexpected}",
+          flush=True)
+    return failures + unexpected
 
 
 def run_probe(arguments: argparse.Namespace, label: str,
@@ -65,32 +133,21 @@ def run_probe(arguments: argparse.Namespace, label: str,
     command.insert(command.index(str(arguments.emulator)) + 1,
                    f"--guest-init={elf}")
     print(f"== {arguments.engine}: {label}", flush=True)
-    with ConsoleProcess(command) as guest:
-        match = guest._read_until(SUMMARY, arguments.timeout)
-        guest.wait_for_exit(60)
-        output = guest.output()
-    lines = output.splitlines()
-    verbose = bool(os.environ.get("A32_PROBE_VERBOSE"))
-    for line in lines:
-        # Failures and skips are the news; the passes are a count, unless
-        # A32_PROBE_VERBOSE asks for every line of the guest's output.
-        if verbose or line.startswith(
-                ("FAIL ", "SKIP ", "NOTE ", "a32-engine-probe: ")):
-            print(line)
-    crashes = [line for line in lines
-               if HOST_CRASH.search(line) and not PROBE_LINE.match(line)]
-    if crashes:
-        print("\n".join(crashes))
-        raise RuntimeError(f"{label}: the guest or the emulator crashed")
-    if int(match.group("checks")) == 0:
-        raise RuntimeError(f"{label}: the probe ran no checks")
-    failures = int(match.group("failures"))
-    unexpected = int(match.group("unexpected"))
-    print(f"{label}: {match.group('checks').decode()} check(s), "
-          f"{failures} failure(s), SIGILLs expected "
-          f"{match.group('expected').decode()} unexpected {unexpected}",
-          flush=True)
-    return failures + unexpected
+    with ConsoleProcess(command, separate_host_output=True) as guest:
+        deadline = time.monotonic() + arguments.timeout
+        while not guest.wait_for_exit(1):
+            if SUMMARY.search("\n".join(console_parts(guest.output())[1])):
+                break
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"{label}: the probe did not report in "
+                    f"{arguments.timeout}s")
+        # The probe powers the guest off once it has reported.
+        guest.wait_for_exit(POWER_OFF_SECONDS)
+        console, host = guest.output(), guest.host_output()
+        status = guest.return_code
+    return check_boot(label, console, host, status,
+                      bool(os.environ.get("A32_PROBE_VERBOSE")))
 
 
 def main() -> int:
