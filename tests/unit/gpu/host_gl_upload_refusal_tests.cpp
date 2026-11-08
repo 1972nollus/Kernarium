@@ -57,7 +57,7 @@ out vec4 tint;
 void main()
 {
     tint = values[index & 2047];
-    gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+    gl_Position = vec4(-0.75, -0.75, 0.0, 1.0);
     gl_PointSize = 1.0;
 }
 )";
@@ -79,7 +79,8 @@ void main()
         uml::platform::hostGraphicsFootprintBytes());
 }
 
-// Draws a point of the colour in values[0] into the bound target.
+// Draws a point at the first pixel of the bound target, in the colour of
+// values[index & 2047].
 void drawPoint(GLint indexLocation, int index)
 {
     glUniform1i(indexLocation, index);
