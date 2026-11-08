@@ -258,10 +258,10 @@ driver caches and is decided again.
   makes for the guest is reserved before its pages are made; imported memory is
   not charged; command, descriptor and query pools, presentation, the VNC
   surface and decoder surfaces are counted once Metal does and never refused.
-- OpenGL: a refused texture or buffer fails the creation with `ENOMEM` but the
-  guest kernel's creation ioctl does not read that answer, so the guest gets a
-  texture with no storage and no error. The context, the renderer and every
-  resource made within the budget stay as they were
+- OpenGL: a refused texture or buffer fails the creation with `ENOMEM`, which
+  the device answers as out of memory. The guest kernel fails the creation
+  ioctl and the guest's GL driver reports `GL_OUT_OF_MEMORY`. The context, the
+  renderer and every resource made within the budget stay as they were
   (`gpu-host-gl-device-memory-budget`).
 - Venus: the guest driver submits `vkAllocateMemory` asynchronously, so a
   refusal reaches the guest as a failed context at the next command naming the
