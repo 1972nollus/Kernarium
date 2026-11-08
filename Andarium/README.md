@@ -264,7 +264,11 @@ requires reopening Andarium.
   swipe a broken app away in Recents, which restarts the process that lost its
   graphics. `GraphicsNotice` decides: the first reading is a baseline, and
   refusals less than a minute apart are one burst, which shows one notice
-  whether or not it was dismissed. Recovery runs no app and is not read.
+  whether or not it was dismissed. Recovery runs no app and is not read. In the
+  same loop `GraphicsReclaim` frees the budget silently: when it stays nearly
+  full or the guest is refused, it ends the cached background app that holds
+  the most, over the guest's shell. It acts only on a holder the guest kernel
+  names by process, never on the foreground, visible, perceptible or home app.
 - **Session ends.** The runtime records how each session ended
   ([`docs/architecture.md`](../docs/architecture.md)). The next launch keeps
   that record as the previous session's (`PreviousSession`) and, after an end

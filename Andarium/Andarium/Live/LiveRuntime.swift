@@ -551,10 +551,53 @@ final class LiveRuntime: RuntimeDriver {
         }
     }
 
+    func readGraphicsMemory(minimumIdle: Duration, minimumBytes: UInt64) async -> GraphicsMemoryReading? {
+        let (seconds, attoseconds) = minimumIdle.components
+        let idle = UInt32(clamping: max(seconds, 0) * 1000 + max(attoseconds, 0) / 1_000_000_000_000_000)
+        return await withCheckedContinuation { continuation in
+            statsQueue.async {
+                continuation.resume(
+                    returning: Self.graphicsMemoryReading(minimumIdleMilliseconds: idle, minimumBytes: minimumBytes))
+            }
+        }
+    }
+
+    func reclaimGraphicsMemory(_ reading: GraphicsMemoryReading, using policy: GraphicsReclaim) async
+        -> GraphicsReclaimResult
+    {
+        await policy.reclaim(from: reading, shell: AdbGuestShell(operations: operations))
+    }
+
     func readGuestMemory() async -> GuestMemorySample? {
         await withCheckedContinuation { continuation in
             statsQueue.async { continuation.resume(returning: Self.guestMemoryReading()) }
         }
+    }
+
+    private nonisolated static func graphicsMemoryReading(
+        minimumIdleMilliseconds: UInt32, minimumBytes: UInt64
+    ) -> GraphicsMemoryReading? {
+        var reading = kernarium_runtime_graphics_memory()
+        reading.struct_size = UInt32(MemoryLayout<kernarium_runtime_graphics_memory>.size)
+        reading.minimum_idle_ms = minimumIdleMilliseconds
+        reading.minimum_holder_bytes = minimumBytes
+        guard kernarium_runtime_loader_read_graphics_memory(&reading) == 0 else { return nil }
+        let count = Int(min(reading.holder_count, UInt32(KERNARIUM_RUNTIME_GRAPHICS_HOLDERS)))
+        let holders = withUnsafeBytes(of: &reading.holders) { raw -> [GraphicsHolder] in
+            let table = raw.bindMemory(to: kernarium_runtime_graphics_holder.self)
+            return (0..<count).map { index in
+                var entry = table[index]
+                let name = withUnsafeBytes(of: &entry.name) { bytes in
+                    String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+                }
+                return GraphicsHolder(
+                    pid: entry.pid, contexts: entry.context_count, bytes: entry.bytes,
+                    idle: .milliseconds(entry.idle_ms), name: name)
+            }
+        }
+        return GraphicsMemoryReading(
+            budgetBytes: reading.budget_bytes, usageBytes: reading.usage_bytes, contextBytes: reading.context_bytes,
+            refusals: reading.memory_refusals, holders: holders)
     }
 
     private nonisolated static func graphicsRefusalsReading() -> UInt64? {
