@@ -22,6 +22,10 @@ struct AppEntry {
     /// taking the access as given, so `simctl privacy` and the system's
     /// alert drive it as they drive the device's.
     var systemMicrophone: Bool
+    /// How many CPU readings the stats overlay and Settings' Stats rows
+    /// start with, and hold: 0 is a session before its first reading. Absent,
+    /// the mock readings run on.
+    var statsReadings: Int?
 
     static func fromArguments() -> AppEntry {
         let defaults = UserDefaults.standard
@@ -31,7 +35,8 @@ struct AppEntry {
             lowSpace: defaults.bool(forKey: "lowSpace"),
             resetTips: defaults.bool(forKey: "resetTips"),
             bootStage: defaults.string(forKey: "bootStage").flatMap { Int($0) },
-            systemMicrophone: defaults.bool(forKey: "systemMicrophone")
+            systemMicrophone: defaults.bool(forKey: "systemMicrophone"),
+            statsReadings: defaults.string(forKey: "statsReadings").flatMap { Int($0) }
         )
     }
 
@@ -217,6 +222,11 @@ struct AppEntry {
             model.fail()
         default:
             break
+        }
+        if let statsReadings {
+            model.session.readout = Readout(
+                previewReadings: statsReadings, memoryMiB: model.guest?.memoryMiB ?? Limits.defaultMemoryRangeMiB.lowerBound
+            )
         }
         if systemMicrophone { useSystemMicrophone(in: model) }
         return model

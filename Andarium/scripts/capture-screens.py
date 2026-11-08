@@ -174,6 +174,8 @@ SHOTS: list[Shot] = [
     s("session-power-menu", "Guest", "session-power", "Android's power menu."),
     s("session-keyboard", "Guest", "session-keyboard", "The guest's own keyboard up over its search."),
     s("session-stats", "Guest", "session-stats", "The CPU, memory and frame rate readout drawn over the guest."),
+    s("session-stats-fresh", "Guest", "session-stats", "The readout before the session's first reading: every figure a dash, the CPU bars all dimmed floor bars.", "-statsReadings", "0"),
+    s("session-stats-short", "Guest", "session-stats", "The readout after three CPU readings: the bars fill from the right, the older slots stay dimmed floor bars.", "-statsReadings", "3"),
     s("session-graphics-notice", "Guest", "session-graphics-notice", "The notice over the running guest that Android ran out of graphics memory."),
     s("session-setup", "Guest", "session-setup", "The guest's own first-run setup screen."),
     s("session-off", "Guest", "session-off", "The guest's screen after it powered off."),
@@ -187,6 +189,7 @@ SHOTS: list[Shot] = [
     # Settings during a session
     s("settings", "Settings", "settings", "Settings at full height: Stats, Apps, Developer and Diagnostics.", dark=True),
     s("settings-stats", "Settings", "settings-stats", "Settings scrolled to Stats."),
+    s("settings-stats-short", "Settings", "settings-stats", "Settings scrolled to Stats after three CPU readings: the bars fill from the right.", "-statsReadings", "3"),
     system_mic("home-mic-system-prompt", "Capabilities", "home-mic-alert", "The system's own question when Microphone is turned on for the first time (the Simulator's alert).", "reset"),
     system_mic("home-mic-system-allowed", "Capabilities", "home-mic-on", "Microphone on after iOS allowed it.", "grant"),
     system_mic("home-mic-system-refused", "Capabilities", "home-capabilities", "Microphone after iOS refused it: the row is dimmed and says it is not allowed in Settings.", "revoke"),
