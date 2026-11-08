@@ -288,6 +288,9 @@ it. The bridge fields used below are defined by the comments in
   XRGB8888 (the first format) and the host ignores the alpha byte; the
   [Android product](../mainline-6.18/README.md#android-product) offers the other
   32-bit RGB orders.
+- The Virtio sound driver runs a substream's elapsed-period work on its
+  device's kthread worker (`virtsnd-<device>`) at the lowest real-time
+  priority, not on the system workqueue.
 
 ## Suspend, wake and the management console
 
