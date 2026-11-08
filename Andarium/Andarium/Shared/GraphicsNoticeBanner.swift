@@ -48,7 +48,7 @@ struct GraphicsNoticeOverlay: View {
         ZStack {
             if model.graphicsNotice.isShowing {
                 GraphicsNoticeBanner { model.dismissGraphicsNotice() }
-                    .padding(.top, model.session.showStats ? 84 : 36)
+                    .padding(.top, StatsPlacement.noticeTop(statsShowing: model.session.showStats))
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
