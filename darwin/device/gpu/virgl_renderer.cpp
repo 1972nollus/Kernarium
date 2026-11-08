@@ -82,6 +82,11 @@ std::atomic<std::uint64_t> deviceMemoryLimit;
 // renderer replaces it only once the one before has been cleaned up.
 std::unique_ptr<DeviceMemoryPool> deviceMemoryPool;
 
+// Who is told of each allocation the pool refused a Venus guest. Set while a
+// renderer exists; the render server's threads read it.
+std::atomic<VirglRenderer::MemoryRefusalObserver> memoryRefusalObserver;
+std::atomic<void*> memoryRefusalObserverData;
+
 #if !UML_GPU_SOFTWARE_RENDERER
 std::uint64_t deviceMemoryPoolUsage(void* data) noexcept
 {
@@ -96,6 +101,14 @@ bool reserveDeviceMemory(void* data, std::uint64_t size) noexcept
 void releaseDeviceMemory(void* data, std::uint64_t size) noexcept
 {
     static_cast<DeviceMemoryPool*>(data)->release(size);
+}
+
+void deviceMemoryRefused(void*) noexcept
+{
+    if (const auto observer =
+            memoryRefusalObserver.load(std::memory_order_acquire)) {
+        observer(memoryRefusalObserverData.load(std::memory_order_relaxed));
+    }
 }
 #endif
 
@@ -327,6 +340,7 @@ VirglRenderer::VirglRenderer()
                 .usage = &deviceMemoryPoolUsage,
                 .reserve = &reserveDeviceMemory,
                 .release = &releaseDeviceMemory,
+                .refused = &deviceMemoryRefused,
             };
             virgl_renderer_set_device_memory_pool(&pool);
         } else {
@@ -381,8 +395,21 @@ VirglRenderer::VirglRenderer()
     }
 }
 
+void VirglRenderer::setMemoryRefusalObserver(
+    MemoryRefusalObserver observer, void* data) noexcept
+{
+    if (observer == nullptr)
+        memoryRefusalObserver.store(nullptr, std::memory_order_release);
+    memoryRefusalObserverData.store(data, std::memory_order_relaxed);
+    if (observer != nullptr)
+        memoryRefusalObserver.store(observer, std::memory_order_release);
+}
+
 VirglRenderer::~VirglRenderer()
 {
+    // The render server's threads stop with the cleanup below, and nothing
+    // they report is wanted after that.
+    setMemoryRefusalObserver(nullptr, nullptr);
     if (deviceMemoryPool)
         deviceMemoryPool->setReclaim({});
     virgl_renderer_cleanup(this);

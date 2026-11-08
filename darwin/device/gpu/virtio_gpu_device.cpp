@@ -392,6 +392,15 @@ VirtioGpuDevice::VirtioGpuDevice(
 {
     sharedMemoryActions_.reserve(protocol::maximumHostVisibleBlobResources);
     blobMappingOwners_.resize(protocol::maximumHostVisibleBlobResources);
+    /* A Venus guest's allocation is decided on the render server's thread,
+     * long after the guest's command left this device, so the renderer
+     * reports a refusal to the display itself. It stops when the renderer
+     * goes, with this device. */
+    VirglRenderer::setMemoryRefusalObserver(
+        [](void* display) noexcept {
+            static_cast<Display*>(display)->recordMemoryRefusal();
+        },
+        &display_);
 }
 #endif
 

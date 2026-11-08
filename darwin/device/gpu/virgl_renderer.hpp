@@ -86,6 +86,13 @@ public:
      * zero for no bound. Takes effect for the next renderer constructed. */
     static void setDeviceMemoryLimit(std::uint64_t bytes) noexcept;
 
+    /* Called, from the render server's threads, for each allocation of a
+     * Venus guest that failed for want of device memory, after the pool had
+     * freed what it could. Cleared when the renderer goes. */
+    using MemoryRefusalObserver = void (*)(void* data) noexcept;
+    static void setMemoryRefusalObserver(
+        MemoryRefusalObserver observer, void* data) noexcept;
+
     VirglRenderer(const VirglRenderer&) = delete;
     VirglRenderer& operator=(const VirglRenderer&) = delete;
 
