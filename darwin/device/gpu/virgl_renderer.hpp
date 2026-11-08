@@ -93,6 +93,16 @@ public:
     static void setMemoryRefusalObserver(
         MemoryRefusalObserver observer, void* data) noexcept;
 
+    /* Called, from the render server's threads, whenever the device memory a
+     * Venus context's guest holds changes: its size when an allocation
+     * succeeds and minus that size when the memory is freed or the context
+     * goes. Memory the host driver only imports is not reported. Cleared
+     * when the renderer goes. */
+    using MemoryAccountObserver = void (*)(
+        void* data, std::uint32_t contextId, std::int64_t delta) noexcept;
+    static void setMemoryAccountObserver(
+        MemoryAccountObserver observer, void* data) noexcept;
+
     /* The device memory budget and what the process holds against it, while
      * a renderer with a budget exists; any thread. Nothing without one. The
      * usage is the pool's own, which is what the budget refuses by: the
@@ -180,6 +190,10 @@ public:
         std::uint32_t ringIndex,
         std::uint64_t fenceCookie) noexcept;
     void unrefResource(std::uint32_t resourceId) noexcept;
+    /* The bytes a Virgl resource's storage takes on the host; 0 for a
+     * resource with none of its own. */
+    [[nodiscard]] std::uint64_t resourceStorageBytes(
+        std::uint32_t resourceId) noexcept;
     [[nodiscard]] int attachBacking(
         std::uint32_t resourceId,
         std::span<iovec> backing) noexcept;

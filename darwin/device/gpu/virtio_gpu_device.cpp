@@ -67,6 +67,32 @@ namespace {
 #define UML_GPU_DISPLAY display_
 #define UML_GPU_VENUS_OFFERED (UML_GPU_SOFTWARE_RENDERER == 0)
 #endif
+/* What the guest's contexts hold of the host GPU's memory (the display keeps
+ * it, since the display outlives this connection). */
+#define UML_GPU_LEDGER UML_GPU_DISPLAY.graphicsLedger()
+
+/* A resource's room in the ledger, given back unless the command commits. */
+class LedgerReservation {
+public:
+    LedgerReservation(ContextMemoryLedger& ledger, std::uint32_t resourceId)
+        : ledger_(ledger), resourceId_(resourceId)
+    {
+        ledger_.reserveResource(resourceId_);
+    }
+    LedgerReservation(const LedgerReservation&) = delete;
+    LedgerReservation& operator=(const LedgerReservation&) = delete;
+    ~LedgerReservation()
+    {
+        if (!committed_)
+            ledger_.resourceReleased(resourceId_);
+    }
+    void commit() noexcept { committed_ = true; }
+
+private:
+    ContextMemoryLedger& ledger_;
+    std::uint32_t resourceId_;
+    bool committed_ {};
+};
 
 /* A blob scanout the renderer answered with a native Metal texture is backed
  * by a host allocation; the descriptor the guest exported for it names that
@@ -401,6 +427,15 @@ VirtioGpuDevice::VirtioGpuDevice(
             static_cast<Display*>(display)->recordMemoryRefusal();
         },
         &display_);
+    /* The same thread reports the device memory a Venus context holds, and
+     * the display's ledger credits it to the context. */
+    VirglRenderer::setMemoryAccountObserver(
+        [](void* ledger, std::uint32_t contextId,
+            std::int64_t delta) noexcept {
+            static_cast<ContextMemoryLedger*>(ledger)->venusMemory(
+                contextId, delta);
+        },
+        &display_.graphicsLedger());
 }
 #endif
 
@@ -574,6 +609,7 @@ void VirtioGpuDevice::reset() noexcept
     for (const auto contextId : contexts_)
         UML_GPU_RENDERER.destroyContext(contextId);
     UML_GPU_RENDERER.resetFenceState();
+    UML_GPU_LEDGER.clear();
     contexts_.clear();
     venusContexts_.clear();
     virglResources_.clear();
@@ -1061,15 +1097,23 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         const std::string_view debugName(
             create->debugName.data(), create->nameLength);
         auto success = response(*header, protocol::GpuResponse::okNoData);
-        /* A Venus context is named by both sets, so it enters both or
-         * neither: a create that runs out of memory leaves no trace, and the
-         * guest's retry of the same ID succeeds. */
+        /* A Venus context is named by both sets and the ledger, so it enters
+         * all of them or none: a create that runs out of memory leaves no
+         * trace, and the guest's retry of the same ID succeeds. The ledger
+         * knows the context before the renderer does, since the renderer
+         * reports the context's device memory from its first allocation. */
         try {
             contexts_.insert(create->header.contextId);
             if (requestedCapset == protocol::venusCapsetId)
                 venusContexts_.insert(create->header.contextId);
+            UML_GPU_LEDGER.contextCreated(
+                create->header.contextId,
+                debugName,
+                requestedCapset == protocol::venusCapsetId,
+                ContextMemoryLedger::Clock::now());
         } catch (const std::bad_alloc&) {
             contexts_.erase(create->header.contextId);
+            venusContexts_.erase(create->header.contextId);
             return response(
                 *header, protocol::GpuResponse::errorOutOfMemory);
         }
@@ -1077,6 +1121,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 create->header.contextId,
                 rendererContextInit,
                 debugName) != 0) {
+            UML_GPU_LEDGER.contextDestroyed(create->header.contextId);
             contexts_.erase(create->header.contextId);
             venusContexts_.erase(create->header.contextId);
             return response(
@@ -1093,6 +1138,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         }
         auto success = response(*header, protocol::GpuResponse::okNoData);
         UML_GPU_RENDERER.destroyContext(header->contextId);
+        UML_GPU_LEDGER.contextDestroyed(header->contextId);
         contexts_.erase(header->contextId);
         venusContexts_.erase(header->contextId);
         if (destroyedContextId != nullptr)
@@ -1123,9 +1169,21 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 *header, protocol::GpuResponse::okNoData);
             if (virglResources_.contains(contextResource->resourceId) ||
                 blobResources_.contains(contextResource->resourceId)) {
+                bool credited = false;
+                try {
+                    credited = UML_GPU_LEDGER.resourceAttached(
+                        header->contextId, contextResource->resourceId);
+                } catch (const std::bad_alloc&) {
+                    return response(
+                        *header, protocol::GpuResponse::errorOutOfMemory);
+                }
                 if (UML_GPU_RENDERER.attachResource(
                         header->contextId,
                         contextResource->resourceId) != 0) {
+                    if (credited) {
+                        UML_GPU_LEDGER.resourceDetached(
+                            header->contextId, contextResource->resourceId);
+                    }
                     return response(
                         *header, protocol::GpuResponse::errorUnspecified);
                 }
@@ -1155,6 +1213,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 return response(
                     *header, protocol::GpuResponse::errorUnspecified);
             }
+            UML_GPU_LEDGER.resourceDetached(
+                header->contextId, contextResource->resourceId);
         }
         return success;
     }
@@ -1181,6 +1241,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 *header, protocol::GpuResponse::errorInvalidContext);
         }
         auto success = response(*header, protocol::GpuResponse::okNoData);
+        UML_GPU_LEDGER.contextActive(
+            header->contextId, ContextMemoryLedger::Clock::now());
         const int submitResult = UML_GPU_RENDERER.submit(
             header->contextId,
             request.subspan(sizeof(*submit), submit->size));
@@ -1230,6 +1292,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         };
         auto success = response(*header, protocol::GpuResponse::okNoData);
         try {
+            UML_GPU_LEDGER.reserveResource(create->resourceId);
             virglResources_.emplace(
                 create->resourceId,
                 VirglResource {
@@ -1240,11 +1303,13 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                     .height = create->height,
                 });
         } catch (const std::bad_alloc&) {
+            UML_GPU_LEDGER.resourceReleased(create->resourceId);
             return response(
                 *header, protocol::GpuResponse::errorOutOfMemory);
         }
         if (const int created = UML_GPU_RENDERER.createResource3d(resource);
             created != 0) {
+            UML_GPU_LEDGER.resourceReleased(create->resourceId);
             virglResources_.erase(create->resourceId);
             /* The renderer reports a host driver with no room for the
              * resource's storage as ENOMEM, which is the one failure the
@@ -1262,6 +1327,9 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 noRoom ? protocol::GpuResponse::errorOutOfMemory
                        : protocol::GpuResponse::errorInvalidParameter);
         }
+        UML_GPU_LEDGER.setResourceBytes(
+            create->resourceId,
+            UML_GPU_RENDERER.resourceStorageBytes(create->resourceId));
         return success;
     }
 
@@ -1314,6 +1382,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
 
         try {
             auto success = response(*header, protocol::GpuResponse::okNoData);
+            LedgerReservation reservation(UML_GPU_LEDGER, create->resourceId);
             auto [iterator, inserted] = blobResources_.emplace(
                 create->resourceId,
                 BlobResource {
@@ -1352,6 +1421,9 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                     noRoom ? protocol::GpuResponse::errorOutOfMemory
                            : protocol::GpuResponse::errorInvalidParameter);
             }
+            UML_GPU_LEDGER.blobMade(
+                create->resourceId, header->contextId, create->size);
+            reservation.commit();
             return success;
         } catch (const std::bad_alloc&) {
             return response(
@@ -1496,6 +1568,10 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return response(
                 *header, protocol::GpuResponse::errorInvalidContext);
         }
+        if (header->contextId != protocol::invalidContextId) {
+            UML_GPU_LEDGER.contextActive(
+                header->contextId, ContextMemoryLedger::Clock::now());
+        }
         const auto resource =
             virglResources_.find(transfer->resourceId);
         if (resource == virglResources_.end()) {
@@ -1587,6 +1663,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             /* The renderer retains the resource's iovec array, so release its
              * reference before erasing the vector that owns that array. */
             UML_GPU_RENDERER.unrefResource(reference->resourceId);
+            UML_GPU_LEDGER.resourceReleased(reference->resourceId);
             virglResources_.erase(virgl);
             if (scanoutResource_ == reference->resourceId) {
                 clearScanout();
@@ -1612,6 +1689,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 return success;
             }
             UML_GPU_RENDERER.unrefResource(reference->resourceId);
+            UML_GPU_LEDGER.resourceReleased(reference->resourceId);
             blobResources_.erase(blob);
             return success;
         }
@@ -2336,6 +2414,7 @@ void VirtioGpuDevice::completeSharedMemoryAction(
             if (resource.retireAfterAction) {
                 const auto resourceId = iterator->first;
                 UML_GPU_RENDERER.unrefResource(resourceId);
+                UML_GPU_LEDGER.resourceReleased(resourceId);
                 blobResources_.erase(iterator);
             }
             return;

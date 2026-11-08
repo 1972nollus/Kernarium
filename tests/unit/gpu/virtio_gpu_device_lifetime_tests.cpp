@@ -16,6 +16,7 @@
 #include <optional>
 #include <source_location>
 #include <stdexcept>
+#include <string_view>
 #include <sys/event.h>
 #include <type_traits>
 #include <unordered_map>
@@ -487,6 +488,12 @@ public:
         ++unrefResourceCount;
     }
 
+    [[nodiscard]] std::uint64_t resourceStorageBytes(
+        std::uint32_t) noexcept override
+    {
+        return resourceStorage;
+    }
+
     [[nodiscard]] int attachBacking(
         std::uint32_t resourceId,
         std::span<iovec> backing) noexcept override
@@ -576,6 +583,8 @@ public:
     unsigned displayUpdateCount {};
     // A renderer without a Vulkan driver offers no Venus capset.
     bool venusOffered {true};
+    // What the renderer reports a Virgl resource to hold.
+    std::uint64_t resourceStorage {4U << 20U};
     unsigned createContextCount {};
     std::uint32_t lastContextFlags {};
     unsigned destroyContextCount {};
@@ -1198,6 +1207,170 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
         protocol::GpuCommand::resourceUnref);
     sweep = failEachAllocationBeforeCommit(device, requestBytes(reference));
     require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
+}
+
+[[nodiscard]] protocol::GpuContextCreate namedContext(
+    std::uint32_t contextId, std::string_view name, std::uint32_t contextInit)
+{
+    auto context = createContext(contextId, contextInit);
+    require(name.size() <= context.debugName.size());
+    std::memcpy(context.debugName.data(), name.data(), name.size());
+    context.nameLength = static_cast<std::uint32_t>(name.size());
+    return context;
+}
+
+/* The host GPU's memory is accounted by the guest context that holds it, as
+ * the guest's commands create, attach, release and destroy it, and a command
+ * that runs out of memory leaves the accounts as they were. */
+void theLedgerFollowsTheGuestsCommands()
+{
+    constexpr std::uint64_t mebibyte = 1U << 20U;
+    using Counts = ContextMemoryLedger::Counts;
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+    auto& ledger = dependencies.graphicsLedger();
+    const auto holder = [&](std::uint32_t pid) -> std::optional<std::uint64_t> {
+        const auto snapshot = ledger.snapshot(
+            ContextMemoryLedger::Clock::now(), 16,
+            ContextMemoryLedger::Clock::duration::zero(), 0);
+        for (const auto& entry : snapshot.holders) {
+            if (entry.pid == pid)
+                return entry.bytes;
+        }
+        return std::nullopt;
+    };
+
+    const auto allocator =
+        namedContext(11, "100:allocator", protocol::virglCapsetId);
+    const auto app = namedContext(12, "200:app", protocol::virglCapsetId);
+    const auto vulkan = namedContext(13, "300:vk", protocol::venusCapsetId);
+    for (const auto* context : {&allocator, &app, &vulkan}) {
+        const auto before = ledger.counts();
+        const auto sweep = failEachAllocationBeforeCommit(
+            device, requestBytes(*context),
+            [&] { return ledger.counts() == before; });
+        require(responseType(sweep.response) ==
+            protocol::GpuResponse::okNoData);
+        require(ledger.counts().contexts == before.contexts + 1);
+    }
+    require(ledger.counts() == Counts {3, 0});
+
+    /* A context the renderer refuses is not kept. */
+    dependencies.rejectNext(FakeGpuDependencies::Operation::create_context);
+    requireResponse(device,
+        requestBytes(namedContext(14, "400:x", protocol::virglCapsetId)),
+        protocol::GpuResponse::errorInvalidContext);
+    require(ledger.counts() == Counts {3, 0});
+
+    /* A resource no context holds yet is no one's. */
+    const auto rendered = create3d(601);
+    auto sweep = failEachAllocationBeforeCommit(
+        device, requestBytes(rendered),
+        [&] { return ledger.counts() == Counts {3, 0}; });
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
+    require(ledger.counts() == Counts {3, 1} && ledger.totalBytes() == 0);
+
+    auto association = newRequest<protocol::GpuContextResource>(
+        GpuCommand::contextAttachResource);
+    association.header.contextId = allocator.header.contextId;
+    association.resourceId = rendered.resourceId;
+    dependencies.rejectNext(FakeGpuDependencies::Operation::attach_resource);
+    requireResponse(device, requestBytes(association),
+        protocol::GpuResponse::errorUnspecified);
+    require(ledger.totalBytes() == 0 && !holder(100),
+        "an attach the renderer refused was credited");
+    sweep = failEachAllocationBeforeCommit(
+        device, requestBytes(association),
+        [&] { return ledger.totalBytes() == 0 && !holder(100); });
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
+    require(holder(100) == 4 * mebibyte && ledger.totalBytes() == 4 * mebibyte);
+
+    /* A second holder shares the bytes and does not add to the total, and
+     * its extra bookkeeping is made before the command commits. */
+    association.header.contextId = app.header.contextId;
+    dependencies.rejectNext(FakeGpuDependencies::Operation::attach_resource);
+    requireResponse(device, requestBytes(association),
+        protocol::GpuResponse::errorUnspecified);
+    require(!holder(200), "a second attach the renderer refused was credited");
+    sweep = failEachAllocationBeforeCommit(
+        device, requestBytes(association),
+        [&] { return !holder(200) && dependencies.attachResourceCount == 1; });
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
+    require(holder(200) == 4 * mebibyte && holder(100) == 4 * mebibyte &&
+            ledger.totalBytes() == 4 * mebibyte,
+        "a resource two contexts hold was not shared");
+
+    association.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::contextDetachResource);
+    requireOk(device, requestBytes(association));
+    require(!holder(200) && holder(100) == 4 * mebibyte,
+        "a detach did not take the credit back");
+    association.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::contextAttachResource);
+    requireOk(device, requestBytes(association));
+
+    /* A blob belongs to its creator, except that a Venus context's device
+     * memory is the renderer's report. */
+    auto blob = newRequest<protocol::GpuResourceCreateBlob>(
+        GpuCommand::resourceCreateBlob);
+    blob.memory = protocol::blobMemoryHost3d;
+    blob.flags = protocol::blobFlagMappable;
+    blob.size = protocol::hostVisibleSharedMemoryAlignment;
+    blob.header.contextId = allocator.header.contextId;
+    blob.resourceId = 701;
+    sweep = failEachAllocationBeforeCommit(
+        device, requestBytes(blob), [&] {
+            return ledger.counts() == Counts {3, 1} &&
+                dependencies.createResourceCount == 1;
+        });
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
+    require(holder(100) == 4 * mebibyte + blob.size &&
+            ledger.counts().resources == 2,
+        "a blob was not credited to its creator");
+
+    blob.header.contextId = vulkan.header.contextId;
+    blob.resourceId = 702;
+    sweep = failEachAllocationBeforeCommit(
+        device, requestBytes(blob), [&] {
+            return ledger.counts() == Counts {3, 2} &&
+                dependencies.createResourceCount == 2;
+        });
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
+    require(!holder(300), "a Venus blob was counted besides its memory");
+    ledger.venusMemory(vulkan.header.contextId, 8 * mebibyte);
+    require(holder(300) == 8 * mebibyte,
+        "a Venus context's device memory was not credited");
+
+    /* A blob the renderer refuses is not kept. */
+    blob.resourceId = 703;
+    dependencies.rejectNext(FakeGpuDependencies::Operation::create_resource);
+    requireResponse(device, requestBytes(blob),
+        protocol::GpuResponse::errorInvalidParameter);
+    require(ledger.counts() == Counts {3, 3});
+
+    /* A resource the guest releases leaves every holder. */
+    auto reference = newRequest<protocol::GpuResourceReference>(
+        GpuCommand::resourceUnref);
+    reference.resourceId = rendered.resourceId;
+    requireOk(device, requestBytes(reference));
+    require(!holder(200) && holder(100) == blob.size &&
+            ledger.counts() == Counts {3, 2},
+        "an unreferenced resource kept its credit");
+
+    /* A context the guest destroys takes its credit, and its Venus memory,
+     * with it. */
+    protocol::GpuControlHeader destroy = vulkan.header;
+    destroy.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::contextDestroy);
+    requireOk(device, requestBytes(destroy));
+    require(!holder(300) && ledger.counts().contexts == 2,
+        "a destroyed Venus context kept its memory");
+    ledger.venusMemory(vulkan.header.contextId, mebibyte);
+    require(!holder(300), "a report for a destroyed context was credited");
+
+    device.reset();
+    require(ledger.counts() == Counts {} && ledger.totalBytes() == 0,
+        "a reset guest left accounts behind");
 }
 
 /* A context create that runs out of memory leaves no trace, so the guest's
@@ -3551,6 +3724,7 @@ int main()
     contextInitUsesVirgl2ForTheDeviceSelectedDefault();
     aRendererWithoutVulkanOffersAndRunsNoVenus();
     lifecycleCommandsAllocateBeforeCommitAndRetry();
+    theLedgerFollowsTheGuestsCommands();
     contextCreateIsRetryableAfterEachAllocationFailure();
     blobCommandsAllocateBeforeCommitAndRetry();
     refusedBlobIsAnsweredAsOutOfMemory();

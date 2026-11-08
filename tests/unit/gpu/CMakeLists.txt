@@ -59,6 +59,13 @@ if(TARGET uml_gpu_context_idle_tracker)
         LIBRARIES UML::GpuContextIdleTracker Threads::Threads)
 endif()
 
+# Whose bytes the budget's bytes are: the ledger needs no GPU device either.
+if(TARGET uml_gpu_context_memory_ledger)
+    uml_add_gpu_unit_test(gpu-context-memory-ledger
+        uml_gpu_context_memory_ledger_tests context_memory_ledger_tests.cpp
+        LIBRARIES UML::GpuContextMemoryLedger Threads::Threads)
+endif()
+
 uml_add_gpu_unit_test(gpu-metal-submit-timing-collector
     uml_gpu_metal_submit_timing_tests metal_submit_timing_tests.cpp
     LIBRARIES Threads::Threads

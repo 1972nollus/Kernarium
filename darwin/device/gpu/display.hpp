@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "context_memory_ledger.hpp"
 #include "protocol.hpp"
 #include "../input/vnc/vnc_input.hpp"
 
@@ -200,6 +201,18 @@ public:
     {
         return memoryRefusals_.load(std::memory_order_relaxed);
     }
+    /* What the guest's contexts hold of the host GPU's memory, by process.
+     * The device keeps it for as long as its guest runs, and clears it when
+     * that guest is gone; it lives here because the display outlives the
+     * connection and any thread may read it. */
+    [[nodiscard]] ContextMemoryLedger& graphicsLedger() noexcept
+    {
+        return graphicsLedger_;
+    }
+    [[nodiscard]] const ContextMemoryLedger& graphicsLedger() const noexcept
+    {
+        return graphicsLedger_;
+    }
 
 protected:
     Display() = default;
@@ -207,6 +220,7 @@ protected:
 private:
     std::atomic_bool guestScanoutActive_ {};
     std::atomic<std::uint64_t> memoryRefusals_ {};
+    ContextMemoryLedger graphicsLedger_;
 };
 
 [[nodiscard]] std::unique_ptr<Display> makeDisplay(
