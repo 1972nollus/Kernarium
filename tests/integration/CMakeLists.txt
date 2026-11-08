@@ -930,6 +930,27 @@ uml_add_guest_integration_test(
     CPUS 4
     GPUS 1)
 
+# The host tells the guest how near its graphics memory budget is and which
+# guest processes hold it, in the root-only file gpu_memory_report on the DRM
+# device (docs/graphics.md, kernel/common/README.md). The probe reads it as
+# Android's lmkd does: it arms the file, waits with poll(), fills the budget
+# with a process, filters the holders, ends the process, has an allocation
+# refused and disarms; the runner checks the launcher's --stats line for
+# guest-reclaim=on while the file is armed.
+uml_add_guest_integration_test(
+    NAME guest-virtgpu-memory-report
+    SCRIPT kernel/run_guest_virtgpu_memory_report.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/virtgpu_memory_report_probe.cpp
+        "--cxxflags=-Wall -Wextra -Werror"
+        --guest-argument=--gpu --guest-argument=--gpu-display=vnc
+        --guest-argument=--gpu-vnc-bind=127.0.0.1 --guest-argument=--gpu-vnc-port=0
+        --guest-argument=--stats=500
+        --ncpus 4 --probe-timeout 420
+    LABELS guest;kernel;gpu
+    TIMEOUT 1000
+    CPUS 4
+    GPUS 1)
+
 # The settings the Android CTS and the desktop disagree on: a Linux guest has
 # SysV IPC, the NFS client and SCTP, no RDS and no wakelock interface, and
 # runs the helper a piped core_pattern names; every guest has IPv4 multicast,
