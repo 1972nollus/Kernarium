@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <mach/mach.h>
 #include <pthread.h>
 #include <signal.h>
 #include <string>
@@ -47,6 +48,12 @@ std::atomic<bool> crash_recorded{false};
  * a stack it does not know the size of. One end writes them, the first. */
 char record_text[output_size + 1024];
 char tail_text[output_size];
+
+/* The record's first bytes are a fixed slot that only the checkpoints write
+ * and the rest is the session's state that only its begin and its end write,
+ * so neither ever overwrites the other's bytes, whichever finishes last. */
+constexpr std::size_t memory_slot_size = 256;
+std::atomic<bool> checkpoint_thread_started{false};
 
 bool kept(int descriptor) noexcept
 {
@@ -127,6 +134,81 @@ std::int64_t now() noexcept
 	return static_cast<std::int64_t>(time.tv_sec);
 }
 
+/* The memory slot: the format line, then the process's footprint, its peak
+ * and what its limit leaves, padded to the slot's size. */
+void write_memory_slot(int descriptor) noexcept
+{
+	char slot[memory_slot_size];
+	Text text{slot, sizeof(slot) - 1};
+	text.text("uml-session 2\nmemory at ").number(now());
+	task_vm_info_data_t info{};
+	mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+	if (task_info(mach_task_self(), TASK_VM_INFO,
+		    reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS) {
+		text.text(" footprint ")
+			.number(static_cast<std::int64_t>(info.phys_footprint))
+			.text(" peak ")
+			.number(static_cast<std::int64_t>(
+				info.ledger_phys_footprint_peak));
+		/* Zero where the host sets no limit, as on a Mac. */
+		if (count >= TASK_VM_INFO_COUNT && info.limit_bytes_remaining != 0)
+			text.text(" available ").number(static_cast<std::int64_t>(
+				info.limit_bytes_remaining));
+	}
+	text.text("\n");
+	const std::size_t used = text.size();
+	std::memset(slot + used, ' ', sizeof(slot) - 1 - used);
+	slot[sizeof(slot) - 1] = '\n';
+	ssize_t written;
+	do {
+		written = pwrite(descriptor, slot, sizeof(slot), 0);
+	} while (written < 0 && errno == EINTR);
+}
+
+void *checkpoint_memory(void *) noexcept
+{
+	(void)pthread_setname_np("uml-session-record");
+	for (;;) {
+		timespec interval{
+			.tv_sec = static_cast<time_t>(memory_checkpoint_interval_ms /
+				1000),
+			.tv_nsec = static_cast<long>(
+				(memory_checkpoint_interval_ms % 1000) * 1000000),
+		};
+		while (nanosleep(&interval, &interval) != 0 && errno == EINTR) {
+		}
+		if (session_open.load(std::memory_order_acquire))
+			checkpoint_session_memory();
+	}
+	return nullptr;
+}
+
+/* One thread for the process's life: it never touches a session that has
+ * ended, and blocks every signal, so the kernel's process-directed signals
+ * never pick it. */
+void start_checkpoints() noexcept
+{
+	if (checkpoint_thread_started.exchange(true))
+		return;
+	sigset_t all;
+	sigset_t previous;
+	sigfillset(&all);
+	if (pthread_sigmask(SIG_SETMASK, &all, &previous) != 0)
+		return;
+	pthread_attr_t attributes;
+	pthread_t thread;
+	if (pthread_attr_init(&attributes) == 0) {
+		(void)pthread_attr_setdetachstate(&attributes,
+			PTHREAD_CREATE_DETACHED);
+		(void)pthread_attr_setstacksize(&attributes, 64 * 1024);
+		if (pthread_create(&thread, &attributes, checkpoint_memory,
+			    nullptr) != 0)
+			checkpoint_thread_started.store(false);
+		(void)pthread_attr_destroy(&attributes);
+	}
+	(void)pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+}
+
 void write_record(SessionEnd end, int status, std::string_view message,
 	std::string_view tail) noexcept
 {
@@ -134,7 +216,7 @@ void write_record(SessionEnd end, int status, std::string_view message,
 	if (descriptor < 0)
 		return;
 	Text record{record_text, sizeof(record_text)};
-	record.text("uml-session 1\nstate ")
+	record.text("state ")
 		.text(end == SessionEnd::running ? "running" : "ended")
 		.text("\nend ").text(session_end_name(end))
 		.text("\nstatus ").number(status)
@@ -150,10 +232,12 @@ void write_record(SessionEnd end, int status, std::string_view message,
 		record.text("kernel-output\n").printable(tail, true);
 	ssize_t written;
 	do {
-		written = pwrite(descriptor, record_text, record.size(), 0);
+		written = pwrite(descriptor, record_text, record.size(),
+			memory_slot_size);
 	} while (written < 0 && errno == EINTR);
 	if (written == static_cast<ssize_t>(record.size()))
-		(void)ftruncate(descriptor, static_cast<off_t>(record.size()));
+		(void)ftruncate(descriptor,
+			static_cast<off_t>(memory_slot_size + record.size()));
 }
 
 std::string_view output_tail() noexcept
@@ -302,16 +386,37 @@ bool begin_session_record(std::string_view path,
 			strerror(error));
 		return false;
 	}
-	if (const int previous = record_descriptor.exchange(descriptor,
-		    std::memory_order_acq_rel);
-	    previous >= 0)
-		(void)close(previous);
+	/* The record keeps one descriptor number for the process's life: a
+	 * checkpoint may hold it at any time, and a closed number another open
+	 * reused would take the checkpoint's bytes. A later session moves its
+	 * file onto that number. */
+	if (const int kept_descriptor =
+		    record_descriptor.load(std::memory_order_acquire);
+	    kept_descriptor >= 0) {
+		const int moved = dup2(descriptor, kept_descriptor);
+		(void)close(descriptor);
+		if (moved < 0)
+			return false;
+		descriptor = kept_descriptor;
+		(void)fcntl(descriptor, F_SETFD, FD_CLOEXEC);
+	} else {
+		record_descriptor.store(descriptor, std::memory_order_release);
+	}
 	if (!exit_hook_installed.exchange(true))
 		(void)atexit(record_process_exit);
 	session_started.store(now(), std::memory_order_relaxed);
+	write_memory_slot(descriptor);
 	session_open.store(true, std::memory_order_release);
 	write_record(SessionEnd::running, 0, {}, {});
+	start_checkpoints();
 	return true;
+}
+
+void checkpoint_session_memory() noexcept
+{
+	const int descriptor = record_descriptor.load(std::memory_order_acquire);
+	if (descriptor >= 0)
+		write_memory_slot(descriptor);
 }
 
 void end_session_record(SessionEnd end, int status,
@@ -396,8 +501,15 @@ std::string_view host_fault_message(std::string_view output_text) noexcept
 void reset_session_record() noexcept
 {
 	session_open.store(false, std::memory_order_release);
-	if (const int descriptor = record_descriptor.exchange(-1); descriptor >= 0)
-		(void)close(descriptor);
+	/* The number stays the record's (begin_session_record), on no file. */
+	if (const int descriptor = record_descriptor.load(); descriptor >= 0) {
+		if (const int empty = open("/dev/null", O_WRONLY | O_CLOEXEC);
+		    empty >= 0) {
+			(void)dup2(empty, descriptor);
+			(void)fcntl(descriptor, F_SETFD, FD_CLOEXEC);
+			(void)close(empty);
+		}
+	}
 	for (auto &console : console_descriptors)
 		console.store(-1, std::memory_order_relaxed);
 	output_end.store(0, std::memory_order_release);
