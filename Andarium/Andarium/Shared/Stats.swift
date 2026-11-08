@@ -102,17 +102,26 @@ struct StatsOverlay: View {
     }
 }
 
-/// The last CPU values as bars, 100% filling the frame.
+/// The last CPU values as bars, 100% filling the frame. It always draws one
+/// bar per history slot, newest on the right; a slot with no reading yet is
+/// a dimmed bar at the floor, so the bars keep their width as values arrive.
 struct Sparkline: View {
     let values: [Int]
+    var slots = StatsMeter.historyLength
+
+    /// One entry per slot, oldest first; `nil` where no reading exists yet.
+    static func slotValues(_ values: [Int], slots: Int) -> [Int?] {
+        let recent = values.suffix(slots).map { Optional($0) }
+        return Array(repeating: nil, count: max(0, slots - recent.count)) + recent
+    }
 
     var body: some View {
         GeometryReader { geo in
             HStack(alignment: .bottom, spacing: 1.5) {
-                ForEach(Array(values.enumerated()), id: \.offset) { _, v in
+                ForEach(Array(Self.slotValues(values, slots: slots).enumerated()), id: \.offset) { _, v in
                     Capsule()
-                        .fill(Color.accentColor)
-                        .frame(height: max(2, geo.size.height * CGFloat(v) / 100))
+                        .fill(v == nil ? Color.accentColor.opacity(0.25) : Color.accentColor)
+                        .frame(height: max(2, geo.size.height * CGFloat(v ?? 0) / 100))
                 }
             }
             .frame(maxHeight: .infinity, alignment: .bottom)
