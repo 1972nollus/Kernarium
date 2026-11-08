@@ -464,6 +464,14 @@ std::optional<VirglRenderer::DeviceMemory> VirglRenderer::deviceMemory() noexcep
     };
 }
 
+std::uint64_t VirglRenderer::reclaimCachedMemory() noexcept
+{
+    std::lock_guard lock(deviceMemoryReadMutex);
+    if (!deviceMemoryReadable || !deviceMemoryPool)
+        return 0;
+    return deviceMemoryPool->reclaim();
+}
+
 VirglRenderer::~VirglRenderer()
 {
     // The render server's threads stop with the cleanup below, and nothing

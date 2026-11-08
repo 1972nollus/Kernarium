@@ -48,7 +48,8 @@ public:
     /* Frees what the provider's GL driver keeps for reuse and nothing uses,
      * and returns how many cached allocations that released. The device
      * memory pool calls it, when it is about to refuse a reservation, on the
-     * refused thread: that thread may be inside a call of this provider and
+     * refused thread, and the device calls it for the memory report, on the
+     * transport thread: a thread may be inside a call of this provider and
      * hold the provider's lock or EGL's, so this takes no lock of either. */
     [[nodiscard]] std::uint64_t releaseCachedMemory() noexcept;
 

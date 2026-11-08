@@ -18,6 +18,7 @@
 #include "virtio_gpu_device_testing.hpp"
 #include "virtio_gpu_uml.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -38,12 +39,25 @@ using namespace std::chrono_literals;
 constexpr std::uint64_t mebibyte = 1U << 20U;
 constexpr std::uint64_t budget = 600 * mebibyte;
 
-/* A renderer with nothing in it, except a budget and a pool usage to read. */
+/* A renderer with nothing in it, except a budget and a pool usage to read,
+ * and memory its drivers cache, which its reclaim frees out of the usage. */
 class BudgetedRenderer final : public VirtioGpuDeviceDependencies {
 public:
     std::optional<VirglRenderer::DeviceMemory> memory;
     std::uint64_t refusals {};
     std::atomic<int> wakes {};
+    std::uint64_t cachedBytes {};
+    int reclaims {};
+
+    [[nodiscard]] std::uint64_t reclaimCachedMemory() noexcept override
+    {
+        ++reclaims;
+        if (cachedBytes == 0 || !memory)
+            return 0;
+        memory->usageBytes -= std::min(memory->usageBytes, cachedBytes);
+        cachedBytes = 0;
+        return 1;
+    }
 
     [[nodiscard]] std::optional<VirglRenderer::DeviceMemory> deviceMemory()
         const noexcept override
@@ -500,6 +514,56 @@ void aSubscriptionRaisesTheEventOncePerChange()
     require(guest.device.displayEventPending(), "clearing the memory event cleared the display event");
 }
 
+/* The pool's usage is within the margin of the budget, but the host's drivers
+ * cache enough of it that the reclaim brings it back under: no pressure. */
+void memoryTheHostFreesItselfIsNoPressure()
+{
+    Guest guest;
+    guest.context(1, "t|pid=100|comm=p", 100 * mebibyte, 20s);
+    (void)ask(guest.device, query(VIRTIO_GPU_UML_MEMORY_SUBSCRIBE));
+    guest.renderer.memory->usageBytes = budget - 20 * mebibyte;
+    guest.renderer.cachedBytes = 150 * mebibyte;
+
+    require(!guest.device.evaluateMemory(guest.now), "reaching the margin raised the event");
+    require(guest.renderer.reclaims == 1, "the host's reclaim was not run");
+    require(guest.renderer.memory->usageBytes == budget - 170 * mebibyte,
+        "the reclaim did not free the cached memory");
+    require(!guest.device.evaluateMemory(guest.now + 300ms), "freed memory raised the event");
+    require(!guest.device.memoryDeadline().has_value(), "freed memory kept a deadline");
+    require(!guest.device.evaluateMemory(guest.now + 10s), "freed memory raised the event later");
+    const auto reply = ask(guest.device, query(VIRTIO_GPU_UML_MEMORY_SUBSCRIBE));
+    require(reply.fixed.state == 0 && reply.fixed.refusals == 0 &&
+            !guest.device.memoryEventPending(),
+        "memory the host freed itself was reported as pressure");
+    require(guest.renderer.reclaims == 1, "the host reclaimed again with nothing cached");
+}
+
+/* The same usage with too little cached stays within the margin once the
+ * reclaim has run: the pressure is declared with no allocation refused. */
+void memoryTheHostCannotFreeIsPressureBeforeAnyRefusal()
+{
+    Guest guest;
+    guest.context(1, "t|pid=100|comm=p", 100 * mebibyte, 20s);
+    (void)ask(guest.device, query(VIRTIO_GPU_UML_MEMORY_SUBSCRIBE));
+    guest.renderer.memory->usageBytes = budget - 20 * mebibyte;
+    guest.renderer.cachedBytes = 30 * mebibyte;
+
+    require(!guest.device.evaluateMemory(guest.now), "reaching the margin raised the event");
+    require(guest.renderer.reclaims == 1, "the host's reclaim was not run");
+    require(guest.device.memoryDeadline() == guest.now + 1s,
+        "the deadline was not the end of the sustain time");
+    /* A reply before the sustain time reports nothing yet. */
+    require(ask(guest.device, query(VIRTIO_GPU_UML_MEMORY_SUBSCRIBE)).fixed.state == 0,
+        "a reply declared pressure before the sustain time");
+    require(guest.device.evaluateMemory(guest.now + 1s), "no event for memory the host could not free");
+    require(guest.device.memoryEventPending(), "the event bit was not set");
+    const auto reply = ask(guest.device, query(VIRTIO_GPU_UML_MEMORY_SUBSCRIBE));
+    require((reply.fixed.state & VIRTIO_GPU_UML_STATE_PRESSURE) != 0 &&
+            (reply.fixed.state & VIRTIO_GPU_UML_STATE_REFUSED) == 0 && reply.fixed.refusals == 0,
+        "the reply did not carry the pressure with no refusal");
+    require(guest.renderer.reclaims == 1, "the host reclaimed more than once for one stretch");
+}
+
 void aRefusalRaisesTheEventAndTheNextReplyReportsIt()
 {
     Guest guest;
@@ -580,6 +644,8 @@ int main()
     aReplyIsCutToTheRoomTheGuestGave();
     aBadQueryIsRefusedAndChangesNothing();
     aSubscriptionRaisesTheEventOncePerChange();
+    memoryTheHostFreesItselfIsNoPressure();
+    memoryTheHostCannotFreeIsPressureBeforeAnyRefusal();
     aRefusalRaisesTheEventAndTheNextReplyReportsIt();
     theGuestsSettingsEndWithTheConnection();
     std::puts("Virtio-GPU memory report tests passed");
