@@ -146,7 +146,8 @@ if(UML_BUILD_UNIT_TESTS AND UML_TARGET_MACOS)
         UML_GPU_VNC_STARTUP_TESTING=1)
     target_include_directories(uml_gpu_display_test_variant PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)
-    target_link_libraries(uml_gpu_display_test_variant PUBLIC UML::VncInput)
+    target_link_libraries(uml_gpu_display_test_variant PUBLIC
+        UML::VncInput UML::GpuContextMemoryLedger)
     target_link_libraries(uml_gpu_display_test_variant PRIVATE
         UML::ThirdPartyVncServer
         "-framework Accelerate"
