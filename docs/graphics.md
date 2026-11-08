@@ -258,13 +258,14 @@ driver caches and is decided again.
   makes for the guest is reserved before its pages are made; imported memory is
   not charged; command, descriptor and query pools, presentation, the VNC
   surface and decoder surfaces are counted once Metal does and never refused.
-- OpenGL: a refused texture, buffer or blob fails the creation with `ENOMEM`
-  (a blob's refusal is read from the failure of the command that made its
-  storage), and the guest kernel's creation ioctl waits for that answer and
-  fails before the guest holds a handle. Mesa raises `GL_OUT_OF_MEMORY` and
-  gralloc fails the allocation, so no refusal leaves a buffer another process
-  can import and name. The context, the renderer and every resource made
-  within the budget stay as they were (`gpu-host-gl-device-memory-budget`).
+- OpenGL: a refused texture or buffer fails the creation with `ENOMEM`, and the
+  guest kernel's creation ioctl waits for the host's answer, for a blob as for
+  any other resource, and fails before the guest holds a handle (`-ENOMEM` for
+  an out-of-memory answer, `-EINVAL` for any other error). Mesa raises
+  `GL_OUT_OF_MEMORY` and gralloc fails the allocation, so no refusal leaves a
+  buffer another process can import and name. The context, the renderer and
+  every resource made within the budget stay as they were
+  (`gpu-host-gl-device-memory-budget`).
 - Venus: the guest driver submits `vkAllocateMemory` asynchronously, so a
   refusal reaches the guest as a failed context at the next command naming the
   allocation, and only that guest process aborts.
@@ -275,13 +276,13 @@ The counter includes memory the guest has freed while its blob resource is still
 referenced, so a loop that reallocates large images can be refused while its
 live memory is below B.
 
-The device counts each OpenGL resource creation, blobs included, it answers
-with out of memory on the display (`Display::memoryRefusals`), so a refusal the
-host reclaimed and retried past is not counted and a restarted guest does not
-reset the count. The applications read it as `gpu_memory_refusals` of the
-runtime's statistics, and the macOS launchers print it as `gpu-refusals` with
-`--stats`. A Venus allocation the host refused is not counted: the guest learns
-of it inside the renderer.
+The device counts each OpenGL resource creation it answers with out of memory
+on the display (`Display::memoryRefusals`), so a refusal the host reclaimed and
+retried past is not counted and a restarted guest does not reset the count. The
+applications read it as `gpu_memory_refusals` of the runtime's statistics, and
+the macOS launchers print it as `gpu-refusals` with `--stats`. A Venus
+allocation the host refused is not counted: the guest learns of it inside the
+renderer.
 
 ### Android guest requirements
 

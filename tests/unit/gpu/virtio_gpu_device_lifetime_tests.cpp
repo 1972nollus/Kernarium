@@ -40,8 +40,6 @@ public:
         create_resource,
         /* the host driver has no room for the resource's storage */
         create_resource_refused,
-        /* the renderer has no room for what a command in the stream makes */
-        submit_refused,
         transfer,
         read_resource,
         fence,
@@ -186,8 +184,6 @@ public:
     {
         if (reject(Operation::submit))
             return EIO;
-        if (reject(Operation::submit_refused))
-            return ENOMEM;
         ++submitCount;
         return 0;
     }
@@ -1394,91 +1390,6 @@ void displayChangeEventsPreserveAResizeThatRacesGuestClear()
     device.notifyDisplayChanged();
     device.reset();
     require(device.config().eventsRead == 0);
-}
-
-/* The guest driver makes a blob's storage with a command in its context's
- * stream and then creates the blob. A renderer with no room for the storage
- * fails that command, so the blob is unknown to it, and the creation is the
- * refusal of that storage: answered as out of memory, so the guest's ioctl
- * fails with -ENOMEM instead of handing out a buffer the host never made, and
- * counted for the application's notice. A blob refused for any other reason,
- * or by a context whose storage was not refused, is a blob described wrongly. */
-void blobStorageRefusedForWantOfMemoryIsAnsweredAndCounted()
-{
-    FakeGpuDependencies dependencies;
-    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
-    const auto context = createContext(0xa01, protocol::virglCapsetId);
-    const auto other = createContext(0xa02, protocol::virglCapsetId);
-    requireOk(device, requestBytes(context));
-    requireOk(device, requestBytes(other));
-
-    const auto blob = [&](std::uint32_t resourceId,
-                          std::uint32_t contextId) {
-        auto create = newRequest<protocol::GpuResourceCreateBlob>(
-            GpuCommand::resourceCreateBlob);
-        create.header.contextId = contextId;
-        create.resourceId = resourceId;
-        create.memory = protocol::blobMemoryHost3d;
-        create.flags = protocol::blobFlagMappable;
-        create.size = protocol::hostVisibleSharedMemoryAlignment;
-        return create;
-    };
-    const auto refuseStorage = [&](std::uint32_t contextId) {
-        auto submit = newRequest<protocol::GpuSubmit3d>(GpuCommand::submit3d);
-        submit.header.contextId = contextId;
-        dependencies.rejectNext(
-            FakeGpuDependencies::Operation::submit_refused);
-        requireResponse(device, requestBytes(submit),
-            protocol::GpuResponse::errorInvalidContext);
-    };
-
-    /* Storage refused, then the blob: out of memory, once, and counted. */
-    refuseStorage(context.header.contextId);
-    auto refused = blob(0xa11, context.header.contextId);
-    dependencies.rejectNext(FakeGpuDependencies::Operation::create_resource);
-    requireResponse(device, requestBytes(refused),
-        protocol::GpuResponse::errorOutOfMemory);
-    require(!dependencies.resources.contains(refused.resourceId),
-        "a refused blob left a resource behind");
-    require(dependencies.memoryRefusalCount == 1,
-        "the blob refusal the guest was answered was not counted");
-
-    /* The refusal belonged to that creation: the next failure is not it. */
-    auto again = blob(0xa12, context.header.contextId);
-    dependencies.rejectNext(FakeGpuDependencies::Operation::create_resource);
-    requireResponse(device, requestBytes(again),
-        protocol::GpuResponse::errorInvalidParameter);
-    require(dependencies.memoryRefusalCount == 1,
-        "a blob refused for another reason was counted");
-
-    /* Another context's storage was not refused. */
-    refuseStorage(context.header.contextId);
-    auto neighbour = blob(0xa13, other.header.contextId);
-    dependencies.rejectNext(FakeGpuDependencies::Operation::create_resource);
-    requireResponse(device, requestBytes(neighbour),
-        protocol::GpuResponse::errorInvalidParameter);
-    require(dependencies.memoryRefusalCount == 1,
-        "a context's blob was counted for another context's refusal");
-
-    /* A creation the renderer made is not a refusal. */
-    auto made = blob(0xa14, other.header.contextId);
-    requireOk(device, requestBytes(made));
-    require(dependencies.resources.contains(made.resourceId));
-    require(dependencies.memoryRefusalCount == 1,
-        "a blob that succeeded was counted as a refusal");
-
-    /* A context that ends takes its refusal with it. */
-    auto destroy = newRequest<protocol::GpuControlHeader>(
-        GpuCommand::contextDestroy);
-    destroy.contextId = context.header.contextId;
-    requireOk(device, requestBytes(destroy));
-    requireOk(device, requestBytes(context));
-    auto reborn = blob(0xa15, context.header.contextId);
-    dependencies.rejectNext(FakeGpuDependencies::Operation::create_resource);
-    requireResponse(device, requestBytes(reborn),
-        protocol::GpuResponse::errorInvalidParameter);
-    require(dependencies.memoryRefusalCount == 1,
-        "a destroyed context's refusal was carried to its successor");
 }
 
 void rendererExecutionFailuresPreserveDeviceState()
@@ -3601,7 +3512,6 @@ int main()
     contextCreateIsRetryableAfterEachAllocationFailure();
     blobCommandsAllocateBeforeCommitAndRetry();
     rendererExecutionFailuresPreserveDeviceState();
-    blobStorageRefusedForWantOfMemoryIsAnsweredAndCounted();
     softwareScanoutProgressesWhileRendererFenceIsPending();
     deferredFencesUseHostTimelineAndMergedRetirement();
     aDestroyedContextsHeldFencesComplete();
