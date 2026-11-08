@@ -615,7 +615,8 @@ final class LiveRuntime: RuntimeDriver {
             bootIndex: reading.boot_index, processorCount: reading.processor_count,
             timestampNanoseconds: reading.timestamp_ns, processorTimeNanoseconds: reading.processor_time_ns,
             presentedFrames: reading.presented_frames, ramBytes: reading.memory_bytes,
-            ramHeldBytes: reading.memory_held_bytes
+            ramHeldBytes: reading.memory_held_bytes, gpuMemoryBudgetBytes: reading.gpu_memory_budget_bytes,
+            gpuMemoryUsedBytes: reading.gpu_memory_used_bytes
         )
     }
 

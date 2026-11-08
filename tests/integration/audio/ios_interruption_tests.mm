@@ -183,6 +183,9 @@ struct Observed final {
     double seconds {};
     // Periods a second at the rate of real audio.
     double expected {nominalRate};
+    // The lowest and highest latency the completions reported, in bytes.
+    std::uint32_t latencyLow {UINT32_MAX};
+    std::uint32_t latencyHigh {};
 
     [[nodiscard]] double rate() const { return completed / seconds; }
     // The guest's frame position advances at the rate of real audio. Periods
@@ -203,14 +206,26 @@ struct Observed final {
     {
         return scheduled == 0 && nominal(tolerance);
     }
+    // A period the output played is heard after the output's own latency,
+    // the same for every period however many are queued; one the mute clock
+    // completed is never heard.
+    [[nodiscard]] bool outputLatency() const
+    {
+        return latencyLow == latencyHigh && latencyHigh > 0;
+    }
+    [[nodiscard]] bool noLatency() const { return latencyHigh == 0; }
     [[nodiscard]] std::string text() const
     {
-        char buffer[160];
+        // Stereo 16-bit frames at 48 kHz.
+        constexpr double bytesPerMillisecond = 48.0 * 4.0;
+        char buffer[224];
         std::snprintf(buffer, sizeof buffer,
             "%llu periods completed in %.2f s (%.2f/s, nominal %.2f/s), "
-            "%llu scheduled",
+            "%llu scheduled, latency %.1f to %.1f ms",
             static_cast<unsigned long long>(completed), seconds, rate(),
-            expected, static_cast<unsigned long long>(scheduled));
+            expected, static_cast<unsigned long long>(scheduled),
+            latencyLow == UINT32_MAX ? 0.0 : latencyLow / bytesPerMillisecond,
+            latencyHigh / bytesPerMillisecond);
         return buffer;
     }
 };
@@ -294,6 +309,8 @@ public:
         const auto begun = std::chrono::steady_clock::now();
         const auto completed = completed_;
         const auto scheduled = scheduledPeriods.load();
+        latencyLow_ = UINT32_MAX;
+        latencyHigh_ = 0;
         if (eventFirst) {
             service();
             collect();
@@ -302,7 +319,9 @@ public:
         return {.completed = completed_ - completed,
             .scheduled = scheduledPeriods.load() - scheduled,
             .seconds = std::chrono::duration<double>(
-                std::chrono::steady_clock::now() - begun).count()};
+                std::chrono::steady_clock::now() - begun).count(),
+            .latencyLow = latencyLow_,
+            .latencyHigh = latencyHigh_};
     }
 
     // The guest writes nothing for `span`: the sink only keeps time.
@@ -391,6 +410,8 @@ private:
             const bool dropped = completion.outcome == PlaybackOutcome::failed ||
                 (completion.outcome == PlaybackOutcome::discarded && !released);
             rejected_ += dropped ? 1 : 0;
+            latencyLow_ = std::min(latencyLow_, completion.latencyBytes);
+            latencyHigh_ = std::max(latencyHigh_, completion.latencyBytes);
         }
     }
 
@@ -404,6 +425,8 @@ private:
     bool failed_ {};
     std::chrono::steady_clock::time_point lastCompletion_ {};
     std::chrono::steady_clock::duration longestWait_ {};
+    std::uint32_t latencyLow_ {UINT32_MAX};
+    std::uint32_t latencyHigh_ {};
 };
 
 // A guest's sound driver on the Virtio Sound device with the real sink under
@@ -582,6 +605,9 @@ void interruptionMutesAndResumes()
     check(stream.open(), "the stream opens");
     auto seen = stream.window(500ms, 1500ms);
     check(seen.playing(), "the stream plays", seen.text());
+    check(seen.outputLatency(),
+        "every played period reports the output's latency, and only that",
+        seen.text());
 
     postDeactivation(AVAudioSessionDeactivationSourceApp, false);
     seen = stream.window(400ms, 1500ms);
@@ -602,6 +628,8 @@ void interruptionMutesAndResumes()
         seen.text());
     check(seen.nominal(),
         "the guest's frame position keeps its rate across the mute",
+        seen.text());
+    check(seen.noLatency(), "a period the mute clock completes reports no latency",
         seen.text());
     check(activations.load() == mark,
         "a muted sink leaves the session to the app that plays", seen.text());

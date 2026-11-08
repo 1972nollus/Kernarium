@@ -3,17 +3,21 @@
 #include "device_memory_pool.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <limits>
+#include <thread>
 #include <utility>
 
 namespace uml::gpu {
 
 DeviceMemoryPool::DeviceMemoryPool(std::uint64_t limit,
     std::function<std::uint64_t()> allocated,
-    std::uint64_t granule)
+    std::uint64_t granule,
+    std::function<std::uint64_t()> prompt)
     : limit_(limit)
     , allocated_(std::move(allocated))
+    , prompt_(std::move(prompt))
     , granule_(std::max<std::uint64_t>(granule, 1))
 {
 }
@@ -46,14 +50,93 @@ std::uint64_t DeviceMemoryPool::usage() const
     return usageLocked();
 }
 
+std::uint64_t DeviceMemoryPool::sampleLocked(
+    std::uint64_t& allocated, std::uint64_t& prompt)
+{
+    allocated = allocated_();
+    prompt = prompt_ ? prompt_() : 0;
+    if (prompt_) {
+        if (sampled_) {
+            if (prompt < lastPrompt_)
+                owed_ += lastPrompt_ - prompt;
+            else
+                owed_ -= std::min(owed_, prompt - lastPrompt_);
+            if (allocated < lastAllocated_)
+                owed_ -= std::min(owed_, lastAllocated_ - allocated);
+        }
+        sampled_ = true;
+        lastPrompt_ = prompt;
+        lastAllocated_ = allocated;
+    }
+    return allocated > std::numeric_limits<std::uint64_t>::max() - reserved_
+        ? std::numeric_limits<std::uint64_t>::max()
+        : allocated + reserved_;
+}
+
 bool DeviceMemoryPool::tryReserve(std::uint64_t charged, std::uint64_t& used)
 {
     std::lock_guard lock(mutex_);
-    used = usageLocked();
+    std::uint64_t allocated = 0;
+    std::uint64_t prompt = 0;
+    used = sampleLocked(allocated, prompt);
     if (charged > limit_ || used > limit_ - charged)
         return false;
     reserved_ += charged;
     return true;
+}
+
+bool DeviceMemoryPool::settleAndReserve(
+    std::uint64_t charged, std::uint64_t& used)
+{
+    using Clock = std::chrono::steady_clock;
+    const Clock::time_point begun = Clock::now();
+    const Clock::time_point deadline = begun + settleLimit;
+    bool waited = false;
+    bool admitted = false;
+    for (;;) {
+        {
+            /* Read under the lock, as the usage is: a reservation released
+             * meanwhile is counted once or twice, never not at all. The lock
+             * is not held while the loop sleeps. */
+            std::lock_guard lock(mutex_);
+            std::uint64_t allocated = 0;
+            std::uint64_t prompt = 0;
+            used = sampleLocked(allocated, prompt);
+            if (charged > limit_ || reserved_ > limit_ - charged)
+                break;
+            if (used <= limit_ - charged) {
+                reserved_ += charged;
+                admitted = true;
+                break;
+            }
+            /* What `allocated` will be once the ledger has paid what it owes,
+             * and never less than the prompt reading. */
+            const std::uint64_t owed = std::min(
+                owed_, allocated > prompt ? allocated - prompt : 0);
+            if (allocated - owed > limit_ - charged - reserved_)
+                break;
+            if (Clock::now() >= deadline) {
+                owed_ = 0;
+                break;
+            }
+        }
+        if (!waited) {
+            waited = true;
+            settleWaits_.fetch_add(1, std::memory_order_relaxed);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if (waited) {
+        if (admitted)
+            settleAdmissions_.fetch_add(1, std::memory_order_relaxed);
+        settleMicroseconds_.fetch_add(
+            static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    Clock::now() - begun)
+                    .count()),
+            std::memory_order_relaxed);
+    }
+    return admitted;
 }
 
 void DeviceMemoryPool::setReclaim(Reclaim reclaim)
@@ -84,6 +167,14 @@ bool DeviceMemoryPool::reserve(std::uint64_t bytes)
                 return true;
             }
         }
+    }
+
+    /* What was freed has left Metal's counter at once and the ledger a
+     * moment later: wait for it, with no lock of the pool or the hook held. */
+    if (prompt_ && charged <= limit_ && settleAndReserve(charged, used)) {
+        if (released != 0)
+            reclaimed_.fetch_add(1, std::memory_order_relaxed);
+        return true;
     }
 
     const bool first = refusals_.fetch_add(1, std::memory_order_relaxed) == 0;

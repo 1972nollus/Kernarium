@@ -162,6 +162,22 @@ struct StatsMeterTests {
         meter.record(reading(at: 1))
         #expect(meter.ramHeldBytes == 1800 << 20)
     }
+
+    /// The graphics figures need no second reading, and a reading without a
+    /// budget (no GPU yet, or a runtime that gives none) has neither.
+    @Test func theGraphicsMemoryIsTheLastReadingsWhileThereIsABudget() {
+        var meter = StatsMeter()
+        #expect(meter.gpuMemoryBudgetBytes == nil && meter.gpuMemoryUsedBytes == nil)
+        var budgeted = reading(at: 1)
+        budgeted.gpuMemoryBudgetBytes = 534 << 20
+        budgeted.gpuMemoryUsedBytes = 412 << 20
+        meter.record(budgeted)
+        #expect(meter.gpuMemoryBudgetBytes == 534 << 20 && meter.gpuMemoryUsedBytes == 412 << 20)
+        var none = reading(at: 2)
+        none.gpuMemoryUsedBytes = 12 << 20
+        meter.record(none)
+        #expect(meter.gpuMemoryBudgetBytes == nil && meter.gpuMemoryUsedBytes == nil)
+    }
 }
 
 struct StatsSamplingTests {

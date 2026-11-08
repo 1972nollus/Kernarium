@@ -32,6 +32,10 @@ enum class PlaybackOutcome : std::uint8_t {
 
 struct PlaybackCompletion final {
     std::uint64_t requestId {};
+    // How long the period's sound still takes to be heard once it completes,
+    // in bytes of the stream: the Virtio sound status's device latency. The
+    // guest adds it to the periods it still has queued, so it never counts
+    // them; it is 0 for a period nothing plays.
     std::uint32_t latencyBytes {};
     PlaybackOutcome outcome {PlaybackOutcome::played};
 };

@@ -2,6 +2,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -24,14 +25,21 @@ namespace uml::gpu {
  * two are read at different instants) leaves the ledger alone.
  *
  * Read `imported` before `metalAllocated`: an import that lands between the
- * two readings is then counted a moment too long and never too short. */
+ * two readings is then counted a moment too long and never too short.
+ * `madeGpuBytes` is the first estimate alone, the one that follows a release
+ * at once; the pool uses it as its prompt reading. */
+[[nodiscard]] constexpr std::uint64_t madeGpuBytes(
+    std::uint64_t metalAllocated, std::uint64_t imported) noexcept
+{
+    return metalAllocated > imported ? metalAllocated - imported : 0;
+}
+
 [[nodiscard]] constexpr std::uint64_t accountedGpuBytes(
     std::uint64_t metalAllocated,
     std::uint64_t imported,
     std::uint64_t graphicsFootprint) noexcept
 {
-    const std::uint64_t made =
-        metalAllocated > imported ? metalAllocated - imported : 0;
+    const std::uint64_t made = madeGpuBytes(metalAllocated, imported);
     return made > graphicsFootprint ? made : graphicsFootprint;
 }
 
@@ -54,7 +62,24 @@ namespace uml::gpu {
  * another consumer's refusal. So the pool takes one reclaim hook, which frees
  * what the host drivers cache and reports how many cached allocations it
  * freed, and calls it before it refuses: a reservation that does not fit
- * runs the hook and is decided once more. */
+ * runs the hook and is decided once more.
+ *
+ * What `allocated` reports does not all follow a release at once. Metal's
+ * counter drops the moment a heap is freed, and the graphics ledger beside it
+ * follows later: within milliseconds, or only at the ledger's next sweep,
+ * a quarter of a second at most. A request that fits once everything is freed
+ * is therefore refused by the larger figure for that while. A pool given a
+ * `prompt` reading, the part of `allocated` that does follow at once, sees
+ * the release: at every decision it compares the prompt reading with the one
+ * before, and what it fell by is what the ledger still owes, less what
+ * `allocated` has fallen by since and what the prompt reading has risen by.
+ * When a request is refused and would fit once the ledger had paid what it
+ * owes, the pool waits for `allocated` to fall rather than refuse, until it
+ * admits the request, the ledger has paid and it still does not fit, or the
+ * bound below passes, and a wait that reached its bound forgets what the
+ * ledger owed. A request that would not fit even then, or that follows no
+ * release, is refused at once: a ledger that stays above the counter for
+ * good, by the surfaces the counter omits, costs no wait. */
 class DeviceMemoryPool final {
 public:
     /* Frees what the host drivers cache for reuse, on whichever thread was
@@ -64,9 +89,16 @@ public:
      * hold locks of the host driver that the hook must not take. */
     using Reclaim = std::function<std::uint64_t()>;
 
+    /* The longest the pool waits for `allocated` to follow a release: the
+     * ledger's sweep and a margin. */
+    static constexpr std::chrono::milliseconds settleLimit {300};
+
+    /* `prompt` is optional; without it a refusal is decided as soon as the
+     * hook has run. Both readings are taken under the pool's lock. */
     DeviceMemoryPool(std::uint64_t limit,
         std::function<std::uint64_t()> allocated,
-        std::uint64_t granule);
+        std::uint64_t granule,
+        std::function<std::uint64_t()> prompt = {});
 
     DeviceMemoryPool(const DeviceMemoryPool&) = delete;
     DeviceMemoryPool& operator=(const DeviceMemoryPool&) = delete;
@@ -97,6 +129,22 @@ public:
         return reclaimed_.load(std::memory_order_relaxed);
     }
 
+    /* How many times the pool waited for `allocated` to follow a release,
+     * how many of those waits admitted the reservation, and the microseconds
+     * spent waiting in all. */
+    [[nodiscard]] std::uint64_t settleWaits() const noexcept
+    {
+        return settleWaits_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t settleAdmissions() const noexcept
+    {
+        return settleAdmissions_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t settleWaitedMicroseconds() const noexcept
+    {
+        return settleMicroseconds_.load(std::memory_order_relaxed);
+    }
+
     /* Sets the reclaim hook, or clears it with an empty function. Returns
      * once no call of the previous one is running. */
     void setReclaim(Reclaim reclaim);
@@ -114,15 +162,35 @@ private:
     [[nodiscard]] std::uint64_t usageLocked() const;
     /* Admits `charged` when it fits; `used` is the usage it was decided at. */
     [[nodiscard]] bool tryReserve(std::uint64_t charged, std::uint64_t& used);
+    /* Reads `allocated` and the prompt reading, credits what the prompt
+     * reading fell by since the last reading to what the ledger owes, and
+     * returns the usage. */
+    [[nodiscard]] std::uint64_t sampleLocked(
+        std::uint64_t& allocated, std::uint64_t& prompt);
+    /* Waits for `allocated` to follow a release the prompt reading showed, and
+     * admits `charged` once it does. False when the request would not fit
+     * even then, when none is owed, or at the bound. */
+    [[nodiscard]] bool settleAndReserve(
+        std::uint64_t charged, std::uint64_t& used);
 
     const std::uint64_t limit_;
     const std::function<std::uint64_t()> allocated_;
+    const std::function<std::uint64_t()> prompt_;
     const std::uint64_t granule_;
     mutable std::mutex mutex_;
     std::uint64_t reserved_ {};
     std::atomic<std::uint64_t> refusals_ {};
     std::atomic<std::uint64_t> refusalsAfterRelease_ {};
     std::atomic<std::uint64_t> reclaimed_ {};
+    std::atomic<std::uint64_t> settleWaits_ {};
+    std::atomic<std::uint64_t> settleAdmissions_ {};
+    std::atomic<std::uint64_t> settleMicroseconds_ {};
+    /* Under mutex_: the bytes the ledger still owes a release the prompt
+     * reading showed, and the readings that were last taken. */
+    std::uint64_t owed_ {};
+    std::uint64_t lastPrompt_ {};
+    std::uint64_t lastAllocated_ {};
+    bool sampled_ {};
     /* Held while the hook runs, which keeps it to one at a time and lets
      * setReclaim wait for a running one. Never held with mutex_. */
     std::mutex reclaimMutex_;

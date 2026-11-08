@@ -199,9 +199,14 @@ struct SessionSettingsSheet: View {
             .onAppear { model.statistics(.settings, visible: true) }
             .onDisappear { model.statistics(.settings, visible: false) }
             LabeledContent {
-                value(session.readout.memoryText(of: memoryMiB))
+                usage(session.readout.memoryText(of: memoryMiB), share: session.readout.memoryFraction(of: memoryMiB))
             } label: {
                 rowLabel("Memory", symbol: "memorychip")
+            }
+            LabeledContent {
+                usage(session.readout.vramText, share: session.readout.vramFraction)
+            } label: {
+                rowLabel("VRAM", symbol: "cube")
             }
             LabeledContent {
                 value(session.readout.fpsText)
@@ -213,6 +218,16 @@ struct SessionSettingsSheet: View {
             }
         }
         .id("stats")
+    }
+
+    /// A figure of memory in use after a bar of its share, as the CPU
+    /// figure follows its sparkline.
+    private func usage(_ text: String, share: Double?) -> some View {
+        HStack(spacing: 10) {
+            ShareBar(share: share)
+                .frame(width: 44, height: 6)
+            value(text)
+        }
     }
 
     private func rowLabel(_ title: String, symbol: String) -> some View {
