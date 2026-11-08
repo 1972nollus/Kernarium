@@ -12,10 +12,6 @@ void MemoryPressure::subscribe(const Reading& reading) noexcept
         return;
     *this = {};
     subscribed_ = true;
-    hasOverhead_ = true;
-    overhead_ = reading.usageBytes > reading.contextBytes
-        ? reading.usageBytes - reading.contextBytes
-        : 0;
     seenRefusals_ = reading.refusals;
     queriedRefusals_ = reading.refusals;
     queried_ = true;
@@ -29,31 +25,26 @@ void MemoryPressure::unsubscribe() noexcept
 bool MemoryPressure::step(
     Clock::time_point now, const Reading& reading) noexcept
 {
-    const std::uint64_t overhead = reading.usageBytes > reading.contextBytes
-        ? reading.usageBytes - reading.contextBytes
-        : 0;
-    overhead_ = hasOverhead_ ? std::min(overhead_, overhead) : overhead;
-    hasOverhead_ = true;
-
-    /* Compared as "held >= B - margin" so that no sum can overflow. */
+    /* Compared as "usage >= B - margin" so that no sum can overflow. */
     const std::uint64_t threshold = reading.budgetBytes -
         std::min(reading.budgetBytes, margin);
-    const std::uint64_t held = reading.contextBytes > UINT64_MAX - overhead_
-        ? UINT64_MAX
-        : reading.contextBytes + overhead_;
-    high_ = reading.budgetBytes != 0 && held >= threshold;
+    high_ = reading.budgetBytes != 0 && reading.usageBytes >= threshold;
 
     bool changed = false;
     if (high_) {
         calmSince_.reset();
         if (!highSince_)
             highSince_ = now;
-        if (!pressure_ && now - *highSince_ >= sustain) {
+        /* Only a figure the host's own reclaim has left, and has had time to
+         * show, counts as pressure. */
+        if (!pressure_ && reclaimedThisStretch_ && now >= settledAt_ &&
+            now - *highSince_ >= sustain) {
             pressure_ = true;
             changed = true;
         }
     } else {
         highSince_.reset();
+        reclaimedThisStretch_ = false;
         if (pressure_) {
             if (!calmSince_)
                 calmSince_ = now;
@@ -101,6 +92,21 @@ MemoryPressure::State MemoryPressure::query(
     return state;
 }
 
+bool MemoryPressure::reclaimDue(Clock::time_point now) const noexcept
+{
+    return subscribed_ && high_ && !pressure_ && !reclaimedThisStretch_ &&
+        (!lastReclaim_ || now - *lastReclaim_ >= reclaimInterval);
+}
+
+void MemoryPressure::reclaimed(Clock::time_point now, bool freed) noexcept
+{
+    if (!subscribed_)
+        return;
+    lastReclaim_ = now;
+    reclaimedThisStretch_ = true;
+    settledAt_ = freed ? now + settle : now;
+}
+
 std::optional<MemoryPressure::Clock::time_point> MemoryPressure::deadline()
     const noexcept
 {
@@ -111,8 +117,17 @@ std::optional<MemoryPressure::Clock::time_point> MemoryPressure::deadline()
         if (!earliest || when < *earliest)
             earliest = when;
     };
-    if (high_ && !pressure_ && highSince_)
-        consider(*highSince_ + sustain);
+    if (high_ && !pressure_ && highSince_) {
+        if (!reclaimedThisStretch_) {
+            /* The reclaim is due, or due once the interval since the last
+             * one has passed. */
+            consider(lastReclaim_
+                    ? std::max(*highSince_, *lastReclaim_ + reclaimInterval)
+                    : *highSince_);
+        } else {
+            consider(std::max(*highSince_ + sustain, settledAt_));
+        }
+    }
     if (!high_ && pressure_ && calmSince_)
         consider(*calmSince_ + calm);
     if (refusalUnraised_ && lastRefusalEvent_)

@@ -346,10 +346,17 @@ subscribes also makes the device raise a config-change event (`events_read`
 bit 1) when the pool goes under or out of pressure, and at most once a second
 when a refusal was counted; the guest then asks again.
 
-- Pressure is `ledger + overhead + 96 MiB >= B`, with the host's smallest
-  overhead seen (usage less the ledger), the margin `GraphicsReclaim` uses. It
-  is declared after 1 s of it and cleared after 5 s without it
-  (`device/gpu/memory_pressure.*`, the evaluator with an injected clock).
+- Pressure is `usage + 96 MiB >= B` on the pool's own usage, the figure a
+  reservation is refused by, so it means "within the margin of what the pool
+  refuses at". The usage holds memory the host frees itself, so when the
+  condition first holds the transport runs the pool's reclaim hook, the one
+  that runs before a refusal (at most once a second, from the transport
+  thread), the figure is given 300 ms to show what it freed, and pressure is
+  declared only if the condition still holds after that and has held for 1 s.
+  It is cleared after 5 s without the condition
+  (`device/gpu/memory_pressure.*`, the evaluator with an injected clock). A
+  guest allocation that arrives faster than the margin fills in that second is
+  still refused first, which the refusal edge reports.
 - Nothing is periodic and nothing wakes an idle device: the ledger's change
   observer arms a coalescing 250 ms timer on the transport thread, and the
   evaluator arms one deadline for its own next change.

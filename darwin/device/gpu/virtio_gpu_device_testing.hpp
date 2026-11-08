@@ -52,6 +52,13 @@ public:
     {
         return std::nullopt;
     }
+    /* Frees what the host's drivers cache, as the pool does before it refuses
+     * (VirglRenderer::reclaimCachedMemory() for the production device), and
+     * returns how many cached allocations it freed. */
+    [[nodiscard]] virtual std::uint64_t reclaimCachedMemory() noexcept
+    {
+        return 0;
+    }
     /* A display keeps what the guest's contexts hold of the host GPU's
      * memory; the device's test double keeps it here. */
     [[nodiscard]] ContextMemoryLedger& graphicsLedger() noexcept

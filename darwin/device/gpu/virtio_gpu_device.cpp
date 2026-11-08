@@ -75,8 +75,10 @@ namespace {
  * budget runs. */
 #if UML_GPU_DEVICE_TESTING
 #define UML_GPU_DEVICE_MEMORY dependencies_.deviceMemory()
+#define UML_GPU_RECLAIM_MEMORY dependencies_.reclaimCachedMemory()
 #else
 #define UML_GPU_DEVICE_MEMORY VirglRenderer::deviceMemory()
+#define UML_GPU_RECLAIM_MEMORY VirglRenderer::reclaimCachedMemory()
 #endif
 
 /* The memory report's wire is the kernel's header; the host's own names for
@@ -638,7 +640,6 @@ void VirtioGpuDevice::setMemoryWake(std::function<void()> wake)
 MemoryPressure::Reading VirtioGpuDevice::memoryReading() const noexcept
 {
     MemoryPressure::Reading reading {
-        .contextBytes = UML_GPU_LEDGER.totalBytes(),
         .refusals = UML_GPU_DISPLAY.memoryRefusals(),
     };
     if (const auto figures = UML_GPU_DEVICE_MEMORY) {
@@ -651,10 +652,16 @@ MemoryPressure::Reading VirtioGpuDevice::memoryReading() const noexcept
 bool VirtioGpuDevice::evaluateMemory(
     std::chrono::steady_clock::time_point now) noexcept
 {
-    if (!memoryPressure_.subscribed() ||
-        !memoryPressure_.evaluate(now, memoryReading())) {
+    if (!memoryPressure_.subscribed())
         return false;
-    }
+    const bool raise = memoryPressure_.evaluate(now, memoryReading());
+    /* The usage holds what the host's drivers cache, which the pool frees
+     * before it refuses: free it first, and let the evaluator read the figure
+     * that is left once it has settled (its deadline). */
+    if (memoryPressure_.reclaimDue(now))
+        memoryPressure_.reclaimed(now, UML_GPU_RECLAIM_MEMORY != 0);
+    if (!raise)
+        return false;
     ++memoryGeneration_;
     ++memoryEventsRaised_;
     return true;

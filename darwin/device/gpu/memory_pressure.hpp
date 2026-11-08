@@ -10,23 +10,27 @@ namespace uml::gpu {
 /* When the host's graphics memory counts as under pressure, for a guest that
  * subscribed to hear of it (the Virtio-GPU memory report, kernel/common/gpu).
  *
- * The budget B is refused by the pool's usage, which also holds memory no
- * guest context accounts for: the host drivers' caches, and the surfaces the
- * system counts. That overhead only grows when a driver caches more, and a
- * guest cannot free it, so the condition counts the smallest overhead seen
- * (the pool's usage less what the contexts hold, never below zero) and is
+ * The figure is the pool's own usage, the one a reservation is refused by, so
+ * pressure is "within the margin of what the pool will refuse at":
  *
- *   context bytes + overhead + margin >= B
+ *   usage + margin >= B
  *
- * Pressure begins once the condition has held for `sustain` and ends once it
- * has been false for `calm`, so a spike that passes is not reported. A refused
- * allocation is an event of its own, raised at most once per `refusalInterval`.
- * An event is raised on a change of the pressure and on a refusal, and never
- * otherwise.
+ * The usage also holds memory the host can free itself, the caches of its
+ * drivers, and the pool frees those before it refuses. Pressure is therefore
+ * declared on the figure that is left once the host has done the same: when
+ * the condition first holds the caller runs the host's reclaim (reclaimDue()
+ * and reclaimed(), at most once per `reclaimInterval`), the figure is given
+ * `settle` to show what it freed, and pressure begins once the condition
+ * holds after that and has held for `sustain`. It ends once the condition has
+ * been false for `calm`, so a spike that passes is not reported. A refused
+ * allocation is an event of its own, raised at most once per
+ * `refusalInterval`. An event is raised on a change of the pressure and on a
+ * refusal, and never otherwise.
  *
  * The class keeps no clock and no timer: the caller reads the figures, passes
- * the time, and arms a timer for deadline() when it returns one. It does
- * nothing while nobody is subscribed. Not thread-safe. */
+ * the time, runs the reclaim when it is due, and arms a timer for deadline()
+ * when it returns one. It does nothing while nobody is subscribed. Not
+ * thread-safe. */
 class MemoryPressure {
 public:
     using Clock = std::chrono::steady_clock;
@@ -35,15 +39,18 @@ public:
     static constexpr Clock::duration sustain = std::chrono::seconds(1);
     static constexpr Clock::duration calm = std::chrono::seconds(5);
     static constexpr Clock::duration refusalInterval = std::chrono::seconds(1);
+    /* How long the figure is given to show what a reclaim freed: the device
+     * memory pool's own bound for its ledger to follow a release. */
+    static constexpr Clock::duration settle = std::chrono::milliseconds(300);
+    /* The least between two reclaims. */
+    static constexpr Clock::duration reclaimInterval = std::chrono::seconds(1);
 
     /* The figures one evaluation reads, at one instant. */
     struct Reading {
         /* B; 0 when the process has no budget. */
         std::uint64_t budgetBytes {};
-        /* The pool's usage. */
+        /* The pool's usage: what a reservation is refused by. */
         std::uint64_t usageBytes {};
-        /* What the guest's contexts hold of it. */
-        std::uint64_t contextBytes {};
         /* Allocations refused so far. */
         std::uint64_t refusals {};
     };
@@ -72,18 +79,22 @@ public:
     [[nodiscard]] State query(
         Clock::time_point now, const Reading& reading) noexcept;
 
-    /* When to evaluate again if nothing changes before, or nothing. */
+    /* Whether the caller is to run the host's reclaim now: the condition holds
+     * and the host has not tried to free memory since it began to. Read after
+     * evaluate() or query(), which find whether the condition holds. */
+    [[nodiscard]] bool reclaimDue(Clock::time_point now) const noexcept;
+    /* The caller ran the reclaim at `now`; `freed` is whether it freed
+     * anything. The figure is then given `settle` to show it. */
+    void reclaimed(Clock::time_point now, bool freed) noexcept;
+
+    /* When to evaluate again if nothing changes before, or nothing. A time
+     * that has passed means now. */
     [[nodiscard]] std::optional<Clock::time_point> deadline() const noexcept;
 
     [[nodiscard]] bool pressure() const noexcept { return pressure_; }
-    /* The smallest overhead seen since the subscription. */
-    [[nodiscard]] std::uint64_t overheadBytes() const noexcept
-    {
-        return overhead_;
-    }
 
 private:
-    /* Updates the overhead, the pressure and the refusals, and returns
+    /* Updates the condition, the pressure and the refusals, and returns
      * whether the pressure changed. */
     [[nodiscard]] bool step(
         Clock::time_point now, const Reading& reading) noexcept;
@@ -91,15 +102,18 @@ private:
     bool subscribed_ {};
     bool high_ {};
     bool pressure_ {};
-    bool hasOverhead_ {};
     bool queried_ {};
     bool refusalUnraised_ {};
-    std::uint64_t overhead_ {};
+    /* A reclaim has run since the condition began to hold. */
+    bool reclaimedThisStretch_ {};
     std::uint64_t seenRefusals_ {};
     std::uint64_t queriedRefusals_ {};
     std::optional<Clock::time_point> highSince_;
     std::optional<Clock::time_point> calmSince_;
     std::optional<Clock::time_point> lastRefusalEvent_;
+    std::optional<Clock::time_point> lastReclaim_;
+    /* When the figure shows what the last reclaim freed. */
+    Clock::time_point settledAt_ {};
 };
 
 } // namespace uml::gpu
