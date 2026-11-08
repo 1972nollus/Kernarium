@@ -19,6 +19,15 @@ from AVFAudio callbacks through a bounded completion ring, and the callback path
 does not allocate or lock. iOS owns `AVAudioSession` interruption and route
 recovery inside `ApplePlaybackSink`.
 
+## Output cycle
+
+While a stream plays, the host output runs at an IO cycle of a quarter of the
+guest's buffer, between 64 and 512 frames (`OutputCycle`): the output consumes
+a cycle at a time, so a guest with a short buffer keeps time to refill it, and
+a long buffer keeps the usual cycle. macOS sets the cycle on the output device
+for this process. iOS asks the audio session, which runs at the shortest cycle
+its clients ask for, rounded to one the hardware supports.
+
 ## Playback pacing
 
 The guest's playback pointer advances with each completion, so the device must
@@ -86,7 +95,7 @@ tests make no sound. `host` is the default.
 ## Tests
 
 `virtio-sound-protocol`, `virtio-sound-microphone` (over fakes, never opening
-the microphone or showing a prompt), `audio-mute-clock` and
+the microphone or showing a prompt), `audio-mute-clock`, `audio-output-cycle` and
 `guest-virtio-sound-suspend` (a guest suspended under a playing and a paused
 stream, see [`../../../kernel/common/README.md`](../../../kernel/common/README.md))
 cover the device. `UML_TEST_APPLE_AUDIO=ON` adds `apple-audio-playback` and

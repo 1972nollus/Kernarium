@@ -224,6 +224,9 @@ requires reopening Andarium.
   keys take touches: while they are open, a touch that begins anywhere else
   reaches Android from its first event and closes the keys
   (`SessionState.closeSideKeys`, called by the display's `touchDidBegin`).
+  Beside the closed keys their tip, while it shows, takes touches on its card
+  alone (on a Mac, where an iPad app's popover keeps its dimming view, every
+  touch), and it goes with the closed keys when they open or the session ends.
 - **Retina.** Retina mode applies at the next start and uses the screen's
   native pixels, whose host allocations count against the same iOS process
   limit as guest RAM (`DisplayOptions`).
