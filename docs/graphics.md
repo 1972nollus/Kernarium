@@ -242,9 +242,11 @@ the GPU a fixed budget, B, computed once at launch from the process's memory
 limit and the guest's memory (the formula is in [memory
 architecture](architecture.md#memory-and-executable-code)). The budget is one
 pool (`device/gpu/device_memory_pool.*`) for everything the host GPU holds for
-the process. The renderer shrinks every advertised heap to B and bounds every
-heap budget it reports by the pool's headroom, so a guest sizes its allocations
-from B less what the host already holds.
+the process: the larger of Metal's allocation counter less the host memory the
+drivers only import, and the graphics ledger the system counts the process by.
+The renderer shrinks every advertised heap to B and bounds every heap budget it
+reports by the pool's headroom, so a guest sizes its allocations from B less
+what the host already holds.
 
 KosmicKrisp is the one place every allocation passes: every device the process
 creates, Venus guests' and host GL's alike, reserves a heap from the pool before
@@ -255,14 +257,23 @@ driver caches and is decided again.
 - `vkAllocateMemory` of any type is refused with
   `VK_ERROR_OUT_OF_DEVICE_MEMORY` when the pool cannot hold it. That covers
   every buffer and texture of the OpenGL path. Host-visible memory the renderer
-  makes for the guest is reserved before its pages are made; imported memory is
-  not charged; command, descriptor and query pools, presentation, the VNC
-  surface and decoder surfaces are counted once Metal does and never refused.
-- OpenGL: a refused texture or buffer fails the creation with `ENOMEM`, which
-  the device answers as out of memory. The guest kernel fails the creation
-  ioctl and the guest's GL driver reports `GL_OUT_OF_MEMORY`. The context, the
-  renderer and every resource made within the budget stay as they were
-  (`gpu-host-gl-device-memory-budget`).
+  makes for the guest is reserved before its pages are made. Imported memory is
+  neither charged nor counted: Metal counts it in full, so KosmicKrisp reports
+  the bytes it imports and the pool leaves them out. Command, descriptor and
+  query pools, presentation, the VNC surface and decoder surfaces are counted
+  once Metal does and never refused.
+- OpenGL: a refused texture or buffer makes the renderer give back what it
+  holds for finished work and create the resource once more: it finishes and
+  trims every context, frees the deferred shared-memory segments and what the
+  host drivers cache, and waits for the freed memory to count in the pool, for
+  300 ms at most (`gpu-host-gl-reclaim-retry`). A reclaim that did not help
+  rules out another until a resource has been destroyed or a quarter of a
+  second has passed. A resource that still does not fit fails the creation with
+  `ENOMEM`, which the device answers as out of memory; the guest kernel fails
+  the creation ioctl and the guest's GL driver reports `GL_OUT_OF_MEMORY`. The
+  context, the renderer and every resource made within the budget stay as they
+  were (`gpu-host-gl-device-memory-budget`). A driver's own staging buffer
+  that is refused inside a transfer or a draw is not retried.
 - Venus: the guest driver submits `vkAllocateMemory` asynchronously, so a
   refusal reaches the guest as a failed context at the next command naming the
   allocation, and only that guest process aborts.
