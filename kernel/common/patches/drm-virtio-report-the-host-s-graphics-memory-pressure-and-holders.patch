@@ -36,10 +36,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  drivers/gpu/drm/virtio/virtgpu_drv.c          |   5 +
  drivers/gpu/drm/virtio/virtgpu_drv.h          |  54 ++++
  drivers/gpu/drm/virtio/virtgpu_kms.c          |  16 +-
- .../gpu/drm/virtio/virtgpu_memory_report.c    | 285 ++++++++++++++++++
- drivers/gpu/drm/virtio/virtgpu_uml.h          | 118 ++++++++
+ .../gpu/drm/virtio/virtgpu_memory_report.c    | 290 ++++++++++++++++++
+ drivers/gpu/drm/virtio/virtgpu_uml.h          | 118 +++++++
  drivers/gpu/drm/virtio/virtgpu_vq.c           |  28 ++
- 7 files changed, 506 insertions(+), 3 deletions(-)
+ 7 files changed, 511 insertions(+), 3 deletions(-)
  create mode 100644 drivers/gpu/drm/virtio/virtgpu_memory_report.c
  create mode 100644 drivers/gpu/drm/virtio/virtgpu_uml.h
 
@@ -237,10 +237,10 @@ index 34bd7b36a488478f23b596c9526f267d8b2189b2..2e6e705d99ca8cfb4f1ee3e84d263391
  	flush_work(&vgdev->cursorq.dequeue_work);
 diff --git a/drivers/gpu/drm/virtio/virtgpu_memory_report.c b/drivers/gpu/drm/virtio/virtgpu_memory_report.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..0ed52f61a1e20155791401a3fa8b44ab92a4d668
+index 0000000000000000000000000000000000000000..91d24f2c339e4205a5b3c5dd2e5da01c3c1739f3
 --- /dev/null
 +++ b/drivers/gpu/drm/virtio/virtgpu_memory_report.c
-@@ -0,0 +1,285 @@
+@@ -0,0 +1,290 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * The host's graphics memory report.
@@ -346,7 +346,7 @@ index 0000000000000000000000000000000000000000..0ed52f61a1e20155791401a3fa8b44ab
 +		(struct virtio_gpu_uml_memory *)vbuf->resp_buf;
 +	struct device *kdev = NULL;
 +	bool again;
-+	u32 count, i;
++	u32 count, i, c;
 +
 +	if (le32_to_cpu(resp->hdr.type) == VIRTIO_GPU_RESP_OK_UML_MEMORY) {
 +		count = min_t(u32, le32_to_cpu(resp->holder_count),
@@ -376,6 +376,11 @@ index 0000000000000000000000000000000000000000..0ed52f61a1e20155791401a3fa8b44ab
 +			dst->idle_ms = le32_to_cpu(src->idle_ms);
 +			memcpy(dst->comm, src->comm, sizeof(dst->comm));
 +			dst->comm[sizeof(dst->comm) - 1] = '\0';
++			/* One holder per line: nothing the host sent may end it. */
++			for (c = 0; dst->comm[c]; c++)
++				if ((unsigned char)dst->comm[c] < 0x20 ||
++				    dst->comm[c] == 0x7f)
++					dst->comm[c] = '?';
 +			report->holder_count++;
 +		}
 +		kdev = report->kdev;
