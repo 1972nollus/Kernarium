@@ -124,6 +124,30 @@ public:
         return display_->memoryRefusals();
     }
 
+    std::optional<GraphicsMemory> graphicsMemory(
+        std::size_t maximumHolders,
+        std::chrono::milliseconds minimumIdle,
+        std::uint64_t minimumBytes) const
+    {
+        std::lock_guard lock(displayMutex_);
+        if (!display_)
+            return std::nullopt;
+        auto snapshot = display_->graphicsLedger().snapshot(
+            ContextMemoryLedger::Clock::now(),
+            maximumHolders,
+            minimumIdle,
+            minimumBytes);
+        GraphicsMemory memory {
+            .contextBytes = snapshot.totalBytes,
+            .holders = std::move(snapshot.holders),
+        };
+        if (const auto pool = VirglRenderer::deviceMemory()) {
+            memory.budgetBytes = pool->budgetBytes;
+            memory.usageBytes = pool->usageBytes;
+        }
+        return memory;
+    }
+
     std::string takeConnectionName()
     {
         std::lock_guard lock(connectionMutex_);
@@ -411,6 +435,15 @@ std::optional<DeviceMemoryFigures> InProcessGpuService::deviceMemory()
         .budgetBytes = memory->budgetBytes,
         .usageBytes = memory->usageBytes,
     };
+}
+
+std::optional<GraphicsMemory> InProcessGpuService::graphicsMemory(
+    std::size_t maximumHolders,
+    std::chrono::milliseconds minimumIdle,
+    std::uint64_t minimumBytes) const
+{
+    return implementation_->graphicsMemory(
+        maximumHolders, minimumIdle, minimumBytes);
 }
 
 } // namespace uml::gpu

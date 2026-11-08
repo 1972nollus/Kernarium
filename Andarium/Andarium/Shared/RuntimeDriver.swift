@@ -136,6 +136,18 @@ protocol RuntimeDriver: AnyObject {
     /// counter, never waits for the guest and may be asked while the
     /// statistics are not shown.
     func readGraphicsRefusals() async -> UInt64?
+    /// The guest's graphics memory budget and who holds it: only holders
+    /// quiet for `minimumIdle` and holding `minimumBytes` or more are listed.
+    /// nil when no guest runs or its GPU has not started. It reads counters,
+    /// never waits for the guest and may be asked while the statistics are not
+    /// shown.
+    func readGraphicsMemory(minimumIdle: Duration, minimumBytes: UInt64) async -> GraphicsMemoryReading?
+    /// Frees graphics memory by asking Android to end the cached app that
+    /// holds the most of it (`GraphicsReclaim.reclaim`), within the guest's
+    /// shell; nothing is ended that the activity manager does not list under
+    /// the holder's process.
+    func reclaimGraphicsMemory(_ reading: GraphicsMemoryReading, using policy: GraphicsReclaim) async
+        -> GraphicsReclaimResult
     /// The guest kernel's own memory figures; nil when they could not be
     /// had: the kernel does not answer the request yet, or asking could wake
     /// a guest that sleeps. The caller keeps the last figures then. It may

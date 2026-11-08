@@ -86,6 +86,9 @@ std::unique_ptr<DeviceMemoryPool> deviceMemoryPool;
 // renderer exists; the render server's threads read it.
 std::atomic<VirglRenderer::MemoryRefusalObserver> memoryRefusalObserver;
 std::atomic<void*> memoryRefusalObserverData;
+// Who is told how much device memory each Venus context holds; the same rule.
+std::atomic<VirglRenderer::MemoryAccountObserver> memoryAccountObserver;
+std::atomic<void*> memoryAccountObserverData;
 // Guards the pool's address for the readers of its figures: a statistics read
 // from any thread must not meet a renderer that is going.
 std::mutex deviceMemoryReadMutex;
@@ -112,6 +115,18 @@ void deviceMemoryRefused(void*) noexcept
     if (const auto observer =
             memoryRefusalObserver.load(std::memory_order_acquire)) {
         observer(memoryRefusalObserverData.load(std::memory_order_relaxed));
+    }
+}
+
+void deviceMemoryAccounted(
+    void*, std::uint32_t contextId, std::int64_t delta) noexcept
+{
+    if (const auto observer =
+            memoryAccountObserver.load(std::memory_order_acquire)) {
+        observer(
+            memoryAccountObserverData.load(std::memory_order_relaxed),
+            contextId,
+            delta);
     }
 }
 #endif
@@ -338,9 +353,10 @@ VirglRenderer::VirglRenderer()
                         uml::platform::hostGraphicsFootprintBytes());
                 },
                 static_cast<std::uint64_t>(getpagesize()),
-                /* The ledger follows a release a few milliseconds after the
-                 * counter does; the pool waits for it when this alone shows
-                 * the room. */
+                /* The counter alone follows a release at once, the ledger
+                 * later: the pool tells a release the ledger has yet to
+                 * follow from a full budget by comparing this reading with
+                 * its last, and waits for the ledger. */
                 [] {
                     const std::uint64_t imported =
                         virgl_renderer_get_imported_host_memory();
@@ -354,6 +370,7 @@ VirglRenderer::VirglRenderer()
                 .reserve = &reserveDeviceMemory,
                 .release = &releaseDeviceMemory,
                 .refused = &deviceMemoryRefused,
+                .account = &deviceMemoryAccounted,
             };
             virgl_renderer_set_device_memory_pool(&pool);
         } else {
@@ -426,6 +443,16 @@ void VirglRenderer::setMemoryRefusalObserver(
         memoryRefusalObserver.store(observer, std::memory_order_release);
 }
 
+void VirglRenderer::setMemoryAccountObserver(
+    MemoryAccountObserver observer, void* data) noexcept
+{
+    if (observer == nullptr)
+        memoryAccountObserver.store(nullptr, std::memory_order_release);
+    memoryAccountObserverData.store(data, std::memory_order_relaxed);
+    if (observer != nullptr)
+        memoryAccountObserver.store(observer, std::memory_order_release);
+}
+
 std::optional<VirglRenderer::DeviceMemory> VirglRenderer::deviceMemory() noexcept
 {
     std::lock_guard lock(deviceMemoryReadMutex);
@@ -442,6 +469,7 @@ VirglRenderer::~VirglRenderer()
     // The render server's threads stop with the cleanup below, and nothing
     // they report is wanted after that.
     setMemoryRefusalObserver(nullptr, nullptr);
+    setMemoryAccountObserver(nullptr, nullptr);
     {
         // A reader of the pool's figures that is inside the pool finishes
         // first, and none starts after this.
@@ -1005,6 +1033,13 @@ int VirglRenderer::contextFenceStatus(
     } catch (...) {
         return EIO;
     }
+}
+
+std::uint64_t VirglRenderer::resourceStorageBytes(
+    std::uint32_t resourceId) noexcept
+{
+    return virgl_renderer_resource_get_storage_size(
+        static_cast<int>(resourceId));
 }
 
 void VirglRenderer::unrefResource(std::uint32_t resourceId) noexcept

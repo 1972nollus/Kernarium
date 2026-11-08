@@ -235,10 +235,10 @@ index aea5e1b60e7f331b5d1cb9a4bb357ace6511631e..ff2339a0e05832a57c3caebf229852b2
  }
  
 diff --git a/drivers/gpu/drm/virtio/virtgpu_ioctl.c b/drivers/gpu/drm/virtio/virtgpu_ioctl.c
-index 54955a5dd287d18b91dd98e11f5a5ab21156d040..50ac2276006b57cfc81f488718e9072ab8a3053f 100644
+index efa20d6f698f35db8cad695ba36f1ad9f860b044..c6ec38f37f492b9aaeb3b8ae7e27fc40dad34217 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_ioctl.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_ioctl.c
-@@ -32,13 +32,14 @@
+@@ -32,6 +32,7 @@
  #include <drm/drm_file.h>
  #include <drm/virtgpu_drm.h>
  
@@ -246,16 +246,17 @@ index 54955a5dd287d18b91dd98e11f5a5ab21156d040..50ac2276006b57cfc81f488718e9072a
  #include "virtgpu_drv.h"
  
  #define VIRTGPU_BLOB_FLAG_USE_MASK (VIRTGPU_BLOB_FLAG_USE_MAPPABLE | \
- 				    VIRTGPU_BLOB_FLAG_USE_SHAREABLE | \
- 				    VIRTGPU_BLOB_FLAG_USE_CROSS_DEVICE)
+@@ -65,7 +66,7 @@ static void virtio_gpu_name_context_owner(char *buf, size_t size,
+ 	scnprintf(buf, size, "%.*s%s", (int)room, name, suffix);
+ }
  
 -/* Must be called with &virtio_gpu_fpriv.struct_mutex held. */
 +/* Must be called with &virtio_gpu_fpriv.context_lock held. */
  static void virtio_gpu_create_context_locked(struct virtio_gpu_device *vgdev,
  					     struct virtio_gpu_fpriv *vfpriv)
  {
-@@ -57,6 +58,7 @@ static void virtio_gpu_create_context_locked(struct virtio_gpu_device *vgdev,
- 	}
+@@ -84,6 +85,7 @@ static void virtio_gpu_create_context_locked(struct virtio_gpu_device *vgdev,
+ 				      name);
  
  	vfpriv->context_created = true;
 +	virtio_gpu_attach_pending_handles(vgdev, vfpriv);

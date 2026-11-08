@@ -77,6 +77,17 @@ nonisolated enum AdbOperationRunner {
     }
 }
 
+/// Runs the short commands the graphics reclaim sends, each on a connection
+/// of its own.
+nonisolated struct AdbGuestShell: GuestShell {
+    var operations: AdbGuestOperations
+
+    func run(_ command: String, limit: Duration) async throws -> GuestShellOutput {
+        let result = try await operations.shell(command, limit: limit)
+        return GuestShellOutput(text: result.text, exitCode: result.exitCode)
+    }
+}
+
 /// What a bug report has left in the guest, shared between the operation's
 /// thread and the cleanup that follows a cancel.
 nonisolated final class BugReportTrail: @unchecked Sendable {
