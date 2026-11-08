@@ -224,6 +224,14 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
 
+    # The renderer reports the host memory the drivers hold by import, which
+    # Metal counts in full and the device memory pool must not charge.
+    uml_add_gpu_unit_test(gpu-host-imported-memory
+        uml_gpu_host_imported_memory_tests host_gl_imported_memory_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY TIMEOUT 120)
+
     # An idle host GL context must give back what its last batches held when
     # the renderer tells the driver it has gone idle (EGL_MESA_context_trim).
     uml_add_gpu_unit_test(gpu-host-context-trim
@@ -305,6 +313,36 @@ if(TARGET uml_gpu_service)
     uml_add_gpu_unit_test(gpu-host-gl-device-memory-budget
         uml_gpu_host_gl_device_memory_budget_tests
         host_gl_device_memory_budget_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY TIMEOUT 120)
+
+    # A creation the budget refuses only because a quiet guest context still
+    # holds its deleted textures is not refused: the renderer finishes and
+    # trims every context, then creates the resource again. A real overcommit
+    # still fails with ENOMEM, in bounded time.
+    uml_add_gpu_unit_test(gpu-host-gl-reclaim-retry
+        uml_gpu_host_gl_reclaim_retry_tests
+        host_gl_reclaim_retry_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY TIMEOUT 240)
+
+    # A draw whose upload memory the budget refuses is skipped with
+    # GL_OUT_OF_MEMORY; the host does not copy into a buffer it never got.
+    uml_add_gpu_unit_test(gpu-host-gl-upload-refusal
+        uml_gpu_host_gl_upload_refusal_tests
+        host_gl_upload_refusal_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY TIMEOUT 240)
+
+    # A resource the guest makes inside a command buffer, which the host
+    # refuses for want of memory, is told to the guest by the blob that names
+    # it: out of memory, once, and not as an id the host never saw.
+    uml_add_gpu_unit_test(gpu-host-gl-refused-blob
+        uml_gpu_host_gl_refused_blob_tests
+        host_gl_refused_blob_tests.cpp
         LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY TIMEOUT 120)
@@ -430,7 +468,8 @@ if(TARGET uml_gpu_service)
         gpu-line-loop-statistics gpu-statistics-availability
         gpu-packed-yuv-planes gpu-texture-barrier-clear gpu-padded-row-transfer
         gpu-host-context-trim gpu-host-context-trim-concurrent
-        gpu-host-gl-device-memory-budget
+        gpu-host-gl-device-memory-budget gpu-host-gl-reclaim-retry
+        gpu-host-imported-memory
         PROPERTIES SKIP_RETURN_CODE 77)
 
     # The renderer and the same-process render server share one fence table.
