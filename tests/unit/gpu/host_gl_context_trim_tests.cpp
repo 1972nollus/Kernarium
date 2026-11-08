@@ -7,17 +7,18 @@
 // what completed work held, without waiting for the device, and the context
 // must go on working: the same context draws, reads back and trims again.
 //
-// The process footprint is the observable: textures the context has written,
-// read back and deleted are still held by the batch that used them until the
-// context is trimmed, and fall out of the footprint when it is.
+// Metal's allocation counter is the observable: textures the context has
+// written, read back and deleted are still held by the batch that used them
+// until the context is trimmed, and leave the counter when it is. The process
+// footprint is not, because Metal returns a released allocation's pages to it
+// on its own schedule, sometimes seconds later.
 
 #include "host_gl_test_support.hpp"
+#include "host_gpu_memory.hpp"
 #include "require.hpp"
 
 #include <epoxy/egl.h>
 #include <epoxy/gl.h>
-
-#include <mach/mach.h>
 
 #include <array>
 #include <chrono>
@@ -43,22 +44,15 @@ constexpr std::uint64_t mebibyte = 1U << 20U;
 
 typedef EGLBoolean (*TrimContext)();
 
-[[nodiscard]] std::uint64_t footprint()
+[[nodiscard]] std::uint64_t allocated()
 {
-    task_vm_info_data_t info {};
-    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
-    require(task_info(mach_task_self(),
-                TASK_VM_INFO,
-                reinterpret_cast<task_info_t>(&info),
-                &count) == KERN_SUCCESS,
-        "the footprint could not be read");
-    return info.phys_footprint;
+    return uml::platform::hostGpuAllocatedBytes();
 }
 
-/* How much the footprint has grown since `baseline`. */
+/* How much the allocation counter has grown since `baseline`. */
 [[nodiscard]] std::uint64_t grown(std::uint64_t baseline)
 {
-    const std::uint64_t now = footprint();
+    const std::uint64_t now = allocated();
     return now > baseline ? now - baseline : 0;
 }
 
@@ -104,7 +98,7 @@ void drawAndDeleteTextures(const std::vector<std::uint8_t>& noise)
     require(glGetError() == GL_NO_ERROR, "GL reported an error");
 }
 
-/* Waits for the footprint to settle at or below `limit` above the baseline. */
+/* Waits for the counter to settle at or below `limit` above the baseline. */
 [[nodiscard]] bool fallsBelow(
     std::uint64_t baseline, std::uint64_t limit, std::chrono::seconds timeout)
 {
@@ -122,7 +116,7 @@ void drawAndDeleteTextures(const std::vector<std::uint8_t>& noise)
 int main()
 {
     /* Nothing may be cached, so a released object is gone at once and the
-     * footprint shows it. Before the driver starts. */
+     * counter shows it. Before the driver starts. */
     ::setenv("ZINK_BO_CACHE_MAX_MIB", "0", 1);
 
     const std::vector<std::uint8_t> noise = makeNoise();
@@ -156,7 +150,7 @@ int main()
 
     constexpr std::uint64_t total = textureBytes * textureCount;
     for (int round = 0; round < 2; ++round) {
-        const std::uint64_t baseline = footprint();
+        const std::uint64_t baseline = allocated();
         drawAndDeleteTextures(noise);
 
         /* Held: the context has nothing to submit, so nothing lets go of the
