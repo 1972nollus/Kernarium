@@ -442,6 +442,17 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
 
+    # A guest that is not offered a compressed format it exposes decodes the
+    # texture and stores four or more times its bytes; each format the host
+    # samples is offered, decodes right, copies by its class and is stored
+    # compressed.
+    uml_add_gpu_unit_test(gpu-compressed-formats
+        uml_gpu_compressed_formats_tests
+        host_gl_compressed_formats_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY TIMEOUT 120)
+
     # A stencil buffer needs no depth plane beside it: Android's hardware
     # renderer asks for a stencil of eight bits and no depth for every window,
     # and the renderer used to give it a depth-stencil image.
