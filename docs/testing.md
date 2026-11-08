@@ -292,7 +292,12 @@ tests (including Android storage and the touch-cancel path), the side keys'
 pass-through of touches to Android, the ADB-over-network hold and the
 background disk locks (which also requires a guest that was allocating
 buffers when the GPU was held to suspend). The storage test signs its helper
-APK with the AOSP test key, never a release key. When derived data is on a
+APK with the AOSP test key, never a release key. Derived data for a Mac run is
+never in a system temporary directory (`/tmp`, `/var/tmp`, `$TMPDIR`):
+Gatekeeper rejects the installed app there ("bad app wrapper") and kills the
+run before its tests start, so the target's first build phase
+(`Andarium/scripts/check-run-location.py`, `andarium-run-location`) fails a Mac
+build below one. When derived data is on a
 removable volume, macOS prompts once for access and the launch hangs until
 answered; build to the internal disk instead.
 

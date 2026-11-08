@@ -67,6 +67,13 @@
       "product": "Products/Andarium.app",
       "product-type": "application",
       "build-phases": [
+        {
+          "kind": "script",
+          "name": "Check Mac run location",
+          "run-on-every-build": true,
+          "shell": "/bin/sh",
+          "script": "/usr/bin/env python3 -B \"$SRCROOT/scripts/check-run-location.py\"\n",
+        },
         "compile-sources",
         "frameworks",
         "resources",
