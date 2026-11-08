@@ -139,6 +139,15 @@ BOOT_OPENGLES_VERSION = 0x30002
 OPENGLES_DEQP_LEVEL_FEATURE = "android.software.opengles.deqp.level"
 OPENGLES_DEQP_LEVEL = 132776705  # 2026-03-01
 UML_INIT_OPENGLES_COPY = "setprop ro.opengles.version ${ro.boot.opengles.version}"
+# The Venus HAL makes vkAllocateMemory wait for the host's reply, so a refusal of the host's GPU
+# budget reaches the application as VK_ERROR_OUT_OF_DEVICE_MEMORY instead of failing the ring and
+# aborting the process. Mesa reads its VN_PERF option as this property; vendor init sets it at
+# early-init, before any process that loads the driver starts, and only there. The driver loads in
+# applications, SurfaceFlinger and programs run from the shell (the CTS among them), and each must
+# be able to read the property, or Mesa reads no option and allocates asynchronously.
+VENUS_PERF_PROPERTY = "debug.mesa.vn.perf"
+VENUS_PERF_COPY = f"setprop {VENUS_PERF_PROPERTY} no_async_mem_alloc"
+VENUS_DRIVER_DOMAINS = ("untrusted_app", "surfaceflinger", "shell")
 # The retired AOSP external/mesa3d stack: its EGL and GLES libraries, and the
 # directory it loaded its driver from.
 RETIRED_EGL_ENTRIES = {
@@ -1324,6 +1333,20 @@ def check_boot_policy(
                 )
     if UML_INIT_TIMEOUT_COPY not in early_init:
         fail("UML init policy does not copy the hardware timeout multiplier at early-init")
+    for trigger, commands in actions.items():
+        for command in commands:
+            if command.startswith(f"setprop {VENUS_PERF_PROPERTY} ") and (
+                trigger != "early-init" or command != VENUS_PERF_COPY
+            ):
+                fail(
+                    f"UML init policy runs '{command}' at '{trigger}', not "
+                    f"'{VENUS_PERF_COPY}' at early-init"
+                )
+    if VENUS_PERF_COPY not in early_init:
+        fail(
+            f"UML init policy does not run '{VENUS_PERF_COPY}' at early-init: a host GPU "
+            "budget refusal would abort a Vulkan application"
+        )
     for trigger, commands in actions.items():
         if UML_INIT_DENSITY_COPY in commands and trigger != UML_INIT_DENSITY_TRIGGER:
             fail(f"UML init policy copies the display density under '{trigger}'")
@@ -2676,6 +2699,7 @@ def check_kernel_policy(
         (platform_policy, vendor_policy, system_ext_policy),
     )
     check_adbd_launch_policy(contexts, (platform_policy, vendor_policy, system_ext_policy))
+    check_venus_option_policy(contexts, (platform_policy, vendor_policy, system_ext_policy))
 
 
 def media_codec_limit(codec: ET.Element, name: str) -> ET.Element:
@@ -3236,6 +3260,35 @@ def check_vendor_init_triggers(
                     f"the trigger 'on {trigger}' names {name}, labelled {label}, which "
                     "vendor_init may not read; init drops the trigger"
                 )
+
+
+def cil_allows_property_set(policies: tuple[bytes, ...], domain: str, label: str) -> bool:
+    """Whether a domain may set the properties of a label, directly or through attributes."""
+    setters = cil_types_and_attributes(policies, domain)
+    settable = cil_types_and_attributes(policies, label)
+    return any(
+        CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()) in setters
+        and CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode()) in settable
+        and b"set" in match.group(3).split()
+        for policy in policies
+        for match in CIL_PROPERTY_SET_RULE.finditer(policy)
+    )
+
+
+def check_venus_option_policy(contexts: list[str], policies: tuple[bytes, ...]) -> None:
+    """vendor_init may set the Venus driver option, and every domain that loads the driver may read it."""
+    label = property_label(VENUS_PERF_PROPERTY, contexts) or "default_prop"
+    if not cil_allows_property_set(policies, "vendor_init", label):
+        fail(
+            f"vendor_init may not set {VENUS_PERF_PROPERTY}, labelled {label}: Venus would "
+            "allocate asynchronously"
+        )
+    for domain in VENUS_DRIVER_DOMAINS:
+        if not cil_allows_file_read(policies, domain, label):
+            fail(
+                f"{domain} may not read {VENUS_PERF_PROPERTY}, labelled {label}: Venus would "
+                "allocate asynchronously there"
+            )
 
 
 # The virtio-gpu device paces the display with a vblank timer, so the present fences of

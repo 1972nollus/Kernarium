@@ -831,6 +831,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           ota_certificates: str | None = None,
                           signed: bool = False,
                           adbd_launch_unreadable: bool = False,
+                          venus_policy_variant: str | None = None,
                           vendor_property_variant: str | None = None,
                           soc_variant: str | None = None,
                           board_variant: str | None = None,
@@ -1088,6 +1089,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 )
                 if init_variant != "missing-gles-copy":
                     graphics += "    setprop ro.opengles.version ${ro.boot.opengles.version}\n"
+                # The Venus driver option that makes vkAllocateMemory wait for the host's reply.
+                venus_sync = "    setprop debug.mesa.vn.perf no_async_mem_alloc\n"
+                if init_variant not in ("missing-venus-sync", "venus-sync-at-boot", "venus-sync-other-value"):
+                    graphics += venus_sync
+                elif init_variant == "venus-sync-other-value":
+                    graphics += "    setprop debug.mesa.vn.perf no_async_mem_alloc,log_ctx_info\n"
                 if init_variant == "angle-copy":
                     graphics += (
                         "    setprop debug.angle.feature_overrides_enabled "
@@ -1195,6 +1202,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 userdata_grow_block = (
                     "on post-fs-data\n" + userdata_grow_data if userdata_grow_data else ""
                 ) + ("on boot\n" + online if userdata_grow_variant == "at-boot" else "")
+                if init_variant == "venus-sync-at-boot":
+                    wifi_dirs += venus_sync
+                elif init_variant == "venus-sync-cleared-at-boot":
+                    wifi_dirs += "    setprop debug.mesa.vn.perf \"\"\n"
                 archive.writestr(
                     "VENDOR/etc/init/init.kernarium.rc",
                     "on early-init\n" + timeout_copy + graphics + density +
@@ -1450,9 +1461,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "SYSTEM/etc/selinux/plat_sepolicy.cil",
                     "(typeattributeset coredomain (adbd init system_server))\n"
-                    + ("(typeattributeset domain (init system_server vendor_init))\n"
-                       if adbd_launch_unreadable
-                       else "(typeattributeset domain (adbd init system_server vendor_init))\n")
+                    + "(typeattributeset domain ("
+                    + ("" if adbd_launch_unreadable else "adbd ")
+                    + "init system_server vendor_init untrusted_app surfaceflinger"
+                    + ("" if venus_policy_variant == "shell-unreadable" else " shell")
+                    + "))\n"
+                    # The Venus driver option is a debug property that vendor_init sets and every
+                    # domain reads.
+                    + "(allow domain debug_prop (file (read getattr map open)))\n"
+                    + ("" if venus_policy_variant == "vendor-init-cannot-set"
+                       else "(allow vendor_init debug_prop (property_service (set)))\n")
                     +
                     "(allow domain boot_status_prop (file (read getattr map open)))\n"
                     "(allow domain bootloader_prop (file (read getattr map open)))\n"
@@ -1474,7 +1492,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "ro.boot.              u:object_r:bootloader_prop:s0\n"
                     "persist.sys.usb.config  u:object_r:system_prop:s0 exact string\n"
                     "persist.adb.tls_server.enable  u:object_r:system_adbd_prop:s0 exact bool\n"
-                    "init.svc.  u:object_r:init_service_status_prop:s0\n",
+                    "init.svc.  u:object_r:init_service_status_prop:s0\n"
+                    "debug.  u:object_r:debug_prop:s0\n",
                 )
                 archive.writestr(
                     "VENDOR/etc/selinux/vendor_property_contexts",
@@ -2998,6 +3017,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
             ("missing-gles-copy", {"init_variant": "missing-gles-copy"}),
             ("missing-timeout-copy", {"init_variant": "missing-timeout-copy"}),
+            ("missing-venus-sync", {"init_variant": "missing-venus-sync"}),
+            ("venus-sync-at-boot", {"init_variant": "venus-sync-at-boot"}),
+            ("venus-sync-other-value", {"init_variant": "venus-sync-other-value"}),
+            ("venus-sync-cleared-at-boot", {"init_variant": "venus-sync-cleared-at-boot"}),
+            ("vendor-init-cannot-set-venus-option", {"venus_policy_variant": "vendor-init-cannot-set"}),
+            ("shell-cannot-read-venus-option", {"venus_policy_variant": "shell-unreadable"}),
             ("timeout-copy-without-default", {"init_variant": "timeout-copy-without-default"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
             ("ungated-density", {"init_variant": "ungated-density"}),
@@ -3290,6 +3315,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not copy the OpenGL ES version at early-init"),
             ("missing-timeout-copy-cause", {"init_variant": "missing-timeout-copy"},
              "does not copy the hardware timeout multiplier at early-init"),
+            ("missing-venus-sync-cause", {"init_variant": "missing-venus-sync"},
+             "does not run 'setprop debug.mesa.vn.perf no_async_mem_alloc' at early-init"),
+            ("venus-sync-at-boot-cause", {"init_variant": "venus-sync-at-boot"},
+             "runs 'setprop debug.mesa.vn.perf no_async_mem_alloc' at 'boot', not"),
+            ("venus-sync-other-value-cause", {"init_variant": "venus-sync-other-value"},
+             "runs 'setprop debug.mesa.vn.perf no_async_mem_alloc,log_ctx_info' at 'early-init', not"),
+            ("venus-sync-cleared-at-boot-cause", {"init_variant": "venus-sync-cleared-at-boot"},
+             "runs 'setprop debug.mesa.vn.perf \"\"' at 'boot', not"),
+            ("vendor-init-cannot-set-venus-option-cause", {"venus_policy_variant": "vendor-init-cannot-set"},
+             "vendor_init may not set debug.mesa.vn.perf, labelled debug_prop"),
+            ("shell-cannot-read-venus-option-cause", {"venus_policy_variant": "shell-unreadable"},
+             "shell may not read debug.mesa.vn.perf, labelled debug_prop"),
             ("timeout-copy-without-default-cause",
              {"init_variant": "timeout-copy-without-default"},
              "runs 'setprop ro.hw_timeout_multiplier \\$\\{ro.boot.hw_timeout_multiplier\\}' "

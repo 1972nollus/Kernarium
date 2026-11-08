@@ -281,6 +281,12 @@ allocator's own `gralloc.minigbm` (`ro.hardware.gralloc=minigbm`); and
 presentation is `VK_ANDROID_native_buffer`. The host side of this stack is in
 [`../../docs/graphics.md`](../../docs/graphics.md#android-guest-requirements).
 
+The Android guest allocates Venus memory synchronously: vendor init sets
+`debug.mesa.vn.perf=no_async_mem_alloc` at early-init, before any process that
+loads the driver starts, so a host GPU budget refusal reaches the application
+as `VK_ERROR_OUT_OF_DEVICE_MEMORY` instead of aborting it. The verifier requires
+the setting and that applications, SurfaceFlinger and the shell may read it.
+
 The boot command line is the only writer of the three graphics HAL selections,
 the OpenGL ES version and `androidboot.lcd_density`; every launcher passes the
 density and a release's command line may not set it. The verifier refuses a
