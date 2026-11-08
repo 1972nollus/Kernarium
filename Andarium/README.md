@@ -138,10 +138,12 @@ everything that exists for automation or only pretends:
   phase runs [`scripts/check-embedded-artifacts.py`](../scripts/check-embedded-artifacts.py),
   which compares the accepted Android release and kernel descriptors with the
   commit's inputs, and the staged and packaged system and runtime with the
-  descriptors, and fails naming the changed paths and commits. A release that
-  records no input trees, a dirty input, or a staged or packaged artifact that is
-  not the accepted one stops the build; only the user decides to ship pending
-  changes, by naming the release ID in `PENDING_INPUTS_DECISION`.
+  descriptors, and fails naming the changed paths and commits. It also refuses
+  a packaged kernel whose Linux banner names a build user or host other than
+  the neutral `kernarium@kernarium`. A release that records no input trees, a
+  dirty input, or a staged or packaged artifact that is not the accepted one
+  stops the build; only the user decides to ship pending changes, by naming the
+  release ID in `PENDING_INPUTS_DECISION`.
 - Its last build phase runs `scripts/check-app-store-bundle.py`, which fails the
   build on a missing Info.plist key, an environment knob, a symbol or log text
   of the debugging and automation support, a test bundle or XCTest framework, a
@@ -257,7 +259,10 @@ requires reopening Andarium.
 - **Statistics.** The session's capsule and Settings' Stats rows show the
   runtime's readings ([`Kernarium/README.md`](../Kernarium/README.md#statistics)),
   read only while a view shows them, the application is active and the guest
-  runs (`StatsSampling.isWanted`).
+  runs (`StatsSampling.isWanted`). Memory is the guest's in use against its
+  size, and VRAM the host GPU's usage against the guest's budget
+  ([`docs/graphics.md`](../docs/graphics.md#device-memory-budget)), a dash
+  without one; each has a bar of its share, orange from 90%.
 - **Graphics memory.** The runtime counts the graphics allocations the host
   refused the guest ([`docs/graphics.md`](../docs/graphics.md#device-memory-budget)).
   While a normal session runs in the foreground the model reads the count every

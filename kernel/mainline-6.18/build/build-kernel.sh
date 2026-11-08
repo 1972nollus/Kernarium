@@ -248,7 +248,11 @@ run_make()
 	if [ -n "$UML_KERNEL_LLVM" ]; then
 		set -- "LLVM=$UML_KERNEL_LLVM" "$@"
 	fi
+	# The Linux banner names the build user and host; every kernel is built
+	# as kernarium@kernarium so it names neither the builder's account nor
+	# machine. scripts/check-embedded-artifacts.py refuses any other pair.
 	PATH="$host_tool_bin:$PATH" \
+		KBUILD_BUILD_USER=kernarium KBUILD_BUILD_HOST=kernarium \
 		PKG_CONFIG_LIBDIR="$UML_KERNEL_HOST_TOOLS_PREFIX/lib/pkgconfig" \
 		PKG_CONFIG_PATH= "$UML_KERNEL_MAKE" \
 		-C "$SOURCE_DIR" "O=$BUILD_DIR" \

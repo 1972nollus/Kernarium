@@ -278,7 +278,11 @@ driver caches and is decided again.
   renderer drops the rest of that buffer and remembers the refused blob id, so
   the blob that names it is answered with `ENOMEM` once, which the device
   reports as out of memory (`gpu-host-gl-refused-blob`). The guest kernel's
-  handling of that answer is part of the kernel contract. A driver's own
+  creation ioctl waits for that answer, for a blob as for any other resource,
+  and fails before the guest holds a handle (`-ENOMEM` for an out-of-memory
+  answer, `-EINVAL` for any other error), so gralloc fails the allocation and
+  no refusal leaves a buffer another process can import
+  (`guest-virtgpu-blob-refusal`). A driver's own
   staging buffer that is refused inside a transfer is not retried. The buffers
   a draw uploads, the program's constants and the attributes it has no array
   for, come from the driver too: a draw whose upload is refused is skipped and
@@ -304,6 +308,12 @@ read it as `gpu_memory_refusals` of the runtime's statistics, and the macOS
 launchers print it as `gpu-refusals` with `--stats`. The renderer reports a
 Venus refusal through the pool's `refused` callback, which the device
 registers.
+
+The same reading carries B and the pool's usage, the count the budget refuses
+by (`gpu_memory_budget_bytes` and `gpu_memory_used_bytes`, runtime API 27): the
+larger of Metal's allocation less the imported host memory and the graphics
+footprint, plus the reservations in flight, memory the drivers keep for reuse
+included. The macOS launchers print them as `gpu-memory <used>/<B> MiB`.
 
 ### Android guest requirements
 

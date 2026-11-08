@@ -169,6 +169,12 @@ int main()
         return skipWithoutRenderer(error);
     }
 
+    // The pool's figures are the applications': the budget, and the count
+    // the budget refuses by.
+    const auto start = uml::gpu::VirglRenderer::deviceMemory();
+    require(start.has_value() && start->budgetBytes == limit,
+        "the renderer did not report its device memory budget");
+
     std::uint32_t nextResourceId = 1;
     std::vector<std::unique_ptr<Texture>> held;
     std::uint32_t stored = 0;
@@ -211,6 +217,13 @@ int main()
         "storage and the guest was not told");
     require(peak <= limit + slackBytes,
         "the host GPU held more than its budget while a guest asked for more");
+    const auto full = uml::gpu::VirglRenderer::deviceMemory();
+    require(full.has_value() && full->budgetBytes == limit,
+        "the budget changed while the guest asked for more");
+    require(full->usageBytes <= limit + slackBytes &&
+            full->usageBytes >= start->usageBytes + (stored * 3ULL / 4ULL) *
+                (textureSize * textureSize * bytesPerPixel),
+        "the pool's usage did not follow the textures the host stored");
 
     // Release the later half of what the guest made; the textures it made
     // before the first refusal and kept still hold their pixels.
@@ -235,6 +248,9 @@ int main()
             "a texture made after the guest released its memory has no "
             "storage");
     }
+    renderer.reset();
+    require(!uml::gpu::VirglRenderer::deviceMemory().has_value(),
+        "a renderer that is gone still reported a budget");
     std::fputs("Device memory budget: ok\n", stderr);
     return 0;
 }

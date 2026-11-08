@@ -26,6 +26,9 @@ struct AppEntry {
     /// start with, and hold: 0 is a session before its first reading. Absent,
     /// the mock readings run on.
     var statsReadings: Int?
+    /// Graphics memory in use, in MiB, held with `statsReadings`: a figure
+    /// near the budget turns its bar orange.
+    var statsVramMiB: Int?
 
     static func fromArguments() -> AppEntry {
         let defaults = UserDefaults.standard
@@ -36,7 +39,8 @@ struct AppEntry {
             resetTips: defaults.bool(forKey: "resetTips"),
             bootStage: defaults.string(forKey: "bootStage").flatMap { Int($0) },
             systemMicrophone: defaults.bool(forKey: "systemMicrophone"),
-            statsReadings: defaults.string(forKey: "statsReadings").flatMap { Int($0) }
+            statsReadings: defaults.string(forKey: "statsReadings").flatMap { Int($0) },
+            statsVramMiB: defaults.string(forKey: "statsVramMiB").flatMap { Int($0) }
         )
     }
 
@@ -231,6 +235,7 @@ struct AppEntry {
             model.session.readout = Readout(
                 previewReadings: statsReadings, memoryMiB: model.guest?.memoryMiB ?? Limits.defaultMemoryRangeMiB.lowerBound
             )
+            if let statsVramMiB { model.session.readout.vramUsedBytes = UInt64(statsVramMiB) * Limits.bytesPerMiB }
         }
         if systemMicrophone { useSystemMicrophone(in: model) }
         return model

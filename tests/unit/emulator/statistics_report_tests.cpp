@@ -178,6 +178,30 @@ void theLineStatesTheGpuRefusalsOfADisplay()
 	require(line && line->find("gpu-refusals") == std::string::npos, *line);
 }
 
+/* A launcher with a device memory budget says how much of it the host holds,
+ * in MiB, after the refusals; one without a budget says nothing. */
+void theLineStatesTheGpuMemoryBudgetAndItsUsage()
+{
+	StatisticsReport report;
+	auto first = sample(0ms, 0);
+	auto second = sample(1000ms, 0);
+	second.gpu_memory_refusals = 2;
+	second.gpu_memory_budget_bytes = 534 * mebibyte;
+	second.gpu_memory_used_bytes = 487 * mebibyte + 512 * 1024;
+	(void)report.add(first, std::nullopt);
+	auto line = report.add(second, std::nullopt);
+	require(line && line->ends_with(" gpu-refusals 2 gpu-memory 487/534 MiB"),
+		*line);
+
+	StatisticsReport bare;
+	auto third = sample(0ms, 0);
+	auto fourth = sample(1000ms, 0);
+	fourth.gpu_memory_used_bytes = 12 * mebibyte;
+	(void)bare.add(third, std::nullopt);
+	line = bare.add(fourth, std::nullopt);
+	require(line && line->find("gpu-memory") == std::string::npos, *line);
+}
+
 void theElapsedTimeCountsFromTheFirstSample()
 {
 	StatisticsReport report;
@@ -212,6 +236,8 @@ int main()
 			theMemoryIsReadOnEverySecondSample},
 		{"the-line-states-the-gpu-refusals-of-a-display",
 			theLineStatesTheGpuRefusalsOfADisplay},
+		{"the-line-states-the-gpu-memory-budget-and-its-usage",
+			theLineStatesTheGpuMemoryBudgetAndItsUsage},
 		{"the-elapsed-time-counts-from-the-first-sample",
 			theElapsedTimeCountsFromTheFirstSample},
 	};

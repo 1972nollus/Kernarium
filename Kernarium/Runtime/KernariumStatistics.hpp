@@ -23,6 +23,13 @@ struct DisplayFigures final {
     std::uint64_t offeredFrames {};
 };
 
+/* The device memory budget and the usage the budget refuses by, as the GPU
+ * service reports them. */
+struct GpuMemoryFigures final {
+    std::uint64_t budgetBytes {};
+    std::uint64_t usedBytes {};
+};
+
 /* A display's primary scanout, as the runtime's guest_display_active reports
  * it: 1 on, 0 off, -1 when there is no guest or its GPU has not started. */
 [[nodiscard]] constexpr std::int32_t displayActive(
@@ -35,14 +42,17 @@ struct DisplayFigures final {
  * when no service is registered, which reads as no frames), `bootIndex` the
  * restart count of the launch's guest, `timestampNs` the steady clock when
  * the guest's CPU time was read, and `memoryRefusals` the GPU service's count
- * of graphics allocations the guest was refused (none reads as 0). */
+ * of graphics allocations the guest was refused (none reads as 0), and
+ * `gpuMemory` the device memory budget and its usage (none reads as 0 for
+ * both). */
 [[nodiscard]] constexpr kernarium_runtime_statistics reading(
     const uml_emulator_statistics& guest,
     std::optional<DisplayFigures> display,
     std::optional<bool> scanout,
     std::uint32_t bootIndex,
     std::uint64_t timestampNs,
-    std::optional<std::uint64_t> memoryRefusals = std::nullopt) noexcept
+    std::optional<std::uint64_t> memoryRefusals = std::nullopt,
+    std::optional<GpuMemoryFigures> gpuMemory = std::nullopt) noexcept
 {
     kernarium_runtime_statistics result {};
     result.struct_size = sizeof(result);
@@ -56,6 +66,8 @@ struct DisplayFigures final {
     result.memory_bytes = guest.guest_ram_bytes;
     result.memory_held_bytes = guest.guest_ram_held_bytes;
     result.gpu_memory_refusals = memoryRefusals.value_or(0U);
+    result.gpu_memory_budget_bytes = gpuMemory ? gpuMemory->budgetBytes : 0U;
+    result.gpu_memory_used_bytes = gpuMemory ? gpuMemory->usedBytes : 0U;
     return result;
 }
 

@@ -17,6 +17,7 @@
 namespace {
 
 using kernarium::statistics::DisplayFigures;
+using kernarium::statistics::GpuMemoryFigures;
 using kernarium::statistics::displayActive;
 using kernarium::statistics::guestMemoryResult;
 using kernarium::statistics::memoryRefusal;
@@ -43,7 +44,9 @@ void aReadingCarriesEveryFigureOfItsSources()
         true,
         2U,
         987654321ULL,
-        7U);
+        7U,
+        GpuMemoryFigures {
+            .budgetBytes = 560005120ULL, .usedBytes = 511705088ULL});
     require(statistics.struct_size == sizeof(statistics));
     require(statistics.processor_count == 4U);
     require(statistics.boot_index == 2U);
@@ -55,6 +58,8 @@ void aReadingCarriesEveryFigureOfItsSources()
     require(statistics.memory_bytes == 2147483648ULL);
     require(statistics.memory_held_bytes == 1610612736ULL);
     require(statistics.gpu_memory_refusals == 7U);
+    require(statistics.gpu_memory_budget_bytes == 560005120ULL &&
+            statistics.gpu_memory_used_bytes == 511705088ULL);
 }
 
 /* No GPU service reads as no frames and an unknown display, and the
@@ -70,6 +75,9 @@ void noDisplayReadsAsNoFramesAndAnUnknownScreen()
         statistics.processor_count == 4U);
     require(statistics.gpu_memory_refusals == 0U,
         "no GPU service refused anything");
+    require(statistics.gpu_memory_budget_bytes == 0U &&
+            statistics.gpu_memory_used_bytes == 0U,
+        "no GPU service gave the guest a budget");
 }
 
 void theScreenReadsAsOneZeroOrUnknown()
