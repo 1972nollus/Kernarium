@@ -4,7 +4,8 @@ function(uml_configure_gpu_component target)
     uml_declare_architecture_target(${target} device)
     target_include_directories(${target} PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
+        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
+        ${PROJECT_SOURCE_DIR}/kernel/common/gpu)
     # Whether the host GL provider is a CPU rasterizer without Vulkan: the
     # iOS Simulator's. The product's prefix decides it, so every component of
     # one configuration, test variants included, agrees.
@@ -40,6 +41,19 @@ target_link_libraries(uml_gpu_mesa_shader_cache PRIVATE
 add_library(uml_gpu_device_memory_pool STATIC device_memory_pool.cpp)
 add_library(UML::GpuDeviceMemoryPool ALIAS uml_gpu_device_memory_pool)
 uml_configure_gpu_component(uml_gpu_device_memory_pool)
+
+# What the guest's contexts hold of the host GPU's memory, by process; see
+# context_memory_ledger.hpp. The display keeps one for the device and the
+# service.
+add_library(uml_gpu_context_memory_ledger STATIC context_memory_ledger.cpp)
+add_library(UML::GpuContextMemoryLedger ALIAS uml_gpu_context_memory_ledger)
+uml_configure_gpu_component(uml_gpu_context_memory_ledger)
+
+# When the guest's graphics memory counts as under pressure, for a guest that
+# subscribed to hear of it; see memory_pressure.hpp.
+add_library(uml_gpu_memory_pressure STATIC memory_pressure.cpp)
+add_library(UML::GpuMemoryPressure ALIAS uml_gpu_memory_pressure)
+uml_configure_gpu_component(uml_gpu_memory_pressure)
 
 # Finds the guest contexts that have gone quiet, for the renderer to trim.
 add_library(uml_gpu_context_idle_tracker STATIC context_idle_tracker.cpp)
@@ -96,7 +110,8 @@ target_compile_definitions(uml_gpu_display PRIVATE
     UML_GPU_VNC_STARTUP_TESTING=0)
 target_include_directories(uml_gpu_display PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)
-target_link_libraries(uml_gpu_display PUBLIC UML::Descriptor UML::VncInput)
+target_link_libraries(uml_gpu_display PUBLIC
+    UML::Descriptor UML::VncInput UML::GpuContextMemoryLedger)
 target_link_libraries(uml_gpu_display PRIVATE UML::GuestTimerMask)
 if(UML_TARGET_MACOS)
     target_link_libraries(uml_gpu_display PRIVATE
@@ -131,7 +146,8 @@ if(UML_BUILD_UNIT_TESTS AND UML_TARGET_MACOS)
         UML_GPU_VNC_STARTUP_TESTING=1)
     target_include_directories(uml_gpu_display_test_variant PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)
-    target_link_libraries(uml_gpu_display_test_variant PUBLIC UML::VncInput)
+    target_link_libraries(uml_gpu_display_test_variant PUBLIC
+        UML::VncInput UML::GpuContextMemoryLedger)
     target_link_libraries(uml_gpu_display_test_variant PRIVATE
         UML::ThirdPartyVncServer
         "-framework Accelerate"
@@ -145,7 +161,8 @@ add_library(uml_gpu_protocol_device STATIC virtio_gpu_device.cpp)
 uml_configure_gpu_component(uml_gpu_protocol_device)
 target_link_libraries(uml_gpu_protocol_device PUBLIC
     uml_gpu_renderer
-    uml_gpu_display)
+    uml_gpu_display
+    UML::GpuMemoryPressure)
 
 # The Virtio-GPU device on the vhost-user transport, with its display.
 add_library(uml_gpu_vhost_user_device STATIC
@@ -201,6 +218,9 @@ if(UML_BUILD_UNIT_TESTS)
     uml_configure_gpu_component(uml_gpu_protocol_device_test_variant)
     target_compile_definitions(uml_gpu_protocol_device_test_variant PUBLIC
         UML_GPU_DEVICE_TESTING=1)
+    target_link_libraries(uml_gpu_protocol_device_test_variant PUBLIC
+        UML::GpuContextMemoryLedger
+        UML::GpuMemoryPressure)
 endif()
 
 add_library(uml_gpu_device INTERFACE)

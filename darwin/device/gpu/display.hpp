@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "context_memory_ledger.hpp"
 #include "protocol.hpp"
 #include "../input/vnc/vnc_input.hpp"
 
@@ -195,10 +196,39 @@ public:
     void recordMemoryRefusal() noexcept
     {
         memoryRefusals_.fetch_add(1, std::memory_order_relaxed);
+        /* A guest that asked to hear of refusals is told through the
+         * ledger's observer. */
+        graphicsLedger_.notify();
     }
     [[nodiscard]] std::uint64_t memoryRefusals() const noexcept
     {
         return memoryRefusals_.load(std::memory_order_relaxed);
+    }
+    /* What the guest's contexts hold of the host GPU's memory, by process.
+     * The device keeps it for as long as its guest runs, and clears it when
+     * that guest is gone; it lives here because the display outlives the
+     * connection and any thread may read it. */
+    [[nodiscard]] ContextMemoryLedger& graphicsLedger() noexcept
+    {
+        return graphicsLedger_;
+    }
+    [[nodiscard]] const ContextMemoryLedger& graphicsLedger() const noexcept
+    {
+        return graphicsLedger_;
+    }
+
+    /* Whether a reclaimer in the guest acts on the memory reports the device
+     * sends (the Virtio-GPU memory report's GUEST_RECLAIMS flag), so the
+     * host's own reclaimer stands down. The device sets it with each query of
+     * the guest and clears it when the connection ends; it lives here because
+     * the display outlives the connection and any thread reads it. */
+    void setGuestReclaims(bool reclaims) noexcept
+    {
+        guestReclaims_.store(reclaims, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool guestReclaims() const noexcept
+    {
+        return guestReclaims_.load(std::memory_order_relaxed);
     }
 
 protected:
@@ -206,7 +236,9 @@ protected:
 
 private:
     std::atomic_bool guestScanoutActive_ {};
+    std::atomic_bool guestReclaims_ {};
     std::atomic<std::uint64_t> memoryRefusals_ {};
+    ContextMemoryLedger graphicsLedger_;
 };
 
 [[nodiscard]] std::unique_ptr<Display> makeDisplay(

@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace uml::emulator {
 
@@ -16,11 +17,28 @@ namespace uml::emulator {
  * display and the frames the guest offered, per second, the memory the guest
  * and the host report and, with a display, how many graphics allocations the
  * host has refused the guest and, with a device memory budget, how much of it
- * the host holds. It is measurement tooling with no UI, built from
+ * the host holds and who holds it. It is measurement tooling with no UI, built
+ * from
  * the same calls the iOS applications make, so a Mac validates their figures.
  * The report keeps no clock and reads no source: it turns the samples it is
  * given into text.
  */
+
+/* One guest process that holds graphics memory (pid 0: a context the host
+ * cannot tell the process of, named by its debug name). */
+struct GraphicsHolder final {
+	std::uint32_t pid {};
+	std::uint64_t bytes {};
+	std::uint64_t idle_ms {};
+	std::string name;
+};
+
+/* What the guest's contexts hold of the device memory budget, and who. */
+struct GraphicsAttribution final {
+	std::uint64_t context_bytes {};
+	/* Largest first. */
+	std::vector<GraphicsHolder> holders;
+};
 
 /* One reading of the host's figures for a running guest. */
 struct StatisticsSample final {
@@ -42,6 +60,11 @@ struct StatisticsSample final {
 	 * 0 without a budget. */
 	std::uint64_t gpu_memory_budget_bytes {};
 	std::uint64_t gpu_memory_used_bytes {};
+	/* Who holds the budget; none without a budget. */
+	std::optional<GraphicsAttribution> graphics_attribution;
+	/* Whether the guest's own low-memory killer asks the host for the budget's
+	 * holders and reclaims them itself. */
+	bool guest_reclaims {};
 };
 
 /* The guest kernel's own memory figures. */
@@ -128,11 +151,36 @@ public:
 				mebibytes(sample.gpu_memory_used_bytes),
 				mebibytes(sample.gpu_memory_budget_bytes));
 			text += memory;
+			if (sample.graphics_attribution)
+				text += attribution_text(*sample.graphics_attribution);
 		}
+		if (sample.guest_reclaims)
+			text += " guest-reclaim=on";
 		return text;
 	}
 
 private:
+	/* " attributed <held> MiB holders <pid>:<name>:<held> MiB:<idle> s ..." */
+	[[nodiscard]] static std::string attribution_text(
+		const GraphicsAttribution &attribution)
+	{
+		char head[48];
+		(void)std::snprintf(head, sizeof(head), " attributed %llu MiB",
+			mebibytes(attribution.context_bytes));
+		std::string text {head};
+		if (attribution.holders.empty())
+			return text;
+		text += " holders";
+		for (const auto &holder : attribution.holders) {
+			char entry[96];
+			(void)std::snprintf(entry, sizeof(entry), " %u:%s:%llu MiB:%llu s",
+				holder.pid, holder.name.c_str(), mebibytes(holder.bytes),
+				static_cast<unsigned long long>(holder.idle_ms / 1000U));
+			text += entry;
+		}
+		return text;
+	}
+
 	[[nodiscard]] static unsigned long long mebibytes(
 		std::uint64_t bytes) noexcept
 	{

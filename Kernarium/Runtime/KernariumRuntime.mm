@@ -2127,6 +2127,51 @@ int runtimeReadStatistics(kernarium_runtime_statistics* statistics)
     return 0;
 }
 
+int runtimeReadGraphicsMemory(kernarium_runtime_graphics_memory* memory)
+{
+    if (memory == nullptr || memory->struct_size < sizeof(*memory))
+        return -EINVAL;
+    std::optional<uml::gpu::GraphicsMemory> figures;
+    std::optional<std::uint64_t> refusals;
+    {
+        std::lock_guard lock(activeGpuMutex);
+        if (activeGpu == nullptr)
+            return -ENODEV;
+        figures = activeGpu->graphicsMemory(
+            KERNARIUM_RUNTIME_GRAPHICS_HOLDERS,
+            std::chrono::milliseconds {memory->minimum_idle_ms},
+            memory->minimum_holder_bytes);
+        refusals = activeGpu->memoryRefusals();
+    }
+    if (!figures)
+        return -ENODEV;
+    std::array<kernarium::statistics::GraphicsHolderFigures,
+        KERNARIUM_RUNTIME_GRAPHICS_HOLDERS> holders;
+    const auto count = std::min<std::size_t>(
+        figures->holders.size(), holders.size());
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto& holder = figures->holders[index];
+        holders[index] = {
+            .pid = holder.pid,
+            .contexts = holder.contexts,
+            .bytes = holder.bytes,
+            .idleMs = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    holder.idle).count()),
+            .name = holder.name,
+        };
+    }
+    *memory = kernarium::statistics::graphicsReading({
+        .budgetBytes = figures->budgetBytes,
+        .usageBytes = figures->usageBytes,
+        .contextBytes = figures->contextBytes,
+        .memoryRefusals = refusals.value_or(0U),
+        .guestReclaims = figures->guestReclaims,
+        .holders = std::span {holders.data(), count},
+    });
+    return 0;
+}
+
 int runtimeReadGuestMemory(kernarium_runtime_guest_memory* memory)
 {
     if (memory == nullptr || memory->struct_size < sizeof(*memory))
@@ -2306,6 +2351,7 @@ const kernarium_runtime_api runtimeApi {
     .read_guest_memory = runtimeReadGuestMemory,
     .cancel_touch = runtimeCancelTouch,
     .quiesce_resident = runtimeQuiesceResident,
+    .read_graphics_memory = runtimeReadGraphicsMemory,
 };
 
 } // namespace
@@ -2358,7 +2404,7 @@ kernarium_runtime_automation_hold_delay_ms(void)
 }
 #endif
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v27(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v28(void)
 {
     return &runtimeApi;
 }

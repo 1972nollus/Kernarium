@@ -68,6 +68,27 @@ final class StubDriver: RuntimeDriver {
         return refusalCounts[min(refusalsAsked, refusalCounts.count - 1)]
     }
 
+    /// What the graphics memory readings answer, in turn, the last one
+    /// repeating; nothing until a test scripts them. A try to free memory
+    /// records the reading it was given and answers `reclaimAnswer`.
+    var graphicsMemories: [GraphicsMemoryReading?] = []
+    private(set) var graphicsMemoryAsked = 0
+    private(set) var graphicsMemoryFilters: [(idle: Duration, bytes: UInt64)] = []
+    func readGraphicsMemory(minimumIdle: Duration, minimumBytes: UInt64) async -> GraphicsMemoryReading? {
+        defer { graphicsMemoryAsked += 1 }
+        graphicsMemoryFilters.append((minimumIdle, minimumBytes))
+        guard !graphicsMemories.isEmpty else { return nil }
+        return graphicsMemories[min(graphicsMemoryAsked, graphicsMemories.count - 1)]
+    }
+    var reclaimAnswer = GraphicsReclaimResult.nothingToEnd
+    private(set) var reclaims: [GraphicsMemoryReading] = []
+    func reclaimGraphicsMemory(_ reading: GraphicsMemoryReading, using policy: GraphicsReclaim) async
+        -> GraphicsReclaimResult
+    {
+        reclaims.append(reading)
+        return reclaimAnswer
+    }
+
     /// What a bug report or an install does when the model asks.
     var bugReport: (@Sendable (@Sendable (BusyUpdate) -> Void) async throws -> URL) = { _ in
         throw CancellationError()

@@ -801,6 +801,26 @@ private:
 				reading.gpu_memory_budget_bytes = memory->budgetBytes;
 				reading.gpu_memory_used_bytes = memory->usageBytes;
 			}
+			/* Holders of 1 MiB or more, quiet or not: the line is for a
+			 * person comparing it with what the guest runs. */
+			if (const auto memory = gpu_->graphicsMemory(
+					8, std::chrono::milliseconds {0}, 1U << 20)) {
+				uml::emulator::GraphicsAttribution attribution {
+					.context_bytes = memory->contextBytes,
+				};
+				for (const auto &holder : memory->holders)
+					attribution.holders.push_back({
+						.pid = holder.pid,
+						.bytes = holder.bytes,
+						.idle_ms = static_cast<std::uint64_t>(
+							std::chrono::duration_cast<
+								std::chrono::milliseconds>(holder.idle)
+								.count()),
+						.name = holder.name,
+					});
+				reading.graphics_attribution = std::move(attribution);
+				reading.guest_reclaims = memory->guestReclaims;
+			}
 			scanout = gpu_->guestScanoutActive();
 		}
 		/* A guest whose display is off may have suspended itself, and the

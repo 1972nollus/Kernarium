@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "context_memory_ledger.hpp"
 #include "display.hpp"
 #include "protocol.hpp"
 #include "virgl_renderer.hpp"
@@ -34,6 +35,29 @@ public:
     /* A display counts the refusals itself; a fake that records them
      * overrides this. */
     virtual void recordMemoryRefusal() noexcept {}
+    /* A display counts the refusals itself; a fake that records them
+     * overrides this. */
+    [[nodiscard]] virtual std::uint64_t memoryRefusals() const noexcept
+    {
+        return 0;
+    }
+    /* A display keeps whether a guest reclaimer acts on the memory reports
+     * (Display::guestReclaims); the device's test double keeps it here. */
+    void setGuestReclaims(bool reclaims) noexcept { guestReclaims_ = reclaims; }
+    [[nodiscard]] bool guestReclaims() const noexcept { return guestReclaims_; }
+    /* The device memory budget and the pool's usage, while a renderer with a
+     * budget runs: VirglRenderer::deviceMemory() for the production device. */
+    [[nodiscard]] virtual std::optional<VirglRenderer::DeviceMemory>
+        deviceMemory() const noexcept
+    {
+        return std::nullopt;
+    }
+    /* A display keeps what the guest's contexts hold of the host GPU's
+     * memory; the device's test double keeps it here. */
+    [[nodiscard]] ContextMemoryLedger& graphicsLedger() noexcept
+    {
+        return graphicsLedger_;
+    }
     virtual void update(
         std::span<const std::uint8_t> source,
         std::uint32_t sourceWidth,
@@ -129,6 +153,12 @@ public:
         std::uint32_t ringIndex,
         std::uint64_t fenceCookie) noexcept = 0;
     virtual void unrefResource(std::uint32_t resourceId) noexcept = 0;
+    /* The host storage of a Virgl resource, which the ledger credits. */
+    [[nodiscard]] virtual std::uint64_t resourceStorageBytes(
+        std::uint32_t) noexcept
+    {
+        return 0;
+    }
     [[nodiscard]] virtual int attachBacking(
         std::uint32_t resourceId,
         std::span<iovec> backing) noexcept = 0;
@@ -140,6 +170,10 @@ public:
         std::uint32_t contextId,
         std::uint32_t resourceId) noexcept = 0;
     virtual void resetFenceState() noexcept = 0;
+
+private:
+    ContextMemoryLedger graphicsLedger_;
+    bool guestReclaims_ {};
 };
 
 } // namespace uml::gpu::testing

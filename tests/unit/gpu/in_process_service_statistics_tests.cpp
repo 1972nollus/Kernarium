@@ -3,7 +3,8 @@
 /* The frame counters of the shipped service's display, read through the
  * service. A windowless display counts the frames it presents, as a screen
  * does, so a scripted guest that shows frames on it moves the count, and a
- * stopped service reports none. */
+ * stopped service reports none. The graphics memory a guest's contexts hold
+ * is read the same way, and a guest that holds none is none. */
 
 #include "frame_guest.hpp"
 #include "gpu_test_support.hpp"
@@ -82,6 +83,12 @@ int main()
     require(service->memoryRefusals() == std::optional<std::uint64_t> {0},
         "a display no guest was refused on counted a refusal");
 
+    const auto none =
+        service->graphicsMemory(8, std::chrono::milliseconds {0}, 0);
+    require(none.has_value() && none->holders.empty() &&
+            none->contextBytes == 0,
+        "a guest that holds no graphics memory was credited some");
+
     /* The device memory budget is the service's too: B once the renderer
      * starts, with the pool's count of what the process holds against it. */
     auto endpoints = takeEndpoints(*service);
@@ -103,6 +110,10 @@ int main()
         "holding requests hid or reset the counters");
     require(service->memoryRefusals() == std::optional<std::uint64_t> {0},
         "showing frames counted a refusal");
+    const auto heldMemory =
+        service->graphicsMemory(8, std::chrono::milliseconds {0}, 0);
+    require(heldMemory.has_value() && heldMemory->holders.empty(),
+        "holding requests hid the graphics memory");
     const auto memory = service->deviceMemory();
     require(memory.has_value() && memory->budgetBytes == deviceMemoryLimit &&
             memory->usageBytes > 0,
@@ -115,5 +126,7 @@ int main()
         "a stopped service reported its display's counters");
     require(!service->memoryRefusals().has_value(),
         "a stopped service reported its display's refusals");
+    require(!service->graphicsMemory(8, std::chrono::milliseconds {0}, 0),
+        "a stopped service reported its graphics memory");
     return 0;
 }

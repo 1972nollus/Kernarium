@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "context_memory_ledger.hpp"
 #include "display.hpp"
 #include "shared_memory_regions.hpp"
 
@@ -9,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace uml::gpu {
 
@@ -44,6 +46,22 @@ struct DeviceMemoryFigures {
      * graphics footprint, plus the reservations in flight. Memory the host's
      * drivers hold for reuse is in it. */
     std::uint64_t usageBytes {};
+};
+
+/* The graphics memory budget and who holds it, at one instant. */
+struct GraphicsMemory {
+    /* The device memory budget, B; 0 when the process has none. */
+    std::uint64_t budgetBytes {};
+    /* What the host GPU holds against it, cache the drivers keep for reuse
+     * included. */
+    std::uint64_t usageBytes {};
+    /* What the guest's contexts hold of it (ContextMemoryLedger). */
+    std::uint64_t contextBytes {};
+    /* Whether a reclaimer in the guest acts on the host's memory reports
+     * (Display::guestReclaims): the host's own then stands down. */
+    bool guestReclaims {};
+    /* The holders that fit the request, largest first. */
+    std::vector<ContextMemoryLedger::Holder> holders;
 };
 
 /* The GPU of one process's guest, and the display it presents on.
@@ -143,6 +161,19 @@ public:
      * not requests are held. */
     [[nodiscard]] std::optional<DeviceMemoryFigures> deviceMemory()
         const noexcept;
+
+    /* The device memory budget, what the process holds against it and what
+     * the guest's contexts hold of that, with the `maximumHolders` largest
+     * holders (a guest process, or a context the host cannot tell the process
+     * of) that hold at least `minimumBytes` and have been quiet for at least
+     * `minimumIdle`. It reads counters and sums nothing, about 0.1 ms, and
+     * waits for no request: any thread, whether or not requests are held.
+     * Nothing once stop() has let the display go. The budget and the usage
+     * are zero while no renderer has one. */
+    [[nodiscard]] std::optional<GraphicsMemory> graphicsMemory(
+        std::size_t maximumHolders,
+        std::chrono::milliseconds minimumIdle,
+        std::uint64_t minimumBytes) const;
 
     /* The port a VNC display listens on, or nothing for any other display. */
     [[nodiscard]] std::optional<std::uint16_t> vncPort() const noexcept;

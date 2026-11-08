@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 27U
+#define KERNARIUM_RUNTIME_API_VERSION 29U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -351,6 +351,68 @@ typedef struct kernarium_runtime_statistics {
 typedef int (*kernarium_runtime_read_statistics_function)(
     kernarium_runtime_statistics* statistics);
 
+/* How many holders one graphics memory reading carries, and the room for a
+ * holder's command name (the guest kernel's, at most 15 characters). */
+#define KERNARIUM_RUNTIME_GRAPHICS_HOLDERS 8U
+#define KERNARIUM_RUNTIME_GRAPHICS_NAME_BYTES 16U
+
+/* One guest process (or one context the host cannot tell the process of) and
+ * the host GPU memory its graphics contexts hold. */
+typedef struct kernarium_runtime_graphics_holder {
+    /* The guest process, as its kernel numbers it; 0 for a context whose
+     * creator the host cannot tell, which a guest kernel without the process
+     * naming gives for every context. */
+    uint32_t pid;
+    /* How many of the process's contexts exist. */
+    uint32_t context_count;
+    /* The bytes it holds. A buffer two processes share is counted in full for
+     * each. */
+    uint64_t bytes;
+    /* Milliseconds since the process's most recently active context last ran a
+     * command. */
+    uint64_t idle_ms;
+    /* The process's command name, or an unnamed context's debug name,
+     * truncated and null-terminated. */
+    char name[KERNARIUM_RUNTIME_GRAPHICS_NAME_BYTES];
+} kernarium_runtime_graphics_holder;
+
+/* The guest's graphics memory budget and who holds it, for an application
+ * that frees graphics memory by ending the guest app that holds it. The
+ * caller sets the first three fields; the rest is the answer. */
+typedef struct kernarium_runtime_graphics_memory {
+    /* Set by the caller to sizeof the structure. */
+    uint32_t struct_size;
+    /* Only holders quiet for at least this many milliseconds, and holding at
+     * least minimum_holder_bytes, are listed. */
+    uint32_t minimum_idle_ms;
+    uint64_t minimum_holder_bytes;
+    /* How many entries of `holders` are filled. */
+    uint32_t holder_count;
+    /* 1 while the guest's own low-memory killer asks the host for the budget's
+     * holders and ends them itself (runtime API 29); an application that ends
+     * holders on its own stands down meanwhile. 0 otherwise. */
+    uint32_t guest_reclaims;
+    /* The device memory budget, and what the process holds against it. The
+     * host's drivers keep memory they could reuse, so usage_bytes is not what
+     * the guest holds. 0 while no renderer has a budget. */
+    uint64_t budget_bytes;
+    uint64_t usage_bytes;
+    /* What the guest's contexts hold of it, named or not, every buffer once:
+     * the part of usage_bytes the host can credit to a guest context. */
+    uint64_t context_bytes;
+    /* As kernarium_runtime_statistics.gpu_memory_refusals, from the same
+     * instant. */
+    uint64_t memory_refusals;
+    /* Largest first. */
+    kernarium_runtime_graphics_holder holders[KERNARIUM_RUNTIME_GRAPHICS_HOLDERS];
+} kernarium_runtime_graphics_memory;
+/* Fills `memory` (the caller sets struct_size and the two filters) with the
+ * running guest's graphics memory. Returns 0, -ENODEV with no guest running
+ * or before its GPU starts, or -EINVAL for a null or short structure. It reads
+ * counters, about 0.1 ms, and never waits for the guest; any thread. */
+typedef int (*kernarium_runtime_read_graphics_memory_function)(
+    kernarium_runtime_graphics_memory* memory);
+
 typedef struct kernarium_runtime_guest_memory {
     /* Set by the caller to sizeof the structure. */
     uint32_t struct_size;
@@ -453,6 +515,7 @@ typedef struct kernarium_runtime_api {
     kernarium_runtime_read_guest_memory_function read_guest_memory;
     kernarium_runtime_cancel_touch_function cancel_touch;
     kernarium_runtime_quiesce_resident_function quiesce_resident;
+    kernarium_runtime_read_graphics_memory_function read_graphics_memory;
 } kernarium_runtime_api;
 
 #if defined(__GNUC__)
@@ -462,7 +525,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v27(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v28(void);
 
 /* An automation-only extension, outside the versioned table: only a runtime
  * built for automation exports this symbol, and the application looks it up
