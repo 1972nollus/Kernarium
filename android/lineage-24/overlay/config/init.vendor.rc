@@ -17,6 +17,12 @@ on early-init
     setprop ro.opengles.version ${ro.boot.opengles.version}
     setprop debug.hwui.renderer ${ro.boot.hardware.guest_hwui_renderer}
     setprop ro.zygote.disable_gl_preload ${ro.boot.hardware.guest_disable_renderer_preload}
+    # The Venus HAL waits for each vkAllocateMemory reply, so a host GPU
+    # budget refusal reaches the application as VK_ERROR_OUT_OF_DEVICE_MEMORY
+    # instead of aborting it. Mesa reads VN_PERF as this property, a
+    # debug_prop every domain may read; early-init runs before any service or
+    # application that loads the driver starts.
+    setprop debug.mesa.vn.perf no_async_mem_alloc
 
 # Kernarium passes the display density at each launch. The standalone macOS
 # launcher passes none, which leaves SurfaceFlinger on its fallback density.

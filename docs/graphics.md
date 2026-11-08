@@ -265,7 +265,9 @@ driver caches and is decided again.
   (`gpu-host-gl-device-memory-budget`).
 - Venus: the guest driver submits `vkAllocateMemory` asynchronously, so a
   refusal reaches the guest as a failed context at the next command naming the
-  allocation, and only that guest process aborts.
+  allocation, and only that guest process aborts. The Android guest allocates
+  synchronously, so there the application gets `VK_ERROR_OUT_OF_DEVICE_MEMORY`
+  and keeps its device.
 - A device's first geometry heap is made at its floor size even when the pool
   refuses it, so a full pool can leave the process one floor per device past B.
 
