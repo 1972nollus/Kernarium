@@ -7,6 +7,7 @@
 #import <TargetConditionals.h>
 
 #include <mutex>
+#include <utility>
 
 namespace uml::audio::session {
 
@@ -17,6 +18,21 @@ namespace {
 std::mutex lock;
 bool playbackNeeds {};
 bool captureNeeds {};
+double playbackCycle {};
+double captureCycle {};
+
+/* The shortest IO cycle a client that needs the session asks for, or 0. */
+double preferredCycle() noexcept
+{
+    double cycle = 0.0;
+    for (const auto [needs, asked] :
+         {std::pair {playbackNeeds, playbackCycle},
+          std::pair {captureNeeds, captureCycle}}) {
+        if (needs && asked > 0.0 && (cycle == 0.0 || asked < cycle))
+            cycle = asked;
+    }
+    return cycle;
+}
 
 /* Sets the category the current clients need and activates the session. */
 bool apply() noexcept
@@ -36,6 +52,9 @@ bool apply() noexcept
                             error:&error]) {
             return false;
         }
+        // Only a preference: a session that keeps another cycle still plays.
+        if (const double cycle = preferredCycle(); cycle > 0.0)
+            (void)[session setPreferredIOBufferDuration:cycle error:&error];
         return [session setActive:YES error:&error];
     } @catch (NSException*) {
         return false;
@@ -83,12 +102,20 @@ void release(Client client) noexcept
     }
 }
 
+void preferIoCycle(Client client, double seconds) noexcept
+{
+    const std::lock_guard guard(lock);
+    (client == Client::capture ? captureCycle : playbackCycle) = seconds;
+}
+
 #else
 
 bool otherAudioPlaying() noexcept
 {
     return false;
 }
+
+void preferIoCycle(Client, double) noexcept {}
 
 bool acquire(Client) noexcept
 {
