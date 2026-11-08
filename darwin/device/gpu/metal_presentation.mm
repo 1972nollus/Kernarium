@@ -507,6 +507,11 @@ struct MetalPresentationState final :
                 latestTexture = texture;
                 latestSampling = *sampling;
                 latestIsCpu = false;
+                /* A display-sized copy of pixels nothing shows any more,
+                 * typically the console the guest drew before its GPU
+                 * scanout. The framebuffer keeps them, and every CPU draw
+                 * uploads all of it, so the next one makes a new texture. */
+                fallbackTexture = nil;
                 ++latestContentGeneration;
                 ++latestPresentationGeneration;
             }
