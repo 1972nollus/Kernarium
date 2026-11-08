@@ -274,15 +274,21 @@ driver caches and is decided again.
   the guest's GL driver reports `GL_OUT_OF_MEMORY`. The context, the renderer
   and every resource made within the budget stay as they were
   (`gpu-host-gl-device-memory-budget`). A resource created inside a command
-  buffer, such as a gralloc blob's storage, loses the answer: the renderer drops
-  the rest of that buffer and the guest learns of the refusal only when a later
-  command names the resource. A driver's own staging buffer that is refused
-  inside a transfer or a draw is not retried.
+  buffer, such as a gralloc blob's storage, loses the answer there: the
+  renderer drops the rest of that buffer and remembers the refused blob id, so
+  the blob that names it is answered with `ENOMEM` once, which the device
+  reports as out of memory (`gpu-host-gl-refused-blob`). The guest kernel's
+  handling of that answer is part of the kernel contract. A driver's own
+  staging buffer that is refused inside a transfer is not retried. The buffers
+  a draw uploads, the program's constants and the attributes it has no array
+  for, come from the driver too: a draw whose upload is refused is skipped and
+  raises `GL_OUT_OF_MEMORY`, and the next draw sets its state up again
+  (`gpu-host-gl-upload-refusal`).
 - Venus: the guest driver submits `vkAllocateMemory` asynchronously, so a
   refusal reaches the guest as a failed context at the next command naming the
   allocation, and only that guest process aborts. The Android guest allocates
   synchronously, so there the application gets `VK_ERROR_OUT_OF_DEVICE_MEMORY`
-  and keeps its device.
+  and keeps its device. A refused Venus allocation is not retried.
 - A device's first geometry heap is made at its floor size even when the pool
   refuses it, so a full pool can leave the process one floor per device past B.
 
@@ -290,13 +296,14 @@ The counter includes memory the guest has freed while its blob resource is still
 referenced, so a loop that reallocates large images can be refused while its
 live memory is below B.
 
-The device counts each OpenGL resource creation it answers with out of memory
-on the display (`Display::memoryRefusals`), so a refusal the host reclaimed and
-retried past is not counted and a restarted guest does not reset the count. The
-applications read it as `gpu_memory_refusals` of the runtime's statistics, and
-the macOS launchers print it as `gpu-refusals` with `--stats`. A Venus
-allocation the host refused is not counted: the guest learns of it inside the
-renderer.
+The device counts each OpenGL resource creation or blob it answers with out of
+memory, and each Venus allocation the pool refuses, on the display
+(`Display::memoryRefusals`), so a refusal the host reclaimed and retried past
+is not counted and a restarted guest does not reset the count. The applications
+read it as `gpu_memory_refusals` of the runtime's statistics, and the macOS
+launchers print it as `gpu-refusals` with `--stats`. The renderer reports a
+Venus refusal through the pool's `refused` callback, which the device
+registers.
 
 ### Android guest requirements
 
