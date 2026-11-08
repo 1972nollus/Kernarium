@@ -401,4 +401,16 @@ std::optional<std::uint64_t> InProcessGpuService::memoryRefusals()
     return implementation_->memoryRefusals();
 }
 
+std::optional<DeviceMemoryFigures> InProcessGpuService::deviceMemory()
+    const noexcept
+{
+    const auto memory = VirglRenderer::deviceMemory();
+    if (!memory)
+        return std::nullopt;
+    return DeviceMemoryFigures {
+        .budgetBytes = memory->budgetBytes,
+        .usageBytes = memory->usageBytes,
+    };
+}
+
 } // namespace uml::gpu

@@ -27,6 +27,7 @@ using uml::testing::require;
 using uml::testing::waitUntil;
 
 constexpr int skippedExitCode = 77;
+constexpr std::uint64_t deviceMemoryLimit = 4ULL << 30;
 constexpr Pixel firstFrame {0x13U, 0x57U, 0x9bU, 0xffU};
 constexpr Pixel secondFrame {0xe1U, 0x4dU, 0x27U, 0xffU};
 
@@ -55,6 +56,7 @@ int main()
     uml::gpu::InProcessGpuOptions options;
     options.displayMode = uml::gpu::DisplayMode::offscreen;
     options.vncPort = 0;
+    options.deviceMemoryLimit = deviceMemoryLimit;
     options.width = 64;
     options.height = 64;
     std::unique_ptr<uml::gpu::InProcessGpuService> service;
@@ -80,6 +82,8 @@ int main()
     require(service->memoryRefusals() == std::optional<std::uint64_t> {0},
         "a display no guest was refused on counted a refusal");
 
+    /* The device memory budget is the service's too: B once the renderer
+     * starts, with the pool's count of what the process holds against it. */
     auto endpoints = takeEndpoints(*service);
     FrameGuest guest {endpoints->transport};
     guest.show(firstFrame);
@@ -99,6 +103,10 @@ int main()
         "holding requests hid or reset the counters");
     require(service->memoryRefusals() == std::optional<std::uint64_t> {0},
         "showing frames counted a refusal");
+    const auto memory = service->deviceMemory();
+    require(memory.has_value() && memory->budgetBytes == deviceMemoryLimit &&
+            memory->usageBytes > 0,
+        "the service did not report its device memory budget and usage");
     service->releaseRequests();
 
     endpoints->close();

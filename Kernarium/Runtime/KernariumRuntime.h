@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 26U
+#define KERNARIUM_RUNTIME_API_VERSION 27U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -333,6 +333,15 @@ typedef struct kernarium_runtime_statistics {
      * host refused is not counted. A rise means a guest application may have
      * lost its graphics state; 0 while there is no display. */
     uint64_t gpu_memory_refusals;
+    /* The host GPU's device memory budget, B, and what the process holds
+     * against it, in bytes. The usage is the count the budget refuses an
+     * allocation by: the larger of Metal's allocation less the host memory the
+     * drivers only import and the graphics footprint, plus the reservations
+     * in flight. It includes memory the host's drivers keep for reuse, so it
+     * is above what the guest's own allocations add up to. Both are 0 while
+     * there is no budget: no GPU yet, or a runtime that gives its guest none. */
+    uint64_t gpu_memory_budget_bytes;
+    uint64_t gpu_memory_used_bytes;
 } kernarium_runtime_statistics;
 /* Fills `statistics` (the caller sets struct_size) with the running guest's
  * host-side figures. Returns 0, -ENODEV with no guest running (before its
@@ -453,7 +462,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v26(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v27(void);
 
 /* An automation-only extension, outside the versioned table: only a runtime
  * built for automation exports this symbol, and the application looks it up

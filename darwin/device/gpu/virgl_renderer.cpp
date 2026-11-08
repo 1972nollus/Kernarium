@@ -86,6 +86,10 @@ std::unique_ptr<DeviceMemoryPool> deviceMemoryPool;
 // renderer exists; the render server's threads read it.
 std::atomic<VirglRenderer::MemoryRefusalObserver> memoryRefusalObserver;
 std::atomic<void*> memoryRefusalObserverData;
+// Guards the pool's address for the readers of its figures: a statistics read
+// from any thread must not meet a renderer that is going.
+std::mutex deviceMemoryReadMutex;
+bool deviceMemoryReadable;
 
 #if !UML_GPU_SOFTWARE_RENDERER
 std::uint64_t deviceMemoryPoolUsage(void* data) noexcept
@@ -358,6 +362,10 @@ VirglRenderer::VirglRenderer()
                 std::to_string(checkedResult));
         }
         initialized = true;
+        if (deviceMemoryPool) {
+            std::lock_guard lock(deviceMemoryReadMutex);
+            deviceMemoryReadable = true;
+        }
         try {
             /* The renderer's own context is where a resource is made and
              * transferred when the guest names no context of its own. */
@@ -386,6 +394,10 @@ VirglRenderer::VirglRenderer()
         }
 #endif
     } catch (...) {
+        {
+            std::lock_guard lock(deviceMemoryReadMutex);
+            deviceMemoryReadable = false;
+        }
         if (deviceMemoryPool)
             deviceMemoryPool->setReclaim({});
         if (initialized)
@@ -405,11 +417,28 @@ void VirglRenderer::setMemoryRefusalObserver(
         memoryRefusalObserver.store(observer, std::memory_order_release);
 }
 
+std::optional<VirglRenderer::DeviceMemory> VirglRenderer::deviceMemory() noexcept
+{
+    std::lock_guard lock(deviceMemoryReadMutex);
+    if (!deviceMemoryReadable || !deviceMemoryPool)
+        return std::nullopt;
+    return DeviceMemory {
+        .budgetBytes = deviceMemoryPool->limit(),
+        .usageBytes = deviceMemoryPool->usage(),
+    };
+}
+
 VirglRenderer::~VirglRenderer()
 {
     // The render server's threads stop with the cleanup below, and nothing
     // they report is wanted after that.
     setMemoryRefusalObserver(nullptr, nullptr);
+    {
+        // A reader of the pool's figures that is inside the pool finishes
+        // first, and none starts after this.
+        std::lock_guard lock(deviceMemoryReadMutex);
+        deviceMemoryReadable = false;
+    }
     if (deviceMemoryPool)
         deviceMemoryPool->setReclaim({});
     virgl_renderer_cleanup(this);
