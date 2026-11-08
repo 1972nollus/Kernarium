@@ -1528,8 +1528,8 @@ def check_setup_wizard_art(overlay: zipfile.ZipFile) -> None:
 # reviewed as the flow its first action reaches, in order, and it may define nothing else.
 SETUP_WIZARD_NAMESPACE = "http://schemas.android.com/apk/res/com.google.android.setupwizard"
 SETUP_WIZARD_FLOWS = {
-    "lineage_wizard_script.xml": ("welcome", "locale", "datetime", "theme_settings", "finish"),
-    "lineage_wizard_script_user.xml": ("welcome", "theme_settings", "finish"),
+    "lineage_wizard_script.xml": ("welcome", "locale", "datetime", "theme_settings"),
+    "lineage_wizard_script_user.xml": ("welcome", "theme_settings"),
 }
 SETUP_WIZARD_HIDDEN = (
     "bluetooth_setup",

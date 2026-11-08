@@ -118,9 +118,11 @@ wizard has no process and no status bar record and adbd has been stable with no
 trade-in mode pending. A measurement of the first-boot experience itself keeps
 the wizard.
 
-The wizard shows Welcome, Language, Date and time and Theme, then Finish (a
-secondary user sees Welcome and Theme, then Finish); the verifier requires the
-two flow scripts in the wizard's resource overlay byte for byte. The other
+The wizard shows Welcome, Language, Date and time and Theme (a secondary user
+sees Welcome and Theme). Finish on the Theme page ends the wizard and goes
+straight to the home screen: LineageOS's closing page, with its logo and home
+button, is not shown (route `p0026`); the verifier requires the two flow scripts
+in the wizard's resource overlay byte for byte. The other
 LineageOS pages are left out because a default answers them or they cannot apply
 to a virtual device: Network (the virtual Wi-Fi is already connected), Location
 (stays on), Screen lock (a fresh guest has none), Navigation (three buttons, the

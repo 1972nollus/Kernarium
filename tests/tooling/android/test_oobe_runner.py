@@ -114,14 +114,12 @@ class WizardPageTests(unittest.TestCase):
                         node("Español", f"{runner.WIZARD}:id/sud_items_title", "[53,333][667,364]")),
             ("tap", 360, 270))
 
-    def test_the_finish_page_taps_its_home_icon(self) -> None:
-        self.assertEqual(
+    def test_the_closing_page_is_not_a_page_the_runner_answers(self) -> None:
+        # The product skips it: Finish on the Theme page goes home, so there is no home icon to tap.
+        with self.assertRaisesRegex(runner.Failure, "does not know"):
             self.action(runner.FINISH_ACTIVITY,
                         node("Tap the home button to go home", f"{runner.WIZARD}:id/swipe_hint_text", "[100,1000][600,1040]"),
-                        node("", f"{runner.WIZARD}:id/swipe_hint_icon", "[300,900][420,1000]")),
-            ("tap", 360, 950))
-        with self.assertRaisesRegex(runner.Failure, "swipe_hint_icon"):
-            self.action(runner.FINISH_ACTIVITY, node("Tap the home button to go home"))
+                        node("", f"{runner.WIZARD}:id/swipe_hint_icon", "[300,900][420,1000]"))
 
     def test_buttons_are_found_by_text(self) -> None:
         for activity, label in ((runner.DATETIME_ACTIVITY, "Next"), (runner.THEME_ACTIVITY, "Finish")):
@@ -130,14 +128,15 @@ class WizardPageTests(unittest.TestCase):
                     self.action(activity, node("Title", "", "[0,0][10,10]"), node(label, "", "[32,1162][687,1237]")),
                     ("tap", 359, 1199))
 
-    def test_the_theme_page_is_the_last_before_finish_and_says_so(self) -> None:
+    def test_the_theme_page_is_the_last_and_says_so(self) -> None:
         self.assertEqual(runner.PAGES[runner.THEME_ACTIVITY], ("text", "Finish"))
-        self.assertEqual(runner.FLOW[-2:], (runner.THEME_ACTIVITY, runner.FINISH_ACTIVITY))
+        self.assertEqual(runner.FLOW[-1], runner.THEME_ACTIVITY)
+        self.assertNotIn(runner.FINISH_ACTIVITY, runner.FLOW)
 
     def test_the_flow_is_the_reviewed_pages_in_order(self) -> None:
         self.assertEqual([page.split("/")[-1] for page in runner.FLOW],
                          [".WelcomeActivity", ".locale.LocaleActivity", ".time.DateTimeActivity",
-                          ".settings.ThemeSettingsActivity", ".FinishActivity"])
+                          ".settings.ThemeSettingsActivity"])
 
     def test_the_pages_the_product_hides_are_not_known(self) -> None:
         for activity in ("com.android.settings/.network.NetworkSetupActivity",
@@ -145,7 +144,8 @@ class WizardPageTests(unittest.TestCase):
                          f"{runner.WIZARD}/.privacy.LocationSettingsActivity",
                          f"{runner.WIZARD}/.settings.LineageSettingsActivity",
                          "com.android.settings/.password.SetupChooseLockGeneric",
-                         f"{runner.WIZARD}/.settings.NavigationSettingsActivity"):
+                         f"{runner.WIZARD}/.settings.NavigationSettingsActivity",
+                         runner.FINISH_ACTIVITY):
             with self.subTest(activity=activity), self.assertRaisesRegex(runner.Failure, "does not know"):
                 self.action(activity, node("Next"))
 
@@ -172,7 +172,7 @@ class StrictFlowTests(unittest.TestCase):
     def test_a_page_out_of_order_is_a_failure(self) -> None:
         for position, activity in ((0, runner.DATETIME_ACTIVITY), (1, runner.THEME_ACTIVITY),
                                    (2, runner.LOCALE_ACTIVITY), (3, runner.WELCOME_ACTIVITY),
-                                   (4, runner.THEME_ACTIVITY)):
+                                   (3, runner.FINISH_ACTIVITY)):
             with self.subTest(position=position), self.assertRaisesRegex(runner.Failure, "expected"):
                 runner.next_page(position, activity)
 
@@ -184,6 +184,10 @@ class StrictFlowTests(unittest.TestCase):
     def test_the_failure_names_the_page_and_what_was_expected(self) -> None:
         with self.assertRaisesRegex(runner.Failure, "LocationSettingsActivity.*DateTimeActivity.*ThemeSettingsActivity"):
             runner.next_page(2, f"{runner.WIZARD}/.privacy.LocationSettingsActivity")
+
+    def test_the_last_page_expects_only_itself(self) -> None:
+        with self.assertRaisesRegex(runner.Failure, "FinishActivity.*expected .*ThemeSettingsActivity"):
+            runner.next_page(len(runner.FLOW) - 1, runner.FINISH_ACTIVITY)
 
 
 class FakeWizard:
@@ -201,8 +205,7 @@ class FakeWizard:
             node("Start", f"{runner.WIZARD}:id/start", "[0,0][100,100]"),
             node("English", f"{runner.WIZARD}:id/sud_items_title", "[0,0][100,100]"),
             node("Next", "", "[0,0][100,100]"),
-            node("Finish", "", "[0,0][100,100]"),
-            node("", f"{runner.WIZARD}:id/swipe_hint_icon", "[0,0][100,100]")))
+            node("Finish", "", "[0,0][100,100]")))
 
     def shell(self, command: str) -> str:
         self.taps.append(command)
@@ -249,6 +252,20 @@ class CompleteWizardTests(unittest.TestCase):
     def test_a_wizard_that_does_not_finish_is_a_failure(self) -> None:
         with self.assertRaisesRegex(runner.Failure, "did not finish"):
             self.run_flow([runner.WELCOME_ACTIVITY])
+
+    def test_finish_on_the_theme_page_goes_to_the_launcher_with_no_closing_page(self) -> None:
+        device = self.run_flow(list(runner.FLOW) + [self.LAUNCHER])
+        # One tap per page, and none after the Theme page's Finish.
+        self.assertEqual(len(device.taps), len(runner.FLOW))
+
+    def test_the_closing_page_after_theme_is_a_failure(self) -> None:
+        with self.assertRaisesRegex(runner.Failure, "closing page, which the product skips: Finish on the "
+                                                    r".*ThemeSettingsActivity page goes straight to the home screen"):
+            self.run_flow(list(runner.FLOW) + [runner.FINISH_ACTIVITY, self.LAUNCHER])
+
+    def test_the_closing_page_is_a_failure_even_when_it_is_the_only_page_seen(self) -> None:
+        with self.assertRaisesRegex(runner.Failure, "closing page"):
+            self.run_flow([runner.FINISH_ACTIVITY])
 
 
 class DefaultsTests(unittest.TestCase):
@@ -491,6 +508,43 @@ OTHER_CRASH = """\
 """
 
 
+FINISH_LOG = """\
+--------- beginning of main
+11-08 04:10:22.310 I/FinishActivity( 1450): onCreate: finishState=NONE
+"""
+
+
+class WizardSkippedFinishTests(unittest.TestCase):
+    class Guest:
+        def __init__(self, log: str) -> None:
+            self.log = log
+            self.commands: list[str] = []
+
+        def shell(self, command: str, timeout: int = 30) -> str:
+            self.commands.append(command)
+            return self.log
+
+    def test_the_closing_pages_creation_is_its_log_tag(self) -> None:
+        self.assertEqual(runner.finish_activity_lines(FINISH_LOG),
+                         ["11-08 04:10:22.310 I/FinishActivity( 1450): onCreate: finishState=NONE"])
+        self.assertEqual(runner.finish_activity_lines("--------- beginning of main\n"), [])
+
+    def test_other_tags_that_name_the_page_are_not_it(self) -> None:
+        self.assertEqual(runner.finish_activity_lines(
+            "11-08 04:10:22.310 I/ActivityTaskManager( 900): START u0 {cmp=org.lineageos.setupwizard/.FinishActivity}\n"), [])
+
+    def test_a_wizard_that_never_started_the_page_passes(self) -> None:
+        guest = self.Guest("--------- beginning of main\n")
+        runner.check_wizard_skipped_finish(guest)
+        self.assertEqual(len(guest.commands), 1)
+        self.assertIn("-b main", guest.commands[0])
+        self.assertIn("FinishActivity:V", guest.commands[0])
+
+    def test_a_wizard_that_started_the_page_fails_and_shows_the_line(self) -> None:
+        with self.assertRaisesRegex(runner.Failure, "started its closing page, which the product skips: .*onCreate: finishState=NONE"):
+            runner.check_wizard_skipped_finish(self.Guest(FINISH_LOG))
+
+
 class WizardCrashTests(unittest.TestCase):
     class Guest:
         def __init__(self, crash_log: str) -> None:
@@ -535,12 +589,13 @@ class WizardCrashTests(unittest.TestCase):
                                       return_value={f"{runner.WIZARD}.{name}" for name in runner.WIZARD_DISABLES}), \
                     mock.patch.object(runner, "check_wizard_released", side_effect=lambda *a, **k: calls.append("released")), \
                     mock.patch.object(runner, "check_wizard_did_not_crash", side_effect=lambda *a, **k: calls.append("crash")), \
+                    mock.patch.object(runner, "check_wizard_skipped_finish", side_effect=lambda *a, **k: calls.append("finish")), \
                     mock.patch.object(runner, "check_defaults", side_effect=lambda *a, **k: calls.append("defaults")), \
                     mock.patch.object(runner, "check_launcher", side_effect=lambda *a, **k: calls.append("launcher")):
                 # `pm list packages -d`: the wizard ends enabled, and the helper disables its package.
                 guest.shell.return_value = "package:com.other" if by_wizard else f"package:{runner.WIZARD}"
                 runner.check_provisioned(guest, by_wizard=by_wizard)
-            self.assertEqual(calls, ["released", "crash", "defaults", "launcher"])
+            self.assertEqual(calls, ["released", "crash", "finish", "defaults", "launcher"])
 
 
 # The launcher's `Data Model` as `dumpsys activity com.android.launcher3/.uioverrides.QuickstepLauncher`

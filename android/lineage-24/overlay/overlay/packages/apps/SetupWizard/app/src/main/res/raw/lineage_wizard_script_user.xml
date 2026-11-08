@@ -5,7 +5,8 @@
      SPDX-FileCopyrightText: The LineageOS Project
 
      Derived from LineageOS's lineage_wizard_script_user.xml, which the wizard
-     runs for a secondary user. The pages shown are Welcome and Theme.
+     runs for a secondary user. The pages shown are Welcome and Theme, and the
+     Finish button of Theme ends the wizard.
 -->
 <WizardScript xmlns:wizard="http://schemas.android.com/apk/res/com.google.android.setupwizard"
     wizard:firstAction="welcome">
@@ -21,12 +22,6 @@
 
     <WizardAction
         id="theme_settings"
-        wizard:uri="intent:#Intent;action=org.lineageos.setupwizard.THEME_SETTINGS;end">
-        <result wizard:action="finish" />
-    </WizardAction>
-
-    <WizardAction
-        id="finish"
-        wizard:uri="intent:#Intent;action=org.lineageos.setupwizard.LINEAGE_SETUP_COMPLETE;end" />
+        wizard:uri="intent:#Intent;action=org.lineageos.setupwizard.THEME_SETTINGS;end" />
 
 </WizardScript>

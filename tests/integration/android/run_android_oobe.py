@@ -11,7 +11,9 @@ a fresh instance, and checks the contract in android/lineage-24/README.md:
   wizard and stays there when pressed, and the wizard's first page is on
   screen. The runner then completes the wizard through the pages the product
   shows, exactly these and in this order: Welcome, Language, Date and time,
-  Theme, Finish. Setup ends in the state the product defines for a fresh guest:
+  Theme. Finish on the Theme page goes straight to the home screen: the
+  wizard's closing page (the logo with its home button) is not shown, and its
+  activity never starts. Setup ends in the state the product defines for a fresh guest:
   both settings 1, the wizard's HOME activity and flow manager disabled, HOME
   resolving to, and pressed back to, the launcher, three-button navigation
   (`navigation_mode` 0, the gestural overlay off and both mode overlays
@@ -37,8 +39,9 @@ a fresh instance, and checks the contract in android/lineage-24/README.md:
 Neither guest may have a wizard crash in its crash buffer: the helper's disable
 landing while the wizard binds kills the process with a NameNotFoundException.
 
-The flow is the contract of release r17 and later: a release that still shows
-LineageOS's other pages fails at the first page that is not in the list.
+The flow is the contract of release r18 and later: a release that still shows
+LineageOS's other pages, or the closing page, fails at the first page that is
+not in the list.
 
 Every wait has a deadline; the guest's launcher is stopped through its own
 process on any exit.
@@ -73,9 +76,11 @@ WELCOME_ACTIVITY = f"{WIZARD}/.WelcomeActivity"
 LOCALE_ACTIVITY = f"{WIZARD}/.locale.LocaleActivity"
 DATETIME_ACTIVITY = f"{WIZARD}/.time.DateTimeActivity"
 THEME_ACTIVITY = f"{WIZARD}/.settings.ThemeSettingsActivity"
+# The closing page of LineageOS's flow (the logo and the home button): the product skips it.
 FINISH_ACTIVITY = f"{WIZARD}/.FinishActivity"
-# The reviewed flow: the pages the wizard shows, in order.
-FLOW = (WELCOME_ACTIVITY, LOCALE_ACTIVITY, DATETIME_ACTIVITY, THEME_ACTIVITY, FINISH_ACTIVITY)
+FINISH_LOG_TAG = "FinishActivity"
+# The reviewed flow: the pages the wizard shows, in order. Finish on the last one goes home.
+FLOW = (WELCOME_ACTIVITY, LOCALE_ACTIVITY, DATETIME_ACTIVITY, THEME_ACTIVITY)
 NAVBAR_GESTURAL = "com.android.internal.systemui.navbar.gestural"
 NAVBAR_3BUTTON = "com.android.internal.systemui.navbar.threebutton"
 WIFI_NETWORK = "VirtWifi"
@@ -143,15 +148,13 @@ def center(bounds: str) -> tuple[int, int]:
 
 
 # What each page of the wizard is asked: the id of its button, the text of its
-# button, its first list item, or the page's home affordance (in three-button
-# navigation the Finish page's icon is the control that goes home).
+# button, or its first list item.
 PAGES: dict[str, tuple[str, str]] = {
     WELCOME_ACTIVITY: ("id", f"{WIZARD}:id/start"),
     LOCALE_ACTIVITY: ("item", "sud_items_title"),
     DATETIME_ACTIVITY: ("text", "Next"),
-    # The last page before Finish: its button reads Finish.
+    # The last page: its button reads Finish, and it ends the wizard.
     THEME_ACTIVITY: ("text", "Finish"),
-    FINISH_ACTIVITY: ("id", f"{WIZARD}:id/swipe_hint_icon"),
 }
 assert tuple(PAGES) == FLOW
 
@@ -567,8 +570,11 @@ def complete_wizard(device: Device) -> None:
             if position != len(FLOW) - 1 or position not in answered:
                 raise Failure(f"the wizard ended at the launcher after {FLOW[position]}, before the whole flow "
                               f"{' > '.join(page.split('/')[-1] for page in FLOW)}")
-            print(f"wizard completed through {len(FLOW)} pages")
+            print(f"wizard completed through {len(FLOW)} pages, and Finish went to the home screen")
             return
+        if activity == FINISH_ACTIVITY:
+            raise Failure("the wizard shows its closing page, which the product skips: Finish on the "
+                          f"{THEME_ACTIVITY.split('/')[-1]} page goes straight to the home screen")
         # A page that is not in the flow may be a transition: look again before
         # calling it unexpected.
         if activity not in FLOW:
@@ -622,6 +628,22 @@ def check_wizard_released(device: Device, *, by_wizard: bool) -> None:
     if not by_wizard and device.wizard_processes() != []:
         raise Failure(f"the setup wizard still runs after the helper: {device.wizard_processes()}")
     print("the wizard holds no status bar lock")
+
+
+def finish_activity_lines(log: str) -> list[str]:
+    """The lines of the closing page's log tag in a `logcat -v time` dump; the page logs when it is created."""
+    return [match.group(0) for match in LAUNCHER_LOG.finditer(log) if match.group("tag") == FINISH_LOG_TAG]
+
+
+def check_wizard_skipped_finish(device: Device) -> None:
+    """The wizard's closing page never started, in either guest: Finish on the last page went to the home screen.
+
+    A poll of the resumed activity could miss a page that flashes by, so the proof is the page's own log line,
+    which its activity writes when it is created. The main buffer was raised before the wizard ran."""
+    lines = finish_activity_lines(device.shell(f"logcat -b main -d -v time -s {FINISH_LOG_TAG}:V", timeout=60))
+    if lines:
+        raise Failure("the wizard started its closing page, which the product skips: " + lines[0])
+    print("the wizard did not start its closing page")
 
 
 def check_wizard_did_not_crash(device: Device) -> None:
@@ -731,6 +753,7 @@ def check_provisioned(device: Device, *, by_wizard: bool, before: dict[str, str]
           + ("disabled its HOME activity and manager" if by_wizard else "package is disabled"))
     check_wizard_released(device, by_wizard=by_wizard)
     check_wizard_did_not_crash(device)
+    check_wizard_skipped_finish(device)
     check_defaults(device, before)
     check_launcher(device)
 

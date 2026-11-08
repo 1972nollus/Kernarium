@@ -5215,50 +5215,56 @@ def verify_setup_wizard_flow(android_root: Path) -> None:
 
     owner = "lineage_wizard_script.xml"
     user = "lineage_wizard_script_user.xml"
+    # Theme is the last page: its Finish button ends the wizard, so no closing page follows it.
     flow = [("welcome", "locale"), ("locale", "datetime"), ("datetime", "theme_settings"),
-            ("theme_settings", "finish"), ("finish", None)]
+            ("theme_settings", None)]
     tool.check_setup_wizard_script(owner, script(*flow), tool.SETUP_WIZARD_FLOWS[owner])
     for page in tool.SETUP_WIZARD_HIDDEN:
         inserted = [("welcome", "locale"), ("locale", page), (page, "datetime"), ("datetime", "theme_settings"),
-                    ("theme_settings", "finish"), ("finish", None)]
+                    ("theme_settings", None)]
         refuses(f"{page}-in-the-flow", f"defines pages the product hides: {page}", owner, script(*inserted))
         refuses(f"{page}-left-unreached", f"defines pages the product hides: {page}", owner,
-                script(*flow, (page, "finish")))
-    refuses("a-reviewed-page-dropped", "reaches welcome > locale > theme_settings > finish, not the reviewed",
-            owner, script(("welcome", "locale"), ("locale", "theme_settings"), ("theme_settings", "finish"),
-                          ("finish", None)))
-    refuses("pages-reordered", "reaches welcome > locale > theme_settings > datetime > finish, not the reviewed",
+                script(*flow, (page, None)))
+    refuses("a-closing-page-after-theme",
+            "reaches welcome > locale > datetime > theme_settings > finish, not the reviewed", owner,
+            script(("welcome", "locale"), ("locale", "datetime"), ("datetime", "theme_settings"),
+                   ("theme_settings", "finish"), ("finish", None)))
+    refuses("a-reviewed-page-dropped", "reaches welcome > locale > theme_settings, not the reviewed",
+            owner, script(("welcome", "locale"), ("locale", "theme_settings"), ("theme_settings", None)))
+    refuses("pages-reordered", "reaches welcome > locale > theme_settings > datetime, not the reviewed",
             owner, script(("welcome", "locale"), ("locale", "theme_settings"), ("theme_settings", "datetime"),
-                          ("datetime", "finish"), ("finish", None)))
+                          ("datetime", None)))
     refuses("a-new-page", "reaches welcome > locale > about > datetime", owner,
             script(("welcome", "locale"), ("locale", "about"), ("about", "datetime"), ("datetime", "theme_settings"),
-                   ("theme_settings", "finish"), ("finish", None)))
-    refuses("an-unreached-page", "defines pages its flow never reaches: about", owner, script(*flow, ("about", "finish")))
-    refuses("a-dangling-result", "the flow reaches 'finish', which the script does not define", owner,
-            script(("welcome", "locale"), ("locale", "datetime"), ("datetime", "theme_settings"),
-                   ("theme_settings", "finish")))
+                   ("theme_settings", None)))
+    refuses("an-unreached-page", "defines pages its flow never reaches: about", owner, script(*flow, ("about", None)))
+    refuses("a-dangling-result", "the flow reaches 'theme_settings', which the script does not define", owner,
+            script(("welcome", "locale"), ("locale", "datetime"), ("datetime", "theme_settings")))
     refuses("no-first-action", "names no firstAction", owner, script(*flow, first=""))
     refuses("a-first-action-that-is-not-defined", "reaches 'start'", owner, script(*flow, first="start"))
-    refuses("a-repeated-id", "without a unique id", owner, script(*flow, ("finish", None)))
+    refuses("a-repeated-id", "without a unique id", owner, script(*flow, ("theme_settings", None)))
     refuses("not-a-wizard-script", "is not a WizardScript", owner, script(*flow, root="Other"))
     refuses("not-xml", "is not well-formed XML", owner, "<WizardScript>")
     # The secondary user's flow is welcome and theme.
-    user_flow = [("welcome", "theme_settings"), ("theme_settings", "finish"), ("finish", None)]
+    user_flow = [("welcome", "theme_settings"), ("theme_settings", None)]
     tool.check_setup_wizard_script(user, script(*user_flow), tool.SETUP_WIZARD_FLOWS[user])
-    refuses("the-owners-flow-for-a-secondary-user", "reaches welcome > locale > datetime > theme_settings > finish, not",
+    refuses("a-closing-page-in-the-users-flow", "reaches welcome > theme_settings > finish, not the reviewed",
+            user, script(("welcome", "theme_settings"), ("theme_settings", "finish"), ("finish", None)))
+    refuses("the-owners-flow-for-a-secondary-user",
+            "reaches welcome > locale > datetime > theme_settings, not the reviewed welcome > theme_settings",
             user, script(*flow))
-    refuses("the-owners-script-with-the-users-name", "not the reviewed welcome > theme_settings > finish",
+    refuses("the-owners-script-with-the-users-name", "not the reviewed welcome > theme_settings",
             user, script(*flow))
     refuses("location-in-the-users-flow", "defines pages the product hides: location_settings", user,
             script(("welcome", "location_settings"), ("location_settings", "theme_settings"),
-                   ("theme_settings", "finish"), ("finish", None)))
+                   ("theme_settings", None)))
 
 
 def verify_launcher_layouts(android_root: Path) -> None:
-    """The launcher's default workspace holds the six reviewed applications on the first page.
+    """The launcher's default home screen is the dock of Files and Settings and an empty workspace.
 
     The layouts are compiled into the launcher's overlay, so the verifier reads the tracked text.
-    These cases rewrite a layout the way an edit or a return to the stock layout would."""
+    These cases rewrite a layout the way an edit or a return to an earlier layout would."""
     tool = load_tool(android_root / "tools/verify-target-files.py")
     layouts = android_root / "overlay/overlay/packages/apps/Launcher3/res/xml"
     names = sorted(path.name for path in layouts.glob("*.xml"))
