@@ -198,21 +198,15 @@ struct SessionSettingsSheet: View {
             // to every row.
             .onAppear { model.statistics(.settings, visible: true) }
             .onDisappear { model.statistics(.settings, visible: false) }
-            let readout = session.readout
             LabeledContent {
-                usage(readout.memoryText(of: memoryMiB), share: readout.memoryFraction(of: memoryMiB), tint: .accentColor)
+                usage(session.readout.memoryText(of: memoryMiB), share: session.readout.memoryFraction(of: memoryMiB))
             } label: {
-                rowLabel("Memory", symbol: "memorychip", detail: freeDetail(readout.memoryFreeText(of: memoryMiB)))
+                rowLabel("Memory", symbol: "memorychip")
             }
-            if design.showsVram {
-                LabeledContent {
-                    usage(readout.vramText, share: readout.vramFraction, tint: StatsTint.vram)
-                } label: {
-                    rowLabel(
-                        "VRAM", symbol: "cube", color: design == .rings ? StatsTint.vram : .accentColor,
-                        detail: freeDetail(readout.vramFreeText)
-                    )
-                }
+            LabeledContent {
+                usage(session.readout.vramText, share: session.readout.vramFraction)
+            } label: {
+                rowLabel("VRAM", symbol: "cube")
             }
             LabeledContent {
                 value(session.readout.fpsText)
@@ -226,49 +220,22 @@ struct SessionSettingsSheet: View {
         .id("stats")
     }
 
-    private var design: StatsDesign { model.statsDesign }
-
-    /// What is left, under the row's title, where the design states it.
-    private func freeDetail(_ free: String?) -> String? {
-        design == .twoLines ? free : nil
-    }
-
-    /// A figure of memory in use, with the design's drawing of its share.
-    @ViewBuilder
-    private func usage(_ text: String, share: Double?, tint: Color) -> some View {
-        switch design {
-        case .today, .figures, .twoLines:
+    /// A figure of memory in use after a bar of its share, as the CPU
+    /// figure follows its sparkline.
+    private func usage(_ text: String, share: Double?) -> some View {
+        HStack(spacing: 10) {
+            ShareBar(share: share)
+                .frame(width: 44, height: 6)
             value(text)
-        case .meters:
-            HStack(spacing: 10) {
-                ShareBar(share: share)
-                    .frame(width: 44, height: 6)
-                value(text)
-            }
-        case .rings:
-            HStack(spacing: 10) {
-                ShareRing(share: share, tint: tint, lineWidth: 3.5)
-                    .frame(width: 22, height: 22)
-                value(text)
-            }
         }
     }
 
-    private func rowLabel(_ title: String, symbol: String, color: Color = .accentColor, detail: String? = nil) -> some View {
+    private func rowLabel(_ title: String, symbol: String) -> some View {
         HStack(spacing: 12) {
-            IconTile(symbol: symbol, color: color)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-                if let detail {
-                    Text(detail)
-                        .font(.system(.footnote, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                        .contentTransition(.numericText())
-                }
-            }
+            IconTile(symbol: symbol)
+            Text(title)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
         }
     }
 

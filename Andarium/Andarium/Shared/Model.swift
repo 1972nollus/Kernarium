@@ -42,8 +42,6 @@ enum GuestScreen: Equatable {
     case setup
     /// Android's screen asleep.
     case off
-    /// A game in play: a bright, busy frame under the stats capsule.
-    case game
 }
 
 /// What the running guest offers through Settings (ADB and the stats
@@ -139,9 +137,6 @@ final class AppModel {
 
     var sessionPreset = SessionPreset()
     var session = SessionState()
-    /// The stats design on trial. The preview chooses one with
-    /// `-statsDesign <n>`; the application shows today's.
-    var statsDesign = StatsDesign.today
     /// How the last run ended, for the screen that says so.
     var runEnd = RunEnd(result: 0)
     var runUptimeSeconds: Int?

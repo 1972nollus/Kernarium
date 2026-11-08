@@ -17,14 +17,6 @@ public enum Formats {
     /// A size in whole gibibytes, as "8 GiB".
     public static func size(gib: Int) -> String { size(Double(gib), unit: 3) }
 
-    /// A part and its whole in the fewest characters, both in the unit the
-    /// whole has alone: "1.35/2.5 GiB", "0.96/2.5 GiB", "412/534 MiB".
-    public static func size(bytes part: UInt64, ofBytes whole: UInt64) -> String {
-        let total = scaled(Double(whole), unit: 0)
-        let used = Double(part) / pow(1024, Double(total.unit))
-        return "\(number(used))/\(total.number) \(units[total.unit])"
-    }
-
     /// A processor count and its noun: "1 vCPU", "6 vCPUs".
     public static func vcpus(_ count: Int) -> String { "\(count) \(count == 1 ? "vCPU" : "vCPUs")" }
 
@@ -32,22 +24,16 @@ public enum Formats {
     /// ruler whose row states the unit.
     public static func gibibytes(mib: Int) -> String { number(Double(mib) / 1024) }
 
-    private static func size(_ value: Double, unit: Int) -> String {
-        let scaled = scaled(value, unit: unit)
-        return scaled.number + " " + units[scaled.unit]
-    }
-
     /// A value in `units[unit]`, moved up a unit once it reaches 1024 of
-    /// the one it is in, and in three significant digits: the number and the
-    /// index of its unit.
-    private static func scaled(_ value: Double, unit: Int) -> (number: String, unit: Int) {
+    /// the one it is in, and in three significant digits.
+    private static func size(_ value: Double, unit: Int) -> String {
         var value = max(value, 0)
         var unit = unit
         while unit < units.count - 1, (Double(number(value)) ?? value) >= 1024 {
             value /= 1024
             unit += 1
         }
-        return (number(value), unit)
+        return number(value) + " " + units[unit]
     }
 
     /// Three significant digits, without trailing zeros: "1.25", "12.6", "118".

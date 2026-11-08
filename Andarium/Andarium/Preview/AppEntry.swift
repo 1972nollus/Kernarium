@@ -26,15 +26,9 @@ struct AppEntry {
     /// start with, and hold: 0 is a session before its first reading. Absent,
     /// the mock readings run on.
     var statsReadings: Int?
-    /// The stats design on trial (`StatsDesign`'s number); today's when
-    /// absent.
-    var statsDesign: StatsDesign
     /// Graphics memory in use, in MiB, held with `statsReadings`: a figure
-    /// near the budget.
+    /// near the budget turns its bar orange.
     var statsVramMiB: Int?
-    /// The stats capsule shows on a session screen that would not show it,
-    /// such as recovery.
-    var showStats: Bool
 
     static func fromArguments() -> AppEntry {
         let defaults = UserDefaults.standard
@@ -46,9 +40,7 @@ struct AppEntry {
             bootStage: defaults.string(forKey: "bootStage").flatMap { Int($0) },
             systemMicrophone: defaults.bool(forKey: "systemMicrophone"),
             statsReadings: defaults.string(forKey: "statsReadings").flatMap { Int($0) },
-            statsDesign: defaults.string(forKey: "statsDesign").flatMap { Int($0) }.flatMap(StatsDesign.init) ?? .today,
-            statsVramMiB: defaults.string(forKey: "statsVramMiB").flatMap { Int($0) },
-            showStats: defaults.bool(forKey: "showStats")
+            statsVramMiB: defaults.string(forKey: "statsVramMiB").flatMap { Int($0) }
         )
     }
 
@@ -172,8 +164,8 @@ struct AppEntry {
             boot(.restart, stage: 3, seconds: 8)
         case "session", "session-tip", "session-open", "session-keyboard", "session-stats",
              "session-power", "session-setup", "session-off", "session-left", "session-volume",
-             "session-graphics-notice", "session-game", "session-stats-designs":
-            model.session.showStats = ["session-stats", "session-game"].contains(screen)
+             "session-graphics-notice":
+            model.session.showStats = screen == "session-stats"
             model.session.sideKeysOpen = ["session-open", "session-off", "session-left", "session-volume"].contains(screen)
             model.sessionPreset = SessionPreset(
                 volumePanel: screen == "session-volume",
@@ -184,7 +176,6 @@ struct AppEntry {
                     case "session-setup": .setup
                     case "session-off": .off
                     case "session-keyboard": .search
-                    case "session-game", "session-stats-designs": .game
                     default: .home
                     }
                 }()
@@ -246,8 +237,6 @@ struct AppEntry {
             )
             if let statsVramMiB { model.session.readout.vramUsedBytes = UInt64(statsVramMiB) * Limits.bytesPerMiB }
         }
-        model.statsDesign = statsDesign
-        if showStats { model.session.showStats = true }
         if systemMicrophone { useSystemMicrophone(in: model) }
         return model
     }
@@ -319,17 +308,6 @@ struct AppEntry {
     /// the way a tap would.
     @MainActor
     func applyDeferred(to model: AppModel) async {
-        // `-orientation landscape` turns an iPad's interface, which `simctl`
-        // cannot rotate, for the stats designs' captures. iPadOS refuses it
-        // in its windowed modes, so such a build passes
-        // INFOPLIST_KEY_UIRequiresFullScreen=YES to xcodebuild; the
-        // screenshot stays portrait and is rotated afterwards.
-        if UserDefaults.standard.string(forKey: "orientation") == "landscape",
-           let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-            scene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight)) { error in
-                print("orientation request refused: \(error)")
-            }
-        }
         try? await Task.sleep(for: .milliseconds(450))
         switch screen {
         case "create", "create-low-space":

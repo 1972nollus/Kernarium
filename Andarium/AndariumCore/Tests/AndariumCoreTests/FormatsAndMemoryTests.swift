@@ -87,17 +87,6 @@ struct FormatsTests {
         #expect(Formats.size(mib: 4096) == "4 GiB")
     }
 
-    /// The stats capsule's compact figures: a part is stated in the unit
-    /// its whole has alone, in three significant digits.
-    @Test func aPartTakesItsWholesUnit() {
-        #expect(Formats.size(bytes: bytes(mib: 1380), ofBytes: bytes(mib: 2560)) == "1.35/2.5 GiB")
-        #expect(Formats.size(bytes: bytes(mib: 412), ofBytes: bytes(mib: 534)) == "412/534 MiB")
-        #expect(Formats.size(bytes: bytes(mib: 980), ofBytes: bytes(mib: 2560)) == "0.96/2.5 GiB")
-        #expect(Formats.size(bytes: bytes(mib: 1004), ofBytes: bytes(mib: 3136)) == "0.98/3.06 GiB")
-        #expect(Formats.size(bytes: bytes(mib: 1023.6), ofBytes: bytes(mib: 4096)) == "1/4 GiB")
-        #expect(Formats.size(bytes: 0, ofBytes: bytes(mib: 534)) == "0/534 MiB")
-    }
-
     @Test func aRulerLabelIsTheCountOfGibibytes() {
         #expect(Formats.gibibytes(mib: 512) == "0.5")
         #expect(Formats.gibibytes(mib: 1024) == "1")
