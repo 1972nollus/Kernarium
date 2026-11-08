@@ -320,7 +320,10 @@ struct AppEntry {
     @MainActor
     func applyDeferred(to model: AppModel) async {
         // `-orientation landscape` turns an iPad's interface, which `simctl`
-        // cannot rotate, for the stats designs' captures.
+        // cannot rotate, for the stats designs' captures. iPadOS refuses it
+        // in its windowed modes, so such a build passes
+        // INFOPLIST_KEY_UIRequiresFullScreen=YES to xcodebuild; the
+        // screenshot stays portrait and is rotated afterwards.
         if UserDefaults.standard.string(forKey: "orientation") == "landscape",
            let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
             scene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight)) { error in
