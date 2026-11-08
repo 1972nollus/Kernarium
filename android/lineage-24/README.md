@@ -195,8 +195,9 @@ The user's debugging setting stays meaningful while adbd remains the host's
 channel: route `p0007` records the setting in `persist.sys.usb.config` and
 restarts adbd instead of stopping it, and route `p0011` refuses every key but the
 host's, with no prompt, while USB and wireless debugging are both off. `adb root`
-is refused at once on a `user` build whatever the authorization policy. SELinux
-stays enforcing in both variants. `tests/integration/android/run_android_adb_debugging.py`
+is refused at once on a `user` build whatever the authorization policy, with
+AOSP's answer for a production build (route `p0011`). SELinux stays enforcing in
+both variants. `tests/integration/android/run_android_adb_debugging.py`
 qualifies this contract.
 
 ### Framework and CTS behaviour
