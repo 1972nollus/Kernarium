@@ -251,14 +251,18 @@ what the host already holds.
 KosmicKrisp is the one place every allocation passes: every device the process
 creates, Venus guests' and host GL's alike, reserves a heap from the pool before
 Metal makes it, so allocations that each fit alone never together take the
-process past B. A reservation that does not fit first frees what the host GL
-driver caches and is decided again. Memory the host frees leaves Metal's counter
-at once but the ledger only later, within milliseconds or at its next sweep. The
-pool sees the release in Metal's counter, and when the request would fit once
-the ledger had caught up with it, waits for the ledger (re-reading it every
-millisecond, for 300 ms at most) rather than refuse. A request that follows no
-release, or would not fit even then, is refused at once, and a wait that
-reached its bound is not repeated until Metal's counter falls again.
+process past B. The ledger counts a heap only once its pages are resident, so
+the driver makes each heap resident before its reservation ends, and a burst of
+creations with no work between them is refused at B
+(`gpu-host-gl-allocation-burst`). A reservation that does not fit first frees
+what the host GL driver caches and is decided again. Memory the host frees
+leaves Metal's counter at once but the ledger only later, within milliseconds or
+at its next sweep. The pool sees the release in Metal's counter, and when the
+request would fit once the ledger had caught up with it, waits for the ledger
+(re-reading it every millisecond, for 300 ms at most) rather than refuse. A
+request that follows no release, or would not fit even then, is refused at once,
+and a wait that reached its bound is not repeated until Metal's counter falls
+again.
 
 - `vkAllocateMemory` of any type is refused with
   `VK_ERROR_OUT_OF_DEVICE_MEMORY` when the pool cannot hold it. That covers
@@ -266,8 +270,9 @@ reached its bound is not repeated until Metal's counter falls again.
   makes for the guest is reserved before its pages are made. Imported memory is
   neither charged nor counted: Metal counts it in full, so KosmicKrisp reports
   the bytes it imports and the pool leaves them out. Command, descriptor and
-  query pools, presentation, the VNC surface and decoder surfaces are counted
-  once Metal does and never refused.
+  query pools, the driver's command storage, presentation, the VNC surface and
+  decoder surfaces are counted and never refused, and they, with the geometry
+  heap floor below, are the only way usage passes B.
 - OpenGL: a refused texture or buffer makes the renderer give back what it
   holds for finished work and create the resource once more: it finishes and
   trims every context, frees the deferred shared-memory segments and what the
