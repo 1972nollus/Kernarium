@@ -856,8 +856,10 @@ uml_add_guest_integration_test(
 # A blob the host refuses never becomes a handle: the ioctl that creates a
 # blob waits for the host's answer and fails with EINVAL or ENOMEM, in the
 # host3d and guest-blob branches alike, instead of returning a GEM handle that
-# no host resource stands behind. The guest has the GPU; the probe names a host
-# object that does not exist, so the refusal does not depend on the GPU budget.
+# no host resource stands behind. The guest has the GPU. The probe names host
+# objects that do not exist (EINVAL), and asks for a resource larger than the
+# GPU budget of a 1 GiB guest, made inside the blob's command buffer as gralloc
+# does (ENOMEM).
 uml_add_guest_integration_test(
     NAME guest-virtgpu-blob-refusal
     SCRIPT support/run_guest_probe.py

@@ -10,7 +10,11 @@
  * everywhere, so the rows below do not depend on the GPU memory budget; they
  * check both blob branches (a host3d blob and a guest blob that the host must
  * name), that a refusal leaves the descriptor usable, and that an ordinary
- * host3d blob still works.  The exit status is the number of failed checks.
+ * host3d blob still works.  A last row makes the host run out of memory as
+ * gralloc does: the storage of a resource too large for the GPU budget is
+ * created inside the blob's own command buffer, where the host cannot report
+ * the refusal, and the blob that names it is answered out of memory, so the
+ * ioctl fails with ENOMEM.  The exit status is the number of failed checks.
  *
  * The UAPI structures are declared here, as the header is not in every guest.
  */
@@ -78,6 +82,16 @@ constexpr uint32_t blob_flag_mappable = 1;
 constexpr uint32_t blob_flag_shareable = 2;
 
 constexpr uint64_t missing_blob_id = 0x7ffffff0;
+
+/* A 2D render target 12288 pixels square: 576 MiB, which fits the aperture but
+ * not the GPU budget of a 1 GiB guest (at most half its memory). */
+constexpr uint32_t virgl_capset = 2;
+constexpr uint32_t command_pipe_resource_create = 48;
+constexpr uint32_t pipe_texture_2d = 2;
+constexpr uint32_t virgl_format_r8g8b8a8_unorm = 67;
+constexpr uint32_t virgl_bind_render_target = 1u << 1;
+constexpr uint32_t virgl_bind_sampler_view = 1u << 3;
+constexpr uint32_t too_large_side = 12288;
 constexpr int refusals = 64;
 
 int failures = 0;
@@ -208,6 +222,49 @@ int main()
 			close_handle(fd, outcome.handle);
 	}
 	checkf(accepted == 0, "repeated refusals", "%d of %d were accepted", accepted, refusals);
+
+	/* The budget refuses the storage that gralloc creates inside the blob's
+	 * command buffer; the blob that names it is the host's chance to say why.
+	 * It needs a context of the virgl capset, so it has a descriptor of its
+	 * own. */
+	const int virgl = open("/dev/dri/renderD128", O_RDWR | O_CLOEXEC);
+	if (virgl >= 0 && (capsets & (1ull << virgl_capset))) {
+		ContextParam virgl_parameter{context_param_capset_id, virgl_capset};
+		ContextInit virgl_context{1, 0, reinterpret_cast<uintptr_t>(&virgl_parameter)};
+		check(ioctl(virgl, ioctl_context_init, &virgl_context) == 0, "create a virgl context");
+		const uint32_t commands[] = {
+			(11u << 16) | command_pipe_resource_create,
+			pipe_texture_2d,
+			virgl_format_r8g8b8a8_unorm,
+			virgl_bind_render_target | virgl_bind_sampler_view,
+			too_large_side,
+			too_large_side,
+			1,
+			1,
+			0,
+			0,
+			0,
+			0x51,
+		};
+		CreateBlob request{};
+		request.blob_mem = blob_mem_host3d;
+		request.blob_flags = blob_flag_mappable | blob_flag_shareable;
+		request.size = uint64_t{too_large_side} * too_large_side * 4;
+		request.cmd_size = sizeof commands;
+		request.cmd = reinterpret_cast<uintptr_t>(commands);
+		request.blob_id = 0x51;
+		errno = 0;
+		const int result = ioctl(virgl, ioctl_create_blob, &request);
+		checkf(result == -1 && errno == ENOMEM && request.bo_handle == 0,
+		       "blob of a resource the budget refuses", "ioctl %d, errno %d, handle %u",
+		       result, result ? errno : 0, request.bo_handle);
+		if (result == 0 && request.bo_handle != 0)
+			close_handle(virgl, request.bo_handle);
+	} else {
+		check(false, "the virgl capset is offered");
+	}
+	if (virgl >= 0)
+		close(virgl);
 
 	/* An ordinary host3d blob, the anonymous kind Venus uses for its shared
 	 * memory, is created and gets a handle and a resource. */
