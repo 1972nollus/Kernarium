@@ -181,6 +181,7 @@ set_tests_properties(runtime-thread-fence
 add_executable(uml_runtime_guest_hibernation_tests guest_hibernation_tests.cpp)
 target_link_libraries(uml_runtime_guest_hibernation_tests PRIVATE
     UML::RuntimeHibernation
+    UML::RuntimeSessionRecord
     UML::RuntimeThreadFence
     UML::MemorySharedBacking)
 uml_add_unit_test(
