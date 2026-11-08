@@ -29,6 +29,8 @@ struct Readout {
         cpu = meter.cpuPercent
         memoryUsedBytes = meter.memoryInUseBytes
         fps = meter.framesPerSecond
+        vramUsedBytes = meter.gpuMemoryUsedBytes
+        vramBudgetBytes = meter.gpuMemoryBudgetBytes
         history = meter.history
     }
 

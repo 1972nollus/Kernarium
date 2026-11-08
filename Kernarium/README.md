@@ -333,7 +333,7 @@ away from the main thread. `KernariumStatistics.hpp` holds the rules, with
 allocations the host has refused the guest (`gpu_memory_refusals`, runtime API
 26), which Andarium turns into a notice, and the host GPU's memory budget with
 the usage it refuses by (`gpu_memory_budget_bytes` and `gpu_memory_used_bytes`,
-runtime API 27); Kernarium reads none of them.
+runtime API 27), which Andarium shows as VRAM; Kernarium reads none of them.
 
 ## Simulator
 

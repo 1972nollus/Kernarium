@@ -257,7 +257,10 @@ requires reopening Andarium.
 - **Statistics.** The session's capsule and Settings' Stats rows show the
   runtime's readings ([`Kernarium/README.md`](../Kernarium/README.md#statistics)),
   read only while a view shows them, the application is active and the guest
-  runs (`StatsSampling.isWanted`).
+  runs (`StatsSampling.isWanted`). Memory is the guest's in use against its
+  size, and VRAM the host GPU's usage against the guest's budget
+  ([`docs/graphics.md`](../docs/graphics.md#device-memory-budget)), a dash
+  without one; each has a bar of its share, orange from 90%.
 - **Graphics memory.** The runtime counts the graphics allocations the host
   refused the guest ([`docs/graphics.md`](../docs/graphics.md#device-memory-budget)).
   While a normal session runs in the foreground the model reads the count every
