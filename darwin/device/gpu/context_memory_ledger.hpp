@@ -21,10 +21,11 @@ struct ContextOwner {
 };
 
 /* The debug name a guest kernel that names the creating process gives its
- * contexts is "<tgid>:<comm>": the process's thread group ID in decimal, a
- * colon, and the process's command name. Any other name, which is every name
- * a kernel without that topic gives (the creating thread's name), belongs to
- * no process the host can tell. */
+ * contexts ends in "|pid=<tgid>|comm=<comm>": the process's thread group ID in
+ * decimal and its command name, which holds no '|'. Anything before the suffix
+ * is the name the context had before, cut to fit. Any other name, which is
+ * every name a kernel without that topic gives (the creating thread's name),
+ * belongs to no process the host can tell. */
 [[nodiscard]] std::optional<ContextOwner> parseContextOwner(
     std::string_view debugName);
 

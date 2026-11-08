@@ -60,6 +60,14 @@ void madeBlob(
     ledger.blobMade(resource, context, bytes);
 }
 
+/* The debug name a kernel with the topic gives a context of process `pid`. */
+std::string owned(std::uint32_t pid, const char* comm,
+    const char* thread = "RenderThread")
+{
+    return std::string(thread) + "|pid=" + std::to_string(pid) +
+        "|comm=" + comm;
+}
+
 bool attach(
     ContextMemoryLedger& ledger, std::uint32_t context, std::uint32_t resource)
 {
@@ -74,30 +82,48 @@ ContextMemoryLedger::Snapshot all(
 
 void namesAreParsedOnlyWhenTheKernelGaveAProcess()
 {
-    const auto named = parseContextOwner("1234:org.example.app");
-    require(named && named->pid == 1234 && named->comm == "org.example.app",
+    const auto named = parseContextOwner("RenderThread|pid=1234|comm=org.example");
+    require(named && named->pid == 1234 && named->comm == "org.example",
         "a name with a process was not parsed");
-    const auto colons = parseContextOwner("462:binder:462_1");
+    const auto bare = parseContextOwner("|pid=7|comm=x");
+    require(bare && bare->pid == 7 && bare->comm == "x",
+        "a name cut to nothing was not parsed");
+    const auto colons = parseContextOwner("a|pid=462|comm=binder:462_1");
     require(colons && colons->pid == 462 && colons->comm == "binder:462_1",
         "a command name with a colon was cut");
+    const auto spaces = parseContextOwner("t|pid=5|comm=two words");
+    require(spaces && spaces->comm == "two words",
+        "a command name with a space was cut");
 
-    /* Every name a kernel without the topic gives is a thread's name. */
+    /* The kernel's suffix is the last one: a name that imitates it, whether
+     * the context's own or a thread's, does not move the process. */
+    const auto forged = parseContextOwner(
+        "|pid=1|comm=victim|pid=2222|comm=real");
+    require(forged && forged->pid == 2222 && forged->comm == "real",
+        "an imitation before the suffix beat the suffix");
+
+    /* Every name a kernel without the topic gives is a thread's name, and a
+     * suffix that is not complete names no process. */
     for (const char* thread : {"RenderThread", "binder:462_1",
-             "Chrome_InProcGp", "GrallocUploadTh", "", ":x", "0:x", "12:",
-             "12", "x12:y", "-5:y", "99999999999:y", "4294967296:y"}) {
+             "Chrome_InProcGp", "GrallocUploadTh", "", "10:allocator",
+             "|pid=5", "|comm=x", "|pid=|comm=x", "|pid=5|comm=",
+             "|pid=0|comm=x", "|pid=x5|comm=y", "|pid=-5|comm=y",
+             "|pid=99999999999|comm=y", "|pid=4294967296|comm=y",
+             "|comm=x|pid=5", "pid=5|comm=x"}) {
         require(!parseContextOwner(thread).has_value(),
             std::string("a thread name was taken for a process: ") + thread);
     }
-    require(parseContextOwner("4294967295:max")->pid == 4294967295U,
+    require(parseContextOwner("t|pid=4294967295|comm=max")->pid ==
+            4294967295U,
         "the largest process ID was refused");
 }
 
 void aResourceIsCreditedToEveryContextThatHoldsIt()
 {
     ContextMemoryLedger ledger;
-    ledger.contextCreated(2, "10:allocator", false, origin);
-    ledger.contextCreated(3, "20:app", false, origin);
-    ledger.contextCreated(4, "30:compositor", false, origin);
+    ledger.contextCreated(2, owned(10, "allocator"), false, origin);
+    ledger.contextCreated(3, owned(20, "app"), false, origin);
+    ledger.contextCreated(4, owned(30, "compositor"), false, origin);
 
     made(ledger, 100, 4 * mebibyte);
     require(ledger.totalBytes() == 0,
@@ -141,8 +167,8 @@ void aResourceIsCreditedToEveryContextThatHoldsIt()
 void anAttachSaysWhetherItMadeTheContextAHolder()
 {
     ContextMemoryLedger ledger;
-    ledger.contextCreated(2, "10:a", false, origin);
-    ledger.contextCreated(3, "20:b", false, origin);
+    ledger.contextCreated(2, owned(10, "a"), false, origin);
+    ledger.contextCreated(3, owned(20, "b"), false, origin);
     made(ledger, 100, mebibyte);
 
     require(attach(ledger, 2, 100), "the first attach did not hold");
@@ -159,8 +185,8 @@ void anAttachSaysWhetherItMadeTheContextAHolder()
 void storageThatArrivesAfterTheAttachIsCredited()
 {
     ContextMemoryLedger ledger;
-    ledger.contextCreated(2, "10:a", false, origin);
-    ledger.contextCreated(3, "20:b", false, origin);
+    ledger.contextCreated(2, owned(10, "a"), false, origin);
+    ledger.contextCreated(3, owned(20, "b"), false, origin);
     ledger.reserveResource(100);
     ledger.reserveResource(100);
     require(attach(ledger, 2, 100) && attach(ledger, 3, 100), "setup");
@@ -198,8 +224,8 @@ void storageThatArrivesAfterTheAttachIsCredited()
 void aContextThatGoesTakesItsCreditWithIt()
 {
     ContextMemoryLedger ledger;
-    ledger.contextCreated(2, "10:a", false, origin);
-    ledger.contextCreated(3, "20:b", false, origin);
+    ledger.contextCreated(2, owned(10, "a"), false, origin);
+    ledger.contextCreated(3, owned(20, "b"), false, origin);
     made(ledger, 100, 8 * mebibyte);
     made(ledger, 101, 2 * mebibyte);
     attach(ledger, 2, 100);
@@ -218,7 +244,7 @@ void aContextThatGoesTakesItsCreditWithIt()
     ledger.contextDestroyed(3);
 
     /* A context's ID may come back with another process. */
-    ledger.contextCreated(2, "11:c", false, origin);
+    ledger.contextCreated(2, owned(11, "c"), false, origin);
     require(all(ledger, origin).holders.empty(),
         "a new context started with the old one's credit");
 }
@@ -226,8 +252,8 @@ void aContextThatGoesTakesItsCreditWithIt()
 void aBlobBelongsToItsCreatorUnlessTheCreatorIsVenus()
 {
     ContextMemoryLedger ledger;
-    ledger.contextCreated(2, "10:gl", false, origin);
-    ledger.contextCreated(3, "20:vk", true, origin);
+    ledger.contextCreated(2, owned(10, "gl"), false, origin);
+    ledger.contextCreated(3, owned(20, "vk"), true, origin);
 
     madeBlob(ledger, 200, 2, 6 * mebibyte);
     require(ledger.totalBytes() == 6 * mebibyte &&
@@ -254,8 +280,8 @@ void aBlobBelongsToItsCreatorUnlessTheCreatorIsVenus()
 void venusMemoryFollowsTheRenderersReports()
 {
     ContextMemoryLedger ledger;
-    ledger.contextCreated(5, "40:game", true, origin);
-    ledger.contextCreated(6, "41:other", true, origin);
+    ledger.contextCreated(5, owned(40, "game"), true, origin);
+    ledger.contextCreated(6, owned(41, "other"), true, origin);
     ledger.venusMemory(5, 64 * static_cast<std::int64_t>(mebibyte));
     ledger.venusMemory(5, 32 * static_cast<std::int64_t>(mebibyte));
     ledger.venusMemory(6, 8 * static_cast<std::int64_t>(mebibyte));
@@ -286,8 +312,8 @@ void venusMemoryFollowsTheRenderersReports()
 void aProcessIsTheSumOfItsContexts()
 {
     ContextMemoryLedger ledger;
-    ledger.contextCreated(2, "77:app", false, origin);
-    ledger.contextCreated(3, "77:app", true, origin);
+    ledger.contextCreated(2, owned(77, "app"), false, origin);
+    ledger.contextCreated(3, owned(77, "app"), true, origin);
     ledger.contextCreated(4, "RenderThread", false, origin);
     ledger.contextCreated(5, "RenderThread", false, origin);
     made(ledger, 100, 10 * mebibyte);
@@ -319,9 +345,9 @@ void aProcessIsTheSumOfItsContexts()
 void aHolderIsIdleWhenItsMostRecentContextIs()
 {
     ContextMemoryLedger ledger;
-    ledger.contextCreated(2, "50:a", false, origin);
-    ledger.contextCreated(3, "50:a", false, origin);
-    ledger.contextCreated(4, "51:b", false, origin);
+    ledger.contextCreated(2, owned(50, "a"), false, origin);
+    ledger.contextCreated(3, owned(50, "a"), false, origin);
+    ledger.contextCreated(4, owned(51, "b"), false, origin);
     for (std::uint32_t id : {2U, 3U, 4U}) {
         made(ledger, 100 + id, 4 * mebibyte);
         attach(ledger, id, 100 + id);
@@ -351,11 +377,11 @@ void theSnapshotKeepsTheLargestHoldersThatAreBigEnough()
 {
     ContextMemoryLedger ledger;
     for (std::uint32_t id = 1; id <= 6; ++id) {
-        ledger.contextCreated(id, std::to_string(id * 10) + ":p", false, origin);
+        ledger.contextCreated(id, owned(id * 10, "p"), false, origin);
         made(ledger, id, id * mebibyte);
         attach(ledger, id, id);
     }
-    ledger.contextCreated(9, "90:empty", false, origin);
+    ledger.contextCreated(9, owned(90, "empty"), false, origin);
 
     auto snapshot = ledger.snapshot(origin, 3, 0s, 0);
     require(snapshot.holders.size() == 3 && snapshot.holders[0].pid == 60 &&
@@ -374,7 +400,7 @@ void theSnapshotKeepsTheLargestHoldersThatAreBigEnough()
 void clearForgetsTheGuest()
 {
     ContextMemoryLedger ledger;
-    ledger.contextCreated(2, "10:a", true, origin);
+    ledger.contextCreated(2, owned(10, "a"), true, origin);
     made(ledger, 100, mebibyte);
     attach(ledger, 2, 100);
     ledger.venusMemory(2, 9);
@@ -392,8 +418,8 @@ void clearForgetsTheGuest()
 void threadsMeetOnOneLedger()
 {
     ContextMemoryLedger ledger;
-    ledger.contextCreated(2, "10:a", true, origin);
-    ledger.contextCreated(3, "11:b", false, origin);
+    ledger.contextCreated(2, owned(10, "a"), true, origin);
+    ledger.contextCreated(3, owned(11, "b"), false, origin);
     std::atomic_bool stop {false};
     std::thread reader([&] {
         while (!stop.load()) {

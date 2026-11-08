@@ -320,11 +320,12 @@ Virgl resource or blob is credited in full to every context it is attached to
 and counted once in the total, and a Venus context's device memory comes from
 the renderer's per-context report (the pool's `account` callback). The guest
 kernel names a context's creating process in the context's debug name
-(`<tgid>:<comm>`); a kernel that does not leaves the holders unnamed and
-nothing acts on them. `read_graphics_memory` (runtime API 28) lists the quiet
-holders by process, and the macOS launchers print them with `--stats`.
-Andarium ends the cached background app that holds the most when the budget is
-nearly full (`GraphicsReclaim`).
+(`<name>|pid=<tgid>|comm=<comm>`, the
+[kernel contract](../kernel/common/README.md#devices)); a kernel that does not
+leaves the holders unnamed and nothing acts on them. `read_graphics_memory`
+(runtime API 28) lists the quiet holders by process, and the macOS launchers
+print them with `--stats`. Andarium ends the cached background app that holds
+the most when the budget is nearly full (`GraphicsReclaim`).
 
 ### Android guest requirements
 

@@ -23,13 +23,24 @@ constexpr std::uint64_t unnamedKey(std::uint32_t contextId) noexcept
 
 std::optional<ContextOwner> parseContextOwner(std::string_view debugName)
 {
-    const auto colon = debugName.find(':');
-    if (colon == std::string_view::npos || colon == 0 ||
-        colon > maximumPidDigits || colon + 1 >= debugName.size()) {
+    constexpr std::string_view commKey = "|comm=";
+    constexpr std::string_view pidKey = "|pid=";
+    /* The kernel's suffix is the last thing in the name, and the command
+     * name in it holds no '|', so the last "|comm=" and the last "|pid="
+     * before it are the kernel's, whatever the name before them says. */
+    const auto commAt = debugName.rfind(commKey);
+    if (commAt == std::string_view::npos)
         return std::nullopt;
-    }
+    const auto pidAt = debugName.substr(0, commAt).rfind(pidKey);
+    if (pidAt == std::string_view::npos)
+        return std::nullopt;
+    const auto digits = debugName.substr(
+        pidAt + pidKey.size(), commAt - pidAt - pidKey.size());
+    const auto comm = debugName.substr(commAt + commKey.size());
+    if (digits.empty() || digits.size() > maximumPidDigits || comm.empty())
+        return std::nullopt;
     std::uint64_t pid = 0;
-    for (const char digit : debugName.substr(0, colon)) {
+    for (const char digit : digits) {
         if (digit < '0' || digit > '9')
             return std::nullopt;
         pid = pid * 10 + static_cast<std::uint64_t>(digit - '0');
@@ -38,7 +49,7 @@ std::optional<ContextOwner> parseContextOwner(std::string_view debugName)
         return std::nullopt;
     return ContextOwner {
         .pid = static_cast<std::uint32_t>(pid),
-        .comm = std::string(debugName.substr(colon + 1)),
+        .comm = std::string(comm),
     };
 }
 

@@ -1241,9 +1241,9 @@ void theLedgerFollowsTheGuestsCommands()
     };
 
     const auto allocator =
-        namedContext(11, "100:allocator", protocol::virglCapsetId);
-    const auto app = namedContext(12, "200:app", protocol::virglCapsetId);
-    const auto vulkan = namedContext(13, "300:vk", protocol::venusCapsetId);
+        namedContext(11, "t|pid=100|comm=allocator", protocol::virglCapsetId);
+    const auto app = namedContext(12, "t|pid=200|comm=app", protocol::virglCapsetId);
+    const auto vulkan = namedContext(13, "t|pid=300|comm=vk", protocol::venusCapsetId);
     for (const auto* context : {&allocator, &app, &vulkan}) {
         const auto before = ledger.counts();
         const auto sweep = failEachAllocationBeforeCommit(
@@ -1258,7 +1258,7 @@ void theLedgerFollowsTheGuestsCommands()
     /* A context the renderer refuses is not kept. */
     dependencies.rejectNext(FakeGpuDependencies::Operation::create_context);
     requireResponse(device,
-        requestBytes(namedContext(14, "400:x", protocol::virglCapsetId)),
+        requestBytes(namedContext(14, "t|pid=400|comm=x", protocol::virglCapsetId)),
         protocol::GpuResponse::errorInvalidContext);
     require(ledger.counts() == Counts {3, 0});
 
