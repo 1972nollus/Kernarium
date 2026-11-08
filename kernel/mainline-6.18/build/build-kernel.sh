@@ -139,6 +139,8 @@ source_tree=$(git -C "$SOURCE_DIR" rev-parse HEAD^{tree} 2>/dev/null || true)
 	fail "kernel ABI copies are stale; replay the tracked series or run kernel/common/abi/sync.sh"
 python3 -B "$COMMON_ROOT/video/sync-protocol.py" --kernel-source "$SOURCE_DIR" --verify ||
 	fail "kernel Virtio video protocol copy is stale; replay the tracked series or run kernel/common/video/sync-protocol.py"
+python3 -B "$COMMON_ROOT/gpu/sync-protocol.py" --kernel-source "$SOURCE_DIR" --verify ||
+	fail "kernel Virtio-GPU memory-report header is stale or collides; replay the tracked series or run kernel/common/gpu/sync-protocol.py"
 mkdir -p -- "$BUILD_DIR"
 SOURCE_DIR=$(CDPATH= cd -- "$SOURCE_DIR" && pwd -P)
 BUILD_DIR=$(CDPATH= cd -- "$BUILD_DIR" && pwd -P)

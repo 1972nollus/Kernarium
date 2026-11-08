@@ -100,6 +100,7 @@ void aGraphicsReadingCarriesTheServicesFigures()
         .usageBytes = 524288000ULL,
         .contextBytes = 440401920ULL,
         .memoryRefusals = 2ULL,
+        .guestReclaims = true,
         .holders = holders,
     });
     require(memory.struct_size == sizeof(memory));
@@ -107,6 +108,8 @@ void aGraphicsReadingCarriesTheServicesFigures()
             memory.usage_bytes == 524288000ULL &&
             memory.context_bytes == 440401920ULL &&
             memory.memory_refusals == 2ULL);
+    require(memory.guest_reclaims == 1U,
+        "the guest's own reclaimer was not reported");
     require(memory.holder_count == 2U);
     require(memory.holders[0].pid == 2204U &&
             memory.holders[0].context_count == 3U &&
@@ -123,7 +126,8 @@ void aGraphicsReadingCarriesTheServicesFigures()
 void noHoldersAndTooManyHoldersFitTheTable()
 {
     const auto none = graphicsReading({.budgetBytes = 1ULL});
-    require(none.holder_count == 0U && none.budget_bytes == 1ULL);
+    require(none.holder_count == 0U && none.budget_bytes == 1ULL &&
+            none.guest_reclaims == 0U);
 
     std::array<GraphicsHolderFigures, 12> many {};
     for (std::uint32_t index = 0; index < many.size(); ++index)

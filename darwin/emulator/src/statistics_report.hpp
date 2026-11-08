@@ -62,6 +62,9 @@ struct StatisticsSample final {
 	std::uint64_t gpu_memory_used_bytes {};
 	/* Who holds the budget; none without a budget. */
 	std::optional<GraphicsAttribution> graphics_attribution;
+	/* Whether the guest's own low-memory killer asks the host for the budget's
+	 * holders and reclaims them itself. */
+	bool guest_reclaims {};
 };
 
 /* The guest kernel's own memory figures. */
@@ -151,6 +154,8 @@ public:
 			if (sample.graphics_attribution)
 				text += attribution_text(*sample.graphics_attribution);
 		}
+		if (sample.guest_reclaims)
+			text += " guest-reclaim=on";
 		return text;
 	}
 

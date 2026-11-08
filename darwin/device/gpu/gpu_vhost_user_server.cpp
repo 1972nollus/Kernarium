@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
@@ -29,6 +30,13 @@ namespace {
 /* The kqueue's identifier for the timer that trims idle guest contexts. The
  * fence timer's is deferred_fences.hpp's. */
 constexpr std::uintptr_t idleTrimTimerIdentifier = 2;
+/* The timers of the memory report: a change of graphics memory arms the first
+ * for a short coalescing delay on whichever thread made it, and the second
+ * is armed on this thread for the moment a sustained pressure, a calm or a
+ * held-back refusal event is due. */
+constexpr std::uintptr_t memoryTickTimerIdentifier = 3;
+constexpr std::uintptr_t memoryDeadlineTimerIdentifier = 4;
+constexpr std::int64_t memoryTickMicroseconds = 250'000;
 
 template<typename Value>
 Value loadUnaligned(const void* address)
@@ -89,7 +97,12 @@ public:
                     "registering GPU display-resize event failed");
             }
         }
+        gpu_.setMemoryWake([this] { armMemoryTick(); });
     }
+
+    /* The ledger's observer reaches this device's queue from other threads,
+     * so it goes before the queue does. */
+    ~GpuVhostUserDevice() override { gpu_.setMemoryWake({}); }
 
     [[nodiscard]] const char* name() const noexcept override
     {
@@ -101,7 +114,10 @@ public:
         return protocol::virtioGpuFeatureVirgl |
             (hasEdid_ ? protocol::virtioGpuFeatureEdid : 0U) |
             protocol::virtioGpuFeatureResourceBlob |
-            protocol::virtioGpuFeatureContextInit;
+            protocol::virtioGpuFeatureContextInit |
+            (gpu_.offersMemoryReport()
+                    ? protocol::virtioGpuFeatureUmlMemoryReport
+                    : 0U);
     }
 
     [[nodiscard]] std::size_t queueCount() const noexcept override
@@ -159,6 +175,10 @@ public:
                 gpu_.displayEventPending()) {
                 configChangePending_ = true;
             }
+            if ((clearEvents & protocol::gpuEventMemory) != 0 &&
+                gpu_.memoryEventPending()) {
+                memoryChangePending_ = true;
+            }
         }
     }
 
@@ -191,6 +211,8 @@ public:
 
         auto result = gpu_.processWithDeferredFence(
             request, cursorQueue, requestId, responseCapacity);
+        if (isMemoryQuery(cursorQueue, request))
+            armMemoryDeadline();
         if (result.destroyedContextId) {
             /* The context's held commands complete on the next tick. */
             const bool held = !fences_.empty();
@@ -244,6 +266,7 @@ public:
         fences_.clear();
         gpu_.reset();
         configChangePending_ = false;
+        memoryChangePending_ = false;
     }
 
     [[nodiscard]] int eventDescriptor() const noexcept override
@@ -253,7 +276,7 @@ public:
 
     void drainEventSource() override
     {
-        std::array<struct kevent, 3> events {};
+        std::array<struct kevent, 5> events {};
         const timespec timeout {};
         int eventCount;
         do {
@@ -271,6 +294,8 @@ public:
         bool resizeReady = false;
         bool fenceTimerReady = false;
         bool idleTrimTimerReady = false;
+        bool memoryTickReady = false;
+        bool memoryDeadlineReady = false;
         const int resizeDescriptor = display_.resizeEventDescriptor();
         for (int index = 0; index < eventCount; ++index) {
             const auto& event = events[static_cast<std::size_t>(index)];
@@ -286,6 +311,16 @@ public:
                 idleTrimTimerReady = true;
                 continue;
             }
+            if (event.filter == EVFILT_TIMER &&
+                event.ident == memoryTickTimerIdentifier) {
+                memoryTickReady = true;
+                continue;
+            }
+            if (event.filter == EVFILT_TIMER &&
+                event.ident == memoryDeadlineTimerIdentifier) {
+                memoryDeadlineReady = true;
+                continue;
+            }
             if (resizeDescriptor >= 0 && event.filter == EVFILT_READ &&
                 event.ident ==
                     static_cast<std::uintptr_t>(resizeDescriptor)) {
@@ -298,6 +333,15 @@ public:
         if (resizeReady && display_.drainResizeEvent()) {
             gpu_.notifyDisplayChanged();
             configChangePending_ = true;
+        }
+        if (memoryTickReady || memoryDeadlineReady) {
+            /* Disarmed before the figures are read, so a change that follows
+             * arms the next evaluation. */
+            if (memoryTickReady)
+                memoryTickArmed_.store(false, std::memory_order_release);
+            if (gpu_.evaluateMemory(std::chrono::steady_clock::now()))
+                memoryChangePending_ = true;
+            armMemoryDeadline();
         }
         if (idleTrimTimerReady) {
             /* A one-shot timer is gone once it has fired. */
@@ -353,22 +397,37 @@ public:
 
     [[nodiscard]] bool configChangePending() const noexcept override
     {
-        return configChangePending_;
+        return configChangePending_ || memoryChangePending_;
     }
 
+    /* A display change waits for the display's resize lifecycle; a memory
+     * change does not. What a claim covers is what the acknowledgement
+     * clears, so a display change the lifecycle held back stays pending. */
     [[nodiscard]] bool claimConfigChange() noexcept override
     {
-        return configChangePending_ && display_.claimResizeNotification();
+        displayLocked_ =
+            configChangePending_ && display_.claimResizeNotification();
+        deliveredDisplay_ = displayLocked_;
+        deliveredMemory_ = memoryChangePending_;
+        return deliveredDisplay_ || deliveredMemory_;
     }
 
     void releaseConfigChange() noexcept override
     {
-        display_.releaseResizeNotification();
+        if (displayLocked_) {
+            displayLocked_ = false;
+            display_.releaseResizeNotification();
+        }
     }
 
     void clearConfigChange() noexcept override
     {
-        configChangePending_ = false;
+        if (deliveredDisplay_)
+            configChangePending_ = false;
+        if (deliveredMemory_)
+            memoryChangePending_ = false;
+        deliveredDisplay_ = false;
+        deliveredMemory_ = false;
     }
 
     void prepareReset() noexcept override
@@ -438,6 +497,62 @@ public:
     }
 
 private:
+    /* Arms the evaluation of the memory report, unless it is armed already.
+     * Any thread: the ledger's observer calls it when graphics memory changes
+     * while the guest is subscribed. A burst of changes costs one evaluation,
+     * a quarter of a second after the first. */
+    void armMemoryTick() noexcept
+    {
+        if (memoryTickArmed_.exchange(true, std::memory_order_acq_rel))
+            return;
+        if (!armOneShot(memoryTickTimerIdentifier, memoryTickMicroseconds))
+            memoryTickArmed_.store(false, std::memory_order_release);
+    }
+
+    /* Arms the timer for the moment the memory report's evaluator next has
+     * something due, or leaves it alone when nothing is. Transport thread. */
+    void armMemoryDeadline() noexcept
+    {
+        const auto deadline = gpu_.memoryDeadline();
+        if (!deadline)
+            return;
+        constexpr std::int64_t shortest = 1000;
+        const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(
+            *deadline - std::chrono::steady_clock::now());
+        (void)armOneShot(
+            memoryDeadlineTimerIdentifier,
+            std::max<std::int64_t>(shortest, remaining.count() + shortest));
+    }
+
+    [[nodiscard]] bool armOneShot(
+        std::uintptr_t identifier, std::int64_t microseconds) noexcept
+    {
+        struct kevent change {};
+        EV_SET(
+            &change,
+            identifier,
+            EVFILT_TIMER,
+            EV_ADD | EV_ENABLE | EV_ONESHOT,
+            NOTE_USECONDS,
+            static_cast<std::intptr_t>(microseconds),
+            nullptr);
+        int result;
+        do {
+            result = ::kevent(
+                eventQueue_.get(), &change, 1, nullptr, 0, nullptr);
+        } while (result < 0 && errno == EINTR);
+        return result == 0;
+    }
+
+    [[nodiscard]] static bool isMemoryQuery(
+        bool cursorQueue, std::span<const std::uint8_t> request) noexcept
+    {
+        if (cursorQueue || request.size() < sizeof(protocol::GpuControlHeader))
+            return false;
+        return loadUnaligned<protocol::GpuControlHeader>(request.data()).type ==
+            static_cast<std::uint32_t>(protocol::GpuCommand::umlGetMemory);
+    }
+
     /* Arms the timer that trims the guest contexts that have gone quiet, for
      * the earliest moment one could be, unless it is armed already: a timer
      * that fires early only finds nothing due and arms the next. Trimming is a
@@ -516,6 +631,12 @@ private:
     VirtioGpuDevice gpu_;
     bool hasEdid_;
     bool configChangePending_ {};
+    /* The memory event is pending, and what the claim now in flight covers. */
+    bool memoryChangePending_ {};
+    bool displayLocked_ {};
+    bool deliveredDisplay_ {};
+    bool deliveredMemory_ {};
+    std::atomic_bool memoryTickArmed_ {};
     bool idleTrimTimerArmed_ {};
     UniqueDescriptor eventQueue_;
     DeferredFences fences_;

@@ -597,7 +597,7 @@ final class LiveRuntime: RuntimeDriver {
         }
         return GraphicsMemoryReading(
             budgetBytes: reading.budget_bytes, usageBytes: reading.usage_bytes, contextBytes: reading.context_bytes,
-            refusals: reading.memory_refusals, holders: holders)
+            refusals: reading.memory_refusals, guestReclaims: reading.guest_reclaims != 0, holders: holders)
     }
 
     private nonisolated static func graphicsRefusalsReading() -> UInt64? {

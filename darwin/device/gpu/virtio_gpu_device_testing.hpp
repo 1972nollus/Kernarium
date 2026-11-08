@@ -35,6 +35,23 @@ public:
     /* A display counts the refusals itself; a fake that records them
      * overrides this. */
     virtual void recordMemoryRefusal() noexcept {}
+    /* A display counts the refusals itself; a fake that records them
+     * overrides this. */
+    [[nodiscard]] virtual std::uint64_t memoryRefusals() const noexcept
+    {
+        return 0;
+    }
+    /* A display keeps whether a guest reclaimer acts on the memory reports
+     * (Display::guestReclaims); the device's test double keeps it here. */
+    void setGuestReclaims(bool reclaims) noexcept { guestReclaims_ = reclaims; }
+    [[nodiscard]] bool guestReclaims() const noexcept { return guestReclaims_; }
+    /* The device memory budget and the pool's usage, while a renderer with a
+     * budget runs: VirglRenderer::deviceMemory() for the production device. */
+    [[nodiscard]] virtual std::optional<VirglRenderer::DeviceMemory>
+        deviceMemory() const noexcept
+    {
+        return std::nullopt;
+    }
     /* A display keeps what the guest's contexts hold of the host GPU's
      * memory; the device's test double keeps it here. */
     [[nodiscard]] ContextMemoryLedger& graphicsLedger() noexcept
@@ -156,6 +173,7 @@ public:
 
 private:
     ContextMemoryLedger graphicsLedger_;
+    bool guestReclaims_ {};
 };
 
 } // namespace uml::gpu::testing

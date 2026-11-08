@@ -196,6 +196,9 @@ public:
     void recordMemoryRefusal() noexcept
     {
         memoryRefusals_.fetch_add(1, std::memory_order_relaxed);
+        /* A guest that asked to hear of refusals is told through the
+         * ledger's observer. */
+        graphicsLedger_.notify();
     }
     [[nodiscard]] std::uint64_t memoryRefusals() const noexcept
     {
@@ -214,11 +217,26 @@ public:
         return graphicsLedger_;
     }
 
+    /* Whether a reclaimer in the guest acts on the memory reports the device
+     * sends (the Virtio-GPU memory report's GUEST_RECLAIMS flag), so the
+     * host's own reclaimer stands down. The device sets it with each query of
+     * the guest and clears it when the connection ends; it lives here because
+     * the display outlives the connection and any thread reads it. */
+    void setGuestReclaims(bool reclaims) noexcept
+    {
+        guestReclaims_.store(reclaims, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool guestReclaims() const noexcept
+    {
+        return guestReclaims_.load(std::memory_order_relaxed);
+    }
+
 protected:
     Display() = default;
 
 private:
     std::atomic_bool guestScanoutActive_ {};
+    std::atomic_bool guestReclaims_ {};
     std::atomic<std::uint64_t> memoryRefusals_ {};
     ContextMemoryLedger graphicsLedger_;
 };

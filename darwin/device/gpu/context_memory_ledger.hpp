@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -127,6 +129,17 @@ public:
     /* Forgets everything: the guest is gone. */
     void clear() noexcept;
 
+    /* While set, `observer` is called after every change of the total bytes,
+     * on the thread that made it with no lock of the ledger held, and by
+     * notify(). It is told nothing and reads what it wants: it must be quick,
+     * must not throw, and must not call setObserver. An empty function clears
+     * it, and the call returns once no call of the previous one is running.
+     * Without an observer a change costs one relaxed load. */
+    void setObserver(std::function<void()> observer);
+    /* Calls the observer for a change of the memory the ledger does not keep,
+     * such as a refused allocation. */
+    void notify() noexcept;
+
     /* The holders that have been quiet for at least `minimumIdle` and hold at
      * least `minimumBytes`, `maximumHolders` of them at most, largest first,
      * and the total. */
@@ -169,6 +182,10 @@ private:
         bool remove(std::uint32_t contextId) noexcept;
     };
 
+    /* Takes the mutex for a change that may alter the total bytes, and calls
+     * the observer once it has let go if it did. */
+    class Change;
+
     /* The caller holds the mutex. */
     void destroyLocked(std::uint32_t contextId) noexcept;
     void rebaseLocked(
@@ -181,6 +198,9 @@ private:
     std::unordered_map<std::uint32_t, Resource> resources_;
     std::uint64_t heldResourceBytes_ {};
     std::uint64_t venusTotal_ {};
+    std::atomic_bool observed_ {};
+    std::mutex observerMutex_;
+    std::function<void()> observer_;
 };
 
 } // namespace uml::gpu

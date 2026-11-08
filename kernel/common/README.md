@@ -22,6 +22,7 @@ contracts every product shares:
 - `tooling/verify-console-input.py` and `tooling/console_input_probe.cpp`: the
   console PTY assertion, run by the standalone kernel build with explicit
   source and build paths (Apple product configuration consumes only bundles);
+- [`gpu/`](gpu/README.md): the private Virtio-GPU memory-report wire contract;
   and
 - [`video/`](video/README.md): the private Virtio video wire contract.
 
@@ -53,6 +54,11 @@ it. The bridge fields used below are defined by the comments in
   may share one host PTY, and a console write allocates no memory. Closing a
   serial line never closes a host descriptor. The console PTY assertion and
   `guest-console-write-memory` check the first two.
+- Output a serial line has queued for a host channel that took less than a
+  write offered goes out before the line's console text, and before the
+  exitcalls close the line at power-off, halt or restart. The console waits up
+  to 1 s for the channel and the exitcalls up to 2 s.
+  `guest-console-queued-output` checks the power-off.
 - Host-side kernel code changes a signal mask only with `pthread_sigmask()`
   (Darwin's `sigprocmask()` sets every thread's mask) and reaches variadic libc
   functions only through fixed-arity bridge functions or shims. The bridge
@@ -290,6 +296,16 @@ it. The bridge fields used below are defined by the comments in
   it to credit graphics memory to a process
   ([`docs/graphics.md`](../../docs/graphics.md#device-memory-budget);
   `guest-virtgpu-context-owner`).
+- With `VIRTIO_GPU_F_UML_MEMORY_REPORT` ([wire contract](gpu/README.md)) the
+  driver serves `gpu_memory_report` on the primary DRM minor
+  (`/sys/class/drm/card0`), mode 0600: a header line (`seq`, `age_ms`, `state`,
+  `refused`, `budget`, `used`, `held`, `armed`, `generation`) and up to 16
+  holder lines `<pid> <bytes> <idle_ms> <contexts> <comm>`, the host's last
+  report. A read formats that report and never waits for the host. A write of
+  `arm <min_bytes> <min_idle_ms>`, `refresh` or `disarm` queues one query and
+  returns, and a stored report calls `sysfs_notify()`. Without the feature
+  there is no file, and no ioctl or other interface changes
+  (`guest-virtgpu-memory-report`).
 - A file's handles opened before its Virtio-GPU context exists are attached when
   the context is created. The primary plane accepts ARGB8888 as well as
   XRGB8888 (the first format) and the host ignores the alpha byte; the
