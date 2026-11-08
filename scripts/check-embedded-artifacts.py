@@ -22,7 +22,8 @@ Kernel bundle (--kernel android|arm64|x86_64):
   - the tracked final tree of the line (UML_KERNEL_FINAL_TREE) equals the one
     the accepted descriptor records, which is every patch of the series;
   - with --app, the kernel in the packaged runtime framework is the kernel the
-    descriptor names (the release in its Linux banner), and its embedded
+    descriptor names (the release in its Linux banner), its banner names the
+    neutral build user and host kernarium@kernarium, and its embedded
     configuration (CONFIG_IKCONFIG) holds every symbol the tracked fragments
     request, as the build's own check does. The bundle manifest records no
     configuration identity, so a symbol removed from a fragment, which falls
@@ -74,6 +75,9 @@ MANIFEST = "release-manifest.json"
 LAYOUT = "guest/partition-layout.json"
 SYSTEM_DISK = "guest/system.img"
 ELF_SECTION = ("__TEXT", "__uml_elf")
+# The build user and host build-kernel.sh gives every kernel; any other pair in
+# a banner is the builder's own account and machine.
+NEUTRAL_BUILDER = "kernarium@kernarium"
 HISTORY_LIMIT = 400
 SHOWN_COMMITS = 10
 
@@ -498,6 +502,15 @@ def kernel_banner_releases(image):
     })
 
 
+def kernel_banner_builders(image):
+    """The user@host pairs of the kernel's Linux banner and /proc/version format."""
+    return sorted({
+        match.group(1).decode("ascii", "replace")
+        for match in re.finditer(
+            rb"(?:Linux version [0-9][0-9A-Za-z._+~-]*|%s version %s) \(([^()]*)\)", image)
+    })
+
+
 def embedded_config(image):
     start = image.find(b"IKCFG_ST\x1f\x8b")
     end = image.find(b"IKCFG_ED", start + 8) if start >= 0 else -1
@@ -570,6 +583,13 @@ def check_kernel(repo, report, name, app):
             f"the kernel in {kernel['framework']} is not the one {label} accepts",
             f"packaged: {', '.join(releases) or 'no Linux banner'}; accepted: {accepted_release}; "
             "package the frameworks from the accepted bundle in the same run",
+        )
+        return
+    # The pairs found are personal values, so the message never repeats them.
+    if kernel_banner_builders(image) != [NEUTRAL_BUILDER]:
+        report.error(
+            f"the kernel in {kernel['framework']} does not name {NEUTRAL_BUILDER} as its build user and host",
+            "build the bundle with build-kernel.sh and package the frameworks from it",
         )
         return
     config = embedded_config(image)
