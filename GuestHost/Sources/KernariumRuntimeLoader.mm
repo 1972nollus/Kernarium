@@ -237,7 +237,8 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->read_statistics == nullptr ||
         api->read_guest_memory == nullptr ||
         api->cancel_touch == nullptr ||
-        api->quiesce_resident == nullptr) {
+        api->quiesce_resident == nullptr ||
+        api->read_graphics_memory == nullptr) {
         std::fputs("Kernarium: runtime API validation failed\n", stderr);
         return false;
     }
@@ -268,12 +269,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v27");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v28");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v27: %s\n",
+            "Kernarium: selected runtime lacks API v28: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;
@@ -604,6 +605,13 @@ extern "C" int kernarium_runtime_loader_read_statistics(
 {
     const kernarium_runtime_api* runtime = api();
     return runtime == nullptr ? -ENODEV : runtime->read_statistics(statistics);
+}
+
+extern "C" int kernarium_runtime_loader_read_graphics_memory(
+    kernarium_runtime_graphics_memory* memory)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ? -ENODEV : runtime->read_graphics_memory(memory);
 }
 
 extern "C" int kernarium_runtime_loader_read_guest_memory(
