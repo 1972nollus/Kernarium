@@ -355,6 +355,38 @@ void checkClearSupersededByNativeFrame(
         "fallback mode did not return");
 }
 
+/* A native frame replaces a CPU one, as a guest's GPU scanout replaces the
+ * console it drew first. The CPU frame's texture is then a copy nothing
+ * shows, while the framebuffer keeps its pixels for the next CPU frame. */
+void checkNativeFrameReleasesFallback(
+    MetalPresentation& presentation, Harness& harness,
+    std::vector<std::uint8_t>& pixels)
+{
+    require(presentation.resize(2048, 1152), "fallback mode did not change");
+    writeCpuFrame(presentation, green);
+    require(harness.draw(pixels) && allOf(pixels, green),
+        "the console frame was not shown");
+    id<MTLDevice> device = (__bridge id<MTLDevice>)presentation.device();
+    const auto allocated = device.currentAllocatedSize;
+
+    require(accepted(harness.present({.width = sourceWidth, .height = sourceHeight})),
+        "native frame after a CPU frame was refused");
+    require(uml::testing::waitUntil([&] {
+        return device.currentAllocatedSize + (8U << 20) < allocated;
+    }, std::chrono::seconds(5)), "a native frame retained the CPU fallback texture");
+    require(harness.draw(pixels), "native frame after a CPU frame did not finish");
+    require(pixelIs(pixels, 16, 9, red) && pixelIs(pixels, 48, 27, white),
+        "releasing the fallback changed native presentation");
+    require(hasCpuPixels(presentation), "a native frame dropped the CPU pixels");
+
+    // Back on the CPU path, the kept pixels return in a new texture.
+    presentation.publishCpuFrame();
+    require(harness.draw(pixels) && allOf(pixels, green),
+        "the CPU pixels did not return after native presentation");
+    require(presentation.resize(framebufferWidth, framebufferHeight),
+        "fallback mode did not return");
+}
+
 /* What the mirror delivered: the newest frame, and how many arrived. */
 struct TapRecorder final {
     struct Frame final {
@@ -694,6 +726,7 @@ int run()
 
     checkCpuFrames(*presentation, harness, pixels);
     checkClearSupersededByNativeFrame(*presentation, harness, pixels);
+    checkNativeFrameReleasesFallback(*presentation, harness, pixels);
 
     /* A clockwise quarter-turn shows the guest's top-left at the display's
      * top-right, pillarboxed at the rotated aspect. */
